@@ -97,10 +97,16 @@ const gchar * lrg_menu_bar_get_title (LrgMenuBar *self,
  * lrg_menu_bar_get_title_rect:
  * @self: an #LrgMenuBar
  * @index: a title index
- * @x: (out) (optional): left, world coordinates
- * @y: (out) (optional): top
+ * @x: (out) (optional): left, canvas (world) coordinates
+ * @y: (out) (optional): top, canvas coordinates
  * @width: (out) (optional): width
  * @height: (out) (optional): height
+ *
+ * The rectangle of title @index in canvas coordinates: the space of
+ * lrg_widget_get_world_x() and of the pointer positions fed to
+ * lrg_canvas_process_input(), whatever containers the bar sits in, so
+ * the result can be clicked directly (the editor's `ui.state` reply and
+ * its X11 smoke test do this).
  *
  * Returns: %TRUE if @index is a title
  */
@@ -158,6 +164,21 @@ void lrg_menu_bar_close (LrgMenuBar *self);
  */
 LRG_AVAILABLE_IN_ALL
 gint lrg_menu_bar_get_open_index (LrgMenuBar *self);
+
+/**
+ * lrg_menu_bar_get_open_title:
+ * @self: an #LrgMenuBar
+ *
+ * The title of the open menu with its mnemonic marker removed ("File"
+ * for "_File"), for status reports such as the editor's `ui.state`.
+ * Follow changes with the `notify::open-index` signal: #LrgMenuBar:open-index
+ * is notified whenever a menu opens, closes or the bar moves to a
+ * neighbouring title.
+ *
+ * Returns: (nullable): the open title, or %NULL when no menu is open
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_menu_bar_get_open_title (LrgMenuBar *self);
 
 /**
  * lrg_menu_bar_get_highlighted:

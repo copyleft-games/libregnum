@@ -1461,6 +1461,118 @@ test_bar_global_keys (Fixture       *f,
 }
 
 static void
+count_notify (GObject    *object,
+              GParamSpec *pspec,
+              guint      *counter)
+{
+	(*counter)++;
+}
+
+/*
+ * The hooks the editor's ui.state IPC reads: the open title without its
+ * mnemonic marker, title and item rects in canvas coordinates (even
+ * with the bar nested in an offset container), the row height, Alt +
+ * mnemonic to open and Escape to close, with notify::open-index on
+ * every change.
+ */
+static void
+test_bar_editor_hooks (Fixture       *f,
+                       gconstpointer  data)
+{
+	g_autoptr(GMenu) bar_model = g_menu_new ();
+	g_autoptr(GMenu) file = file_model ();
+	g_autoptr(GMenu) view = view_model ();
+	LrgVBox         *box = lrg_vbox_new ();
+	LrgMenuBar      *bar;
+	LrgMenu         *menu;
+	guint            notified = 0;
+	gfloat           tx;
+	gfloat           ty;
+	gfloat           tw;
+	gfloat           th;
+	gfloat           ix;
+	gfloat           iy;
+	gfloat           iw;
+	gfloat           ih;
+	gfloat           ex;
+	gfloat           ey;
+	gfloat           ew;
+	gfloat           eh;
+
+	g_menu_append_submenu (bar_model, "_File", G_MENU_MODEL (file));
+	g_menu_append_submenu (bar_model, "_View", G_MENU_MODEL (view));
+	bar = lrg_menu_bar_new_from_model (G_MENU_MODEL (bar_model));
+
+	/* The bar sits in a box placed away from the canvas origin */
+	lrg_container_add_child (LRG_CONTAINER (f->canvas), LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_allocate (LRG_WIDGET (box), 100.0f, 300.0f, 500.0f, 40.0f);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (bar));
+	g_object_unref (bar);
+	lrg_canvas_record (f->canvas);
+	g_signal_connect (bar, "notify::open-index", G_CALLBACK (count_notify), &notified);
+
+	g_assert_null (lrg_menu_bar_get_open_title (bar));
+
+	/* Title rects are canvas coordinates: inside the offset box */
+	g_assert_true (lrg_menu_bar_get_title_rect (bar, 1, &tx, &ty, &tw, &th));
+	g_assert_cmpfloat (tx, >=, 100.0f);
+	g_assert_cmpfloat (ty, >=, 300.0f);
+	g_assert_cmpfloat (tw, >, 0.0f);
+
+	/* Clicking that rect opens View */
+	click_at (f, tx + tw * 0.5f, ty + th * 0.5f);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, 1);
+	g_assert_cmpstr (lrg_menu_bar_get_open_title (bar), ==, "View");
+	g_assert_cmpuint (notified, ==, 1);
+	lrg_menu_bar_close (bar);
+	g_assert_null (lrg_menu_bar_get_open_title (bar));
+	g_assert_cmpuint (notified, ==, 2);
+	settle (f);
+
+	/* Alt+F opens "_File" by keyboard; the title has no marker */
+	lrg_canvas_set_focused_widget (f->canvas, f->button);
+	key_mods (f, GRL_KEY_F, LRG_INPUT_MODIFIER_ALT, 0);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, 0);
+	g_assert_cmpstr (lrg_menu_bar_get_open_title (bar), ==, "File");
+	g_assert_cmpuint (notified, ==, 3);
+	settle (f);
+
+	/* Item rects match entry rects, are canvas coordinates below the
+	 * title, and an item row is the row height tall */
+	menu = lrg_menu_bar_get_menu (bar, 0);
+	g_assert_nonnull (menu);
+	g_assert_true (lrg_menu_get_open (menu));
+	g_assert_true (lrg_menu_get_item_rect (menu, 1, &ix, &iy, &iw, &ih));
+	g_assert_true (lrg_menu_get_entry_rect (menu, 1, &ex, &ey, &ew, &eh));
+	g_assert_cmpfloat (ix, ==, ex);
+	g_assert_cmpfloat (iy, ==, ey);
+	g_assert_cmpfloat (iw, ==, ew);
+	g_assert_cmpfloat (ih, ==, eh);
+	g_assert_cmpfloat (lrg_menu_get_row_height (menu), >, 0.0f);
+	g_assert_cmpfloat (ih, ==, lrg_menu_get_row_height (menu));
+	g_assert_cmpfloat (iy, >=, 300.0f);
+	g_assert_false (lrg_menu_get_item_rect (menu, 999, NULL, NULL, NULL, NULL));
+
+	/* Escape closes the menu and clears the open title */
+	key (f, GRL_KEY_ESCAPE);
+	settle (f);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+	g_assert_null (lrg_menu_bar_get_open_title (bar));
+	g_assert_cmpuint (notified, ==, 4);
+
+	/* Alt+F again, then click the Save item through its rect */
+	key_mods (f, GRL_KEY_F, LRG_INPUT_MODIFIER_ALT, 0);
+	settle (f);
+	g_assert_true (lrg_menu_get_item_rect (menu, 1, &ix, &iy, &iw, &ih));
+	click_at (f, ix + iw * 0.5f, iy + ih * 0.5f);
+	g_assert_cmpuint (f->log->len, ==, 1);
+	g_assert_cmpstr (g_ptr_array_index (f->log, 0), ==, "save");
+	g_assert_null (lrg_menu_bar_get_open_title (bar));
+	settle (f);
+}
+
+static void
 test_bar_drag_release (Fixture       *f,
                        gconstpointer  data)
 {
@@ -1721,6 +1833,7 @@ main (int    argc,
 	ADD ("/ui/menu-bar/arrows", test_bar_arrows);
 	ADD ("/ui/menu-bar/drag-release", test_bar_drag_release);
 	ADD ("/ui/menu-bar/global-keys", test_bar_global_keys);
+	ADD ("/ui/menu-bar/editor-hooks", test_bar_editor_hooks);
 	ADD ("/ui/menu/rtl", test_rtl);
 	ADD ("/ui/menu/all-presets", test_all_presets);
 #undef ADD

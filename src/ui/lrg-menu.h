@@ -301,6 +301,44 @@ gboolean lrg_menu_get_entry_rect (LrgMenu *self,
                                   gfloat  *height);
 
 /**
+ * lrg_menu_get_item_rect:
+ * @self: an #LrgMenu
+ * @index: a row index (as for lrg_menu_get_entry_kind())
+ * @x: (out) (optional): row left, canvas (world) coordinates
+ * @y: (out) (optional): row top, canvas coordinates
+ * @width: (out) (optional): row width
+ * @height: (out) (optional): row height
+ *
+ * The rectangle of row @index in canvas coordinates, the same space as
+ * lrg_menu_bar_get_title_rect() and #LrgCanvasInput pointer positions,
+ * so a test or an IPC client can click it. Identical to
+ * lrg_menu_get_entry_rect(); the name matches the editor's `ui.state`
+ * vocabulary. Meaningful while the menu is open (laid out).
+ *
+ * Returns: %TRUE if @index is a row
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_menu_get_item_rect (LrgMenu *self,
+                                 guint    index,
+                                 gfloat  *x,
+                                 gfloat  *y,
+                                 gfloat  *width,
+                                 gfloat  *height);
+
+/**
+ * lrg_menu_get_row_height:
+ * @self: an #LrgMenu
+ *
+ * The height of an item row: the theme's ROW_HEIGHT metric. Headers are
+ * 0.8 of it and separators a thin band, so use lrg_menu_get_item_rect()
+ * for exact positions.
+ *
+ * Returns: the height of an item row, in pixels
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_menu_get_row_height (LrgMenu *self);
+
+/**
  * lrg_menu_get_highlighted:
  * @self: an #LrgMenu
  *

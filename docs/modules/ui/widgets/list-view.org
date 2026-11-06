@@ -72,6 +72,19 @@ Each row is placed in a slot as wide as the viewport (minus a small inset) and o
 - A second click on the same row within 400 ms emits =row-activated=.
 - The /cursor/ is the keyboard row; =get_selected()= prefers it when it is selected, else the lowest selected position.
 - Model changes keep the selection on its items: inserting before a selected item shifts it, removing a selected item unselects it (=selection-changed= is emitted).
+- =lrg_list_view_select_full (list, position, LrgSelectMode mode)= applies a gesture from code: =LRG_SELECT_MODE_REPLACE= (click), =LRG_SELECT_MODE_TOGGLE= (Ctrl + click), =LRG_SELECT_MODE_EXTEND= (Shift + click, from the anchor). The modes are those of [[file:tree-view.org::#tree-view-multi-selection][LrgTreeView]] (=LrgSelectMode= is declared in =lrg-tree-view.h=); TOGGLE and EXTEND need =multiple= mode, in =single= mode TOGGLE on the selected row clears the selection. The cursor moves to the row without scrolling.
+- =lrg_list_view_get_selected_positions()= returns a new =GArray= of =guint= in ascending order; =lrg_list_view_get_anchor()= the anchor row.
+
+** Drag-and-drop geometry
+:PROPERTIES:
+:CUSTOM_ID: list-view-dnd
+:END:
+Like [[file:tree-view.org::#tree-view-dnd][LrgTreeView]], the list answers a drop target's geometry questions in canvas (world) coordinates and paints where a drop would land; the drag session itself is the canvas's (see [[file:../drag-and-drop.org][drag and drop]]).
+
+- =lrg_list_view_get_row_rect (list, position, &x, &y, &w, &h)=: the full-width row rectangle at the displayed scroll offset; =FALSE= past the model.
+- =lrg_list_view_get_item_at (list, x, y)=: the row under a point, or =LRG_LIST_VIEW_INVALID_POSITION=.
+- =lrg_list_view_get_drop_position (list, y, &position, &pos)=: top quarter =BEFORE=, bottom quarter =AFTER=, middle =INTO= (=LrgDropPosition=). Below the last row: the last row, =AFTER=. Empty list: invalid position, =INTO=. =FALSE= outside the viewport.
+- =lrg_list_view_set_drop_indicator (list, position, pos)=, =lrg_list_view_clear_drop_indicator()=, =lrg_list_view_get_drop_indicator (list, &pos)=: an =ACCENT= insertion line (2 px, with a ring at its start) above or below the row that glides between rows with a spring, or an =ACCENT= tint and outline for =INTO=. Any model change clears it (positions shift); set it again from the next motion event.
 
 ** Properties and signals
 :PROPERTIES:
@@ -86,7 +99,7 @@ Inherited: =padding= (default 4, around the rows).
 
 | Signal              | Arguments        | Emitted                                    |
 |---------------------+------------------+--------------------------------------------|
-| =selection-changed= | none             | Rows were selected or unselected            |
+| =selection-changed= | none             | Rows were selected or unselected (clicks, keys, =select_full=, model changes) |
 | =row-activated=     | =guint position= | Double click (two presses on the row within 0.4 s of canvas time), or Enter / Space / gamepad A on the cursor row |
 
 ** Parts and states
@@ -207,6 +220,8 @@ lrg_list_view_scroll_to (list, 42, TRUE);
 - =lrg_list_view_scroll_to (self, guint position, gboolean animate)=, =get_scroll_offset=
 - =lrg_list_view_get_row_widget (self, guint position)=, =get_n_rows=
 - =LRG_LIST_VIEW_INVALID_POSITION=
+- =lrg_list_view_select_full (self, position, LrgSelectMode mode)=, =lrg_list_view_get_selected_positions= (transfer full), =lrg_list_view_get_anchor=
+- =lrg_list_view_get_row_rect=, =lrg_list_view_get_item_at=, =lrg_list_view_get_drop_position=, =lrg_list_view_set_drop_indicator=, =lrg_list_view_clear_drop_indicator=, =lrg_list_view_get_drop_indicator=
 
 ** Related
 :PROPERTIES:

@@ -17,6 +17,7 @@
 #include <gio/gio.h>
 #include "../lrg-version.h"
 #include "lrg-container.h"
+#include "lrg-tree-view.h"   /* LrgDropPosition, LrgSelectMode */
 
 G_BEGIN_DECLS
 
@@ -265,5 +266,139 @@ LrgWidget * lrg_list_view_get_row_widget (LrgListView *self,
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_list_view_get_n_rows (LrgListView *self);
+
+/* ==========================================================================
+ * Editor support: multi-selection, geometry and drop helpers
+ * ========================================================================== */
+
+/**
+ * lrg_list_view_select_full:
+ * @self: an #LrgListView
+ * @position: a model position
+ * @mode: how the selection changes
+ *
+ * Changes the selection the way a click does: REPLACE (plain click),
+ * TOGGLE (Ctrl+click) or EXTEND (Shift+click: every row from the anchor
+ * to @position). The cursor moves to @position; the view does not
+ * scroll. TOGGLE and EXTEND need %LRG_SELECTION_MODE_MULTIPLE (see
+ * #LrgSelectMode for the other modes). #LrgListView::selection-changed
+ * is emitted when the selection changed.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_list_view_select_full (LrgListView   *self,
+                                guint          position,
+                                LrgSelectMode  mode);
+
+/**
+ * lrg_list_view_get_selected_positions:
+ * @self: an #LrgListView
+ *
+ * Returns: (transfer full) (element-type guint): the selected positions
+ *   in ascending order
+ */
+LRG_AVAILABLE_IN_ALL
+GArray * lrg_list_view_get_selected_positions (LrgListView *self);
+
+/**
+ * lrg_list_view_get_anchor:
+ * @self: an #LrgListView
+ *
+ * Returns: the row EXTEND ranges start from, or
+ *   %LRG_LIST_VIEW_INVALID_POSITION
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_list_view_get_anchor (LrgListView *self);
+
+/**
+ * lrg_list_view_get_row_rect:
+ * @self: an #LrgListView
+ * @position: a model position
+ * @x: (out) (optional): left, canvas (world) coordinates
+ * @y: (out) (optional): top, canvas coordinates, at the displayed scroll
+ *   offset
+ * @width: (out) (optional): width (the whole viewport)
+ * @height: (out) (optional): row height
+ *
+ * The rectangle of the row at @position, whether or not it is scrolled
+ * into the viewport.
+ *
+ * Returns: %TRUE if @position is in the model
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_list_view_get_row_rect (LrgListView *self,
+                                     guint        position,
+                                     gfloat      *x,
+                                     gfloat      *y,
+                                     gfloat      *width,
+                                     gfloat      *height);
+
+/**
+ * lrg_list_view_get_item_at:
+ * @self: an #LrgListView
+ * @x: canvas x
+ * @y: canvas y
+ *
+ * Returns: the position of the row under the point, or
+ *   %LRG_LIST_VIEW_INVALID_POSITION
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_list_view_get_item_at (LrgListView *self,
+                                 gfloat       x,
+                                 gfloat       y);
+
+/**
+ * lrg_list_view_get_drop_position:
+ * @self: an #LrgListView
+ * @y: canvas y of the pointer
+ * @position: (out) (optional): the target row, or
+ *   %LRG_LIST_VIEW_INVALID_POSITION for an empty list
+ * @pos: (out) (optional): where the payload lands relative to the row
+ *
+ * Maps a drag position to a drop target like
+ * lrg_tree_view_get_drop_position(): top quarter BEFORE, bottom quarter
+ * AFTER, middle INTO. Below the last row the target is the last row,
+ * AFTER; an empty list gives an invalid position and INTO.
+ *
+ * Returns: %TRUE if @y is inside the viewport
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_list_view_get_drop_position (LrgListView     *self,
+                                          gfloat           y,
+                                          guint           *position,
+                                          LrgDropPosition *pos);
+
+/**
+ * lrg_list_view_set_drop_indicator:
+ * @self: an #LrgListView
+ * @position: the target row, or %LRG_LIST_VIEW_INVALID_POSITION to clear
+ * @pos: where the payload would land
+ *
+ * Paints an accent insertion line above (BEFORE) or below (AFTER) the
+ * row, gliding between rows with a spring, or an accent outline and
+ * tint over it (INTO). Cleared when the model changes.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_list_view_set_drop_indicator (LrgListView     *self,
+                                       guint            position,
+                                       LrgDropPosition  pos);
+
+/**
+ * lrg_list_view_clear_drop_indicator:
+ * @self: an #LrgListView
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_list_view_clear_drop_indicator (LrgListView *self);
+
+/**
+ * lrg_list_view_get_drop_indicator:
+ * @self: an #LrgListView
+ * @pos: (out) (optional): the indicated position
+ *
+ * Returns: the row the indicator is on, or
+ *   %LRG_LIST_VIEW_INVALID_POSITION when hidden
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_list_view_get_drop_indicator (LrgListView     *self,
+                                        LrgDropPosition *pos);
 
 G_END_DECLS

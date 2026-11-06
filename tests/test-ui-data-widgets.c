@@ -833,6 +833,490 @@ test_tree_keyboard (void)
 }
 
 /* ==========================================================================
+ * Tree view: editor features (v0.8.1)
+ * ========================================================================== */
+
+/* key_mods: one frame with a key press while @mods are held */
+static void
+key_mods (LrgCanvas         *canvas,
+          GrlKey             k,
+          LrgInputModifiers  mods)
+{
+	LrgCanvasInput input;
+
+	frame_pointer (&input, -10.0f, -10.0f);
+	input.modifiers = mods;
+	lrg_canvas_input_add_key (&input, k);
+	lrg_canvas_process_input (canvas, &input);
+}
+
+/* type_char: one frame typing @c */
+static void
+type_char (LrgCanvas *canvas,
+           gunichar   c)
+{
+	LrgCanvasInput input;
+
+	frame_pointer (&input, -10.0f, -10.0f);
+	lrg_canvas_input_add_char (&input, c);
+	lrg_canvas_process_input (canvas, &input);
+}
+
+/* click_mods: a left click at (@x, @y) with @mods held */
+static void
+click_mods (LrgCanvas         *canvas,
+            gfloat             x,
+            gfloat             y,
+            LrgInputModifiers  mods)
+{
+	LrgCanvasInput input;
+
+	move_to (canvas, x, y);
+	frame_pointer (&input, x, y);
+	input.modifiers = mods;
+	input.buttons_down = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	input.buttons_pressed = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	lrg_canvas_process_input (canvas, &input);
+	frame_pointer (&input, x, y);
+	input.modifiers = mods;
+	input.buttons_released = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	lrg_canvas_process_input (canvas, &input);
+}
+
+/* selected_names: the selection as "a,b,c" in get_selected_items order */
+static gchar *
+selected_names (LrgTreeView *tree)
+{
+	g_autoptr(GPtrArray) items = lrg_tree_view_get_selected_items (tree);
+	GString             *out = g_string_new (NULL);
+	guint                i;
+
+	for (i = 0; i < items->len; i++)
+	{
+		if (i > 0)
+			g_string_append_c (out, ',');
+		g_string_append (out, TEST_ITEM (g_ptr_array_index (items, i))->name);
+	}
+	return g_string_free (out, FALSE);
+}
+
+#define ASSERT_SELECTION(tree, expected) \
+	G_STMT_START { \
+		g_autofree gchar *got_ = selected_names (tree); \
+		g_assert_cmpstr (got_, ==, expected); \
+	} G_STMT_END
+
+static void
+test_tree_multi_select (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	TreeLog              log = { 0 };
+	LrgTreeView         *tree = tree_fixture (canvas, 20, &log);
+	guint                changes = 0;
+	GObject             *root0 = lrg_tree_view_get_item (tree, 0);
+
+	lrg_tree_view_set_selection_mode (tree, LRG_SELECTION_MODE_MULTIPLE);
+	g_signal_connect_swapped (tree, "selection-changed", G_CALLBACK (on_count_swapped), &changes);
+	lrg_canvas_set_focused_widget (canvas, LRG_WIDGET (tree));
+
+	/* Click replaces; clicking it again changes nothing */
+	click_at (canvas, 100.0f, tree_row_y (2));
+	ASSERT_SELECTION (tree, "root-2");
+	g_assert_cmpuint (changes, ==, 1);
+	settle (canvas, 300);
+	click_mods (canvas, 100.0f, tree_row_y (2), LRG_INPUT_MODIFIER_NONE);
+	g_assert_cmpuint (changes, ==, 1);
+	settle (canvas, 300);
+
+	/* Ctrl toggles and moves the anchor; Shift extends from it */
+	click_mods (canvas, 100.0f, tree_row_y (5), LRG_INPUT_MODIFIER_CTRL);
+	ASSERT_SELECTION (tree, "root-2,root-5");
+	g_assert_cmpuint (changes, ==, 2);
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_anchor_item (tree))->name, ==, "root-5");
+	settle (canvas, 300);
+	click_mods (canvas, 100.0f, tree_row_y (7), LRG_INPUT_MODIFIER_SHIFT);
+	ASSERT_SELECTION (tree, "root-5,root-6,root-7");
+	g_assert_cmpuint (changes, ==, 3);
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_anchor_item (tree))->name, ==, "root-5");
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_cursor_item (tree))->name, ==, "root-7");
+
+	/* Shift+arrows extend the range from the anchor, both ways */
+	key_mods (canvas, GRL_KEY_UP, LRG_INPUT_MODIFIER_SHIFT);
+	ASSERT_SELECTION (tree, "root-5,root-6");
+	key_mods (canvas, GRL_KEY_UP, LRG_INPUT_MODIFIER_SHIFT);
+	key_mods (canvas, GRL_KEY_UP, LRG_INPUT_MODIFIER_SHIFT);
+	ASSERT_SELECTION (tree, "root-4,root-5");
+	g_assert_cmpuint (changes, ==, 6);
+	/* A plain arrow collapses back to one row */
+	key (canvas, GRL_KEY_DOWN);
+	ASSERT_SELECTION (tree, "root-5");
+
+	/* The API: TOGGLE then EXTEND from the new anchor */
+	lrg_tree_view_select_item_full (tree, root0, LRG_SELECT_MODE_TOGGLE);
+	ASSERT_SELECTION (tree, "root-0,root-5");
+	lrg_tree_view_select_item_full (tree, lrg_tree_view_get_item (tree, 2), LRG_SELECT_MODE_EXTEND);
+	ASSERT_SELECTION (tree, "root-0,root-1,root-2");
+	g_assert_true (lrg_tree_view_get_anchor_item (tree) == root0);
+	g_assert_cmpuint (lrg_tree_view_get_n_selected (tree), ==, 3);
+
+	/* Hidden selected items stay selected and come last */
+	lrg_tree_view_expand (tree, root0);
+	lrg_tree_view_select_item_full (tree, lrg_tree_view_get_item (tree, 2), LRG_SELECT_MODE_TOGGLE);
+	ASSERT_SELECTION (tree, "root-0,root-0/1,root-1,root-2");
+	lrg_tree_view_collapse (tree, root0);
+	ASSERT_SELECTION (tree, "root-0,root-1,root-2,root-0/1");
+
+	/* Single mode: one item; TOGGLE on it clears, EXTEND replaces */
+	changes = 0;
+	lrg_tree_view_set_selection_mode (tree, LRG_SELECTION_MODE_SINGLE);
+	g_assert_cmpuint (lrg_tree_view_get_n_selected (tree), ==, 1);
+	lrg_tree_view_select_item_full (tree, lrg_tree_view_get_item (tree, 3), LRG_SELECT_MODE_EXTEND);
+	ASSERT_SELECTION (tree, "root-3");
+	lrg_tree_view_select_item_full (tree, lrg_tree_view_get_item (tree, 3), LRG_SELECT_MODE_TOGGLE);
+	ASSERT_SELECTION (tree, "");
+	g_assert_cmpuint (changes, ==, 3);
+
+	/* None mode selects nothing but moves the cursor */
+	lrg_tree_view_set_selection_mode (tree, LRG_SELECTION_MODE_NONE);
+	lrg_tree_view_select_item_full (tree, lrg_tree_view_get_item (tree, 4), LRG_SELECT_MODE_REPLACE);
+	g_assert_cmpuint (lrg_tree_view_get_n_selected (tree), ==, 0);
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_cursor_item (tree))->name, ==, "root-4");
+}
+
+/* Children function that also records child -> parent links */
+typedef struct
+{
+	TreeLog     log;
+	GHashTable *parents;   /* GObject * -> GObject * (not owned) */
+	guint       asked;
+} LinkedTree;
+
+static GListModel *
+linked_children (LrgTreeView *tree,
+                 GObject     *item,
+                 gpointer     user_data)
+{
+	LinkedTree *lt = user_data;
+	GListModel *children = tree_children (tree, item, &lt->log);
+	guint       i;
+
+	for (i = 0; children != NULL && i < g_list_model_get_n_items (children); i++)
+	{
+		g_autoptr(GObject) child = g_list_model_get_item (children, i);
+
+		g_hash_table_insert (lt->parents, child, item);
+	}
+	return children;
+}
+
+static GObject *
+linked_parent (LrgTreeView *tree,
+               GObject     *item,
+               gpointer     user_data)
+{
+	LinkedTree *lt = user_data;
+
+	lt->asked++;
+	return g_hash_table_lookup (lt->parents, item);
+}
+
+static void
+test_tree_reveal (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	TreeLog              log = { 0 };
+	LrgTreeView         *tree = tree_fixture (canvas, 50, &log);
+	GObject             *root30 = lrg_tree_view_get_item (tree, 30);
+	GObject             *child;
+	GObject             *grand;
+	guint                expanded = 0;
+	gfloat               ry;
+	gfloat               rh;
+
+	g_signal_connect_swapped (tree, "row-expanded", G_CALLBACK (on_count_swapped), &expanded);
+
+	/* Get hold of root-30/0/2, then hide it again */
+	lrg_tree_view_expand (tree, root30);
+	child = lrg_tree_view_get_item (tree, 31);
+	lrg_tree_view_expand (tree, child);
+	grand = lrg_tree_view_get_item (tree, 34);
+	g_assert_cmpstr (TEST_ITEM (grand)->name, ==, "root-30/0/2");
+	lrg_tree_view_collapse_all (tree);
+	settle (canvas, 300);
+	expanded = 0;
+	g_assert_false (lrg_tree_view_get_row_rect (tree, grand, NULL, NULL, NULL, NULL));
+
+	/* No parent function: found by search, ancestors expanded root first */
+	g_assert_true (lrg_tree_view_reveal (tree, grand));
+	g_assert_cmpuint (expanded, ==, 2);
+	g_assert_true (lrg_tree_view_is_expanded (tree, root30));
+	g_assert_true (lrg_tree_view_is_expanded (tree, child));
+	g_assert_cmpuint (lrg_tree_view_get_position (tree, grand), ==, 34);
+
+	/* The scroll glides (spring), then the row is fully in view */
+	g_assert_true (lrg_canvas_update (canvas, DT));
+	settle (canvas, 600);
+	g_assert_cmpfloat (lrg_tree_view_get_scroll_offset (tree), >, 0.0f);
+	g_assert_true (lrg_tree_view_get_row_rect (tree, grand, NULL, &ry, NULL, &rh));
+	g_assert_cmpfloat (ry, >=, 4.0f - 0.01f);
+	g_assert_cmpfloat (ry + rh, <=, 296.0f + 0.01f);
+	g_assert_null (lrg_tree_view_get_selected_item (tree));
+
+	/* Revealing a visible item only scrolls; an unknown item fails */
+	expanded = 0;
+	g_assert_true (lrg_tree_view_reveal (tree, root30));
+	g_assert_cmpuint (expanded, ==, 0);
+	{
+		g_autoptr(TestItem) stray = item_new ("stray", 0);
+
+		g_assert_false (lrg_tree_view_reveal (tree, G_OBJECT (stray)));
+	}
+}
+
+static void
+test_tree_reveal_parent_func (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LinkedTree           lt = { { 0 }, NULL, 0 };
+	LrgTreeView         *tree;
+	GObject             *root40;
+	GObject             *leaf;
+
+	lt.parents = g_hash_table_new (g_direct_hash, g_direct_equal);
+	tree = tree_fixture (canvas, 50, &lt.log);
+	lrg_tree_view_set_children_func (tree, linked_children, &lt, NULL);
+	lrg_tree_view_set_parent_func (tree, linked_parent, &lt, NULL);
+
+	root40 = lrg_tree_view_get_item (tree, 40);
+	lrg_tree_view_expand (tree, root40);
+	leaf = lrg_tree_view_get_item (tree, 44);
+	g_assert_cmpstr (TEST_ITEM (leaf)->name, ==, "root-40/3");
+	lrg_tree_view_collapse (tree, root40);
+
+	g_assert_true (lrg_tree_view_reveal (tree, leaf));
+	g_assert_cmpuint (lt.asked, ==, 2);   /* leaf -> root-40 -> NULL */
+	g_assert_true (lrg_tree_view_is_expanded (tree, root40));
+	settle (canvas, 600);
+	g_assert_nonnull (lrg_tree_view_get_row_widget (tree, 44));
+
+	g_hash_table_unref (lt.parents);
+}
+
+typedef struct
+{
+	guint    labels;
+	guint    cancelled;
+	gboolean accept;
+	gchar   *text;
+	GObject *item;
+} EditLog;
+
+static gboolean
+on_edit_label (LrgTreeView *tree,
+               GObject     *item,
+               const gchar *text,
+               EditLog     *log)
+{
+	log->labels++;
+	log->item = item;
+	g_free (log->text);
+	log->text = g_strdup (text);
+	return log->accept;
+}
+
+static void
+on_edit_cancelled (LrgTreeView *tree,
+                   GObject     *item,
+                   EditLog     *log)
+{
+	log->cancelled++;
+	log->item = item;
+}
+
+static void
+test_tree_rename (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	TreeLog              log = { 0 };
+	LrgTreeView         *tree = tree_fixture (canvas, 20, &log);
+	EditLog              ed = { 0 };
+	LrgWidget           *editor;
+	gfloat               rx;
+	gfloat               ry;
+	gfloat               rw;
+	gfloat               rh;
+
+	g_signal_connect (tree, "edit-label", G_CALLBACK (on_edit_label), &ed);
+	g_signal_connect (tree, "edit-cancelled", G_CALLBACK (on_edit_cancelled), &ed);
+	lrg_canvas_set_focused_widget (canvas, LRG_WIDGET (tree));
+
+	/* F2 on the cursor row opens the editor over its label */
+	click_at (canvas, 100.0f, tree_row_y (1));
+	settle (canvas, 300);
+	key (canvas, GRL_KEY_F2);
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_editing_item (tree))->name, ==, "root-1");
+	editor = lrg_tree_view_get_editor (tree);
+	g_assert_nonnull (editor);
+	g_assert_true (LRG_IS_TEXT_INPUT (editor));
+	g_assert_cmpstr (lrg_text_input_get_text (LRG_TEXT_INPUT (editor)), ==, "root-1");
+	g_assert_true (lrg_canvas_get_focused_widget (canvas) == editor);
+	g_assert_true (lrg_tree_view_get_row_rect (tree, lrg_tree_view_get_item (tree, 1), &rx, &ry, &rw, &rh));
+	g_assert_cmpfloat (lrg_widget_get_world_y (editor), >=, ry);
+	g_assert_cmpfloat (lrg_widget_get_world_y (editor) + lrg_widget_get_height (editor), <=, ry + rh + 0.01f);
+	g_assert_cmpfloat (lrg_widget_get_world_x (editor), >, rx);
+	lrg_canvas_record (canvas);
+
+	/* Typing replaces the selected text; a refused name keeps editing */
+	type_char (canvas, 'x');
+	type_char (canvas, 'y');
+	g_assert_cmpstr (lrg_text_input_get_text (LRG_TEXT_INPUT (editor)), ==, "xy");
+	key (canvas, GRL_KEY_UP);   /* arrows stay with the input */
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_cursor_item (tree))->name, ==, "root-1");
+	key (canvas, GRL_KEY_ENTER);
+	g_assert_cmpuint (ed.labels, ==, 1);
+	g_assert_cmpstr (ed.text, ==, "xy");
+	g_assert_nonnull (lrg_tree_view_get_editing_item (tree));
+
+	/* Accepted: the editor goes and the view has the focus again */
+	ed.accept = TRUE;
+	key (canvas, GRL_KEY_ENTER);
+	g_assert_cmpuint (ed.labels, ==, 2);
+	g_assert_null (lrg_tree_view_get_editing_item (tree));
+	g_assert_null (lrg_tree_view_get_editor (tree));
+	g_assert_true (lrg_canvas_get_focused_widget (canvas) == LRG_WIDGET (tree));
+	g_assert_cmpuint (ed.cancelled, ==, 0);
+
+	/* Escape cancels */
+	g_assert_true (lrg_tree_view_start_editing (tree, lrg_tree_view_get_item (tree, 2)));
+	key (canvas, GRL_KEY_ESCAPE);
+	g_assert_cmpuint (ed.cancelled, ==, 1);
+	g_assert_cmpstr (TEST_ITEM (ed.item)->name, ==, "root-2");
+	g_assert_null (lrg_tree_view_get_editing_item (tree));
+	g_assert_cmpuint (ed.labels, ==, 2);
+
+	/* Clicking another row moves the focus: the edit is committed */
+	g_assert_true (lrg_tree_view_start_editing (tree, lrg_tree_view_get_item (tree, 3)));
+	type_char (canvas, 'z');
+	settle (canvas, 300);
+	click_at (canvas, 100.0f, tree_row_y (6));
+	g_assert_cmpuint (ed.labels, ==, 3);
+	g_assert_cmpstr (ed.text, ==, "z");
+	g_assert_cmpstr (TEST_ITEM (ed.item)->name, ==, "root-3");
+	g_assert_null (lrg_tree_view_get_editing_item (tree));
+
+	/* Collapsing the edited row's parent cancels; so does a new model */
+	lrg_tree_view_expand (tree, lrg_tree_view_get_item (tree, 0));
+	g_assert_true (lrg_tree_view_start_editing (tree, lrg_tree_view_get_item (tree, 2)));
+	lrg_tree_view_collapse (tree, lrg_tree_view_get_item (tree, 0));
+	g_assert_cmpuint (ed.cancelled, ==, 2);
+	g_assert_null (lrg_tree_view_get_editing_item (tree));
+	g_assert_true (lrg_tree_view_start_editing (tree, lrg_tree_view_get_item (tree, 4)));
+	lrg_tree_view_stop_editing (tree, FALSE);
+	g_assert_cmpuint (ed.labels, ==, 4);
+	g_assert_null (lrg_tree_view_get_editing_item (tree));
+
+	/* Items without a row cannot be edited */
+	{
+		g_autoptr(TestItem) stray = item_new ("stray", 0);
+
+		g_assert_false (lrg_tree_view_start_editing (tree, G_OBJECT (stray)));
+	}
+	g_free (ed.text);
+}
+
+static void
+test_tree_drop_geometry (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	TreeLog              log = { 0 };
+	LrgTreeView         *tree = tree_fixture (canvas, 20, &log);
+	GObject             *root0 = lrg_tree_view_get_item (tree, 0);
+	GObject             *item = NULL;
+	LrgDropPosition      pos;
+	LrgPaintList        *list;
+	guint                base;
+	gfloat               x;
+	gfloat               y;
+	gfloat               w;
+	gfloat               h;
+
+	lrg_tree_view_expand (tree, root0);
+	settle (canvas, 300);
+
+	/* Row rects and hit tests, canvas coordinates */
+	g_assert_true (lrg_tree_view_get_row_rect (tree, root0, &x, &y, &w, &h));
+	g_assert_cmpfloat (x, ==, 4.0f);
+	g_assert_cmpfloat (y, ==, 4.0f);
+	g_assert_cmpfloat (w, ==, 192.0f);
+	g_assert_cmpfloat (h, ==, 24.0f);
+	g_assert_true (lrg_tree_view_get_row_rect (tree, lrg_tree_view_get_item (tree, 3), NULL, &y, NULL, NULL));
+	g_assert_cmpfloat (y, ==, 4.0f + 3.0f * 24.0f);
+	g_assert_cmpstr (TEST_ITEM (lrg_tree_view_get_item_at (tree, 100.0f, tree_row_y (1)))->name, ==, "root-0/0");
+	g_assert_null (lrg_tree_view_get_item_at (tree, 250.0f, tree_row_y (1)));
+	g_assert_null (lrg_tree_view_get_item_at (tree, 100.0f, 299.0f));
+
+	/* Quarters: before / into / after; after an open parent = before its first child */
+	g_assert_true (lrg_tree_view_get_drop_position (tree, 4.0f + 2.0f, &item, &pos));
+	g_assert_true (item == root0);
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_BEFORE);
+	g_assert_true (lrg_tree_view_get_drop_position (tree, 4.0f + 12.0f, &item, &pos));
+	g_assert_true (item == root0);
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_INTO);
+	g_assert_true (lrg_tree_view_get_drop_position (tree, 4.0f + 22.0f, &item, &pos));
+	g_assert_cmpstr (TEST_ITEM (item)->name, ==, "root-0/0");
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_BEFORE);
+	g_assert_true (lrg_tree_view_get_drop_position (tree, 4.0f + 24.0f * 2.0f + 22.0f, &item, &pos));
+	g_assert_cmpstr (TEST_ITEM (item)->name, ==, "root-0/1");
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_AFTER);
+	g_assert_false (lrg_tree_view_get_drop_position (tree, -5.0f, &item, &pos));
+	g_assert_null (item);
+
+	/* Painting: an INTO highlight, a line that glides, then nothing */
+	list = lrg_canvas_record (canvas);
+	base = lrg_paint_list_get_n_instances (list);
+	lrg_tree_view_set_drop_indicator (tree, lrg_tree_view_get_item (tree, 7), LRG_DROP_POSITION_INTO);
+	list = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), >, base);
+	lrg_tree_view_set_drop_indicator (tree, lrg_tree_view_get_item (tree, 7), LRG_DROP_POSITION_AFTER);
+	g_assert_true (lrg_tree_view_get_drop_indicator (tree, &pos) == lrg_tree_view_get_item (tree, 7));
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_AFTER);
+	list = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), >, base);
+	settle (canvas, 300);
+	lrg_tree_view_set_drop_indicator (tree, lrg_tree_view_get_item (tree, 10), LRG_DROP_POSITION_BEFORE);
+	g_assert_true (lrg_canvas_update (canvas, DT));
+	settle (canvas, 300);
+	lrg_tree_view_clear_drop_indicator (tree);
+	g_assert_null (lrg_tree_view_get_drop_indicator (tree, NULL));
+	list = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, base);
+
+	/* Below the last row: after the last root item, even when it is
+	 * open; an empty tree drops into the root */
+	{
+		g_autoptr(LrgCanvas) c2 = canvas_new ();
+		TreeLog              l2 = { 0 };
+		LrgTreeView         *small = tree_fixture (c2, 3, &l2);
+		g_autoptr(GListStore) empty = g_list_store_new (TEST_TYPE_ITEM);
+
+		lrg_tree_view_expand (small, lrg_tree_view_get_item (small, 2));
+		g_assert_true (lrg_tree_view_get_drop_position (small, 250.0f, &item, &pos));
+		g_assert_cmpstr (TEST_ITEM (item)->name, ==, "root-2");
+		g_assert_cmpint (pos, ==, LRG_DROP_POSITION_AFTER);
+		lrg_tree_view_set_model (small, G_LIST_MODEL (empty));
+		g_assert_true (lrg_tree_view_get_drop_position (small, 100.0f, &item, &pos));
+		g_assert_null (item);
+		g_assert_cmpint (pos, ==, LRG_DROP_POSITION_INTO);
+	}
+
+	g_assert_cmpstr (g_enum_get_value (g_type_class_peek (LRG_TYPE_DROP_POSITION) != NULL ?
+	                                   g_type_class_peek (LRG_TYPE_DROP_POSITION) :
+	                                   g_type_class_ref (LRG_TYPE_DROP_POSITION),
+	                                   LRG_DROP_POSITION_AFTER)->value_nick, ==, "after");
+	g_assert_true (G_TYPE_IS_ENUM (LRG_TYPE_SELECT_MODE));
+}
+
+/* ==========================================================================
  * Tile view
  *
  * 300 x 300 at (0, 0), padding 2, tiles 64 x 64, spacing 8: four
@@ -948,6 +1432,230 @@ test_tiles_hover_click (void)
 	g_assert_cmpuint (activated, ==, 1);
 	click_at (canvas, 40.0f, 110.0f);
 	g_assert_cmpuint (lrg_tile_view_get_selected (tiles), ==, 4);
+}
+
+/* ==========================================================================
+ * Tile view: editor features (v0.8.1)
+ * ========================================================================== */
+
+/* positions_str: a GArray of guint as "a,b,c" (frees the array) */
+static gchar *
+positions_str (GArray *positions)
+{
+	GString *out = g_string_new (NULL);
+	guint    i;
+
+	for (i = 0; i < positions->len; i++)
+		g_string_append_printf (out, "%s%u", i > 0 ? "," : "", g_array_index (positions, guint, i));
+	g_array_unref (positions);
+	return g_string_free (out, FALSE);
+}
+
+#define ASSERT_POSITIONS(array, expected) \
+	G_STMT_START { \
+		g_autofree gchar *got_ = positions_str (array); \
+		g_assert_cmpstr (got_, ==, expected); \
+	} G_STMT_END
+
+static void
+test_tiles_geometry_multi (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgTileView         *tiles = tile_fixture (canvas, 50);
+	gfloat               x;
+	gfloat               y;
+	gfloat               w;
+	gfloat               h;
+	guint                changes = 0;
+
+	settle (canvas, 300);
+	g_signal_connect_swapped (tiles, "selection-changed", G_CALLBACK (on_count_swapped), &changes);
+
+	/* Rects and hit tests in canvas coordinates; gaps miss */
+	g_assert_true (lrg_tile_view_get_tile_rect (tiles, 1, &x, &y, &w, &h));
+	g_assert_cmpfloat (x, ==, 82.0f);
+	g_assert_cmpfloat (y, ==, 8.0f);
+	g_assert_cmpfloat (w, ==, 64.0f);
+	g_assert_cmpfloat (h, ==, 64.0f);
+	g_assert_true (lrg_tile_view_get_tile_rect (tiles, 5, &x, &y, NULL, NULL));
+	g_assert_cmpfloat (x, ==, 82.0f);
+	g_assert_cmpfloat (y, ==, 80.0f);
+	g_assert_false (lrg_tile_view_get_tile_rect (tiles, 50, NULL, NULL, NULL, NULL));
+	g_assert_cmpuint (lrg_tile_view_get_item_at (tiles, 100.0f, 40.0f), ==, 1);
+	g_assert_cmpuint (lrg_tile_view_get_item_at (tiles, 78.0f, 40.0f), ==, LRG_TILE_VIEW_INVALID_POSITION);
+	g_assert_cmpuint (lrg_tile_view_get_item_at (tiles, 40.0f, 110.0f), ==, 4);
+	g_assert_cmpuint (lrg_tile_view_get_item_at (tiles, 400.0f, 40.0f), ==, LRG_TILE_VIEW_INVALID_POSITION);
+
+	/* Clicks: Shift extends from the anchor, Ctrl toggles */
+	lrg_tile_view_set_selection_mode (tiles, LRG_SELECTION_MODE_MULTIPLE);
+	click_at (canvas, 40.0f, 40.0f);
+	settle (canvas, 300);
+	click_mods (canvas, x + 10.0f, y + 10.0f, LRG_INPUT_MODIFIER_SHIFT);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "0,1,2,3,4,5");
+	g_assert_cmpuint (lrg_tile_view_get_anchor (tiles), ==, 0);
+	settle (canvas, 300);
+	lrg_tile_view_get_tile_rect (tiles, 9, &x, &y, NULL, NULL);
+	click_mods (canvas, x + 10.0f, y + 10.0f, LRG_INPUT_MODIFIER_CTRL);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "0,1,2,3,4,5,9");
+	g_assert_cmpuint (lrg_tile_view_get_anchor (tiles), ==, 9);
+
+	/* Shift+arrows extend from the anchor */
+	lrg_canvas_set_focused_widget (canvas, LRG_WIDGET (tiles));
+	key_mods (canvas, GRL_KEY_RIGHT, LRG_INPUT_MODIFIER_SHIFT);
+	key_mods (canvas, GRL_KEY_DOWN, LRG_INPUT_MODIFIER_SHIFT);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "9,10,11,12,13,14");
+	key (canvas, GRL_KEY_LEFT);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "13");
+
+	/* The API, then single mode */
+	lrg_tile_view_select_full (tiles, 20, LRG_SELECT_MODE_TOGGLE);
+	lrg_tile_view_select_full (tiles, 22, LRG_SELECT_MODE_EXTEND);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "20,21,22");
+	g_assert_cmpuint (lrg_tile_view_get_cursor (tiles), ==, 22);
+	lrg_tile_view_set_selection_mode (tiles, LRG_SELECTION_MODE_SINGLE);
+	lrg_tile_view_select_full (tiles, 30, LRG_SELECT_MODE_EXTEND);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "30");
+	lrg_tile_view_select_full (tiles, 30, LRG_SELECT_MODE_TOGGLE);
+	ASSERT_POSITIONS (lrg_tile_view_get_selected_positions (tiles), "");
+	g_assert_cmpuint (changes, >, 0);
+}
+
+/* ==========================================================================
+ * List view: editor features (v0.8.1)
+ *
+ * 200 x 300 at (0, 0), padding 4, rows 24: row p spans
+ * y = 4 + 24 p .. 28 + 24 p.
+ * ========================================================================== */
+
+static LrgListView *
+list_fixture (LrgCanvas  *canvas,
+              GListStore *store)
+{
+	LrgListView *list = lrg_list_view_new ();
+
+	lrg_list_view_set_row_height (list, 24.0f);
+	lrg_list_view_set_model (list, G_LIST_MODEL (store));
+	place (canvas, list, 0.0f, 0.0f, 200.0f, 300.0f);
+	return list;
+}
+
+static void
+test_list_multi_select (void)
+{
+	g_autoptr(LrgCanvas)  canvas = canvas_new ();
+	g_autoptr(GListStore) store = store_new (40);
+	LrgListView          *list = list_fixture (canvas, store);
+
+	lrg_list_view_set_selection_mode (list, LRG_SELECTION_MODE_MULTIPLE);
+
+	lrg_list_view_select_full (list, 2, LRG_SELECT_MODE_REPLACE);
+	lrg_list_view_select_full (list, 5, LRG_SELECT_MODE_TOGGLE);
+	ASSERT_POSITIONS (lrg_list_view_get_selected_positions (list), "2,5");
+	g_assert_cmpuint (lrg_list_view_get_anchor (list), ==, 5);
+	lrg_list_view_select_full (list, 7, LRG_SELECT_MODE_EXTEND);
+	ASSERT_POSITIONS (lrg_list_view_get_selected_positions (list), "5,6,7");
+	g_assert_cmpuint (lrg_list_view_get_cursor (list), ==, 7);
+
+	/* Clicks map to the same modes */
+	click_mods (canvas, 100.0f, 4.0f + 24.0f * 3.0f + 12.0f, LRG_INPUT_MODIFIER_SHIFT);
+	ASSERT_POSITIONS (lrg_list_view_get_selected_positions (list), "3,4,5");
+	settle (canvas, 300);
+	click_mods (canvas, 100.0f, 4.0f + 24.0f * 9.0f + 12.0f, LRG_INPUT_MODIFIER_CTRL);
+	ASSERT_POSITIONS (lrg_list_view_get_selected_positions (list), "3,4,5,9");
+
+	/* Single mode */
+	lrg_list_view_set_selection_mode (list, LRG_SELECTION_MODE_SINGLE);
+	lrg_list_view_select_full (list, 11, LRG_SELECT_MODE_EXTEND);
+	ASSERT_POSITIONS (lrg_list_view_get_selected_positions (list), "11");
+	lrg_list_view_select_full (list, 11, LRG_SELECT_MODE_TOGGLE);
+	ASSERT_POSITIONS (lrg_list_view_get_selected_positions (list), "");
+}
+
+static void
+test_list_drop_geometry (void)
+{
+	g_autoptr(LrgCanvas)  canvas = canvas_new ();
+	g_autoptr(GListStore) store = store_new (40);
+	LrgListView          *list = list_fixture (canvas, store);
+	LrgPaintList         *paint;
+	LrgDropPosition       pos;
+	guint                 row;
+	guint                 base;
+	gfloat                x;
+	gfloat                y;
+	gfloat                w;
+	gfloat                h;
+
+	settle (canvas, 300);
+	g_assert_true (lrg_list_view_get_row_rect (list, 3, &x, &y, &w, &h));
+	g_assert_cmpfloat (x, ==, 4.0f);
+	g_assert_cmpfloat (y, ==, 4.0f + 72.0f);
+	g_assert_cmpfloat (w, ==, 192.0f);
+	g_assert_cmpfloat (h, ==, 24.0f);
+	g_assert_false (lrg_list_view_get_row_rect (list, 40, NULL, NULL, NULL, NULL));
+	g_assert_cmpuint (lrg_list_view_get_item_at (list, 100.0f, 4.0f + 48.0f + 12.0f), ==, 2);
+	g_assert_cmpuint (lrg_list_view_get_item_at (list, 250.0f, 20.0f), ==, LRG_LIST_VIEW_INVALID_POSITION);
+
+	/* Scrolled: rects follow the offset */
+	lrg_list_view_scroll_to (list, 30, FALSE);
+	lrg_canvas_record (canvas);
+	g_assert_true (lrg_list_view_get_row_rect (list, 30, NULL, &y, NULL, NULL));
+	g_assert_cmpuint (lrg_list_view_get_item_at (list, 100.0f, y + 12.0f), ==, 30);
+	lrg_list_view_scroll_to (list, 0, FALSE);
+	lrg_canvas_record (canvas);
+
+	/* Quarters */
+	g_assert_true (lrg_list_view_get_drop_position (list, 4.0f + 24.0f + 2.0f, &row, &pos));
+	g_assert_cmpuint (row, ==, 1);
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_BEFORE);
+	g_assert_true (lrg_list_view_get_drop_position (list, 4.0f + 24.0f + 12.0f, &row, &pos));
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_INTO);
+	g_assert_true (lrg_list_view_get_drop_position (list, 4.0f + 24.0f + 22.0f, &row, &pos));
+	g_assert_cmpuint (row, ==, 1);
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_AFTER);
+	g_assert_false (lrg_list_view_get_drop_position (list, 400.0f, &row, &pos));
+
+	/* Indicator: painted, glides, cleared by a model change */
+	paint = lrg_canvas_record (canvas);
+	base = lrg_paint_list_get_n_instances (paint);
+	lrg_list_view_set_drop_indicator (list, 2, LRG_DROP_POSITION_AFTER);
+	paint = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (paint), >, base);
+	settle (canvas, 300);
+	lrg_list_view_set_drop_indicator (list, 6, LRG_DROP_POSITION_BEFORE);
+	g_assert_true (lrg_canvas_update (canvas, DT));
+	settle (canvas, 300);
+	g_assert_cmpuint (lrg_list_view_get_drop_indicator (list, &pos), ==, 6);
+	g_assert_cmpint (pos, ==, LRG_DROP_POSITION_BEFORE);
+	lrg_list_view_set_drop_indicator (list, 6, LRG_DROP_POSITION_INTO);
+	paint = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (paint), >, base);
+	{
+		g_autoptr(TestItem) extra = item_new ("extra", 0);
+
+		g_list_store_append (store, extra);
+	}
+	g_assert_cmpuint (lrg_list_view_get_drop_indicator (list, NULL), ==, LRG_LIST_VIEW_INVALID_POSITION);
+	lrg_list_view_set_drop_indicator (list, 1, LRG_DROP_POSITION_BEFORE);
+	lrg_list_view_clear_drop_indicator (list);
+	paint = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (paint), ==, base);
+
+	/* Below the last row, and an empty list */
+	{
+		g_autoptr(LrgCanvas)  c2 = canvas_new ();
+		g_autoptr(GListStore) few = store_new (3);
+		g_autoptr(GListStore) none = store_new (0);
+		LrgListView          *small = list_fixture (c2, few);
+
+		g_assert_true (lrg_list_view_get_drop_position (small, 250.0f, &row, &pos));
+		g_assert_cmpuint (row, ==, 2);
+		g_assert_cmpint (pos, ==, LRG_DROP_POSITION_AFTER);
+		lrg_list_view_set_model (small, G_LIST_MODEL (none));
+		g_assert_true (lrg_list_view_get_drop_position (small, 100.0f, &row, &pos));
+		g_assert_cmpuint (row, ==, LRG_LIST_VIEW_INVALID_POSITION);
+		g_assert_cmpint (pos, ==, LRG_DROP_POSITION_INTO);
+	}
 }
 
 /* ==========================================================================
@@ -1512,9 +2220,17 @@ main (int   argc,
 	g_test_add_func ("/ui/tree/virtualized", test_tree_virtualized);
 	g_test_add_func ("/ui/tree/expand", test_tree_expand);
 	g_test_add_func ("/ui/tree/keyboard", test_tree_keyboard);
+	g_test_add_func ("/ui/tree/multi-select", test_tree_multi_select);
+	g_test_add_func ("/ui/tree/reveal", test_tree_reveal);
+	g_test_add_func ("/ui/tree/reveal-parent-func", test_tree_reveal_parent_func);
+	g_test_add_func ("/ui/tree/rename", test_tree_rename);
+	g_test_add_func ("/ui/tree/drop-geometry", test_tree_drop_geometry);
 	g_test_add_func ("/ui/tiles/virtualized", test_tiles_virtualized);
 	g_test_add_func ("/ui/tiles/keyboard", test_tiles_keyboard);
 	g_test_add_func ("/ui/tiles/hover-click", test_tiles_hover_click);
+	g_test_add_func ("/ui/tiles/geometry-multi", test_tiles_geometry_multi);
+	g_test_add_func ("/ui/list/multi-select", test_list_multi_select);
+	g_test_add_func ("/ui/list/drop-geometry", test_list_drop_geometry);
 	g_test_add_func ("/ui/splitter/drag", test_splitter_drag);
 	g_test_add_func ("/ui/splitter/keyboard-animate", test_splitter_keyboard_animate);
 	g_test_add_func ("/ui/expander/animation", test_expander_animation);

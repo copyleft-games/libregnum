@@ -147,6 +147,8 @@ struct _Lv
 	const gchar *file;      /* interned file name, or NULL */
 	guint        line;      /* 1-based, 0 when unknown */
 	guint        column;    /* 1-based */
+	gchar       *ptr;       /* JSON pointer inside its file ("/children/2"), only
+	                         * when the loader tracks sources, else NULL */
 };
 
 static void lv_unref (Lv *lv);
@@ -174,6 +176,7 @@ lv_new (LvKind    kind,
 		lv->file = at->file;
 		lv->line = at->line;
 		lv->column = at->column;
+		lv->ptr = g_strdup (at->ptr);
 	}
 	return lv;
 }
@@ -206,6 +209,7 @@ lv_unref (Lv *lv)
 	if (!g_atomic_int_dec_and_test (&lv->ref_count))
 		return;
 	g_free (lv->str);
+	g_free (lv->ptr);
 	if (lv->items != NULL)
 		g_ptr_array_unref (lv->items);
 	if (lv->keys != NULL)
@@ -407,10 +411,46 @@ is_null_word (const gchar *s)
 	       g_strcmp0 (s, "Null") == 0 || g_strcmp0 (s, "NULL") == 0;
 }
 
+/*
+ * ptr_append:
+ * Appends one reference token to the JSON pointer @base (RFC 6901: '~'
+ * is written "~0" and '/' is written "~1"). Returns NULL when @base is
+ * NULL, which is how the parser says it does not track sources.
+ */
+static gchar *
+ptr_append (const gchar *base,
+            const gchar *token)
+{
+	GString *out;
+	const gchar *t;
+
+	if (base == NULL)
+		return NULL;
+	out = g_string_new (base);
+	g_string_append_c (out, '/');
+	for (t = token; *t != '\0'; t++)
+	{
+		if (*t == '~')
+			g_string_append (out, "~0");
+		else if (*t == '/')
+			g_string_append (out, "~1");
+		else
+			g_string_append_c (out, *t);
+	}
+	return g_string_free (out, FALSE);
+}
+
+/*
+ * lv_from_yaml:
+ * Converts one libyaml node (and its subtree) into an #Lv. @ptr is the
+ * JSON pointer of @yn inside its file when sources are tracked (the
+ * root is ""), or NULL; children get @ptr plus their key or index.
+ */
 static Lv *
 lv_from_yaml (yaml_document_t  *doc,
               yaml_node_t      *yn,
               const gchar      *file,
+              const gchar      *ptr,
               guint             depth,
               GError          **error)
 {
@@ -421,6 +461,7 @@ lv_from_yaml (yaml_document_t  *doc,
 	tmp.file = file;
 	tmp.line = (guint)yn->start_mark.line + 1;
 	tmp.column = (guint)yn->start_mark.column + 1;
+	tmp.ptr = (gchar *)ptr;   /* copied by lv_new, never freed through tmp */
 
 	/* Aliases share nodes in libyaml, so a recursive alias would never end */
 	if (depth > UI_MAX_DEPTH)
@@ -453,12 +494,20 @@ lv_from_yaml (yaml_document_t  *doc,
 			for (item = yn->data.sequence.items.start; item < yn->data.sequence.items.top; item++)
 			{
 				yaml_node_t *child;
+				g_autofree gchar *cptr = NULL;
 				Lv *c;
 
 				child = yaml_document_get_node (doc, *item);
 				if (child == NULL)
 					continue;
-				c = lv_from_yaml (doc, child, file, depth + 1, error);
+				if (ptr != NULL)
+				{
+					gchar idx[16];
+
+					g_snprintf (idx, sizeof (idx), "%u", lv->items->len);
+					cptr = ptr_append (ptr, idx);
+				}
+				c = lv_from_yaml (doc, child, file, cptr, depth + 1, error);
 				if (c == NULL)
 				{
 					lv_unref (lv);
@@ -512,7 +561,11 @@ lv_from_yaml (yaml_document_t  *doc,
 					lv_unref (lv);
 					return NULL;
 				}
-				v = lv_from_yaml (doc, vn, file, depth + 1, error);
+				{
+					g_autofree gchar *vptr = ptr_append (ptr, key);
+
+					v = lv_from_yaml (doc, vn, file, vptr, depth + 1, error);
+				}
 				if (v == NULL)
 				{
 					lv_unref (lv);
@@ -532,12 +585,15 @@ lv_from_yaml (yaml_document_t  *doc,
 /*
  * parse_yaml:
  * Parses the first document of @data. @file (interned, nullable) is
- * recorded in every value for error messages.
+ * recorded in every value for error messages. With @track every value
+ * also records its JSON pointer inside the document (see
+ * lrg_ui_loader_set_track_sources()).
  */
 static Lv *
 parse_yaml (const gchar  *data,
             gsize         length,
             const gchar  *file,
+            gboolean      track,
             GError      **error)
 {
 	yaml_parser_t parser;
@@ -581,7 +637,7 @@ parse_yaml (const gchar  *data,
 		return NULL;
 	}
 
-	lv = lv_from_yaml (&doc, root, file, 0, error);
+	lv = lv_from_yaml (&doc, root, file, track ? "" : NULL, 0, error);
 	yaml_document_delete (&doc);
 	yaml_parser_delete (&parser);
 	return lv;
@@ -2893,6 +2949,9 @@ struct _UiNode
 	gboolean     has_tabs;
 	GPtrArray   *tabs;          /* UiTab * */
 	GPtrArray   *shortcuts;     /* ShortcutSpec *, root node only, nullable */
+	Lv          *site;          /* where the node is written in the main document:
+	                             * its own mapping, or the component use / include
+	                             * entry it comes from; nullable */
 };
 
 static void
@@ -3012,6 +3071,7 @@ ui_node_unref (UiNode *n)
 	g_ptr_array_unref (n->children);
 	g_ptr_array_unref (n->tabs);
 	g_clear_pointer (&n->shortcuts, g_ptr_array_unref);
+	lv_unref (n->site);
 	g_free (n);
 }
 
@@ -3100,6 +3160,7 @@ struct _LrgUILoader
 	GHashTable  *variables;    /* gchar * -> EVal * */
 	gboolean     use_symbols;
 	gboolean     use_monitors;
+	gboolean     track_sources;
 	GModule     *self_module;
 
 	GPtrArray   *roots;        /* GWeakRef *: roots built, newest last */
@@ -3358,6 +3419,9 @@ typedef struct
 	Scope       *scope;
 	SlotFill    *slots;   /* inside a component body, else NULL */
 	const gchar *file;    /* file the current values come from, or NULL */
+	Lv          *site;    /* not owned: inside a component body or an included
+	                       * file, the use site in the main document that the
+	                       * nodes report as their source; NULL at top level */
 } Env;
 
 typedef struct
@@ -7102,6 +7166,7 @@ expand_component (Ctx          *c,
 	body_env.scope = scope;
 	body_env.slots = &fill;
 	body_env.file = comp->file;
+	body_env.site = env->site != NULL ? env->site : use;
 	body_path = path_join (path, "<%s>", comp->name);
 	tmp = g_ptr_array_new_with_free_func ((GDestroyNotify)ui_node_unref);
 	g_ptr_array_add (c->comp_stack, comp->name);
@@ -7243,6 +7308,7 @@ expand_widget (Ctx          *c,
 	}
 
 	node = ui_node_new (type, path, map);
+	node->site = lv_ref (env->site != NULL ? env->site : map);
 	klass = g_type_class_ref (type);
 	for (i = 0; i < map->keys->len; i++)
 	{
@@ -7520,7 +7586,8 @@ load_file_cached (Ctx          *c,
 		set_error (error, LRG_UI_LOADER_ERROR_IO, node_path, at, "cannot read '%s': %s", path, local->message);
 		return NULL;
 	}
-	lv = parse_yaml (contents, len, g_intern_string (path), error);
+	/* No pointers: widgets of an included file report the include site */
+	lv = parse_yaml (contents, len, g_intern_string (path), FALSE, error);
 	if (lv == NULL)
 		return NULL;
 	g_hash_table_insert (c->file_cache, g_strdup (path), lv);
@@ -7606,6 +7673,8 @@ expand_include (Ctx          *c,
 	/* Optional variables for the included file */
 	e2 = *env;
 	e2.file = g_intern_string (full);
+	if (e2.site == NULL)
+		e2.site = item;
 	with = lv_map_get (item, "with");
 	if (with != NULL)
 	{
@@ -8047,7 +8116,7 @@ expand_text (LrgUILoader  *self,
 	UiNode *root = NULL;
 	gboolean ok;
 
-	doc = parse_yaml (data, length, file != NULL ? g_intern_string (file) : NULL, error);
+	doc = parse_yaml (data, length, file != NULL ? g_intern_string (file) : NULL, self->track_sources, error);
 	if (doc == NULL)
 		return NULL;
 
@@ -8073,6 +8142,7 @@ expand_text (LrgUILoader  *self,
 	env.scope = globals;
 	env.slots = NULL;
 	env.file = file != NULL ? g_intern_string (file) : NULL;
+	env.site = NULL;
 
 	out = g_ptr_array_new_with_free_func ((GDestroyNotify)ui_node_unref);
 	ok = expand_document (&c, doc, &env, "", TRUE, out, error);
@@ -9830,6 +9900,125 @@ lrg_ui_loader_get_widget (LrgUILoader *self,
 	/* The widget tree owns it; hand out a borrowed pointer */
 	g_object_unref (obj);
 	return LRG_WIDGET (obj);
+}
+
+/* ==========================================================================
+ * Source tracking (for UI designers: widget <-> YAML location)
+ * ========================================================================== */
+
+void
+lrg_ui_loader_set_track_sources (LrgUILoader *self,
+                                 gboolean     track_sources)
+{
+	g_return_if_fail (LRG_IS_UI_LOADER (self));
+
+	self->track_sources = track_sources != FALSE;
+}
+
+gboolean
+lrg_ui_loader_get_track_sources (LrgUILoader *self)
+{
+	g_return_val_if_fail (LRG_IS_UI_LOADER (self), FALSE);
+
+	return self->track_sources;
+}
+
+/* site_of: the use-site value a loader-built widget reports, or NULL */
+static Lv *
+site_of (LrgWidget *widget)
+{
+	WidgetRecord *rec = widget_get_record (widget);
+
+	return rec != NULL && rec->node != NULL ? rec->node->site : NULL;
+}
+
+const gchar *
+lrg_ui_loader_get_source_path (LrgUILoader *self,
+                               LrgWidget   *widget)
+{
+	Lv *site;
+
+	g_return_val_if_fail (LRG_IS_UI_LOADER (self), NULL);
+	g_return_val_if_fail (LRG_IS_WIDGET (widget), NULL);
+
+	site = site_of (widget);
+	return site != NULL ? site->ptr : NULL;
+}
+
+gboolean
+lrg_ui_loader_get_source_location (LrgUILoader *self,
+                                   LrgWidget   *widget,
+                                   guint       *line,
+                                   guint       *column)
+{
+	Lv *site;
+
+	g_return_val_if_fail (LRG_IS_UI_LOADER (self), FALSE);
+	g_return_val_if_fail (LRG_IS_WIDGET (widget), FALSE);
+
+	site = site_of (widget);
+	if (site == NULL || site->line == 0)
+		return FALSE;
+	if (line != NULL)
+		*line = site->line;
+	if (column != NULL)
+		*column = site->column;
+	return TRUE;
+}
+
+/*
+ * find_by_path:
+ * Depth-first, parents before children, so the outermost widget written
+ * at @path wins (the root of a component before the widgets of its body,
+ * which report the same use site).
+ */
+static LrgWidget *
+find_by_path (LrgWidget   *w,
+              const gchar *path)
+{
+	Lv *site = site_of (w);
+	GList *l;
+
+	if (site != NULL && g_strcmp0 (site->ptr, path) == 0)
+		return w;
+	if (!LRG_IS_CONTAINER (w))
+		return NULL;
+	for (l = lrg_container_get_children (LRG_CONTAINER (w)); l != NULL; l = l->next)
+	{
+		LrgWidget *hit = find_by_path (LRG_WIDGET (l->data), path);
+
+		if (hit != NULL)
+			return hit;
+	}
+	return NULL;
+}
+
+LrgWidget *
+lrg_ui_loader_get_widget_for_path (LrgUILoader *self,
+                                   const gchar *path)
+{
+	gint i;
+
+	g_return_val_if_fail (LRG_IS_UI_LOADER (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	/* "/" is accepted for the document root, which is "" in RFC 6901 */
+	if (g_strcmp0 (path, "/") == 0)
+		path = "";
+
+	/* Newest root first, like lrg_ui_loader_get_widget() */
+	for (i = (gint)self->roots->len - 1; i >= 0; i--)
+	{
+		g_autoptr(GObject) root = g_weak_ref_get (g_ptr_array_index (self->roots, i));
+		LrgWidget *hit;
+
+		if (root == NULL)
+			continue;
+		hit = find_by_path (LRG_WIDGET (root), path);
+		if (hit != NULL)
+			return hit;   /* owned by its tree; borrowed */
+	}
+	return NULL;
 }
 
 LrgWidget *

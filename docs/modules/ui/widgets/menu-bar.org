@@ -85,7 +85,30 @@ Everything else inside an open menu behaves as described in [[file:menu.org::#me
 | Property | Type | Access | Meaning |
 |----------+------+--------+---------|
 | =model= | =GMenuModel= | read/write | The bar description |
-| =open-index= | =gint= (default -1) | read | Title whose menu is open |
+| =open-index= | =gint= (default -1) | read | Title whose menu is open; notified on every open, close and switch to a neighbouring title |
+
+** Status for tools and IPC
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-status
+:END:
+Everything a remote client or a smoke test needs to see and click the bar is queryable, in canvas (world) coordinates: the space of =lrg_widget_get_world_x()= and of the pointer positions given to =lrg_canvas_process_input()=, whatever containers and offsets the bar sits in. This is what lrgeditor's =ui.state= IPC reply reports.
+
+- =lrg_menu_bar_get_open_title (bar)=: the open menu's title with its mnemonic marker removed (="File"= for ="_File"=), or =NULL= when no menu is open.
+- =lrg_menu_bar_get_title_rect (bar, index, &x, &y, &w, &h)=: a title's rectangle (the full bar height). Clicking its centre opens that menu.
+- =lrg_menu_get_item_rect (menu, index, &x, &y, &w, &h)= and =lrg_menu_get_row_height (menu)= on =lrg_menu_bar_get_menu (bar, index)=: the open menu's rows (see [[file:menu.org::#menu-geometry][LrgMenu geometry]]).
+- Changes: connect to =notify::open-index=. It fires when a menu opens (click, F10, Alt+mnemonic, =lrg_menu_bar_open_menu()=), when it closes (Escape, a click outside, an item chosen, =lrg_menu_bar_close()=) and when the bar moves to another title (hover or Left / Right), so a status reporter can push a fresh =ui.state= from that one handler.
+
+#+begin_src C
+static void
+on_open_changed (LrgMenuBar *bar, GParamSpec *pspec, gpointer user_data)
+{
+	const gchar *title = lrg_menu_bar_get_open_title (bar);   /* NULL = closed */
+
+	my_ipc_push_ui_state (user_data, "menu", title);
+}
+
+g_signal_connect (bar, "notify::open-index", G_CALLBACK (on_open_changed), server);
+#+end_src
 
 ** Signals
 :PROPERTIES:
@@ -166,7 +189,8 @@ root:
 | =lrg_menu_bar_get_model (self)= / =lrg_menu_bar_set_model (self, model)= | The description |
 | =lrg_menu_bar_get_n_titles (self)= | Number of titles |
 | =lrg_menu_bar_get_title (self, index)= | Title text without mnemonic markers |
-| =lrg_menu_bar_get_title_rect (self, index, &x, &y, &w, &h)= | Title rectangle in world coordinates |
+| =lrg_menu_bar_get_title_rect (self, index, &x, &y, &w, &h)= | Title rectangle in canvas (world) coordinates |
+| =lrg_menu_bar_get_open_title (self)= | Open title without mnemonic markers, or =NULL= |
 | =lrg_menu_bar_get_menu (self, index)= | The title's =LrgMenu= (created on first use; =NULL= for a plain button) |
 | =lrg_menu_bar_open_menu (self, index, keyboard)= | Open a title's menu (or run a plain button) |
 | =lrg_menu_bar_close (self)= | Close the open menu |

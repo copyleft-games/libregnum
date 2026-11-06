@@ -153,6 +153,14 @@ The release of the press that opened the menu does not activate anything: a rele
 
 Mnemonic underlines are drawn while the menu is driven by the keyboard (opened with keys, or after a key press).
 
+** Geometry
+:PROPERTIES:
+:CUSTOM_ID: menu-geometry
+:END:
+Rows are stacked from the top: item rows are the theme's =ROW_HEIGHT= tall, section headers 0.8 of it, separators a thin band. For tests, IPC and tools:
+- =lrg_menu_get_item_rect (menu, index, &x, &y, &w, &h)=: the rectangle of row =index= in canvas (world) coordinates, the space of pointer input, so its centre can be clicked directly. It is the same as =lrg_menu_get_entry_rect()= under the name lrgeditor's =ui.state= uses; =index= counts separators and headers like =lrg_menu_get_entry_kind()=. Meaningful while the menu is open (laid out).
+- =lrg_menu_get_row_height (menu)=: the height of an item row (=ROW_HEIGHT=); lrgeditor reports it as =frame_height=. Use the item rect for exact positions of headers and separators.
+
 ** Properties
 :PROPERTIES:
 :CUSTOM_ID: menu-properties
@@ -264,6 +272,8 @@ Entry keys: =label= (=_= marks the mnemonic), =action= (="prefix.action"=), =tar
 | =lrg_menu_get_entry_action (self, index)= | Row action name |
 | =lrg_menu_get_entry_enabled (self, index)= | Whether the row can be highlighted and activated |
 | =lrg_menu_get_entry_rect (self, index, &x, &y, &w, &h)= | Row rectangle in world coordinates |
+| =lrg_menu_get_item_rect (self, index, &x, &y, &w, &h)= | Same, canvas coordinates (=ui.state= naming) |
+| =lrg_menu_get_row_height (self)= | Height of an item row |
 | =lrg_menu_get_highlighted (self)= / =lrg_menu_set_highlighted (self, index)= | The highlighted row |
 | =lrg_menu_activate_entry (self, index)= | Do what clicking the row does |
 | =lrg_menu_get_submenu_delay (self)= / =lrg_menu_set_submenu_delay (self, delay)= | Hover delay for submenus |
