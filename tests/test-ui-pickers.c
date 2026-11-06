@@ -1299,6 +1299,119 @@ test_markdown_wrapping (Fixture       *fixture,
 	g_assert_cmpuint (lrg_paint_list_get_n_instances (lrg_canvas_record (fixture->canvas)), >=, 6);
 }
 
+/* find_rich_span: the span of @rich whose text is @text */
+static const LrgTextSpan *
+find_rich_span (LrgRichText *rich,
+                const gchar *text)
+{
+	guint i;
+
+	for (i = 0; i < lrg_rich_text_get_span_count (rich); i++)
+		if (g_strcmp0 (lrg_text_span_get_text (lrg_rich_text_get_span (rich, i)), text) == 0)
+			return lrg_rich_text_get_span (rich, i);
+	return NULL;
+}
+
+static void
+test_markdown_rich_text (void)
+{
+	g_autoptr(LrgMarkdownLabel) md = lrg_markdown_label_new (
+		"# Big\n"
+		"\n"
+		"Some **bold** and *it* with `code`, [a link](lrg://x), [wave]waves[/wave], "
+		"[color=#ff0000]red[/color], a[3] and \\[x].\n"
+		"\n"
+		"```\n"
+		"int a[3];\n"
+		"```\n");
+	LrgRichText       *rich;
+	const LrgTextSpan *span;
+	const gchar       *markup;
+	guint8             r;
+	guint8             g;
+	guint8             b;
+	guint8             a;
+
+	g_assert_cmpuint (lrg_markdown_label_get_n_blocks (md), ==, 3);
+
+	/* Headings are bold rich text */
+	rich = lrg_markdown_label_get_block_rich_text (md, 0);
+	g_assert_true (LRG_IS_RICH_TEXT (rich));
+	span = find_rich_span (rich, "Big");
+	g_assert_nonnull (span);
+	g_assert_true (lrg_text_span_get_style (span) & LRG_TEXT_STYLE_BOLD);
+
+	/* The paragraph: Markdown became BBCode, rich tags passed through */
+	markup = lrg_markdown_label_get_block_markup (md, 1);
+	g_assert_nonnull (strstr (markup, "[b]bold[/b]"));
+	g_assert_nonnull (strstr (markup, "[i]it[/i]"));
+	g_assert_nonnull (strstr (markup, "[u]a link[/u]"));
+	g_assert_nonnull (strstr (markup, "[wave]waves[/wave]"));
+	rich = lrg_markdown_label_get_block_rich_text (md, 1);
+	span = find_rich_span (rich, "bold");
+	g_assert_nonnull (span);
+	g_assert_cmpint (lrg_text_span_get_style (span), ==, LRG_TEXT_STYLE_BOLD);
+	span = find_rich_span (rich, "it");
+	g_assert_nonnull (span);
+	g_assert_cmpint (lrg_text_span_get_style (span), ==, LRG_TEXT_STYLE_ITALIC);
+	span = find_rich_span (rich, "a link");
+	g_assert_nonnull (span);
+	g_assert_true (lrg_text_span_get_style (span) & LRG_TEXT_STYLE_UNDERLINE);
+	span = find_rich_span (rich, "waves");
+	g_assert_nonnull (span);
+	g_assert_cmpint (lrg_text_span_get_effect_type (span), ==, LRG_TEXT_EFFECT_WAVE);
+	span = find_rich_span (rich, "red");
+	g_assert_nonnull (span);
+	lrg_text_span_get_color (span, &r, &g, &b, &a);
+	g_assert_cmpuint (r, ==, 255);
+	g_assert_cmpuint (g, ==, 0);
+	g_assert_cmpuint (b, ==, 0);
+
+	/* Brackets that are not tags stay text (stored as U+E000 in markup) */
+	g_assert_cmpstr (lrg_markdown_label_get_block_text (md, 1), ==,
+	                 "Some bold and it with code, a link, waves, red, a[3] and [x].");
+	g_assert_cmpuint (lrg_markdown_label_get_n_links (md), ==, 1);
+	g_assert_cmpstr (lrg_markdown_label_get_link_url (md, 0), ==, "lrg://x");
+
+	/* Code blocks keep their brackets */
+	g_assert_cmpstr (lrg_markdown_label_get_block_text (md, 2), ==, "int a[3];");
+	g_assert_nonnull (strstr (lrg_markdown_label_get_block_markup (md, 2), "\xee\x80\x80"));
+	g_assert_null (lrg_markdown_label_get_block_rich_text (md, 3));
+}
+
+static void
+test_markdown_effects (Fixture       *fixture,
+                       gconstpointer  user_data)
+{
+	LrgMarkdownLabel *md = lrg_markdown_label_new ("[typewriter=20]Hello there[/typewriter]");
+	guint             i;
+
+	add (fixture, md, 10.0f, 10.0f, 400.0f, 60.0f);
+	g_assert_false (lrg_markdown_label_get_effects_complete (md));
+
+	/* Animated from step(): the canvas stays busy until it has typed */
+	g_assert_true (lrg_canvas_update (fixture->canvas, FRAME));
+	for (i = 0; i < 600 && !lrg_markdown_label_get_effects_complete (md); i++)
+		lrg_canvas_update (fixture->canvas, FRAME);
+	g_assert_true (lrg_markdown_label_get_effects_complete (md));
+	g_assert_cmpuint (i, >, 30);
+
+	/* Reset starts it over */
+	lrg_markdown_label_reset_effects (md);
+	g_assert_false (lrg_markdown_label_get_effects_complete (md));
+
+	/* Looping effects keep the canvas animating */
+	lrg_markdown_label_set_markdown (md, "Some [wave]wavy[/wave] text");
+	for (i = 0; i < 10; i++)
+		g_assert_true (lrg_canvas_update (fixture->canvas, FRAME));
+	g_assert_false (lrg_markdown_label_get_effects_complete (md));
+
+	/* Plain text settles */
+	lrg_markdown_label_set_markdown (md, "Plain **text**");
+	settle (fixture->canvas);
+	g_assert_false (lrg_canvas_update (fixture->canvas, FRAME));
+}
+
 static void
 on_link (LrgMarkdownLabel *md,
          const gchar      *url,
@@ -1551,6 +1664,8 @@ main (int   argc,
 	g_test_add_func ("/ui/pickers/markdown/blocks", test_markdown_blocks);
 	ADD ("/ui/pickers/markdown/wrapping", test_markdown_wrapping);
 	ADD ("/ui/pickers/markdown/links", test_markdown_links);
+	g_test_add_func ("/ui/pickers/markdown/rich-text", test_markdown_rich_text);
+	ADD ("/ui/pickers/markdown/effects", test_markdown_effects);
 
 	ADD ("/ui/pickers/presets", test_all_presets);
 

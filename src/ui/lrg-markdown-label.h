@@ -16,6 +16,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "lrg-widget.h"
+#include "../text/lrg-rich-text.h"
 
 G_BEGIN_DECLS
 
@@ -278,5 +279,58 @@ gboolean lrg_markdown_label_get_link_bounds (LrgMarkdownLabel *self,
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_markdown_label_get_n_lines (LrgMarkdownLabel *self);
+
+/**
+ * lrg_markdown_label_get_block_rich_text:
+ * @self: an #LrgMarkdownLabel
+ * @index: a block index
+ *
+ * The #LrgRichText the block was translated into: its spans carry the
+ * #LrgTextStyle, size, colour and effect of every run of text. Do not
+ * change it; it is rebuilt when the Markdown changes.
+ *
+ * Returns: (transfer none) (nullable): the block's rich text, or %NULL
+ *   if @index is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+LrgRichText * lrg_markdown_label_get_block_rich_text (LrgMarkdownLabel *self,
+                                                      guint             index);
+
+/**
+ * lrg_markdown_label_get_block_markup:
+ * @self: an #LrgMarkdownLabel
+ * @index: a block index
+ *
+ * The LrgRichText (BBCode) markup generated for the block. Literal "["
+ * characters appear as U+E000 (LrgRichText has no escape for them).
+ *
+ * Returns: (nullable): the markup, or %NULL if @index is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_markdown_label_get_block_markup (LrgMarkdownLabel *self,
+                                                   guint             index);
+
+/**
+ * lrg_markdown_label_reset_effects:
+ * @self: an #LrgMarkdownLabel
+ *
+ * Restarts every text effect from the beginning (a typewriter types
+ * again, a fade fades in again), through lrg_rich_text_reset_effects().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_markdown_label_reset_effects (LrgMarkdownLabel *self);
+
+/**
+ * lrg_markdown_label_get_effects_complete:
+ * @self: an #LrgMarkdownLabel
+ *
+ * Whether every one-shot effect (typewriter, fade) has finished, as
+ * lrg_rich_text_effects_complete() reports for each block. Looping
+ * effects (wave, shake, rainbow, pulse) never complete.
+ *
+ * Returns: %TRUE when there is nothing left to reveal
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_markdown_label_get_effects_complete (LrgMarkdownLabel *self);
 
 G_END_DECLS

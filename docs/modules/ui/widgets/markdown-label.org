@@ -7,7 +7,7 @@
 :PROPERTIES:
 :CUSTOM_ID: markdown-label-overview
 :END:
-=LrgMarkdownLabel= renders a subset of Markdown, word-wrapped to its width: patch notes, quest text, tooltips with a bit of structure, in-game help.
+=LrgMarkdownLabel= renders a subset of Markdown, word-wrapped to its width: patch notes, quest text, tooltips with a bit of structure, in-game help. It is built on =LrgRichText=: every Markdown block is translated into =LrgRichText= (BBCode) markup and parsed by =lrg_rich_text_set_markup()=, so the rich text's spans carry each run's =LrgTextStyle=, size, colour and text effect, and =LrgRichText= tags written in the Markdown pass straight through ([[#markdown-label-rich-text][Rich text and effects]]).
 
 Supported:
 
@@ -15,21 +15,65 @@ Supported:
 |-----------------------------------+-------------------------------------------------------------------------------------------|
 | =# H1=, =## H2=, =### H3= (to =######=) | =FONT_SIZE_TITLE=, =FONT_SIZE_LARGE=, 1.12 × body; synthetic bold; H1 / H2 get a hairline rule under them |
 | paragraphs                        | wrapped at word boundaries; single newlines are soft breaks (a space); blank lines separate |
-| =**bold**=, =__bold__=            | synthetic bold: drawn twice, 0.6 px apart                                                 |
-| =*italic*=, =_italic_=            | no italic face exists: a slight =ACCENT= tint plus a faint underline                       |
-| =***both***=                      | both of the above                                                                         |
-| =`inline code`=                   | on an =INPUT=-coloured rounded chip with a hairline, 0.92 × size, UI font (the theme has no mono font) |
+| =**bold**=, =__bold__=            | =[b]= in the rich text; drawn with the bold face (see [[#markdown-label-faces][Font faces]]) |
+| =*italic*=, =_italic_=            | =[i]=; the italic face                                                                    |
+| =***both***=                      | =[b][i]=; the bold-italic face                                                            |
+| =`inline code`=                   | on an =INPUT=-coloured rounded chip with a hairline, 0.92 × size, the mono face           |
 | fenced code (=```= or =~~~=)      | =PANEL= box with a border, lines kept verbatim and not wrapped (clipped to the panel)     |
 | =- item=, =* item=, =+ item=      | bullets (disc at depth 0, ring deeper), indented per nesting level (2 spaces per level)   |
 | =1. item=, =1) item=              | numbered items (the source number is kept), right-aligned numbers                         |
 | => quote=                         | =ACCENT= bar on the left, =TEXT_MUTED= text; consecutive quote lines join                 |
 | =[text](url)=                     | =LINK= colour; an underline grows in on hover; click or keyboard emits =link-activated=   |
 | =---=, =***=, =___=               | a horizontal rule                                                                         |
-| =\*= (backslash + punctuation)    | the literal character                                                                     |
+| =\*= (backslash + punctuation)    | the literal character (=\[= gives a literal bracket)                                      |
+| =[wave]..[/wave]= and other =LrgRichText= tags | passed through: effects, colours, sizes, underline, strikethrough               |
 
-Markers surrounded by spaces (=a * b=) and =_= inside words (=snake_case=) stay literal. Not supported: tables, images, HTML, setext headings, nested quotes, hard line breaks, selection and copying.
+Markers surrounded by spaces (=a * b=) and =_= inside words (=snake_case=) stay literal. Square brackets that are neither a link nor a known =LrgRichText= tag stay text (=a[3]=). Not supported: tables, images, HTML, setext headings, nested quotes, hard line breaks, selection and copying.
 
 The text is parsed once when it is set; the layout (words flowed into lines, merged into runs of the same style) is rebuilt whenever the width or font size changes, and the preferred height follows the wrapped height. The measure uses the current width: an unsized label wraps at its natural width (the longest unwrapped line, at most 480).
+
+** Rich text and effects
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-rich-text
+:END:
+Each block becomes one =LrgRichText=; =lrg_markdown_label_get_block_rich_text()= returns it (transfer none) and =lrg_markdown_label_get_block_markup()= the markup it was parsed from. The translation:
+
+| Markdown            | Rich text markup                    | Kept beside the rich text                  |
+|---------------------+-------------------------------------+--------------------------------------------|
+| =**x**= / =*x*=     | =[b]x[/b]= / =[i]x[/i]=             |                                            |
+| heading text        | wrapped in =[b]..[/b]=              | block kind and level                       |
+| =[text](url)=       | =[u]text[/u]=                       | the URL and the link's plain-text range    |
+| =`code`=            | the text                            | the code's plain-text range                |
+| fenced code         | the text                            | one code range over the block              |
+| =[wave]= etc.       | copied unchanged                    |                                            |
+| a literal =[=       | U+E000 (=LrgRichText= has no escape) | turned back into =[= when measured / drawn |
+
+Recognised =LrgRichText= tags: =[b]=, =[i]=, =[u]=, =[s]=, =[color=#RRGGBB]= / =[color=red]=, =[size=1.5]=, =[shake]=, =[wave]=, =[rainbow]=, =[typewriter=N]= (=N= / 50 is the speed; the =speed=N= form of the =LrgRichText= documentation is not parsed by =LrgRichText= itself), =[pulse]=, =[fade]=, each closed with =[/name]=. Colours set with =[color=..]= beat the theme colour of the part (except on links); spans without one use the part colours below.
+
+Effects animate on the canvas clock: =step()= calls =lrg_rich_text_update()= on every block and returns =TRUE= while an effect runs (looping effects — wave, shake, rainbow, pulse — always). Glyphs are recorded one by one with the offset and colour each effect gives them. Because =LrgRichText= keeps its effect objects private, the label holds a mirror =LrgTextEffect= per effect span (same type, speed and character count, advanced together) to apply per glyph; character indices count from the start of each span. =lrg_markdown_label_reset_effects()= restarts them (=lrg_rich_text_reset_effects()=) and =lrg_markdown_label_get_effects_complete()= reports =lrg_rich_text_effects_complete()= for all blocks.
+
+#+begin_src C
+/* A quest log line that types itself in, with a shaking threat */
+lrg_markdown_label_set_markdown (log,
+	"[typewriter=40]The **Warden** says: [shake]you shall not pass[/shake].[/typewriter]");
+lrg_markdown_label_reset_effects (log);   /* replay when the page opens */
+#+end_src
+
+Layout does not use =LrgRichText='s own =max-width= wrapping (it cannot report link positions): the label flows the rich text spans itself, word by word, and keeps each block's rich text font size and max width in step with its layout.
+
+** Font faces
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-faces
+:END:
+Bold, italic, bold-italic and code text use the fonts registered in the default =LrgFontManager= as =ui-bold=, =ui-italic=, =ui-bold-italic= and =ui-mono=. If a name is not registered, the first time a window is open the label tries common system files (Inter, Cantarell, Noto Sans, Open Sans, Liberation Sans, DejaVu Sans; Adwaita Mono, Source Code Pro, DejaVu Sans Mono, Liberation Mono for code), loads the first it finds into the font manager under that name at 64 px and mipmaps it. Register your own faces under these names before the label first paints to choose them. A span's =custom_font= (=lrg_text_span_set_custom_font()=), when the font manager has it, wins.
+
+Fallbacks, used when no face is available (no window yet, no font file, or the fragment has non-ASCII characters, which faces loaded through =LrgFontManager= do not cover):
+
+- bold without a bold face: synthetic bold, the UI font drawn twice 0.6 px apart;
+- italic without an italic face: the UI font with a slight =ACCENT= tint and a faint underline;
+- code without a mono face: the UI font.
+
+The layout is redone when faces become available, so measuring always matches drawing.
 
 ** Creation
 :PROPERTIES:
@@ -80,6 +124,7 @@ The parsed structure is readable, for tests and for tools:
 - =lrg_markdown_label_get_block_n_spans()=, =lrg_markdown_label_get_block_span (md, block, span, &style)= — inline spans with =LrgMarkdownSpanStyle= flags (=BOLD=, =ITALIC=, =CODE=, =LINK=; =lrg_markdown_span_style_get_type()=)
 - =lrg_markdown_label_get_n_links()=, =lrg_markdown_label_get_link_url()=, =lrg_markdown_label_get_link_bounds()= (first laid-out piece, canvas coordinates)
 - =lrg_markdown_label_get_n_lines()= — visual lines after wrapping at the current width
+- =lrg_markdown_label_get_block_rich_text()=, =lrg_markdown_label_get_block_markup()= — the block's =LrgRichText= and its markup
 
 ** Parts and states
 :PROPERTIES:
@@ -165,8 +210,9 @@ build_quest_text (Game        *game,
 :PROPERTIES:
 :CUSTOM_ID: markdown-label-limitations
 :END:
-- No true bold or italic faces: bold is synthetic, italic is a tint plus a faint underline.
-- Inline code and code blocks use the UI font (the theme has no monospace font).
+- Without bold / italic / mono faces (headless, or no font files) bold is synthetic, italic a tint plus a faint underline and code the UI font; faces loaded through =LrgFontManager= cover ASCII only.
+- A literal =[= that should not start a tag must be escaped (=\[=) when it is followed by a known tag name.
+- Effect character indices count per rich text span, so a =[typewriter]= reveals each block (and each span inside it) from its own start.
 - Words longer than the line overflow it instead of breaking; code block lines are clipped, not wrapped.
 - Text cannot be selected or copied.
 
@@ -182,6 +228,8 @@ build_quest_text (Game        *game,
 - =lrg_markdown_label_get_block_n_spans=, =lrg_markdown_label_get_block_span=
 - =lrg_markdown_label_get_n_links=, =lrg_markdown_label_get_link_url=, =lrg_markdown_label_get_link_bounds=
 - =lrg_markdown_label_get_n_lines=
+- =lrg_markdown_label_get_block_rich_text=, =lrg_markdown_label_get_block_markup=
+- =lrg_markdown_label_reset_effects=, =lrg_markdown_label_get_effects_complete=
 - =lrg_markdown_block_kind_get_type=, =lrg_markdown_span_style_get_type=
 
 ** Related
@@ -189,4 +237,5 @@ build_quest_text (Game        *game,
 :CUSTOM_ID: markdown-label-related
 :END:
 - [[file:label.org][Label]]
+- =LrgRichText= (=src/text/lrg-rich-text.h=), =LrgFontManager= (=src/text/lrg-font-manager.h=)
 - [[file:../widget.org][LrgWidget]], [[file:../theme.org][Theme]]
