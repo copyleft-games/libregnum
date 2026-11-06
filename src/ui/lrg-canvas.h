@@ -17,6 +17,7 @@
 #include "../lrg-version.h"
 #include "lrg-container.h"
 #include "lrg-ui-event.h"
+#include "lrg-canvas-input.h"
 
 G_BEGIN_DECLS
 
@@ -60,6 +61,21 @@ void lrg_canvas_render (LrgCanvas *self);
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_canvas_handle_input (LrgCanvas *self);
+
+/**
+ * lrg_canvas_process_input:
+ * @self: an #LrgCanvas
+ * @input: one frame of input, in canvas coordinates
+ *
+ * Turns @input into UI events and dispatches them. This is what
+ * lrg_canvas_handle_input() calls after polling graylib; call it
+ * directly to drive the canvas from your own input layer, a replay or
+ * a test. @input->pointer_x/y must already be in canvas coordinates
+ * (no pointer transform is applied here).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_process_input (LrgCanvas            *self,
+                               const LrgCanvasInput *input);
 
 /**
  * LrgCanvasPointerTransform:

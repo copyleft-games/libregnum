@@ -176,6 +176,7 @@
 #include "ui/lrg-hbox.h"
 #include "ui/lrg-grid.h"
 #include "ui/lrg-tab-view.h"
+#include "ui/lrg-canvas-input.h"
 #include "ui/lrg-canvas.h"
 #include "ui/lrg-checkbox.h"
 #include "ui/lrg-progress-bar.h"

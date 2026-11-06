@@ -12,8 +12,10 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_UI
 
 #include "lrg-canvas.h"
+#include "lrg-canvas-private.h"
 #include "../lrg-log.h"
 #include <graylib.h>
+#include <raylib.h>
 
 struct _LrgCanvas
 {
@@ -266,31 +268,90 @@ lrg_canvas_render (LrgCanvas *self)
 }
 
 /*
+ * _lrg_canvas_apply_pointer_transform:
+ *
+ * See lrg-canvas-private.h.
+ */
+void
+_lrg_canvas_apply_pointer_transform (gfloat *x,
+                                     gfloat *y)
+{
+    if (default_pointer_transform != NULL)
+        default_pointer_transform (x, y, default_pointer_transform_data);
+}
+
+/*
  * lrg_canvas_handle_input:
  * @self: an #LrgCanvas
  *
- * Processes input and dispatches events to widgets.
+ * Polls graylib into an #LrgCanvasInput and processes it.
  */
 void
 lrg_canvas_handle_input (LrgCanvas *self)
+{
+    LrgCanvasInput input;
+
+    g_return_if_fail (LRG_IS_CANVAS (self));
+
+    lrg_canvas_input_poll (&input, GetFrameTime ());
+    lrg_canvas_process_input (self, &input);
+}
+
+/*
+ * dispatch_button:
+ *
+ * Sends one button-down or button-up event for every button set in
+ * @mask. The event carries (button, x, y) in that order, matching
+ * lrg_ui_event_new_mouse_button().
+ */
+static void
+dispatch_button (LrgWidget      *target,
+                 LrgUIEventType  type,
+                 guint           mask,
+                 gfloat          x,
+                 gfloat          y)
+{
+    static const GrlMouseButton buttons[] = {
+        GRL_MOUSE_BUTTON_LEFT,
+        GRL_MOUSE_BUTTON_RIGHT,
+        GRL_MOUSE_BUTTON_MIDDLE
+    };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (buttons); i++)
+    {
+        g_autoptr(LrgUIEvent) event = NULL;
+
+        if ((mask & LRG_CANVAS_BUTTON_MASK (buttons[i])) == 0)
+            continue;
+
+        event = lrg_ui_event_new_mouse_button (type, (gint) buttons[i], x, y);
+        dispatch_event (target, event);
+    }
+}
+
+/*
+ * lrg_canvas_process_input:
+ * @self: an #LrgCanvas
+ * @input: one frame of input
+ *
+ * Turns an input frame into UI events and dispatches them.
+ */
+void
+lrg_canvas_process_input (LrgCanvas            *self,
+                          const LrgCanvasInput *input)
 {
     gfloat       mouse_x;
     gfloat       mouse_y;
     LrgWidget   *target;
     LrgUIEvent  *event;
-    unsigned char raw;
+    guint        i;
 
     g_return_if_fail (LRG_IS_CANVAS (self));
+    g_return_if_fail (input != NULL);
 
-    /* Get current mouse position */
-    mouse_x = (gfloat)grl_input_get_mouse_x ();
-    mouse_y = (gfloat)grl_input_get_mouse_y ();
-
-    /* Map window pixels into the canvas's render space (virtual
-     * resolution etc.) so hit-testing matches what is on screen */
-    if (default_pointer_transform != NULL)
-        default_pointer_transform (&mouse_x, &mouse_y,
-                                   default_pointer_transform_data);
+    mouse_x = input->pointer_x;
+    mouse_y = input->pointer_y;
 
     /* Find widget under mouse */
     target = lrg_canvas_widget_at_point (self, mouse_x, mouse_y);
@@ -329,9 +390,8 @@ lrg_canvas_handle_input (LrgCanvas *self)
         self->last_mouse_y = mouse_y;
     }
 
-    /* Handle mouse button presses */
-    raw = grl_input_is_mouse_button_pressed (GRL_MOUSE_BUTTON_LEFT);
-    if (raw != 0)
+    /* Button presses */
+    if (input->buttons_pressed != 0)
     {
         /* Pointer debugging: run with G_MESSAGES_DEBUG=all to trace
          * why a click did or didn't reach a widget */
@@ -339,95 +399,47 @@ lrg_canvas_handle_input (LrgCanvas *self)
                  mouse_x, mouse_y,
                  target != NULL ? G_OBJECT_TYPE_NAME (target) : "(nothing)");
 
-        /* Set focus on click */
-        if (target != NULL && target != self->focused_widget)
+        /* Set focus on left click */
+        if ((input->buttons_pressed & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT)) &&
+            target != NULL && target != self->focused_widget)
         {
             lrg_canvas_set_focused_widget (self, target);
         }
 
-        event = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-                                               mouse_x, mouse_y,
-                                               GRL_MOUSE_BUTTON_LEFT);
+        dispatch_button (target, LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
+                         input->buttons_pressed, mouse_x, mouse_y);
+    }
+
+    /* Button releases */
+    if (input->buttons_released != 0)
+    {
+        dispatch_button (target, LRG_UI_EVENT_MOUSE_BUTTON_UP,
+                         input->buttons_released, mouse_x, mouse_y);
+    }
+
+    /* Mouse wheel */
+    if (input->wheel_x != 0.0f || input->wheel_y != 0.0f)
+    {
+        event = lrg_ui_event_new_scroll (mouse_x, mouse_y,
+                                         input->wheel_x, input->wheel_y);
         dispatch_event (target, event);
         lrg_ui_event_free (event);
     }
 
-    raw = grl_input_is_mouse_button_pressed (GRL_MOUSE_BUTTON_RIGHT);
-    if (raw != 0)
+    /* Key presses go to the focused widget */
+    for (i = 0; i < input->n_keys; i++)
     {
-        event = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-                                               mouse_x, mouse_y,
-                                               GRL_MOUSE_BUTTON_RIGHT);
-        dispatch_event (target, event);
+        event = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_DOWN, input->keys[i]);
+        dispatch_event (self->focused_widget, event);
         lrg_ui_event_free (event);
     }
 
-    raw = grl_input_is_mouse_button_pressed (GRL_MOUSE_BUTTON_MIDDLE);
-    if (raw != 0)
+    /* Typed characters go to the focused widget */
+    for (i = 0; i < input->n_chars; i++)
     {
-        event = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-                                               mouse_x, mouse_y,
-                                               GRL_MOUSE_BUTTON_MIDDLE);
-        dispatch_event (target, event);
+        event = lrg_ui_event_new_text_input (input->chars[i]);
+        dispatch_event (self->focused_widget, event);
         lrg_ui_event_free (event);
-    }
-
-    /* Handle mouse button releases */
-    raw = grl_input_is_mouse_button_released (GRL_MOUSE_BUTTON_LEFT);
-    if (raw != 0)
-    {
-        event = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_UP,
-                                               mouse_x, mouse_y,
-                                               GRL_MOUSE_BUTTON_LEFT);
-        dispatch_event (target, event);
-        lrg_ui_event_free (event);
-    }
-
-    raw = grl_input_is_mouse_button_released (GRL_MOUSE_BUTTON_RIGHT);
-    if (raw != 0)
-    {
-        event = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_UP,
-                                               mouse_x, mouse_y,
-                                               GRL_MOUSE_BUTTON_RIGHT);
-        dispatch_event (target, event);
-        lrg_ui_event_free (event);
-    }
-
-    raw = grl_input_is_mouse_button_released (GRL_MOUSE_BUTTON_MIDDLE);
-    if (raw != 0)
-    {
-        event = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_UP,
-                                               mouse_x, mouse_y,
-                                               GRL_MOUSE_BUTTON_MIDDLE);
-        dispatch_event (target, event);
-        lrg_ui_event_free (event);
-    }
-
-    /* Handle mouse wheel */
-    {
-        g_autoptr(GrlVector2) wheel = grl_input_get_mouse_wheel_move_v ();
-
-        if (wheel->x != 0.0f || wheel->y != 0.0f)
-        {
-            event = lrg_ui_event_new_scroll (mouse_x, mouse_y, wheel->x, wheel->y);
-            dispatch_event (target, event);
-            lrg_ui_event_free (event);
-        }
-    }
-
-    /* Handle key events (dispatch to focused widget) */
-    {
-        GrlKey key;
-
-        key = grl_input_get_key_pressed ();
-        while (key != GRL_KEY_NULL)
-        {
-            event = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_DOWN, key);
-            dispatch_event (self->focused_widget, event);
-            lrg_ui_event_free (event);
-
-            key = grl_input_get_key_pressed ();
-        }
     }
 }
 

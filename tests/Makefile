@@ -76,6 +76,7 @@ TEST_SOURCES := \
 	test-ecs.c \
 	test-input.c \
 	test-ui.c \
+	test-ui-input.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \

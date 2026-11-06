@@ -134,6 +134,7 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-hbox.h \
 	src/ui/lrg-grid.h \
 	src/ui/lrg-tab-view.h \
+	src/ui/lrg-canvas-input.h \
 	src/ui/lrg-canvas.h \
 	src/ui/lrg-checkbox.h \
 	src/ui/lrg-progress-bar.h \
@@ -782,6 +783,7 @@ SOURCES := \
 	src/ui/lrg-hbox.c \
 	src/ui/lrg-grid.c \
 	src/ui/lrg-tab-view.c \
+	src/ui/lrg-canvas-input.c \
 	src/ui/lrg-canvas.c \
 	src/ui/lrg-checkbox.c \
 	src/ui/lrg-progress-bar.c \
@@ -2684,7 +2686,7 @@ $(OBJDIR)/src/ui/lrg-tab-view.o: src/ui/lrg-tab-view.c src/ui/lrg-tab-view.h src
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/src/ui/lrg-canvas.o: src/ui/lrg-canvas.c src/ui/lrg-canvas.h src/ui/lrg-container.h
+$(OBJDIR)/src/ui/lrg-canvas.o: src/ui/lrg-canvas.c src/ui/lrg-canvas.h src/ui/lrg-canvas-input.h src/ui/lrg-canvas-private.h src/ui/lrg-container.h src/ui/lrg-ui-event.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

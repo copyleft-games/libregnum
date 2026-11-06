@@ -27,6 +27,7 @@ struct _LrgUIEvent
     GrlKey         key;
     gfloat         scroll_x;
     gfloat         scroll_y;
+    gunichar       codepoint;   /* TEXT_INPUT: the Unicode character */
     gboolean       consumed;
 };
 
@@ -58,6 +59,7 @@ lrg_ui_event_new (LrgUIEventType type)
     self->key = GRL_KEY_NULL;
     self->scroll_x = 0.0f;
     self->scroll_y = 0.0f;
+    self->codepoint = 0;
     self->consumed = FALSE;
 
     return self;
@@ -198,6 +200,27 @@ lrg_ui_event_new_focus_out (void)
  * ========================================================================== */
 
 /*
+ * lrg_ui_event_new_text_input:
+ * @codepoint: the Unicode character that was typed
+ *
+ * Creates a text-input event carrying one already-composed character
+ * (keyboard layout, Shift and dead keys applied). Text widgets insert
+ * this instead of translating raw key codes.
+ *
+ * Returns: (transfer full): A new #LrgUIEvent
+ */
+LrgUIEvent *
+lrg_ui_event_new_text_input (gunichar codepoint)
+{
+    LrgUIEvent *self;
+
+    self = lrg_ui_event_new (LRG_UI_EVENT_TEXT_INPUT);
+    self->codepoint = codepoint;
+
+    return self;
+}
+
+/*
  * lrg_ui_event_copy:
  * @self: an #LrgUIEvent
  *
@@ -212,15 +235,10 @@ lrg_ui_event_copy (const LrgUIEvent *self)
 
     g_return_val_if_fail (self != NULL, NULL);
 
+    /* plain value struct: a field-wise copy keeps every member,
+     * including ones added after this function was written */
     copy = g_slice_new (LrgUIEvent);
-    copy->type = self->type;
-    copy->x = self->x;
-    copy->y = self->y;
-    copy->button = self->button;
-    copy->key = self->key;
-    copy->scroll_x = self->scroll_x;
-    copy->scroll_y = self->scroll_y;
-    copy->consumed = self->consumed;
+    *copy = *self;
 
     return copy;
 }
@@ -403,4 +421,20 @@ lrg_ui_event_consume (LrgUIEvent *self)
     g_return_if_fail (self != NULL);
 
     self->consumed = TRUE;
+}
+
+/*
+ * lrg_ui_event_get_codepoint:
+ * @self: an #LrgUIEvent
+ *
+ * Gets the character carried by a %LRG_UI_EVENT_TEXT_INPUT event.
+ *
+ * Returns: The Unicode character, or 0 for other event types
+ */
+gunichar
+lrg_ui_event_get_codepoint (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, 0);
+
+    return self->codepoint;
 }

@@ -134,6 +134,19 @@ LrgUIEvent * lrg_ui_event_new_focus_in (void);
 LRG_AVAILABLE_IN_ALL
 LrgUIEvent * lrg_ui_event_new_focus_out (void);
 
+/**
+ * lrg_ui_event_new_text_input:
+ * @codepoint: the Unicode character that was typed
+ *
+ * Creates a text-input event carrying one already-composed character
+ * (keyboard layout, Shift and dead keys applied). Text widgets insert
+ * this instead of translating raw key codes.
+ *
+ * Returns: (transfer full): A new #LrgUIEvent
+ */
+LRG_AVAILABLE_IN_ALL
+LrgUIEvent * lrg_ui_event_new_text_input (gunichar codepoint);
+
 /* ==========================================================================
  * Copy/Free
  * ========================================================================== */
@@ -278,5 +291,16 @@ void lrg_ui_event_set_consumed (LrgUIEvent *self,
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_ui_event_consume (LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_get_codepoint:
+ * @self: an #LrgUIEvent
+ *
+ * Gets the character carried by a %LRG_UI_EVENT_TEXT_INPUT event.
+ *
+ * Returns: The Unicode character, or 0 for other event types
+ */
+LRG_AVAILABLE_IN_ALL
+gunichar lrg_ui_event_get_codepoint (const LrgUIEvent *self);
 
 G_END_DECLS
