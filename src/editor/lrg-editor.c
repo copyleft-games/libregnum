@@ -33,6 +33,7 @@
 #include "lrg-script-binding.h"
 #include "lrg-level-serializer.h"
 #include "lrg-prefab.h"
+#include "lrg-asset-meta.h"
 #include "../lrg-enums.h"
 #include <graylib.h>
 #include <gio/gio.h>
@@ -92,6 +93,7 @@ enum
 	SIGNAL_CHANGED,
 	SIGNAL_LEVEL_REPLACED,
 	SIGNAL_SAVED,
+	SIGNAL_PREFAB_SYNCED,
 	N_SIGNALS
 };
 
@@ -331,6 +333,25 @@ lrg_editor_class_init (LrgEditorClass *klass)
 		              G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL,
 		              G_TYPE_NONE, 1, G_TYPE_STRING);
+
+	/**
+	 * LrgEditor::prefab-synced:
+	 * @self: the editor
+	 * @path: the prefab file that changed
+	 * @n_instances: how many instances in the level changed
+	 *
+	 * Emitted by lrg_editor_prefab_changed() (and so after saving or
+	 * applying to a prefab) once the dependent linked instances were
+	 * synced, as one undo group.
+	 *
+	 * Since: 0.8.1
+	 */
+	signals[SIGNAL_PREFAB_SYNCED] =
+		g_signal_new ("prefab-synced",
+		              G_TYPE_FROM_CLASS (klass),
+		              G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL,
+		              G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_UINT);
 }
 
 static void
@@ -428,6 +449,11 @@ static void
 execute_command (LrgEditor        *self,
                  LrgEditorCommand *cmd)
 {
+	/* Edits of linked prefab instance nodes mark their paths overridden;
+	 * the marks ride on the command so undo clears them again. A failed
+	 * try_merge() may already have marked it. */
+	if (lrg_editor_command_get_n_override_marks (cmd) == 0)
+		lrg_editor_command_mark_prefab_overrides (cmd);
 	lrg_editor_command_apply (cmd);
 	record_command (self, cmd);
 
@@ -461,7 +487,11 @@ try_merge (LrgEditor        *self,
 		top = g_ptr_array_index (self->undo_stack, self->undo_stack->len - 1);
 	}
 
-	if (top == NULL || !lrg_editor_command_merge (top, cmd))
+	if (top == NULL)
+		return FALSE;
+
+	lrg_editor_command_mark_prefab_overrides (cmd);
+	if (!lrg_editor_command_merge (top, cmd))
 		return FALSE;
 
 	lrg_editor_command_apply (top);
@@ -1283,16 +1313,6 @@ lrg_editor_cut_selection (LrgEditor *self)
 	return data;
 }
 
-static gboolean
-fresh_guid (LrgNode  *node,
-            gpointer  user_data)
-{
-	g_autofree gchar *guid = g_uuid_string_random ();
-
-	lrg_node_set_guid (node, guid);
-	return TRUE;
-}
-
 GPtrArray *
 lrg_editor_paste (LrgEditor    *self,
                   const gchar  *data,
@@ -1339,7 +1359,8 @@ lrg_editor_paste (LrgEditor    *self,
 		g_autofree gchar *name = NULL;
 
 		lrg_level_remove_node (tmp, node);
-		lrg_node_foreach (node, fresh_guid, NULL);
+		/* Fresh guids; prefab links in the pasted subtree follow. */
+		lrg_prefab_regenerate_guids (node);
 		name = unique_sibling_name (parent, lrg_node_get_name (node));
 		lrg_node_set_name (node, name);
 
@@ -1709,6 +1730,17 @@ lrg_editor_remove_script (LrgEditor *self,
 	return lrg_editor_commit_node_state (self, node, before, "Detach Script", FALSE);
 }
 
+/* The asset guid from the prefab's `.meta` sidecar, if it has one. */
+static gchar *
+asset_guid_for (const gchar *path)
+{
+	g_autoptr(LrgAssetMeta) meta = lrg_asset_meta_load_for_asset (path, NULL);
+
+	if (meta == NULL || lrg_asset_meta_get_guid (meta) == NULL)
+		return NULL;
+	return g_strdup (lrg_asset_meta_get_guid (meta));
+}
+
 LrgNode *
 lrg_editor_instantiate_prefab (LrgEditor    *self,
                                const gchar  *path,
@@ -1717,35 +1749,18 @@ lrg_editor_instantiate_prefab (LrgEditor    *self,
 {
 	g_autoptr(LrgNode) prefab = NULL;
 	g_autoptr(LrgNode) instance = NULL;
-	LrgNodeVisual     *visual;
+	g_autofree gchar  *asset_guid = NULL;
 
 	g_return_val_if_fail (LRG_IS_EDITOR (self), NULL);
 	g_return_val_if_fail (path != NULL, NULL);
 
-	prefab = lrg_prefab_load (path, error);
+	prefab = lrg_prefab_load_resolved (path, NULL, error);
 	if (prefab == NULL)
 		return NULL;
 
-	instance = lrg_prefab_instantiate (prefab);
-
-	/* Record where the instance came from so tools can find the source. */
-	visual = lrg_node_get_visual (instance);
-	if (visual == NULL)
-	{
-		g_autoptr(LrgNodeVisual) v = lrg_node_visual_new (LRG_NODE_VISUAL_PREFAB_INSTANCE);
-
-		lrg_node_visual_set_asset (v, path);
-		lrg_node_set_visual (instance, v);
-	}
-	else
-	{
-		GValue src = G_VALUE_INIT;
-
-		g_value_init (&src, G_TYPE_STRING);
-		g_value_set_string (&src, path);
-		lrg_node_visual_set_param (visual, "prefab:source", &src);
-		g_value_unset (&src);
-	}
+	/* A linked instance; it also carries the 0.8.0 source marker. */
+	asset_guid = asset_guid_for (path);
+	instance = lrg_prefab_instantiate_linked (prefab, path, asset_guid);
 
 	if (parent == NULL)
 		parent = lrg_level_get_root (self->level);
@@ -1758,6 +1773,383 @@ lrg_editor_instantiate_prefab (LrgEditor    *self,
 
 	lrg_editor_insert_node (self, instance, parent, -1);
 	return instance;
+}
+
+/* --------------------------------------------------------------------------
+ * Linked prefabs
+ * -------------------------------------------------------------------------- */
+
+static gboolean
+same_file (const gchar *a,
+           const gchar *b)
+{
+	g_autofree gchar *ca = NULL;
+	g_autofree gchar *cb = NULL;
+
+	if (a == NULL || b == NULL)
+		return FALSE;
+
+	ca = g_canonicalize_filename (a, NULL);
+	cb = g_canonicalize_filename (b, NULL);
+	return g_strcmp0 (ca, cb) == 0;
+}
+
+/* Drops selected nodes that left the level: a sync detaches nodes without
+ * the level's node-removed signal. */
+static void
+prune_selection (LrgEditor *self)
+{
+	LrgNode   *root = lrg_level_get_root (self->level);
+	GPtrArray *selected = lrg_editor_selection_get_nodes (self->selection);
+	gint       i;
+
+	for (i = (gint) selected->len - 1; i >= 0; i--)
+	{
+		LrgNode *sel = g_ptr_array_index (selected, i);
+
+		if (!lrg_node_is_ancestor_of (root, sel))
+			lrg_editor_selection_remove (self->selection, sel);
+	}
+}
+
+/* Records an already-applied command (no re-apply). */
+static void
+record_applied (LrgEditor        *self,
+                LrgEditorCommand *cmd)
+{
+	record_command (self, cmd);
+	if (self->open_group != NULL)
+		g_signal_emit (self, signals[SIGNAL_CHANGED], 0);
+}
+
+/* Records a prefab-sync command whose subtree was just mutated, or drops
+ * it when nothing changed. */
+static void
+finish_tree_command (LrgEditor        *self,
+                     LrgEditorCommand *cmd,
+                     gboolean          changed)
+{
+	if (!changed)
+	{
+		g_object_unref (cmd);
+		return;
+	}
+
+	lrg_editor_command_prefab_sync_capture (cmd);
+	record_applied (self, cmd);
+	prune_selection (self);
+}
+
+static LrgPrefabLink *
+require_link (LrgNode  *instance,
+              GError  **error)
+{
+	LrgPrefabLink *link = lrg_node_get_prefab_link (instance);
+
+	if (link == NULL || lrg_prefab_link_get_source_path (link) == NULL)
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		             "Node %s is not a linked prefab instance",
+		             lrg_node_get_name (instance) != NULL ? lrg_node_get_name (instance) : "");
+	return (link != NULL && lrg_prefab_link_get_source_path (link) != NULL) ? link : NULL;
+}
+
+static gboolean
+collect_instance_roots (LrgNode  *node,
+                        gpointer  user_data)
+{
+	if (lrg_node_get_prefab_link (node) != NULL && lrg_prefab_find_owner (node) == node)
+		g_ptr_array_add (user_data, node);
+	return TRUE;
+}
+
+static void
+unref_nullable (gpointer data)
+{
+	if (data != NULL)
+		g_object_unref (data);
+}
+
+/*
+ * sync_dependents:
+ *
+ * Body of lrg_editor_prefab_changed(): finds the outermost instances that
+ * depend on @path (directly or through nesting), loads each distinct
+ * source once (resolved), and syncs them inside one group.
+ */
+static guint
+sync_dependents (LrgEditor   *self,
+                 const gchar *path)
+{
+	g_autoptr(GPtrArray)  roots = g_ptr_array_new ();
+	g_autoptr(GHashTable) cache = NULL;
+	g_autofree gchar     *canon = g_canonicalize_filename (path, NULL);
+	guint                 changed = 0;
+	guint                 i;
+
+	lrg_node_foreach (lrg_level_get_root (self->level), collect_instance_roots, roots);
+	cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, unref_nullable);
+
+	lrg_editor_begin_group (self, "Sync Prefab");
+	for (i = 0; i < roots->len; i++)
+	{
+		LrgNode          *root = g_ptr_array_index (roots, i);
+		LrgPrefabLink    *link = lrg_node_get_prefab_link (root);
+		g_autofree gchar *src = g_canonicalize_filename (lrg_prefab_link_get_source_path (link), NULL);
+		LrgNode          *prefab;
+		LrgEditorCommand *cmd;
+
+		if (!g_hash_table_lookup_extended (cache, src, NULL, (gpointer *) &prefab))
+		{
+			g_auto(GStrv) deps = NULL;
+
+			prefab = lrg_prefab_load_resolved (src, &deps, NULL);
+			if (prefab != NULL && g_strcmp0 (src, canon) != 0 &&
+			    (deps == NULL || !g_strv_contains ((const gchar *const *) deps, canon)))
+				g_clear_object (&prefab);  /* unrelated to @path */
+			g_hash_table_insert (cache, g_strdup (src), prefab);
+		}
+		if (prefab == NULL)
+			continue;
+
+		cmd = lrg_editor_command_new_prefab_sync (self->level, root, "Sync Prefab");
+		if (lrg_prefab_sync_instance (root, prefab))
+		{
+			finish_tree_command (self, cmd, TRUE);
+			changed++;
+		}
+		else
+			g_object_unref (cmd);
+	}
+	lrg_editor_end_group (self);
+
+	g_signal_emit (self, signals[SIGNAL_PREFAB_SYNCED], 0, path, changed);
+	return changed;
+}
+
+guint
+lrg_editor_prefab_changed (LrgEditor   *self,
+                           const gchar *path)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR (self), 0);
+	g_return_val_if_fail (path != NULL, 0);
+
+	return sync_dependents (self, path);
+}
+
+gboolean
+lrg_editor_save_prefab (LrgEditor    *self,
+                        LrgNode      *node,
+                        const gchar  *path,
+                        GError      **error)
+{
+	LrgPrefabLink *link;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+
+	/* Saving an instance over its own source would give the source this
+	 * instance's guids and orphan every map: that is "apply all". */
+	link = lrg_node_get_prefab_link (node);
+	if (link != NULL && same_file (lrg_prefab_link_get_source_path (link), path) &&
+	    lrg_prefab_find_owner (node) == node)
+		return lrg_editor_prefab_apply (self, node, NULL, error);
+
+	if (!lrg_prefab_save (node, path, error))
+		return FALSE;
+
+	sync_dependents (self, path);
+	return TRUE;
+}
+
+gboolean
+lrg_editor_prefab_sync (LrgEditor  *self,
+                        LrgNode    *instance,
+                        GError    **error)
+{
+	LrgPrefabLink      *link;
+	g_autoptr(LrgNode)  prefab = NULL;
+	LrgEditorCommand   *cmd;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (instance), FALSE);
+
+	link = require_link (instance, error);
+	if (link == NULL)
+		return FALSE;
+	prefab = lrg_prefab_load_resolved (lrg_prefab_link_get_source_path (link), NULL, error);
+	if (prefab == NULL)
+		return FALSE;
+
+	cmd = lrg_editor_command_new_prefab_sync (self->level, instance, "Sync Prefab");
+	finish_tree_command (self, cmd, lrg_prefab_sync_instance (instance, prefab));
+	return TRUE;
+}
+
+gboolean
+lrg_editor_prefab_apply (LrgEditor          *self,
+                         LrgNode            *instance,
+                         const gchar *const *keys,
+                         GError            **error)
+{
+	LrgPrefabLink      *link;
+	g_autoptr(LrgNode)  prefab = NULL;
+	g_autofree gchar   *path = NULL;
+	g_autofree gchar   *before = NULL;
+	g_autofree gchar   *after = NULL;
+	LrgEditorCommand   *cmd;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (instance), FALSE);
+
+	link = require_link (instance, error);
+	if (link == NULL)
+		return FALSE;
+	path = g_strdup (lrg_prefab_link_get_source_path (link));
+
+	/* The old contents make the file write undoable. */
+	if (!g_file_get_contents (path, &before, NULL, error))
+		return FALSE;
+	prefab = lrg_prefab_load_resolved (path, NULL, error);
+	if (prefab == NULL)
+		return FALSE;
+
+	cmd = lrg_editor_command_new_prefab_sync (self->level, instance, "Apply to Prefab");
+	lrg_prefab_apply_overrides_to_source (instance, prefab, keys);
+	if (!lrg_prefab_save (prefab, path, error))
+	{
+		/* Nothing was recorded: put the instance back. */
+		lrg_editor_command_undo (cmd);
+		g_object_unref (cmd);
+		return FALSE;
+	}
+	if (!g_file_get_contents (path, &after, NULL, NULL))
+		after = g_strdup ("");
+
+	lrg_editor_begin_group (self, "Apply to Prefab");
+	finish_tree_command (self, cmd, TRUE);
+	record_applied (self, lrg_editor_command_new_prefab_file (path, before, after));
+	sync_dependents (self, path);
+	lrg_editor_end_group (self);
+
+	return TRUE;
+}
+
+gboolean
+lrg_editor_prefab_revert (LrgEditor    *self,
+                          LrgNode      *instance,
+                          const gchar  *key,
+                          GError      **error)
+{
+	LrgPrefabLink      *link;
+	g_autoptr(LrgNode)  prefab = NULL;
+	LrgEditorCommand   *cmd;
+	gboolean            changed = FALSE;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (instance), FALSE);
+
+	link = require_link (instance, error);
+	if (link == NULL)
+		return FALSE;
+	prefab = lrg_prefab_load_resolved (lrg_prefab_link_get_source_path (link), NULL, error);
+	if (prefab == NULL)
+		return FALSE;
+
+	cmd = lrg_editor_command_new_prefab_sync (self->level, instance,
+	                                          key != NULL ? "Revert Override" : "Revert All Overrides");
+	if (key != NULL)
+		changed = lrg_prefab_revert_override (instance, prefab, key);
+	else
+	{
+		g_auto(GStrv) keys = lrg_prefab_link_get_overrides (link);
+		guint         i;
+
+		for (i = 0; keys != NULL && keys[i] != NULL; i++)
+			if (lrg_prefab_revert_override (instance, prefab, keys[i]))
+				changed = TRUE;
+		if (lrg_prefab_sync_instance (instance, prefab))
+			changed = TRUE;
+	}
+	finish_tree_command (self, cmd, changed);
+	return TRUE;
+}
+
+gboolean
+lrg_editor_prefab_relink (LrgEditor    *self,
+                          LrgNode      *instance,
+                          const gchar  *path,
+                          GError      **error)
+{
+	g_autoptr(LrgNode)  prefab = NULL;
+	g_autofree gchar   *source = NULL;
+	g_autofree gchar   *asset_guid = NULL;
+	LrgEditorCommand   *cmd;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (instance), FALSE);
+
+	source = g_strdup (path != NULL ? path : lrg_prefab_get_marker_source (instance));
+	if (source == NULL)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		             "No prefab source recorded on %s",
+		             lrg_node_get_name (instance) != NULL ? lrg_node_get_name (instance) : "node");
+		return FALSE;
+	}
+
+	prefab = lrg_prefab_load_resolved (source, NULL, error);
+	if (prefab == NULL)
+		return FALSE;
+
+	asset_guid = asset_guid_for (source);
+	cmd = lrg_editor_command_new_prefab_sync (self->level, instance, "Relink Prefab");
+	finish_tree_command (self, cmd, lrg_prefab_relink (instance, prefab, source, asset_guid));
+	return TRUE;
+}
+
+gboolean
+lrg_editor_prefab_unlink (LrgEditor *self,
+                          LrgNode   *instance)
+{
+	LrgEditorCommand *cmd;
+	gboolean          changed;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (instance), FALSE);
+
+	cmd = lrg_editor_command_new_prefab_sync (self->level, instance, "Unlink Prefab");
+	changed = lrg_prefab_unlink (instance);
+	finish_tree_command (self, cmd, changed);
+	return changed;
+}
+
+gboolean
+lrg_editor_prefab_set_override (LrgEditor   *self,
+                                LrgNode     *node,
+                                const gchar *path,
+                                gboolean     overridden)
+{
+	LrgNode          *owner;
+	g_autofree gchar *key = NULL;
+	LrgPrefabLink    *link;
+
+	g_return_val_if_fail (LRG_IS_EDITOR (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+
+	owner = lrg_prefab_find_owner (node);
+	if (owner == NULL)
+		return FALSE;
+
+	link = lrg_node_get_prefab_link (owner);
+	key = lrg_prefab_make_override_key (owner, node, path);
+	if (overridden ? lrg_prefab_link_has_override (link, key)
+	               : !lrg_prefab_link_contains_override (link, key))
+		return FALSE;
+
+	execute_command (self, lrg_editor_command_new_prefab_override (owner, key, overridden));
+	return TRUE;
 }
 
 /* ==========================================================================

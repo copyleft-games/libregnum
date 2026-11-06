@@ -190,6 +190,25 @@ GPtrArray *comps   = lrg_node_get_components (node);  /* (transfer none) */
 GPtrArray *scripts = lrg_node_get_scripts (node);     /* (transfer none) */
 #+end_src
 
+*** Prefab Link
+:PROPERTIES:
+:CUSTOM_ID: prefab-link
+:END:
+Since 0.8.1 the root of a linked prefab instance holds an =LrgPrefabLink= in its =prefab-link= property (=lrg_node_get_prefab_link()= / =lrg_node_set_prefab_link()=). The link stores the source =.rprefab= path and asset guid, a map from every mirrored instance node guid to its source node guid, and the instance's override keys. Nested instances inside an instance carry their own link on their own root. The link is identity metadata, like the guid: =lrg_node_copy_state()= and =lrg_node_state_equal()= ignore it, so snapshot undo of ordinary edits never touches it.
+
+Any node of an instance can answer which source node it mirrors with =lrg_node_get_prefab_source_guid()=. The value is looked up in the map of the owning instance root (=lrg_prefab_find_owner()=), so it never goes stale; it is =NULL= for nodes outside instances and for nodes added in the instance.
+
+#+begin_src C
+LrgNode       *owner = lrg_prefab_find_owner (node);         /* instance root, or NULL */
+LrgPrefabLink *link  = owner ? lrg_node_get_prefab_link (owner) : NULL;
+const gchar   *src   = lrg_node_get_prefab_source_guid (node);
+
+if (lrg_prefab_is_overridden (node, "transform/location"))
+    g_print ("%s keeps its own location\n", lrg_node_get_name (node));
+#+end_src
+
+See [[file:prefabs.org][Prefabs]] for the full model and [[file:yaml-format.org::#prefab-link-block][Prefab Link Block]] for the file format.
+
 *** Instantiate Vfunc
 :PROPERTIES:
 :CUSTOM_ID: instantiate-vfunc

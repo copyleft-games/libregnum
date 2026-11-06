@@ -12,6 +12,7 @@
 #include "lrg-node-visual.h"
 #include "lrg-component-desc.h"
 #include "lrg-script-binding.h"
+#include "lrg-prefab.h"
 
 typedef struct
 {
@@ -32,6 +33,8 @@ typedef struct
 	LrgNodeVisual *visual;     /* owned, nullable */
 	GPtrArray     *components; /* owned LrgComponentDesc* */
 	GPtrArray     *scripts;    /* owned LrgScriptBinding* */
+
+	LrgPrefabLink *prefab_link; /* owned, nullable: prefab instance roots */
 } LrgNodePrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgNode, lrg_node, G_TYPE_OBJECT)
@@ -47,6 +50,7 @@ enum
 	PROP_LOCKED,
 	PROP_IS_2D,
 	PROP_VISUAL,
+	PROP_PREFAB_LINK,
 	N_PROPS
 };
 
@@ -87,6 +91,7 @@ lrg_node_finalize (GObject *object)
 	g_clear_object (&priv->visual);
 	g_clear_pointer (&priv->components, g_ptr_array_unref);
 	g_clear_pointer (&priv->scripts, g_ptr_array_unref);
+	g_clear_object (&priv->prefab_link);
 	tree_changed ();
 
 	G_OBJECT_CLASS (lrg_node_parent_class)->finalize (object);
@@ -120,6 +125,9 @@ lrg_node_get_property (GObject    *object,
 		break;
 	case PROP_VISUAL:
 		g_value_set_object (value, priv->visual);
+		break;
+	case PROP_PREFAB_LINK:
+		g_value_set_object (value, priv->prefab_link);
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -162,6 +170,9 @@ lrg_node_set_property (GObject      *object,
 		break;
 	case PROP_VISUAL:
 		g_set_object (&priv->visual, g_value_get_object (value));
+		break;
+	case PROP_PREFAB_LINK:
+		lrg_node_set_prefab_link (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -264,6 +275,22 @@ lrg_node_class_init (LrgNodeClass *klass)
 		                     LRG_TYPE_NODE_VISUAL,
 		                     G_PARAM_READWRITE |
 		                     G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgNode:prefab-link:
+	 *
+	 * The #LrgPrefabLink of a linked prefab instance root, or %NULL.
+	 *
+	 * Since: 0.8.1
+	 */
+	properties[PROP_PREFAB_LINK] =
+		g_param_spec_object ("prefab-link",
+		                     "Prefab Link",
+		                     "Link of a prefab instance root",
+		                     LRG_TYPE_PREFAB_LINK,
+		                     G_PARAM_READWRITE |
+		                     G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -666,6 +693,48 @@ lrg_node_get_scripts (LrgNode *self)
 	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
 
 	return NODE_PRIV (self)->scripts;
+}
+
+/* ==========================================================================
+ * Prefab link
+ * ========================================================================== */
+
+LrgPrefabLink *
+lrg_node_get_prefab_link (LrgNode *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
+
+	return NODE_PRIV (self)->prefab_link;
+}
+
+void
+lrg_node_set_prefab_link (LrgNode       *self,
+                          LrgPrefabLink *link)
+{
+	LrgNodePrivate *priv;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+	g_return_if_fail (link == NULL || LRG_IS_PREFAB_LINK (link));
+
+	priv = lrg_node_get_instance_private (self);
+	if (g_set_object (&priv->prefab_link, link))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PREFAB_LINK]);
+}
+
+const gchar *
+lrg_node_get_prefab_source_guid (LrgNode *self)
+{
+	LrgNode *owner;
+
+	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
+
+	/* Derived from the owner's map, so it can never go stale. */
+	owner = lrg_prefab_find_owner (self);
+	if (owner == NULL)
+		return NULL;
+
+	return lrg_prefab_link_map_lookup (NODE_PRIV (owner)->prefab_link,
+	                                   NODE_PRIV (self)->guid);
 }
 
 /* ==========================================================================

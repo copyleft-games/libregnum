@@ -205,6 +205,46 @@ children:
 =children:= is a recursive sequence of node mappings using the same schema. If a
 node has no children the key may be omitted entirely or set to an empty sequence.
 
+*** Prefab Link Block
+:PROPERTIES:
+:CUSTOM_ID: prefab-link-block
+:END:
+Since 0.8.1 the root of a linked prefab instance (see [[file:prefabs.org::#linked-instances][Linked Instances]]) carries an optional =prefab:= mapping. The node and its whole subtree are still written out in full, exactly as before; the block only adds editor metadata that ties the expanded copy back to its source. The runtime (=lrg_level_instantiate()=, =lrg_level_to_scene()=) never reads it, and readers older than 0.8.1 ignore it.
+
+#+begin_src yaml
+- name: "Crate2"
+  guid: "4a1e0c55-2d0b-4f3b-9f71-0c7f61c9a0d2"
+  # ... transform, visual, components, scripts as usual ...
+  prefab:
+    source: "assets/prefabs/crate.rprefab"
+    guid: "b0c4f3c2-8a52-4d1e-a3a1-6b2f4f7d9e10"   # asset guid, omitted when unknown
+    map:
+      4a1e0c55-2d0b-4f3b-9f71-0c7f61c9a0d2: 0f6f3a52-71a4-4c4e-8d2a-9a1c55c1e7b3
+      8e2a3c4d-1f0b-5a6c-9d7e-112233445566: 5c0ffee0-1234-4abc-8def-001122334455
+    overrides:
+      - "transform/scale"
+      - "components/health/max"
+      - "8e2a3c4d-1f0b-5a6c-9d7e-112233445566:visible"
+      - "children/+77d0a3b1-9c2e-4b51-a0f4-3e5d6c7b8a90"
+  children:
+    - name: "Lid"
+      guid: "8e2a3c4d-1f0b-5a6c-9d7e-112233445566"
+      # ...
+#+end_src
+
+| Field | Type | Required | Description |
+|-------+------+----------+-------------|
+| =source= | string | Yes | Path of the source =.rprefab=, as given to the editor; a block without it is ignored |
+| =guid= | string | No | Asset guid of the source (from its =.meta= sidecar); resolution falls back to =source= when absent |
+| =map= | mapping | Yes | Instance node guid to source node guid, for every node of the instance that mirrors a source node (the root included); nodes added in the instance are not listed |
+| =overrides= | sequence | No | Override keys, sorted; omitted when empty |
+
+An override key is a property path relative to one node of the instance. A bare path (=visible=, =transform/scale=) addresses the instance root; any other node is addressed as =<instance-node-guid>:<path>=. The path grammar is described in [[file:prefabs.org::#override-paths][Override Paths]].
+
+Nested instances (a prefab instance stored inside a prefab) carry the same block on their own root, in both =.rprefab= and =.rlevel= files. Inside a =.rprefab= the outermost node never carries a block: prefab variants are not supported, so =lrg_prefab_save()= drops it and =lrg_prefab_load()= ignores it.
+
+A 0.8.0 file has no block; its instances load unlinked and keep their 0.8.0 marker (a =prefab:source= visual param, or a =prefab-instance= visual whose =asset= is the source), which the editor's Relink action uses.
+
 ** Complete Example
 :PROPERTIES:
 :CUSTOM_ID: complete-example
@@ -300,7 +340,8 @@ timelines:
 - Integer prop values in the =props= or =params= bags round-trip as =int64= (YAML
   plain integers without decimal point).
 - The =.rprefab= format reuses this schema with =type: prefab= and a single root
-  node mapping.
+  node mapping. Since 0.8.1 =lrg_prefab_save()= writes node guids unchanged (they
+  used to be regenerated on every save), because linked instances map onto them.
 - Comments in YAML are supported when reading but are not preserved on write.
 
 ** See Also

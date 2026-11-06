@@ -702,10 +702,12 @@ gboolean lrg_editor_remove_script (LrgEditor *self,
  * @parent: (nullable): parent node, or %NULL for the root
  * @error: (nullable): return location for an error
  *
- * Loads a prefab and inserts a fresh instance (new GUIDs) as one undoable
- * command. The instance root remembers its source in a visual of kind
- * %LRG_NODE_VISUAL_PREFAB_INSTANCE only if it had no visual of its own;
- * otherwise the source path is stored in the `prefab:source` param.
+ * Loads a prefab (resolving nested prefabs) and inserts a linked instance
+ * (see lrg_prefab_instantiate_linked()) as one undoable command. The asset
+ * guid is read from the prefab's `.meta` sidecar when there is one. Like
+ * in 0.8.0, the instance root also remembers its source in a visual of
+ * kind %LRG_NODE_VISUAL_PREFAB_INSTANCE if it had no visual of its own,
+ * otherwise in the `prefab:source` visual param.
  *
  * Returns: (transfer none) (nullable): the instance root
  */
@@ -714,6 +716,168 @@ LrgNode * lrg_editor_instantiate_prefab (LrgEditor    *self,
                                          const gchar  *path,
                                          LrgNode      *parent,
                                          GError      **error);
+
+/**
+ * lrg_editor_save_prefab:
+ * @self: an #LrgEditor
+ * @node: the node subtree to save
+ * @path: destination `.rprefab` path
+ * @error: (nullable): return location for an error
+ *
+ * Saves @node as a prefab (lrg_prefab_save()) and then syncs every linked
+ * instance in the open level that depends on @path, as one undo group
+ * (see lrg_editor_prefab_changed()). When @node is itself a linked
+ * instance of @path, this is lrg_editor_prefab_apply() of all overrides
+ * instead, so the instance's guid map stays valid. The file write itself
+ * is not undoable.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_save_prefab (LrgEditor    *self,
+                                 LrgNode      *node,
+                                 const gchar  *path,
+                                 GError      **error);
+
+/**
+ * lrg_editor_prefab_changed:
+ * @self: an #LrgEditor
+ * @path: a `.rprefab` file that changed (saved here or modified on disk)
+ *
+ * Entry point for the UI's file monitor. Syncs every outermost linked
+ * instance in the open level whose source is @path, or whose source
+ * prefab nests @path (transitively), recording all changes as ONE undo
+ * group. Instances that are already up to date record nothing, so a file
+ * restored by an undo does not create new history. Emits
+ * #LrgEditor::prefab-synced.
+ *
+ * Returns: the number of instances that changed
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_prefab_changed (LrgEditor   *self,
+                                 const gchar *path);
+
+/**
+ * lrg_editor_prefab_sync:
+ * @self: an #LrgEditor
+ * @instance: a linked prefab instance root
+ * @error: (nullable): return location for an error
+ *
+ * Syncs one instance with its source file as one undoable step (nothing
+ * is recorded when it is already up to date).
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_sync (LrgEditor  *self,
+                                 LrgNode    *instance,
+                                 GError    **error);
+
+/**
+ * lrg_editor_prefab_apply:
+ * @self: an #LrgEditor
+ * @instance: a linked prefab instance root
+ * @keys: (nullable) (array zero-terminated=1): override keys to apply, or
+ *   %NULL for all
+ * @error: (nullable): return location for an error
+ *
+ * Writes the instance's values at @keys into the source prefab, saves the
+ * prefab file and syncs every other dependent instance, all as ONE undo
+ * group. Undo restores the previous file contents as well as the
+ * instances.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_apply (LrgEditor          *self,
+                                  LrgNode            *instance,
+                                  const gchar *const *keys,
+                                  GError            **error);
+
+/**
+ * lrg_editor_prefab_revert:
+ * @self: an #LrgEditor
+ * @instance: a linked prefab instance root
+ * @key: (nullable): the override key to revert, or %NULL for all
+ * @error: (nullable): return location for an error
+ *
+ * Reverts one override (or all of them) to the source values as one
+ * undoable step.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_revert (LrgEditor    *self,
+                                   LrgNode      *instance,
+                                   const gchar  *key,
+                                   GError      **error);
+
+/**
+ * lrg_editor_prefab_relink:
+ * @self: an #LrgEditor
+ * @instance: an unlinked instance root (e.g. loaded from a 0.8.0 level)
+ * @path: (nullable): the source prefab; %NULL reads the 0.8.0 marker
+ * @error: (nullable): return location for an error
+ *
+ * Links @instance to its source by structure (lrg_prefab_relink()) as one
+ * undoable step. The **Relink** action of the UI.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_relink (LrgEditor    *self,
+                                   LrgNode      *instance,
+                                   const gchar  *path,
+                                   GError      **error);
+
+/**
+ * lrg_editor_prefab_unlink:
+ * @self: an #LrgEditor
+ * @instance: a linked prefab instance root
+ *
+ * Unlinks @instance (lrg_prefab_unlink()) as one undoable step.
+ *
+ * Returns: %TRUE if @instance was linked
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_unlink (LrgEditor *self,
+                                   LrgNode   *instance);
+
+/**
+ * lrg_editor_prefab_set_override:
+ * @self: an #LrgEditor
+ * @node: a node of a linked prefab instance
+ * @path: a property path relative to @node
+ * @overridden: whether the path should be marked overridden
+ *
+ * Marks (or unmarks, without changing any value) @path of @node as one
+ * undoable %LRG_EDITOR_CMD_PREFAB_OVERRIDE step. Edits made through the
+ * editor's setters mark their paths automatically; this is for explicit
+ * UI toggles.
+ *
+ * Returns: %TRUE if the override set changed
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_set_override (LrgEditor   *self,
+                                         LrgNode     *node,
+                                         const gchar *path,
+                                         gboolean     overridden);
 
 /* ==========================================================================
  * Grouping
