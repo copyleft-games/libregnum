@@ -1,379 +1,198 @@
+#+title: UI Basics Example
+#+description: The smallest complete libregnum UI program: a canvas, a vertical box with a label, a primary button, a switch and a slider, a theme preset and the per-frame input and render calls
+#+authors: Zach Podbielniak
+#+categories: libregnum ui examples
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 2.0
+
 * UI Basics Example
 :PROPERTIES:
 :CUSTOM_ID: ui-basics-example
 :END:
-A complete example showing how to create a basic UI with the UI module.
+#+begin_quote
+*[[file:../index.org][Home]]* > Examples > UI Basics
+#+end_quote
 
-** Setup
+The smallest complete program that uses the retained UI framework. It opens a window, picks a theme preset, builds a vertical box holding a title label, a primary button, a switch and a slider, and runs the two per-frame calls every UI needs: =lrg_canvas_handle_input()= and =lrg_canvas_render()=. Everything else (animation, focus rings, gamepad navigation, shadows) comes for free.
+
+When you have this running, continue with the two full walkthroughs:
+
+- [[file:ui-showcase.org][UI Showcase]]: every widget in an application layout, runtime theme and accent switching, motion presets, gradient cards from style rules, toasts, a modal dialog and a 10,000-row list.
+- [[file:ui-game-menu.org][Game UI Menu]]: game menus over a live scene, a YAML theme, a fixed virtual resolution with letterboxing, a modal pause menu and gamepad-first navigation.
+
+** The program
 :PROPERTIES:
-:CUSTOM_ID: setup
+:CUSTOM_ID: ui-basics-program
 :END:
 #+begin_src C
+/* ui-basics.c - the smallest complete libregnum UI program */
+
 #include <libregnum.h>
+#include <graylib.h>
+#include <raylib.h>
 
-typedef struct
+/* on_play_clicked: a primary button was clicked (mouse, Enter, Space or gamepad A) */
+static void
+on_play_clicked (LrgButton *button,
+                 gpointer   user_data)
 {
-    LrgCanvas *ui_canvas;
-    LrgTheme *theme;
-    gboolean dialog_visible;
-    gfloat volume;
-    gboolean sound_enabled;
-} UIExample;
+	LrgLabel *status = LRG_LABEL (user_data);
 
-UIExample *example_new(void)
+	lrg_label_set_text (status, "Play clicked!");
+}
+
+/* on_bloom_toggled: the switch flipped; the new state comes with the signal */
+static void
+on_bloom_toggled (LrgCheckbox *checkbox,
+                  gboolean     checked,
+                  gpointer     user_data)
 {
-    UIExample *ex = g_new0(UIExample, 1);
-    ex->ui_canvas = lrg_canvas_new();
-    ex->theme = lrg_theme_get_default();
-    ex->dialog_visible = TRUE;
-    ex->volume = 0.7f;
-    ex->sound_enabled = TRUE;
-    return ex;
+	g_print ("bloom %s\n", checked ? "on" : "off");
+}
+
+/* on_volume_changed: the slider moved; read the value back from it */
+static void
+on_volume_changed (LrgSlider *slider,
+                   gpointer   user_data)
+{
+	g_print ("volume %.0f\n", lrg_slider_get_value (slider));
+}
+
+int
+main (int   argc,
+      char *argv[])
+{
+	g_autoptr(GrlWindow) window = NULL;
+	g_autoptr(LrgTheme)  theme = NULL;
+	g_autoptr(LrgCanvas) canvas = NULL;
+	LrgVBox             *root;
+	LrgLabel            *status;
+	LrgButton           *play;
+	LrgCheckbox         *bloom;
+	LrgSlider           *volume;
+
+	/* 1. A window, then a theme preset as the process-wide default */
+	SetConfigFlags (FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
+	window = grl_window_new (640, 400, "UI basics");
+	grl_window_set_target_fps (window, 60);
+
+	theme = lrg_theme_new_preset (argc > 1 ? argv[1] : "midnight");
+	if (theme == NULL)
+		theme = lrg_theme_new_preset ("midnight");
+	lrg_theme_set_default (theme);
+
+	/* 2. The canvas is the root of the widget tree; let it fill the
+	 *    window with the theme's WINDOW colour */
+	canvas = lrg_canvas_new ();
+	lrg_canvas_set_paint_background (canvas, TRUE);
+
+	/* 3. A vertical box stacks its children with padding and spacing */
+	root = lrg_vbox_new ();
+	lrg_container_set_padding (LRG_CONTAINER (root), 24.0f);
+	lrg_container_set_spacing (LRG_CONTAINER (root), 14.0f);
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (root));
+
+	status = lrg_label_new ("Hello, libregnum");
+	lrg_widget_add_class (LRG_WIDGET (status), "title");
+	lrg_container_add_child (LRG_CONTAINER (root), LRG_WIDGET (status));
+
+	play = lrg_button_new ("Play");
+	lrg_widget_add_class (LRG_WIDGET (play), "primary");
+	lrg_widget_set_halign (LRG_WIDGET (play), LRG_ALIGN_START);
+	g_signal_connect (play, "clicked", G_CALLBACK (on_play_clicked), status);
+	lrg_container_add_child (LRG_CONTAINER (root), LRG_WIDGET (play));
+
+	bloom = lrg_checkbox_new_with_style ("Enable bloom", LRG_CHECKBOX_STYLE_SWITCH);
+	g_signal_connect (bloom, "toggled", G_CALLBACK (on_bloom_toggled), NULL);
+	lrg_container_add_child (LRG_CONTAINER (root), LRG_WIDGET (bloom));
+
+	volume = lrg_slider_new_with_range (0.0, 100.0, 1.0);
+	lrg_slider_set_value (volume, 65.0);
+	g_signal_connect (volume, "value-changed", G_CALLBACK (on_volume_changed), NULL);
+	lrg_container_add_child (LRG_CONTAINER (root), LRG_WIDGET (volume));
+
+	/* 4. The frame loop: follow the window size, feed input, render */
+	while (!grl_window_should_close (window))
+	{
+		gfloat w = (gfloat) GetScreenWidth ();
+		gfloat h = (gfloat) GetScreenHeight ();
+
+		lrg_widget_set_size (LRG_WIDGET (canvas), w, h);
+		lrg_widget_set_size (LRG_WIDGET (root), w, h);
+
+		lrg_canvas_handle_input (canvas);
+
+		grl_window_begin_drawing (window);
+		lrg_canvas_render (canvas);
+		grl_window_end_drawing (window);
+	}
+
+	/* The canvas owns its children; drop our own references */
+	g_object_unref (volume);
+	g_object_unref (bloom);
+	g_object_unref (play);
+	g_object_unref (status);
+	g_object_unref (root);
+	return 0;
 }
 #+end_src
 
-** Setting Up Theme
-:PROPERTIES:
-:CUSTOM_ID: setting-up-theme
-:END:
-#+begin_src C
-void setup_dark_theme(UIExample *ex)
-{
-    LrgTheme *theme = ex->theme;
+Build it like any example (copy the compile line =make -C examples= prints for =ui-showcase=), then run it with an optional preset name:
 
-    /* Colors */
-    GrlColor bg = GRL_COLOR(20, 20, 30, 255);
-    GrlColor surface = GRL_COLOR(40, 40, 50, 255);
-    GrlColor primary = GRL_COLOR(100, 150, 255, 255);
-    GrlColor text = GRL_COLOR(220, 220, 220, 255);
-    GrlColor border = GRL_COLOR(80, 80, 100, 255);
-
-    lrg_theme_set_background_color(theme, &bg);
-    lrg_theme_set_surface_color(theme, &surface);
-    lrg_theme_set_primary_color(theme, &primary);
-    lrg_theme_set_text_color(theme, &text);
-    lrg_theme_set_border_color(theme, &border);
-
-    /* Typography */
-    lrg_theme_set_font_size_small(theme, 12.0f);
-    lrg_theme_set_font_size_normal(theme, 16.0f);
-    lrg_theme_set_font_size_large(theme, 24.0f);
-
-    /* Spacing */
-    lrg_theme_set_padding_small(theme, 4.0f);
-    lrg_theme_set_padding_normal(theme, 8.0f);
-    lrg_theme_set_padding_large(theme, 16.0f);
-    lrg_theme_set_border_width(theme, 1.0f);
-    lrg_theme_set_corner_radius(theme, 4.0f);
-}
+#+begin_src sh
+./ui-basics
+./ui-basics daylight
+./ui-basics catppuccin-mocha
 #+end_src
 
-** Creating UI Layout
+** Step by step
 :PROPERTIES:
-:CUSTOM_ID: creating-ui-layout
+:CUSTOM_ID: ui-basics-steps
 :END:
-#+begin_src C
-void create_settings_dialog(UIExample *ex)
-{
-    LrgCanvas *canvas = ex->ui_canvas;
-
-    /* Main dialog panel */
-    g_autoptr(LrgPanel) dialog = lrg_panel_new();
-    lrg_widget_set_position(LRG_WIDGET(dialog), 150, 100);
-    lrg_widget_set_size(LRG_WIDGET(dialog), 500, 400);
-
-    GrlColor bg = GRL_COLOR(40, 40, 50, 255);
-    GrlColor border = GRL_COLOR(100, 100, 120, 255);
-    lrg_panel_set_background_color(dialog, &bg);
-    lrg_panel_set_border_color(dialog, &border);
-    lrg_panel_set_border_width(dialog, 2.0f);
-    lrg_panel_set_corner_radius(dialog, 8.0f);
-
-    lrg_container_add_child(LRG_CONTAINER(canvas), LRG_WIDGET(dialog));
-
-    /* Main layout: VBox */
-    g_autoptr(LrgVBox) main_layout = lrg_vbox_new();
-    lrg_container_set_spacing(LRG_CONTAINER(main_layout), 15);
-    lrg_container_set_padding(LRG_CONTAINER(main_layout), 20);
-    lrg_container_add_child(LRG_CONTAINER(dialog), LRG_WIDGET(main_layout));
-
-    /* Title */
-    g_autoptr(LrgLabel) title = lrg_label_new("Settings");
-    GrlColor title_color = GRL_COLOR(100, 150, 255, 255);
-    lrg_label_set_color(title, &title_color);
-    lrg_label_set_font_size(title, 24.0f);
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(title));
-
-    /* Audio section */
-    g_autoptr(LrgLabel) audio_label = lrg_label_new("Audio");
-    GrlColor section_color = GRL_COLOR(150, 150, 180, 255);
-    lrg_label_set_color(audio_label, &section_color);
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(audio_label));
-
-    /* Sound enable checkbox */
-    g_autoptr(LrgCheckbox) sound_check = lrg_checkbox_new("Enable Sound");
-    lrg_checkbox_set_checked(sound_check, TRUE);
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(sound_check));
-
-    /* Volume slider with label */
-    g_autoptr(LrgHBox) volume_container = lrg_hbox_new();
-    lrg_container_set_spacing(LRG_CONTAINER(volume_container), 10);
-
-    g_autoptr(LrgLabel) volume_label = lrg_label_new("Volume:");
-    g_autoptr(LrgSlider) volume_slider = lrg_slider_new_with_range(0, 100, 5);
-    lrg_slider_set_value(volume_slider, 70.0);
-
-    GrlColor fill_color = GRL_COLOR(100, 150, 255, 255);
-    lrg_slider_set_fill_color(volume_slider, &fill_color);
-
-    lrg_widget_set_width(LRG_WIDGET(volume_label), 60);
-    lrg_widget_set_width(LRG_WIDGET(volume_slider), 300);
-
-    lrg_container_add_child(LRG_CONTAINER(volume_container), LRG_WIDGET(volume_label));
-    lrg_container_add_child(LRG_CONTAINER(volume_container), LRG_WIDGET(volume_slider));
-
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(volume_container));
-
-    /* Graphics section */
-    g_autoptr(LrgLabel) graphics_label = lrg_label_new("Graphics");
-    lrg_label_set_color(graphics_label, &section_color);
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(graphics_label));
-
-    /* Brightness slider */
-    g_autoptr(LrgHBox) brightness_container = lrg_hbox_new();
-    lrg_container_set_spacing(LRG_CONTAINER(brightness_container), 10);
-
-    g_autoptr(LrgLabel) brightness_label = lrg_label_new("Brightness:");
-    g_autoptr(LrgSlider) brightness_slider = lrg_slider_new_with_range(50, 150, 5);
-    lrg_slider_set_value(brightness_slider, 100.0);
-
-    lrg_slider_set_fill_color(brightness_slider, &fill_color);
-
-    lrg_widget_set_width(LRG_WIDGET(brightness_label), 80);
-    lrg_widget_set_width(LRG_WIDGET(brightness_slider), 280);
-
-    lrg_container_add_child(LRG_CONTAINER(brightness_container), LRG_WIDGET(brightness_label));
-    lrg_container_add_child(LRG_CONTAINER(brightness_container), LRG_WIDGET(brightness_slider));
-
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(brightness_container));
-
-    /* Button row at bottom */
-    g_autoptr(LrgHBox) button_row = lrg_hbox_new();
-    lrg_container_set_spacing(LRG_CONTAINER(button_row), 10);
-
-    g_autoptr(LrgButton) ok_btn = lrg_button_new("OK");
-    g_autoptr(LrgButton) cancel_btn = lrg_button_new("Cancel");
-    g_autoptr(LrgButton) apply_btn = lrg_button_new("Apply");
-
-    lrg_widget_set_width(LRG_WIDGET(ok_btn), 100);
-    lrg_widget_set_width(LRG_WIDGET(cancel_btn), 100);
-    lrg_widget_set_width(LRG_WIDGET(apply_btn), 100);
-
-    GrlColor btn_normal = GRL_COLOR(100, 100, 100, 255);
-    GrlColor btn_hover = GRL_COLOR(120, 120, 120, 255);
-    GrlColor btn_text = GRL_COLOR(255, 255, 255, 255);
-
-    for (guint i = 0; i < 3; i++)
-    {
-        LrgButton *btn = (i == 0) ? ok_btn : (i == 1) ? cancel_btn : apply_btn;
-        lrg_button_set_normal_color(btn, &btn_normal);
-        lrg_button_set_hover_color(btn, &btn_hover);
-        lrg_button_set_text_color(btn, &btn_text);
-        lrg_button_set_corner_radius(btn, 4.0f);
-    }
-
-    lrg_container_add_child(LRG_CONTAINER(button_row), LRG_WIDGET(ok_btn));
-    lrg_container_add_child(LRG_CONTAINER(button_row), LRG_WIDGET(cancel_btn));
-    lrg_container_add_child(LRG_CONTAINER(button_row), LRG_WIDGET(apply_btn));
-
-    lrg_container_add_child(LRG_CONTAINER(main_layout), LRG_WIDGET(button_row));
-}
-#+end_src
-
-** Game Loop Integration
+*** Theme first
 :PROPERTIES:
-:CUSTOM_ID: game-loop-integration
+:CUSTOM_ID: ui-basics-theme
 :END:
-#+begin_src C
-void ui_update(UIExample *ex)
-{
-    /* Process input and dispatch to UI */
-    lrg_canvas_handle_input(ex->ui_canvas);
+=lrg_theme_new_preset()= returns one of the built-in themes (=midnight=, =daylight=, =catppuccin-mocha=, =catppuccin-latte=, =high-contrast=; the list is also available from =lrg_theme_list_presets()=), or =NULL= for an unknown name. =lrg_theme_set_default()= installs it process-wide and takes its own reference, so the local =g_autoptr= is fine. Widgets read the default theme every frame: calling =lrg_theme_set_default()= again later restyles the running UI, and =lrg_theme_set_accent()= recolours every accent-coloured part from one colour. See [[file:../guides/theming.org][Theming Guide]].
 
-    /* Render entire UI */
-    lrg_canvas_render(ex->ui_canvas);
-}
-
-void ui_destroy(UIExample *ex)
-{
-    g_object_unref(ex->ui_canvas);
-    g_free(ex);
-}
-#+end_src
-
-** Example: Interactive Dialog
+*** The canvas and the tree
 :PROPERTIES:
-:CUSTOM_ID: example-interactive-dialog
+:CUSTOM_ID: ui-basics-tree
 :END:
-#+begin_src C
-typedef struct
-{
-    LrgButton *ok_button;
-    LrgButton *cancel_button;
-    gboolean result;  /* TRUE for OK, FALSE for Cancel */
-} DialogResult;
+=LrgCanvas= is the root of a widget tree and the thing that turns input into events and widgets into draw calls. =lrg_canvas_set_paint_background()= makes it fill itself with the theme's window colour; leave it off (the default) when the UI is drawn over a game scene.
 
-void create_yes_no_dialog(LrgCanvas *canvas,
-                          const gchar *message,
-                          DialogResult *result)
-{
-    result->result = FALSE;
+=LrgVBox= stacks its children top to bottom with the container's padding and spacing. Children stretch to the box's width unless their horizontal alignment says otherwise, which is why the button gets =LRG_ALIGN_START=. =lrg_container_add_child()= takes its own reference to the child.
 
-    /* Dialog panel */
-    g_autoptr(LrgPanel) dialog = lrg_panel_new();
-    lrg_widget_set_position(LRG_WIDGET(dialog), 300, 200);
-    lrg_widget_set_size(LRG_WIDGET(dialog), 400, 150);
-
-    GrlColor bg = GRL_COLOR(40, 40, 50, 255);
-    lrg_panel_set_background_color(dialog, &bg);
-
-    lrg_container_add_child(LRG_CONTAINER(canvas), LRG_WIDGET(dialog));
-
-    /* Layout */
-    g_autoptr(LrgVBox) layout = lrg_vbox_new();
-    lrg_container_set_padding(LRG_CONTAINER(layout), 20);
-    lrg_container_set_spacing(LRG_CONTAINER(layout), 20);
-    lrg_container_add_child(LRG_CONTAINER(dialog), LRG_WIDGET(layout));
-
-    /* Message */
-    g_autoptr(LrgLabel) msg_label = lrg_label_new(message);
-    lrg_container_add_child(LRG_CONTAINER(layout), LRG_WIDGET(msg_label));
-
-    /* Buttons */
-    g_autoptr(LrgHBox) btn_row = lrg_hbox_new();
-    lrg_container_set_spacing(LRG_CONTAINER(btn_row), 10);
-
-    result->ok_button = lrg_button_new("Yes");
-    result->cancel_button = lrg_button_new("No");
-
-    lrg_widget_set_width(LRG_WIDGET(result->ok_button), 100);
-    lrg_widget_set_width(LRG_WIDGET(result->cancel_button), 100);
-
-    lrg_container_add_child(LRG_CONTAINER(btn_row), LRG_WIDGET(result->ok_button));
-    lrg_container_add_child(LRG_CONTAINER(btn_row), LRG_WIDGET(result->cancel_button));
-
-    lrg_container_add_child(LRG_CONTAINER(layout), LRG_WIDGET(btn_row));
-}
-#+end_src
-
-** Common UI Patterns
+*** Widgets and signals
 :PROPERTIES:
-:CUSTOM_ID: common-ui-patterns
+:CUSTOM_ID: ui-basics-widgets
 :END:
-*** Menu with List
+| Widget                                                             | Signal          | Handler signature                                    |
+|--------------------------------------------------------------------+-----------------+------------------------------------------------------|
+| =lrg_button_new ("Play")= + class =primary=                        | =clicked=       | =(LrgButton *, gpointer)=                            |
+| =lrg_checkbox_new_with_style (label, LRG_CHECKBOX_STYLE_SWITCH)=   | =toggled=       | =(LrgCheckbox *, gboolean checked, gpointer)=        |
+| =lrg_slider_new_with_range (min, max, step)=                       | =value-changed= | =(LrgSlider *, gpointer)=, read =lrg_slider_get_value()= |
+
+Style classes such as =primary= (accent fill), =flat=, =danger=, =title=, =heading= and =muted= are interpreted by the theme; add them with =lrg_widget_add_class()=. A button fires =clicked= on a mouse click and on Enter, Space or gamepad A while focused; =Tab= and the arrow keys or D-pad move focus. See [[file:../modules/ui/widgets/button.org][Button]], [[file:../modules/ui/widgets/checkbox.org][Checkbox]], [[file:../modules/ui/widgets/slider.org][Slider]], [[file:../modules/ui/widgets/label.org][Label]] and [[file:../modules/ui/widgets/vbox.org][VBox]].
+
+*** The frame loop
 :PROPERTIES:
-:CUSTOM_ID: menu-with-list
+:CUSTOM_ID: ui-basics-loop
 :END:
-#+begin_src C
-g_autoptr(LrgVBox) menu = lrg_vbox_new();
-lrg_container_set_spacing(LRG_CONTAINER(menu), 5);
+1. Size the canvas and the root box to the window, so resizing works. Setting an unchanged size costs nothing.
+2. =lrg_canvas_handle_input()=: polls mouse, keyboard and gamepad, dispatches events (your signal handlers run here) and advances every spring and appear animation by the frame time. Call it every frame.
+3. =lrg_canvas_render()= between =grl_window_begin_drawing()= and =grl_window_end_drawing()=: lays out what changed, records the tree into a paint list and draws it.
 
-const gchar *items[] = {"New Game", "Continue", "Settings", "Quit"};
-for (guint i = 0; i < 4; i++)
-{
-    g_autoptr(LrgButton) item = lrg_button_new(items[i]);
-    lrg_widget_set_width(LRG_WIDGET(item), 200);
-    lrg_widget_set_height(LRG_WIDGET(item), 40);
-    lrg_container_add_child(LRG_CONTAINER(menu), LRG_WIDGET(item));
-}
-#+end_src
+To draw the UI over a game, render your scene first, then call =lrg_canvas_render()= in the same drawing block. To draw at a fixed virtual resolution, render into a render texture and install a pointer transform; [[file:ui-game-menu.org#game-menu-virtual][Game UI Menu]] shows how.
 
-*** Form Layout
+** Next steps
 :PROPERTIES:
-:CUSTOM_ID: form-layout
+:CUSTOM_ID: ui-basics-next
 :END:
-#+begin_src C
-g_autoptr(LrgGrid) form = lrg_grid_new(2);
-lrg_grid_set_column_spacing(form, 10);
-lrg_grid_set_row_spacing(form, 10);
-
-/* Name field */
-g_autoptr(LrgLabel) name_lbl = lrg_label_new("Name:");
-g_autoptr(LrgTextInput) name_input = lrg_text_input_new_with_placeholder("Enter your name");
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(name_lbl));
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(name_input));
-
-/* Email field */
-g_autoptr(LrgLabel) email_lbl = lrg_label_new("Email:");
-g_autoptr(LrgTextInput) email_input = lrg_text_input_new_with_placeholder("Enter your email");
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(email_lbl));
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(email_input));
-#+end_src
-
-*** Progress Indicator
-:PROPERTIES:
-:CUSTOM_ID: progress-indicator
-:END:
-#+begin_src C
-g_autoptr(LrgVBox) progress_box = lrg_vbox_new();
-lrg_container_set_spacing(LRG_CONTAINER(progress_box), 10);
-
-g_autoptr(LrgLabel) status = lrg_label_new("Loading...");
-lrg_container_add_child(LRG_CONTAINER(progress_box), LRG_WIDGET(status));
-
-g_autoptr(LrgProgressBar) bar = lrg_progress_bar_new();
-lrg_progress_bar_set_show_text(bar, TRUE);
-lrg_progress_bar_set_value(bar, 45.0);
-lrg_progress_bar_set_max(bar, 100.0);
-lrg_widget_set_width(LRG_WIDGET(bar), 300);
-
-lrg_container_add_child(LRG_CONTAINER(progress_box), LRG_WIDGET(bar));
-#+end_src
-
-** Complete Main Function
-:PROPERTIES:
-:CUSTOM_ID: complete-main-function
-:END:
-#+begin_src C
-int main(void)
-{
-    UIExample *ex = example_new();
-    setup_dark_theme(ex);
-    create_settings_dialog(ex);
-
-    gboolean running = TRUE;
-
-    while (running)
-    {
-        /* Process UI input and rendering */
-        ui_update(ex);
-
-        /* Game loop continues... */
-        running = get_window_should_close() == FALSE;
-    }
-
-    ui_destroy(ex);
-    return 0;
-}
-#+end_src
-
-** Key Concepts Demonstrated
-:PROPERTIES:
-:CUSTOM_ID: key-concepts-demonstrated
-:END:
-1. *Hierarchical layout* - Nested containers with VBox/HBox
-2. *Theme customization* - Colors, fonts, spacing
-3. *Widget composition* - Building complex UIs from simple widgets
-4. *Event handling* - Buttons respond to clicks
-5. *Focus management* - Text input gets keyboard focus
-6. *Layout spacing* - Consistent padding and spacing
-7. *Styled containers* - Panels with borders and colors
-8. *Form layouts* - Using grids for aligned input fields
-
-** Next Steps
-:PROPERTIES:
-:CUSTOM_ID: next-steps
-:END:
-- See [[../modules/ui/index.md][UI Module Overview]] for complete documentation
-- See [[file:input-handling.org][Input Handling Example]] for input integration
-- See [[../modules/ui/widget.md][Widget Documentation]] for widget details
+- [[file:ui-showcase.org][UI Showcase]] and [[file:ui-game-menu.org][Game UI Menu]]: complete walkthroughs
+- [[file:../modules/ui/index.org][UI module]]: overview and widget list
+- [[file:../modules/ui/layout.org][Layout]]: boxes, grids, fill weights, alignment, margins
+- [[file:../modules/ui/styling.org][Styling]] and [[file:../modules/ui/theme.org][Theme]]: style classes, rules and colour roles
+- [[file:../modules/ui/animation.org][Animation]]: springs, motion presets, appear animations
+- [[file:../modules/ui/input-and-focus.org][Input and Focus]] and [[file:../modules/ui/canvas-api.org][Canvas API]]

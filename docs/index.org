@@ -139,6 +139,9 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/omnomagon.org][3D Omnomagon]]* - A complete playable 3D Omnomagon game demonstrating data-driven design, type registration, YAML loading, 3D rendering, collision detection, and simple AI
 - *[[file:examples/dlc-store.org][DLC Store Demo]]* - DLC ownership verification, content gating, trial support, and store integration
 - *[[file:examples/native-dlc.org][Native DLC Example]]* - Loading native GModule shared libraries as DLC content
+- *[[file:examples/ui-basics.org][UI Basics]]* - A minimal retained-UI program: canvas, theme preset, button, switch and slider
+- *[[file:examples/ui-showcase.org][UI Showcase]]* - App-style tour of every widget, theme presets and accents, motion, gradient cards, toasts, a modal dialog and a 10,000-row list
+- *[[file:examples/ui-game-menu.org][Game UI Menu]]* - Game menus over a live scene: YAML theme, virtual resolution with a pointer transform, gamepad navigation, pause modal and achievement toasts
 
 ** Core Concepts Overview
 :PROPERTIES:
