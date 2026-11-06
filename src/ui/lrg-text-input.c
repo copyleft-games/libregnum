@@ -445,15 +445,43 @@ lrg_text_input_handle_event (LrgWidget        *widget,
             return TRUE;
 
         default:
-            /* Handle printable characters */
+            /*
+             * Printable keys are swallowed here so they don't trigger
+             * shortcuts while typing, but the character itself arrives
+             * as a separate LRG_UI_EVENT_TEXT_INPUT carrying the
+             * composed codepoint (layout, Shift and dead keys applied).
+             * Turning the raw key code into a character here produced
+             * uppercase-only ASCII.
+             */
             if (key >= 32 && key <= 126)
             {
-                insert_char_at_cursor (self, (gunichar)key);
                 return TRUE;
             }
             break;
         }
         break;
+
+    case LRG_UI_EVENT_TEXT_INPUT:
+        {
+            gunichar codepoint;
+
+            if (!self->focused)
+            {
+                return FALSE;
+            }
+
+            /* Reject control characters; everything printable,
+             * including non-ASCII, is inserted as-is */
+            codepoint = lrg_ui_event_get_codepoint (event);
+            if (codepoint == 0 || g_unichar_iscntrl (codepoint) ||
+                !g_unichar_validate (codepoint))
+            {
+                return FALSE;
+            }
+
+            insert_char_at_cursor (self, codepoint);
+            return TRUE;
+        }
 
     case LRG_UI_EVENT_FOCUS_IN:
         self->focused = TRUE;
