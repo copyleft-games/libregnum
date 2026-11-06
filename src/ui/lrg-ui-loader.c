@@ -74,6 +74,10 @@
 #include "lrg-node-graph.h"
 #include "lrg-timeline-view.h"
 #include "lrg-dock-area.h"
+#include "lrg-block-editor.h"
+#include "lrg-file-browser.h"
+#include "lrg-header-bar.h"
+#include "lrg-pagination.h"
 #include "lrg-canvas.h"
 #include "lrg-ui-actions.h"
 #include "../lrg-enums.h"
@@ -2809,9 +2813,14 @@ typedef enum
 	ATTR_ITEMS,
 	ATTR_ANCHOR,       /* child of an LrgAnchorLayout: placement in `anchor` */
 	ATTR_PAGE_NAME,    /* child of an LrgSwitcher: page name in `text` */
+	ATTR_PACK,         /* child of an LrgHeaderBar: `ival` 0 start, 1 end, 2 title */
 	ATTR_DOCK_PLACE,   /* LrgDockPanel in an LrgDockArea: `ival` position, `text` relative-to */
 	ATTR_DOCK_LAYOUT,  /* LrgDockArea: lrg_dock_area_load_layout() document in `text` */
 	ATTR_GRAPH,        /* LrgNodeGraph: lrg_node_graph_load_yaml() document in `text` */
+	ATTR_BLOCKS,       /* LrgBlockEditor: lrg_block_editor_load_yaml() document in `text` */
+	ATTR_FB_LOCATION,  /* LrgFileBrowser: folder path ("~" expanded) in `text` */
+	ATTR_FB_FILTERS,   /* LrgFileBrowser: LrgFileFilter * in `specs`, first is current */
+	ATTR_FB_PLACES,    /* LrgFileBrowser: PlaceSpec * in `specs` */
 	ATTR_TRACKS,       /* LrgTimelineView: TrackSpec tree in `specs` */
 	ATTR_MARKERS       /* LrgTimelineView: MarkerSpec array in `specs` */
 } AttrKind;
@@ -5070,6 +5079,8 @@ child_attr_parent_type (const UiAttr *a)
 		return LRG_TYPE_ANCHOR_LAYOUT;
 	case ATTR_PAGE_NAME:
 		return LRG_TYPE_SWITCHER;
+	case ATTR_PACK:
+		return LRG_TYPE_HEADER_BAR;
 	case ATTR_DOCK_PLACE:
 		return LRG_TYPE_DOCK_AREA;
 	default:
@@ -5102,7 +5113,8 @@ check_child_attrs (GType         parent_type,
 			set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, child->path, a->value,
 			           "%s only valid on a child of %s%s%s",
 			           a->kind == ATTR_DOCK_PLACE ? "'position' and 'relative-to' are" :
-			           a->kind == ATTR_ANCHOR ? "'anchor' is" : "'page-name' is",
+			           a->kind == ATTR_ANCHOR ? "'anchor' is" :
+			           a->kind == ATTR_PACK ? "'pack' is" : "'page-name' is",
 			           g_type_name (need),
 			           parent_type != G_TYPE_INVALID ? ", not of " : "",
 			           parent_type != G_TYPE_INVALID ? g_type_name (parent_type) : "");
@@ -5129,6 +5141,32 @@ child_attr_apply (LrgContainer *parent,
 	case ATTR_PAGE_NAME:
 		if (LRG_IS_SWITCHER (parent))
 			lrg_switcher_set_child_name (LRG_SWITCHER (parent), w, a->text);
+		break;
+	case ATTR_PACK:
+		/* `title` makes the child the bar's centred title widget;
+		 * start/end move it between the two packing groups */
+		if (LRG_IS_HEADER_BAR (parent))
+		{
+			LrgHeaderBar *bar = LRG_HEADER_BAR (parent);
+
+			if (a->ival == 2)
+				lrg_header_bar_set_title_widget (bar, w);
+			else
+			{
+				if (lrg_header_bar_get_title_widget (bar) == w)
+				{
+					/* Was the title: put it back as an ordinary child.
+					 * Unsetting the title removes it from the bar, which
+					 * may hold the only reference: keep it alive. */
+					g_autoptr(LrgWidget) keep = g_object_ref (w);
+
+					lrg_header_bar_set_title_widget (bar, NULL);
+					if (lrg_widget_get_parent (w) == NULL)
+						lrg_container_add_child (parent, w);
+				}
+				lrg_header_bar_set_child_packing (bar, w, a->ival == 1);
+			}
+		}
 		break;
 	case ATTR_DOCK_PLACE:
 		/* The placement only matters when the panel is docked */
@@ -5160,6 +5198,22 @@ child_attr_reset (LrgContainer *parent,
 		if (LRG_IS_SWITCHER (parent))
 			lrg_switcher_set_child_name (LRG_SWITCHER (parent), w, NULL);
 		break;
+	case ATTR_PACK:
+		if (LRG_IS_HEADER_BAR (parent))
+		{
+			LrgHeaderBar *bar = LRG_HEADER_BAR (parent);
+
+			if (lrg_header_bar_get_title_widget (bar) == w)
+			{
+				g_autoptr(LrgWidget) keep = g_object_ref (w);
+
+				lrg_header_bar_set_title_widget (bar, NULL);
+				if (lrg_widget_get_parent (w) == NULL)
+					lrg_container_add_child (parent, w);
+			}
+			lrg_header_bar_set_child_packing (bar, w, FALSE);
+		}
+		break;
 	default:
 		break;
 	}
@@ -5186,6 +5240,7 @@ typedef struct
 	gboolean has_tangents;
 	gdouble  in_slope;
 	gdouble  out_slope;
+	gint     shape;        /* LrgCanvasKeyShape, AUTO unless `shape:` */
 } KeySpec;
 
 typedef struct
@@ -5347,7 +5402,7 @@ parse_track (Lv           *v,
              GError      **error)
 {
 	static const gchar *clip_keys[] = { "start", "duration", "label", "color", NULL };
-	static const gchar *key_keys[] = { "time", "value", "interpolation", "tangents", NULL };
+	static const gchar *key_keys[] = { "time", "value", "interpolation", "tangents", "shape", NULL };
 	g_autofree gchar *msg = NULL;
 	TrackSpec *t;
 	GObjectClass *klass;
@@ -5453,6 +5508,11 @@ parse_track (Lv           *v,
 						ks.in_slope = a;
 						ks.out_slope = b;
 					}
+
+					/* Per-key shape: beats the timeline's key-shape and the look */
+					ks.shape = LRG_CANVAS_KEY_SHAPE_AUTO;
+					if (ok && e->kind == LV_MAP && lv_map_get (e, "shape") != NULL)
+						ok = conv_enum (LRG_TYPE_CANVAS_KEY_SHAPE, lv_map_get (e, "shape"), &ks.shape, &msg);
 					if (!ok)
 					{
 						set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
@@ -5682,6 +5742,8 @@ timeline_add_tracks (LrgTimelineView      *tv,
 
 			if (ks->has_tangents)
 				lrg_timeline_view_set_keyframe_tangents (tv, id, ks->in_slope, ks->out_slope);
+			if (ks->shape != LRG_CANVAS_KEY_SHAPE_AUTO)
+				lrg_timeline_view_set_keyframe_shape (tv, id, (LrgCanvasKeyShape) ks->shape);
 		}
 		timeline_add_tracks (tv, s->children, track, NULL);
 	}
@@ -5726,6 +5788,287 @@ timeline_apply (LrgTimelineView *tv,
  * them into a throwaway widget, so a bad document fails before anything
  * is built.
  * -------------------------------------------------------------------------- */
+
+/* Probes a block editor document (palette and/or program) */
+static gboolean
+check_blocks_text (const gchar  *text,
+                   const Lv     *at,
+                   const gchar  *path,
+                   GError      **error)
+{
+	g_autoptr(LrgBlockEditor) probe = lrg_block_editor_new ();
+	g_autoptr(GError) local = NULL;
+
+	if (g_object_is_floating (probe))
+		g_object_ref_sink (probe);
+	if (!lrg_block_editor_load_yaml (probe, text, -1, &local))
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, at, "invalid 'blocks': %s", local->message);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * LrgFileBrowser `location:`, `filters:` and `places:`
+ * -------------------------------------------------------------------------- */
+
+typedef struct
+{
+	gchar   *label;
+	gchar   *path;   /* "~" expanded */
+	LrgIcon  icon;
+} PlaceSpec;
+
+static void
+place_spec_free (gpointer data)
+{
+	PlaceSpec *p = data;
+
+	g_free (p->label);
+	g_free (p->path);
+	g_free (p);
+}
+
+/* expand_home: "~" and "~/x" become paths under the home folder */
+static gchar *
+expand_home (const gchar *path)
+{
+	if (path[0] == '~' && (path[1] == '\0' || path[1] == '/'))
+		return g_build_filename (g_get_home_dir (), path + 1, NULL);
+	return g_strdup (path);
+}
+
+/* text_list: a scalar or a list of scalars as a NULL-terminated vector */
+static gboolean
+text_list (const Lv     *x,
+           const gchar  *key,
+           GStrv        *out,
+           gchar       **msg)
+{
+	g_autoptr(GStrvBuilder) b = g_strv_builder_new ();
+	guint i;
+
+	if (x->kind == LV_SCALAR)
+		g_strv_builder_add (b, x->str);
+	else if (x->kind == LV_SEQ)
+	{
+		for (i = 0; i < x->items->len; i++)
+		{
+			const Lv *e = g_ptr_array_index (x->items, i);
+
+			if (e->kind != LV_SCALAR)
+			{
+				*msg = g_strdup_printf ("'%s' must be text or a list of text", key);
+				return FALSE;
+			}
+			g_strv_builder_add (b, e->str);
+		}
+	}
+	else
+	{
+		*msg = g_strdup_printf ("'%s' must be text or a list of text, got %s", key, lv_kind_name (x));
+		return FALSE;
+	}
+	*out = g_strv_builder_end (b);
+	return TRUE;
+}
+
+/* Parses `filters:` into LrgFileFilter objects: each entry is
+ * {name, patterns, suffixes, mime-types} (each list may be one text) */
+static GPtrArray *
+parse_file_filters (const Lv     *v,
+                    const gchar  *path,
+                    GError      **error)
+{
+	static const gchar *keys[] = { "name", "patterns", "suffixes", "mime-types", NULL };
+	g_autoptr(GPtrArray) out = g_ptr_array_new_with_free_func (g_object_unref);
+	guint i;
+
+	if (v->kind != LV_SEQ)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, v,
+		           "'filters' must be a list of filters, got %s", lv_kind_name (v));
+		return NULL;
+	}
+	for (i = 0; i < v->items->len; i++)
+	{
+		const Lv *e = g_ptr_array_index (v->items, i);
+		g_autofree gchar *ep = path_join (path, "[%u]", i);
+		g_autofree gchar *msg = NULL;
+		g_autofree gchar *name = NULL;
+		g_autoptr(LrgFileFilter) f = NULL;
+		guint k;
+
+		if (e->kind != LV_MAP)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e,
+			           "a filter must be a mapping {name, patterns, suffixes, mime-types}");
+			return NULL;
+		}
+		if (!spec_check_keys (e, keys, "filter", 0, &msg) || !spec_text (e, "name", 0, &name, &msg))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
+			return NULL;
+		}
+		if (name == NULL)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "a filter needs a 'name'");
+			return NULL;
+		}
+		f = lrg_file_filter_new (name);
+		for (k = 1; keys[k] != NULL; k++)
+		{
+			const Lv *x = lv_map_get (e, keys[k]);
+			g_auto(GStrv) list = NULL;
+			guint j;
+
+			if (x == NULL)
+				continue;
+			if (!text_list (x, keys[k], &list, &msg))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, x, "%s", msg);
+				return NULL;
+			}
+			for (j = 0; list[j] != NULL; j++)
+			{
+				if (k == 1)
+					lrg_file_filter_add_pattern (f, list[j]);
+				else if (k == 2)
+					lrg_file_filter_add_suffix (f, list[j]);
+				else
+					lrg_file_filter_add_mime_type (f, list[j]);
+			}
+		}
+		g_ptr_array_add (out, g_steal_pointer (&f));
+	}
+	return g_steal_pointer (&out);
+}
+
+/* Parses `places:` entries {label, path, icon} */
+static GPtrArray *
+parse_file_places (const Lv     *v,
+                   const gchar  *path,
+                   GError      **error)
+{
+	static const gchar *keys[] = { "label", "path", "icon", NULL };
+	g_autoptr(GPtrArray) out = g_ptr_array_new_with_free_func (place_spec_free);
+	guint i;
+
+	if (v->kind != LV_SEQ)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, v,
+		           "'places' must be a list of places, got %s", lv_kind_name (v));
+		return NULL;
+	}
+	for (i = 0; i < v->items->len; i++)
+	{
+		const Lv *e = g_ptr_array_index (v->items, i);
+		g_autofree gchar *ep = path_join (path, "[%u]", i);
+		g_autofree gchar *msg = NULL;
+		g_autofree gchar *label = NULL;
+		g_autofree gchar *where = NULL;
+		gint icon = LRG_ICON_FOLDER;
+
+		if (e->kind != LV_MAP)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e,
+			           "a place must be a mapping {label, path, icon}");
+			return NULL;
+		}
+		if (!spec_check_keys (e, keys, "place", 0, &msg) || !spec_text (e, "label", 0, &label, &msg) ||
+		    !spec_text (e, "path", 1, &where, &msg) ||
+		    (lv_map_get (e, "icon") != NULL && !conv_enum (LRG_TYPE_ICON, lv_map_get (e, "icon"), &icon, &msg)))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
+			return NULL;
+		}
+		if (label == NULL || where == NULL)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "a place needs a 'label' and a 'path'");
+			return NULL;
+		}
+		{
+			PlaceSpec *ps = g_new0 (PlaceSpec, 1);
+
+			ps->label = g_steal_pointer (&label);
+			ps->path = expand_home (where);
+			ps->icon = (LrgIcon) icon;
+			g_ptr_array_add (out, ps);
+		}
+	}
+	return g_steal_pointer (&out);
+}
+
+/* What the loader added to a browser, so a reload replaces only that and
+ * leaves filters and places the application added alone */
+#define FB_LOADER_FILTERS "lrg-ui-loader-filters"
+#define FB_LOADER_PLACES  "lrg-ui-loader-places"
+
+static void
+fb_clear_loader_filters (LrgFileBrowser *fb)
+{
+	GPtrArray *old = g_object_get_data (G_OBJECT (fb), FB_LOADER_FILTERS);
+	guint i;
+
+	if (old == NULL)
+		return;
+	for (i = 0; i < old->len; i++)
+		lrg_file_browser_remove_filter (fb, g_ptr_array_index (old, i));
+	g_object_set_data (G_OBJECT (fb), FB_LOADER_FILTERS, NULL);
+}
+
+static void
+fb_clear_loader_places (LrgFileBrowser *fb)
+{
+	GPtrArray *old = g_object_get_data (G_OBJECT (fb), FB_LOADER_PLACES);
+	guint i;
+
+	if (old == NULL)
+		return;
+	for (i = 0; i < old->len; i++)
+		lrg_file_browser_remove_place (fb, g_ptr_array_index (old, i));
+	g_object_set_data (G_OBJECT (fb), FB_LOADER_PLACES, NULL);
+}
+
+static void
+fb_apply_filters (LrgFileBrowser *fb,
+                  GPtrArray      *filters)
+{
+	GPtrArray *added = g_ptr_array_new_with_free_func (g_object_unref);
+	guint i;
+
+	fb_clear_loader_filters (fb);
+	for (i = 0; i < filters->len; i++)
+	{
+		LrgFileFilter *f = g_ptr_array_index (filters, i);
+
+		lrg_file_browser_add_filter (fb, f);
+		g_ptr_array_add (added, g_object_ref (f));
+	}
+	if (filters->len > 0)
+		lrg_file_browser_set_filter (fb, g_ptr_array_index (filters, 0));
+	g_object_set_data_full (G_OBJECT (fb), FB_LOADER_FILTERS, added, (GDestroyNotify) g_ptr_array_unref);
+}
+
+static void
+fb_apply_places (LrgFileBrowser *fb,
+                 GPtrArray      *places)
+{
+	GPtrArray *added = g_ptr_array_new_with_free_func (g_object_unref);
+	guint i;
+
+	fb_clear_loader_places (fb);
+	for (i = 0; i < places->len; i++)
+	{
+		PlaceSpec *ps = g_ptr_array_index (places, i);
+		g_autoptr(GFile) file = g_file_new_for_path (ps->path);
+
+		lrg_file_browser_add_place (fb, ps->label, file, ps->icon);
+		g_ptr_array_add (added, g_steal_pointer (&file));
+	}
+	g_object_set_data_full (G_OBJECT (fb), FB_LOADER_PLACES, added, (GDestroyNotify) g_ptr_array_unref);
+}
 
 static gboolean
 check_graph_text (const gchar  *text,
@@ -5909,6 +6252,26 @@ node_set_widget_key (Ctx           *c,
 		ui_node_put_attr (node, a);
 		return TRUE;
 	}
+	if (key_equal (key, "pack"))
+	{
+		static const gchar *packs[] = { "start", "end", "title", NULL };
+		guint p;
+
+		for (p = 0; packs[p] != NULL; p++)
+			if (r->kind == LV_SCALAR && g_ascii_strcasecmp (r->str, packs[p]) == 0)
+				break;
+		if (packs[p] == NULL)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+			           "'pack' must be start, end or title");
+			return FALSE;
+		}
+		a = ui_attr_new (ATTR_PACK, "pack", r);
+		a->child = TRUE;
+		a->ival = (gint) p;
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
 	if ((key_equal (key, "position") || key_equal (key, "relative-to")) &&
 	    g_type_is_a (node->type, LRG_TYPE_DOCK_PANEL))
 	{
@@ -5984,6 +6347,48 @@ node_set_widget_key (Ctx           *c,
 		a->pspec = sp;
 		g_value_init (&a->gvalue, LRG_TYPE_SYNTAX);
 		g_value_set_object (&a->gvalue, syn);
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
+	/* --- LrgBlockEditor `blocks:` / `blocks-file:` --------------------- */
+	if ((key_equal (key, "blocks") || key_equal (key, "blocks-file")) &&
+	    g_type_is_a (node->type, LRG_TYPE_BLOCK_EDITOR))
+	{
+		g_autofree gchar *text = NULL;
+		g_autoptr(Lv) stamp = NULL;
+
+		if (key_equal (key, "blocks-file"))
+		{
+			g_autofree gchar *full = NULL;
+
+			if (r->kind != LV_SCALAR || *r->str == '\0')
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+				           "'blocks-file' must be a file name");
+				return FALSE;
+			}
+			full = resolve_file_path (env, r->str);
+			text = read_doc_file (c, full, val, path, error);
+			if (text == NULL)
+				return FALSE;
+		}
+		else if (r->kind == LV_MAP)
+			text = lv_to_yaml (r);
+		else if (r->kind == LV_SCALAR && r->quoted)
+			text = g_strdup (r->str);
+		else
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+			           "'blocks' must be a block editor document (a mapping), got %s", lv_kind_name (r));
+			return FALSE;
+		}
+		if (!check_blocks_text (text, val, path, error))
+			return FALSE;
+		stamp = lv_new_scalar (text, TRUE, val);
+		a = ui_attr_new (ATTR_BLOCKS, "blocks", stamp);
+		a->text = g_steal_pointer (&text);
+		a->late = TRUE;
 		ui_node_put_attr (node, a);
 		return TRUE;
 	}
@@ -6282,6 +6687,47 @@ node_set_key (Ctx           *c,
 		return TRUE;
 	}
 
+	/* --- LrgFileBrowser `location:`, `filters:`, `places:` (before the
+	 * property lookup: `location` is also a GFile property) ------------ */
+	if (g_type_is_a (node->type, LRG_TYPE_FILE_BROWSER) &&
+	    (key_equal (key, "location") || key_equal (key, "filters") || key_equal (key, "places")))
+	{
+		g_autofree gchar *kp = path_join (path, "%s", key);
+
+		if (key_equal (key, "location"))
+		{
+			if (r->kind != LV_SCALAR || *r->str == '\0')
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, kp, val,
+				           "'location' must be a folder path");
+				return FALSE;
+			}
+			a = ui_attr_new (ATTR_FB_LOCATION, "location", r);
+			a->text = expand_home (r->str);
+		}
+		else if (key_equal (key, "filters"))
+		{
+			GPtrArray *filters = parse_file_filters (r, kp, error);
+
+			if (filters == NULL)
+				return FALSE;
+			a = ui_attr_new (ATTR_FB_FILTERS, "filters", r);
+			a->specs = filters;
+		}
+		else
+		{
+			GPtrArray *places = parse_file_places (r, kp, error);
+
+			if (places == NULL)
+				return FALSE;
+			a = ui_attr_new (ATTR_FB_PLACES, "places", r);
+			a->specs = places;
+		}
+		a->late = TRUE;
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
 	if (key_equal (key, "on"))
 		return put_handlers (self, node, r, path, merge, error);
 
@@ -6297,7 +6743,12 @@ node_set_key (Ctx           *c,
 		return put_handlers (self, node, one, path, TRUE, error);
 	}
 
-	if (key_equal (key, "look"))
+	/* `look:` is the per-part look map, except that a scalar on a widget
+	 * with a `look` property of its own (LrgNodeGraph, LrgTimelineView:
+	 * `look: blueprint`) sets that property; it falls through to the
+	 * ordinary property handling below */
+	if (key_equal (key, "look") &&
+	    !(r->kind == LV_SCALAR && g_object_class_find_property (klass, "look") != NULL))
 	{
 		g_autoptr(GArray) looks = g_array_new (FALSE, TRUE, sizeof (LookEntry));
 
@@ -7838,6 +8289,7 @@ apply_attr (LrgWidget *w,
 		break;
 	case ATTR_ANCHOR:
 	case ATTR_PAGE_NAME:
+	case ATTR_PACK:
 	case ATTR_DOCK_PLACE:
 		/* Through the parent; a widget being built has none yet and
 		 * gets them from apply_child_attrs() once it is added */
@@ -7864,6 +8316,24 @@ apply_attr (LrgWidget *w,
 	case ATTR_TRACKS:
 	case ATTR_MARKERS:
 		timeline_apply (LRG_TIMELINE_VIEW (w), a);
+		break;
+	case ATTR_BLOCKS:
+		{
+			g_autoptr(GError) local = NULL;
+
+			/* Checked during expansion */
+			if (!lrg_block_editor_load_yaml (LRG_BLOCK_EDITOR (w), a->text, -1, &local))
+				lrg_message (LRG_LOG_DOMAIN, "UI loader: blocks not loaded: %s", local->message);
+			break;
+		}
+	case ATTR_FB_LOCATION:
+		lrg_file_browser_set_location_path (LRG_FILE_BROWSER (w), a->text);
+		break;
+	case ATTR_FB_FILTERS:
+		fb_apply_filters (LRG_FILE_BROWSER (w), a->specs);
+		break;
+	case ATTR_FB_PLACES:
+		fb_apply_places (LRG_FILE_BROWSER (w), a->specs);
 		break;
 	case ATTR_ON:
 	default:
@@ -7968,6 +8438,7 @@ reset_attr (LrgWidget    *w,
 		break;
 	case ATTR_ANCHOR:
 	case ATTR_PAGE_NAME:
+	case ATTR_PACK:
 		child_attr_reset (lrg_widget_get_parent (w), w, a);
 		break;
 	case ATTR_GRAPH:
@@ -7979,6 +8450,18 @@ reset_attr (LrgWidget    *w,
 	case ATTR_MARKERS:
 		timeline_clear_markers (LRG_TIMELINE_VIEW (w));
 		break;
+	case ATTR_BLOCKS:
+		/* The program goes; kinds stay, like a palette loaded by code */
+		lrg_block_editor_clear_program (LRG_BLOCK_EDITOR (w));
+		break;
+	case ATTR_FB_FILTERS:
+		fb_clear_loader_filters (LRG_FILE_BROWSER (w));
+		break;
+	case ATTR_FB_PLACES:
+		fb_clear_loader_places (LRG_FILE_BROWSER (w));
+		break;
+	case ATTR_FB_LOCATION:
+		/* Where the user browsed to stays */
 	case ATTR_DOCK_PLACE:
 	case ATTR_DOCK_LAYOUT:
 		/* The user's arrangement stays */
@@ -9095,6 +9578,10 @@ lrg_ui_loader_class_init (LrgUILoaderClass *klass)
 	g_type_ensure (LRG_TYPE_TIMELINE_VIEW);
 	g_type_ensure (LRG_TYPE_DOCK_AREA);
 	g_type_ensure (LRG_TYPE_DOCK_PANEL);
+	g_type_ensure (LRG_TYPE_PAGINATION);
+	g_type_ensure (LRG_TYPE_FILE_BROWSER);
+	g_type_ensure (LRG_TYPE_BLOCK_EDITOR);
+	g_type_ensure (LRG_TYPE_HEADER_BAR);
 
 	/**
 	 * LrgUILoader::reloaded:

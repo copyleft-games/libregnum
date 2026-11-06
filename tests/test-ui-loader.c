@@ -2573,6 +2573,215 @@ find_example (const gchar *name)
 	return NULL;
 }
 
+/* ==========================================================================
+ * Wave 4: header bar, pagination, canvas looks
+ * ========================================================================== */
+
+#define W4_V1 \
+	"type: vbox\n" \
+	"children:\n" \
+	"  - type: header-bar\n" \
+	"    id: hb\n" \
+	"    title: Studio\n" \
+	"    decoration-layout: \"menu:close\"\n" \
+	"    children:\n" \
+	"      - {type: button, id: open, text: Open}\n" \
+	"      - {type: button, id: save, text: Save, pack: end}\n" \
+	"      - {type: label, id: crumbs, text: \"a / b\", pack: title}\n" \
+	"  - {type: pagination, id: pg, n-pages: 20, page: 4, siblings: 2}\n" \
+	"  - {type: node-graph, id: g, look: blueprint, link-shape: step, glow: 0.5}\n" \
+	"  - type: timeline-view\n" \
+	"    id: tl\n" \
+	"    look: neon\n" \
+	"    key-shape: circle\n" \
+	"    tracks:\n" \
+	"      - name: A\n" \
+	"        keyframes:\n" \
+	"          - {time: 0, value: 0, shape: bar}\n" \
+	"          - {time: 1, value: 1}\n"
+
+static void
+test_wave4 (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgVBox) host = lrg_vbox_new ();
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *v2 = NULL;
+	ReloadLog log = { 0 };
+	LrgHeaderBar *hb;
+	LrgWidget *crumbs;
+	LrgTimelineView *tl;
+	LrgTimelineViewTrack *a;
+
+	g_signal_connect (loader, "reloaded", G_CALLBACK (on_reloaded), &log);
+	g_signal_connect (loader, "reload-failed", G_CALLBACK (on_reload_failed), &log);
+	dir = g_dir_make_tmp ("lrg-ui-wave4-XXXXXX", &error);
+	g_assert_no_error (error);
+	path = g_build_filename (dir, "w4.yaml", NULL);
+	write_stamped (path, W4_V1, 1000000000);
+	lrg_ui_loader_watch_file (loader, path, LRG_CONTAINER (host), &error);
+	g_assert_no_error (error);
+
+	/* Header bar: packing and the title widget */
+	hb = LRG_HEADER_BAR (lrg_ui_loader_get_widget (loader, "hb"));
+	crumbs = lrg_ui_loader_get_widget (loader, "crumbs");
+	g_assert_cmpstr (lrg_header_bar_get_title (hb), ==, "Studio");
+	g_assert_cmpstr (lrg_header_bar_get_decoration_layout (hb), ==, "menu:close");
+	g_assert_false (lrg_header_bar_get_child_packing (hb, lrg_ui_loader_get_widget (loader, "open")));
+	g_assert_true (lrg_header_bar_get_child_packing (hb, lrg_ui_loader_get_widget (loader, "save")));
+	g_assert_true (lrg_header_bar_get_title_widget (hb) == crumbs);
+
+	/* Pagination and looks: plain properties */
+	g_assert_cmpuint (lrg_pagination_get_n_pages (LRG_PAGINATION (lrg_ui_loader_get_widget (loader, "pg"))), ==, 20);
+	g_assert_cmpuint (lrg_pagination_get_page (LRG_PAGINATION (lrg_ui_loader_get_widget (loader, "pg"))), ==, 4);
+	g_assert_cmpint (lrg_node_graph_get_look (LRG_NODE_GRAPH (lrg_ui_loader_get_widget (loader, "g"))), ==,
+	                 LRG_CANVAS_LOOK_BLUEPRINT);
+	g_assert_cmpint (lrg_node_graph_get_link_shape (LRG_NODE_GRAPH (lrg_ui_loader_get_widget (loader, "g"))), ==,
+	                 LRG_CANVAS_LINK_SHAPE_STEP);
+	tl = LRG_TIMELINE_VIEW (lrg_ui_loader_get_widget (loader, "tl"));
+	g_assert_cmpint (lrg_timeline_view_get_look (tl), ==, LRG_CANVAS_LOOK_NEON);
+	g_assert_cmpint (lrg_timeline_view_get_key_shape (tl), ==, LRG_CANVAS_KEY_SHAPE_CIRCLE);
+	a = lrg_timeline_view_find_track (tl, "A");
+	g_assert_cmpint (lrg_timeline_view_get_keyframe_shape (tl, lrg_timeline_view_get_keyframe (tl, a, 0)), ==,
+	                 LRG_CANVAS_KEY_SHAPE_BAR);
+	g_assert_cmpint (lrg_timeline_view_get_keyframe_shape (tl, lrg_timeline_view_get_keyframe (tl, a, 1)), ==,
+	                 LRG_CANVAS_KEY_SHAPE_AUTO);
+
+	/* Reload: the title child moves to the end group, Save loses its
+	 * pack key (back to start) */
+	{
+		g_auto(GStrv) p1 = g_strsplit (W4_V1, "pack: title", -1);
+		g_autofree gchar *t1 = g_strjoinv ("pack: end", p1);
+		g_auto(GStrv) p2 = g_strsplit (t1, "text: Save, pack: end", -1);
+
+		v2 = g_strjoinv ("text: Save", p2);
+	}
+	write_stamped (path, v2, 1000000010);
+	g_assert_true (lrg_ui_loader_poll (loader));
+	g_assert_cmpuint (log.reloaded, ==, 1);
+	g_assert_true (lrg_ui_loader_get_widget (loader, "hb") == LRG_WIDGET (hb));
+	g_assert_true (lrg_ui_loader_get_widget (loader, "crumbs") == crumbs);
+	g_assert_null (lrg_header_bar_get_title_widget (hb));
+	g_assert_true (lrg_widget_get_parent (crumbs) == LRG_CONTAINER (hb));
+	g_assert_true (lrg_header_bar_get_child_packing (hb, crumbs));
+	g_assert_false (lrg_header_bar_get_child_packing (hb, lrg_ui_loader_get_widget (loader, "save")));
+
+	g_free (log.last_error);
+	g_unlink (path);
+	g_rmdir (dir);
+}
+
+static void
+test_wave4_errors (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+
+	g_free (load_err (loader, "type: vbox\nchildren: [{type: label, pack: end}]\n",
+	                  LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "children[0]: 'pack' is only valid on a child of LrgHeaderBar, not of LrgVBox"));
+	g_free (load_err (loader, "type: header-bar\nchildren: [{type: label, pack: middle}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "children[0]: 'pack' must be start, end or title"));
+	g_free (load_err (loader,
+	                  "type: timeline-view\ntracks: [{name: A, keyframes: [{time: 0, value: 0, shape: blob}]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "tracks[0].keyframes[0]: "));
+	g_free (load_err (loader, "type: node-graph\nlook: chrome\n", LRG_UI_LOADER_ERROR_INVALID_VALUE, NULL));
+}
+
+static void
+test_wave4_files_blocks (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	g_autoptr(LrgWidget) root2 = NULL;
+	g_autoptr(GFile) home = g_file_new_for_path (g_get_home_dir ());
+	g_autoptr(LrgFileFilter) app_filter = lrg_file_filter_new ("Everything");
+	g_autofree gchar *saves = g_build_filename (g_get_home_dir (), "saves", NULL);
+	LrgFileBrowser *fb;
+	LrgBlockEditor *be;
+	GListModel *filters;
+	guint n_places;
+
+	root = load_ok (loader,
+		"type: vbox\n"
+		"children:\n"
+		"  - type: file-browser\n"
+		"    id: fb\n"
+		"    mode: save\n"
+		"    show-system-places: false\n"
+		"    location: \"~\"\n"
+		"    filters:\n"
+		"      - {name: Levels, suffixes: [rlevel], patterns: \"*.rlevel\"}\n"
+		"      - {name: Images, mime-types: [image/png, image/jpeg]}\n"
+		"    places:\n"
+		"      - {label: Saves, path: ~/saves, icon: star}\n"
+		"  - type: block-editor\n"
+		"    id: be\n"
+		"    blocks:\n"
+		"      kinds:\n"
+		"        - {id: start, shape: hat, label: when started}\n"
+		"        - {id: move, label: \"move {steps:number=10} steps\"}\n"
+		"      scripts:\n"
+		"        - {x: 10, y: 10, blocks: [{kind: start}, {kind: move, values: {steps: \"5\"}}]}\n");
+
+	/* File browser */
+	fb = LRG_FILE_BROWSER (lrg_ui_loader_get_widget (loader, "fb"));
+	g_assert_cmpint (lrg_file_browser_get_mode (fb), ==, LRG_FILE_BROWSER_MODE_SAVE);
+	g_assert_true (g_file_equal (lrg_file_browser_get_location (fb), home));
+	filters = lrg_file_browser_get_filters (fb);
+	g_assert_cmpuint (g_list_model_get_n_items (filters), ==, 2);
+	g_assert_cmpstr (lrg_file_filter_get_name (lrg_file_browser_get_filter (fb)), ==, "Levels");
+	g_assert_cmpstr (lrg_file_filter_get_suffixes (lrg_file_browser_get_filter (fb))[0], ==, "rlevel");
+	n_places = lrg_file_browser_get_n_places (fb);
+	g_assert_cmpuint (n_places, >=, 1);
+	g_assert_cmpstr (lrg_file_browser_get_place_label (fb, 0), ==, "Saves");
+	{
+		g_autoptr(GFile) want = g_file_new_for_path (saves);
+
+		g_assert_true (g_file_equal (lrg_file_browser_get_place_location (fb, 0), want));
+	}
+
+	/* Block editor */
+	be = LRG_BLOCK_EDITOR (lrg_ui_loader_get_widget (loader, "be"));
+	g_assert_cmpuint (lrg_block_editor_get_n_kinds (be), ==, 2);
+	g_assert_cmpuint (lrg_block_editor_get_n_scripts (be), ==, 1);
+
+	/* A second document into a fresh browser: the loader's filters
+	 * replace only its own, an application filter stays */
+	root2 = load_ok (loader,
+		"type: file-browser\n"
+		"id: fb2\n"
+		"show-system-places: false\n"
+		"filters: [{name: A, patterns: \"*.a\"}]\n");
+	fb = LRG_FILE_BROWSER (root2);
+	lrg_file_browser_add_filter (fb, app_filter);
+	g_assert_cmpuint (g_list_model_get_n_items (lrg_file_browser_get_filters (fb)), ==, 2);
+}
+
+static void
+test_wave4_files_blocks_errors (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+
+	g_free (load_err (loader, "type: file-browser\nfilters: [{patterns: \"*.x\"}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "filters[0]: a filter needs a 'name'"));
+	g_free (load_err (loader, "type: file-browser\nfilters: [{name: X, globs: \"*.x\"}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "filters[0]: unknown filter key 'globs'"));
+	g_free (load_err (loader, "type: file-browser\nfilters: {name: X}\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "filters: 'filters' must be a list of filters, got a mapping"));
+	g_free (load_err (loader, "type: file-browser\nplaces: [{label: X}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "places[0]: a place needs a 'label' and a 'path'"));
+	g_free (load_err (loader, "type: file-browser\nplaces: [{label: X, path: /, icon: nope}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "places[0]: unknown LrgIcon value 'nope'"));
+	g_free (load_err (loader, "type: file-browser\nlocation: [a]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "location: 'location' must be a folder path"));
+	g_free (load_err (loader, "type: block-editor\nblocks: {kinds: [{id: a, shape: blob, label: x}]}\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): invalid 'blocks': block editor YAML: kind 0"));
+	g_free (load_err (loader, "type: block-editor\nblocks: 3\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): 'blocks' must be a block editor document"));
+}
+
 static void
 test_wave3_examples (void)
 {
@@ -2667,6 +2876,10 @@ main (int   argc,
 	g_test_add_func ("/ui-loader/wave3/menus", test_menus);
 	g_test_add_func ("/ui-loader/wave3/anchor-switcher-size", test_anchor_switcher_size);
 	g_test_add_func ("/ui-loader/wave3/viewport-custom", test_viewport_custom);
+	g_test_add_func ("/ui-loader/wave4/reload", test_wave4);
+	g_test_add_func ("/ui-loader/wave4/errors", test_wave4_errors);
+	g_test_add_func ("/ui-loader/wave4/files-blocks", test_wave4_files_blocks);
+	g_test_add_func ("/ui-loader/wave4/files-blocks-errors", test_wave4_files_blocks_errors);
 	g_test_add_func ("/ui-loader/wave3/text-editor", test_text_editor_languages);
 	g_test_add_func ("/ui-loader/wave3/node-graph", test_node_graph);
 	g_test_add_func ("/ui-loader/wave3/timeline", test_timeline);

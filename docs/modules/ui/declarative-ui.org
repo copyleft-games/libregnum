@@ -153,7 +153,7 @@ A property key takes its value converted to the property's type. Out-of-range va
 
 Other property types (objects, pointers, other boxed types) cannot be set from YAML and are reported as errors, with two exceptions: a =GMenuModel= property (=model=, =context-menu=) takes a menu (see [[#menus][Menus]]), and =LrgTextEditor:syntax= is set by =language-file:=. A float =aspect-ratio= property also accepts ="16:9"= or ="4/3"=. Construct-only properties are passed to =g_object_new()=.
 
-*Order of application.* Construct-only properties, then the id, then the other keys in document order, then =items=, then =children= / =child= / =tabs=, then the /late/ properties =value=, =selected=, =active-tab=, =fraction=, =scroll-x=, =scroll-y=, =cursor-position=, =visible-child-name=, =visible-index= and =time= (which depend on ranges, items, pages or content set before them) together with the embedded documents =graph:=, =layout:=, =tracks:= and =markers:=, then the handlers. Setting a widget up therefore never fires the document's own handlers.
+*Order of application.* Construct-only properties, then the id, then the other keys in document order, then =items=, then =children= / =child= / =tabs=, then the /late/ properties =value=, =selected=, =active-tab=, =fraction=, =scroll-x=, =scroll-y=, =cursor-position=, =visible-child-name=, =visible-index= and =time= (which depend on ranges, items, pages or content set before them) together with the embedded documents =graph:=, =blocks:=, =layout:=, =tracks:= and =markers:= and the file browser's =location:=, =filters:= and =places:=, then the handlers. Setting a widget up therefore never fires the document's own handlers.
 
 *** Handlers
 :PROPERTIES:
@@ -299,6 +299,12 @@ Every setting of these widgets is an ordinary GObject property (enums and flags 
 | =language-file=              | =LrgTextEditor=                       | file name                                               | Loads, registers and sets an =LrgSyntax= (=syntax= property) |
 | =graph=, =graph-file=        | =LrgNodeGraph=                        | a graph document (mapping), or its file                 | =lrg_node_graph_load_yaml()=                               |
 | =tracks=, =markers=          | =LrgTimelineView=                     | lists (below)                                           | Tracks, clips, keyframes and markers through the C API     |
+| =pack=                       | a child of =LrgHeaderBar=             | =start= (default), =end= or =title=                     | =lrg_header_bar_set_child_packing()= / =set_title_widget()= |
+| =blocks=, =blocks-file=      | =LrgBlockEditor=                      | a block editor document (mapping), or its file          | =lrg_block_editor_load_yaml()=                              |
+| =location=                   | =LrgFileBrowser=                      | folder path, ="~"= expanded                             | =lrg_file_browser_set_location_path()=                      |
+| =filters=                    | =LrgFileBrowser=                      | list of ={name, patterns, suffixes, mime-types}=        | =lrg_file_browser_add_filter()=; the first is current       |
+| =places=                     | =LrgFileBrowser=                      | list of ={label, path, icon}=                           | =lrg_file_browser_add_place()=                              |
+| =look= (a scalar)            | a widget with its own =look= property | its value, e.g. =blueprint=                             | The property (=LrgNodeGraph=, =LrgTimelineView=); a mapping is still the part-look map |
 | =aspect-ratio=               | any float =aspect-ratio= property     | ="16:9"=, ="4/3"= or a number                           | width / height                                            |
 
 Per-child keys are attributes of the child node: a component whose root carries =anchor:= can be used inside an =LrgAnchorLayout=. A per-child key under a parent that does not take it is an =LRG_UI_LOADER_ERROR_STRUCTURE= error (=children[0]: 'anchor' is only valid on a child of LrgAnchorLayout, not of LrgVBox=). The root of a watched document takes its own =anchor:= / =page-name:= when the host is an anchor layout or a switcher.
@@ -438,10 +444,74 @@ markers:
 |------------+--------------------------------------------------------------------------+----------------------------------------------------------------------|
 | track      | =name=, =tracks=, =clips=, =keyframes=, any writable =LrgTimelineViewTrack= property (=color=, =height=, =collapsed=, =muted=, =locked=, =allow-overlap=, =curve-lane=, =curve-height=, =value-min=, =value-max=, =default-value=) | =lrg_timeline_view_track_new()= + =lrg_timeline_view_append_track()= |
 | clip       | =start=, =duration= (> 0), =label=, =color=                              | =lrg_timeline_view_add_clip()=, =lrg_timeline_view_set_clip_color()= |
-| keyframe   | =time=, =value=, =interpolation= (=step=, =linear= (default), =ease=, =bezier=), =tangents: [in, out]= | =lrg_timeline_view_add_keyframe()=, =lrg_timeline_view_set_keyframe_tangents()= |
+| keyframe   | =time=, =value=, =interpolation= (=step=, =linear= (default), =ease=, =bezier=), =tangents: [in, out]=, =shape= (=LrgCanvasKeyShape= nick: =diamond=, =circle=, =square=, =bar=) | =lrg_timeline_view_add_keyframe()=, =lrg_timeline_view_set_keyframe_tangents()=, =lrg_timeline_view_set_keyframe_shape()= |
 | marker     | =time=, =label=                                                          | =lrg_timeline_view_add_marker()=                                     |
 
 The loader remembers the tracks and markers it created. On reload, =tracks:= (or =markers:=) is applied again only when it changed in the document: the loader's tracks (or markers) are removed and recreated, so edits the user made to them are lost; tracks and markers added by code are left alone. Unchanged lists keep the same track objects and every user edit.
+
+*** Canvas looks
+:PROPERTIES:
+:CUSTOM_ID: canvas-look-keys
+:END:
+=LrgNodeGraph= and =LrgTimelineView= take their look as a plain property. Because =look:= is also the per-part look map, a /scalar/ =look:= on a widget that has a =look= property sets that property; a mapping is still the part-look map.
+
+#+begin_src yaml
+- {type: node-graph, look: blueprint, link-shape: step, pin-shape: diamond, glow: 0.6}
+- {type: timeline-view, look: neon, key-shape: circle, grid-style: dots}
+#+end_src
+
+Per-item overrides (a node's =icon=, a port's =shape=, a link's =color= / =shape=) live in the =graph:= document; a keyframe's =shape= in =tracks:= (above). See [[file:widgets/node-graph.org::#node-graph-looks][node graph looks]].
+
+*** Header bar
+:PROPERTIES:
+:CUSTOM_ID: header-bar-keys
+:END:
+#+begin_src yaml
+type: header-bar
+title: Studio
+decoration-layout: "menu:minimize,maximize,close"
+children:
+  - {type: button, text: Open, on-clicked: app.open}                 # start (default)
+  - {type: button, text: Save, on-clicked: app.save, pack: end}
+  - {type: breadcrumb, id: crumbs, pack: title}                        # replaces the title text
+#+end_src
+
+On reload a changed =pack= moves the child between the groups; a removed =pack= puts it back in the start group (a former title widget becomes an ordinary child again).
+
+*** File browser
+:PROPERTIES:
+:CUSTOM_ID: file-browser-keys
+:END:
+#+begin_src yaml
+type: file-browser
+mode: save                      # open, open-multiple, save, select-folder
+location: ~/Documents/levels    # "~" is the home folder
+current-name: untitled.rlevel
+filters:
+  - {name: Levels, suffixes: [rlevel], patterns: "*.rlevel"}
+  - {name: Images, mime-types: [image/png, image/jpeg]}
+places:
+  - {label: Saves, path: ~/.local/share/mygame/saves, icon: star}
+#+end_src
+
+The first filter becomes the current one. The loader remembers the filters and places it added: a reload that changes =filters:= or =places:= replaces only those, and ones added by code stay. =location:= is applied when the browser is built and when the key changes; where the user browsed to is otherwise kept. Each list entry may give =patterns=, =suffixes= and =mime-types= as one text or a list. =icon= is an =LrgIcon= nick (=folder= by default).
+
+*** Block editor
+:PROPERTIES:
+:CUSTOM_ID: block-editor-keys
+:END:
+#+begin_src yaml
+type: block-editor
+blocks-file: scripts/palette.yaml       # or inline:
+# blocks:
+#   kinds:
+#     - {id: start, shape: hat, label: when started}
+#     - {id: move, label: "move {steps:number=10} steps"}
+#   scripts:
+#     - {x: 10, y: 10, blocks: [{kind: start}, {kind: move}]}
+#+end_src
+
+=blocks:= / =blocks-file:= take the document format of [[file:widgets/block-editor.org::#block-editor-yaml-schema][lrg_block_editor_load_yaml()]] (palette, program or both). Like =graph:=, it is checked during expansion by loading it into a throwaway editor, applied late, and loaded again on reload only when its text changed; a removed =blocks:= clears the program (the kinds stay).
 
 *** Dock area
 :PROPERTIES:
@@ -726,7 +796,7 @@ tracks[0].keyframes[2]: unknown LrgTimelineViewInterpolation value 'wobbly' (exp
 - *Handlers* are reconnected only when the widget's =on:= mapping changed.
 - *Ids*: after a reload =lrg_ui_loader_get_widget()= answers from the new tree.
 - *Root*: when the root itself must be rebuilt it is removed from the host and the new root added (at the end of the host's children).
-- *Per-child keys* (=anchor=, =page-name=) are re-applied through the parent when they change and reset when removed; children re-added for reordering get them again.
+- *Per-child keys* (=anchor=, =page-name=, =pack=) are re-applied through the parent when they change and reset when removed; children re-added for reordering get them again.
 - *Menus, graphs, layouts, tracks and markers*: see [[#menus][Menus]] and [[#widget-specific-keys][Widget-specific keys]]: each is applied again only when its resolved value changed.
 
 ** Worked example
