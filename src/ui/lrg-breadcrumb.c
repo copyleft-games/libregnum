@@ -314,7 +314,9 @@ relayout (LrgBreadcrumb *self)
 	for (i = 0; i < n; i++)
 		total += segment_width (self, i) + (i > 0 ? sep : 0.0f);
 
-	if (total <= width || n == 1)
+	/* Half a unit of slack: parents snap slots to whole pixels, so a
+	 * natural width of 251.2 may be allocated as 251 */
+	if (total <= width + 0.5f || n == 1)
 	{
 		gfloat x = 0.0f;
 

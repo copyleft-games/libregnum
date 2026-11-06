@@ -461,8 +461,11 @@ title_size (LrgHeaderBar *self,
 			return;
 		lrg_widget_get_preferred_size (tw, w, h);
 		lrg_widget_get_margin (tw, &m);
-		*w += m.left + m.right;
-		*h += m.top + m.bottom;
+		/* Whole units: slots snap to pixels, and a title widget given
+		 * 251 for a natural 251.2 may think it does not fit (a
+		 * breadcrumb would collapse) */
+		*w = ceilf (*w + m.left + m.right);
+		*h = ceilf (*h + m.top + m.bottom);
 		return;
 	}
 

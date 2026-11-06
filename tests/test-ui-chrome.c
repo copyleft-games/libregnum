@@ -1724,6 +1724,28 @@ on_toast_button (LrgToast    *toast,
  * runs its action and reports BUTTON; a card click runs the default
  * action and reports CLICKED; dismiss() and expiry report their own
  * reasons. */
+/* A breadcrumb as the title widget gets its natural width when there is
+ * room, so it does not collapse to "first ... last" */
+static void
+test_header_title_breadcrumb (void)
+{
+	g_autoptr(LrgCanvas) canvas = lrg_canvas_new ();
+	LrgHeaderBar        *bar = lrg_header_bar_new ();
+	LrgBreadcrumb       *crumbs = lrg_breadcrumb_new ();
+
+	lrg_breadcrumb_append (crumbs, "Showcase");
+	lrg_breadcrumb_append (crumbs, "Cards");
+	lrg_breadcrumb_append (crumbs, "Elevation");
+	lrg_header_bar_set_title_widget (bar, LRG_WIDGET (crumbs));
+	g_object_unref (crumbs);
+	lrg_canvas_set_paint_background (canvas, FALSE);
+	lrg_widget_set_size (LRG_WIDGET (canvas), 980.0f, 600.0f);
+	place (canvas, bar, 0.0f, 0.0f, 980.0f, 48.0f);
+	frames (canvas, 3);
+	lrg_canvas_record (canvas);
+	g_assert_false (lrg_breadcrumb_get_collapsed (crumbs));
+}
+
 static void
 test_toast_buttons (void)
 {
@@ -2076,6 +2098,7 @@ main (int   argc,
 	g_test_add ("/ui/notification/fallback-buttons", NotifyFixture, NULL, notify_set_up, test_notify_fallback_buttons,
 	            notify_tear_down);
 	g_test_add_func ("/ui/toast/buttons", test_toast_buttons);
+	g_test_add_func ("/ui/header-bar/title-breadcrumb", test_header_title_breadcrumb);
 	g_test_add ("/ui/notification/in-app", NotifyFixture, NULL, notify_set_up, test_notify_in_app,
 	            notify_tear_down);
 
