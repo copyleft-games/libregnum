@@ -2,80 +2,146 @@
 :PROPERTIES:
 :CUSTOM_ID: slider-widget
 :END:
-Numeric value selector with configurable range, step, and orientation.
+=LrgSlider= picks a number from a range by dragging a thumb along a track, clicking on the track, or with the keyboard and gamepad when it has focus.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: slider-overview
+:END:
+The slider records itself through =paint()= as three parts:
+
+- *TRACK* - a pill across the widget in the theme's =TRACK= colour, inset by half a thumb at each end.
+- *FILL* - the part of the track from the minimum to the value, in the theme's =ACCENT= family.
+- *THUMB* - a round =HANDLE= coloured knob with a soft drop shadow. It swells a little on hover and more while pressed or dragged, with a faint accent halo, all cross-faded by the widget's hover and press springs.
+
+Values are clamped to =[min, max]= and snapped to =step=. Horizontal sliders grow to the right; vertical sliders grow upwards (the top is the maximum).
 
 ** Creation
 :PROPERTIES:
-:CUSTOM_ID: creation
+:CUSTOM_ID: slider-creation
 :END:
 #+begin_src C
-g_autoptr(LrgSlider) slider = lrg_slider_new();  /* 0-100 default */
-g_autoptr(LrgSlider) slider_range = lrg_slider_new_with_range(0, 10, 0.5);
-lrg_widget_set_size(LRG_WIDGET(slider), 200, 20);
+g_autoptr(LrgSlider) volume = lrg_slider_new_with_range (0.0, 100.0, 5.0);
+
+lrg_slider_set_value (volume, 75.0);
+lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (volume));
 #+end_src
 
-** Value
+=lrg_slider_new()= creates a 0..100 slider with step 1.
+
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: value
+:CUSTOM_ID: slider-properties
 :END:
+| Property          | Type             | Default    | Notes                                                                 |
+|-------------------+------------------+------------+-----------------------------------------------------------------------|
+| =value=           | double           | 0          | Clamped and snapped                                                   |
+| =min=             | double           | 0          |                                                                       |
+| =max=             | double           | 100        |                                                                       |
+| =step=            | double           | 1          | 0 for continuous; keys then move by 1% of the range                   |
+| =orientation=     | =LrgOrientation= | horizontal |                                                                       |
+| =track-color=     | =GrlColor=       | grey       | Theme =TRACK= until set; once set it wins                             |
+| =fill-color=      | =GrlColor=       | blue       | Theme =ACCENT= family until set; hover/press shades derived from it   |
+| =handle-color=    | =GrlColor=       | white      | Theme =HANDLE= until set                                              |
+| =handle-size=     | float            | 20         | Reported only; theme =HANDLE_SIZE= is used until a size is set        |
+| =track-thickness= | float            | 6          | Reported only; about a quarter of the thumb until set                 |
+
+The preferred size is 200 along the axis and 1.3 thumbs across it (room for the pressed thumb).
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: slider-signals
+:END:
+- =value-changed= - emitted whenever the value actually changes (dragging, clicking, keys, or =lrg_slider_set_value()=).
+
 #+begin_src C
-lrg_slider_set_value(slider, 50.0);
-gdouble value = lrg_slider_get_value(slider);
-gdouble fraction = lrg_slider_get_fraction(slider);  /* 0.0-1.0 */
+static void
+on_volume (LrgSlider *slider,
+           gpointer   user_data)
+{
+	g_message ("volume %.0f", lrg_slider_get_value (slider));
+}
+
+g_signal_connect (volume, "value-changed", G_CALLBACK (on_volume), NULL);
 #+end_src
 
-** Range
+** Parts and states
 :PROPERTIES:
-:CUSTOM_ID: range
+:CUSTOM_ID: slider-parts
 :END:
-#+begin_src C
-lrg_slider_set_min(slider, 0.0);
-lrg_slider_set_max(slider, 100.0);
-lrg_slider_set_step(slider, 5.0);
+| Part    | Resting                         | Hovered                          | Pressed / dragging                 | Disabled     |
+|---------+---------------------------------+----------------------------------+------------------------------------+--------------|
+| =track= | =TRACK=, pill                   | same                             | same                               | opacity 0.45 |
+| =fill=  | =ACCENT=, pill                  | =ACCENT_HOVER=                   | =ACCENT_PRESSED=                   | opacity 0.45 |
+| =thumb= | =HANDLE=, size =HANDLE_SIZE=, shadow | size x1.18, stronger shadow, accent glow | size x1.3, flatter shadow, brighter glow | opacity 0.45 |
+| =focus= | ring from the base widget       |                                  |                                    |              |
 
-lrg_slider_set_range(slider, 10, 100);  /* Set min and max */
+The =size= field of the =thumb= look is the thumb diameter and the =size= of the =track= look is the track thickness, so both can be changed from a theme.
 
-gdouble min = lrg_slider_get_min(slider);
-gdouble max = lrg_slider_get_max(slider);
-gdouble step = lrg_slider_get_step(slider);
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: slider-style-classes
+:END:
+The slider has no built-in classes. Add your own with =lrg_widget_add_class()= and target them from theme rules.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: slider-theming
+:END:
+#+begin_src yaml
+styles:
+  # Chunkier track for every slider
+  - widget: LrgSlider
+    part: track
+    size: 8
+  # A "warning" slider with an amber fill and a bigger thumb while dragged
+  - widget: LrgSlider
+    class: warning
+    part: fill
+    background: "#f59e0b"
+  - widget: LrgSlider
+    class: warning
+    part: thumb
+    state: [pressed]
+    size: 30
 #+end_src
 
-** Orientation
-:PROPERTIES:
-:CUSTOM_ID: orientation
-:END:
-#+begin_src C
-lrg_slider_set_orientation(slider, LRG_ORIENTATION_HORIZONTAL);
-/* or LRG_ORIENTATION_VERTICAL */
-#+end_src
+Explicitly set colour properties replace the theme defaults; theme rules are merged on top of those defaults.
 
-** Appearance
+** Keyboard and gamepad
 :PROPERTIES:
-:CUSTOM_ID: appearance
+:CUSTOM_ID: slider-keyboard
+:END:
+- When focused, Left / Right (horizontal) or Down / Up (vertical) change the value by one step and are consumed, so focus does not move.
+- Arrows across the slider's axis are not handled and move focus as usual.
+- Home and End jump to the minimum and maximum.
+- A press anywhere on the slider jumps the value there and starts a drag; the canvas keeps routing pointer moves and the release to the slider while the button is held, even outside its bounds.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: slider-example
 :END:
 #+begin_src C
-lrg_slider_set_track_color(slider, &track_color);
-lrg_slider_set_fill_color(slider, &fill_color);
-lrg_slider_set_handle_color(slider, &handle_color);
-lrg_slider_set_handle_size(slider, 10.0f);
-lrg_slider_set_track_thickness(slider, 4.0f);
+LrgVBox   *box = lrg_vbox_new ();
+LrgSlider *brightness = lrg_slider_new_with_range (0.0, 1.0, 0.05);
+LrgSlider *level = lrg_slider_new ();
+
+lrg_slider_set_value (brightness, 0.8);
+lrg_slider_set_orientation (level, LRG_ORIENTATION_VERTICAL);
+lrg_widget_add_class (LRG_WIDGET (level), "warning");
+
+lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (brightness));
+lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (level));
 #+end_src
 
 ** API Reference
 :PROPERTIES:
-:CUSTOM_ID: api-reference
+:CUSTOM_ID: slider-api
 :END:
-- =lrg_slider_new()=
-- =lrg_slider_new_with_range(gdouble min, gdouble max, gdouble step)=
-- =lrg_slider_get_value(LrgSlider *self)=
-- =lrg_slider_set_value(LrgSlider *self, gdouble value)=
-- =lrg_slider_get_min/set_min/get_max/set_max/get_step/set_step=
-- =lrg_slider_set_range(LrgSlider *self, gdouble min, gdouble max)=
-- =lrg_slider_get_fraction(LrgSlider *self)=
-- =lrg_slider_get_orientation/set_orientation=
-
-** Related
-:PROPERTIES:
-:CUSTOM_ID: related
-:END:
-- [[../index.md][UI Widgets Overview]]
+- =lrg_slider_new()=, =lrg_slider_new_with_range(min, max, step)=
+- =lrg_slider_get_value()= / =lrg_slider_set_value()=
+- =lrg_slider_get_min()= / =lrg_slider_set_min()=, =lrg_slider_get_max()= / =lrg_slider_set_max()=, =lrg_slider_set_range()=
+- =lrg_slider_get_step()= / =lrg_slider_set_step()=, =lrg_slider_get_fraction()=
+- =lrg_slider_get_orientation()= / =lrg_slider_set_orientation()=
+- =lrg_slider_get/set_track_color()=, =lrg_slider_get/set_fill_color()=, =lrg_slider_get/set_handle_color()=
+- =lrg_slider_get/set_handle_size()=, =lrg_slider_get/set_track_thickness()=

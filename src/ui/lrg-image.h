@@ -172,4 +172,32 @@ void lrg_image_set_source_rect (LrgImage           *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_image_clear_source_rect (LrgImage *self);
 
+/* ==========================================================================
+ * Corner Radius
+ * ========================================================================== */
+
+/**
+ * lrg_image_get_corner_radius:
+ * @self: an #LrgImage
+ *
+ * Gets the radius of the image's rounded corners.
+ *
+ * Returns: the corner radius (0 = square corners)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_image_get_corner_radius (LrgImage *self);
+
+/**
+ * lrg_image_set_corner_radius:
+ * @self: an #LrgImage
+ * @radius: corner radius, 0 for square corners
+ *
+ * Rounds the image's corners (anti-aliased). Use half the shorter side
+ * for a circular avatar. Applies to every scale mode except
+ * %LRG_IMAGE_SCALE_MODE_TILE.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_image_set_corner_radius (LrgImage *self,
+                                  gfloat    radius);
+
 G_END_DECLS

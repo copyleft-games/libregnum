@@ -173,6 +173,114 @@ void lrg_text_input_set_cursor_position (LrgTextInput *self,
                                          gint          position);
 
 /* ==========================================================================
+ * Selection and editing
+ * ========================================================================== */
+
+/**
+ * lrg_text_input_get_selection:
+ * @self: an #LrgTextInput
+ * @start: (out) (optional): first selected character
+ * @end: (out) (optional): one past the last selected character
+ *
+ * Gets the selected range in UTF-8 characters, ordered so that
+ * @start <= @end. With nothing selected both are the cursor position.
+ *
+ * Returns: %TRUE if a non-empty range is selected
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_text_input_get_selection (LrgTextInput *self,
+                                       gint         *start,
+                                       gint         *end);
+
+/**
+ * lrg_text_input_set_selection:
+ * @self: an #LrgTextInput
+ * @anchor: the fixed end of the selection, in characters
+ * @cursor: the moving end, where the cursor goes
+ *
+ * Selects the characters between @anchor and @cursor (either order;
+ * values are clamped to the text). Equal values just move the cursor.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_input_set_selection (LrgTextInput *self,
+                                   gint          anchor,
+                                   gint          cursor);
+
+/**
+ * lrg_text_input_select_all:
+ * @self: an #LrgTextInput
+ *
+ * Selects the whole text (what Ctrl+A does).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_input_select_all (LrgTextInput *self);
+
+/**
+ * lrg_text_input_get_selected_text:
+ * @self: an #LrgTextInput
+ *
+ * Returns: (transfer full) (nullable): the selected text, or %NULL
+ *   when nothing is selected
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_text_input_get_selected_text (LrgTextInput *self);
+
+/**
+ * lrg_text_input_delete_selection:
+ * @self: an #LrgTextInput
+ *
+ * Deletes the selected text, if any, emitting #LrgTextInput::text-changed.
+ *
+ * Returns: %TRUE if something was deleted
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_text_input_delete_selection (LrgTextInput *self);
+
+/**
+ * lrg_text_input_insert_text:
+ * @self: an #LrgTextInput
+ * @text: UTF-8 text to insert
+ *
+ * Inserts @text at the cursor, replacing the selection, as if typed.
+ * Control characters (newlines, tabs ...) are dropped and the result is
+ * cut to #LrgTextInput:max-length.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_input_insert_text (LrgTextInput *self,
+                                 const gchar  *text);
+
+/**
+ * lrg_text_input_copy_clipboard:
+ * @self: an #LrgTextInput
+ *
+ * Copies the selection to the clipboard (Ctrl+C). Without a window the
+ * text goes to a process-wide fallback clipboard instead, so editing
+ * also works headless. Password inputs never copy.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_input_copy_clipboard (LrgTextInput *self);
+
+/**
+ * lrg_text_input_cut_clipboard:
+ * @self: an #LrgTextInput
+ *
+ * Copies the selection to the clipboard and deletes it (Ctrl+X).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_input_cut_clipboard (LrgTextInput *self);
+
+/**
+ * lrg_text_input_paste_clipboard:
+ * @self: an #LrgTextInput
+ *
+ * Inserts the clipboard text at the cursor, replacing the selection
+ * (Ctrl+V). See lrg_text_input_copy_clipboard() for the headless
+ * fallback.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_text_input_paste_clipboard (LrgTextInput *self);
+
+/* ==========================================================================
  * Focus
  * ========================================================================== */
 

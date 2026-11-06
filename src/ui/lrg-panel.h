@@ -139,4 +139,33 @@ LRG_AVAILABLE_IN_ALL
 void lrg_panel_set_corner_radius (LrgPanel *self,
                                   gfloat    radius);
 
+/* ==========================================================================
+ * Elevation
+ * ========================================================================== */
+
+/**
+ * lrg_panel_get_elevation:
+ * @self: an #LrgPanel
+ *
+ * Gets how far the panel floats above what is behind it.
+ *
+ * Returns: the elevation, 0 (flat) to 3
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_panel_get_elevation (LrgPanel *self);
+
+/**
+ * lrg_panel_set_elevation:
+ * @self: an #LrgPanel
+ * @elevation: 0 (flat, no shadow) to 3 (floating); larger values are
+ *   clamped to 3
+ *
+ * Sets the panel's elevation. Each step casts a larger, softer drop
+ * shadow derived from the theme's SHADOW_BLUR and SHADOW_OFFSET_Y
+ * metrics. The default is 1.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_panel_set_elevation (LrgPanel *self,
+                              guint     elevation);
+
 G_END_DECLS

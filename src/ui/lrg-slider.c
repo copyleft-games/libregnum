@@ -5,6 +5,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Slider widget for selecting numeric values.
+ *
+ * Painted as three parts: a pill TRACK, an ACCENT FILL from the minimum
+ * to the value, and a round THUMB with a soft shadow that swells on
+ * hover and while dragged. Arrow keys step the value when focused.
  */
 
 #include "config.h"
@@ -48,6 +52,14 @@ struct _LrgSlider
     gfloat          track_thickness;
 
     gboolean        is_dragging;
+
+    /* Which legacy appearance properties the caller set explicitly;
+     * unset ones follow the theme */
+    gboolean        track_set;
+    gboolean        fill_set;
+    gboolean        handle_set;
+    gboolean        handle_size_set;
+    gboolean        thickness_set;
 };
 
 G_DEFINE_TYPE (LrgSlider, lrg_slider, LRG_TYPE_WIDGET)
@@ -81,6 +93,13 @@ static guint signals[N_SIGNALS];
 /* ==========================================================================
  * Private Helpers
  * ========================================================================== */
+
+/* How much bigger the thumb grows under the pointer / while dragged */
+#define THUMB_HOVER_GROW   (1.18f)
+#define THUMB_PRESS_GROW   (1.30f)
+
+/* Opacity of a disabled slider */
+#define SLIDER_DISABLED_OPACITY (0.45f)
 
 /*
  * Clamp value to range and snap to step increment.
@@ -117,26 +136,58 @@ snap_value (LrgSlider *self,
 }
 
 /*
+ * base_handle_size:
+ *
+ * Resting thumb diameter: the explicit #LrgSlider:handle-size, else
+ * the theme's HANDLE_SIZE metric. Layout (track inset, value mapping)
+ * always uses this resting size so the value under the pointer does
+ * not shift while the thumb grows.
+ */
+static gfloat
+base_handle_size (LrgSlider *self)
+{
+    if (self->handle_size_set)
+        return self->handle_size;
+    return lrg_theme_get_metric (lrg_widget_get_theme (LRG_WIDGET (self)),
+                                 LRG_THEME_METRIC_HANDLE_SIZE);
+}
+
+/*
+ * base_track_thickness:
+ *
+ * The explicit #LrgSlider:track-thickness, else about a quarter of
+ * the thumb (never thinner than 4 units).
+ */
+static gfloat
+base_track_thickness (LrgSlider *self)
+{
+    if (self->thickness_set)
+        return self->track_thickness;
+    return MAX (4.0f, roundf (base_handle_size (self) * 0.28f));
+}
+
+/*
  * Calculate the handle center position based on current value.
  */
 static gfloat
 value_to_position (LrgSlider          *self,
                    const GrlRectangle *bounds)
 {
-    gfloat track_start;
-    gfloat track_length;
+    gfloat  track_start;
+    gfloat  track_length;
+    gfloat  handle = base_handle_size (self);
     gdouble fraction;
 
     if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
     {
-        track_start = bounds->x + self->handle_size / 2.0f;
-        track_length = bounds->width - self->handle_size;
+        track_start = bounds->x + handle / 2.0f;
+        track_length = bounds->width - handle;
     }
     else
     {
         /* Vertical: top is max, bottom is min */
-        track_start = bounds->y + bounds->height - self->handle_size / 2.0f;
-        track_length = -(bounds->height - self->handle_size);
+        track_start = bounds->y + bounds->height - handle / 2.0f;
+        track_length = -(bounds->height - handle);
     }
 
     fraction = lrg_slider_get_fraction (self);
@@ -151,39 +202,32 @@ position_to_value (LrgSlider          *self,
                    gfloat              pos,
                    const GrlRectangle *bounds)
 {
-    gfloat track_start;
-    gfloat track_length;
+    gfloat  track_start;
+    gfloat  track_length;
+    gfloat  handle = base_handle_size (self);
     gdouble fraction;
 
     if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
     {
-        track_start = bounds->x + self->handle_size / 2.0f;
-        track_length = bounds->width - self->handle_size;
+        track_start = bounds->x + handle / 2.0f;
+        track_length = bounds->width - handle;
     }
     else
     {
-        track_start = bounds->y + self->handle_size / 2.0f;
-        track_length = bounds->height - self->handle_size;
+        track_start = bounds->y + handle / 2.0f;
+        track_length = bounds->height - handle;
     }
 
     if (track_length <= 0.0f)
         return self->min;
 
     if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
-    {
         fraction = (pos - track_start) / track_length;
-    }
     else
-    {
         /* Vertical: top is max, bottom is min */
         fraction = 1.0 - ((pos - track_start) / track_length);
-    }
 
-    /* Clamp fraction to [0, 1] */
-    if (fraction < 0.0)
-        fraction = 0.0;
-    if (fraction > 1.0)
-        fraction = 1.0;
+    fraction = CLAMP (fraction, 0.0, 1.0);
 
     return self->min + fraction * (self->max - self->min);
 }
@@ -205,78 +249,181 @@ get_widget_bounds (LrgWidget *widget)
 }
 
 /* ==========================================================================
+ * Looks
+ * ========================================================================== */
+
+/*
+ * lrg_slider_style_defaults:
+ *
+ * TRACK: the theme's TRACK colour (explicit track-color wins), a pill.
+ * FILL: ACCENT, lighter on hover, ACCENT_PRESSED while dragging
+ * (explicit fill-color wins), a pill.
+ * THUMB: HANDLE colour (explicit handle-color wins) with a soft drop
+ * shadow; its @size is the resting diameter, grown on hover and more
+ * while pressed so the thumb swells under the finger.
+ */
+static void
+lrg_slider_style_defaults (LrgWidget      *widget,
+                           LrgUIPart       part,
+                           LrgWidgetState  state,
+                           LrgPartLook    *look)
+{
+    LrgSlider      *self = LRG_SLIDER (widget);
+    LrgTheme       *theme = lrg_widget_get_theme (widget);
+    gboolean        hovered = (state & LRG_WIDGET_STATE_HOVERED) != 0;
+    gboolean        pressed = (state & LRG_WIDGET_STATE_PRESSED) != 0;
+    const GrlColor *shadow;
+    GrlColor        c;
+    gfloat          size;
+
+    switch (part)
+    {
+    case LRG_UI_PART_TRACK:
+        c = self->track_set ? self->track_color
+                            : *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
+        lrg_part_look_set_background (look, &c);
+        lrg_part_look_set_radius (look, G_MAXFLOAT);
+        lrg_part_look_set_size (look, base_track_thickness (self));
+        break;
+
+    case LRG_UI_PART_FILL:
+        if (self->fill_set)
+        {
+            if (pressed)
+                lrg_paint_color_shade (&self->fill_color, -0.12f, &c);
+            else if (hovered)
+                lrg_paint_color_shade (&self->fill_color, 0.10f, &c);
+            else
+                c = self->fill_color;
+        }
+        else
+        {
+            c = *lrg_theme_get_color (theme, pressed ? LRG_THEME_COLOR_ACCENT_PRESSED
+                                             : hovered ? LRG_THEME_COLOR_ACCENT_HOVER
+                                             : LRG_THEME_COLOR_ACCENT);
+        }
+        lrg_part_look_set_background (look, &c);
+        lrg_part_look_set_radius (look, G_MAXFLOAT);
+        break;
+
+    case LRG_UI_PART_THUMB:
+        c = self->handle_set ? self->handle_color
+                             : *lrg_theme_get_color (theme, LRG_THEME_COLOR_HANDLE);
+        lrg_part_look_set_background (look, &c);
+        lrg_part_look_set_radius (look, G_MAXFLOAT);
+
+        size = base_handle_size (self);
+        if (pressed)
+            size *= THUMB_PRESS_GROW;
+        else if (hovered)
+            size *= THUMB_HOVER_GROW;
+        lrg_part_look_set_size (look, size);
+
+        /* Soft shadow under the thumb, stronger when lifted by hover */
+        shadow = lrg_theme_get_color (theme, LRG_THEME_COLOR_SHADOW);
+        lrg_paint_color_with_alpha (shadow, ((gfloat) shadow->a / 255.0f) * (hovered ? 0.8f : 0.55f),
+                                    &c);
+        lrg_part_look_set_shadow (look, &c,
+                                  MAX (lrg_theme_get_metric (theme, LRG_THEME_METRIC_SHADOW_BLUR) *
+                                       (hovered ? 0.45f : 0.3f), 1.0f),
+                                  lrg_theme_get_metric (theme, LRG_THEME_METRIC_SHADOW_OFFSET_Y) *
+                                  (pressed ? 0.15f : hovered ? 0.45f : 0.3f));
+
+        /* A faint accent halo while hovered / dragged */
+        lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT),
+                                    pressed ? 0.35f : hovered ? 0.25f : 0.0f, &c);
+        lrg_part_look_set_glow (look, &c, size * 0.45f);
+        break;
+
+    default:
+        LRG_WIDGET_CLASS (lrg_slider_parent_class)->style_defaults (widget, part, state, look);
+        return;
+    }
+
+    if (state & LRG_WIDGET_STATE_DISABLED)
+        lrg_part_look_set_opacity (look, SLIDER_DISABLED_OPACITY);
+}
+
+/* ==========================================================================
  * Virtual Method Overrides
  * ========================================================================== */
 
+/*
+ * lrg_slider_paint:
+ *
+ * Track (a pill across the widget, inset by half a resting thumb),
+ * fill from the minimum end to the thumb, then the round thumb
+ * centred on the value position. Vertical sliders fill upwards.
+ */
 static void
-lrg_slider_draw (LrgWidget *widget)
+lrg_slider_paint (LrgWidget    *widget,
+                  LrgPaintList *list)
 {
-    LrgSlider *self = LRG_SLIDER (widget);
-    GrlRectangle bounds;
-    gfloat track_x;
-    gfloat track_y;
-    gfloat track_w;
-    gfloat track_h;
-    gfloat fill_w;
-    gfloat fill_h;
-    gfloat handle_x;
-    gfloat handle_y;
-    gfloat handle_pos;
-    gdouble fraction;
+    LrgSlider    *self = LRG_SLIDER (widget);
+    GrlRectangle  bounds = get_widget_bounds (widget);
+    LrgPartLook   track;
+    LrgPartLook   fill;
+    LrgPartLook   thumb;
+    gfloat        handle = base_handle_size (self);
+    gfloat        pos = value_to_position (self, &bounds);
+    gfloat        t;
+    gfloat        d;
+    gfloat        tx;
+    gfloat        ty;
+    gfloat        tw;
+    gfloat        th;
+    gfloat        cx;
+    gfloat        cy;
 
-    bounds = get_widget_bounds (widget);
-    fraction = lrg_slider_get_fraction (self);
-    handle_pos = value_to_position (self, &bounds);
+    lrg_widget_resolve_look (widget, LRG_UI_PART_TRACK, &track);
 
-    if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
+    /* The canvas drops PRESSED while a captured pointer is outside the
+     * widget; a thumb being dragged keeps its pressed look anyway */
+    if (self->is_dragging)
     {
-        /* Horizontal: track runs left-right, centered vertically */
-        track_x = bounds.x + self->handle_size / 2.0f;
-        track_y = bounds.y + (bounds.height - self->track_thickness) / 2.0f;
-        track_w = bounds.width - self->handle_size;
-        track_h = self->track_thickness;
+        LrgWidgetState held = lrg_widget_get_state_flags (widget) |
+                              LRG_WIDGET_STATE_HOVERED | LRG_WIDGET_STATE_PRESSED;
 
-        /* Fill from left to handle position */
-        fill_w = (gfloat)(fraction * track_w);
-        fill_h = track_h;
-
-        /* Handle centered on track at value position */
-        handle_x = handle_pos;
-        handle_y = bounds.y + bounds.height / 2.0f;
+        lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_FILL, held, &fill);
+        lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_THUMB, held, &thumb);
     }
     else
     {
-        /* Vertical: track runs top-bottom, centered horizontally */
-        track_x = bounds.x + (bounds.width - self->track_thickness) / 2.0f;
-        track_y = bounds.y + self->handle_size / 2.0f;
-        track_w = self->track_thickness;
-        track_h = bounds.height - self->handle_size;
-
-        /* Fill from bottom to handle position (value increases upward) */
-        fill_w = track_w;
-        fill_h = (gfloat)(fraction * track_h);
-
-        /* Handle centered on track at value position */
-        handle_x = bounds.x + bounds.width / 2.0f;
-        handle_y = handle_pos;
+        lrg_widget_resolve_look (widget, LRG_UI_PART_FILL, &fill);
+        lrg_widget_resolve_look (widget, LRG_UI_PART_THUMB, &thumb);
     }
 
-    /* Draw track background */
-    grl_draw_rectangle (track_x, track_y, track_w, track_h, &self->track_color);
+    t = track.size > 0.0f ? track.size : base_track_thickness (self);
+    d = thumb.size > 0.0f ? thumb.size : handle;
 
-    /* Draw fill (progress portion) */
     if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
     {
-        grl_draw_rectangle (track_x, track_y, fill_w, fill_h, &self->fill_color);
+        tx = bounds.x + handle / 2.0f;
+        ty = bounds.y + (bounds.height - t) / 2.0f;
+        tw = bounds.width - handle;
+        th = t;
+        cx = pos;
+        cy = bounds.y + bounds.height / 2.0f;
+
+        lrg_widget_paint_box (widget, list, &track, tx, ty, tw, th);
+        /* Fill reaches the thumb centre; a little under it hides the cap */
+        lrg_widget_paint_box (widget, list, &fill, tx, ty, MAX (cx - tx, 0.0f), th);
     }
     else
     {
-        /* Vertical: fill from bottom */
-        grl_draw_rectangle (track_x, track_y + track_h - fill_h, fill_w, fill_h, &self->fill_color);
+        tx = bounds.x + (bounds.width - t) / 2.0f;
+        ty = bounds.y + handle / 2.0f;
+        tw = t;
+        th = bounds.height - handle;
+        cx = bounds.x + bounds.width / 2.0f;
+        cy = pos;
+
+        lrg_widget_paint_box (widget, list, &track, tx, ty, tw, th);
+        lrg_widget_paint_box (widget, list, &fill, tx, cy, tw, MAX (ty + th - cy, 0.0f));
     }
 
-    /* Draw handle */
-    grl_draw_circle (handle_x, handle_y, self->handle_size / 2.0f, &self->handle_color);
+    /* Thumb */
+    lrg_widget_paint_box (widget, list, &thumb, cx - d / 2.0f, cy - d / 2.0f, d, d);
 }
 
 static void
@@ -285,62 +432,92 @@ lrg_slider_measure (LrgWidget *widget,
                     gfloat    *preferred_height)
 {
     LrgSlider *self = LRG_SLIDER (widget);
+    gfloat     cross = ceilf (base_handle_size (self) * THUMB_PRESS_GROW);
 
     if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
     {
         if (preferred_width != NULL)
             *preferred_width = 200.0f;
         if (preferred_height != NULL)
-            *preferred_height = self->handle_size;
+            *preferred_height = cross;
     }
     else
     {
         if (preferred_width != NULL)
-            *preferred_width = self->handle_size;
+            *preferred_width = cross;
         if (preferred_height != NULL)
             *preferred_height = 200.0f;
     }
 }
 
+/*
+ * key_step:
+ *
+ * The value change for a key, or 0 when the key does not move this
+ * slider. Without a step, keys move by 1% of the range.
+ */
+static gdouble
+key_step (LrgSlider *self,
+          GrlKey     key)
+{
+    gdouble inc = self->step > 0.0 ? self->step : (self->max - self->min) / 100.0;
+
+    if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
+    {
+        if (key == GRL_KEY_RIGHT)
+            return inc;
+        if (key == GRL_KEY_LEFT)
+            return -inc;
+    }
+    else
+    {
+        if (key == GRL_KEY_UP)
+            return inc;
+        if (key == GRL_KEY_DOWN)
+            return -inc;
+    }
+    return 0.0;
+}
+
+/*
+ * lrg_slider_handle_event:
+ *
+ * A left press jumps to the pointer and starts a drag; the canvas
+ * keeps routing moves and the release to the slider (pointer capture)
+ * even outside its bounds. When focused, the arrow keys along the
+ * slider's axis step the value and Home / End jump to the ends; they
+ * are consumed so they do not move focus.
+ */
 static gboolean
 lrg_slider_handle_event (LrgWidget        *widget,
                          const LrgUIEvent *event)
 {
-    LrgSlider *self = LRG_SLIDER (widget);
-    GrlRectangle bounds;
-    LrgUIEventType type;
-    gdouble new_value;
-    gfloat pos;
-    gfloat x;
-    gfloat y;
+    LrgSlider      *self = LRG_SLIDER (widget);
+    GrlRectangle    bounds;
+    LrgUIEventType  type;
+    gfloat          pos;
+    gdouble         delta;
 
     bounds = get_widget_bounds (widget);
     type = lrg_ui_event_get_event_type (event);
-    x = lrg_ui_event_get_x (event);
-    y = lrg_ui_event_get_y (event);
 
     switch (type)
     {
     case LRG_UI_EVENT_MOUSE_BUTTON_DOWN:
-        if (lrg_ui_event_get_button (event) == 0)  /* Left button */
+        if (lrg_ui_event_get_button (event) == GRL_MOUSE_BUTTON_LEFT)
         {
             self->is_dragging = TRUE;
 
             /* Jump to click position */
-            if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
-                pos = x;
-            else
-                pos = y;
-
-            new_value = position_to_value (self, pos, &bounds);
-            lrg_slider_set_value (self, new_value);
-
+            pos = self->orientation == LRG_ORIENTATION_HORIZONTAL ? lrg_ui_event_get_x (event)
+                                                                  : lrg_ui_event_get_y (event);
+            lrg_slider_set_value (self, position_to_value (self, pos, &bounds));
             return TRUE;
         }
         break;
 
     case LRG_UI_EVENT_MOUSE_BUTTON_UP:
-        if (lrg_ui_event_get_button (event) == 0 && self->is_dragging)
+        if (lrg_ui_event_get_button (event) == GRL_MOUSE_BUTTON_LEFT && self->is_dragging)
         {
             self->is_dragging = FALSE;
             return TRUE;
@@ -350,15 +527,30 @@ lrg_slider_handle_event (LrgWidget        *widget,
     case LRG_UI_EVENT_MOUSE_MOVE:
         if (self->is_dragging)
         {
-            if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
-                pos = x;
-            else
-                pos = y;
-
-            new_value = position_to_value (self, pos, &bounds);
-            lrg_slider_set_value (self, new_value);
-
+            pos = self->orientation == LRG_ORIENTATION_HORIZONTAL ? lrg_ui_event_get_x (event)
+                                                                  : lrg_ui_event_get_y (event);
+            lrg_slider_set_value (self, position_to_value (self, pos, &bounds));
             return TRUE;
+        }
+        break;
+
+    case LRG_UI_EVENT_KEY_DOWN:
+        switch (lrg_ui_event_get_key (event))
+        {
+        case GRL_KEY_HOME:
+            lrg_slider_set_value (self, self->min);
+            return TRUE;
+        case GRL_KEY_END:
+            lrg_slider_set_value (self, self->max);
+            return TRUE;
+        default:
+            delta = key_step (self, lrg_ui_event_get_key (event));
+            if (delta != 0.0)
+            {
+                lrg_slider_set_value (self, self->value + delta);
+                return TRUE;
+            }
+            break;
         }
         break;
 
@@ -472,7 +664,8 @@ lrg_slider_class_init (LrgSliderClass *klass)
     object_class->get_property = lrg_slider_get_property;
     object_class->set_property = lrg_slider_set_property;
 
-    widget_class->draw = lrg_slider_draw;
+    widget_class->paint = lrg_slider_paint;
+    widget_class->style_defaults = lrg_slider_style_defaults;
     widget_class->measure = lrg_slider_measure;
     widget_class->handle_event = lrg_slider_handle_event;
 
@@ -550,7 +743,8 @@ lrg_slider_class_init (LrgSliderClass *klass)
     /**
      * LrgSlider:track-color:
      *
-     * The track background color.
+     * The track background colour. Until set, the theme's TRACK colour
+     * is used; once set it replaces that default.
      */
     properties[PROP_TRACK_COLOR] =
         g_param_spec_boxed ("track-color",
@@ -564,7 +758,9 @@ lrg_slider_class_init (LrgSliderClass *klass)
     /**
      * LrgSlider:fill-color:
      *
-     * The fill color.
+     * The colour of the filled part. Until set, the theme's ACCENT
+     * family is used; once set it replaces that default (hover and
+     * press shades are derived from it).
      */
     properties[PROP_FILL_COLOR] =
         g_param_spec_boxed ("fill-color",
@@ -578,7 +774,7 @@ lrg_slider_class_init (LrgSliderClass *klass)
     /**
      * LrgSlider:handle-color:
      *
-     * The handle color.
+     * The thumb colour. Until set, the theme's HANDLE colour is used.
      */
     properties[PROP_HANDLE_COLOR] =
         g_param_spec_boxed ("handle-color",
@@ -592,7 +788,9 @@ lrg_slider_class_init (LrgSliderClass *klass)
     /**
      * LrgSlider:handle-size:
      *
-     * The handle diameter.
+     * The resting thumb diameter. The default (20) is only reported:
+     * the slider follows the theme's HANDLE_SIZE until a size is set.
+     * The thumb grows a little on hover and while dragged.
      */
     properties[PROP_HANDLE_SIZE] =
         g_param_spec_float ("handle-size",
@@ -606,7 +804,8 @@ lrg_slider_class_init (LrgSliderClass *klass)
     /**
      * LrgSlider:track-thickness:
      *
-     * The track thickness.
+     * The track thickness. The default (6) is only reported: until set,
+     * the track is about a quarter of the thumb diameter.
      */
     properties[PROP_TRACK_THICKNESS] =
         g_param_spec_float ("track-thickness",
@@ -958,6 +1157,7 @@ lrg_slider_set_orientation (LrgSlider      *self,
         return;
 
     self->orientation = orientation;
+    lrg_widget_queue_layout (LRG_WIDGET (self));
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ORIENTATION]);
 }
 
@@ -995,6 +1195,7 @@ lrg_slider_set_track_color (LrgSlider      *self,
     g_return_if_fail (LRG_IS_SLIDER (self));
     g_return_if_fail (color != NULL);
 
+    self->track_set = TRUE;
     if (self->track_color.r == color->r &&
         self->track_color.g == color->g &&
         self->track_color.b == color->b &&
@@ -1035,6 +1236,7 @@ lrg_slider_set_fill_color (LrgSlider      *self,
     g_return_if_fail (LRG_IS_SLIDER (self));
     g_return_if_fail (color != NULL);
 
+    self->fill_set = TRUE;
     if (self->fill_color.r == color->r &&
         self->fill_color.g == color->g &&
         self->fill_color.b == color->b &&
@@ -1075,6 +1277,7 @@ lrg_slider_set_handle_color (LrgSlider      *self,
     g_return_if_fail (LRG_IS_SLIDER (self));
     g_return_if_fail (color != NULL);
 
+    self->handle_set = TRUE;
     if (self->handle_color.r == color->r &&
         self->handle_color.g == color->g &&
         self->handle_color.b == color->b &&
@@ -1115,6 +1318,8 @@ lrg_slider_set_handle_size (LrgSlider *self,
     g_return_if_fail (LRG_IS_SLIDER (self));
     g_return_if_fail (size >= 1.0f);
 
+    self->handle_size_set = TRUE;
+    lrg_widget_queue_layout (LRG_WIDGET (self));
     if (self->handle_size == size)
         return;
 
@@ -1152,6 +1357,7 @@ lrg_slider_set_track_thickness (LrgSlider *self,
     g_return_if_fail (LRG_IS_SLIDER (self));
     g_return_if_fail (thickness >= 1.0f);
 
+    self->thickness_set = TRUE;
     if (self->track_thickness == thickness)
         return;
 

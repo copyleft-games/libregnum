@@ -49,6 +49,7 @@ struct _LrgImage
     LrgImageScaleMode  scale_mode;
     GrlColor           tint;
     GrlRectangle      *source_rect;
+    gfloat             corner_radius;
 };
 
 G_DEFINE_TYPE (LrgImage, lrg_image, LRG_TYPE_WIDGET)
@@ -60,6 +61,7 @@ enum
     PROP_SCALE_MODE,
     PROP_TINT,
     PROP_SOURCE_RECT,
+    PROP_CORNER_RADIUS,
     N_PROPS
 };
 
@@ -150,28 +152,39 @@ calculate_fill_rects (gfloat         src_width,
  * Virtual Method Overrides
  * ========================================================================== */
 
+/*
+ * lrg_image_paint:
+ *
+ * Records the texture as SDF image instances, so FIT, FILL and STRETCH
+ * get anti-aliased rounded corners (#LrgImage:corner-radius) for free.
+ * TILE repeats the texture inside a clip of the widget's bounds; the
+ * tiles themselves are square-cornered. Disabled images fade.
+ */
 static void
-lrg_image_draw (LrgWidget *widget)
+lrg_image_paint (LrgWidget    *widget,
+                 LrgPaintList *list)
 {
-    LrgImage *self = LRG_IMAGE (widget);
-    GrlRectangle bounds;
-    GrlRectangle source;
-    GrlRectangle dest;
-    GrlVector2 origin;
-    gfloat src_width;
-    gfloat src_height;
+    LrgImage     *self = LRG_IMAGE (widget);
+    GrlRectangle  bounds;
+    GrlRectangle  source;
+    GrlRectangle  dest;
+    GrlColor      tint;
+    gfloat        src_width;
+    gfloat        src_height;
+    gfloat        radius = self->corner_radius;
 
     /* Nothing to draw without a texture */
     if (self->texture == NULL || !grl_texture_is_valid (self->texture))
         return;
 
-    /* Get widget bounds */
     bounds.x = lrg_widget_get_world_x (widget);
     bounds.y = lrg_widget_get_world_y (widget);
     bounds.width = lrg_widget_get_width (widget);
     bounds.height = lrg_widget_get_height (widget);
+    if (bounds.width <= 0.0f || bounds.height <= 0.0f)
+        return;
 
-    /* Determine source rectangle (whole texture or specified region) */
+    /* Source: the whole texture or the sprite-sheet region */
     if (self->source_rect != NULL)
     {
         source = *self->source_rect;
@@ -180,14 +193,17 @@ lrg_image_draw (LrgWidget *widget)
     {
         source.x = 0.0f;
         source.y = 0.0f;
-        source.width = (gfloat)grl_texture_get_width (self->texture);
-        source.height = (gfloat)grl_texture_get_height (self->texture);
+        source.width = (gfloat) grl_texture_get_width (self->texture);
+        source.height = (gfloat) grl_texture_get_height (self->texture);
     }
-
     src_width = source.width;
     src_height = source.height;
-    origin.x = 0.0f;
-    origin.y = 0.0f;
+    if (src_width <= 0.0f || src_height <= 0.0f)
+        return;
+
+    tint = self->tint;
+    if (lrg_widget_get_state_flags (widget) & LRG_WIDGET_STATE_DISABLED)
+        tint.a = (guint8) ((gfloat) tint.a * 0.45f);
 
     switch (self->scale_mode)
     {
@@ -195,7 +211,8 @@ lrg_image_draw (LrgWidget *widget)
         dest = calculate_fit_rect (src_width, src_height,
                                    bounds.x, bounds.y,
                                    bounds.width, bounds.height);
-        grl_draw_texture_pro (self->texture, &source, &dest, &origin, 0.0f, &self->tint);
+        lrg_paint_list_image (list, self->texture, &source,
+                              dest.x, dest.y, dest.width, dest.height, radius, &tint);
         break;
 
     case LRG_IMAGE_SCALE_MODE_FILL:
@@ -208,73 +225,39 @@ lrg_image_draw (LrgWidget *widget)
                                   bounds.width, bounds.height,
                                   &fill_source, &fill_dest);
 
-            /* Adjust source rectangle if using a custom source rect */
-            if (self->source_rect != NULL)
-            {
-                fill_source.x += self->source_rect->x;
-                fill_source.y += self->source_rect->y;
-            }
+            /* The crop is relative to a custom source rect */
+            fill_source.x += source.x;
+            fill_source.y += source.y;
 
-            grl_draw_texture_pro (self->texture, &fill_source, &fill_dest, &origin, 0.0f, &self->tint);
+            lrg_paint_list_image (list, self->texture, &fill_source,
+                                  fill_dest.x, fill_dest.y, fill_dest.width, fill_dest.height,
+                                  radius, &tint);
         }
-        break;
-
-    case LRG_IMAGE_SCALE_MODE_STRETCH:
-        dest.x = bounds.x;
-        dest.y = bounds.y;
-        dest.width = bounds.width;
-        dest.height = bounds.height;
-        grl_draw_texture_pro (self->texture, &source, &dest, &origin, 0.0f, &self->tint);
         break;
 
     case LRG_IMAGE_SCALE_MODE_TILE:
         {
             gfloat tile_x;
             gfloat tile_y;
-            GrlRectangle tile_dest;
 
-            /* Draw tiled copies of the texture */
+            /* Whole tiles, cut at the widget's edge by the clip */
+            lrg_paint_list_push_clip (list, bounds.x, bounds.y, bounds.width, bounds.height);
             for (tile_y = bounds.y; tile_y < bounds.y + bounds.height; tile_y += src_height)
             {
                 for (tile_x = bounds.x; tile_x < bounds.x + bounds.width; tile_x += src_width)
                 {
-                    GrlRectangle tile_source;
-                    gfloat draw_width;
-                    gfloat draw_height;
-
-                    /* Calculate how much of this tile is visible */
-                    draw_width = src_width;
-                    draw_height = src_height;
-
-                    if (tile_x + draw_width > bounds.x + bounds.width)
-                        draw_width = bounds.x + bounds.width - tile_x;
-                    if (tile_y + draw_height > bounds.y + bounds.height)
-                        draw_height = bounds.y + bounds.height - tile_y;
-
-                    /* Set up source (possibly partial for edge tiles) */
-                    tile_source = source;
-                    tile_source.width = draw_width;
-                    tile_source.height = draw_height;
-
-                    /* Set up destination */
-                    tile_dest.x = tile_x;
-                    tile_dest.y = tile_y;
-                    tile_dest.width = draw_width;
-                    tile_dest.height = draw_height;
-
-                    grl_draw_texture_pro (self->texture, &tile_source, &tile_dest, &origin, 0.0f, &self->tint);
+                    lrg_paint_list_image (list, self->texture, &source,
+                                          tile_x, tile_y, src_width, src_height, 0.0f, &tint);
                 }
             }
+            lrg_paint_list_pop_clip (list);
         }
         break;
 
+    case LRG_IMAGE_SCALE_MODE_STRETCH:
     default:
-        /* Fallback to stretch */
-        dest.x = bounds.x;
-        dest.y = bounds.y;
-        dest.width = bounds.width;
-        dest.height = bounds.height;
-        grl_draw_texture_pro (self->texture, &source, &dest, &origin, 0.0f, &self->tint);
+        lrg_paint_list_image (list, self->texture, &source,
+                              bounds.x, bounds.y, bounds.width, bounds.height, radius, &tint);
         break;
     }
 }
@@ -369,6 +352,9 @@ lrg_image_get_property (GObject    *object,
     case PROP_SOURCE_RECT:
         g_value_set_boxed (value, self->source_rect);
         break;
+    case PROP_CORNER_RADIUS:
+        g_value_set_float (value, self->corner_radius);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -396,6 +382,9 @@ lrg_image_set_property (GObject      *object,
     case PROP_SOURCE_RECT:
         lrg_image_set_source_rect (self, g_value_get_boxed (value));
         break;
+    case PROP_CORNER_RADIUS:
+        lrg_image_set_corner_radius (self, g_value_get_float (value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -412,7 +401,7 @@ lrg_image_class_init (LrgImageClass *klass)
     object_class->get_property = lrg_image_get_property;
     object_class->set_property = lrg_image_set_property;
 
-    widget_class->draw = lrg_image_draw;
+    widget_class->paint = lrg_image_paint;
     widget_class->measure = lrg_image_measure;
     widget_class->handle_event = lrg_image_handle_event;
 
@@ -469,6 +458,23 @@ lrg_image_class_init (LrgImageClass *klass)
                             "Source Rectangle",
                             "Optional source rectangle for sprite sheet rendering",
                             GRL_TYPE_RECTANGLE,
+                            G_PARAM_READWRITE |
+                            G_PARAM_STATIC_STRINGS |
+                            G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgImage:corner-radius:
+     *
+     * Radius of the image's rounded corners (anti-aliased by the paint
+     * renderer). 0 keeps square corners; a radius of half the shorter
+     * side or more gives a pill or circle. Not applied to the tiles of
+     * %LRG_IMAGE_SCALE_MODE_TILE.
+     */
+    properties[PROP_CORNER_RADIUS] =
+        g_param_spec_float ("corner-radius",
+                            "Corner Radius",
+                            "Rounded corner radius",
+                            0.0f, G_MAXFLOAT, 0.0f,
                             G_PARAM_READWRITE |
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
@@ -564,6 +570,7 @@ lrg_image_set_texture (LrgImage   *self,
     if (texture != NULL)
         self->texture = g_object_ref (texture);
 
+    lrg_widget_queue_layout (LRG_WIDGET (self));
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXTURE]);
 }
 
@@ -689,6 +696,7 @@ lrg_image_set_source_rect (LrgImage           *self,
     if (rect != NULL)
         self->source_rect = grl_rectangle_copy (rect);
 
+    lrg_widget_queue_layout (LRG_WIDGET (self));
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SOURCE_RECT]);
 }
 
@@ -702,4 +710,29 @@ void
 lrg_image_clear_source_rect (LrgImage *self)
 {
     lrg_image_set_source_rect (self, NULL);
+}
+
+/* ==========================================================================
+ * Public API - Corner Radius
+ * ========================================================================== */
+
+gfloat
+lrg_image_get_corner_radius (LrgImage *self)
+{
+    g_return_val_if_fail (LRG_IS_IMAGE (self), 0.0f);
+    return self->corner_radius;
+}
+
+void
+lrg_image_set_corner_radius (LrgImage *self,
+                             gfloat    radius)
+{
+    g_return_if_fail (LRG_IS_IMAGE (self));
+    g_return_if_fail (radius >= 0.0f);
+
+    if (self->corner_radius != radius)
+    {
+        self->corner_radius = radius;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CORNER_RADIUS]);
+    }
 }

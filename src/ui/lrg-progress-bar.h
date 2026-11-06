@@ -5,6 +5,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Progress bar widget for displaying completion status.
+ *
+ * Painted as a TRACK part with a gradient FILL (ACCENT to ACCENT_HOVER)
+ * that eases towards the value on a spring, or a shimmering segment
+ * when indeterminate.
  */
 
 #pragma once
@@ -98,6 +102,44 @@ void lrg_progress_bar_set_max (LrgProgressBar *self,
  */
 LRG_AVAILABLE_IN_ALL
 gdouble lrg_progress_bar_get_fraction (LrgProgressBar *self);
+
+/**
+ * lrg_progress_bar_get_display_fraction:
+ * @self: an #LrgProgressBar
+ *
+ * Gets the fraction currently drawn. The fill eases towards
+ * lrg_progress_bar_get_fraction() on a spring each time the bar is
+ * painted, so right after a value change the two differ.
+ *
+ * Returns: The drawn fraction (0.0 to 1.0, may overshoot briefly with
+ *   bouncy motion)
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_progress_bar_get_display_fraction (LrgProgressBar *self);
+
+/**
+ * lrg_progress_bar_get_indeterminate:
+ * @self: an #LrgProgressBar
+ *
+ * Gets whether the bar shows indeterminate activity.
+ *
+ * Returns: %TRUE if the bar is indeterminate
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_progress_bar_get_indeterminate (LrgProgressBar *self);
+
+/**
+ * lrg_progress_bar_set_indeterminate:
+ * @self: an #LrgProgressBar
+ * @indeterminate: %TRUE to show a shimmering segment sliding across
+ *   the track instead of a fill (for work of unknown length)
+ *
+ * Switches between the value fill and the indeterminate animation.
+ * The value is kept and shown again when switched back.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_progress_bar_set_indeterminate (LrgProgressBar *self,
+                                         gboolean        indeterminate);
 
 /* ==========================================================================
  * Display Options

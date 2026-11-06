@@ -2,78 +2,128 @@
 :PROPERTIES:
 :CUSTOM_ID: panel-widget
 :END:
-Styled container with background and border support.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgPanel= is a container with a surface: a rounded =BOX= in the theme's =PANEL= colour with a =BORDER= hairline and a drop shadow whose size depends on the panel's =elevation=. Children are painted on top of the surface, in order, after it.
+
+Use it for cards, side bars and HUD frames. Children are positioned like in a plain =LrgContainer= (absolute positions); nest an =LrgVBox= / =LrgHBox= inside for automatic layout.
 
 ** Creation
 :PROPERTIES:
 :CUSTOM_ID: creation
 :END:
 #+begin_src C
-g_autoptr(LrgPanel) panel = lrg_panel_new();
-lrg_widget_set_size(LRG_WIDGET(panel), 400, 300);
-lrg_widget_set_position(LRG_WIDGET(panel), 100, 50);
-lrg_container_add_child(container, LRG_WIDGET(panel));
+LrgPanel *card = lrg_panel_new ();
+
+lrg_widget_set_size (LRG_WIDGET (card), 320, 200);
+lrg_panel_set_elevation (card, 2);
+lrg_container_add_child (LRG_CONTAINER (card), LRG_WIDGET (content));
 #+end_src
 
-** Background
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: background
+:CUSTOM_ID: properties
 :END:
-#+begin_src C
-GrlColor bg = GRL_COLOR(50, 50, 50, 255);
-lrg_panel_set_background_color(panel, &bg);
+| Property           | Type       | Default        | Notes                                                                     |
+|--------------------+------------+----------------+---------------------------------------------------------------------------|
+| =background-color= | =GrlColor= | legacy grey    | Theme =PANEL= until set                                                   |
+| =border-color=     | =GrlColor= | =NULL=         | Theme =BORDER= hairline until set; set it to =NULL= to remove the border  |
+| =border-width=     | float      | 1 (reported)   | Theme =BORDER_WIDTH= until set                                            |
+| =corner-radius=    | float      | 0 (reported)   | Theme =CORNER_RADIUS= until set                                           |
+| =elevation=        | uint       | 1              | 0 (flat) to 3; drives the shadow                                          |
 
-const GrlColor *current_bg = lrg_panel_get_background_color(panel);
+The legacy properties keep their old default values in their getters, but the panel draws with the theme until a value is set explicitly; an explicit value then wins.
+
+Elevation → shadow: blur = =SHADOW_BLUR= × {0, 0.5, 1.0, 1.6} and vertical offset = =SHADOW_OFFSET_Y= × the same factor, in the theme's =SHADOW= colour.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+No panel-specific signals (see =LrgWidget= and =LrgContainer=).
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+| Part    | What it is | Resting                                             | Disabled     |
+|---------+------------+-----------------------------------------------------+--------------|
+| =BOX=   | Surface    | =PANEL= fill, =BORDER= border, =CORNER_RADIUS=, elevation shadow | opacity 0.6 |
+
+Panels are not focusable, so no focus ring is drawn.
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+No built-in classes. Common custom classes are =card= or =hud=; style them with rules.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+#+begin_src yaml
+styles:
+  # Glassy HUD panels
+  - widget: LrgPanel
+    class: hud
+    part: box
+    background: "#1e1e2ecc"
+    border: "#ffffff22"
+    radius: 16
+
+  # Gradient cards
+  - widget: LrgPanel
+    class: card
+    part: box
+    gradient:
+      start: "#28282e"
+      end: "#1f1f24"
+      angle: 90
 #+end_src
 
-** Border
+** Keyboard, mouse and gamepad
 :PROPERTIES:
-:CUSTOM_ID: border
+:CUSTOM_ID: keyboard-mouse-gamepad
+:END:
+The panel itself takes no input; events reach its children and bubble through it.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
 :END:
 #+begin_src C
-GrlColor border = GRL_COLOR(100, 100, 100, 255);
-lrg_panel_set_border_color(panel, &border);
-lrg_panel_set_border_width(panel, 2.0f);
+LrgPanel *dialog = lrg_panel_new ();
+LrgVBox  *column = lrg_vbox_new ();
 
-/* NULL for no border */
-lrg_panel_set_border_color(panel, NULL);
-#+end_src
+lrg_panel_set_elevation (dialog, 3);
+lrg_widget_set_size (LRG_WIDGET (dialog), 360, 220);
+lrg_container_set_padding (LRG_CONTAINER (column), 16);
+lrg_widget_set_size (LRG_WIDGET (column), 360, 220);
 
-** Corner Radius
-:PROPERTIES:
-:CUSTOM_ID: corner-radius
-:END:
-#+begin_src C
-lrg_panel_set_corner_radius(panel, 5.0f);  /* Rounded corners */
-gfloat radius = lrg_panel_get_corner_radius(panel);
-#+end_src
-
-** Adding Children
-:PROPERTIES:
-:CUSTOM_ID: adding-children
-:END:
-#+begin_src C
-g_autoptr(LrgVBox) vbox = lrg_vbox_new();
-lrg_container_set_padding(LRG_CONTAINER(vbox), 10);
-lrg_container_add_child(LRG_CONTAINER(panel), LRG_WIDGET(vbox));
-
-g_autoptr(LrgLabel) title = lrg_label_new("Settings");
-lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(title));
+lrg_container_add_child (LRG_CONTAINER (column), LRG_WIDGET (lrg_label_new ("Quit game?")));
+lrg_container_add_child (LRG_CONTAINER (column), LRG_WIDGET (lrg_button_new ("Quit")));
+lrg_container_add_child (LRG_CONTAINER (dialog), LRG_WIDGET (column));
 #+end_src
 
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference
 :END:
-- =lrg_panel_new()=
-- =lrg_panel_get_background_color/set_background_color=
-- =lrg_panel_get_border_color/set_border_color=
-- =lrg_panel_get_border_width/set_border_width=
-- =lrg_panel_get_corner_radius/set_corner_radius=
+- =lrg_panel_new (void)=
+- =lrg_panel_get_background_color= / =lrg_panel_set_background_color=
+- =lrg_panel_get_border_color= / =lrg_panel_set_border_color=
+- =lrg_panel_get_border_width= / =lrg_panel_set_border_width=
+- =lrg_panel_get_corner_radius= / =lrg_panel_set_corner_radius=
+- =lrg_panel_get_elevation= / =lrg_panel_set_elevation=
 
 ** Related
 :PROPERTIES:
 :CUSTOM_ID: related
 :END:
-- [[../container.md][Container]]
-- [[../index.md][UI Widgets Overview]]
+- [[file:../container.org][LrgContainer]]
+- [[file:../theme.org][Theme]]
+- [[file:vbox.org][VBox]], [[file:hbox.org][HBox]]

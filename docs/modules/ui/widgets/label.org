@@ -2,162 +2,132 @@
 :PROPERTIES:
 :CUSTOM_ID: label-widget
 :END:
-Simple text display widget with customizable font, size, and alignment. Labels automatically use the theme's default font when no font is explicitly set.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgLabel= displays text. It records the text through the paint pipeline with the theme's UI font, so it batches with shapes and picks its colour and size from the theme.
+
+- Colour: the theme's =TEXT= (=TEXT_MUTED= with the =muted= class, =DISABLED= while insensitive). An explicitly set colour wins.
+- Size: the theme's =FONT_SIZE=, or =FONT_SIZE_TITLE= / =FONT_SIZE_LARGE= / =FONT_SIZE_SMALL= with the =title= / =heading= / =caption= classes. An explicitly set size wins.
+- Multi-line text (=\n=): each line is aligned on its own (left, centre or right within the label's width); lines are 1.2 font sizes apart.
+- When the label is allocated taller than its text (for example stretched in a row next to a button) the text block is centred vertically; otherwise it starts at the top edge.
+- Labels are not focusable and do not consume input.
+- The legacy immediate path (=lrg_widget_draw()=) skips labels that lie wholly outside the render target, so long lists stay cheap.
 
 ** Creation
 :PROPERTIES:
 :CUSTOM_ID: creation
 :END:
 #+begin_src C
-g_autoptr(LrgLabel) lbl = lrg_label_new ("Hello World");
-lrg_container_add_child (container, LRG_WIDGET (lbl));
+LrgLabel *title = lrg_label_new ("Settings");
+LrgLabel *hint = lrg_label_new ("Changes apply immediately.");
+
+lrg_widget_add_class (LRG_WIDGET (title), "title");
+lrg_widget_add_class (LRG_WIDGET (hint), "muted");
 #+end_src
 
-** Text
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: text
+:CUSTOM_ID: properties
 :END:
-#+begin_src C
-lrg_label_set_text (lbl, "New Text");
-const gchar *text = lrg_label_get_text (lbl);
+| Property    | Type               | Default         | Notes                                                    |
+|-------------+--------------------+-----------------+----------------------------------------------------------|
+| =text=      | string             | =NULL=          | May contain newlines; changing it queues a layout        |
+| =font=      | =GrlFont=          | =NULL=          | =NULL= uses the theme's UI font                          |
+| =font-size= | float              | 20 (reported)   | Theme size (by class) until set                          |
+| =color=     | =GrlColor=         | legacy white    | Theme =TEXT= / =TEXT_MUTED= until set                    |
+| =alignment= | =LrgTextAlignment= | =LEFT=          | Horizontal alignment of each line                        |
+
+=font-size= and =color= keep their old default values in their getters, but the label draws with the theme until a value is set explicitly.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+The label has no signals of its own (see =LrgWidget= for =state-changed=).
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+| Part    | What it is | Resting                          | Disabled   |
+|---------+------------+----------------------------------+------------|
+| =LABEL= | The text   | =TEXT= (or explicit =color=)     | =DISABLED= |
+
+The label has no surface; put it in an =LrgPanel= for a background.
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+| Class     | Effect                          |
+|-----------+---------------------------------|
+| =muted=   | =TEXT_MUTED= colour             |
+| =title=   | =FONT_SIZE_TITLE= (32 by default) |
+| =heading= | =FONT_SIZE_LARGE= (24)          |
+| =caption= | =FONT_SIZE_SMALL= (12)          |
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+#+begin_src yaml
+metrics:
+  font-size-title: 40
+
+styles:
+  # Accent-coloured headings
+  - widget: LrgLabel
+    class: heading
+    part: label
+    foreground: "#cba6f7"
+
+  # A "warning" class of your own
+  - widget: LrgLabel
+    class: warning
+    part: label
+    foreground: "#fbbf24"
 #+end_src
 
-** Font
+** Keyboard, mouse and gamepad
 :PROPERTIES:
-:CUSTOM_ID: font
+:CUSTOM_ID: keyboard-mouse-gamepad
 :END:
-Labels use a three-level font fallback chain:
+None: labels are display-only and never take focus. Clicks pass to the parent.
 
-1. *Widget font* - Set via =lrg_label_set_font()=
-2. *Theme default font* - From =lrg_theme_get_default_font()=
-3. *raylib default* - Built-in bitmap font (last resort)
-
-*** Using Theme's Default Font (Recommended)
+** Example
 :PROPERTIES:
-:CUSTOM_ID: using-themes-default-font-recommended
-:END:
-The simplest approach - just create the label and it uses the theme font:
-
-#+begin_src C
-/* No font set - automatically uses theme's system font */
-g_autoptr(LrgLabel) lbl = lrg_label_new ("Hello World");
-lrg_label_set_font_size (lbl, 24.0f);
-lrg_widget_draw (LRG_WIDGET (lbl));
-#+end_src
-
-*** Using a Specific Font
-:PROPERTIES:
-:CUSTOM_ID: using-a-specific-font
+:CUSTOM_ID: example
 :END:
 #+begin_src C
-/* Load and use a custom font */
-LrgFontManager *fonts = lrg_font_manager_get_default ();
-lrg_font_manager_load_font (fonts, "custom", "assets/fonts/MyFont.ttf", 18, NULL);
+LrgVBox  *card = lrg_vbox_new ();
+LrgLabel *name = lrg_label_new ("Captain Mira");
+LrgLabel *bio = lrg_label_new ("Level 12 navigator\nLast seen: Kepler Station");
 
-GrlFont *font = lrg_font_manager_get_font (fonts, "custom");
-lrg_label_set_font (lbl, font);
-#+end_src
+lrg_widget_add_class (LRG_WIDGET (name), "heading");
+lrg_widget_add_class (LRG_WIDGET (bio), "muted");
+lrg_label_set_alignment (bio, LRG_TEXT_ALIGN_CENTER);
 
-*** Font Size
-:PROPERTIES:
-:CUSTOM_ID: font-size
-:END:
-#+begin_src C
-lrg_label_set_font_size (lbl, 20.0f);
-gfloat size = lrg_label_get_font_size (lbl);
-#+end_src
-
-** Color and Alignment
-:PROPERTIES:
-:CUSTOM_ID: color-and-alignment
-:END:
-#+begin_src C
-g_autoptr(GrlColor) text_color = grl_color_new (200, 200, 200, 255);
-lrg_label_set_color (lbl, text_color);
-
-lrg_label_set_alignment (lbl, LRG_TEXT_ALIGN_CENTER);
-#+end_src
-
-*** Alignment Values
-:PROPERTIES:
-:CUSTOM_ID: alignment-values
-:END:
-| Value                   | Description                   |
-|-------------------------+-------------------------------|
-| =LRG_TEXT_ALIGN_LEFT=   | Left-aligned (default)        |
-| =LRG_TEXT_ALIGN_CENTER= | Centered within widget bounds |
-| =LRG_TEXT_ALIGN_RIGHT=  | Right-aligned                 |
-
-** Text Measurement
-:PROPERTIES:
-:CUSTOM_ID: text-measurement
-:END:
-Labels can measure their preferred size based on text content:
-
-#+begin_src C
-gfloat width, height;
-lrg_widget_measure (LRG_WIDGET (lbl), &width, &height);
-
-/* Use measured size for layout */
-lrg_widget_set_size (LRG_WIDGET (lbl), width, height);
-#+end_src
-
-** Drawing
-:PROPERTIES:
-:CUSTOM_ID: drawing
-:END:
-Labels implement the =draw= virtual method:
-
-#+begin_src C
-/* Position the label */
-lrg_widget_set_position (LRG_WIDGET (lbl), 100.0f, 50.0f);
-
-/* Draw it */
-lrg_widget_draw (LRG_WIDGET (lbl));
-#+end_src
-
-A label whose text cannot touch the current render target is skipped: its measured text box (cached until the text, font or size changes), widened by two ems on every side for glyph offsets and padding, is tested against the visible area from rlgl's live matrices (=lrg_draw_cull_visible_rect_2d()=), so 2D cameras, render textures, letterbox viewports and pushed transforms are all respected. Anything skipped would have been clipped entirely by the GPU, so the output is unchanged; a long list of labels laid out past the screen costs a test per label instead of a textured quad per glyph. With raylib's default font (no theme font) the box is a conservative bound of two ems per byte.
-
-** Example: Dynamic Text Updates
-:PROPERTIES:
-:CUSTOM_ID: example-dynamic-text-updates
-:END:
-#+begin_src C
-/* Create a score label */
-g_autoptr(LrgLabel) score_label = lrg_label_new ("Score: 0");
-lrg_label_set_font_size (score_label, 24.0f);
-
-g_autoptr(GrlColor) gold = grl_color_new (255, 215, 0, 255);
-lrg_label_set_color (score_label, gold);
-
-/* Update each frame */
-void update_score (gint score)
-{
-    g_autofree gchar *text = g_strdup_printf ("Score: %d", score);
-    lrg_label_set_text (score_label, text);
-}
+lrg_container_add_child (LRG_CONTAINER (card), LRG_WIDGET (name));
+lrg_container_add_child (LRG_CONTAINER (card), LRG_WIDGET (bio));
 #+end_src
 
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference
 :END:
-- =lrg_label_new(const gchar *text)=
-- =lrg_label_get_text(LrgLabel *self)=
-- =lrg_label_set_text(LrgLabel *self, const gchar *text)=
-- =lrg_label_get_font(LrgLabel *self)=
-- =lrg_label_set_font(LrgLabel *self, GrlFont *font)=
-- =lrg_label_get_font_size(LrgLabel *self)=
-- =lrg_label_set_font_size(LrgLabel *self, gfloat size)=
-- =lrg_label_get_color(LrgLabel *self)=
-- =lrg_label_set_color(LrgLabel *self, const GrlColor *color)=
-- =lrg_label_get_alignment(LrgLabel *self)=
-- =lrg_label_set_alignment(LrgLabel *self, LrgTextAlignment alignment)=
+- =lrg_label_new (const gchar *text)=
+- =lrg_label_get_text= / =lrg_label_set_text=
+- =lrg_label_get_font= / =lrg_label_set_font=
+- =lrg_label_get_font_size= / =lrg_label_set_font_size=
+- =lrg_label_get_color= / =lrg_label_set_color=
+- =lrg_label_get_alignment= / =lrg_label_set_alignment=
 
 ** Related
 :PROPERTIES:
 :CUSTOM_ID: related
 :END:
-- [[../index.md][UI Widgets Overview]]
-- [[../theme.md][Theme]] - Theming system and default font
-- [[../../text/font-manager.md][Font Manager]] - Font loading and system font detection
+- [[file:../theme.org][Theme]] (colour roles, font metrics)
+- [[file:button.org][Button]], [[file:panel.org][Panel]]
