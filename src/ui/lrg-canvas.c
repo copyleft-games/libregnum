@@ -1182,6 +1182,22 @@ lrg_canvas_show_popup (LrgCanvas         *self,
 	g_return_if_fail (LRG_IS_CANVAS (self));
 	g_return_if_fail (LRG_IS_WIDGET (popup));
 	g_return_if_fail (anchor == NULL || LRG_IS_WIDGET (anchor));
+
+	/* Re-opening a popup whose close animation is still running:
+	 * drop the ghost so it can be shown again right away */
+	{
+		guint k;
+
+		for (k = 0; k < self->closing->len; k++)
+		{
+			if (g_array_index (self->closing, PopupEntry, k).popup == popup)
+			{
+				_lrg_widget_set_parent (popup, NULL);
+				g_array_remove_index (self->closing, k);
+				break;
+			}
+		}
+	}
 	g_return_if_fail (lrg_widget_get_parent (popup) == NULL);
 
 	/* Size: keep an explicit one, otherwise the preferred size */

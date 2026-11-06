@@ -1,0 +1,200 @@
+* Toast and Toast Queue
+:PROPERTIES:
+:CUSTOM_ID: toast-widget
+:END:
+=LrgToast= is a short notification card. It has a title, a muted message, a coloured stripe for its kind, and a thin hairline along the bottom that shrinks as its time runs out. =LrgToastQueue= is a see-through layer that covers the canvas and shows toasts in a corner. Cards rise about 14 units into place while they fade in. They fade out where they are when they expire or are clicked, and the rest of the stack glides into the freed space.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: toast-creation
+:END:
+#+begin_src c
+/* once, after the rest of the UI so it is on top */
+LrgToastQueue *toasts = lrg_toast_queue_new ();
+lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (toasts));
+
+/* whenever something happens */
+g_autoptr(LrgToast) toast = lrg_toast_new ("Saved", "Your level was written to disk.");
+lrg_toast_set_kind (toast, LRG_TOAST_KIND_SUCCESS);
+lrg_toast_queue_show (toasts, toast);   /* the queue takes its own reference */
+#+end_src
+
+A queue with no size of its own sizes itself to its parent and follows the parent's size. Because it is pointer-transparent (=lrg_widget_set_pointer_transparent()=), clicks on its empty areas reach the widgets underneath; only the cards catch the pointer.
+
+** LrgToast
+:PROPERTIES:
+:CUSTOM_ID: toast-toast
+:END:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =title= | string | read/write | First line, in =TEXT= |
+| =message= | string | read/write | Detail, =TEXT_MUTED=, =FONT_SIZE_SMALL=, word-wrapped; =\n= kept |
+| =kind= | =LrgToastKind= (default =INFO=) | read/write | Stripe and hairline colour |
+| =duration= | =gdouble= (default 3.5) | read/write | Seconds on screen; 0 = until dismissed |
+| =dismissed= | boolean | read | Expired or dismissed |
+
+| Kind | Colour role |
+|------+-------------|
+| =LRG_TOAST_KIND_INFO= | =ACCENT= |
+| =LRG_TOAST_KIND_SUCCESS= | =SUCCESS= |
+| =LRG_TOAST_KIND_WARNING= | =WARNING= |
+| =LRG_TOAST_KIND_DANGER= | =DANGER= |
+
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =dismissed= | none | Once: the time ran out, the card was clicked, or =lrg_toast_dismiss()= was called |
+
+The toast keeps its own clock. =lrg_toast_advance (toast, seconds)= runs it; the queue calls it every frame. The clock pauses while the pointer is over the card, so the player can finish reading. =lrg_toast_get_elapsed()= and =lrg_toast_get_remaining_fraction()= expose it. Every card is 340 units wide, so stacks line up.
+
+** LrgToastQueue
+:PROPERTIES:
+:CUSTOM_ID: toast-queue
+:END:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =mode= | =LrgToastMode= (default =STACK=) | read/write | How new toasts are shown |
+| =max-visible= | =guint= (default 3) | read/write | Cards on screen at once in stack mode |
+| =toast-halign= | =LrgAlign= (default =END=) | read/write | =START= left, =CENTER=, =END= right, =FILL= full width |
+| =toast-valign= | =LrgAlign= (default =END=) | read/write | =START= top (stack grows down), =END= / =FILL= bottom (grows up), =CENTER= |
+| =auto-advance= | boolean (default =TRUE=) | read/write | Advance time from the frame clock while painting |
+| =spacing= | =gfloat= (default 10) | read/write | Gap between cards (inherited from =LrgContainer=) |
+| =padding= | =gfloat= (default 16) | read/write | Distance from the canvas edges (inherited) |
+| =n-visible= | =guint= | read | Cards showing that are not on their way out |
+| =n-pending= | =guint= | read | Toasts waiting their turn |
+
+*** Modes
+:PROPERTIES:
+:CUSTOM_ID: toast-modes
+:END:
+| Mode | Behaviour |
+|------+-----------|
+| =LRG_TOAST_MODE_REPLACE= | A new toast dismisses the one showing; the old card fades out in place while the new one rises over it |
+| =LRG_TOAST_MODE_SEQUENCE= | One at a time, in order: the next one appears once the current card has fully faded out |
+| =LRG_TOAST_MODE_STACK= | Up to =max-visible= cards; the newest is nearest the corner, and the rest wait and come in as places free up |
+
+*** Time
+:PROPERTIES:
+:CUSTOM_ID: toast-time
+:END:
+=lrg_toast_queue_advance (queue, seconds)= runs the visible toasts' clocks and the enter, leave and re-flow springs. It removes cards that have faded out and brings in waiting toasts. With =auto-advance= on (the default), painting calls it with the real time since the last paint, clamped to 0.1 s. Turn it off to drive time yourself: deterministic tests, or toasts that should freeze while the game is paused. =lrg_toast_queue_clear()= dismisses everything, showing or waiting. =lrg_toast_queue_get_visible_toast (queue, i)= returns the i-th live card, oldest first.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: toast-parts
+:END:
+| Part | Default look | States |
+|------+--------------+--------|
+| =popup= | Card: =POPUP= fill, =BORDER= hairline, =POPUP_RADIUS=, =SHADOW= with =SHADOW_BLUR= / =SHADOW_OFFSET_Y= | =hovered= → shadow 1.5× (the card lifts) |
+| =indicator= | Kind colour, pill stripe on the left | |
+| =label= | Title, =TEXT= | |
+| =item= | Message, =TEXT_MUTED= | |
+| =fill= | Remaining-time hairline, kind colour at 70% alpha | hidden when =duration= is 0 |
+
+** Input
+:PROPERTIES:
+:CUSTOM_ID: toast-input
+:END:
+Toasts never take keyboard focus, so they never interrupt the player's navigation. Clicking a card dismisses it early, and hovering pauses its timer. Clicks on the rest of the queue pass through to the UI below.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: toast-theming
+:END:
+#+begin_src yaml
+styles:
+  # Glassy cards with a stronger lift
+  - widget: LrgToast
+    part: popup
+    background: "#1e1e2ee6"
+    shadow-blur: 32
+    radius: 10
+  # Fatter hairline, and a red stripe for danger toasts styled by class
+  - widget: LrgToast
+    part: fill
+    size: 3
+  - widget: LrgToast
+    class: urgent
+    part: indicator
+    background: "#ff5470"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: toast-example
+:END:
+#+begin_src c
+typedef struct
+{
+	LrgCanvas     *canvas;
+	LrgToastQueue *toasts;
+} Hud;
+
+static void
+hud_init (Hud *hud)
+{
+	hud->canvas = lrg_canvas_new ();
+	lrg_widget_set_size (LRG_WIDGET (hud->canvas), 1280.0f, 720.0f);
+
+	/* ... the rest of the HUD ... */
+
+	hud->toasts = lrg_toast_queue_new ();
+	lrg_toast_queue_set_mode (hud->toasts, LRG_TOAST_MODE_STACK);
+	lrg_toast_queue_set_max_visible (hud->toasts, 4);
+	lrg_toast_queue_set_toast_valign (hud->toasts, LRG_ALIGN_START);   /* top-right */
+	lrg_container_add_child (LRG_CONTAINER (hud->canvas), LRG_WIDGET (hud->toasts));
+	g_object_unref (hud->toasts);   /* the canvas owns it */
+}
+
+static void
+hud_notify (Hud          *hud,
+            LrgToastKind  kind,
+            const gchar  *title,
+            const gchar  *message,
+            gdouble       seconds)
+{
+	g_autoptr(LrgToast) toast = lrg_toast_new (title, message);
+
+	lrg_toast_set_kind (toast, kind);
+	lrg_toast_set_duration (toast, seconds);
+	lrg_toast_queue_show (hud->toasts, toast);
+}
+
+/* usage */
+hud_notify (&hud, LRG_TOAST_KIND_SUCCESS, "Achievement", "First blood", 3.5);
+hud_notify (&hud, LRG_TOAST_KIND_DANGER, "Disconnected", "Trying to reconnect...", 0.0);
+
+/* every frame */
+lrg_canvas_handle_input (hud.canvas);
+lrg_canvas_render (hud.canvas);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: toast-api
+:END:
+- =lrg_toast_new (const gchar *title, const gchar *message)=
+- =lrg_toast_get_title= / =lrg_toast_set_title=
+- =lrg_toast_get_message= / =lrg_toast_set_message=
+- =lrg_toast_get_kind= / =lrg_toast_set_kind=
+- =lrg_toast_get_duration= / =lrg_toast_set_duration=
+- =lrg_toast_get_elapsed=, =lrg_toast_get_remaining_fraction=
+- =lrg_toast_advance (LrgToast *self, gdouble seconds)=
+- =lrg_toast_dismiss=, =lrg_toast_get_dismissed=
+- =lrg_toast_queue_new (void)=
+- =lrg_toast_queue_get_mode= / =lrg_toast_queue_set_mode=
+- =lrg_toast_queue_get_max_visible= / =lrg_toast_queue_set_max_visible=
+- =lrg_toast_queue_get_toast_halign= / =lrg_toast_queue_set_toast_halign=
+- =lrg_toast_queue_get_toast_valign= / =lrg_toast_queue_set_toast_valign=
+- =lrg_toast_queue_get_auto_advance= / =lrg_toast_queue_set_auto_advance=
+- =lrg_toast_queue_show (LrgToastQueue *self, LrgToast *toast)=
+- =lrg_toast_queue_advance (LrgToastQueue *self, gdouble seconds)=
+- =lrg_toast_queue_clear=
+- =lrg_toast_queue_get_n_visible=, =lrg_toast_queue_get_n_pending=, =lrg_toast_queue_get_visible_toast=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: toast-related
+:END:
+- [[file:canvas.org][Canvas]]
+- [[file:dialog.org][Dialog]]
+- [[file:../theme.org][Theme]]

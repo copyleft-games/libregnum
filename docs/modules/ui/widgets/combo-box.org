@@ -1,0 +1,185 @@
+* Combo Box Widget
+:PROPERTIES:
+:CUSTOM_ID: combo-box-widget
+:END:
+=LrgComboBox= lets the player pick one of several text items. Closed, it looks like a button: the selected item (or a muted placeholder) on the left and a chevron on the right. Clicking it, or activating it with Enter / Space / gamepad A, opens a list on the canvas popup layer directly below it (or above it when there is no room). The chevron flips half a turn on a spring while the list is open.
+
+The list is an internal popup widget that holds one focusable row per item, so everything the canvas does for focus works inside it: Tab, arrow keys, the gamepad D-pad and stick. Long lists show about eight rows and scroll with the wheel or the keyboard.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: combo-box-creation
+:END:
+#+begin_src c
+g_autoptr(LrgComboBox) quality = lrg_combo_box_new ();
+
+lrg_combo_box_append (quality, "Low");
+lrg_combo_box_append (quality, "Medium");
+lrg_combo_box_append (quality, "High");
+lrg_combo_box_set_placeholder (quality, "Choose quality");
+lrg_combo_box_set_selected (quality, 1);
+
+lrg_container_add_child (LRG_CONTAINER (column), LRG_WIDGET (quality));
+#+end_src
+
+The combo box must live inside an =LrgCanvas= (directly or nested) to open its list: the canvas owns the popup layer. Its preferred size is the theme's =CONTROL_HEIGHT= and wide enough for the longest item, so changing the selection never resizes it.
+
+** Items and selection
+:PROPERTIES:
+:CUSTOM_ID: combo-box-items
+:END:
+- =lrg_combo_box_append (self, text)= adds an item at the end.
+- =lrg_combo_box_remove_all (self)= removes every item and clears the selection.
+- =lrg_combo_box_get_n_items (self)= / =lrg_combo_box_get_item_text (self, index)= read them back.
+- =lrg_combo_box_get_selected (self)= / =lrg_combo_box_set_selected (self, index)=: =-1= means nothing is selected; an out-of-range index also selects nothing.
+- =lrg_combo_box_get_selected_text (self)= returns the selected label or =NULL=.
+- =lrg_combo_box_popup (self)= / =lrg_combo_box_popdown (self)= open and close the list from code; =lrg_combo_box_get_popup_open (self)= tells whether it is open.
+
+Changing the items while the list is open closes it.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: combo-box-properties
+:END:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =selected= | =gint= (default -1) | read/write | Selected item index, -1 for none |
+| =placeholder= | string | read/write | Muted text shown when nothing is selected |
+| =n-items= | =guint= | read | Number of items |
+| =popup-open= | boolean | read | Whether the list is showing |
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: combo-box-signals
+:END:
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =changed= | none | =selected= changed, by the user or by code |
+
+When the user picks a row, the list closes first and =changed= is emitted afterwards, so a handler sees a settled UI (it can, for example, present a dialog).
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: combo-box-parts
+:END:
+Looks are resolved per part with =lrg_widget_resolve_look()=, blended between resting, hovered and pressed by the widget's springs, with theme style rules merged on top.
+
+| Widget | Part | Default look | State changes |
+|--------+------+--------------+---------------|
+| =LrgComboBox= | =box= | =CONTROL= fill, =BORDER= hairline, =CORNER_RADIUS=, faint shadow | =hovered= / =open= → =CONTROL_HOVER=; =pressed= → =CONTROL_PRESSED=; =open= → =ACCENT= border; =disabled= → opacity 0.45 |
+| =LrgComboBox= | =label= | =TEXT= foreground (selected text) | the placeholder always uses =TEXT_MUTED= |
+| =LrgComboBox= | =arrow= | =TEXT_MUTED= chevron, size = half the font size | =hovered= → =TEXT=; =open= → =ACCENT= and flipped |
+| =LrgComboPopup= | =popup= | =POPUP= fill, =BORDER= hairline, =POPUP_RADIUS=, =SHADOW= with =SHADOW_BLUR= / =SHADOW_OFFSET_Y= | |
+| =LrgComboPopup= | =scroll-thumb= | slim =TEXT_MUTED= pill (45% alpha) | shown only when the list scrolls |
+| =LrgComboRow= | =item= | transparent, =CORNER_RADIUS=, =TEXT= foreground | =hovered= / =focus-visible= → =CONTROL_HOVER=; =pressed= → =CONTROL_PRESSED= |
+| =LrgComboRow= | =mark= | =ACCENT= check mark on the selected row | |
+| =LrgComboRow= | =focus= | no ring (the highlighted row shows focus) | |
+
+The popup and its rows copy the combo box's style classes when the list opens, so a rule written for a class (for example =class: compact=) reaches all three widget types.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: combo-box-keyboard
+:END:
+| Where | Input | Effect |
+|-------+-------+--------|
+| Closed, focused | Enter / Space / gamepad A | Open; the selected row (or the first) gets focus with a visible ring |
+| Closed, focused | Up / Down | Select the previous / next item directly (clamped, emits =changed=) |
+| Closed, focused | Home / End | Select the first / last item |
+| Closed | click | Open; the selected row gets focus without a ring |
+| Open | Up / Down, Page Up / Page Down, Home / End | Move focus through the rows, scrolling as needed |
+| Open | gamepad D-pad / stick | Canvas spatial navigation between rows (scrolls the focused row into view) |
+| Open | Enter / Space / gamepad A, or click a row | Select that row and close; focus returns to the combo box |
+| Open | Escape / gamepad B | Close without changing the selection |
+| Open | click outside, or on the combo box | Close without changing the selection |
+| Open | mouse wheel | Scroll the list |
+
+Because the closed combo box uses Up / Down itself, arrow keys do not move focus away from it; use Tab or the gamepad.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: combo-box-theming
+:END:
+#+begin_src yaml
+styles:
+  # Pill-shaped combo boxes with an accent chevron
+  - widget: LrgComboBox
+    part: box
+    radius: 999
+  - widget: LrgComboBox
+    part: arrow
+    foreground: "#7c6cff"
+  # A softer list surface with a bigger shadow
+  - widget: LrgComboPopup
+    part: popup
+    radius: 12
+    shadow-blur: 28
+  # Selected-looking hover rows
+  - widget: LrgComboRow
+    part: item
+    state: hovered
+    background: "#7c6cff40"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: combo-box-example
+:END:
+#+begin_src c
+static void
+on_quality_changed (LrgComboBox *combo,
+                    gpointer     user_data)
+{
+	g_message ("quality: %s", lrg_combo_box_get_selected_text (combo));
+}
+
+static void
+build_settings (LrgCanvas *canvas)
+{
+	g_autoptr(LrgVBox)     column = lrg_vbox_new ();
+	g_autoptr(LrgComboBox) quality = lrg_combo_box_new ();
+
+	lrg_widget_set_position (LRG_WIDGET (column), 40.0f, 40.0f);
+	lrg_widget_set_size (LRG_WIDGET (column), 240.0f, 200.0f);
+
+	lrg_combo_box_set_placeholder (quality, "Choose quality");
+	lrg_combo_box_append (quality, "Low");
+	lrg_combo_box_append (quality, "Medium");
+	lrg_combo_box_append (quality, "High");
+	lrg_combo_box_append (quality, "Ultra");
+	g_signal_connect (quality, "changed", G_CALLBACK (on_quality_changed), NULL);
+
+	lrg_container_add_child (LRG_CONTAINER (column), LRG_WIDGET (quality));
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (column));
+}
+
+/* every frame */
+lrg_canvas_handle_input (canvas);
+lrg_canvas_render (canvas);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: combo-box-api
+:END:
+- =lrg_combo_box_new (void)=
+- =lrg_combo_box_append (LrgComboBox *self, const gchar *text)=
+- =lrg_combo_box_remove_all (LrgComboBox *self)=
+- =lrg_combo_box_get_n_items (LrgComboBox *self)=
+- =lrg_combo_box_get_item_text (LrgComboBox *self, guint index)=
+- =lrg_combo_box_get_selected (LrgComboBox *self)=
+- =lrg_combo_box_set_selected (LrgComboBox *self, gint index)=
+- =lrg_combo_box_get_selected_text (LrgComboBox *self)=
+- =lrg_combo_box_get_placeholder (LrgComboBox *self)=
+- =lrg_combo_box_set_placeholder (LrgComboBox *self, const gchar *placeholder)=
+- =lrg_combo_box_popup (LrgComboBox *self)=
+- =lrg_combo_box_popdown (LrgComboBox *self)=
+- =lrg_combo_box_get_popup_open (LrgComboBox *self)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: combo-box-related
+:END:
+- [[file:canvas.org][Canvas]] (popup layer, focus and navigation)
+- [[file:dialog.org][Dialog]]
+- [[file:../theme.org][Theme]]
