@@ -1871,6 +1871,7 @@ $(BUILDDIR)/$(PC_FILE): libregnum.pc.in config.mk | $(BUILDDIR)
 	        -e 's|@INCLUDEDIR@|$(INCLUDEDIR)|g' \
 	        -e 's|@VERSION@|$(VERSION)|g' \
 	        -e 's|@API_VERSION@|$(API_VERSION)|g' \
+	        -e 's|@FRIBIDI_PC@|$(if $(filter 1,$(HAS_FRIBIDI)),fribidi,)|g' \
 	        $< > $@
 
 # =============================================================================
