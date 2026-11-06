@@ -16,6 +16,7 @@
 #include "lrg-gui-raylib-private.h"
 #include "../paint/lrg-paint-renderer.h"
 #include "../paint/lrg-paint-private.h"
+#include "../paint/lrg-paint-font.h"
 /* graylib's O(1)-glyph-lookup forms of DrawTextEx()/MeasureTextEx():
  * header-only, on raylib's public API, same quads and measurements.
  * raylib's own functions scan the glyph table linearly per character.
@@ -36,6 +37,13 @@ struct _LrgGuiRaylib
 
 	Font      ui_font;
 	Font      mono_font;
+	/*
+	 * SDF twins of the two faces (with system fallbacks for symbols,
+	 * emoji, CJK and right-to-left scripts). When set they draw and
+	 * measure editor text; the bitmap fonts stay as the fallback.
+	 */
+	LrgPaintFont *ui_sdf;
+	LrgPaintFont *mono_sdf;
 	gboolean  ui_loaded;
 	gboolean  mono_loaded;
 	gchar    *ui_path;
@@ -251,6 +259,25 @@ unload_fonts (LrgGuiRaylib *self)
 		UnloadFont (self->mono_font);
 	self->ui_loaded = FALSE;
 	self->mono_loaded = FALSE;
+	g_clear_object (&self->ui_sdf);
+	g_clear_object (&self->mono_sdf);
+}
+
+/* load_sdf: an SDF font for @path with system fallbacks, or NULL */
+static LrgPaintFont *
+load_sdf (const gchar *path)
+{
+	g_autoptr(GError) error = NULL;
+	LrgPaintFont     *font;
+
+	font = lrg_paint_font_new_from_file (path, &error);
+	if (font == NULL)
+	{
+		g_debug ("GUI: no SDF text for %s: %s", path, error->message);
+		return NULL;
+	}
+	lrg_paint_font_add_system_fallbacks (font);
+	return font;
 }
 
 static gboolean
@@ -293,6 +320,12 @@ lrg_gui_raylib_load_fonts (LrgGuiRaylib *self,
 
 	self->ui_loaded = load_one (ui, size, &self->ui_font);
 	self->mono_loaded = load_one (mono, size, &self->mono_font);
+
+	/* Crisp SDF text wherever the bitmap face loaded (needs a window) */
+	if (self->ui_loaded)
+		self->ui_sdf = load_sdf (ui);
+	if (self->mono_loaded)
+		self->mono_sdf = load_sdf (mono);
 	self->loaded_size = size;
 
 	g_free (self->ui_path);
@@ -330,6 +363,8 @@ lrg_gui_raylib_finalize (GObject *object)
 	/* Fonts live on the GL context; only unload while it exists. */
 	if (IsWindowReady ())
 		unload_fonts (self);
+	g_clear_object (&self->ui_sdf);
+	g_clear_object (&self->mono_sdf);
 	latch_uninstall ();
 	g_free (self->ui_path);
 	g_clear_object (&self->paint);
@@ -368,11 +403,23 @@ measure (const gchar *text,
          gpointer     user_data)
 {
 	LrgGuiRaylib *self = user_data;
-	Font          font = font_for (self, monospace);
+	LrgPaintFont *sdf = monospace ? self->mono_sdf : self->ui_sdf;
+	Font          font;
 	gchar         stack[512];
 	gchar        *heap = NULL;
 	const gchar  *s = text;
 	Vector2       v;
+
+	/* SDF faces measure exactly what they draw */
+	if (sdf != NULL)
+	{
+		gfloat w = 0.0f;
+
+		lrg_paint_font_measure_text (sdf, text, length, font_size, 0.0f,
+		                             LRG_TEXT_DIRECTION_AUTO, &w, NULL);
+		return w;
+	}
+	font = font_for (self, monospace);
 
 	/* The measure wants a NUL-terminated string. */
 	if (length >= 0)
@@ -703,7 +750,17 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 			break;
 
 		case LRG_GUI_CMD_TEXT:
-			if (cmd->text != NULL)
+			if (cmd->text != NULL
+			    && (cmd->monospace ? self->mono_sdf : self->ui_sdf) != NULL)
+			{
+				LrgPaintTextStyle style;
+
+				lrg_paint_text_style_init (&style, &col);
+				lrg_paint_font_draw_text (cmd->monospace ? self->mono_sdf : self->ui_sdf,
+				                          paint, cmd->text, -1, r->x, r->y,
+				                          cmd->font_size, &style);
+			}
+			else if (cmd->text != NULL)
 			{
 				Font   font = font_for (self, cmd->monospace);
 				gfloat spacing = (font.texture.id == GetFontDefault ().texture.id)
