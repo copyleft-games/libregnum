@@ -1,0 +1,234 @@
+# showcase-settings.yaml - a settings screen for LrgUILoader
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Shows components with parameters and slots, ${expressions}, for-each,
+# repeat, if, tabs, combo items, look overrides, appear cascades and
+# handlers. Load it with:
+#
+#   loader = lrg_ui_loader_new ();
+#   lrg_ui_loader_add_handler (loader, "settings_apply", G_CALLBACK (on_apply), game);
+#   lrg_ui_loader_add_handler (loader, "settings_reset", G_CALLBACK (on_reset), game);
+#   lrg_ui_loader_add_handler (loader, "settings_slider_changed", G_CALLBACK (on_slider), game);
+#   root = lrg_ui_loader_watch_file (loader, "data/ui/showcase-settings.yaml",
+#                                    LRG_CONTAINER (canvas), &error);
+#
+# and call lrg_ui_loader_poll (loader) every frame: edit and save this file
+# while the example runs and the screen follows.
+#
+# Optional loader variables: `compact` (boolean) tightens the spacing.
+#
+# Quote an expression when it contains ": " or sits inside a flow
+# collection ([...] or {...}): YAML would read those characters itself.
+
+variables:
+  gap: "${default(compact, false) ? 6 : 12}"
+  accent: "#7c5cff"
+  audio-channels:
+    - { name: master, label: Master volume, value: 80 }
+    - { name: music, label: Music, value: 60 }
+    - { name: effects, label: Sound effects, value: 75 }
+    - { name: voice, label: Voice, value: 90 }
+
+components:
+  # A titled card: a panel framing a column; its children go in the slot
+  Section:
+    params:
+      title: Untitled
+      hint: ""
+    body:
+      type: panel
+      fill-children: true
+      margin: [0, 0, "${gap}", 0]
+      look:
+        box:
+          radius: 14
+          shadow: { color: "#00000055", blur: 18 }
+      children:
+        - type: vbox
+          spacing: ${gap}
+          padding: ${gap + 4}
+          children:
+            - type: label
+              text: ${upper(title)}
+              font-size: 13
+              class: section-title
+            - type: label
+              if: ${len(hint) > 0}
+              text: ${hint}
+              class: muted
+            - slot: true
+
+  # A labelled slider row with a live value label
+  SliderRow:
+    params:
+      name: value
+      label: Value
+      value: 50
+      min: 0
+      max: 100
+      index: 0
+    body:
+      type: hbox
+      id: row-${name}
+      spacing: ${gap}
+      appear: { kind: fly-up, delay: "${index * 0.05}" }
+      children:
+        - type: label
+          text: ${label}
+          min-size: [160, 0]
+        - type: slider
+          id: slider-${name}
+          min: ${min}
+          max: ${max}
+          step: 1
+          value: ${value}
+          fill-weight: 1
+          on: { value-changed: settings_slider_changed }
+        - type: label
+          id: value-${name}
+          text: "${str(round(value))}${max == 100 ? '%' : ''}"
+          min-size: [48, 0]
+          halign: end
+
+  # A check box with an optional explanation underneath
+  Toggle:
+    params:
+      label: Option
+      checked: false
+      note: ""
+    body:
+      type: vbox
+      spacing: 2
+      children:
+        - type: checkbox
+          label: ${label}
+          checked: ${checked}
+        - type: label
+          if: ${!empty(note)}
+          text: ${note}
+          class: muted
+          margin: { left: 28 }
+
+root:
+  type: vbox
+  id: settings
+  spacing: ${gap}
+  padding: 24
+  children:
+    - type: label
+      id: settings-title
+      text: Settings
+      font-size: 28
+      appear: fade
+
+    - type: tab-view
+      id: settings-tabs
+      fill-weight: 1
+      tabs:
+        - label: Audio
+          content:
+            type: scroll-box
+            child:
+              type: vbox
+              children:
+                - type: Section
+                  title: Volume
+                  hint: Levels for each channel
+                  children:
+                    - for-each:
+                        items: ${audio_channels}
+                        var: ch
+                        index: i
+                        body:
+                          type: SliderRow
+                          name: ${ch.name}
+                          label: ${ch.label}
+                          value: ${ch.value}
+                          index: ${i}
+                - type: Section
+                  title: Output
+                  children:
+                    - type: combo-box
+                      id: audio-device
+                      items: [Default device, Headphones, Speakers, HDMI]
+                      selected: 0
+                    - type: Toggle
+                      label: Mute when unfocused
+                      checked: true
+
+        - label: Video
+          content:
+            type: vbox
+            children:
+              - type: Section
+                title: Display
+                children:
+                  - type: combo-box
+                    id: video-resolution
+                    placeholder: Resolution
+                    items: [1280x720, 1920x1080, 2560x1440, 3840x2160]
+                    selected: 1
+                  - type: Toggle
+                    label: Fullscreen
+                  - type: Toggle
+                    label: V-Sync
+                    checked: true
+                    note: Caps the frame rate to the display's refresh rate
+                  - type: SliderRow
+                    name: fov
+                    label: Field of view
+                    min: 60
+                    max: 120
+                    value: 90
+              - type: Section
+                title: Quality presets
+                children:
+                  - type: hbox
+                    spacing: 8
+                    children:
+                      - repeat:
+                          count: 4
+                          var: q
+                          body:
+                            type: button
+                            id: preset-${q}
+                            text: ${['Low', 'Medium', 'High', 'Ultra'][q]}
+                            class: "${q == 2 ? 'primary' : ''}"
+                            fill-weight: 1
+
+        - label: Profile
+          content:
+            type: vbox
+            children:
+              - type: Section
+                title: Player
+                children:
+                  - type: text-input
+                    id: player-name
+                    placeholder: Your name
+                    max-length: 24
+                  - type: Toggle
+                    label: Show my name to other players
+                    checked: true
+
+    - type: hbox
+      id: settings-actions
+      spacing: 8
+      halign: end
+      children:
+        - type: button
+          id: settings-reset
+          text: Reset
+          class: flat
+          on: { clicked: settings_reset }
+        - type: button
+          id: settings-apply
+          text: Apply
+          class: primary
+          look:
+            box:
+              hovered:
+                glow: { color: "${accent}", size: 12 }
+          on: { clicked: settings_apply }

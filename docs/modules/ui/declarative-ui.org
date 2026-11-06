@@ -1,0 +1,554 @@
+#+title: Declarative UI (YAML)
+#+description: LrgUILoader: widget trees from YAML documents, components, expressions, includes and hot reload
+#+authors: Zach Podbielniak
+#+categories: libregnum ui
+#+created: 2026-11-06T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* Declarative UI
+:PROPERTIES:
+:CUSTOM_ID: declarative-ui
+:END:
+=LrgUILoader= builds widget trees from YAML documents. A document describes widgets by type, sets their GObject properties by name, wires their signals to named handlers, and can declare reusable *components* with parameters, =${expressions}= and *slots*. Structural keys (=repeat=, =for-each=, =if=, =include=) generate nodes. A document loaded with =lrg_ui_loader_watch_file()= follows its files while the game runs: when one is saved, the new document is diffed against the live widgets, which keep their identity and their state.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+#+begin_src C
+g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+g_autoptr(GError) error = NULL;
+LrgWidget *root;
+
+lrg_ui_loader_add_handler (loader, "on_play", G_CALLBACK (on_play), game);
+root = lrg_ui_loader_watch_file (loader, "data/ui/menu.yaml", LRG_CONTAINER (canvas), &error);
+if (root == NULL)
+	g_printerr ("%s\n", error->message);
+
+/* every frame */
+lrg_ui_loader_poll (loader);
+lrg_canvas_process_input (canvas, &input);
+lrg_canvas_render (canvas);
+#+end_src
+
+#+begin_src yaml
+# data/ui/menu.yaml
+type: vbox
+spacing: 12
+padding: 24
+children:
+  - {type: label, text: My Game, font-size: 40, appear: fade}
+  - {type: button, id: play, text: Play, class: primary, on: {clicked: on_play}}
+  - {type: button, text: Quit, class: flat}
+#+end_src
+
+The loader works in three stages:
+
+1. *Parse*: libyaml reads the text into a value tree that remembers file, line and column of every value.
+2. *Expand*: components are instantiated, expressions evaluated, =repeat= / =for-each= / =include= / =slot= / =if= resolved, type names looked up and every value converted to the type it will be applied as. *All validation happens here*: a document with a mistake fails before a single widget is created or changed.
+3. *Build or sync*: the expanded tree is instantiated, or (hot reload) diffed against the live widgets.
+
+** Document structure
+:PROPERTIES:
+:CUSTOM_ID: document-structure
+:END:
+A document is one of:
+
+- a *widget node* (a mapping with =type:=): it is the root;
+- a mapping with the top-level keys =components:=, =variables:= and =root:= (any of them may be missing; a document with only =components:= is a library meant for =include=);
+- a widget node that also carries =components:= and =variables:= beside its widget keys;
+- a *list* of nodes (useful for included fragments). The document loaded by the API must give exactly one root widget.
+
+| Top-level key | Meaning                                                                                                          |
+|---------------+------------------------------------------------------------------------------------------------------------------|
+| =components:= | Mapping of component name to ={params:, body:}= (see [[#components][Components]])                                                 |
+| =variables:=  | Mapping of name to value, evaluated in order (each may use the previous ones); visible to the whole document and to its components |
+| =root:=       | The root node (a mapping), or a list that must give one widget                                                   |
+| =type:=       | The mapping itself is the root node                                                                              |
+
+Only the first YAML document of a stream is read. Anchors and aliases work as in any YAML.
+
+** Widget nodes
+:PROPERTIES:
+:CUSTOM_ID: widget-nodes
+:END:
+A widget node is a mapping. =type:= names the widget; every other key is either a special key (below) or the name of a writable GObject property of that type. Keys may be written with =-= or =_= (=fill-weight= and =fill_weight= are the same key).
+
+*** Type names
+:PROPERTIES:
+:CUSTOM_ID: type-names
+:END:
+=type:= is resolved in this order:
+
+1. a *component* declared in the document or in a file it included;
+2. a name registered in the loader's =LrgRegistry= (=lrg_ui_loader_set_registry()=), for example =type: gauge= after =lrg_registry_register (registry, "gauge", MY_TYPE_GAUGE)=;
+3. an exact GType name: =LrgButton=, =LrgScrollBox=, =MyGameHud=;
+4. a *short name*: the GType name without its =Lrg= prefix, compared without case, =-= and =_=: =button=, =Button=, =scroll-box=, =scroll_box=, =ScrollBox=, =vbox=, =VBox=, =tab-view=, =combo-box=, =text-input=, =progress-bar=, ... This also finds your own widget types (=MyGauge= as =my-gauge=) once they are registered with GObject;
+5. a type that is not registered yet is found through its =get_type= function: =scroll-box= tries the symbol =lrg_scroll_box_get_type=, =LrgFooBar= tries =lrg_foo_bar_get_type=.
+
+The type must derive from =LrgWidget= and must not be abstract.
+
+*** Special keys
+:PROPERTIES:
+:CUSTOM_ID: special-keys
+:END:
+| Key                         | Value                                                         | Effect                                                                                                                              |
+|-----------------------------+---------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------|
+| =type=                      | type or component name                                        | What to build (see [[#type-names][Type names]])                                                                                                        |
+| =id=                        | text                                                          | Sets the widget's name (=lrg_widget_set_name()=); found with =lrg_ui_loader_get_widget()= and =lrg_widget_find()=; used by the reload diff |
+| =class=                     | ="a b c"= or =[a, b, c]=                                      | Style classes (=lrg_widget_add_class()=)                                                                                            |
+| =children=                  | list of nodes                                                 | Added with =lrg_container_add_child()=; the type must be a container                                                                |
+| =child=                     | one node                                                      | The single child: set through the widget's =child= or =content= property when it has one (=LrgScrollBox=, =LrgDialog=), else added as a child |
+| =tabs=                      | list of ={label:, content: node, if:}=                        | =LrgTabView= pages, added with =lrg_tab_view_add_tab()=                                                                             |
+| =items=                     | list of text                                                  | =LrgComboBox= entries (=lrg_combo_box_append()=)                                                                                    |
+| =on=                        | mapping signal -> handler                                     | Connects signals (see [[#handlers][Handlers]])                                                                                                 |
+| =look=                      | mapping part -> look                                          | Per-instance part looks (see [[#looks][Looks]])                                                                                            |
+| =appear=                    | kind, or ={kind:, delay:}=                                    | Entrance animation: =lrg_widget_set_appear()=; kinds are the =LrgAppear= nicks (=fade=, =pop=, =zoom=, =fly-up=, =fly-down=, =fly-left=, =fly-right=, =drop=) |
+| =min-size=                  | =[w, h]= or ={width:, height:}=                               | =lrg_widget_set_min_size()=                                                                                                         |
+| =max-size=                  | =[w, h]= or ={width:, height:}=                               | =lrg_widget_set_max_size()= (0 = unlimited)                                                                                         |
+| =if=                        | expression                                                    | The node is skipped when false (see [[#truthiness][truthiness]])                                                                                  |
+| =margin=, =halign=, =valign=, =fill-weight=, =opacity=, =visible=, =enabled=, =focusable=, ... | | Ordinary =LrgWidget= properties, converted as below                                                      |
+
+=LrgScrollBox= takes exactly one child (=child:= or a one-element =children:=); =LrgTabView= takes its pages through =tabs:= only.
+
+*** Property values
+:PROPERTIES:
+:CUSTOM_ID: property-values
+:END:
+A property key takes its value converted to the property's type. Out-of-range values are errors, not clamps.
+
+| Property type                       | Accepted YAML                                                                                                                           |
+|-------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------|
+| =gboolean=                          | =true= / =false= (also =yes= / =no=, =on= / =off=, =1= / =0=)                                                                           |
+| =gint=, =guint=, =glong=, =gint64=, =guchar=, ... | an integer (=12=, =-3=, =0x1F=); =2.0= is accepted, =2.5= is an error                                                       |
+| =gfloat=, =gdouble=                 | a number (=1.5=, =-2=, =1e3=)                                                                                                           |
+| =gchararray= (string)               | any scalar (=text: 42= gives ="42"=); =null= gives =NULL=                                                                               |
+| enum                                | a nick (=center=), the nick in any case or with =_= (=CENTER=, =fly_up=), the C name (=LRG_ALIGN_CENTER=), or the integer value          |
+| flags                               | a list of nicks (=[checked, selected]=), or one scalar with nicks separated by a vertical bar, commas, plus signs or spaces (='hovered + focused'=), or the integer mask |
+| =GrlColor=                          | ="#rgb"=, ="#rgba"=, ="#rrggbb"=, ="#rrggbbaa"=, =transparent=, =white=, =black=, =[r, g, b]=, =[r, g, b, a]= (0..255), ={r:, g:, b:, a:}= (missing components are 0, alpha 255) |
+| =LrgInsets= (=margin=, ...)         | ="8"= (all sides), =[8]=, =[vertical, horizontal]=, =[top, right, bottom, left]= (CSS order), ={left:, top:, right:, bottom:}= (missing sides 0) |
+| =LrgCornerRadii=                    | a number, =[tl, tr, br, bl]= (or 1 / 2 values), ={top-left:, top-right:, bottom-right:, bottom-left:}=                                   |
+| =GrlVector2=                        | =[x, y]= or ={x:, y:}=                                                                                                                  |
+| =GStrv=                             | a list of text, or one scalar                                                                                                           |
+
+Other property types (objects, pointers, other boxed types) cannot be set from YAML and are reported as errors. Construct-only properties are passed to =g_object_new()=.
+
+*Order of application.* Construct-only properties, then the id, then the other keys in document order, then =items=, then =children= / =child= / =tabs=, then the /late/ properties =value=, =selected=, =active-tab=, =fraction=, =scroll-x=, =scroll-y= and =cursor-position= (which depend on ranges, items or content set before them), then the handlers. Setting a widget up therefore never fires the document's own handlers.
+
+*** Handlers
+:PROPERTIES:
+:CUSTOM_ID: handlers
+:END:
+#+begin_src yaml
+on:
+  clicked: on_play                               # handler name
+  notify::text: on_name_changed                  # detailed signals work
+  value-changed: {handler: on_volume, after: true, swapped: false}
+#+end_src
+
+The signal must exist on the widget's type. The handler name is looked up among the handlers registered with =lrg_ui_loader_add_handler()= (connected with the user data given there). When =lrg_ui_loader_set_use_symbols()= is on, an unregistered name is then looked up as a global symbol of the program with =GModule= and connected with =NULL= user data; the program must export its symbols (=-rdynamic= / =-Wl,--export-dynamic=). =after: true= connects with =G_CONNECT_AFTER=, =swapped: true= with =G_CONNECT_SWAPPED=. Unknown signals and unknown handlers are errors, found before anything is built.
+
+*** Looks
+:PROPERTIES:
+:CUSTOM_ID: looks
+:END:
+=look:= maps a part nick (=box=, =label=, =track=, =fill=, =thumb=, =knob=, =mark=, =arrow=, =popup=, =item=, =header=, =tab=, =indicator=, =scrollbar=, ...: the =LrgUIPart= nicks) to a look. Each look is applied with =lrg_widget_set_part_look()=, so it beats theme defaults, theme style rules and explicit setters (see [[file:styling.org][UI styling]]).
+
+| Field                         | Value                                                         | =LrgPartLook= field                         |
+|-------------------------------+---------------------------------------------------------------+---------------------------------------------|
+| =background=                  | colour                                                        | =background=                                |
+| =foreground= (or =color=)     | colour                                                        | =foreground=                                |
+| =border=                      | colour, or ={color:, width:}=                                 | =border= (+ =border_width=)                 |
+| =border-width=                | number                                                        | =border_width=                              |
+| =radius= (or =radii=)         | number or 4 corners                                           | =radii=                                     |
+| =shadow=                      | colour, or ={color:, blur:}=                                  | =shadow= (+ =shadow_blur=)                  |
+| =shadow-blur=                 | number                                                        | =shadow_blur=                               |
+| =shadow-offset-y= (=shadow-offset=) | number                                                  | =shadow_offset_y=                           |
+| =gradient=                    | ={kind:, start:, end:, angle:, center: [x, y], radius:}= with =kind= =linear= or =radial= (=from= / =to= are aliases) | =gradient=  |
+| =opacity=                     | 0..1                                                          | =opacity=                                   |
+| =size=                        | number                                                        | =size=                                      |
+| =glow=                        | colour, or ={color:, size:}=                                  | =glow= (+ =glow_size=)                      |
+| =glow-size=                   | number                                                        | =glow_size=                                 |
+| a state (=hovered=, =pressed=, =focused=, =focus-visible=, =disabled=, =checked=, =selected=, =open=, or a combination =checked+hovered=) | a look | the same part, for those states (nests) |
+
+#+begin_src yaml
+look:
+  box:
+    background: "#1e1e2e"
+    radius: 12
+    border: {color: "#ffffff22", width: 1}
+    hovered:
+      background: "#313244"
+      glow: {color: "#cba6f7", size: 10}
+    checked+hovered: {opacity: 0.9}
+  label: {foreground: white}
+#+end_src
+
+** Expressions
+:PROPERTIES:
+:CUSTOM_ID: expressions
+:END:
+Any scalar value may contain =${expression}=. A scalar that is exactly one =${...}= keeps the result's type (a number, a boolean, a list, a mapping), so =value: ${volume}= sets a number and =items: ${options}= passes a list. Otherwise the results are converted to text and joined with the surrounding text: =text: "Level ${level + 1} of ${max}"=. Write =$${= for a literal =${=.
+
+*YAML quoting.* YAML reads =": "= and, inside flow collections (=[...]=, ={...}=), the characters =,= ={= =}= =[= =]= itself. Quote expressions that contain them: =text: "${hp > 0 ? 'alive' : 'dead'}"=, =appear: {kind: pop, delay: "${i * 0.05}"}=. Quoting does not change the result's type.
+
+*** Grammar
+:PROPERTIES:
+:CUSTOM_ID: expression-grammar
+:END:
+From lowest to highest precedence:
+
+#+begin_example
+expr    := or ( '?' expr ':' expr )?
+or      := and ( '||' and )*
+and     := eq ( '&&' eq )*
+eq      := cmp ( ( '==' | '!=' ) cmp )*
+cmp     := add ( ( '<' | '<=' | '>' | '>=' ) add )*
+add     := mul ( ( '+' | '-' ) mul )*
+mul     := unary ( ( '*' | '/' | '%' ) unary )*
+unary   := ( '!' | '-' | '+' ) unary | postfix
+postfix := primary ( '.' name | '[' expr ']' )*
+primary := number | 'text' | "text" | true | false | null
+         | name | name '(' args ')' | '(' expr ')' | '[' args ']'
+#+end_example
+
+- *Numbers*: =12=, =1.5=, =.5=, =1e3=, =0xff=. Results print without a trailing =.0= (=6 / 2= is =3=; =0.1 + 0.2= is =0.3=).
+- *Text*: ='single'= or ="double"= quotes with =\n=, =\t= and =\\= escapes.
+- *Names*: parameters, loop variables, document variables and loader variables. Names are =[A-Za-z_][A-Za-z0-9_]*=; a name defined with =-= (=label-width=) is also reachable with =_= (=label_width=). An unknown name is an error, except inside the first argument of =default()=.
+- =+= adds numbers, and joins text when either side is text (=1 + 2 + 'x'= is ="3x"=, ='x' + 1 + 2= is ="x12"=).
+- =- * / %= need numbers (text that reads as a number is accepted); division and modulo by zero are errors.
+- === and =!== compare numbers numerically, text as text, lists and mappings structurally; =null= equals only =null=.
+- =< <= > >== compare numerically when both sides are numbers, else as text.
+- =&&= and =||= short-circuit and give a boolean; =a ? b : c= evaluates only the taken branch, so =x != null && x.name= is safe.
+- =.name= reads a mapping member, =[i]= a list element (negative indexes count from the end; out of range gives =null=) or a mapping member by computed key; =[a, b, c]= builds a list.
+
+*** Truthiness
+:PROPERTIES:
+:CUSTOM_ID: truthiness
+:END:
+False: =false=, =0=, =null=, the empty text, the text ="false"=, an empty list or mapping. Everything else is true.
+
+*** Functions
+:PROPERTIES:
+:CUSTOM_ID: expression-functions
+:END:
+| Function                 | Result                                                               |
+|--------------------------+----------------------------------------------------------------------|
+| =min(a, b, ...)=         | the smallest number                                                  |
+| =max(a, b, ...)=         | the largest number                                                   |
+| =len(x)=                 | characters of text, elements of a list or mapping; 0 for =null=      |
+| =empty(x)=               | =len(x) == 0=                                                        |
+| =default(x, fallback)=   | =x=, or =fallback= when =x= is =null=, empty text or undefined       |
+| =upper(t)=, =lower(t)=   | case-converted text (Unicode aware)                                  |
+| =str(x)=                 | text form of a value                                                 |
+| =int(x)=                 | number truncated toward zero                                         |
+| =float(x)=               | number (text is parsed)                                              |
+| =round(x)=, =floor(x)=, =ceil(x)=, =abs(x)= | the usual                                         |
+
+*** Variables
+:PROPERTIES:
+:CUSTOM_ID: variables
+:END:
+Expressions see, from innermost to outermost: =repeat= / =for-each= variables, component parameters (inside a component body), =include ... with:= variables, the document's =variables:=, and the loader's variables set with =lrg_ui_loader_set_variable()= (booleans, numbers and strings keep their type; enums become their nick; other types become text). A component body does not see the variables of the place it is used (only its parameters, the document's variables and the loader's variables): pass what it needs as parameters.
+
+** Components
+:PROPERTIES:
+:CUSTOM_ID: components
+:END:
+#+begin_src yaml
+components:
+  Field:
+    params: {label: Name, hint: "", label-width: 90, wide: false}
+    body:
+      type: hbox
+      class: field
+      spacing: 8
+      children:
+        - {type: label, text: "${label}:", min-size: ["${wide ? 140 : label_width}", 0]}
+        - {type: text-input, placeholder: "${default(hint, label)}", fill-weight: 1}
+        - slot: true
+
+root:
+  type: vbox
+  children:
+    - type: Field
+      id: email
+      label: Email
+      hint: you@example.com
+      class: highlighted
+      children: [{type: button, text: Show}]
+    - {type: Field, wide: true}
+#+end_src
+
+- =params:= maps each parameter to its default value. Defaults may use expressions (evaluated with the earlier parameters and the global variables).
+- =body:= is one node (a widget, another component, or a structural node) that must give exactly one widget.
+- Where the component is used, keys that are parameters give their values (evaluated where the component is used). *Other keys apply to the body's root widget*: =id=, =class= (merged with the body's classes), =on= (merged: a signal named again replaces the body's handler), =look=, =margin=, =if=, any property of the root. A key that is neither a parameter nor valid on the root is an error that says so.
+- =instance= is a number unique to each use, handy for ids: =id: "row-${instance}"=.
+- Components can use every component of their document, declared before or after them; components of an included file are known once the =include= node has been expanded (put library includes first). A component that uses itself (directly or through others) is an error naming the chain.
+
+*** Slots
+:PROPERTIES:
+:CUSTOM_ID: slots
+:END:
+- =slot: true= (or =slot: default=) in the body is replaced by the =children:= given where the component is used.
+- =slot: name= is replaced by the nodes given under =slots: {name: [...]}= where the component is used.
+- A slot node may carry =children:=: they are its fallback content when the use site gives nothing for it.
+- Use-site children with no default slot in the body are appended to the body's root when it is a container; otherwise that is an error. A named fill that matches no slot is an error.
+- The nodes that fill a slot are expanded where the component is used, so they see that place's variables.
+
+#+begin_src yaml
+components:
+  Card:
+    params: {title: Card}
+    body:
+      type: panel
+      children:
+        - type: vbox
+          children:
+            - {type: label, text: "${title}"}
+            - slot: true
+              children: [{type: label, text: Nothing here}]
+            - {type: hbox, children: [{slot: footer}]}
+root:
+  type: Card
+  title: Inventory
+  children: [{type: label, text: Sword}]
+  slots:
+    footer: [{type: button, text: Close}]
+#+end_src
+
+** Structural keys
+:PROPERTIES:
+:CUSTOM_ID: structural-keys
+:END:
+Wherever a node may appear (a list of =children=, a =child=, a component =body=, a slot fill, a =root=), these mappings generate zero or more nodes:
+
+| Node                                                                      | Result                                                                                                                                             |
+|---------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------|
+| =repeat: {count: N, var: i, body: node-or-list}=                          | =body= N times with =i= = 0 .. N-1 (=var= defaults to =i=; N is an integer 0..10000, expressions allowed)                                             |
+| =repeat: N= with =var:= / =body:= beside it                               | the same, short form                                                                                                                               |
+| =for-each: {items: list, var: item, index: index, body: node-or-list}=    | =body= once per element; =var= (default =item=) is the element (a mapping element is reachable with =item.name=), =index= (default =index=) its position |
+| =for-each: list= with =var:= / =index:= / =body:= beside it               | the same, short form                                                                                                                               |
+| =include: file.yaml= (+ =with: {name: value}=)                            | the file's components are registered and its root node(s), if any, inserted here; =with:= variables are visible inside it                          |
+| =slot: true= / =slot: name=                                               | see [[#slots][Slots]]                                                                                                                                         |
+| =if: expr= on any node                                                    | the node (structural or not) is skipped when false                                                                                                 |
+
+=for-each= items may be a YAML list, an expression giving a list (=items: ${people}=), a mapping (values in order, the index variable is the key), or a text ="a|b|c"= split on =|=. Structural mappings accept only their own keys (and =if=); anything else is an error.
+
+*** Includes
+:PROPERTIES:
+:CUSTOM_ID: includes
+:END:
+=include:= paths are relative to the file that contains the =include= (or to a component's file, for includes inside a component body); for documents given with =lrg_ui_loader_load_from_data()= they are relative to the current directory. A file that includes itself, directly or through other files, is an error naming the chain (=include cycle: a.yaml -> b.yaml -> a.yaml=). Each file is parsed once per load, however many times it is included. Included files are watched with the document (see [[#hot-reload][Hot reload]]).
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+Every error is a =GError= in the =LRG_UI_LOADER_ERROR= domain (=lrg_ui_loader_error_quark()=; codes in the =LrgUILoaderError= enum, GType =lrg_ui_loader_error_get_type()=) whose message is
+
+#+begin_example
+<node path>: <what is wrong> (at <file>:<line>:<column>)
+#+end_example
+
+The position is the value at fault (=(at line L, column C)= for documents given as text). The node path names the node inside the expanded document:
+
+| Path piece             | Meaning                                                  |
+|------------------------+----------------------------------------------------------|
+| =(root)=               | the root node                                            |
+| =(document)=           | the document itself (syntax errors, no root, ...)        |
+| =children[2]=          | third child                                              |
+| =tabs[0].content=      | content of the first tab                                 |
+| =child=                | the single child                                         |
+| =repeat[3].body=       | fourth repetition                                        |
+| =for-each[1].body=     | second element                                           |
+| =<Field>=              | inside the body of component =Field=                     |
+| ={parts.yaml}=         | inside an included file                                  |
+| =components.Field=     | the declaration of a component                           |
+
+Examples:
+
+#+begin_example
+children[2].children[0]: unknown property 'colour' on LrgLabel (at menu.yaml:8:9)
+children[0]: unknown widget type or component 'Frobnicator' (at line 3, column 11)
+(root): invalid value for property 'opacity' of LrgButton: 2 is out of range for 'opacity'
+children[1]<Field>.children[0]: in '${labl}:': unknown variable 'labl' (at menu.yaml:5:33)
+children[0]: component 'Loop' uses itself (Loop -> Loop)
+children[0]{b.yaml}.children[0]: include cycle: a.yaml -> b.yaml -> a.yaml
+(root): unknown handler 'on_ply' for signal 'clicked' (register it with lrg_ui_loader_add_handler())
+(document): YAML syntax error: did not find expected node content while parsing a flow node (at menu.yaml:3:1)
+#+end_example
+
+| Code                                    | Raised for                                                                                 |
+|-----------------------------------------+--------------------------------------------------------------------------------------------|
+| =LRG_UI_LOADER_ERROR_PARSE=             | YAML syntax errors, duplicate keys, non-text keys                                          |
+| =LRG_UI_LOADER_ERROR_IO=                | a document or included file cannot be read                                                 |
+| =LRG_UI_LOADER_ERROR_UNKNOWN_TYPE=      | unknown type, a type that is not a widget, an abstract type                                |
+| =LRG_UI_LOADER_ERROR_UNKNOWN_PROPERTY=  | unknown or read-only property; a component use-site key that fits neither params nor root  |
+| =LRG_UI_LOADER_ERROR_INVALID_VALUE=     | a value that does not convert (wrong type, out of range, unknown enum nick, bad colour ...) |
+| =LRG_UI_LOADER_ERROR_EXPRESSION=        | malformed expression, unknown variable or function, bad operand, division by zero          |
+| =LRG_UI_LOADER_ERROR_HANDLER=           | unknown signal, unknown handler, malformed =on:= entry                                     |
+| =LRG_UI_LOADER_ERROR_COMPONENT=         | malformed component, recursion, unknown or misplaced slot                                  |
+| =LRG_UI_LOADER_ERROR_INCLUDE_CYCLE=     | include cycles (and includes nested more than 64 deep)                                     |
+| =LRG_UI_LOADER_ERROR_STRUCTURE=         | wrong document shape: no or several roots, children on a non-container, unknown keys in structural nodes, ... |
+
+** Hot reload
+:PROPERTIES:
+:CUSTOM_ID: hot-reload
+:END:
+=lrg_ui_loader_watch_file (loader, path, host, &error)= builds the document, adds its root to =host= (an =LrgCanvas= or any container) and remembers the document and every file it read (its includes). Then either:
+
+- call =lrg_ui_loader_poll()= every frame: it =stat()=s each watched file (modification time with nanoseconds where available, size and inode) and reloads the documents whose files changed. No thread, no blocking; or
+- turn on =lrg_ui_loader_set_use_monitors (loader, TRUE)=: each file gets a =GFileMonitor= that flags its document, and =poll()= only reloads flagged documents (no =stat()=). Monitors deliver through the thread-default =GMainContext=, so the game must iterate it (=g_main_context_iteration (NULL, FALSE)=).
+
+=lrg_ui_loader_reload()= reloads every watched document immediately, changed or not (after =lrg_ui_loader_set_variable()=, for example).
+
+*** What a reload does
+:PROPERTIES:
+:CUSTOM_ID: reload-semantics
+:END:
+1. The document is read and fully expanded and validated. *If anything is wrong, nothing changes*: the live tree stays exactly as it was, =::reload-failed= is emitted with the error (and logged as a message), and the file is not retried until it changes again.
+2. Otherwise the new tree is diffed against the live one, starting at the root. Each live widget remembers the expanded node it was built from; the diff compares the new node with that one.
+3. =::reloaded= is emitted with the document's path and root.
+
+*** Diff rules
+:PROPERTIES:
+:CUSTOM_ID: diff-rules
+:END:
+- *Matching children*: a new child with an =id= matches the live child with the same id and type. A new child without an id matches the live child without an id of the same type and the same rank among the id-less children of that type (the second id-less =label= matches the second id-less live =label=). Give widgets ids when you reorder them.
+- *Reuse*: a matched widget is kept (same pointer, same handlers held by the game, same state) and receives only the values whose YAML *changed* (compared after expressions are evaluated). A value that did not change in the YAML is not applied again, so state the user changed survives: typed text, slider and spin values, the selected combo entry, the active tab, scroll offsets, check boxes ... unless the YAML value of that property changed, in which case the YAML wins.
+- *Removed values* go back to the property's default (a removed =margin= becomes 0, a removed =class= is removed, a removed =look= is cleared, a removed =appear= becomes none, a removed =on:= disconnects).
+- *Rebuild instead of reuse* when the type changes, a construct-only property changes, the kind of content changes (children / child / tabs), or a removed property cannot be reset in place (a boxed or object property whose default is =NULL=, such as an explicit colour: widgets ignore =NULL= colours). The rebuilt widget takes the old one's place; its subtree is new.
+- *Unmatched* new nodes are built and inserted at their place; unmatched live widgets are removed (and destroyed unless the game holds a reference). Children the loader did not build (added by code, internal scroll bars) are left alone.
+- *Order*: children end up in document order. Appending keeps the others in place; any other move takes the loader's children out and puts them back in order (no widget is rebuilt for that).
+- *Tabs*: pages are matched like children through their content; when the same contents stay in the same order only labels change, otherwise the page list is rebuilt from the (reused) contents and the active page index is kept.
+- *Combo items*: when =items= changes the list is replaced and the selection follows its text when the old selected text still exists, otherwise it is cleared.
+- *Handlers* are reconnected only when the widget's =on:= mapping changed.
+- *Ids*: after a reload =lrg_ui_loader_get_widget()= answers from the new tree.
+- *Root*: when the root itself must be rebuilt it is removed from the host and the new root added (at the end of the host's children).
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+=examples/data/ui/showcase-settings.yaml= is a full settings screen: a =Section= component (a titled card with a default slot), a =SliderRow= component (label, slider and live value with =id: slider-${name}=), a =Toggle= component (check box plus an optional note with =if=), audio channels generated with =for-each= over a list of mappings, quality presets generated with =repeat=, three tabs, combo boxes with =items=, a =look= override with a hovered glow, =appear= cascades and handlers. Load it with:
+
+#+begin_src C
+lrg_ui_loader_add_handler (loader, "settings_apply", G_CALLBACK (on_apply), game);
+lrg_ui_loader_add_handler (loader, "settings_reset", G_CALLBACK (on_reset), game);
+lrg_ui_loader_add_handler (loader, "settings_slider_changed", G_CALLBACK (on_slider), game);
+root = lrg_ui_loader_watch_file (loader, "data/ui/showcase-settings.yaml", LRG_CONTAINER (canvas), &error);
+#+end_src
+
+A smaller document with everything at once:
+
+#+begin_src yaml
+variables:
+  difficulty: [Easy, Normal, Hard]
+components:
+  Stat:
+    params: {name: "?", value: 0, max: 100}
+    body:
+      type: hbox
+      id: "stat-${name}"
+      spacing: 8
+      children:
+        - {type: label, text: "${upper(name)}", min-size: [80, 0]}
+        - {type: progress-bar, value: "${value}", max: "${max}", fill-weight: 1}
+        - {type: label, text: "${value}/${max}", if: "${max > 0}"}
+root:
+  type: panel
+  fill-children: true
+  look: {box: {radius: 16, shadow: {color: "#00000066", blur: 24}}}
+  children:
+    - type: vbox
+      spacing: 10
+      padding: 16
+      children:
+        - include: header.yaml
+          with: {title: Character}
+        - for-each: [{name: hp, value: 72}, {name: mp, value: 30, max: 50}]
+          var: s
+          body: {type: Stat, name: "${s.name}", value: "${s.value}", max: "${default(s.max, 100)}"}
+        - {type: combo-box, id: difficulty, items: "${difficulty}", selected: 1}
+        - type: hbox
+          children:
+            - repeat: 3
+              var: slot
+              body: {type: button, id: "slot-${slot}", text: "Slot ${slot + 1}", fill-weight: 1}
+#+end_src
+
+** C API reference
+:PROPERTIES:
+:CUSTOM_ID: c-api
+:END:
+=LrgUILoader= is a final =GObject=. Include =<libregnum.h>=.
+
+*** Creating and configuring
+:PROPERTIES:
+:CUSTOM_ID: api-config
+:END:
+| Function                                                    | Description                                                                                                         |
+|-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------|
+| =lrg_ui_loader_new (void)=                                  | A loader with no handlers, variables or registry                                                                    |
+| =lrg_ui_loader_set_registry (self, registry)=               | Registry of short type names consulted first (nullable; the loader keeps a reference)                               |
+| =lrg_ui_loader_get_registry (self)=                         | The registry, or =NULL= (transfer none)                                                                             |
+| =lrg_ui_loader_add_handler (self, name, callback, user_data)= | Registers a named handler for =on:=; registering a name again replaces it for later loads                         |
+| =lrg_ui_loader_set_use_symbols (self, use_symbols)=         | Look unregistered handler names up as program symbols (=GModule=), default =FALSE=                                  |
+| =lrg_ui_loader_get_use_symbols (self)=                      | Whether symbol lookup is on                                                                                         |
+| =lrg_ui_loader_set_variable (self, name, value)=            | Sets a global expression variable from a =GValue= (=NULL= removes it)                                               |
+
+*** Loading
+:PROPERTIES:
+:CUSTOM_ID: api-loading
+:END:
+| Function                                                    | Description                                                                                                         |
+|-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------|
+| =lrg_ui_loader_load_from_data (self, data, length, error)=  | Builds a document given as text (=length= -1 if nul-terminated); returns the root (transfer full) or =NULL=         |
+| =lrg_ui_loader_load_from_file (self, path, error)=          | Builds a file; includes are relative to it; not watched; returns the root (transfer full) or =NULL=                 |
+| =lrg_ui_loader_get_widget (self, id)=                       | A live widget built by this loader, by =id= (transfer none; the loader holds only a weak reference). The most recent load wins for duplicate ids; within one document the first in depth-first order |
+
+*** Hot reload
+:PROPERTIES:
+:CUSTOM_ID: api-hot-reload
+:END:
+| Function                                                    | Description                                                                                                         |
+|-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------|
+| =lrg_ui_loader_watch_file (self, path, host, error)=        | Builds the file, adds its root to =host=, watches it and its includes; returns the root (transfer none, owned by =host=) or =NULL=. Watching a path again replaces the watch (the old tree stays where it is) |
+| =lrg_ui_loader_unwatch_file (self, path)=                   | Stops watching; widgets stay; =TRUE= if it was watched                                                              |
+| =lrg_ui_loader_poll (self)=                                 | Reloads changed documents; =TRUE= if a reload ran (successful or not). Call every frame                             |
+| =lrg_ui_loader_reload (self, error)=                        | Reloads every watched document now; =FALSE= with the first error if one failed                                      |
+| =lrg_ui_loader_set_use_monitors (self, use_monitors)=       | Use =GFileMonitor= instead of =stat()= polling                                                                      |
+| =lrg_ui_loader_get_use_monitors (self)=                     | Whether monitors are used                                                                                           |
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: api-errors
+:END:
+| Symbol                              | Description                                       |
+|-------------------------------------+---------------------------------------------------|
+| =LRG_UI_LOADER_ERROR=               | The error domain (=lrg_ui_loader_error_quark()=) |
+| =lrg_ui_loader_error_quark (void)=  | The error quark                                   |
+| =LrgUILoaderError=                  | The error codes (see [[#errors][Errors]])                  |
+| =lrg_ui_loader_error_get_type (void)= | GType of =LrgUILoaderError= (=LRG_TYPE_UI_LOADER_ERROR=) |
+
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: api-signals
+:END:
+| Signal            | Arguments                                   | Emitted when                                                                                   |
+|-------------------+---------------------------------------------+------------------------------------------------------------------------------------------------|
+| =reloaded=        | =const gchar *path=, =LrgWidget *root=      | A watched document was reloaded and diffed into the live tree (look widgets up again here)     |
+| =reload-failed=   | =const gchar *path=, =const GError *error=  | A watched document changed but could not be loaded; the live tree is untouched                 |
+
+** Limitations
+:PROPERTIES:
+:CUSTOM_ID: limitations
+:END:
+- Object-typed properties (fonts, textures, themes) cannot be set from YAML; set them from code after loading (look the widget up by id).
+- Line and column point at the value (or the node) at fault; for values produced by expressions they point at the expression.
+- When the root of a watched document must be rebuilt it is appended to the host, not put back at its old index.
+- A removed explicit colour property cannot be reset in place, so its widget is rebuilt (it loses its state).
+- Only the first document of a multi-document YAML stream is read.
+- =poll()= compares modification time (nanoseconds on Linux), size and inode; a write that keeps all three identical is not seen.

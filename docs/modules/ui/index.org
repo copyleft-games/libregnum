@@ -45,6 +45,7 @@ Core:
 - [[file:container.org][LrgContainer]]: children, spacing, padding, =layout_children=.
 - [[file:layout.org][Layout]]: measure / allocate / arrange, layout hints, slots, box and grid layout, dirty propagation, writing containers.
 - [[file:styling.org][Styling]]: parts, =LrgPartLook=, style rules, specificity, look resolution, the =styles:= YAML schema.
+- [[file:declarative-ui.org][Declarative UI]]: YAML widget trees, components, expressions, includes and hot reload via =LrgUILoader=.
 - [[file:theme.org][LrgTheme]]: colour roles, metrics, presets, accent derivation, fonts, YAML.
 - [[file:animation.org][Animation]]: hover and press springs, eased looks, appear transitions and stagger, popup transitions, reduced motion.
 - [[file:input-and-focus.org][Input, focus and popups]]: =LrgCanvasInput=, dispatch and bubbling, capture, hover, focus navigation, ACTIVATE / CANCEL, the popup layer, testing.

@@ -225,6 +225,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:modules/ui/widget.org][LrgWidget]] and [[file:modules/ui/container.org][LrgContainer]] - Base classes and their virtual methods
 - [[file:modules/ui/layout.org][Layout]] - Measure, slots, box and grid layout, custom containers
 - [[file:modules/ui/styling.org][Styling]] - Parts, looks, style rules and specificity
+- [[file:modules/ui/declarative-ui.org][Declarative UI]] - Widget trees from YAML: components, expressions, includes, hot reload
 - [[file:modules/ui/theme.org][LrgTheme]] - Colour roles, metrics, presets, YAML
 - [[file:modules/ui/animation.org][Animation]] - Hover/press springs, appear transitions, popup motion, reduced motion
 - [[file:modules/ui/input-and-focus.org][Input, Focus and Popups]] - Input frames, bubbling, capture, focus navigation, popups
