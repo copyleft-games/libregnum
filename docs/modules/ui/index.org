@@ -53,6 +53,7 @@ Core:
 - [[file:canvas-api.org][LrgCanvas API]]: every =LrgCanvas= and =LrgCanvasInput= function with its signature (rendering, input frames, focus, navigation, popups, the boxed input type).
 - [[file:widget-api-reference.org][Widget API reference]]: every public function of every widget class, one section per widget.
 - [[file:tooltip.org][Tooltips]]: =LrgTooltip=, =LrgTooltipLayout=.
+- [[file:inspector.org][UI inspector]]: =LrgUIInspector=, tree snapshots, paths, pick mode, highlight overlay, timings, live property edits and the =lrg_ui_*= MCP tools.
 
 Related:
 

@@ -95,6 +95,12 @@ struct _LrgCanvas
 	/* Theme last laid out with, to re-layout on switches and edits */
 	LrgTheme     *seen_theme;   /* weak */
 	guint         seen_generation;
+
+	/* Phase timings for the UI inspector, measured only while enabled */
+	gboolean      timing_enabled;
+	gint64        step_us;
+	gint64        layout_us;
+	gint64        record_us;
 };
 
 G_DEFINE_FINAL_TYPE (LrgCanvas, lrg_canvas, LRG_TYPE_CONTAINER)
@@ -1653,9 +1659,11 @@ lrg_canvas_update (LrgCanvas *self,
 {
 	gboolean busy;
 	guint    i;
+	gint64   start;
 
 	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
 
+	start = self->timing_enabled ? g_get_monotonic_time () : 0;
 	self->clock += (gdouble)delta_time;
 	busy = lrg_widget_step (LRG_WIDGET (self), delta_time);
 
@@ -1686,6 +1694,8 @@ lrg_canvas_update (LrgCanvas *self,
 		g_array_remove_index (self->closing, i);
 	}
 
+	if (self->timing_enabled)
+		self->step_us = g_get_monotonic_time () - start;
 	return busy;
 }
 
@@ -1726,9 +1736,11 @@ lrg_canvas_record (LrgCanvas *self)
 	LrgWidget *root;
 	LrgTheme  *theme;
 	guint      i;
+	gint64     start;
 
 	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
 	root = LRG_WIDGET (self);
+	start = self->timing_enabled ? g_get_monotonic_time () : 0;
 
 	/* A different or edited theme can change every preferred size
 	 * (font sizes, control heights): lay the whole tree out again */
@@ -1753,6 +1765,16 @@ lrg_canvas_record (LrgCanvas *self)
 		lrg_widget_layout (g_array_index (self->popups, PopupEntry, i).popup);
 	for (i = 0; i < self->overlays->len; i++)
 		lrg_widget_layout (g_ptr_array_index (self->overlays, i));
+
+	/* Inspector timings: layout above, recording below */
+	if (self->timing_enabled)
+	{
+		gint64 now = g_get_monotonic_time ();
+
+		self->layout_us = now - start;
+		self->record_us = 0;
+		start = now;
+	}
 
 	lrg_paint_list_clear (self->paint);
 
@@ -1812,6 +1834,8 @@ lrg_canvas_record (LrgCanvas *self)
 	for (i = 0; i < self->overlays->len; i++)
 		lrg_widget_paint (g_ptr_array_index (self->overlays, i), self->paint);
 
+	if (self->timing_enabled)
+		self->record_us = g_get_monotonic_time () - start;
 	return self->paint;
 }
 
@@ -1875,4 +1899,45 @@ lrg_canvas_get_n_overlays (LrgCanvas *self)
 	g_return_val_if_fail (LRG_IS_CANVAS (self), 0);
 
 	return self->overlays->len;
+}
+
+/* ==========================================================================
+ * Inspector hooks (lrg-canvas-private.h)
+ * ========================================================================== */
+
+void
+_lrg_canvas_set_timing_enabled (LrgCanvas *self,
+                                gboolean   enabled)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	self->timing_enabled = enabled;
+}
+
+void
+_lrg_canvas_get_timings (LrgCanvas *self,
+                         gint64    *step_us,
+                         gint64    *layout_us,
+                         gint64    *record_us)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	*step_us = self->step_us;
+	*layout_us = self->layout_us;
+	*record_us = self->record_us;
+}
+
+void
+_lrg_canvas_get_layers (LrgCanvas *self,
+                        GPtrArray *popups,
+                        GPtrArray *overlays)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	for (i = 0; popups != NULL && i < self->popups->len; i++)
+		g_ptr_array_add (popups, g_array_index (self->popups, PopupEntry, i).popup);
+	for (i = 0; overlays != NULL && i < self->overlays->len; i++)
+		g_ptr_array_add (overlays, g_ptr_array_index (self->overlays, i));
 }

@@ -15,6 +15,8 @@
 #include "../../debug/lrg-debug-overlay.h"
 #include "../../debug/lrg-debug-console.h"
 #include "../../debug/lrg-inspector.h"
+#include "../../ui/lrg-ui-inspector.h"
+#include "../../ui/lrg-widget.h"
 #include "../../lrg-enums.h"
 #include "../../lrg-log.h"
 #include <gio/gio.h>
@@ -31,7 +33,10 @@
  * the default #LrgProfiler (sections, frame statistics, reports), the
  * default #LrgDebugOverlay (visibility, flags, custom lines, rendered
  * text), the default #LrgDebugConsole (command execution and output) and
- * the default #LrgInspector (world, object and component inspection).
+ * the default #LrgInspector (world, object and component inspection) and
+ * the default #LrgUIInspector (retained UI tree, picking, highlighting,
+ * live property edits and canvas timings; the app registers its canvas
+ * with lrg_ui_inspector_register_canvas()).
  *
  * Every tool returns a JSON object as its single text content.
  */
@@ -685,14 +690,266 @@ handle_inspect (LrgMcpDebugTools *self,
 }
 
 /* ==========================================================================
+ * Tool Handlers - UI inspector
+ * ========================================================================== */
+
+/*
+ * The UI tools all talk to lrg_ui_inspector_get_default(); the app makes
+ * its canvas visible with lrg_ui_inspector_register_canvas(). Results
+ * are the inspector's own JSON text.
+ */
+
+/* text_result: wrap JSON text (taken) as the tool's single text content */
+static McpToolResult *
+text_result (gchar *text)
+{
+	McpToolResult *result = mcp_tool_result_new (FALSE);
+
+	mcp_tool_result_add_text (result, text);
+	g_free (text);
+	return result;
+}
+
+/* ui_inspector: the default inspector, or an error when no canvas is registered */
+static LrgUIInspector *
+ui_inspector (GError **error)
+{
+	LrgUIInspector *inspector = lrg_ui_inspector_get_default ();
+
+	if (lrg_ui_inspector_get_canvas (inspector) == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                     "No UI canvas registered (call lrg_ui_inspector_register_canvas())");
+		return NULL;
+	}
+	return inspector;
+}
+
+/* describe: the widget at @path as JSON text, or an error */
+static McpToolResult *
+describe (LrgUIInspector  *inspector,
+          LrgWidget       *widget,
+          GError         **error)
+{
+	gchar *text = lrg_ui_inspector_describe_widget (inspector, widget, FALSE);
+
+	if (text == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                     "Widget is not addressable by path (internal child)");
+		return NULL;
+	}
+	return text_result (text);
+}
+
+static McpToolResult *
+handle_ui_tree (LrgMcpDebugTools *self,
+                JsonObject       *arguments,
+                GError          **error)
+{
+	LrgUIInspector *inspector = ui_inspector (error);
+
+	if (inspector == NULL)
+		return NULL;
+	return text_result (lrg_ui_inspector_snapshot_json (inspector, FALSE));
+}
+
+/*
+ * handle_ui_pick:
+ *
+ * The topmost widget at (x, y), as the canvas hit-tests clicks; with
+ * select=true it also becomes the highlighted selection. Empty space
+ * returns {"path": null}.
+ */
+static McpToolResult *
+handle_ui_pick (LrgMcpDebugTools *self,
+                JsonObject       *arguments,
+                GError          **error)
+{
+	LrgUIInspector *inspector = ui_inspector (error);
+	LrgWidget      *widget;
+	gdouble         x;
+	gdouble         y;
+
+	if (inspector == NULL)
+		return NULL;
+
+	x = lrg_mcp_tool_group_get_double_arg (arguments, "x", 0.0);
+	y = lrg_mcp_tool_group_get_double_arg (arguments, "y", 0.0);
+	widget = lrg_ui_inspector_pick (inspector, (gfloat) x, (gfloat) y);
+
+	/* Internal children (kept out of their parent's child list) have no
+	 * path: report the nearest addressable ancestor instead */
+	while (widget != NULL)
+	{
+		g_autofree gchar *path = lrg_ui_inspector_get_path (inspector, widget);
+
+		if (path != NULL)
+			break;
+		widget = (LrgWidget *) lrg_widget_get_parent (widget);
+	}
+	if (lrg_mcp_tool_group_get_bool_arg (arguments, "select", FALSE))
+		lrg_ui_inspector_set_selected (inspector, widget);
+	if (widget == NULL)
+		return text_result (g_strdup ("{\"path\":null}"));
+	return describe (inspector, widget, error);
+}
+
+static McpToolResult *
+handle_ui_get_widget (LrgMcpDebugTools *self,
+                      JsonObject       *arguments,
+                      GError          **error)
+{
+	LrgUIInspector *inspector = ui_inspector (error);
+	const gchar    *path;
+	LrgWidget      *widget;
+
+	if (inspector == NULL)
+		return NULL;
+	path = lrg_mcp_tool_group_get_string_arg (arguments, "path", "");
+	widget = lrg_ui_inspector_lookup (inspector, path);
+	if (widget == NULL)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No widget at path \"%s\"", path);
+		return NULL;
+	}
+	return describe (inspector, widget, error);
+}
+
+/*
+ * handle_ui_set_property:
+ *
+ * Strings go through lrg_ui_inspector_set_property_from_string() (enum
+ * nicks, flags "a|b", colours "#rrggbbaa", numbers as text); JSON
+ * numbers and booleans are converted to the property type. Returns the
+ * widget's description after the change.
+ */
+static McpToolResult *
+handle_ui_set_property (LrgMcpDebugTools *self,
+                        JsonObject       *arguments,
+                        GError          **error)
+{
+	LrgUIInspector *inspector = ui_inspector (error);
+	const gchar    *path;
+	const gchar    *name;
+	JsonNode       *node;
+	GValue          value = G_VALUE_INIT;
+	gboolean        ok;
+	GType           input;
+
+	if (inspector == NULL)
+		return NULL;
+	path = lrg_mcp_tool_group_get_string_arg (arguments, "path", "");
+	name = lrg_mcp_tool_group_get_string_arg (arguments, "property", "");
+	node = json_object_get_member (arguments, "value");
+
+	input = JSON_NODE_HOLDS_VALUE (node) ? json_node_get_value_type (node) : G_TYPE_INVALID;
+	if (input == G_TYPE_STRING)
+		ok = lrg_ui_inspector_set_property_from_string (inspector, path, name,
+		                                                json_node_get_string (node), error);
+	else
+	{
+		if (input == G_TYPE_BOOLEAN)
+		{
+			g_value_init (&value, G_TYPE_BOOLEAN);
+			g_value_set_boolean (&value, json_node_get_boolean (node));
+		}
+		else if (input == G_TYPE_INT64)
+		{
+			g_value_init (&value, G_TYPE_INT64);
+			g_value_set_int64 (&value, json_node_get_int (node));
+		}
+		else if (input == G_TYPE_DOUBLE)
+		{
+			g_value_init (&value, G_TYPE_DOUBLE);
+			g_value_set_double (&value, json_node_get_double (node));
+		}
+		else if (JSON_NODE_HOLDS_NULL (node))
+		{
+			g_value_init (&value, G_TYPE_STRING);
+			g_value_set_string (&value, NULL);
+		}
+		else
+		{
+			g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+			                     "value must be a string, number, boolean or null");
+			return NULL;
+		}
+		ok = lrg_ui_inspector_set_property (inspector, path, name, &value, error);
+		g_value_unset (&value);
+	}
+	if (!ok)
+		return NULL;
+	return describe (inspector, lrg_ui_inspector_lookup (inspector, path), error);
+}
+
+/*
+ * handle_ui_highlight:
+ *
+ * Selects (and so highlights) the widget at path; without a path the
+ * selection is cleared. pick_mode switches interactive picking.
+ */
+static McpToolResult *
+handle_ui_highlight (LrgMcpDebugTools *self,
+                     JsonObject       *arguments,
+                     GError          **error)
+{
+	LrgUIInspector   *inspector = ui_inspector (error);
+	const gchar      *path;
+	g_autofree gchar *selected = NULL;
+	JsonObject       *json;
+
+	if (inspector == NULL)
+		return NULL;
+	path = lrg_mcp_tool_group_get_string_arg (arguments, "path", NULL);
+	if (!lrg_ui_inspector_highlight (inspector, path, error))
+		return NULL;
+	if (arguments != NULL && json_object_has_member (arguments, "pick_mode"))
+		lrg_ui_inspector_set_pick_mode (inspector, json_object_get_boolean_member (arguments, "pick_mode"));
+
+	json = json_object_new ();
+	if (lrg_ui_inspector_get_selected (inspector) != NULL)
+		selected = lrg_ui_inspector_get_path (inspector, lrg_ui_inspector_get_selected (inspector));
+	if (selected != NULL)
+		json_object_set_string_member (json, "selected", selected);
+	else
+		json_object_set_null_member (json, "selected");
+	json_object_set_boolean_member (json, "pick_mode", lrg_ui_inspector_get_pick_mode (inspector));
+	return _lrg_mcp_result (json);
+}
+
+static McpToolResult *
+handle_ui_timings (LrgMcpDebugTools *self,
+                   JsonObject       *arguments,
+                   GError          **error)
+{
+	LrgUIInspector        *inspector = ui_inspector (error);
+	LrgUIInspectorTimings  t;
+	JsonObject            *json;
+
+	if (inspector == NULL)
+		return NULL;
+	lrg_ui_inspector_get_timings (inspector, &t);
+	json = json_object_new ();
+	json_object_set_int_member (json, "step_us", t.step_us);
+	json_object_set_int_member (json, "layout_us", t.layout_us);
+	json_object_set_int_member (json, "record_us", t.record_us);
+	json_object_set_int_member (json, "n_instances", t.n_instances);
+	json_object_set_int_member (json, "n_commands", t.n_commands);
+	json_object_set_int_member (json, "draw_calls", t.draw_calls);
+	json_object_set_int_member (json, "frames", (gint64) t.frames);
+	return _lrg_mcp_result (json);
+}
+
+/* ==========================================================================
  * Tool Table
  * ========================================================================== */
 
 /*
  * DebugToolArg:
  *
- * One input-schema property: JSON type ("string", "integer", "boolean"),
- * description and whether the caller must supply it. The same rows build
+ * One input-schema property: JSON type ("string", "integer", "number",
+ * "boolean", or "any" for an untyped value), description and whether the caller must supply it. The same rows build
  * the advertised schema and validate incoming arguments.
  */
 typedef struct
@@ -745,6 +1002,23 @@ static const DebugToolArg execute_args[] = {
 static const DebugToolArg output_args[] = {
 	{ "limit", "integer", "Maximum number of newest lines to return (default 50)", FALSE },
 };
+static const DebugToolArg ui_pick_args[] = {
+	{ "x", "number", "X in canvas coordinates", TRUE },
+	{ "y", "number", "Y in canvas coordinates", TRUE },
+	{ "select", "boolean", "Also select (highlight) the picked widget", FALSE },
+};
+static const DebugToolArg ui_path_args[] = {
+	{ "path", "string", "Widget path, e.g. \"LrgVBox#main/LrgButton#ok\" (\"\" is the canvas)", TRUE },
+};
+static const DebugToolArg ui_set_property_args[] = {
+	{ "path", "string", "Widget path", TRUE },
+	{ "property", "string", "GObject property name", TRUE },
+	{ "value", "any", "New value: number, boolean, null or text (enum nick, flags a|b, #rrggbbaa)", TRUE },
+};
+static const DebugToolArg ui_highlight_args[] = {
+	{ "path", "string", "Widget path to select and highlight (clears the selection when omitted)", FALSE },
+	{ "pick_mode", "boolean", "Turn interactive pick mode on or off", FALSE },
+};
 static const DebugToolArg inspect_args[] = {
 	{ "world", "string", "World name (first active world when omitted)", FALSE },
 	{ "object_id", "string", "Game object id to select (from the ECS tools)", FALSE },
@@ -775,6 +1049,18 @@ static const DebugTool debug_tools[] = {
 	  TOOL_ARGS (output_args), handle_console_get_output },
 	{ "lrg_debug_inspect", "Inspect a world or game object with the debug inspector",
 	  TOOL_ARGS (inspect_args), handle_inspect },
+	{ "lrg_ui_tree", "Snapshot the registered UI canvas: widget tree with paths, geometry, state and looks",
+	  NULL, 0, handle_ui_tree },
+	{ "lrg_ui_pick", "Find the topmost UI widget at a canvas point (as clicks hit-test)",
+	  TOOL_ARGS (ui_pick_args), handle_ui_pick },
+	{ "lrg_ui_get_widget", "Describe one UI widget by path, including all its properties",
+	  TOOL_ARGS (ui_path_args), handle_ui_get_widget },
+	{ "lrg_ui_set_property", "Set a UI widget property by name for live tweaking",
+	  TOOL_ARGS (ui_set_property_args), handle_ui_set_property },
+	{ "lrg_ui_highlight", "Select and highlight a UI widget by path, or toggle pick mode",
+	  TOOL_ARGS (ui_highlight_args), handle_ui_highlight },
+	{ "lrg_ui_timings", "Get the UI canvas frame timings (step, layout, record) and paint counts",
+	  NULL, 0, handle_ui_timings },
 };
 
 /*
@@ -830,10 +1116,14 @@ validate_args (const DebugTool  *tool,
 		}
 
 		type = JSON_NODE_HOLDS_VALUE (node) ? json_node_get_value_type (node) : G_TYPE_INVALID;
-		if (g_str_equal (spec->type, "string"))
+		if (g_str_equal (spec->type, "any"))
+			valid = TRUE;
+		else if (g_str_equal (spec->type, "string"))
 			valid = type == G_TYPE_STRING;
 		else if (g_str_equal (spec->type, "integer"))
 			valid = type == G_TYPE_INT64;
+		else if (g_str_equal (spec->type, "number"))
+			valid = type == G_TYPE_INT64 || type == G_TYPE_DOUBLE;
 		else
 			valid = type == G_TYPE_BOOLEAN;
 		if (!valid)
@@ -866,7 +1156,8 @@ add_tool (LrgMcpToolGroup *group,
 	{
 		JsonObject *property = json_object_new ();
 
-		json_object_set_string_member (property, "type", tool->args[i].type);
+		if (!g_str_equal (tool->args[i].type, "any"))
+			json_object_set_string_member (property, "type", tool->args[i].type);
 		json_object_set_string_member (property, "description", tool->args[i].description);
 		json_object_set_object_member (properties, tool->args[i].name, property);
 		if (tool->args[i].required)

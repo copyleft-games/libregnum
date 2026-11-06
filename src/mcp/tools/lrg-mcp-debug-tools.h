@@ -39,6 +39,9 @@ G_DECLARE_FINAL_TYPE (LrgMcpDebugTools, lrg_mcp_debug_tools, LRG, MCP_DEBUG_TOOL
  * - `lrg_debug_profiler_start` - Start a profiler section
  * - `lrg_debug_profiler_stop` - Stop a profiler section
  * - `lrg_debug_profiler_report` - Get profiler report
+ * - `lrg_ui_tree`, `lrg_ui_pick`, `lrg_ui_get_widget`,
+ *   `lrg_ui_set_property`, `lrg_ui_highlight`, `lrg_ui_timings` - the
+ *   retained UI inspector (see lrg_ui_inspector_register_canvas())
  *
  * Returns: (transfer full): A new #LrgMcpDebugTools
  */
