@@ -2793,7 +2793,7 @@ test_wave3_examples (void)
 	g_autofree gchar *pages = find_example ("pages.yaml");
 	g_autofree gchar *desc = NULL;
 	static const gchar *ids[] = {
-		"studio", "menubar", "dock", "scene", "graph", "timeline", "script", "console", NULL
+		"studio", "menubar", "dock", "scene", "graph", "timeline", "script", "console", "blocks", NULL
 	};
 	LrgWidget *root;
 	guint i;
@@ -2816,8 +2816,15 @@ test_wave3_examples (void)
 	g_assert_cmpstr (lrg_text_editor_get_language (LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "script"))), ==,
 	                 "studio-script");
 	g_assert_true (lrg_text_editor_get_read_only (LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "console"))));
+	/* The block editor: studio-blocks.yaml's palette and its one script */
+	g_assert_true (LRG_IS_BLOCK_EDITOR (lrg_ui_loader_get_widget (loader, "blocks")));
+	g_assert_cmpuint (lrg_block_editor_get_n_kinds (LRG_BLOCK_EDITOR (lrg_ui_loader_get_widget (loader, "blocks"))), ==, 9);
+	g_assert_cmpuint (lrg_block_editor_get_n_scripts (LRG_BLOCK_EDITOR (lrg_ui_loader_get_widget (loader, "blocks"))), ==, 1);
+	g_assert_cmpstr (lrg_block_get_kind_id (lrg_block_editor_get_nth_script (LRG_BLOCK_EDITOR (lrg_ui_loader_get_widget (loader, "blocks")), 0)),
+	                 ==, "when-play");
 	desc = lrg_dock_area_describe (LRG_DOCK_AREA (lrg_ui_loader_get_widget (loader, "dock")));
-	g_assert_cmpstr (desc, ==, "V(0.75,H(0.50,[scene-panel*],[graph-panel,script-panel*]),[timeline-panel,console-panel*])");
+	g_assert_cmpstr (desc, ==,
+	                 "V(0.75,H(0.50,[scene-panel*],[graph-panel,script-panel,blocks-panel*]),[timeline-panel,console-panel*])");
 	lrg_widget_layout (LRG_WIDGET (canvas));
 
 	/* A forced reload of an unchanged document keeps every widget */

@@ -65,8 +65,8 @@ cd examples
 
 | Example | Description | Documentation |
 |---------|-------------|---------------|
-| `ui-showcase` | Every retained UI widget across 17 pages: menus, glass, motion, data, pickers, editor, graph, timeline, dock | [docs](../docs/examples/ui-showcase.org) |
-| `ui-studio` | Tool app from YAML: menu bar, dock, 3D viewport animated by a timeline, node graph, script editor and console | [docs](../docs/examples/ui-studio.org) |
+| `ui-showcase` | Every retained UI widget across 20 pages: menus, glass, motion, data and pagination, pickers, editor, graph, timeline, canvas looks, block editor, dock, file browser and dialogs, header bar, toast buttons, notifications | [docs](../docs/examples/ui-showcase.org) |
+| `ui-studio` | Tool app from YAML: menu bar, dock, 3D viewport animated by a timeline and by block scripts, node graph and timeline looks, file dialogs, save notifications, script editor and console | [docs](../docs/examples/ui-studio.org) |
 | `ui-theme-editor` | Live theme editor with palette generation and contrast checks | [docs](../docs/examples/ui-theme-editor.org) |
 | `game-ui-menu` | Gamepad-navigable game menu over a live scene, themed from YAML | [docs](../docs/examples/ui-game-menu.org) |
 
@@ -83,7 +83,7 @@ Example data files are located in:
 
 - `data/` - General game data (sprites, levels, etc.)
 - `data/dlcs/` - Sample DLC manifest files for `game-dlc-store`
-- `data/ui/` - Declarative UI documents (`studio.yaml`, `hud.yaml`, `pages.yaml`)
+- `data/ui/` - Declarative UI documents (`studio.yaml`, `hud.yaml`, `pages.yaml`) and data they reference (`studio-blocks.yaml`: ui-studio's block palette and sample program)
 - `mods/` - Sample native mods for `game-creature-collector`
 
 ## Platform Support

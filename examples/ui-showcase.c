@@ -14,7 +14,9 @@
  * shortcuts, card context menus, right-to-left layout, an anchor-layout
  * HUD, a switcher and a size box, a live 3D viewport and a custom
  * widget, a code editor with a console, a node graph, a playing
- * timeline and a dock area.
+ * timeline, the five canvas looks, a block editor running its scripts,
+ * a dock area, a file browser with the file dialogs, a header bar,
+ * pagination, toast buttons and desktop notifications.
  *
  * Controls:
  *   Mouse                 everything (right-click a card for its menu)
@@ -43,6 +45,7 @@
 #define SIDEBAR_WIDTH  (240.0f)
 #define N_LIST_ITEMS   (10000)
 #define N_TABLE_ROWS   (10000)
+#define TABLE_PAGE     (250)    /* rows per page of the data page's pager */
 #define SETTINGS_FILE  "showcase-settings.yaml"
 
 static const gchar *license_text =
@@ -89,7 +92,10 @@ enum
 	PAGE_EDITOR,
 	PAGE_GRAPH,
 	PAGE_TIMELINE,
+	PAGE_LOOKS,
+	PAGE_BLOCKS,
 	PAGE_DOCK,
+	PAGE_FILES,
 	PAGE_MARKDOWN,
 	PAGE_DECLARATIVE,
 	PAGE_INSPECTOR,
@@ -99,8 +105,32 @@ enum
 static const gchar *page_names[N_PAGES] = {
 	"Controls", "Cards", "Feedback", "List", "Data", "Pickers",
 	"Glass", "Motion", "Layout", "Viewport", "Editor", "Graph", "Timeline",
-	"Dock", "Markdown", "Declarative", "Inspector"
+	"Looks", "Blocks", "Dock", "Files", "Markdown", "Declarative", "Inspector"
 };
+
+/* Looks page combos: LrgCanvasLook and LrgCanvasLinkShape, in enum order */
+static const gchar *look_names[] = { "Auto (theme)", "Modern", "Blueprint", "Blender", "Neon" };
+static const gchar *link_shape_names[] = { "Look's links", "Bezier", "Straight", "Step", "Angled" };
+static const gchar *key_shape_names[] = { "Look's keys", "Diamond", "Circle", "Square", "Bar" };
+
+/* Blocks page: "set color" choices and their colours */
+static const struct { const gchar *name; const gchar *hex; } sprite_colors[] = {
+	{ "violet", "#7c6cff" },
+	{ "cyan",   "#22d3ee" },
+	{ "mint",   "#34d399" },
+	{ "amber",  "#fbbf24" },
+	{ "coral",  "#ff7a45" }
+};
+
+/* A "repeat" block being run: the block and the iterations still to go */
+typedef struct
+{
+	LrgBlock *loop;
+	gint      left;
+} BlockLoop;
+
+#define SPRITE_TRAIL   (48)
+#define BLOCK_STEP     (0.25)   /* seconds per block on the Blocks page */
 
 /* Effect palettes for the glass page, by built-in effect name. Effects
  * not in this table (user effects) use the theme's colours. */
@@ -810,6 +840,45 @@ typedef struct
 	LrgTimelineViewTrack *track_size;
 	LrgTimelineViewTrack *track_hue;
 	LrgDockArea      *dock;
+
+	/* Looks page */
+	LrgNodeGraph     *look_graph;
+	LrgTimelineView  *look_timeline;
+	LrgComboBox      *look_combo;
+
+	/* Blocks page: the editor, its interpreter and the sprite it drives */
+	LrgBlockEditor   *blocks;
+	LrgLabel         *blocks_status;
+	gboolean          running;
+	LrgBlock         *pc;
+	GArray           *loops;        /* BlockLoop */
+	gdouble           run_delay;
+	guint             run_steps;
+	gfloat            sprite_x;     /* target position, stage units from the centre */
+	gfloat            sprite_y;
+	gfloat            sprite_heading;  /* degrees, 0 = right, 90 = up */
+	gfloat            shown_x;      /* what is drawn: eases towards the target */
+	gfloat            shown_y;
+	gfloat            shown_heading;
+	gchar            *sprite_color;
+	gchar            *sprite_say;
+	gfloat            say_left;     /* seconds the speech bubble stays */
+	gfloat            trail[SPRITE_TRAIL * 2];
+	guint             trail_len;
+
+	/* Files page */
+	LrgFileBrowser   *files;
+	LrgLabel         *files_selection;
+	LrgLabel         *files_result;
+
+	/* Feedback and cards pages: notification, header bar */
+	LrgHeaderBar     *header_bar;
+	LrgLabel         *header_hint;
+	gboolean          real_window;  /* --header-bar-window */
+	gint              fake_x;       /* the fake window the header bar moves */
+	gint              fake_y;
+	gboolean          fake_maximized;
+	guint             deleted_batches;
 } Showcase;
 
 static void show_toast (Showcase *app, const gchar *title, const gchar *message, LrgToastKind kind);
@@ -1327,12 +1396,183 @@ attach_card_menu (Showcase   *app,
 	card_sync (panel);
 }
 
+/* ==========================================================================
+ * Header bar (cards page): client-side window decoration. The window
+ * buttons and dragging go through an LrgHeaderBarWindowFuncs table: the
+ * default one drives the real raylib window (--header-bar-window); the
+ * showcase otherwise installs this fake one, which only moves numbers
+ * and raises toasts, so trying the buttons does not iconify the tour.
+ * ========================================================================== */
+
+static void
+fake_window_caption (Showcase *app)
+{
+	g_autofree gchar *text = g_strdup_printf ("A fake window at %d, %d%s: drag the empty bar to move it, "
+	                                          "double-click it to maximise (--header-bar-window: the real one).",
+	                                          app->fake_x, app->fake_y,
+	                                          app->fake_maximized ? ", maximised" : "");
+
+	if (app->header_hint != NULL)
+		lrg_label_set_text (app->header_hint, text);
+}
+
+static gboolean
+fake_can_move (gpointer user_data)
+{
+	return TRUE;
+}
+
+static void
+fake_get_position (gpointer user_data,
+                   gint    *x,
+                   gint    *y)
+{
+	Showcase *app = user_data;
+
+	*x = app->fake_x;
+	*y = app->fake_y;
+}
+
+static void
+fake_set_position (gpointer user_data,
+                   gint     x,
+                   gint     y)
+{
+	Showcase *app = user_data;
+
+	app->fake_x = x;
+	app->fake_y = y;
+	fake_window_caption (app);
+}
+
+static void
+fake_minimize (gpointer user_data)
+{
+	show_toast (user_data, "Minimize", "A fake window: run with --header-bar-window to use the real one.",
+	            LRG_TOAST_KIND_INFO);
+}
+
+static gboolean
+fake_is_maximized (gpointer user_data)
+{
+	return ((Showcase *) user_data)->fake_maximized;
+}
+
+static void
+fake_maximize (gpointer user_data)
+{
+	Showcase *app = user_data;
+
+	app->fake_maximized = TRUE;
+	fake_window_caption (app);
+	show_toast (app, "Maximize", "The maximise glyph is now a restore glyph.", LRG_TOAST_KIND_INFO);
+}
+
+static void
+fake_restore (gpointer user_data)
+{
+	Showcase *app = user_data;
+
+	app->fake_maximized = FALSE;
+	fake_window_caption (app);
+}
+
+static const LrgHeaderBarWindowFuncs fake_window_funcs = {
+	fake_can_move, fake_get_position, fake_set_position,
+	fake_minimize, fake_is_maximized, fake_maximize, fake_restore
+};
+
+/* on_close_requested: with the real window the close button goes on to
+ * app.quit; with the fake one it only toasts */
+static gboolean
+on_close_requested (LrgHeaderBar *bar,
+                    gpointer      user_data)
+{
+	Showcase *app = user_data;
+
+	if (app->real_window)
+		return FALSE;
+	show_toast (app, "Close requested", "Returning TRUE from ::close-requested kept the app open.",
+	            LRG_TOAST_KIND_WARNING);
+	return TRUE;
+}
+
+static void
+on_header_button (LrgButton *button,
+                  gpointer   user_data)
+{
+	show_toast (user_data, lrg_button_get_text (button), "A header bar child: packed with pack_start / pack_end.",
+	            LRG_TOAST_KIND_INFO);
+}
+
+/* build_header_bar: Back / New at the start, a breadcrumb as the title
+ * widget, Share at the end, then the window buttons */
+static LrgWidget *
+build_header_bar (Showcase *app)
+{
+	LrgHeaderBar  *bar = lrg_header_bar_new ();
+	LrgBreadcrumb *crumbs = lrg_breadcrumb_new ();
+	LrgButton     *btn;
+
+	app->header_bar = bar;
+	lrg_header_bar_set_title (bar, "Cards");
+	btn = lrg_button_new ("Back");
+	lrg_widget_add_class (LRG_WIDGET (btn), "flat");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_header_button), app);
+	lrg_header_bar_pack_start (bar, LRG_WIDGET (btn));
+	g_object_unref (btn);
+	btn = lrg_button_new ("New");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_header_button), app);
+	lrg_header_bar_pack_start (bar, LRG_WIDGET (btn));
+	g_object_unref (btn);
+	btn = lrg_button_new ("Share");
+	lrg_widget_add_class (LRG_WIDGET (btn), "primary");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_header_button), app);
+	lrg_header_bar_pack_end (bar, LRG_WIDGET (btn));
+	g_object_unref (btn);
+
+	/* A breadcrumb replaces the title text */
+	lrg_breadcrumb_append (crumbs, "Showcase");
+	lrg_breadcrumb_append (crumbs, "Cards");
+	lrg_breadcrumb_append (crumbs, "Elevation");
+	lrg_header_bar_set_title_widget (bar, LRG_WIDGET (crumbs));
+	g_object_unref (crumbs);
+
+	/* The window: the real one only on request */
+	if (!app->real_window)
+	{
+		app->fake_x = 120;
+		app->fake_y = 80;
+		lrg_header_bar_set_window_funcs (bar, &fake_window_funcs, app, NULL);
+		fake_window_caption (app);
+	}
+	g_signal_connect (bar, "close-requested", G_CALLBACK (on_close_requested), app);
+	return LRG_WIDGET (bar);
+}
+
 static LrgWidget *
 build_cards_page (Showcase *app)
 {
+	LrgVBox               *page = vcol (16.0f);
 	LrgGrid               *grid = lrg_grid_new (3);
 	g_autoptr(GMenuModel)  menu = card_menu_model ();
 	guint                  i;
+
+	/* A header bar over the cards, as a window would wear it */
+	{
+		LrgVBox  *box;
+		LrgPanel *panel;
+		LrgLabel *hint = label_with_class ("Drag the empty bar to move the window, double-click it to maximise.",
+		                                   "muted");
+
+		box = card (LRG_CONTAINER (page), NULL, &panel);
+		lrg_container_set_padding (LRG_CONTAINER (panel), 0.0f);
+
+		lrg_widget_set_margin_all (LRG_WIDGET (hint), 12.0f);
+		app->header_hint = hint;
+		add (box, build_header_bar (app));
+		add (box, hint);
+	}
 
 	lrg_grid_set_column_spacing (grid, 24.0f);
 	lrg_grid_set_row_spacing (grid, 24.0f);
@@ -1366,7 +1606,8 @@ build_cards_page (Showcase *app)
 		lrg_container_add_child (LRG_CONTAINER (grid), LRG_WIDGET (panel));
 	}
 
-	return LRG_WIDGET (grid);
+	add (page, grid);
+	return LRG_WIDGET (page);
 }
 
 static void
@@ -1438,6 +1679,52 @@ on_dialog_clicked (LrgButton *button,
 	lrg_dialog_present (app->dialog, app->canvas);
 }
 
+/* on_delete_clicked: a toast with an Undo button. The button is a
+ * detailed action ("show.undo-delete") activated on the toast, so the
+ * "show" group on the canvas answers it like a menu item */
+static void
+on_delete_clicked (LrgButton *button,
+                   gpointer   user_data)
+{
+	Showcase           *app = user_data;
+	g_autoptr(LrgToast) toast = lrg_toast_new ("Deleted 3 items", "crate.png, barrel.png, torch.png");
+
+	app->deleted_batches++;
+	lrg_toast_add_button (toast, "Undo", "show.undo-delete");
+	lrg_toast_set_duration (toast, 6.0);
+	lrg_toast_queue_show (app->toasts, toast);
+}
+
+/* on_notify_clicked: a desktop notification (org.freedesktop.Notifications)
+ * whose click and button open the Files page; without a notification
+ * server, or with "Force in-app" on, it is a toast in the showcase's
+ * queue with the same button */
+static void
+on_notify_clicked (LrgButton *button,
+                   gpointer   user_data)
+{
+	Showcase                  *app = user_data;
+	g_autoptr(LrgNotification) note = lrg_notification_new ("Download finished");
+	g_autoptr(GError)          error = NULL;
+
+	lrg_notification_set_body (note, "level-pack.zip (24 MB) is ready.");
+	lrg_notification_set_icon_name (note, "folder-download");
+	lrg_notification_set_default_action (note, "show.page::files");
+	lrg_notification_add_button (note, "Show files", "show.page::files");
+	lrg_notification_set_toast_queue (note, app->toasts);
+	/* Actions resolve from the anchor up to the canvas */
+	if (!lrg_notification_show (note, button != NULL ? LRG_WIDGET (button) : LRG_WIDGET (app->canvas), &error))
+		show_toast (app, "Notification failed", error->message, LRG_TOAST_KIND_DANGER);
+}
+
+static void
+on_force_in_app_toggled (LrgCheckbox *check,
+                         gboolean     checked,
+                         gpointer     user_data)
+{
+	lrg_notification_set_force_in_app (checked);
+}
+
 static LrgWidget *
 build_feedback_page (Showcase *app)
 {
@@ -1468,6 +1755,29 @@ build_feedback_page (Showcase *app)
 	lrg_combo_box_set_selected (app->toast_mode, 0);
 	g_signal_connect (app->toast_mode, "changed", G_CALLBACK (on_toast_mode_changed), app);
 	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (app->toast_mode));
+	add (box, row);
+
+	box = section (LRG_CONTAINER (page), "Toast buttons and notifications");
+	add (box, label_with_class ("Toast buttons run GIO actions (Undo is show.undo-delete). A notification goes "
+	                            "to the desktop,\nor falls back to a toast here when there is no notification "
+	                            "server.", "muted"));
+	row = hrow (10.0f);
+	{
+		LrgButton   *btn = lrg_button_new ("Delete 3 items");
+		LrgCheckbox *force;
+
+		lrg_widget_add_class (LRG_WIDGET (btn), "danger");
+		g_signal_connect (btn, "clicked", G_CALLBACK (on_delete_clicked), app);
+		add (row, btn);
+		btn = lrg_button_new ("Send notification");
+		g_signal_connect (btn, "clicked", G_CALLBACK (on_notify_clicked), app);
+		add (row, btn);
+		force = lrg_checkbox_new_with_style ("Force in-app", LRG_CHECKBOX_STYLE_SWITCH);
+		lrg_widget_set_valign (LRG_WIDGET (force), LRG_ALIGN_CENTER);
+		lrg_checkbox_set_checked (force, lrg_notification_get_force_in_app ());
+		g_signal_connect (force, "toggled", G_CALLBACK (on_force_in_app_toggled), app);
+		add (row, force);
+	}
 	add (box, row);
 
 	box = section (LRG_CONTAINER (page), "Dialog");
@@ -1715,11 +2025,27 @@ on_table_sort (LrgTable *table,
 	Showcase         *app = user_data;
 	g_autofree gchar *text = NULL;
 
-	text = g_strdup_printf ("%u adventurers, sorted by %s (%s); drag header edges to resize",
+	text = g_strdup_printf ("%u adventurers by %s (%s)",
 	                        g_list_model_get_n_items (lrg_table_get_model (table)),
 	                        column >= 0 ? lrg_table_get_column_title (table, (guint) column) : "nothing",
 	                        ascending ? "ascending" : "descending");
 	lrg_label_set_text (app->table_status, text);
+}
+
+/* on_table_page: the pager under the table jumps TABLE_PAGE rows at a
+ * time. lrg_table_scroll_to() scrolls by the least amount that shows a
+ * row, so showing the page's last row first and then its first row
+ * leaves the first row at the top. */
+static void
+on_table_page (LrgPagination *pager,
+               guint          page,
+               gpointer       user_data)
+{
+	Showcase *app = user_data;
+	guint     first = page * TABLE_PAGE;
+
+	lrg_table_scroll_to (app->table, MIN (first + TABLE_PAGE - 1, N_TABLE_ROWS - 1), FALSE);
+	lrg_table_scroll_to (app->table, first, FALSE);
 }
 
 static void
@@ -1880,7 +2206,18 @@ build_data_page (Showcase *app)
 	g_signal_connect (app->table, "sort-changed", G_CALLBACK (on_table_sort), app);
 	g_signal_connect (app->table, "row-activated", G_CALLBACK (on_table_activated), app);
 	lrg_table_set_sort (app->table, 3, FALSE);   /* highest level first */
-	lrg_container_add_child (LRG_CONTAINER (right), LRG_WIDGET (app->table_status));
+	{
+		/* The status line, with a pager over the 10,000 rows beside it */
+		LrgHBox       *status_row = hrow (10.0f);
+		LrgPagination *pager = lrg_pagination_new (N_TABLE_ROWS / TABLE_PAGE);
+
+		lrg_widget_set_fill_weight (LRG_WIDGET (app->table_status), 1.0f);
+		lrg_widget_set_valign (LRG_WIDGET (app->table_status), LRG_ALIGN_CENTER);
+		lrg_container_add_child (LRG_CONTAINER (status_row), LRG_WIDGET (app->table_status));
+		g_signal_connect (pager, "page-changed", G_CALLBACK (on_table_page), app);
+		add (status_row, pager);
+		add (right, status_row);
+	}
 	lrg_container_add_child (LRG_CONTAINER (right), LRG_WIDGET (app->table));
 
 	/* Splitter: drag the handle, double-click resets */
@@ -3995,6 +4332,869 @@ build_dock_page (Showcase *app)
 	return LRG_WIDGET (page);
 }
 
+/* ==========================================================================
+ * Looks page: one LrgCanvasLook for a node graph and a timeline (one
+ * above the other), with the link shape, key shape and glow on top of it
+ * ========================================================================== */
+
+static void
+on_look_changed (LrgComboBox *combo,
+                 gpointer     user_data)
+{
+	Showcase *app = user_data;
+	gint      i = lrg_combo_box_get_selected (combo);
+
+	if (i < 0 || i >= (gint) G_N_ELEMENTS (look_names))
+		return;
+	lrg_node_graph_set_look (app->look_graph, (LrgCanvasLook) i);
+	lrg_timeline_view_set_look (app->look_timeline, (LrgCanvasLook) i);
+}
+
+static void
+on_link_shape_changed (LrgComboBox *combo,
+                       gpointer     user_data)
+{
+	Showcase *app = user_data;
+	gint      i = lrg_combo_box_get_selected (combo);
+
+	if (i >= 0 && i < (gint) G_N_ELEMENTS (link_shape_names))
+		lrg_node_graph_set_link_shape (app->look_graph, (LrgCanvasLinkShape) i);
+}
+
+static void
+on_key_shape_changed (LrgComboBox *combo,
+                      gpointer     user_data)
+{
+	Showcase *app = user_data;
+	gint      i = lrg_combo_box_get_selected (combo);
+
+	if (i >= 0 && i < (gint) G_N_ELEMENTS (key_shape_names))
+		lrg_timeline_view_set_key_shape (app->look_timeline, (LrgCanvasKeyShape) i);
+}
+
+/* on_glow_toggled: glow off is 0; on follows the look (negative) */
+static void
+on_glow_toggled (LrgCheckbox *check,
+                 gboolean     checked,
+                 gpointer     user_data)
+{
+	Showcase *app = user_data;
+
+	lrg_node_graph_set_glow (app->look_graph, checked ? -1.0f : 0.0f);
+	lrg_timeline_view_set_glow (app->look_timeline, checked ? -1.0f : 0.0f);
+}
+
+/* look_combo: a labelled combo box over @names */
+static LrgComboBox *
+look_combo (LrgHBox      *row,
+            const gchar  *caption,
+            const gchar **names,
+            guint         n_names,
+            GCallback     callback,
+            Showcase     *app)
+{
+	LrgComboBox *combo = lrg_combo_box_new ();
+	LrgLabel    *label = label_with_class (caption, "muted");
+	guint        i;
+
+	for (i = 0; i < n_names; i++)
+		lrg_combo_box_append (combo, names[i]);
+	lrg_combo_box_set_selected (combo, 0);
+	g_signal_connect (combo, "changed", callback, app);
+	lrg_widget_set_valign (LRG_WIDGET (label), LRG_ALIGN_CENTER);
+	add (row, label);
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (combo));
+	g_object_unref (combo);
+	return combo;
+}
+
+static LrgWidget *
+build_looks_page (Showcase *app)
+{
+	LrgVBox              *page = vcol (16.0f);
+	LrgHBox              *row = hrow (10.0f);
+	LrgSplitter          *split = lrg_splitter_new (LRG_ORIENTATION_VERTICAL);
+	LrgVBox              *left = vcol (0.0f);
+	LrgVBox              *right = vcol (0.0f);
+	LrgVBox              *box;
+	LrgPanel             *panel;
+	LrgCheckbox          *glow;
+	LrgGraphNode         *n;
+	LrgTimelineViewTrack *track;
+	GrlColor              c;
+
+	/* The controls: look, link shape, key shape, glow */
+	app->look_combo = look_combo (row, "Look", look_names, G_N_ELEMENTS (look_names),
+	                              G_CALLBACK (on_look_changed), app);
+	look_combo (row, "Links", link_shape_names, G_N_ELEMENTS (link_shape_names),
+	            G_CALLBACK (on_link_shape_changed), app);
+	look_combo (row, "Keys", key_shape_names, G_N_ELEMENTS (key_shape_names),
+	            G_CALLBACK (on_key_shape_changed), app);
+	glow = lrg_checkbox_new_with_style ("Glow", LRG_CHECKBOX_STYLE_SWITCH);
+	lrg_checkbox_set_checked (glow, TRUE);
+	lrg_widget_set_valign (LRG_WIDGET (glow), LRG_ALIGN_CENTER);
+	g_signal_connect (glow, "toggled", G_CALLBACK (on_glow_toggled), app);
+	add (row, glow);
+	add (page, row);
+
+	/* Node graph: a small material, one "exec"-style flow */
+	box = card (LRG_CONTAINER (left), NULL, &panel);
+	lrg_container_set_padding (LRG_CONTAINER (panel), 8.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	app->look_graph = lrg_node_graph_new ();
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->look_graph), 1.0f);
+	n = graph_node (app->look_graph, "time", "Time", "input", 0.0f, 0.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "t", "float");
+	n = graph_node (app->look_graph, "tex", "Texture", "texture", 0.0f, 120.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "color", "vec4");
+	n = graph_node (app->look_graph, "wave", "Sine wave", "math", 220.0f, 0.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "x", "float");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "y", "float");
+	n = graph_node (app->look_graph, "mix", "Mix", "math", 220.0f, 120.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "a", "vec4");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "factor", "float");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "out", "vec4");
+	n = graph_node (app->look_graph, "out", "Output", "output", 440.0f, 60.0f);
+	color_hex ("#f472b6", 1.0f, &c);
+	lrg_graph_node_set_accent (n, &c);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "albedo", "vec4");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "emission", "float");
+	lrg_node_graph_connect_by_name (app->look_graph, "time", "t", "wave", "x", NULL);
+	lrg_node_graph_connect_by_name (app->look_graph, "tex", "color", "mix", "a", NULL);
+	lrg_node_graph_connect_by_name (app->look_graph, "wave", "y", "mix", "factor", NULL);
+	lrg_node_graph_connect_by_name (app->look_graph, "mix", "out", "out", "albedo", NULL);
+	lrg_node_graph_connect_by_name (app->look_graph, "wave", "y", "out", "emission", NULL);
+	lrg_node_graph_set_animate_links (app->look_graph, TRUE);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->look_graph));
+
+	/* Timeline: clips, a curve and markers, playing */
+	box = card (LRG_CONTAINER (right), NULL, &panel);
+	lrg_container_set_padding (LRG_CONTAINER (panel), 8.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	app->look_timeline = lrg_timeline_view_new ();
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->look_timeline), 1.0f);
+	lrg_timeline_view_set_duration (app->look_timeline, 6.0);
+	lrg_timeline_view_set_loop (app->look_timeline, TRUE);
+	track = lrg_timeline_view_add_track (app->look_timeline, "Shots", NULL);
+	lrg_timeline_view_add_clip (app->look_timeline, track, 0.0, 2.0, "Intro");
+	lrg_timeline_view_add_clip (app->look_timeline, track, 2.2, 3.4, "Chase");
+	track = lrg_timeline_view_add_track (app->look_timeline, "Music", NULL);
+	color_hex ("#34d399", 1.0f, &c);
+	lrg_timeline_view_track_set_color (track, &c);
+	lrg_timeline_view_add_clip (app->look_timeline, track, 0.0, 6.0, "theme.ogg");
+	track = lrg_timeline_view_add_track (app->look_timeline, "Glow", NULL);
+	color_hex ("#fbbf24", 1.0f, &c);
+	lrg_timeline_view_track_set_color (track, &c);
+	lrg_timeline_view_track_set_curve_lane (track, TRUE);
+	lrg_timeline_view_track_set_curve_height (track, 48.0f);
+	lrg_timeline_view_track_set_value_range (track, 0.0, 1.0);
+	lrg_timeline_view_add_keyframe (app->look_timeline, track, 0.0, 0.1, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->look_timeline, track, 2.0, 0.9, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->look_timeline, track, 4.0, 0.3, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+	lrg_timeline_view_add_keyframe (app->look_timeline, track, 6.0, 0.8, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_marker (app->look_timeline, 2.2, "Go");
+	lrg_timeline_view_add_marker (app->look_timeline, 5.6, "End");
+	lrg_timeline_view_set_playing (app->look_timeline, TRUE);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->look_timeline));
+
+	/* One above the other in a splitter. (Side by side they would not
+	 * fit: a timeline's natural width is its header plus 480, a graph's
+	 * 480, and boxes never shrink children below their natural size.) */
+	lrg_splitter_set_start_child (split, LRG_WIDGET (left));
+	lrg_splitter_set_end_child (split, LRG_WIDGET (right));
+	g_object_unref (left);
+	g_object_unref (right);
+	lrg_splitter_set_min_sizes (split, 160.0f, 160.0f);
+	lrg_splitter_set_fraction (split, 0.55f, FALSE);
+	lrg_splitter_set_default_fraction (split, 0.55f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (split), 1.0f);
+	add (page, split);
+	return LRG_WIDGET (page);
+}
+
+/* ==========================================================================
+ * Blocks page: LrgBlockEditor with a tiny interpreter driving a sprite.
+ * The interpreter runs from the stage's step callback, one block per
+ * BLOCK_STEP seconds of canvas time, so a running script never blocks a
+ * frame. Its state is a program counter (the next block) and a stack of
+ * the "repeat" blocks it is inside. Editing the program stops a run.
+ * ========================================================================== */
+
+/* blocks_palette: the page's palette and sample program, built in C */
+static void
+blocks_palette (LrgBlockEditor *editor)
+{
+	static const struct { const gchar *id; LrgBlockShape shape; const gchar *category; const gchar *label; } kinds[] = {
+		{ "when-run",  LRG_BLOCK_SHAPE_HAT,       "events",  "when run clicked" },
+		{ "move",      LRG_BLOCK_SHAPE_STATEMENT, "motion",  "move {steps:number=40} steps" },
+		{ "turn",      LRG_BLOCK_SHAPE_STATEMENT, "motion",  "turn {deg:number=90} degrees" },
+		{ "go-home",   LRG_BLOCK_SHAPE_STATEMENT, "motion",  "go home" },
+		{ "repeat",    LRG_BLOCK_SHAPE_C,         "control", "repeat {times:number=4}" },
+		{ "wait",      LRG_BLOCK_SHAPE_STATEMENT, "control", "wait {s:number=0.5} s" },
+		{ "say",       LRG_BLOCK_SHAPE_STATEMENT, "looks",   "say {msg:text=Hello!}" },
+		{ "set-color", LRG_BLOCK_SHAPE_STATEMENT, "looks",   "set color {c:dropdown=violet|cyan|mint|amber|coral}" }
+	};
+	static const struct { const gchar *kind; const gchar *slot; const gchar *value; gboolean into; } program[] = {
+		{ "set-color", "c",     "cyan",      FALSE },
+		{ "repeat",    "times", "4",         FALSE },
+		{ "move",      "steps", "70",        TRUE },   /* into the repeat's mouth */
+		{ "turn",      "deg",   "90",        FALSE },
+		{ "say",       "msg",   "A square!", FALSE }   /* after the repeat (see below) */
+	};
+	LrgBlock *last;
+	LrgBlock *loop = NULL;
+	guint     i;
+
+	for (i = 0; i < G_N_ELEMENTS (kinds); i++)
+	{
+		g_autoptr(GError) error = NULL;
+
+		if (lrg_block_editor_define_kind (editor, kinds[i].id, kinds[i].shape, kinds[i].category,
+		                                  kinds[i].label, &error) == NULL)
+			g_printerr ("ui-showcase: block kind %s: %s\n", kinds[i].id, error->message);
+	}
+
+	/* when run clicked / set color / repeat 4 { move 70; turn 90 } / say */
+	last = lrg_block_editor_create_block (editor, "when-run", 20.0f, 20.0f);
+	for (i = 0; i < G_N_ELEMENTS (program); i++)
+	{
+		LrgBlock *b = lrg_block_editor_create_block (editor, program[i].kind, 0.0f, 0.0f);
+		LrgBlock *target = last;
+		LrgBlockPlace place = LRG_BLOCK_PLACE_NEXT;
+
+		lrg_block_set_value_by_name (b, program[i].slot, program[i].value);
+		if (program[i].into)
+		{
+			target = loop;
+			place = LRG_BLOCK_PLACE_MOUTH;
+		}
+		else if (g_strcmp0 (program[i].kind, "say") == 0 && loop != NULL)
+			target = loop;
+		lrg_block_editor_attach (editor, b, target, place, 0);
+		if (g_strcmp0 (program[i].kind, "repeat") == 0)
+			loop = b;
+		last = b;
+	}
+
+	/* A second, loose script to play with */
+	last = lrg_block_editor_create_block (editor, "when-run", 20.0f, 330.0f);
+	{
+		LrgBlock *b = lrg_block_editor_create_block (editor, "go-home", 0.0f, 0.0f);
+
+		lrg_block_editor_attach (editor, b, last, LRG_BLOCK_PLACE_NEXT, 0);
+	}
+	lrg_block_editor_clear_history (editor);
+}
+
+static void
+blocks_light (Showcase *app,
+              LrgBlock *block)
+{
+	lrg_block_editor_clear_running (app->blocks);
+	if (block != NULL)
+		lrg_block_set_running (block, TRUE);
+}
+
+static void
+blocks_status (Showcase    *app,
+               const gchar *text)
+{
+	lrg_label_set_text (app->blocks_status, text);
+}
+
+static void
+blocks_finish (Showcase    *app,
+               const gchar *why)
+{
+	g_autofree gchar *text = NULL;
+
+	if (!app->running)
+		return;
+	app->running = FALSE;
+	app->pc = NULL;
+	g_array_set_size (app->loops, 0);
+	blocks_light (app, NULL);
+	text = g_strdup_printf ("%s after %u blocks", why, app->run_steps);
+	blocks_status (app, text);
+}
+
+static void
+blocks_run (Showcase *app,
+            LrgBlock *top)
+{
+	blocks_finish (app, "Interrupted");
+	app->running = TRUE;
+	app->pc = top;
+	app->run_delay = 0.0;
+	app->run_steps = 0;
+	blocks_status (app, "Running...");
+}
+
+/* blocks_run_first: the Run button runs the first "when run clicked" */
+static void
+blocks_run_first (Showcase *app)
+{
+	guint i;
+
+	for (i = 0; i < lrg_block_editor_get_n_scripts (app->blocks); i++)
+	{
+		LrgBlock *top = lrg_block_editor_get_nth_script (app->blocks, i);
+
+		if (g_strcmp0 (lrg_block_get_kind_id (top), "when-run") == 0)
+		{
+			blocks_run (app, top);
+			return;
+		}
+	}
+	blocks_status (app, "No \"when run clicked\" script");
+}
+
+static void
+sprite_trail_push (Showcase *app)
+{
+	if (app->trail_len == SPRITE_TRAIL)
+	{
+		memmove (app->trail, app->trail + 2, sizeof (gfloat) * 2 * (SPRITE_TRAIL - 1));
+		app->trail_len--;
+	}
+	app->trail[app->trail_len * 2] = app->sprite_x;
+	app->trail[app->trail_len * 2 + 1] = app->sprite_y;
+	app->trail_len++;
+}
+
+/* blocks_step: run one block; returns its duration in seconds, or a
+ * negative value when the script ended */
+static gdouble
+blocks_step (Showcase *app)
+{
+	LrgBlock    *block;
+	const gchar *id;
+	gdouble      cost = BLOCK_STEP;
+
+	/* At the end of a stack: finish, loop again, or leave the loop */
+	while (app->pc == NULL)
+	{
+		BlockLoop *frame;
+
+		if (app->loops->len == 0)
+		{
+			blocks_finish (app, "Finished");
+			return -1.0;
+		}
+		frame = &g_array_index (app->loops, BlockLoop, app->loops->len - 1);
+		if (--frame->left > 0)
+			app->pc = lrg_block_get_mouth (frame->loop, 0);
+		else
+		{
+			app->pc = lrg_block_get_next (frame->loop);
+			g_array_set_size (app->loops, app->loops->len - 1);
+		}
+	}
+
+	block = app->pc;
+	id = lrg_block_get_kind_id (block);
+	app->pc = lrg_block_get_next (block);
+	app->run_steps++;
+	blocks_light (app, block);
+
+	if (g_strcmp0 (id, "move") == 0)
+	{
+		gfloat rad = app->sprite_heading * (gfloat) G_PI / 180.0f;
+		gfloat steps = (gfloat) lrg_block_get_number (block, "steps");
+
+		/* The stage is 300 x 240 units around the centre: stay on it */
+		app->sprite_x += cosf (rad) * steps;
+		app->sprite_y += sinf (rad) * steps;
+		if (fabsf (app->sprite_x) > 150.0f || fabsf (app->sprite_y) > 120.0f)
+		{
+			app->sprite_x = CLAMP (app->sprite_x, -150.0f, 150.0f);
+			app->sprite_y = CLAMP (app->sprite_y, -120.0f, 120.0f);
+		}
+		sprite_trail_push (app);
+	}
+	else if (g_strcmp0 (id, "turn") == 0)
+		app->sprite_heading += (gfloat) lrg_block_get_number (block, "deg");
+	else if (g_strcmp0 (id, "go-home") == 0)
+	{
+		app->sprite_x = 0.0f;
+		app->sprite_y = 0.0f;
+		app->sprite_heading = 0.0f;
+		app->trail_len = 0;
+		sprite_trail_push (app);
+	}
+	else if (g_strcmp0 (id, "repeat") == 0)
+	{
+		gint      times = (gint) lrg_block_get_number (block, "times");
+		LrgBlock *mouth = lrg_block_get_mouth (block, 0);
+
+		if (times > 0 && mouth != NULL)
+		{
+			BlockLoop frame = { block, MIN (times, 10000) };
+
+			g_array_append_val (app->loops, frame);
+			app->pc = mouth;
+		}
+		cost = BLOCK_STEP * 0.4;
+	}
+	else if (g_strcmp0 (id, "wait") == 0)
+		cost = CLAMP (lrg_block_get_number (block, "s"), 0.0, 30.0);
+	else if (g_strcmp0 (id, "say") == 0)
+	{
+		g_free (app->sprite_say);
+		app->sprite_say = g_strdup (lrg_block_get_value_by_name (block, "msg"));
+		app->say_left = 2.5f;
+	}
+	else if (g_strcmp0 (id, "set-color") == 0)
+	{
+		g_free (app->sprite_color);
+		app->sprite_color = g_strdup (lrg_block_get_value_by_name (block, "c"));
+	}
+	else
+		cost = BLOCK_STEP * 0.4;   /* the hat */
+	return cost;
+}
+
+/* stage_step: the canvas clock. Eases the drawn sprite towards its
+ * target and runs the interpreter */
+static gboolean
+blocks_stage_step (LrgCustomWidget *widget,
+                   gfloat           dt,
+                   gpointer         user_data)
+{
+	Showcase *app = user_data;
+	gfloat    k = MIN (1.0f, dt * 9.0f);
+
+	app->shown_x += (app->sprite_x - app->shown_x) * k;
+	app->shown_y += (app->sprite_y - app->shown_y) * k;
+	app->shown_heading += (app->sprite_heading - app->shown_heading) * k;
+	if (app->say_left > 0.0f)
+		app->say_left -= dt;
+
+	if (app->running)
+	{
+		app->run_delay -= dt;
+		while (app->running && app->run_delay <= 0.0)
+		{
+			gdouble cost = blocks_step (app);
+
+			if (cost < 0.0)
+				break;
+			app->run_delay += cost;
+		}
+	}
+	return TRUE;
+}
+
+/* sprite_rgb: the sprite's colour from its "set color" choice */
+static void
+sprite_rgb (Showcase *app,
+            GrlColor *out)
+{
+	guint i;
+
+	color_hex ("#7c6cff", 1.0f, out);
+	for (i = 0; i < G_N_ELEMENTS (sprite_colors); i++)
+		if (g_strcmp0 (app->sprite_color, sprite_colors[i].name) == 0)
+			color_hex (sprite_colors[i].hex, 1.0f, out);
+}
+
+/* blocks_stage_paint: a dotted floor, the path walked so far, the
+ * sprite with a heading needle, and its speech bubble */
+static void
+blocks_stage_paint (LrgCustomWidget *widget,
+                    LrgPaintList    *list,
+                    gfloat           x,
+                    gfloat           y,
+                    gfloat           width,
+                    gfloat           height,
+                    gpointer         user_data)
+{
+	Showcase *app = user_data;
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont  *font = lrg_theme_get_ui_font (theme);
+	gfloat    cx = x + width * 0.5f;
+	gfloat    cy = y + height * 0.5f;
+	gfloat    scale = MIN (width / 340.0f, height / 280.0f);
+	gfloat    sx = cx + app->shown_x * scale;
+	gfloat    sy = cy - app->shown_y * scale;
+	gfloat    rad = app->shown_heading * (gfloat) G_PI / 180.0f;
+	GrlColor  body;
+	GrlColor  glow;
+	GrlColor  dot;
+	GrlColor  path;
+	gfloat    gx;
+	gfloat    gy;
+	guint     i;
+
+	lrg_paint_list_rect (list, x, y, width, height, 12.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_INPUT));
+	lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED), 0.25f, &dot);
+	for (gx = x + 14.0f; gx < x + width - 6.0f; gx += 22.0f)
+		for (gy = y + 14.0f; gy < y + height - 6.0f; gy += 22.0f)
+			lrg_paint_list_circle (list, gx, gy, 1.2f, &dot);
+
+	/* The path walked */
+	sprite_rgb (app, &body);
+	lrg_paint_color_with_alpha (&body, 0.6f, &path);
+	for (i = 1; i < app->trail_len; i++)
+		lrg_paint_list_line (list, cx + app->trail[(i - 1) * 2] * scale, cy - app->trail[(i - 1) * 2 + 1] * scale,
+		                     cx + app->trail[i * 2] * scale, cy - app->trail[i * 2 + 1] * scale, 3.0f, &path);
+
+	/* The sprite */
+	lrg_paint_color_with_alpha (&body, 0.5f, &glow);
+	lrg_paint_list_shadow (list, sx - 16.0f, sy - 16.0f, 32.0f, 32.0f, 16.0f, 22.0f, 0.0f, 0.0f, 0.0f, &glow);
+	lrg_paint_list_circle (list, sx, sy, 16.0f, &body);
+	lrg_paint_list_line (list, sx, sy, sx + cosf (rad) * 24.0f, sy - sinf (rad) * 24.0f, 4.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+
+	/* Speech bubble */
+	if (app->say_left > 0.0f && app->sprite_say != NULL && app->sprite_say[0] != '\0')
+	{
+		gfloat size = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE);
+		gfloat tw = 0.0f;
+		gfloat th = 0.0f;
+		gfloat bx;
+		gfloat by;
+
+		lrg_paint_measure_text (font, app->sprite_say, size, 0.0f, &tw, &th);
+		bx = CLAMP (sx - tw * 0.5f - 10.0f, x + 4.0f, x + width - tw - 24.0f);
+		by = MAX (y + 4.0f, sy - 34.0f - th - 12.0f);
+		lrg_paint_list_push_opacity (list, MIN (1.0f, app->say_left * 3.0f));
+		lrg_paint_list_rect (list, bx, by, tw + 20.0f, th + 12.0f, 10.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_POPUP));
+		lrg_paint_list_text (list, font, app->sprite_say, bx + 10.0f, by + 6.0f, size, 0.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+		lrg_paint_list_pop_opacity (list);
+	}
+}
+
+static void
+on_blocks_activated (LrgBlockEditor *editor,
+                     LrgBlock       *top,
+                     gpointer        user_data)
+{
+	blocks_run (user_data, top);
+}
+
+static void
+on_blocks_changed (LrgBlockEditor *editor,
+                   gpointer        user_data)
+{
+	blocks_finish (user_data, "Stopped: the program was edited");
+}
+
+static void
+on_blocks_run (LrgButton *button,
+               gpointer   user_data)
+{
+	blocks_run_first (user_data);
+}
+
+static void
+on_blocks_stop (LrgButton *button,
+                gpointer   user_data)
+{
+	blocks_finish (user_data, "Stopped");
+}
+
+static void
+on_blocks_reset (LrgButton *button,
+                 gpointer   user_data)
+{
+	Showcase *app = user_data;
+
+	blocks_finish (app, "Reset");
+	app->sprite_x = app->sprite_y = app->sprite_heading = 0.0f;
+	app->trail_len = 0;
+	sprite_trail_push (app);
+	g_clear_pointer (&app->sprite_say, g_free);
+}
+
+static void
+on_blocks_clean_up (LrgButton *button,
+                    gpointer   user_data)
+{
+	lrg_block_editor_clean_up (((Showcase *) user_data)->blocks);
+}
+
+static LrgWidget *
+build_blocks_page (Showcase *app)
+{
+	LrgVBox              *page = vcol (16.0f);
+	LrgHBox              *bottom = hrow (16.0f);
+	LrgVBox              *side;
+	LrgVBox              *box;
+	LrgPanel             *panel;
+	LrgHBox              *row;
+	LrgCustomWidget      *stage;
+	LrgCustomWidgetFuncs  funcs = { 0 };
+	LrgButton            *btn;
+
+	/* The editor fills the page; the stage and controls sit under it
+	 * (side by side would exceed the page: an editor's natural width is
+	 * 520 plus its palette) */
+	box = card (LRG_CONTAINER (page), NULL, &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	lrg_container_set_padding (LRG_CONTAINER (panel), 10.0f);
+	app->blocks = lrg_block_editor_new ();
+	lrg_block_editor_set_palette_width (app->blocks, 190.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->blocks), 1.0f);
+	blocks_palette (app->blocks);
+	app->loops = g_array_new (FALSE, FALSE, sizeof (BlockLoop));
+	g_signal_connect (app->blocks, "block-activated", G_CALLBACK (on_blocks_activated), app);
+	g_signal_connect (app->blocks, "changed", G_CALLBACK (on_blocks_changed), app);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->blocks));
+	g_object_unref (app->blocks);
+
+	/* The stage */
+	box = card (LRG_CONTAINER (bottom), NULL, &panel);
+	lrg_container_set_padding (LRG_CONTAINER (panel), 10.0f);
+	stage = lrg_custom_widget_new ();
+	funcs.paint = blocks_stage_paint;
+	funcs.step = blocks_stage_step;
+	lrg_custom_widget_set_funcs (stage, &funcs, app, NULL);
+	lrg_custom_widget_set_preferred_width (stage, 360.0f);
+	lrg_custom_widget_set_preferred_height (stage, 210.0f);
+	add (box, stage);
+	sprite_trail_push (app);
+
+	/* The run controls */
+	side = card (LRG_CONTAINER (bottom), "Run the program", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	row = hrow (8.0f);
+	btn = lrg_button_new ("Run");
+	lrg_widget_add_class (LRG_WIDGET (btn), "primary");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_blocks_run), app);
+	add (row, btn);
+	btn = lrg_button_new ("Stop");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_blocks_stop), app);
+	add (row, btn);
+	btn = lrg_button_new ("Reset");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_blocks_reset), app);
+	add (row, btn);
+	btn = lrg_button_new ("Clean up");
+	lrg_widget_add_class (LRG_WIDGET (btn), "flat");
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_blocks_clean_up), app);
+	add (row, btn);
+	add (side, row);
+	app->blocks_status = label_with_class ("Press Run, or double-click a script", NULL);
+	add (side, app->blocks_status);
+	add (side, label_with_class ("Drag blocks out of the palette and snap them together. One block\n"
+	                             "runs per tick of the canvas clock; the running block glows\n"
+	                             "(lrg_block_set_running). Ctrl+Z undoes; drop on the palette deletes.",
+	                             "muted"));
+	add (page, bottom);
+	return LRG_WIDGET (page);
+}
+
+/* ==========================================================================
+ * Files page: an embedded LrgFileBrowser and the four LrgFileDialog
+ * operations, in-app (the dialogs are modal sheets on this canvas)
+ * ========================================================================== */
+
+/* files_list: "a, b, c" of a GListModel of GFile */
+static gchar *
+files_list (GListModel *files)
+{
+	GString *out = g_string_new (NULL);
+	guint    n = g_list_model_get_n_items (files);
+	guint    i;
+
+	for (i = 0; i < n && i < 4; i++)
+	{
+		g_autoptr(GFile) file = g_list_model_get_item (files, i);
+		g_autofree gchar *name = g_file_get_basename (file);
+
+		g_string_append_printf (out, "%s%s", i > 0 ? ", " : "", name);
+	}
+	if (n > 4)
+		g_string_append_printf (out, " and %u more", n - 4);
+	return g_string_free (out, FALSE);
+}
+
+static void
+on_files_selection (LrgFileBrowser *browser,
+                    gpointer        user_data)
+{
+	Showcase              *app = user_data;
+	g_autoptr(GListModel)  files = lrg_file_browser_get_selected_files (browser);
+	g_autofree gchar      *names = files_list (files);
+	g_autofree gchar      *text = NULL;
+
+	if (g_list_model_get_n_items (files) == 0)
+		text = g_strdup ("Nothing selected (Ctrl / Shift + click selects several)");
+	else
+		text = g_strdup_printf ("%u selected: %s", g_list_model_get_n_items (files), names);
+	lrg_label_set_text (app->files_selection, text);
+}
+
+static void
+on_files_activated (LrgFileBrowser *browser,
+                    GFile          *file,
+                    gpointer        user_data)
+{
+	g_autofree gchar *name = g_file_get_basename (file);
+
+	show_toast (user_data, "Opened", name, LRG_TOAST_KIND_SUCCESS);
+}
+
+/* files_report: show a dialog's result under the buttons and as a toast */
+static void
+files_report (Showcase    *app,
+              const gchar *what,
+              const gchar *result,
+              GError      *error)
+{
+	g_autofree gchar *text = NULL;
+
+	if (result == NULL)
+	{
+		gboolean dismissed = g_error_matches (error, LRG_FILE_DIALOG_ERROR, LRG_FILE_DIALOG_ERROR_DISMISSED);
+
+		text = g_strdup_printf ("%s: %s", what, dismissed ? "cancelled" : error->message);
+		lrg_label_set_text (app->files_result, text);
+		if (!dismissed)
+			show_toast (app, what, error->message, LRG_TOAST_KIND_DANGER);
+		return;
+	}
+	text = g_strdup_printf ("%s: %s", what, result);
+	lrg_label_set_text (app->files_result, text);
+	show_toast (app, what, result, LRG_TOAST_KIND_SUCCESS);
+}
+
+static void
+on_dialog_file (GObject      *source,
+                GAsyncResult *result,
+                gpointer      user_data)
+{
+	Showcase         *app = user_data;
+	LrgFileDialog    *dialog = LRG_FILE_DIALOG (source);
+	g_autoptr(GError) error = NULL;
+	g_autoptr(GFile)  file = NULL;
+	const gchar      *what = g_object_get_data (source, "what");
+	g_autofree gchar *path = NULL;
+
+	if (g_strcmp0 (what, "Save") == 0)
+		file = lrg_file_dialog_save_finish (dialog, result, &error);
+	else if (g_strcmp0 (what, "Select folder") == 0)
+		file = lrg_file_dialog_select_folder_finish (dialog, result, &error);
+	else
+		file = lrg_file_dialog_open_finish (dialog, result, &error);
+	path = file != NULL ? g_file_get_path (file) : NULL;
+	files_report (app, what, path, error);
+}
+
+static void
+on_dialog_files (GObject      *source,
+                 GAsyncResult *result,
+                 gpointer      user_data)
+{
+	g_autoptr(GError)     error = NULL;
+	g_autoptr(GListModel) files = lrg_file_dialog_open_multiple_finish (LRG_FILE_DIALOG (source), result, &error);
+	g_autofree gchar     *names = files != NULL ? files_list (files) : NULL;
+
+	files_report (user_data, "Open multiple", names, error);
+}
+
+/* run_file_dialog: one LrgFileDialog operation by name ("Open", "Open
+ * multiple", "Save", "Select folder"), shown on @anchor's canvas. Each
+ * run makes a new dialog description; its filters match the embedded
+ * browser's. The buttons pass their "what" data (on_dialog_mode). */
+static void
+run_file_dialog (Showcase    *app,
+                 const gchar *what,
+                 LrgWidget   *anchor)
+{
+	g_autoptr(LrgFileDialog)  dialog = lrg_file_dialog_new ();
+	g_autoptr(GFile)          home = g_file_new_for_path (g_get_home_dir ());
+
+	lrg_file_dialog_set_filters (dialog, lrg_file_browser_get_filters (app->files));
+	lrg_file_dialog_set_initial_folder (dialog, home);
+	lrg_file_dialog_set_show_system_places (dialog, TRUE);
+	/* The callback reads the operation back from the dialog object */
+	g_object_set_data_full (G_OBJECT (dialog), "what", g_strdup (what), g_free);
+
+	if (g_strcmp0 (what, "Open") == 0)
+		lrg_file_dialog_open (dialog, anchor, NULL, on_dialog_file, app);
+	else if (g_strcmp0 (what, "Open multiple") == 0)
+		lrg_file_dialog_open_multiple (dialog, anchor, NULL, on_dialog_files, app);
+	else if (g_strcmp0 (what, "Save") == 0)
+	{
+		lrg_file_dialog_set_initial_name (dialog, "untitled.txt");
+		lrg_file_dialog_save (dialog, anchor, NULL, on_dialog_file, app);
+	}
+	else
+		lrg_file_dialog_select_folder (dialog, anchor, NULL, on_dialog_file, app);
+}
+
+static void
+on_dialog_mode (LrgButton *button,
+                gpointer   user_data)
+{
+	run_file_dialog (user_data, g_object_get_data (G_OBJECT (button), "what"), LRG_WIDGET (button));
+}
+
+static LrgWidget *
+build_files_page (Showcase *app)
+{
+	static const gchar *modes[] = { "Open", "Open multiple", "Save", "Select folder" };
+	LrgVBox                 *page = vcol (14.0f);
+	LrgHBox                 *row = hrow (10.0f);
+	LrgVBox                 *box;
+	LrgPanel                *panel;
+	g_autoptr(GFile)         home = g_file_new_for_path (g_get_home_dir ());
+	g_autoptr(GFile)         docs = g_file_get_child (home, "Documents");
+	g_autoptr(LrgFileFilter) all = lrg_file_filter_new ("All files");
+	g_autoptr(LrgFileFilter) images = lrg_file_filter_new ("Images");
+	g_autoptr(LrgFileFilter) text = lrg_file_filter_new ("Text and data");
+	guint                    i;
+
+	/* The four dialog operations */
+	for (i = 0; i < G_N_ELEMENTS (modes); i++)
+	{
+		g_autofree gchar *label = g_strconcat (modes[i], "...", NULL);
+		LrgButton        *btn = lrg_button_new (label);
+
+		if (i == 0)
+			lrg_widget_add_class (LRG_WIDGET (btn), "primary");
+		g_object_set_data (G_OBJECT (btn), "what", (gpointer) modes[i]);
+		g_signal_connect (btn, "clicked", G_CALLBACK (on_dialog_mode), app);
+		add (row, btn);
+	}
+	app->files_result = label_with_class ("LrgFileDialog: in-app sheets on this canvas", "muted");
+	lrg_widget_set_valign (LRG_WIDGET (app->files_result), LRG_ALIGN_CENTER);
+	add (row, app->files_result);
+	add (page, row);
+
+	/* The browser: several files at once, from the home folder */
+	lrg_file_filter_add_pattern (all, "*");
+	lrg_file_filter_add_mime_type (images, "image/*");
+	lrg_file_filter_add_suffix (images, "png");
+	lrg_file_filter_add_suffix (images, "jpg");
+	lrg_file_filter_add_suffix (text, "txt");
+	lrg_file_filter_add_suffix (text, "md");
+	lrg_file_filter_add_suffix (text, "org");
+	lrg_file_filter_add_suffix (text, "yaml");
+	box = card (LRG_CONTAINER (page), NULL, &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	app->files = g_object_new (LRG_TYPE_FILE_BROWSER,
+	                           "mode", LRG_FILE_BROWSER_MODE_OPEN_MULTIPLE,
+	                           "location", home,
+	                           NULL);
+	lrg_file_browser_add_filter (app->files, all);
+	lrg_file_browser_add_filter (app->files, images);
+	lrg_file_browser_add_filter (app->files, text);
+	lrg_file_browser_add_place (app->files, "Documents", docs, LRG_ICON_STAR);
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->files), 1.0f);
+	g_signal_connect (app->files, "selection-changed", G_CALLBACK (on_files_selection), app);
+	g_signal_connect (app->files, "file-activated", G_CALLBACK (on_files_activated), app);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->files));
+	g_object_unref (app->files);
+	app->files_selection = label_with_class ("", "muted");
+	add (box, app->files_selection);
+	on_files_selection (app->files, app);
+	return LRG_WIDGET (page);
+}
+
 static void
 show_page (Showcase *app,
            guint     index)
@@ -4236,6 +5436,17 @@ on_reload_action (GSimpleAction *action,
 		            LRG_TOAST_KIND_DANGER);
 }
 
+/* on_undo_delete_action: show.undo-delete, the Undo button of the
+ * "Deleted 3 items" toast */
+static void
+on_undo_delete_action (GSimpleAction *action,
+                       GVariant      *parameter,
+                       gpointer       user_data)
+{
+	show_toast (user_data, "Restored 3 items", "crate.png, barrel.png and torch.png are back.",
+	            LRG_TOAST_KIND_SUCCESS);
+}
+
 static void
 on_shortcuts_action (GSimpleAction *action,
                      GVariant      *parameter,
@@ -4354,7 +5565,8 @@ install_actions (Showcase *app)
 		{ "screenshot", on_screenshot_action, NULL, NULL,         NULL, { 0 } },
 		{ "reload",     on_reload_action,     NULL, NULL,         NULL, { 0 } },
 		{ "shortcuts",  on_shortcuts_action,  NULL, NULL,         NULL, { 0 } },
-		{ "about",      on_about_action,      NULL, NULL,         NULL, { 0 } }
+		{ "about",      on_about_action,      NULL, NULL,         NULL, { 0 } },
+		{ "undo-delete", on_undo_delete_action, NULL, NULL,       NULL, { 0 } }
 	};
 	guint i;
 
@@ -4551,7 +5763,10 @@ build_ui (Showcase *app)
 	app->page[PAGE_EDITOR] = build_editor_page (app);
 	app->page[PAGE_GRAPH] = build_graph_page (app);
 	app->page[PAGE_TIMELINE] = build_timeline_page (app);
+	app->page[PAGE_LOOKS] = build_looks_page (app);
+	app->page[PAGE_BLOCKS] = build_blocks_page (app);
 	app->page[PAGE_DOCK] = build_dock_page (app);
+	app->page[PAGE_FILES] = build_files_page (app);
 	app->page[PAGE_MARKDOWN] = build_markdown_page (app);
 	app->page[PAGE_DECLARATIVE] = build_declarative_page (app);
 	app->page[PAGE_INSPECTOR] = build_inspector_page (app);
@@ -4559,7 +5774,8 @@ build_ui (Showcase *app)
 	{
 		gboolean fill = (i == PAGE_LIST || i == PAGE_DATA || i == PAGE_GLASS ||
 		                 i == PAGE_MARKDOWN || i == PAGE_DECLARATIVE || i == PAGE_VIEWPORT ||
-		                 i == PAGE_EDITOR || i == PAGE_GRAPH || i == PAGE_TIMELINE || i == PAGE_DOCK);
+		                 i == PAGE_EDITOR || i == PAGE_GRAPH || i == PAGE_TIMELINE || i == PAGE_DOCK ||
+		                 i == PAGE_LOOKS || i == PAGE_BLOCKS || i == PAGE_FILES);
 
 		lrg_widget_set_appear (app->page[i], LRG_APPEAR_FLY_UP, 0.0f);
 		lrg_widget_set_valign (app->page[i], fill ? LRG_ALIGN_FILL : LRG_ALIGN_START);
@@ -4612,11 +5828,18 @@ main (int   argc,
 	gboolean                  opt_rtl = FALSE;
 	gint                      opt_menu = 0;
 	gboolean                  opt_context = FALSE;
+	g_autofree gchar         *opt_look = NULL;
+	gboolean                  opt_run_blocks = FALSE;
+	gboolean                  opt_real_window = FALSE;
+	gboolean                  opt_in_app = FALSE;
+	gboolean                  opt_notify = FALSE;
+	g_autofree gchar         *opt_file_dialog = NULL;
 	g_autoptr(LrgMenu)        context = NULL;
 	Showcase                  app = { 0 };
 	gint                      frame = 0;
 	gboolean                  was_picking = FALSE;
 	gboolean                  graph_framed = FALSE;
+	gboolean                  looks_framed = FALSE;
 
 	GOptionEntry entries[] = {
 		{ "theme", 't', 0, G_OPTION_ARG_STRING, &opt_theme,
@@ -4626,7 +5849,18 @@ main (int   argc,
 		  "Motion preset (smooth, snappy, bouncy, wobbly, none)", "NAME" },
 		{ "page", 'p', 0, G_OPTION_ARG_STRING, &opt_page,
 		  "Start page (controls, cards, feedback, list, data, pickers, glass, motion, layout, viewport, "
-		  "editor, graph, timeline, dock, markdown, declarative, inspector)", "NAME" },
+		  "editor, graph, timeline, looks, blocks, dock, files, markdown, declarative, inspector)", "NAME" },
+		{ "look", 'l', 0, G_OPTION_ARG_STRING, &opt_look,
+		  "Looks page: start with this canvas look (auto, modern, blueprint, blender, neon)", "NICK" },
+		{ "run-blocks", 0, 0, G_OPTION_ARG_NONE, &opt_run_blocks, "Blocks page: run the script at start-up", NULL },
+		{ "header-bar-window", 0, 0, G_OPTION_ARG_NONE, &opt_real_window,
+		  "Cards page: the header bar's buttons and dragging drive the real window", NULL },
+		{ "in-app-notifications", 0, 0, G_OPTION_ARG_NONE, &opt_in_app,
+		  "Show notifications as in-app toasts, never on the desktop", NULL },
+		{ "file-dialog", 0, 0, G_OPTION_ARG_STRING, &opt_file_dialog,
+		  "Open a file dialog on frame 10 (open, open-multiple, save, select-folder)", "MODE" },
+		{ "notify", 0, 0, G_OPTION_ARG_NONE, &opt_notify,
+		  "Send the Feedback page's notification and the Undo toast at start-up", NULL },
 		{ "toasts", 0, 0, G_OPTION_ARG_NONE, &opt_toasts, "Show a few toasts at start-up", NULL },
 		{ "dialog", 0, 0, G_OPTION_ARG_NONE, &opt_dialog, "Open the dialog at start-up", NULL },
 		{ "island", 0, 0, G_OPTION_ARG_NONE, &opt_island, "Expand the island (motion page) at start-up", NULL },
@@ -4661,6 +5895,12 @@ main (int   argc,
 		"  ui-showcase --page timeline --theme daylight\n"
 		"  ui-showcase --page dock --rtl\n"
 		"  ui-showcase --page feedback --toasts --dialog --screenshot dialog.png --frames 120\n"
+		"  ui-showcase --page looks --look neon\n"
+		"  ui-showcase --page blocks --run-blocks\n"
+		"  ui-showcase --page files            (LrgFileBrowser + the four LrgFileDialog modes)\n"
+		"  ui-showcase --page files --file-dialog open-multiple\n"
+		"  ui-showcase --page cards --header-bar-window\n"
+		"  ui-showcase --page feedback --notify --in-app-notifications\n"
 		"\n"
 		"Keys: Tab/arrows move focus, Enter activates, Escape cancels, F12 toggles inspector pick mode,\n"
 		"Ctrl+Q quits, Ctrl+1..9 open pages, Ctrl+Shift+R toggles right-to-left, F1 lists shortcuts.\n");
@@ -4682,8 +5922,30 @@ main (int   argc,
 		lrg_canvas_input_set_poll_touch (TRUE);
 
 	app.accent = g_strdup (opt_accent);
+	app.real_window = opt_real_window;
+	if (opt_in_app)
+		lrg_notification_set_force_in_app (TRUE);
 	apply_theme (&app, opt_theme != NULL ? opt_theme : "midnight");
 	build_ui (&app);
+	lrg_notification_set_default_toast_queue (app.toasts);
+
+	if (opt_look != NULL)
+	{
+		g_autoptr(GEnumClass) klass = g_type_class_ref (LRG_TYPE_CANVAS_LOOK);
+		GEnumValue           *value = g_enum_get_value_by_nick (klass, opt_look);
+
+		if (value != NULL)
+			lrg_combo_box_set_selected (app.look_combo, value->value);
+		else
+			g_printerr ("ui-showcase: unknown look '%s'\n", opt_look);
+	}
+	if (opt_run_blocks)
+		blocks_run_first (&app);
+	if (opt_notify)
+	{
+		on_delete_clicked (NULL, &app);
+		on_notify_clicked (NULL, &app);
+	}
 
 	if (opt_motion != NULL)
 		g_action_group_activate_action (G_ACTION_GROUP (app.actions), "motion", g_variant_new_string (opt_motion));
@@ -4745,13 +6007,33 @@ main (int   argc,
 			lrg_node_graph_frame_all (app.graph, FALSE);
 			graph_framed = TRUE;
 		}
+		if (app.current_page == PAGE_LOOKS && !looks_framed &&
+		    lrg_widget_get_width (LRG_WIDGET (app.look_graph)) > 0.0f)
+		{
+			lrg_node_graph_frame_all (app.look_graph, FALSE);
+			looks_framed = TRUE;
+		}
 		app.scene_time += GetFrameTime ();
 
 		/* Hot reload: a stat() of the watched YAML per frame */
 		lrg_ui_loader_poll (app.loader);
 
+		/* GIO work: file browser listings, file dialog and notification
+		 * D-Bus replies complete on the default main context */
+		g_main_context_iteration (NULL, FALSE);
+
 		if (opt_dialog && frame == 10)
 			lrg_dialog_present (app.dialog, app.canvas);
+		if (opt_file_dialog != NULL && frame == 10)
+		{
+			static const gchar *nicks[] = { "open", "open-multiple", "save", "select-folder" };
+			static const gchar *whats[] = { "Open", "Open multiple", "Save", "Select folder" };
+			guint i;
+
+			for (i = 0; i < G_N_ELEMENTS (nicks); i++)
+				if (g_strcmp0 (opt_file_dialog, nicks[i]) == 0)
+					run_file_dialog (&app, whats[i], LRG_WIDGET (app.canvas));
+		}
 		if (opt_island && frame == 10)
 			lrg_island_set_expanded (app.island, TRUE);
 		if (opt_menu > 0 && frame == 10)
@@ -4848,5 +6130,8 @@ main (int   argc,
 	g_ptr_array_unref (app.appear_tiles);
 	g_free (app.yaml_path);
 	g_free (app.accent);
+	g_clear_pointer (&app.loops, g_array_unref);
+	g_free (app.sprite_color);
+	g_free (app.sprite_say);
 	return 0;
 }

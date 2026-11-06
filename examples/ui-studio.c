@@ -5,23 +5,32 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * A "flashy tool app" built purely on libregnum's UI: a menu bar over a
- * dock area holding a live 3D viewport, a node graph, a timeline whose
- * keyframes animate the scene while it plays, a script editor and a
- * console. The window is described by examples/data/ui/studio.yaml and
- * built with LrgUILoader; when the document is missing or fails to load
- * the same window is built in C (build_ui_in_c()), so the program always
- * runs. Either way the C side then wires the scene, the animation
- * tracks, the console input, the actions and the shortcuts.
+ * dock area holding a live 3D viewport, a node graph, a block editor, a
+ * timeline whose keyframes animate the scene while it plays, a script
+ * editor and a console. The window is described by
+ * examples/data/ui/studio.yaml (the block palette and sample program by
+ * studio-blocks.yaml) and built with LrgUILoader; when the document is
+ * missing or fails to load the same window is built in C
+ * (build_ui_in_c()), so the program always runs. Either way the C side
+ * then wires the scene, the animation tracks, the console input, the
+ * actions, the shortcuts and the block interpreter.
  *
  * Controls:
- *   Ctrl+Q          quit                 Space     play / pause the timeline
- *   Ctrl+S          save the dock layout Ctrl+O    load the saved layout
+ *   Ctrl+Q          quit                 Space     play / pause (runs the
+ *   Ctrl+S          save the dock layout           "when play pressed" scripts)
+ *   Ctrl+Shift+S    save as... (dialog)  Ctrl+O    open a layout (dialog)
  *   F5              run the script       Ctrl+N    reset layout, clear console
  *   Drag the scene  orbit the camera     Wheel     zoom
  *   Drag tabs       re-dock / float panels (see LrgDockArea)
+ *   Double-click a block script: run it (one block per tick, highlighted)
  *
  * The layout is saved as YAML to $XDG_CACHE_HOME/libregnum/ui-studio-layout.yaml
- * and restored at start-up (unless --default-layout).
+ * and restored at start-up (unless --default-layout). File > Open and
+ * Save As use LrgFileDialog (in-app, or the desktop's portal chooser
+ * with --native-dialogs); a save is announced with an LrgNotification
+ * (a desktop notification, or a toast when there is no notification
+ * server or with --in-app-notifications). View > Canvas Look switches
+ * the node graph and the timeline between the five LrgCanvasLook presets.
  *
  * Run with --help for options.
  */
@@ -36,7 +45,10 @@
 #define WINDOW_WIDTH   (1280)
 #define WINDOW_HEIGHT  (800)
 #define STUDIO_FILE    "studio.yaml"
+#define BLOCKS_FILE    "studio-blocks.yaml"
 #define LAYOUT_FILE    "ui-studio-layout.yaml"
+#define BLOCK_STEP     (0.3)    /* seconds the interpreter spends per block */
+#define BOUNCE_TIME    (0.7f)   /* seconds a "bounce" block's hop lasts */
 
 static const gchar *license_text =
 	"ui-studio - a docked tool window built on the libregnum UI\n"
@@ -77,6 +89,31 @@ static const gchar *script_text =
 /* Motion presets offered in Theme > Motion, by LrgMotion nick */
 static const gchar *motion_nicks[] = { "smooth", "snappy", "bouncy", "wobbly", "none" };
 
+/* View > Canvas Look entries: label and LrgCanvasLook nick */
+static const struct { const gchar *label; const gchar *nick; } canvas_looks[] = {
+	{ "_Auto (theme)", "auto" },
+	{ "_Modern",       "modern" },
+	{ "_Blueprint",    "blueprint" },
+	{ "Ble_nder",      "blender" },
+	{ "_Neon",         "neon" }
+};
+
+/* Hues of the "set color" block's dropdown choices */
+static const struct { const gchar *name; gfloat hue; } block_colors[] = {
+	{ "red",    355.0f },
+	{ "green",  135.0f },
+	{ "blue",   215.0f },
+	{ "purple", 275.0f },
+	{ "gold",    45.0f }
+};
+
+/* A "repeat" block being run: the block and the iterations still to go */
+typedef struct
+{
+	LrgBlock *loop;
+	gint      left;
+} BlockLoop;
+
 /* ==========================================================================
  * Application state
  * ========================================================================== */
@@ -97,14 +134,34 @@ typedef struct
 	LrgTimelineView      *timeline;
 	LrgTextEditor        *console;
 	LrgTextEditor        *input;         /* added under the console in C */
+	LrgBlockEditor       *blocks;
 	LrgLabel             *status;
 	LrgLabel             *clock;
+	LrgToastQueue        *toasts;        /* overlay; in-app notification fallback */
 
 	GSimpleActionGroup   *actions;       /* "app" on the canvas */
 	gchar                *default_layout;
 	gchar                *layout_path;
+	gboolean              native_dialogs;
 	gboolean              quit;
 	guint                 added_nodes;
+
+	/* The block interpreter: the next block to run, the repeat loops
+	 * it is inside (innermost last) and the time left on this step */
+	gboolean              running;
+	LrgBlock             *pc;
+	GArray               *loops;         /* BlockLoop */
+	gdouble               run_delay;
+	guint                 run_steps;
+
+	/* What the blocks do to the scene, on top of the timeline curves */
+	gfloat                block_spin;
+	gfloat                block_spin_target;
+	gfloat                bounce_height;
+	gfloat                bounce_time;
+	gfloat                orbit_left;    /* radians of camera swing still to go */
+	gboolean              block_tinted;
+	gfloat                block_hue;
 
 	/* Scene */
 	GrlCamera3D          *camera;
@@ -220,6 +277,16 @@ orbit_apply (Studio *app)
 	                               app->distance * cp * cosf (app->yaw));
 }
 
+/* block_bounce: the height of a "bounce" block's hop, a half sine over
+ * BOUNCE_TIME seconds */
+static gfloat
+block_bounce (Studio *app)
+{
+	if (app->bounce_time >= BOUNCE_TIME)
+		return 0.0f;
+	return app->bounce_height * sinf ((gfloat) G_PI * app->bounce_time / BOUNCE_TIME);
+}
+
 /* draw_scene: the viewport's render function, run from the canvas step
  * between BeginTextureMode() and EndTextureMode() on the viewport's own
  * texture. Every animated value comes from a timeline curve sampled at
@@ -232,9 +299,9 @@ draw_scene (LrgViewport      *viewport,
             gpointer          user_data)
 {
 	Studio  *app = user_data;
-	gfloat   spin = sample (app, app->track_spin, 0.0f);
-	gfloat   hue = sample (app, app->track_hue, 260.0f);
-	gfloat   bounce = sample (app, app->track_bounce, 0.0f);
+	gfloat   spin = sample (app, app->track_spin, 0.0f) + app->block_spin;
+	gfloat   hue = app->block_tinted ? app->block_hue : sample (app, app->track_hue, 260.0f);
+	gfloat   bounce = sample (app, app->track_bounce, 0.0f) + block_bounce (app);
 	Color    main_tint = ColorFromHSV (hue, 0.55f, 1.0f);
 	Vector3  axis = { 0.0f, 1.0f, 0.0f };
 	Vector3  tilt = { 0.35f, 1.0f, 0.15f };
@@ -333,8 +400,10 @@ build_menus_in_c (GMenuModel **graph_context)
 	g_autoptr(GMenu)  edit_b = g_menu_new ();
 	g_autoptr(GMenu)  view = g_menu_new ();
 	g_autoptr(GMenu)  panels = g_menu_new ();
+	g_autoptr(GMenu)  looks = g_menu_new ();
 	g_autoptr(GMenu)  help = g_menu_new ();
 	g_autoptr(GMenu)  add = g_menu_new ();
+	guint             i;
 
 	menu_item (file_a, "_New", "app.new", NULL, "plus");
 	menu_item (file_a, "_Open...", "app.open", NULL, "folder");
@@ -358,9 +427,14 @@ build_menus_in_c (GMenuModel **graph_context)
 
 	menu_item (view, "Show _Grid", "app.toggle-grid", NULL, NULL);
 	menu_item (view, "_Reset Layout", "app.reset-layout", NULL, "refresh");
+	/* A radio submenu: app.canvas-look has a string state */
+	for (i = 0; i < G_N_ELEMENTS (canvas_looks); i++)
+		menu_item (looks, canvas_looks[i].label, "app.canvas-look", g_variant_new_string (canvas_looks[i].nick), NULL);
+	g_menu_append_submenu (view, "Canvas _Look", G_MENU_MODEL (looks));
 	menu_item (panels, "Scene", "app.show-panel", g_variant_new_string ("scene-panel"), "eye");
 	menu_item (panels, "Graph", "app.show-panel", g_variant_new_string ("graph-panel"), NULL);
 	menu_item (panels, "Script", "app.show-panel", g_variant_new_string ("script-panel"), "edit");
+	menu_item (panels, "Blocks", "app.show-panel", g_variant_new_string ("blocks-panel"), "play");
 	menu_item (panels, "Timeline", "app.show-panel", g_variant_new_string ("timeline-panel"), "clock");
 	menu_item (panels, "Console", "app.show-panel", g_variant_new_string ("console-panel"), NULL);
 	g_menu_append_section (view, "Panels", G_MENU_MODEL (panels));
@@ -402,6 +476,72 @@ dock_panel (LrgDockArea     *dock,
 	return panel;
 }
 
+/* blocks_attach: a new block of @kind after @after (or into the first
+ * mouth of @after with @into_mouth), with one slot value set */
+static LrgBlock *
+blocks_attach (LrgBlockEditor *editor,
+               LrgBlock       *after,
+               gboolean        into_mouth,
+               const gchar    *kind,
+               const gchar    *slot,
+               const gchar    *value)
+{
+	LrgBlock *block = lrg_block_editor_create_block (editor, kind, 0.0f, 0.0f);
+
+	if (slot != NULL)
+		lrg_block_set_value_by_name (block, slot, value);
+	lrg_block_editor_attach (editor, block, after,
+	                         into_mouth ? LRG_BLOCK_PLACE_MOUTH : LRG_BLOCK_PLACE_NEXT, 0);
+	return block;
+}
+
+/* build_blocks_in_c: the palette and sample program of studio-blocks.yaml,
+ * through the C API (keep the two in step) */
+static LrgBlockEditor *
+build_blocks_in_c (void)
+{
+	static const struct { const gchar *id; LrgBlockShape shape; const gchar *category; const gchar *label; } kinds[] = {
+		{ "when-play", LRG_BLOCK_SHAPE_HAT,       "events",  "when play pressed" },
+		{ "spin",      LRG_BLOCK_SHAPE_STATEMENT, "motion",  "spin {deg:number=90} degrees" },
+		{ "bounce",    LRG_BLOCK_SHAPE_STATEMENT, "motion",  "bounce {height:number=1}" },
+		{ "orbit",     LRG_BLOCK_SHAPE_STATEMENT, "motion",  "orbit camera {deg:number=45}" },
+		{ "repeat",    LRG_BLOCK_SHAPE_C,         "control", "repeat {times:number=4}" },
+		{ "wait",      LRG_BLOCK_SHAPE_STATEMENT, "control", "wait {s:number=1} s" },
+		{ "stop",      LRG_BLOCK_SHAPE_CAP,       "control", "stop" },
+		{ "set-color", LRG_BLOCK_SHAPE_STATEMENT, "looks",   "set color {c:dropdown=red|green|blue|purple|gold}" },
+		{ "say",       LRG_BLOCK_SHAPE_STATEMENT, "looks",   "say {msg:text=Hello}" }
+	};
+	LrgBlockEditor *editor = lrg_block_editor_new ();
+	LrgBlock       *b;
+	LrgBlock       *loop;
+	guint           i;
+
+	/* The palette: categories appear in the order kinds first use them */
+	for (i = 0; i < G_N_ELEMENTS (kinds); i++)
+	{
+		g_autoptr(GError) error = NULL;
+
+		if (lrg_block_editor_define_kind (editor, kinds[i].id, kinds[i].shape, kinds[i].category,
+		                                  kinds[i].label, &error) == NULL)
+			g_printerr ("ui-studio: block kind %s: %s\n", kinds[i].id, error->message);
+	}
+
+	/* The sample program, one script under a "when play pressed" hat */
+	b = lrg_block_editor_create_block (editor, "when-play", 24.0f, 24.0f);
+	b = blocks_attach (editor, b, FALSE, "set-color", "c", "blue");
+	b = blocks_attach (editor, b, FALSE, "say", "msg", "Spinning up");
+	loop = blocks_attach (editor, b, FALSE, "repeat", "times", "4");
+	b = blocks_attach (editor, loop, TRUE, "spin", "deg", "90");
+	blocks_attach (editor, b, FALSE, "wait", "s", "0.4");
+	b = blocks_attach (editor, loop, FALSE, "set-color", "c", "gold");
+	b = blocks_attach (editor, b, FALSE, "bounce", "height", "1");
+	b = blocks_attach (editor, b, FALSE, "orbit", "deg", "60");
+	blocks_attach (editor, b, FALSE, "say", "msg", "Done!");
+	lrg_block_editor_set_scroll (editor, -16.0f, -16.0f);
+	lrg_block_editor_clear_history (editor);   /* the sample is not an undo step */
+	return editor;
+}
+
 /* build_ui_in_c: everything studio.yaml declares, in the same places
  * and with the same ids, so the wiring below works on either */
 static LrgWidget *
@@ -414,6 +554,7 @@ build_ui_in_c (Studio *app)
 	g_autoptr(GError)     error = NULL;
 	LrgDockPanel         *scene;
 	LrgDockPanel         *graph;
+	LrgDockPanel         *script;
 	LrgDockPanel         *timeline;
 	LrgTimelineViewTrack *camera;
 	LrgTimelineViewTrack *track;
@@ -485,9 +626,17 @@ build_ui_in_c (Studio *app)
 	lrg_text_editor_set_language (app->script, "studio-script");
 	lrg_text_editor_set_show_line_numbers (app->script, TRUE);
 	lrg_text_editor_set_text (app->script, script_text);
-	dock_panel (app->dock, "script-panel", "Script", "edit", LRG_WIDGET (app->script), graph,
-	            LRG_DOCK_POSITION_CENTER);
+	script = dock_panel (app->dock, "script-panel", "Script", "edit", LRG_WIDGET (app->script), graph,
+	                     LRG_DOCK_POSITION_CENTER);
 	g_object_unref (app->script);
+
+	/* Blocks: the palette and program of studio-blocks.yaml, in C */
+	app->blocks = build_blocks_in_c ();
+	lrg_widget_set_name (LRG_WIDGET (app->blocks), "blocks");
+	lrg_block_editor_set_palette_width (app->blocks, 170.0f);
+	dock_panel (app->dock, "blocks-panel", "Blocks", "play", LRG_WIDGET (app->blocks), script,
+	            LRG_DOCK_POSITION_CENTER);
+	g_object_unref (app->blocks);
 
 	/* Timeline: camera curve, audio clips, an event, three markers */
 	app->timeline = lrg_timeline_view_new ();
@@ -615,8 +764,9 @@ build_ui_from_yaml (Studio *app)
 	app->script = lookup (app, "script", LRG_TYPE_TEXT_EDITOR);
 	app->timeline = lookup (app, "timeline", LRG_TYPE_TIMELINE_VIEW);
 	app->console = lookup (app, "console", LRG_TYPE_TEXT_EDITOR);
+	app->blocks = lookup (app, "blocks", LRG_TYPE_BLOCK_EDITOR);
 	if (app->menubar == NULL || app->dock == NULL || app->scene == NULL || app->graph == NULL ||
-	    app->script == NULL || app->timeline == NULL || app->console == NULL ||
+	    app->script == NULL || app->timeline == NULL || app->console == NULL || app->blocks == NULL ||
 	    !LRG_IS_CONTAINER (root))
 	{
 		g_printerr ("ui-studio: %s is incomplete; building the window in C\n", path);
@@ -627,6 +777,7 @@ build_ui_from_yaml (Studio *app)
 		app->script = NULL;
 		app->timeline = NULL;
 		app->console = NULL;
+		app->blocks = NULL;
 		return NULL;
 	}
 	app->from_yaml = TRUE;
@@ -651,22 +802,68 @@ find_panel (Studio      *app,
 	return (widget != NULL && LRG_IS_DOCK_PANEL (widget)) ? LRG_DOCK_PANEL (widget) : NULL;
 }
 
-/* save_layout: the dock arrangement as YAML in the user cache dir */
+/* notify_saved: announce a save with a desktop notification. Its button
+ * is a detailed action on the canvas ("app.show-panel" with the console's
+ * id), so the same action group that serves the menus answers it. With
+ * no notification server (or --in-app-notifications) it becomes a toast
+ * in the studio's queue, with the same button. */
+static void
+notify_saved (Studio      *app,
+              const gchar *path)
+{
+	g_autoptr(LrgNotification) note = lrg_notification_new ("Layout saved");
+	g_autoptr(GError)          error = NULL;
+	const gchar               *home = g_get_home_dir ();
+	g_autofree gchar          *shown = NULL;
+
+	/* "~/..." keeps the body short enough for a toast */
+	if (home != NULL && g_str_has_prefix (path, home) && path[strlen (home)] == G_DIR_SEPARATOR)
+		shown = g_strconcat ("~", path + strlen (home), NULL);
+	else
+		shown = g_strdup (path);
+	lrg_notification_set_body (note, shown);
+	lrg_notification_set_icon_name (note, "document-save");
+	lrg_notification_set_timeout (note, 6000);
+	lrg_notification_add_button (note, "Show in console", "app.show-panel::console-panel");
+	lrg_notification_set_toast_queue (note, app->toasts);
+	if (!lrg_notification_show (note, LRG_WIDGET (app->canvas), &error))
+		console_print (app, "[warn] notification: %s", error->message);
+	/* note may go now: it keeps itself alive while shown */
+}
+
+/* save_layout_to: the dock arrangement as YAML at @path; with @graph also
+ * the node graph, next to it as NAME-graph.yaml */
 static gboolean
-save_layout (Studio *app)
+save_layout_to (Studio      *app,
+                const gchar *path,
+                gboolean     graph)
 {
 	g_autofree gchar  *yaml = lrg_dock_area_save_layout (app->dock);
-	g_autofree gchar  *dir = g_path_get_dirname (app->layout_path);
+	g_autofree gchar  *dir = g_path_get_dirname (path);
 	g_autoptr(GError)  error = NULL;
 
 	g_mkdir_with_parents (dir, 0755);
-	if (!g_file_set_contents (app->layout_path, yaml, -1, &error))
+	if (!g_file_set_contents (path, yaml, -1, &error))
 	{
 		console_print (app, "[error] save layout: %s", error->message);
 		return FALSE;
 	}
-	console_print (app, "[info] layout saved to %s", app->layout_path);
+	console_print (app, "[info] layout saved to %s", path);
 	set_status (app, "Layout saved");
+
+	if (graph)
+	{
+		g_autofree gchar *base = g_path_get_basename (path);
+		g_autofree gchar *stem = g_str_has_suffix (base, ".yaml") ? g_strndup (base, strlen (base) - 5)
+		                                                          : g_strdup (base);
+		g_autofree gchar *name = g_strconcat (stem, "-graph.yaml", NULL);
+		g_autofree gchar *graph_path = g_build_filename (dir, name, NULL);
+		g_autofree gchar *text = lrg_node_graph_to_yaml (app->graph, NULL, NULL);
+
+		if (text != NULL && g_file_set_contents (graph_path, text, -1, NULL))
+			console_print (app, "[info] graph saved to %s", graph_path);
+	}
+	notify_saved (app, path);
 	return TRUE;
 }
 
@@ -685,6 +882,108 @@ load_layout (Studio      *app,
 	return TRUE;
 }
 
+/* load_layout_file: read and apply a layout file */
+static gboolean
+load_layout_file (Studio      *app,
+                  const gchar *path)
+{
+	g_autofree gchar  *yaml = NULL;
+	g_autoptr(GError)  error = NULL;
+
+	if (!g_file_get_contents (path, &yaml, NULL, &error))
+	{
+		console_print (app, "[warn] %s (Ctrl+S saves a layout)", error->message);
+		return FALSE;
+	}
+	if (!load_layout (app, yaml))
+		return FALSE;
+	console_print (app, "[info] layout loaded from %s", path);
+	set_status (app, "Layout loaded");
+	return TRUE;
+}
+
+/* layout_dialog: an LrgFileDialog over the layout folder showing only
+ * YAML files. In-app by default (a modal sheet on the canvas); with
+ * --native-dialogs the XDG portal's chooser is tried first. */
+static LrgFileDialog *
+layout_dialog (Studio      *app,
+               const gchar *title)
+{
+	LrgFileDialog            *dialog = lrg_file_dialog_new ();
+	g_autoptr(LrgFileFilter)  layouts = lrg_file_filter_new ("Layouts (*.yaml)");
+	g_autoptr(LrgFileFilter)  all = lrg_file_filter_new ("All files");
+	g_autoptr(GListStore)     filters = g_list_store_new (LRG_TYPE_FILE_FILTER);
+	g_autofree gchar         *dir_path = g_path_get_dirname (app->layout_path);
+	g_autoptr(GFile)          dir = g_file_new_for_path (dir_path);
+
+	/* The folder must exist for the browser to list it */
+	g_mkdir_with_parents (dir_path, 0755);
+	lrg_file_filter_add_suffix (layouts, "yaml");
+	lrg_file_filter_add_suffix (layouts, "yml");
+	lrg_file_filter_add_pattern (all, "*");
+	g_list_store_append (filters, layouts);
+	g_list_store_append (filters, all);
+
+	lrg_file_dialog_set_title (dialog, title);
+	lrg_file_dialog_set_filters (dialog, G_LIST_MODEL (filters));
+	lrg_file_dialog_set_default_filter (dialog, layouts);
+	lrg_file_dialog_set_initial_folder (dialog, dir);
+	lrg_file_dialog_add_place (dialog, "Layouts", dir, LRG_ICON_STAR);
+	lrg_file_dialog_set_prefer_native (dialog, app->native_dialogs);
+	return dialog;
+}
+
+/* dialog_failed: report a file dialog error; backing out is silent */
+static void
+dialog_failed (Studio *app,
+               GError *error)
+{
+	if (!g_error_matches (error, LRG_FILE_DIALOG_ERROR, LRG_FILE_DIALOG_ERROR_DISMISSED))
+		console_print (app, "[error] file dialog: %s", error->message);
+	else
+		set_status (app, "Cancelled");
+}
+
+static void
+on_open_chosen (GObject      *source,
+                GAsyncResult *result,
+                gpointer      user_data)
+{
+	Studio            *app = user_data;
+	g_autoptr(GError)  error = NULL;
+	g_autoptr(GFile)   file = lrg_file_dialog_open_finish (LRG_FILE_DIALOG (source), result, &error);
+	g_autofree gchar  *path = NULL;
+
+	if (file == NULL)
+	{
+		dialog_failed (app, error);
+		return;
+	}
+	path = g_file_get_path (file);
+	if (path != NULL)
+		load_layout_file (app, path);
+}
+
+static void
+on_save_chosen (GObject      *source,
+                GAsyncResult *result,
+                gpointer      user_data)
+{
+	Studio            *app = user_data;
+	g_autoptr(GError)  error = NULL;
+	g_autoptr(GFile)   file = lrg_file_dialog_save_finish (LRG_FILE_DIALOG (source), result, &error);
+	g_autofree gchar  *path = NULL;
+
+	if (file == NULL)
+	{
+		dialog_failed (app, error);
+		return;
+	}
+	path = g_file_get_path (file);
+	if (path != NULL)
+		save_layout_to (app, path, TRUE);
+}
+
 static void
 on_new (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
@@ -696,22 +995,15 @@ on_new (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 	set_status (app, "New session");
 }
 
+/* on_open: File > Open..., a layout picked in a file dialog. The dialog
+ * object can go right away: the operation holds its own reference. */
 static void
 on_open (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
-	Studio           *app = user_data;
-	g_autofree gchar *yaml = NULL;
+	Studio                  *app = user_data;
+	g_autoptr(LrgFileDialog) dialog = layout_dialog (app, "Open Layout");
 
-	if (!g_file_get_contents (app->layout_path, &yaml, NULL, NULL))
-	{
-		console_print (app, "[warn] no saved layout at %s (Ctrl+S saves one)", app->layout_path);
-		return;
-	}
-	if (load_layout (app, yaml))
-	{
-		console_print (app, "[info] layout loaded from %s", app->layout_path);
-		set_status (app, "Layout loaded");
-	}
+	lrg_file_dialog_open (dialog, LRG_WIDGET (app->canvas), NULL, on_open_chosen, app);
 }
 
 /* on_open_recent: the File > Open Recent entries carry the file name as
@@ -728,23 +1020,25 @@ on_open_recent (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 	set_status (app, name);
 }
 
+/* on_save: File > Save, straight to the default layout file */
 static void
 on_save (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
-	save_layout (user_data);
+	Studio *app = user_data;
+
+	save_layout_to (app, app->layout_path, FALSE);
 }
 
-/* on_save_as: also writes the graph next to the layout */
+/* on_save_as: File > Save As..., the layout (and the graph next to it)
+ * wherever the save dialog says; it asks before replacing a file */
 static void
 on_save_as (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
-	Studio           *app = user_data;
-	g_autofree gchar *dir = g_path_get_dirname (app->layout_path);
-	g_autofree gchar *graph_path = g_build_filename (dir, "ui-studio-graph.yaml", NULL);
-	g_autofree gchar *graph = lrg_node_graph_to_yaml (app->graph, NULL, NULL);
+	Studio                  *app = user_data;
+	g_autoptr(LrgFileDialog) dialog = layout_dialog (app, "Save Layout As");
 
-	if (save_layout (app) && graph != NULL && g_file_set_contents (graph_path, graph, -1, NULL))
-		console_print (app, "[info] graph saved to %s", graph_path);
+	lrg_file_dialog_set_initial_name (dialog, LAYOUT_FILE);
+	lrg_file_dialog_save (dialog, LRG_WIDGET (app->canvas), NULL, on_save_chosen, app);
 }
 
 static void
@@ -828,12 +1122,38 @@ on_frame_all (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 
 /* on_play: toggle playback; the timeline advances the playhead itself
  * on the canvas clock */
+static void blocks_run_hats (Studio *app);
+
 static void
 on_play (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 {
-	Studio *app = user_data;
+	Studio  *app = user_data;
+	gboolean play = !lrg_timeline_view_get_playing (app->timeline);
 
-	lrg_timeline_view_set_playing (app->timeline, !lrg_timeline_view_get_playing (app->timeline));
+	lrg_timeline_view_set_playing (app->timeline, play);
+	if (play)
+		blocks_run_hats (app);
+}
+
+/* on_canvas_look: View > Canvas Look, a radio (string state) over the
+ * LrgCanvasLook nicks, applied to the node graph and the timeline */
+static void
+on_canvas_look (GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+	Studio                *app = user_data;
+	const gchar           *nick = g_variant_get_string (parameter, NULL);
+	g_autoptr(GEnumClass)  klass = g_type_class_ref (LRG_TYPE_CANVAS_LOOK);
+	GEnumValue            *value = g_enum_get_value_by_nick (klass, nick);
+
+	if (value == NULL)
+	{
+		console_print (app, "[warn] unknown canvas look '%s' (auto, modern, blueprint, blender, neon)", nick);
+		return;
+	}
+	lrg_node_graph_set_look (app->graph, (LrgCanvasLook) value->value);
+	lrg_timeline_view_set_look (app->timeline, (LrgCanvasLook) value->value);
+	g_simple_action_set_state (action, parameter);
+	console_print (app, "[look] %s", nick);
 }
 
 /* on_add_node: a node of the chosen kind at the centre of the view */
@@ -920,6 +1240,211 @@ on_run (GSimpleAction *action, GVariant *parameter, gpointer user_data)
 }
 
 /* ==========================================================================
+ * The block interpreter
+ *
+ * Runs one block per tick from the main loop (studio_update()), so a
+ * script with waits and loops never blocks a frame. The state is a
+ * program counter (the next block to run) and a stack of the "repeat"
+ * blocks it is inside with their remaining iterations. The block being
+ * run glows (lrg_block_set_running()). Any edit of the program stops the
+ * run, so the block pointers held here never outlive their blocks.
+ * ========================================================================== */
+
+/* blocks_light: move the execution glow to @block (NULL: off) */
+static void
+blocks_light (Studio   *app,
+              LrgBlock *block)
+{
+	lrg_block_editor_clear_running (app->blocks);
+	if (block != NULL)
+		lrg_block_set_running (block, TRUE);
+}
+
+static void
+blocks_finish (Studio      *app,
+               const gchar *why)
+{
+	if (!app->running)
+		return;
+	app->running = FALSE;
+	app->pc = NULL;
+	g_array_set_size (app->loops, 0);
+	blocks_light (app, NULL);
+	console_print (app, "[blocks] %s after %u blocks", why, app->run_steps);
+	set_status (app, "Script finished");
+}
+
+/* blocks_run: start running the script under @top (stops a running one) */
+static void
+blocks_run (Studio   *app,
+            LrgBlock *top)
+{
+	blocks_finish (app, "interrupted");
+	app->running = TRUE;
+	app->pc = top;
+	app->run_delay = 0.0;
+	app->run_steps = 0;
+	console_print (app, "[blocks] running '%s'", lrg_block_kind_get_label (lrg_block_get_kind (top)));
+	set_status (app, "Running blocks...");
+}
+
+/* blocks_run_hats: run the first "when play pressed" script (Space) */
+static void
+blocks_run_hats (Studio *app)
+{
+	guint i;
+
+	for (i = 0; i < lrg_block_editor_get_n_scripts (app->blocks); i++)
+	{
+		LrgBlock *top = lrg_block_editor_get_nth_script (app->blocks, i);
+
+		if (g_strcmp0 (lrg_block_get_kind_id (top), "when-play") == 0)
+		{
+			blocks_run (app, top);
+			return;
+		}
+	}
+}
+
+/* blocks_hue: the hue of a "set color" choice */
+static gfloat
+blocks_hue (const gchar *name)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (block_colors); i++)
+		if (g_strcmp0 (block_colors[i].name, name) == 0)
+			return block_colors[i].hue;
+	return 260.0f;
+}
+
+/* blocks_step: run one block. Returns the seconds it takes (the time
+ * until the next step), or a negative value when the run ended. */
+static gdouble
+blocks_step (Studio *app)
+{
+	LrgBlock    *block;
+	const gchar *id;
+	gdouble      cost = BLOCK_STEP;
+
+	/* Fell off the end of a stack: finish, or go round the innermost
+	 * loop again, or leave it and carry on below it */
+	while (app->pc == NULL)
+	{
+		BlockLoop *frame;
+
+		if (app->loops->len == 0)
+		{
+			blocks_finish (app, "finished");
+			return -1.0;
+		}
+		frame = &g_array_index (app->loops, BlockLoop, app->loops->len - 1);
+		if (--frame->left > 0)
+			app->pc = lrg_block_get_mouth (frame->loop, 0);
+		else
+		{
+			app->pc = lrg_block_get_next (frame->loop);
+			g_array_set_size (app->loops, app->loops->len - 1);
+		}
+	}
+
+	/* Run the block at the program counter */
+	block = app->pc;
+	id = lrg_block_get_kind_id (block);
+	app->pc = lrg_block_get_next (block);
+	app->run_steps++;
+	blocks_light (app, block);
+
+	if (g_strcmp0 (id, "when-play") == 0)
+		cost = BLOCK_STEP * 0.5;
+	else if (g_strcmp0 (id, "spin") == 0)
+		app->block_spin_target += (gfloat) lrg_block_get_number (block, "deg");
+	else if (g_strcmp0 (id, "bounce") == 0)
+	{
+		app->bounce_height = (gfloat) lrg_block_get_number (block, "height");
+		app->bounce_time = 0.0f;
+		cost = MAX (cost, (gdouble) BOUNCE_TIME);
+	}
+	else if (g_strcmp0 (id, "orbit") == 0)
+		app->orbit_left += (gfloat) lrg_block_get_number (block, "deg") * ((gfloat) G_PI / 180.0f);
+	else if (g_strcmp0 (id, "repeat") == 0)
+	{
+		gint      times = (gint) lrg_block_get_number (block, "times");
+		LrgBlock *mouth = lrg_block_get_mouth (block, 0);
+
+		/* An empty or zero-times loop is skipped; otherwise enter it */
+		if (times > 0 && mouth != NULL)
+		{
+			BlockLoop frame = { block, MIN (times, 10000) };
+
+			g_array_append_val (app->loops, frame);
+			app->pc = mouth;
+		}
+		cost = BLOCK_STEP * 0.5;
+	}
+	else if (g_strcmp0 (id, "wait") == 0)
+		cost = CLAMP (lrg_block_get_number (block, "s"), 0.0, 60.0);
+	else if (g_strcmp0 (id, "set-color") == 0)
+	{
+		app->block_tinted = TRUE;
+		app->block_hue = blocks_hue (lrg_block_get_value_by_name (block, "c"));
+	}
+	else if (g_strcmp0 (id, "say") == 0)
+		console_print (app, "[blocks] say: %s", lrg_block_get_value_by_name (block, "msg"));
+	else if (g_strcmp0 (id, "stop") == 0)
+	{
+		blocks_finish (app, "stopped by a stop block");
+		return -1.0;
+	}
+	return cost;
+}
+
+/* on_block_activated: double-click / Enter on a script runs it */
+static void
+on_block_activated (LrgBlockEditor *editor,
+                    LrgBlock       *top,
+                    gpointer        user_data)
+{
+	blocks_run (user_data, top);
+}
+
+/* on_blocks_changed: an edit invalidates the running program */
+static void
+on_blocks_changed (LrgBlockEditor *editor,
+                   gpointer        user_data)
+{
+	blocks_finish (user_data, "stopped (the program was edited)");
+}
+
+/* studio_update: per-frame animation of what the blocks set in motion,
+ * then the interpreter's clock */
+static void
+studio_update (Studio *app,
+               gfloat  dt)
+{
+	gfloat swing;
+
+	app->block_spin += (app->block_spin_target - app->block_spin) * MIN (1.0f, dt * 8.0f);
+	if (app->bounce_time < BOUNCE_TIME)
+		app->bounce_time += dt;
+	swing = app->orbit_left * MIN (1.0f, dt * 5.0f);
+	app->yaw += swing;
+	app->orbit_left -= swing;
+
+	if (!app->running)
+		return;
+	app->run_delay -= dt;
+	while (app->running && app->run_delay <= 0.0)
+	{
+		gdouble cost = blocks_step (app);
+
+		if (cost < 0.0)
+			break;
+		app->run_delay += cost;
+	}
+}
+
+/* ==========================================================================
  * Console commands
  * ========================================================================== */
 
@@ -937,8 +1462,11 @@ run_command (Studio      *app,
 	{
 		console_print (app, "play | pause | seek SECONDS | rate X     timeline playback");
 		console_print (app, "theme NAME | motion NICK                 look and feel");
-		console_print (app, "save | load | reset                      dock layout");
+		console_print (app, "save | load | reset                      dock layout (default file)");
+		console_print (app, "open | save-as                           file dialogs");
 		console_print (app, "panel ID | node KIND | frame             panels and graph");
+		console_print (app, "look NICK                                canvas look (auto, modern, blueprint, ...)");
+		console_print (app, "blocks | stop                            run / stop the block script");
 		console_print (app, "run | clear | quit");
 	}
 	else if (g_strcmp0 (verb, "play") == 0)
@@ -956,7 +1484,17 @@ run_command (Studio      *app,
 	else if (g_strcmp0 (verb, "save") == 0)
 		g_action_group_activate_action (group, "save", NULL);
 	else if (g_strcmp0 (verb, "load") == 0)
+		load_layout_file (app, app->layout_path);
+	else if (g_strcmp0 (verb, "open") == 0)
 		g_action_group_activate_action (group, "open", NULL);
+	else if (g_strcmp0 (verb, "save-as") == 0)
+		g_action_group_activate_action (group, "save-as", NULL);
+	else if (g_strcmp0 (verb, "look") == 0 && arg != NULL)
+		g_action_group_activate_action (group, "canvas-look", g_variant_new_string (arg));
+	else if (g_strcmp0 (verb, "blocks") == 0)
+		blocks_run_hats (app);
+	else if (g_strcmp0 (verb, "stop") == 0)
+		blocks_finish (app, "stopped");
 	else if (g_strcmp0 (verb, "reset") == 0)
 		g_action_group_activate_action (group, "reset-layout", NULL);
 	else if (g_strcmp0 (verb, "panel") == 0 && arg != NULL)
@@ -1056,7 +1594,8 @@ install_actions (Studio      *app,
 		{ "add-node",     on_add_node,     "s",  NULL,       NULL, { 0 } },
 		{ "theme",        on_theme,        "s",  "'midnight'", NULL, { 0 } },
 		{ "motion",       on_motion,       "s",  "'smooth'", NULL, { 0 } },
-		{ "run",          on_run,          NULL, NULL,       NULL, { 0 } }
+		{ "run",          on_run,          NULL, NULL,       NULL, { 0 } },
+		{ "canvas-look",  on_canvas_look,  "s",  "'auto'",   NULL, { 0 } }
 	};
 
 	app->actions = g_simple_action_group_new ();
@@ -1236,6 +1775,17 @@ wire (Studio      *app,
 	lrg_dock_area_present_panel (app->dock, find_panel (app, "timeline-panel"));
 	g_signal_connect (app->dock, "layout-changed", G_CALLBACK (on_layout_changed), app);
 
+	/* Blocks: double-click a script to run it; edits stop a run */
+	app->loops = g_array_new (FALSE, FALSE, sizeof (BlockLoop));
+	g_signal_connect (app->blocks, "block-activated", G_CALLBACK (on_block_activated), app);
+	g_signal_connect (app->blocks, "changed", G_CALLBACK (on_blocks_changed), app);
+
+	/* Toasts in the overlay layer (above dialogs and their veil): the
+	 * in-app fallback for notifications, also the process default */
+	app->toasts = lrg_toast_queue_new ();
+	lrg_canvas_add_overlay (app->canvas, LRG_WIDGET (app->toasts));
+	lrg_notification_set_default_toast_queue (app->toasts);
+
 	/* The layout as built is the "reset" layout; a saved one is restored */
 	app->default_layout = lrg_dock_area_save_layout (app->dock);
 	if (restore && g_file_get_contents (app->layout_path, &saved, NULL, NULL) && load_layout (app, saved))
@@ -1263,6 +1813,9 @@ main (int   argc,
 	gboolean                  opt_license = FALSE;
 	gboolean                  opt_c_only = FALSE;
 	gboolean                  opt_default_layout = FALSE;
+	gboolean                  opt_native = FALSE;
+	gboolean                  opt_in_app = FALSE;
+	g_autofree gchar         *opt_look = NULL;
 	gint                      opt_menu = 0;
 	g_auto(GStrv)             opt_exec = NULL;
 	Studio                    app = { 0 };
@@ -1275,6 +1828,12 @@ main (int   argc,
 		{ "c-only", 0, 0, G_OPTION_ARG_NONE, &opt_c_only, "Build the window in C even if studio.yaml exists", NULL },
 		{ "default-layout", 0, 0, G_OPTION_ARG_NONE, &opt_default_layout,
 		  "Do not restore the layout saved with Ctrl+S", NULL },
+		{ "look", 'l', 0, G_OPTION_ARG_STRING, &opt_look,
+		  "Canvas look of the graph and timeline (auto, modern, blueprint, blender, neon)", "NICK" },
+		{ "native-dialogs", 0, 0, G_OPTION_ARG_NONE, &opt_native,
+		  "Open and Save As try the desktop's file chooser (XDG portal) first", NULL },
+		{ "in-app-notifications", 0, 0, G_OPTION_ARG_NONE, &opt_in_app,
+		  "Show notifications as in-app toasts, never on the desktop", NULL },
 		{ "menu", 0, 0, G_OPTION_ARG_INT, &opt_menu, "Open menu N of the menu bar (1 = File) on frame 10", "N" },
 		{ "exec", 'e', 0, G_OPTION_ARG_STRING_ARRAY, &opt_exec,
 		  "Run a console command at start-up (repeatable)", "COMMAND" },
@@ -1296,9 +1855,14 @@ main (int   argc,
 		"  ui-studio --theme daylight --screenshot studio.png --frames 120\n"
 		"  ui-studio --menu 4 --screenshot theme-menu.png\n"
 		"  ui-studio --exec 'theme catppuccin-latte' --exec 'seek 6'\n"
+		"  ui-studio --look blueprint             (also View > Canvas Look)\n"
+		"  ui-studio --exec 'panel blocks-panel' --exec blocks   (run the block script)\n"
+		"  ui-studio --native-dialogs             (File > Open uses the desktop chooser)\n"
+		"  ui-studio --in-app-notifications --exec save   (the save toast)\n"
 		"\n"
-		"Keys: Ctrl+Q quit, Space play/pause, Ctrl+S save layout, Ctrl+O load layout,\n"
-		"Ctrl+N reset, F5 run the script, Home frames the graph. Console: type 'help'.\n"
+		"Keys: Ctrl+Q quit, Space play/pause (and run the blocks), Ctrl+S save layout,\n"
+		"Ctrl+Shift+S save as, Ctrl+O open a layout, Ctrl+N reset, F5 run the script,\n"
+		"Home frames the graph. Double-click a block script to run it. Console: type 'help'.\n"
 		"The layout file is $XDG_CACHE_HOME/libregnum/" LAYOUT_FILE ".\n");
 	if (!g_option_context_parse (ctx, &argc, &argv, &error))
 	{
@@ -1331,6 +1895,9 @@ main (int   argc,
 
 	app.canvas = lrg_canvas_new ();
 	lrg_canvas_set_paint_background (app.canvas, TRUE);
+	app.native_dialogs = opt_native;
+	if (opt_in_app)
+		lrg_notification_set_force_in_app (TRUE);
 	app.layout_path = g_build_filename (g_get_user_cache_dir (), "libregnum", LAYOUT_FILE, NULL);
 
 	/* The window: studio.yaml if it loads, else the same thing in C */
@@ -1341,6 +1908,8 @@ main (int   argc,
 	lrg_container_add_child (LRG_CONTAINER (app.canvas), root);
 	g_object_unref (root);
 	wire (&app, opt_theme, !opt_default_layout && opt_screenshot == NULL);
+	if (opt_look != NULL)
+		g_action_group_activate_action (G_ACTION_GROUP (app.actions), "canvas-look", g_variant_new_string (opt_look));
 
 	while (!grl_window_should_close (window) && !app.quit)
 	{
@@ -1350,10 +1919,16 @@ main (int   argc,
 
 		lrg_widget_set_size (LRG_WIDGET (app.canvas), w, h);
 		lrg_widget_set_size (app.root, w, h);
+		lrg_widget_set_size (LRG_WIDGET (app.toasts), w, h);
+
+		/* GIO work: file dialog folder listings, notification D-Bus
+		 * replies and portal responses complete on the main context */
+		g_main_context_iteration (NULL, FALSE);
 
 		/* Input, then the canvas clock: springs, timeline playback and
-		 * the viewport's render into its texture */
+		 * the viewport's render into its texture; then the blocks */
 		lrg_canvas_handle_input (app.canvas);
+		studio_update (&app, GetFrameTime ());
 		if (opt_menu > 0 && frame == 10)
 			lrg_menu_bar_open_menu (app.menubar, (guint) (opt_menu - 1), TRUE);
 		if (frame == 2)
@@ -1388,8 +1963,10 @@ main (int   argc,
 		UnloadModel (app.cube);
 	g_clear_object (&app.camera);
 	g_clear_object (&app.actions);
+	g_clear_object (&app.toasts);
 	g_clear_object (&app.canvas);
 	g_clear_object (&app.loader);
+	g_clear_pointer (&app.loops, g_array_unref);
 	g_free (app.default_layout);
 	g_free (app.layout_path);
 	return 0;

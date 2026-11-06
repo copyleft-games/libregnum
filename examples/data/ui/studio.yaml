@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # A menu bar over a dock area whose panels hold a viewport, a node graph,
-# a timeline, a script editor and a console. Everything is declared here:
+# a block editor, a timeline, a script editor and a console. Everything is declared here:
 # the menu model (named menus under `menus:`), a context menu, the
 # script language (`languages:`), the graph document (`graph:`), the
 # timeline tracks, keyframes and markers (`tracks:` / `markers:`), and
@@ -25,6 +25,8 @@
 #   timeline        LrgTimelineView
 #   console-panel   LrgDockPanel   holds `console`
 #   console         LrgTextEditor  read-only log
+#   blocks-panel    LrgDockPanel   holds `blocks`
+#   blocks          LrgBlockEditor palette + program from studio-blocks.yaml
 #
 # Actions the menus and shortcuts use (insert an "app" action group on
 # the canvas, or on the root, to make them work):
@@ -32,6 +34,7 @@
 #   app.cut app.copy app.paste app.toggle-grid app.reset-layout
 #   app.show-panel (string target: a panel id) app.about
 #   app.frame-all app.play app.add-node (string target: a node kind)
+#   app.canvas-look (string state: an LrgCanvasLook nick; a radio submenu)
 #
 # Load it with:
 #
@@ -76,11 +79,19 @@ menus:
     - {label: Scene, action: app.show-panel, target: scene-panel, icon: eye}
     - {label: Graph, action: app.show-panel, target: graph-panel}
     - {label: Script, action: app.show-panel, target: script-panel, icon: edit}
+    - {label: Blocks, action: app.show-panel, target: blocks-panel, icon: play}
     - {label: Timeline, action: app.show-panel, target: timeline-panel, icon: clock}
     - {label: Console, action: app.show-panel, target: console-panel}
   view:
     - {label: Show _Grid, action: app.toggle-grid}
     - {label: _Reset Layout, action: app.reset-layout, icon: refresh}
+    - label: Canvas _Look
+      submenu:
+        - {label: _Auto (theme), action: app.canvas-look, target: auto}
+        - {label: _Modern, action: app.canvas-look, target: modern}
+        - {label: _Blueprint, action: app.canvas-look, target: blueprint}
+        - {label: Ble_nder, action: app.canvas-look, target: blender}
+        - {label: _Neon, action: app.canvas-look, target: neon}
     - {section: panels, label: Panels}
   help:
     - {label: _About, action: app.about, icon: info}
@@ -199,6 +210,18 @@ root:
                   emit("level-complete")
                 end
               end
+
+        - type: dock-panel
+          id: blocks-panel
+          title: Blocks
+          icon: play
+          position: center
+          relative-to: script-panel
+          child:
+            type: block-editor
+            id: blocks
+            palette-width: 170
+            blocks-file: studio-blocks.yaml   # relative to this document
 
         - type: dock-panel
           id: timeline-panel
