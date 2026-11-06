@@ -222,10 +222,11 @@ lrg_gui_style_init_from_theme (LrgGuiStyle *style,
 	g_return_if_fail (style != NULL);
 	g_return_if_fail (LRG_IS_THEME (theme));
 
-	/* Start from the compact editor metrics, then recolour */
-	lrg_gui_style_init (style, NULL, scale);
 	if (scale <= 0.0f)
 		scale = 1.0f;
+
+	/* Start from the compact editor metrics, then recolour */
+	lrg_gui_style_init (style, NULL, scale);
 
 #define R(role) lrg_theme_get_color (theme, LRG_THEME_COLOR_##role)
 	c = style->colors;

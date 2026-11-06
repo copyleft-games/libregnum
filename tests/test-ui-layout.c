@@ -646,6 +646,73 @@ test_resolve_look_blends_with_springs (void)
 	g_assert_cmpuint (look.background.r, ==, 255);
 }
 
+static void
+test_theme_switch_relayouts (void)
+{
+	g_autoptr(LrgCanvas) canvas = lrg_canvas_new ();
+	g_autoptr(LrgTheme)  theme = lrg_theme_new ();
+	TestBlock           *a = TEST_BLOCK (block_new (10.0f, 10.0f));
+	guint                before;
+
+	lrg_widget_set_theme (LRG_WIDGET (canvas), theme);
+	lrg_widget_set_size (LRG_WIDGET (canvas), 100.0f, 100.0f);
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (a));
+	lrg_canvas_record (canvas);
+	before = a->arranged;
+
+	/* Editing a metric re-lays out the whole tree on the next frame */
+	lrg_theme_set_metric (theme, LRG_THEME_METRIC_FONT_SIZE, 22.0f);
+	lrg_canvas_record (canvas);
+	g_assert_cmpuint (a->arranged, >, before);
+
+	/* ...and only once */
+	before = a->arranged;
+	lrg_canvas_record (canvas);
+	g_assert_cmpuint (a->arranged, ==, before);
+
+	g_object_unref (a);
+}
+
+static void
+test_rule_edit_invalidates (void)
+{
+	g_autoptr(LrgTheme)     theme = lrg_theme_new ();
+	g_autoptr(LrgStyleRule) rule = lrg_style_rule_new ("TestBlock", NULL, LRG_UI_PART_BOX,
+	                                                   LRG_WIDGET_STATE_NONE);
+	g_autoptr(LrgWidget)    w = block_new (10.0f, 10.0f);
+	GrlColor                a = { 10, 0, 0, 255 };
+	GrlColor                b = { 20, 0, 0, 255 };
+	LrgPartLook             look;
+
+	lrg_part_look_set_background (lrg_style_rule_get_look (rule), &a);
+	lrg_theme_add_style_rule (theme, rule);
+	lrg_widget_set_theme (w, theme);
+	lrg_widget_resolve_look (w, LRG_UI_PART_BOX, &look);
+	g_assert_cmpuint (look.background.r, ==, 10);
+
+	/* In-place edit + notification drops the cached resolution */
+	lrg_part_look_set_background (lrg_style_rule_get_look (rule), &b);
+	lrg_theme_style_rules_changed (theme);
+	lrg_widget_resolve_look (w, LRG_UI_PART_BOX, &look);
+	g_assert_cmpuint (look.background.r, ==, 20);
+}
+
+static void
+test_remove_all_relayouts (void)
+{
+	g_autoptr(LrgVBox) box = lrg_vbox_new ();
+	LrgWidget         *a = block_new (10.0f, 10.0f);
+
+	lrg_container_add_child (LRG_CONTAINER (box), a);
+	lrg_widget_allocate (LRG_WIDGET (box), 0.0f, 0.0f, 100.0f, 100.0f);
+	g_assert_false (lrg_widget_get_needs_layout (LRG_WIDGET (box)));
+	lrg_container_remove_all (LRG_CONTAINER (box));
+	g_assert_true (lrg_widget_get_needs_layout (LRG_WIDGET (box)));
+	g_assert_null (lrg_widget_get_parent (a));
+
+	g_object_unref (a);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -672,6 +739,9 @@ main (int   argc,
 	g_test_add_func ("/ui/widget/legacy-callbacks", test_legacy_widgets_use_callbacks);
 	g_test_add_func ("/ui/widget/paint-box", test_paint_box_layers);
 	g_test_add_func ("/ui/widget/look-blend", test_resolve_look_blends_with_springs);
+	g_test_add_func ("/ui/layout/theme-switch", test_theme_switch_relayouts);
+	g_test_add_func ("/ui/layout/remove-all", test_remove_all_relayouts);
+	g_test_add_func ("/ui/style/rule-edit-invalidates", test_rule_edit_invalidates);
 
 	return g_test_run ();
 }

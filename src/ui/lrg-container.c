@@ -24,6 +24,7 @@ typedef struct
     GList  *children;  /* List of LrgWidget* (owned references) */
     gfloat  spacing;
     gfloat  padding;
+    gboolean disposing;
 } LrgContainerPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgContainer, lrg_container, LRG_TYPE_WIDGET)
@@ -184,6 +185,9 @@ lrg_container_dispose (GObject *object)
     LrgContainer *self = LRG_CONTAINER (object);
 
     /* Remove all children (releases references) */
+    LrgContainerPrivate *priv = lrg_container_get_instance_private (self);
+
+    priv->disposing = TRUE;
     lrg_container_remove_all (self);
 
     G_OBJECT_CLASS (lrg_container_parent_class)->dispose (object);
@@ -391,6 +395,14 @@ lrg_container_remove_all (LrgContainer *self)
 
     g_list_free (priv->children);
     priv->children = NULL;
+
+    /* Same contract as add/remove: lay out now and mark for the canvas
+     * (not while disposing: the container is going away) */
+    if (!priv->disposing)
+    {
+        lrg_container_layout_children (self);
+        lrg_widget_queue_layout (LRG_WIDGET (self));
+    }
 }
 
 /*

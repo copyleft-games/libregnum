@@ -747,6 +747,29 @@ test_focus_cleared_on_destroy (CanvasFixture *fixture,
 	frame_nav (fixture->canvas, LRG_NAV_DIRECTION_NEXT);
 }
 
+static void
+test_hidden_focus_dropped (CanvasFixture *fixture,
+                           gconstpointer  user_data)
+{
+	g_autoptr(GString) log = g_string_new (NULL);
+	TestProbe         *parent = probe_new ("parent", log, 0, 0, 200, 200, FALSE);
+	TestProbe         *a = probe_new ("a", log, 0, 0, 40, 20, TRUE);
+
+	lrg_container_add_child (LRG_CONTAINER (parent), LRG_WIDGET (a));
+	lrg_container_add_child (LRG_CONTAINER (fixture->canvas), LRG_WIDGET (parent));
+	lrg_canvas_set_focused_widget (fixture->canvas, LRG_WIDGET (a));
+
+	/* Hiding the focus drops it on the next frame; keys reach nobody */
+	lrg_widget_set_visible (LRG_WIDGET (a), FALSE);
+	g_string_truncate (log, 0);
+	frame_key (fixture->canvas, GRL_KEY_A);
+	g_assert_null (lrg_canvas_get_focused_widget (fixture->canvas));
+	g_assert_false (log_has (log, "parent:key"));
+
+	g_object_unref (a);
+	g_object_unref (parent);
+}
+
 /* ==========================================================================
  * Popups
  * ========================================================================== */
@@ -954,6 +977,7 @@ main (int   argc,
     ADD ("/ui/input/focus/arrows-handled", test_arrows_handled_by_widget);
     ADD ("/ui/input/focus/activate-cancel", test_activate_and_cancel);
     ADD ("/ui/input/focus/weak", test_focus_cleared_on_destroy);
+    ADD ("/ui/input/focus/hidden-dropped", test_hidden_focus_dropped);
     g_test_add_func ("/ui/input/popup/placement", test_place_popup_flips);
     ADD ("/ui/input/popup/light-dismiss", test_popup_light_dismiss);
     ADD ("/ui/input/popup/modal", test_popup_modal_traps);

@@ -1339,6 +1339,14 @@ lrg_theme_clear_style_rules (LrgTheme *self)
 	notify_changed (self);
 }
 
+void
+lrg_theme_style_rules_changed (LrgTheme *self)
+{
+	g_return_if_fail (LRG_IS_THEME (self));
+
+	notify_changed (self);
+}
+
 GPtrArray *
 lrg_theme_get_style_rules (LrgTheme *self)
 {

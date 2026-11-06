@@ -187,7 +187,9 @@ static const gchar *fragment_source =
 	"            vec4 body = premul (fill);\n"
 	"            if (prim == 3) {\n"
 	"                vec2 f = (v_pos - v_rect.xy) / max (v_rect.zw - v_rect.xy, vec2 (1e-4));\n"
-	"                body *= texture (u_tex, mix (v_extra.xy, v_extra.zw, f));\n"
+	/* textures (images, font atlases) are straight alpha */
+	"                vec4 t = texture (u_tex, mix (v_extra.xy, v_extra.zw, f));\n"
+	"                body *= vec4 (t.rgb * t.a, t.a);\n"
 	"            }\n"
 	"            float bw = v_params.x;\n"
 	"            if (bw > 0.0)\n"

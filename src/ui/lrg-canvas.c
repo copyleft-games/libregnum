@@ -60,6 +60,10 @@ struct _LrgCanvas
 
 	/* Rendering */
 	LrgPaintList *paint;
+
+	/* Theme last laid out with, to re-layout on switches and edits */
+	LrgTheme     *seen_theme;   /* weak */
+	guint         seen_generation;
 };
 
 G_DEFINE_FINAL_TYPE (LrgCanvas, lrg_canvas, LRG_TYPE_CONTAINER)
@@ -202,6 +206,7 @@ lrg_canvas_dispose (GObject *object)
 
 	g_clear_weak_pointer (&self->focused_widget);
 	g_clear_weak_pointer (&self->hovered_widget);
+	g_clear_weak_pointer (&self->seen_theme);
 	if (self->hover_path != NULL)
 		g_ptr_array_set_size (self->hover_path, 0);
 	g_clear_object (&self->capture);
@@ -934,6 +939,12 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	g_return_if_fail (LRG_IS_CANVAS (self));
 	g_return_if_fail (input != NULL);
 
+	/* Focus on a widget that was hidden or disabled since is dropped,
+	 * so keys stop reaching it (and bubbling to its ancestors) */
+	if (self->focused_widget != NULL &&
+	    (!visible_chain (self->focused_widget) || !lrg_widget_get_enabled (self->focused_widget)))
+		set_focus (self, NULL, FALSE);
+
 	/* End last frame's activation flash */
 	if (self->pulse != NULL)
 	{
@@ -1410,14 +1421,42 @@ paint_veil (LrgCanvas  *self,
 	                     lrg_widget_get_width (root), lrg_widget_get_height (root), 0.0f, &c);
 }
 
+/* queue_layout_all: mark a whole subtree (theme metrics changed) */
+static void
+queue_layout_all (LrgWidget *widget)
+{
+	GList *l;
+
+	lrg_widget_queue_layout (widget);
+	if (LRG_IS_CONTAINER (widget))
+		for (l = lrg_container_get_children (LRG_CONTAINER (widget)); l != NULL; l = l->next)
+			queue_layout_all (LRG_WIDGET (l->data));
+}
+
 LrgPaintList *
 lrg_canvas_record (LrgCanvas *self)
 {
 	LrgWidget *root;
+	LrgTheme  *theme;
 	guint      i;
 
 	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
 	root = LRG_WIDGET (self);
+
+	/* A different or edited theme can change every preferred size
+	 * (font sizes, control heights): lay the whole tree out again */
+	theme = lrg_widget_get_theme (root);
+	if (theme != self->seen_theme || lrg_theme_get_generation (theme) != self->seen_generation)
+	{
+		if (self->seen_theme != NULL || self->seen_generation != 0)
+		{
+			queue_layout_all (root);
+			for (i = 0; i < self->popups->len; i++)
+				queue_layout_all (g_array_index (self->popups, PopupEntry, i).popup);
+		}
+		g_set_weak_pointer (&self->seen_theme, theme);
+		self->seen_generation = lrg_theme_get_generation (theme);
+	}
 
 	/* Layout what changed */
 	lrg_widget_layout (root);

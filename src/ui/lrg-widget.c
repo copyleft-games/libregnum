@@ -1421,6 +1421,9 @@ lrg_widget_add_class (LrgWidget   *self,
 		return;
 	q = g_quark_from_string (style_class);
 	g_array_append_val (priv->classes, q);
+
+	/* A class can change sizes (e.g. a "title" label) */
+	lrg_widget_queue_layout (self);
 }
 
 void
@@ -1441,6 +1444,7 @@ lrg_widget_remove_class (LrgWidget   *self,
 		if (g_array_index (priv->classes, GQuark, i) == q)
 		{
 			g_array_remove_index (priv->classes, i);
+			lrg_widget_queue_layout (self);
 			return;
 		}
 	}

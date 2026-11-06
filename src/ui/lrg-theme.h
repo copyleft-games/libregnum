@@ -824,6 +824,17 @@ LRG_AVAILABLE_IN_ALL
 void lrg_theme_clear_style_rules (LrgTheme *self);
 
 /**
+ * lrg_theme_style_rules_changed:
+ * @self: an #LrgTheme
+ *
+ * Call after editing the look of a rule that is already in the theme
+ * (lrg_style_rule_get_look() returns it for in-place edits): drops the
+ * cached resolutions and emits #LrgTheme::changed.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_theme_style_rules_changed (LrgTheme *self);
+
+/**
  * lrg_theme_get_style_rules:
  * @self: an #LrgTheme
  *

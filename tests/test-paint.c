@@ -781,6 +781,39 @@ test_gpu_triangle (void)
 }
 
 static void
+test_gpu_image_alpha_not_brightened (void)
+{
+	g_autoptr(LrgPaintList) list = NULL;
+	g_autoptr(GrlTexture)   tex = NULL;
+	g_autoptr(GrlImage)     src = NULL;
+	guint8                  pixels[4 * 4 * 4];
+	guint                   i;
+	Image                   img;
+	Color                   c;
+
+	SKIP_WITHOUT_GL ();
+
+	/* A half-transparent white texture over black must give ~50% grey,
+	 * not white: texels are straight alpha and must be premultiplied
+	 * (this is what anti-aliased glyph edges rely on) */
+	for (i = 0; i < sizeof (pixels); i += 4)
+	{
+		pixels[i] = pixels[i + 1] = pixels[i + 2] = 255;
+		pixels[i + 3] = 128;
+	}
+	src = grl_image_new_from_pixels (4, 4, GRL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8, pixels);
+	tex = grl_texture_new_from_image (src);
+
+	list = lrg_paint_list_new ();
+	lrg_paint_list_image (list, tex, NULL, 0.0f, 0.0f, 128.0f, 128.0f, 0.0f, NULL);
+	img = render_list (list);
+	c = pixel (&img, 64, 64);
+	g_assert_cmpuint (c.r, >, 110);
+	g_assert_cmpuint (c.r, <, 145);
+	UnloadImage (img);
+}
+
+static void
 draw_green_square (gpointer user_data)
 {
 	DrawRectangle (0, 0, 128, 128, (Color){ 0, 255, 0, 255 });
@@ -909,6 +942,7 @@ main (int   argc,
 	g_test_add_func ("/paint/gpu/clip", test_gpu_clip);
 	g_test_add_func ("/paint/gpu/order-and-alpha", test_gpu_order_and_alpha);
 	g_test_add_func ("/paint/gpu/triangle", test_gpu_triangle);
+	g_test_add_func ("/paint/gpu/image-alpha", test_gpu_image_alpha_not_brightened);
 	g_test_add_func ("/paint/gpu/callback-clipped", test_gpu_callback_clipped);
 	g_test_add_func ("/paint/gpu/text-batches", test_gpu_text_batches_with_shapes);
 	g_test_add_func ("/paint/gpu/measure-matches-layout", test_gpu_measure_matches_layout);
