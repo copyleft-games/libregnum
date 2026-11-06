@@ -1,0 +1,327 @@
+* File browser
+:PROPERTIES:
+:CUSTOM_ID: file-browser
+:END:
+=LrgFileBrowser= lets the player or the tool user walk the file system and pick files to open or save, or a folder, without a terminal: save slots and mod folders in a game, levels and assets in a tool such as =examples/ui-studio=. =LrgFileFilter= describes which files a filter lets through. For a ready-made modal dialog (or the desktop's own chooser through the XDG portal) use [[file:file-dialog.org][LrgFileDialog]], which wraps a browser.
+
+The browser is an =LrgContainer= that composes real widgets (an [[file:breadcrumb.org][LrgBreadcrumb]] for the path, two [[file:text-input.org][LrgTextInput]] fields for a typed path and the file name, an [[file:combo-box.org][LrgComboBox]] for the filters) and draws the rest itself: the toolbar buttons, the places sidebar and the virtualized file list.
+
+#+begin_example
++------------------------------------------------------------------+
+| <- -> ^   / > home > me > Saves             [edit] [eye] [reload] |  toolbar
++---------------+--------------------------------------------------+
+| * Game Saves  | Name                          Size    Modified ^ |  header
+| Places        | [] Slot 1                                        |
+|  Home         | [] autosave.dat                1.2 kB  14:02      |  rows
+|  Documents    | [] slot-1.dat                  3.4 kB  12 Mar     |
+|  File System  |                                                  |
+| Bookmarks     |                                                  |
+| Devices       |                                                  |
++---------------+--------------------------------------------------+
+| Name [ slot-2 .................... ]        [ Saves (*.dat)  v ] |  footer
++------------------------------------------------------------------+
+#+end_example
+
+The footer appears in =LRG_FILE_BROWSER_MODE_SAVE= (name field) or when filters were added (filter list).
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: file-browser-creation
+:END:
+#+begin_src C
+g_autoptr(GFile)         saves = g_file_new_for_path (save_dir);
+g_autoptr(LrgFileFilter) filter = lrg_file_filter_new ("Saves");
+LrgFileBrowser          *browser;
+
+lrg_file_filter_add_suffix (filter, "dat");
+
+/* show-system-places: FALSE keeps the sidebar to the game's own
+ * places and never touches the volume monitor */
+browser = g_object_new (LRG_TYPE_FILE_BROWSER,
+                        "mode", LRG_FILE_BROWSER_MODE_SAVE,
+                        "location", saves,
+                        "show-system-places", FALSE,
+                        NULL);
+lrg_file_browser_add_place (browser, "Save slots", saves, LRG_ICON_STAR);
+lrg_file_browser_add_filter (browser, filter);
+lrg_file_browser_set_current_name (browser, "slot-1");
+
+g_signal_connect (browser, "file-activated", G_CALLBACK (on_file_chosen), game);
+lrg_container_add_child (LRG_CONTAINER (panel), LRG_WIDGET (browser));
+g_object_unref (browser);
+#+end_src
+
+=lrg_file_browser_new()= starts in =LRG_FILE_BROWSER_MODE_OPEN= at the process's working directory with the system places shown. Folders load asynchronously on the thread-default main context: the list is empty (with pulsing dots) until that context runs. Games that drive their own loop must iterate it (=g_main_context_iteration (NULL, FALSE)= once per frame is enough).
+
+** Modes
+:PROPERTIES:
+:CUSTOM_ID: file-browser-modes
+:END:
+| =LrgFileBrowserMode=                     | Rows listed     | Selection           | Extra                                                                                       |
+|------------------------------------------+-----------------+---------------------+---------------------------------------------------------------------------------------------|
+| =LRG_FILE_BROWSER_MODE_OPEN=             | folders + files | one row             |                                                                                             |
+| =LRG_FILE_BROWSER_MODE_OPEN_MULTIPLE=    | folders + files | Ctrl / Shift, Ctrl+A | Space toggles the cursor row                                                                |
+| =LRG_FILE_BROWSER_MODE_SAVE=             | folders + files | one row             | Name field; picking a file copies its name; =lrg_file_browser_get_save_file()=              |
+| =LRG_FILE_BROWSER_MODE_SELECT_FOLDER=    | folders only    | one row             | Files are not listed at all                                                                 |
+
+Leaving =OPEN_MULTIPLE= keeps only the cursor row selected. =lrg_file_browser_mode_get_type()= registers the enum (nicks =open=, =open-multiple=, =save=, =select-folder=).
+
+*** Saving
+In =SAVE= mode =lrg_file_browser_get_save_file()= resolves the name field against the location ("~/x" and absolute paths work too) and appends the current filter's default extension (=lrg_file_filter_get_default_extension()=) when the name has none: "slot1" with a "Saves (=*.dat=)" filter is =slot1.dat=, "slot1.sav" stays as typed, a leading dot does not count as an extension. Switching filters swaps a matching extension in the field ("map.png" becomes "map.jpg"). Enter in the name field emits =file-activated= with the save file, or enters the folder when the name is one. Asking before replacing an existing file is the job of the caller ([[file:file-dialog.org][LrgFileDialog]] does it).
+
+** Loading and the folder monitor
+:PROPERTIES:
+:CUSTOM_ID: file-browser-loading
+:END:
+- Navigation cancels any load in flight (=GCancellable=), empties the list, and runs =g_file_enumerate_children_async()= then =g_file_enumerator_next_files_async()= in batches of 256. Each batch is filtered and sorted into the visible list as it arrives, so huge folders show their first rows at once. =LrgFileBrowser:loading= is =TRUE= until the end; the rows fade and slide in when the first batch lands.
+- A failure (missing folder, permission denied ...) is kept in =lrg_file_browser_get_error()= and drawn as a row with a warning icon in the =DANGER= colour.
+- A =GFileMonitor= watches the shown folder. Changes are coalesced into one reload (an idle callback). =lrg_file_browser_reload()= (F5, the reload button) does the same: the old list stays visible until the new one is complete; selection and cursor are carried over by name, and a selected file that disappeared emits =selection-changed=.
+- Only the rows inside the viewport are painted: a folder of thousands of files costs about one screen of instances.
+
+The attributes requested are name, display name, type, size, hidden / backup flags, symlink flag, the fast (name-based) content type, modification time and =access::can-read=. Folders that cannot be read show a padlock.
+
+** Filters
+:PROPERTIES:
+:CUSTOM_ID: file-browser-filters
+:END:
+=LrgFileFilter= is a =GObject= with a name and three kinds of rules; a file passes when any rule matches, and a filter without rules passes everything.
+
+| Rule        | Added with                         | Matching                                                                      |
+|-------------+------------------------------------+-------------------------------------------------------------------------------|
+| Glob        | =lrg_file_filter_add_pattern()=    | ='*'= and ='?'= on the file name, ignoring case ("*.png" accepts "A.PNG")      |
+| Suffix      | =lrg_file_filter_add_suffix()=     | ="png"= is the same as "*.png"; a leading dot is accepted                      |
+| MIME type   | =lrg_file_filter_add_mime_type()=  | Exact types match subclasses (=text/plain= accepts C sources); ="image/*"= takes a whole family |
+
+#+begin_src C
+LrgFileFilter *images = lrg_file_filter_new ("Images");
+
+lrg_file_filter_add_mime_type (images, "image/png");
+lrg_file_filter_add_suffix (images, "qoi");          /* not in shared-mime-info */
+lrg_file_browser_add_filter (browser, images);
+
+gboolean ok = lrg_file_filter_match_name (images, "shot.PNG", NULL);   /* TRUE */
+#+end_src
+
+=lrg_file_filter_match_name()= takes an optional content type (guessed from the name when the filter has MIME rules), =lrg_file_filter_match()= reads it from a =GFileInfo=. The rule lists are read back with =lrg_file_filter_get_patterns()=, =lrg_file_filter_get_suffixes()= and =lrg_file_filter_get_mime_types()= (also the =patterns=, =suffixes= and =mime-types= =GStrv= properties; setting one replaces its list). =lrg_file_filter_get_name()= / =lrg_file_filter_set_name()= hold the name shown in the combo.
+
+In the browser, folders are never filtered out. =lrg_file_browser_add_filter()= adds to the combo (the first filter becomes current), =lrg_file_browser_set_filter()= picks one (adding it when missing; =NULL= shows all files and the combo shows "All files"), =lrg_file_browser_remove_filter()= falls back to the first remaining one, =lrg_file_browser_get_filters()= is the =GListModel= of filters. A selected file the new filter hides is unselected.
+
+** Places
+:PROPERTIES:
+:CUSTOM_ID: file-browser-places
+:END:
+The sidebar lists, top to bottom:
+1. *Application places* from =lrg_file_browser_add_place()= (a label, a folder, an =LrgIcon=): save folders, mod folders, the project's assets. Adding a folder twice updates its label and icon; =lrg_file_browser_remove_place()= removes one.
+2. *Places* (heading): Home, the XDG user folders that exist (=g_get_user_special_dir()=: Desktop, Documents, Downloads, Music, Pictures, Videos) and File System.
+3. *Bookmarks*: =file://= lines of =~/.config/gtk-3.0/bookmarks= (=g_get_user_config_dir()=) whose folder exists, with their label.
+4. *Devices*: mounts from =GVolumeMonitor= (kept up to date on =mount-added= / =mount-removed=).
+
+Groups 2 to 4 are the system places, shown while =show-system-places= is set; set it to =FALSE= at construction for a game that should only offer its own folders. =lrg_file_browser_get_n_places()=, =lrg_file_browser_get_place_label()= and =lrg_file_browser_get_place_location()= read the sidebar in order. The place showing the current folder is drawn in the selection colour with an accent bar on its leading edge; a hover pill slides between places. =show-sidebar= (=lrg_file_browser_set_show_sidebar()=) hides the sidebar; it takes =sidebar-width= units, at most 40 % of the browser.
+
+** Navigation and history
+:PROPERTIES:
+:CUSTOM_ID: file-browser-navigation
+:END:
+=lrg_file_browser_set_location()= (or the =location= property, or =lrg_file_browser_set_location_path()= with "~" and relative paths) navigates and pushes the previous folder on the back history, clearing the forward history; navigating to the shown folder does nothing. =lrg_file_browser_go_back()=, =lrg_file_browser_go_forward()= and =lrg_file_browser_go_up()= move through it; =lrg_file_browser_can_go_back()=, =lrg_file_browser_can_go_forward()= and =lrg_file_browser_can_go_up()= say whether they can (the toolbar buttons dim and stop reacting when not). Going up selects the folder just left. =lrg_file_browser_get_location()= returns the folder shown.
+
+The breadcrumb shows one segment per folder from the file system root, or from "Home" when the folder is inside the home folder; it collapses its middle into "..." when narrow. Clicking a segment navigates there.
+
+The path field replaces the breadcrumb while =editing-location= is set (=lrg_file_browser_set_editing_location()=, Ctrl+L, the pencil button, or typing "/" or "~" in the list). It starts with the current path. Enter on a folder navigates; on a file it opens the file's folder, selects the file and emits =file-activated= (in =SAVE= mode it fills the name field instead); a path that leads nowhere keeps the field open. Escape or a click in the list goes back to the breadcrumb.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: file-browser-behaviour
+:END:
+| Input                                   | Action                                                                                   |
+|-----------------------------------------+------------------------------------------------------------------------------------------|
+| Click a row                             | Select it (Ctrl toggles, Shift selects from the anchor in =OPEN_MULTIPLE=)                |
+| Double click a row (0.4 s canvas time)  | Folder: enter it. File: =file-activated=                                                  |
+| Click below the rows                    | Clear the selection                                                                      |
+| Click a column header                   | Sort by it; again flips the order                                                         |
+| Click a place / breadcrumb segment      | Go there                                                                                 |
+| Toolbar buttons                         | Back, forward, up, edit path, show hidden files, reload                                  |
+| Wheel / touch pan over list or sidebar  | Smooth scroll with rubber band; overlay scrollbars fade in                               |
+| Up / Down, Home / End, PageUp / PageDown| Move the cursor and select (Shift extends in =OPEN_MULTIPLE=)                             |
+| Enter, gamepad A                        | =lrg_file_browser_activate_cursor()=: enter a folder or activate a file                   |
+| Backspace, Alt+Up                       | Parent folder                                                                            |
+| Alt+Left / Alt+Right                    | Back / forward (swapped in right-to-left)                                                |
+| Alt+Home                                | Home folder                                                                              |
+| Ctrl+L, typing "/" or "~"               | Path field                                                                               |
+| Ctrl+H                                  | Toggle hidden files                                                                      |
+| Ctrl+A                                  | Select all (=OPEN_MULTIPLE=)                                                              |
+| F5                                      | Reload                                                                                   |
+| Typing letters                          | Type-ahead: jump to the first name starting with the text (case-insensitive); the same letter again cycles; the text resets after 1 s of canvas time |
+| Escape, gamepad B                       | Close the path field; otherwise left to the parent (a dialog cancels)                    |
+
+The list keys apply while the browser itself has focus (a click in the list or sidebar focuses it); Alt+arrows, Ctrl+L, Ctrl+H and F5 also work while the name or path field is focused. Left and Right without Alt are left to focus navigation.
+
+** Selection and entries
+:PROPERTIES:
+:CUSTOM_ID: file-browser-selection
+:END:
+- =lrg_file_browser_get_n_entries()=, =lrg_file_browser_get_entry_info()= (the =GFileInfo=) and =lrg_file_browser_get_entry_file()= read the visible list in display order.
+- =lrg_file_browser_get_cursor()= is the keyboard cursor row (-1 for none).
+- =lrg_file_browser_get_selected_files()= returns a new =GListModel= of the selected =GFile= items (folders included), =lrg_file_browser_get_selected_file()= the first one.
+- =lrg_file_browser_select_file()= selects a file of the current folder and scrolls to it; while the folder is loading it is selected when it shows up. =lrg_file_browser_select_all()= and =lrg_file_browser_unselect_all()= do what they say.
+- =lrg_file_browser_get_current_name()= / =lrg_file_browser_set_current_name()= hold the name field text.
+
+** Sorting and hidden files
+:PROPERTIES:
+:CUSTOM_ID: file-browser-sorting
+:END:
+=lrg_file_browser_set_sort()= takes an =LrgFileBrowserSort= (=LRG_FILE_BROWSER_SORT_NAME=, =LRG_FILE_BROWSER_SORT_SIZE=, =LRG_FILE_BROWSER_SORT_MODIFIED=; type =lrg_file_browser_sort_get_type()=) and a direction; =lrg_file_browser_get_sort_column()= and =lrg_file_browser_get_sort_ascending()= read it back. Names compare case-insensitively with numbers in natural order (=g_utf8_collate_key_for_filename()=, "file2" before "file10"); ties fall back to the name. With =folders-first= (=lrg_file_browser_set_folders_first()=, =lrg_file_browser_get_folders_first()=, on by default) folders stay above files in both directions.
+
+Hidden files (dot files, backup files ending in "~", names listed in a folder's =.hidden=) are left out unless =show-hidden= is set (=lrg_file_browser_set_show_hidden()=, =lrg_file_browser_get_show_hidden()=, Ctrl+H, the eye button); shown, they are drawn muted.
+
+** Looks and motion
+:PROPERTIES:
+:CUSTOM_ID: file-browser-looks
+:END:
+Rows show a type icon (built-in paint icons: folders in the accent colour, a padlock for unreadable folders, pictures in =LINK=, audio / video in =SUCCESS=, archives in =WARNING=, programs in =DANGER=, text with a pencil, a page otherwise), the name, the size (=g_format_size()=, muted, end-aligned) and the modification date (time for today, day and month this year, else with the year). Narrow lists drop the date column below 420 units and the size column below 280.
+
+Motion follows the widget's =LrgMotion=, all driven by the canvas clock: the hover pill slides between rows and places and fades in and out, the selection slides to the cursor row when it moves by keyboard (jumps over 8 rows snap), the list fades and rises into place after a navigation, scrolling glides with a rubber band, and toolbar buttons blend their hover and press looks and squeeze their icon when pressed. A new browser does not animate in. The well gets an accent border while the browser has focus; after keyboard navigation the cursor row carries a focus-coloured ring.
+
+In right-to-left layouts (=lrg_widget_is_rtl()=) everything mirrors: the sidebar moves to the right, the back / forward arrows swap, columns run from the right with names right-aligned, and Alt+Left / Alt+Right swap.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: file-browser-api
+:END:
+| Function                                         | Purpose                                                    |
+|--------------------------------------------------+------------------------------------------------------------|
+| =lrg_file_browser_new()=                         | New browser (OPEN, working directory)                      |
+| =lrg_file_browser_get_mode()= / =lrg_file_browser_set_mode()= | Mode                                          |
+| =lrg_file_browser_get_location()= / =lrg_file_browser_set_location()= | Folder shown; navigate                 |
+| =lrg_file_browser_set_location_path()=           | Navigate to a path ("~", relative)                         |
+| =lrg_file_browser_go_back()= / =lrg_file_browser_go_forward()= / =lrg_file_browser_go_up()= | History and parent  |
+| =lrg_file_browser_can_go_back()= / =lrg_file_browser_can_go_forward()= / =lrg_file_browser_can_go_up()= | Whether they can |
+| =lrg_file_browser_reload()=                      | List again, keeping the selection                          |
+| =lrg_file_browser_get_loading()=                 | Enumeration running                                        |
+| =lrg_file_browser_get_error()=                   | Error of the last load                                     |
+| =lrg_file_browser_get_show_hidden()= / =lrg_file_browser_set_show_hidden()= | Hidden files                    |
+| =lrg_file_browser_get_folders_first()= / =lrg_file_browser_set_folders_first()= | Folders on top              |
+| =lrg_file_browser_set_sort()=                    | Sort column and direction                                  |
+| =lrg_file_browser_get_sort_column()= / =lrg_file_browser_get_sort_ascending()= | Current sort                 |
+| =lrg_file_browser_add_filter()= / =lrg_file_browser_remove_filter()= | Filter list                             |
+| =lrg_file_browser_get_filters()=                 | =GListModel= of filters                                    |
+| =lrg_file_browser_get_filter()= / =lrg_file_browser_set_filter()= | Current filter                              |
+| =lrg_file_browser_get_current_name()= / =lrg_file_browser_set_current_name()= | Name field                    |
+| =lrg_file_browser_get_save_file()=               | File SAVE would write (extension added)                    |
+| =lrg_file_browser_get_n_entries()=               | Visible rows                                               |
+| =lrg_file_browser_get_entry_info()= / =lrg_file_browser_get_entry_file()= | Row info / file                       |
+| =lrg_file_browser_get_cursor()=                  | Cursor row                                                 |
+| =lrg_file_browser_activate_cursor()=             | Enter on the cursor row                                    |
+| =lrg_file_browser_select_file()=                 | Select a file (deferred while loading)                     |
+| =lrg_file_browser_select_all()= / =lrg_file_browser_unselect_all()= | Whole selection                           |
+| =lrg_file_browser_get_selected_files()= / =lrg_file_browser_get_selected_file()= | Selection                  |
+| =lrg_file_browser_add_place()= / =lrg_file_browser_remove_place()= | Application places                         |
+| =lrg_file_browser_get_n_places()= / =lrg_file_browser_get_place_label()= / =lrg_file_browser_get_place_location()= | Sidebar contents |
+| =lrg_file_browser_get_show_sidebar()= / =lrg_file_browser_set_show_sidebar()= | Sidebar visibility             |
+| =lrg_file_browser_get_show_system_places()= / =lrg_file_browser_set_show_system_places()= | System places      |
+| =lrg_file_browser_get_editing_location()= / =lrg_file_browser_set_editing_location()= | Path field         |
+| =lrg_file_browser_mode_get_type()= / =lrg_file_browser_sort_get_type()= | Enum types                           |
+| =lrg_file_filter_new()=                          | New filter                                                 |
+| =lrg_file_filter_get_name()= / =lrg_file_filter_set_name()= | Filter name                                    |
+| =lrg_file_filter_add_pattern()= / =lrg_file_filter_add_suffix()= / =lrg_file_filter_add_mime_type()= | Rules  |
+| =lrg_file_filter_get_patterns()= / =lrg_file_filter_get_suffixes()= / =lrg_file_filter_get_mime_types()= | Rule lists |
+| =lrg_file_filter_match_name()= / =lrg_file_filter_match()= | Test a name or a =GFileInfo=                     |
+| =lrg_file_filter_get_default_extension()=        | Extension SAVE adds                                        |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: file-browser-properties
+:END:
+| Property             | Type                 | Default             | Notes                                                    |
+|----------------------+----------------------+---------------------+----------------------------------------------------------|
+| =mode=               | =LrgFileBrowserMode= | =open=              |                                                          |
+| =location=           | =GFile=              | working directory   | Setting navigates                                        |
+| =show-hidden=        | =gboolean=           | =FALSE=             |                                                          |
+| =folders-first=      | =gboolean=           | =TRUE=              |                                                          |
+| =sort-column=        | =LrgFileBrowserSort= | =name=              |                                                          |
+| =sort-ascending=     | =gboolean=           | =TRUE=              |                                                          |
+| =filter=             | =LrgFileFilter=      | =NULL=              | Current filter                                           |
+| =filters=            | =GListModel=         |                     | Read-only                                                |
+| =current-name=       | =gchar *=            | =""=                | Name field                                               |
+| =show-sidebar=       | =gboolean=           | =TRUE=              |                                                          |
+| =show-system-places= | =gboolean=           | =TRUE=              | Construct property; =FALSE= skips the volume monitor     |
+| =sidebar-width=      | =gfloat=             | 176                 | At most 40 % of the width                                |
+| =row-height=         | =gfloat=             | 0                   | 0 = theme =ROW_HEIGHT=                                   |
+| =editing-location=   | =gboolean=           | =FALSE=             | Path field shown                                         |
+| =loading=            | =gboolean=           | =FALSE=             | Read-only                                                |
+
+| Signal              | Arguments | When                                                                                       |
+|---------------------+-----------+--------------------------------------------------------------------------------------------|
+| =file-activated=    | =GFile=   | A file (never a folder) is double clicked / activated, typed in the path field, or Enter in the SAVE name field |
+| =selection-changed= |           | Rows selected or unselected, by the user or by code (navigation clears the selection)       |
+| =location-changed=  |           | Moved to another folder (now loading)                                                       |
+
+All settable properties notify only on change (=G_PARAM_EXPLICIT_NOTIFY=).
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: file-browser-parts
+:END:
+| Part        | State        | Built-in look                                                               |
+|-------------+--------------+-----------------------------------------------------------------------------|
+| =box=       | resting      | The card: =PANEL=, =BORDER=, =CORNER_RADIUS=                                 |
+| =box=       | =disabled=   | 45 % opacity                                                                |
+| =track=     | resting      | Places sidebar: =SURFACE= at 70 %; foreground (headings, icons) =TEXT_MUTED= |
+| =fill=      | resting      | The list well: =INPUT=, =BORDER=                                             |
+| =fill=      | =focused=    | Border in =ACCENT=                                                           |
+| =header=    | resting      | Column headers: =CONTROL=, titles in =TEXT_MUTED=                            |
+| =header=    | =hovered= / =pressed= | =CONTROL_HOVER= / =CONTROL_PRESSED=, title in =TEXT=                 |
+| =header=    | =selected=   | The sorted column's title in =TEXT=                                          |
+| =arrow=     | resting      | Sort chevron in =ACCENT=                                                     |
+| =item=      | resting      | Rows and places: transparent, text in =TEXT=, radius 3/4 of =CORNER_RADIUS=  |
+| =item=      | =hovered=    | Hover pill: =CONTROL_HOVER=                                                  |
+| =item=      | =pressed=    | =CONTROL_PRESSED=                                                            |
+| =item=      | =selected=   | =SELECTION= (a little stronger when hovered)                                 |
+| =tab=       | resting      | Toolbar buttons: transparent, icon in =TEXT=                                 |
+| =tab=       | =hovered= / =pressed= | =CONTROL_HOVER= / =CONTROL_PRESSED=                                  |
+| =tab=       | =checked=    | Toggles that are on (eye, path field): =SELECTION=, icon in =ACCENT=         |
+| =tab=       | =disabled=   | Back / forward / up with nowhere to go: 35 % opacity                         |
+| =indicator= | resting      | Cursor ring (=FOCUS=), current-place bar and loading dots (=ACCENT=)        |
+| =scrollbar= / =scroll_thumb= | | Overlay scrollbars (shared scroll helpers)                                |
+| =label=     | resting      | The "Name" label of the footer: =TEXT=                                       |
+
+Theme rules targeting =LrgFileBrowser= style the browser; the toolbar buttons are private zone widgets that take the browser's looks with their own hover / press state. The breadcrumb, fields and combo are ordinary widgets with their own looks.
+
+** YAML (UI loader)
+:PROPERTIES:
+:CUSTOM_ID: file-browser-yaml
+:END:
+Supported by =LrgUILoader= as =LrgFileBrowser= (the integration pass adds the details). Every setting is a property, so the usual keys apply (=mode: save=, =location:= as a path, =show-hidden=, =sort-column: modified=, =show-system-places: false= ...). Keys beyond plain properties that the loader should offer:
+
+#+begin_src yaml
+type: file-browser
+id: saves
+mode: save
+location: ~/.local/share/mygame/saves      # path, "~" expanded
+show-system-places: false
+current-name: slot-1
+places:                                    # lrg_file_browser_add_place()
+  - {label: Save slots, path: ~/.local/share/mygame/saves, icon: star}
+filters:                                   # LrgFileFilter list, first is current
+  - {name: Saves, suffixes: [dat]}
+  - {name: Images, mime-types: ["image/*"], patterns: ["*.qoi"]}
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: file-browser-pitfalls
+:END:
+- Nothing loads until the thread-default main context runs. A game loop that never iterates it shows the loading dots forever.
+- The browser lists local files through GIO; non-local URIs need gvfs.
+- =SELECT_FOLDER= hides files completely; it does not show them dimmed.
+- =file-activated= is never emitted for folders (they are entered). Use =selection-changed= plus =lrg_file_browser_get_selected_file()= to react to a folder choice, or the dialog's select-folder operation.
+- The browser does not confirm overwrites; check =g_file_query_exists()= on the save file yourself or use [[file:file-dialog.org][LrgFileDialog]].
+- =lrg_file_browser_get_entry_info()= indexes the /visible/ list: indices change when the sort, filter or hidden-file setting changes.
+- =show-system-places= creates the =GVolumeMonitor=; for hermetic tests set =GIO_USE_VOLUME_MONITOR=unix= (and =GIO_USE_VFS=local=).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: file-browser-see-also
+:END:
+- [[file:file-dialog.org][File dialog]] (modal dialog and XDG portal)
+- [[file:breadcrumb.org][Breadcrumb]], [[file:text-input.org][Text input]], [[file:combo-box.org][Combo box]] (the composed widgets)
+- [[file:table.org][Table]] (a general virtualized table with the same header and row looks)

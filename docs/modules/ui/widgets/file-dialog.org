@@ -1,0 +1,194 @@
+* File dialog
+:PROPERTIES:
+:CUSTOM_ID: file-dialog
+:END:
+=LrgFileDialog= asks the user for a file to open, files to open, a place to save or a folder, asynchronously, in the style of GTK 4's =GtkFileDialog=: the object only describes the dialog (title, filters, initial folder ...), and each of the four operations is a GIO async call (=GTask=) that completes when the user picks something or backs out. One dialog object can run any number of operations, one after the other or at the same time.
+
+Two backends:
+- *In-app* (the default): an [[file:dialog.org][LrgDialog]] presented modally on the canvas of a widget you pass, holding an [[file:file-browser.org][LrgFileBrowser]] above a Cancel / accept row. Works everywhere a canvas does, including full-screen games and consoles, and follows the canvas theme.
+- *Native*: with =prefer-native= set, the desktop's own file chooser through the XDG desktop portal (=org.freedesktop.portal.FileChooser= on the session bus, so it also works for Flatpak apps). When the portal is not there or refuses the call, the in-app dialog is used instead.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-creation
+:END:
+#+begin_src C
+static void
+on_level_chosen (GObject      *source,
+                 GAsyncResult *result,
+                 gpointer      user_data)
+{
+	g_autoptr(GError) error = NULL;
+	g_autoptr(GFile)  file = lrg_file_dialog_open_finish (LRG_FILE_DIALOG (source), result, &error);
+
+	if (file == NULL)
+	{
+		/* The user backing out is not worth a message */
+		if (!g_error_matches (error, LRG_FILE_DIALOG_ERROR, LRG_FILE_DIALOG_ERROR_DISMISSED))
+			g_warning ("Cannot open a level: %s", error->message);
+		return;
+	}
+	editor_load_level (user_data, file);
+}
+
+static void
+open_level (Editor *editor)
+{
+	g_autoptr(LrgFileDialog) dialog = lrg_file_dialog_new ();
+	g_autoptr(LrgFileFilter) levels = lrg_file_filter_new ("Levels");
+	g_autoptr(GListStore)    filters = g_list_store_new (LRG_TYPE_FILE_FILTER);
+	g_autoptr(GFile)         dir = g_file_new_for_path (editor->project_dir);
+
+	lrg_file_filter_add_suffix (levels, "rlevel");
+	g_list_store_append (filters, levels);
+
+	lrg_file_dialog_set_title (dialog, "Open Level");
+	lrg_file_dialog_set_filters (dialog, G_LIST_MODEL (filters));
+	lrg_file_dialog_set_initial_folder (dialog, dir);
+	lrg_file_dialog_add_place (dialog, "Project", dir, LRG_ICON_STAR);
+
+	/* Any widget inside the canvas the dialog should cover */
+	lrg_file_dialog_open (dialog, LRG_WIDGET (editor->canvas), NULL, on_level_chosen, editor);
+}
+#+end_src
+
+The dialog object may be released right after starting an operation: the operation keeps its own reference.
+
+** Operations
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-operations
+:END:
+| Start                              | Finish                                    | Result                     | In-app accept button does                                                       |
+|------------------------------------+-------------------------------------------+----------------------------+---------------------------------------------------------------------------------|
+| =lrg_file_dialog_open()=           | =lrg_file_dialog_open_finish()=           | =GFile=                    | The selected file; a selected folder is entered instead                          |
+| =lrg_file_dialog_open_multiple()=  | =lrg_file_dialog_open_multiple_finish()=  | =GListModel= of =GFile=    | The selected files (folders left out); a single selected folder is entered       |
+| =lrg_file_dialog_save()=           | =lrg_file_dialog_save_finish()=           | =GFile=                    | The name field with the filter's extension added; asks before replacing          |
+| =lrg_file_dialog_select_folder()=  | =lrg_file_dialog_select_folder_finish()=  | =GFile=                    | The selected folder, or the folder being shown when none is selected             |
+
+Every start function takes =(dialog, LrgWidget *parent, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)=. =parent= is any widget inside the =LrgCanvas= to show the in-app dialog on (the canvas itself works); it may be =NULL= only when the portal answers. Results are =transfer full=.
+
+In the in-app dialog a double click on a file (or Enter on it) answers at once, as if accepted: =OPEN= returns it, =OPEN_MULTIPLE= returns it together with the rest of the selection when it is part of it, =SAVE= goes through the overwrite question. Enter in the =SAVE= name field accepts too.
+
+** Errors and cancellation
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-errors
+:END:
+Failures are reported in the =LRG_FILE_DIALOG_ERROR= domain (=lrg_file_dialog_error_quark()=, enum type =lrg_file_dialog_error_get_type()=) with an =LrgFileDialogError= code:
+
+| Code                               | When                                                                                         |
+|------------------------------------+----------------------------------------------------------------------------------------------|
+| =LRG_FILE_DIALOG_ERROR_DISMISSED=  | The user closed the dialog without choosing: Cancel, Escape / gamepad B, the portal's cancel |
+| =LRG_FILE_DIALOG_ERROR_CANCELLED=  | The operation's =GCancellable= was cancelled; the dialog is closed (the portal's request is closed with =Request.Close=). Also returned at once when the cancellable was already cancelled |
+| =LRG_FILE_DIALOG_ERROR_FAILED=     | Nothing to show the dialog on (no canvas found from =parent=), or the portal reported a failure |
+
+Cancellation is deliberately reported in this domain, not as =G_IO_ERROR_CANCELLED= (the task's automatic cancellable check is turned off), so one =g_error_matches()= on =LRG_FILE_DIALOG_ERROR= covers every outcome.
+
+** The in-app dialog
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-in-app
+:END:
+- An =LrgDialog= titled with =title= (or "Open File", "Open Files", "Save File", "Select Folder") is presented on the parent's canvas with =lrg_dialog_present()=: a veil dims the rest, the sheet flies up, input outside is blocked.
+- Its content is a browser (=mode= matching the operation, =initial-folder=, the filters with =default-filter= current, =initial-name= in the name field, the application places from =lrg_file_dialog_add_place()=, system places unless =show-system-places= is off) sized to the canvas (up to 780 x 470, leaving room around it), above a right-aligned row with "Cancel" and the accept button (=accept-label=, else "Open", "Save" or "Select"; =primary= style).
+- Focus starts in the list, or in the name field when saving, with the base name (without the extension) selected so typing replaces it.
+- The accept and cancel buttons live in the dialog content rather than in =LrgDialog='s own button row because that row closes the dialog on any click, and saving has to stay open while it asks about replacing a file.
+- *Overwrite confirmation*: accepting a save onto an existing file presents a second =LrgDialog= on top ("Replace “name”?", Cancel / Replace with the =danger= style). Replace answers with the file; Cancel or Escape returns to the file dialog, still open. A save name that is a folder enters it.
+- Closing the dialog by any other route (the canvas dismissing the popup) counts as =DISMISSED=.
+
+Names of the widgets inside, for tests and theming (=lrg_widget_find()= on =lrg_canvas_get_top_popup()=): the sheet is ="file-dialog"=, the browser ="file-browser"=, the buttons ="accept-button"= and ="cancel-button"=; the overwrite question is ="file-dialog-confirm"= with ="replace-button"=.
+
+** The portal
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-portal
+:END:
+With =prefer-native= set, the operation calls =OpenFile= (open, open-multiple with =multiple=, select-folder with =directory=) or =SaveFile= on =/org/freedesktop/portal/desktop=, interface =org.freedesktop.portal.FileChooser=, bus name =org.freedesktop.portal.Desktop=:
+
+| Option           | From                                                                                 |
+|------------------+--------------------------------------------------------------------------------------|
+| =handle_token=   | A random token; the reply's request path is predicted from it                         |
+| =modal=          | =modal=                                                                              |
+| =accept_label=   | =accept-label= (when set)                                                            |
+| =multiple=       | =open_multiple=                                                                      |
+| =directory=      | =select_folder=                                                                      |
+| =filters=        | =filters= as =a(sa(us))=: globs and suffixes (as "*.ext") are =0=, MIME types =1= (not for folders) |
+| =current_filter= | =default-filter=                                                                     |
+| =current_name=   | =initial-name= (save)                                                                |
+| =current_folder= | =initial-folder= as a NUL-terminated byte string                                    |
+
+The title is the call's =title= argument; the parent window handle is empty. The dialog subscribes to =org.freedesktop.portal.Request::Response= on the predicted path =/org/freedesktop/portal/desktop/request/SENDER/TOKEN= /before/ calling, so a fast answer cannot be missed, and re-subscribes if an older portal replies with another path. Response =0= returns the =uris= as =GFile= (the first for single-file operations), =1= is =DISMISSED=, anything else =FAILED=. If there is no session bus, or the call fails (no portal running, unknown method ...), the in-app dialog is shown on =parent= instead.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-api
+:END:
+| Function                                                         | Purpose                                        |
+|------------------------------------------------------------------+------------------------------------------------|
+| =lrg_file_dialog_new()=                                          | New dialog description                         |
+| =lrg_file_dialog_get_title()= / =lrg_file_dialog_set_title()=    | Heading                                        |
+| =lrg_file_dialog_get_accept_label()= / =lrg_file_dialog_set_accept_label()= | Accept button text                  |
+| =lrg_file_dialog_get_initial_folder()= / =lrg_file_dialog_set_initial_folder()= | Start folder                    |
+| =lrg_file_dialog_get_initial_name()= / =lrg_file_dialog_set_initial_name()= | Suggested save name                 |
+| =lrg_file_dialog_get_filters()= / =lrg_file_dialog_set_filters()= | =GListModel= of =LrgFileFilter=               |
+| =lrg_file_dialog_get_default_filter()= / =lrg_file_dialog_set_default_filter()= | Filter selected at first        |
+| =lrg_file_dialog_get_modal()= / =lrg_file_dialog_set_modal()=    | Portal modality                                |
+| =lrg_file_dialog_get_prefer_native()= / =lrg_file_dialog_set_prefer_native()= | Try the portal first              |
+| =lrg_file_dialog_get_show_system_places()= / =lrg_file_dialog_set_show_system_places()= | In-app system places    |
+| =lrg_file_dialog_add_place()=                                    | In-app application place                       |
+| =lrg_file_dialog_open()= / =lrg_file_dialog_open_finish()=       | One existing file                              |
+| =lrg_file_dialog_open_multiple()= / =lrg_file_dialog_open_multiple_finish()= | Several files                      |
+| =lrg_file_dialog_save()= / =lrg_file_dialog_save_finish()=       | Where to save                                  |
+| =lrg_file_dialog_select_folder()= / =lrg_file_dialog_select_folder_finish()= | A folder                           |
+| =lrg_file_dialog_error_quark()= / =lrg_file_dialog_error_get_type()= | Error domain and enum type                 |
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-properties
+:END:
+| Property             | Type             | Default | Notes                                                    |
+|----------------------+------------------+---------+----------------------------------------------------------|
+| =title=              | =gchar *=        | =NULL=  | =NULL= = per-operation default                           |
+| =accept-label=       | =gchar *=        | =NULL=  | =NULL= = "Open", "Save" or "Select"                      |
+| =initial-folder=     | =GFile=          | =NULL=  | =NULL= = working directory (in-app)                      |
+| =initial-name=       | =gchar *=        | =NULL=  | Save only                                                |
+| =filters=            | =GListModel=     | =NULL=  | Items are =LrgFileFilter=                                |
+| =default-filter=     | =LrgFileFilter=  | =NULL=  | =NULL= = the first filter                                |
+| =modal=              | =gboolean=       | =TRUE=  | Passed to the portal; the in-app dialog is always modal  |
+| =prefer-native=      | =gboolean=       | =FALSE= | Use the XDG portal when available                        |
+| =show-system-places= | =gboolean=       | =TRUE=  | In-app sidebar                                           |
+
+The dialog has no signals: results arrive through the =GAsyncReadyCallback=.
+
+** YAML (UI loader)
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-yaml
+:END:
+=LrgFileDialog= is not a widget, so it does not appear in a UI tree. A loader-friendly way to use it is an action that opens a dialog described in YAML (the integration pass decides): every setting is a property, plus =filters:= (the same list as the browser's) and =places:=.
+
+#+begin_src yaml
+file-dialogs:
+  open-level:
+    title: Open Level
+    initial-folder: ~/projects/mygame/levels
+    prefer-native: true
+    filters:
+      - {name: Levels, suffixes: [rlevel]}
+    places:
+      - {label: Project, path: ~/projects/mygame, icon: star}
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-pitfalls
+:END:
+- Results arrive on the main context the operation was started from; iterate it (games: once per frame) or nothing ever completes.
+- The in-app dialog needs =parent= inside an =LrgCanvas=; with =NULL= only the portal can answer, and without a portal the operation fails with =FAILED=.
+- The portal returns URIs; on a sandboxed (Flatpak) app they point into the document portal. Use the =GFile= as is rather than building paths.
+- The portal cannot add an extension or confirm overwrites for you beyond what the desktop's chooser does; the in-app dialog does both.
+- =modal= has no effect on the in-app dialog (=LrgDialog= is always modal).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: file-dialog-see-also
+:END:
+- [[file:file-browser.org][File browser]] (the in-app dialog's content, filters, places)
+- [[file:dialog.org][Dialog]] (the modal sheet)
+- [[file:../../ui/widgets/canvas.org][Canvas]] (popups, focus)

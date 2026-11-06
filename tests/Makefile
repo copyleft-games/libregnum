@@ -98,6 +98,7 @@ TEST_SOURCES := \
 	test-ui-actions.c \
 	test-ui-layout-helpers.c \
 	test-ui-viewport.c \
+	test-ui-file-browser.c \
 	test-ui-chrome.c \
 	test-ui-graph-looks.c \
 	test-ui-menus.c \

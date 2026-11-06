@@ -186,6 +186,8 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-timeline-view.h \
 	src/ui/lrg-dock-area.h \
 	src/ui/lrg-ui-actions.h \
+	src/ui/lrg-file-browser.h \
+	src/ui/lrg-file-dialog.h \
 	src/ui/lrg-notification.h \
 	src/ui/lrg-header-bar.h \
 	src/ui/lrg-pagination.h \
@@ -883,6 +885,8 @@ SOURCES := \
 	src/ui/lrg-timeline-view.c \
 	src/ui/lrg-dock-area.c \
 	src/ui/lrg-ui-actions.c \
+	src/ui/lrg-file-browser.c \
+	src/ui/lrg-file-dialog.c \
 	src/ui/lrg-notification.c \
 	src/ui/lrg-header-bar.c \
 	src/ui/lrg-pagination.c \
