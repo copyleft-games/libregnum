@@ -18,7 +18,8 @@
 # Starts a headless lrgeditor on a fresh project and drives it with
 # lrgeditorctl: sessions, get/describe, create/set/rename/move/delete,
 # apply -f, edit (scripted $VISUAL), select, run, undo/redo, save,
-# validate, logs, call, events, and the MCP bridge (lrgeditorctl mcp)
+# validate, logs, call, events, the 0.8.1 verbs (meta, vcs, prefab, code)
+# and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
 set -euo pipefail
@@ -150,6 +151,31 @@ check 'thumbnail of a level' "$(ctl thumbnail "${work}/game/levels/main.rlevel")
 "${ctl}" thumbnail "${work}/game/broken.png" >/dev/null 2>&1 && status=0 || status=$?
 check 'thumbnail failure exits 1' "status=${status}" 'status=1'
 
+# 0.8.1 verbs: asset sidecars, git status, linked prefabs, code editor.
+mkdir -p "${work}/game/assets" "${work}/game/prefabs" "${work}/game/scripts"
+printf 'stone' >"${work}/game/assets/stone.png"
+check 'meta get (in memory)' "$(ctl meta get "${work}/game/assets/stone.png")" 'exists: false'
+check 'meta set' "$(ctl meta set "${work}/game/assets/stone.png" filter=point)" 'filter: point'
+check 'meta sidecar written' "$(cat "${work}/game/assets/stone.png.meta")" 'point'
+"${ctl}" meta set "${work}/game/assets/stone.png" filter=fuzzy >/dev/null 2>&1 && status=0 || status=$?
+check 'meta set rejects a bad value' "status=${status}" 'status=1'
+check 'vcs outside git' "$(ctl vcs)" 'not a git repository'
+check 'vcs path outside git' "$(ctl vcs "${work}/game/assets/stone.png" -o json)" '"path"'
+ctl call prefab.save node=Props/Barrel "path=${work}/game/prefabs/barrel.rprefab" >/dev/null
+ctl call prefab.instantiate "path=${work}/game/prefabs/barrel.rprefab" parent=Keep >/dev/null
+check 'prefab overrides' "$(ctl prefab overrides Keep/Barrel)" 'linked: true'
+ctl set node Keep/Barrel scale=3,3,3 >/dev/null
+check 'prefab override recorded' "$(ctl prefab overrides Keep/Barrel -o json)" 'transform'
+check 'prefab revert' "$(ctl prefab revert Keep/Barrel -o json)" '"overrides" : []'
+check 'prefab sync' "$(ctl prefab sync)" 'synced'
+check 'prefab unlink' "$(ctl prefab unlink Keep/Barrel)" 'linked: false'
+check 'prefab relink' "$(ctl prefab relink Keep/Barrel "path=${work}/game/prefabs/barrel.rprefab")" 'linked: true'
+printf 'print("smoke")\nreturn 1\n' >"${work}/game/scripts/smoke.lua"
+check 'code open' "$(ctl code open "${work}/game/scripts/smoke.lua:2")" 'smoke.lua:2'
+check 'code list' "$(ctl code list)" 'smoke.lua'
+check 'code save' "$(ctl code save -o json)" '"dirty" : false'
+check 'methods include code.open' "$(ctl get methods -o json)" 'code.open'
+
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
 check 'saved file has the nodes' "$(cat "${work}/game/levels/main.rlevel")" 'Barrel'
@@ -186,6 +212,8 @@ else
 	check 'mcp initialize' "${out}" '"name":"libregnum-editor"'
 	check 'mcp tools/list' "${out}" '"name":"create_node"'
 	check 'mcp tilemap tools' "${out}" '"name":"paint_tiles"'
+	check 'mcp 0.8.1 tools' "${out}" '"name":"set_asset_meta"'
+	check 'mcp code tools' "${out}" '"name":"code_open"'
 	check 'mcp create_node' "$(ctl get nodes -o name)" 'node/AIBox'
 	check 'mcp tool error' "${out}" '"isError":true'
 fi

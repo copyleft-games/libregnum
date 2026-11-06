@@ -7,18 +7,24 @@
  * The editor's modal dialogs on LrgDialog and LrgFileDialog: unsaved
  * changes (Save / Don't Save / Cancel), open and save level (.rlevel
  * filter), open project (folder), import scene, save and instantiate
- * prefab, new project, new script, crash recovery, about, the shortcut
- * list and a project settings summary.
+ * prefab, new project, new script (Lua, Python, GJS, crispy C and Emacs
+ * Lisp templates; the file opens where the script-editor setting says),
+ * crash recovery, about (version, license, links), the live searchable
+ * shortcut table (LrgEditorPreferences' keymap, read-only) and the
+ * editable project settings (name, default level, game module, run
+ * command, scripts folder and the asset folder list, written to
+ * project.ryaml through LrgProject).
  *
  * One dialog is open at a time. Its id goes into
  * LrgEditorViewState:dialog while it shows (ui.state "dialog" reports the
  * same strings as 0.8.0: "confirm", "file", "new-project", "new-script",
- * "recover", "about", "shortcuts", "project-settings"), which also takes
- * the "editor" action group off the canvas so shortcuts do not fire
- * behind it. Escape answers LRG_DIALOG_RESPONSE_CANCEL.
- *
- * The preferences editor, command palette and quick open come in Wave 4
- * (their actions show a notification until then).
+ * "recover", "about", "shortcuts", "project-settings", plus
+ * "preferences" from lrg-editor-preferences.c), which also takes the
+ * "editor" action group off the canvas so shortcuts do not fire behind
+ * it. Escape answers LRG_DIALOG_RESPONSE_CANCEL. Other files that show
+ * dialogs (preferences, the code panel's prompts) follow the same
+ * protocol: the dialog is object data "lrg-editor-dialog" on the app,
+ * so editor_dialog_close_all() closes them too.
  */
 
 #include "config.h"
@@ -31,6 +37,10 @@
 #include "../../ui/lrg-combo-box.h"
 #include "../../ui/lrg-label.h"
 #include "../../ui/lrg-vbox.h"
+#include "../../ui/lrg-hbox.h"
+#include "../../ui/lrg-button.h"
+#include "lrg-editor-code-panel.h"
+#include "lrg-editor-preferences.h"
 #include <string.h>
 
 #define DIALOG_KEY "lrg-editor-dialog"
@@ -422,7 +432,6 @@ editor_dialog_instantiate_prefab (LrgEditorApp *self)
 
 	run_file_dialog (self, FILE_INSTANTIATE_PREFAB, "Instantiate Prefab", dir, ".rprefab", NULL);
 }
-
 /* ==========================================================================
  * New project, new script
  * ========================================================================== */
@@ -435,24 +444,33 @@ new_project_done (LrgEditorApp *self,
 	LrgTextInput     *name = g_object_get_data (G_OBJECT (dialog), "name");
 	LrgTextInput     *dir = g_object_get_data (G_OBJECT (dialog), "dir");
 	g_autoptr(GError) error = NULL;
-	const gchar      *folder;
+	g_autofree gchar *folder = NULL;
+	const gchar      *title;
 
 	if (response != RESPONSE_PRIMARY)
 		return;
-	folder = lrg_text_input_get_text (dir);
-	if (folder == NULL || *folder == '\0')
+	folder = g_strstrip (g_strdup (lrg_text_input_get_text (dir) != NULL ? lrg_text_input_get_text (dir) : ""));
+	title = lrg_text_input_get_text (name);
+	if (*folder == '\0')
 	{
 		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Choose a folder for the project");
 		return;
 	}
-	if (!lrg_editor_app_new_project (self, folder, lrg_text_input_get_text (name), &error))
-		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "New project failed: %s", error->message);
+	if (lrg_editor_is_dirty (self->editor))
+	{
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Save or discard the open level first");
+		return;
+	}
+	if (!lrg_editor_app_new_project (self, folder, title != NULL && *title != '\0' ? title : "New Game", &error))
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Could not create the project: %s", error->message);
 }
 
 void
 editor_dialog_new_project (LrgEditorApp *self)
 {
-	g_autoptr(LrgDialog) dialog = lrg_dialog_new ("New Project", NULL);
+	g_autoptr(LrgDialog) dialog = lrg_dialog_new ("New Project",
+	                                              "Creates the folder with levels/, scripts/, assets/ and "
+	                                              "prefabs/, a project.ryaml manifest and a starter level.");
 	g_autoptr(LrgVBox)   box = lrg_vbox_new ();
 	g_autofree gchar    *cwd = g_get_current_dir ();
 	g_autofree gchar    *dir = g_build_filename (cwd, "new-game", NULL);
@@ -470,7 +488,9 @@ editor_dialog_new_project (LrgEditorApp *self)
 	present (self, dialog, "new-project", new_project_done);
 }
 
-static const gchar * const script_languages[] = { "Lua", "Python", "JavaScript (GJS)", "C (crispy)", "Elisp" };
+/* The languages of the New Script dialog, in 0.8.0 order; the
+ * templates themselves come from editor_app_create_script(). */
+static const gchar * const script_languages[] = { "Lua", "Python", "JavaScript (GJS)", "C (crispy)", "Emacs Lisp" };
 static const LrgScriptLanguage script_language_ids[] = {
 	LRG_SCRIPT_LANGUAGE_LUA, LRG_SCRIPT_LANGUAGE_PYTHON, LRG_SCRIPT_LANGUAGE_GJS,
 	LRG_SCRIPT_LANGUAGE_CRISPY, LRG_SCRIPT_LANGUAGE_ELISP
@@ -491,11 +511,16 @@ new_script_done (LrgEditorApp *self,
 
 	if (response != RESPONSE_PRIMARY)
 		return;
+	if (lrg_text_input_get_text (name) == NULL || *lrg_text_input_get_text (name) == '\0')
+	{
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Give the script a name");
+		return;
+	}
 	i = CLAMP (lrg_combo_box_get_selected (lang), 0, (gint) G_N_ELEMENTS (script_language_ids) - 1);
 	rel = editor_app_create_script (self, lrg_text_input_get_text (name), script_language_ids[i], &error);
 	if (rel == NULL)
 	{
-		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "New script failed: %s", error->message);
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Could not create the script: %s", error->message);
 		return;
 	}
 
@@ -507,27 +532,42 @@ new_script_done (LrgEditorApp *self,
 
 		lrg_editor_add_script (self->editor, node, binding);
 	}
-	editor_app_open_file (self, rel, 1, 1);
+
+	/* Code panel or external editor, as script-editor says */
+	lrg_editor_code_panel_open_script (self, rel, 1);
+}
+
+/* Enter in the name field creates the script (the field eats Enter) */
+static void
+on_field_submitted (LrgTextInput *input,
+                    gpointer      user_data)
+{
+	lrg_dialog_respond (LRG_DIALOG (user_data), RESPONSE_PRIMARY);
 }
 
 void
 editor_dialog_new_script (LrgEditorApp *self,
                           const gchar  *node_guid)
 {
-	g_autoptr(LrgDialog)   dialog = lrg_dialog_new ("New Script", NULL);
+	LrgNode               *node = (node_guid != NULL) ? lrg_editor_find_node (self->editor, node_guid) : NULL;
+	g_autofree gchar      *body = (node != NULL) ? g_strdup_printf ("Attach to: %s", lrg_node_get_name (node))
+	                                             : g_strdup ("Creates the file in the project's scripts folder.");
+	g_autoptr(LrgDialog)   dialog = lrg_dialog_new ("New Script", body);
 	g_autoptr(LrgVBox)     box = lrg_vbox_new ();
 	g_autoptr(LrgComboBox) lang = lrg_combo_box_new ();
-	LrgNode               *node = (node_guid != NULL) ? lrg_editor_find_node (self->editor, node_guid) : NULL;
+	g_autoptr(LrgLabel)    lang_label = lrg_label_new ("Language");
 	LrgTextInput          *name;
 	guint                  i;
 
 	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
 	name = add_field (box, "Name", node != NULL && lrg_node_get_name (node) != NULL ? lrg_node_get_name (node)
 	                                                                                 : "script", "script-name");
+	g_signal_connect_object (name, "submitted", G_CALLBACK (on_field_submitted), dialog, 0);
 	for (i = 0; i < G_N_ELEMENTS (script_languages); i++)
 		lrg_combo_box_append (lang, script_languages[i]);
 	lrg_combo_box_set_selected (lang, 0);
 	lrg_widget_set_name (LRG_WIDGET (lang), "script-language");
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (lang_label));
 	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (lang));
 	g_object_set_data (G_OBJECT (dialog), "name", name);
 	g_object_set_data (G_OBJECT (dialog), "lang", lang);
@@ -539,7 +579,7 @@ editor_dialog_new_script (LrgEditorApp *self,
 }
 
 /* ==========================================================================
- * Recovery, about, shortcuts, project settings
+ * Recovery, about, shortcuts
  * ========================================================================== */
 
 static void
@@ -552,6 +592,8 @@ recover_done (LrgEditorApp *self,
 
 	if (path == NULL)
 		return;
+	if (response == LRG_DIALOG_RESPONSE_CANCEL)
+		return;   /* Later: keep the autosave and the offer */
 	if (response == RESPONSE_PRIMARY)
 	{
 		/* Restore: load the autosave but keep the document's real path */
@@ -580,77 +622,321 @@ recover_done (LrgEditorApp *self,
 void
 editor_dialog_recover (LrgEditorApp *self)
 {
-	g_autofree gchar    *body = g_strdup_printf ("An autosave newer than the level exists:\n%s",
-	                                             self->recovery_file);
-	g_autoptr(LrgDialog) dialog = lrg_dialog_new ("Recover unsaved changes?", body);
+	g_autofree gchar    *body = g_strdup_printf ("An autosave newer than the level on disk was found; the editor "
+	                                             "may have closed without saving.\n%s", self->recovery_file);
+	g_autoptr(LrgDialog) dialog = lrg_dialog_new ("Recover Autosave", body);
 
 	lrg_dialog_add_button (dialog, "Later", LRG_DIALOG_RESPONSE_CANCEL, FALSE);
-	lrg_dialog_add_button (dialog, "Discard", RESPONSE_SECONDARY, FALSE);
+	lrg_dialog_add_button (dialog, "Discard Autosave", RESPONSE_SECONDARY, FALSE);
 	lrg_dialog_add_button (dialog, "Restore", RESPONSE_PRIMARY, TRUE);
 	present (self, dialog, "recover", recover_done);
+}
+
+/* About: the docs and source links open with the desktop's handler */
+static void
+open_uri (LrgEditorApp *self,
+          const gchar  *uri)
+{
+	g_autoptr(GError) error = NULL;
+
+	if (!g_app_info_launch_default_for_uri (uri, NULL, &error))
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Could not open %s: %s", uri, error->message);
+}
+
+static void
+on_about_link (LrgButton *button,
+               gpointer   user_data)
+{
+	LrgEditorApp *self = LRG_EDITOR_APP (user_data);
+	const gchar  *what = g_object_get_data (G_OBJECT (button), "link");
+
+	if (g_strcmp0 (what, "docs") == 0)
+		lrg_editor_actions_activate (self->actions, "help.docs");
+	else
+		open_uri (self, what);
+}
+
+static void
+about_link (LrgEditorApp *self,
+            LrgHBox      *row,
+            const gchar  *label,
+            const gchar  *name,
+            const gchar  *link)
+{
+	g_autoptr(LrgButton) button = lrg_button_new (label);
+
+	lrg_widget_set_name (LRG_WIDGET (button), name);
+	g_object_set_data_full (G_OBJECT (button), "link", g_strdup (link), g_free);
+	g_signal_connect_object (button, "clicked", G_CALLBACK (on_about_link), self, 0);
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (button));
 }
 
 void
 editor_dialog_about (LrgEditorApp *self)
 {
-	g_autofree gchar    *body = g_strdup_printf ("libregnum %s\n\nThe level, scene and world editor of the "
-	                                             "libregnum engine, built with the engine's own UI toolkit.\n"
-	                                             "AGPL-3.0-or-later", LRG_VERSION_STRING);
+	const gchar         *sock = lrg_editor_server_get_socket_path (self->server);
+	g_autofree gchar    *body = g_strdup_printf ("Version %s\n\nThe level, scene and world editor of the "
+	                                             "libregnum engine, built with the engine's own retained UI "
+	                                             "toolkit.\n\nCopyright 2025-2026 Zach Podbielniak\nFree software "
+	                                             "under the GNU Affero General Public License, version 3 or later "
+	                                             "(AGPL-3.0-or-later).%s%s", LRG_VERSION_STRING,
+	                                             sock != NULL ? "\n\nIPC socket: " : "", sock != NULL ? sock : "");
 	g_autoptr(LrgDialog) dialog = lrg_dialog_new ("About the libregnum editor", body);
+	g_autoptr(LrgHBox)   links = lrg_hbox_new ();
 
+	lrg_container_set_spacing (LRG_CONTAINER (links), 8.0f);
+	about_link (self, links, "Documentation", "about-docs", "docs");
+	about_link (self, links, "Source code", "about-source", "https://gitlab.com/zachpodbielniak/libregnum");
+	about_link (self, links, "License", "about-license", "https://www.gnu.org/licenses/agpl-3.0.html");
+	lrg_dialog_set_content (dialog, LRG_WIDGET (links));
 	lrg_dialog_add_button (dialog, "Close", LRG_DIALOG_RESPONSE_CLOSE, TRUE);
 	present (self, dialog, "about", NULL);
+}
+
+static void
+shortcuts_done (LrgEditorApp *self,
+                LrgDialog    *dialog,
+                gint          response)
+{
+	/* Close this one first: a popup opened while it is still up would be
+	 * stacked above it and closed along with it */
+	if (response != RESPONSE_PRIMARY)
+		return;
+	lrg_dialog_close (dialog);
+	lrg_editor_preferences_present (self, "keybindings");
 }
 
 void
 editor_dialog_shortcuts (LrgEditorApp *self)
 {
-	GString             *text = g_string_new (NULL);
-	GList               *ids = lrg_editor_actions_list (self->actions);
-	GList               *l;
-	g_autoptr(LrgDialog) dialog = NULL;
+	g_autoptr(LrgDialog) dialog = lrg_dialog_new ("Keyboard Shortcuts", NULL);
+	g_autoptr(LrgWidget) keymap = lrg_editor_preferences_create_keymap (self, FALSE);
 
-	/* "Category  Label  Ctrl+S" for every bound action */
-	for (l = ids; l != NULL; l = l->next)
-	{
-		g_auto(GStrv)     accels = lrg_editor_actions_get_accels (self->actions, l->data);
-		g_autofree gchar *label = NULL;
-
-		if (accels == NULL || accels[0] == NULL || accels[0][0] == '\0')
-			continue;
-		label = lrg_editor_accel_to_label (accels[0]);
-		g_string_append_printf (text, "%-10s %-34s %s\n", lrg_editor_actions_get_category (self->actions, l->data),
-		                        lrg_editor_actions_get_label (self->actions, l->data), label);
-	}
-	g_list_free (ids);
-
-	dialog = lrg_dialog_new ("Keyboard Shortcuts", text->str);
-	g_string_free (text, TRUE);
+	/* A live, searchable table (it follows rebinding) */
+	lrg_widget_set_min_size (keymap, MIN (720.0f, MAX (self->width - 160.0f, 400.0f)),
+	                         MIN (560.0f, MAX (self->height - 260.0f, 260.0f)));
+	lrg_dialog_set_content (dialog, keymap);
+	lrg_dialog_add_button (dialog, "Edit Keybindings...", RESPONSE_PRIMARY, FALSE);
 	lrg_dialog_add_button (dialog, "Close", LRG_DIALOG_RESPONSE_CLOSE, TRUE);
-	present (self, dialog, "shortcuts", NULL);
+	present (self, dialog, "shortcuts", shortcuts_done);
 }
 
-/* A read-only summary until the editable form lands with the
- * preferences rework (Wave 4). */
+/* ==========================================================================
+ * Project settings
+ * ========================================================================== */
+
+/* The asset folder list is edited in a GPtrArray on the dialog and only
+ * written to the project on Save. */
+static void project_dirs_rebuild (LrgDialog *dialog);
+
+static void
+on_dir_remove (LrgButton *button,
+               gpointer   user_data)
+{
+	LrgDialog *dialog = LRG_DIALOG (user_data);
+	GPtrArray *dirs = g_object_get_data (G_OBJECT (dialog), "dirs");
+	guint      index = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (button), "index"));
+
+	if (index < dirs->len)
+		g_ptr_array_remove_index (dirs, index);
+	project_dirs_rebuild (dialog);
+}
+
+static void
+on_dir_add (LrgButton *button,
+            gpointer   user_data)
+{
+	LrgDialog        *dialog = LRG_DIALOG (user_data);
+	GPtrArray        *dirs = g_object_get_data (G_OBJECT (dialog), "dirs");
+	LrgTextInput     *input = g_object_get_data (G_OBJECT (dialog), "dir-input");
+	g_autofree gchar *dir = g_strstrip (g_strdup (lrg_text_input_get_text (input) != NULL
+	                                              ? lrg_text_input_get_text (input) : ""));
+	guint             i;
+
+	if (*dir == '\0')
+		return;
+	for (i = 0; i < dirs->len; i++)
+		if (g_strcmp0 (g_ptr_array_index (dirs, i), dir) == 0)
+			return;
+	g_ptr_array_add (dirs, g_steal_pointer (&dir));
+	lrg_text_input_set_text (input, "");
+	project_dirs_rebuild (dialog);
+}
+
+static void
+on_dir_submitted (LrgTextInput *input,
+                  gpointer      user_data)
+{
+	on_dir_add (NULL, user_data);
+}
+
+static void
+project_dirs_rebuild (LrgDialog *dialog)
+{
+	LrgVBox   *list = g_object_get_data (G_OBJECT (dialog), "dir-list");
+	GPtrArray *dirs = g_object_get_data (G_OBJECT (dialog), "dirs");
+	guint      i;
+
+	lrg_container_remove_all (LRG_CONTAINER (list));
+	for (i = 0; i < dirs->len; i++)
+	{
+		g_autoptr(LrgHBox)   row = lrg_hbox_new ();
+		g_autoptr(LrgLabel)  label = lrg_label_new (g_ptr_array_index (dirs, i));
+		g_autoptr(LrgButton) remove = lrg_button_new ("Remove");
+		g_autofree gchar    *name = g_strdup_printf ("project-dir-remove:%u", i);
+
+		lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+		lrg_widget_set_fill_weight (LRG_WIDGET (label), 1.0f);
+		lrg_widget_set_valign (LRG_WIDGET (label), LRG_ALIGN_CENTER);
+		lrg_widget_set_name (LRG_WIDGET (remove), name);
+		g_object_set_data (G_OBJECT (remove), "index", GUINT_TO_POINTER (i));
+		g_signal_connect_object (remove, "clicked", G_CALLBACK (on_dir_remove), dialog, 0);
+		lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (label));
+		lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (remove));
+		lrg_container_add_child (LRG_CONTAINER (list), LRG_WIDGET (row));
+	}
+	if (dirs->len == 0)
+	{
+		g_autoptr(LrgLabel) none = lrg_label_new ("No asset folders: the whole project is scanned");
+
+		lrg_widget_add_class (LRG_WIDGET (none), "dim-label");
+		lrg_container_add_child (LRG_CONTAINER (list), LRG_WIDGET (none));
+	}
+	lrg_widget_queue_layout (LRG_WIDGET (dialog));
+}
+
+static void
+on_use_current_level (LrgButton *button,
+                      gpointer   user_data)
+{
+	LrgDialog        *dialog = LRG_DIALOG (user_data);
+	LrgEditorApp     *self = g_object_get_data (G_OBJECT (dialog), "app");
+	LrgTextInput     *level = g_object_get_data (G_OBJECT (dialog), "level");
+	g_autofree gchar *rel = NULL;
+
+	if (self == NULL || self->project == NULL || lrg_editor_get_path (self->editor) == NULL)
+		return;
+	rel = lrg_project_relativize (self->project, lrg_editor_get_path (self->editor));
+	lrg_text_input_set_text (level, rel);
+}
+
+/* "" -> NULL for the optional project fields */
+static const gchar *
+field_or_null (LrgDialog   *dialog,
+               const gchar *key)
+{
+	LrgTextInput *input = g_object_get_data (G_OBJECT (dialog), key);
+	const gchar  *text = lrg_text_input_get_text (input);
+
+	return (text != NULL && *text != '\0') ? text : NULL;
+}
+
+static void
+project_settings_done (LrgEditorApp *self,
+                       LrgDialog    *dialog,
+                       gint          response)
+{
+	GPtrArray        *dirs = g_object_get_data (G_OBJECT (dialog), "dirs");
+	g_autoptr(GError) error = NULL;
+	guint             i;
+
+	if (response != RESPONSE_PRIMARY || self->project == NULL)
+		return;
+	lrg_project_set_name (self->project, field_or_null (dialog, "name") != NULL ? field_or_null (dialog, "name")
+	                                                                           : "Game");
+	lrg_project_set_default_level (self->project, field_or_null (dialog, "level"));
+	lrg_project_set_game_output (self->project, field_or_null (dialog, "module"));
+	lrg_project_set_run_command (self->project, field_or_null (dialog, "run"));
+	lrg_project_set_scripts_dir (self->project, field_or_null (dialog, "scripts"));
+	lrg_project_clear_asset_dirs (self->project);
+	for (i = 0; i < dirs->len; i++)
+		lrg_project_add_asset_dir (self->project, g_ptr_array_index (dirs, i));
+	if (!lrg_project_save (self->project, &error))
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Could not save the project: %s", error->message);
+	else
+		editor_app_notify (self, EDITOR_NOTIFY_SUCCESS, "Saved project settings");
+}
+
 void
 editor_dialog_project_settings (LrgEditorApp *self)
 {
-	g_autofree gchar    *body = NULL;
-	g_autoptr(LrgDialog) dialog = NULL;
+	g_autofree gchar     *body = NULL;
+	g_autoptr(LrgDialog)  dialog = NULL;
+	g_autoptr(LrgVBox)    box = lrg_vbox_new ();
+	g_autoptr(LrgHBox)    level_row = lrg_hbox_new ();
+	g_autoptr(LrgVBox)    level_box = lrg_vbox_new ();
+	g_autoptr(LrgButton)  use_current = lrg_button_new ("Use current");
+	g_autoptr(LrgLabel)   dirs_label = lrg_label_new ("Asset folders");
+	g_autoptr(LrgVBox)    dir_list = lrg_vbox_new ();
+	g_autoptr(LrgHBox)    add_row = lrg_hbox_new ();
+	g_autoptr(LrgTextInput) dir_input = lrg_text_input_new_with_placeholder ("assets/audio");
+	g_autoptr(LrgButton)  add = lrg_button_new ("Add");
+	GPtrArray            *dirs = g_ptr_array_new_with_free_func (g_free);
+	GPtrArray            *pdirs;
+	LrgTextInput         *input;
+	guint                 i;
 
 	if (self->project == NULL)
+	{
+		g_ptr_array_unref (dirs);
 		return;
-	body = g_strdup_printf ("Name: %s\nRoot: %s\nDefault level: %s\nGame module: %s\nRun command: %s\n"
-	                        "Scripts: %s\n\nEdit project.ryaml to change these (an editor form comes in Wave 4).",
-	                        lrg_project_get_name (self->project), self->project_dir,
-	                        lrg_project_get_default_level (self->project) != NULL
-	                        ? lrg_project_get_default_level (self->project) : "-",
-	                        lrg_project_get_game_output (self->project) != NULL
-	                        ? lrg_project_get_game_output (self->project) : "-",
-	                        lrg_project_get_run_command (self->project) != NULL
-	                        ? lrg_project_get_run_command (self->project) : "(default)",
-	                        lrg_project_get_scripts_dir (self->project));
+	}
+	body = g_strdup ("Saved to project.ryaml in the project folder.");
 	dialog = lrg_dialog_new ("Project Settings", body);
-	lrg_dialog_add_button (dialog, "Close", LRG_DIALOG_RESPONSE_CLOSE, TRUE);
-	present (self, dialog, "project-settings", NULL);
+	g_object_set_data (G_OBJECT (dialog), "app", self);
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+
+	input = add_field (box, "Name", lrg_project_get_name (self->project), "project-name");
+	g_object_set_data (G_OBJECT (dialog), "name", input);
+
+	/* Default level with "Use current" */
+	input = add_field (level_box, "Default level", lrg_project_get_default_level (self->project),
+	                   "project-default-level");
+	g_object_set_data (G_OBJECT (dialog), "level", input);
+	lrg_widget_set_fill_weight (LRG_WIDGET (level_box), 1.0f);
+	lrg_widget_set_name (LRG_WIDGET (use_current), "project-use-current");
+	lrg_widget_set_valign (LRG_WIDGET (use_current), LRG_ALIGN_END);
+	lrg_widget_set_enabled (LRG_WIDGET (use_current), lrg_editor_get_path (self->editor) != NULL);
+	g_signal_connect_object (use_current, "clicked", G_CALLBACK (on_use_current_level), dialog, 0);
+	lrg_container_set_spacing (LRG_CONTAINER (level_row), 6.0f);
+	lrg_container_add_child (LRG_CONTAINER (level_row), LRG_WIDGET (level_box));
+	lrg_container_add_child (LRG_CONTAINER (level_row), LRG_WIDGET (use_current));
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (level_row));
+
+	input = add_field (box, "Game module", lrg_project_get_game_output (self->project), "project-game-module");
+	lrg_text_input_set_placeholder (input, "build/libmygame.so");
+	g_object_set_data (G_OBJECT (dialog), "module", input);
+	input = add_field (box, "Run command ({project} {level} {module}; empty uses the default)",
+	                   lrg_project_get_run_command (self->project), "project-run-command");
+	lrg_text_input_set_placeholder (input, "lrgldr {module} -- --level {level}");
+	g_object_set_data (G_OBJECT (dialog), "run", input);
+	input = add_field (box, "Scripts folder", lrg_project_get_scripts_dir (self->project), "project-scripts-dir");
+	g_object_set_data (G_OBJECT (dialog), "scripts", input);
+
+	/* Asset folders: a list with Remove buttons and an Add row */
+	pdirs = lrg_project_get_asset_dirs (self->project);
+	for (i = 0; pdirs != NULL && i < pdirs->len; i++)
+		g_ptr_array_add (dirs, g_strdup (g_ptr_array_index (pdirs, i)));
+	g_object_set_data_full (G_OBJECT (dialog), "dirs", dirs, (GDestroyNotify) g_ptr_array_unref);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (dirs_label));
+	lrg_container_set_spacing (LRG_CONTAINER (dir_list), 2.0f);
+	lrg_widget_set_name (LRG_WIDGET (dir_list), "project-dirs");
+	g_object_set_data (G_OBJECT (dialog), "dir-list", dir_list);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (dir_list));
+	lrg_widget_set_name (LRG_WIDGET (dir_input), "project-dir-input");
+	lrg_widget_set_fill_weight (LRG_WIDGET (dir_input), 1.0f);
+	g_signal_connect_object (dir_input, "submitted", G_CALLBACK (on_dir_submitted), dialog, 0);
+	g_object_set_data (G_OBJECT (dialog), "dir-input", dir_input);
+	lrg_widget_set_name (LRG_WIDGET (add), "project-dir-add");
+	g_signal_connect_object (add, "clicked", G_CALLBACK (on_dir_add), dialog, 0);
+	lrg_container_set_spacing (LRG_CONTAINER (add_row), 6.0f);
+	lrg_container_add_child (LRG_CONTAINER (add_row), LRG_WIDGET (dir_input));
+	lrg_container_add_child (LRG_CONTAINER (add_row), LRG_WIDGET (add));
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (add_row));
+	project_dirs_rebuild (dialog);
+
+	lrg_dialog_set_content (dialog, LRG_WIDGET (box));
+	lrg_dialog_add_button (dialog, "Cancel", LRG_DIALOG_RESPONSE_CANCEL, FALSE);
+	lrg_dialog_add_button (dialog, "Save", RESPONSE_PRIMARY, TRUE);
+	present (self, dialog, "project-settings", project_settings_done);
 }

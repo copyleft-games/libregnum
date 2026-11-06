@@ -118,15 +118,57 @@ location: [2, 2, -3]
 | =play [start\vert{}pause\vert{}step\vert{}stop\vert{}state]=, =stop= | Play-in-editor (stop restores the level) |
 | =game start\vert{}stop=                    | Run the game process                                        |
 | =view top\vert{}front\vert{}right\vert{}bottom\vert{}back\vert{}left\vert{}persp\vert{}all=, =view focus PATH=, =view set k=v...= | Camera |
+| =view layout single\vert{}split-h\vert{}split-v\vert{}quad=, =view render-mode MODE [viewport=N]=, =view overlay NAME on\vert{}off [viewport=N]= | Viewports (=view.layout=, =view.render_mode=, =view.overlay=); without an argument they print the current state |
 | =screenshot FILE.png [--window]=           | Viewport or window PNG (windowed editors)                   |
 | =tiles NODE=, =tiles NODE paint\vert{}rect\vert{}fill\vert{}pick\vert{}configure k=v...= | Print a tilemap grid, or paint it (=tilemap.*=; e.g. =paint tile=3 'points=[[0,0],[7,0]]' brush=2=) |
 | =timeline [list\vert{}get NAME\vert{}add NAME\vert{}rm NAME\vert{}key NAME NODE k=v...\vert{}play [NAME]\vert{}stop\vert{}seek TIME [NAME]\vert{}state]= | Keyframe timelines (=timeline.*=) |
 | =thumbnail PATH=                           | Generate (if needed) and print an asset's cached thumbnail PNG |
 | =notify MESSAGE [--level 0-3]=             | Toast in the editor                                         |
+| =meta get PATH=, =meta set PATH k=v... [guid=G]= | An asset's =.meta= sidecar (=asset.meta.*=), see [[#verbs-0-8-1][0.8.1 verbs]] |
+| =vcs [PATH]= (alias =git=)                 | Git branch and the files that are not clean (=vcs.status=)  |
+| =prefab overrides\vert{}apply\vert{}revert\vert{}relink\vert{}unlink NODE [keys=a,b] [path=P]=, =prefab sync [PATH]= | Linked prefab instances (=prefab.*=) |
+| =code open PATH[:LINE]=, =code list=, =code save [PATH]= | The built-in code editor (=code.*=) |
+| =inspector list\vert{}get\vert{}set\vert{}reset\vert{}state\vert{}apply-override\vert{}revert-override [NODE] [NAME] [k=v...]= | The inspector panel (=inspector.*=) |
+| =hierarchy reveal\vert{}rename NODE [NEW_NAME]=, =hierarchy filter TEXT=, =hierarchy state= | The hierarchy panel (=hierarchy.*=) |
+| =asset reveal\vert{}duplicate\vert{}trash PATH=, =asset rename PATH NAME=, =asset move PATH DEST=, =asset orphans [trash=true]= | Asset browser file operations (=asset.*=; the =.meta= goes along) |
+| =profiler [frames=N] [enable=true\vert{}false]= | Profiler sections as a table (=profiler.sample=) |
 | =call METHOD [k=v...\vert{}JSON]=          | Any IPC method                                              |
 | =quit [--force]=                           |                                                             |
 | =mcp=                                      | MCP server on stdio                                         |
 | =completion bash=                          | Completion script (nodes, actions and methods complete from the live session) |
+
+** 0.8.1 verbs
+:PROPERTIES:
+:CUSTOM_ID: verbs-0-8-1
+:END:
+Every IPC method added in 0.8.1 has a verb. They share one convention: positional arguments fill the method's main parameters in order (=NODE=, =PATH=, =NAME=, =DEST=...), any =key=value= argument is passed through as a parameter as is (values are parsed like =set node=: numbers, =true= / =false=, =null=, =a,b,c= number vectors, JSON), and the result prints as YAML (or =-o json=, =-o table=...). A path that exists relative to the current directory is sent absolute; anything else is passed through and the editor resolves it against the project. So a parameter the verb does not know about still reaches the editor, and =call METHOD k=v...= remains the generic escape hatch for every method.
+
+| Verb | Method | Notes |
+|------+--------+-------|
+| =meta get PATH= | =asset.meta.get= | The sidecar the asset has, or the one the editor would create (=exists: false=; nothing written) |
+| =meta set PATH k=v... [guid=G]= | =asset.meta.set= | Every =k=v= except =guid= goes into =settings= (=null= resets a setting); all or nothing, a bad value exits 1 |
+| =vcs [PATH]= | =vcs.status= | Without a path: =branch NAME= then a STATUS / PATH table (=-o wide= adds the badge letter), or "not a git repository"; with a path: that path's badge |
+| =prefab overrides NODE= | =prefab.overrides= | |
+| =prefab apply NODE [keys=a,b]= | =prefab.apply= | =keys= is split on commas into the list the method takes |
+| =prefab revert NODE [keys=a,b]= | =prefab.revert= | |
+| =prefab relink NODE [path=P]=, =prefab unlink NODE= | =prefab.relink=, =prefab.unlink= | |
+| =prefab sync [PATH]= | =prefab.sync= | |
+| =code open PATH[:LINE]= | =code.open= | Prints =opened PATH:LINE= (=-o yaml= for the tab) |
+| =code list=, =code save [PATH]= | =code.list=, =code.save= | |
+| =inspector VERB [NODE] [NAME] [k=v...]= | =inspector.VERB= (=-= becomes =_=) | e.g. =inspector set Props/Crate scale section=transform value=2,2,2= |
+| =hierarchy reveal NODE=, =hierarchy rename NODE [NEW_NAME]=, =hierarchy filter TEXT=, =hierarchy state= | =hierarchy.*= | |
+| =asset reveal PATH=, =asset rename PATH NAME=, =asset move PATH DEST=, =asset duplicate PATH=, =asset trash PATH=, =asset orphans [trash=true]= | =asset.*= | |
+| =profiler [frames=N] [enable=BOOL]= | =profiler.sample= | A SECTION / LAST_MS / AVG_MS / MAX_MS table (=-o wide= adds MIN_MS and COUNT) |
+| =view layout NAME=, =view render-mode MODE=, =view overlay NAME on\vert{}off= | =view.layout=, =view.render_mode=, =view.overlay= | =viewport=N= picks a viewport (default the active one) |
+
+#+begin_src sh
+lrgeditorctl meta set assets/crate.png filter=point max-size=512
+lrgeditorctl vcs -o wide
+lrgeditorctl prefab apply Props/Crate keys=transform/scale
+lrgeditorctl code open scripts/door.lua:12
+lrgeditorctl view layout quad
+lrgeditorctl profiler frames=120
+#+end_src
 
 ** MCP
 :PROPERTIES:
@@ -142,7 +184,7 @@ claude mcp add libregnum -- lrgeditorctl mcp
 claude mcp add libregnum-keep -- lrgeditor --mcp /home/me/games/keep
 #+end_src
 
-Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
+Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Added in 0.8.1 (one per new IPC method, arguments passed through): =get_asset_meta= (read-only), =set_asset_meta=, =vcs_status= (read-only), =prefab_overrides= (read-only), =prefab_apply= (destructive), =prefab_revert= (destructive), =prefab_sync=, =prefab_relink=, =prefab_unlink= (destructive), =set_viewport_layout=, =set_render_mode=, =set_overlay=, =inspector_list= and =inspector_get= (read-only), =inspector_set=, =inspector_reset=, =inspector_apply_override= and =inspector_revert_override= (destructive), =inspector_state=, =hierarchy_reveal=, =hierarchy_rename=, =hierarchy_state= (read-only), =asset_reveal=, =asset_rename=, =asset_move=, =asset_duplicate=, =asset_trash= and =asset_orphans= (destructive), =profiler_sample=, =code_open=, =code_list= (read-only), =code_save=. Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
 
 Adding a tool: append a row to the table in =src/editorctl/lrgeditorctl-mcp.c= (name, IPC method, kind, hints, description, JSON-schema properties); both servers pick it up.
 
