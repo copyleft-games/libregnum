@@ -1,0 +1,20 @@
+/* test-paint-fx.c
+ *
+ * Copyright 2026 Zach Podbielniak
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Glass, backdrop blur, effect shaders, curves and icons.
+ */
+
+#include <glib.h>
+#include <libregnum.h>
+
+int
+main (int   argc,
+      char *argv[])
+{
+	g_test_init (&argc, &argv, NULL);
+
+	return g_test_run ();
+}

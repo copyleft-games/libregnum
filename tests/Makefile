@@ -84,6 +84,13 @@ TEST_SOURCES := \
 	test-ui-new-widgets.c \
 	test-ui-layout.c \
 	test-ui-popups.c \
+	test-paint-fx.c \
+	test-paint-text.c \
+	test-ui-data-widgets.c \
+	test-ui-pickers.c \
+	test-ui-loader.c \
+	test-ui-inspector.c \
+	test-ui-motion.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \

@@ -125,6 +125,9 @@ PUBLIC_HEADERS := \
 	src/paint/lrg-paint-types.h \
 	src/paint/lrg-paint-list.h \
 	src/paint/lrg-paint-renderer.h \
+	src/paint/lrg-paint-fx.h \
+	src/paint/lrg-paint-icons.h \
+	src/paint/lrg-paint-font.h \
 	src/ui/lrg-ui-event.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
@@ -155,6 +158,21 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-toast.h \
 	src/ui/lrg-toast-queue.h \
 	src/ui/lrg-list-view.h \
+	src/ui/lrg-table.h \
+	src/ui/lrg-tree-view.h \
+	src/ui/lrg-tile-view.h \
+	src/ui/lrg-splitter.h \
+	src/ui/lrg-expander.h \
+	src/ui/lrg-wrap-box.h \
+	src/ui/lrg-color-picker.h \
+	src/ui/lrg-rating.h \
+	src/ui/lrg-date-picker.h \
+	src/ui/lrg-time-picker.h \
+	src/ui/lrg-breadcrumb.h \
+	src/ui/lrg-markdown-label.h \
+	src/ui/lrg-island.h \
+	src/ui/lrg-ui-loader.h \
+	src/ui/lrg-ui-inspector.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
@@ -788,6 +806,9 @@ SOURCES := \
 	src/paint/lrg-paint-types.c \
 	src/paint/lrg-paint-list.c \
 	src/paint/lrg-paint-renderer.c \
+	src/paint/lrg-paint-fx.c \
+	src/paint/lrg-paint-icons.c \
+	src/paint/lrg-paint-font.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
@@ -818,6 +839,21 @@ SOURCES := \
 	src/ui/lrg-toast.c \
 	src/ui/lrg-toast-queue.c \
 	src/ui/lrg-list-view.c \
+	src/ui/lrg-table.c \
+	src/ui/lrg-tree-view.c \
+	src/ui/lrg-tile-view.c \
+	src/ui/lrg-splitter.c \
+	src/ui/lrg-expander.c \
+	src/ui/lrg-wrap-box.c \
+	src/ui/lrg-color-picker.c \
+	src/ui/lrg-rating.c \
+	src/ui/lrg-date-picker.c \
+	src/ui/lrg-time-picker.c \
+	src/ui/lrg-breadcrumb.c \
+	src/ui/lrg-markdown-label.c \
+	src/ui/lrg-island.c \
+	src/ui/lrg-ui-loader.c \
+	src/ui/lrg-ui-inspector.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \
