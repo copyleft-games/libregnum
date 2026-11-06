@@ -1067,9 +1067,26 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		dispatch_event (self, self->focused_widget, event);
 	}
 
-	/* Gamepad / Tab navigation and buttons */
+	/* Gamepad / Tab navigation. Directions are offered to the focused
+	 * widget as arrow keys first (a list moves its cursor, a slider
+	 * steps); only unhandled ones move focus. */
 	if (input->nav != LRG_NAV_DIRECTION_NONE && self->navigation_enabled)
-		lrg_canvas_move_focus (self, input->nav);
+	{
+		static const GrlKey arrows[] = {
+			GRL_KEY_NULL, GRL_KEY_UP, GRL_KEY_DOWN, GRL_KEY_LEFT, GRL_KEY_RIGHT
+		};
+		gboolean handled = FALSE;
+
+		if ((guint) input->nav < G_N_ELEMENTS (arrows) && self->focused_widget != NULL)
+		{
+			g_autoptr(LrgUIEvent) event = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_DOWN,
+			                                                    arrows[input->nav]);
+
+			handled = dispatch_event (self, self->focused_widget, event);
+		}
+		if (!handled)
+			lrg_canvas_move_focus (self, input->nav);
+	}
 	if (input->activate)
 		lrg_canvas_activate_focus (self);
 	if (input->cancel)

@@ -1614,6 +1614,10 @@ lrg_widget_step (LrgWidget *self,
 	busy |= lrg_spring_step (&priv->hover, delta_time);
 	busy |= lrg_spring_step (&priv->press, delta_time);
 
+	/* The widget's own animations */
+	if (LRG_WIDGET_GET_CLASS (self)->step != NULL)
+		busy |= LRG_WIDGET_GET_CLASS (self)->step (self, delta_time);
+
 	/* Appear: count down the delay, then run the spring */
 	if (!priv->appear_pending && priv->appear != LRG_APPEAR_NONE)
 	{

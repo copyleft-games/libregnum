@@ -109,6 +109,7 @@ G_DECLARE_DERIVABLE_TYPE (LrgWidget, lrg_widget, LRG, WIDGET, GObject)
  * @paint: Records the widget into a paint list
  * @style_defaults: Built-in look of a part in a state
  * @arrange: Called after the widget's rectangle was assigned
+ * @step: Advances the widget's own animations
  *
  * The class structure for #LrgWidget.
  *
@@ -194,8 +195,24 @@ struct _LrgWidgetClass
 	 */
 	void     (*arrange)        (LrgWidget *self);
 
+	/**
+	 * LrgWidgetClass::step:
+	 * @self: the widget
+	 * @delta_time: seconds since the last frame
+	 *
+	 * Advances springs and timers the widget owns itself (knobs,
+	 * indicators, scroll offsets, toast timers). Called by
+	 * lrg_widget_step() every frame, before painting, so animations
+	 * follow the canvas clock (deterministic in tests and replays) and
+	 * lrg_canvas_update() knows when anything is still moving.
+	 *
+	 * Returns: %TRUE while something is still animating
+	 */
+	gboolean (*step)           (LrgWidget *self,
+	                            gfloat     delta_time);
+
 	/*< private >*/
-	gpointer _reserved[5];
+	gpointer _reserved[4];
 };
 
 /* ==========================================================================
