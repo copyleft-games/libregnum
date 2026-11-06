@@ -135,6 +135,8 @@ find_widget_at_point_recursive (LrgWidget *widget,
 			found = find_widget_at_point_recursive (LRG_WIDGET (l->data), x, y);
 	}
 
+	if (found == NULL && lrg_widget_get_pointer_transparent (widget))
+		return NULL;
 	return found != NULL ? found : widget;
 }
 

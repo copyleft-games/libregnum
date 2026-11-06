@@ -867,6 +867,27 @@ void lrg_widget_set_focusable (LrgWidget *self,
                                gboolean   focusable);
 
 /**
+ * lrg_widget_get_pointer_transparent:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if pointer hit-testing passes through the widget
+ *   itself (its children can still be hit)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_pointer_transparent (LrgWidget *self);
+
+/**
+ * lrg_widget_set_pointer_transparent:
+ * @self: an #LrgWidget
+ * @transparent: let clicks on empty areas of the widget reach what is
+ *   underneath; used by full-screen layers such as toast queues and
+ *   overlays
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_pointer_transparent (LrgWidget *self,
+                                         gboolean   transparent);
+
+/**
  * lrg_widget_get_hover_progress:
  * @self: an #LrgWidget
  *

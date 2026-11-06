@@ -16,10 +16,10 @@
 
 struct _LrgListView
 {
-	LrgWidget parent_instance;
+	LrgContainer parent_instance;
 };
 
-G_DEFINE_FINAL_TYPE (LrgListView, lrg_list_view, LRG_TYPE_WIDGET)
+G_DEFINE_FINAL_TYPE (LrgListView, lrg_list_view, LRG_TYPE_CONTAINER)
 
 static void
 lrg_list_view_class_init (LrgListViewClass *klass)

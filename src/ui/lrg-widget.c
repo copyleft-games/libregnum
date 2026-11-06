@@ -109,6 +109,7 @@ typedef struct
 	GArray         *classes;     /* GQuark */
 	LrgWidgetState  state;
 	gboolean        focusable;
+	gboolean        pointer_transparent;
 	LrgSpring       hover;
 	LrgSpring       press;
 } LrgWidgetPrivate;
@@ -1549,6 +1550,27 @@ lrg_widget_set_focusable (LrgWidget *self,
 		return;
 	priv->focusable = focusable;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FOCUSABLE]);
+}
+
+gboolean
+lrg_widget_get_pointer_transparent (LrgWidget *self)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), FALSE);
+	priv = lrg_widget_get_instance_private (self);
+	return priv->pointer_transparent;
+}
+
+void
+lrg_widget_set_pointer_transparent (LrgWidget *self,
+                                    gboolean   transparent)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	priv = lrg_widget_get_instance_private (self);
+	priv->pointer_transparent = !!transparent;
 }
 
 gfloat

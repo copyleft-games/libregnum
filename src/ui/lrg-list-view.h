@@ -15,14 +15,14 @@
 
 #include <glib-object.h>
 #include "../lrg-version.h"
-#include "lrg-widget.h"
+#include "lrg-container.h"
 
 G_BEGIN_DECLS
 
 #define LRG_TYPE_LIST_VIEW (lrg_list_view_get_type ())
 
 LRG_AVAILABLE_IN_ALL
-G_DECLARE_FINAL_TYPE (LrgListView, lrg_list_view, LRG, LIST_VIEW, LrgWidget)
+G_DECLARE_FINAL_TYPE (LrgListView, lrg_list_view, LRG, LIST_VIEW, LrgContainer)
 
 /**
  * lrg_list_view_new:

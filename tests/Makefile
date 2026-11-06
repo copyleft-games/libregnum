@@ -83,6 +83,7 @@ TEST_SOURCES := \
 	test-ui-widgets.c \
 	test-ui-new-widgets.c \
 	test-ui-layout.c \
+	test-ui-popups.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \
