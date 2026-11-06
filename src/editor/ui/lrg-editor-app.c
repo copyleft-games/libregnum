@@ -168,19 +168,6 @@ lrg_editor_app_init (LrgEditorApp *self)
  * Panels and the dock layout
  * ========================================================================== */
 
-/* A muted placeholder for panels without a widget of their own yet. */
-static LrgWidget *
-placeholder (const gchar *text)
-{
-	LrgLabel *label = lrg_label_new (text);
-
-	lrg_widget_set_name (LRG_WIDGET (label), "placeholder");
-	lrg_widget_add_class (LRG_WIDGET (label), "dim-label");
-	lrg_widget_set_halign (LRG_WIDGET (label), LRG_ALIGN_CENTER);
-	lrg_widget_set_valign (LRG_WIDGET (label), LRG_ALIGN_CENTER);
-	return LRG_WIDGET (label);
-}
-
 static void
 make_panel (LrgEditorApp *self,
             const gchar  *id,
@@ -208,8 +195,8 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "inspector", "Inspector", "gear", LRG_WIDGET (lrg_editor_inspector_panel_new (self)), TRUE);
 	make_panel (self, "assets", "Assets", "folder", LRG_WIDGET (lrg_editor_assets_panel_new (self)), TRUE);
 	make_panel (self, "console", "Console", "info", LRG_WIDGET (lrg_editor_console_panel_new (self)), TRUE);
-	make_panel (self, "problems", "Problems", "warning", placeholder ("Problems (Wave 4)"), TRUE);
-	make_panel (self, "history", "History", "undo", placeholder ("History (Wave 4)"), TRUE);
+	make_panel (self, "problems", "Problems", "warning", LRG_WIDGET (lrg_editor_problems_panel_new (self)), TRUE);
+	make_panel (self, "history", "History", "undo", LRG_WIDGET (lrg_editor_history_panel_new (self)), TRUE);
 	make_panel (self, "timeline", "Timeline", "play", LRG_WIDGET (lrg_editor_timeline_panel_new (self)), TRUE);
 	make_panel (self, "profiler", "Profiler", "chart", LRG_WIDGET (lrg_editor_profiler_panel_new (self)), TRUE);
 	make_panel (self, "code", "Code", "code", LRG_WIDGET (lrg_editor_code_panel_new (self)), TRUE);
@@ -1738,8 +1725,14 @@ lrg_editor_app_process_frame (LrgEditorApp         *self,
                               gint                  width,
                               gint                  height)
 {
+	LrgProfiler *prof;
+
 	g_return_if_fail (LRG_IS_EDITOR_APP (self));
 	g_return_if_fail (input != NULL);
+
+	/* Editor phases show in the profiler panel (no-ops while it is off) */
+	prof = lrg_profiler_get_default ();
+	lrg_profiler_begin_frame (prof);
 
 	/* Clock and size */
 	self->width = MAX (width, 1);
@@ -1757,12 +1750,16 @@ lrg_editor_app_process_frame (LrgEditorApp         *self,
 
 	/* Model -> widgets (enabled / checked states, shortcuts, status
 	 * bar), then a layout pass so input hits this frame's rectangles */
+	lrg_profiler_begin_section (prof, "ui.update");
 	editor_window_set_menus_enabled (self->window, lrg_editor_view_state_get_dialog (self->view) == NULL);
 	editor_window_refresh (self->window);
 	lrg_widget_layout (LRG_WIDGET (self->canvas));
+	lrg_profiler_end_section (prof, "ui.update");
 
 	/* Input: shortcuts, menus, dialogs, the viewport; advances springs */
+	lrg_profiler_begin_section (prof, "ui.input");
 	lrg_canvas_process_input (self->canvas, input);
+	lrg_profiler_end_section (prof, "ui.input");
 	editor_viewport_panel_tick (self->viewport_panel, input->delta_time);
 
 	tick_timers (self, input->delta_time);
@@ -1775,6 +1772,8 @@ lrg_editor_app_process_frame (LrgEditorApp         *self,
 	if (self->quit_requested && lrg_editor_view_state_get_dialog (self->view) == NULL &&
 	    !lrg_editor_is_dirty (self->editor))
 		self->quit_now = TRUE;
+
+	lrg_profiler_end_frame (prof);
 }
 
 void
@@ -1882,136 +1881,6 @@ editor_cpu_affinity_disabled (void)
 	        g_strcmp0 (value, "0") == 0);
 }
 
-/* ==========================================================================
- * Input latching (window mode)
- *
- * raylib samples button and modifier state once per frame, so a press and
- * release that both land between two frames (a touchpad tap, xdotool, a
- * fast click on a slow frame under software GL) is never seen, and a
- * chord typed faster than a frame (Ctrl down, A, Ctrl up) loses its Ctrl.
- * lrg_canvas_input_poll() reads raylib only, so the editor chains GLFW
- * button and key callbacks in front of raylib's (as the 0.8.0 GUI backend
- * did) and patches each polled frame: a latched press becomes a press
- * edge (and a release edge when the button is already up again), and the
- * modifiers GLFW reported with a key press are added to the frame's
- * modifiers. GLFW is linked through raylib's desktop platform; only the
- * entry points used here are declared.
- * ========================================================================== */
-
-typedef struct GLFWwindow GLFWwindow;
-typedef void (*GLFWmousebuttonfun) (GLFWwindow *window, int button, int action, int mods);
-typedef void (*GLFWkeyfun) (GLFWwindow *window, int key, int scancode, int action, int mods);
-
-GLFWwindow *       glfwGetCurrentContext      (void);
-GLFWmousebuttonfun glfwSetMouseButtonCallback (GLFWwindow *window, GLFWmousebuttonfun callback);
-GLFWkeyfun         glfwSetKeyCallback         (GLFWwindow *window, GLFWkeyfun callback);
-
-#define LATCH_GLFW_PRESS     (1)
-#define LATCH_GLFW_REPEAT    (2)
-#define LATCH_GLFW_MOD_SHIFT (0x0001)
-#define LATCH_GLFW_MOD_CTRL  (0x0002)
-#define LATCH_GLFW_MOD_ALT   (0x0004)
-#define LATCH_GLFW_MOD_SUPER (0x0008)
-#define LATCH_BUTTONS        (3)
-
-static GLFWwindow         *latch_window = NULL;
-static GLFWmousebuttonfun  latch_button_chain = NULL;
-static GLFWkeyfun          latch_key_chain = NULL;
-static guint               latch_presses[LATCH_BUTTONS];
-static guint               latch_mods;   /* LrgInputModifiers of keys pressed this frame */
-
-static void
-latch_mouse_button (GLFWwindow *window,
-                    int         button,
-                    int         action,
-                    int         mods)
-{
-	/* GLFW numbers left / right / middle 0 / 1 / 2, like GrlMouseButton */
-	if (action == LATCH_GLFW_PRESS && button >= 0 && button < LATCH_BUTTONS)
-		latch_presses[button]++;
-	if (latch_button_chain != NULL)
-		latch_button_chain (window, button, action, mods);
-}
-
-static void
-latch_key (GLFWwindow *window,
-           int         key,
-           int         scancode,
-           int         action,
-           int         mods)
-{
-	if (action == LATCH_GLFW_PRESS || action == LATCH_GLFW_REPEAT)
-	{
-		if (mods & LATCH_GLFW_MOD_SHIFT)
-			latch_mods |= LRG_INPUT_MODIFIER_SHIFT;
-		if (mods & LATCH_GLFW_MOD_CTRL)
-			latch_mods |= LRG_INPUT_MODIFIER_CTRL;
-		if (mods & LATCH_GLFW_MOD_ALT)
-			latch_mods |= LRG_INPUT_MODIFIER_ALT;
-		if (mods & LATCH_GLFW_MOD_SUPER)
-			latch_mods |= LRG_INPUT_MODIFIER_SUPER;
-	}
-	if (latch_key_chain != NULL)
-		latch_key_chain (window, key, scancode, action, mods);
-}
-
-static void
-latch_install (void)
-{
-	GLFWwindow *window;
-
-	if (latch_window != NULL || !IsWindowReady ())
-		return;
-	window = glfwGetCurrentContext ();
-	if (window == NULL)
-		return;
-	latch_window = window;
-	latch_button_chain = glfwSetMouseButtonCallback (window, latch_mouse_button);
-	latch_key_chain = glfwSetKeyCallback (window, latch_key);
-	memset (latch_presses, 0, sizeof latch_presses);
-	latch_mods = 0;
-}
-
-static void
-latch_uninstall (void)
-{
-	if (latch_window == NULL)
-		return;
-	if (IsWindowReady () && glfwGetCurrentContext () == latch_window)
-	{
-		glfwSetMouseButtonCallback (latch_window, latch_button_chain);
-		glfwSetKeyCallback (latch_window, latch_key_chain);
-	}
-	latch_window = NULL;
-	latch_button_chain = NULL;
-	latch_key_chain = NULL;
-}
-
-/* Adds what raylib's once-per-frame sampling missed to @input. */
-static void
-latch_apply (LrgCanvasInput *input)
-{
-	static const GrlMouseButton buttons[LATCH_BUTTONS] = {
-		GRL_MOUSE_BUTTON_LEFT, GRL_MOUSE_BUTTON_RIGHT, GRL_MOUSE_BUTTON_MIDDLE
-	};
-	guint i;
-
-	for (i = 0; i < LATCH_BUTTONS; i++)
-	{
-		guint bit = LRG_CANVAS_BUTTON_MASK (buttons[i]);
-
-		if (latch_presses[i] == 0 || (input->buttons_pressed & bit))
-			continue;
-		input->buttons_pressed |= bit;
-		if (!(input->buttons_down & bit))
-			input->buttons_released |= bit;
-	}
-	if (input->n_keys > 0)
-		input->modifiers = (LrgInputModifiers) (input->modifiers | latch_mods);
-	memset (latch_presses, 0, sizeof latch_presses);
-	latch_mods = 0;
-}
-
 gint
 lrg_editor_app_run (LrgEditorApp *self)
 {
@@ -2049,7 +1918,6 @@ lrg_editor_app_run (LrgEditorApp *self)
 		lrg_grl_window_resolve_max_frames_in_flight (EDITOR_MAX_FRAMES_IN_FLIGHT));
 	self->window_open = TRUE;
 	g_clear_pointer (&self->window_title, g_free);
-	latch_install ();
 	editor_thumbnails_window_opened (self);
 
 	while (!self->quit_now)
@@ -2065,7 +1933,6 @@ lrg_editor_app_run (LrgEditorApp *self)
 			lrg_editor_app_request_quit (self);
 
 		lrg_canvas_input_poll (&input, GetFrameTime ());
-		latch_apply (&input);
 		lrg_editor_app_process_frame (self, &input, GetScreenWidth (), GetScreenHeight ());
 
 		/* The canvas steps the viewport (its render texture is drawn
@@ -2100,7 +1967,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 	lrg_editor_scene_renderer_release (self->renderer);
 	viewport = lrg_editor_viewport_panel_get_viewport (self->viewport_panel);
 	lrg_viewport_set_mode (viewport, LRG_VIEWPORT_MODE_TEXTURE);
-	latch_uninstall ();
+	lrg_canvas_input_detach_latch ();
 	grl_frame_sync_reset ();	/* its fences belong to the context closing */
 	grl_fast2d_shutdown ();	/* graylib's 2D batch, ditto */
 	CloseWindow ();

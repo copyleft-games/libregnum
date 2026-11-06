@@ -242,7 +242,7 @@ void                lrg_profiler_end_frame            (LrgProfiler *self);
  *
  * Gets all section names that have been profiled.
  *
- * Returns: (transfer full) (element-type utf8): list of section names
+ * Returns: (transfer container) (element-type utf8): list of section names; the strings belong to the profiler
  */
 LRG_AVAILABLE_IN_ALL
 GList *             lrg_profiler_get_section_names    (LrgProfiler *self);

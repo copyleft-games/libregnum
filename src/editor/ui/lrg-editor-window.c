@@ -154,7 +154,7 @@ mirror_add (LrgEditorWindow *self,
 
 	state = g_action_group_get_action_state (group, id);
 	if (state != NULL)
-		action = g_simple_action_new_stateful (id, NULL, g_variant_ref (state));
+		action = g_simple_action_new_stateful (id, NULL, state); /* takes its own reference */
 	else
 		action = g_simple_action_new (id, NULL);
 	g_simple_action_set_enabled (action, g_action_group_get_action_enabled (group, id));
