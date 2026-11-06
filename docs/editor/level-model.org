@@ -352,3 +352,114 @@ gboolean     enabled    = lrg_script_binding_get_enabled (bind);
 - [[file:editor-runtime.org][Editor Runtime]] — mutating nodes through undo/redo commands
 - [[file:prefabs.org][Prefabs]] — saving and reusing node subtrees
 - [[file:../modules/editor/index.org][Editor Module Reference]]
+
+** Node property source
+:PROPERTIES:
+:CUSTOM_ID: node-property-source
+:END:
+=LrgEditorNodeSource= (=src/editor/lrg-editor-node-source.h=, since 0.8.1) exposes one /section/ of one =LrgNode= as an =LrgPropertySource= (see [[file:../modules/ui/property-grid.org][Property grid]]), so the inspector can give an =LrgPropertyGrid= one source per selected node and get multi-edit, mixed values, hints and state markers for free. Every write goes through the =LrgEditor= undo stack, so it is undoable and marks prefab overrides automatically; a gesture (a drag in the grid) over N nodes is exactly one undo step, and a cancelled gesture (Escape) restores every node exactly.
+
+What the inspector does, in one block:
+#+begin_src C
+/* Once, when the panel is built: route the grid's edits through the editor */
+lrg_editor_node_source_connect_grid (transform_grid, editor);
+
+/* On every selection change: one source per selected node */
+GPtrArray           *nodes = lrg_editor_selection_get_nodes (lrg_editor_get_selection (editor));
+g_autoptr(GPtrArray) sources = lrg_editor_node_source_new_for_nodes (editor, nodes,
+                                                                     LRG_EDITOR_NODE_SECTION_TRANSFORM, NULL);
+lrg_property_grid_set_sources (transform_grid, sources);
+#+end_src
+
+*** Sections
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-sections
+:END:
+=LrgEditorNodeSection= picks what a source lists. Property names are valid =GParamSpec= names (the grid matches sources by name and type), labels are what the grid shows.
+
+| Section     | Properties (name: type, hint)                                                                                         | Notes                                                                                   |
+|-------------+-----------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------|
+| =HEADER=    | =name= string, =visible= bool, =locked= bool, =is-2d= bool, =path= and =guid= read-only strings                        | Flag edits on N nodes are one step                                                      |
+| =TRANSFORM= | =location=, =rotation=, =scale= =GrlVector3= (=vector3=, scale =vector3:uniform=), =world= read-only =GrlVector3=     | Rotation is shown and written in degrees, stored in radians                             |
+| =VISUAL=    | =kind= enum, =primitive= enum, =asset= string (=asset:model=, =asset:texture=, ...), material, parameters            | The list follows the kind; see below                                                    |
+| =COMPONENT= | =component-type= read-only string, then the registered type's properties, then raw stored keys                        | One source per component; the constructor names it                                      |
+| =SCRIPTS=   | per binding /i/: =script-i-enabled= bool, =script-i-language= enum, =script-i-path= string (=asset:script=)           | Grouped per script                                                                      |
+
+The visual section lists =primitive= only for primitives and =asset= only for asset-backed kinds (mesh, sprite, tilemap, prefab instance, CAD part, audio emitter). Drawable kinds and lights get a /Material/ group: =color= (=GrlColor=, hint =color=; "Light color" for lights) and, except for lights, =roughness=, =metallic= and =emission= (doubles with range hints). The /Parameters/ group lists every key of the visual's param bag plus the usual keys of the kind even when unset (light =intensity=, =range=, =spot_angle=; camera =fov=, =near=, =far=; audio =volume=, =radius=; sprite =frame=, =pixels_per_unit=; tilemap =tile_size=), each with a range or angle hint and its usual default. A key becomes the property =param-<key>= with every character outside =[A-Za-z0-9]= turned into =-= (=cad:thickness= is =param-cad-thickness=); the label keeps the original key. Keys starting with =prefab:= are internal markers and stay hidden.
+
+The component section is named by type: =lrg_editor_node_source_new (editor, node, LRG_EDITOR_NODE_SECTION_COMPONENT, "Health")=, and ="Health#2"= for the second component of that type (the same convention as prefab override paths). The type is looked up in the default engine's =LrgRegistry=, then by =GType= name. Its properties are those the 0.8.0 inspector showed: writable, not construct-only, not object-typed, not declared by =GObject= itself, with the class's own =GParamSpec= (so ranges, enum and flags types, defaults, and =[hint:...]= blurbs or hint qdata all apply). Stored values are converted to the property's type on read: numbers by =GValue= transforms, strings (as a YAML load keeps them) by enum and flags nicks, integers onto enums and flags. Writes store the property's own type. Stored keys the type does not declare, and every key of an unregistered type, are listed as raw values of their stored type.
+
+*** Values and undo
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-undo
+:END:
+=lrg_property_source_get_value()= reads the node every time. =lrg_property_source_set_value()= converts the value to the property's type (validating it against the =GParamSpec=, so ranges clamp), writes it into the node in place and records the difference with =lrg_editor_commit_node_state()= as one =NODE_STATE= command labelled "Set <label>". Because every command passes through the editor's execute path, the paths it changes are marked as prefab overrides when the node belongs to a linked instance, and undo clears exactly those marks.
+
+=lrg_property_source_reset()= stores the default: the pspec default for header flags and parameters, (0, 0, 0) for location and rotation, (1, 1, 1) for scale, white, 0.5, 0 and 0 for the material, the usual value of suggested parameters. For component properties reset removes the stored key, so the type's default applies again. Name, path, asset, primitive and raw keys have no default.
+
+*** Gestures
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-gestures
+:END:
+=lrg_editor_node_source_begin_gesture()= snapshots the node; until =lrg_editor_node_source_end_gesture()= every write is a /preview/: it changes the node in place, tells the level (=lrg_level_notify_node_changed()=) and emits =LrgEditor::changed= so views redraw, but records nothing. =end_gesture (self, TRUE, label)= then records the whole difference as one command; =end_gesture (self, FALSE, NULL)= copies the snapshot back (=lrg_node_copy_state()=) and records nothing. Gestures nest, only the outermost pair counts, and =lrg_editor_node_source_in_gesture()= tells whether one is open. Ending N gestures between =lrg_editor_begin_group()= and =lrg_editor_end_group()= makes an edit of N nodes one undo step:
+#+begin_src C
+lrg_editor_node_source_begin_gesture (a);
+lrg_editor_node_source_begin_gesture (b);
+lrg_property_source_set_value (LRG_PROPERTY_SOURCE (a), "locked", &value);   /* preview */
+lrg_property_source_set_value (LRG_PROPERTY_SOURCE (b), "locked", &value);
+lrg_editor_begin_group (editor, "Lock");
+lrg_editor_node_source_end_gesture (a, TRUE, "Lock");
+lrg_editor_node_source_end_gesture (b, TRUE, "Lock");
+lrg_editor_end_group (editor);                                               /* one undo step */
+#+end_src
+
+*** Connecting a grid
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-grid
+:END:
+=lrg_editor_node_source_connect_grid (grid, editor)= does the above for whatever sources the grid holds at the time of each edit. It switches the grid to =LRG_PROPERTY_APPLY_DELEGATE= and handles its signals:
+
+| Grid signal       | What the link does                                                                                                                                       |
+|-------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =edit-begin=      | Captures the grid's sources and begins a gesture on every =LrgEditorNodeSource=; remembers the current value of other sources                             |
+| =edit-value=      | Writes =lrg_property_grid_get_value_for_source()= into every source (vectors keep each node's other axes), then notifies views once                       |
+| =edit-end=        | Commit: ends every gesture inside one =lrg_editor_begin_group()=, so the drag is ONE undo step. Cancel (Escape): restores every node, records nothing    |
+| =reset-requested= | One undo group: overridden prefab properties are reverted to the prefab's value, the rest reset to their default                                         |
+
+Sources that are not node sources (an =LrgObjectPropertySource= over a live play-mode object) are written directly, not undoably, and restored on cancel. Previews of a batch are announced once per frame (one =LrgEditor::changed=), not once per node, so a drag over many nodes stays cheap. Connecting twice does nothing; =lrg_editor_node_source_disconnect_grid()= commits an open gesture and removes the handlers. =pick-requested= is left to the inspector (it opens the asset or node picker and writes the result with =lrg_property_grid_set_reference_value()=).
+
+*** States
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-states
+:END:
+=lrg_property_source_get_state()= combines:
+- =DEFAULT= when the value equals the default described above.
+- =OVERRIDDEN= when the node belongs to a linked prefab instance and the property's override path is covered by the instance's override set (=lrg_prefab_is_overridden()=). =lrg_editor_node_source_get_override_path()= gives the path (=transform/location=, =visual/params/intensity=, =components/Health/max-hp=, =components/+Health= for the type row, =scripts/<path>/enabled=, =scripts/+<path>= for the path row; see [[file:prefabs.org::#override-paths][Override Paths]]).
+- =ANIMATED= when a timeline of the level has a track for one of the property's channels on this node: =location.x|y|z= for location (and likewise rotation and scale), =color.r|g|b|a= for the colour, =roughness=, =metallic=, =param.<key>= for parameters.
+- =INVALID= for an asset or script path that names a file which does not exist, and for the type row of a component type the editor does not know. Paths are tried absolute, against =lrg_editor_node_source_set_asset_root()= (the project root) when set, otherwise against the level file's directory and the current directory. Values without a =/= or =.= (asset guids) are never invalid.
+
+Per-row prefab actions: =lrg_editor_node_source_revert_override()= puts the prefab's value back (=lrg_editor_prefab_revert()=, one undo step) and =lrg_editor_node_source_apply_override()= writes the instance's value into the prefab and syncs the other instances (=lrg_editor_prefab_apply()=). Both act on the override key that covers the property, which may be a parent path (=visual= covers =visual/asset=), and fail with =G_IO_ERROR_NOT_FOUND= when nothing is overridden.
+
+*** Change notification
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-changes
+:END:
+A source follows =LrgEditor::changed=, =LrgEditor::level-replaced= and =LrgLevel::node-changed= (for its node) and emits =property-changed= coalesced: it re-reads the node and emits once per property whose value or state really changed since the last emission, and nothing for notifications without a change. When the property list itself changed (a visual kind change, a component key added, a script attached) it emits once with a =NULL= name, which makes the grid re-read the schema. =lrg_editor_node_source_refresh()= forces the check after mutating a node behind the editor's back.
+
+*** API summary
+:PROPERTIES:
+:CUSTOM_ID: node-property-source-api
+:END:
+| Function                                                                 | Purpose                                                              |
+|--------------------------------------------------------------------------+----------------------------------------------------------------------|
+| =lrg_editor_node_source_new()=                                           | One section of one node                                              |
+| =lrg_editor_node_source_new_for_nodes()=                                 | One source per node (nodes without the component are left out)      |
+| =lrg_editor_node_source_get_editor()=, =lrg_editor_node_source_get_node()= | The editor and node (construct-only properties =editor=, =node=)   |
+| =lrg_editor_node_source_get_section()=                                   | The section (=section=; =lrg_editor_node_section_get_type()= is its enum type) |
+| =lrg_editor_node_source_get_component_type()=                            | The component type of a component section (=component-type=)         |
+| =lrg_editor_node_source_get_asset_root()=, =lrg_editor_node_source_set_asset_root()= | Where relative asset paths are checked (=asset-root=)    |
+| =lrg_editor_node_source_get_override_path()=                             | The prefab property path of a property                               |
+| =lrg_editor_node_source_revert_override()=, =lrg_editor_node_source_apply_override()= | Per-row prefab Revert / Apply                           |
+| =lrg_editor_node_source_begin_gesture()=, =lrg_editor_node_source_end_gesture()=, =lrg_editor_node_source_in_gesture()= | Preview, then one command or an exact restore |
+| =lrg_editor_node_source_refresh()=                                       | Re-check and emit changes now                                        |
+| =lrg_editor_node_source_connect_grid()=, =lrg_editor_node_source_disconnect_grid()= | Route a grid's DELEGATE edits through the undo stack      |

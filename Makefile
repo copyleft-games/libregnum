@@ -1585,6 +1585,7 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-asset-meta.h \
 	src/editor/lrg-editor-vcs.h \
 	src/editor/lrg-editor-document.h \
+	src/editor/lrg-editor-node-source.h \
 	src/editor/lrg-prefab.h
 SOURCES += \
 	src/editor/lrg-component-desc.c \
@@ -1621,6 +1622,7 @@ SOURCES += \
 	src/editor/lrg-asset-meta.c \
 	src/editor/lrg-editor-vcs.c \
 	src/editor/lrg-editor-document.c \
+	src/editor/lrg-editor-node-source.c \
 	src/editor/lrg-prefab.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
@@ -1628,16 +1630,8 @@ PUBLIC_HEADERS += \
 SOURCES += \
 	src/editor/ui/lrg-editor-app.c \
 	src/editor/ui/lrg-editor-app-actions.c \
-	src/editor/ui/lrg-editor-panel-hierarchy.c \
-	src/editor/ui/lrg-editor-panel-inspector.c \
-	src/editor/ui/lrg-editor-panel-viewport.c \
-	src/editor/ui/lrg-editor-panel-assets.c \
-	src/editor/ui/lrg-editor-panel-console.c \
-	src/editor/ui/lrg-editor-render.c \
 	src/editor/ui/lrg-editor-dialogs.c \
 	src/editor/ui/lrg-editor-play.c \
-	src/editor/ui/lrg-editor-panel-tiles.c \
-	src/editor/ui/lrg-editor-panel-timeline.c \
 	src/editor/ui/lrg-editor-thumbnails.c
 endif
 endif

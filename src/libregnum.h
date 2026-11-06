@@ -462,6 +462,7 @@
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"
+#include "editor/lrg-editor-node-source.h"
 #include "editor/lrg-editor-shortcut-legacy.h"
 #include "editor/lrg-editor-view-state.h"
 #include "editor/lrg-editor-play-session.h"

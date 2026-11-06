@@ -250,6 +250,7 @@ TEST_SOURCES := \
 	test-editor-app.c \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
+	test-editor-node-source.c \
 	test-ui-dnd.c \
 	test-ui-property-grid.c \
 	test-editor-actions.c \
