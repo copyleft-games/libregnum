@@ -254,6 +254,8 @@ TEST_SOURCES := \
 	test-editor-app-assets.c \
 	test-editor-app-panels.c \
 	test-editor-app-dialogs.c \
+	test-editor-app-data-1.c \
+	test-editor-app-data-2.c \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
 	test-editor-settings-migrate.c \

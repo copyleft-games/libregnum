@@ -1630,6 +1630,15 @@ SOURCES += \
 	src/editor/lrg-prefab.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
+	src/editor/ui/data/lrg-editor-data-editor.h \
+	src/editor/ui/data/lrg-editor-input-map-editor.h \
+	src/editor/ui/data/lrg-editor-locale-editor.h \
+	src/editor/ui/data/lrg-editor-sound-bank-editor.h \
+	src/editor/ui/data/lrg-editor-theme-editor.h \
+	src/editor/ui/data/lrg-editor-hud-layout-editor.h \
+	src/editor/ui/data/lrg-editor-ui-layout-editor.h \
+	src/editor/ui/data/lrg-editor-dialog-tree-editor.h \
+	src/editor/ui/data/lrg-editor-dungeon-editor.h \
 	src/editor/ui/lrg-editor-window.h \
 	src/editor/ui/lrg-editor-legacy-input.h \
 	src/editor/ui/lrg-editor-hierarchy-panel.h \
@@ -1649,6 +1658,15 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-app.h
 SOURCES += \
 	src/editor/ui/lrg-editor-app.c \
+	src/editor/ui/data/lrg-editor-data-editor.c \
+	src/editor/ui/data/lrg-editor-input-map-editor.c \
+	src/editor/ui/data/lrg-editor-locale-editor.c \
+	src/editor/ui/data/lrg-editor-sound-bank-editor.c \
+	src/editor/ui/data/lrg-editor-theme-editor.c \
+	src/editor/ui/data/lrg-editor-hud-layout-editor.c \
+	src/editor/ui/data/lrg-editor-ui-layout-editor.c \
+	src/editor/ui/data/lrg-editor-dialog-tree-editor.c \
+	src/editor/ui/data/lrg-editor-dungeon-editor.c \
 	src/editor/ui/lrg-editor-window.c \
 	src/editor/ui/lrg-editor-legacy-input.c \
 	src/editor/ui/lrg-editor-hierarchy-panel.c \
