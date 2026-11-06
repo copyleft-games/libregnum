@@ -42,16 +42,18 @@ Input is split into two steps so that anything can drive a canvas:
 | =wheel_x=, =wheel_y= | Wheel movement this frame |
 | =keys[]=, =n_keys= | Key presses this frame, oldest first (at most =LRG_CANVAS_INPUT_MAX_KEYS=, 16) |
 | =chars[]=, =n_chars= | Composed characters typed this frame (layout, Shift and dead keys applied), oldest first (at most 16) |
-| =modifiers= | =LrgInputModifiers= held (=SHIFT=, =CTRL=, =ALT=) |
+| =modifiers= | =LrgInputModifiers= held (=SHIFT=, =CTRL=, =ALT=, =SUPER=) |
 | =nav= | A focus-navigation request (=LrgNavDirection=) |
 | =activate= | Activate the focused widget |
 | =cancel= | Back / cancel |
 | =delta_time= | Seconds since the previous frame; drives every spring |
+| =keys_released[]=, =n_keys_released= | Key releases this frame, oldest first (at most 16); they become =KEY_UP= events |
 
 | Function | Purpose | Notes |
 |----------+---------+-------|
 | =lrg_canvas_input_init (self)= | Reset to "nothing happened" (pointer at 0,0, no buttons, keys or navigation, =dt= 0) | Always init before filling by hand |
 | =lrg_canvas_input_add_key (self, key)= | Append a key press | Ignored once full |
+| =lrg_canvas_input_add_key_release (self, key)= | Append a key release | Ignored once full |
 | =lrg_canvas_input_add_char (self, codepoint)= | Append a typed character | Ignored once full |
 | =lrg_canvas_input_add_text (self, utf8)= | Append every character of a string | Tests, on-screen keyboards |
 | =lrg_canvas_input_poll (self, delta_time)= | Fill from graylib (needs a window) | See below |
@@ -62,8 +64,9 @@ What =lrg_canvas_input_poll()= reads:
 - the mouse position, mapped through the process-wide pointer transform (=lrg_canvas_set_default_pointer_transform()=, installed by whatever presents a scaled render target, e.g. the 2D game template's virtual resolution);
 - left, right and middle button down / pressed / released;
 - both wheel axes;
-- Shift, Ctrl and Alt (left or right);
+- Shift, Ctrl, Alt and Super (left or right);
 - raylib's key-press queue; *Tab is not queued as a key*: it becomes =nav = NEXT= (=PREVIOUS= with Shift);
+- key releases (every key from Space to Menu is checked, Tab excepted) into =keys_released=;
 - raylib's character queue (composed codepoints);
 - gamepad 0: D-pad up/down/left/right become =nav=, the bottom face button (A / Cross) =activate=, the right face button (B / Circle) =cancel=; when the D-pad gave nothing, the left stick becomes =nav= once it passes 0.6 on an axis (dominant axis wins), and it must return below 0.3 before it can navigate again (latched, so holding the stick moves one step).
 
@@ -75,13 +78,14 @@ What =lrg_canvas_input_poll()= reads:
 2. *Hit test*: =lrg_canvas_widget_at_point()= at the pointer (popups first, see [[#input-hit-testing][hit testing]]). The *target* for pointer events is the capture widget while a button is held, else the hit widget.
 3. *Hover*: updates the hover path to the hit widget (=POINTER_LEAVE= / =POINTER_ENTER=, =HOVERED= flags).
 4. *Move*: if the pointer moved since the last frame, dispatches =MOUSE_MOVE= to the target; a capture widget gets =PRESSED= while the pointer is over it and loses it while outside.
-5. *Presses*: closes non-modal popups above the one clicked into (light dismiss); on a left press, focuses the nearest focusable ancestor of the hit widget (or clears focus when clicking empty space with no modal open) and starts a capture on the hit widget (with =PRESSED=); then dispatches one =MOUSE_BUTTON_DOWN= per pressed button to the target.
-6. *Releases*: dispatches one =MOUSE_BUTTON_UP= per released button to the capture widget (or the hit widget); a left release ends the capture and clears =PRESSED=.
+5. *Presses*: closes non-modal popups above the one clicked into (light dismiss); on a left press, focuses the nearest focusable ancestor of the hit widget (or clears focus when clicking empty space with no modal open); any press starts a capture on the hit widget when none is running (a left press adds =PRESSED=); then dispatches one =MOUSE_BUTTON_DOWN= per pressed button to the target.
+6. *Releases*: dispatches one =MOUSE_BUTTON_UP= per released button to the capture widget (or the hit widget); the capture ends when every button it holds is released (a left release clears =PRESSED=).
 7. *Wheel*: =SCROLL= to the hit widget (not the capture).
-8. *Keys*: each key as =KEY_DOWN= to the focused widget (or, with nothing focused, the top popup), bubbling. If nobody handled it: an arrow key moves focus spatially (when navigation is enabled), Enter / keypad Enter / Space activate the focus, Escape cancels.
-9. *Characters*: each as =TEXT_INPUT= to the focused widget, bubbling.
-10. *Navigation*: =nav= moves focus (when navigation is enabled), =activate= activates, =cancel= cancels.
-11. *Animation*: =lrg_canvas_update (canvas, delta_time)= steps every spring.
+8. *Keys*: each key as =KEY_DOWN= to the focused widget (or, with nothing focused, the top popup), bubbling. If nobody handled it, a matching [[#input-shortcuts][shortcut]] fires (printable ones wait for step 10); if none ran: an arrow key moves focus spatially (when navigation is enabled), Enter / keypad Enter / Space activate the focus, Escape cancels.
+9. *Key releases*: each as =KEY_UP= to the same target, bubbling (no shortcuts, no navigation).
+10. *Characters*: each as =TEXT_INPUT= to the focused widget, bubbling. Then the held-back printable shortcuts fire if no character was accepted.
+11. *Navigation*: =nav= moves focus (when navigation is enabled), =activate= activates, =cancel= cancels.
+12. *Animation*: =lrg_canvas_update (canvas, delta_time)= steps every spring.
 
 Key presses are dispatched before =nav=, so a widget that wants arrow keys must handle (return =TRUE= for) them; unhandled arrows navigate.
 
@@ -115,7 +119,7 @@ Containers do *not* forward bubbling events back down to their children: =LrgCon
 | =CANCEL= | focused widget, else top popup | yes |
 | =POINTER_ENTER= / =POINTER_LEAVE= | each widget entering / leaving the hover path | no (sent directly) |
 | =FOCUS_IN= / =FOCUS_OUT= | the widget gaining / losing focus | no (sent directly) |
-| =KEY_UP= | not generated by the canvas | - |
+| =KEY_UP= | focused widget, else top popup (from =keys_released=) | yes |
 
 Only the return value stops bubbling; the event's =consumed= flag (=lrg_ui_event_consume()=) is not consulted by the canvas.
 
@@ -123,7 +127,7 @@ Only the return value stops bubbling; the event's =consumed= flag (=lrg_ui_event
 :PROPERTIES:
 :CUSTOM_ID: input-capture
 :END:
-The widget hit by a *left* press captures the pointer until the left button is released: it receives every =MOUSE_MOVE= and the =MOUSE_BUTTON_UP= even when the pointer has left its bounds (or the window area of other widgets). This is what makes slider drags, scrollbar drags and "press, slide off, release to cancel" buttons work without each widget tracking global state. While captured, the widget carries =PRESSED= only while the pointer is over it, so a button visibly un-presses when dragged off. Right and middle presses do not capture or focus; their events go to the hit widget.
+The widget hit by a press of *any* mouse button captures the pointer until every button pressed on it is released: it receives every =MOUSE_MOVE= and each =MOUSE_BUTTON_UP= even when the pointer has left its bounds (or the window area of other widgets). This is what makes slider drags, scrollbar drags, right-drag orbit cameras, middle-drag panning and "press, slide off, release to cancel" buttons work without each widget tracking global state. Buttons pressed while a capture runs join it (a right press during a middle drag goes to the captured widget). Only the left button focuses and sets =PRESSED=; while captured by a left press the widget carries =PRESSED= only while the pointer is over it, so a button visibly un-presses when dragged off.
 
 A widget that implements "click" should therefore treat =MOUSE_BUTTON_UP= with button 0 *inside its bounds* (=lrg_widget_contains_point()= with the event's x/y) as the click; outside means the user cancelled.
 
@@ -151,6 +155,7 @@ So a panel stays hovered while the pointer is over one of its buttons, and movin
 1. Open popups are tested first, newest first. If a popup contains a hit, that is the result. A *modal* popup that does not contain the point stops the search there: its veil swallows the rest of the canvas (=NULL=).
 2. Then the canvas tree, depth first, children in reverse order (the last painted is on top).
 3. Invisible or disabled widgets and their subtrees are skipped; the canvas itself is never returned.
+4. A container is only searched when the point is inside it, unless =lrg_container_set_overflow_hit_test (container, TRUE)= (property =overflow-hit-test=): then its children are searched even outside its rectangle (anchor layouts, badges hanging off an edge). The container itself is still only hit inside its rectangle.
 
 *** Pointer-transparent widgets
 :PROPERTIES:
@@ -231,6 +236,18 @@ g_signal_connect (canvas, "cancel", G_CALLBACK (on_ui_cancel), game);
 :CUSTOM_ID: input-navigation-enabled
 :END:
 =lrg_canvas_set_navigation_enabled (canvas, FALSE)= (property =navigation-enabled=, default =TRUE=) stops unhandled arrows and =nav= requests from moving focus, for games that drive focus themselves or use arrows for gameplay while a HUD is up. Activate and cancel still work. =lrg_canvas_move_focus()= can always be called directly.
+
+** Keyboard shortcuts
+:PROPERTIES:
+:CUSTOM_ID: input-shortcuts
+:END:
+=lrg_canvas_add_shortcut (canvas, "<Ctrl>s", "doc.save", NULL)= binds a key combination to a GIO action (see [[file:actions.org][actions and shortcuts]] for actions, the built-in =app= / =ui= groups and the accelerator syntax). The rule, per key press:
+
+1. The focused widget (else the top popup) sees =KEY_DOWN= first; returning =TRUE= consumes the key and no shortcut fires. A text field thereby keeps Backspace, arrows, Ctrl+C ...
+2. Otherwise the shortcut with exactly these modifiers activates its action from the focused widget (widget-scoped groups apply), else from the canvas. If it ran, the defaults (navigation, activation, cancel) are skipped for that key.
+3. Shortcuts on printable keys without Ctrl, Alt or Super wait until the frame's characters were delivered and only fire if no widget accepted a =TEXT_INPUT=, so typing never triggers them.
+
+Text-editing widgets should return =TRUE= for printable keys only when no Ctrl / Alt / Super is held (AltGr = Ctrl+Alt is text), so Ctrl+Q still quits from inside a text field; =LrgTextInput= does.
 
 ** Popups
 :PROPERTIES:

@@ -406,4 +406,115 @@ void lrg_canvas_remove_overlay (LrgCanvas *self,
 LRG_AVAILABLE_IN_ALL
 guint lrg_canvas_get_n_overlays (LrgCanvas *self);
 
+/* ==========================================================================
+ * Shortcuts
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_add_shortcut:
+ * @self: an #LrgCanvas
+ * @accel: an accelerator such as "<Ctrl>s" or "F5" (see lrg_accel_parse())
+ * @action: the action to activate, "prefix.action"
+ * @target: (nullable): the parameter to activate it with (a floating
+ *   reference is consumed)
+ *
+ * Binds a keyboard shortcut. Binding an accelerator that is already
+ * bound replaces the old binding. The action is resolved from the
+ * focused widget (so widget-scoped groups apply), else from the canvas.
+ *
+ * Dispatch rule: on each key press the focused widget sees the key
+ * first. If it consumes it (returns %TRUE) no shortcut fires; that is
+ * how a text field keeps Ctrl+C, Backspace or arrows. Otherwise the
+ * matching shortcut activates its action and focus navigation /
+ * activation does not run for that key. Shortcuts on printable keys
+ * without Ctrl, Alt or Super ("q", "<Shift>a", "space") are held back
+ * until the frame's typed characters were delivered and fire only if
+ * no widget accepted a typed character, so typing into a text field
+ * never triggers them.
+ *
+ * Returns: %TRUE if @accel was valid and the shortcut was added
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_add_shortcut (LrgCanvas   *self,
+                                  const gchar *accel,
+                                  const gchar *action,
+                                  GVariant    *target);
+
+/**
+ * lrg_canvas_remove_shortcut:
+ * @self: an #LrgCanvas
+ * @accel: an accelerator added with lrg_canvas_add_shortcut()
+ *
+ * Removes the binding of @accel. Spellings that parse to the same key
+ * and modifiers ("<Primary>s", "<Control>S") match.
+ *
+ * Returns: %TRUE if a binding was removed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_remove_shortcut (LrgCanvas   *self,
+                                     const gchar *accel);
+
+/**
+ * lrg_canvas_remove_all_shortcuts:
+ * @self: an #LrgCanvas
+ *
+ * Removes every shortcut.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_remove_all_shortcuts (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_n_shortcuts:
+ * @self: an #LrgCanvas
+ *
+ * Returns: number of bound shortcuts
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_canvas_get_n_shortcuts (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_accel_for_action:
+ * @self: an #LrgCanvas
+ * @action: "prefix.action"
+ * @target: (nullable): the parameter the binding must carry, or %NULL
+ *   for a binding without one
+ *
+ * Finds the accelerator bound to @action with @target, for showing it
+ * next to a menu item (pass the result to lrg_accel_to_label()).
+ *
+ * Returns: (transfer full) (nullable): the accelerator as it was
+ *   added, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_canvas_get_accel_for_action (LrgCanvas   *self,
+                                         const gchar *action,
+                                         GVariant    *target);
+
+/* ==========================================================================
+ * Layout direction
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_get_default_direction:
+ * @self: an #LrgCanvas
+ *
+ * Returns: the direction widgets use when neither they nor an ancestor
+ *   set one (%LRG_WIDGET_DIRECTION_LTR unless changed)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidgetDirection lrg_canvas_get_default_direction (LrgCanvas *self);
+
+/**
+ * lrg_canvas_set_default_direction:
+ * @self: an #LrgCanvas
+ * @direction: %LRG_WIDGET_DIRECTION_LTR or %LRG_WIDGET_DIRECTION_RTL
+ *   (%LRG_WIDGET_DIRECTION_INHERIT is taken as LTR)
+ *
+ * Sets the root layout direction, e.g. from the user's locale. Widgets
+ * that inherit their direction are laid out again.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_set_default_direction (LrgCanvas          *self,
+                                       LrgWidgetDirection  direction);
+
 G_END_DECLS

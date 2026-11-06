@@ -346,6 +346,7 @@ lrg_input_modifiers_get_type (void)
             { LRG_INPUT_MODIFIER_SHIFT, "LRG_INPUT_MODIFIER_SHIFT", "shift" },
             { LRG_INPUT_MODIFIER_CTRL, "LRG_INPUT_MODIFIER_CTRL", "ctrl" },
             { LRG_INPUT_MODIFIER_ALT, "LRG_INPUT_MODIFIER_ALT", "alt" },
+            { LRG_INPUT_MODIFIER_SUPER, "LRG_INPUT_MODIFIER_SUPER", "super" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -6326,6 +6327,27 @@ lrg_icon_get_type (void)
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgIcon"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_widget_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_WIDGET_DIRECTION_INHERIT, "LRG_WIDGET_DIRECTION_INHERIT", "inherit" },
+            { LRG_WIDGET_DIRECTION_LTR, "LRG_WIDGET_DIRECTION_LTR", "ltr" },
+            { LRG_WIDGET_DIRECTION_RTL, "LRG_WIDGET_DIRECTION_RTL", "rtl" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgWidgetDirection"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

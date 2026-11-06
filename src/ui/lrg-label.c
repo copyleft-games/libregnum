@@ -258,9 +258,16 @@ lrg_label_paint (LrgWidget    *widget,
     gfloat        th;
     gchar       **lines;
     guint         i;
+    LrgTextAlignment align;
 
     if (self->text == NULL || self->text[0] == '\0')
         return;
+
+    /* Right-to-left: LEFT means the leading edge, so left and right
+     * swap (the default LEFT alignment hugs the right edge) */
+    align = self->alignment;
+    if (lrg_widget_is_rtl (widget) && align != LRG_TEXT_ALIGN_CENTER)
+        align = align == LRG_TEXT_ALIGN_LEFT ? LRG_TEXT_ALIGN_RIGHT : LRG_TEXT_ALIGN_LEFT;
 
     font = label_font (self);
     size = label_effective_size (self);
@@ -279,7 +286,7 @@ lrg_label_paint (LrgWidget    *widget,
         y += (h - th) * 0.5f;
 
     /* Single line, left aligned: one call, no splitting */
-    if (self->alignment == LRG_TEXT_ALIGN_LEFT && strchr (self->text, '\n') == NULL)
+    if (align == LRG_TEXT_ALIGN_LEFT && strchr (self->text, '\n') == NULL)
     {
         lrg_paint_list_text (list, font, self->text, x, y, size, 1.0f, &fg);
         return;
@@ -294,12 +301,12 @@ lrg_label_paint (LrgWidget    *widget,
 
         if (lines[i][0] != '\0')
         {
-            if (self->alignment != LRG_TEXT_ALIGN_LEFT)
+            if (align != LRG_TEXT_ALIGN_LEFT)
             {
                 lrg_paint_measure_text (font, lines[i], size, 1.0f, &lw, NULL);
-                if (self->alignment == LRG_TEXT_ALIGN_CENTER)
+                if (align == LRG_TEXT_ALIGN_CENTER)
                     lx += (w - lw) * 0.5f;
-                else if (self->alignment == LRG_TEXT_ALIGN_RIGHT)
+                else if (align == LRG_TEXT_ALIGN_RIGHT)
                     lx += w - lw;
             }
             lrg_paint_list_text (list, font, lines[i], lx, y, size, 1.0f, &fg);

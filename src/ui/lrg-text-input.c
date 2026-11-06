@@ -938,7 +938,13 @@ handle_key (LrgTextInput      *self,
      * Printable keys (Space included) are swallowed so they neither
      * trigger shortcuts nor activate; the character itself arrives as
      * a separate TEXT_INPUT event carrying the composed codepoint.
+     * With Ctrl, Alt or Super held (and not AltGr = Ctrl+Alt) the key
+     * types nothing, so it is left to canvas shortcuts.
      */
+    if (((mods & LRG_INPUT_MODIFIER_CTRL) && !(mods & LRG_INPUT_MODIFIER_ALT)) ||
+        ((mods & LRG_INPUT_MODIFIER_ALT) && !(mods & LRG_INPUT_MODIFIER_CTRL)) ||
+        (mods & LRG_INPUT_MODIFIER_SUPER))
+        return FALSE;
     return key >= 32 && key <= 126;
 }
 

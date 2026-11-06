@@ -78,6 +78,18 @@ lrg_canvas_input_add_key (LrgCanvasInput *self,
 }
 
 void
+lrg_canvas_input_add_key_release (LrgCanvasInput *self,
+                                  GrlKey          key)
+{
+    g_return_if_fail (self != NULL);
+
+    if (self->n_keys_released >= LRG_CANVAS_INPUT_MAX_KEYS)
+        return;
+
+    self->keys_released[self->n_keys_released++] = key;
+}
+
+void
 lrg_canvas_input_add_char (LrgCanvasInput *self,
                            gunichar        codepoint)
 {
@@ -186,6 +198,7 @@ lrg_canvas_input_poll (LrgCanvasInput *self,
     guint  i;
     GrlKey key;
     gint   ch;
+    gint   k;
 
     g_return_if_fail (self != NULL);
 
@@ -228,6 +241,9 @@ lrg_canvas_input_poll (LrgCanvasInput *self,
     if (grl_input_is_key_down (GRL_KEY_LEFT_ALT) ||
         grl_input_is_key_down (GRL_KEY_RIGHT_ALT))
         self->modifiers |= LRG_INPUT_MODIFIER_ALT;
+    if (grl_input_is_key_down (GRL_KEY_LEFT_SUPER) ||
+        grl_input_is_key_down (GRL_KEY_RIGHT_SUPER))
+        self->modifiers |= LRG_INPUT_MODIFIER_SUPER;
 
     /* Key presses. Tab is navigation, not a key the focused widget
      * sees; everything else is queued in order. */
@@ -243,6 +259,14 @@ lrg_canvas_input_poll (LrgCanvasInput *self,
             continue;
         }
         lrg_canvas_input_add_key (self, key);
+    }
+
+    /* Key releases: graylib has no release queue, so scan the key
+     * range (cheap: a few hundred table lookups). Tab stays navigation. */
+    for (k = (gint) GRL_KEY_SPACE; k <= (gint) GRL_KEY_KB_MENU; k++)
+    {
+        if (k != (gint) GRL_KEY_TAB && grl_input_is_key_released ((GrlKey) k))
+            lrg_canvas_input_add_key_release (self, (GrlKey) k);
     }
 
     /* Composed characters (layout, Shift and dead keys applied) */

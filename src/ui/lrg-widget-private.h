@@ -98,4 +98,20 @@ void _lrg_widget_outer_size (LrgWidget *self,
                              gfloat    *width,
                              gfloat    *height);
 
+/*
+ * _lrg_widget_mirrors_children:
+ *
+ * TRUE when @self lays out right-to-left and its class did not opt out
+ * with lrg_widget_class_set_handles_direction(): lrg_widget_allocate()
+ * then mirrors each child's rectangle inside @self.
+ */
+gboolean _lrg_widget_mirrors_children (LrgWidget *self);
+
+/*
+ * _lrg_widget_queue_layout_subtree:
+ *
+ * Marks @self and every descendant for layout (direction changes).
+ */
+void _lrg_widget_queue_layout_subtree (LrgWidget *self);
+
 G_END_DECLS

@@ -216,6 +216,7 @@
 #include "ui/lrg-island.h"
 #include "ui/lrg-ui-loader.h"
 #include "ui/lrg-ui-inspector.h"
+#include "ui/lrg-ui-actions.h"
 
 /* Tilemap module */
 #include "tilemap/lrg-tileset.h"

@@ -1523,6 +1523,10 @@ lrg_tree_view_class_init (LrgTreeViewClass *klass)
 		              G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL,
 		              G_TYPE_NONE, 1, G_TYPE_OBJECT);
+
+	/* Positions children with a meaning of their own (scroll offsets,
+	 * columns, painted chrome): no automatic RTL mirroring */
+	lrg_widget_class_set_handles_direction (LRG_WIDGET_CLASS (klass), TRUE);
 }
 
 static void

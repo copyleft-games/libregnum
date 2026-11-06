@@ -754,6 +754,10 @@ lrg_scroll_box_class_init (LrgScrollBoxClass *klass)
 		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
+
+	/* Positions children with a meaning of their own (scroll offsets,
+	 * columns, painted chrome): no automatic RTL mirroring */
+	lrg_widget_class_set_handles_direction (LRG_WIDGET_CLASS (klass), TRUE);
 }
 
 static void

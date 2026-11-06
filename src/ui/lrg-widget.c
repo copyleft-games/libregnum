@@ -19,6 +19,8 @@
 #include "lrg-widget.h"
 #include "lrg-widget-private.h"
 #include "lrg-container.h"
+#include "lrg-canvas.h"
+#include "lrg-canvas-private.h"
 #include "../paint/lrg-paint-renderer.h"
 #include "../tween/lrg-spring.h"
 #include "../lrg-log.h"
@@ -119,6 +121,12 @@ typedef struct
 	GArray         *part_looks;  /* PartOverride, NULL until used */
 	LrgSpring       hover;
 	LrgSpring       press;
+
+	/* Actions: prefix -> GActionGroup (owned), NULL until used */
+	GHashTable     *action_groups;
+
+	/* Layout direction set on this widget (INHERIT by default) */
+	LrgWidgetDirection direction;
 } LrgWidgetPrivate;
 
 /* A per-instance look override (lrg_widget_set_part_look) */
@@ -151,6 +159,7 @@ enum
 	PROP_FOCUSABLE,
 	PROP_STATE_FLAGS,
 	PROP_THEME,
+	PROP_DIRECTION,
 	N_PROPS
 };
 
@@ -325,6 +334,7 @@ lrg_widget_finalize (GObject *object)
 	g_clear_pointer (&priv->classes, g_array_unref);
 	g_clear_pointer (&priv->part_looks, g_array_unref);
 	g_clear_object (&priv->theme);
+	g_clear_pointer (&priv->action_groups, g_hash_table_unref);
 
 	G_OBJECT_CLASS (lrg_widget_parent_class)->finalize (object);
 }
@@ -391,6 +401,9 @@ lrg_widget_get_property (GObject    *object,
 	case PROP_THEME:
 		g_value_set_object (value, priv->theme);
 		break;
+	case PROP_DIRECTION:
+		g_value_set_enum (value, priv->direction);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -452,6 +465,9 @@ lrg_widget_set_property (GObject      *object,
 		break;
 	case PROP_THEME:
 		lrg_widget_set_theme (self, g_value_get_object (value));
+		break;
+	case PROP_DIRECTION:
+		lrg_widget_set_direction (self, g_value_get_enum (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -586,6 +602,16 @@ lrg_widget_class_init (LrgWidgetClass *klass)
 	 * Theme for this widget and its subtree, %NULL to inherit.
 	 */
 	properties[PROP_THEME] = g_param_spec_object ("theme", NULL, NULL, LRG_TYPE_THEME, rw);
+	/**
+	 * LrgWidget:direction:
+	 *
+	 * Layout direction of the widget and the descendants that inherit
+	 * it; %LRG_WIDGET_DIRECTION_INHERIT follows the parent (see
+	 * lrg_widget_get_effective_direction()).
+	 */
+	properties[PROP_DIRECTION] =
+		g_param_spec_enum ("direction", NULL, NULL, LRG_TYPE_WIDGET_DIRECTION,
+		                   LRG_WIDGET_DIRECTION_INHERIT, rw);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -735,6 +761,17 @@ lrg_widget_allocate (LrgWidget *self,
 
 	g_return_if_fail (LRG_IS_WIDGET (self));
 	priv = lrg_widget_get_instance_private (self);
+
+	/*
+	 * Right-to-left: the parent laid its children out left-to-right;
+	 * mirror the rectangle inside the parent so the whole layout reads
+	 * from the right (first child rightmost, START alignment and the
+	 * left margin on the right). Classes that place children with a
+	 * meaning of their own opt out with
+	 * lrg_widget_class_set_handles_direction().
+	 */
+	if (priv->parent != NULL && _lrg_widget_mirrors_children (LRG_WIDGET (priv->parent)))
+		x = lrg_widget_get_width (LRG_WIDGET (priv->parent)) - x - MAX (width, 0.0f);
 
 	/* Glide from the old painted position to the new one */
 	if (priv->animate_layout && priv->placed && (x != priv->x || y != priv->y))
@@ -2224,3 +2261,376 @@ lrg_widget_handle_event (LrgWidget        *self,
 
 	return LRG_WIDGET_GET_CLASS (self)->handle_event (self, event);
 }
+
+/* ==========================================================================
+ * Actions
+ * ========================================================================== */
+
+/* Deepest scope walk before giving up (guards against anchor cycles) */
+#define SCOPE_MAX_DEPTH (256)
+
+/*
+ * scope_parent:
+ *
+ * The next widget up an action / direction scope. Normally the parent;
+ * a popup shown on a canvas with an anchor continues from its anchor,
+ * so a context menu sees the groups and direction of the widget that
+ * opened it (popups are parented to the canvas for coordinates only).
+ */
+static LrgWidget *
+scope_parent (LrgWidget *widget)
+{
+	LrgWidgetPrivate *priv = lrg_widget_get_instance_private (widget);
+
+	if (priv->parent != NULL && LRG_IS_CANVAS (priv->parent))
+	{
+		LrgWidget *anchor = _lrg_canvas_get_popup_anchor (LRG_CANVAS (priv->parent), widget);
+
+		if (anchor != NULL && anchor != widget)
+			return anchor;
+	}
+	return (LrgWidget *) priv->parent;
+}
+
+void
+lrg_widget_insert_action_group (LrgWidget    *self,
+                                const gchar  *prefix,
+                                GActionGroup *group)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	g_return_if_fail (prefix != NULL && *prefix != '\0');
+	g_return_if_fail (strchr (prefix, '.') == NULL);
+	g_return_if_fail (group == NULL || G_IS_ACTION_GROUP (group));
+
+	priv = lrg_widget_get_instance_private (self);
+
+	/* NULL removes; the table is created lazily on first insert */
+	if (group == NULL)
+	{
+		if (priv->action_groups != NULL)
+			g_hash_table_remove (priv->action_groups, prefix);
+		return;
+	}
+
+	if (priv->action_groups == NULL)
+		priv->action_groups = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
+	g_hash_table_replace (priv->action_groups, g_strdup (prefix), g_object_ref (group));
+}
+
+GActionGroup *
+lrg_widget_get_action_group (LrgWidget   *self,
+                             const gchar *prefix)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), NULL);
+	g_return_val_if_fail (prefix != NULL, NULL);
+
+	priv = lrg_widget_get_instance_private (self);
+	if (priv->action_groups == NULL)
+		return NULL;
+	return g_hash_table_lookup (priv->action_groups, prefix);
+}
+
+GActionGroup *
+lrg_widget_find_action_group (LrgWidget   *self,
+                              const gchar *prefix)
+{
+	LrgWidget *w;
+	guint      depth = 0;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), NULL);
+	g_return_val_if_fail (prefix != NULL, NULL);
+
+	/* Nearest first: a group on a widget shadows its ancestors' */
+	for (w = self; w != NULL && depth < SCOPE_MAX_DEPTH; w = scope_parent (w), depth++)
+	{
+		GActionGroup *group = lrg_widget_get_action_group (w, prefix);
+
+		if (group != NULL)
+			return group;
+	}
+	return NULL;
+}
+
+/* compare_prefix: sort callback over an array of gchar* */
+static gint
+compare_prefix (gconstpointer a,
+                gconstpointer b,
+                gpointer      user_data)
+{
+	return g_strcmp0 (*(const gchar * const *) a, *(const gchar * const *) b);
+}
+
+gchar **
+lrg_widget_list_action_prefixes (LrgWidget *self)
+{
+	g_autoptr(GPtrArray) out = NULL;
+	LrgWidget           *w;
+	guint                depth = 0;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), NULL);
+
+	out = g_ptr_array_new_with_free_func (g_free);
+	for (w = self; w != NULL && depth < SCOPE_MAX_DEPTH; w = scope_parent (w), depth++)
+	{
+		LrgWidgetPrivate *priv = lrg_widget_get_instance_private (w);
+		g_autofree gpointer *keys = NULL;
+		guint                n = 0;
+		guint                i;
+
+		if (priv->action_groups == NULL)
+			continue;
+
+		/* Sorted per widget so the listing is stable */
+		keys = g_hash_table_get_keys_as_array (priv->action_groups, &n);
+		g_sort_array (keys, n, sizeof (gpointer), compare_prefix, NULL);
+		for (i = 0; i < n; i++)
+		{
+			guint k;
+			gboolean seen = FALSE;
+
+			for (k = 0; k < out->len && !seen; k++)
+				seen = g_strcmp0 (g_ptr_array_index (out, k), keys[i]) == 0;
+			if (!seen)
+				g_ptr_array_add (out, g_strdup (keys[i]));
+		}
+	}
+	g_ptr_array_add (out, NULL);
+	return (gchar **) g_ptr_array_free (g_steal_pointer (&out), FALSE);
+}
+
+/*
+ * split_action_name:
+ *
+ * "prefix.action" -> prefix (newly allocated) and a pointer to the
+ * action part inside @name. FALSE when there is no dot or either part
+ * is empty.
+ */
+static gboolean
+split_action_name (const gchar  *name,
+                   gchar       **prefix,
+                   const gchar **action)
+{
+	const gchar *dot = strchr (name, '.');
+
+	if (dot == NULL || dot == name || dot[1] == '\0')
+		return FALSE;
+	*prefix = g_strndup (name, (gsize) (dot - name));
+	*action = dot + 1;
+	return TRUE;
+}
+
+GAction *
+lrg_widget_lookup_action (LrgWidget   *self,
+                          const gchar *name)
+{
+	g_autofree gchar *prefix = NULL;
+	const gchar      *action = NULL;
+	GActionGroup     *group;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), NULL);
+	g_return_val_if_fail (name != NULL, NULL);
+
+	if (!split_action_name (name, &prefix, &action))
+		return NULL;
+	group = lrg_widget_find_action_group (self, prefix);
+	if (group == NULL || !G_IS_ACTION_MAP (group))
+		return NULL;
+	return g_action_map_lookup_action (G_ACTION_MAP (group), action);
+}
+
+gboolean
+lrg_widget_activate_action (LrgWidget   *self,
+                            const gchar *name,
+                            GVariant    *parameter)
+{
+	g_autoptr(GVariant)  param = NULL;
+	g_autofree gchar    *prefix = NULL;
+	const gchar         *action = NULL;
+	const GVariantType  *ptype = NULL;
+	GActionGroup        *group;
+	gboolean             enabled = FALSE;
+
+	/* Take the floating reference first so every early return frees it */
+	if (parameter != NULL)
+		param = g_variant_ref_sink (parameter);
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+
+	if (!split_action_name (name, &prefix, &action))
+	{
+		lrg_debug (LRG_LOG_DOMAIN, "activate_action: \"%s\" is not \"prefix.action\"", name);
+		return FALSE;
+	}
+
+	group = lrg_widget_find_action_group (self, prefix);
+	if (group == NULL)
+	{
+		lrg_debug (LRG_LOG_DOMAIN, "activate_action: no \"%s\" group in scope of %s", prefix, G_OBJECT_TYPE_NAME (self));
+		return FALSE;
+	}
+
+	/* Exists, enabled and the parameter fits the declared type */
+	if (!g_action_group_query_action (group, action, &enabled, &ptype, NULL, NULL, NULL))
+	{
+		lrg_debug (LRG_LOG_DOMAIN, "activate_action: group \"%s\" has no action \"%s\"", prefix, action);
+		return FALSE;
+	}
+	if (!enabled)
+		return FALSE;
+	if ((ptype == NULL) != (param == NULL) ||
+	    (ptype != NULL && !g_variant_is_of_type (param, ptype)))
+	{
+		lrg_debug (LRG_LOG_DOMAIN, "activate_action: parameter of %s does not match its type", name);
+		return FALSE;
+	}
+
+	g_action_group_activate_action (group, action, param);
+	return TRUE;
+}
+
+/* ==========================================================================
+ * Layout direction
+ * ========================================================================== */
+
+static GQuark
+handles_direction_quark (void)
+{
+	return g_quark_from_static_string ("lrg-widget-handles-direction");
+}
+
+void
+lrg_widget_class_set_handles_direction (LrgWidgetClass *klass,
+                                        gboolean        handles_direction)
+{
+	g_return_if_fail (LRG_IS_WIDGET_CLASS (klass));
+
+	/* 1 = mirrored automatically, 2 = the class handles it (0 = unset) */
+	g_type_set_qdata (G_TYPE_FROM_CLASS (klass), handles_direction_quark (),
+	                  GINT_TO_POINTER (handles_direction ? 2 : 1));
+}
+
+gboolean
+lrg_widget_class_get_handles_direction (LrgWidgetClass *klass)
+{
+	GType type;
+
+	g_return_val_if_fail (LRG_IS_WIDGET_CLASS (klass), FALSE);
+
+	/* The nearest class that decided wins */
+	for (type = G_TYPE_FROM_CLASS (klass); type != 0; type = g_type_parent (type))
+	{
+		gint v = GPOINTER_TO_INT (g_type_get_qdata (type, handles_direction_quark ()));
+
+		if (v != 0)
+			return v == 2;
+		if (type == LRG_TYPE_WIDGET)
+			break;
+	}
+	return FALSE;
+}
+
+/* queue_layout_subtree: a direction change re-places the whole subtree */
+static void
+queue_layout_subtree (LrgWidget *widget)
+{
+	GList *l;
+
+	lrg_widget_queue_layout (widget);
+	if (LRG_IS_CONTAINER (widget))
+		for (l = lrg_container_get_children (LRG_CONTAINER (widget)); l != NULL; l = l->next)
+			queue_layout_subtree (LRG_WIDGET (l->data));
+}
+
+void
+_lrg_widget_queue_layout_subtree (LrgWidget *self)
+{
+	queue_layout_subtree (self);
+}
+
+LrgWidgetDirection
+lrg_widget_get_direction (LrgWidget *self)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), LRG_WIDGET_DIRECTION_INHERIT);
+	priv = lrg_widget_get_instance_private (self);
+	return priv->direction;
+}
+
+void
+lrg_widget_set_direction (LrgWidget          *self,
+                          LrgWidgetDirection  direction)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	g_return_if_fail (direction <= LRG_WIDGET_DIRECTION_RTL);
+	priv = lrg_widget_get_instance_private (self);
+
+	if (priv->direction == direction)
+		return;
+	priv->direction = direction;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DIRECTION]);
+
+	/* Every descendant that inherits may now mirror differently */
+	queue_layout_subtree (self);
+}
+
+LrgWidgetDirection
+lrg_widget_get_effective_direction (LrgWidget *self)
+{
+	LrgWidget *w;
+	LrgWidget *last = self;
+	guint      depth = 0;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), LRG_WIDGET_DIRECTION_LTR);
+
+	/* Own value, else the nearest ancestor (popups: their anchor) */
+	for (w = self; w != NULL && depth < SCOPE_MAX_DEPTH; w = scope_parent (w), depth++)
+	{
+		LrgWidgetPrivate *priv = lrg_widget_get_instance_private (w);
+
+		if (priv->direction != LRG_WIDGET_DIRECTION_INHERIT)
+			return priv->direction;
+		last = w;
+	}
+
+	/* Nobody decided: the canvas default at the root */
+	if (LRG_IS_CANVAS (last))
+		return lrg_canvas_get_default_direction (LRG_CANVAS (last));
+	return LRG_WIDGET_DIRECTION_LTR;
+}
+
+gboolean
+lrg_widget_is_rtl (LrgWidget *self)
+{
+	return lrg_widget_get_effective_direction (self) == LRG_WIDGET_DIRECTION_RTL;
+}
+
+gboolean
+_lrg_widget_mirrors_children (LrgWidget *self)
+{
+	return !lrg_widget_class_get_handles_direction (LRG_WIDGET_GET_CLASS (self)) &&
+	       lrg_widget_is_rtl (self);
+}
+
+gfloat
+lrg_widget_mirror_x (LrgWidget *self,
+                     gfloat     x,
+                     gfloat     width)
+{
+	gfloat wx;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), x);
+
+	if (!lrg_widget_is_rtl (self))
+		return x;
+	wx = lrg_widget_get_world_x (self);
+	return 2.0f * wx + lrg_widget_get_width (self) - x - width;
+}
+

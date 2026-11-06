@@ -210,6 +210,7 @@ GType lrg_input_binding_type_get_type (void) G_GNUC_CONST;
  * @LRG_INPUT_MODIFIER_SHIFT: Shift key
  * @LRG_INPUT_MODIFIER_CTRL: Control key
  * @LRG_INPUT_MODIFIER_ALT: Alt key
+ * @LRG_INPUT_MODIFIER_SUPER: Super (Windows / Command / Meta) key
  *
  * Input modifier flags.
  */
@@ -218,7 +219,8 @@ typedef enum /*< flags >*/
     LRG_INPUT_MODIFIER_NONE  = 0,
     LRG_INPUT_MODIFIER_SHIFT = 1 << 0,
     LRG_INPUT_MODIFIER_CTRL  = 1 << 1,
-    LRG_INPUT_MODIFIER_ALT   = 1 << 2
+    LRG_INPUT_MODIFIER_ALT   = 1 << 2,
+    LRG_INPUT_MODIFIER_SUPER = 1 << 3
 } LrgInputModifiers;
 
 LRG_AVAILABLE_IN_ALL
@@ -6872,5 +6874,29 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_icon_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_ICON (lrg_icon_get_type ())
 
+/**
+ * LrgWidgetDirection:
+ * @LRG_WIDGET_DIRECTION_INHERIT: use the parent's direction (the
+ *   canvas default at the root)
+ * @LRG_WIDGET_DIRECTION_LTR: lay out left to right
+ * @LRG_WIDGET_DIRECTION_RTL: lay out right to left: containers mirror
+ *   their children horizontally and START/END alignment swap sides
+ *
+ * Layout direction of a widget subtree (see
+ * lrg_widget_get_effective_direction()). Distinct from
+ * #LrgTextDirection, which is about shaping text runs.
+ */
+typedef enum
+{
+    LRG_WIDGET_DIRECTION_INHERIT,
+    LRG_WIDGET_DIRECTION_LTR,
+    LRG_WIDGET_DIRECTION_RTL
+} LrgWidgetDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_widget_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_WIDGET_DIRECTION (lrg_widget_direction_get_type ())
+
 G_END_DECLS
+
 

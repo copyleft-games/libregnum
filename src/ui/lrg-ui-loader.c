@@ -62,6 +62,8 @@
 #include "lrg-tab-view.h"
 #include "lrg-text-input.h"
 #include "lrg-vbox.h"
+#include "lrg-canvas.h"
+#include "lrg-ui-actions.h"
 #include "../lrg-enums.h"
 #include "../lrg-log.h"
 
@@ -2802,7 +2804,17 @@ typedef struct
 	gpointer   user_data;
 	gboolean   after;
 	gboolean   swapped;
+	gchar     *action;   /* "prefix.action" instead of a callback, or NULL */
+	GVariant  *target;   /* the action's parameter, nullable */
 } HandlerSpec;
+
+/* One entry of a document's top-level `shortcuts:` list */
+typedef struct
+{
+	gchar    *accel;
+	gchar    *action;
+	GVariant *target;    /* nullable */
+} ShortcutSpec;
 
 typedef struct
 {
@@ -2847,6 +2859,7 @@ struct _UiNode
 	const gchar *child_prop;    /* `child:` set through this property, or NULL */
 	gboolean     has_tabs;
 	GPtrArray   *tabs;          /* UiTab * */
+	GPtrArray   *shortcuts;     /* ShortcutSpec *, root node only, nullable */
 };
 
 static void
@@ -2855,6 +2868,31 @@ handler_spec_clear (gpointer data)
 	HandlerSpec *h = data;
 
 	g_free (h->signal);
+	g_free (h->action);
+	g_clear_pointer (&h->target, g_variant_unref);
+}
+
+/* handler_spec_copy: deep copy for merging `on:` entries */
+static HandlerSpec
+handler_spec_copy (const HandlerSpec *h)
+{
+	HandlerSpec copy = *h;
+
+	copy.signal = g_strdup (h->signal);
+	copy.action = g_strdup (h->action);
+	copy.target = h->target != NULL ? g_variant_ref (h->target) : NULL;
+	return copy;
+}
+
+static void
+shortcut_spec_free (gpointer data)
+{
+	ShortcutSpec *sc = data;
+
+	g_free (sc->accel);
+	g_free (sc->action);
+	g_clear_pointer (&sc->target, g_variant_unref);
+	g_free (sc);
 }
 
 static void
@@ -2937,6 +2975,7 @@ ui_node_unref (UiNode *n)
 	g_ptr_array_unref (n->attrs);
 	g_ptr_array_unref (n->children);
 	g_ptr_array_unref (n->tabs);
+	g_clear_pointer (&n->shortcuts, g_ptr_array_unref);
 	g_free (n);
 }
 
@@ -3888,11 +3927,85 @@ parse_word_list (const Lv  *v,
 }
 
 /*
+ * is_action_name:
+ * "prefix.action" with both parts non-empty. Handler names are C
+ * identifiers and never contain a dot, so a dotted value is an action.
+ */
+static gboolean
+is_action_name (const gchar *s)
+{
+	const gchar *dot = s != NULL ? strchr (s, '.') : NULL;
+
+	return dot != NULL && dot != s && dot[1] != '\0';
+}
+
+/*
+ * parse_action_target:
+ * The parameter of an action reference: @target is a scalar, @type_lv
+ * an optional GVariant type string ("s" when missing). Strings are
+ * taken as-is; other types are parsed in GVariant text format
+ * ("true", "42", "1.5", "('a', 2)").
+ */
+static gboolean
+parse_action_target (const Lv  *target,
+                     const Lv  *type_lv,
+                     GVariant **out,
+                     gchar    **msg)
+{
+	const gchar *type = "s";
+	g_autoptr(GError) local = NULL;
+	GVariant *v;
+
+	*out = NULL;
+	if (target == NULL)
+	{
+		if (type_lv != NULL)
+		{
+			*msg = g_strdup ("'target-type' needs a 'target'");
+			return FALSE;
+		}
+		return TRUE;
+	}
+	if (target->kind != LV_SCALAR)
+	{
+		*msg = g_strdup_printf ("'target' must be a scalar, got %s", lv_kind_name (target));
+		return FALSE;
+	}
+	if (type_lv != NULL)
+	{
+		if (type_lv->kind != LV_SCALAR || !g_variant_type_string_is_valid (type_lv->str))
+		{
+			*msg = g_strdup ("'target-type' must be a GVariant type string such as s, b, i or d");
+			return FALSE;
+		}
+		type = type_lv->str;
+	}
+
+	if (g_strcmp0 (type, "s") == 0)
+		v = g_variant_new_string (target->str);
+	else
+	{
+		g_autoptr(GVariantType) vt = g_variant_type_new (type);
+
+		v = g_variant_parse (vt, target->str, NULL, NULL, &local);
+		if (v == NULL)
+		{
+			*msg = g_strdup_printf ("cannot read '%s' as type %s: %s", target->str, type, local->message);
+			return FALSE;
+		}
+	}
+	*out = g_variant_ref_sink (v);
+	return TRUE;
+}
+
+/*
  * parse_handlers:
- * `on:` maps signal names to a handler name or to
- * {handler:, after: bool, swapped: bool}. Signals are checked against
- * @type and handler names resolved now, so a reload with a typo fails
- * before anything changes.
+ * `on:` maps signal names to a handler name, to an action
+ * ("prefix.action"), or to {handler:, after: bool, swapped: bool} /
+ * {action:, target:, target-type:, after: bool}. Signals are checked
+ * against @type and handler names resolved now, so a reload with a typo
+ * fails before anything changes. Actions are resolved when the signal
+ * fires, from the widget up through its ancestors.
  */
 static gboolean
 parse_handlers (LrgUILoader  *self,
@@ -3928,6 +4041,34 @@ parse_handlers (LrgUILoader  *self,
 			return FALSE;
 		}
 
+		/* An action instead of a C handler */
+		if ((it->kind == LV_SCALAR && is_action_name (it->str)) ||
+		    (it->kind == LV_MAP && lv_map_get (it, "action") != NULL))
+		{
+			Lv *av = it->kind == LV_MAP ? lv_map_get (it, "action") : it;
+			Lv *after = it->kind == LV_MAP ? lv_map_get (it, "after") : NULL;
+			g_autofree gchar *msg = NULL;
+
+			if (av->kind != LV_SCALAR || !is_action_name (av->str))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_HANDLER, path, it,
+				           "signal '%s': 'action' must be \"prefix.action\"", sig);
+				return FALSE;
+			}
+			if ((it->kind == LV_MAP &&
+			     !parse_action_target (lv_map_get (it, "target"), lv_map_get (it, "target-type"),
+			                           &h.target, &msg)) ||
+			    (after != NULL && !conv_bool (after, &h.after, &msg)))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_HANDLER, path, it, "signal '%s': %s", sig, msg);
+				return FALSE;
+			}
+			h.action = g_strdup (av->str);
+			h.signal = g_strdup (sig);
+			g_array_append_val (out, h);
+			continue;
+		}
+
 		if (it->kind == LV_SCALAR)
 			hname = it->str;
 		else if (it->kind == LV_MAP)
@@ -3940,7 +4081,7 @@ parse_handlers (LrgUILoader  *self,
 			if (hv == NULL || hv->kind != LV_SCALAR)
 			{
 				set_error (error, LRG_UI_LOADER_ERROR_HANDLER, path, it,
-				           "signal '%s': a mapping needs a 'handler' name", sig);
+				           "signal '%s': a mapping needs a 'handler' or an 'action'", sig);
 				return FALSE;
 			}
 			hname = hv->str;
@@ -4022,6 +4163,78 @@ type_has_widget_property (GObjectClass *klass,
 	ps = g_object_class_find_property (klass, name);
 	return ps != NULL && (ps->flags & G_PARAM_WRITABLE) &&
 	       g_type_is_a (LRG_TYPE_WIDGET, G_PARAM_SPEC_VALUE_TYPE (ps));
+}
+
+/*
+ * put_handlers:
+ * Parses an `on:` mapping (or the one-entry mapping an `on-<signal>:`
+ * key stands for) into the node's ATTR_ON attribute. With @merge the
+ * entries are merged with the existing ones; a signal named again
+ * replaces its old entry.
+ */
+static gboolean
+put_handlers (LrgUILoader  *self,
+              UiNode       *node,
+              Lv           *r,
+              const gchar  *path,
+              gboolean      merge,
+              GError      **error)
+{
+	UiAttr *a;
+	g_autoptr(GArray) hs = g_array_new (FALSE, TRUE, sizeof (HandlerSpec));
+	g_autoptr(Lv) value = NULL;
+	UiAttr *old;
+
+	g_array_set_clear_func (hs, handler_spec_clear);
+	if (!parse_handlers (self, node->type, r, path, hs, error))
+		return FALSE;
+
+	/* Overrides add signals; a signal named again replaces the old entry */
+	old = merge ? ui_node_find_attr (node, "on") : NULL;
+	value = lv_ref (r);
+	if (old != NULL)
+	{
+		g_autoptr(GArray) merged = g_array_new (FALSE, TRUE, sizeof (HandlerSpec));
+		guint i;
+		guint j;
+
+		g_array_set_clear_func (merged, handler_spec_clear);
+		lv_unref (value);
+		value = lv_new (LV_MAP, r);
+		for (i = 0; i < old->handlers->len; i++)
+		{
+			HandlerSpec *oh = &g_array_index (old->handlers, HandlerSpec, i);
+			HandlerSpec copy;
+			gboolean replaced = FALSE;
+
+			for (j = 0; j < hs->len; j++)
+			{
+				if (g_strcmp0 (g_array_index (hs, HandlerSpec, j).signal, oh->signal) == 0)
+					replaced = TRUE;
+			}
+			if (replaced)
+				continue;
+			copy = handler_spec_copy (oh);
+			g_array_append_val (merged, copy);
+			lv_map_add (value, oh->signal, lv_ref (lv_map_get (old->value, oh->signal) != NULL ?
+			                                     lv_map_get (old->value, oh->signal) :
+			                                     old->value));
+		}
+		for (j = 0; j < hs->len; j++)
+		{
+			HandlerSpec copy = handler_spec_copy (&g_array_index (hs, HandlerSpec, j));
+
+			g_array_append_val (merged, copy);
+		}
+		for (j = 0; j < r->keys->len; j++)
+			lv_map_add (value, g_ptr_array_index (r->keys, j), lv_ref (g_ptr_array_index (r->items, j)));
+		g_array_unref (hs);
+		hs = g_steal_pointer (&merged);
+	}
+	a = ui_attr_new (ATTR_ON, "on", value);
+	a->handlers = g_steal_pointer (&hs);
+	ui_node_put_attr (node, a);
+	return TRUE;
 }
 
 /*
@@ -4229,63 +4442,18 @@ node_set_key (Ctx           *c,
 	}
 
 	if (key_equal (key, "on"))
+		return put_handlers (self, node, r, path, merge, error);
+
+	/* `on-<signal>: action-or-handler`, one signal per key; merged with
+	 * `on:` and with each other */
+	if (key[0] == 'o' && key[1] == 'n' && (key[2] == '-' || key[2] == '_') && key[3] != '\0' &&
+	    g_object_class_find_property (klass, key) == NULL)
 	{
-		g_autoptr(GArray) hs = g_array_new (FALSE, TRUE, sizeof (HandlerSpec));
-		g_autoptr(Lv) value = NULL;
-		UiAttr *old;
+		g_autoptr(Lv) one = lv_new (LV_MAP, r);
+		g_autofree gchar *sig = g_strdelimit (g_strdup (key + 3), "_", '-');
 
-		g_array_set_clear_func (hs, handler_spec_clear);
-		if (!parse_handlers (self, node->type, r, path, hs, error))
-			return FALSE;
-
-		/* Overrides add signals; a signal named again replaces the old entry */
-		old = merge ? ui_node_find_attr (node, "on") : NULL;
-		value = lv_ref (r);
-		if (old != NULL)
-		{
-			g_autoptr(GArray) merged = g_array_new (FALSE, TRUE, sizeof (HandlerSpec));
-			guint i;
-			guint j;
-
-			g_array_set_clear_func (merged, handler_spec_clear);
-			lv_unref (value);
-			value = lv_new (LV_MAP, r);
-			for (i = 0; i < old->handlers->len; i++)
-			{
-				HandlerSpec *oh = &g_array_index (old->handlers, HandlerSpec, i);
-				HandlerSpec copy;
-				gboolean replaced = FALSE;
-
-				for (j = 0; j < hs->len; j++)
-				{
-					if (g_strcmp0 (g_array_index (hs, HandlerSpec, j).signal, oh->signal) == 0)
-						replaced = TRUE;
-				}
-				if (replaced)
-					continue;
-				copy = *oh;
-				copy.signal = g_strdup (oh->signal);
-				g_array_append_val (merged, copy);
-				lv_map_add (value, oh->signal, lv_ref (lv_map_get (old->value, oh->signal) != NULL ?
-				                                     lv_map_get (old->value, oh->signal) :
-				                                     old->value));
-			}
-			for (j = 0; j < hs->len; j++)
-			{
-				HandlerSpec copy = g_array_index (hs, HandlerSpec, j);
-
-				copy.signal = g_strdup (copy.signal);
-				g_array_append_val (merged, copy);
-			}
-			for (j = 0; j < r->keys->len; j++)
-				lv_map_add (value, g_ptr_array_index (r->keys, j), lv_ref (g_ptr_array_index (r->items, j)));
-			g_array_unref (hs);
-			hs = g_steal_pointer (&merged);
-		}
-		a = ui_attr_new (ATTR_ON, "on", value);
-		a->handlers = g_steal_pointer (&hs);
-		ui_node_put_attr (node, a);
-		return TRUE;
+		lv_map_add (one, sig, lv_ref (r));
+		return put_handlers (self, node, one, path, TRUE, error);
 	}
 
 	if (key_equal (key, "look"))
@@ -5389,7 +5557,7 @@ expand_document (Ctx          *c,
 		{
 			const gchar *k = g_ptr_array_index (doc->keys, i);
 
-			if (key_equal (k, "components") || key_equal (k, "variables"))
+			if (key_equal (k, "components") || key_equal (k, "variables") || key_equal (k, "shortcuts"))
 				continue;
 			lv_map_add (node, k, lv_ref (g_ptr_array_index (doc->items, i)));
 		}
@@ -5402,10 +5570,11 @@ expand_document (Ctx          *c,
 		{
 			const gchar *k = g_ptr_array_index (doc->keys, i);
 
-			if (!key_equal (k, "components") && !key_equal (k, "variables") && !key_equal (k, "root"))
+			if (!key_equal (k, "components") && !key_equal (k, "variables") && !key_equal (k, "root") &&
+			    !key_equal (k, "shortcuts"))
 			{
 				set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, path, g_ptr_array_index (doc->items, i),
-				           "unknown top-level key '%s' (expected type, components, variables or root)", k);
+				           "unknown top-level key '%s' (expected type, components, variables, shortcuts or root)", k);
 				ok = FALSE;
 				break;
 			}
@@ -5427,6 +5596,68 @@ expand_document (Ctx          *c,
  * Runs the whole EXPAND stage on a document. @file (canonical, nullable)
  * is the document's own path; every file read is appended to @files.
  */
+/*
+ * parse_shortcuts:
+ * The top-level `shortcuts:` list:
+ * `- {accel: "<Ctrl>q", action: app.quit, target: ..., target-type: ...}`.
+ * Accelerators and action names are validated here.
+ *
+ * Returns: (transfer full): ShortcutSpec array, or NULL with @error set
+ */
+static GPtrArray *
+parse_shortcuts (const Lv  *list,
+                 GError   **error)
+{
+	g_autoptr(GPtrArray) out = g_ptr_array_new_with_free_func (shortcut_spec_free);
+	guint i;
+
+	if (list->kind != LV_SEQ)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, "shortcuts", list,
+		           "'shortcuts' must be a list of {accel:, action:}, got %s", lv_kind_name (list));
+		return NULL;
+	}
+	for (i = 0; i < list->items->len; i++)
+	{
+		const Lv *it = g_ptr_array_index (list->items, i);
+		const Lv *accel = lv_map_get (it, "accel");
+		const Lv *action = lv_map_get (it, "action");
+		g_autofree gchar *msg = NULL;
+		GVariant *target = NULL;
+		ShortcutSpec *sc;
+
+		if (it->kind != LV_MAP || accel == NULL || action == NULL)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, "shortcuts", it,
+			           "a shortcut needs 'accel' and 'action'");
+			return NULL;
+		}
+		if (accel->kind != LV_SCALAR || !lrg_accel_parse (accel->str, NULL, NULL))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, "shortcuts", accel,
+			           "invalid accelerator '%s'", accel->kind == LV_SCALAR ? accel->str : "?");
+			return NULL;
+		}
+		if (action->kind != LV_SCALAR || !is_action_name (action->str))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, "shortcuts", action,
+			           "'action' must be \"prefix.action\"");
+			return NULL;
+		}
+		if (!parse_action_target (lv_map_get (it, "target"), lv_map_get (it, "target-type"), &target, &msg))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, "shortcuts", it, "%s", msg);
+			return NULL;
+		}
+		sc = g_new0 (ShortcutSpec, 1);
+		sc->accel = g_strdup (accel->str);
+		sc->action = g_strdup (action->str);
+		sc->target = target;
+		g_ptr_array_add (out, sc);
+	}
+	return g_steal_pointer (&out);
+}
+
 static UiNode *
 expand_text (LrgUILoader  *self,
              const gchar  *data,
@@ -5485,6 +5716,14 @@ expand_text (LrgUILoader  *self,
 	if (ok)
 		root = ui_node_ref (g_ptr_array_index (out, 0));
 
+	/* Top-level `shortcuts:` belong to the document's root */
+	if (root != NULL && doc->kind == LV_MAP && lv_map_get (doc, "shortcuts") != NULL)
+	{
+		root->shortcuts = parse_shortcuts (lv_map_get (doc, "shortcuts"), error);
+		if (root->shortcuts == NULL)
+			g_clear_pointer (&root, ui_node_unref);
+	}
+
 	g_hash_table_unref (c.components);
 	g_ptr_array_unref (c.include_stack);
 	g_ptr_array_unref (c.comp_stack);
@@ -5519,6 +5758,67 @@ expand_file (LrgUILoader  *self,
  * BUILD: UiNode -> widgets
  * ========================================================================== */
 
+/*
+ * ActionClosure:
+ * A signal handler that activates an action on the emitting widget,
+ * whatever the signal's signature (the marshaller ignores the
+ * arguments). A signal with a boolean return value gets TRUE when the
+ * action ran.
+ */
+typedef struct
+{
+	GClosure  closure;
+	gchar    *action;
+	GVariant *target;
+} ActionClosure;
+
+static void
+action_closure_marshal (GClosure     *closure,
+                        GValue       *return_value,
+                        guint         n_param_values,
+                        const GValue *param_values,
+                        gpointer      invocation_hint,
+                        gpointer      marshal_data)
+{
+	ActionClosure *ac = (ActionClosure *)closure;
+	GObject *instance;
+	gboolean ran = FALSE;
+
+	if (n_param_values < 1 || !G_VALUE_HOLDS_OBJECT (&param_values[0]))
+		return;
+	instance = g_value_get_object (&param_values[0]);
+	if (LRG_IS_WIDGET (instance))
+		ran = lrg_widget_activate_action (LRG_WIDGET (instance), ac->action, ac->target);
+	if (!ran)
+		lrg_debug (LRG_LOG_DOMAIN, "UI loader: action '%s' did not run (not found or disabled)", ac->action);
+	if (return_value != NULL && G_VALUE_HOLDS_BOOLEAN (return_value))
+		g_value_set_boolean (return_value, ran);
+}
+
+static void
+action_closure_finalize (gpointer  data,
+                         GClosure *closure)
+{
+	ActionClosure *ac = (ActionClosure *)closure;
+
+	g_free (ac->action);
+	g_clear_pointer (&ac->target, g_variant_unref);
+}
+
+static gulong
+connect_action (LrgWidget         *w,
+                const HandlerSpec *h)
+{
+	GClosure *closure = g_closure_new_simple (sizeof (ActionClosure), NULL);
+	ActionClosure *ac = (ActionClosure *)closure;
+
+	ac->action = g_strdup (h->action);
+	ac->target = h->target != NULL ? g_variant_ref (h->target) : NULL;
+	g_closure_set_marshal (closure, action_closure_marshal);
+	g_closure_add_finalize_notifier (closure, NULL, action_closure_finalize);
+	return g_signal_connect_closure (w, h->signal, closure, h->after);
+}
+
 static void
 connect_handlers (LrgWidget    *w,
                   WidgetRecord *rec,
@@ -5532,6 +5832,13 @@ connect_handlers (LrgWidget    *w,
 		GConnectFlags flags = 0;
 		gulong id;
 
+		if (h->action != NULL)
+		{
+			id = connect_action (w, h);
+			if (id != 0)
+				g_array_append_val (rec->handler_ids, id);
+			continue;
+		}
 		if (h->after)
 			flags |= G_CONNECT_AFTER;
 		if (h->swapped)
@@ -6186,6 +6493,126 @@ sync_widget (LrgWidget *w,
 }
 
 /* ==========================================================================
+ * Document shortcuts
+ * ========================================================================== */
+
+/*
+ * RootShortcuts:
+ * The `shortcuts:` of the document a root widget was built from, kept
+ * on the root (qdata). They are bound on the canvas the root lives in:
+ * at once when it is already in one, otherwise when it is added to one.
+ * Replacing them (hot reload) or destroying the root unbinds them.
+ */
+typedef struct
+{
+	GPtrArray *specs;    /* ShortcutSpec *, shared with the UiNode */
+	GWeakRef   canvas;   /* where they are bound, or empty */
+} RootShortcuts;
+
+static GQuark
+root_shortcuts_quark (void)
+{
+	return g_quark_from_static_string ("lrg-ui-loader-shortcuts");
+}
+
+static void
+root_shortcuts_uninstall (RootShortcuts *rs)
+{
+	g_autoptr(GObject) canvas = g_weak_ref_get (&rs->canvas);
+	guint i;
+
+	if (canvas == NULL)
+		return;
+	for (i = 0; i < rs->specs->len; i++)
+		lrg_canvas_remove_shortcut (LRG_CANVAS (canvas),
+		                            ((ShortcutSpec *)g_ptr_array_index (rs->specs, i))->accel);
+	g_weak_ref_set (&rs->canvas, NULL);
+}
+
+static void
+root_shortcuts_free (gpointer data)
+{
+	RootShortcuts *rs = data;
+
+	root_shortcuts_uninstall (rs);
+	g_weak_ref_clear (&rs->canvas);
+	g_ptr_array_unref (rs->specs);
+	g_free (rs);
+}
+
+/* root_shortcuts_try_install: bind on the canvas @root is in, if any */
+static void
+root_shortcuts_try_install (LrgWidget *root)
+{
+	RootShortcuts *rs = g_object_get_qdata (G_OBJECT (root), root_shortcuts_quark ());
+	g_autoptr(GObject) bound = NULL;
+	LrgWidget *top;
+	guint i;
+
+	if (rs == NULL)
+		return;
+	bound = g_weak_ref_get (&rs->canvas);
+	top = lrg_widget_get_root (root);
+	if (!LRG_IS_CANVAS (top) || bound == G_OBJECT (top))
+		return;
+	if (bound != NULL)
+		root_shortcuts_uninstall (rs);
+
+	for (i = 0; i < rs->specs->len; i++)
+	{
+		ShortcutSpec *sc = g_ptr_array_index (rs->specs, i);
+
+		lrg_canvas_add_shortcut (LRG_CANVAS (top), sc->accel, sc->action, sc->target);
+	}
+	g_weak_ref_set (&rs->canvas, top);
+}
+
+static void
+on_root_parent_changed (GObject    *object,
+                        GParamSpec *pspec,
+                        gpointer    user_data)
+{
+	root_shortcuts_try_install (LRG_WIDGET (object));
+}
+
+/*
+ * attach_shortcuts:
+ * Replaces the shortcuts carried by @root with those of @node (a
+ * document root). The old ones are unbound first.
+ */
+static void
+attach_shortcuts (LrgWidget *root,
+                  UiNode    *node)
+{
+	static GQuark hooked = 0;
+	RootShortcuts *rs;
+
+	if (hooked == 0)
+		hooked = g_quark_from_static_string ("lrg-ui-loader-shortcuts-hooked");
+
+	if (node->shortcuts == NULL || node->shortcuts->len == 0)
+	{
+		g_object_set_qdata (G_OBJECT (root), root_shortcuts_quark (), NULL);
+		return;
+	}
+
+	/* Unbind the previous set before binding the new one */
+	g_object_set_qdata (G_OBJECT (root), root_shortcuts_quark (), NULL);
+	rs = g_new0 (RootShortcuts, 1);
+	rs->specs = g_ptr_array_ref (node->shortcuts);
+	g_weak_ref_init (&rs->canvas, NULL);
+	g_object_set_qdata_full (G_OBJECT (root), root_shortcuts_quark (), rs, root_shortcuts_free);
+
+	/* Bind now, or when the root reaches a canvas */
+	if (g_object_get_qdata (G_OBJECT (root), hooked) == NULL)
+	{
+		g_signal_connect (root, "notify::parent", G_CALLBACK (on_root_parent_changed), NULL);
+		g_object_set_qdata (G_OBJECT (root), hooked, GINT_TO_POINTER (1));
+	}
+	root_shortcuts_try_install (root);
+}
+
+/* ==========================================================================
  * Ids
  * ========================================================================== */
 
@@ -6443,6 +6870,12 @@ live_doc_reload (LrgUILoader  *self,
 		new_root = sync_widget (LRG_WIDGET (old_root), node);
 	else
 		new_root = build_widget (node);
+
+	/* The document's shortcuts follow the (possibly new) root; a
+	 * replaced root unbinds its old set when it is released */
+	if (new_root != LRG_WIDGET (old_root) && old_root != NULL)
+		g_object_set_qdata (old_root, root_shortcuts_quark (), NULL);
+	attach_shortcuts (new_root, node);
 
 	/* The root was rebuilt (or was gone): swap it in the host */
 	if (new_root != LRG_WIDGET (old_root))
@@ -6746,6 +7179,7 @@ lrg_ui_loader_load_from_data (LrgUILoader  *self,
 	if (node == NULL)
 		return NULL;
 	root = build_widget (node);
+	attach_shortcuts (root, node);
 	remember_root (self, root);
 	rebuild_ids (self);
 	return root;
@@ -6768,6 +7202,7 @@ lrg_ui_loader_load_from_file (LrgUILoader  *self,
 	if (node == NULL)
 		return NULL;
 	root = build_widget (node);
+	attach_shortcuts (root, node);
 	remember_root (self, root);
 	rebuild_ids (self);
 	return root;
@@ -6814,6 +7249,7 @@ lrg_ui_loader_watch_file (LrgUILoader   *self,
 	if (node == NULL)
 		return NULL;
 	root = build_widget (node);
+	attach_shortcuts (root, node);
 	lrg_container_add_child (host, root);
 
 	/* Watching the same path again replaces the previous watch */

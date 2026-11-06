@@ -25,6 +25,7 @@ typedef struct
     gfloat  spacing;
     gfloat  padding;
     gboolean disposing;
+    gboolean overflow_hit_test;
 } LrgContainerPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgContainer, lrg_container, LRG_TYPE_WIDGET)
@@ -34,6 +35,7 @@ enum
     PROP_0,
     PROP_SPACING,
     PROP_PADDING,
+    PROP_OVERFLOW_HIT_TEST,
     N_PROPS
 };
 
@@ -210,6 +212,9 @@ lrg_container_get_property (GObject    *object,
     case PROP_PADDING:
         g_value_set_float (value, priv->padding);
         break;
+    case PROP_OVERFLOW_HIT_TEST:
+        g_value_set_boolean (value, priv->overflow_hit_test);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -230,6 +235,9 @@ lrg_container_set_property (GObject      *object,
         break;
     case PROP_PADDING:
         lrg_container_set_padding (self, g_value_get_float (value));
+        break;
+    case PROP_OVERFLOW_HIT_TEST:
+        lrg_container_set_overflow_hit_test (self, g_value_get_boolean (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -284,6 +292,18 @@ lrg_container_class_init (LrgContainerClass *klass)
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgContainer:overflow-hit-test:
+     *
+     * Whether pointer hit-testing reaches children placed outside the
+     * container's rectangle (see lrg_container_set_overflow_hit_test()).
+     */
+    properties[PROP_OVERFLOW_HIT_TEST] =
+        g_param_spec_boolean ("overflow-hit-test", NULL, NULL, FALSE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -329,6 +349,82 @@ lrg_container_add_child (LrgContainer *self,
     /* Re-layout now (legacy callers expect it) and mark for the canvas */
     lrg_container_layout_children (self);
     lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+void
+lrg_container_insert_child_at (LrgContainer *self,
+                               LrgWidget    *child,
+                               guint         index)
+{
+    LrgContainerPrivate *priv;
+
+    g_return_if_fail (LRG_IS_CONTAINER (self));
+    g_return_if_fail (LRG_IS_WIDGET (child));
+    g_return_if_fail (lrg_widget_get_parent (child) == NULL);
+
+    priv = lrg_container_get_instance_private (self);
+
+    /* g_list_insert appends for positions past the end */
+    priv->children = g_list_insert (priv->children, g_object_ref (child),
+                                    index > (guint) G_MAXINT ? -1 : (gint) index);
+    _lrg_widget_set_parent (child, self);
+
+    lrg_container_layout_children (self);
+    lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+void
+lrg_container_reorder_child (LrgContainer *self,
+                             LrgWidget    *child,
+                             guint         index)
+{
+    LrgContainerPrivate *priv;
+    GList               *link;
+
+    g_return_if_fail (LRG_IS_CONTAINER (self));
+    g_return_if_fail (LRG_IS_WIDGET (child));
+
+    priv = lrg_container_get_instance_private (self);
+    link = g_list_find (priv->children, child);
+    g_return_if_fail (link != NULL);
+
+    /* Unlink and reinsert the same reference: the child never loses
+     * its parent, so focus, capture and state survive the move */
+    if ((guint) g_list_position (priv->children, link) == index)
+        return;
+    priv->children = g_list_remove_link (priv->children, link);
+    g_list_free_1 (link);
+    priv->children = g_list_insert (priv->children, child,
+                                    index > (guint) G_MAXINT ? -1 : (gint) index);
+
+    lrg_container_layout_children (self);
+    lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+gboolean
+lrg_container_get_overflow_hit_test (LrgContainer *self)
+{
+    LrgContainerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_CONTAINER (self), FALSE);
+    priv = lrg_container_get_instance_private (self);
+    return priv->overflow_hit_test;
+}
+
+void
+lrg_container_set_overflow_hit_test (LrgContainer *self,
+                                     gboolean      overflow)
+{
+    LrgContainerPrivate *priv;
+
+    g_return_if_fail (LRG_IS_CONTAINER (self));
+    priv = lrg_container_get_instance_private (self);
+
+    overflow = !!overflow;
+    if (priv->overflow_hit_test == overflow)
+        return;
+    priv->overflow_hit_test = overflow;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OVERFLOW_HIT_TEST]);
 }
 
 /*

@@ -86,6 +86,9 @@ typedef struct
  * @delta_time: seconds since the previous frame (drives springs)
  * @touches: fingers currently down, in canvas coordinates
  * @n_touches: number of valid entries in @touches
+ * @keys_released: key releases this frame, oldest first (they become
+ *   %LRG_UI_EVENT_KEY_UP events)
+ * @n_keys_released: number of valid entries in @keys_released
  *
  * A plain value struct describing everything that happened to the
  * input devices during one frame. Zero it with lrg_canvas_input_init()
@@ -111,6 +114,8 @@ typedef struct
     gfloat           delta_time;
     LrgCanvasTouch   touches[LRG_CANVAS_INPUT_MAX_TOUCHES];
     guint            n_touches;
+    GrlKey           keys_released[LRG_CANVAS_INPUT_MAX_KEYS];
+    guint            n_keys_released;
 } LrgCanvasInput;
 
 LRG_AVAILABLE_IN_ALL
@@ -165,6 +170,17 @@ void lrg_canvas_input_init (LrgCanvasInput *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_canvas_input_add_key (LrgCanvasInput *self,
                                GrlKey          key);
+
+/**
+ * lrg_canvas_input_add_key_release:
+ * @self: an #LrgCanvasInput
+ * @key: the key that was released
+ *
+ * Appends a key release. Silently ignored once the frame is full.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_add_key_release (LrgCanvasInput *self,
+                                       GrlKey          key);
 
 /**
  * lrg_canvas_input_add_char:

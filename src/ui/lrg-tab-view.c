@@ -115,6 +115,21 @@ lrg_tab_view_get_tab_width (LrgTabView *self)
     return lrg_widget_get_width (LRG_WIDGET (self)) / (gfloat) self->tabs->len;
 }
 
+/*
+ * tab_slot:
+ *
+ * Visual position of tab @index in the header strip: tabs run from
+ * the left in left-to-right and from the right in right-to-left.
+ */
+static guint
+tab_slot (LrgTabView *self,
+          guint       index)
+{
+    if (self->tabs->len == 0 || !lrg_widget_is_rtl (LRG_WIDGET (self)))
+        return index;
+    return self->tabs->len - 1 - MIN (index, self->tabs->len - 1);
+}
+
 /* tab_bar_top: world Y of the header strip */
 static gfloat
 tab_bar_top (LrgTabView *self)
@@ -148,6 +163,10 @@ lrg_tab_view_get_tab_at_point (LrgTabView *self,
         return -1;
     tab_index = (gint) ((x - lrg_widget_get_world_x (LRG_WIDGET (self))) / tab_width);
 
+    /* Slot under the pointer -> tab index (mirrored in RTL) */
+    if (tab_index >= 0 && (guint) tab_index < self->tabs->len)
+        tab_index = (gint) tab_slot (self, (guint) tab_index);
+
     if (tab_index < 0 || (guint) tab_index >= self->tabs->len)
         return -1;
 
@@ -171,7 +190,7 @@ indicator_target (LrgTabView *self,
 
     if (inset * 2.0f >= tab_w)
         inset = 0.0f;
-    *x = (gfloat) self->active_tab * tab_w + inset;
+    *x = (gfloat) tab_slot (self, self->active_tab) * tab_w + inset;
     *w = tab_w - inset * 2.0f;
 }
 
@@ -401,7 +420,7 @@ lrg_tab_view_paint (LrgWidget    *widget,
     for (i = 0; i < self->tabs->len; i++)
     {
         LrgTabEntry *entry = g_ptr_array_index (self->tabs, i);
-        gfloat       tx = x + (gfloat) i * tab_w;
+        gfloat       tx = x + (gfloat) tab_slot (self, i) * tab_w;
 
         tab_look (self, i, &look);
         lrg_widget_paint_box (widget, list, &look, tx + 2.0f, top + 2.0f,
@@ -542,13 +561,14 @@ lrg_tab_view_handle_event (LrgWidget        *widget,
             break;
         if (self->tabs->len == 0)
             break;
-        if (lrg_ui_event_get_key (event) == GRL_KEY_LEFT)
+        /* Left / right follow the strip: mirrored in right-to-left */
+        if (lrg_ui_event_get_key (event) == (lrg_widget_is_rtl (widget) ? GRL_KEY_RIGHT : GRL_KEY_LEFT))
         {
             if (self->active_tab > 0)
                 lrg_tab_view_set_active_tab (self, self->active_tab - 1);
             return TRUE;
         }
-        if (lrg_ui_event_get_key (event) == GRL_KEY_RIGHT)
+        if (lrg_ui_event_get_key (event) == (lrg_widget_is_rtl (widget) ? GRL_KEY_LEFT : GRL_KEY_RIGHT))
         {
             if (self->active_tab + 1 < self->tabs->len)
                 lrg_tab_view_set_active_tab (self, self->active_tab + 1);

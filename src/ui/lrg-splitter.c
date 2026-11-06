@@ -418,6 +418,10 @@ lrg_splitter_paint (LrgWidget    *widget,
 				h = MAX (0.0f, a - pos);
 			}
 		}
+		/* Right-to-left: the panes were mirrored by the layout, so
+		 * mirror their clip rectangles too */
+		if (horizontal (self))
+			x = lrg_widget_mirror_x (widget, x, w);
 		lrg_paint_list_push_clip (list, x, y, w, h);
 		lrg_widget_paint (p, list);
 		lrg_paint_list_pop_clip (list);
@@ -480,12 +484,39 @@ origin (LrgSplitter *self)
 	                         : lrg_widget_get_world_y (LRG_WIDGET (self));
 }
 
+/*
+ * local_coord:
+ *
+ * The event position along the orientation, measured from where the
+ * start pane begins: the left (top) edge, or the right edge for a
+ * horizontal splitter laid out right-to-left (its start pane is on the
+ * right there).
+ */
+static gfloat
+local_coord (LrgSplitter      *self,
+             const LrgUIEvent *event)
+{
+	if (horizontal (self) && lrg_widget_is_rtl (LRG_WIDGET (self)))
+		return origin (self) + lrg_widget_get_width (LRG_WIDGET (self)) - main_coord (self, event);
+	return main_coord (self, event) - origin (self);
+}
+
 static gboolean
 handle_key (LrgSplitter *self,
             GrlKey       key)
 {
 	gboolean h = horizontal (self);
 	gfloat   cur = target (self);
+
+	/* Arrows move the divider the way they point: in right-to-left the
+	 * start pane is on the right, so Left grows it */
+	if (h && lrg_widget_is_rtl (LRG_WIDGET (self)))
+	{
+		if (key == GRL_KEY_LEFT)
+			key = GRL_KEY_RIGHT;
+		else if (key == GRL_KEY_RIGHT)
+			key = GRL_KEY_LEFT;
+	}
 
 	if ((h && key == GRL_KEY_LEFT) || (!h && key == GRL_KEY_UP))
 		move_to (self, cur - KEY_STEP, TRUE);
@@ -526,14 +557,14 @@ lrg_splitter_handle_event (LrgWidget        *widget,
 		self->dragging = TRUE;
 		self->animating = FALSE;
 		lrg_spring_snap (&self->shown, target (self));
-		self->grab = main_coord (self, event) - (origin (self) + self->shown.value);
+		self->grab = local_coord (self, event) - self->shown.value;
 		g_signal_emit (self, signals[SIGNAL_DRAG_BEGIN], 0);
 		return TRUE;
 
 	case LRG_UI_EVENT_MOUSE_MOVE:
 		if (!self->dragging)
 			return FALSE;
-		move_to (self, main_coord (self, event) - origin (self) - self->grab, FALSE);
+		move_to (self, local_coord (self, event) - self->grab, FALSE);
 		return TRUE;
 
 	case LRG_UI_EVENT_MOUSE_BUTTON_UP:

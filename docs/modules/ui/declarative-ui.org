@@ -65,7 +65,24 @@ A document is one of:
 | =components:= | Mapping of component name to ={params:, body:}= (see [[#components][Components]])                                                 |
 | =variables:=  | Mapping of name to value, evaluated in order (each may use the previous ones); visible to the whole document and to its components |
 | =root:=       | The root node (a mapping), or a list that must give one widget                                                   |
+| =shortcuts:=  | List of ={accel:, action:, target:, target-type:}= keyboard shortcuts (see [[#document-shortcuts][Shortcuts]])              |
 | =type:=       | The mapping itself is the root node                                                                              |
+
+*** Shortcuts
+:PROPERTIES:
+:CUSTOM_ID: document-shortcuts
+:END:
+#+begin_src yaml
+shortcuts:
+  - {accel: "<Ctrl>q", action: app.quit}
+  - {accel: F1, action: ui.toggle, target: help}
+  - {accel: "<Ctrl>+", action: view.zoom, target: "1.25", target-type: d}
+root: {type: vbox, children: [{type: label, id: help, text: Help}]}
+#+end_src
+
+Each entry is bound with =lrg_canvas_add_shortcut()= on the canvas the document's root lives in: immediately when it already is in a canvas tree (=lrg_ui_loader_watch_file()= into a canvas), otherwise as soon as the root is added to one. Accelerators (see [[file:actions.org::#actions-accels][accelerator syntax]]) and action names are validated during expansion (=LRG_UI_LOADER_ERROR_INVALID_VALUE=; a =shortcuts:= that is not a list is =LRG_UI_LOADER_ERROR_STRUCTURE=). A hot reload unbinds the previous set and binds the new one; destroying the root unbinds them. Only the main document's =shortcuts:= count (not included files').
+
+*Direction.* =direction: rtl= (=ltr=, =inherit=) on any widget node sets =LrgWidget:direction=, mirroring that subtree (see [[file:layout.org::#layout-direction][layout direction]]).
 
 Only the first YAML document of a stream is read. Anchors and aliases work as in any YAML.
 
@@ -146,6 +163,25 @@ on:
   notify::text: on_name_changed                  # detailed signals work
   value-changed: {handler: on_volume, after: true, swapped: false}
 #+end_src
+
+A value can also be an *action* instead of a C handler (see [[file:actions.org][actions]]); a value with a dot is an action, since handler names never contain one:
+
+#+begin_src yaml
+on:
+  clicked: app.quit                                     # action without parameter
+  activate: {action: ui.show, target: details}          # string parameter
+  value-changed: {action: game.set, target: "3", target-type: i, after: true}
+on-clicked: {action: ui.toggle, target: help}           # one-signal shorthand, merged with on:
+#+end_src
+
+| Key | Meaning |
+|-----+---------|
+| =action= | ="prefix.action"=, resolved when the signal fires from the emitting widget up to the canvas |
+| =target= | The parameter, a scalar; a string unless =target-type= says otherwise |
+| =target-type= | A =GVariant= type string (=b=, =i=, =u=, =d=, =s=, =(si)= ...); non-string targets are parsed in GVariant text format (="true"=, ="42"=, ="('a', 2)"=) |
+| =after= | Connect after the default handler |
+
+=on-<signal>: value= (=on_clicked= also works) is a one-entry =on:= and merges with =on:= and other =on-= keys (a property literally named =on-...= wins). The action closure ignores the signal's arguments; a signal with a boolean return value gets =TRUE= when the action ran. Malformed action names, targets that do not parse as their type and unknown signals are =LRG_UI_LOADER_ERROR_HANDLER= errors; whether the action exists is only known when it fires (nothing happens, debug log, when it does not). Hot reload reconnects action handlers like the others.
 
 The signal must exist on the widget's type. The handler name is looked up among the handlers registered with =lrg_ui_loader_add_handler()= (connected with the user data given there). When =lrg_ui_loader_set_use_symbols()= is on, an unregistered name is then looked up as a global symbol of the program with =GModule= and connected with =NULL= user data; the program must export its symbols (=-rdynamic= / =-Wl,--export-dynamic=). =after: true= connects with =G_CONNECT_AFTER=, =swapped: true= with =G_CONNECT_SWAPPED=. Unknown signals and unknown handlers are errors, found before anything is built.
 

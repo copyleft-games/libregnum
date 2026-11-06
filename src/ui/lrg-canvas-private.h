@@ -10,6 +10,7 @@
 #pragma once
 
 #include <glib.h>
+#include <gio/gio.h>
 
 G_BEGIN_DECLS
 
@@ -45,5 +46,48 @@ void _lrg_canvas_get_timings        (struct _LrgCanvas *self,
 void _lrg_canvas_get_layers         (struct _LrgCanvas *self,
                                      GPtrArray         *popups,
                                      GPtrArray         *overlays);
+
+/*
+ * _lrg_canvas_get_popup_anchor:
+ *
+ * The anchor @popup was shown with (open or closing), or NULL. Action
+ * and direction lookups continue from it so a popup sees the scope of
+ * the widget that opened it.
+ */
+struct _LrgWidget;
+
+struct _LrgWidget * _lrg_canvas_get_popup_anchor (struct _LrgCanvas *self,
+                                                  struct _LrgWidget *popup);
+
+/*
+ * _lrg_canvas_find_widget:
+ *
+ * lrg_widget_find() over the canvas tree, then its open popups and the
+ * overlay layer (used by the built-in "ui" actions).
+ */
+struct _LrgWidget * _lrg_canvas_find_widget (struct _LrgCanvas *self,
+                                             const gchar       *name);
+
+/*
+ * _lrg_canvas_focus_widget:
+ *
+ * Moves focus to @widget with the focus ring visible (keyboard style).
+ */
+void _lrg_canvas_focus_widget (struct _LrgCanvas *self,
+                               struct _LrgWidget *widget);
+
+/*
+ * _lrg_canvas_emit_quit_requested:
+ *
+ * Emits LrgCanvas::quit-requested (the built-in "app.quit" action).
+ */
+void _lrg_canvas_emit_quit_requested (struct _LrgCanvas *self);
+
+/*
+ * Built-in action groups (lrg-ui-actions.c), installed by every canvas
+ * under "app" and "ui". They hold a weak reference to @canvas.
+ */
+GActionGroup * _lrg_ui_actions_new_app_group (struct _LrgCanvas *canvas);
+GActionGroup * _lrg_ui_actions_new_ui_group  (struct _LrgCanvas *canvas);
 
 G_END_DECLS

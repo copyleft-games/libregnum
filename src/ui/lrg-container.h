@@ -76,6 +76,61 @@ void lrg_container_add_child (LrgContainer *self,
                               LrgWidget    *child);
 
 /**
+ * lrg_container_insert_child_at:
+ * @self: an #LrgContainer
+ * @child: a widget without a parent
+ * @index: position among the children; past the end (e.g. -1 cast to
+ *   guint, or G_MAXUINT) appends
+ *
+ * Like lrg_container_add_child(), but at @index. Children are laid out
+ * and painted in order, so this also decides stacking (later on top).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_container_insert_child_at (LrgContainer *self,
+                                    LrgWidget    *child,
+                                    guint         index);
+
+/**
+ * lrg_container_reorder_child:
+ * @self: an #LrgContainer
+ * @child: a child of @self
+ * @index: its new position; past the end moves it last (on top)
+ *
+ * Moves @child to @index without removing it (it keeps its state,
+ * focus and pointer capture) and lays the container out again.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_container_reorder_child (LrgContainer *self,
+                                  LrgWidget    *child,
+                                  guint         index);
+
+/**
+ * lrg_container_get_overflow_hit_test:
+ * @self: an #LrgContainer
+ *
+ * Returns: %TRUE if pointer hit-testing looks for children outside
+ *   the container's own rectangle
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_container_get_overflow_hit_test (LrgContainer *self);
+
+/**
+ * lrg_container_set_overflow_hit_test:
+ * @self: an #LrgContainer
+ * @overflow: whether children placed outside the container's
+ *   rectangle can be hit
+ *
+ * Normally the canvas only looks for children under the pointer when
+ * the pointer is inside the container. Layouts that place children
+ * beyond their own bounds (anchor layouts, callouts, badges hanging off
+ * an edge) turn this on so those children still receive clicks and
+ * hover. The container itself is only hit inside its rectangle.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_container_set_overflow_hit_test (LrgContainer *self,
+                                          gboolean      overflow);
+
+/**
  * lrg_container_remove_child:
  * @self: an #LrgContainer
  * @child: the widget to remove

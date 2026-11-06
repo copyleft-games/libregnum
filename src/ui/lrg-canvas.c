@@ -20,6 +20,7 @@
 #include "lrg-canvas.h"
 #include "lrg-canvas-private.h"
 #include "lrg-widget-private.h"
+#include "lrg-ui-actions.h"
 #include "../paint/lrg-paint-renderer.h"
 #include "../tween/lrg-spring.h"
 #include "../lrg-log.h"
@@ -45,6 +46,16 @@ typedef enum
 	TOUCH_DONE      /* gesture finished; wait for every finger to lift */
 } TouchState;
 
+/* A keyboard shortcut (lrg_canvas_add_shortcut) */
+typedef struct
+{
+	GrlKey             key;
+	LrgInputModifiers  mods;
+	gchar             *accel;    /* as given, for get_accel_for_action */
+	gchar             *action;   /* "prefix.action" */
+	GVariant          *target;   /* owned, nullable */
+} Shortcut;
+
 typedef struct
 {
 	LrgWidget *popup;     /* owned */
@@ -63,6 +74,7 @@ struct _LrgCanvas
 	LrgWidget    *hovered_widget;   /* weak */
 	GPtrArray    *hover_path;       /* owned refs, target first */
 	LrgWidget    *capture;          /* owned while a button is held */
+	guint         capture_buttons;  /* LRG_CANVAS_BUTTON_MASK bits held on it */
 	LrgWidget    *pulse;            /* owned: activate press flash */
 	gfloat        last_mouse_x;
 	gfloat        last_mouse_y;
@@ -96,6 +108,10 @@ struct _LrgCanvas
 	LrgTheme     *seen_theme;   /* weak */
 	guint         seen_generation;
 
+	/* Keyboard shortcuts and the root layout direction */
+	GArray             *shortcuts;          /* Shortcut */
+	LrgWidgetDirection  default_direction;
+
 	/* Phase timings for the UI inspector, measured only while enabled */
 	gboolean      timing_enabled;
 	gint64        step_us;
@@ -112,6 +128,7 @@ enum
 	PROP_HOVERED_WIDGET,
 	PROP_NAVIGATION_ENABLED,
 	PROP_PAINT_BACKGROUND,
+	PROP_DEFAULT_DIRECTION,
 	N_PROPS
 };
 
@@ -119,6 +136,7 @@ enum
 {
 	SIGNAL_CANCEL,
 	SIGNAL_POPUP_DISMISSED,
+	SIGNAL_QUIT_REQUESTED,
 	N_SIGNALS
 };
 
@@ -132,6 +150,16 @@ static gpointer                  default_pointer_transform_data = NULL;
 /* ==========================================================================
  * Helpers
  * ========================================================================== */
+
+static void
+shortcut_clear (gpointer data)
+{
+	Shortcut *sc = data;
+
+	g_clear_pointer (&sc->accel, g_free);
+	g_clear_pointer (&sc->action, g_free);
+	g_clear_pointer (&sc->target, g_variant_unref);
+}
 
 static void
 popup_entry_clear (gpointer data)
@@ -161,9 +189,15 @@ find_widget_at_point_recursive (LrgWidget *widget,
 {
 	LrgWidget *found = NULL;
 
+	gboolean   inside;
+
 	if (!lrg_widget_get_visible (widget) || !lrg_widget_get_enabled (widget))
 		return NULL;
-	if (!lrg_widget_contains_point (widget, x, y))
+
+	/* Outside: only containers that let children overflow are searched */
+	inside = lrg_widget_contains_point (widget, x, y);
+	if (!inside && !(LRG_IS_CONTAINER (widget) &&
+	                 lrg_container_get_overflow_hit_test (LRG_CONTAINER (widget))))
 		return NULL;
 
 	/* Children in reverse: the last painted is on top */
@@ -176,7 +210,7 @@ find_widget_at_point_recursive (LrgWidget *widget,
 			found = find_widget_at_point_recursive (LRG_WIDGET (l->data), x, y);
 	}
 
-	if (found == NULL && lrg_widget_get_pointer_transparent (widget))
+	if (found == NULL && (!inside || lrg_widget_get_pointer_transparent (widget)))
 		return NULL;
 	return found != NULL ? found : widget;
 }
@@ -274,6 +308,7 @@ lrg_canvas_finalize (GObject *object)
 	g_clear_pointer (&self->popups, g_array_unref);
 	g_clear_pointer (&self->closing, g_array_unref);
 	g_clear_pointer (&self->overlays, g_ptr_array_unref);
+	g_clear_pointer (&self->shortcuts, g_array_unref);
 	g_clear_object (&self->paint);
 
 	G_OBJECT_CLASS (lrg_canvas_parent_class)->finalize (object);
@@ -301,6 +336,9 @@ lrg_canvas_get_property (GObject    *object,
 	case PROP_PAINT_BACKGROUND:
 		g_value_set_boolean (value, self->paint_background);
 		break;
+	case PROP_DEFAULT_DIRECTION:
+		g_value_set_enum (value, self->default_direction);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -321,6 +359,9 @@ lrg_canvas_set_property (GObject      *object,
 		break;
 	case PROP_PAINT_BACKGROUND:
 		lrg_canvas_set_paint_background (self, g_value_get_boolean (value));
+		break;
+	case PROP_DEFAULT_DIRECTION:
+		lrg_canvas_set_default_direction (self, g_value_get_enum (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -361,6 +402,10 @@ lrg_canvas_class_init (LrgCanvasClass *klass)
 	widget_class->draw = lrg_canvas_draw;
 	widget_class->paint = lrg_canvas_paint;
 
+	/* Canvas children are positioned freely and popups are placed at
+	 * their anchors: nothing for the generic RTL mirroring to do */
+	lrg_widget_class_set_handles_direction (widget_class, TRUE);
+
 	/**
 	 * LrgCanvas:focused-widget:
 	 *
@@ -396,7 +441,30 @@ lrg_canvas_class_init (LrgCanvasClass *klass)
 		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
 		                      G_PARAM_EXPLICIT_NOTIFY);
 
+	/**
+	 * LrgCanvas:default-direction:
+	 *
+	 * Layout direction of widgets that inherit theirs all the way to the
+	 * root. %LRG_WIDGET_DIRECTION_LTR or %LRG_WIDGET_DIRECTION_RTL.
+	 */
+	properties[PROP_DEFAULT_DIRECTION] =
+		g_param_spec_enum ("default-direction", NULL, NULL, LRG_TYPE_WIDGET_DIRECTION,
+		                   LRG_WIDGET_DIRECTION_LTR,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
+
+	/**
+	 * LrgCanvas::quit-requested:
+	 * @canvas: the canvas
+	 *
+	 * Emitted by the built-in "app.quit" action (e.g. bound to
+	 * "<Ctrl>q"). The canvas does not own the window: the application
+	 * connects this signal and closes its window or leaves its loop.
+	 */
+	signals[SIGNAL_QUIT_REQUESTED] =
+		g_signal_new ("quit-requested", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 
 	/**
 	 * LrgCanvas::cancel:
@@ -435,6 +503,20 @@ lrg_canvas_init (LrgCanvas *self)
 	self->navigation_enabled = TRUE;
 	self->last_mouse_x = -1.0f;
 	self->last_mouse_y = -1.0f;
+	self->shortcuts = g_array_new (FALSE, TRUE, sizeof (Shortcut));
+	g_array_set_clear_func (self->shortcuts, shortcut_clear);
+	self->default_direction = LRG_WIDGET_DIRECTION_LTR;
+
+	/* Built-in actions every UI can bind to: "app.quit", "ui.show" ... */
+	{
+		GActionGroup *app = _lrg_ui_actions_new_app_group (self);
+		GActionGroup *ui = _lrg_ui_actions_new_ui_group (self);
+
+		lrg_widget_insert_action_group (LRG_WIDGET (self), "app", app);
+		lrg_widget_insert_action_group (LRG_WIDGET (self), "ui", ui);
+		g_object_unref (app);
+		g_object_unref (ui);
+	}
 }
 
 LrgCanvas *
@@ -1207,6 +1289,210 @@ recognise_touch (LrgCanvas      *self,
 	}
 }
 
+/* ==========================================================================
+ * Shortcuts
+ * ========================================================================== */
+
+/* find_shortcut: index of the binding for exactly @key + @mods, or -1 */
+static gint
+find_shortcut (LrgCanvas         *self,
+               GrlKey             key,
+               LrgInputModifiers  mods)
+{
+	const LrgInputModifiers relevant = LRG_INPUT_MODIFIER_SHIFT | LRG_INPUT_MODIFIER_CTRL |
+	                                   LRG_INPUT_MODIFIER_ALT | LRG_INPUT_MODIFIER_SUPER;
+	guint i;
+
+	for (i = 0; i < self->shortcuts->len; i++)
+	{
+		Shortcut *sc = &g_array_index (self->shortcuts, Shortcut, i);
+
+		if (sc->key == key && sc->mods == (mods & relevant))
+			return (gint) i;
+	}
+	return -1;
+}
+
+/*
+ * shortcut_is_printable:
+ *
+ * A key that also types a character (letters, digits, punctuation,
+ * space) without Ctrl / Alt / Super: such shortcuts must not fire while
+ * the user types into a text field.
+ */
+static gboolean
+shortcut_is_printable (const Shortcut *sc)
+{
+	if (sc->mods & (LRG_INPUT_MODIFIER_CTRL | LRG_INPUT_MODIFIER_ALT | LRG_INPUT_MODIFIER_SUPER))
+		return FALSE;
+	return sc->key == GRL_KEY_SPACE || (sc->key >= GRL_KEY_APOSTROPHE && sc->key <= GRL_KEY_GRAVE) ||
+	       (sc->key >= GRL_KEY_KP_0 && sc->key <= GRL_KEY_KP_EQUAL && sc->key != GRL_KEY_KP_ENTER);
+}
+
+/*
+ * fire_shortcut:
+ *
+ * Activates the shortcut's action from the focused widget (so groups
+ * scoped to the focused subtree apply), else from the canvas.
+ */
+static gboolean
+fire_shortcut (LrgCanvas *self,
+               gint       index)
+{
+	Shortcut            *sc = &g_array_index (self->shortcuts, Shortcut, index);
+	g_autofree gchar    *action = g_strdup (sc->action);
+	g_autoptr(GVariant)  target = sc->target != NULL ? g_variant_ref (sc->target) : NULL;
+	LrgWidget           *from = self->focused_widget != NULL ? self->focused_widget : LRG_WIDGET (self);
+
+	/* Copies: the action may remove or rebind shortcuts */
+	if (lrg_widget_activate_action (from, action, target))
+		return TRUE;
+	if (from != LRG_WIDGET (self))
+		return lrg_widget_activate_action (LRG_WIDGET (self), action, target);
+	return FALSE;
+}
+
+gboolean
+lrg_canvas_add_shortcut (LrgCanvas   *self,
+                         const gchar *accel,
+                         const gchar *action,
+                         GVariant    *target)
+{
+	g_autoptr(GVariant) owned = NULL;
+	Shortcut            sc;
+	GrlKey              key;
+	LrgInputModifiers   mods;
+	gint                old;
+
+	/* Own the parameter before any early return */
+	if (target != NULL)
+		owned = g_variant_ref_sink (target);
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
+	g_return_val_if_fail (accel != NULL, FALSE);
+	g_return_val_if_fail (action != NULL, FALSE);
+
+	if (!lrg_accel_parse (accel, &key, &mods))
+	{
+		lrg_warning (LRG_LOG_DOMAIN, "lrg_canvas_add_shortcut: cannot parse accelerator \"%s\"", accel);
+		return FALSE;
+	}
+
+	/* One binding per key combination: the newest wins */
+	old = find_shortcut (self, key, mods);
+	if (old >= 0)
+		g_array_remove_index (self->shortcuts, (guint) old);
+
+	memset (&sc, 0, sizeof (Shortcut));
+	sc.key = key;
+	sc.mods = mods;
+	sc.accel = g_strdup (accel);
+	sc.action = g_strdup (action);
+	sc.target = g_steal_pointer (&owned);
+	g_array_append_val (self->shortcuts, sc);
+	return TRUE;
+}
+
+gboolean
+lrg_canvas_remove_shortcut (LrgCanvas   *self,
+                            const gchar *accel)
+{
+	GrlKey            key;
+	LrgInputModifiers mods;
+	gint              i;
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
+	g_return_val_if_fail (accel != NULL, FALSE);
+
+	if (!lrg_accel_parse (accel, &key, &mods))
+		return FALSE;
+	i = find_shortcut (self, key, mods);
+	if (i < 0)
+		return FALSE;
+	g_array_remove_index (self->shortcuts, (guint) i);
+	return TRUE;
+}
+
+void
+lrg_canvas_remove_all_shortcuts (LrgCanvas *self)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	g_array_set_size (self->shortcuts, 0);
+}
+
+guint
+lrg_canvas_get_n_shortcuts (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), 0);
+
+	return self->shortcuts->len;
+}
+
+gchar *
+lrg_canvas_get_accel_for_action (LrgCanvas   *self,
+                                 const gchar *action,
+                                 GVariant    *target)
+{
+	g_autoptr(GVariant) owned = NULL;
+	guint               i;
+
+	if (target != NULL)
+		owned = g_variant_ref_sink (target);
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
+	g_return_val_if_fail (action != NULL, NULL);
+
+	for (i = 0; i < self->shortcuts->len; i++)
+	{
+		Shortcut *sc = &g_array_index (self->shortcuts, Shortcut, i);
+
+		if (g_strcmp0 (sc->action, action) != 0)
+			continue;
+		if ((sc->target == NULL) != (owned == NULL))
+			continue;
+		if (owned != NULL && !g_variant_equal (sc->target, owned))
+			continue;
+		return g_strdup (sc->accel);
+	}
+	return NULL;
+}
+
+/* ==========================================================================
+ * Layout direction
+ * ========================================================================== */
+
+LrgWidgetDirection
+lrg_canvas_get_default_direction (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), LRG_WIDGET_DIRECTION_LTR);
+
+	return self->default_direction;
+}
+
+void
+lrg_canvas_set_default_direction (LrgCanvas          *self,
+                                  LrgWidgetDirection  direction)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	if (direction != LRG_WIDGET_DIRECTION_RTL)
+		direction = LRG_WIDGET_DIRECTION_LTR;
+	if (self->default_direction == direction)
+		return;
+	self->default_direction = direction;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DEFAULT_DIRECTION]);
+
+	/* Everything that inherits may mirror differently now */
+	_lrg_widget_queue_layout_subtree (LRG_WIDGET (self));
+	for (i = 0; i < self->popups->len; i++)
+		_lrg_widget_queue_layout_subtree (g_array_index (self->popups, PopupEntry, i).popup);
+	for (i = 0; i < self->overlays->len; i++)
+		_lrg_widget_queue_layout_subtree (g_ptr_array_index (self->overlays, i));
+}
+
 void
 lrg_canvas_process_input (LrgCanvas            *self,
                           const LrgCanvasInput *input_in)
@@ -1219,6 +1505,9 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	LrgWidget *target;
 	LrgWidget *key_target;
 	guint      i;
+	GrlKey     deferred[LRG_CANVAS_INPUT_MAX_KEYS];
+	guint      n_deferred = 0;
+	gboolean   typed = FALSE;
 
 	g_return_if_fail (LRG_IS_CANVAS (self));
 	g_return_if_fail (input_in != NULL);
@@ -1262,7 +1551,8 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		self->last_mouse_y = my;
 
 		/* A captured widget looks pressed only while the pointer is on it */
-		if (self->capture != NULL)
+		if (self->capture != NULL &&
+		    (self->capture_buttons & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT)))
 		{
 			if (lrg_widget_contains_point (self->capture, mx, my))
 				lrg_widget_set_state_flags (self->capture, LRG_WIDGET_STATE_PRESSED);
@@ -1294,12 +1584,24 @@ lrg_canvas_process_input (LrgCanvas            *self,
 				set_focus (self, focus_target_for (self, hit), FALSE);
 			else if (top_modal_index (self) < 0)
 				set_focus (self, NULL, FALSE);
+		}
 
-			if (hit != NULL && self->capture == NULL)
-			{
-				self->capture = g_object_ref (hit);
-				lrg_widget_set_state_flags (hit, LRG_WIDGET_STATE_PRESSED);
-			}
+		/*
+		 * Any button captures the pointer: the widget it went down on
+		 * gets MOVE and BUTTON_UP even outside its bounds (drags,
+		 * orbit cameras) until every captured button is released.
+		 * Only the left button makes it look PRESSED.
+		 */
+		if (hit != NULL && self->capture == NULL)
+		{
+			self->capture = g_object_ref (hit);
+			self->capture_buttons = 0;
+		}
+		if (self->capture != NULL)
+		{
+			self->capture_buttons |= input->buttons_pressed;
+			if (input->buttons_pressed & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT))
+				lrg_widget_set_state_flags (self->capture, LRG_WIDGET_STATE_PRESSED);
 		}
 
 		target = self->capture != NULL ? self->capture : hit;
@@ -1315,11 +1617,13 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		dispatch_button (self, released != NULL ? released : hit,
 		                 LRG_UI_EVENT_MOUSE_BUTTON_UP, input->buttons_released, input);
 
-		if (released != NULL &&
-		    (input->buttons_released & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT)))
+		if (released != NULL && self->capture == released)
 		{
-			lrg_widget_unset_state_flags (released, LRG_WIDGET_STATE_PRESSED);
-			g_clear_object (&self->capture);
+			if (input->buttons_released & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT))
+				lrg_widget_unset_state_flags (released, LRG_WIDGET_STATE_PRESSED);
+			self->capture_buttons &= ~input->buttons_released;
+			if (self->capture_buttons == 0)
+				g_clear_object (&self->capture);
 		}
 	}
 
@@ -1333,18 +1637,31 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		dispatch_event (self, hit, event);
 	}
 
-	/* Keys: the focused widget (or the top popup) first; unhandled
-	 * arrows navigate, Enter/Space activate, Escape cancels */
+	/* Keys: the focused widget (or the top popup) first; then a
+	 * matching shortcut; then unhandled arrows navigate, Enter/Space
+	 * activate, Escape cancels. Printable shortcuts wait for the typed
+	 * characters below (see lrg_canvas_add_shortcut()). */
 	key_target = self->focused_widget != NULL ? self->focused_widget : lrg_canvas_get_top_popup (self);
 	for (i = 0; i < input->n_keys; i++)
 	{
 		g_autoptr(LrgUIEvent) event = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_DOWN, input->keys[i]);
 		GrlKey                key = input->keys[i];
 		LrgNavDirection       dir;
+		gint                  sc;
 
 		lrg_ui_event_set_modifiers (event, input->modifiers);
 		if (!dispatch_event (self, key_target, event))
 		{
+			sc = find_shortcut (self, key, input->modifiers);
+			if (sc >= 0 && shortcut_is_printable (&g_array_index (self->shortcuts, Shortcut, sc)))
+			{
+				if (n_deferred < G_N_ELEMENTS (deferred))
+					deferred[n_deferred++] = key;
+				goto next_key;
+			}
+			if (sc >= 0 && fire_shortcut (self, sc))
+				goto next_key;
+
 			dir = arrow_direction (key);
 			if (dir != LRG_NAV_DIRECTION_NONE && self->navigation_enabled)
 				lrg_canvas_move_focus (self, dir);
@@ -1354,8 +1671,19 @@ lrg_canvas_process_input (LrgCanvas            *self,
 				cancel (self);
 		}
 
+	next_key:
 		key_target = self->focused_widget != NULL ? self->focused_widget
 		                                          : lrg_canvas_get_top_popup (self);
+	}
+
+	/* Key releases go where presses go (focus, else the top popup),
+	 * bubbling; they never trigger shortcuts or navigation */
+	for (i = 0; i < input->n_keys_released; i++)
+	{
+		g_autoptr(LrgUIEvent) event = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_UP, input->keys_released[i]);
+
+		lrg_ui_event_set_modifiers (event, input->modifiers);
+		dispatch_event (self, key_target, event);
 	}
 
 	/* Typed characters */
@@ -1364,7 +1692,17 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		g_autoptr(LrgUIEvent) event = lrg_ui_event_new_text_input (input->chars[i]);
 
 		lrg_ui_event_set_modifiers (event, input->modifiers);
-		dispatch_event (self, self->focused_widget, event);
+		if (dispatch_event (self, self->focused_widget, event))
+			typed = TRUE;
+	}
+
+	/* Printable shortcuts fire only when nothing took typed text */
+	for (i = 0; i < n_deferred && !typed; i++)
+	{
+		gint sc = find_shortcut (self, deferred[i], input->modifiers);
+
+		if (sc >= 0)
+			fire_shortcut (self, sc);
 	}
 
 	/* Gamepad / Tab navigation. Directions are offered to the focused
@@ -1940,4 +2278,55 @@ _lrg_canvas_get_layers (LrgCanvas *self,
 		g_ptr_array_add (popups, g_array_index (self->popups, PopupEntry, i).popup);
 	for (i = 0; overlays != NULL && i < self->overlays->len; i++)
 		g_ptr_array_add (overlays, g_ptr_array_index (self->overlays, i));
+}
+
+LrgWidget *
+_lrg_canvas_get_popup_anchor (LrgCanvas *self,
+                              LrgWidget *popup)
+{
+	guint i;
+
+	for (i = 0; i < self->popups->len; i++)
+		if (g_array_index (self->popups, PopupEntry, i).popup == popup)
+			return g_array_index (self->popups, PopupEntry, i).anchor;
+	for (i = 0; i < self->closing->len; i++)
+		if (g_array_index (self->closing, PopupEntry, i).popup == popup)
+			return g_array_index (self->closing, PopupEntry, i).anchor;
+	return NULL;
+}
+
+LrgWidget *
+_lrg_canvas_find_widget (LrgCanvas   *self,
+                         const gchar *name)
+{
+	LrgWidget *found;
+	guint      i;
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
+	g_return_val_if_fail (name != NULL, NULL);
+
+	/* The tree first, then open popups (newest first), then overlays */
+	found = lrg_widget_find (LRG_WIDGET (self), name);
+	for (i = self->popups->len; found == NULL && i > 0; i--)
+		found = lrg_widget_find (g_array_index (self->popups, PopupEntry, i - 1).popup, name);
+	for (i = 0; found == NULL && i < self->overlays->len; i++)
+		found = lrg_widget_find (g_ptr_array_index (self->overlays, i), name);
+	return found;
+}
+
+void
+_lrg_canvas_focus_widget (LrgCanvas *self,
+                          LrgWidget *widget)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	set_focus (self, widget, TRUE);
+}
+
+void
+_lrg_canvas_emit_quit_requested (LrgCanvas *self)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	g_signal_emit (self, signals[SIGNAL_QUIT_REQUESTED], 0);
 }

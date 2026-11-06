@@ -442,6 +442,22 @@ slot_index_of (LrgBreadcrumb *self,
 }
 
 /* key_at: the slot key under canvas point x, KEY_NONE between slots */
+/*
+ * slot_left:
+ *
+ * Left edge of @slot relative to the breadcrumb. Slots are laid out
+ * from the left; in right-to-left the trail is mirrored so it reads
+ * from the right edge.
+ */
+static gfloat
+slot_left (LrgBreadcrumb *self,
+           const Slot    *slot)
+{
+	if (lrg_widget_is_rtl (LRG_WIDGET (self)))
+		return lrg_widget_get_width (LRG_WIDGET (self)) - slot->x - slot->width;
+	return slot->x;
+}
+
 static gint
 key_at (LrgBreadcrumb *self,
         gfloat         px)
@@ -454,7 +470,9 @@ key_at (LrgBreadcrumb *self,
 	{
 		Slot *s = &g_array_index (self->slots, Slot, i);
 
-		if (rel >= s->x && rel < s->x + s->width)
+		gfloat left = slot_left (self, s);
+
+		if (rel >= left && rel < left + s->width)
 			return s->key;
 	}
 	return KEY_NONE;
@@ -915,7 +933,7 @@ open_popup (LrgBreadcrumb *self,
 
 	/* Anchor on the breadcrumb, then move under the ellipsis slot */
 	lrg_canvas_show_popup (canvas, LRG_WIDGET (popup), LRG_WIDGET (self), LRG_POPUP_PLACEMENT_BELOW, FALSE);
-	lrg_widget_set_x (LRG_WIDGET (popup), lrg_widget_get_x (LRG_WIDGET (popup)) + slot->x);
+	lrg_widget_set_x (LRG_WIDGET (popup), lrg_widget_get_x (LRG_WIDGET (popup)) + slot_left (self, slot));
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_POPUP_OPEN]);
 
 	popup_focus_row (popup, 0, keyboard);
@@ -1080,18 +1098,20 @@ lrg_breadcrumb_step (LrgWidget *widget,
 	return busy;
 }
 
-/* paint_chevron: a small ">" centred on (cx, cy) */
+/* paint_chevron: a small ">" centred on (cx, cy), "<" when @rtl */
 static void
 paint_chevron (LrgPaintList      *list,
                const LrgPartLook *look,
                gfloat             cx,
-               gfloat             cy)
+               gfloat             cy,
+               gboolean           rtl)
 {
 	gfloat s = look->size > 0.0f ? look->size : 4.0f;
 	gfloat t = MAX (1.25f, s * 0.35f);
+	gfloat d = rtl ? -1.0f : 1.0f;
 
-	lrg_paint_list_line (list, cx - s * 0.4f, cy - s, cx + s * 0.45f, cy, t, &look->foreground);
-	lrg_paint_list_line (list, cx + s * 0.45f, cy, cx - s * 0.4f, cy + s, t, &look->foreground);
+	lrg_paint_list_line (list, cx - d * s * 0.4f, cy - s, cx + d * s * 0.45f, cy, t, &look->foreground);
+	lrg_paint_list_line (list, cx + d * s * 0.45f, cy, cx - d * s * 0.4f, cy + s, t, &look->foreground);
 }
 
 static void
@@ -1108,6 +1128,7 @@ lrg_breadcrumb_paint (LrgWidget    *widget,
 	gfloat          cy = y + h * 0.5f;
 	gfloat          pad = item_pad (widget);
 	gfloat          inset = roundf (h * 0.12f);
+	gboolean        rtl = lrg_widget_is_rtl (widget);
 	guint           i;
 
 	ensure_layout (self);
@@ -1124,13 +1145,15 @@ lrg_breadcrumb_paint (LrgWidget    *widget,
 		LrgSpring      *spring = key_spring (self, slot->key);
 		gfloat          t;
 		const gchar    *text;
+		gfloat          sx = x + slot_left (self, slot);
 
-		/* Chevron before every slot but the first */
+		/* Chevron before every slot but the first (mirrored in RTL) */
 		if (i > 0)
 		{
-			Slot *prev = &g_array_index (self->slots, Slot, i - 1);
+			Slot   *prev = &g_array_index (self->slots, Slot, i - 1);
+			gfloat  mid = (prev->x + prev->width + slot->x) * 0.5f;
 
-			paint_chevron (list, &arrow, x + (prev->x + prev->width + slot->x) * 0.5f, cy);
+			paint_chevron (list, &arrow, x + (rtl ? w - mid : mid), cy, rtl);
 		}
 
 		/* Per-slot state: current segment, open list, pressed */
@@ -1150,15 +1173,15 @@ lrg_breadcrumb_paint (LrgWidget    *widget,
 			                                   state | LRG_WIDGET_STATE_HOVERED | LRG_WIDGET_STATE_PRESSED,
 			                                   &look);
 
-		lrg_widget_paint_box (widget, list, &look, x + slot->x, y + inset, slot->width, h - inset * 2.0f);
+		lrg_widget_paint_box (widget, list, &look, sx, y + inset, slot->width, h - inset * 2.0f);
 
 		if (slot->key == KEY_ELLIPSIS)
 			text = CRUMB_ELLIPSIS_TEXT;
 		else
 			text = slot->display != NULL ? slot->display : segment_at (self, (guint) slot->key)->label;
 
-		lrg_paint_list_push_clip (list, x + slot->x, y, slot->width, h);
-		paint_text_centered_v (list, widget, text, x + slot->x + pad, cy, &look.foreground);
+		lrg_paint_list_push_clip (list, sx, y, slot->width, h);
+		paint_text_centered_v (list, widget, text, sx + pad, cy, &look.foreground);
 		lrg_paint_list_pop_clip (list);
 
 		/* Keyboard cursor */
@@ -1168,7 +1191,7 @@ lrg_breadcrumb_paint (LrgWidget    *widget,
 			LrgPartLook ring;
 
 			lrg_widget_resolve_look (widget, LRG_UI_PART_INDICATOR, &ring);
-			lrg_paint_list_rect_ex (list, x + slot->x - 1.0f, y + inset - 1.0f, slot->width + 2.0f,
+			lrg_paint_list_rect_ex (list, sx - 1.0f, y + inset - 1.0f, slot->width + 2.0f,
 			                        h - inset * 2.0f + 2.0f, &ring.radii, NULL, NULL, ring.border_width,
 			                        &ring.border);
 		}
@@ -1253,10 +1276,11 @@ lrg_breadcrumb_handle_event (LrgWidget        *widget,
 	case LRG_UI_EVENT_KEY_DOWN:
 		switch (lrg_ui_event_get_key (event))
 		{
+		/* Arrows follow the trail, which is mirrored in RTL */
 		case GRL_KEY_LEFT:
-			return move_focus_key (self, -1);
+			return move_focus_key (self, lrg_widget_is_rtl (widget) ? 1 : -1);
 		case GRL_KEY_RIGHT:
-			return move_focus_key (self, 1);
+			return move_focus_key (self, lrg_widget_is_rtl (widget) ? -1 : 1);
 		case GRL_KEY_HOME:
 			if (self->slots->len > 0)
 				self->focus_key = g_array_index (self->slots, Slot, 0).key;
@@ -1548,7 +1572,7 @@ lrg_breadcrumb_get_segment_bounds (LrgBreadcrumb *self,
 	slot = find_slot (self, index);
 	if (slot == NULL)
 		return FALSE;
-	bounds->x = lrg_widget_get_world_x (LRG_WIDGET (self)) + slot->x;
+	bounds->x = lrg_widget_get_world_x (LRG_WIDGET (self)) + slot_left (self, slot);
 	bounds->y = lrg_widget_get_world_y (LRG_WIDGET (self));
 	bounds->width = slot->width;
 	bounds->height = lrg_widget_get_height (LRG_WIDGET (self));

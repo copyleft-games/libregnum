@@ -22,6 +22,7 @@
 #endif
 
 #include <glib-object.h>
+#include <gio/gio.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
@@ -1088,6 +1089,214 @@ void lrg_widget_paint_box (LrgWidget         *self,
                            gfloat             y,
                            gfloat             width,
                            gfloat             height);
+
+/* ==========================================================================
+ * Actions
+ * ========================================================================== */
+
+/**
+ * lrg_widget_insert_action_group:
+ * @self: an #LrgWidget
+ * @prefix: the prefix the group's actions are addressed with, e.g.
+ *   "game" for "game.pause"
+ * @group: (nullable): the actions, or %NULL to remove the group
+ *   installed under @prefix
+ *
+ * Makes @group's actions reachable from @self and its descendants as
+ * "@prefix.name" (lrg_widget_activate_action()). A group on a widget
+ * shadows a group with the same prefix on an ancestor; the canvas is
+ * the root of the scope and carries the built-in "app" and "ui"
+ * groups. The widget keeps a reference to @group.
+ *
+ * |[<!-- language="C" -->
+ * g_autoptr(GSimpleActionGroup) game = g_simple_action_group_new ();
+ *
+ * g_action_map_add_action_entries (G_ACTION_MAP (game), entries,
+ *                                  G_N_ELEMENTS (entries), state);
+ * lrg_widget_insert_action_group (LRG_WIDGET (canvas), "game",
+ *                                 G_ACTION_GROUP (game));
+ * ]|
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_insert_action_group (LrgWidget    *self,
+                                     const gchar  *prefix,
+                                     GActionGroup *group);
+
+/**
+ * lrg_widget_get_action_group:
+ * @self: an #LrgWidget
+ * @prefix: a prefix
+ *
+ * Returns: (transfer none) (nullable): the group inserted on @self
+ *   itself under @prefix (ancestors are not searched)
+ */
+LRG_AVAILABLE_IN_ALL
+GActionGroup * lrg_widget_get_action_group (LrgWidget   *self,
+                                            const gchar *prefix);
+
+/**
+ * lrg_widget_find_action_group:
+ * @self: an #LrgWidget
+ * @prefix: a prefix
+ *
+ * Resolves @prefix the way lrg_widget_activate_action() does: @self,
+ * then each ancestor up to the canvas. Popups and overlays shown on a
+ * canvas resolve through the canvas.
+ *
+ * Returns: (transfer none) (nullable): the nearest group for @prefix
+ */
+LRG_AVAILABLE_IN_ALL
+GActionGroup * lrg_widget_find_action_group (LrgWidget   *self,
+                                             const gchar *prefix);
+
+/**
+ * lrg_widget_list_action_prefixes:
+ * @self: an #LrgWidget
+ *
+ * Every prefix reachable from @self (its own groups and its
+ * ancestors'), nearest first and without duplicates.
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the prefixes;
+ *   free with g_strfreev()
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_widget_list_action_prefixes (LrgWidget *self);
+
+/**
+ * lrg_widget_lookup_action:
+ * @self: an #LrgWidget
+ * @name: an action name, "prefix.action"
+ *
+ * Finds the action @name resolves to from @self. Only groups that are
+ * also a #GActionMap (such as #GSimpleActionGroup) can hand out the
+ * #GAction; use lrg_widget_find_action_group() for other groups.
+ * Menus use it to read an action's enabled flag and state (a boolean
+ * state is a check mark, a string state a radio choice).
+ *
+ * Returns: (transfer none) (nullable): the action, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+GAction * lrg_widget_lookup_action (LrgWidget   *self,
+                                    const gchar *name);
+
+/**
+ * lrg_widget_activate_action:
+ * @self: an #LrgWidget
+ * @name: "prefix.action"
+ * @parameter: (nullable): the parameter; must match the action's
+ *   parameter type (a floating reference is consumed)
+ *
+ * Activates the action @name resolves to from @self (see
+ * lrg_widget_insert_action_group()). Nothing happens, and %FALSE is
+ * returned, when no group provides the action, the action is
+ * disabled or @parameter does not match its parameter type.
+ *
+ * Returns: %TRUE if an action was activated
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_activate_action (LrgWidget   *self,
+                                     const gchar *name,
+                                     GVariant    *parameter);
+
+/* ==========================================================================
+ * Layout direction
+ * ========================================================================== */
+
+/**
+ * lrg_widget_get_direction:
+ * @self: an #LrgWidget
+ *
+ * Returns: the direction set on @self itself (may be
+ *   %LRG_WIDGET_DIRECTION_INHERIT)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidgetDirection lrg_widget_get_direction (LrgWidget *self);
+
+/**
+ * lrg_widget_set_direction:
+ * @self: an #LrgWidget
+ * @direction: %LRG_WIDGET_DIRECTION_LTR, %LRG_WIDGET_DIRECTION_RTL, or
+ *   %LRG_WIDGET_DIRECTION_INHERIT (the default) to follow the parent
+ *
+ * Sets the layout direction of @self and every descendant that
+ * inherits. In right-to-left, containers mirror the positions of their
+ * children horizontally (so the first child of an #LrgHBox is on the
+ * right and %LRG_ALIGN_START means the right edge) and labels align
+ * their text to the right. The subtree is laid out again.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_direction (LrgWidget          *self,
+                               LrgWidgetDirection  direction);
+
+/**
+ * lrg_widget_get_effective_direction:
+ * @self: an #LrgWidget
+ *
+ * The direction @self lays out with: its own, else the nearest
+ * ancestor's, else the canvas default
+ * (lrg_canvas_set_default_direction()), else left-to-right.
+ *
+ * Returns: %LRG_WIDGET_DIRECTION_LTR or %LRG_WIDGET_DIRECTION_RTL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidgetDirection lrg_widget_get_effective_direction (LrgWidget *self);
+
+/**
+ * lrg_widget_is_rtl:
+ * @self: an #LrgWidget
+ *
+ * Shorthand for comparing lrg_widget_get_effective_direction() with
+ * %LRG_WIDGET_DIRECTION_RTL.
+ *
+ * Returns: %TRUE if @self lays out right to left
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_is_rtl (LrgWidget *self);
+
+/**
+ * lrg_widget_class_set_handles_direction:
+ * @klass: a widget class
+ * @handles_direction: %TRUE if the class mirrors its own children in
+ *   right-to-left
+ *
+ * By default, when a container's effective direction is
+ * right-to-left, lrg_widget_allocate() mirrors each child's rectangle
+ * inside the container (x becomes width - x - child width), so every
+ * layout written left-to-right comes out mirrored. Classes that place
+ * children at positions with a meaning of their own (scroll offsets,
+ * graph or timeline coordinates, popups) or that mirror themselves call
+ * this from class_init to opt out. Subclasses inherit the setting.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_class_set_handles_direction (LrgWidgetClass *klass,
+                                             gboolean        handles_direction);
+
+/**
+ * lrg_widget_class_get_handles_direction:
+ * @klass: a widget class
+ *
+ * Returns: %TRUE if @klass (or a parent class) opted out of automatic
+ *   mirroring
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_class_get_handles_direction (LrgWidgetClass *klass);
+
+/**
+ * lrg_widget_mirror_x:
+ * @self: an #LrgWidget
+ * @x: a world X coordinate inside @self
+ * @width: the width of the span starting at @x
+ *
+ * Helper for widgets that paint direction-dependent content
+ * themselves: in right-to-left, returns the left edge of the span
+ * mirrored inside @self's rectangle; in left-to-right, returns @x.
+ *
+ * Returns: the left edge to paint the span at
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_mirror_x (LrgWidget *self,
+                            gfloat     x,
+                            gfloat     width);
 
 /* ==========================================================================
  * Virtual Method Wrappers

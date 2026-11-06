@@ -91,6 +91,7 @@ TEST_SOURCES := \
 	test-ui-loader.c \
 	test-ui-inspector.c \
 	test-ui-motion.c \
+	test-ui-actions.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \
