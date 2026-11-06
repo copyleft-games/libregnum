@@ -14,6 +14,8 @@
 #include "lrg-gui-raylib.h"
 #include <graylib.h>
 #include "lrg-gui-raylib-private.h"
+#include "../paint/lrg-paint-renderer.h"
+#include "../paint/lrg-paint-private.h"
 /* graylib's O(1)-glyph-lookup forms of DrawTextEx()/MeasureTextEx():
  * header-only, on raylib's public API, same quads and measurements.
  * raylib's own functions scan the glyph table linearly per character.
@@ -40,16 +42,12 @@ struct _LrgGuiRaylib
 	gfloat    loaded_size;
 	gint      cursor;        /* raylib cursor last applied */
 
-	GArray   *clip_stack;    /* Rectangle */
-
-	/* The scissor state last set during lrg_gui_raylib_render(), so a
-	 * clip change to the same rectangle (common: a region pops back to
-	 * its parent's clip) does not end and restart scissor mode, each of
-	 * which flushes raylib's batch. scissor_known is FALSE when the GL
-	 * state is not ours to assume (frame start, after a callback). */
-	gboolean  scissor_known;
-	gboolean  scissor_on;
-	gint      scissor[4];    /* x, y, w, h as given to BeginScissorMode */
+	/* The frame is translated into SDF paint instances and drawn by
+	 * the shared paint renderer: anti-aliased rounded shapes, soft
+	 * shadows, and text glyphs in the same batch (usually one draw
+	 * call for the whole editor). Clips become per-instance clip
+	 * rectangles, so no scissor changes or batch flushes. */
+	LrgPaintList *paint;
 };
 
 G_DEFINE_FINAL_TYPE (LrgGuiRaylib, lrg_gui_raylib, G_TYPE_OBJECT)
@@ -334,7 +332,7 @@ lrg_gui_raylib_finalize (GObject *object)
 		unload_fonts (self);
 	latch_uninstall ();
 	g_free (self->ui_path);
-	g_array_unref (self->clip_stack);
+	g_clear_object (&self->paint);
 
 	G_OBJECT_CLASS (lrg_gui_raylib_parent_class)->finalize (object);
 }
@@ -348,7 +346,7 @@ lrg_gui_raylib_class_init (LrgGuiRaylibClass *klass)
 static void
 lrg_gui_raylib_init (LrgGuiRaylib *self)
 {
-	self->clip_stack = g_array_new (FALSE, FALSE, sizeof (Rectangle));
+	self->paint = lrg_paint_list_new ();
 	self->cursor = -1;
 }
 
@@ -606,10 +604,11 @@ lrg_gui_raylib_poll_input (LrgGuiRaylib *self,
  * Rendering
  * ========================================================================== */
 
-static Color
-to_color (LrgGuiColor c)
+/* to_grl: 0xRRGGBBAA -> GrlColor */
+static GrlColor
+to_grl (LrgGuiColor c)
 {
-	Color out;
+	GrlColor out;
 
 	out.r = (c >> 24) & 0xff;
 	out.g = (c >> 16) & 0xff;
@@ -618,244 +617,131 @@ to_color (LrgGuiColor c)
 	return out;
 }
 
+typedef struct
+{
+	LrgGuiDrawCallback callback;
+	LrgGuiRect         rect;
+	gpointer           user_data;
+} CallbackData;
+
+/* run_gui_callback: adapts a GUI draw callback to a paint callback */
 static void
-apply_clip (LrgGuiRaylib *self)
+run_gui_callback (gpointer data)
 {
-	gint want[4] = { 0, 0, 0, 0 };
-	gboolean on = self->clip_stack->len > 0;
+	CallbackData *cb = data;
 
-	if (on)
-	{
-		Rectangle r = g_array_index (self->clip_stack, Rectangle, self->clip_stack->len - 1);
-
-		want[0] = (gint) floorf (r.x);
-		want[1] = (gint) floorf (r.y);
-		want[2] = (gint) ceilf (MAX (0.0f, r.width));
-		want[3] = (gint) ceilf (MAX (0.0f, r.height));
-	}
-
-	/* Already in that state: nothing to do (and no batch flush). */
-	if (self->scissor_known && self->scissor_on == on &&
-	    (!on || memcmp (self->scissor, want, sizeof want) == 0))
-		return;
-
-	EndScissorMode ();
-	if (on)
-		BeginScissorMode (want[0], want[1], want[2], want[3]);
-	self->scissor_known = TRUE;
-	self->scissor_on = on;
-	memcpy (self->scissor, want, sizeof want);
-}
-
-static void
-push_clip (LrgGuiRaylib     *self,
-           const LrgGuiRect *rect)
-{
-	Rectangle r = { rect->x, rect->y, rect->w, rect->h };
-
-	if (self->clip_stack->len > 0)
-	{
-		Rectangle top = g_array_index (self->clip_stack, Rectangle, self->clip_stack->len - 1);
-		gfloat    x2 = MIN (r.x + r.width, top.x + top.width);
-		gfloat    y2 = MIN (r.y + r.height, top.y + top.height);
-
-		r.x = MAX (r.x, top.x);
-		r.y = MAX (r.y, top.y);
-		r.width = MAX (0.0f, x2 - r.x);
-		r.height = MAX (0.0f, y2 - r.y);
-	}
-	g_array_append_val (self->clip_stack, r);
-	apply_clip (self);
-}
-
-static void
-pop_clip (LrgGuiRaylib *self)
-{
-	if (self->clip_stack->len > 0)
-		g_array_set_size (self->clip_stack, self->clip_stack->len - 1);
-	apply_clip (self);
-}
-
-static gfloat
-roundness_for (const LrgGuiRect *r,
-               gfloat            radius)
-{
-	gfloat m = MIN (r->w, r->h);
-
-	return (m > 0.0f) ? CLAMP (radius * 2.0f / m, 0.0f, 1.0f) : 0.0f;
-}
-
-/*
- * shapes_atlas_rect:
- *
- * raylib's GenImageFontAtlas() paints a 3x3 opaque white block in the
- * bottom-right corner of every font atlas, for SetShapesTexture(). Using
- * the UI font's atlas (its centre texel, so bilinear filtering only ever
- * blends white with white) as the shapes texture while replaying lets
- * rectangles, circles and UI text share one texture, so raylib batches
- * them instead of flushing at every switch between a shape and a label.
- * Returns FALSE (keep raylib's default) without a loaded UI font.
- */
-static gboolean
-shapes_atlas_rect (LrgGuiRaylib *self,
-                   Rectangle    *rect)
-{
-	if (!self->ui_loaded || self->ui_font.texture.id == 0 ||
-	    self->ui_font.texture.width < 3 || self->ui_font.texture.height < 3)
-		return FALSE;
-
-	rect->x = (gfloat) (self->ui_font.texture.width - 2);
-	rect->y = (gfloat) (self->ui_font.texture.height - 2);
-	rect->width = 1.0f;
-	rect->height = 1.0f;
-	return TRUE;
+	cb->callback (&cb->rect, cb->user_data);
 }
 
 void
 lrg_gui_raylib_render (LrgGuiRaylib   *self,
                        LrgGuiDrawList *list)
 {
-	guint     i, n;
-	Texture2D prev_shapes;
-	Rectangle prev_shapes_rect;
-	Rectangle atlas_rect;
-	gboolean  use_atlas;
+	LrgPaintList *paint;
+	guint         i;
+	guint         n;
+	guint         depth = 0;
 
 	g_return_if_fail (LRG_IS_GUI_RAYLIB (self));
 	g_return_if_fail (LRG_IS_GUI_DRAW_LIST (list));
 
-	g_array_set_size (self->clip_stack, 0);
-	self->scissor_known = FALSE;
+	paint = self->paint;
+	lrg_paint_list_clear (paint);
 	n = lrg_gui_draw_list_get_length (list);
-
-	/* Shapes sample the font atlas' white block during the replay only;
-	 * the previous shapes texture is restored around callbacks and at
-	 * the end, so nothing outside the GUI sees the change. */
-	prev_shapes = GetShapesTexture ();
-	prev_shapes_rect = GetShapesTextureRectangle ();
-	use_atlas = shapes_atlas_rect (self, &atlas_rect);
-	if (use_atlas)
-		SetShapesTexture (self->ui_font.texture, atlas_rect);
 
 	for (i = 0; i < n; i++)
 	{
 		const LrgGuiCommand *cmd = lrg_gui_draw_list_get_command (list, i);
-		Rectangle            rec = { cmd->rect.x, cmd->rect.y, cmd->rect.w, cmd->rect.h };
-		Color                col = to_color (cmd->color);
+		const LrgGuiRect    *r = &cmd->rect;
+		GrlColor             col = to_grl (cmd->color);
 
 		switch (cmd->kind)
 		{
 		case LRG_GUI_CMD_RECT_FILLED:
-			if (cmd->rounding > 0.5f && rec.width > 2.0f && rec.height > 2.0f)
-				grl_fast2d_draw_rectangle_rounded (rec, roundness_for (&cmd->rect, cmd->rounding), 6, col);
-			else
-				grl_fast2d_draw_rectangle_rec (rec, col);
+			lrg_paint_list_rect (paint, r->x, r->y, r->w, r->h, cmd->rounding, &col);
 			break;
 
 		case LRG_GUI_CMD_RECT_OUTLINE:
-			if (cmd->rounding > 0.5f && rec.width > 2.0f && rec.height > 2.0f)
-				DrawRectangleRoundedLinesEx (rec, roundness_for (&cmd->rect, cmd->rounding), 6,
-				                             cmd->thickness, col);
-			else
-				grl_fast2d_draw_rectangle_lines_ex (rec, cmd->thickness, col);
+			lrg_paint_list_border (paint, r->x, r->y, r->w, r->h, cmd->rounding,
+			                       MAX (cmd->thickness, 1.0f), &col);
+			break;
+
+		case LRG_GUI_CMD_SHADOW:
+			lrg_paint_list_shadow (paint, r->x, r->y, r->w, r->h, cmd->rounding,
+			                       cmd->thickness, 0.0f, 0.0f, cmd->points[1], &col);
 			break;
 
 		case LRG_GUI_CMD_LINE:
-			{
-				Vector2 a = { cmd->points[0], cmd->points[1] };
-				Vector2 b = { cmd->points[2], cmd->points[3] };
-
-				DrawLineEx (a, b, cmd->thickness, col);
-			}
+			lrg_paint_list_line (paint, cmd->points[0], cmd->points[1],
+			                     cmd->points[2], cmd->points[3],
+			                     MAX (cmd->thickness, 1.0f), &col);
 			break;
 
 		case LRG_GUI_CMD_TRIANGLE:
-			{
-				Vector2 a = { cmd->points[0], cmd->points[1] };
-				Vector2 b = { cmd->points[2], cmd->points[3] };
-				Vector2 c = { cmd->points[4], cmd->points[5] };
-				gfloat  cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-
-				/* raylib wants counter-clockwise on screen. */
-				if (cross > 0.0f)
-					DrawTriangle (a, c, b, col);
-				else
-					DrawTriangle (a, b, c, col);
-			}
+			lrg_paint_list_triangle (paint, cmd->points[0], cmd->points[1],
+			                         cmd->points[2], cmd->points[3],
+			                         cmd->points[4], cmd->points[5], &col);
 			break;
 
 		case LRG_GUI_CMD_CIRCLE_FILLED:
-			{
-				Vector2 c = { cmd->rect.x, cmd->rect.y };
-
-				grl_fast2d_draw_circle_v (c, cmd->thickness, col);
-			}
+			lrg_paint_list_circle (paint, r->x, r->y, cmd->thickness, &col);
 			break;
 
 		case LRG_GUI_CMD_CIRCLE_OUTLINE:
 			{
-				Vector2 c = { cmd->rect.x, cmd->rect.y };
+				/* rounding carries the stroke width (1 px below 1),
+				 * centred on the requested radius */
+				gfloat         w = cmd->rounding > 1.0f ? cmd->rounding : 1.0f;
+				gfloat         outer = cmd->thickness + w * 0.5f;
+				LrgCornerRadii radii;
 
-				/* rounding carries the stroke width; raylib 6.2's
-				 * DrawCircleLinesEx() grows inward from its radius, so
-				 * push the outer edge out by half the stroke to centre
-				 * it on the requested radius */
-				if (cmd->rounding > 1.0f)
-					DrawCircleLinesEx (c, cmd->thickness + cmd->rounding * 0.5f,
-					                   cmd->rounding, col);
-				else
-					DrawCircleLinesV (c, cmd->thickness, col);
+				lrg_corner_radii_init_uniform (&radii, outer);
+				lrg_paint_list_rect_ex (paint, r->x - outer, r->y - outer,
+				                        outer * 2.0f, outer * 2.0f, &radii,
+				                        NULL, NULL, w, &col);
 			}
 			break;
 
 		case LRG_GUI_CMD_TEXT:
+			if (cmd->text != NULL)
 			{
-				Font    font = font_for (self, cmd->monospace);
-				Vector2 pos = { cmd->rect.x, cmd->rect.y };
-				gfloat  spacing = (font.texture.id == GetFontDefault ().texture.id)
-				                  ? cmd->font_size / 10.0f : 0.0f;
+				Font   font = font_for (self, cmd->monospace);
+				gfloat spacing = (font.texture.id == GetFontDefault ().texture.id)
+				                 ? cmd->font_size / 10.0f : 0.0f;
 
-				grl_text_draw_ex (font, cmd->text, pos, cmd->font_size, spacing, col);
+				_lrg_paint_list_text_font (paint, &font, cmd->text, -1, r->x, r->y,
+				                           cmd->font_size, spacing, &col);
 			}
 			break;
 
 		case LRG_GUI_CMD_CLIP_PUSH:
-			push_clip (self, &cmd->rect);
+			lrg_paint_list_push_clip (paint, r->x, r->y, r->w, r->h);
+			depth++;
 			break;
 
 		case LRG_GUI_CMD_CLIP_POP:
-			pop_clip (self);
+			if (depth > 0)
+			{
+				lrg_paint_list_pop_clip (paint);
+				depth--;
+			}
 			break;
 
 		case LRG_GUI_CMD_IMAGE:
-			if (cmd->texture != NULL)
-			{
-				/* graylib textures wrap a raylib Texture2D. */
-				Texture2D *tex = grl_texture_get_handle (GRL_TEXTURE (cmd->texture));
-
-				if (tex != NULL && tex->id != 0)
-				{
-					Rectangle src = { 0.0f, 0.0f, (gfloat) tex->width, (gfloat) tex->height };
-					Vector2   origin = { 0.0f, 0.0f };
-
-					grl_fast2d_draw_texture_pro (*tex, src, rec, origin, 0.0f, col);
-				}
-			}
+			if (cmd->texture != NULL && GRL_IS_TEXTURE (cmd->texture))
+				lrg_paint_list_image (paint, GRL_TEXTURE (cmd->texture), NULL,
+				                      r->x, r->y, r->w, r->h, 0.0f, &col);
 			break;
 
 		case LRG_GUI_CMD_CALLBACK:
 			if (cmd->callback != NULL)
 			{
-				/* Custom renderers (3D viewports) manage their own state;
-				 * restore our clip afterwards. */
-				EndScissorMode ();
-				if (use_atlas)
-					SetShapesTexture (prev_shapes, prev_shapes_rect);
-				cmd->callback (&cmd->rect, cmd->user_data);
-				if (use_atlas)
-					SetShapesTexture (self->ui_font.texture, atlas_rect);
-				self->scissor_known = FALSE;
-				apply_clip (self);
+				CallbackData *cb = g_new (CallbackData, 1);
+
+				cb->callback = cmd->callback;
+				cb->rect = *r;
+				cb->user_data = cmd->user_data;
+				lrg_paint_list_callback (paint, run_gui_callback, cb, g_free);
 			}
 			break;
 
@@ -864,11 +750,10 @@ lrg_gui_raylib_render (LrgGuiRaylib   *self,
 		}
 	}
 
-	g_array_set_size (self->clip_stack, 0);
-	EndScissorMode ();
-	self->scissor_known = FALSE;
-	if (use_atlas)
-		SetShapesTexture (prev_shapes, prev_shapes_rect);
+	while (depth-- > 0)
+		lrg_paint_list_pop_clip (paint);
+
+	lrg_paint_renderer_render (lrg_paint_renderer_get_default (), paint);
 }
 
 void

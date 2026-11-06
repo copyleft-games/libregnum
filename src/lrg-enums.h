@@ -6699,6 +6699,7 @@ GType lrg_selection_mode_get_type (void) G_GNUC_CONST;
  * @LRG_PAINT_PRIM_SHADOW: soft blurred rounded rectangle
  * @LRG_PAINT_PRIM_LINE: line segment with round caps
  * @LRG_PAINT_PRIM_IMAGE: textured rounded rectangle (images and glyphs)
+ * @LRG_PAINT_PRIM_TRIANGLE: filled triangle (arrows, chevrons, carets)
  *
  * Shape drawn by one #LrgPaintInstance.
  */
@@ -6707,7 +6708,8 @@ typedef enum
     LRG_PAINT_PRIM_RECT,
     LRG_PAINT_PRIM_SHADOW,
     LRG_PAINT_PRIM_LINE,
-    LRG_PAINT_PRIM_IMAGE
+    LRG_PAINT_PRIM_IMAGE,
+    LRG_PAINT_PRIM_TRIANGLE
 } LrgPaintPrim;
 
 LRG_AVAILABLE_IN_ALL

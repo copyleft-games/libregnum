@@ -62,6 +62,8 @@ typedef struct
 	gint               popup_index;   /* index in the popup stack, or -1 */
 	guint              bg_cmd;        /* deferred background command */
 	gboolean           has_bg_cmd;
+	guint              shadow_cmd;    /* deferred drop-shadow command */
+	gboolean           has_shadow_cmd;
 } GuiRegion;
 
 typedef struct

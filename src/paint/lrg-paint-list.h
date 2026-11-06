@@ -291,6 +291,30 @@ void lrg_paint_list_line (LrgPaintList   *self,
                           const GrlColor *color);
 
 /**
+ * lrg_paint_list_triangle:
+ * @self: an #LrgPaintList
+ * @x0: first vertex X
+ * @y0: first vertex Y
+ * @x1: second vertex X
+ * @y1: second vertex Y
+ * @x2: third vertex X
+ * @y2: third vertex Y
+ * @color: fill colour
+ *
+ * Records an anti-aliased filled triangle (any winding), for arrows,
+ * chevrons and carets.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_triangle (LrgPaintList   *self,
+                              gfloat          x0,
+                              gfloat          y0,
+                              gfloat          x1,
+                              gfloat          y1,
+                              gfloat          x2,
+                              gfloat          y2,
+                              const GrlColor *color);
+
+/**
  * lrg_paint_list_image:
  * @self: an #LrgPaintList
  * @texture: texture to draw

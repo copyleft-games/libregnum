@@ -17,6 +17,7 @@
 #include <raylib.h>
 
 #include "lrg-paint-list.h"
+#include "lrg-paint-private.h"
 #include "../lrg-log.h"
 
 /* Clip rectangle used when nothing is pushed */
@@ -590,6 +591,40 @@ lrg_paint_list_line (LrgPaintList   *self,
 }
 
 void
+lrg_paint_list_triangle (LrgPaintList   *self,
+                         gfloat          x0,
+                         gfloat          y0,
+                         gfloat          x1,
+                         gfloat          y1,
+                         gfloat          x2,
+                         gfloat          y2,
+                         const GrlColor *color)
+{
+	LrgPaintInstance inst;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+	g_return_if_fail (color != NULL);
+
+	if (color->a == 0)
+		return;
+	if (bounds_outside_clip (self, MIN (x0, MIN (x1, x2)), MIN (y0, MIN (y1, y2)),
+	                         MAX (x0, MAX (x1, x2)), MAX (y0, MAX (y1, y2))))
+		return;
+
+	/* Two vertices in rect, the third in extra */
+	init_instance (self, &inst, LRG_PAINT_PRIM_TRIANGLE);
+	inst.rect[0] = x0;
+	inst.rect[1] = y0;
+	inst.rect[2] = x1;
+	inst.rect[3] = y1;
+	inst.extra[0] = x2;
+	inst.extra[1] = y2;
+	color_to_bytes (self, color, inst.color);
+
+	append_instance (self, &inst);
+}
+
+void
 lrg_paint_list_image (LrgPaintList       *self,
                       GrlTexture         *texture,
                       const GrlRectangle *source,
@@ -654,18 +689,18 @@ lrg_paint_list_image (LrgPaintList       *self,
  * ========================================================================== */
 
 void
-lrg_paint_list_text (LrgPaintList   *self,
-                     GrlFont        *font,
-                     const gchar    *text,
-                     gfloat          x,
-                     gfloat          y,
-                     gfloat          size,
-                     gfloat          spacing,
-                     const GrlColor *color)
+_lrg_paint_list_text_font (LrgPaintList   *self,
+                           const Font     *rl,
+                           const gchar    *text,
+                           gssize          length,
+                           gfloat          x,
+                           gfloat          y,
+                           gfloat          size,
+                           gfloat          spacing,
+                           const GrlColor *color)
 {
-	Font         storage;
-	const Font  *rl;
 	const gchar *p;
+	const gchar *end;
 	gfloat       scale;
 	gfloat       pad;
 	gfloat       pen_x;
@@ -674,20 +709,12 @@ lrg_paint_list_text (LrgPaintList   *self,
 	gfloat       th;
 	guint8       rgba[4];
 
-	g_return_if_fail (LRG_IS_PAINT_LIST (self));
-	g_return_if_fail (text != NULL);
-	g_return_if_fail (color != NULL);
-
-	if (text[0] == '\0' || size <= 0.0f || color->a == 0)
+	if (text[0] == '\0' || length == 0 || size <= 0.0f || color->a == 0)
 		return;
-
-	rl = resolve_font (font, &storage);
 	if (rl->glyphCount == 0 || rl->texture.id == 0 || rl->baseSize == 0)
 		return;
 
-	if (font != NULL)
-		keep_ref (self, font);
-
+	end = length < 0 ? text + strlen (text) : text + length;
 	scale = size / (gfloat) rl->baseSize;
 	pad = (gfloat) rl->glyphPadding;
 	tw = (gfloat) MAX (rl->texture.width, 1);
@@ -698,7 +725,7 @@ lrg_paint_list_text (LrgPaintList   *self,
 	pen_x = floorf (x + 0.5f);
 	pen_y = floorf (y + 0.5f);
 
-	for (p = text; *p != '\0'; p = g_utf8_next_char (p))
+	for (p = text; p < end && *p != '\0'; p = g_utf8_next_char (p))
 	{
 		gunichar         cp = g_utf8_get_char (p);
 		gint             index;
@@ -746,6 +773,33 @@ lrg_paint_list_text (LrgPaintList   *self,
 
 		pen_x += glyph_advance (rl, index, scale) + spacing;
 	}
+}
+
+void
+lrg_paint_list_text (LrgPaintList   *self,
+                     GrlFont        *font,
+                     const gchar    *text,
+                     gfloat          x,
+                     gfloat          y,
+                     gfloat          size,
+                     gfloat          spacing,
+                     const GrlColor *color)
+{
+	Font        storage;
+	const Font *rl;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+	g_return_if_fail (text != NULL);
+	g_return_if_fail (color != NULL);
+
+	rl = resolve_font (font, &storage);
+	if (rl->glyphCount == 0 || rl->texture.id == 0)
+		return;
+
+	if (font != NULL)
+		keep_ref (self, font);
+
+	_lrg_paint_list_text_font (self, rl, text, -1, x, y, size, spacing, color);
 }
 
 void
@@ -882,6 +936,13 @@ lrg_paint_list_transform_group (LrgPaintList *self,
 		{
 			inst->rect[k] = pivot_x + (inst->rect[k] - pivot_x) * scale + translate_x;
 			inst->rect[k + 1] = pivot_y + (inst->rect[k + 1] - pivot_y) * scale + translate_y;
+		}
+
+		/* A triangle keeps its third vertex in extra */
+		if ((gint) (inst->params[2] + 0.5f) == LRG_PAINT_PRIM_TRIANGLE)
+		{
+			inst->extra[0] = pivot_x + (inst->extra[0] - pivot_x) * scale + translate_x;
+			inst->extra[1] = pivot_y + (inst->extra[1] - pivot_y) * scale + translate_y;
 		}
 
 		/* Sizes scale with the shape */

@@ -6213,6 +6213,7 @@ lrg_paint_prim_get_type (void)
             { LRG_PAINT_PRIM_SHADOW, "LRG_PAINT_PRIM_SHADOW", "shadow" },
             { LRG_PAINT_PRIM_LINE, "LRG_PAINT_PRIM_LINE", "line" },
             { LRG_PAINT_PRIM_IMAGE, "LRG_PAINT_PRIM_IMAGE", "image" },
+            { LRG_PAINT_PRIM_TRIANGLE, "LRG_PAINT_PRIM_TRIANGLE", "triangle" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

@@ -39,6 +39,8 @@ G_BEGIN_DECLS
  * @LRG_GUI_CMD_IMAGE: draw @texture (a #GrlTexture) stretched into @rect
  * @LRG_GUI_CMD_CALLBACK: call @callback with @rect (custom rendering such
  *   as a 3D viewport, run in draw order)
+ * @LRG_GUI_CMD_SHADOW: a soft drop shadow under @rect (blur in @thickness,
+ *   corner radius in @rounding, vertical offset in @points[1])
  *
  * Drawing command kinds.
  */
@@ -54,7 +56,8 @@ typedef enum
 	LRG_GUI_CMD_CLIP_PUSH,
 	LRG_GUI_CMD_CLIP_POP,
 	LRG_GUI_CMD_IMAGE,
-	LRG_GUI_CMD_CALLBACK
+	LRG_GUI_CMD_CALLBACK,
+	LRG_GUI_CMD_SHADOW
 } LrgGuiCommandKind;
 
 /**
@@ -173,6 +176,27 @@ guint lrg_gui_draw_list_rect_outline (LrgGuiDrawList   *self,
                                       LrgGuiColor       color,
                                       gfloat            thickness,
                                       gfloat            rounding);
+
+/**
+ * lrg_gui_draw_list_shadow:
+ * @self: an #LrgGuiDrawList
+ * @rect: the rectangle casting the shadow
+ * @color: shadow colour (alpha sets the strength)
+ * @blur: softness in pixels
+ * @offset_y: vertical offset in pixels
+ * @rounding: corner radius of the casting rectangle
+ *
+ * Adds a soft drop shadow. Backends without shadow support ignore it.
+ *
+ * Returns: the command index (for lrg_gui_draw_list_set_rect())
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_gui_draw_list_shadow (LrgGuiDrawList   *self,
+                                const LrgGuiRect *rect,
+                                LrgGuiColor       color,
+                                gfloat            blur,
+                                gfloat            offset_y,
+                                gfloat            rounding);
 
 /**
  * lrg_gui_draw_list_line:

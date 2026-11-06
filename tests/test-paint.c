@@ -210,6 +210,25 @@ test_line_and_circle (void)
 }
 
 static void
+test_triangle (void)
+{
+	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+	const LrgPaintInstance *inst;
+
+	lrg_paint_list_triangle (list, 10.0f, 10.0f, 30.0f, 10.0f, 20.0f, 30.0f, &C_RED);
+	inst = lrg_paint_list_get_instance (list, 0);
+	g_assert_cmpint (lrg_paint_instance_get_prim (inst), ==, LRG_PAINT_PRIM_TRIANGLE);
+	g_assert_cmpfloat (inst->rect[2], ==, 30.0f);
+	g_assert_cmpfloat (inst->extra[0], ==, 20.0f);
+	g_assert_cmpfloat (inst->extra[1], ==, 30.0f);
+
+	/* The third vertex moves with group transforms too */
+	lrg_paint_list_transform_group (list, 0, 1.0f, 0.0f, 0.0f, 5.0f, 7.0f, 1.0f);
+	g_assert_cmpfloat (inst->extra[0], ==, 25.0f);
+	g_assert_cmpfloat (inst->extra[1], ==, 37.0f);
+}
+
+static void
 test_batching_merges_untextured (void)
 {
 	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
@@ -737,6 +756,31 @@ test_gpu_order_and_alpha (void)
 }
 
 static void
+test_gpu_triangle (void)
+{
+	g_autoptr(LrgPaintList) list = NULL;
+	Image                   img;
+
+	SKIP_WITHOUT_GL ();
+	list = lrg_paint_list_new ();
+
+	/* Clockwise on screen; winding must not matter */
+	lrg_paint_list_triangle (list, 20.0f, 20.0f, 108.0f, 20.0f, 64.0f, 108.0f, &C_WHITE);
+	img = render_list (list);
+
+	g_assert_cmpuint (pixel (&img, 64, 40).r, >=, 250);   /* inside */
+	g_assert_cmpuint (pixel (&img, 25, 100).r, ==, 0);    /* outside, lower left */
+	g_assert_cmpuint (pixel (&img, 64, 10).r, ==, 0);     /* above the top edge */
+	UnloadImage (img);
+
+	lrg_paint_list_clear (list);
+	lrg_paint_list_triangle (list, 20.0f, 20.0f, 64.0f, 108.0f, 108.0f, 20.0f, &C_WHITE);
+	img = render_list (list);
+	g_assert_cmpuint (pixel (&img, 64, 40).r, >=, 250);
+	UnloadImage (img);
+}
+
+static void
 draw_green_square (gpointer user_data)
 {
 	DrawRectangle (0, 0, 128, 128, (Color){ 0, 255, 0, 255 });
@@ -840,6 +884,7 @@ main (int   argc,
 	g_test_add_func ("/paint/list/border-and-gradient", test_border_and_gradient);
 	g_test_add_func ("/paint/list/shadow-geometry", test_shadow_geometry);
 	g_test_add_func ("/paint/list/line-and-circle", test_line_and_circle);
+	g_test_add_func ("/paint/list/triangle", test_triangle);
 	g_test_add_func ("/paint/list/batching", test_batching_merges_untextured);
 	g_test_add_func ("/paint/list/callback-splits", test_callback_splits_batches);
 	g_test_add_func ("/paint/list/callback-destroy", test_callback_destroy_on_clear);
@@ -863,6 +908,7 @@ main (int   argc,
 	g_test_add_func ("/paint/gpu/line", test_gpu_line);
 	g_test_add_func ("/paint/gpu/clip", test_gpu_clip);
 	g_test_add_func ("/paint/gpu/order-and-alpha", test_gpu_order_and_alpha);
+	g_test_add_func ("/paint/gpu/triangle", test_gpu_triangle);
 	g_test_add_func ("/paint/gpu/callback-clipped", test_gpu_callback_clipped);
 	g_test_add_func ("/paint/gpu/text-batches", test_gpu_text_batches_with_shapes);
 	g_test_add_func ("/paint/gpu/measure-matches-layout", test_gpu_measure_matches_layout);
