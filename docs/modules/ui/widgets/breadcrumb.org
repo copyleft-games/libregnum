@@ -1,0 +1,149 @@
+* Breadcrumb Widget
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-overview
+:END:
+=LrgBreadcrumb= shows a path ("Home › Saves › Slot 3") as a row of clickable segments separated by small chevrons. The last segment is the current location (=SELECTED=, full =TEXT=); its ancestors are muted. Each segment has its own hover spring, so its =ITEM= surface fades in independently under the pointer; a keyboard cursor moves between segments with Left / Right and is drawn with the =INDICATOR= part.
+
+When the segments do not fit the allocated width, middle segments fold into an ellipsis segment ("…"): the first segment stays, then the ellipsis, then as many trailing segments as fit (at least the last). If even that is too wide the first segment folds in too, and the last label is shortened with "…". Clicking the ellipsis opens a popup list of the hidden segments; picking one activates it.
+
+Segments can carry application data (=lrg_breadcrumb_append_with_data()=), freed with the segment.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-creation
+:END:
+#+begin_src C
+LrgBreadcrumb *path = lrg_breadcrumb_new ();
+
+lrg_breadcrumb_append (path, "Main menu");
+lrg_breadcrumb_append (path, "Settings");
+lrg_breadcrumb_append_with_data (path, "Audio", g_object_ref (audio_page), g_object_unref);
+g_signal_connect (path, "activated", G_CALLBACK (on_crumb), stack);
+#+end_src
+
+Preferred size: every segment shown (labels plus padding and chevrons), =CONTROL_HEIGHT= tall. Give it less width (a box with fill weights, or an explicit size) and it collapses; the layout is rebuilt whenever the width changes.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-properties
+:END:
+| Property     | Type    | Default | Notes                                              |
+|--------------+---------+---------+----------------------------------------------------|
+| =n-segments= | uint    | 0       | Read-only: number of segments                      |
+| =collapsed=  | boolean | =FALSE= | Read-only: middle segments are in the ellipsis     |
+| =popup-open= | boolean | =FALSE= | Read-only: the hidden-segment list is showing      |
+
+Segments: =lrg_breadcrumb_append()=, =lrg_breadcrumb_append_with_data()= (both return the new index), =lrg_breadcrumb_truncate (path, n)= (keep the first =n=, the usual "go up to here"), =lrg_breadcrumb_remove_all()=, =lrg_breadcrumb_get_n_segments()=, =lrg_breadcrumb_get_segment_label()=, =lrg_breadcrumb_get_segment_data()=.
+
+Layout queries: =lrg_breadcrumb_get_collapsed()=, =lrg_breadcrumb_get_hidden_range (path, &first, &n)=, =lrg_breadcrumb_get_segment_bounds (path, index, &rect)= (=LRG_BREADCRUMB_ELLIPSIS= for the "…" segment; =FALSE= for hidden segments), =lrg_breadcrumb_get_popup_open()=, =lrg_breadcrumb_popdown()=.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-signals
+:END:
+| Signal      | Arguments     | Emitted when                                                                   |
+|-------------+---------------+--------------------------------------------------------------------------------|
+| =activated= | =guint index= | A segment was clicked (press and release on it), activated with Enter / Space / gamepad A, or picked from the hidden list |
+
+The breadcrumb does not truncate itself; call =lrg_breadcrumb_truncate (path, index + 1)= in the handler when activating means "go there".
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-parts
+:END:
+| Widget          | Part        | Default look                                                    | State changes                                                                    |
+|-----------------+-------------+-----------------------------------------------------------------+----------------------------------------------------------------------------------|
+| =LrgBreadcrumb= | =item=      | One segment: transparent, =TEXT_MUTED=, =CORNER_RADIUS=          | =hovered= (pointer, keyboard cursor) → =CONTROL_HOVER= and =TEXT=; =pressed= → =CONTROL_PRESSED=; =selected= (current, last segment) → =TEXT=; =open= (ellipsis with its list up) → =CONTROL_HOVER=; =disabled= → opacity 0.45 |
+| =LrgBreadcrumb= | =arrow=     | Chevron separators, =TEXT_MUTED=, =size= = 0.3 × font size        | =disabled= → opacity 0.45                                                        |
+| =LrgBreadcrumb= | =indicator= | Keyboard cursor ring: =FOCUS= border, =FOCUS_RING_WIDTH=          | drawn only after keyboard / gamepad navigation                                   |
+| =LrgBreadcrumb= | =focus=     | no ring (the segment cursor shows focus)                         |                                                                                  |
+| =LrgCrumbPopup= | =popup=     | =POPUP= fill, =BORDER=, =POPUP_RADIUS=, =SHADOW=                 |                                                                                  |
+| =LrgCrumbRow=   | =item=      | Hidden-segment rows, like combo box rows                         | =hovered= / =focus-visible= → =CONTROL_HOVER=; =pressed= → =CONTROL_PRESSED=      |
+
+Segment states are composed per segment and blended with =lrg_widget_resolve_look_for_state()= + =lrg_part_look_lerp()= by the segment's hover spring. The popup and its rows copy the breadcrumb's style classes.
+
+** Keyboard, mouse and gamepad
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-keyboard
+:END:
+| Where          | Input                          | Effect                                                                        |
+|----------------+--------------------------------+-------------------------------------------------------------------------------|
+| Breadcrumb     | Left / Right (D-pad)           | Move the segment cursor (the ellipsis is a stop); at the ends focus moves on  |
+| Breadcrumb     | Home / End                     | First / last segment                                                          |
+| Breadcrumb     | Enter / Space / gamepad A      | Activate the cursor segment (the ellipsis opens its list, focused, with a ring) |
+| Breadcrumb     | click a segment                | =activated=; the cursor moves there                                           |
+| Breadcrumb     | press the ellipsis             | Open the hidden list; pressing it again closes it                             |
+| Hidden list    | Up / Down, Home / End          | Move between rows                                                             |
+| Hidden list    | Enter / Space / A, click a row | Close, then =activated= with that segment                                     |
+| Hidden list    | Escape / gamepad B, click outside | Close                                                                      |
+
+The cursor starts on the last segment when the breadcrumb gains focus.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-theming
+:END:
+#+begin_src yaml
+styles:
+  # Link-coloured ancestors, accent current segment, larger chevrons
+  - widget: LrgBreadcrumb
+    part: item
+    foreground: "#60a5fa"
+  - widget: LrgBreadcrumb
+    part: item
+    state: selected
+    foreground: "#e5e7eb"
+  - widget: LrgBreadcrumb
+    part: arrow
+    size: 5
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-example
+:END:
+#+begin_src C
+static void
+on_crumb (LrgBreadcrumb *path,
+          guint          index,
+          gpointer       user_data)
+{
+	MenuStack *stack = user_data;
+
+	/* Pop the menu stack back to the clicked level */
+	menu_stack_pop_to (stack, index);
+	lrg_breadcrumb_truncate (path, index + 1);
+}
+
+static void
+on_menu_pushed (MenuStack   *stack,
+                const gchar *title,
+                gpointer     user_data)
+{
+	lrg_breadcrumb_append (LRG_BREADCRUMB (user_data), title);
+}
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-api
+:END:
+- =lrg_breadcrumb_new (void)=
+- =lrg_breadcrumb_append=, =lrg_breadcrumb_append_with_data=
+- =lrg_breadcrumb_truncate=, =lrg_breadcrumb_remove_all=
+- =lrg_breadcrumb_get_n_segments=, =lrg_breadcrumb_get_segment_label=, =lrg_breadcrumb_get_segment_data=
+- =lrg_breadcrumb_get_collapsed=, =lrg_breadcrumb_get_hidden_range=, =lrg_breadcrumb_get_segment_bounds=
+- =lrg_breadcrumb_get_popup_open=, =lrg_breadcrumb_popdown=
+- =LRG_BREADCRUMB_ELLIPSIS=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: breadcrumb-related
+:END:
+- [[file:combo-box.org][Combo box]] (the same popup pattern)
+- [[file:../widget.org][LrgWidget]], [[file:../theme.org][Theme]]

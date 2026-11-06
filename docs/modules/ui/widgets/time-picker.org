@@ -1,0 +1,146 @@
+* Time Picker Widget
+:PROPERTIES:
+:CUSTOM_ID: time-picker-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: time-picker-overview
+:END:
+=LrgTimePicker= edits a time of day in one field-like widget made of segments: hour, minute, an optional second and, in 12-hour mode, an AM / PM toggle. Each segment behaves like a tiny spin box: the arrow keys, the mouse wheel, a vertical drag or typed digits change it.
+
+- The field is an =INPUT= surface (=BOX= part); colons sit between the number segments.
+- Each segment has its own hover spring (=ITEM= part), and the active segment of a focused picker is an =ACCENT= pill (=SELECTED= state).
+- A changed digit rolls in from above (increase) or below (decrease) on a per-segment spring, fading as it travels.
+
+The time is stored as 24-hour =hour= / =minute= / =second=; the 12-hour display is computed. Stepping a segment wraps inside it and does not carry: 59 + 1 minutes is 0 minutes, the hour unchanged. In 12-hour mode the hour segment cycles 12, 1 .. 11 within the current half of the day; the AM / PM segment moves the time by 12 hours.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: time-picker-creation
+:END:
+#+begin_src C
+LrgTimePicker *alarm = lrg_time_picker_new ();
+
+lrg_time_picker_set_use_24h (alarm, FALSE);
+lrg_time_picker_set_time (alarm, 7, 30, 0);
+g_signal_connect (alarm, "time-changed", G_CALLBACK (on_alarm_changed), clock);
+#+end_src
+
+Preferred size: =CONTROL_HEIGHT= tall; each number segment is as wide as "00" plus padding, the period as wide as "PM". Showing seconds or switching to 12-hour mode queues a layout.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: time-picker-properties
+:END:
+| Property       | Type    | Default | Notes                                              |
+|----------------+---------+---------+----------------------------------------------------|
+| =hour=         | int     | 0       | 0..23 in every mode (clamped)                       |
+| =minute=       | int     | 0       | 0..59 (clamped)                                     |
+| =second=       | int     | 0       | 0..59, kept while hidden                            |
+| =show-seconds= | boolean | =FALSE= | Adds the seconds segment                            |
+| =use-24h=      | boolean | =TRUE=  | =FALSE= shows 12, 1..11 and an AM / PM segment      |
+
+Functions: =lrg_time_picker_set_time()= sets all three at once (one signal), =lrg_time_picker_step_segment()= does what a spin gesture does, =lrg_time_picker_get_is_pm()=, =lrg_time_picker_get_text()= ("HH:MM", "HH:MM:SS", plus " AM" / " PM" in 12-hour mode), =lrg_time_picker_get_active_segment()= / =set_active_segment()= with =LrgTimePickerSegment= (=HOUR=, =MINUTE=, =SECOND=, =PERIOD=; =lrg_time_picker_segment_get_type()=), and =lrg_time_picker_get_segment_bounds()= for hit testing.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: time-picker-signals
+:END:
+| Signal         | Arguments | Emitted when                                                                    |
+|----------------+-----------+---------------------------------------------------------------------------------|
+| =time-changed= | none      | Once per change of any field, by the user or from code (=notify::hour= etc. too) |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: time-picker-parts
+:END:
+| Part    | What it is        | Resting                                     | Changes                                                                                     |
+|---------+-------------------+---------------------------------------------+---------------------------------------------------------------------------------------------|
+| =box=   | The field         | =INPUT= fill, =BORDER= hairline, =CORNER_RADIUS= | =hovered= → =TEXT_MUTED= border; =focused= → =ACCENT= border; =disabled= → opacity 0.45      |
+| =item=  | One segment       | transparent, =TEXT=, radius =CORNER_RADIUS= − 2 | =hovered= → =CONTROL_HOVER=; =pressed= (dragging) → =CONTROL_PRESSED=; =selected= (active segment while focused) → =ACCENT= / =ACCENT_HOVER= / =ACCENT_PRESSED= with =TEXT_ON_ACCENT= |
+| =label= | The colons        | =TEXT_MUTED=                                |                                                                                             |
+| =focus= | Focus ring        | from =LrgWidget=                            | after keyboard / gamepad navigation                                                         |
+
+Segment states are per segment: =lrg_widget_resolve_look_for_state()= is used for the resting and hovered variants and blended by the segment's own hover spring.
+
+** Keyboard, mouse and gamepad
+:PROPERTIES:
+:CUSTOM_ID: time-picker-keyboard
+:END:
+| Input                          | Effect                                                                         |
+|--------------------------------+--------------------------------------------------------------------------------|
+| Up / Down (D-pad)              | Active segment +/− 1 (wraps); on the period, toggles AM / PM                   |
+| Page Up / Page Down            | Hours +/− 6, minutes / seconds +/− 10                                          |
+| Left / Right (D-pad)           | Previous / next segment; at the ends focus moves on (spatial navigation)       |
+| digits                         | Type the active field: a valid pair sets it and moves on; a first digit that cannot start a pair (for example 7 for hours) completes at once |
+| =a= / =p=                      | AM / PM in 12-hour mode                                                         |
+| Enter / Space / gamepad A      | Toggle AM / PM on the period, else move to the next segment                    |
+| click a segment                | Make it active                                                                 |
+| drag up / down on a segment    | +/− 1 per 10 px                                                                 |
+| click AM / PM                  | Toggle it                                                                       |
+| mouse wheel over a segment     | +/− 1 (wheel up increases)                                                      |
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: time-picker-theming
+:END:
+#+begin_src yaml
+styles:
+  # Flat field, success-green active segment
+  - widget: LrgTimePicker
+    part: box
+    background: "#00000000"
+    border-width: 0
+  - widget: LrgTimePicker
+    part: item
+    state: selected
+    background: "#16a34a"
+    foreground: "#ffffff"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: time-picker-example
+:END:
+#+begin_src C
+static void
+on_curfew_changed (LrgTimePicker *picker,
+                   gpointer       user_data)
+{
+	World *world = user_data;
+
+	world_set_curfew (world, lrg_time_picker_get_hour (picker), lrg_time_picker_get_minute (picker));
+}
+
+static LrgWidget *
+build_curfew (World *world)
+{
+	LrgTimePicker *picker = lrg_time_picker_new ();
+
+	lrg_time_picker_set_time (picker, 22, 0, 0);
+	g_signal_connect (picker, "time-changed", G_CALLBACK (on_curfew_changed), world);
+	return LRG_WIDGET (picker);
+}
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: time-picker-api
+:END:
+- =lrg_time_picker_new (void)=
+- =lrg_time_picker_get_hour= / =lrg_time_picker_set_hour=
+- =lrg_time_picker_get_minute= / =lrg_time_picker_set_minute=
+- =lrg_time_picker_get_second= / =lrg_time_picker_set_second=
+- =lrg_time_picker_set_time=, =lrg_time_picker_get_text=, =lrg_time_picker_get_is_pm=
+- =lrg_time_picker_get_show_seconds= / =lrg_time_picker_set_show_seconds=
+- =lrg_time_picker_get_use_24h= / =lrg_time_picker_set_use_24h=
+- =lrg_time_picker_get_active_segment= / =lrg_time_picker_set_active_segment=, =lrg_time_picker_segment_get_type=
+- =lrg_time_picker_step_segment=, =lrg_time_picker_get_segment_bounds=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: time-picker-related
+:END:
+- [[file:date-picker.org][Date picker]], [[file:spin-box.org][Spin box]]
+- [[file:../widget.org][LrgWidget]], [[file:../theme.org][Theme]]

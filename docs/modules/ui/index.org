@@ -87,6 +87,18 @@ Related:
 | =LrgSeparator= | [[file:widgets/separator.org][separator]] | display |
 | =LrgToast= / =LrgToastQueue= | [[file:widgets/toast.org][toast]] | notification layer |
 | =LrgIsland= | [[file:widgets/island.org][island]] | morphing compact/expanded panel |
+| =LrgTable= | [[file:widgets/table.org][table]] | virtualized sortable, resizable table |
+| =LrgTreeView= | [[file:widgets/tree-view.org][tree-view]] | virtualized expandable tree |
+| =LrgTileView= | [[file:widgets/tile-view.org][tile-view]] | virtualized tile grid |
+| =LrgSplitter= | [[file:widgets/splitter.org][splitter]] | two panes with a draggable handle |
+| =LrgExpander= | [[file:widgets/expander.org][expander]] | header revealing content on a spring |
+| =LrgWrapBox= | [[file:widgets/wrap-box.org][wrap-box]] | flowing, wrapping layout |
+| =LrgColorPicker= | [[file:widgets/color-picker.org][color-picker]] | HSV square, hue/alpha strips, hex, swatches, popup mode |
+| =LrgRating= | [[file:widgets/rating.org][rating]] | star/heart/dot rating with half steps |
+| =LrgDatePicker= | [[file:widgets/date-picker.org][date-picker]] | date field with calendar popup |
+| =LrgTimePicker= | [[file:widgets/time-picker.org][time-picker]] | segmented time field |
+| =LrgBreadcrumb= | [[file:widgets/breadcrumb.org][breadcrumb]] | path trail with collapsing middle |
+| =LrgMarkdownLabel= | [[file:widgets/markdown-label.org][markdown-label]] | wrapped markdown text with links |
 | =LrgGrid= | [[file:layout.org::#layout-grid][grid layout]] | layout container |
 
 ** Quick start

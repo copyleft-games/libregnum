@@ -1,0 +1,192 @@
+* Markdown Label Widget
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-overview
+:END:
+=LrgMarkdownLabel= renders a subset of Markdown, word-wrapped to its width: patch notes, quest text, tooltips with a bit of structure, in-game help.
+
+Supported:
+
+| Markdown                          | Rendering                                                                                 |
+|-----------------------------------+-------------------------------------------------------------------------------------------|
+| =# H1=, =## H2=, =### H3= (to =######=) | =FONT_SIZE_TITLE=, =FONT_SIZE_LARGE=, 1.12 × body; synthetic bold; H1 / H2 get a hairline rule under them |
+| paragraphs                        | wrapped at word boundaries; single newlines are soft breaks (a space); blank lines separate |
+| =**bold**=, =__bold__=            | synthetic bold: drawn twice, 0.6 px apart                                                 |
+| =*italic*=, =_italic_=            | no italic face exists: a slight =ACCENT= tint plus a faint underline                       |
+| =***both***=                      | both of the above                                                                         |
+| =`inline code`=                   | on an =INPUT=-coloured rounded chip with a hairline, 0.92 × size, UI font (the theme has no mono font) |
+| fenced code (=```= or =~~~=)      | =PANEL= box with a border, lines kept verbatim and not wrapped (clipped to the panel)     |
+| =- item=, =* item=, =+ item=      | bullets (disc at depth 0, ring deeper), indented per nesting level (2 spaces per level)   |
+| =1. item=, =1) item=              | numbered items (the source number is kept), right-aligned numbers                         |
+| => quote=                         | =ACCENT= bar on the left, =TEXT_MUTED= text; consecutive quote lines join                 |
+| =[text](url)=                     | =LINK= colour; an underline grows in on hover; click or keyboard emits =link-activated=   |
+| =---=, =***=, =___=               | a horizontal rule                                                                         |
+| =\*= (backslash + punctuation)    | the literal character                                                                     |
+
+Markers surrounded by spaces (=a * b=) and =_= inside words (=snake_case=) stay literal. Not supported: tables, images, HTML, setext headings, nested quotes, hard line breaks, selection and copying.
+
+The text is parsed once when it is set; the layout (words flowed into lines, merged into runs of the same style) is rebuilt whenever the width or font size changes, and the preferred height follows the wrapped height. The measure uses the current width: an unsized label wraps at its natural width (the longest unwrapped line, at most 480).
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-creation
+:END:
+#+begin_src C
+LrgMarkdownLabel *notes = lrg_markdown_label_new (
+	"## Patch 1.4\n"
+	"\n"
+	"- **New:** the *Ember* staff\n"
+	"- Fixed `save_slot` corruption ([details](notes://1.4))\n");
+
+lrg_widget_set_fill_weight (LRG_WIDGET (notes), 1.0f);
+g_signal_connect (notes, "link-activated", G_CALLBACK (on_note_link), game);
+#+end_src
+
+Inside a vertical box the label gets the box's width, wraps to it and reports the height it needs.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-properties
+:END:
+| Property     | Type       | Default | Notes                                                                 |
+|--------------+------------+---------+-----------------------------------------------------------------------|
+| =markdown=   | string     | =NULL=  | The source; parsed immediately                                       |
+| =font-size=  | float      | 0       | Body size; 0 follows the theme's =FONT_SIZE=; headings and code scale |
+| =text-color= | =GrlColor= | =NULL=  | Explicit body / heading colour (=LABEL= and =HEADER=); beats theme rules |
+
+The label is focusable only while the text has links.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-signals
+:END:
+| Signal           | Arguments          | Emitted when                                                                     |
+|------------------+--------------------+----------------------------------------------------------------------------------|
+| =link-activated= | =const gchar *url= | A link was clicked (press and release on the same link) or activated from the keyboard / gamepad |
+
+** Structure accessors
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-structure
+:END:
+The parsed structure is readable, for tests and for tools:
+
+- =lrg_markdown_label_get_n_blocks()=, =lrg_markdown_label_get_block_kind()= (=LrgMarkdownBlockKind=: =PARAGRAPH=, =HEADING=, =BULLET_ITEM=, =NUMBERED_ITEM=, =QUOTE=, =CODE_BLOCK=, =RULE=; =lrg_markdown_block_kind_get_type()=)
+- =lrg_markdown_label_get_block_level()= — heading level, or list nesting depth
+- =lrg_markdown_label_get_block_text()= — the block's text without markup
+- =lrg_markdown_label_get_block_n_spans()=, =lrg_markdown_label_get_block_span (md, block, span, &style)= — inline spans with =LrgMarkdownSpanStyle= flags (=BOLD=, =ITALIC=, =CODE=, =LINK=; =lrg_markdown_span_style_get_type()=)
+- =lrg_markdown_label_get_n_links()=, =lrg_markdown_label_get_link_url()=, =lrg_markdown_label_get_link_bounds()= (first laid-out piece, canvas coordinates)
+- =lrg_markdown_label_get_n_lines()= — visual lines after wrapping at the current width
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-parts
+:END:
+| Part        | What it is                                  | Default look                                         | State changes                                                    |
+|-------------+---------------------------------------------+------------------------------------------------------+------------------------------------------------------------------|
+| =label=     | Body text                                   | =TEXT=                                               | =disabled= → opacity 0.45 (the whole label)                       |
+| =header=    | Headings                                    | =TEXT=                                               |                                                                  |
+| =item=      | Links                                       | =LINK= foreground, radius 3                          | =hovered= → 15 % lighter (+ underline); =pressed= → 10 % darker; =selected= (keyboard cursor) → =FOCUS= ring |
+| =mark=      | Inline code chip                            | =INPUT= background, =TEXT=, =BORDER= 1 px, half =CORNER_RADIUS= |                                                         |
+| =box=       | Fenced code panel                           | =PANEL= background, =TEXT=, =BORDER=, =CORNER_RADIUS= |                                                                 |
+| =indicator= | Quote bar (=background=) and quote text (=foreground=) | =ACCENT= pill bar, =TEXT_MUTED= text       |                                                                  |
+| =track=     | Horizontal rules (=background=)             | =BORDER=                                             |                                                                  |
+| =arrow=     | Bullets and list numbers                    | =TEXT_MUTED=                                         |                                                                  |
+| =focus=     | Widget focus ring                           | none: the focused link carries the ring              |                                                                  |
+
+Links resolve their look per link (=lrg_widget_resolve_look_for_state()=), so only the link under the pointer lightens.
+
+** Keyboard, mouse and gamepad
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-keyboard
+:END:
+| Input                        | Effect                                                                  |
+|------------------------------+-------------------------------------------------------------------------|
+| pointer over a link          | Lighter colour, an underline grows in from the left                     |
+| click a link                 | =link-activated= (only when released on the same link)                  |
+| Tab / gamepad to the label   | Focus (only when it has links); the cursor starts on the first link      |
+| Left / Right (D-pad)         | Previous / next link; at the ends focus moves on                        |
+| Enter / Space / gamepad A    | =link-activated= for the cursor link                                     |
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-theming
+:END:
+#+begin_src yaml
+styles:
+  # Parchment-style quest text
+  - widget: LrgMarkdownLabel
+    part: label
+    foreground: "#3b2f1e"
+  - widget: LrgMarkdownLabel
+    part: header
+    foreground: "#7a2e0e"
+  - widget: LrgMarkdownLabel
+    part: indicator
+    background: "#b45309"
+  - widget: LrgMarkdownLabel
+    part: mark
+    background: "#f3e8d0"
+    border: "#d6c3a0"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-example
+:END:
+#+begin_src C
+static void
+on_note_link (LrgMarkdownLabel *label,
+              const gchar      *url,
+              gpointer          user_data)
+{
+	Game *game = user_data;
+
+	if (g_str_has_prefix (url, "codex://"))
+		game_open_codex_entry (game, url + strlen ("codex://"));
+}
+
+static LrgWidget *
+build_quest_text (Game        *game,
+                  const gchar *markdown)
+{
+	LrgMarkdownLabel *text = lrg_markdown_label_new (markdown);
+
+	lrg_markdown_label_set_font_size (text, 18.0f);
+	g_signal_connect (text, "link-activated", G_CALLBACK (on_note_link), game);
+	return LRG_WIDGET (text);
+}
+#+end_src
+
+** Limitations
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-limitations
+:END:
+- No true bold or italic faces: bold is synthetic, italic is a tint plus a faint underline.
+- Inline code and code blocks use the UI font (the theme has no monospace font).
+- Words longer than the line overflow it instead of breaking; code block lines are clipped, not wrapped.
+- Text cannot be selected or copied.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-api
+:END:
+- =lrg_markdown_label_new (const gchar *markdown)=
+- =lrg_markdown_label_get_markdown= / =lrg_markdown_label_set_markdown=
+- =lrg_markdown_label_get_font_size= / =lrg_markdown_label_set_font_size=
+- =lrg_markdown_label_get_text_color= / =lrg_markdown_label_set_text_color=
+- =lrg_markdown_label_get_n_blocks=, =lrg_markdown_label_get_block_kind=, =lrg_markdown_label_get_block_level=, =lrg_markdown_label_get_block_text=
+- =lrg_markdown_label_get_block_n_spans=, =lrg_markdown_label_get_block_span=
+- =lrg_markdown_label_get_n_links=, =lrg_markdown_label_get_link_url=, =lrg_markdown_label_get_link_bounds=
+- =lrg_markdown_label_get_n_lines=
+- =lrg_markdown_block_kind_get_type=, =lrg_markdown_span_style_get_type=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: markdown-label-related
+:END:
+- [[file:label.org][Label]]
+- [[file:../widget.org][LrgWidget]], [[file:../theme.org][Theme]]

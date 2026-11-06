@@ -1,0 +1,184 @@
+* Date Picker Widget
+:PROPERTIES:
+:CUSTOM_ID: date-picker-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: date-picker-overview
+:END:
+=LrgDatePicker= is an input-like field that shows a date (formatted with =g_date_time_format()=, ="%Y-%m-%d"= by default) and a small calendar icon. Clicking it, or activating it from the keyboard or gamepad, opens a month calendar on the canvas popup layer directly below it:
+
+- A header with the month and year between previous / next buttons (chevrons on soft round hover pads).
+- A weekday row (Monday first; two-letter names from the locale, =%a=).
+- A 6 × 7 day grid. Days of the neighbouring months are muted, days outside =min-date= .. =max-date= are faded and cannot be picked, today has an =ACCENT= ring and the picked day is an =ACCENT= disc.
+- A soft highlight bubble glides on springs to the day under the pointer, or to the keyboard cursor; turning the month slides the grid in from the side of travel and fades it up.
+
+The value is a date only: =lrg_date_picker_get_date()= returns a =GDateTime= at local midnight. Internally days are =GDate= numbers, so month and leap-year arithmetic is exact.
+
+The picker must live on an =LrgCanvas= (directly or nested) to open its calendar.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: date-picker-creation
+:END:
+#+begin_src C
+LrgDatePicker       *due = lrg_date_picker_new ();
+g_autoptr(GDateTime) start = g_date_time_new_now_local ();
+
+lrg_date_picker_set_min_date (due, start);
+lrg_date_picker_set_format (due, "%a %d %b %Y");
+lrg_date_picker_set_placeholder (due, "Due date");
+g_signal_connect (due, "date-changed", G_CALLBACK (on_due_changed), task);
+#+end_src
+
+Preferred size: =CONTROL_HEIGHT= tall, wide enough for a long sample date in the current format (or the placeholder) plus the icon.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: date-picker-properties
+:END:
+| Property      | Type        | Default        | Notes                                                                      |
+|---------------+-------------+----------------+----------------------------------------------------------------------------|
+| =date=        | =GDateTime= | =NULL=         | The picked day (local midnight); clamped into the limits                   |
+| =format=      | string      | ="%Y-%m-%d"=   | =g_date_time_format()= pattern for the field; =NULL= restores the default  |
+| =placeholder= | string      | =NULL=         | Muted text while no date is set; =NULL= shows "Select a date"              |
+| =min-date=    | =GDateTime= | =NULL=         | Earliest pickable day; setting it re-clamps =date=                         |
+| =max-date=    | =GDateTime= | =NULL=         | Latest pickable day; setting it re-clamps =date=                           |
+| =today=       | =GDateTime= | =NULL=         | The day ringed as today; =NULL= reads the system date when the calendar opens (games with an in-world calendar, tests) |
+| =popup-open=  | boolean     | =FALSE=        | Read-only: the calendar is showing                                         |
+
+Convenience: =lrg_date_picker_set_date_ymd()= / =lrg_date_picker_get_date_ymd()=, =lrg_date_picker_get_text()= (the formatted date or =NULL=).
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: date-picker-signals
+:END:
+| Signal         | Arguments | Emitted when                                                                        |
+|----------------+-----------+-------------------------------------------------------------------------------------|
+| =date-changed= | none      | The picked day changed: from the calendar, from code, or by clamping to new limits  |
+
+When a day is picked the calendar closes first and =date-changed= is emitted afterwards. Setting the same day again (any time of day) emits nothing.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: date-picker-parts
+:END:
+| Widget            | Part        | Default look                                                         | State changes                                                                  |
+|-------------------+-------------+----------------------------------------------------------------------+--------------------------------------------------------------------------------|
+| =LrgDatePicker=   | =box=       | =INPUT= fill, =BORDER= hairline, =CORNER_RADIUS=                     | =hovered= → =TEXT_MUTED= border; =focused= / =open= → =ACCENT= border; =pressed= → =CONTROL_PRESSED=; =disabled= → opacity 0.45 |
+| =LrgDatePicker=   | =label=     | =TEXT= (the date)                                                    | the placeholder always uses =TEXT_MUTED=                                       |
+| =LrgDatePicker=   | =arrow=     | Calendar icon, =TEXT_MUTED=, =size= = font size                      | =hovered= → =TEXT=; =open= → =ACCENT=                                           |
+| =LrgDateCalendar= | =popup=     | =POPUP= fill, =BORDER=, =POPUP_RADIUS=, =SHADOW=                      |                                                                                |
+| =LrgDateCalendar= | =header=    | Month title, =TEXT=                                                  |                                                                                |
+| =LrgDateCalendar= | =label=     | Weekday names, =TEXT_MUTED=                                          |                                                                                |
+| =LrgDateCalendar= | =item=      | Day cells and header buttons: transparent circle, =TEXT=             | =hovered= → =CONTROL_HOVER= (the bubble); =pressed= → =CONTROL_PRESSED=; =selected= → =ACCENT= disc, =TEXT_ON_ACCENT=; =disabled= → opacity 0.35 |
+| =LrgDateCalendar= | =indicator= | Today's ring: =ACCENT= border, 1.5 × =BORDER_WIDTH=                  |                                                                                |
+| =LrgDateCalendar= | =arrow=     | Previous / next chevrons, =TEXT_MUTED=                               | =hovered= → =TEXT=                                                              |
+| =LrgDateCalendar= | =focus=     | no ring (the cursor bubble shows keyboard focus)                     |                                                                                |
+
+The calendar copies the picker's style classes when it opens, so class rules reach both widget types.
+
+** Keyboard, mouse and gamepad
+:PROPERTIES:
+:CUSTOM_ID: date-picker-keyboard
+:END:
+| Where           | Input                                | Effect                                                                   |
+|-----------------+--------------------------------------+--------------------------------------------------------------------------|
+| Field           | click                                | Open (cursor on the date, or today); a click while open closes it        |
+| Field, focused  | Enter / Space / gamepad A, Alt+Down  | Open with the cursor bubble visible                                      |
+| Calendar        | Left / Right                         | Cursor one day back / forward (turns the month when it leaves it)        |
+| Calendar        | Up / Down (gamepad D-pad)            | Cursor one week back / forward                                           |
+| Calendar        | Page Up / Page Down                  | Previous / next month (Shift: year), same day clamped to the month       |
+| Calendar        | Home / End                           | First / last day of the cursor's month                                   |
+| Calendar        | Enter / Space / gamepad A            | Pick the cursor day and close; focus returns to the field with its ring  |
+| Calendar        | click a day                          | Pick it and close (disabled days ignore clicks)                          |
+| Calendar        | click the chevrons, mouse wheel      | Previous / next month (wheel up = previous); months entirely outside the limits are skipped |
+| Calendar        | Escape / gamepad B, click outside    | Close without changing the date                                          |
+
+The cursor never leaves =min-date= .. =max-date=.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: date-picker-theming
+:END:
+#+begin_src yaml
+styles:
+  # Square day cells and a thicker today ring
+  - widget: LrgDateCalendar
+    part: item
+    radius: 6
+  - widget: LrgDateCalendar
+    part: indicator
+    border: "#f97316"
+    border-width: 2
+  # A pill-shaped field
+  - widget: LrgDatePicker
+    part: box
+    radius: 999
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: date-picker-example
+:END:
+#+begin_src C
+static void
+on_birthday (LrgDatePicker *picker,
+             gpointer       user_data)
+{
+	Character *hero = user_data;
+	gint       y;
+	gint       m;
+	gint       d;
+
+	if (lrg_date_picker_get_date_ymd (picker, &y, &m, &d))
+		character_set_birthday (hero, y, m, d);
+}
+
+static LrgWidget *
+build_birthday (Character *hero,
+                GDateTime *world_today)
+{
+	LrgDatePicker *picker = lrg_date_picker_new ();
+
+	/* The in-world calendar decides what "today" is */
+	lrg_date_picker_set_today (picker, world_today);
+	lrg_date_picker_set_max_date (picker, world_today);
+	lrg_date_picker_set_format (picker, "%d %B %Y");
+	g_signal_connect (picker, "date-changed", G_CALLBACK (on_birthday), hero);
+	return LRG_WIDGET (picker);
+}
+#+end_src
+
+** Testing helpers
+:PROPERTIES:
+:CUSTOM_ID: date-picker-testing
+:END:
+- =lrg_date_picker_get_visible_month (picker, &year, &month)= — the month the calendar shows (or will show).
+- =lrg_date_picker_show_month (picker, year, month)= — turn the open calendar (cursor on the first pickable day).
+- =lrg_date_picker_get_cursor_date (picker)= — the keyboard cursor day (transfer full), =NULL= while closed.
+- =lrg_date_picker_get_day_bounds (picker, y, m, d, &rect)= — a day's cell in canvas coordinates.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: date-picker-api
+:END:
+- =lrg_date_picker_new (void)=
+- =lrg_date_picker_get_date= / =lrg_date_picker_set_date=, =lrg_date_picker_set_date_ymd= / =lrg_date_picker_get_date_ymd=
+- =lrg_date_picker_get_text=
+- =lrg_date_picker_get_format= / =lrg_date_picker_set_format=
+- =lrg_date_picker_get_placeholder= / =lrg_date_picker_set_placeholder=
+- =lrg_date_picker_get_min_date= / =lrg_date_picker_set_min_date=
+- =lrg_date_picker_get_max_date= / =lrg_date_picker_set_max_date=
+- =lrg_date_picker_get_today= / =lrg_date_picker_set_today=
+- =lrg_date_picker_popup=, =lrg_date_picker_popdown=, =lrg_date_picker_get_popup_open=
+- =lrg_date_picker_get_visible_month=, =lrg_date_picker_show_month=, =lrg_date_picker_get_cursor_date=, =lrg_date_picker_get_day_bounds=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: date-picker-related
+:END:
+- [[file:time-picker.org][Time picker]]
+- [[file:combo-box.org][Combo box]] (the same popup pattern)
+- [[file:../widget.org][LrgWidget]], [[file:../theme.org][Theme]]
