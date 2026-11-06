@@ -13,6 +13,8 @@
 
 #include <string.h>
 
+#include <raylib.h>
+
 #include "lrg-canvas-input.h"
 #include "lrg-canvas-private.h"
 #include "../lrg-log.h"
@@ -21,6 +23,9 @@
  * deflection it must fall back under before the next push fires */
 #define NAV_STICK_PRESS   (0.6f)
 #define NAV_STICK_RELEASE (0.3f)
+
+/* Desktop raylib reports the mouse as touch 0; opt in for touch screens */
+static gboolean poll_touch = FALSE;
 
 G_DEFINE_BOXED_TYPE (LrgCanvasInput, lrg_canvas_input,
                      lrg_canvas_input_copy, lrg_canvas_input_free)
@@ -82,6 +87,35 @@ lrg_canvas_input_add_char (LrgCanvasInput *self,
         return;
 
     self->chars[self->n_chars++] = codepoint;
+}
+
+void
+lrg_canvas_input_add_touch (LrgCanvasInput *self,
+                            gint            id,
+                            gfloat          x,
+                            gfloat          y)
+{
+	g_return_if_fail (self != NULL);
+
+	if (self->n_touches >= LRG_CANVAS_INPUT_MAX_TOUCHES)
+		return;
+
+	self->touches[self->n_touches].id = id;
+	self->touches[self->n_touches].x = x;
+	self->touches[self->n_touches].y = y;
+	self->n_touches++;
+}
+
+void
+lrg_canvas_input_set_poll_touch (gboolean enabled)
+{
+	poll_touch = !!enabled;
+}
+
+gboolean
+lrg_canvas_input_get_poll_touch (void)
+{
+	return poll_touch;
 }
 
 void

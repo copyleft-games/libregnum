@@ -30,6 +30,21 @@
 /* Margin popups keep from the canvas edge */
 #define POPUP_EDGE (4.0f)
 
+/* Touch: movement before a touch becomes a drag, and the hold time
+ * that makes it a long press (right click) */
+#define TOUCH_SLOP       (10.0f)
+#define TOUCH_LONG_PRESS (0.5f)
+
+typedef enum
+{
+	TOUCH_IDLE,     /* no finger down */
+	TOUCH_PENDING,  /* one finger down, not moved past the slop yet */
+	TOUCH_PAN,      /* a widget claimed the drag (PAN events) */
+	TOUCH_MOUSE,    /* nobody claimed it: replayed as a mouse drag */
+	TOUCH_PINCH,    /* two fingers: ZOOM events */
+	TOUCH_DONE      /* gesture finished; wait for every finger to lift */
+} TouchState;
+
 typedef struct
 {
 	LrgWidget *popup;     /* owned */
@@ -63,6 +78,19 @@ struct _LrgCanvas
 
 	/* Rendering */
 	LrgPaintList *paint;
+	gdouble       clock;            /* seconds summed from update dt, drives effects */
+
+	/* Touch gesture recogniser */
+	TouchState    touch_state;
+	gfloat        touch_start_x;
+	gfloat        touch_start_y;
+	gfloat        touch_last_x;
+	gfloat        touch_last_y;
+	gfloat        touch_held;
+	gfloat        touch_vel_x;
+	gfloat        touch_vel_y;
+	gfloat        pinch_distance;
+	LrgWidget    *pan_target;       /* owned while panning */
 
 	/* Theme last laid out with, to re-layout on switches and edits */
 	LrgTheme     *seen_theme;   /* weak */
@@ -214,6 +242,7 @@ lrg_canvas_dispose (GObject *object)
 		g_ptr_array_set_size (self->hover_path, 0);
 	g_clear_object (&self->capture);
 	g_clear_object (&self->pulse);
+	g_clear_object (&self->pan_target);
 	if (self->popups != NULL)
 		g_array_set_size (self->popups, 0);
 	if (self->closing != NULL)
@@ -946,10 +975,238 @@ arrow_direction (GrlKey key)
 	}
 }
 
+/*
+ * claim_pan:
+ *
+ * Offers the first PAN of a drag to the widget under where the finger
+ * went down and its ancestors; returns the widget that claimed it.
+ */
+static LrgWidget *
+claim_pan (LrgCanvas *self,
+           gfloat     x,
+           gfloat     y,
+           gfloat     dx,
+           gfloat     dy)
+{
+	g_autoptr(LrgUIEvent) ev = lrg_ui_event_new_pan (x, y, dx, dy);
+	LrgWidget            *w;
+
+	lrg_ui_event_set_target (ev, lrg_canvas_widget_at_point (self, self->touch_start_x,
+	                                                         self->touch_start_y));
+	lrg_ui_event_set_bubbling (ev, FALSE);
+	for (w = lrg_ui_event_get_target (ev); w != NULL && w != LRG_WIDGET (self);
+	     w = (LrgWidget *) lrg_widget_get_parent (w))
+	{
+		if (lrg_widget_handle_event (w, ev))
+			return w;
+		lrg_ui_event_set_bubbling (ev, TRUE);
+	}
+	return NULL;
+}
+
+/*
+ * recognise_touch:
+ * @frame: (inout): this frame's input; pointer and button fields are
+ *   rewritten to replay taps, long presses and unclaimed drags as mouse
+ *   input, so every widget works with touch unchanged
+ *
+ * One finger: a tap is a left click, a hold is a right click, a drag is
+ * offered as PAN events (scrolling widgets claim it and get a PAN_END
+ * with the release velocity for flicks) or else replayed as a mouse
+ * drag (sliders, splitters). Two fingers: ZOOM events with the change
+ * in finger distance, at the pinch centre.
+ */
+static void
+recognise_touch (LrgCanvas      *self,
+                 LrgCanvasInput *frame)
+{
+	const guint left = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	const guint right = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_RIGHT);
+	gfloat      dt = frame->delta_time;
+
+	/* All fingers up: finish whatever was in progress */
+	if (frame->n_touches == 0)
+	{
+		switch (self->touch_state)
+		{
+		case TOUCH_PENDING:
+			/* A tap: press and release in one frame */
+			frame->pointer_x = self->touch_start_x;
+			frame->pointer_y = self->touch_start_y;
+			frame->buttons_pressed |= left;
+			frame->buttons_released |= left;
+			break;
+		case TOUCH_MOUSE:
+			frame->pointer_x = self->touch_last_x;
+			frame->pointer_y = self->touch_last_y;
+			frame->buttons_released |= left;
+			break;
+		case TOUCH_PAN:
+			if (self->pan_target != NULL)
+			{
+				g_autoptr(LrgUIEvent) ev = lrg_ui_event_new_pan_end (self->touch_last_x,
+				                                                     self->touch_last_y,
+				                                                     self->touch_vel_x,
+				                                                     self->touch_vel_y);
+
+				send_direct (self->pan_target, ev);
+			}
+			break;
+		case TOUCH_IDLE:
+		case TOUCH_PINCH:
+		case TOUCH_DONE:
+		default:
+			break;
+		}
+		g_clear_object (&self->pan_target);
+		self->touch_state = TOUCH_IDLE;
+		return;
+	}
+
+	/* A second finger turns anything into a pinch */
+	if (frame->n_touches >= 2 && self->touch_state != TOUCH_PINCH && self->touch_state != TOUCH_DONE)
+	{
+		if (self->touch_state == TOUCH_MOUSE)
+		{
+			frame->buttons_released |= left;
+			frame->pointer_x = self->touch_last_x;
+			frame->pointer_y = self->touch_last_y;
+		}
+		if (self->touch_state == TOUCH_PAN && self->pan_target != NULL)
+		{
+			g_autoptr(LrgUIEvent) ev = lrg_ui_event_new_pan_end (self->touch_last_x,
+			                                                     self->touch_last_y, 0.0f, 0.0f);
+
+			send_direct (self->pan_target, ev);
+			g_clear_object (&self->pan_target);
+		}
+		self->touch_state = TOUCH_PINCH;
+		self->pinch_distance = hypotf (frame->touches[1].x - frame->touches[0].x,
+		                               frame->touches[1].y - frame->touches[0].y);
+		return;
+	}
+
+	if (self->touch_state == TOUCH_PINCH)
+	{
+		gfloat cx;
+		gfloat cy;
+		gfloat d;
+
+		if (frame->n_touches < 2)
+		{
+			self->touch_state = TOUCH_DONE;
+			return;
+		}
+
+		cx = (frame->touches[0].x + frame->touches[1].x) * 0.5f;
+		cy = (frame->touches[0].y + frame->touches[1].y) * 0.5f;
+		d = hypotf (frame->touches[1].x - frame->touches[0].x,
+		            frame->touches[1].y - frame->touches[0].y);
+		if (self->pinch_distance > 0.5f && fabsf (d - self->pinch_distance) > 0.01f)
+		{
+			g_autoptr(LrgUIEvent) ev = lrg_ui_event_new_zoom (cx, cy, d / self->pinch_distance);
+
+			dispatch_event (self, lrg_canvas_widget_at_point (self, cx, cy), ev);
+		}
+		self->pinch_distance = d;
+		frame->pointer_x = cx;
+		frame->pointer_y = cy;
+		return;
+	}
+
+	if (self->touch_state == TOUCH_DONE)
+		return;
+
+	/* One finger */
+	{
+		gfloat tx = frame->touches[0].x;
+		gfloat ty = frame->touches[0].y;
+		gfloat dx = tx - self->touch_last_x;
+		gfloat dy = ty - self->touch_last_y;
+
+		if (self->touch_state == TOUCH_IDLE)
+		{
+			self->touch_state = TOUCH_PENDING;
+			self->touch_start_x = self->touch_last_x = tx;
+			self->touch_start_y = self->touch_last_y = ty;
+			self->touch_held = 0.0f;
+			self->touch_vel_x = self->touch_vel_y = 0.0f;
+			frame->pointer_x = tx;
+			frame->pointer_y = ty;
+			return;
+		}
+
+		/* Smoothed finger velocity for flicks */
+		if (dt > 0.0f)
+		{
+			self->touch_vel_x = self->touch_vel_x * 0.4f + (dx / dt) * 0.6f;
+			self->touch_vel_y = self->touch_vel_y * 0.4f + (dy / dt) * 0.6f;
+		}
+
+		switch (self->touch_state)
+		{
+		case TOUCH_PENDING:
+			self->touch_held += dt;
+			frame->pointer_x = self->touch_start_x;
+			frame->pointer_y = self->touch_start_y;
+			if (hypotf (tx - self->touch_start_x, ty - self->touch_start_y) > TOUCH_SLOP)
+			{
+				LrgWidget *claimer = claim_pan (self, tx, ty, tx - self->touch_start_x,
+				                                ty - self->touch_start_y);
+
+				if (claimer != NULL)
+				{
+					self->pan_target = g_object_ref (claimer);
+					self->touch_state = TOUCH_PAN;
+				}
+				else
+				{
+					/* Mouse replay: press where the finger went down */
+					self->touch_state = TOUCH_MOUSE;
+					frame->buttons_pressed |= left;
+					frame->buttons_down |= left;
+				}
+			}
+			else if (self->touch_held >= TOUCH_LONG_PRESS)
+			{
+				frame->buttons_pressed |= right;
+				frame->buttons_released |= right;
+				self->touch_state = TOUCH_DONE;
+			}
+			break;
+
+		case TOUCH_PAN:
+			if (self->pan_target != NULL && (dx != 0.0f || dy != 0.0f))
+			{
+				g_autoptr(LrgUIEvent) ev = lrg_ui_event_new_pan (tx, ty, dx, dy);
+
+				send_direct (self->pan_target, ev);
+			}
+			frame->pointer_x = tx;
+			frame->pointer_y = ty;
+			break;
+
+		case TOUCH_MOUSE:
+			frame->pointer_x = tx;
+			frame->pointer_y = ty;
+			frame->buttons_down |= left;
+			break;
+
+		default:
+			break;
+		}
+
+		self->touch_last_x = tx;
+		self->touch_last_y = ty;
+	}
+}
+
 void
 lrg_canvas_process_input (LrgCanvas            *self,
-                          const LrgCanvasInput *input)
+                          const LrgCanvasInput *input_in)
 {
+	LrgCanvasInput        frame;
+	const LrgCanvasInput *input = &frame;
 	gfloat     mx;
 	gfloat     my;
 	LrgWidget *hit;
@@ -958,7 +1215,12 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	guint      i;
 
 	g_return_if_fail (LRG_IS_CANVAS (self));
-	g_return_if_fail (input != NULL);
+	g_return_if_fail (input_in != NULL);
+
+	/* Touch gestures rewrite a copy of the frame into mouse input */
+	frame = *input_in;
+	if (frame.n_touches > 0 || self->touch_state != TOUCH_IDLE)
+		recognise_touch (self, &frame);
 
 	/* Focus on a widget that was hidden or disabled since is dropped,
 	 * so keys stop reaching it (and bubbling to its ancestors) */
@@ -1394,6 +1656,7 @@ lrg_canvas_update (LrgCanvas *self,
 
 	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
 
+	self->clock += (gdouble)delta_time;
 	busy = lrg_widget_step (LRG_WIDGET (self), delta_time);
 
 	for (i = 0; i < self->popups->len; i++)
@@ -1492,6 +1755,21 @@ lrg_canvas_record (LrgCanvas *self)
 		lrg_widget_layout (g_ptr_array_index (self->overlays, i));
 
 	lrg_paint_list_clear (self->paint);
+
+	/*
+	 * Frame inputs for effect shaders and curve pulses: the canvas clock
+	 * (never a wall clock, so captures are reproducible) and the pointer
+	 * in canvas units while it is over the root.
+	 */
+	lrg_paint_list_set_time (self->paint, self->clock);
+	if (self->last_mouse_x >= 0.0f
+	    && self->last_mouse_x < lrg_widget_get_world_x (root) + lrg_widget_get_width (root)
+	    && self->last_mouse_y >= 0.0f
+	    && self->last_mouse_y < lrg_widget_get_world_y (root) + lrg_widget_get_height (root))
+		lrg_paint_list_set_pointer (self->paint, self->last_mouse_x, self->last_mouse_y);
+	else
+		lrg_paint_list_unset_pointer (self->paint);
+
 	if (!lrg_widget_get_visible (root))
 		return self->paint;
 

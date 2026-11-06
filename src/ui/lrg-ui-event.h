@@ -367,4 +367,108 @@ LRG_AVAILABLE_IN_ALL
 void lrg_ui_event_set_modifiers (LrgUIEvent        *self,
                                  LrgInputModifiers  modifiers);
 
+/* ==========================================================================
+ * Touch gestures
+ * ========================================================================== */
+
+/**
+ * lrg_ui_event_new_pan:
+ * @x: finger position X (canvas units)
+ * @y: finger position Y
+ * @dx: movement since the previous PAN
+ * @dy: movement since the previous PAN
+ *
+ * Creates a %LRG_UI_EVENT_PAN: a touch drag the canvas offers to the
+ * widget under the finger. A widget that scrolls or moves content
+ * returns %TRUE for the first PAN it receives to claim the drag; if
+ * nothing claims it, the drag is replayed as a mouse drag instead.
+ *
+ * Returns: (transfer full): a new #LrgUIEvent
+ */
+LRG_AVAILABLE_IN_ALL
+LrgUIEvent * lrg_ui_event_new_pan (gfloat x,
+                                   gfloat y,
+                                   gfloat dx,
+                                   gfloat dy);
+
+/**
+ * lrg_ui_event_new_pan_end:
+ * @x: release position X
+ * @y: release position Y
+ * @velocity_x: finger velocity at release, canvas units per second
+ * @velocity_y: finger velocity at release
+ *
+ * Creates a %LRG_UI_EVENT_PAN_END, sent to the widget that claimed the
+ * pan when the finger lifts. Scrolling widgets use the velocity for a
+ * flick.
+ *
+ * Returns: (transfer full): a new #LrgUIEvent
+ */
+LRG_AVAILABLE_IN_ALL
+LrgUIEvent * lrg_ui_event_new_pan_end (gfloat x,
+                                       gfloat y,
+                                       gfloat velocity_x,
+                                       gfloat velocity_y);
+
+/**
+ * lrg_ui_event_new_zoom:
+ * @x: pinch centre X
+ * @y: pinch centre Y
+ * @scale: change in finger distance since the previous ZOOM (1 = none)
+ *
+ * Creates a %LRG_UI_EVENT_ZOOM for a two-finger pinch, sent (bubbling)
+ * to the widget under the pinch centre.
+ *
+ * Returns: (transfer full): a new #LrgUIEvent
+ */
+LRG_AVAILABLE_IN_ALL
+LrgUIEvent * lrg_ui_event_new_zoom (gfloat x,
+                                    gfloat y,
+                                    gfloat scale);
+
+/**
+ * lrg_ui_event_get_delta_x:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: PAN movement on X, 0 for other events
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_ui_event_get_delta_x (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_get_delta_y:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: PAN movement on Y, 0 for other events
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_ui_event_get_delta_y (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_get_velocity_x:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: PAN_END velocity on X (units per second), 0 for other events
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_ui_event_get_velocity_x (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_get_velocity_y:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: PAN_END velocity on Y (units per second), 0 for other events
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_ui_event_get_velocity_y (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_get_scale:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: ZOOM scale factor, 1 for other events
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_ui_event_get_scale (const LrgUIEvent *self);
+
 G_END_DECLS

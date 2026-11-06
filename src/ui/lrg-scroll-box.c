@@ -19,6 +19,8 @@
 
 #include "config.h"
 
+#include <math.h>
+
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_UI
 
 #include "lrg-scroll-box.h"
@@ -503,6 +505,35 @@ lrg_scroll_box_handle_event (LrgWidget        *widget,
 			return TRUE;
 		}
 		return FALSE;
+
+	case LRG_UI_EVENT_PAN:
+		{
+			/* Touch drag: claim it if we scroll along its main axis,
+			 * then let the content follow the finger */
+			gfloat   dx = lrg_ui_event_get_delta_x (event);
+			gfloat   dy = lrg_ui_event_get_delta_y (event);
+			gboolean handled = FALSE;
+
+			ensure_layout (self);
+			if (self->vscroll && lrg_scroll_axis_get_max (&self->ay) > 0.0f &&
+			    fabsf (dy) >= fabsf (dx) * 0.5f)
+				handled |= lrg_scroll_axis_pan (&self->ay, dy);
+			if (self->hscroll && lrg_scroll_axis_get_max (&self->ax) > 0.0f &&
+			    fabsf (dx) >= fabsf (dy) * 0.5f)
+				handled |= lrg_scroll_axis_pan (&self->ax, dx);
+			if (handled)
+				lrg_scroll_fx_poke (&self->fx);
+			return handled;
+		}
+
+	case LRG_UI_EVENT_PAN_END:
+		/* Flick: coast on with the release velocity */
+		if (self->vscroll)
+			lrg_scroll_axis_flick (&self->ay, smooth (self) ? lrg_ui_event_get_velocity_y (event) : 0.0f);
+		if (self->hscroll)
+			lrg_scroll_axis_flick (&self->ax, smooth (self) ? lrg_ui_event_get_velocity_x (event) : 0.0f);
+		lrg_scroll_fx_poke (&self->fx);
+		return TRUE;
 
 	case LRG_UI_EVENT_SCROLL:
 		{

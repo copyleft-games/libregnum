@@ -42,6 +42,28 @@ G_BEGIN_DECLS
  */
 #define LRG_CANVAS_BUTTON_MASK(button) (1u << (guint)(button))
 
+/**
+ * LRG_CANVAS_INPUT_MAX_TOUCHES:
+ *
+ * Maximum number of simultaneous touch points in one frame.
+ */
+#define LRG_CANVAS_INPUT_MAX_TOUCHES (10)
+
+/**
+ * LrgCanvasTouch:
+ * @id: platform touch id, stable while the finger stays down
+ * @x: position X in canvas coordinates
+ * @y: position Y in canvas coordinates
+ *
+ * One finger on the screen.
+ */
+typedef struct
+{
+	gint   id;
+	gfloat x;
+	gfloat y;
+} LrgCanvasTouch;
+
 #define LRG_TYPE_CANVAS_INPUT (lrg_canvas_input_get_type ())
 
 /**
@@ -62,6 +84,8 @@ G_BEGIN_DECLS
  * @activate: activate the focused widget (gamepad A / Enter / Space)
  * @cancel: cancel / back (gamepad B / Escape)
  * @delta_time: seconds since the previous frame (drives springs)
+ * @touches: fingers currently down, in canvas coordinates
+ * @n_touches: number of valid entries in @touches
  *
  * A plain value struct describing everything that happened to the
  * input devices during one frame. Zero it with lrg_canvas_input_init()
@@ -85,6 +109,8 @@ typedef struct
     gboolean         activate;
     gboolean         cancel;
     gfloat           delta_time;
+    LrgCanvasTouch   touches[LRG_CANVAS_INPUT_MAX_TOUCHES];
+    guint            n_touches;
 } LrgCanvasInput;
 
 LRG_AVAILABLE_IN_ALL
@@ -181,6 +207,41 @@ void lrg_canvas_input_add_text (LrgCanvasInput *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_canvas_input_poll (LrgCanvasInput *self,
                             gfloat          delta_time);
+
+/**
+ * lrg_canvas_input_add_touch:
+ * @self: an #LrgCanvasInput
+ * @id: touch id (stable while the finger is down)
+ * @x: position X in canvas coordinates
+ * @y: position Y in canvas coordinates
+ *
+ * Adds a finger to the frame. Silently ignored once the frame is full.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_add_touch (LrgCanvasInput *self,
+                                 gint            id,
+                                 gfloat          x,
+                                 gfloat          y);
+
+/**
+ * lrg_canvas_input_set_poll_touch:
+ * @enabled: read touch points in lrg_canvas_input_poll()
+ *
+ * Touch polling is off by default because desktop raylib reports the
+ * mouse as touch point 0 while a button is held, which would turn
+ * every click into a gesture. Turn it on for touch screens (Android,
+ * handhelds, kiosks).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_set_poll_touch (gboolean enabled);
+
+/**
+ * lrg_canvas_input_get_poll_touch:
+ *
+ * Returns: %TRUE if lrg_canvas_input_poll() reads touch points
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_input_get_poll_touch (void);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgCanvasInput, lrg_canvas_input_free)
 

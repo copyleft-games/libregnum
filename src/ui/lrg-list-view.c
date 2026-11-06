@@ -963,6 +963,21 @@ lrg_list_view_handle_event (LrgWidget        *widget,
 		}
 		return FALSE;
 
+	case LRG_UI_EVENT_PAN:
+		/* Vertical touch drags scroll the list, following the finger */
+		update_extent (self);
+		if (fabsf (lrg_ui_event_get_delta_y (event)) < fabsf (lrg_ui_event_get_delta_x (event)) * 0.5f)
+			return FALSE;
+		if (!lrg_scroll_axis_pan (&self->ay, lrg_ui_event_get_delta_y (event)))
+			return FALSE;
+		lrg_scroll_fx_poke (&self->fx);
+		return TRUE;
+
+	case LRG_UI_EVENT_PAN_END:
+		lrg_scroll_axis_flick (&self->ay, smooth (self) ? lrg_ui_event_get_velocity_y (event) : 0.0f);
+		lrg_scroll_fx_poke (&self->fx);
+		return TRUE;
+
 	case LRG_UI_EVENT_SCROLL:
 		{
 			gboolean handled;

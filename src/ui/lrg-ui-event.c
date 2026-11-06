@@ -32,6 +32,9 @@ struct _LrgUIEvent
     gboolean       bubbling;    /* set while travelling up from the target */
     LrgWidget     *target;      /* widget the event was aimed at (unowned) */
     LrgInputModifiers modifiers;
+    gfloat         dx;          /* PAN: movement; PAN_END: velocity */
+    gfloat         dy;
+    gfloat         scale;       /* ZOOM: factor since the last ZOOM */
 };
 
 G_DEFINE_BOXED_TYPE (LrgUIEvent, lrg_ui_event,
@@ -525,4 +528,87 @@ lrg_ui_event_set_modifiers (LrgUIEvent        *self,
     g_return_if_fail (self != NULL);
 
     self->modifiers = modifiers;
+}
+
+/*
+ * lrg_ui_event_new_pan:
+ *
+ * See the header.
+ */
+LrgUIEvent *
+lrg_ui_event_new_pan (gfloat x,
+                      gfloat y,
+                      gfloat dx,
+                      gfloat dy)
+{
+    LrgUIEvent *self = lrg_ui_event_new (LRG_UI_EVENT_PAN);
+
+    self->x = x;
+    self->y = y;
+    self->dx = dx;
+    self->dy = dy;
+    return self;
+}
+
+LrgUIEvent *
+lrg_ui_event_new_pan_end (gfloat x,
+                          gfloat y,
+                          gfloat velocity_x,
+                          gfloat velocity_y)
+{
+    LrgUIEvent *self = lrg_ui_event_new (LRG_UI_EVENT_PAN_END);
+
+    self->x = x;
+    self->y = y;
+    self->dx = velocity_x;
+    self->dy = velocity_y;
+    return self;
+}
+
+LrgUIEvent *
+lrg_ui_event_new_zoom (gfloat x,
+                       gfloat y,
+                       gfloat scale)
+{
+    LrgUIEvent *self = lrg_ui_event_new (LRG_UI_EVENT_ZOOM);
+
+    self->x = x;
+    self->y = y;
+    self->scale = scale;
+    return self;
+}
+
+gfloat
+lrg_ui_event_get_delta_x (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, 0.0f);
+    return self->type == LRG_UI_EVENT_PAN ? self->dx : 0.0f;
+}
+
+gfloat
+lrg_ui_event_get_delta_y (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, 0.0f);
+    return self->type == LRG_UI_EVENT_PAN ? self->dy : 0.0f;
+}
+
+gfloat
+lrg_ui_event_get_velocity_x (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, 0.0f);
+    return self->type == LRG_UI_EVENT_PAN_END ? self->dx : 0.0f;
+}
+
+gfloat
+lrg_ui_event_get_velocity_y (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, 0.0f);
+    return self->type == LRG_UI_EVENT_PAN_END ? self->dy : 0.0f;
+}
+
+gfloat
+lrg_ui_event_get_scale (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, 1.0f);
+    return self->type == LRG_UI_EVENT_ZOOM ? self->scale : 1.0f;
 }

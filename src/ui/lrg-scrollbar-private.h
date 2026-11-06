@@ -223,6 +223,32 @@ lrg_scroll_axis_step (LrgScrollAxis *axis,
 }
 
 /*
+ * lrg_scroll_axis_step_snap:
+ *
+ * lrg_scroll_axis_step() that also lands at large offsets: a float
+ * spring tens of thousands of units down a long list cannot get within
+ * LRG_SPRING_EPSILON of its target (the float spacing there is bigger),
+ * so it would report motion forever. Once the offset is within a
+ * hundredth of a unit and nearly still, it snaps and stops.
+ *
+ * Returns: %TRUE while the offset is moving
+ */
+static inline gboolean
+lrg_scroll_axis_step_snap (LrgScrollAxis *axis,
+                           gfloat         delta_time)
+{
+	gboolean moving = lrg_scroll_axis_step (axis, delta_time);
+
+	if (moving && !axis->bounce &&
+	    fabsf (axis->pos.value - axis->pos.target) < 0.01f && fabsf (axis->pos.velocity) < 0.5f)
+	{
+		lrg_spring_snap (&axis->pos, axis->pos.target);
+		moving = FALSE;
+	}
+	return moving;
+}
+
+/*
  * lrg_scroll_axis_thumb:
  * @track_start: where the track begins
  * @track_len: track length
@@ -616,6 +642,68 @@ lrg_scroll_bar_new (const gchar *name)
 	lrg_widget_set_name (bar, name);
 	lrg_widget_set_visible (bar, FALSE);
 	return bar;
+}
+
+/* ==========================================================================
+ * Touch panning and flicks
+ * ========================================================================== */
+
+/* Seconds of finger velocity a flick carries the content */
+#define LRG_SCROLL_FLICK_TIME (0.35f)
+
+/*
+ * lrg_scroll_axis_pan:
+ * @delta: finger movement (positive = finger moved towards the end,
+ *   so the content offset decreases)
+ *
+ * Content follows the finger directly (no glide). Past an end it moves
+ * at half speed (rubber band) and is flagged to spring back.
+ *
+ * Returns: %TRUE if the axis can scroll
+ */
+static inline gboolean
+lrg_scroll_axis_pan (LrgScrollAxis *axis,
+                     gfloat         delta)
+{
+	gfloat max = lrg_scroll_axis_get_max (axis);
+	gfloat value;
+
+	if (max <= 0.0f)
+		return FALSE;
+
+	value = axis->pos.value - delta;
+	if (value < 0.0f || value > max)
+	{
+		/* resist: only half of the movement past an end */
+		value = axis->pos.value - delta * 0.5f;
+		axis->bounce = TRUE;
+	}
+	lrg_spring_snap (&axis->pos, value);
+	return TRUE;
+}
+
+/*
+ * lrg_scroll_axis_flick:
+ * @velocity: finger velocity at release (units per second, positive =
+ *   towards the end)
+ *
+ * Lets the content coast on: the target moves by the velocity times
+ * LRG_SCROLL_FLICK_TIME and the spring glides there (with the usual
+ * rubber band at the ends). A slow release just settles in bounds.
+ */
+static inline void
+lrg_scroll_axis_flick (LrgScrollAxis *axis,
+                       gfloat         velocity)
+{
+	gfloat max = lrg_scroll_axis_get_max (axis);
+	gfloat target;
+
+	if (max <= 0.0f)
+		return;
+
+	target = axis->pos.value - velocity * LRG_SCROLL_FLICK_TIME;
+	axis->bounce = target < 0.0f || target > max;
+	lrg_spring_set_target (&axis->pos, lrg_scroll_axis_clamp (axis, target));
 }
 
 G_END_DECLS
