@@ -99,6 +99,7 @@ TEST_SOURCES := \
 	test-ui-layout-helpers.c \
 	test-ui-viewport.c \
 	test-ui-chrome.c \
+	test-ui-graph-looks.c \
 	test-ui-menus.c \
 	test-tooltip.c \
 	test-tilemap.c \

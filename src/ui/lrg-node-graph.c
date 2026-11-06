@@ -74,6 +74,8 @@
 #define MINIMAP_MARGIN   (12.0f)
 #define LINK_SEGMENTS    (20)      /* samples for wire hit tests */
 #define DOT_MAX          (4000)    /* most grid dots drawn */
+#define ICON_SIZE        (16.0f)   /* header icon */
+#define ICON_GAP         (6.0f)    /* header icon to title */
 
 /* Header / type palette: pleasant, mid-luminance hues */
 static const guint32 palette[] = {
@@ -115,6 +117,8 @@ lrg_node_graph_grid_get_type (void)
 			{ LRG_NODE_GRAPH_GRID_NONE, "LRG_NODE_GRAPH_GRID_NONE", "none" },
 			{ LRG_NODE_GRAPH_GRID_DOTS, "LRG_NODE_GRAPH_GRID_DOTS", "dots" },
 			{ LRG_NODE_GRAPH_GRID_LINES, "LRG_NODE_GRAPH_GRID_LINES", "lines" },
+			{ LRG_NODE_GRAPH_GRID_AUTO, "LRG_NODE_GRAPH_GRID_AUTO", "auto" },
+			{ LRG_NODE_GRAPH_GRID_CROSSES, "LRG_NODE_GRAPH_GRID_CROSSES", "crosses" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_enum_register_static (g_intern_static_string ("LrgNodeGraphGrid"), values);
@@ -125,6 +129,567 @@ lrg_node_graph_grid_get_type (void)
 }
 
 G_DEFINE_QUARK (lrg-node-graph-error-quark, lrg_node_graph_error)
+
+/* --------------------------------------------------------------------------
+ * Canvas look enums (shared with LrgTimelineView)
+ * -------------------------------------------------------------------------- */
+
+GType
+lrg_canvas_look_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_CANVAS_LOOK_AUTO, "LRG_CANVAS_LOOK_AUTO", "auto" },
+			{ LRG_CANVAS_LOOK_MODERN, "LRG_CANVAS_LOOK_MODERN", "modern" },
+			{ LRG_CANVAS_LOOK_BLUEPRINT, "LRG_CANVAS_LOOK_BLUEPRINT", "blueprint" },
+			{ LRG_CANVAS_LOOK_BLENDER, "LRG_CANVAS_LOOK_BLENDER", "blender" },
+			{ LRG_CANVAS_LOOK_NEON, "LRG_CANVAS_LOOK_NEON", "neon" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgCanvasLook"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+GType
+lrg_canvas_link_shape_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_CANVAS_LINK_SHAPE_AUTO, "LRG_CANVAS_LINK_SHAPE_AUTO", "auto" },
+			{ LRG_CANVAS_LINK_SHAPE_BEZIER, "LRG_CANVAS_LINK_SHAPE_BEZIER", "bezier" },
+			{ LRG_CANVAS_LINK_SHAPE_STRAIGHT, "LRG_CANVAS_LINK_SHAPE_STRAIGHT", "straight" },
+			{ LRG_CANVAS_LINK_SHAPE_STEP, "LRG_CANVAS_LINK_SHAPE_STEP", "step" },
+			{ LRG_CANVAS_LINK_SHAPE_ANGLED, "LRG_CANVAS_LINK_SHAPE_ANGLED", "angled" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgCanvasLinkShape"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+GType
+lrg_canvas_pin_shape_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_CANVAS_PIN_SHAPE_AUTO, "LRG_CANVAS_PIN_SHAPE_AUTO", "auto" },
+			{ LRG_CANVAS_PIN_SHAPE_CIRCLE, "LRG_CANVAS_PIN_SHAPE_CIRCLE", "circle" },
+			{ LRG_CANVAS_PIN_SHAPE_SQUARE, "LRG_CANVAS_PIN_SHAPE_SQUARE", "square" },
+			{ LRG_CANVAS_PIN_SHAPE_DIAMOND, "LRG_CANVAS_PIN_SHAPE_DIAMOND", "diamond" },
+			{ LRG_CANVAS_PIN_SHAPE_TRIANGLE, "LRG_CANVAS_PIN_SHAPE_TRIANGLE", "triangle" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgCanvasPinShape"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+GType
+lrg_canvas_key_shape_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_CANVAS_KEY_SHAPE_AUTO, "LRG_CANVAS_KEY_SHAPE_AUTO", "auto" },
+			{ LRG_CANVAS_KEY_SHAPE_DIAMOND, "LRG_CANVAS_KEY_SHAPE_DIAMOND", "diamond" },
+			{ LRG_CANVAS_KEY_SHAPE_CIRCLE, "LRG_CANVAS_KEY_SHAPE_CIRCLE", "circle" },
+			{ LRG_CANVAS_KEY_SHAPE_SQUARE, "LRG_CANVAS_KEY_SHAPE_SQUARE", "square" },
+			{ LRG_CANVAS_KEY_SHAPE_BAR, "LRG_CANVAS_KEY_SHAPE_BAR", "bar" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgCanvasKeyShape"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+GType
+lrg_canvas_header_style_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_CANVAS_HEADER_STYLE_AUTO, "LRG_CANVAS_HEADER_STYLE_AUTO", "auto" },
+			{ LRG_CANVAS_HEADER_STYLE_GRADIENT, "LRG_CANVAS_HEADER_STYLE_GRADIENT", "gradient" },
+			{ LRG_CANVAS_HEADER_STYLE_SOLID, "LRG_CANVAS_HEADER_STYLE_SOLID", "solid" },
+			{ LRG_CANVAS_HEADER_STYLE_STRIPE, "LRG_CANVAS_HEADER_STYLE_STRIPE", "stripe" },
+			{ LRG_CANVAS_HEADER_STYLE_TINT, "LRG_CANVAS_HEADER_STYLE_TINT", "tint" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgCanvasHeaderStyle"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+/* --------------------------------------------------------------------------
+ * LrgCanvasLookParts
+ * -------------------------------------------------------------------------- */
+
+G_DEFINE_BOXED_TYPE (LrgCanvasLookParts, lrg_canvas_look_parts,
+                     lrg_canvas_look_parts_copy, lrg_canvas_look_parts_free)
+
+LrgCanvasLookParts *
+lrg_canvas_look_parts_copy (const LrgCanvasLookParts *self)
+{
+	g_return_val_if_fail (self != NULL, NULL);
+	return g_memdup2 (self, sizeof (LrgCanvasLookParts));
+}
+
+void
+lrg_canvas_look_parts_free (LrgCanvasLookParts *self)
+{
+	g_free (self);
+}
+
+/* look_rgba: a colour from 0xRRGGBB and an alpha 0..1 */
+static GrlColor
+look_rgba (guint32 hex,
+      gfloat  alpha)
+{
+	GrlColor c;
+
+	c.r = (guint8) ((hex >> 16) & 0xff);
+	c.g = (guint8) ((hex >> 8) & 0xff);
+	c.b = (guint8) (hex & 0xff);
+	c.a = (guint8) roundf (CLAMP (alpha, 0.0f, 1.0f) * 255.0f);
+	return c;
+}
+
+/* look_fade: @c with its alpha multiplied by @alpha */
+static GrlColor
+look_fade (const GrlColor *c,
+      gfloat          alpha)
+{
+	GrlColor out = *c;
+
+	out.a = (guint8) roundf ((gfloat) c->a * CLAMP (alpha, 0.0f, 1.0f));
+	return out;
+}
+
+/*
+ * parts_from_theme:
+ *
+ * The AUTO preset: every part from the theme's roles and metrics,
+ * matching what the widgets' built-in looks (style_defaults) produce
+ * for the theme, so AUTO is the classic look.
+ */
+static void
+parts_from_theme (LrgCanvasLookParts *p,
+                  LrgTheme           *t)
+{
+	const GrlColor *tc = lrg_theme_get_color (t, LRG_THEME_COLOR_TEXT);
+	const GrlColor *muted = lrg_theme_get_color (t, LRG_THEME_COLOR_TEXT_MUTED);
+	const GrlColor *accent = lrg_theme_get_color (t, LRG_THEME_COLOR_ACCENT);
+	gfloat          radius = lrg_theme_get_metric (t, LRG_THEME_METRIC_CORNER_RADIUS);
+	gfloat          bw = MAX (1.0f, lrg_theme_get_metric (t, LRG_THEME_METRIC_BORDER_WIDTH));
+
+	p->dark = lrg_paint_color_luminance (lrg_theme_get_color (t, LRG_THEME_COLOR_WINDOW)) <= 0.5f;
+
+	/* --- surfaces, text, grid --- */
+	lrg_paint_color_mix (lrg_theme_get_color (t, LRG_THEME_COLOR_WINDOW),
+	                     lrg_theme_get_color (t, LRG_THEME_COLOR_PANEL), 0.5f, &p->background);
+	p->background_end = p->background;
+	p->text = *tc;
+	p->text_muted = *muted;
+	p->accent = *accent;
+	p->grid_style = LRG_NODE_GRAPH_GRID_LINES;
+	p->grid_major_every = 4;
+	p->grid_minor = look_fade (lrg_theme_get_color (t, LRG_THEME_COLOR_BORDER), 0.35f);
+	p->grid_major = look_fade (lrg_theme_get_color (t, LRG_THEME_COLOR_BORDER), 0.75f);
+	p->grid_glow = 0.0f;
+
+	/* --- cards and headers --- */
+	p->node_background = *lrg_theme_get_color (t, LRG_THEME_COLOR_SURFACE);
+	p->node_border = *lrg_theme_get_color (t, LRG_THEME_COLOR_BORDER);
+	p->node_border_width = bw;
+	p->node_radius = MAX (6.0f, radius * 1.25f);
+	p->node_shadow = *lrg_theme_get_color (t, LRG_THEME_COLOR_SHADOW);
+	p->node_shadow_blur = MAX (8.0f, lrg_theme_get_metric (t, LRG_THEME_METRIC_SHADOW_BLUR));
+	p->node_shadow_offset_y = MAX (2.0f, lrg_theme_get_metric (t, LRG_THEME_METRIC_SHADOW_OFFSET_Y));
+	p->node_gradient = FALSE;
+	p->node_glow = 0.0f;
+	p->node_border_accent = FALSE;
+	p->header_style = LRG_CANVAS_HEADER_STYLE_GRADIENT;
+	p->header = *accent;
+	p->title = *lrg_theme_get_color (t, LRG_THEME_COLOR_TEXT_ON_ACCENT);
+	p->header_mute = 0.0f;
+
+	/* --- pins, links, selection --- */
+	p->pin_shape = LRG_CANVAS_PIN_SHAPE_CIRCLE;
+	p->pin_size = 10.0f;
+	p->pin_ring = *lrg_theme_get_color (t, LRG_THEME_COLOR_SURFACE);
+	p->pin_ring_width = 2.0f;
+	p->pin_glow = 0.0f;
+	p->link_shape = LRG_CANVAS_LINK_SHAPE_BEZIER;
+	p->link_width = 2.5f;
+	p->link_glow = 5.0f;
+	p->link_gradient = TRUE;
+	p->link_flow = FALSE;
+	p->selection = *accent;
+	p->selection_width = 2.0f;
+	p->selection_glow = 0.0f;
+
+	/* --- timeline --- */
+	p->track_header = *lrg_theme_get_color (t, LRG_THEME_COLOR_SURFACE);
+	p->track_header_text = *tc;
+	p->lane = look_fade (lrg_theme_get_color (t, LRG_THEME_COLOR_TRACK), 0.14f);
+	p->lane_alt = look_fade (lrg_theme_get_color (t, LRG_THEME_COLOR_TRACK), 0.30f);
+	p->lane_border = look_fade (muted, 0.55f * 0.3f);
+	p->clip_radius = MAX (3.0f, radius * 0.75f);
+	p->clip_gradient = FALSE;
+	p->clip_outline = FALSE;
+	p->clip_glow = 0.0f;
+	p->key_shape = LRG_CANVAS_KEY_SHAPE_DIAMOND;
+	p->key_size = 5.5f;
+	p->key = *tc;
+	p->key_selected = *accent;
+	p->playhead = *accent;
+	p->playhead_width = 2.0f;
+	p->playhead_glow = 8.0f;
+	p->ruler = *lrg_theme_get_color (t, LRG_THEME_COLOR_SURFACE);
+	p->ruler_text = *muted;
+	p->ruler_tick = look_fade (muted, 0.55f);
+	p->marker = *lrg_theme_get_color (t, LRG_THEME_COLOR_WARNING);
+	p->loop_region = look_fade (accent, 0.14f);
+}
+
+/* parts_modern: soft surfaces that follow the theme's light or dark */
+static void
+parts_modern (LrgCanvasLookParts *p,
+              LrgTheme           *t)
+{
+	gboolean dark = lrg_paint_color_luminance (lrg_theme_get_color (t, LRG_THEME_COLOR_WINDOW)) <= 0.5f;
+	GrlColor accent = *lrg_theme_get_color (t, LRG_THEME_COLOR_ACCENT);
+	guint32  ink = dark ? 0xececf1 : 0x1d1d22;
+	guint32  card = dark ? 0x232327 : 0xffffff;
+
+	p->dark = dark;
+	p->background = look_rgba (dark ? 0x161618 : 0xf1f1f3, 1.0f);
+	p->background_end = look_rgba (dark ? 0x1b1b20 : 0xe8e8ee, 1.0f);
+	p->text = look_rgba (ink, 1.0f);
+	p->text_muted = look_rgba (dark ? 0x9a9aa5 : 0x6b6b76, 1.0f);
+	p->accent = accent;
+	p->grid_style = LRG_NODE_GRAPH_GRID_DOTS;
+	p->grid_major_every = 4;
+	p->grid_minor = look_rgba (ink, dark ? 0.10f : 0.14f);
+	p->grid_major = look_rgba (ink, dark ? 0.20f : 0.26f);
+	p->grid_glow = 0.0f;
+
+	p->node_background = look_rgba (card, 1.0f);
+	p->node_border = look_rgba (ink, dark ? 0.07f : 0.08f);
+	p->node_border_width = 1.0f;
+	p->node_radius = 14.0f;
+	p->node_shadow = look_rgba (0x000000, dark ? 0.5f : 0.12f);
+	p->node_shadow_blur = 28.0f;
+	p->node_shadow_offset_y = 10.0f;
+	p->node_gradient = TRUE;
+	p->node_glow = 0.0f;
+	p->node_border_accent = FALSE;
+	p->header_style = LRG_CANVAS_HEADER_STYLE_TINT;
+	p->header = accent;
+	p->title = look_rgba (ink, 1.0f);
+	p->header_mute = 0.0f;
+
+	p->pin_shape = LRG_CANVAS_PIN_SHAPE_CIRCLE;
+	p->pin_size = 10.0f;
+	p->pin_ring = look_rgba (card, 1.0f);
+	p->pin_ring_width = 2.0f;
+	p->pin_glow = 0.0f;
+	p->link_shape = LRG_CANVAS_LINK_SHAPE_BEZIER;
+	p->link_width = 2.5f;
+	p->link_glow = 0.0f;
+	p->link_gradient = TRUE;
+	p->link_flow = FALSE;
+	p->selection = accent;
+	p->selection_width = 2.0f;
+	p->selection_glow = 6.0f;
+
+	p->track_header = look_rgba (dark ? 0x1e1e22 : 0xffffff, 1.0f);
+	p->track_header_text = look_rgba (ink, 1.0f);
+	p->lane = look_rgba (ink, 0.02f);
+	p->lane_alt = look_rgba (ink, 0.045f);
+	p->lane_border = look_rgba (ink, 0.05f);
+	p->clip_radius = 8.0f;
+	p->clip_gradient = TRUE;
+	p->clip_outline = FALSE;
+	p->clip_glow = 0.0f;
+	p->key_shape = LRG_CANVAS_KEY_SHAPE_CIRCLE;
+	p->key_size = 5.0f;
+	p->key = look_rgba (ink, 1.0f);
+	p->key_selected = accent;
+	p->playhead = accent;
+	p->playhead_width = 2.0f;
+	p->playhead_glow = 6.0f;
+	p->ruler = p->track_header;
+	p->ruler_text = p->text_muted;
+	p->ruler_tick = look_rgba (ink, 0.18f);
+	p->marker = look_rgba (0xf5a524, 1.0f);
+	p->loop_region = look_fade (&accent, 0.12f);
+}
+
+/* parts_blueprint: a deep blue drafting board */
+static void
+parts_blueprint (LrgCanvasLookParts *p)
+{
+	p->dark = TRUE;
+	p->background = look_rgba (0x123764, 1.0f);
+	p->background_end = look_rgba (0x0a2546, 1.0f);
+	p->text = look_rgba (0xe6f0ff, 1.0f);
+	p->text_muted = look_rgba (0x9fb8d8, 1.0f);
+	p->accent = look_rgba (0x8ec5ff, 1.0f);
+	p->grid_style = LRG_NODE_GRAPH_GRID_LINES;
+	p->grid_major_every = 5;
+	p->grid_minor = look_rgba (0xffffff, 0.07f);
+	p->grid_major = look_rgba (0xbcd8ff, 0.22f);
+	p->grid_glow = 0.0f;
+
+	p->node_background = look_rgba (0x0b1d36, 0.92f);
+	p->node_border = look_rgba (0x6fa8dc, 0.55f);
+	p->node_border_width = 1.0f;
+	p->node_radius = 6.0f;
+	p->node_shadow = look_rgba (0x000000, 0.6f);
+	p->node_shadow_blur = 16.0f;
+	p->node_shadow_offset_y = 6.0f;
+	p->node_gradient = TRUE;
+	p->node_glow = 0.0f;
+	p->node_border_accent = FALSE;
+	p->header_style = LRG_CANVAS_HEADER_STYLE_GRADIENT;
+	p->header = look_rgba (0x3d7cc9, 1.0f);
+	p->title = look_rgba (0xffffff, 1.0f);
+	p->header_mute = 0.0f;
+
+	p->pin_shape = LRG_CANVAS_PIN_SHAPE_CIRCLE;
+	p->pin_size = 10.0f;
+	p->pin_ring = look_rgba (0x0b1d36, 1.0f);
+	p->pin_ring_width = 2.0f;
+	p->pin_glow = 0.0f;
+	p->link_shape = LRG_CANVAS_LINK_SHAPE_BEZIER;
+	p->link_width = 3.0f;
+	p->link_glow = 6.0f;
+	p->link_gradient = TRUE;
+	p->link_flow = FALSE;
+	p->selection = look_rgba (0xf5b342, 1.0f);
+	p->selection_width = 2.0f;
+	p->selection_glow = 8.0f;
+
+	p->track_header = look_rgba (0x0c2340, 1.0f);
+	p->track_header_text = p->text;
+	p->lane = look_rgba (0xffffff, 0.03f);
+	p->lane_alt = look_rgba (0xffffff, 0.06f);
+	p->lane_border = look_rgba (0xbcd8ff, 0.12f);
+	p->clip_radius = 4.0f;
+	p->clip_gradient = TRUE;
+	p->clip_outline = FALSE;
+	p->clip_glow = 0.0f;
+	p->key_shape = LRG_CANVAS_KEY_SHAPE_DIAMOND;
+	p->key_size = 5.5f;
+	p->key = p->text;
+	p->key_selected = p->selection;
+	p->playhead = look_rgba (0xff5a4e, 1.0f);
+	p->playhead_width = 1.5f;
+	p->playhead_glow = 6.0f;
+	p->ruler = look_rgba (0x0a1f3a, 1.0f);
+	p->ruler_text = p->text_muted;
+	p->ruler_tick = look_rgba (0xbcd8ff, 0.35f);
+	p->marker = p->selection;
+	p->loop_region = look_rgba (0x8ec5ff, 0.14f);
+}
+
+/* parts_blender: a dark grey editor with muted colours */
+static void
+parts_blender (LrgCanvasLookParts *p)
+{
+	p->dark = TRUE;
+	p->background = look_rgba (0x1d1d1d, 1.0f);
+	p->background_end = p->background;
+	p->text = look_rgba (0xe6e6e6, 1.0f);
+	p->text_muted = look_rgba (0xa0a0a0, 1.0f);
+	p->accent = look_rgba (0x4772b3, 1.0f);
+	p->grid_style = LRG_NODE_GRAPH_GRID_DOTS;
+	p->grid_major_every = 5;
+	p->grid_minor = look_rgba (0xffffff, 0.08f);
+	p->grid_major = look_rgba (0xffffff, 0.16f);
+	p->grid_glow = 0.0f;
+
+	p->node_background = look_rgba (0x303030, 1.0f);
+	p->node_border = look_rgba (0x161616, 1.0f);
+	p->node_border_width = 1.0f;
+	p->node_radius = 5.0f;
+	p->node_shadow = look_rgba (0x000000, 0.45f);
+	p->node_shadow_blur = 8.0f;
+	p->node_shadow_offset_y = 3.0f;
+	p->node_gradient = FALSE;
+	p->node_glow = 0.0f;
+	p->node_border_accent = FALSE;
+	p->header_style = LRG_CANVAS_HEADER_STYLE_SOLID;
+	p->header = look_rgba (0x4a4a4a, 1.0f);
+	p->title = look_rgba (0xe6e6e6, 1.0f);
+	p->header_mute = 0.45f;
+
+	p->pin_shape = LRG_CANVAS_PIN_SHAPE_CIRCLE;
+	p->pin_size = 8.0f;
+	p->pin_ring = look_rgba (0x1d1d1d, 1.0f);
+	p->pin_ring_width = 1.5f;
+	p->pin_glow = 0.0f;
+	p->link_shape = LRG_CANVAS_LINK_SHAPE_BEZIER;
+	p->link_width = 1.6f;
+	p->link_glow = 0.0f;
+	p->link_gradient = TRUE;
+	p->link_flow = FALSE;
+	p->selection = look_rgba (0xffa733, 1.0f);
+	p->selection_width = 1.5f;
+	p->selection_glow = 0.0f;
+
+	p->track_header = look_rgba (0x2b2b2b, 1.0f);
+	p->track_header_text = look_rgba (0xd6d6d6, 1.0f);
+	p->lane = look_rgba (0xffffff, 0.025f);
+	p->lane_alt = look_rgba (0xffffff, 0.05f);
+	p->lane_border = look_rgba (0x151515, 1.0f);
+	p->clip_radius = 3.0f;
+	p->clip_gradient = FALSE;
+	p->clip_outline = FALSE;
+	p->clip_glow = 0.0f;
+	p->key_shape = LRG_CANVAS_KEY_SHAPE_DIAMOND;
+	p->key_size = 5.0f;
+	p->key = look_rgba (0xdadada, 1.0f);
+	p->key_selected = p->selection;
+	p->playhead = p->accent;
+	p->playhead_width = 2.0f;
+	p->playhead_glow = 0.0f;
+	p->ruler = look_rgba (0x232323, 1.0f);
+	p->ruler_text = p->text_muted;
+	p->ruler_tick = look_rgba (0xffffff, 0.18f);
+	p->marker = look_rgba (0xe6e6e6, 1.0f);
+	p->loop_region = look_rgba (0x4772b3, 0.15f);
+}
+
+/* parts_neon: near black, everything lit in its own colour */
+static void
+parts_neon (LrgCanvasLookParts *p)
+{
+	p->dark = TRUE;
+	p->background = look_rgba (0x06060b, 1.0f);
+	p->background_end = look_rgba (0x0d0719, 1.0f);
+	p->text = look_rgba (0xf2efff, 1.0f);
+	p->text_muted = look_rgba (0xa99ee0, 1.0f);
+	p->accent = look_rgba (0xec4899, 1.0f);
+	p->grid_style = LRG_NODE_GRAPH_GRID_LINES;
+	p->grid_major_every = 4;
+	p->grid_minor = look_rgba (0xa78bfa, 0.08f);
+	p->grid_major = look_rgba (0xa78bfa, 0.24f);
+	p->grid_glow = 3.0f;
+
+	p->node_background = look_rgba (0x0b0b14, 0.94f);
+	p->node_border = look_rgba (0x8b5cf6, 1.0f);
+	p->node_border_width = 1.5f;
+	p->node_radius = 12.0f;
+	p->node_shadow = look_rgba (0x000000, 0.0f);
+	p->node_shadow_blur = 0.0f;
+	p->node_shadow_offset_y = 0.0f;
+	p->node_gradient = FALSE;
+	p->node_glow = 14.0f;
+	p->node_border_accent = TRUE;
+	p->header_style = LRG_CANVAS_HEADER_STYLE_STRIPE;
+	p->header = look_rgba (0x8b5cf6, 1.0f);
+	p->title = look_rgba (0xffffff, 1.0f);
+	p->header_mute = 0.0f;
+
+	p->pin_shape = LRG_CANVAS_PIN_SHAPE_DIAMOND;
+	p->pin_size = 10.0f;
+	p->pin_ring = look_rgba (0x0b0b14, 1.0f);
+	p->pin_ring_width = 2.0f;
+	p->pin_glow = 5.0f;
+	p->link_shape = LRG_CANVAS_LINK_SHAPE_BEZIER;
+	p->link_width = 2.4f;
+	p->link_glow = 10.0f;
+	p->link_gradient = TRUE;
+	p->link_flow = FALSE;
+	p->selection = look_rgba (0xffffff, 1.0f);
+	p->selection_width = 2.0f;
+	p->selection_glow = 12.0f;
+
+	p->track_header = look_rgba (0x0b0b14, 1.0f);
+	p->track_header_text = p->text;
+	p->lane = look_rgba (0xa78bfa, 0.03f);
+	p->lane_alt = look_rgba (0xa78bfa, 0.06f);
+	p->lane_border = look_rgba (0x8b5cf6, 0.20f);
+	p->clip_radius = 8.0f;
+	p->clip_gradient = FALSE;
+	p->clip_outline = TRUE;
+	p->clip_glow = 8.0f;
+	p->key_shape = LRG_CANVAS_KEY_SHAPE_CIRCLE;
+	p->key_size = 5.0f;
+	p->key = p->text;
+	p->key_selected = p->accent;
+	p->playhead = p->accent;
+	p->playhead_width = 1.5f;
+	p->playhead_glow = 12.0f;
+	p->ruler = look_rgba (0x0b0b14, 1.0f);
+	p->ruler_text = p->text_muted;
+	p->ruler_tick = look_rgba (0xa78bfa, 0.35f);
+	p->marker = look_rgba (0x22d3ee, 1.0f);
+	p->loop_region = look_rgba (0xec4899, 0.12f);
+}
+
+void
+lrg_canvas_look_parts_init (LrgCanvasLookParts *self,
+                            LrgCanvasLook       look,
+                            LrgTheme           *theme)
+{
+	g_return_if_fail (self != NULL);
+	g_return_if_fail (theme == NULL || LRG_IS_THEME (theme));
+
+	if (theme == NULL)
+		theme = lrg_theme_get_default ();
+
+	memset (self, 0, sizeof *self);
+	self->look = look;
+	self->glow = 1.0f;
+	switch (look)
+	{
+	case LRG_CANVAS_LOOK_MODERN:
+		parts_modern (self, theme);
+		break;
+	case LRG_CANVAS_LOOK_BLUEPRINT:
+		parts_blueprint (self);
+		break;
+	case LRG_CANVAS_LOOK_BLENDER:
+		parts_blender (self);
+		break;
+	case LRG_CANVAS_LOOK_NEON:
+		parts_neon (self);
+		break;
+	case LRG_CANVAS_LOOK_AUTO:
+	default:
+		self->look = LRG_CANVAS_LOOK_AUTO;
+		parts_from_theme (self, theme);
+		break;
+	}
+}
+
 
 /* ==========================================================================
  * Instance structures
@@ -140,6 +705,7 @@ struct _LrgGraphPort
 	gboolean               multi_link;
 	gboolean               has_color;
 	GrlColor               color;
+	LrgCanvasPinShape      shape;      /* AUTO: the graph's */
 
 	LrgGraphNode          *node;       /* not owned */
 	guint                  n_links;
@@ -154,6 +720,11 @@ struct _LrgGraphLink
 	GObject       parent_instance;
 	LrgGraphPort *output;               /* owned reference */
 	LrgGraphPort *input;                /* owned reference */
+
+	/* per-item look (beats the graph and the look preset) */
+	gboolean            has_color;
+	GrlColor            color;
+	LrgCanvasLinkShape  shape;
 };
 
 struct _LrgGraphNode
@@ -165,6 +736,8 @@ struct _LrgGraphNode
 	gchar         *category;
 	gboolean       has_accent;
 	GrlColor       accent;
+	gchar         *icon;               /* built-in icon name */
+	LrgSvgIcon    *svg_icon;           /* owned reference */
 	gfloat         x;
 	gfloat         y;
 	gfloat         min_width;
@@ -239,6 +812,15 @@ struct _LrgNodeGraph
 	gboolean          snap;
 	gboolean          show_minimap;
 	gboolean          animate_links;
+
+	/* look (see LrgCanvasLookParts) */
+	LrgCanvasLook         look;
+	LrgCanvasLinkShape    link_shape;
+	LrgCanvasPinShape     pin_shape;
+	LrgCanvasHeaderStyle  header_style;
+	gfloat                link_width;   /* 0: the look's */
+	gfloat                glow;         /* < 0: the look's */
+	gboolean              selection_flow;
 
 	/* interaction */
 	DragMode          drag;
@@ -330,6 +912,7 @@ enum
 	PORT_PROP_TYPE_NAME,
 	PORT_PROP_MULTI_LINK,
 	PORT_PROP_COLOR,
+	PORT_PROP_SHAPE,
 	PORT_N_PROPS
 };
 
@@ -369,6 +952,9 @@ lrg_graph_port_get_property (GObject    *object,
 	case PORT_PROP_COLOR:
 		g_value_set_boxed (value, self->has_color ? &self->color : NULL);
 		break;
+	case PORT_PROP_SHAPE:
+		g_value_set_enum (value, self->shape);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -403,6 +989,9 @@ lrg_graph_port_set_property (GObject      *object,
 		break;
 	case PORT_PROP_COLOR:
 		lrg_graph_port_set_color (self, g_value_get_boxed (value));
+		break;
+	case PORT_PROP_SHAPE:
+		lrg_graph_port_set_shape (self, (LrgCanvasPinShape) g_value_get_enum (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -464,6 +1053,17 @@ lrg_graph_port_class_init (LrgGraphPortClass *klass)
 	port_props[PORT_PROP_COLOR] =
 		g_param_spec_boxed ("color", "Color", "Explicit port colour", GRL_TYPE_COLOR,
 		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgGraphPort:shape:
+	 *
+	 * The port's own shape; %LRG_CANVAS_PIN_SHAPE_AUTO follows the
+	 * graph's #LrgNodeGraph:pin-shape, then the look.
+	 */
+	port_props[PORT_PROP_SHAPE] =
+		g_param_spec_enum ("shape", "Shape", "Port shape", LRG_TYPE_CANVAS_PIN_SHAPE,
+		                   LRG_CANVAS_PIN_SHAPE_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, PORT_N_PROPS, port_props);
 }
@@ -571,6 +1171,26 @@ lrg_graph_port_set_color (LrgGraphPort   *self,
 	g_object_notify_by_pspec (G_OBJECT (self), port_props[PORT_PROP_COLOR]);
 }
 
+LrgCanvasPinShape
+lrg_graph_port_get_shape (LrgGraphPort *self)
+{
+	g_return_val_if_fail (LRG_IS_GRAPH_PORT (self), LRG_CANVAS_PIN_SHAPE_AUTO);
+	return self->shape;
+}
+
+void
+lrg_graph_port_set_shape (LrgGraphPort      *self,
+                          LrgCanvasPinShape  shape)
+{
+	g_return_if_fail (LRG_IS_GRAPH_PORT (self));
+	g_return_if_fail (shape <= LRG_CANVAS_PIN_SHAPE_TRIANGLE);
+
+	if (self->shape == shape)
+		return;
+	self->shape = shape;
+	g_object_notify_by_pspec (G_OBJECT (self), port_props[PORT_PROP_SHAPE]);
+}
+
 guint
 lrg_graph_port_get_n_links (LrgGraphPort *self)
 {
@@ -589,6 +1209,8 @@ enum
 	LINK_PROP_0,
 	LINK_PROP_OUTPUT,
 	LINK_PROP_INPUT,
+	LINK_PROP_COLOR,
+	LINK_PROP_SHAPE,
 	LINK_N_PROPS
 };
 
@@ -620,6 +1242,33 @@ lrg_graph_link_get_property (GObject    *object,
 	case LINK_PROP_INPUT:
 		g_value_set_object (value, self->input);
 		break;
+	case LINK_PROP_COLOR:
+		g_value_set_boxed (value, self->has_color ? &self->color : NULL);
+		break;
+	case LINK_PROP_SHAPE:
+		g_value_set_enum (value, self->shape);
+		break;
+	default:
+		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
+}
+
+static void
+lrg_graph_link_set_property (GObject      *object,
+                             guint         prop_id,
+                             const GValue *value,
+                             GParamSpec   *pspec)
+{
+	LrgGraphLink *self = LRG_GRAPH_LINK (object);
+
+	switch (prop_id)
+	{
+	case LINK_PROP_COLOR:
+		lrg_graph_link_set_color (self, g_value_get_boxed (value));
+		break;
+	case LINK_PROP_SHAPE:
+		lrg_graph_link_set_shape (self, (LrgCanvasLinkShape) g_value_get_enum (value));
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -632,6 +1281,7 @@ lrg_graph_link_class_init (LrgGraphLinkClass *klass)
 
 	object_class->dispose = lrg_graph_link_dispose;
 	object_class->get_property = lrg_graph_link_get_property;
+	object_class->set_property = lrg_graph_link_set_property;
 
 	/**
 	 * LrgGraphLink:output:
@@ -650,6 +1300,26 @@ lrg_graph_link_class_init (LrgGraphLinkClass *klass)
 	link_props[LINK_PROP_INPUT] =
 		g_param_spec_object ("input", "Input", "Input port", LRG_TYPE_GRAPH_PORT,
 		                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgGraphLink:color:
+	 *
+	 * The wire's own colour, %NULL to blend the colours of its ports.
+	 */
+	link_props[LINK_PROP_COLOR] =
+		g_param_spec_boxed ("color", "Color", "Wire colour", GRL_TYPE_COLOR,
+		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgGraphLink:shape:
+	 *
+	 * The wire's own path; %LRG_CANVAS_LINK_SHAPE_AUTO follows the
+	 * graph's #LrgNodeGraph:link-shape, then the look.
+	 */
+	link_props[LINK_PROP_SHAPE] =
+		g_param_spec_enum ("shape", "Shape", "Wire path", LRG_TYPE_CANVAS_LINK_SHAPE,
+		                   LRG_CANVAS_LINK_SHAPE_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, LINK_N_PROPS, link_props);
 }
@@ -673,6 +1343,53 @@ lrg_graph_link_get_input (LrgGraphLink *self)
 	return self->input;
 }
 
+gboolean
+lrg_graph_link_get_color (LrgGraphLink *self,
+                          GrlColor     *color)
+{
+	g_return_val_if_fail (LRG_IS_GRAPH_LINK (self), FALSE);
+
+	if (self->has_color && color != NULL)
+		*color = self->color;
+	return self->has_color;
+}
+
+void
+lrg_graph_link_set_color (LrgGraphLink   *self,
+                          const GrlColor *color)
+{
+	g_return_if_fail (LRG_IS_GRAPH_LINK (self));
+
+	if (color == NULL && !self->has_color)
+		return;
+	if (color != NULL && self->has_color && memcmp (color, &self->color, sizeof (GrlColor)) == 0)
+		return;
+	self->has_color = color != NULL;
+	if (color != NULL)
+		self->color = *color;
+	g_object_notify_by_pspec (G_OBJECT (self), link_props[LINK_PROP_COLOR]);
+}
+
+LrgCanvasLinkShape
+lrg_graph_link_get_shape (LrgGraphLink *self)
+{
+	g_return_val_if_fail (LRG_IS_GRAPH_LINK (self), LRG_CANVAS_LINK_SHAPE_AUTO);
+	return self->shape;
+}
+
+void
+lrg_graph_link_set_shape (LrgGraphLink       *self,
+                          LrgCanvasLinkShape  shape)
+{
+	g_return_if_fail (LRG_IS_GRAPH_LINK (self));
+	g_return_if_fail (shape <= LRG_CANVAS_LINK_SHAPE_ANGLED);
+
+	if (self->shape == shape)
+		return;
+	self->shape = shape;
+	g_object_notify_by_pspec (G_OBJECT (self), link_props[LINK_PROP_SHAPE]);
+}
+
 /* ==========================================================================
  * LrgGraphNode
  * ========================================================================== */
@@ -691,6 +1408,8 @@ enum
 	NODE_PROP_MIN_WIDTH,
 	NODE_PROP_BODY,
 	NODE_PROP_SELECTED,
+	NODE_PROP_ICON,
+	NODE_PROP_SVG_ICON,
 	NODE_N_PROPS
 };
 
@@ -711,6 +1430,7 @@ lrg_graph_node_dispose (GObject *object)
 	g_clear_pointer (&self->inputs, g_ptr_array_unref);
 	g_clear_pointer (&self->outputs, g_ptr_array_unref);
 	g_clear_object (&self->body);
+	g_clear_object (&self->svg_icon);
 	G_OBJECT_CLASS (lrg_graph_node_parent_class)->dispose (object);
 }
 
@@ -722,6 +1442,7 @@ lrg_graph_node_finalize (GObject *object)
 	g_free (self->id);
 	g_free (self->title);
 	g_free (self->category);
+	g_free (self->icon);
 	G_OBJECT_CLASS (lrg_graph_node_parent_class)->finalize (object);
 }
 
@@ -762,6 +1483,12 @@ lrg_graph_node_get_property (GObject    *object,
 	case NODE_PROP_SELECTED:
 		g_value_set_boolean (value, self->selected);
 		break;
+	case NODE_PROP_ICON:
+		g_value_set_string (value, self->icon);
+		break;
+	case NODE_PROP_SVG_ICON:
+		g_value_set_object (value, self->svg_icon);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -801,6 +1528,12 @@ lrg_graph_node_set_property (GObject      *object,
 		break;
 	case NODE_PROP_BODY:
 		lrg_graph_node_set_body (self, g_value_get_object (value));
+		break;
+	case NODE_PROP_ICON:
+		lrg_graph_node_set_icon (self, g_value_get_string (value));
+		break;
+	case NODE_PROP_SVG_ICON:
+		lrg_graph_node_set_svg_icon (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -898,6 +1631,25 @@ lrg_graph_node_class_init (LrgGraphNodeClass *klass)
 	node_props[NODE_PROP_SELECTED] =
 		g_param_spec_boolean ("selected", "Selected", "Selected in the graph", FALSE,
 		                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgGraphNode:icon:
+	 *
+	 * Name of a built-in icon (#LrgIcon nick) drawn before the title,
+	 * %NULL for none.
+	 */
+	node_props[NODE_PROP_ICON] =
+		g_param_spec_string ("icon", "Icon", "Header icon name", NULL,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgGraphNode:svg-icon:
+	 *
+	 * SVG icon drawn before the title in place of #LrgGraphNode:icon.
+	 */
+	node_props[NODE_PROP_SVG_ICON] =
+		g_param_spec_object ("svg-icon", "SVG icon", "Header SVG icon", LRG_TYPE_SVG_ICON,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, NODE_N_PROPS, node_props);
 }
@@ -999,6 +1751,54 @@ lrg_graph_node_set_accent (LrgGraphNode   *self,
 	if (self->graph != NULL)
 		graph_node_changed (self->graph, self, FALSE);
 	g_object_notify_by_pspec (G_OBJECT (self), node_props[NODE_PROP_ACCENT]);
+}
+
+const gchar *
+lrg_graph_node_get_icon (LrgGraphNode *self)
+{
+	g_return_val_if_fail (LRG_IS_GRAPH_NODE (self), NULL);
+	return self->icon;
+}
+
+void
+lrg_graph_node_set_icon (LrgGraphNode *self,
+                         const gchar  *icon)
+{
+	g_return_if_fail (LRG_IS_GRAPH_NODE (self));
+
+	if (icon != NULL && *icon == '\0')
+		icon = NULL;
+	if (g_strcmp0 (self->icon, icon) == 0)
+		return;
+	g_free (self->icon);
+	self->icon = g_strdup (icon);
+	/* The icon takes header room: the card may widen */
+	self->geometry_dirty = TRUE;
+	if (self->graph != NULL)
+		graph_node_changed (self->graph, self, TRUE);
+	g_object_notify_by_pspec (G_OBJECT (self), node_props[NODE_PROP_ICON]);
+}
+
+LrgSvgIcon *
+lrg_graph_node_get_svg_icon (LrgGraphNode *self)
+{
+	g_return_val_if_fail (LRG_IS_GRAPH_NODE (self), NULL);
+	return self->svg_icon;
+}
+
+void
+lrg_graph_node_set_svg_icon (LrgGraphNode *self,
+                             LrgSvgIcon   *icon)
+{
+	g_return_if_fail (LRG_IS_GRAPH_NODE (self));
+	g_return_if_fail (icon == NULL || LRG_IS_SVG_ICON (icon));
+
+	if (!g_set_object (&self->svg_icon, icon))
+		return;
+	self->geometry_dirty = TRUE;
+	if (self->graph != NULL)
+		graph_node_changed (self->graph, self, TRUE);
+	g_object_notify_by_pspec (G_OBJECT (self), node_props[NODE_PROP_SVG_ICON]);
 }
 
 gfloat
@@ -1225,6 +2025,13 @@ enum
 	PROP_SNAP_TO_GRID,
 	PROP_SHOW_MINIMAP,
 	PROP_ANIMATE_LINKS,
+	PROP_LOOK,
+	PROP_LINK_SHAPE,
+	PROP_PIN_SHAPE,
+	PROP_HEADER_STYLE,
+	PROP_LINK_WIDTH,
+	PROP_GLOW,
+	PROP_SELECTION_FLOW,
 	N_PROPS
 };
 
@@ -1399,6 +2206,14 @@ text_width (GrlFont     *font,
 	return w;
 }
 
+/* node_has_icon: the node draws an icon in its header */
+static gboolean
+node_has_icon (LrgGraphNode *node)
+{
+	return node->svg_icon != NULL ||
+	       (node->icon != NULL && lrg_paint_icon_from_name (node->icon) != LRG_ICON_NONE);
+}
+
 /*
  * ensure_geometry:
  *
@@ -1452,7 +2267,8 @@ ensure_geometry (LrgNodeGraph *self,
 		lrg_widget_get_preferred_size (node->body, &bw, &bh);
 
 	/* --- width --- */
-	width = MAX (node->min_width, node->title_w + PAD * 2.0f + 8.0f);
+	width = MAX (node->min_width, node->title_w + PAD * 2.0f + 8.0f +
+	             (node_has_icon (node) ? ICON_SIZE + ICON_GAP : 0.0f));
 	width = MAX (width, max_in + max_out + LABEL_INSET * 2.0f + LABEL_GAP);
 	width = MAX (width, bw + PAD * 2.0f);
 	node->w = ceilf (width);
@@ -1563,23 +2379,6 @@ segment_distance (gfloat px,
 	qx = ax + dx * t - px;
 	qy = ay + dy * t - py;
 	return sqrtf (qx * qx + qy * qy);
-}
-
-/* link_wire: the screen-space control points of a link */
-static void
-link_wire (LrgNodeGraph *self,
-           const View   *v,
-           LrgGraphLink *link,
-           gfloat        pts[8])
-{
-	gfloat x0;
-	gfloat y0;
-	gfloat x3;
-	gfloat y3;
-
-	port_screen_pos (self, v, link->output, &x0, &y0);
-	port_screen_pos (self, v, link->input, &x3, &y3);
-	wire_points (x0, y0, x3, y3, v->z, pts);
 }
 
 /* rects_overlap: two rectangles given as x, y, w, h intersect */
@@ -2486,6 +3285,8 @@ lrg_node_graph_duplicate_selection (LrgNodeGraph *self)
 		copy->has_accent = orig->has_accent;
 		copy->accent = orig->accent;
 		copy->min_width = orig->min_width;
+		copy->icon = g_strdup (orig->icon);
+		g_set_object (&copy->svg_icon, orig->svg_icon);
 		for (d = 0; d < 2; d++)
 		{
 			GPtrArray *ports = d == 0 ? orig->inputs : orig->outputs;
@@ -2499,6 +3300,7 @@ lrg_node_graph_duplicate_selection (LrgNodeGraph *self)
 				np->multi_link = p->multi_link;
 				np->has_color = p->has_color;
 				np->color = p->color;
+				np->shape = p->shape;
 			}
 		}
 		if (lrg_node_graph_append_node (self, copy))
@@ -2523,7 +3325,17 @@ lrg_node_graph_duplicate_selection (LrgNodeGraph *self)
 		op = lrg_graph_node_find_port (on, LRG_GRAPH_PORT_OUTPUT, link->output->name);
 		ip = lrg_graph_node_find_port (in, LRG_GRAPH_PORT_INPUT, link->input->name);
 		if (op != NULL && ip != NULL)
-			lrg_node_graph_connect (self, op, ip, NULL);
+		{
+			LrgGraphLink *nl = lrg_node_graph_connect (self, op, ip, NULL);
+
+			/* The copy keeps the wire's own look */
+			if (nl != NULL)
+			{
+				nl->has_color = link->has_color;
+				nl->color = link->color;
+				nl->shape = link->shape;
+			}
+		}
 	}
 
 	/* --- the copies become the selection --- */
@@ -2934,47 +3746,35 @@ lrg_node_graph_port_at (LrgNodeGraph *self,
 	return port_near (self, x, y, PORT_REACH, NULL);
 }
 
+/* forward: defined with the painting code */
+static gboolean link_hit (LrgNodeGraph       *self,
+                          gconstpointer       view,
+                          LrgGraphLink       *link,
+                          LrgCanvasLinkShape  shape,
+                          gfloat              x,
+                          gfloat              y);
+static LrgCanvasLinkShape link_shape_of (LrgNodeGraph *self,
+                                         LrgGraphLink *link);
+
 LrgGraphLink *
 lrg_node_graph_link_at (LrgNodeGraph *self,
                         gfloat        x,
                         gfloat        y)
 {
-	View  v;
-	guint i;
+	LrgCanvasLinkShape shape;
+	View               v;
+	guint              i;
 
 	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), NULL);
 
 	view_get (self, &v);
+	shape = link_shape_of (self, NULL);
 	for (i = self->links->len; i > 0; i--)
 	{
 		LrgGraphLink *l = g_ptr_array_index (self->links, i - 1);
-		gfloat        pts[8];
-		gfloat        px;
-		gfloat        py;
-		gint          s;
 
-		link_wire (self, &v, l, pts);
-
-		/* Cheap reject on the control polygon's bounding box */
-		if (x < MIN (MIN (pts[0], pts[2]), MIN (pts[4], pts[6])) - LINK_REACH ||
-		    x > MAX (MAX (pts[0], pts[2]), MAX (pts[4], pts[6])) + LINK_REACH ||
-		    y < MIN (MIN (pts[1], pts[3]), MIN (pts[5], pts[7])) - LINK_REACH ||
-		    y > MAX (MAX (pts[1], pts[3]), MAX (pts[5], pts[7])) + LINK_REACH)
-			continue;
-
-		px = pts[0];
-		py = pts[1];
-		for (s = 1; s <= LINK_SEGMENTS; s++)
-		{
-			gfloat qx;
-			gfloat qy;
-
-			bezier_at (pts, (gfloat) s / (gfloat) LINK_SEGMENTS, &qx, &qy);
-			if (segment_distance (x, y, px, py, qx, qy) <= LINK_REACH)
-				return l;
-			px = qx;
-			py = qy;
-		}
+		if (link_hit (self, &v, l, l->shape != LRG_CANVAS_LINK_SHAPE_AUTO ? l->shape : shape, x, y))
+			return l;
 	}
 	return NULL;
 }
@@ -3068,6 +3868,7 @@ lrg_node_graph_set_grid_style (LrgNodeGraph     *self,
                                LrgNodeGraphGrid  style)
 {
 	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_return_if_fail (style <= LRG_NODE_GRAPH_GRID_CROSSES);
 
 	if (self->grid_style == style)
 		return;
@@ -3133,6 +3934,147 @@ lrg_node_graph_set_animate_links (LrgNodeGraph *self,
 		return;
 	self->animate_links = animate;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ANIMATE_LINKS]);
+}
+
+LrgCanvasLook
+lrg_node_graph_get_look (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), LRG_CANVAS_LOOK_AUTO);
+	return self->look;
+}
+
+void
+lrg_node_graph_set_look (LrgNodeGraph  *self,
+                         LrgCanvasLook  look)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_return_if_fail (look <= LRG_CANVAS_LOOK_NEON);
+
+	if (self->look == look)
+		return;
+	self->look = look;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOOK]);
+}
+
+LrgCanvasLinkShape
+lrg_node_graph_get_link_shape (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), LRG_CANVAS_LINK_SHAPE_AUTO);
+	return self->link_shape;
+}
+
+void
+lrg_node_graph_set_link_shape (LrgNodeGraph       *self,
+                               LrgCanvasLinkShape  shape)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_return_if_fail (shape <= LRG_CANVAS_LINK_SHAPE_ANGLED);
+
+	if (self->link_shape == shape)
+		return;
+	self->link_shape = shape;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LINK_SHAPE]);
+}
+
+LrgCanvasPinShape
+lrg_node_graph_get_pin_shape (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), LRG_CANVAS_PIN_SHAPE_AUTO);
+	return self->pin_shape;
+}
+
+void
+lrg_node_graph_set_pin_shape (LrgNodeGraph      *self,
+                              LrgCanvasPinShape  shape)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_return_if_fail (shape <= LRG_CANVAS_PIN_SHAPE_TRIANGLE);
+
+	if (self->pin_shape == shape)
+		return;
+	self->pin_shape = shape;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PIN_SHAPE]);
+}
+
+LrgCanvasHeaderStyle
+lrg_node_graph_get_header_style (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), LRG_CANVAS_HEADER_STYLE_AUTO);
+	return self->header_style;
+}
+
+void
+lrg_node_graph_set_header_style (LrgNodeGraph         *self,
+                                 LrgCanvasHeaderStyle  style)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_return_if_fail (style <= LRG_CANVAS_HEADER_STYLE_TINT);
+
+	if (self->header_style == style)
+		return;
+	self->header_style = style;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_HEADER_STYLE]);
+}
+
+gfloat
+lrg_node_graph_get_link_width (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), 0.0f);
+	return self->link_width;
+}
+
+void
+lrg_node_graph_set_link_width (LrgNodeGraph *self,
+                               gfloat        width)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+
+	width = CLAMP (width, 0.0f, 32.0f);
+	if (self->link_width == width)
+		return;
+	self->link_width = width;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LINK_WIDTH]);
+}
+
+gfloat
+lrg_node_graph_get_glow (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), -1.0f);
+	return self->glow;
+}
+
+void
+lrg_node_graph_set_glow (LrgNodeGraph *self,
+                         gfloat        glow)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+
+	/* Every negative value means "the look's" */
+	glow = glow < 0.0f ? -1.0f : MIN (glow, 3.0f);
+	if (self->glow == glow)
+		return;
+	self->glow = glow;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GLOW]);
+}
+
+gboolean
+lrg_node_graph_get_selection_flow (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), FALSE);
+	return self->selection_flow;
+}
+
+void
+lrg_node_graph_set_selection_flow (LrgNodeGraph *self,
+                                   gboolean      flow)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+
+	flow = !!flow;
+	if (self->selection_flow == flow)
+		return;
+	self->selection_flow = flow;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SELECTION_FLOW]);
 }
 
 /* ==========================================================================
@@ -3213,6 +4155,120 @@ lrg_node_graph_measure (LrgWidget *widget,
  * halo, foreground the live wire), INDICATOR (rubber band), POPUP
  * (minimap).
  */
+/*
+ * preset_style_defaults:
+ *
+ * The built-in look of a part under a non-Auto preset: the preset's
+ * parts (lrg_canvas_look_parts_init()) mapped onto the widget parts,
+ * so theme style rules and lrg_widget_set_part_look() still apply on
+ * top of the preset. Returns FALSE for parts the preset leaves to the
+ * Auto look (FOCUS ...).
+ */
+static gboolean
+preset_style_defaults (LrgNodeGraph   *self,
+                       LrgUIPart       part,
+                       LrgWidgetState  state,
+                       LrgPartLook    *look)
+{
+	LrgTheme          *theme = lrg_widget_get_theme (LRG_WIDGET (self));
+	LrgCanvasLookParts p;
+	LrgPaintGradient   grad;
+	GrlColor           c;
+
+	lrg_canvas_look_parts_init (&p, self->look, theme);
+	switch (part)
+	{
+	case LRG_UI_PART_BOX:
+		lrg_part_look_set_background (look, &p.background);
+		if (memcmp (&p.background, &p.background_end, sizeof (GrlColor)) != 0)
+		{
+			/* Top-to-bottom wash */
+			memset (&grad, 0, sizeof grad);
+			grad.kind = LRG_PAINT_GRADIENT_LINEAR;
+			grad.start = p.background;
+			grad.end = p.background_end;
+			grad.angle = 90.0f;
+			lrg_part_look_set_gradient (look, &grad);
+		}
+		lrg_part_look_set_border (look, &p.grid_major, 1.0f);
+		lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+		break;
+
+	case LRG_UI_PART_ITEM:
+		lrg_part_look_set_background (look, &p.node_background);
+		lrg_part_look_set_foreground (look, &p.text);
+		lrg_part_look_set_radius (look, p.node_radius);
+		lrg_part_look_set_shadow (look, &p.node_shadow, p.node_shadow_blur, p.node_shadow_offset_y);
+		if (state & LRG_WIDGET_STATE_SELECTED)
+		{
+			lrg_part_look_set_border (look, &p.selection, p.selection_width);
+			if (p.selection_glow > 0.0f)
+			{
+				lrg_paint_color_with_alpha (&p.selection, 0.55f, &c);
+				lrg_part_look_set_glow (look, &c, p.selection_glow);
+			}
+		}
+		else
+			lrg_part_look_set_border (look, &p.node_border, p.node_border_width);
+		break;
+
+	case LRG_UI_PART_HEADER:
+		lrg_part_look_set_background (look, &p.header);
+		lrg_part_look_set_foreground (look, &p.title);
+		break;
+
+	case LRG_UI_PART_LABEL:
+		lrg_part_look_set_foreground (look, &p.text_muted);
+		break;
+
+	case LRG_UI_PART_MARK:
+		lrg_part_look_set_size (look, p.pin_size);
+		lrg_part_look_set_border (look, &p.pin_ring, p.pin_ring_width);
+		if (p.pin_glow > 0.0f)
+		{
+			lrg_paint_color_with_alpha (&p.accent, 0.5f, &c);
+			lrg_part_look_set_glow (look, &c, p.pin_glow);
+		}
+		break;
+
+	case LRG_UI_PART_TRACK:
+		lrg_part_look_set_background (look, &p.grid_minor);
+		lrg_part_look_set_foreground (look, &p.grid_major);
+		if (p.grid_glow > 0.0f)
+			lrg_part_look_set_glow (look, &p.grid_major, p.grid_glow);
+		break;
+
+	case LRG_UI_PART_FILL:
+		lrg_part_look_set_foreground (look, &p.accent);
+		lrg_part_look_set_size (look, p.link_width);
+		lrg_paint_color_with_alpha (&p.accent, 0.4f, &c);
+		lrg_part_look_set_glow (look, &c, p.link_glow);
+		break;
+
+	case LRG_UI_PART_INDICATOR:
+		lrg_paint_color_with_alpha (&p.accent, 0.12f, &c);
+		lrg_part_look_set_background (look, &c);
+		lrg_part_look_set_border (look, &p.accent, 1.0f);
+		lrg_part_look_set_radius (look, 3.0f);
+		break;
+
+	case LRG_UI_PART_POPUP:
+		lrg_paint_color_with_alpha (&p.node_background, 0.92f, &c);
+		lrg_part_look_set_background (look, &c);
+		lrg_part_look_set_border (look, &p.node_border, MAX (1.0f, p.node_border_width));
+		lrg_part_look_set_radius (look, MIN (p.node_radius, 10.0f));
+		lrg_part_look_set_shadow (look, &p.node_shadow, p.node_shadow_blur, p.node_shadow_offset_y);
+		break;
+
+	default:
+		return FALSE;
+	}
+
+	if (state & LRG_WIDGET_STATE_DISABLED)
+		lrg_part_look_set_opacity (look, 0.45f);
+	return TRUE;
+}
+
 static void
 lrg_node_graph_style_defaults (LrgWidget      *widget,
                                LrgUIPart       part,
@@ -3223,6 +4279,11 @@ lrg_node_graph_style_defaults (LrgWidget      *widget,
 	gfloat    radius = lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS);
 	gfloat    bw = MAX (1.0f, lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH));
 	GrlColor  c;
+
+	/* Presets replace the theme-derived built-in look part by part */
+	if (LRG_NODE_GRAPH (widget)->look != LRG_CANVAS_LOOK_AUTO &&
+	    preset_style_defaults (LRG_NODE_GRAPH (widget), part, state, look))
+		return;
 
 	switch (part)
 	{
@@ -3322,23 +4383,94 @@ node_accent (LrgGraphNode   *node,
 /* Looks resolved once per paint, shared by every node */
 typedef struct
 {
-	LrgPartLook item;
-	LrgPartLook item_sel;
-	LrgPartLook header;
-	LrgPartLook label;
-	LrgPartLook mark;
-	LrgPartLook track;
-	LrgPartLook fill;
-	LrgPartLook band;
-	LrgPartLook popup;
-	LrgPartLook focus;
-	GrlFont    *font;
-	gfloat      fs;
-	gfloat      fss;
-	GrlColor    text;
-	gboolean    focus_visible;
-	gboolean    light;        /* light theme: type colours are darkened */
+	LrgPartLook        box;
+	LrgPartLook        item;
+	LrgPartLook        item_sel;
+	LrgPartLook        header;
+	LrgPartLook        label;
+	LrgPartLook        mark;
+	LrgPartLook        track;
+	LrgPartLook        fill;
+	LrgPartLook        band;
+	LrgPartLook        popup;
+	LrgPartLook        focus;
+	LrgCanvasLookParts p;        /* every part, resolved (see resolve_parts) */
+	GrlFont           *font;
+	gfloat             fs;
+	gfloat             fss;
+	GrlColor           text;
+	gboolean           focus_visible;
+	gboolean           light;    /* light canvas: type colours are darkened */
 } Looks;
+
+/*
+ * resolve_parts:
+ *
+ * Builds the resolved LrgCanvasLookParts, lowest precedence first:
+ * the preset (Auto: the theme), then the widget parts as resolved
+ * through style_defaults + theme style rules + part-look overrides
+ * (which carry the preset's colours unless an app overrode them),
+ * then the graph's own look properties. Per-item values (node colour
+ * and icon, port and link shape and colour) are applied while
+ * painting each item.
+ */
+static void
+resolve_parts (LrgNodeGraph *self,
+               const Looks  *k,
+               LrgCanvasLookParts *p)
+{
+	lrg_canvas_look_parts_init (p, self->look, lrg_widget_get_theme (LRG_WIDGET (self)));
+
+	/* --- theme rules and part looks, through the widget parts --- */
+	if (k->box.gradient.kind == LRG_PAINT_GRADIENT_LINEAR)
+	{
+		p->background = k->box.gradient.start;
+		p->background_end = k->box.gradient.end;
+	}
+	else
+	{
+		p->background = k->box.background;
+		p->background_end = k->box.background;
+	}
+	p->node_background = k->item.background;
+	p->node_border = k->item.border;
+	p->node_border_width = k->item.border_width;
+	p->node_radius = k->item.radii.top_left;
+	p->node_shadow = k->item.shadow;
+	p->node_shadow_blur = k->item.shadow_blur;
+	p->node_shadow_offset_y = k->item.shadow_offset_y;
+	p->selection = k->item_sel.border;
+	p->selection_width = k->item_sel.border_width;
+	p->selection_glow = k->item_sel.glow.a > 0 ? k->item_sel.glow_size : 0.0f;
+	p->header = k->header.background;
+	p->title = k->header.foreground;
+	p->text_muted = k->label.foreground;
+	p->pin_size = k->mark.size;
+	p->pin_ring = k->mark.border;
+	p->pin_ring_width = k->mark.border_width;
+	p->pin_glow = k->mark.glow.a > 0 ? k->mark.glow_size : 0.0f;
+	p->grid_minor = k->track.background;
+	p->grid_major = k->track.foreground;
+	p->grid_glow = k->track.glow.a > 0 ? k->track.glow_size : 0.0f;
+	p->link_width = k->fill.size;
+	p->link_glow = k->fill.glow_size;
+	p->accent = k->fill.foreground;
+
+	/* --- the graph's own look properties --- */
+	if (self->grid_style != LRG_NODE_GRAPH_GRID_AUTO)
+		p->grid_style = self->grid_style;
+	if (self->link_shape != LRG_CANVAS_LINK_SHAPE_AUTO)
+		p->link_shape = self->link_shape;
+	if (self->pin_shape != LRG_CANVAS_PIN_SHAPE_AUTO)
+		p->pin_shape = self->pin_shape;
+	if (self->header_style != LRG_CANVAS_HEADER_STYLE_AUTO)
+		p->header_style = self->header_style;
+	if (self->link_width > 0.0f)
+		p->link_width = self->link_width;
+	if (self->glow >= 0.0f)
+		p->glow = self->glow;
+	p->link_flow = p->link_flow || self->selection_flow;
+}
 
 static void
 resolve_looks (LrgNodeGraph *self,
@@ -3349,6 +4481,7 @@ resolve_looks (LrgNodeGraph *self,
 	LrgWidgetState st = lrg_widget_get_state_flags (w) &
 	                    (LRG_WIDGET_STATE_DISABLED | LRG_WIDGET_STATE_FOCUSED);
 
+	lrg_widget_resolve_look (w, LRG_UI_PART_BOX, &k->box);
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_ITEM, st, &k->item);
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_ITEM, st | LRG_WIDGET_STATE_SELECTED, &k->item_sel);
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_HEADER, st, &k->header);
@@ -3359,12 +4492,27 @@ resolve_looks (LrgNodeGraph *self,
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_INDICATOR, st, &k->band);
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_POPUP, st, &k->popup);
 	lrg_widget_resolve_look (w, LRG_UI_PART_FOCUS, &k->focus);
+	resolve_parts (self, k, &k->p);
 	k->font = lrg_theme_get_ui_font (theme);
 	k->fs = font_size (self);
 	k->fss = font_size_small (self);
-	k->text = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	k->text = self->look == LRG_CANVAS_LOOK_AUTO ? *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT)
+	                                             : k->p.text;
 	k->focus_visible = (lrg_widget_get_state_flags (w) & LRG_WIDGET_STATE_FOCUS_VISIBLE) != 0;
-	k->light = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_WINDOW)) > 0.5f;
+	k->light = !k->p.dark;
+}
+
+void
+lrg_node_graph_get_look_parts (LrgNodeGraph       *self,
+                               LrgCanvasLookParts *parts)
+{
+	Looks k;
+
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_return_if_fail (parts != NULL);
+
+	resolve_looks (self, &k);
+	*parts = k.p;
 }
 
 /*
@@ -3372,7 +4520,7 @@ resolve_looks (LrgNodeGraph *self,
  *
  * The colour a port and its wires use: the explicit colour, the theme
  * accent for "any", else the type's palette colour, darkened on light
- * themes so pastel wires keep their contrast.
+ * canvases so pastel wires keep their contrast.
  */
 static void
 port_color (LrgNodeGraph *self,
@@ -3381,17 +4529,71 @@ port_color (LrgNodeGraph *self,
             GrlColor     *out)
 {
 	if (!port->has_color && port->type == 0)
-		*out = *lrg_theme_get_color (lrg_widget_get_theme (LRG_WIDGET (self)), LRG_THEME_COLOR_ACCENT);
+		*out = self->look == LRG_CANVAS_LOOK_AUTO
+		       ? *lrg_theme_get_color (lrg_widget_get_theme (LRG_WIDGET (self)), LRG_THEME_COLOR_ACCENT)
+		       : k->p.accent;
 	else if (!lrg_graph_port_get_color (port, out) && k->light)
 		lrg_paint_color_shade (out, -0.3f, out);
 }
 
 /*
+ * port_shape:
+ *
+ * The shape a port is drawn with: its own, else the graph's
+ * pin-shape, else the Blueprint convention (ports of type "exec" are
+ * arrows), else the look's.
+ */
+static LrgCanvasPinShape
+port_shape (LrgNodeGraph *self,
+            const Looks  *k,
+            LrgGraphPort *port)
+{
+	static GQuark exec = 0;
+
+	if (port->shape != LRG_CANVAS_PIN_SHAPE_AUTO)
+		return port->shape;
+	if (self->pin_shape != LRG_CANVAS_PIN_SHAPE_AUTO)
+		return self->pin_shape;
+	if (exec == 0)
+		exec = g_quark_from_static_string ("exec");
+	if (self->look == LRG_CANVAS_LOOK_BLUEPRINT && port->type == exec)
+		return LRG_CANVAS_PIN_SHAPE_TRIANGLE;
+	return k->p.pin_shape;
+}
+
+/*
+ * grid_line:
+ *
+ * One grid line, with a soft halo under it when @halo > 0 (a wider,
+ * fainter line: two instances that batch with every other line).
+ */
+static void
+grid_line (LrgPaintList   *list,
+           gfloat          x0,
+           gfloat          y0,
+           gfloat          x1,
+           gfloat          y1,
+           gfloat          halo,
+           const GrlColor *c)
+{
+	if (halo > 0.0f)
+	{
+		GrlColor h = *c;
+
+		h.a = (guint8) ((gfloat) c->a * 0.35f);
+		lrg_paint_list_line (list, x0, y0, x1, y1, 1.0f + halo * 2.0f, &h);
+	}
+	lrg_paint_list_line (list, x0, y0, x1, y1, 1.0f, c);
+}
+
+/*
  * paint_grid:
  *
- * Minor cells every grid-size units and major cells every four, each
- * fading in as its on-screen spacing grows past a few units, so the
- * grid never turns into noise when zoomed out.
+ * Minor cells every grid-size units and major cells every
+ * grid-major-every minor ones, each fading in as its on-screen spacing
+ * grows past a few units, so the grid never turns into noise when
+ * zoomed out. Lines are plain line instances (one per line, batched
+ * into the same draw call); dots and crosses are capped at DOT_MAX.
  */
 static void
 paint_grid (LrgNodeGraph *self,
@@ -3399,23 +4601,26 @@ paint_grid (LrgNodeGraph *self,
             const View   *v,
             const Looks  *k)
 {
-	gfloat step = self->grid_size;
-	gint   level;
+	const LrgCanvasLookParts *p = &k->p;
+	gfloat                    every = (gfloat) MAX (2u, p->grid_major_every);
+	gfloat                    step = self->grid_size;
+	gint                      level;
 
-	if (self->grid_style == LRG_NODE_GRAPH_GRID_NONE)
+	if (p->grid_style == LRG_NODE_GRAPH_GRID_NONE)
 		return;
 
 	/* Coarsen until a major cell is at least 24 canvas units */
-	while (step * 4.0f * v->z < 24.0f)
-		step *= 4.0f;
+	while (step * every * v->z < 24.0f)
+		step *= every;
 
 	for (level = 0; level < 2; level++)
 	{
-		gfloat   gstep = level == 0 ? step : step * 4.0f;
+		gfloat   gstep = level == 0 ? step : step * every;
 		gfloat   s = gstep * v->z;
 		gfloat   fade = level == 0 ? CLAMP ((s - 6.0f) / 14.0f, 0.0f, 1.0f)
 		                           : CLAMP ((s - 12.0f) / 24.0f, 0.0f, 1.0f);
-		GrlColor c = level == 0 ? k->track.background : k->track.foreground;
+		GrlColor c = level == 0 ? p->grid_minor : p->grid_major;
+		gfloat   halo = level == 1 ? p->grid_glow * p->glow : 0.0f;
 		gfloat   gx0 = floorf (to_gx (v, v->wx) / gstep) * gstep;
 		gfloat   gy0 = floorf (to_gy (v, v->wy) / gstep) * gstep;
 		gfloat   gx;
@@ -3425,22 +4630,22 @@ paint_grid (LrgNodeGraph *self,
 			continue;
 		c.a = (guint8) ((gfloat) c.a * fade);
 
-		if (self->grid_style == LRG_NODE_GRAPH_GRID_LINES)
+		if (p->grid_style == LRG_NODE_GRAPH_GRID_LINES)
 		{
 			for (gx = gx0; to_sx (v, gx) <= v->wx + v->w; gx += gstep)
 			{
 				/* Minor lines under a major one are skipped */
-				if (level == 0 && fmodf (fabsf (gx), gstep * 4.0f) < gstep * 0.5f)
+				if (level == 0 && fmodf (fabsf (gx), gstep * every) < gstep * 0.5f)
 					continue;
-				lrg_paint_list_line (list, roundf (to_sx (v, gx)) + 0.5f, v->wy,
-				                     roundf (to_sx (v, gx)) + 0.5f, v->wy + v->h, 1.0f, &c);
+				grid_line (list, roundf (to_sx (v, gx)) + 0.5f, v->wy,
+				           roundf (to_sx (v, gx)) + 0.5f, v->wy + v->h, halo, &c);
 			}
 			for (gy = gy0; to_sy (v, gy) <= v->wy + v->h; gy += gstep)
 			{
-				if (level == 0 && fmodf (fabsf (gy), gstep * 4.0f) < gstep * 0.5f)
+				if (level == 0 && fmodf (fabsf (gy), gstep * every) < gstep * 0.5f)
 					continue;
-				lrg_paint_list_line (list, v->wx, roundf (to_sy (v, gy)) + 0.5f,
-				                     v->wx + v->w, roundf (to_sy (v, gy)) + 0.5f, 1.0f, &c);
+				grid_line (list, v->wx, roundf (to_sy (v, gy)) + 0.5f,
+				           v->wx + v->w, roundf (to_sy (v, gy)) + 0.5f, halo, &c);
 			}
 		}
 		else
@@ -3448,45 +4653,290 @@ paint_grid (LrgNodeGraph *self,
 			gfloat cols = v->w / s + 2.0f;
 			gfloat rows = v->h / s + 2.0f;
 			gfloat r = level == 0 ? 1.0f : 1.6f;
+			gfloat arm = level == 0 ? 2.5f : 4.0f;
+			gfloat cap = p->grid_style == LRG_NODE_GRAPH_GRID_CROSSES ? (gfloat) DOT_MAX * 0.5f
+			                                                            : (gfloat) DOT_MAX;
 
-			/* Dots are one instance each: bail out if too dense */
-			if (cols * rows > (gfloat) DOT_MAX || s < 10.0f)
+			/* Dots and crosses are one or two instances each: bail out
+			 * if too dense */
+			if (cols * rows > cap || s < 10.0f)
 				continue;
 			for (gx = gx0; to_sx (v, gx) <= v->wx + v->w; gx += gstep)
 				for (gy = gy0; to_sy (v, gy) <= v->wy + v->h; gy += gstep)
-					lrg_paint_list_circle (list, to_sx (v, gx), to_sy (v, gy), r, &c);
+				{
+					gfloat x = to_sx (v, gx);
+					gfloat y = to_sy (v, gy);
+
+					if (p->grid_style == LRG_NODE_GRAPH_GRID_CROSSES)
+					{
+						lrg_paint_list_line (list, x - arm, y, x + arm, y, 1.0f, &c);
+						lrg_paint_list_line (list, x, y - arm, x, y + arm, 1.0f, &c);
+					}
+					else
+						lrg_paint_list_circle (list, x, y, r, &c);
+				}
 		}
 	}
+}
+
+/* ==========================================================================
+ * Wire paths
+ * ========================================================================== */
+
+#define PATH_MAX_PTS (6)
+
+/*
+ * WirePath:
+ *
+ * The screen-space path of a wire: one cubic Bezier (BEZIER), or a
+ * polyline of up to PATH_MAX_PTS points (STRAIGHT, STEP, ANGLED). The
+ * same path is painted and hit tested.
+ */
+typedef struct
+{
+	LrgCanvasLinkShape shape;
+	gfloat             bez[8];
+	gfloat             pts[PATH_MAX_PTS * 2];
+	guint              n;
+} WirePath;
+
+/* path_add: appends a polyline point, dropping repeats */
+static void
+path_add (WirePath *w,
+          gfloat    x,
+          gfloat    y)
+{
+	if (w->n > 0 && fabsf (w->pts[w->n * 2 - 2] - x) < 0.01f && fabsf (w->pts[w->n * 2 - 1] - y) < 0.01f)
+		return;
+	if (w->n >= PATH_MAX_PTS)
+		return;
+	w->pts[w->n * 2] = x;
+	w->pts[w->n * 2 + 1] = y;
+	w->n++;
+}
+
+/*
+ * wire_path:
+ *
+ * The path of a wire from an output at (x0, y0) to an input at
+ * (x3, y3) in @shape. STEP turns at the middle column, or, when the
+ * wire runs backwards, leaves the output, crosses at the middle row and
+ * enters the input from the left; ANGLED leaves and enters on short
+ * horizontal stubs joined by a diagonal.
+ */
+static void
+wire_path (LrgCanvasLinkShape  shape,
+           gfloat              x0,
+           gfloat              y0,
+           gfloat              x3,
+           gfloat              y3,
+           gfloat              zoom,
+           WirePath           *w)
+{
+	gfloat stub = 20.0f * zoom;
+
+	memset (w, 0, sizeof *w);
+	w->shape = shape;
+	switch (shape)
+	{
+	case LRG_CANVAS_LINK_SHAPE_STRAIGHT:
+		path_add (w, x0, y0);
+		path_add (w, x3, y3);
+		break;
+
+	case LRG_CANVAS_LINK_SHAPE_STEP:
+		path_add (w, x0, y0);
+		if (x3 - x0 >= stub * 2.0f)
+		{
+			gfloat mx = roundf ((x0 + x3) * 0.5f);
+
+			path_add (w, mx, y0);
+			path_add (w, mx, y3);
+		}
+		else
+		{
+			gfloat my = (y0 + y3) * 0.5f;
+
+			path_add (w, x0 + stub, y0);
+			path_add (w, x0 + stub, my);
+			path_add (w, x3 - stub, my);
+			path_add (w, x3 - stub, y3);
+		}
+		path_add (w, x3, y3);
+		break;
+
+	case LRG_CANVAS_LINK_SHAPE_ANGLED:
+		stub = MIN (24.0f * zoom, MAX (4.0f * zoom, fabsf (x3 - x0) * 0.25f));
+		path_add (w, x0, y0);
+		path_add (w, x0 + stub, y0);
+		path_add (w, x3 - stub, y3);
+		path_add (w, x3, y3);
+		break;
+
+	case LRG_CANVAS_LINK_SHAPE_BEZIER:
+	case LRG_CANVAS_LINK_SHAPE_AUTO:
+	default:
+		w->shape = LRG_CANVAS_LINK_SHAPE_BEZIER;
+		wire_points (x0, y0, x3, y3, zoom, w->bez);
+		break;
+	}
+}
+
+/* path_bounds: the box around a path (the Bezier's control polygon) */
+static void
+path_bounds (const WirePath *w,
+             gfloat         *x0,
+             gfloat         *y0,
+             gfloat         *x1,
+             gfloat         *y1)
+{
+	const gfloat *pts = w->shape == LRG_CANVAS_LINK_SHAPE_BEZIER ? w->bez : w->pts;
+	guint         n = w->shape == LRG_CANVAS_LINK_SHAPE_BEZIER ? 4 : w->n;
+	guint         i;
+
+	*x0 = *y0 = G_MAXFLOAT;
+	*x1 = *y1 = -G_MAXFLOAT;
+	for (i = 0; i < n; i++)
+	{
+		*x0 = MIN (*x0, pts[i * 2]);
+		*x1 = MAX (*x1, pts[i * 2]);
+		*y0 = MIN (*y0, pts[i * 2 + 1]);
+		*y1 = MAX (*y1, pts[i * 2 + 1]);
+	}
+}
+
+/* path_distance: distance from (x, y) to the path */
+static gfloat
+path_distance (const WirePath *w,
+               gfloat          x,
+               gfloat          y)
+{
+	gfloat best = G_MAXFLOAT;
+	gfloat px;
+	gfloat py;
+	guint  i;
+
+	if (w->shape == LRG_CANVAS_LINK_SHAPE_BEZIER)
+	{
+		gint s;
+
+		px = w->bez[0];
+		py = w->bez[1];
+		for (s = 1; s <= LINK_SEGMENTS; s++)
+		{
+			gfloat qx;
+			gfloat qy;
+
+			bezier_at (w->bez, (gfloat) s / (gfloat) LINK_SEGMENTS, &qx, &qy);
+			best = MIN (best, segment_distance (x, y, px, py, qx, qy));
+			px = qx;
+			py = qy;
+		}
+		return best;
+	}
+	for (i = 0; i + 1 < w->n; i++)
+		best = MIN (best, segment_distance (x, y, w->pts[i * 2], w->pts[i * 2 + 1],
+		                                    w->pts[i * 2 + 2], w->pts[i * 2 + 3]));
+	return best;
+}
+
+/* link_shape_of: the shape a link is drawn with */
+static LrgCanvasLinkShape
+link_shape_of (LrgNodeGraph *self,
+               LrgGraphLink *link)
+{
+	LrgCanvasLookParts p;
+
+	if (link != NULL && link->shape != LRG_CANVAS_LINK_SHAPE_AUTO)
+		return link->shape;
+	if (self->link_shape != LRG_CANVAS_LINK_SHAPE_AUTO)
+		return self->link_shape;
+	if (self->look == LRG_CANVAS_LOOK_AUTO)
+		return LRG_CANVAS_LINK_SHAPE_BEZIER;
+	lrg_canvas_look_parts_init (&p, self->look, lrg_widget_get_theme (LRG_WIDGET (self)));
+	return p.link_shape;
+}
+
+/* link_path: the screen-space path of @link through the view @v */
+static void
+link_path (LrgNodeGraph       *self,
+           const View         *v,
+           LrgGraphLink       *link,
+           LrgCanvasLinkShape  shape,
+           WirePath           *w)
+{
+	gfloat x0;
+	gfloat y0;
+	gfloat x3;
+	gfloat y3;
+
+	port_screen_pos (self, v, link->output, &x0, &y0);
+	port_screen_pos (self, v, link->input, &x3, &y3);
+	wire_path (shape, x0, y0, x3, y3, v->z, w);
+}
+
+/* link_hit: (@x, @y) is within LINK_REACH of @link's path */
+static gboolean
+link_hit (LrgNodeGraph       *self,
+          gconstpointer       view,
+          LrgGraphLink       *link,
+          LrgCanvasLinkShape  shape,
+          gfloat              x,
+          gfloat              y)
+{
+	const View *v = view;
+	WirePath    w;
+	gfloat      x0;
+	gfloat      y0;
+	gfloat      x1;
+	gfloat      y1;
+
+	link_path (self, v, link, shape, &w);
+
+	/* Cheap reject on the path's bounding box */
+	path_bounds (&w, &x0, &y0, &x1, &y1);
+	if (x < x0 - LINK_REACH || x > x1 + LINK_REACH || y < y0 - LINK_REACH || y > y1 + LINK_REACH)
+		return FALSE;
+	return path_distance (&w, x, y) <= LINK_REACH;
 }
 
 /*
  * paint_wire:
  *
- * One wire as a gradient Bezier from @from to @to with a glow halo,
- * stronger when @emphasis (hovered or selected), and flowing pulses
- * when animate-links is on.
+ * One wire along @w: a gradient from @from to @to (a Bezier is one
+ * curve instance; a polyline one straight curve instance per segment,
+ * the gradient running across the whole path by length) with a glow
+ * halo, stronger when @emphasis (hovered or selected), and flowing
+ * pulses when @pulses.
  */
 static void
 paint_wire (LrgNodeGraph   *self,
             LrgPaintList   *list,
             const View     *v,
             const Looks    *k,
-            const gfloat    pts[8],
+            const WirePath *w,
             const GrlColor *from,
             const GrlColor *to,
             gfloat          emphasis,
             gboolean        pulses)
 {
 	LrgPaintCurveStyle style;
-	gfloat             thickness = MAX (1.25f, k->fill.size * v->z) * (1.0f + emphasis * 0.4f);
+	gfloat             thickness = MAX (1.25f, k->p.link_width * v->z) * (1.0f + emphasis * 0.4f);
+	gfloat             total = 0.0f;
+	gfloat             done = 0.0f;
 	GrlColor           mid;
+	guint              i;
 
 	lrg_paint_curve_style_init (&style, from);
 	style.color_start = *from;
-	style.color_end = *to;
+	style.color_end = k->p.link_gradient ? *to : *from;
 	lrg_paint_color_mix (from, to, 0.5f, &mid);
-	lrg_paint_color_with_alpha (&mid, 0.12f + 0.38f * emphasis, &style.glow);
-	style.glow_size = MAX (2.0f, k->fill.glow_size * v->z) * (0.6f + emphasis * 0.8f);
+	if (k->p.glow > 0.0f && (k->p.link_glow > 0.0f || emphasis > 0.0f))
+	{
+		lrg_paint_color_with_alpha (&mid, MIN (1.0f, (0.12f + 0.38f * emphasis) * MAX (1.0f, k->p.glow)),
+		                            &style.glow);
+		style.glow_size = MAX (2.0f, k->p.link_glow * v->z) * (0.6f + emphasis * 0.8f) * k->p.glow;
+	}
 	if (pulses)
 	{
 		lrg_paint_color_mix (&mid, &(GrlColor){ 255, 255, 255, 255 }, 0.6f, &style.pulse_color);
@@ -3494,22 +4944,61 @@ paint_wire (LrgNodeGraph   *self,
 		style.pulse_speed = 0.35f;
 		style.pulse_phase = 0.0f;
 	}
-	lrg_paint_list_curve (list, pts[0], pts[1], pts[2], pts[3], pts[4], pts[5], pts[6], pts[7],
-	                      thickness, &style);
+
+	if (w->shape == LRG_CANVAS_LINK_SHAPE_BEZIER)
+	{
+		lrg_paint_list_curve (list, w->bez[0], w->bez[1], w->bez[2], w->bez[3], w->bez[4], w->bez[5],
+		                      w->bez[6], w->bez[7], thickness, &style);
+		return;
+	}
+
+	/* --- polyline: one straight curve per segment --- */
+	for (i = 0; i + 1 < w->n; i++)
+		total += hypotf (w->pts[i * 2 + 2] - w->pts[i * 2], w->pts[i * 2 + 3] - w->pts[i * 2 + 1]);
+	if (total <= 0.0f)
+		return;
+	for (i = 0; i + 1 < w->n; i++)
+	{
+		gfloat             ax = w->pts[i * 2];
+		gfloat             ay = w->pts[i * 2 + 1];
+		gfloat             bx = w->pts[i * 2 + 2];
+		gfloat             by = w->pts[i * 2 + 3];
+		gfloat             len = hypotf (bx - ax, by - ay);
+		LrgPaintCurveStyle seg = style;
+
+		if (k->p.link_gradient)
+		{
+			lrg_paint_color_mix (from, to, done / total, &seg.color_start);
+			lrg_paint_color_mix (from, to, (done + len) / total, &seg.color_end);
+		}
+		if (pulses)
+		{
+			/* Same travel speed on every segment, pulses spread by length */
+			seg.pulse_count = (guint) MAX (1.0f, roundf (3.0f * len / total));
+			seg.pulse_speed = style.pulse_speed * total / MAX (len, 1.0f);
+			seg.pulse_phase = done / total;
+		}
+		lrg_paint_list_curve (list, ax, ay, ax + (bx - ax) / 3.0f, ay + (by - ay) / 3.0f,
+		                      ax + (bx - ax) * 2.0f / 3.0f, ay + (by - ay) * 2.0f / 3.0f, bx, by,
+		                      thickness, &seg);
+		done += len;
+	}
 }
 
-/* curve_visible: the control polygon's box (grown by @pad) meets the view */
+/* path_visible: the path's box (grown by @pad) meets the view */
 static gboolean
-curve_visible (const View   *v,
-               const gfloat  pts[8],
-               gfloat        pad)
+path_visible (const View     *v,
+              const WirePath *w,
+              gfloat          pad)
 {
-	gfloat x0 = MIN (MIN (pts[0], pts[2]), MIN (pts[4], pts[6])) - pad;
-	gfloat x1 = MAX (MAX (pts[0], pts[2]), MAX (pts[4], pts[6])) + pad;
-	gfloat y0 = MIN (MIN (pts[1], pts[3]), MIN (pts[5], pts[7])) - pad;
-	gfloat y1 = MAX (MAX (pts[1], pts[3]), MAX (pts[5], pts[7])) + pad;
+	gfloat x0;
+	gfloat y0;
+	gfloat x1;
+	gfloat y1;
 
-	return rects_overlap (x0, y0, x1 - x0, y1 - y0, v->wx, v->wy, v->w, v->h);
+	path_bounds (w, &x0, &y0, &x1, &y1);
+	return rects_overlap (x0 - pad, y0 - pad, x1 - x0 + pad * 2.0f, y1 - y0 + pad * 2.0f,
+	                      v->wx, v->wy, v->w, v->h);
 }
 
 static void
@@ -3523,22 +5012,41 @@ paint_links (LrgNodeGraph *self,
 	for (i = 0; i < self->links->len; i++)
 	{
 		LrgGraphLink *l = g_ptr_array_index (self->links, i);
-		gfloat        pts[8];
+		WirePath      w;
 		GrlColor      a;
 		GrlColor      b;
 		gfloat        emphasis = 0.0f;
+		gboolean      selected = FALSE;
 
-		link_wire (self, v, l, pts);
-		if (!curve_visible (v, pts, 16.0f))
+		link_path (self, v, l, l->shape != LRG_CANVAS_LINK_SHAPE_AUTO ? l->shape : k->p.link_shape, &w);
+		if (!path_visible (v, &w, 16.0f))
 			continue;
 
-		port_color (self, k, l->output, &a);
-		port_color (self, k, l->input, &b);
+		/* Per-item colour beats the port colours */
+		if (l->has_color)
+		{
+			a = l->color;
+			b = l->color;
+		}
+		else
+		{
+			port_color (self, k, l->output, &a);
+			port_color (self, k, l->input, &b);
+		}
 		if (l == self->selected_link)
+		{
 			emphasis = 1.0f;
-		else if (l == self->hover_link || l->output->node->selected || l->input->node->selected)
+			selected = TRUE;
+		}
+		else if (l->output->node->selected || l->input->node->selected)
+		{
 			emphasis = 0.5f;
-		paint_wire (self, list, v, k, pts, &a, &b, emphasis, self->animate_links);
+			selected = TRUE;
+		}
+		else if (l == self->hover_link)
+			emphasis = 0.5f;
+		paint_wire (self, list, v, k, &w, &a, &b, emphasis,
+		            self->animate_links || (selected && k->p.link_flow));
 		self->stat_links++;
 	}
 }
@@ -3561,7 +5069,7 @@ paint_live_link (LrgNodeGraph *self,
 	gfloat        oy;
 	gfloat        ex = self->pointer_x;
 	gfloat        ey = self->pointer_y;
-	gfloat        pts[8];
+	WirePath      w;
 	GrlColor      oc;
 	GrlColor      ec;
 
@@ -3578,21 +5086,66 @@ paint_live_link (LrgNodeGraph *self,
 	}
 	if (o->direction == LRG_GRAPH_PORT_OUTPUT)
 	{
-		wire_points (ox, oy, ex, ey, v->z, pts);
-		paint_wire (self, list, v, k, pts, &oc, &ec, 1.0f, TRUE);
+		wire_path (k->p.link_shape, ox, oy, ex, ey, v->z, &w);
+		paint_wire (self, list, v, k, &w, &oc, &ec, 1.0f, TRUE);
 	}
 	else
 	{
-		wire_points (ex, ey, ox, oy, v->z, pts);
-		paint_wire (self, list, v, k, pts, &ec, &oc, 1.0f, TRUE);
+		wire_path (k->p.link_shape, ex, ey, ox, oy, v->z, &w);
+		paint_wire (self, list, v, k, &w, &ec, &oc, 1.0f, TRUE);
+	}
+}
+
+/*
+ * pin_shape:
+ *
+ * A port shape of "radius" @r centred at (@x, @y) in @c: a circle, a
+ * rounded square, a diamond (two triangles) or an arrow pointing
+ * right (along the flow).
+ */
+static void
+pin_shape (LrgPaintList      *list,
+           LrgCanvasPinShape  shape,
+           gfloat             x,
+           gfloat             y,
+           gfloat             r,
+           const GrlColor    *c)
+{
+	gfloat d;
+
+	switch (shape)
+	{
+	case LRG_CANVAS_PIN_SHAPE_SQUARE:
+		d = r * 0.9f;
+		lrg_paint_list_rect (list, x - d, y - d, d * 2.0f, d * 2.0f, d * 0.3f, c);
+		break;
+
+	case LRG_CANVAS_PIN_SHAPE_DIAMOND:
+		d = r * 1.25f;
+		lrg_paint_list_triangle (list, x - d, y, x, y - d, x + d, y, c);
+		lrg_paint_list_triangle (list, x - d, y, x + d, y, x, y + d, c);
+		break;
+
+	case LRG_CANVAS_PIN_SHAPE_TRIANGLE:
+		d = r * 1.15f;
+		lrg_paint_list_triangle (list, x - d * 0.8f, y - d, x + d, y, x - d * 0.8f, y + d, c);
+		break;
+
+	case LRG_CANVAS_PIN_SHAPE_CIRCLE:
+	case LRG_CANVAS_PIN_SHAPE_AUTO:
+	default:
+		lrg_paint_list_circle (list, x, y, r, c);
+		break;
 	}
 }
 
 /*
  * paint_port:
  *
- * A port dot: filled when linked, a ring when free. While a wire is
- * dragged, ports it can land on grow and glow, the others fade.
+ * A port in its shape: filled when linked, an outline when free (the
+ * shape again, smaller, in the ring colour). While a wire is dragged,
+ * ports it can land on grow and glow, the others fade. Looks with a
+ * pin glow light every port softly in its colour.
  */
 static void
 paint_port (LrgNodeGraph *self,
@@ -3603,11 +5156,13 @@ paint_port (LrgNodeGraph *self,
             gfloat        sx,
             gfloat        sy)
 {
-	GrlColor c;
-	GrlColor ring;
-	gfloat   r = k->mark.size * 0.5f * v->z;
-	gfloat   alpha = 1.0f;
-	gboolean hot = p == self->hover_port || p == self->link_snap;
+	LrgCanvasPinShape shape = port_shape (self, k, p);
+	GrlColor          c;
+	GrlColor          ring;
+	gfloat            r = k->p.pin_size * 0.5f * v->z;
+	gfloat            alpha = 1.0f;
+	gfloat            halo = k->p.pin_glow * k->p.glow;
+	gboolean          hot = p == self->hover_port || p == self->link_snap;
 
 	port_color (self, k, p, &c);
 	if (self->drag == DRAG_LINK)
@@ -3616,6 +5171,14 @@ paint_port (LrgNodeGraph *self,
 			hot = TRUE;
 		else if (p != self->link_origin)
 			alpha = 0.3f;
+	}
+	if (halo > 0.0f)
+	{
+		GrlColor glow;
+
+		lrg_paint_color_with_alpha (&c, 0.55f * alpha, &glow);
+		lrg_paint_list_shadow (list, sx - r, sy - r, r * 2.0f, r * 2.0f, r, halo * v->z, 0.0f, 0.0f,
+		                       0.0f, &glow);
 	}
 	if (hot)
 	{
@@ -3626,22 +5189,147 @@ paint_port (LrgNodeGraph *self,
 		lrg_paint_list_circle (list, sx, sy, r + 4.0f * v->z, &glow);
 	}
 	c.a = (guint8) ((gfloat) c.a * alpha);
-	lrg_paint_list_circle (list, sx, sy, r, &c);
+	pin_shape (list, shape, sx, sy, r, &c);
 	if (p->n_links == 0 && p != self->link_snap)
 	{
-		ring = k->mark.border;
+		ring = k->p.pin_ring;
 		ring.a = (guint8) ((gfloat) ring.a * alpha);
-		lrg_paint_list_circle (list, sx, sy, MAX (0.5f, r - MAX (1.5f, k->mark.border_width * v->z)),
-		                       &ring);
+		pin_shape (list, shape, sx, sy, MAX (0.5f, r - MAX (1.5f, k->p.pin_ring_width * v->z)), &ring);
+	}
+}
+
+/* title_on: a readable title colour on @fill: @want, else text, else black or white */
+static void
+title_on (const Looks    *k,
+          const GrlColor *want,
+          const GrlColor *fill,
+          GrlColor       *out)
+{
+	if (want->a > 0 && lrg_paint_color_contrast (want, fill) >= 3.0f)
+		*out = *want;
+	else if (lrg_paint_color_contrast (&k->text, fill) >= 3.0f)
+		*out = k->text;
+	else
+		*out = lrg_paint_color_luminance (fill) > 0.4f ? (GrlColor){ 20, 20, 24, 255 }
+		                                               : (GrlColor){ 250, 250, 250, 255 };
+}
+
+/*
+ * paint_header:
+ *
+ * The header strip of a card in the resolved header style, then the
+ * icon and the title. Returns nothing; @accent is the node colour.
+ */
+static void
+paint_header (LrgNodeGraph   *self,
+              LrgPaintList   *list,
+              const View     *v,
+              const Looks    *k,
+              LrgGraphNode   *n,
+              const GrlColor *accent,
+              gfloat          sx,
+              gfloat          sy,
+              gfloat          sw,
+              gfloat          r)
+{
+	const LrgCanvasLookParts *p = &k->p;
+	gfloat                    hh = HEADER_H * v->z;
+	LrgCornerRadii            top = { r, r, 0.0f, 0.0f };
+	LrgPaintGradient          grad;
+	GrlColor                  fill;
+	GrlColor                  title;
+	gfloat                    tx;
+
+	/* --- the strip --- */
+	switch (p->header_style)
+	{
+	case LRG_CANVAS_HEADER_STYLE_SOLID:
+		fill = *accent;
+		lrg_paint_list_rect_ex (list, sx, sy, sw, hh, &top, &fill, NULL, 0.0f, NULL);
+		title_on (k, &k->header.foreground, &fill, &title);
+		break;
+
+	case LRG_CANVAS_HEADER_STYLE_STRIPE:
+		{
+			gfloat band = MAX (2.0f, 3.0f * v->z);
+
+			/* Card colour lifted a little and tinted, a bright band on top */
+			lrg_paint_color_mix (&p->node_background, accent, 0.12f, &fill);
+			fill.a = MAX (fill.a, p->node_background.a);
+			lrg_paint_list_rect_ex (list, sx, sy, sw, hh, &top, &fill, NULL, 0.0f, NULL);
+			if (p->glow > 0.0f && p->node_glow > 0.0f)
+			{
+				GrlColor g;
+
+				lrg_paint_color_with_alpha (accent, 0.5f, &g);
+				lrg_paint_list_shadow (list, sx + r, sy, MAX (0.0f, sw - r * 2.0f), band, band * 0.5f,
+				                       6.0f * v->z * p->glow, 0.0f, 0.0f, 0.0f, &g);
+			}
+			lrg_paint_list_rect_ex (list, sx, sy, sw, band, &top, accent, NULL, 0.0f, NULL);
+			title_on (k, &k->header.foreground, &fill, &title);
+		}
+		break;
+
+	case LRG_CANVAS_HEADER_STYLE_TINT:
+		{
+			GrlColor line;
+
+			lrg_paint_color_mix (&p->node_background, accent, 0.22f, &fill);
+			fill.a = MAX (fill.a, p->node_background.a);
+			lrg_paint_list_rect_ex (list, sx, sy, sw, hh, &top, &fill, NULL, 0.0f, NULL);
+			lrg_paint_color_with_alpha (accent, 0.45f, &line);
+			lrg_paint_list_rect (list, sx, sy + hh - 1.0f, sw, 1.0f, 0.0f, &line);
+			title_on (k, &k->header.foreground, &fill, &title);
+		}
+		break;
+
+	case LRG_CANVAS_HEADER_STYLE_GRADIENT:
+	case LRG_CANVAS_HEADER_STYLE_AUTO:
+	default:
+		memset (&grad, 0, sizeof grad);
+		grad.kind = LRG_PAINT_GRADIENT_LINEAR;
+		grad.start = *accent;
+		lrg_paint_color_shade (accent, -0.28f, &grad.end);
+		grad.angle = 0.0f;
+		lrg_paint_list_rect_ex (list, sx, sy, sw, hh, &top, NULL, &grad, 0.0f, NULL);
+		fill = *accent;
+		title_on (k, &k->header.foreground, &fill, &title);
+		break;
+	}
+
+	if (v->z < TEXT_MIN_ZOOM)
+		return;
+
+	/* --- icon, then the title beside it --- */
+	tx = sx + PAD * v->z;
+	if (node_has_icon (n))
+	{
+		gfloat is = ICON_SIZE * v->z;
+		gfloat iy = sy + (hh - is) * 0.5f;
+
+		if (n->svg_icon != NULL)
+			lrg_paint_list_svg_icon (list, n->svg_icon, roundf (tx), roundf (iy), is, &title);
+		else
+			lrg_paint_list_icon (list, lrg_paint_icon_from_name (n->icon), tx, iy, is, 0.0f, &title);
+		tx += (ICON_SIZE + ICON_GAP) * v->z;
+	}
+	if (n->title != NULL)
+	{
+		lrg_paint_list_push_clip (list, sx + 4.0f * v->z, sy, MAX (0.0f, sw - 8.0f * v->z), hh);
+		lrg_paint_list_text (list, k->font, n->title, roundf (tx),
+		                     roundf (sy + (hh - k->fs * v->z) * 0.5f), k->fs * v->z, 0.0f, &title);
+		lrg_paint_list_pop_clip (list);
 	}
 }
 
 /*
  * paint_node:
  *
- * One card: lifted shadow (spring), body, header gradient in the
- * accent colour with the title, the selection outline (spring), the
- * keyboard cursor ring, then the ports and their labels.
+ * One card: its glow in the node colour (looks with a node glow), the
+ * selection halo, lifted shadow (spring), body (optionally a
+ * gradient), the header, the selection outline (spring), the keyboard
+ * cursor ring, then the ports and their labels. Halos go under the
+ * body: a translucent card shows a little of them, never a wash.
  */
 static void
 paint_node (LrgNodeGraph *self,
@@ -3650,65 +5338,87 @@ paint_node (LrgNodeGraph *self,
             const Looks  *k,
             LrgGraphNode *n)
 {
-	gfloat           sx = to_sx (v, n->x);
-	gfloat           sy = to_sy (v, n->y);
-	gfloat           sw = n->w * v->z;
-	gfloat           sh = n->h * v->z;
-	gfloat           r = k->item.radii.top_left * v->z;
-	gfloat           hh = HEADER_H * v->z;
-	gfloat           lift = CLAMP (n->lift.value, 0.0f, 1.5f);
-	gfloat           sel = CLAMP (n->sel.value, 0.0f, 1.0f);
-	gboolean         text = v->z >= TEXT_MIN_ZOOM;
-	LrgCornerRadii   top = { r, r, 0.0f, 0.0f };
-	LrgPaintGradient grad;
-	GrlColor         accent;
-	GrlColor         title;
-	GrlColor         shadow;
-	guint            d;
+	const LrgCanvasLookParts *p = &k->p;
+	gfloat                    sx = to_sx (v, n->x);
+	gfloat                    sy = to_sy (v, n->y);
+	gfloat                    sw = n->w * v->z;
+	gfloat                    sh = n->h * v->z;
+	gfloat                    r = p->node_radius * v->z;
+	gfloat                    lift = CLAMP (n->lift.value, 0.0f, 1.5f);
+	gfloat                    sel = CLAMP (n->sel.value, 0.0f, 1.0f);
+	gboolean                  text = v->z >= TEXT_MIN_ZOOM;
+	LrgPaintGradient          body;
+	GrlColor                  accent;
+	GrlColor                  shadow;
+	GrlColor                  border;
+	guint                     d;
+
+	/* --- node colour: per-item, else category, else the look's; muted
+	 *     towards the look's header colour by header-mute --- */
+	node_accent (n, &p->header, &accent);
+	if (p->header_mute > 0.0f)
+		lrg_paint_color_mix (&accent, &p->header, p->header_mute, &accent);
+
+	/* --- glow in the node colour, brighter when selected --- */
+	if (p->node_glow > 0.0f && p->glow > 0.0f)
+	{
+		GrlColor g;
+
+		lrg_paint_color_with_alpha (&accent, MIN (1.0f, (0.5f + 0.3f * sel) * p->glow), &g);
+		lrg_paint_list_shadow (list, sx, sy, sw, sh, r, p->node_glow * (1.0f + 0.5f * sel) * v->z,
+		                       0.0f, 0.0f, 0.0f, &g);
+	}
+
+	/* --- selection halo (under the card: a soft shadow instance fills
+	 *     its whole rectangle, so it must not cover the body) --- */
+	if (sel > 0.01f && p->selection_glow > 0.0f && p->glow > 0.0f)
+	{
+		GrlColor g;
+
+		lrg_paint_color_with_alpha (&p->selection, MIN (1.0f, 0.45f * sel * p->glow), &g);
+		lrg_paint_list_shadow (list, sx - 2.0f, sy - 2.0f, sw + 4.0f, sh + 4.0f, r + 2.0f,
+		                       p->selection_glow * v->z, 0.0f, 0.0f, 0.0f, &g);
+	}
 
 	/* --- shadow, lifting while selected / dragged --- */
-	shadow = k->item.shadow;
+	shadow = p->node_shadow;
 	shadow.a = (guint8) MIN (255.0f, (gfloat) shadow.a * (1.0f + lift * 0.6f));
 	if (shadow.a > 0)
 		lrg_paint_list_shadow (list, sx, sy, sw, sh, r,
-		                       k->item.shadow_blur * (1.0f + lift * 1.2f) * MAX (0.5f, v->z), 0.0f,
-		                       0.0f, k->item.shadow_offset_y * (1.0f + lift * 2.0f) * MAX (0.5f, v->z),
+		                       p->node_shadow_blur * (1.0f + lift * 1.2f) * MAX (0.5f, v->z), 0.0f,
+		                       0.0f, p->node_shadow_offset_y * (1.0f + lift * 2.0f) * MAX (0.5f, v->z),
 		                       &shadow);
 
 	/* --- card --- */
-	lrg_paint_list_rect_ex (list, sx, sy, sw, sh, &(LrgCornerRadii){ r, r, r, r },
-	                        &k->item.background, NULL, k->item.border_width, &k->item.border);
-
-	/* --- header: accent gradient, title in a contrasting colour --- */
-	node_accent (n, &k->header.background, &accent);
-	memset (&grad, 0, sizeof grad);
-	grad.kind = LRG_PAINT_GRADIENT_LINEAR;
-	grad.start = accent;
-	lrg_paint_color_shade (&accent, -0.28f, &grad.end);
-	grad.angle = 0.0f;
-	lrg_paint_list_rect_ex (list, sx, sy, sw, hh, &top, NULL, &grad, 0.0f, NULL);
-	if (text && n->title != NULL)
+	border = p->node_border_accent ? accent : p->node_border;
+	if (p->node_gradient)
 	{
-		title = k->header.foreground;
-		if (lrg_paint_color_contrast (&title, &accent) < 3.0f)
-			title = lrg_paint_color_contrast (&k->text, &accent) >= 3.0f
-			        ? k->text : (lrg_paint_color_luminance (&accent) > 0.4f
-			                     ? (GrlColor){ 20, 20, 24, 255 } : (GrlColor){ 250, 250, 250, 255 });
-		lrg_paint_list_push_clip (list, sx + 4.0f * v->z, sy, MAX (0.0f, sw - 8.0f * v->z), hh);
-		lrg_paint_list_text (list, k->font, n->title, roundf (sx + PAD * v->z),
-		                     roundf (sy + (hh - k->fs * v->z) * 0.5f), k->fs * v->z, 0.0f, &title);
-		lrg_paint_list_pop_clip (list);
+		memset (&body, 0, sizeof body);
+		body.kind = LRG_PAINT_GRADIENT_LINEAR;
+		body.angle = 90.0f;
+		lrg_paint_color_shade (&p->node_background, p->dark ? 0.06f : 0.0f, &body.start);
+		lrg_paint_color_shade (&p->node_background, p->dark ? -0.10f : -0.04f, &body.end);
+		body.start.a = p->node_background.a;
+		body.end.a = p->node_background.a;
+		lrg_paint_list_rect_ex (list, sx, sy, sw, sh, &(LrgCornerRadii){ r, r, r, r },
+		                        NULL, &body, p->node_border_width, &border);
 	}
+	else
+		lrg_paint_list_rect_ex (list, sx, sy, sw, sh, &(LrgCornerRadii){ r, r, r, r },
+		                        &p->node_background, NULL, p->node_border_width, &border);
 
-	/* --- selection outline (springs in) and keyboard cursor --- */
+	/* --- header: strip, icon, title --- */
+	paint_header (self, list, v, k, n, &accent, sx, sy, sw, r);
+
+	/* --- selection outline and halo (spring in), keyboard cursor --- */
 	if (sel > 0.01f)
 	{
-		GrlColor c = k->item_sel.border;
+		GrlColor c = p->selection;
 		gfloat   grow = 2.0f;
 
 		c.a = (guint8) ((gfloat) c.a * sel);
 		lrg_paint_list_border (list, sx - grow, sy - grow, sw + grow * 2.0f, sh + grow * 2.0f, r + grow,
-		                       MAX (1.0f, k->item_sel.border_width), &c);
+		                       MAX (1.0f, p->selection_width), &c);
 	}
 	if (n == self->cursor && k->focus_visible && k->focus.border_width > 0.0f)
 	{
@@ -3726,20 +5436,20 @@ paint_node (LrgNodeGraph *self,
 
 		for (i = 0; i < ports->len; i++)
 		{
-			LrgGraphPort *p = g_ptr_array_index (ports, i);
+			LrgGraphPort *pt = g_ptr_array_index (ports, i);
 			gfloat        px = d == 0 ? sx : sx + sw;
-			gfloat        py = sy + p->rel_y * v->z;
+			gfloat        py = sy + pt->rel_y * v->z;
 
-			if (text && p->name != NULL)
+			if (text && pt->name != NULL)
 			{
 				gfloat lx = d == 0 ? px + LABEL_INSET * v->z
-				                   : px - LABEL_INSET * v->z - p->label_w * v->z;
+				                   : px - LABEL_INSET * v->z - pt->label_w * v->z;
 
-				lrg_paint_list_text (list, k->font, p->name, roundf (lx),
+				lrg_paint_list_text (list, k->font, pt->name, roundf (lx),
 				                     roundf (py - k->fss * v->z * 0.5f), k->fss * v->z, 0.0f,
-				                     &k->label.foreground);
+				                     &p->text_muted);
 			}
-			paint_port (self, list, v, k, p, px, py);
+			paint_port (self, list, v, k, pt, px, py);
 		}
 	}
 }
@@ -4850,6 +6560,37 @@ hex_to_color (const gchar *text,
 	return TRUE;
 }
 
+/* enum_nick: the nick of @value in the enum @type */
+static const gchar *
+enum_nick (GType type,
+           gint  value)
+{
+	g_autoptr(GEnumClass) klass = g_type_class_ref (type);
+	GEnumValue           *ev = g_enum_get_value (klass, value);
+
+	return ev != NULL ? ev->value_nick : "auto";
+}
+
+/* enum_parse: @text as a nick (or name) of the enum @type, %FALSE if unknown */
+static gboolean
+enum_parse (GType        type,
+            const gchar *text,
+            gint        *out)
+{
+	g_autoptr(GEnumClass) klass = g_type_class_ref (type);
+	GEnumValue           *ev;
+
+	if (text == NULL)
+		return FALSE;
+	ev = g_enum_get_value_by_nick (klass, text);
+	if (ev == NULL)
+		ev = g_enum_get_value_by_name (klass, text);
+	if (ev == NULL)
+		return FALSE;
+	*out = ev->value;
+	return TRUE;
+}
+
 gchar *
 lrg_node_graph_to_yaml (LrgNodeGraph  *self,
                         gsize         *length,
@@ -4898,6 +6639,8 @@ lrg_node_graph_to_yaml (LrgNodeGraph  *self,
 		}
 		if (n->min_width != MIN_WIDTH)
 			yaml_mapping_set_double_member (m, "min-width", (gdouble) n->min_width);
+		if (n->icon != NULL)
+			yaml_mapping_set_string_member (m, "icon", n->icon);
 
 		for (d = 0; d < 2; d++)
 		{
@@ -4921,6 +6664,9 @@ lrg_node_graph_to_yaml (LrgNodeGraph  *self,
 
 					yaml_mapping_set_string_member (pm, "color", hex);
 				}
+				if (p->shape != LRG_CANVAS_PIN_SHAPE_AUTO)
+					yaml_mapping_set_string_member (pm, "shape", enum_nick (LRG_TYPE_CANVAS_PIN_SHAPE,
+					                                                        (gint) p->shape));
 				yaml_sequence_add_mapping_element (ports, pm);
 				yaml_mapping_unref (pm);
 			}
@@ -4942,6 +6688,15 @@ lrg_node_graph_to_yaml (LrgNodeGraph  *self,
 		yaml_mapping_set_string_member (m, "output", l->output->name);
 		yaml_mapping_set_string_member (m, "to", l->input->node->id);
 		yaml_mapping_set_string_member (m, "input", l->input->name);
+		if (l->has_color)
+		{
+			g_autofree gchar *hex = color_to_hex (&l->color);
+
+			yaml_mapping_set_string_member (m, "color", hex);
+		}
+		if (l->shape != LRG_CANVAS_LINK_SHAPE_AUTO)
+			yaml_mapping_set_string_member (m, "shape", enum_nick (LRG_TYPE_CANVAS_LINK_SHAPE,
+			                                                       (gint) l->shape));
 		yaml_sequence_add_mapping_element (links, m);
 		yaml_mapping_unref (m);
 	}
@@ -4975,6 +6730,7 @@ typedef struct
 	gint      multi;       /* -1: default */
 	gboolean  has_color;
 	GrlColor  color;
+	gint      shape;       /* LrgCanvasPinShape */
 } StagedPort;
 
 typedef struct
@@ -4987,6 +6743,7 @@ typedef struct
 	gdouble   min_width;
 	gboolean  has_accent;
 	GrlColor  accent;
+	gchar    *icon;
 	GArray   *ports;       /* StagedPort */
 } StagedNode;
 
@@ -4994,8 +6751,11 @@ typedef struct
 {
 	gchar *from;
 	gchar *output;
-	gchar *to;
-	gchar *input;
+	gchar    *to;
+	gchar    *input;
+	gboolean  has_color;
+	GrlColor  color;
+	gint      shape;       /* LrgCanvasLinkShape */
 } StagedLink;
 
 static void
@@ -5015,6 +6775,7 @@ staged_node_clear (gpointer data)
 	g_free (n->id);
 	g_free (n->title);
 	g_free (n->category);
+	g_free (n->icon);
 	g_clear_pointer (&n->ports, g_array_unref);
 }
 
@@ -5116,6 +6877,9 @@ stage_node (YamlNode    *item,
 			return parse_fail (error, "node accent", index);
 		out->has_accent = TRUE;
 	}
+	if (!scalar_member (m, "icon", &s))
+		return parse_fail (error, "node icon", index);
+	out->icon = g_strdup (s);
 
 	/* --- ports --- */
 	out->ports = g_array_new (FALSE, TRUE, sizeof (StagedPort));
@@ -5176,6 +6940,11 @@ stage_node (YamlNode    *item,
 				return parse_fail (error, "port color", index);
 			g_array_index (out->ports, StagedPort, k).has_color = TRUE;
 		}
+		if (!scalar_member (pm, "shape", &s))
+			return parse_fail (error, "port shape", index);
+		if (s != NULL && !enum_parse (LRG_TYPE_CANVAS_PIN_SHAPE, s,
+		                              &g_array_index (out->ports, StagedPort, k).shape))
+			return parse_fail (error, "port shape", index);
 
 		/* Names are unique per direction */
 		for (j = 0; j < k; j++)
@@ -5320,6 +7089,8 @@ lrg_node_graph_load_yaml (LrgNodeGraph  *self,
 		const gchar *out;
 		const gchar *to;
 		const gchar *in;
+		const gchar *col;
+		const gchar *shape;
 
 		if (li == NULL || yaml_node_get_node_type (li) != YAML_NODE_MAPPING)
 			return parse_fail (error, "link", i);
@@ -5330,6 +7101,14 @@ lrg_node_graph_load_yaml (LrgNodeGraph  *self,
 		    !staged_has_port (nodes, index_of, to, in, LRG_GRAPH_PORT_INPUT) ||
 		    g_strcmp0 (from, to) == 0)
 			return parse_fail (error, "link", i);
+		memset (&l, 0, sizeof l);
+		if (!scalar_member (lm, "color", &col) ||
+		    (col != NULL && !hex_to_color (col, &l.color)))
+			return parse_fail (error, "link color", i);
+		l.has_color = col != NULL;
+		if (!scalar_member (lm, "shape", &shape) ||
+		    (shape != NULL && !enum_parse (LRG_TYPE_CANVAS_LINK_SHAPE, shape, &l.shape)))
+			return parse_fail (error, "link shape", i);
 		l.from = g_strdup (from);
 		l.output = g_strdup (out);
 		l.to = g_strdup (to);
@@ -5351,6 +7130,7 @@ lrg_node_graph_load_yaml (LrgNodeGraph  *self,
 		node->category = g_strdup (sn->category);
 		node->has_accent = sn->has_accent;
 		node->accent = sn->accent;
+		node->icon = g_strdup (sn->icon);
 		for (k = 0; k < sn->ports->len; k++)
 		{
 			StagedPort   *sp = &g_array_index (sn->ports, StagedPort, k);
@@ -5361,15 +7141,21 @@ lrg_node_graph_load_yaml (LrgNodeGraph  *self,
 				p->multi_link = sp->multi != 0;
 			p->has_color = sp->has_color;
 			p->color = sp->color;
+			p->shape = (LrgCanvasPinShape) sp->shape;
 		}
 		lrg_node_graph_append_node (self, node);
 	}
 	for (i = 0; i < links->len; i++)
 	{
-		StagedLink *sl = &g_array_index (links, StagedLink, i);
+		StagedLink   *sl = &g_array_index (links, StagedLink, i);
+		LrgGraphLink *link = lrg_node_graph_connect_by_name (self, sl->from, sl->output, sl->to, sl->input,
+		                                                     error);
 
-		if (lrg_node_graph_connect_by_name (self, sl->from, sl->output, sl->to, sl->input, error) == NULL)
+		if (link == NULL)
 			return FALSE;
+		link->has_color = sl->has_color;
+		link->color = sl->color;
+		link->shape = (LrgCanvasLinkShape) sl->shape;
 	}
 	if (has_view)
 		lrg_node_graph_set_view (self, (gfloat) vx, (gfloat) vy, (gfloat) vz, FALSE);
@@ -5462,6 +7248,27 @@ lrg_node_graph_get_property (GObject    *object,
 	case PROP_ANIMATE_LINKS:
 		g_value_set_boolean (value, self->animate_links);
 		break;
+	case PROP_LOOK:
+		g_value_set_enum (value, self->look);
+		break;
+	case PROP_LINK_SHAPE:
+		g_value_set_enum (value, self->link_shape);
+		break;
+	case PROP_PIN_SHAPE:
+		g_value_set_enum (value, self->pin_shape);
+		break;
+	case PROP_HEADER_STYLE:
+		g_value_set_enum (value, self->header_style);
+		break;
+	case PROP_LINK_WIDTH:
+		g_value_set_float (value, self->link_width);
+		break;
+	case PROP_GLOW:
+		g_value_set_float (value, self->glow);
+		break;
+	case PROP_SELECTION_FLOW:
+		g_value_set_boolean (value, self->selection_flow);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -5510,6 +7317,27 @@ lrg_node_graph_set_property (GObject      *object,
 		break;
 	case PROP_ANIMATE_LINKS:
 		lrg_node_graph_set_animate_links (self, g_value_get_boolean (value));
+		break;
+	case PROP_LOOK:
+		lrg_node_graph_set_look (self, (LrgCanvasLook) g_value_get_enum (value));
+		break;
+	case PROP_LINK_SHAPE:
+		lrg_node_graph_set_link_shape (self, (LrgCanvasLinkShape) g_value_get_enum (value));
+		break;
+	case PROP_PIN_SHAPE:
+		lrg_node_graph_set_pin_shape (self, (LrgCanvasPinShape) g_value_get_enum (value));
+		break;
+	case PROP_HEADER_STYLE:
+		lrg_node_graph_set_header_style (self, (LrgCanvasHeaderStyle) g_value_get_enum (value));
+		break;
+	case PROP_LINK_WIDTH:
+		lrg_node_graph_set_link_width (self, g_value_get_float (value));
+		break;
+	case PROP_GLOW:
+		lrg_node_graph_set_glow (self, g_value_get_float (value));
+		break;
+	case PROP_SELECTION_FLOW:
+		lrg_node_graph_set_selection_flow (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -5600,11 +7428,12 @@ lrg_node_graph_class_init (LrgNodeGraphClass *klass)
 	/**
 	 * LrgNodeGraph:grid-style:
 	 *
-	 * How the background grid is drawn.
+	 * How the background grid is drawn; %LRG_NODE_GRAPH_GRID_AUTO (the
+	 * default) uses the look's grid (lines for the Auto look).
 	 */
 	properties[PROP_GRID_STYLE] =
 		g_param_spec_enum ("grid-style", "Grid style", "Background grid",
-		                   LRG_TYPE_NODE_GRAPH_GRID, LRG_NODE_GRAPH_GRID_LINES,
+		                   LRG_TYPE_NODE_GRAPH_GRID, LRG_NODE_GRAPH_GRID_AUTO,
 		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	/**
@@ -5632,6 +7461,77 @@ lrg_node_graph_class_init (LrgNodeGraphClass *klass)
 	 */
 	properties[PROP_ANIMATE_LINKS] =
 		g_param_spec_boolean ("animate-links", "Animate links", "Flowing pulses on wires", FALSE,
+		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:look:
+	 *
+	 * The visual preset (#LrgCanvasLook); Auto follows the theme.
+	 */
+	properties[PROP_LOOK] =
+		g_param_spec_enum ("look", "Look", "Canvas look preset", LRG_TYPE_CANVAS_LOOK,
+		                   LRG_CANVAS_LOOK_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:link-shape:
+	 *
+	 * Path of every wire without its own #LrgGraphLink:shape; Auto
+	 * uses the look's.
+	 */
+	properties[PROP_LINK_SHAPE] =
+		g_param_spec_enum ("link-shape", "Link shape", "Wire path", LRG_TYPE_CANVAS_LINK_SHAPE,
+		                   LRG_CANVAS_LINK_SHAPE_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:pin-shape:
+	 *
+	 * Shape of every port without its own #LrgGraphPort:shape; Auto
+	 * uses the look's.
+	 */
+	properties[PROP_PIN_SHAPE] =
+		g_param_spec_enum ("pin-shape", "Pin shape", "Port shape", LRG_TYPE_CANVAS_PIN_SHAPE,
+		                   LRG_CANVAS_PIN_SHAPE_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:header-style:
+	 *
+	 * How node headers show their colour; Auto uses the look's.
+	 */
+	properties[PROP_HEADER_STYLE] =
+		g_param_spec_enum ("header-style", "Header style", "Node header style",
+		                   LRG_TYPE_CANVAS_HEADER_STYLE, LRG_CANVAS_HEADER_STYLE_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:link-width:
+	 *
+	 * Wire thickness at zoom 1; 0 uses the look's.
+	 */
+	properties[PROP_LINK_WIDTH] =
+		g_param_spec_float ("link-width", "Link width", "Wire thickness", 0.0f, 32.0f, 0.0f,
+		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:glow:
+	 *
+	 * Strength of every glow: 0 off, 1 the look's, up to 3; negative
+	 * (the default) follows the look.
+	 */
+	properties[PROP_GLOW] =
+		g_param_spec_float ("glow", "Glow", "Glow strength", -1.0f, 3.0f, -1.0f,
+		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNodeGraph:selection-flow:
+	 *
+	 * Pulses flow along the selected wire and the wires of selected
+	 * nodes.
+	 */
+	properties[PROP_SELECTION_FLOW] =
+		g_param_spec_boolean ("selection-flow", "Selection flow", "Animate selected wires", FALSE,
 		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
@@ -5765,7 +7665,8 @@ lrg_node_graph_init (LrgNodeGraph *self)
 	self->min_zoom = 0.2f;
 	self->max_zoom = 2.5f;
 	self->grid_size = 24.0f;
-	self->grid_style = LRG_NODE_GRAPH_GRID_LINES;
+	self->grid_style = LRG_NODE_GRAPH_GRID_AUTO;
+	self->glow = -1.0f;
 	lrg_spring_init (&self->zoom_s, 1.0f, LRG_MOTION_SMOOTH);
 	lrg_spring_init (&self->cx_s, 0.0f, LRG_MOTION_SMOOTH);
 	lrg_spring_init (&self->cy_s, 0.0f, LRG_MOTION_SMOOTH);

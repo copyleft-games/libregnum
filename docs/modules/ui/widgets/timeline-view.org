@@ -134,6 +134,7 @@ Follow playhead: with =follow-playhead= (default on) the view pages so a playhea
 | =lrg_timeline_view_get_clip_start= / =lrg_timeline_view_get_clip_duration= / =lrg_timeline_view_get_clip_track= | Read a clip |
 | =lrg_timeline_view_get_clip_label= / =lrg_timeline_view_set_clip_label= | Label                                             |
 | =lrg_timeline_view_set_clip_color (self, clip, color)=           | Per-clip colour (=NULL= = track colour)                  |
+| =lrg_timeline_view_get_clip_color (self, clip, &color)=          | The clip's own colour; FALSE when it uses the track's    |
 | =lrg_timeline_view_get_n_clips (self, track)=                    | Count (=NULL= = all tracks)                              |
 | =lrg_timeline_view_get_clip_at (self, track, time)=              | Clip covering a time                                     |
 
@@ -145,6 +146,7 @@ Follow playhead: with =follow-playhead= (default on) the view pages so a playhea
 | =lrg_timeline_view_get_keyframe_time= / =lrg_timeline_view_get_keyframe_value= / =lrg_timeline_view_get_keyframe_track= | Read |
 | =lrg_timeline_view_get_keyframe_interpolation= / =lrg_timeline_view_set_keyframe_interpolation= | Segment interpolation |
 | =lrg_timeline_view_set_keyframe_tangents (self, id, in_slope, out_slope)= | Bezier (Hermite) slopes, value per second     |
+| =lrg_timeline_view_get_keyframe_shape= / =lrg_timeline_view_set_keyframe_shape= | Per-key shape (=auto= = the timeline's)  |
 | =lrg_timeline_view_get_n_keyframes (self, track)= / =lrg_timeline_view_get_keyframe (self, track, index)= | Enumerate in time order |
 | =lrg_timeline_view_evaluate (self, track, time)=                         | Sample the curve (held before the first / after the last key) |
 
@@ -190,6 +192,16 @@ Interpolation of the segment from key a to key b, with u = (t - a.time) / (b.tim
 | =lrg_timeline_view_get_track_height= / =lrg_timeline_view_set_track_height= | Default clip lane height                     |
 | =lrg_timeline_view_get_show_play_button= / =lrg_timeline_view_set_show_play_button= | Corner play button                   |
 
+*** Looks and serialization
+| Function                                                                 | Purpose                                         |
+|--------------------------------------------------------------------------+-------------------------------------------------|
+| =lrg_timeline_view_get_look= / =lrg_timeline_view_set_look=              | Canvas look preset                              |
+| =lrg_timeline_view_get_grid_style= / =lrg_timeline_view_set_grid_style=  | Time grid (=auto= = the look's)                 |
+| =lrg_timeline_view_get_key_shape= / =lrg_timeline_view_set_key_shape=    | Keyframe shape (=auto= = the look's)            |
+| =lrg_timeline_view_get_glow= / =lrg_timeline_view_set_glow=              | Glow strength (negative = the look's)           |
+| =lrg_timeline_view_get_look_parts (self, &parts)=                        | Resolved =LrgCanvasLookParts=                   |
+| =lrg_timeline_view_to_yaml= / =lrg_timeline_view_load_yaml=              | Save / replace tracks and markers               |
+
 Types: =lrg_timeline_view_get_type=, =lrg_timeline_view_track_get_type=, and the enums =LrgTimelineViewInterpolation= (=lrg_timeline_view_interpolation_get_type=), =LrgTimelineViewTimeFormat= (=lrg_timeline_view_time_format_get_type=) and the flags =LrgTimelineViewSnap= (=lrg_timeline_view_snap_get_type=: =PLAYHEAD=, =MARKERS=, =CLIPS=, =GRID=, =ALL=).
 
 ** Properties
@@ -214,6 +226,10 @@ Types: =lrg_timeline_view_get_type=, =lrg_timeline_view_track_get_type=, and the
 | =ruler-height=     | float                      | 30         |                                                          |
 | =track-height=     | float                      | 0          | 0 = 1.4 x theme =ROW_HEIGHT= (at least 28)               |
 | =show-play-button= | boolean                    | TRUE       |                                                          |
+| =look=             | =LrgCanvasLook=            | auto       | Visual preset, see [[#timeline-looks][Looks]]            |
+| =grid-style=       | =LrgNodeGraphGrid=         | auto       | Time grid behind the lanes (=auto= = the look's)         |
+| =key-shape=        | =LrgCanvasKeyShape=        | auto       | =diamond=, =circle=, =square=, =bar=                     |
+| =glow=             | float                      | -1         | Glow strength 0..3; negative = the look's                |
 
 =LrgTimelineViewTrack= properties: =name=, =color= (=GrlColor=), =height=, =collapsed=, =muted=, =locked=, =allow-overlap=, =curve-lane=, =curve-height= (72), =value-min= (0), =value-max= (1), =default-value= (0), =parent= (read-only).
 
@@ -260,6 +276,95 @@ Drags emit their signals once at release so an undo stack sees one entry per ges
 | =FOCUS=        | Focus ring                 | From =LrgWidget=                                                              |
 
 Clips get a white sheen on their top half and lift while dragged (shadow blur +14, offset +6, raised 2 units on the =lift= spring). Muted tracks draw their clips at 40 % opacity. Every preset in =lrg_theme_list_presets()= is covered by the =/ui/timeline/presets= and =/ui/gpu/timeline= tests.
+
+** Looks
+:PROPERTIES:
+:CUSTOM_ID: timeline-looks
+:END:
+The timeline shares the canvas looks of [[file:node-graph.org::#node-graph-looks][LrgNodeGraph]]: set =look= (=LrgCanvasLook=) to restyle every part at once, then override what you need.
+
+#+begin_src c
+lrg_timeline_view_set_look (tl, LRG_CANVAS_LOOK_NEON);
+lrg_timeline_view_set_key_shape (tl, LRG_CANVAS_KEY_SHAPE_BAR);           /* beats the look */
+lrg_timeline_view_set_keyframe_shape (tl, key, LRG_CANVAS_KEY_SHAPE_CIRCLE); /* beats the timeline */
+lrg_timeline_view_set_clip_color (tl, clip, &(GrlColor){ 0xec, 0x48, 0x99, 255 });
+#+end_src
+
+*** Presets
+:PROPERTIES:
+:CUSTOM_ID: timeline-look-presets
+:END:
+| Look        | Panel and ruler | Time grid | Lanes | Clips | Keyframes | Playhead | Markers / loop |
+|-------------+-----------------+-----------+-------+-------+-----------+----------+----------------|
+| =auto=      | Theme =PANEL=, =SURFACE= bands | none | =TRACK= 14 % / 30 % stripes | Track colour, theme radius x 0.75, sheen | Diamonds, =TEXT= / =ACCENT= | =ACCENT=, glow 8 | =WARNING= flags, =ACCENT= 14 % |
+| =modern=    | Soft wash, white or =#1e1e22= bands | dots | Faint stripes | Radius 8, vertical gradient | Circles | Theme =ACCENT=, glow 6 | Amber flags |
+| =blueprint= | Deep blue, navy bands | lines | White 3 % / 6 % stripes | Radius 4, gradient | Diamonds, amber when selected | Red =#ff5a4e=, glow 6 | Amber flags, blue loop |
+| =blender=   | Greys =#1d1d1d=, =#2b2b2b= | dots | White 2.5 % / 5 % stripes, dark separators | Radius 3, flat | Diamonds, orange when selected | Blue =#4772b3= 2 wide, no glow | White flags, blue loop |
+| =neon=      | Near black | glowing lines | Violet 3 % / 6 % stripes | Outlined in their colour on a dark tint, glow 8, radius 8 | Circles, pink when selected | Pink =#ec4899=, glow 12 | Cyan flags, pink loop |
+
+*** Parts
+:PROPERTIES:
+:CUSTOM_ID: timeline-look-parts
+:END:
+The timeline paints with these fields of =LrgCanvasLookParts= (the rest belong to the node graph):
+| Field | Meaning |
+|-------+---------|
+| =background=, =background_end= | Panel wash (=BOX= part) |
+| =track_header=, =track_header_text=, =lane_border= | Header column, track names, separators (=HEADER=, =LABEL=) |
+| =lane=, =lane_alt= | Lane stripes, even and odd rows (=TRACK=) |
+| =grid_style=, =grid_minor=, =grid_major=, =grid_glow= | Time grid behind the lanes at the ruler's ticks: =lines= (minor and major), =dots= (dotted major lines), =crosses= (where major ticks meet row edges), =none= |
+| =clip_radius=, =clip_gradient=, =clip_outline=, =clip_glow= | Clips (=ITEM=; colour from the clip, else the track) |
+| =key_shape=, =key_size=, =key=, =key_selected= | Keyframes in the clip lane: =diamond=, =circle=, =square=, =bar= (=MARK=) |
+| =playhead=, =playhead_width=, =playhead_glow= | Playhead line and handle (=INDICATOR=) |
+| =ruler=, =ruler_text=, =ruler_tick= | Ruler band, labels and ticks |
+| =marker=, =loop_region= | Marker flags (=TAB=), loop range (=FILL=) |
+| =selection=, =selection_width=, =selection_glow= | Selected clip rim and halo |
+| =glow= | Overall glow strength |
+
+=lrg_timeline_view_get_look_parts (tl, &parts)= returns the parts the next paint uses (never an =auto= value; the Auto look resolves its grid to =none=).
+
+*** Override precedence
+:PROPERTIES:
+:CUSTOM_ID: timeline-look-precedence
+:END:
+Highest wins:
+1. Per item: a clip's colour (=lrg_timeline_view_set_clip_color()=), a keyframe's shape (=lrg_timeline_view_set_keyframe_shape()=), a track's colour.
+2. Timeline properties: =grid-style= (=auto= = not set), =key-shape= (=auto= = not set), =glow= (negative = not set).
+3. =lrg_widget_set_part_look()= overrides, then theme style rules, on =BOX=, =HEADER=, =LABEL=, =TRACK=, =ITEM=, =MARK=, =INDICATOR=, =TAB=, =FILL=.
+4. The look preset.
+5. The theme (=auto= takes everything from the theme's roles; every theme preset is covered by =tests/test-ui-graph-looks.c=).
+
+*** Looks in YAML
+:PROPERTIES:
+:CUSTOM_ID: timeline-look-yaml
+:END:
+=look=, =grid-style=, =key-shape= and =glow= are plain properties for =LrgUILoader=. Clip colours already load from =tracks:= (=color:=); keyframe shapes are part of the [[#timeline-serialization][serialization format]] (=shape:= on a keyframe).
+
+** Serialization
+:PROPERTIES:
+:CUSTOM_ID: timeline-serialization
+:END:
+=lrg_timeline_view_to_yaml (tl, &length, &error)= writes the duration, the frame rate, the tracks (with every property that differs from a new track's, their clips, keyframes and nested tracks) and the markers; =lrg_timeline_view_load_yaml (tl, data, length, &error)= replaces every track and marker with a document's:
+#+begin_src yaml
+version: 1
+duration: 12
+fps: 24
+tracks:
+  - name: Group
+    color: "#ff4040ff"
+    tracks:
+      - name: Child
+        muted: true
+        curve-lane: true
+        clips:
+          - { start: 1, duration: 2.5, label: intro, color: "#ff4040ff" }
+        keyframes:
+          - { time: 0.5, value: 0.25, interpolation: bezier, tangents: [0.5, -1.5], shape: bar }
+          - { time: 3, value: 0.75, interpolation: step }
+markers:
+  - { time: 6, label: cue }
+#+end_src
+The mapping forms match what =LrgUILoader= reads under =tracks:= / =markers:=; =shape:= on keyframes is the extra key. Any writable track property is accepted on a track. The whole document is validated before anything changes; errors are =LRG_TIMELINE_VIEW_ERROR_PARSE= (=LrgTimelineViewError=, =LRG_TIMELINE_VIEW_ERROR=, =lrg_timeline_view_error_quark=). Saving a loaded timeline reproduces the document. Selection, view and playback state are not saved.
 
 ** YAML
 :PROPERTIES:

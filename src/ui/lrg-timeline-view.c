@@ -40,6 +40,7 @@
 
 #include <math.h>
 #include <string.h>
+#include <yaml-glib.h>
 
 #include "lrg-timeline-view.h"
 #include "lrg-scrollbar-private.h"
@@ -189,6 +190,7 @@ typedef struct
 	gdouble                   in_slope;
 	gdouble                   out_slope;
 	LrgTimelineViewInterpolation  interp;
+	LrgCanvasKeyShape         shape;     /* AUTO: the timeline's */
 	gboolean                  moving;
 } Keyframe;
 
@@ -970,6 +972,12 @@ struct _LrgTimelineView
 	gfloat                 ruler_h;
 	gfloat                 track_h;
 
+	/* Look (see LrgCanvasLookParts) */
+	LrgCanvasLook          look;
+	LrgNodeGraphGrid       grid_style;     /* AUTO: the look's */
+	LrgCanvasKeyShape      key_shape;      /* AUTO: the look's */
+	gfloat                 glow_strength;  /* < 0: the look's */
+
 	/* View */
 	LrgSpring              zoom;         /* canvas units per second */
 	gboolean               anchored;     /* zooming about a point */
@@ -1033,6 +1041,10 @@ enum
 	PROP_RULER_HEIGHT,
 	PROP_TRACK_HEIGHT,
 	PROP_SHOW_PLAY_BUTTON,
+	PROP_LOOK,
+	PROP_GRID_STYLE,
+	PROP_KEY_SHAPE,
+	PROP_GLOW,
 	N_PROPS
 };
 
@@ -2068,6 +2080,120 @@ lrg_timeline_view_measure (LrgWidget *widget,
  * Looks
  * ========================================================================== */
 
+/*
+ * preset_style_defaults:
+ *
+ * The built-in look of a part under a non-Auto preset: the preset's
+ * parts (lrg_canvas_look_parts_init()) mapped onto the timeline's
+ * widget parts, so theme style rules and lrg_widget_set_part_look()
+ * still apply on top. Returns FALSE for parts left to the Auto look
+ * (rubber band, snap guide, play button, scrollbars, focus).
+ */
+static gboolean
+preset_style_defaults (LrgTimelineView *self,
+                       LrgUIPart        part,
+                       LrgWidgetState   state,
+                       LrgPartLook     *look)
+{
+	LrgTheme          *theme = lrg_widget_get_theme (LRG_WIDGET (self));
+	LrgCanvasLookParts p;
+	LrgPaintGradient   grad;
+	GrlColor           c;
+
+	lrg_canvas_look_parts_init (&p, self->look, theme);
+	switch (part)
+	{
+	case LRG_UI_PART_BOX:
+		lrg_part_look_set_background (look, &p.background);
+		if (memcmp (&p.background, &p.background_end, sizeof (GrlColor)) != 0)
+		{
+			memset (&grad, 0, sizeof grad);
+			grad.kind = LRG_PAINT_GRADIENT_LINEAR;
+			grad.start = p.background;
+			grad.end = p.background_end;
+			grad.angle = 90.0f;
+			lrg_part_look_set_gradient (look, &grad);
+		}
+		lrg_part_look_set_border (look, (state & LRG_WIDGET_STATE_FOCUSED) ? &p.accent : &p.lane_border, 1.0f);
+		lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+		break;
+
+	case LRG_UI_PART_HEADER:
+		lrg_part_look_set_background (look, &p.track_header);
+		lrg_part_look_set_border (look, &p.lane_border, 1.0f);
+		break;
+
+	case LRG_UI_PART_LABEL:
+		lrg_part_look_set_foreground (look, &p.track_header_text);
+		break;
+
+	case LRG_UI_PART_TRACK:
+		lrg_part_look_set_background (look, (state & LRG_WIDGET_STATE_SELECTED) ? &p.lane_alt : &p.lane);
+		break;
+
+	case LRG_UI_PART_ITEM:
+		lrg_part_look_set_background (look, &p.node_background);
+		lrg_part_look_set_radius (look, p.clip_radius);
+		lrg_part_look_set_shadow (look, &p.node_shadow, p.node_shadow_blur * 0.35f,
+		                          p.node_shadow_offset_y * 0.4f);
+		lrg_paint_color_with_alpha (&p.text, 0.18f, &c);
+		lrg_part_look_set_border (look, &c, 1.0f);
+		if (p.clip_glow > 0.0f)
+		{
+			lrg_paint_color_with_alpha (&p.accent, 0.35f, &c);
+			lrg_part_look_set_glow (look, &c, p.clip_glow);
+		}
+		if (state & LRG_WIDGET_STATE_SELECTED)
+		{
+			lrg_part_look_set_border (look, &p.selection, MAX (1.5f, p.selection_width));
+			lrg_paint_color_with_alpha (&p.selection, 0.45f, &c);
+			lrg_part_look_set_glow (look, &c, MAX (6.0f, p.selection_glow));
+		}
+		break;
+
+	case LRG_UI_PART_MARK:
+		lrg_part_look_set_background (look, (state & LRG_WIDGET_STATE_SELECTED) ? &p.key_selected : &p.key);
+		lrg_part_look_set_border (look, &p.track_header, 1.5f);
+		lrg_part_look_set_size (look, p.key_size);
+		if (state & (LRG_WIDGET_STATE_SELECTED | LRG_WIDGET_STATE_HOVERED))
+		{
+			lrg_paint_color_with_alpha (&p.key_selected, 0.5f, &c);
+			lrg_part_look_set_glow (look, &c, 6.0f);
+		}
+		break;
+
+	case LRG_UI_PART_INDICATOR:
+		lrg_part_look_set_background (look, &p.playhead);
+		lrg_part_look_set_foreground (look, &p.background);
+		if (p.playhead_glow > 0.0f)
+		{
+			lrg_paint_color_with_alpha (&p.playhead, 0.55f, &c);
+			lrg_part_look_set_glow (look, &c, p.playhead_glow);
+		}
+		lrg_part_look_set_radius (look, G_MAXFLOAT);
+		lrg_part_look_set_size (look, p.playhead_width);
+		break;
+
+	case LRG_UI_PART_TAB:
+		lrg_part_look_set_background (look, &p.marker);
+		lrg_part_look_set_radius (look, 3.0f);
+		lrg_part_look_set_size (look, 1.0f);
+		break;
+
+	case LRG_UI_PART_FILL:
+		lrg_part_look_set_background (look, &p.loop_region);
+		lrg_part_look_set_border (look, &p.accent, 0.0f);
+		break;
+
+	default:
+		return FALSE;
+	}
+
+	if (state & LRG_WIDGET_STATE_DISABLED)
+		lrg_part_look_set_opacity (look, 0.45f);
+	return TRUE;
+}
+
 static void
 lrg_timeline_view_style_defaults (LrgWidget      *widget,
                              LrgUIPart       part,
@@ -2080,6 +2206,11 @@ lrg_timeline_view_style_defaults (LrgWidget      *widget,
 	GrlColor  c;
 
 	if (lrg_scroll_style_defaults (theme, part, state, look))
+		return;
+
+	/* Presets replace the theme-derived built-in look part by part */
+	if (LRG_TIMELINE_VIEW (widget)->look != LRG_CANVAS_LOOK_AUTO &&
+	    preset_style_defaults (LRG_TIMELINE_VIEW (widget), part, state, look))
 		return;
 
 	switch (part)
@@ -2233,6 +2364,9 @@ typedef struct
 	LrgPartLook loop;
 	LrgPartLook veil;
 	LrgPartLook guide;
+	LrgPartLook box;
+	LrgPartLook ruler;
+	LrgCanvasLookParts p;   /* every part, resolved (see resolve_parts) */
 	GrlColor    text;
 	GrlColor    muted;
 	GrlColor    tick;
@@ -2240,6 +2374,69 @@ typedef struct
 	GrlFont    *font;
 	gfloat      fs;
 } Looks;
+
+/*
+ * resolve_parts:
+ *
+ * Builds the resolved LrgCanvasLookParts, lowest precedence first:
+ * the preset (Auto: the theme), then the timeline's widget parts as
+ * resolved through style_defaults + theme style rules + part-look
+ * overrides, then the timeline's look properties. Clip colours and
+ * keyframe shapes are per item and applied while painting.
+ */
+static void
+resolve_parts (LrgTimelineView    *self,
+               const Looks        *l,
+               LrgCanvasLookParts *p)
+{
+	lrg_canvas_look_parts_init (p, self->look, lrg_widget_get_theme (LRG_WIDGET (self)));
+
+	/* --- theme rules and part looks, through the widget parts --- */
+	if (l->box.gradient.kind == LRG_PAINT_GRADIENT_LINEAR)
+	{
+		p->background = l->box.gradient.start;
+		p->background_end = l->box.gradient.end;
+	}
+	else
+	{
+		p->background = l->box.background;
+		p->background_end = l->box.background;
+	}
+	p->track_header = l->header.background;
+	p->track_header_text = l->label.foreground;
+	p->lane = l->lane.background;
+	p->lane_alt = l->lane_alt.background;
+	p->clip_radius = l->clip.radii.top_left;
+	p->clip_glow = l->clip.glow.a > 0 ? l->clip.glow_size : 0.0f;
+	p->selection = l->clip_sel.border;
+	p->selection_width = l->clip_sel.border_width;
+	p->selection_glow = l->clip_sel.glow.a > 0 ? l->clip_sel.glow_size : 0.0f;
+	p->key = l->key.background;
+	p->key_selected = l->key_sel.background;
+	if (l->key.size > 0.0f)
+		p->key_size = l->key.size;
+	p->playhead = l->indicator.background;
+	p->playhead_width = l->indicator.size;
+	p->playhead_glow = l->indicator.glow.a > 0 ? l->indicator.glow_size : 0.0f;
+	p->marker = l->marker.background;
+	p->loop_region = l->loop.background;
+	if (self->look == LRG_CANVAS_LOOK_AUTO)
+	{
+		/* The classic look: the ruler is a header band, no time grid */
+		p->ruler = l->header.background;
+		p->ruler_text = l->muted;
+		p->ruler_tick = l->tick;
+		p->grid_style = LRG_NODE_GRAPH_GRID_NONE;
+	}
+
+	/* --- the timeline's own look properties --- */
+	if (self->grid_style != LRG_NODE_GRAPH_GRID_AUTO)
+		p->grid_style = self->grid_style;
+	if (self->key_shape != LRG_CANVAS_KEY_SHAPE_AUTO)
+		p->key_shape = self->key_shape;
+	if (self->glow_strength >= 0.0f)
+		p->glow = self->glow_strength;
+}
 
 static void
 resolve_looks (LrgTimelineView *self,
@@ -2263,12 +2460,53 @@ resolve_looks (LrgTimelineView *self,
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_VEIL, LRG_WIDGET_STATE_NONE, &l->veil);
 	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_HANDLE, LRG_WIDGET_STATE_NONE, &l->guide);
 
+	lrg_widget_resolve_look (w, LRG_UI_PART_BOX, &l->box);
+
 	l->text = l->label.foreground;
 	l->muted = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
 	lrg_paint_color_with_alpha (&l->muted, 0.55f, &l->tick);
 	l->accent = l->indicator.background;
 	l->font = ui_font (self);
 	l->fs = font_size (self);
+
+	resolve_parts (self, l, &l->p);
+
+	/* Presets bring their own ruler band and ruler ink */
+	l->ruler = l->header;
+	if (self->look != LRG_CANVAS_LOOK_AUTO)
+	{
+		l->ruler.background = l->p.ruler;
+		l->muted = l->p.ruler_text;
+		l->tick = l->p.ruler_tick;
+	}
+
+	/* Overall glow strength scales every halo (1: as resolved) */
+	if (l->p.glow != 1.0f)
+	{
+		LrgPartLook *glowing[] = { &l->clip, &l->clip_hover, &l->clip_sel, &l->key, &l->key_sel,
+		                           &l->indicator, &l->guide };
+		guint        i;
+
+		for (i = 0; i < G_N_ELEMENTS (glowing); i++)
+		{
+			glowing[i]->glow_size *= l->p.glow;
+			if (l->p.glow <= 0.0f)
+				glowing[i]->glow.a = 0;
+		}
+	}
+}
+
+void
+lrg_timeline_view_get_look_parts (LrgTimelineView    *self,
+                                  LrgCanvasLookParts *parts)
+{
+	Looks l;
+
+	g_return_if_fail (LRG_IS_TIMELINE_VIEW (self));
+	g_return_if_fail (parts != NULL);
+
+	resolve_looks (self, &l);
+	*parts = l.p;
 }
 
 /* paint_glow_line: a vertical line with a soft halo (playhead, guides) */
@@ -2317,6 +2555,154 @@ paint_diamond (LrgPaintList      *list,
 }
 
 /*
+ * paint_key:
+ *
+ * A keyframe in @shape centred at (@x, @y): a diamond, a dot, a
+ * rounded square or a thin bar, each with an outline in the look's
+ * border colour and the look's glow.
+ */
+static void
+paint_key (LrgPaintList      *list,
+           const LrgPartLook *look,
+           LrgCanvasKeyShape  shape,
+           gfloat             x,
+           gfloat             y,
+           gfloat             half)
+{
+	gfloat ob = MAX (1.0f, look->border_width);
+	gfloat bw;
+
+	switch (shape)
+	{
+	case LRG_CANVAS_KEY_SHAPE_CIRCLE:
+		if (look->glow.a > 0)
+			lrg_paint_list_shadow (list, x - half, y - half, half * 2.0f, half * 2.0f, half,
+			                       look->glow_size, 0.0f, 0.0f, 0.0f, &look->glow);
+		if (look->border_width > 0.0f && look->border.a > 0)
+			lrg_paint_list_circle (list, x, y, half + ob * 0.5f, &look->border);
+		lrg_paint_list_circle (list, x, y, half - ob * 0.5f + 0.5f, &look->background);
+		break;
+
+	case LRG_CANVAS_KEY_SHAPE_SQUARE:
+		half *= 0.85f;
+		if (look->glow.a > 0)
+			lrg_paint_list_shadow (list, x - half, y - half, half * 2.0f, half * 2.0f, half * 0.35f,
+			                       look->glow_size, 0.0f, 0.0f, 0.0f, &look->glow);
+		lrg_paint_list_rect_ex (list, x - half, y - half, half * 2.0f, half * 2.0f,
+		                        &(LrgCornerRadii){ half * 0.35f, half * 0.35f, half * 0.35f, half * 0.35f },
+		                        &look->background, NULL, look->border.a > 0 ? look->border_width : 0.0f,
+		                        &look->border);
+		break;
+
+	case LRG_CANVAS_KEY_SHAPE_BAR:
+		bw = MAX (2.0f, half * 0.45f);
+		if (look->glow.a > 0)
+			lrg_paint_list_shadow (list, x - bw * 0.5f, y - half * 1.5f, bw, half * 3.0f, bw * 0.5f,
+			                       look->glow_size, 0.0f, 0.0f, 0.0f, &look->glow);
+		lrg_paint_list_rect_ex (list, x - bw * 0.5f, y - half * 1.5f, bw, half * 3.0f,
+		                        &(LrgCornerRadii){ bw * 0.5f, bw * 0.5f, bw * 0.5f, bw * 0.5f },
+		                        &look->background, NULL, look->border.a > 0 ? MIN (1.0f, look->border_width) : 0.0f,
+		                        &look->border);
+		break;
+
+	case LRG_CANVAS_KEY_SHAPE_DIAMOND:
+	case LRG_CANVAS_KEY_SHAPE_AUTO:
+	default:
+		paint_diamond (list, look, x, y, half);
+		break;
+	}
+}
+
+/*
+ * paint_time_grid:
+ *
+ * The time grid behind the lanes, at the ruler's ticks: full-height
+ * lines (major ones with an optional halo), dotted major lines, or
+ * small crosses where major ticks meet row boundaries. One instance
+ * (two with a halo) per line, batched with the rest of the frame.
+ */
+static void
+paint_time_grid (LrgTimelineView *self,
+                 LrgPaintList    *list,
+                 const Looks     *l,
+                 const Geom      *g)
+{
+	const LrgCanvasLookParts *p = &l->p;
+	gdouble                   per = 1.0 / pps (self);
+	gdouble                   t0;
+	gdouble                   t1;
+	gdouble                   major;
+	gdouble                   minor_step;
+	guint                     minor;
+	gint64                    k;
+	gint64                    k1;
+	gfloat                    halo = p->grid_glow * p->glow;
+	guint                     budget = 4000;
+
+	if (p->grid_style == LRG_NODE_GRAPH_GRID_NONE || p->grid_style == LRG_NODE_GRAPH_GRID_AUTO)
+		return;
+
+	lrg_timeline_view_get_visible_range (self, &t0, &t1);
+	major = tick_step (self, per, &minor);
+	minor_step = major / (gdouble) MAX (minor, 1u);
+	k = (gint64) floor (MAX (0.0, t0) / minor_step);
+	k1 = (gint64) ceil (t1 / minor_step);
+	for (; k <= k1 && budget > 0; k++)
+	{
+		gboolean is_major = minor <= 1 || k % (gint64) minor == 0;
+		gfloat   x = roundf (lrg_timeline_view_time_to_x (self, (gdouble) k * minor_step)) + 0.5f;
+		gfloat   y;
+
+		switch (p->grid_style)
+		{
+		case LRG_NODE_GRAPH_GRID_LINES:
+			if (is_major && halo > 0.0f)
+			{
+				GrlColor h = p->grid_major;
+
+				h.a = (guint8) ((gfloat) h.a * 0.35f);
+				lrg_paint_list_line (list, x, g->cy, x, g->cy + g->vh, 1.0f + halo * 2.0f, &h);
+			}
+			lrg_paint_list_line (list, x, g->cy, x, g->cy + g->vh, 1.0f,
+			                     is_major ? &p->grid_major : &p->grid_minor);
+			budget--;
+			break;
+
+		case LRG_NODE_GRAPH_GRID_DOTS:
+			if (!is_major)
+				break;
+			for (y = g->cy + 4.0f; y < g->cy + g->vh && budget > 0; y += 8.0f, budget--)
+				lrg_paint_list_circle (list, x, y, 1.0f, &p->grid_major);
+			break;
+
+		case LRG_NODE_GRAPH_GRID_CROSSES:
+			{
+				gfloat off = lrg_scroll_axis_get_value (&self->ay);
+				guint  i;
+
+				if (!is_major)
+					break;
+				for (i = 0; i < self->rows->len && budget > 0; i++)
+				{
+					Row *r = &g_array_index (self->rows, Row, i);
+
+					y = g->cy + r->y - off;
+					if (y < g->cy - 4.0f || y > g->cy + g->vh + 4.0f)
+						continue;
+					lrg_paint_list_line (list, x - 3.0f, y, x + 3.0f, y, 1.0f, &p->grid_major);
+					lrg_paint_list_line (list, x, y - 3.0f, x, y + 3.0f, 1.0f, &p->grid_major);
+					budget--;
+				}
+			}
+			break;
+
+		default:
+			return;
+		}
+	}
+}
+
+/*
  * paint_clip:
  *
  * One clip: its colour (clip, else track) in the ITEM look, blended to
@@ -2358,6 +2744,29 @@ paint_clip (LrgTimelineView  *self,
 	look.background = fill;
 	look.gradient.kind = LRG_PAINT_GRADIENT_NONE;
 
+	/* --- look variants: gradient body, outlined (Neon), coloured glow --- */
+	if (l->p.clip_gradient && !l->p.clip_outline)
+	{
+		look.gradient.kind = LRG_PAINT_GRADIENT_LINEAR;
+		look.gradient.angle = 90.0f;
+		lrg_paint_color_shade (&fill, 0.10f, &look.gradient.start);
+		lrg_paint_color_shade (&fill, -0.14f, &look.gradient.end);
+	}
+	if (l->p.clip_outline)
+	{
+		/* An opaque dark tint (the panel mixed with the clip colour), so
+		 * the glow under it never washes the body */
+		lrg_paint_color_mix (&l->p.background, &fill, 0.2f, &look.background);
+		look.background.a = 255;
+		if (!sel)
+		{
+			look.border = fill;
+			look.border_width = MAX (1.5f, look.border_width);
+		}
+	}
+	if (look.glow.a > 0 && !sel)
+		lrg_paint_color_with_alpha (&fill, (gfloat) look.glow.a / 255.0f, &look.glow);
+
 	/* Lifted: shadow spreads and drops, the clip rises a little */
 	if (lift > 0.001f)
 	{
@@ -2371,9 +2780,9 @@ paint_clip (LrgTimelineView  *self,
 
 	lrg_widget_paint_box (LRG_WIDGET (self), list, &look, x0, y, w, h);
 
-	/* Sheen on the upper half */
+	/* Sheen on the upper half (not on outlined clips) */
 	lrg_paint_color_with_alpha (&(GrlColor){ 255, 255, 255, 255 }, 0.10f * look.opacity, &sheen);
-	if (h > 8.0f && w > 6.0f)
+	if (h > 8.0f && w > 6.0f && !l->p.clip_outline)
 	{
 		LrgCornerRadii r = look.radii;
 
@@ -2400,6 +2809,12 @@ paint_clip (LrgTimelineView  *self,
 				seen.a = 255;
 				text_on (&seen, &ink);
 				ink.a = (guint8) ((gfloat) ink.a * 0.7f);
+			}
+			else if (l->p.clip_outline)
+			{
+				/* Bright ink of the clip's own colour on its dark tint */
+				lrg_paint_color_mix (&fill, &(GrlColor){ 255, 255, 255, 255 }, 0.55f, &ink);
+				ink.a = 255;
 			}
 			else
 				text_on (&fill, &ink);
@@ -2660,10 +3075,12 @@ paint_row (LrgTimelineView  *self,
 	{
 		Keyframe *k = g_ptr_array_index (t->keys, i);
 		gboolean  sel = g_hash_table_contains (self->sel_keys, ID_KEY (k->id));
-		gfloat    half = MIN (KEY_HALF, r->main_h * 0.3f);
+		gfloat    half = MIN (l->p.key_size, r->main_h * 0.3f);
 
-		paint_diamond (list, sel ? &l->key_sel : &l->key, lrg_timeline_view_time_to_x (self, k->time),
-		               top + r->main_h * 0.5f, half);
+		/* Per-key shape beats the timeline's and the look's */
+		paint_key (list, sel ? &l->key_sel : &l->key,
+		           k->shape != LRG_CANVAS_KEY_SHAPE_AUTO ? k->shape : l->p.key_shape,
+		           lrg_timeline_view_time_to_x (self, k->time), top + r->main_h * 0.5f, half);
 	}
 
 	/* 4. Curve lane */
@@ -2957,13 +3374,15 @@ lrg_timeline_view_paint (LrgWidget    *widget,
 
 	/* 2. Header column and ruler bands */
 	lrg_widget_paint_box (widget, list, &l.header, g.wx, g.cy, g.cx - g.wx, g.vh);
-	lrg_widget_paint_box (widget, list, &l.header, g.wx, g.wy, g.w, g.cy - g.wy);
+	lrg_widget_paint_box (widget, list, &l.ruler, g.wx, g.wy, g.w, g.cy - g.wy);
 
 	lrg_timeline_view_get_visible_range (self, &t0, &t1);
 	off = lrg_scroll_axis_get_value (&self->ay);
 
-	/* 3. Visible rows: lanes, clips, keyframes, curves; then headers */
+	/* 3. Time grid (looks), visible rows: lanes, clips, keyframes,
+	 *    curves; then headers */
 	lrg_paint_list_push_clip (list, g.cx, g.cy, g.vw, g.vh);
+	paint_time_grid (self, list, &l, &g);
 	for (i = 0; i < self->rows->len; i++)
 	{
 		Row   *r = &g_array_index (self->rows, Row, i);
@@ -4596,6 +5015,18 @@ lrg_timeline_view_get_property (GObject    *object,
 	case PROP_SHOW_PLAY_BUTTON:
 		g_value_set_boolean (value, self->show_play);
 		break;
+	case PROP_LOOK:
+		g_value_set_enum (value, self->look);
+		break;
+	case PROP_GRID_STYLE:
+		g_value_set_enum (value, self->grid_style);
+		break;
+	case PROP_KEY_SHAPE:
+		g_value_set_enum (value, self->key_shape);
+		break;
+	case PROP_GLOW:
+		g_value_set_float (value, self->glow_strength);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -4661,6 +5092,18 @@ lrg_timeline_view_set_property (GObject      *object,
 		break;
 	case PROP_SHOW_PLAY_BUTTON:
 		lrg_timeline_view_set_show_play_button (self, g_value_get_boolean (value));
+		break;
+	case PROP_LOOK:
+		lrg_timeline_view_set_look (self, (LrgCanvasLook) g_value_get_enum (value));
+		break;
+	case PROP_GRID_STYLE:
+		lrg_timeline_view_set_grid_style (self, (LrgNodeGraphGrid) g_value_get_enum (value));
+		break;
+	case PROP_KEY_SHAPE:
+		lrg_timeline_view_set_key_shape (self, (LrgCanvasKeyShape) g_value_get_enum (value));
+		break;
+	case PROP_GLOW:
+		lrg_timeline_view_set_glow (self, g_value_get_float (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -4851,6 +5294,48 @@ lrg_timeline_view_class_init (LrgTimelineViewClass *klass)
 		g_param_spec_boolean ("show-play-button", "Show play button", "Show the play / pause button", TRUE,
 		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
+	/**
+	 * LrgTimelineView:look:
+	 *
+	 * The visual preset (#LrgCanvasLook); Auto follows the theme.
+	 */
+	properties[PROP_LOOK] =
+		g_param_spec_enum ("look", "Look", "Canvas look preset", LRG_TYPE_CANVAS_LOOK,
+		                   LRG_CANVAS_LOOK_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgTimelineView:grid-style:
+	 *
+	 * Time grid behind the lanes, at the ruler's ticks; Auto uses the
+	 * look's (none for the Auto look).
+	 */
+	properties[PROP_GRID_STYLE] =
+		g_param_spec_enum ("grid-style", "Grid style", "Time grid", LRG_TYPE_NODE_GRAPH_GRID,
+		                   LRG_NODE_GRAPH_GRID_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgTimelineView:key-shape:
+	 *
+	 * Shape of every keyframe without its own shape; Auto uses the
+	 * look's.
+	 */
+	properties[PROP_KEY_SHAPE] =
+		g_param_spec_enum ("key-shape", "Key shape", "Keyframe shape", LRG_TYPE_CANVAS_KEY_SHAPE,
+		                   LRG_CANVAS_KEY_SHAPE_AUTO,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgTimelineView:glow:
+	 *
+	 * Strength of every glow: 0 off, 1 the look's, up to 3; negative
+	 * (the default) follows the look.
+	 */
+	properties[PROP_GLOW] =
+		g_param_spec_float ("glow", "Glow", "Glow strength", -1.0f, 3.0f, -1.0f,
+		                    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
 	/**
@@ -5025,6 +5510,8 @@ lrg_timeline_view_init (LrgTimelineView *self)
 	self->snap_distance = DEFAULT_SNAP_PX;
 	self->header_w = DEFAULT_HEADER_W;
 	self->ruler_h = DEFAULT_RULER_H;
+	self->grid_style = LRG_NODE_GRAPH_GRID_AUTO;
+	self->glow_strength = -1.0f;
 
 	lrg_spring_init (&self->zoom, (gfloat) DEFAULT_ZOOM, LRG_MOTION_SMOOTH);
 	lrg_spring_init (&self->lift, 0.0f, LRG_MOTION_SNAPPY);
@@ -5436,6 +5923,22 @@ lrg_timeline_view_set_clip_color (LrgTimelineView    *self,
 	queue (self);
 }
 
+gboolean
+lrg_timeline_view_get_clip_color (LrgTimelineView *self,
+                                  guint            clip,
+                                  GrlColor        *color)
+{
+	Clip *c;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), FALSE);
+	c = lookup_clip (self, clip);
+	if (c == NULL || !c->has_color)
+		return FALSE;
+	if (color != NULL)
+		*color = c->color;
+	return TRUE;
+}
+
 guint
 lrg_timeline_view_get_n_clips (LrgTimelineView      *self,
                           LrgTimelineViewTrack *track)
@@ -5609,6 +6112,33 @@ lrg_timeline_view_set_keyframe_interpolation (LrgTimelineView              *self
 	if (k == NULL)
 		return;
 	k->interp = interpolation;
+	queue (self);
+}
+
+LrgCanvasKeyShape
+lrg_timeline_view_get_keyframe_shape (LrgTimelineView *self,
+                                      guint            keyframe)
+{
+	Keyframe *k;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), LRG_CANVAS_KEY_SHAPE_AUTO);
+	k = lookup_key (self, keyframe);
+	return k != NULL ? k->shape : LRG_CANVAS_KEY_SHAPE_AUTO;
+}
+
+void
+lrg_timeline_view_set_keyframe_shape (LrgTimelineView   *self,
+                                      guint              keyframe,
+                                      LrgCanvasKeyShape  shape)
+{
+	Keyframe *k;
+
+	g_return_if_fail (LRG_IS_TIMELINE_VIEW (self));
+	g_return_if_fail (shape <= LRG_CANVAS_KEY_SHAPE_BAR);
+	k = lookup_key (self, keyframe);
+	if (k == NULL)
+		return;
+	k->shape = shape;
 	queue (self);
 }
 
@@ -6536,4 +7066,797 @@ lrg_timeline_view_set_show_play_button (LrgTimelineView *self,
 	self->show_play = show;
 	queue (self);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHOW_PLAY_BUTTON]);
+}
+
+/* ==========================================================================
+ * Looks: properties
+ * ========================================================================== */
+
+LrgCanvasLook
+lrg_timeline_view_get_look (LrgTimelineView *self)
+{
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), LRG_CANVAS_LOOK_AUTO);
+	return self->look;
+}
+
+void
+lrg_timeline_view_set_look (LrgTimelineView *self,
+                            LrgCanvasLook    look)
+{
+	g_return_if_fail (LRG_IS_TIMELINE_VIEW (self));
+	g_return_if_fail (look <= LRG_CANVAS_LOOK_NEON);
+
+	if (self->look == look)
+		return;
+	self->look = look;
+	queue (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOOK]);
+}
+
+LrgNodeGraphGrid
+lrg_timeline_view_get_grid_style (LrgTimelineView *self)
+{
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), LRG_NODE_GRAPH_GRID_AUTO);
+	return self->grid_style;
+}
+
+void
+lrg_timeline_view_set_grid_style (LrgTimelineView  *self,
+                                  LrgNodeGraphGrid  style)
+{
+	g_return_if_fail (LRG_IS_TIMELINE_VIEW (self));
+	g_return_if_fail (style <= LRG_NODE_GRAPH_GRID_CROSSES);
+
+	if (self->grid_style == style)
+		return;
+	self->grid_style = style;
+	queue (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GRID_STYLE]);
+}
+
+LrgCanvasKeyShape
+lrg_timeline_view_get_key_shape (LrgTimelineView *self)
+{
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), LRG_CANVAS_KEY_SHAPE_AUTO);
+	return self->key_shape;
+}
+
+void
+lrg_timeline_view_set_key_shape (LrgTimelineView   *self,
+                                 LrgCanvasKeyShape  shape)
+{
+	g_return_if_fail (LRG_IS_TIMELINE_VIEW (self));
+	g_return_if_fail (shape <= LRG_CANVAS_KEY_SHAPE_BAR);
+
+	if (self->key_shape == shape)
+		return;
+	self->key_shape = shape;
+	queue (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_KEY_SHAPE]);
+}
+
+gfloat
+lrg_timeline_view_get_glow (LrgTimelineView *self)
+{
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), -1.0f);
+	return self->glow_strength;
+}
+
+void
+lrg_timeline_view_set_glow (LrgTimelineView *self,
+                            gfloat           glow)
+{
+	g_return_if_fail (LRG_IS_TIMELINE_VIEW (self));
+
+	/* Every negative value means "the look's" */
+	glow = glow < 0.0f ? -1.0f : MIN (glow, 3.0f);
+	if (self->glow_strength == glow)
+		return;
+	self->glow_strength = glow;
+	queue (self);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GLOW]);
+}
+
+/* ==========================================================================
+ * YAML
+ * ========================================================================== */
+
+G_DEFINE_QUARK (lrg-timeline-view-error-quark, lrg_timeline_view_error)
+
+/* yaml_color: "#rrggbbaa" */
+static gchar *
+yaml_color (const GrlColor *c)
+{
+	return g_strdup_printf ("#%02x%02x%02x%02x", c->r, c->g, c->b, c->a);
+}
+
+/* yaml_parse_color: "#rrggbb" or "#rrggbbaa" */
+static gboolean
+yaml_parse_color (const gchar *text,
+                  GrlColor    *out)
+{
+	guint64 v;
+	gchar  *end = NULL;
+	gsize   len;
+
+	if (text == NULL || text[0] != '#')
+		return FALSE;
+	len = strlen (text + 1);
+	if (len != 6 && len != 8)
+		return FALSE;
+	v = g_ascii_strtoull (text + 1, &end, 16);
+	if (end == NULL || *end != '\0')
+		return FALSE;
+	if (len == 6)
+		v = (v << 8) | 0xff;
+	out->r = (guint8) ((v >> 24) & 0xff);
+	out->g = (guint8) ((v >> 16) & 0xff);
+	out->b = (guint8) ((v >> 8) & 0xff);
+	out->a = (guint8) (v & 0xff);
+	return TRUE;
+}
+
+/* yaml_nick: the nick of @value in the enum @type */
+static const gchar *
+yaml_nick (GType type,
+           gint  value)
+{
+	g_autoptr(GEnumClass) klass = g_type_class_ref (type);
+	GEnumValue           *ev = g_enum_get_value (klass, value);
+
+	return ev != NULL ? ev->value_nick : "auto";
+}
+
+/* yaml_enum: @text as a nick or name of the enum @type */
+static gboolean
+yaml_enum (GType        type,
+           const gchar *text,
+           gint        *out)
+{
+	g_autoptr(GEnumClass) klass = g_type_class_ref (type);
+	GEnumValue           *ev;
+
+	if (text == NULL)
+		return FALSE;
+	ev = g_enum_get_value_by_nick (klass, text);
+	if (ev == NULL)
+		ev = g_enum_get_value_by_name (klass, text);
+	if (ev == NULL)
+		return FALSE;
+	*out = ev->value;
+	return TRUE;
+}
+
+/* --- writing ------------------------------------------------------------- */
+
+static YamlSequence *
+tracks_to_yaml (LrgTimelineView      *self,
+                LrgTimelineViewTrack *parent);
+
+/*
+ * track_to_yaml:
+ *
+ * One track: its name, the properties that differ from a new track's,
+ * its clips and keyframes in time order, then its nested tracks.
+ */
+static YamlMapping *
+track_to_yaml (LrgTimelineView      *self,
+               LrgTimelineViewTrack *t)
+{
+	YamlMapping  *m = yaml_mapping_new ();
+	YamlSequence *children;
+	guint         i;
+
+	if (t->name != NULL)
+		yaml_mapping_set_string_member (m, "name", t->name);
+	if (t->has_color)
+	{
+		g_autofree gchar *hex = yaml_color (&t->color);
+
+		yaml_mapping_set_string_member (m, "color", hex);
+	}
+	if (t->height != 0.0f)
+		yaml_mapping_set_double_member (m, "height", (gdouble) t->height);
+	if (t->collapsed)
+		yaml_mapping_set_boolean_member (m, "collapsed", TRUE);
+	if (t->muted)
+		yaml_mapping_set_boolean_member (m, "muted", TRUE);
+	if (t->locked)
+		yaml_mapping_set_boolean_member (m, "locked", TRUE);
+	if (t->allow_overlap)
+		yaml_mapping_set_boolean_member (m, "allow-overlap", TRUE);
+	if (t->curve_lane)
+		yaml_mapping_set_boolean_member (m, "curve-lane", TRUE);
+	if (t->curve_height != DEFAULT_CURVE_H)
+		yaml_mapping_set_double_member (m, "curve-height", (gdouble) t->curve_height);
+	if (t->value_min != 0.0)
+		yaml_mapping_set_double_member (m, "value-min", t->value_min);
+	if (t->value_max != 1.0)
+		yaml_mapping_set_double_member (m, "value-max", t->value_max);
+	if (t->default_value != 0.0)
+		yaml_mapping_set_double_member (m, "default-value", t->default_value);
+
+	/* --- clips --- */
+	if (t->clips->len > 0)
+	{
+		YamlSequence *clips = yaml_sequence_new ();
+
+		for (i = 0; i < t->clips->len; i++)
+		{
+			Clip        *c = g_ptr_array_index (t->clips, i);
+			YamlMapping *cm = yaml_mapping_new ();
+
+			yaml_mapping_set_double_member (cm, "start", c->start);
+			yaml_mapping_set_double_member (cm, "duration", c->duration);
+			if (c->label != NULL)
+				yaml_mapping_set_string_member (cm, "label", c->label);
+			if (c->has_color)
+			{
+				g_autofree gchar *hex = yaml_color (&c->color);
+
+				yaml_mapping_set_string_member (cm, "color", hex);
+			}
+			yaml_sequence_add_mapping_element (clips, cm);
+			yaml_mapping_unref (cm);
+		}
+		yaml_mapping_set_sequence_member (m, "clips", clips);
+		yaml_sequence_unref (clips);
+	}
+
+	/* --- keyframes --- */
+	if (t->keys->len > 0)
+	{
+		YamlSequence *keys = yaml_sequence_new ();
+
+		for (i = 0; i < t->keys->len; i++)
+		{
+			Keyframe    *k = g_ptr_array_index (t->keys, i);
+			YamlMapping *km = yaml_mapping_new ();
+
+			yaml_mapping_set_double_member (km, "time", k->time);
+			yaml_mapping_set_double_member (km, "value", k->value);
+			yaml_mapping_set_string_member (km, "interpolation",
+			                                yaml_nick (LRG_TYPE_TIMELINE_VIEW_INTERPOLATION, (gint) k->interp));
+			if (k->in_slope != 0.0 || k->out_slope != 0.0)
+			{
+				YamlSequence *tan = yaml_sequence_new ();
+
+				yaml_sequence_add_double_element (tan, k->in_slope);
+				yaml_sequence_add_double_element (tan, k->out_slope);
+				yaml_mapping_set_sequence_member (km, "tangents", tan);
+				yaml_sequence_unref (tan);
+			}
+			if (k->shape != LRG_CANVAS_KEY_SHAPE_AUTO)
+				yaml_mapping_set_string_member (km, "shape",
+				                                yaml_nick (LRG_TYPE_CANVAS_KEY_SHAPE, (gint) k->shape));
+			yaml_sequence_add_mapping_element (keys, km);
+			yaml_mapping_unref (km);
+		}
+		yaml_mapping_set_sequence_member (m, "keyframes", keys);
+		yaml_sequence_unref (keys);
+	}
+
+	/* --- nested tracks --- */
+	children = tracks_to_yaml (self, t);
+	if (yaml_sequence_get_length (children) > 0)
+		yaml_mapping_set_sequence_member (m, "tracks", children);
+	yaml_sequence_unref (children);
+	return m;
+}
+
+/* tracks_to_yaml: the tracks whose parent is @parent, in display order */
+static YamlSequence *
+tracks_to_yaml (LrgTimelineView      *self,
+                LrgTimelineViewTrack *parent)
+{
+	YamlSequence *seq = yaml_sequence_new ();
+	guint         i;
+
+	for (i = 0; i < self->tracks->len; i++)
+	{
+		LrgTimelineViewTrack *t = g_ptr_array_index (self->tracks, i);
+		YamlMapping          *m;
+
+		if (t->parent != parent)
+			continue;
+		m = track_to_yaml (self, t);
+		yaml_sequence_add_mapping_element (seq, m);
+		yaml_mapping_unref (m);
+	}
+	return seq;
+}
+
+gchar *
+lrg_timeline_view_to_yaml (LrgTimelineView  *self,
+                           gsize            *length,
+                           GError          **error)
+{
+	g_autoptr(YamlGenerator) generator = NULL;
+	g_autoptr(YamlNode)      root_node = NULL;
+	YamlMapping             *root;
+	YamlSequence            *tracks;
+	YamlSequence            *markers;
+	gsize                    len = 0;
+	gchar                   *data;
+	guint                    i;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), NULL);
+	g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+	root = yaml_mapping_new ();
+	yaml_mapping_set_int_member (root, "version", 1);
+	yaml_mapping_set_double_member (root, "duration", self->duration);
+	if (self->fps > 0.0)
+		yaml_mapping_set_double_member (root, "fps", self->fps);
+
+	tracks = tracks_to_yaml (self, NULL);
+	yaml_mapping_set_sequence_member (root, "tracks", tracks);
+	yaml_sequence_unref (tracks);
+
+	markers = yaml_sequence_new ();
+	for (i = 0; i < self->markers->len; i++)
+	{
+		Marker      *mk = g_ptr_array_index (self->markers, i);
+		YamlMapping *mm = yaml_mapping_new ();
+
+		yaml_mapping_set_double_member (mm, "time", mk->time);
+		if (mk->label != NULL)
+			yaml_mapping_set_string_member (mm, "label", mk->label);
+		yaml_sequence_add_mapping_element (markers, mm);
+		yaml_mapping_unref (mm);
+	}
+	yaml_mapping_set_sequence_member (root, "markers", markers);
+	yaml_sequence_unref (markers);
+
+	root_node = yaml_node_new_mapping (root);
+	yaml_mapping_unref (root);
+	generator = yaml_generator_new ();
+	yaml_generator_set_root (generator, root_node);
+	data = yaml_generator_to_data (generator, &len, error);
+	if (data != NULL && length != NULL)
+		*length = len;
+	return data;
+}
+
+/* --- reading ------------------------------------------------------------- */
+
+/* Parsed document, built before the timeline is touched */
+typedef struct
+{
+	gdouble   start;
+	gdouble   duration;
+	gchar    *label;
+	gboolean  has_color;
+	GrlColor  color;
+} StagedClip;
+
+typedef struct
+{
+	gdouble   time;
+	gdouble   value;
+	gint      interp;
+	gdouble   in_slope;
+	gdouble   out_slope;
+	gint      shape;
+} StagedKey;
+
+typedef struct
+{
+	LrgTimelineViewTrack *track;      /* detached, properties set */
+	GArray               *clips;      /* StagedClip */
+	GArray               *keys;       /* StagedKey */
+	GPtrArray            *children;   /* StagedTrack * */
+} StagedTrack;
+
+static void
+staged_clip_clear (gpointer data)
+{
+	g_free (((StagedClip *) data)->label);
+}
+
+static void
+staged_track_free (gpointer data)
+{
+	StagedTrack *t = data;
+
+	g_clear_object (&t->track);
+	g_clear_pointer (&t->clips, g_array_unref);
+	g_clear_pointer (&t->keys, g_array_unref);
+	g_clear_pointer (&t->children, g_ptr_array_unref);
+	g_free (t);
+}
+
+static gboolean
+parse_fail (GError      **error,
+            const gchar  *path,
+            const gchar  *what)
+{
+	g_set_error (error, LRG_TIMELINE_VIEW_ERROR, LRG_TIMELINE_VIEW_ERROR_PARSE,
+	             "timeline YAML: %s: %s", path, what);
+	return FALSE;
+}
+
+/* scalar_of: the text of a scalar node, %NULL for a null node; FALSE otherwise */
+static gboolean
+scalar_of (YamlNode     *node,
+           const gchar **out)
+{
+	*out = NULL;
+	if (node == NULL || yaml_node_get_node_type (node) == YAML_NODE_NULL)
+		return TRUE;
+	if (yaml_node_get_node_type (node) != YAML_NODE_SCALAR)
+		return FALSE;
+	*out = yaml_node_get_scalar (node);
+	return TRUE;
+}
+
+/* number_of: a finite number from a scalar node */
+static gboolean
+number_of (YamlNode *node,
+           gdouble  *out)
+{
+	const gchar *text;
+	gchar       *end = NULL;
+
+	if (!scalar_of (node, &text) || text == NULL)
+		return FALSE;
+	*out = g_ascii_strtod (text, &end);
+	return end != NULL && end != text && *end == '\0' && isfinite (*out);
+}
+
+/* number_in: member @key of @m as a number, @fallback when absent */
+static gboolean
+number_in (YamlMapping *m,
+           const gchar *key,
+           gdouble      fallback,
+           gboolean     required,
+           gdouble     *out)
+{
+	if (!yaml_mapping_has_member (m, key))
+	{
+		*out = fallback;
+		return !required;
+	}
+	return number_of (yaml_mapping_get_member (m, key), out);
+}
+
+/* list_in: member @key of @m as a sequence (NULL when absent); FALSE when not a list */
+static gboolean
+list_in (YamlMapping   *m,
+         const gchar   *key,
+         YamlSequence **out)
+{
+	YamlNode *n;
+
+	*out = NULL;
+	if (!yaml_mapping_has_member (m, key))
+		return TRUE;
+	n = yaml_mapping_get_member (m, key);
+	if (n == NULL || yaml_node_get_node_type (n) == YAML_NODE_NULL)
+		return TRUE;
+	if (yaml_node_get_node_type (n) != YAML_NODE_SEQUENCE)
+		return FALSE;
+	*out = yaml_node_get_sequence (n);
+	return TRUE;
+}
+
+/*
+ * set_track_property:
+ *
+ * Sets a track property from a YAML scalar: booleans, numbers, text
+ * and colours ("#rrggbb[aa]"). "parent" is structural and refused.
+ */
+static gboolean
+set_track_property (LrgTimelineViewTrack *track,
+                    const gchar          *key,
+                    YamlNode             *node)
+{
+	GParamSpec   *pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (track), key);
+	g_auto(GValue) value = G_VALUE_INIT;
+	const gchar  *text;
+	gdouble       d;
+
+	if (pspec == NULL || !(pspec->flags & G_PARAM_WRITABLE) || g_strcmp0 (key, "parent") == 0)
+		return FALSE;
+	if (!scalar_of (node, &text))
+		return FALSE;
+	g_value_init (&value, pspec->value_type);
+	if (pspec->value_type == G_TYPE_BOOLEAN)
+	{
+		if (g_strcmp0 (text, "true") == 0 || g_strcmp0 (text, "yes") == 0)
+			g_value_set_boolean (&value, TRUE);
+		else if (g_strcmp0 (text, "false") == 0 || g_strcmp0 (text, "no") == 0)
+			g_value_set_boolean (&value, FALSE);
+		else
+			return FALSE;
+	}
+	else if (pspec->value_type == G_TYPE_FLOAT || pspec->value_type == G_TYPE_DOUBLE)
+	{
+		if (!number_of (node, &d))
+			return FALSE;
+		if (pspec->value_type == G_TYPE_FLOAT)
+			g_value_set_float (&value, (gfloat) d);
+		else
+			g_value_set_double (&value, d);
+	}
+	else if (pspec->value_type == G_TYPE_STRING)
+		g_value_set_string (&value, text);
+	else if (pspec->value_type == GRL_TYPE_COLOR)
+	{
+		GrlColor c;
+
+		if (text != NULL && !yaml_parse_color (text, &c))
+			return FALSE;
+		g_value_set_boxed (&value, text != NULL ? &c : NULL);
+	}
+	else
+		return FALSE;
+	if (g_param_value_validate (pspec, &value))
+		return FALSE;
+	g_object_set_property (G_OBJECT (track), key, &value);
+	return TRUE;
+}
+
+static gboolean stage_tracks (YamlSequence  *seq,
+                              const gchar   *path,
+                              guint          depth,
+                              GPtrArray     *out,
+                              GError       **error);
+
+/* stage_track: parses one `tracks:` entry */
+static gboolean
+stage_track (YamlNode     *item,
+             const gchar  *path,
+             guint         depth,
+             StagedTrack  *st,
+             GError      **error)
+{
+	YamlMapping  *m;
+	YamlSequence *seq;
+	const gchar  *name = NULL;
+	guint         i;
+
+	if (item == NULL || yaml_node_get_node_type (item) != YAML_NODE_MAPPING)
+		return parse_fail (error, path, "a track must be a mapping");
+	m = yaml_node_get_mapping (item);
+	if (yaml_mapping_has_member (m, "name") && !scalar_of (yaml_mapping_get_member (m, "name"), &name))
+		return parse_fail (error, path, "bad name");
+	st->track = lrg_timeline_view_track_new (name);
+	st->clips = g_array_new (FALSE, TRUE, sizeof (StagedClip));
+	g_array_set_clear_func (st->clips, staged_clip_clear);
+	st->keys = g_array_new (FALSE, TRUE, sizeof (StagedKey));
+	st->children = g_ptr_array_new_with_free_func (staged_track_free);
+
+	/* --- track properties: every other scalar key --- */
+	for (i = 0; i < yaml_mapping_get_size (m); i++)
+	{
+		const gchar *key = yaml_mapping_get_key (m, i);
+
+		if (g_strcmp0 (key, "name") == 0 || g_strcmp0 (key, "clips") == 0 ||
+		    g_strcmp0 (key, "keyframes") == 0 || g_strcmp0 (key, "tracks") == 0)
+			continue;
+		if (!set_track_property (st->track, key, yaml_mapping_get_value (m, i)))
+		{
+			g_autofree gchar *msg = g_strdup_printf ("bad or unknown track key '%s'", key);
+
+			return parse_fail (error, path, msg);
+		}
+	}
+
+	/* --- clips --- */
+	if (!list_in (m, "clips", &seq))
+		return parse_fail (error, path, "'clips' must be a list");
+	for (i = 0; seq != NULL && i < yaml_sequence_get_length (seq); i++)
+	{
+		YamlNode    *cn = yaml_sequence_get_element (seq, i);
+		YamlMapping *cm;
+		StagedClip   c;
+		const gchar *text = NULL;
+
+		memset (&c, 0, sizeof c);
+		if (cn == NULL || yaml_node_get_node_type (cn) != YAML_NODE_MAPPING)
+			return parse_fail (error, path, "a clip must be a mapping");
+		cm = yaml_node_get_mapping (cn);
+		if (!number_in (cm, "start", 0.0, TRUE, &c.start) || !number_in (cm, "duration", 0.0, TRUE, &c.duration) ||
+		    c.duration <= 0.0)
+			return parse_fail (error, path, "a clip needs a start and a positive duration");
+		if (yaml_mapping_has_member (cm, "label") && !scalar_of (yaml_mapping_get_member (cm, "label"), &text))
+			return parse_fail (error, path, "bad clip label");
+		c.label = g_strdup (text);
+		g_array_append_val (st->clips, c);
+		if (yaml_mapping_has_member (cm, "color"))
+		{
+			StagedClip *sc = &g_array_index (st->clips, StagedClip, st->clips->len - 1);
+
+			if (!scalar_of (yaml_mapping_get_member (cm, "color"), &text) ||
+			    (text != NULL && !yaml_parse_color (text, &sc->color)))
+				return parse_fail (error, path, "bad clip color");
+			sc->has_color = text != NULL;
+		}
+	}
+
+	/* --- keyframes --- */
+	if (!list_in (m, "keyframes", &seq))
+		return parse_fail (error, path, "'keyframes' must be a list");
+	for (i = 0; seq != NULL && i < yaml_sequence_get_length (seq); i++)
+	{
+		YamlNode     *kn = yaml_sequence_get_element (seq, i);
+		YamlMapping  *km;
+		YamlSequence *tan;
+		StagedKey     k;
+		const gchar  *text = NULL;
+
+		memset (&k, 0, sizeof k);
+		k.interp = LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR;
+		if (kn == NULL || yaml_node_get_node_type (kn) != YAML_NODE_MAPPING)
+			return parse_fail (error, path, "a keyframe must be a mapping");
+		km = yaml_node_get_mapping (kn);
+		if (!number_in (km, "time", 0.0, TRUE, &k.time) || !number_in (km, "value", 0.0, FALSE, &k.value))
+			return parse_fail (error, path, "a keyframe needs a time and a numeric value");
+		if (yaml_mapping_has_member (km, "interpolation") &&
+		    (!scalar_of (yaml_mapping_get_member (km, "interpolation"), &text) ||
+		     !yaml_enum (LRG_TYPE_TIMELINE_VIEW_INTERPOLATION, text, &k.interp)))
+			return parse_fail (error, path, "bad keyframe interpolation");
+		if (yaml_mapping_has_member (km, "shape") &&
+		    (!scalar_of (yaml_mapping_get_member (km, "shape"), &text) ||
+		     !yaml_enum (LRG_TYPE_CANVAS_KEY_SHAPE, text, &k.shape)))
+			return parse_fail (error, path, "bad keyframe shape");
+		if (!list_in (km, "tangents", &tan) ||
+		    (tan != NULL && (yaml_sequence_get_length (tan) != 2 ||
+		                     !number_of (yaml_sequence_get_element (tan, 0), &k.in_slope) ||
+		                     !number_of (yaml_sequence_get_element (tan, 1), &k.out_slope))))
+			return parse_fail (error, path, "'tangents' must be [in, out]");
+		g_array_append_val (st->keys, k);
+	}
+
+	/* --- nested tracks --- */
+	if (!list_in (m, "tracks", &seq))
+		return parse_fail (error, path, "'tracks' must be a list");
+	return seq == NULL || stage_tracks (seq, path, depth + 1, st->children, error);
+}
+
+/* stage_tracks: parses a `tracks:` list (nesting at most 16 deep) */
+static gboolean
+stage_tracks (YamlSequence  *seq,
+              const gchar   *path,
+              guint          depth,
+              GPtrArray     *out,
+              GError       **error)
+{
+	guint i;
+
+	if (depth > 16)
+		return parse_fail (error, path, "tracks nest too deeply");
+	for (i = 0; i < yaml_sequence_get_length (seq); i++)
+	{
+		g_autofree gchar *sub = g_strdup_printf ("%s.tracks[%u]", path, i);
+		StagedTrack      *st = g_new0 (StagedTrack, 1);
+
+		g_ptr_array_add (out, st);
+		if (!stage_track (yaml_sequence_get_element (seq, i), sub, depth, st, error))
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* apply_tracks: adds the staged tracks (under @parent) with their content */
+static void
+apply_tracks (LrgTimelineView      *self,
+              GPtrArray            *staged,
+              LrgTimelineViewTrack *parent)
+{
+	guint i;
+	guint j;
+
+	for (i = 0; i < staged->len; i++)
+	{
+		StagedTrack *st = g_ptr_array_index (staged, i);
+
+		lrg_timeline_view_append_track (self, st->track, parent);
+		for (j = 0; j < st->clips->len; j++)
+		{
+			StagedClip *c = &g_array_index (st->clips, StagedClip, j);
+			guint       id = lrg_timeline_view_add_clip (self, st->track, c->start, c->duration, c->label);
+
+			if (id != LRG_TIMELINE_VIEW_INVALID_ID && c->has_color)
+				lrg_timeline_view_set_clip_color (self, id, &c->color);
+		}
+		for (j = 0; j < st->keys->len; j++)
+		{
+			StagedKey *k = &g_array_index (st->keys, StagedKey, j);
+			guint      id = lrg_timeline_view_add_keyframe (self, st->track, k->time, k->value,
+			                                                (LrgTimelineViewInterpolation) k->interp);
+
+			if (id == LRG_TIMELINE_VIEW_INVALID_ID)
+				continue;
+			if (k->in_slope != 0.0 || k->out_slope != 0.0)
+				lrg_timeline_view_set_keyframe_tangents (self, id, k->in_slope, k->out_slope);
+			lrg_timeline_view_set_keyframe_shape (self, id, (LrgCanvasKeyShape) k->shape);
+		}
+		apply_tracks (self, st->children, st->track);
+	}
+}
+
+gboolean
+lrg_timeline_view_load_yaml (LrgTimelineView  *self,
+                             const gchar      *data,
+                             gssize            length,
+                             GError          **error)
+{
+	g_autoptr(YamlParser) parser = NULL;
+	g_autoptr(GPtrArray)  tracks = NULL;
+	g_autoptr(GArray)     marks = NULL;
+	g_autoptr(GError)     local = NULL;
+	YamlNode             *root_node;
+	YamlMapping          *root;
+	YamlSequence         *seq;
+	gdouble               version;
+	gdouble               duration;
+	gdouble               fps;
+	guint                 i;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_VIEW (self), FALSE);
+	g_return_val_if_fail (data != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* --- the document --- */
+	parser = yaml_parser_new ();
+	if (!yaml_parser_load_from_data (parser, data, length, &local))
+		return parse_fail (error, "document", local->message);
+	root_node = yaml_parser_get_root (parser);
+	if (root_node == NULL || yaml_node_get_node_type (root_node) != YAML_NODE_MAPPING)
+		return parse_fail (error, "document", "not a mapping");
+	root = yaml_node_get_mapping (root_node);
+	if (!number_in (root, "version", 1.0, FALSE, &version) || version != 1.0)
+		return parse_fail (error, "version", "unsupported version");
+	if (!number_in (root, "duration", self->duration, FALSE, &duration) || duration <= 0.0)
+		return parse_fail (error, "duration", "must be a positive number");
+	if (!number_in (root, "fps", self->fps, FALSE, &fps) || fps < 0.0)
+		return parse_fail (error, "fps", "must be a number >= 0");
+
+	/* --- tracks and markers, staged --- */
+	tracks = g_ptr_array_new_with_free_func (staged_track_free);
+	if (!list_in (root, "tracks", &seq))
+		return parse_fail (error, "tracks", "must be a list");
+	if (seq != NULL && !stage_tracks (seq, "document", 0, tracks, error))
+		return FALSE;
+
+	marks = g_array_new (FALSE, TRUE, sizeof (StagedClip));
+	g_array_set_clear_func (marks, staged_clip_clear);
+	if (!list_in (root, "markers", &seq))
+		return parse_fail (error, "markers", "must be a list");
+	for (i = 0; seq != NULL && i < yaml_sequence_get_length (seq); i++)
+	{
+		YamlNode    *mn = yaml_sequence_get_element (seq, i);
+		YamlMapping *mm;
+		StagedClip   mk;
+		const gchar *text = NULL;
+
+		memset (&mk, 0, sizeof mk);
+		if (mn == NULL || yaml_node_get_node_type (mn) != YAML_NODE_MAPPING)
+			return parse_fail (error, "markers", "a marker must be a mapping");
+		mm = yaml_node_get_mapping (mn);
+		if (!number_in (mm, "time", 0.0, TRUE, &mk.start))
+			return parse_fail (error, "markers", "a marker needs a time");
+		if (yaml_mapping_has_member (mm, "label") && !scalar_of (yaml_mapping_get_member (mm, "label"), &text))
+			return parse_fail (error, "markers", "bad marker label");
+		mk.label = g_strdup (text);
+		g_array_append_val (marks, mk);
+	}
+
+	/* --- valid: replace the content --- */
+	while (self->tracks->len > 0)
+		lrg_timeline_view_remove_track (self, g_ptr_array_index (self->tracks, 0));
+	while (self->markers->len > 0)
+		lrg_timeline_view_remove_marker (self, ((Marker *) g_ptr_array_index (self->markers, 0))->id);
+	lrg_timeline_view_set_duration (self, duration);
+	lrg_timeline_view_set_fps (self, fps);
+	apply_tracks (self, tracks, NULL);
+	for (i = 0; i < marks->len; i++)
+	{
+		StagedClip *mk = &g_array_index (marks, StagedClip, i);
+
+		lrg_timeline_view_add_marker (self, mk->start, mk->label);
+	}
+	return TRUE;
 }

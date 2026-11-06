@@ -31,6 +31,8 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "lrg-container.h"
+#include "lrg-theme.h"
+#include "../paint/lrg-paint-icons.h"
 
 G_BEGIN_DECLS
 
@@ -60,20 +62,353 @@ GType lrg_graph_port_direction_get_type (void) G_GNUC_CONST;
  * @LRG_NODE_GRAPH_GRID_NONE: no grid
  * @LRG_NODE_GRAPH_GRID_DOTS: a dot at every grid intersection
  * @LRG_NODE_GRAPH_GRID_LINES: minor and major grid lines
+ * @LRG_NODE_GRAPH_GRID_AUTO: whatever the canvas look picks (the
+ *   default; lines for %LRG_CANVAS_LOOK_AUTO)
+ * @LRG_NODE_GRAPH_GRID_CROSSES: a small cross at every intersection
  *
  * How the canvas background grid is drawn. Either way it fades out as
- * the cells get too small on screen.
+ * the cells get too small on screen. #LrgTimelineView uses the same
+ * values for the time grid drawn behind its lanes.
  */
 typedef enum
 {
 	LRG_NODE_GRAPH_GRID_NONE,
 	LRG_NODE_GRAPH_GRID_DOTS,
-	LRG_NODE_GRAPH_GRID_LINES
+	LRG_NODE_GRAPH_GRID_LINES,
+	LRG_NODE_GRAPH_GRID_AUTO,
+	LRG_NODE_GRAPH_GRID_CROSSES
 } LrgNodeGraphGrid;
 
 LRG_AVAILABLE_IN_ALL
 GType lrg_node_graph_grid_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_NODE_GRAPH_GRID (lrg_node_graph_grid_get_type ())
+
+/* ==========================================================================
+ * Canvas looks (shared with LrgTimelineView)
+ * ========================================================================== */
+
+/**
+ * LrgCanvasLook:
+ * @LRG_CANVAS_LOOK_AUTO: follows the theme: every part comes from the
+ *   theme's colour roles and metrics (the classic look)
+ * @LRG_CANVAS_LOOK_MODERN: soft surfaces, large rounded cards, deep
+ *   soft shadows, tinted headers and a dotted grid; light or dark with
+ *   the theme
+ * @LRG_CANVAS_LOOK_BLUEPRINT: a deep blue drafting board with a fine
+ *   and a coarse grid, gradient headers, amber selection and arrow
+ *   pins for "exec" ports
+ * @LRG_CANVAS_LOOK_BLENDER: a dark grey editor with a dotted grid,
+ *   flat headers, small pins and thin wires
+ * @LRG_CANVAS_LOOK_NEON: near black with a glowing grid, outlined
+ *   cards lit in their own colour, glowing wires and pins
+ *
+ * Visual preset of a node graph or timeline canvas. A preset defines
+ * every visual part (background, grid, cards, headers, pins, links,
+ * selection, tracks, clips, keyframes, playhead, ruler, markers and
+ * loop region); see #LrgCanvasLookParts.
+ */
+typedef enum
+{
+	LRG_CANVAS_LOOK_AUTO,
+	LRG_CANVAS_LOOK_MODERN,
+	LRG_CANVAS_LOOK_BLUEPRINT,
+	LRG_CANVAS_LOOK_BLENDER,
+	LRG_CANVAS_LOOK_NEON
+} LrgCanvasLook;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_canvas_look_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CANVAS_LOOK (lrg_canvas_look_get_type ())
+
+/**
+ * LrgCanvasLinkShape:
+ * @LRG_CANVAS_LINK_SHAPE_AUTO: the look's shape (an item: the widget's)
+ * @LRG_CANVAS_LINK_SHAPE_BEZIER: a smooth cubic curve with horizontal
+ *   tangents
+ * @LRG_CANVAS_LINK_SHAPE_STRAIGHT: one straight segment
+ * @LRG_CANVAS_LINK_SHAPE_STEP: right angles: out horizontally, across
+ *   vertically, in horizontally (a detour around the nodes when the
+ *   link runs backwards)
+ * @LRG_CANVAS_LINK_SHAPE_ANGLED: short horizontal stubs at both ends
+ *   joined by one diagonal
+ *
+ * Path of a node graph wire.
+ */
+typedef enum
+{
+	LRG_CANVAS_LINK_SHAPE_AUTO,
+	LRG_CANVAS_LINK_SHAPE_BEZIER,
+	LRG_CANVAS_LINK_SHAPE_STRAIGHT,
+	LRG_CANVAS_LINK_SHAPE_STEP,
+	LRG_CANVAS_LINK_SHAPE_ANGLED
+} LrgCanvasLinkShape;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_canvas_link_shape_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CANVAS_LINK_SHAPE (lrg_canvas_link_shape_get_type ())
+
+/**
+ * LrgCanvasPinShape:
+ * @LRG_CANVAS_PIN_SHAPE_AUTO: the look's shape (a port: the widget's)
+ * @LRG_CANVAS_PIN_SHAPE_CIRCLE: a dot
+ * @LRG_CANVAS_PIN_SHAPE_SQUARE: a small square
+ * @LRG_CANVAS_PIN_SHAPE_DIAMOND: a square on its corner
+ * @LRG_CANVAS_PIN_SHAPE_TRIANGLE: an arrow pointing along the flow
+ *   (to the right)
+ *
+ * Shape of a node graph port. Every shape is filled when the port has
+ * a link and drawn as an outline when it is free.
+ */
+typedef enum
+{
+	LRG_CANVAS_PIN_SHAPE_AUTO,
+	LRG_CANVAS_PIN_SHAPE_CIRCLE,
+	LRG_CANVAS_PIN_SHAPE_SQUARE,
+	LRG_CANVAS_PIN_SHAPE_DIAMOND,
+	LRG_CANVAS_PIN_SHAPE_TRIANGLE
+} LrgCanvasPinShape;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_canvas_pin_shape_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CANVAS_PIN_SHAPE (lrg_canvas_pin_shape_get_type ())
+
+/**
+ * LrgCanvasKeyShape:
+ * @LRG_CANVAS_KEY_SHAPE_AUTO: the look's shape (a keyframe: the widget's)
+ * @LRG_CANVAS_KEY_SHAPE_DIAMOND: a diamond
+ * @LRG_CANVAS_KEY_SHAPE_CIRCLE: a dot
+ * @LRG_CANVAS_KEY_SHAPE_SQUARE: a rounded square
+ * @LRG_CANVAS_KEY_SHAPE_BAR: a thin vertical bar
+ *
+ * Shape of a timeline keyframe.
+ */
+typedef enum
+{
+	LRG_CANVAS_KEY_SHAPE_AUTO,
+	LRG_CANVAS_KEY_SHAPE_DIAMOND,
+	LRG_CANVAS_KEY_SHAPE_CIRCLE,
+	LRG_CANVAS_KEY_SHAPE_SQUARE,
+	LRG_CANVAS_KEY_SHAPE_BAR
+} LrgCanvasKeyShape;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_canvas_key_shape_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CANVAS_KEY_SHAPE (lrg_canvas_key_shape_get_type ())
+
+/**
+ * LrgCanvasHeaderStyle:
+ * @LRG_CANVAS_HEADER_STYLE_AUTO: the look's style
+ * @LRG_CANVAS_HEADER_STYLE_GRADIENT: the node colour shading darker
+ *   towards the right
+ * @LRG_CANVAS_HEADER_STYLE_SOLID: the flat node colour
+ * @LRG_CANVAS_HEADER_STYLE_STRIPE: the card colour with a bright band
+ *   of the node colour along the top edge
+ * @LRG_CANVAS_HEADER_STYLE_TINT: the card colour tinted by the node
+ *   colour
+ *
+ * How the header of a node card shows the node's colour.
+ */
+typedef enum
+{
+	LRG_CANVAS_HEADER_STYLE_AUTO,
+	LRG_CANVAS_HEADER_STYLE_GRADIENT,
+	LRG_CANVAS_HEADER_STYLE_SOLID,
+	LRG_CANVAS_HEADER_STYLE_STRIPE,
+	LRG_CANVAS_HEADER_STYLE_TINT
+} LrgCanvasHeaderStyle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_canvas_header_style_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CANVAS_HEADER_STYLE (lrg_canvas_header_style_get_type ())
+
+#define LRG_TYPE_CANVAS_LOOK_PARTS (lrg_canvas_look_parts_get_type ())
+
+/**
+ * LrgCanvasLookParts:
+ * @look: the preset the parts come from
+ * @dark: %TRUE when the parts are meant for a dark canvas
+ * @glow: overall glow strength (0 disables every glow, 1 is the
+ *   preset's)
+ * @background: canvas background (gradient start, top)
+ * @background_end: canvas background at the bottom (equal to
+ *   @background when flat)
+ * @text: main text colour on the canvas
+ * @text_muted: secondary text (port labels, ruler labels)
+ * @accent: highlight colour (live wires, rubber band, focus)
+ * @grid_style: grid drawing, never %LRG_NODE_GRAPH_GRID_AUTO
+ * @grid_major_every: minor cells per major cell
+ * @grid_minor: colour of the minor grid
+ * @grid_major: colour of the major grid
+ * @grid_glow: halo width around major grid lines (0: none)
+ * @node_background: card body colour
+ * @node_border: card outline colour
+ * @node_border_width: card outline width
+ * @node_radius: card corner radius
+ * @node_shadow: card shadow colour
+ * @node_shadow_blur: card shadow blur
+ * @node_shadow_offset_y: card shadow drop
+ * @node_gradient: the card body shades darker towards the bottom
+ * @node_glow: halo width around cards in the node's colour (0: none)
+ * @node_border_accent: the card outline takes the node's colour
+ * @header_style: header look, never %LRG_CANVAS_HEADER_STYLE_AUTO
+ * @header: header colour of nodes without a category or colour
+ * @title: title colour; alpha 0 picks white or black for contrast
+ * @header_mute: how far node colours are mixed towards a neutral grey
+ *   in headers (0: pure colour, 1: grey)
+ * @pin_shape: port shape, never %LRG_CANVAS_PIN_SHAPE_AUTO
+ * @pin_size: port diameter at zoom 1
+ * @pin_ring: inner colour of free ports (their hole)
+ * @pin_ring_width: outline width of free ports
+ * @pin_glow: halo width around ports (0: only when hot)
+ * @link_shape: wire path, never %LRG_CANVAS_LINK_SHAPE_AUTO
+ * @link_width: wire thickness at zoom 1
+ * @link_glow: halo width around wires
+ * @link_gradient: wires blend from the output's to the input's colour
+ * @link_flow: pulses flow along the selected wire and the wires of
+ *   selected nodes
+ * @selection: selection outline colour
+ * @selection_width: selection outline width
+ * @selection_glow: halo width around selected items
+ * @track_header: timeline header column and ruler colour
+ * @track_header_text: track names
+ * @lane: timeline lane colour (even rows)
+ * @lane_alt: timeline lane colour (odd rows: the stripes)
+ * @lane_border: line between lanes
+ * @clip_radius: clip corner radius
+ * @clip_gradient: clips shade darker towards the bottom
+ * @clip_outline: clips are a tinted fill with a bright outline
+ * @clip_glow: halo width around clips in their colour (0: only when
+ *   selected)
+ * @key_shape: keyframe shape, never %LRG_CANVAS_KEY_SHAPE_AUTO
+ * @key_size: keyframe half size
+ * @key: keyframe colour
+ * @key_selected: selected keyframe colour
+ * @playhead: playhead colour
+ * @playhead_width: playhead line width
+ * @playhead_glow: halo width around the playhead
+ * @ruler: ruler band colour
+ * @ruler_text: ruler labels
+ * @ruler_tick: ruler ticks and time grid
+ * @marker: marker flag colour
+ * @loop_region: loop range tint
+ *
+ * Every visual part of a canvas look, resolved. Fill one with a preset
+ * (lrg_canvas_look_parts_init()) or ask a widget for the parts it
+ * paints with (lrg_node_graph_get_look_parts(),
+ * lrg_timeline_view_get_look_parts()), which also apply the theme's
+ * style rules, per-instance part looks and the widget's own look
+ * properties.
+ */
+typedef struct
+{
+	LrgCanvasLook        look;
+	gboolean             dark;
+	gfloat               glow;
+
+	GrlColor             background;
+	GrlColor             background_end;
+	GrlColor             text;
+	GrlColor             text_muted;
+	GrlColor             accent;
+
+	LrgNodeGraphGrid     grid_style;
+	guint                grid_major_every;
+	GrlColor             grid_minor;
+	GrlColor             grid_major;
+	gfloat               grid_glow;
+
+	GrlColor             node_background;
+	GrlColor             node_border;
+	gfloat               node_border_width;
+	gfloat               node_radius;
+	GrlColor             node_shadow;
+	gfloat               node_shadow_blur;
+	gfloat               node_shadow_offset_y;
+	gboolean             node_gradient;
+	gfloat               node_glow;
+	gboolean             node_border_accent;
+
+	LrgCanvasHeaderStyle header_style;
+	GrlColor             header;
+	GrlColor             title;
+	gfloat               header_mute;
+
+	LrgCanvasPinShape    pin_shape;
+	gfloat               pin_size;
+	GrlColor             pin_ring;
+	gfloat               pin_ring_width;
+	gfloat               pin_glow;
+
+	LrgCanvasLinkShape   link_shape;
+	gfloat               link_width;
+	gfloat               link_glow;
+	gboolean             link_gradient;
+	gboolean             link_flow;
+
+	GrlColor             selection;
+	gfloat               selection_width;
+	gfloat               selection_glow;
+
+	GrlColor             track_header;
+	GrlColor             track_header_text;
+	GrlColor             lane;
+	GrlColor             lane_alt;
+	GrlColor             lane_border;
+	gfloat               clip_radius;
+	gboolean             clip_gradient;
+	gboolean             clip_outline;
+	gfloat               clip_glow;
+	LrgCanvasKeyShape    key_shape;
+	gfloat               key_size;
+	GrlColor             key;
+	GrlColor             key_selected;
+	GrlColor             playhead;
+	gfloat               playhead_width;
+	gfloat               playhead_glow;
+	GrlColor             ruler;
+	GrlColor             ruler_text;
+	GrlColor             ruler_tick;
+	GrlColor             marker;
+	GrlColor             loop_region;
+} LrgCanvasLookParts;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_canvas_look_parts_get_type (void) G_GNUC_CONST;
+
+/**
+ * lrg_canvas_look_parts_init:
+ * @self: (out caller-allocates): the parts to fill
+ * @look: a preset
+ * @theme: (nullable): the theme %LRG_CANVAS_LOOK_AUTO and
+ *   %LRG_CANVAS_LOOK_MODERN derive from (and whose light or dark
+ *   background Modern follows); %NULL for the default theme
+ *
+ * Fills @self with the preset's parts. The fixed palettes (Blueprint,
+ * Blender, Neon) do not depend on the theme; Modern follows its light
+ * or dark background; Auto takes every colour from its roles.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_look_parts_init (LrgCanvasLookParts *self,
+                                 LrgCanvasLook       look,
+                                 LrgTheme           *theme);
+
+/**
+ * lrg_canvas_look_parts_copy:
+ * @self: an #LrgCanvasLookParts
+ *
+ * Returns: (transfer full): a copy of @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasLookParts * lrg_canvas_look_parts_copy (const LrgCanvasLookParts *self);
+
+/**
+ * lrg_canvas_look_parts_free:
+ * @self: (nullable): an #LrgCanvasLookParts
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_look_parts_free (LrgCanvasLookParts *self);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgCanvasLookParts, lrg_canvas_look_parts_free)
 
 /**
  * LrgNodeGraphError:
@@ -237,6 +572,28 @@ void lrg_graph_port_set_color (LrgGraphPort   *self,
 LRG_AVAILABLE_IN_ALL
 guint lrg_graph_port_get_n_links (LrgGraphPort *self);
 
+/**
+ * lrg_graph_port_get_shape:
+ * @self: an #LrgGraphPort
+ *
+ * Returns: the port's own shape, %LRG_CANVAS_PIN_SHAPE_AUTO when it
+ *   follows the graph
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasPinShape lrg_graph_port_get_shape (LrgGraphPort *self);
+
+/**
+ * lrg_graph_port_set_shape:
+ * @self: an #LrgGraphPort
+ * @shape: the port's shape, or %LRG_CANVAS_PIN_SHAPE_AUTO for the
+ *   graph's #LrgNodeGraph:pin-shape (then the look's)
+ *
+ * Gives one port its own shape (it beats the graph and the look).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_graph_port_set_shape (LrgGraphPort      *self,
+                               LrgCanvasPinShape  shape);
+
 /* ==========================================================================
  * LrgGraphNode
  * ========================================================================== */
@@ -329,6 +686,51 @@ void lrg_graph_node_set_accent (LrgGraphNode   *self,
  *
  * Returns: left edge in graph units
  */
+/**
+ * lrg_graph_node_get_icon:
+ * @self: an #LrgGraphNode
+ *
+ * Returns: (nullable): the name of the built-in icon drawn in the
+ *   header, %NULL for none
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_graph_node_get_icon (LrgGraphNode *self);
+
+/**
+ * lrg_graph_node_set_icon:
+ * @self: an #LrgGraphNode
+ * @icon: (nullable): a built-in icon name (an #LrgIcon nick such as
+ *   "gear" or "play", see lrg_paint_icon_from_name()), %NULL for none
+ *
+ * Draws an icon before the title in the node's header. Unknown names
+ * are kept (and saved) but draw nothing.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_graph_node_set_icon (LrgGraphNode *self,
+                              const gchar  *icon);
+
+/**
+ * lrg_graph_node_get_svg_icon:
+ * @self: an #LrgGraphNode
+ *
+ * Returns: (transfer none) (nullable): the SVG icon of the header
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSvgIcon * lrg_graph_node_get_svg_icon (LrgGraphNode *self);
+
+/**
+ * lrg_graph_node_set_svg_icon:
+ * @self: an #LrgGraphNode
+ * @icon: (nullable): an SVG icon, drawn in place of the built-in
+ *   #LrgGraphNode:icon (tinted with the title colour)
+ *
+ * Sets an SVG icon for the header. SVG icons are not saved by
+ * lrg_node_graph_to_yaml().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_graph_node_set_svg_icon (LrgGraphNode *self,
+                                  LrgSvgIcon   *icon);
+
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_graph_node_get_x (LrgGraphNode *self);
 
@@ -503,6 +905,52 @@ LrgGraphPort * lrg_graph_link_get_output (LrgGraphLink *self);
  */
 LRG_AVAILABLE_IN_ALL
 LrgGraphPort * lrg_graph_link_get_input (LrgGraphLink *self);
+
+/**
+ * lrg_graph_link_get_color:
+ * @self: an #LrgGraphLink
+ * @color: (out caller-allocates) (optional): the link's own colour
+ *
+ * Returns: %TRUE if the link has its own colour
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_graph_link_get_color (LrgGraphLink *self,
+                                   GrlColor     *color);
+
+/**
+ * lrg_graph_link_set_color:
+ * @self: an #LrgGraphLink
+ * @color: (nullable): a colour for the whole wire, %NULL to blend the
+ *   colours of its ports again
+ *
+ * Gives one wire its own colour.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_graph_link_set_color (LrgGraphLink   *self,
+                               const GrlColor *color);
+
+/**
+ * lrg_graph_link_get_shape:
+ * @self: an #LrgGraphLink
+ *
+ * Returns: the link's own shape, %LRG_CANVAS_LINK_SHAPE_AUTO when it
+ *   follows the graph
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasLinkShape lrg_graph_link_get_shape (LrgGraphLink *self);
+
+/**
+ * lrg_graph_link_set_shape:
+ * @self: an #LrgGraphLink
+ * @shape: the wire's path, or %LRG_CANVAS_LINK_SHAPE_AUTO for the
+ *   graph's #LrgNodeGraph:link-shape (then the look's)
+ *
+ * Gives one wire its own path. Hit testing (lrg_node_graph_link_at())
+ * follows the path that is drawn.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_graph_link_set_shape (LrgGraphLink       *self,
+                               LrgCanvasLinkShape  shape);
 
 /* ==========================================================================
  * LrgNodeGraph: model
@@ -1160,7 +1608,8 @@ LrgNodeGraphGrid lrg_node_graph_get_grid_style (LrgNodeGraph *self);
 /**
  * lrg_node_graph_set_grid_style:
  * @self: an #LrgNodeGraph
- * @style: dots, lines or none
+ * @style: dots, lines, crosses, none, or %LRG_NODE_GRAPH_GRID_AUTO
+ *   for the look's grid
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_node_graph_set_grid_style (LrgNodeGraph     *self,
@@ -1223,6 +1672,163 @@ void lrg_node_graph_set_animate_links (LrgNodeGraph *self,
                                        gboolean      animate);
 
 /* ==========================================================================
+ * LrgNodeGraph: looks
+ * ========================================================================== */
+
+/**
+ * lrg_node_graph_get_look:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the canvas look preset
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasLook lrg_node_graph_get_look (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_look:
+ * @self: an #LrgNodeGraph
+ * @look: a preset; %LRG_CANVAS_LOOK_AUTO follows the theme
+ *
+ * Picks the visual preset. Explicit look properties
+ * (#LrgNodeGraph:grid-style, #LrgNodeGraph:link-shape ...), per-item
+ * settings, theme style rules and lrg_widget_set_part_look() still
+ * apply on top of it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_look (LrgNodeGraph  *self,
+                              LrgCanvasLook  look);
+
+/**
+ * lrg_node_graph_get_link_shape:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the wire path set on the graph (%LRG_CANVAS_LINK_SHAPE_AUTO:
+ *   the look's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasLinkShape lrg_node_graph_get_link_shape (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_link_shape:
+ * @self: an #LrgNodeGraph
+ * @shape: the path of every wire without its own shape
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_link_shape (LrgNodeGraph       *self,
+                                    LrgCanvasLinkShape  shape);
+
+/**
+ * lrg_node_graph_get_pin_shape:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the port shape set on the graph (%LRG_CANVAS_PIN_SHAPE_AUTO:
+ *   the look's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasPinShape lrg_node_graph_get_pin_shape (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_pin_shape:
+ * @self: an #LrgNodeGraph
+ * @shape: the shape of every port without its own shape
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_pin_shape (LrgNodeGraph      *self,
+                                   LrgCanvasPinShape  shape);
+
+/**
+ * lrg_node_graph_get_header_style:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the header style set on the graph
+ *   (%LRG_CANVAS_HEADER_STYLE_AUTO: the look's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasHeaderStyle lrg_node_graph_get_header_style (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_header_style:
+ * @self: an #LrgNodeGraph
+ * @style: how node headers show their colour
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_header_style (LrgNodeGraph         *self,
+                                      LrgCanvasHeaderStyle  style);
+
+/**
+ * lrg_node_graph_get_link_width:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the wire thickness set on the graph, 0 for the look's
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_node_graph_get_link_width (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_link_width:
+ * @self: an #LrgNodeGraph
+ * @width: wire thickness at zoom 1, 0 for the look's
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_link_width (LrgNodeGraph *self,
+                                    gfloat        width);
+
+/**
+ * lrg_node_graph_get_glow:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the glow strength set on the graph, negative for the look's
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_node_graph_get_glow (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_glow:
+ * @self: an #LrgNodeGraph
+ * @glow: strength of every glow (wires, ports, cards, selection, grid):
+ *   0 turns them off, 1 is the look's, up to 3; negative follows the
+ *   look
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_glow (LrgNodeGraph *self,
+                              gfloat        glow);
+
+/**
+ * lrg_node_graph_get_selection_flow:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: %TRUE if pulses flow along selected wires
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_graph_get_selection_flow (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_set_selection_flow:
+ * @self: an #LrgNodeGraph
+ * @flow: animate pulses along the selected wire and the wires of the
+ *   selected nodes (#LrgNodeGraph:animate-links animates every wire)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_set_selection_flow (LrgNodeGraph *self,
+                                        gboolean      flow);
+
+/**
+ * lrg_node_graph_get_look_parts:
+ * @self: an #LrgNodeGraph
+ * @parts: (out caller-allocates): the parts the graph paints with
+ *
+ * Resolves every visual part as the next paint will: the look preset,
+ * then the theme's style rules and lrg_widget_set_part_look() overrides
+ * (through the widget parts BOX, ITEM, HEADER, LABEL, MARK, TRACK and
+ * FILL), then the graph's look properties. Per-item settings (node
+ * colours and icons, port and link shapes and colours) are applied on
+ * top while painting.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_get_look_parts (LrgNodeGraph       *self,
+                                    LrgCanvasLookParts *parts);
+
+/* ==========================================================================
  * LrgNodeGraph: serialization
  * ========================================================================== */
 
@@ -1233,7 +1839,8 @@ void lrg_node_graph_set_animate_links (LrgNodeGraph *self,
  * @error: return location for a #GError
  *
  * Serializes the view, the nodes (id, title, position, category,
- * accent, ports) and the links. Body widgets are not saved.
+ * accent, icon, ports with their colour and shape) and the links (with
+ * their colour and shape). Body widgets and SVG icons are not saved.
  *
  * Returns: (transfer full) (nullable): the YAML document
  */

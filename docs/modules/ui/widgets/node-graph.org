@@ -195,12 +195,19 @@ The body becomes a child of the graph (=LrgNodeGraph= is an =LrgContainer=) whil
 | =min-zoom=      | =gfloat=           | 0.2     | Smallest zoom |
 | =max-zoom=      | =gfloat=           | 2.5     | Largest zoom |
 | =grid-size=     | =gfloat=           | 24      | Grid cell in graph units; snap step |
-| =grid-style=    | =LrgNodeGraphGrid= | =lines= | =none=, =dots= or =lines= |
+| =grid-style=    | =LrgNodeGraphGrid= | =auto=  | =none=, =dots=, =lines=, =crosses=, or =auto= for the look's (lines in the Auto look) |
 | =snap-to-grid=  | =gboolean=         | =FALSE= | Dragged cards land on the grid (the grabbed card snaps, the others keep their offsets) |
 | =show-minimap=  | =gboolean=         | =FALSE= | Overview in the bottom-right corner (180 x 120) |
 | =animate-links= | =gboolean=         | =FALSE= | Pulses flow along wires |
+| =look=          | =LrgCanvasLook=    | =auto=  | Visual preset, see [[#node-graph-looks][Looks]] |
+| =link-shape=    | =LrgCanvasLinkShape= | =auto= | =bezier=, =straight=, =step=, =angled= for wires without their own shape |
+| =pin-shape=     | =LrgCanvasPinShape= | =auto= | =circle=, =square=, =diamond=, =triangle= for ports without their own shape |
+| =header-style=  | =LrgCanvasHeaderStyle= | =auto= | =gradient=, =solid=, =stripe=, =tint= |
+| =link-width=    | =gfloat=           | 0       | Wire thickness at zoom 1; 0 = the look's |
+| =glow=          | =gfloat=           | -1      | Glow strength 0..3; negative = the look's |
+| =selection-flow= | =gboolean=        | =FALSE= | Pulses along the selected wire and the wires of selected nodes |
 
-=LrgGraphNode= properties: =id= (construct-only), =title=, =category=, =accent= (=GrlColor=, nullable), =x=, =y=, =min-width=, =body=, =selected= (read-only). =LrgGraphPort=: =name=, =direction=, =type-name= (construct-only), =multi-link=, =color= (nullable). =LrgGraphLink=: =output=, =input= (read-only).
+=LrgGraphNode= properties: =id= (construct-only), =title=, =category=, =accent= (=GrlColor=, nullable), =icon= (built-in icon name, nullable), =svg-icon= (=LrgSvgIcon=), =x=, =y=, =min-width=, =body=, =selected= (read-only). =LrgGraphPort=: =name=, =direction=, =type-name= (construct-only), =multi-link=, =color= (nullable), =shape= (=LrgCanvasPinShape=, =auto=). =LrgGraphLink=: =output=, =input= (read-only), =color= (nullable), =shape= (=LrgCanvasLinkShape=, =auto=).
 
 | Signal              | Arguments                         | Emitted |
 |---------------------+-----------------------------------+---------|
@@ -246,6 +253,102 @@ styles:
     size: 3.5
 #+end_src
 
+** Looks
+:PROPERTIES:
+:CUSTOM_ID: node-graph-looks
+:END:
+A graph can switch its whole appearance with one property, =look= (=LrgCanvasLook=). The same presets exist on [[file:timeline-view.org::#timeline-looks][LrgTimelineView]], so an editor's graph and timeline can match.
+
+#+begin_src c
+lrg_node_graph_set_look (graph, LRG_CANVAS_LOOK_BLUEPRINT);
+lrg_node_graph_set_link_shape (graph, LRG_CANVAS_LINK_SHAPE_STEP);   /* beats the look */
+lrg_graph_node_set_icon (node, "gear");                              /* header icon */
+lrg_graph_link_set_shape (link, LRG_CANVAS_LINK_SHAPE_STRAIGHT);     /* beats the graph */
+#+end_src
+
+*** Presets
+:PROPERTIES:
+:CUSTOM_ID: node-graph-look-presets
+:END:
+| Look        | Canvas | Grid | Cards | Header | Pins | Wires | Selection |
+|-------------+--------+------+-------+--------+------+-------+-----------|
+| =auto=      | Theme =WINDOW= / =PANEL= mix | Lines (=BORDER= 35 % / 75 %), major every 4 | =SURFACE=, theme radius x 1.25, theme shadow | Gradient of the node colour | Circles 10 | Bezier 2.5, gradient, glow 5 | =ACCENT= 2 |
+| =modern=    | Soft =#161618= / =#f1f1f3= wash (follows the theme's light / dark) | Dots | White or =#232327=, radius 14, deep soft shadow, body gradient | Tint of the node colour, text title | Circles 10 | Bezier 2.5, no glow | Theme =ACCENT=, glow 6 |
+| =blueprint= | Deep blue gradient =#123764= to =#0a2546= | Fine and coarse lines (major every 5) | Translucent navy, radius 6, blue rim, body gradient | Gradient; ports typed =exec= are arrows | Circles 10 | Bezier 3, glow 6 | Amber =#f5b342=, glow 8 |
+| =blender=   | Flat =#1d1d1d= | Dots (major every 5) | =#303030=, radius 5, dark rim | Solid, node colours muted 45 % towards grey | Circles 8 | Bezier 1.6, no glow | Orange =#ffa733= 1.5 |
+| =neon=      | Near black =#06060b= to =#0d0719= | Violet lines, major lines glow | Outlined in the node colour, radius 12, glow 14 in the node colour | Stripe: a glowing band of the node colour | Diamonds with a glow | Bezier 2.4, glow 10 | White, glow 12 |
+
+Light themes keep their contrast in =auto= and =modern= (port colours are darkened on light canvases); the fixed palettes (Blueprint, Blender, Neon) are always dark.
+
+*** Parts
+:PROPERTIES:
+:CUSTOM_ID: node-graph-look-parts
+:END:
+Every preset defines the whole =LrgCanvasLookParts= structure (shared with the timeline). The graph uses:
+| Field | Meaning |
+|-------+---------|
+| =background=, =background_end= | Canvas wash (top, bottom) |
+| =grid_style=, =grid_major_every=, =grid_minor=, =grid_major=, =grid_glow= | Grid: =lines=, =dots=, =crosses= or =none=; minor cells per major cell; colours; halo around major lines |
+| =node_background=, =node_border=, =node_border_width=, =node_radius=, =node_shadow=, =node_shadow_blur=, =node_shadow_offset_y= | Card body |
+| =node_gradient=, =node_glow=, =node_border_accent= | Body shading, halo in the node colour, outline in the node colour |
+| =header_style=, =header=, =title=, =header_mute= | Header style (=gradient=, =solid=, =stripe=, =tint=), colour of nodes without one, title colour (alpha 0: pick by contrast), how far node colours are mixed towards =header= |
+| =pin_shape=, =pin_size=, =pin_ring=, =pin_ring_width=, =pin_glow= | Ports: =circle=, =square=, =diamond=, =triangle= (an arrow along the flow); filled when linked, an outline (the shape again in =pin_ring=) when free |
+| =link_shape=, =link_width=, =link_glow=, =link_gradient=, =link_flow= | Wires: =bezier=, =straight=, =step=, =angled=; thickness; halo; output-to-input colour blend; pulses on selected wires |
+| =selection=, =selection_width=, =selection_glow= | Selection outline and halo |
+| =text=, =text_muted=, =accent=, =glow=, =dark= | Text, port labels, live wires and rubber band, overall glow strength, dark canvas |
+
+=lrg_canvas_look_parts_init (&parts, look, theme)= fills the structure for a preset; =lrg_node_graph_get_look_parts (graph, &parts)= returns what the next paint will use (all overrides applied, never an =auto= value). It is a boxed type (=LRG_TYPE_CANVAS_LOOK_PARTS=, =lrg_canvas_look_parts_get_type=, =lrg_canvas_look_parts_copy=, =lrg_canvas_look_parts_free=).
+
+*** Override precedence
+:PROPERTIES:
+:CUSTOM_ID: node-graph-look-precedence
+:END:
+Highest wins:
+1. Per item: a node's =accent= / =category= colour and =icon= / =svg-icon=, a port's =color= and =shape=, a link's =color= and =shape=.
+2. Graph properties: =grid-style=, =link-shape=, =pin-shape=, =header-style= (each =auto= = not set), =link-width= (0 = not set), =glow= (negative = not set), =selection-flow=.
+3. =lrg_widget_set_part_look()= overrides, then theme style rules, on the parts =box=, =item=, =header=, =label=, =mark=, =track=, =fill= (see [[#node-graph-parts][Parts and states]]).
+4. The look preset (non-Auto presets replace the built-in look of those parts).
+5. The theme (the =auto= look takes every colour from the theme's roles, so all theme presets still look right).
+
+Blueprint adds one convention between 2 and 4: a port whose type is =exec= is drawn as an arrow unless the port or the graph sets a pin shape.
+
+*** Icons and glow
+:PROPERTIES:
+:CUSTOM_ID: node-graph-look-icons
+:END:
+- =lrg_graph_node_set_icon (node, "gear")= draws a built-in icon (any =LrgIcon= nick, see =lrg_paint_icon_from_name()=) before the title, in the title colour; the card widens to fit. An unknown name is kept (and saved) but draws nothing. =lrg_graph_node_set_svg_icon()= draws an =LrgSvgIcon= instead (not saved to YAML, needs a window to rasterize).
+- Wires glow through =lrg_paint_list_curve()= (one instance per Bezier, one per straight segment of the other shapes, the gradient running over the whole path by length). Cards, ports and the selection glow with soft shadow instances in their colour. =glow= scales all of them; 0 removes every halo.
+- =selection-flow= sends pulses along the selected wire and the wires of selected nodes (=animate-links= animates every wire).
+- Hit testing (=lrg_node_graph_link_at()=) follows the drawn path of every shape.
+
+*** Looks in YAML
+:PROPERTIES:
+:CUSTOM_ID: node-graph-look-yaml
+:END:
+The look and its properties are plain properties for =LrgUILoader=; per-item overrides live in the graph document:
+#+begin_src yaml
+type: node-graph
+look: neon
+link-shape: auto
+pin-shape: auto
+glow: 1.5
+graph:
+  version: 1
+  nodes:
+    - id: tex
+      title: Texture
+      icon: file
+      accent: "#22d3eeff"
+      ports:
+        - { name: color, direction: output, type: vec4, shape: diamond }
+    - id: out
+      title: Output
+      x: 300
+      ports: [{ name: albedo, direction: input, type: vec4 }]
+  links:
+    - { from: tex, output: color, to: out, input: albedo, color: "#ec4899ff", shape: step }
+#+end_src
+
 ** Serialization
 :PROPERTIES:
 :CUSTOM_ID: node-graph-yaml
@@ -274,7 +377,7 @@ nodes:
 links:
   - { from: tex, output: color, to: out, input: albedo }
 #+end_src
-Optional node keys: =title=, =category=, =accent= (=#rrggbb= or =#rrggbbaa=), =min-width=; port keys: =type= (absent for "any"), =multi-link= (written only when it differs from the default), =color=. Body widgets are not saved.
+Optional node keys: =title=, =category=, =accent= (=#rrggbb= or =#rrggbbaa=), =min-width=, =icon= (built-in icon name); port keys: =type= (absent for "any"), =multi-link= (written only when it differs from the default), =color=, =shape= (pin shape nick); link keys: =color=, =shape= (link shape nick). Shapes are written only when set (not =auto=). Body widgets and SVG icons are not saved.
 
 Loading validates the whole document first (scalar types, unique node ids, unique port names per direction, link ends naming existing ports of two different nodes) and fails with =LRG_NODE_GRAPH_ERROR_PARSE= without touching the graph. Links are then restored with =lrg_node_graph_connect()=, so the application's =can-connect= still applies: a refused link stops the load with that error, keeping the nodes and the links restored before it. Saving a loaded graph reproduces the document.
 
@@ -284,7 +387,8 @@ Loading validates the whole document first (scalar types, unique node ids, uniqu
 :END:
 - Cards (with a 32-unit margin for shadows and port dots) and wires (by their control polygon's box) outside the view are skipped; =lrg_node_graph_get_paint_stats()= reports how many were painted last time.
 - A card costs about ten instances plus one per glyph; a wire is one instance. Below a zoom of 0.4 glyphs are dropped.
-- Grid lines are one instance each; dots are skipped when more than 4000 would be needed, and both levels fade out before they get dense.
+- Grid lines are one instance each (two for the major lines of a glowing grid), all batched into the draw call of the background; dots are skipped when more than 4000 would be needed (crosses, two instances each, past 2000), and both levels fade out before they get dense.
+- The =auto= look costs nothing extra: no glows, gradients or icons are recorded unless a look, a property or an item asks for them. A step or angled wire is three curve instances instead of one.
 - Hit tests reject cards and wires by bounding boxes before exact tests, so pointer motion over 500 nodes and 1000 links stays cheap.
 - Node geometry is cached; text is measured only when a title, port or font size changes.
 
@@ -320,6 +424,8 @@ The document is validated during expansion (a bad link is a loader error with th
 - =node-moved= is not emitted on every pointer motion during a drag (watch =notify::x= / =notify::y= for that).
 - Removing a node from a =node-removed= or =link-removed= handler is allowed; the graph re-checks its state after each emission.
 - =lrg_node_graph_load_yaml()= clears the graph first: existing bodies are dropped with their nodes.
+- =grid-style= now defaults to =auto= (the look's grid). Code that read =lrg_node_graph_get_grid_style()= expecting =lines= should read the resolved =grid_style= of =lrg_node_graph_get_look_parts()= instead.
+- A theme style rule or =lrg_widget_set_part_look()= on =item=, =header= ... beats the look preset; clear it if a preset seems to have no effect on cards.
 
 ** API Reference
 :PROPERTIES:
@@ -327,22 +433,27 @@ The document is validated during expansion (a bad link is a loader error with th
 :END:
 Enums and errors:
 - =LrgGraphPortDirection= (=lrg_graph_port_direction_get_type=), =LrgNodeGraphGrid= (=lrg_node_graph_grid_get_type=)
+- Looks: =LrgCanvasLook= (=lrg_canvas_look_get_type=), =LrgCanvasLinkShape= (=lrg_canvas_link_shape_get_type=), =LrgCanvasPinShape= (=lrg_canvas_pin_shape_get_type=), =LrgCanvasKeyShape= (=lrg_canvas_key_shape_get_type=), =LrgCanvasHeaderStyle= (=lrg_canvas_header_style_get_type=)
+- =LrgCanvasLookParts= (=lrg_canvas_look_parts_get_type=): =lrg_canvas_look_parts_init=, =lrg_canvas_look_parts_copy=, =lrg_canvas_look_parts_free=
 - =LrgNodeGraphError=, =LRG_NODE_GRAPH_ERROR=, =lrg_node_graph_error_quark=
 
 =LrgGraphPort=:
 - =lrg_graph_port_get_name=, =lrg_graph_port_get_direction=, =lrg_graph_port_get_port_type=, =lrg_graph_port_get_type_name=, =lrg_graph_port_get_node=
 - =lrg_graph_port_get_multi_link= / =lrg_graph_port_set_multi_link=
 - =lrg_graph_port_get_color= / =lrg_graph_port_set_color=, =lrg_graph_port_get_n_links=
+- =lrg_graph_port_get_shape= / =lrg_graph_port_set_shape=
 
 =LrgGraphNode=:
 - =lrg_graph_node_new (id, title)=, =lrg_graph_node_get_id=, =lrg_graph_node_get_graph=, =lrg_graph_node_get_selected=
 - =lrg_graph_node_get_title= / =lrg_graph_node_set_title=, =lrg_graph_node_get_category= / =lrg_graph_node_set_category=, =lrg_graph_node_get_accent= / =lrg_graph_node_set_accent=
 - =lrg_graph_node_get_x=, =lrg_graph_node_get_y=, =lrg_graph_node_set_position=, =lrg_graph_node_get_min_width= / =lrg_graph_node_set_min_width=
 - =lrg_graph_node_get_body= / =lrg_graph_node_set_body=
+- =lrg_graph_node_get_icon= / =lrg_graph_node_set_icon=, =lrg_graph_node_get_svg_icon= / =lrg_graph_node_set_svg_icon=
 - =lrg_graph_node_add_port (node, direction, name, type_name)=, =lrg_graph_node_remove_port=, =lrg_graph_node_get_n_ports=, =lrg_graph_node_get_port=, =lrg_graph_node_find_port=
 
 =LrgGraphLink=:
 - =lrg_graph_link_get_output=, =lrg_graph_link_get_input=
+- =lrg_graph_link_get_color= / =lrg_graph_link_set_color=, =lrg_graph_link_get_shape= / =lrg_graph_link_set_shape=
 
 =LrgNodeGraph= model:
 - =lrg_node_graph_new=, =lrg_node_graph_add_node (graph, id, title, x, y)=, =lrg_node_graph_append_node=, =lrg_node_graph_remove_node=, =lrg_node_graph_clear=
@@ -366,6 +477,11 @@ Settings:
 - =lrg_node_graph_get_min_zoom=, =lrg_node_graph_get_max_zoom=, =lrg_node_graph_set_zoom_range=
 - =lrg_node_graph_get_grid_size= / =lrg_node_graph_set_grid_size=, =lrg_node_graph_get_grid_style= / =lrg_node_graph_set_grid_style=, =lrg_node_graph_get_snap_to_grid= / =lrg_node_graph_set_snap_to_grid=
 - =lrg_node_graph_get_show_minimap= / =lrg_node_graph_set_show_minimap=, =lrg_node_graph_get_animate_links= / =lrg_node_graph_set_animate_links=
+
+Looks:
+- =lrg_node_graph_get_look= / =lrg_node_graph_set_look=, =lrg_node_graph_get_look_parts=
+- =lrg_node_graph_get_link_shape= / =lrg_node_graph_set_link_shape=, =lrg_node_graph_get_pin_shape= / =lrg_node_graph_set_pin_shape=, =lrg_node_graph_get_header_style= / =lrg_node_graph_set_header_style=
+- =lrg_node_graph_get_link_width= / =lrg_node_graph_set_link_width=, =lrg_node_graph_get_glow= / =lrg_node_graph_set_glow=, =lrg_node_graph_get_selection_flow= / =lrg_node_graph_set_selection_flow=
 
 Serialization:
 - =lrg_node_graph_to_yaml=, =lrg_node_graph_load_yaml=

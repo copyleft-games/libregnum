@@ -20,6 +20,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "lrg-container.h"
+#include "lrg-node-graph.h"
 
 G_BEGIN_DECLS
 
@@ -96,6 +97,32 @@ typedef enum /*< flags >*/
 LRG_AVAILABLE_IN_ALL
 GType lrg_timeline_view_snap_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_TIMELINE_VIEW_SNAP (lrg_timeline_view_snap_get_type ())
+
+/**
+ * LrgTimelineViewError:
+ * @LRG_TIMELINE_VIEW_ERROR_PARSE: a YAML document could not be loaded
+ *
+ * Errors from lrg_timeline_view_load_yaml().
+ */
+typedef enum
+{
+	LRG_TIMELINE_VIEW_ERROR_PARSE
+} LrgTimelineViewError;
+
+/**
+ * LRG_TIMELINE_VIEW_ERROR:
+ *
+ * Error domain of #LrgTimelineViewError.
+ */
+#define LRG_TIMELINE_VIEW_ERROR (lrg_timeline_view_error_quark ())
+
+/**
+ * lrg_timeline_view_error_quark:
+ *
+ * Returns: the #LrgTimelineViewError domain
+ */
+LRG_AVAILABLE_IN_ALL
+GQuark lrg_timeline_view_error_quark (void);
 
 /* ==========================================================================
  * LrgTimelineViewTrack
@@ -632,6 +659,20 @@ void lrg_timeline_view_set_clip_color (LrgTimelineView    *self,
                                   const GrlColor *color);
 
 /**
+ * lrg_timeline_view_get_clip_color:
+ * @self: an #LrgTimelineView
+ * @clip: a clip id
+ * @color: (out caller-allocates) (optional): the clip's own colour
+ *
+ * Returns: %TRUE if the clip has its own colour (else it uses the
+ *   track's)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_view_get_clip_color (LrgTimelineView *self,
+                                           guint            clip,
+                                           GrlColor        *color);
+
+/**
  * lrg_timeline_view_get_n_clips:
  * @self: an #LrgTimelineView
  * @track: (nullable): a track, or %NULL for all tracks
@@ -763,6 +804,34 @@ LRG_AVAILABLE_IN_ALL
 void lrg_timeline_view_set_keyframe_interpolation (LrgTimelineView              *self,
                                               guint                     keyframe,
                                               LrgTimelineViewInterpolation  interpolation);
+
+/**
+ * lrg_timeline_view_get_keyframe_shape:
+ * @self: an #LrgTimelineView
+ * @keyframe: a keyframe id
+ *
+ * Returns: the keyframe's own shape, %LRG_CANVAS_KEY_SHAPE_AUTO when
+ *   it follows the timeline
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasKeyShape lrg_timeline_view_get_keyframe_shape (LrgTimelineView *self,
+                                                        guint            keyframe);
+
+/**
+ * lrg_timeline_view_set_keyframe_shape:
+ * @self: an #LrgTimelineView
+ * @keyframe: a keyframe id
+ * @shape: the keyframe's shape in the clip lane, or
+ *   %LRG_CANVAS_KEY_SHAPE_AUTO for the timeline's
+ *   #LrgTimelineView:key-shape (then the look's)
+ *
+ * Gives one keyframe its own shape (it beats the timeline and the
+ * look).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_view_set_keyframe_shape (LrgTimelineView   *self,
+                                           guint              keyframe,
+                                           LrgCanvasKeyShape  shape);
 
 /**
  * lrg_timeline_view_set_keyframe_tangents:
@@ -1488,5 +1557,152 @@ gboolean lrg_timeline_view_get_show_play_button (LrgTimelineView *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_timeline_view_set_show_play_button (LrgTimelineView *self,
                                         gboolean     show);
+
+/* ==========================================================================
+ * Looks
+ * ========================================================================== */
+
+/**
+ * lrg_timeline_view_get_look:
+ * @self: an #LrgTimelineView
+ *
+ * Returns: the canvas look preset
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasLook lrg_timeline_view_get_look (LrgTimelineView *self);
+
+/**
+ * lrg_timeline_view_set_look:
+ * @self: an #LrgTimelineView
+ * @look: a preset; %LRG_CANVAS_LOOK_AUTO follows the theme
+ *
+ * Picks the visual preset (the same presets as #LrgNodeGraph). Look
+ * properties (#LrgTimelineView:grid-style, #LrgTimelineView:key-shape,
+ * #LrgTimelineView:glow), per-item settings (clip colours, keyframe
+ * shapes), theme style rules and lrg_widget_set_part_look() still
+ * apply on top of it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_view_set_look (LrgTimelineView *self,
+                                 LrgCanvasLook    look);
+
+/**
+ * lrg_timeline_view_get_grid_style:
+ * @self: an #LrgTimelineView
+ *
+ * Returns: the time grid style set on the timeline
+ *   (%LRG_NODE_GRAPH_GRID_AUTO: the look's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNodeGraphGrid lrg_timeline_view_get_grid_style (LrgTimelineView *self);
+
+/**
+ * lrg_timeline_view_set_grid_style:
+ * @self: an #LrgTimelineView
+ * @style: how the time grid behind the lanes is drawn (at the ruler's
+ *   ticks); %LRG_NODE_GRAPH_GRID_AUTO uses the look's (none for the
+ *   Auto look)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_view_set_grid_style (LrgTimelineView  *self,
+                                       LrgNodeGraphGrid  style);
+
+/**
+ * lrg_timeline_view_get_key_shape:
+ * @self: an #LrgTimelineView
+ *
+ * Returns: the keyframe shape set on the timeline
+ *   (%LRG_CANVAS_KEY_SHAPE_AUTO: the look's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCanvasKeyShape lrg_timeline_view_get_key_shape (LrgTimelineView *self);
+
+/**
+ * lrg_timeline_view_set_key_shape:
+ * @self: an #LrgTimelineView
+ * @shape: the shape of every keyframe without its own shape
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_view_set_key_shape (LrgTimelineView   *self,
+                                      LrgCanvasKeyShape  shape);
+
+/**
+ * lrg_timeline_view_get_glow:
+ * @self: an #LrgTimelineView
+ *
+ * Returns: the glow strength set on the timeline, negative for the
+ *   look's
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_timeline_view_get_glow (LrgTimelineView *self);
+
+/**
+ * lrg_timeline_view_set_glow:
+ * @self: an #LrgTimelineView
+ * @glow: strength of every glow (playhead, clips, keyframes, grid): 0
+ *   turns them off, 1 is the look's, up to 3; negative follows the
+ *   look
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_view_set_glow (LrgTimelineView *self,
+                                 gfloat           glow);
+
+/**
+ * lrg_timeline_view_get_look_parts:
+ * @self: an #LrgTimelineView
+ * @parts: (out caller-allocates): the parts the timeline paints with
+ *
+ * Resolves every visual part as the next paint will: the look preset,
+ * then theme style rules and lrg_widget_set_part_look() overrides
+ * (through the parts BOX, HEADER, LABEL, TRACK, ITEM, MARK, INDICATOR,
+ * TAB and FILL), then the timeline's look properties. Clip colours and
+ * keyframe shapes are applied per item while painting.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_view_get_look_parts (LrgTimelineView    *self,
+                                       LrgCanvasLookParts *parts);
+
+/* ==========================================================================
+ * Serialization
+ * ========================================================================== */
+
+/**
+ * lrg_timeline_view_to_yaml:
+ * @self: an #LrgTimelineView
+ * @length: (out) (optional): length of the result
+ * @error: return location for a #GError
+ *
+ * Serializes the duration, the frame rate, the tracks (name, colour,
+ * layout and value settings, nested tracks), their clips (start,
+ * duration, label, colour) and keyframes (time, value, interpolation,
+ * tangents, shape), and the markers. The format is the one
+ * #LrgUILoader reads under `tracks:` and `markers:`, with a few extra
+ * keys (`shape:` on keyframes).
+ *
+ * Returns: (transfer full) (nullable): the YAML document
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_timeline_view_to_yaml (LrgTimelineView  *self,
+                                   gsize            *length,
+                                   GError          **error);
+
+/**
+ * lrg_timeline_view_load_yaml:
+ * @self: an #LrgTimelineView
+ * @data: a document written by lrg_timeline_view_to_yaml()
+ * @length: length of @data, or -1 if NUL-terminated
+ * @error: return location for a #LrgTimelineViewError
+ *
+ * Replaces every track and marker with the document's. The whole
+ * document is validated before anything changes, so a malformed one
+ * leaves the timeline untouched.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_view_load_yaml (LrgTimelineView  *self,
+                                      const gchar      *data,
+                                      gssize            length,
+                                      GError          **error);
 
 G_END_DECLS
