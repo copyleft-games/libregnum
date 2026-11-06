@@ -12,6 +12,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_UI
 
 #include "lrg-grid.h"
+#include "lrg-widget-private.h"
 #include "../lrg-log.h"
 
 struct _LrgGrid
@@ -98,8 +99,8 @@ lrg_grid_layout_children (LrgContainer *container)
         x = padding + current_col * (cell_width + self->column_spacing);
         y = padding + current_row * (cell_height + self->row_spacing);
 
-        lrg_widget_set_position (child, x, y);
-        lrg_widget_set_size (child, cell_width, cell_height);
+        /* The cell is the child's slot (margin, alignment, min/max) */
+        lrg_widget_place_in_slot (child, x, y, cell_width, cell_height);
 
         /* Advance to next cell */
         current_col++;
@@ -140,7 +141,7 @@ lrg_grid_measure (LrgWidget *widget,
             continue;
         }
 
-        lrg_widget_measure (child, &child_width, &child_height);
+        _lrg_widget_outer_size (child, &child_width, &child_height);
 
         if (child_width > max_child_width)
         {

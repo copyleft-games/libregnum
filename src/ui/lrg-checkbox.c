@@ -401,6 +401,7 @@ lrg_checkbox_class_init (LrgCheckboxClass *klass)
 static void
 lrg_checkbox_init (LrgCheckbox *self)
 {
+    lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
     self->label = NULL;
     self->checked = FALSE;
     self->box_size = 20.0f;

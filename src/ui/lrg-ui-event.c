@@ -29,6 +29,9 @@ struct _LrgUIEvent
     gfloat         scroll_y;
     gunichar       codepoint;   /* TEXT_INPUT: the Unicode character */
     gboolean       consumed;
+    gboolean       bubbling;    /* set while travelling up from the target */
+    LrgWidget     *target;      /* widget the event was aimed at (unowned) */
+    LrgInputModifiers modifiers;
 };
 
 G_DEFINE_BOXED_TYPE (LrgUIEvent, lrg_ui_event,
@@ -437,4 +440,89 @@ lrg_ui_event_get_codepoint (const LrgUIEvent *self)
     g_return_val_if_fail (self != NULL, 0);
 
     return self->codepoint;
+}
+
+/*
+ * lrg_ui_event_get_bubbling:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: %TRUE while the canvas is bubbling the event up the tree
+ */
+gboolean
+lrg_ui_event_get_bubbling (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, FALSE);
+
+    return self->bubbling;
+}
+
+/*
+ * lrg_ui_event_set_bubbling:
+ * @self: an #LrgUIEvent
+ * @bubbling: whether the event is bubbling
+ */
+void
+lrg_ui_event_set_bubbling (LrgUIEvent *self,
+                           gboolean    bubbling)
+{
+    g_return_if_fail (self != NULL);
+
+    self->bubbling = bubbling;
+}
+
+/*
+ * lrg_ui_event_get_target:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: (transfer none) (nullable): the widget the event was
+ *   originally delivered to
+ */
+LrgWidget *
+lrg_ui_event_get_target (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, NULL);
+
+    return self->target;
+}
+
+/*
+ * lrg_ui_event_set_target:
+ * @self: an #LrgUIEvent
+ * @target: (nullable): the original target
+ */
+void
+lrg_ui_event_set_target (LrgUIEvent *self,
+                         LrgWidget  *target)
+{
+    g_return_if_fail (self != NULL);
+
+    self->target = target;
+}
+
+/*
+ * lrg_ui_event_get_modifiers:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: modifier keys held when the event happened
+ */
+LrgInputModifiers
+lrg_ui_event_get_modifiers (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, LRG_INPUT_MODIFIER_NONE);
+
+    return self->modifiers;
+}
+
+/*
+ * lrg_ui_event_set_modifiers:
+ * @self: an #LrgUIEvent
+ * @modifiers: modifier keys
+ */
+void
+lrg_ui_event_set_modifiers (LrgUIEvent        *self,
+                            LrgInputModifiers  modifiers)
+{
+    g_return_if_fail (self != NULL);
+
+    self->modifiers = modifiers;
 }

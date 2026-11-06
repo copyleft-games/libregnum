@@ -615,6 +615,7 @@ lrg_tab_view_class_init (LrgTabViewClass *klass)
 static void
 lrg_tab_view_init (LrgTabView *self)
 {
+    lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
     self->tabs = g_ptr_array_new_with_free_func (
         (GDestroyNotify)lrg_tab_entry_free);
     self->active_tab = 0;

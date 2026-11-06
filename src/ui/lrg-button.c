@@ -464,6 +464,7 @@ lrg_button_class_init (LrgButtonClass *klass)
 static void
 lrg_button_init (LrgButton *self)
 {
+    lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
     self->text = NULL;
     self->font = NULL;
     self->font_size = 20.0f;

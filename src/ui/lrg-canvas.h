@@ -49,6 +49,65 @@ LRG_AVAILABLE_IN_ALL
 void lrg_canvas_render (LrgCanvas *self);
 
 /**
+ * lrg_canvas_update:
+ * @self: an #LrgCanvas
+ * @delta_time: seconds since the last frame
+ *
+ * Advances every widget's springs and appear animations.
+ * lrg_canvas_process_input() calls this with the frame's delta time,
+ * so call it yourself only when you skip input processing.
+ *
+ * Returns: %TRUE while something is animating
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_update (LrgCanvas *self,
+                            gfloat     delta_time);
+
+/**
+ * lrg_canvas_get_paint_list:
+ * @self: an #LrgCanvas
+ *
+ * The paint list the last lrg_canvas_render() recorded, for
+ * inspection, profiling and tests.
+ *
+ * Returns: (transfer none): the paint list
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPaintList * lrg_canvas_get_paint_list (LrgCanvas *self);
+
+/**
+ * lrg_canvas_record:
+ * @self: an #LrgCanvas
+ *
+ * Lays out the tree and records it into the canvas's paint list
+ * without drawing it. lrg_canvas_render() is record + draw; headless
+ * code and tests can record alone.
+ *
+ * Returns: (transfer none): the recorded paint list
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPaintList * lrg_canvas_record (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_paint_background:
+ * @self: an #LrgCanvas
+ *
+ * Returns: %TRUE if the canvas fills itself with the theme's window colour
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_get_paint_background (LrgCanvas *self);
+
+/**
+ * lrg_canvas_set_paint_background:
+ * @self: an #LrgCanvas
+ * @paint_background: fill with %LRG_THEME_COLOR_WINDOW before painting
+ *   (off by default so game scenes show through)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_set_paint_background (LrgCanvas *self,
+                                      gboolean   paint_background);
+
+/**
  * lrg_canvas_handle_input:
  * @self: an #LrgCanvas
  *
@@ -162,5 +221,147 @@ void lrg_canvas_set_focused_widget (LrgCanvas *self,
  */
 LRG_AVAILABLE_IN_ALL
 LrgWidget * lrg_canvas_get_hovered_widget (LrgCanvas *self);
+
+/* ==========================================================================
+ * Focus navigation
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_get_navigation_enabled:
+ * @self: an #LrgCanvas
+ *
+ * Returns: %TRUE if arrow keys, Tab and the gamepad move focus
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_get_navigation_enabled (LrgCanvas *self);
+
+/**
+ * lrg_canvas_set_navigation_enabled:
+ * @self: an #LrgCanvas
+ * @enabled: whether arrow keys, Tab and the gamepad move focus
+ *   (on by default; turn off when the game drives focus itself)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_set_navigation_enabled (LrgCanvas *self,
+                                        gboolean   enabled);
+
+/**
+ * lrg_canvas_move_focus:
+ * @self: an #LrgCanvas
+ * @direction: where to move
+ *
+ * Moves keyboard focus. %LRG_NAV_DIRECTION_NEXT and
+ * %LRG_NAV_DIRECTION_PREVIOUS walk the tab order (depth-first, wrapping);
+ * the four directions pick the nearest focusable widget that way,
+ * preferring ones in line with the current focus. Focus stays inside
+ * an open modal popup. The new focus shows its focus ring.
+ *
+ * Returns: %TRUE if focus moved
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_move_focus (LrgCanvas       *self,
+                                LrgNavDirection  direction);
+
+/**
+ * lrg_canvas_activate_focus:
+ * @self: an #LrgCanvas
+ *
+ * Sends %LRG_UI_EVENT_ACTIVATE to the focused widget (what Enter,
+ * Space and gamepad A do) with a short press animation.
+ *
+ * Returns: %TRUE if a widget handled it
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_activate_focus (LrgCanvas *self);
+
+/* ==========================================================================
+ * Popups
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_show_popup:
+ * @self: an #LrgCanvas
+ * @popup: widget to show above everything else; the canvas keeps a
+ *   reference until it is dismissed
+ * @anchor: (nullable): widget to place @popup next to
+ * @placement: where to place it; flips to the other side when it would
+ *   leave the canvas
+ * @modal: modal popups dim the canvas, trap focus and swallow input
+ *   outside them; non-modal popups close when clicking elsewhere
+ *
+ * Opens a popup (menus, combo lists, dialogs, tooltips). A popup with
+ * zero size is given its preferred size. Without an appear animation
+ * it pops in. The anchor gets %LRG_WIDGET_STATE_OPEN while it is open.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_show_popup (LrgCanvas         *self,
+                            LrgWidget         *popup,
+                            LrgWidget         *anchor,
+                            LrgPopupPlacement  placement,
+                            gboolean           modal);
+
+/**
+ * lrg_canvas_dismiss_popup:
+ * @self: an #LrgCanvas
+ * @popup: an open popup
+ *
+ * Closes @popup (and any popups opened after it). It shrinks back
+ * towards its anchor while fading out, then is released.
+ * #LrgCanvas::popup-dismissed is emitted.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_dismiss_popup (LrgCanvas *self,
+                               LrgWidget *popup);
+
+/**
+ * lrg_canvas_get_top_popup:
+ * @self: an #LrgCanvas
+ *
+ * Returns: (transfer none) (nullable): the most recent open popup
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidget * lrg_canvas_get_top_popup (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_popup_count:
+ * @self: an #LrgCanvas
+ *
+ * Returns: number of open popups (closing ones excluded)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_canvas_get_popup_count (LrgCanvas *self);
+
+/**
+ * lrg_canvas_place_popup:
+ * @canvas_width: canvas width
+ * @canvas_height: canvas height
+ * @anchor_x: anchor left (canvas coordinates)
+ * @anchor_y: anchor top
+ * @anchor_width: anchor width (0 for a point)
+ * @anchor_height: anchor height
+ * @popup_width: popup width
+ * @popup_height: popup height
+ * @placement: requested placement
+ * @x: (out): popup left
+ * @y: (out): popup top
+ *
+ * The placement maths lrg_canvas_show_popup() uses: place next to the
+ * anchor with a small gap, flip to the opposite side when the popup
+ * does not fit, then clamp inside the canvas.
+ *
+ * Returns: the placement actually used (after flipping)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPopupPlacement lrg_canvas_place_popup (gfloat             canvas_width,
+                                          gfloat             canvas_height,
+                                          gfloat             anchor_x,
+                                          gfloat             anchor_y,
+                                          gfloat             anchor_width,
+                                          gfloat             anchor_height,
+                                          gfloat             popup_width,
+                                          gfloat             popup_height,
+                                          LrgPopupPlacement  placement,
+                                          gfloat            *x,
+                                          gfloat            *y);
 
 G_END_DECLS

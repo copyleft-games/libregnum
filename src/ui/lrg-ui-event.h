@@ -17,6 +17,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-enums.h"
+#include "../lrg-types.h"
 
 G_BEGIN_DECLS
 
@@ -302,5 +303,68 @@ void lrg_ui_event_consume (LrgUIEvent *self);
  */
 LRG_AVAILABLE_IN_ALL
 gunichar lrg_ui_event_get_codepoint (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_get_bubbling:
+ * @self: an #LrgUIEvent
+ *
+ * Events travel from the target widget up through its ancestors until
+ * one handles them. Containers check this to avoid forwarding a
+ * bubbling event back down to their children.
+ *
+ * Returns: %TRUE while the canvas is bubbling the event up the tree
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_ui_event_get_bubbling (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_set_bubbling:
+ * @self: an #LrgUIEvent
+ * @bubbling: whether the event is bubbling
+ *
+ * Used by the canvas while dispatching.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_ui_event_set_bubbling (LrgUIEvent *self,
+                                gboolean    bubbling);
+
+/**
+ * lrg_ui_event_get_target:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: (transfer none) (nullable): the widget the event was
+ *   originally delivered to (useful while it bubbles)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidget * lrg_ui_event_get_target (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_set_target:
+ * @self: an #LrgUIEvent
+ * @target: (nullable): the original target
+ *
+ * Used by the canvas while dispatching.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_ui_event_set_target (LrgUIEvent *self,
+                              LrgWidget  *target);
+
+/**
+ * lrg_ui_event_get_modifiers:
+ * @self: an #LrgUIEvent
+ *
+ * Returns: modifier keys held when the event happened
+ */
+LRG_AVAILABLE_IN_ALL
+LrgInputModifiers lrg_ui_event_get_modifiers (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_set_modifiers:
+ * @self: an #LrgUIEvent
+ * @modifiers: modifier keys
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_ui_event_set_modifiers (LrgUIEvent        *self,
+                                 LrgInputModifiers  modifiers);
 
 G_END_DECLS

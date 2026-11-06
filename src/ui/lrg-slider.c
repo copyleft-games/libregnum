@@ -638,6 +638,7 @@ lrg_slider_class_init (LrgSliderClass *klass)
 static void
 lrg_slider_init (LrgSlider *self)
 {
+    lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
     self->value = 0.0;
     self->min = 0.0;
     self->max = 100.0;

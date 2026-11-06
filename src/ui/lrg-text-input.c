@@ -856,6 +856,7 @@ lrg_text_input_class_init (LrgTextInputClass *klass)
 static void
 lrg_text_input_init (LrgTextInput *self)
 {
+    lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
     self->text = NULL;
     self->placeholder = NULL;
     self->max_length = 0;

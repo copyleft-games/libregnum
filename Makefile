@@ -2651,7 +2651,7 @@ $(OBJDIR)/src/ui/lrg-ui-event.o: src/ui/lrg-ui-event.c src/ui/lrg-ui-event.h
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/src/ui/lrg-widget.o: src/ui/lrg-widget.c src/ui/lrg-widget.h src/ui/lrg-widget-private.h
+$(OBJDIR)/src/ui/lrg-widget.o: src/ui/lrg-widget.c src/ui/lrg-widget.h src/ui/lrg-widget-private.h src/ui/lrg-container.h src/ui/lrg-theme.h src/ui/lrg-style.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
