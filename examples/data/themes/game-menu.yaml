@@ -1,0 +1,65 @@
+# game-menu.yaml - theme for examples/game-ui-menu.c
+#
+# A warm "arcade dusk" look built on the midnight preset: a sunset accent,
+# deeper panels, rounder corners, bouncy motion, and style rules that give
+# primary buttons a gradient and an orange glow on hover.
+#
+# Hex colours must be quoted: '#' starts a YAML comment.
+
+name: arcade-dusk
+preset: midnight
+accent: "#ff7a45"
+motion: bouncy
+
+colors:
+  window: "#120d1a"
+  panel: "#1c1428cc"
+  surface: "#261b36"
+  border: "#3b2c52"
+  text: "#f6eefe"
+  text-muted: "#b6a6cc"
+  control: "#2a1f3d"
+  control-hover: "#36284e"
+  control-pressed: "#433161"
+  popup: "#1f1630"
+  veil: "#08050ccc"
+
+metrics:
+  corner-radius: 14
+  control-height: 46
+  padding-x: 22
+  font-size: 20
+  font-size-large: 30
+  font-size-title: 56
+  popup-radius: 20
+  shadow-blur: 26
+  shadow-offset-y: 10
+
+styles:
+  # Primary buttons: sunset gradient at rest...
+  - widget: LrgButton
+    class: primary
+    part: box
+    gradient: { kind: linear, start: "#ff7a45", end: "#ff3d7f", angle: 0 }
+  # ...that glows when hovered or focused
+  - widget: LrgButton
+    class: primary
+    part: box
+    state: [hovered]
+    glow: "#ff6a5a88"
+    glow-size: 22
+  - widget: LrgButton
+    class: primary
+    part: box
+    state: [focus-visible]
+    glow: "#ff6a5aaa"
+    glow-size: 26
+  # Menu cards float with a big soft shadow
+  - widget: LrgPanel
+    class: card
+    part: box
+    shadow: "#000000c0"
+    shadow-blur: 40
+    shadow-offset: 16
+    border: "#ffffff14"
+    border-width: 1

@@ -713,6 +713,34 @@ test_remove_all_relayouts (void)
 	g_object_unref (a);
 }
 
+static void
+test_panel_fill_children (void)
+{
+	g_autoptr(LrgPanel) panel = lrg_panel_new ();
+	LrgWidget          *w = block_new (30.0f, 10.0f);
+	gfloat              pw;
+	gfloat              ph;
+
+	lrg_container_set_padding (LRG_CONTAINER (panel), 8.0f);
+	lrg_widget_set_position (w, 3.0f, 4.0f);
+	lrg_container_add_child (LRG_CONTAINER (panel), w);
+
+	/* Default: free positioning (legacy behaviour) */
+	lrg_widget_allocate (LRG_WIDGET (panel), 0.0f, 0.0f, 200.0f, 100.0f);
+	g_assert_cmpfloat (lrg_widget_get_x (w), ==, 3.0f);
+
+	/* fill-children: placed in the padded content box */
+	lrg_panel_set_fill_children (panel, TRUE);
+	lrg_widget_layout (LRG_WIDGET (panel));
+	g_assert_cmpfloat (lrg_widget_get_x (w), ==, 8.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (w), ==, 184.0f);
+	lrg_widget_measure (LRG_WIDGET (panel), &pw, &ph);
+	g_assert_cmpfloat (pw, ==, 46.0f);
+	g_assert_cmpfloat (ph, ==, 26.0f);
+
+	g_object_unref (w);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -741,6 +769,7 @@ main (int   argc,
 	g_test_add_func ("/ui/widget/look-blend", test_resolve_look_blends_with_springs);
 	g_test_add_func ("/ui/layout/theme-switch", test_theme_switch_relayouts);
 	g_test_add_func ("/ui/layout/remove-all", test_remove_all_relayouts);
+	g_test_add_func ("/ui/layout/panel-fill-children", test_panel_fill_children);
 	g_test_add_func ("/ui/style/rule-edit-invalidates", test_rule_edit_invalidates);
 
 	return g_test_run ();

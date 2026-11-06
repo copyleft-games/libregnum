@@ -168,4 +168,28 @@ LRG_AVAILABLE_IN_ALL
 void lrg_panel_set_elevation (LrgPanel *self,
                               guint     elevation);
 
+/**
+ * lrg_panel_get_fill_children:
+ * @self: an #LrgPanel
+ *
+ * Returns: %TRUE if children are laid out in the padded content box
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_panel_get_fill_children (LrgPanel *self);
+
+/**
+ * lrg_panel_set_fill_children:
+ * @self: an #LrgPanel
+ * @fill_children: lay children out inside the padded content box
+ *   (honouring their margin, alignment and min/max size) instead of
+ *   leaving them where they were positioned; the panel then measures
+ *   as its largest child plus padding
+ *
+ * Off by default, so existing code that positions panel children by
+ * hand keeps working. Turn it on to frame a box, grid or card.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_panel_set_fill_children (LrgPanel *self,
+                                  gboolean  fill_children);
+
 G_END_DECLS

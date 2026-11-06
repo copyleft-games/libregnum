@@ -44,6 +44,7 @@ struct _LrgPanel
     gboolean      radius_set;
 
     guint         elevation;
+    gboolean      fill_children;
 };
 
 G_DEFINE_TYPE (LrgPanel, lrg_panel, LRG_TYPE_CONTAINER)
@@ -56,6 +57,7 @@ enum
     PROP_BORDER_WIDTH,
     PROP_CORNER_RADIUS,
     PROP_ELEVATION,
+    PROP_FILL_CHILDREN,
     N_PROPS
 };
 
@@ -153,6 +155,81 @@ lrg_panel_paint (LrgWidget    *widget,
  * GObject Implementation
  * ========================================================================== */
 
+/*
+ * lrg_panel_layout_children:
+ *
+ * With fill-children on, every visible child is placed in the padded
+ * content box (its own margin, alignment and min/max apply), so a
+ * panel can frame a box or grid. Off (the default), children keep the
+ * positions they were given.
+ */
+static void
+lrg_panel_layout_children (LrgContainer *container)
+{
+    LrgPanel *self = LRG_PANEL (container);
+    gfloat    pad;
+    gfloat    w;
+    gfloat    h;
+    GList    *l;
+
+    if (!self->fill_children)
+        return;
+
+    pad = lrg_container_get_padding (container);
+    w = MAX (0.0f, lrg_widget_get_width (LRG_WIDGET (self)) - pad * 2.0f);
+    h = MAX (0.0f, lrg_widget_get_height (LRG_WIDGET (self)) - pad * 2.0f);
+
+    for (l = lrg_container_get_children (container); l != NULL; l = l->next)
+        if (lrg_widget_get_visible (LRG_WIDGET (l->data)))
+            lrg_widget_place_in_slot (LRG_WIDGET (l->data), pad, pad, w, h);
+}
+
+/*
+ * lrg_panel_measure:
+ *
+ * In fill-children mode the panel wants its largest child (with
+ * margins) plus padding; otherwise the container's bounding-box rule.
+ */
+static void
+lrg_panel_measure (LrgWidget *widget,
+                   gfloat    *preferred_width,
+                   gfloat    *preferred_height)
+{
+    LrgPanel *self = LRG_PANEL (widget);
+    gfloat    pad;
+    gfloat    mw = 0.0f;
+    gfloat    mh = 0.0f;
+    GList    *l;
+
+    if (!self->fill_children)
+    {
+        LRG_WIDGET_CLASS (lrg_panel_parent_class)->measure (widget, preferred_width,
+                                                            preferred_height);
+        return;
+    }
+
+    pad = lrg_container_get_padding (LRG_CONTAINER (widget));
+    for (l = lrg_container_get_children (LRG_CONTAINER (widget)); l != NULL; l = l->next)
+    {
+        LrgWidget *child = LRG_WIDGET (l->data);
+        LrgInsets  m;
+        gfloat     cw;
+        gfloat     ch;
+
+        if (!lrg_widget_get_visible (child))
+            continue;
+        lrg_widget_get_preferred_size (child, &cw, &ch);
+        lrg_widget_get_margin (child, &m);
+        mw = MAX (mw, cw + m.left + m.right);
+        mh = MAX (mh, ch + m.top + m.bottom);
+    }
+
+    if (preferred_width != NULL)
+        *preferred_width = mw + pad * 2.0f;
+    if (preferred_height != NULL)
+        *preferred_height = mh + pad * 2.0f;
+}
+
 static void
 lrg_panel_get_property (GObject    *object,
                         guint       prop_id,
@@ -177,6 +254,9 @@ lrg_panel_get_property (GObject    *object,
         break;
     case PROP_ELEVATION:
         g_value_set_uint (value, self->elevation);
+        break;
+    case PROP_FILL_CHILDREN:
+        g_value_set_boolean (value, self->fill_children);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -209,6 +289,9 @@ lrg_panel_set_property (GObject      *object,
     case PROP_ELEVATION:
         lrg_panel_set_elevation (self, g_value_get_uint (value));
         break;
+    case PROP_FILL_CHILDREN:
+        lrg_panel_set_fill_children (self, g_value_get_boolean (value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -224,6 +307,8 @@ lrg_panel_class_init (LrgPanelClass *klass)
     object_class->set_property = lrg_panel_set_property;
 
     widget_class->paint = lrg_panel_paint;
+    widget_class->measure = lrg_panel_measure;
+    LRG_CONTAINER_CLASS (klass)->layout_children = lrg_panel_layout_children;
     widget_class->style_defaults = lrg_panel_style_defaults;
 
     /* lrg_widget_draw() renders paint() (background and children);
@@ -305,6 +390,22 @@ lrg_panel_class_init (LrgPanelClass *klass)
                            G_PARAM_READWRITE |
                            G_PARAM_STATIC_STRINGS |
                            G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgPanel:fill-children:
+     *
+     * Lay children out inside the padded content box (each child's
+     * margin, alignment and min/max size apply) instead of leaving
+     * them where they were positioned. Use it to frame a box or grid.
+     */
+    properties[PROP_FILL_CHILDREN] =
+        g_param_spec_boolean ("fill-children",
+                              "Fill Children",
+                              "Place children in the padded content box",
+                              FALSE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -542,5 +643,31 @@ lrg_panel_set_elevation (LrgPanel *self,
     {
         self->elevation = elevation;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ELEVATION]);
+    }
+}
+
+/* ==========================================================================
+ * Public API - Child layout
+ * ========================================================================== */
+
+gboolean
+lrg_panel_get_fill_children (LrgPanel *self)
+{
+    g_return_val_if_fail (LRG_IS_PANEL (self), FALSE);
+    return self->fill_children;
+}
+
+void
+lrg_panel_set_fill_children (LrgPanel *self,
+                             gboolean  fill_children)
+{
+    g_return_if_fail (LRG_IS_PANEL (self));
+
+    fill_children = !!fill_children;
+    if (self->fill_children != fill_children)
+    {
+        self->fill_children = fill_children;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FILL_CHILDREN]);
+        lrg_widget_queue_layout (LRG_WIDGET (self));
     }
 }
