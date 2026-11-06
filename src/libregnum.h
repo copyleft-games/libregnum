@@ -223,6 +223,8 @@
 #include "ui/lrg-anchor-layout.h"
 #include "ui/lrg-switcher.h"
 #include "ui/lrg-size-box.h"
+#include "ui/lrg-text-editor.h"
+#include "ui/lrg-syntax.h"
 #include "ui/lrg-ui-actions.h"
 
 /* Tilemap module */
