@@ -584,7 +584,7 @@ A single-line editable text field with selection, clipboard, password mode and a
 :PROPERTIES:
 :CUSTOM_ID: wref-toast
 :END:
-A transient notification card with a title, message, kind colour and a timer. Type: final, derives from =LrgWidget=, header =src/ui/lrg-toast.h=. Signals: =dismissed= (no arguments). Concepts, parts and theming: [[file:widgets/toast.org][Toast widget page]].
+A transient notification card with a title, message, kind colour and a timer. Type: final, derives from =LrgWidget=, header =src/ui/lrg-toast.h=. Signals: =dismissed= (no arguments), =button-clicked= (=guint index=, =gchar *action=). Property =default-action= (string). Concepts, parts and theming: [[file:widgets/toast.org][Toast widget page]].
 
 | Function | Signature | Notes |
 |----------+-----------+-------|
@@ -603,6 +603,16 @@ A transient notification card with a title, message, kind colour and a timer. Ty
 | =lrg_toast_advance= | =gboolean lrg_toast_advance (LrgToast *self, gdouble seconds);= | Runs the toast's clock (the toast queue does this every frame). The clock does not run while the pointer is over the toast. Dismisses the toast when its duration runs out. Returns =TRUE= if the toast is dismissed (now or before) |
 | =lrg_toast_dismiss= | =void lrg_toast_dismiss (LrgToast *self);= | Ends the toast early; emits =LrgToast::dismissed= once. A toast queue then fades it out and removes it. |
 | =lrg_toast_get_dismissed= | =gboolean lrg_toast_get_dismissed (LrgToast *self);= | Returns =TRUE= once the toast expired or was dismissed |
+| =lrg_toast_dismiss_reason_get_type= | =GType lrg_toast_dismiss_reason_get_type (void);= | The =GEnum= type of =LrgToastDismissReason=: =NONE= (=none=), =EXPIRED= (=expired=), =CLICKED= (=clicked=), =BUTTON= (=button=), =PROGRAMMATIC= (=programmatic=) |
+| =lrg_toast_get_dismiss_reason= | =LrgToastDismissReason lrg_toast_get_dismiss_reason (LrgToast *self);= | Why the toast went away; =NONE= while it is up. Read it in a =dismissed= handler |
+| =lrg_toast_add_button= | =guint lrg_toast_add_button (LrgToast *self, const gchar *label, const gchar *detailed_action);= | Adds a pill to the bottom row. A click (press and release on it) activates =detailed_action= (nullable) through the widget tree, emits =button-clicked= and dismisses with =BUTTON=. Returns the button's index |
+| =lrg_toast_get_n_buttons= | =guint lrg_toast_get_n_buttons (LrgToast *self);= | Number of buttons |
+| =lrg_toast_get_button_label= | =const gchar * lrg_toast_get_button_label (LrgToast *self, guint index);= | Returns (transfer none) (nullable): the label, =NULL= out of range |
+| =lrg_toast_get_button_action= | =const gchar * lrg_toast_get_button_action (LrgToast *self, guint index);= | Returns (transfer none) (nullable): the detailed action |
+| =lrg_toast_get_button_rect= | =gboolean lrg_toast_get_button_rect (LrgToast *self, guint index, gfloat *x, gfloat *y, gfloat *width, gfloat *height);= | World rect of a button after layout; all outs optional. =FALSE= if =index= is not a button |
+| =lrg_toast_clear_buttons= | =void lrg_toast_clear_buttons (LrgToast *self);= | Removes every button |
+| =lrg_toast_get_default_action= | =const gchar * lrg_toast_get_default_action (LrgToast *self);= | Returns (transfer none) (nullable): the action run by a click on the card |
+| =lrg_toast_set_default_action= | =void lrg_toast_set_default_action (LrgToast *self, const gchar *detailed_action);= | Sets it (nullable); notifies =default-action= |
 
 #+begin_src c
 /* Kinds round-trip through their nicks, e.g. from a quest data file */

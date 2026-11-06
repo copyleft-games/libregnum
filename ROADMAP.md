@@ -81,6 +81,18 @@ copied) brought to both UI stacks:
   tool app loaded from `examples/data/ui/studio.yaml` (C fallback) whose
   timeline keyframes animate a live 3D scene, with a console, global
   shortcuts, theme switching and a dock layout saved as YAML.
+- **Files, scripting and window chrome**: `LrgFileBrowser` (async GIO
+  listing, places, filters, type-ahead, live refresh) and `LrgFileDialog`
+  (GtkFileDialog-style async open/save/select-folder, in-app or through the
+  XDG desktop portal), `LrgBlockEditor` (Scratch-style snapping blocks with
+  a palette, undo, YAML and a walkable program API for game scripting),
+  `LrgPagination`, `LrgHeaderBar` (self-drawn title bar with window buttons
+  and drag-to-move), `LrgNotification` (freedesktop notifications over GDBus
+  with buttons routed to widget actions, falling back to toasts), and toast
+  buttons with dismiss reasons.
+- **Canvas looks**: Modern, Blueprint, Blender and Neon presets for the
+  node graph and timeline (link, pin, key and header styles, glow, dot and
+  cross grids) with per-item overrides.
 - Not planned: platform look emulation, native accessibility bridges, a
   Vulkan backend, colour emoji and complex-script shaping beyond Arabic.
 

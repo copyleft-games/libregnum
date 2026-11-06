@@ -240,7 +240,9 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - Layout helpers: [[file:modules/ui/widgets/anchor-layout.org][LrgAnchorLayout]] (HUD anchoring), [[file:modules/ui/widgets/switcher.org][LrgSwitcher]] (pages with transitions), [[file:modules/ui/widgets/size-box.org][LrgSizeBox]] (size and aspect constraints)
 - Embedding: [[file:modules/ui/widgets/viewport.org][LrgViewport]] (render textures and 3D scenes in the layout), [[file:modules/ui/widgets/custom-widget.org][LrgCustomWidget]] (paint / step / event callbacks without subclassing)
 - Editing: [[file:modules/ui/widgets/text-editor.org][LrgTextEditor]], [[file:modules/ui/widgets/syntax.org][LrgSyntax]] (highlighting languages)
-- Tools: [[file:modules/ui/widgets/node-graph.org][LrgNodeGraph]], [[file:modules/ui/widgets/timeline-view.org][LrgTimelineView]], [[file:modules/ui/widgets/dock-area.org][LrgDockArea]]
+- Tools: [[file:modules/ui/widgets/node-graph.org][LrgNodeGraph]] and [[file:modules/ui/widgets/timeline-view.org][LrgTimelineView]] (with Blueprint, Blender and Neon looks), [[file:modules/ui/widgets/dock-area.org][LrgDockArea]], [[file:modules/ui/widgets/block-editor.org][LrgBlockEditor]] (visual programming)
+- Files: [[file:modules/ui/widgets/file-browser.org][LrgFileBrowser]], [[file:modules/ui/widgets/file-dialog.org][LrgFileDialog]]
+- Window and feedback: [[file:modules/ui/widgets/header-bar.org][LrgHeaderBar]], [[file:modules/ui/widgets/pagination.org][LrgPagination]], [[file:modules/ui/widgets/notification.org][LrgNotification]], [[file:modules/ui/widgets/toast.org::#toast-buttons][toast buttons]]
 - [[file:modules/paint/index.org][Paint Module]] - The instanced SDF pipeline ([[file:modules/paint/paint-list.org][LrgPaintList]], [[file:modules/paint/paint-renderer.org][LrgPaintRenderer]], [[file:modules/paint/text.org][SDF text, fallback fonts and bidi]])
 - [[file:modules/tween/spring.org][Springs and Motion]] - =LrgSpring=, motion presets, reduced motion
 - [[file:modules/gui/index.org][GUI Module]] - The immediate-mode editor GUI (shares the paint renderer and themes)

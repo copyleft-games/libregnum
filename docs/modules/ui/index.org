@@ -114,6 +114,12 @@ Related:
 | =LrgNodeGraph= | [[file:widgets/node-graph.org][node-graph]] | node editor with typed ports and wires |
 | =LrgTimelineView= | [[file:widgets/timeline-view.org][timeline-view]] | multi-track sequencer with curves |
 | =LrgDockArea= / =LrgDockPanel= | [[file:widgets/dock-area.org][dock-area]] | tabbed, splittable, floatable panels |
+| =LrgBlockEditor= | [[file:widgets/block-editor.org][block-editor]] | Scratch-style visual programming blocks |
+| =LrgFileBrowser= / =LrgFileFilter= | [[file:widgets/file-browser.org][file-browser]] | folder browser with places, filters and live refresh |
+| =LrgFileDialog= | [[file:widgets/file-dialog.org][file-dialog]] | async open / save / select-folder dialogs (in-app or portal) |
+| =LrgPagination= | [[file:widgets/pagination.org][pagination]] | page buttons with gaps and a sliding pill |
+| =LrgHeaderBar= | [[file:widgets/header-bar.org][header-bar]] | self-drawn window title bar |
+| =LrgNotification= | [[file:widgets/notification.org][notification]] | desktop notifications with an in-app toast fallback |
 | =LrgGrid= | [[file:layout.org::#layout-grid][grid layout]] | layout container |
 
 ** Quick start
