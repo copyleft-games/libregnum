@@ -4,6 +4,34 @@ Last updated: 2026-10-29
 
 ## Recently Shipped
 
+### Unreleased: UI framework overhaul (`src/paint/`, `src/ui/`, `src/gui/`)
+
+Concepts from the Raven UI library (Apache-2.0; reimplemented, no code
+copied) brought to both UI stacks:
+
+- **SDF paint core** (`src/paint/`): `LrgPaintList` records rounded
+  rectangles with per-corner radii, borders, linear/radial gradients, soft
+  shadows, lines, triangles, images and text glyphs as GPU instances;
+  `LrgPaintRenderer` draws them with one instanced signed-distance-field
+  shader (analytic anti-aliasing), usually one draw call per frame.
+- **Springs** (`LrgSpring`, `LrgMotion`): closed-form, frame-rate independent
+  motion with snappy/smooth/bouncy/wobbly presets, global speed and reduced
+  motion tied to accessibility settings.
+- **Themes**: 27 colour roles, 18 metrics, accent derivation, five presets
+  (midnight, daylight, catppuccin-mocha/latte, high-contrast), strict YAML
+  load/save, runtime switching, and `LrgStyleRule` part x state x class
+  rules with CSS-like specificity.
+- **Retained UI** (`src/ui/`): layout hints (margin, alignment, fill weight,
+  min/max), dirty-flag layout, state flags with spring-blended looks, appear
+  transitions, event bubbling, pointer capture, enter/leave, Tab and
+  gamepad spatial navigation, a popup layer (placement with flipping, modal
+  veil, ghost close), and new widgets: overlay, scroll box, separator, spin
+  box, combo box, dialog, toast queue, virtualized list view.
+- **Immediate-mode GUI / editor**: drawn through the SDF renderer, with
+  shadows under popups and tooltips and `lrg_gui_style_init_from_theme()`.
+- Fixed: canvas clicks passed (x, y, button) as (button, x, y); text input
+  produced uppercase-only ASCII.
+
 ### v0.6.0
 
 - Stub gaps closed: scene serializer default file I/O; lightmap image
@@ -241,6 +269,15 @@ been validated. Headless tests skip cases requiring a display or hardware.
 
 ## Future Directions
 
+- UI P3 (visual): backdrop blur and frosted-glass material (dual-Kawase on a
+  render texture, integrated with `src/postprocess/`), pointer-reactive
+  effect shaders (shimmer, aurora, neon, spotlight), SDF/MSDF text through a
+  graylib wrapper for crisp scaling, declarative YAML UI with components and
+  hot-reload diffing through `LrgRegistry`/`LrgDataLoader`, and a UI
+  inspector exposed in the editor and over MCP.
+- UI P4 (widgets): table, tree view, menu/menu bar, colour picker,
+  date/time pickers, breadcrumb, expander, splitter, markdown view (on
+  `LrgRichText`), a morphing island panel, and `@key` i18n strings.
 - Named reel registry and nested composition opacity.
 - Extend definition reload workflows to application-specific dependency graphs
   and live instance migration. Current hot reload replaces cached definitions;

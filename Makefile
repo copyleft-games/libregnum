@@ -2189,6 +2189,13 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 # Documentation
 # =============================================================================
 
+# Every public symbol of the paint, spring and retained UI modules must
+# be mentioned somewhere under docs/ (org pages)
+DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h
+
+docs-check:
+	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)
+
 docs:
 ifeq ($(BUILD_DOCS),1)
 	$(call print_status,"Building documentation...")
@@ -3018,7 +3025,7 @@ $(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src
 # Phony Targets
 # =============================================================================
 
-.PHONY: all lib lib-static lib-shared gir test tests check examples docs
+.PHONY: all lib lib-static lib-shared gir test tests check examples docs docs-check
 .PHONY: install uninstall clean distclean debug-build generate
 .PHONY: deps deps-graylib deps-yamlglib deps-crispy deps-clean check-deps
 
