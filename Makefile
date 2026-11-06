@@ -175,6 +175,8 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-ui-inspector.h \
 	src/ui/lrg-menu.h \
 	src/ui/lrg-menu-bar.h \
+	src/ui/lrg-viewport.h \
+	src/ui/lrg-custom-widget.h \
 	src/ui/lrg-ui-actions.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
@@ -859,6 +861,8 @@ SOURCES := \
 	src/ui/lrg-ui-inspector.c \
 	src/ui/lrg-menu.c \
 	src/ui/lrg-menu-bar.c \
+	src/ui/lrg-viewport.c \
+	src/ui/lrg-custom-widget.c \
 	src/ui/lrg-ui-actions.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \

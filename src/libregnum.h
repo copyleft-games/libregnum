@@ -218,6 +218,8 @@
 #include "ui/lrg-ui-inspector.h"
 #include "ui/lrg-menu.h"
 #include "ui/lrg-menu-bar.h"
+#include "ui/lrg-viewport.h"
+#include "ui/lrg-custom-widget.h"
 #include "ui/lrg-ui-actions.h"
 
 /* Tilemap module */
