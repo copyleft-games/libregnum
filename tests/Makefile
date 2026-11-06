@@ -248,6 +248,12 @@ TEST_SOURCES := \
 	test-editor-tools.c \
 	test-editor-server.c \
 	test-editor-app.c \
+	test-editor-app-hierarchy.c \
+	test-editor-app-inspector.c \
+	test-editor-app-viewport.c \
+	test-editor-app-assets.c \
+	test-editor-app-panels.c \
+	test-editor-app-dialogs.c \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
 	test-editor-settings-migrate.c \
