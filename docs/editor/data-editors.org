@@ -1,0 +1,590 @@
+#+title: Data Editors
+#+description: The headless LrgEditorDocument model behind the editor's eight data editors: YAML paths, undo with gesture merging, save and reload, validation through the engine loaders, and per-format notes
+#+authors: Zach Podbielniak
+#+categories: libregnum editor data yaml
+#+created: 2026-11-06T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 0.8.1
+
+* Data Editors
+:PROPERTIES:
+:CUSTOM_ID: data-editors
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Data Editors
+#+end_quote
+
+A game ships much of its content as YAML data files that are not levels: input maps, locales, sound banks, HUD layouts, UI layouts, dialog trees, procgen dungeon recipes and themes. The editor edits each of them in its own panel (an actions × bindings table for input maps, a node graph for dialog trees, and so on), but every panel sits on one shared, headless model: =LrgEditorDocument= (=src/editor/lrg-editor-document.h=).
+
+A document holds one file as a YAML tree. The panels, the IPC methods and scripts all edit it through *YAML paths* (=/actions/jump/bindings/0/key=), and every edit is a command on the document's own undo stack, so each open file has its own history. Saving keeps key order, keys the engine does not know and comments. Validation runs the engine's own loader on the text that would be saved, plus structural checks the loader does not make, and returns issues that point at paths and lines.
+
+This page describes the model. The UI of each editor is described in the sections reserved for it at the end.
+
+** At a glance
+:PROPERTIES:
+:CUSTOM_ID: data-editors-at-a-glance
+:END:
+#+begin_src c
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgEditorDocument) doc = NULL;
+g_autoptr(GPtrArray) issues = NULL;
+
+doc = lrg_editor_document_new_from_file ("data/controls.input.yaml", &error);
+
+/* one undo step per call */
+lrg_editor_document_set_string (doc, "/actions/jump/bindings/0/key", "W", 0, &error);
+lrg_editor_document_rename_key (doc, "/actions", "jump", "leap", &error);
+
+/* a drag: many calls, one undo step (same path, same gesture id) */
+lrg_editor_document_set_double (doc, "/pieces/health/x", 10.0, 42, &error);
+lrg_editor_document_set_double (doc, "/pieces/health/x", 14.5, 42, &error);
+
+lrg_editor_document_undo (doc);
+
+if (!lrg_editor_document_validate (doc, &issues))
+	show_issues (issues);           /* errors first, each with path + line */
+else
+	lrg_editor_document_save (doc, &error);   /* atomic write */
+#+end_src
+
+| Area | Functions |
+|------+-----------|
+| Open | =new (format)=, =new_from_file (path)=, =new_from_data (text, len, format)=, =detect_format (name, text, len)= |
+| Read | =get_kind=, =has_path=, =get_scalar=, =get_value=, =get_keys=, =get_length=, =get_yaml=, =to_data=, =get_line=, =get_path_at_line= |
+| Edit | =set_string=, =set_int=, =set_double=, =set_boolean=, =set_null=, =set_value=, =replace=, =insert_item=, =move_item=, =add_key=, =rename_key=, =remove= |
+| Undo | =undo=, =redo=, =can_undo=, =can_redo=, =get_undo_label=, =get_redo_label=, =begin_group=, =end_group=, =clear_undo=, =get/set_undo_limit= |
+| Files | =save=, =save_as=, =reload=, =check_external_change=, =set_monitor_file= |
+| Validate | =validate (&issues)= |
+| Helpers | =input_actions=, =locale_keys=, =locale_missing_keys=, =dialog_nodes=, =dialog_edges=, =sound_bank_resolve= |
+
+** The model
+:PROPERTIES:
+:CUSTOM_ID: data-editors-model
+:END:
+*** One type with a format enum
+:PROPERTIES:
+:CUSTOM_ID: data-editors-one-type
+:END:
+=LrgEditorDocument= is a final GObject with a =format= property (=LrgEditorDocumentFormat=: =unknown=, =input-map=, =locale=, =sound-bank=, =hud-layout=, =ui-layout=, =dialog-tree=, =dungeon=, =theme=), not a base class with one subclass per format. Everything the panels and IPC drive (paths, undo, save, reload, line mapping) is the same for every format; the formats differ only in their validator, the skeleton of a new file and a few read helpers. One type keeps the =data.*= IPC methods and the base data-editor panel generic, and the per-format code is a set of static functions selected by the enum. A format the engine does not know (=unknown=) still gets the full editing model, with validation reduced to the YAML-level checks.
+
+*** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: data-editors-properties
+:END:
+| Property | Type | Meaning |
+|----------+------+---------|
+| =format= | =LrgEditorDocumentFormat= | Picks the validator; detected on open, settable when detection is wrong |
+| =path= | string, read-only | The file, or =NULL= while untitled; changed by =save_as= |
+| =dirty= | boolean, read-only | The tree differs from the last load or save |
+| =read-only= | boolean | Edits and saves are refused; set on open when the file is not writable |
+| =can-undo=, =can-redo= | boolean, read-only | For menu sensitivity |
+| =undo-limit= | uint | Steps kept, default 256, 0 = unlimited |
+| =base-dir= | string | Where relative files (sound bank entries) resolve; =NULL= = the document's directory |
+| =reference= | =LrgEditorDocument= | What validation compares against (the source locale) |
+| =monitor-file= | boolean | Watch the file with a =GFileMonitor= (off by default) |
+
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =changed= | path | After every edit, undo and redo step (several for a group), and =""= after a reload. For a set or replace the path is the node's; for insert, remove, move and rename it is the container's |
+| =dirty-changed= | gboolean | The document became dirty or clean (also =notify::dirty=) |
+| =saved= | path | After a successful save |
+| =reloaded= | — | After =reload()= replaced the tree |
+| =file-changed= | — | Once per external change on disk since the last load or save |
+
+*** Opening and format detection
+:PROPERTIES:
+:CUSTOM_ID: data-editors-open
+:END:
+- =lrg_editor_document_new (format)= creates an untitled document holding the smallest file the format's loader accepts (=actions: {}=, a locale with =code=, =name= and empty =strings=, a dialog tree with one empty node, =preset: midnight= for a theme, ...). Every skeleton passes its own validator.
+- =new_from_file (path)= reads the file with comment capture on; a parse error is =LRG_EDITOR_DOCUMENT_ERROR_PARSE= with the line and column. The document is read-only when the file is not writable.
+- =new_from_data (text, len, format)= is the same for text; =LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN= detects the format from the content.
+
+=lrg_editor_document_detect_format (name, text, len)= decides in this order:
+
+1. *A double extension* is an explicit statement: =*.input.yaml= (also =.inputmap=), =*.locale.yaml=, =*.bank.yaml= (also =.soundbank=), =*.hud.yaml=, =*.ui.yaml=, =*.dialog.yaml=, =*.dungeon.yaml=, =*.theme.yaml=, plus the bare names =dungeon.yaml= and =theme.yaml=. =.yml= works too.
+2. *The content*: the keys each loader requires or is known by. =actions:= mapping → input map; =sounds:= → sound bank; =pieces:= → HUD layout; =nodes:= sequence → dialog tree; =strings:= or =code:= + =name:= → locale; =generator:= → dungeon; =colors=, =metrics=, =preset=, =accent=, =styles= or =motion= → theme; a root =type:= → UI layout.
+3. *The parent directory*: =locales=, =locale=, =i18n=, =lang=, =themes=, =dialogs=, =dialog=, =dialogue=, =input=, =dungeons=, =ui=.
+
+Content beats the directory on purpose: =examples/data/ui/hud.yaml= is a UI layout (it has =type: vbox=), not an =LrgHudLayout= state file.
+
+** YAML paths
+:PROPERTIES:
+:CUSTOM_ID: data-editors-paths
+:END:
+Paths follow JSON pointer (RFC 6901):
+
+- A path is =/= followed by segments separated by =/=. =""= and =/= both mean the root.
+- A segment is a mapping key or a decimal sequence index (no sign, no leading zeros).
+- Inside a segment, =~= is written =~0= and =/= is written =~1=. =lrg_editor_document_path_escape()=, =path_join()= and =path_split()= do the escaping; =/a~1b~0c= is the key =a/b~c=.
+- In a setter, a missing last mapping key is created at the end of the mapping, and =-= (or the sequence's length) appends to a sequence. Anything else that does not exist is =LRG_EDITOR_DOCUMENT_ERROR_NOT_FOUND=; walking into a scalar is =WRONG_KIND=; a malformed path is =INVALID_PATH=.
+
+| Path | In an input map | Meaning |
+|------+-----------------+---------|
+| =/actions= | the actions mapping | |
+| =/actions/jump/bindings/0/key= | =SPACE= | key of the first binding of =jump= |
+| =/actions/jump/bindings/-= | (setter only) | append a binding |
+| =/= | the whole document | =replace (doc, "", text)= swaps everything |
+
+Because the input-map format keys actions by name, an action is addressed by name (=/actions/jump=), not by index; formats that use sequences (dialog =nodes=, dungeon =spawns=, UI =children=) use indices.
+
+*** Reading
+:PROPERTIES:
+:CUSTOM_ID: data-editors-reading
+:END:
+- =get_kind (path)= returns =missing=, =null=, =scalar=, =mapping= or =sequence= (=LrgEditorDocumentNodeKind=).
+- =get_scalar (path)= returns the text as written (numbers and booleans too); =NULL= for a null or a collection.
+- =get_value (path, &value)= types a scalar the way YAML does: a plain =true/false/yes/no/on/off= is a boolean, a plain integer an =int64=, a plain float a =double=, anything else (including every quoted scalar, so ='42'= stays a string) a string. A null gives a =G_TYPE_POINTER= value holding =NULL=.
+- =get_keys (path)= returns a mapping's keys in document order; =get_length (path)= the size of a sequence or mapping.
+- =get_yaml (path)= serializes a subtree with its comments (copy, the YAML pane); =to_data()= the whole document exactly as =save()= writes it.
+
+*** Line mapping
+:PROPERTIES:
+:CUSTOM_ID: data-editors-lines
+:END:
+=get_line (path, &line, &column)= says where a path starts in =to_data()= (for a mapping value: the line of its key), and =get_path_at_line (line)= is the inverse: the deepest node that starts on or before the line. The UI-layout editor uses them to jump from a clicked preview widget to its YAML and back; validation uses them to give every issue a line. yaml-glib does not keep source positions, so the document walks the serialized text with libyaml's event parser and caches the result until the next change.
+
+** Editing and undo
+:PROPERTIES:
+:CUSTOM_ID: data-editors-undo
+:END:
+*** Edit operations
+:PROPERTIES:
+:CUSTOM_ID: data-editors-edit-operations
+:END:
+Every call below is one undo step (unless merged or grouped) and returns =FALSE= with a =GError= when it cannot apply. A read-only document refuses all of them with =LRG_EDITOR_DOCUMENT_ERROR_READ_ONLY=.
+
+| Call | Effect |
+|------+--------|
+| =set_string (path, text, gesture)= | A string scalar; written quoted when plain would read as another type (='true'=, ='42'=, ='#ff0000'=) |
+| =set_int=, =set_double=, =set_boolean=, =set_null= | Typed scalars. Doubles always read back as floats (=2.0=, not =2=) with the shortest round-trip precision |
+| =set_value (path, GValue, gesture)= | The property-grid setter: strings, booleans, every integer width, float, double, enums (written as their nick), unset or =NULL= → null |
+| =replace (path, yaml)= | Replace a subtree (or the whole document with =""=) by parsed text |
+| =insert_item (path, index, yaml)= | Insert into a sequence; -1 appends; =NULL= inserts a null |
+| =move_item (path, from, to)= | Reorder a sequence item |
+| =add_key (path, key, yaml, position)= | Add a mapping key at a position in the key order (-1 = end); =EXISTS= if present |
+| =rename_key (path, old, new)= | Rename in place: position, value and comments are kept |
+| =remove (path)= | Remove a key or a sequence item (not the root) |
+
+A setter replacing an existing node copies the old node's comments (the comment lines above it, the comment after it on its line, the blank line before it) to the new node, so editing a value never drops its comment.
+
+*** How commands work
+:PROPERTIES:
+:CUSTOM_ID: data-editors-commands
+:END:
+A command records the container path, the key or index, and references to the node objects it put in and took out; it never copies the tree. Undo swaps the old node back, redo swaps the new one in. Because undo and redo run in strict stack order, the container path always resolves to the same container again. Nodes are never mutated in place: an edit replaces, inserts or removes whole children of a container. yaml-glib can only append to sequences and mappings, so an insert at a position detaches the tail, appends the new entry and re-appends the tail; the container node itself (and its comments) is never replaced.
+
+*** Gesture merging
+:PROPERTIES:
+:CUSTOM_ID: data-editors-merging
+:END:
+A drag, a slider or typing in a field produces many edits that the user thinks of as one. The setters take a =gesture_id=:
+
+- Consecutive =set_*= / =set_value= calls on the *same path* with the *same non-zero* gesture id merge into one undo step: the step keeps the value from before the first call and takes the value of the last.
+- If the gesture created the key (the first call added it), the later calls merge into that add, so one undo removes the key again.
+- 0 never merges. A different path, an undo or redo, a save, or a group boundary ends the merge: the next call with the same id starts a new step.
+- The UI allocates a fresh id per gesture (a press-to-release, a focus-in to focus-out).
+
+*** Groups
+:PROPERTIES:
+:CUSTOM_ID: data-editors-groups
+:END:
+=begin_group (label)= / =end_group ()= make every edit in between one undo step with that label ("Add binding" = insert a binding + set its key). Groups nest; only the outermost one makes a step, and an empty group makes none. While a group is open, =undo=, =redo= and =save= are refused (=can_undo= is =FALSE=) and the document counts as dirty as soon as the group holds an edit.
+
+*** Labels, limits and dirty tracking
+:PROPERTIES:
+:CUSTOM_ID: data-editors-dirty
+:END:
+- Every step has a label for the Edit menu: "Set /actions/jump/bindings/0/key", "Insert /nodes/3", "Rename /actions/leap", "Remove /strings/old", or the group's label.
+- =undo-limit= (default 256, 0 = unlimited) drops the oldest steps first.
+- Each step carries a serial number naming the state after it, and the document remembers the serial of the state last loaded or saved. =dirty= is "the current serial differs from the clean one", so undoing back to the saved state makes the document clean again, and redoing past it makes it dirty. A merged step gets a new serial (the state changed). Dropping old steps or =clear_undo()= keep the dirty flag as it is.
+
+** Files
+:PROPERTIES:
+:CUSTOM_ID: data-editors-files
+:END:
+*** Save
+:PROPERTIES:
+:CUSTOM_ID: data-editors-save
+:END:
+=save()= writes =to_data()= with =g_file_set_contents()= (a temporary file renamed over the target, so a crash never leaves a truncated data file), makes the current state clean, ends any gesture merge and emits =saved=. =save_as (path)= does the same to a new file (creating its directory) and makes it the document's file. An untitled document must use =save_as= (=save= fails with =NO_PATH=).
+
+The text is produced by yaml-glib's comment-preserving block writer. What survives and what does not:
+
+| Kept | Lost or normalized |
+|------+--------------------|
+| Key order of every mapping | Flow style: =[a, b]= and ={k: v}= are written as block sequences and mappings (empty ones stay =[]= / ={}=) |
+| Keys and values the engine does not know | Anchors and aliases: =&a= / =*a= are expanded into copies |
+| Whole-line comments above a key or item, and the comment after a value on its line | A comment after a one-line flow collection is repeated on every line the collection expands into (a yaml-glib limitation) |
+| Blank lines between entries | Comments after the last node of the file |
+| Scalar style that matters: ='true'= stays a string, =true= stays a boolean, a plain scalar stays plain while still safe | Quote style: double-quoted scalars are written single-quoted; indentation is always two spaces |
+| Multi-line strings (written as literal block scalars) | Document markers (=---=, =...=), directives and tags (=!custom=) |
+| | Duplicate keys: yaml-glib keeps the last value at the first key's position; validation warns about them until the next save |
+
+*** Reload and external changes
+:PROPERTIES:
+:CUSTOM_ID: data-editors-reload
+:END:
+- =reload()= re-reads the file, drops unsaved edits and the history, makes the document clean and emits =changed ("")= then =reloaded=. A failed reload (unreadable or invalid file) leaves the document unchanged.
+- The document remembers the modification time and content of the file at the last load or save. =check_external_change()= compares the time; when it moved (or the file is gone) it compares the content, so a touch or our own save is not a change. On a real change it emits =file-changed= once and keeps returning =TRUE= until the next save or reload. The editor calls it on window focus, and offers "Reload" or "Keep mine" (saving over it).
+- With =monitor-file= on, a =GFileMonitor= runs the same check from the main loop whenever the file is written, moved or deleted. It follows =save_as= to the new file.
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: data-editors-validation
+:END:
+=lrg_editor_document_validate (doc, &issues)= returns =TRUE= when no issue has error severity. Issues are boxed =LrgEditorDocumentIssue= values:
+
+| Field | Meaning |
+|-------+---------|
+| =severity= | =LrgEditorProblemSeverity= (=info=, =warning=, =error=), shared with the level Problems panel |
+| =path= | YAML path of the offending node, best effort (=NULL= when unknown) |
+| =line=, =column= | 1-based position in =to_data()=, or 0 |
+| =message= | What is wrong, in the engine's words where the engine said it |
+
+Issues come sorted: errors, then warnings, then infos, each in the order found.
+
+*** How the engine loader is run
+:PROPERTIES:
+:CUSTOM_ID: data-editors-validation-loader
+:END:
+Validation checks what would be saved: it serializes the document and gives that text to the format's real loader, so a passing document is one the game will load.
+
+- Loaders with a from-memory API get the text directly: =lrg_ui_loader_load_from_data=, =lrg_dialog_tree_new_from_data=, =lrg_procgen_dungeon_new_from_data=, =lrg_theme_new_from_data=.
+- Loaders that only read files get a temporary file under =g_get_tmp_dir()= that is deleted right after: =lrg_input_map_load_from_file=, =lrg_locale_new_from_file=, =lrg_hud_layout_load_from_file=, =lrg_sound_bank_new_from_file=. The temporary file's name is replaced by the document's name in every message.
+- A loader's =GError= becomes an error issue. Its location is recovered when the message carries one: the UI loader's =children[2].children[0]:= and the dungeon loader's =params.fill-percent:= prefixes become =/children/2/children/0= and =/params/fill-percent= (when that path exists), and =line N, column M= positions are mapped back to a path with =get_path_at_line=.
+- Warnings a loader logs while it runs (in its log domain) are captured as warning issues instead of reaching the console, except where the structural checks already report the same thing with a path (input maps).
+- Some loaders stop at the first problem. Where the structural checks mirror the loader's rules (HUD layouts, dialog trees), they report every problem with its path, and the loader's own error is added only when they found none.
+
+Duplicate keys found when the file was read are reported for every format as warnings, with the line of the repeat; they disappear from the file at the next save.
+
+*** Structural checks per format
+:PROPERTIES:
+:CUSTOM_ID: data-editors-validation-formats
+:END:
+| Format | Engine loader | Structural checks |
+|--------+---------------+-------------------|
+| Input map | =lrg_input_map_load_from_file= (temp file) | Each action is a mapping with a non-empty =bindings= sequence (else the loader silently drops it). Each binding is a mapping with a known =type= (=keyboard=, =mouse_button=, =gamepad_button=, =gamepad_axis=) and its required field (=key=, =button=, =axis=). Key names are checked against the loader's table (an unknown name loads as no key at all). The same input bound twice, in one action or two, is a warning (modifiers compared order-free) |
+| Locale | =lrg_locale_new_from_file= (temp file) | =strings= is a mapping; each entry is a text or a mapping of plural forms (=zero=, =one=, =two=, =few=, =many=, =other=); empty entries are warnings. With a =reference= document: keys it has and this one lacks (warning), keys only here (info), a different number of =%= placeholders than the reference's text (warning) |
+| Sound bank | =lrg_sound_bank_new_from_file= on a copy *without* =sounds= (temp file) | The loader would decode every sound, so it only checks the root, =name= and =base_path=. Each sound must be a file name with a known audio extension (wav, ogg, mp3, flac, qoa, xm, mod), and its file must exist, resolved like =LrgSoundBank= does (=base_path= relative to =base-dir=, else the document's directory). Untitled documents without =base-dir= skip the file check |
+| HUD layout | =lrg_hud_layout_load_from_file= (temp file) | Only =version= and =pieces= at the root; per piece only =anchor=, =x=, =y=, =locked=, =hidden=; =anchor= a known =LrgHudAnchor= nick; =x= / =y= numbers and only beside an anchor; =locked= / =hidden= =true= / =false= / =yes= / =no= |
+| UI layout | =lrg_ui_loader_load_from_data= | The loader is strict (unknown types, properties, values, handlers, includes) and its messages carry the node path and line. =include:= paths resolve against the current directory, since the text is validated from memory |
+| Dialog tree | =lrg_dialog_tree_new_from_data= | =id= and a non-empty =nodes= sequence; each node has =id= and =text=; ids are unique; responses have =text= and =next=; every =next= (node, response) and =start= names an existing node; nodes unreachable from =start= (or the first node) are warnings. The loader's linear-scene rule (a node with neither =next= nor =responses= continues with the following node) counts as an edge |
+| Dungeon | =lrg_procgen_dungeon_new_from_data= | The loader is strict (unknown keys and parameters, ranges, types) and names the offending key, which becomes the issue's path |
+| Theme | =lrg_theme_new_from_data= | The loader is strict (unknown keys, colour roles, metrics, malformed colours). A relative =font:= path is not resolved against the file's directory, since the text is validated from memory |
+
+** Format notes
+:PROPERTIES:
+:CUSTOM_ID: data-editors-format-notes
+:END:
+*** Input maps
+:PROPERTIES:
+:CUSTOM_ID: data-editors-input-maps
+:END:
+#+begin_src yaml
+actions:
+  jump:
+    bindings:
+      - { type: keyboard, key: SPACE }
+      - { type: gamepad_button, gamepad: 0, button: RIGHT_FACE_DOWN }
+  fire:
+    bindings:
+      - { type: mouse_button, button: LEFT, modifiers: [SHIFT] }
+#+end_src
+=input_actions()= lists the action names in order. Renaming an action is =rename_key ("/actions", old, new)=. The engine writer (=lrg_input_map_save_to_file=) iterates a hash table, so a file saved by the game loses its order; saving through the document keeps it.
+
+*** Locales
+:PROPERTIES:
+:CUSTOM_ID: data-editors-locales
+:END:
+#+begin_src yaml
+code: en
+name: English
+strings:
+  greeting: 'Hello, %s!'
+  items:
+    one: '%d item'
+    other: '%d items'
+#+end_src
+=locale_keys()= lists the keys of =strings= (a plural entry is one key); =locale_missing_keys (doc, reference)= the reference's keys this locale lacks. The key × language grid opens one document per locale and sets the source language as each one's =reference=.
+
+*** Sound banks
+:PROPERTIES:
+:CUSTOM_ID: data-editors-sound-banks
+:END:
+#+begin_src yaml
+name: player
+base_path: sounds/player/
+sounds:
+  jump: jump.wav
+  land: land.ogg
+#+end_src
+=sound_bank_resolve (name)= gives the file a sound plays, for preview playback and the missing-file check.
+
+*** HUD layouts
+:PROPERTIES:
+:CUSTOM_ID: data-editors-hud-layouts
+:END:
+The player-state file of =LrgHudLayout= (=version= plus =pieces= of =anchor=, =x=, =y=, =locked=, =hidden=). The loader rejects unknown keys, so this is the one format where extra keys are errors rather than preserved notes.
+
+*** UI layouts
+:PROPERTIES:
+:CUSTOM_ID: data-editors-ui-layouts
+:END:
+=LrgUILoader= documents (=type:=, =children:=, properties, =on:= handlers, components). The preview-to-YAML jump uses =get_line= on the widget's node path.
+
+*** Dialog trees
+:PROPERTIES:
+:CUSTOM_ID: data-editors-dialog-trees
+:END:
+#+begin_src yaml
+id: intro
+start: hello
+nodes:
+  - id: hello
+    text: Halt!
+    responses:
+      - { text: Friend, next: friend }
+  - id: friend
+    text: Pass.
+#+end_src
+=dialog_nodes()= lists node ids; =dialog_edges()= returns =LrgEditorDocumentEdge= values (=from=, =to=, =response= index or -1, and the path of the =next= value, =NULL= for an implicit chain edge) for the node graph. Targets may name missing nodes; the graph draws those as dangling.
+
+*** Procgen dungeons
+:PROPERTIES:
+:CUSTOM_ID: data-editors-dungeons
+:END:
+The recipe format of [[file:../modules/procgen/yaml.org][LrgProcgenDungeon]]. The engine writer (=lrg_procgen_dungeon_to_data=) writes every parameter including defaults; the document writes only what the file has.
+
+*** Themes
+:PROPERTIES:
+:CUSTOM_ID: data-editors-themes
+:END:
+The format of [[file:../guides/theming.org][LrgTheme files]]. Colours set with =set_string= are quoted automatically, so ='#7c6cff'= never turns into a comment.
+
+** Engine gaps found
+:PROPERTIES:
+:CUSTOM_ID: data-editors-engine-gaps
+:END:
+| Format | From-memory loader | Writer |
+|--------+--------------------+--------|
+| Input map | no (file only) | =save_to_file= (hash order, drops unknown keys and comments) |
+| Locale | no (=new_from_file= only) | none |
+| Sound bank | no (and loading decodes audio) | none |
+| HUD layout | no (=load_variant= takes a =GVariant=, not YAML) | =save_to_file= |
+| UI layout | yes | none (documents are hand-written) |
+| Dialog tree | yes | none |
+| Dungeon | yes | =to_data= / =save_to_file= |
+| Theme | yes | =to_data= / =save_to_file= |
+
+The document does not need the writers (it saves the YAML tree), but =*_from_data= loaders for input maps, locales, sound banks and HUD layouts would remove the temporary files from validation, and a sound bank "manifest only" load would let the real loader check the =sounds= section without decoding audio.
+
+** Proposed IPC methods
+:PROPERTIES:
+:CUSTOM_ID: data-editors-ipc
+:END:
+These are wired in the editor server in a later wave; documents are identified by their path.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =data.open= | =path=, optional =format= (nick) | =format=, =dirty=, =read_only=, =undo_label=, =redo_label=; opens the matching editor panel unless =headless= |
+| =data.get= | =path=, =at= (YAML path, default root), optional =as= (=yaml= / =value=) | =kind=, =value= (typed) or =yaml=, =keys= / =length= for collections, =line= |
+| =data.set= | =path=, =at=, one of =value= (typed JSON) / =yaml=, optional =gesture= | =ok=, =dirty=, =undo_label= |
+| =data.edit= | =path=, =op= (=insert=, =move=, =add_key=, =rename_key=, =remove=), op arguments | =ok=, =dirty= |
+| =data.undo= / =data.redo= | =path= | =ok=, labels |
+| =data.validate= | =path= | =ok=, =issues= (severity, path, line, column, message) |
+| =data.save= | =path=, optional =save_as= | =ok=, =path= |
+| =data.reload= | =path= | =ok= |
+| =data.list= | — | the open documents with path, format, dirty |
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api
+:END:
+Header: =editor/lrg-editor-document.h= (included by =<libregnum.h>= in editor builds).
+
+*** Types and enums
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-types-and-enums
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_document_format_get_type= | GType of =LrgEditorDocumentFormat= |
+| =lrg_editor_document_format_to_string= | format → nick (="sound-bank"=) |
+| =lrg_editor_document_format_from_string= | nick or C name → format (=unknown= otherwise) |
+| =lrg_editor_document_node_kind_get_type= | GType of =LrgEditorDocumentNodeKind= |
+| =lrg_editor_document_error_quark= | the =LRG_EDITOR_DOCUMENT_ERROR= domain |
+| =lrg_editor_document_error_get_type= | GType of =LrgEditorDocumentError= |
+| =lrg_editor_document_issue_get_type= | boxed GType of =LrgEditorDocumentIssue= |
+| =lrg_editor_document_issue_new= | build an issue (severity, path, line, column, message) |
+| =lrg_editor_document_issue_copy= | copy an issue |
+| =lrg_editor_document_issue_free= | free an issue |
+| =lrg_editor_document_edge_get_type= | boxed GType of =LrgEditorDocumentEdge= |
+| =lrg_editor_document_edge_copy= | copy a dialog edge |
+| =lrg_editor_document_edge_free= | free a dialog edge |
+
+*** Construction and properties
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-construction-and-properties
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_document_new= | untitled document holding the format's skeleton |
+| =lrg_editor_document_new_from_file= | open a file (format detected, read-only if not writable) |
+| =lrg_editor_document_new_from_data= | untitled document from text |
+| =lrg_editor_document_detect_format= | double extension, then content, then directory |
+| =lrg_editor_document_get_format= | the =format= property |
+| =lrg_editor_document_set_format= | override the detected format |
+| =lrg_editor_document_get_path= | the file, or =NULL= |
+| =lrg_editor_document_get_display_name= | base name or "untitled" |
+| =lrg_editor_document_get_dirty= | the =dirty= property |
+| =lrg_editor_document_get_read_only= | the =read-only= property |
+| =lrg_editor_document_set_read_only= | refuse or allow edits and saves |
+| =lrg_editor_document_get_base_dir= | the =base-dir= property |
+| =lrg_editor_document_set_base_dir= | where relative files resolve |
+| =lrg_editor_document_get_reference= | the =reference= property |
+| =lrg_editor_document_set_reference= | the document validation compares against |
+| =lrg_editor_document_get_monitor_file= | the =monitor-file= property |
+| =lrg_editor_document_set_monitor_file= | watch the file with a =GFileMonitor= |
+
+*** Paths and reading
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-paths-and-reading
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_document_path_escape= | escape one segment (=~0=, =~1=) |
+| =lrg_editor_document_path_join= | parent + escaped segment |
+| =lrg_editor_document_path_split= | path → unescaped segments |
+| =lrg_editor_document_get_kind= | missing / null / scalar / mapping / sequence |
+| =lrg_editor_document_has_path= | whether a path exists |
+| =lrg_editor_document_get_scalar= | scalar text as written |
+| =lrg_editor_document_get_value= | scalar typed the YAML way, as a =GValue= |
+| =lrg_editor_document_get_keys= | mapping keys in order |
+| =lrg_editor_document_get_length= | items of a sequence / keys of a mapping |
+| =lrg_editor_document_get_yaml= | a subtree as YAML text |
+| =lrg_editor_document_to_data= | the whole document as saved |
+| =lrg_editor_document_get_line= | path → line and column in =to_data()= |
+| =lrg_editor_document_get_path_at_line= | line → deepest path starting there |
+
+*** Editing
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-editing
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_document_set_string= | string scalar (quoted when needed) |
+| =lrg_editor_document_set_int= | integer scalar |
+| =lrg_editor_document_set_double= | float scalar (shortest round-trip, always a float) |
+| =lrg_editor_document_set_boolean= | boolean scalar |
+| =lrg_editor_document_set_null= | null |
+| =lrg_editor_document_set_value= | typed setter from a =GValue= |
+| =lrg_editor_document_replace= | replace a subtree from YAML text |
+| =lrg_editor_document_insert_item= | insert into a sequence |
+| =lrg_editor_document_move_item= | reorder a sequence item |
+| =lrg_editor_document_add_key= | add a mapping key at a position |
+| =lrg_editor_document_rename_key= | rename a key in place |
+| =lrg_editor_document_remove= | remove a key or item |
+
+*** Undo
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-undo
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_document_begin_group= | start a compound step |
+| =lrg_editor_document_end_group= | end it |
+| =lrg_editor_document_undo= | undo one step |
+| =lrg_editor_document_redo= | redo one step |
+| =lrg_editor_document_can_undo= | whether undo would act |
+| =lrg_editor_document_can_redo= | whether redo would act |
+| =lrg_editor_document_get_undo_label= | label of the step undo reverts |
+| =lrg_editor_document_get_redo_label= | label of the step redo applies |
+| =lrg_editor_document_clear_undo= | forget the history (dirty kept) |
+| =lrg_editor_document_get_undo_limit= | the =undo-limit= property |
+| =lrg_editor_document_set_undo_limit= | cap the history |
+
+*** Files, validation and helpers
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-files-validation-and-helpers
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_document_save= | atomic write to the document's file |
+| =lrg_editor_document_save_as= | atomic write to a new file, which becomes the document's |
+| =lrg_editor_document_reload= | re-read the file, dropping edits and history |
+| =lrg_editor_document_check_external_change= | detect another program's change; emits =file-changed= once |
+| =lrg_editor_document_validate= | engine loader + structural checks → issues |
+| =lrg_editor_document_input_actions= | input map action names |
+| =lrg_editor_document_locale_keys= | locale string keys |
+| =lrg_editor_document_locale_missing_keys= | reference keys a locale lacks |
+| =lrg_editor_document_dialog_nodes= | dialog node ids |
+| =lrg_editor_document_dialog_edges= | dialog edges for the node graph |
+| =lrg_editor_document_sound_bank_resolve= | file a sound plays |
+
+** Editor panels
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panels
+:END:
+#+begin_comment
+The sections below are written with the editor UI (Wave 5). Each describes its panel on top of the model above.
+#+end_comment
+
+*** Base panel (Save, Revert, Validate, issues list)
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base
+:END:
+/To be written with the UI./
+
+*** Input map editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-input-map
+:END:
+/To be written with the UI./
+
+*** Locale editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-locale
+:END:
+/To be written with the UI./
+
+*** Sound bank editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-sound-bank
+:END:
+/To be written with the UI./
+
+*** Theme editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-theme
+:END:
+/To be written with the UI./
+
+*** HUD layout editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-layout
+:END:
+/To be written with the UI./
+
+*** UI layout editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-ui-layout
+:END:
+/To be written with the UI./
+
+*** Dialog tree editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-tree
+:END:
+/To be written with the UI./
+
+*** Procgen dungeon editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dungeon
+:END:
+/To be written with the UI./
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: data-editors-tests
+:END:
+=tests/test-editor-document.c= runs headless (no window, no audio device): path escaping, format detection, every skeleton validating, open errors, gesture merging, nested groups, dirty tracking across save/undo/redo/limit/clear, typed values, comment and unknown-key preservation through save, external-change detection and reload, line mapping and duplicate keys, and for each of the eight formats a real-format fixture that is loaded, edited, undone, saved, reloaded and validated both passing and failing with the expected message and path.

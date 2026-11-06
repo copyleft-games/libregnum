@@ -254,6 +254,7 @@ TEST_SOURCES := \
 	test-editor-view-state.c \
 	test-editor-play-session.c \
 	test-editor-viewport-nav.c \
+	test-editor-document.c \
 	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \

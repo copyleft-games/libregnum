@@ -459,6 +459,7 @@
 #include "editor/lrg-editor-view-state.h"
 #include "editor/lrg-editor-play-session.h"
 #include "editor/lrg-editor-viewport-nav.h"
+#include "editor/lrg-editor-document.h"
 #ifdef LRG_BUILD_EDITOR_UI
 #include "editor/ui/lrg-editor-app.h"
 #endif
