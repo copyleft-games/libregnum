@@ -744,7 +744,7 @@ static void
 test_paint_box_materials (void)
 {
 	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
-	g_autoptr(LrgPanel)     panel = g_object_ref_sink (lrg_panel_new ());
+	g_autoptr(LrgPanel)     panel = lrg_panel_new ();
 	LrgPartLook             look;
 	GrlColor                bg = { 30, 30, 40, 255 };
 	GrlColor                border = { 255, 255, 255, 60 };

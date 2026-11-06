@@ -1000,7 +1000,11 @@ test_include (void)
 		"type: hbox\n"
 		"id: 'row-${who}'\n"
 		"children: [{type: Badge, text: '${who}'}]\n");
-	g_mkdir (g_build_filename (dir, "sub", NULL), 0700);
+	{
+		g_autofree gchar *sub = g_build_filename (dir, "sub", NULL);
+
+		g_mkdir (sub, 0700);
+	}
 	p3 = write_temp (dir, "sub/deep.yaml", "include: ../row.yaml\nwith: {who: deep}\n");
 	main_path = write_temp (dir, "main.yaml",
 		"type: vbox\n"
