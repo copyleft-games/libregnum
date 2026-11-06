@@ -349,7 +349,72 @@ test_ember_theme_is_readable (void)
 }
 #+end_src
 
-For individual colours use =lrg_paint_color_contrast()= and =lrg_paint_color_luminance()=. The ratio assumes opaque colours; for translucent ones, compare the colour as it composites over its background. =high-contrast= is designed for players who need it; offer it in your settings (and pair it with reduced motion).
+For individual colours use =lrg_color_contrast_ratio()= (or =lrg_paint_color_contrast()= and =lrg_paint_color_luminance()=). The ratio assumes opaque colours; for translucent ones, compare the colour as it composites over its background. =high-contrast= is designed for players who need it; offer it in your settings (and pair it with reduced motion).
+
+The theme also knows which role pairs carry text in the built-in widgets (=lrg_theme_get_contrast_pair()=, 12 pairs), so a test can check them all at once and a tool can repair them:
+
+#+begin_src c
+g_assert_cmpuint (lrg_theme_count_contrast_failures (theme, 4.5f), ==, 0);
+
+/* or repair: moves text towards white/black by the smallest step */
+lrg_theme_fix_contrast (theme, 4.5f);
+#+end_src
+
+See [[file:../modules/ui/theme.org::#theme-palette-fix][fixing contrast]] for the algorithm.
+
+** Designing with the theme editor
+:PROPERTIES:
+:CUSTOM_ID: theming-editor
+:END:
+=examples/ui-theme-editor.c= is a live editor for theme files: change a value on the left and real widgets on the right restyle on the same frame, while a contrast panel grades every text/background pair. It writes YAML that =lrg_theme_new_from_file()= loads back unchanged, so the file it saves is the file you ship. The program itself is documented in [[file:../examples/ui-theme-editor.org][the theme editor example]]; this section is the design workflow.
+
+#+begin_src sh
+make -j"$(nproc)" lib && make -C examples
+./examples/build/release/examples/ui-theme-editor --accent '#22d3ee' --output data/ui/cyan.yaml
+#+end_src
+
+*** 1. Start from an accent or a preset
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-start
+:END:
+Two starting points, chosen on the command line or in the *Palette* section:
+
+- *An accent* (=--accent HEX=, or the accent swatch): with /Generate neutrals from accent/ on, the editor calls =lrg_theme_generate_palette()= and every colour role is rebuilt from the accent, the tint and depth sliders and the dark switch. This is the fastest way to a coherent brand palette.
+- *A preset* (=--preset NAME=, or the /Preset/ combo): the preset's own colours, metrics and motion are loaded and generation switches off, so the accent swatch only re-derives the accent family (=lrg_theme_set_accent()=). Use this to make a variant of =catppuccin-mocha= with your brand colour.
+- *An existing file* (=--theme FILE=, or the /Load/ button): edit a theme you already ship.
+
+*** 2. Shape the neutrals with tint and depth
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-shape
+:END:
+- *Tint* decides how much of the accent's hue bleeds into the surfaces and text. Around 0.2 to 0.3 gives a UI that feels "of a piece" with the accent without looking coloured; 0 is neutral grey (a good choice when the game's art is very colourful); 0.6 and above reads as a coloured UI (navy, plum, forest).
+- *Depth* decides how dark (or light) the surfaces sit and how far window, panel, surface and popup step apart. Low depth gives a soft, flat look where cards barely lift off the window; high depth gives strong layering, which helps over a busy game scene.
+- *Dark* flips the polarity. Generated light palettes step *down* from a white panel (the window and controls are darker than the panel), matching =daylight=.
+
+Moving either slider turns generation back on, so after picking a preset you can still dial in a generated palette.
+
+*** 3. Fine-tune individual roles and metrics
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-roles
+:END:
+Every one of the 27 roles has a swatch in one of five expanders (Surfaces, Text, Accent family, Controls, Status & effects); clicking it opens a full colour picker. Hand-editing a role switches generation off, so the next accent change does not overwrite your edit. The /Metrics/ expander has a spin box per metric (font sizes, corner radius, border width, control height, padding, spacing, row height, popup radius, shadow blur and offset, focus ring, scrollbar, check and handle size); the preview re-lays itself out as sizes change. The /Motion/ combo sets the spring preset; hover and press the preview buttons to feel it.
+
+*** 4. Check contrast, then auto-fix
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-contrast
+:END:
+The contrast panel lists the 12 pairs from =lrg_theme_get_contrast_pair()=. Each row shows an "Aa" chip drawn in the pair's own colours, the ratio, and a badge: *AAA* (7:1 or more), *AA* (4.5:1 or more) or *FAIL*. The summary line counts the failures. /Auto-fix AA/ and /Auto-fix AAA/ call =lrg_theme_fix_contrast()= with 4.5 and 7 and report how many roles moved in a toast. Typical fixes are tiny: muted text a few percent lighter, the pressed accent a shade lighter so its label still reads. If a fix moves a colour you care about (the accent itself), adjust that colour by hand instead and run the fix again.
+
+*** 5. Save and ship
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-save
+:END:
+The header's path field defaults to =--output= (or =theme.yaml=); /Save YAML/ writes =lrg_theme_to_data()= there and confirms with a toast. The file holds every colour, metric, the motion, name and dark flag (plus any style rules the theme had), so it loads back identical. Load it in the game with =lrg_theme_new_from_file()= as in [[#theming-quick-start][the quick start]]. For scripted pipelines, =--save= writes the file without opening a window:
+
+#+begin_src sh
+# generate, enforce AA, and write a theme in CI
+ui-theme-editor --accent '#ff7a45' --light --tint 0.3 --fix-contrast --save --output data/ui/ember-light.yaml
+#+end_src
 
 ** Fonts
 :PROPERTIES:
@@ -547,3 +612,4 @@ Messages name the offending key (=colors.text-muted: expected a hex colour ...=,
 - [[file:../modules/ui/styling.org][UI styling]] (style rules in depth)
 - [[file:../modules/ui/animation.org][UI animation]] (motion presets)
 - [[file:extending-ui.org][Extending the UI]] (using roles and metrics in your own widgets)
+- [[file:../examples/ui-theme-editor.org][Theme editor example]] (design themes live)

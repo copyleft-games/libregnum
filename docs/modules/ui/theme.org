@@ -128,6 +128,87 @@ See [[file:styling.org::#styling-rules][style rules]] for matching and specifici
 
 Errors use =LRG_THEME_ERROR= (=PARSE=, =INVALID=, =FONT=). The file format is documented in [[file:../../guides/theming.org::#theming-file][the theming guide]] and the =styles:= schema in [[file:styling.org::#styling-yaml][styling]].
 
+** Palette generation and contrast
+:PROPERTIES:
+:CUSTOM_ID: theme-palette
+:END:
+Functions that build a whole palette from one accent colour and keep text readable. The [[file:../../examples/ui-theme-editor.org][theme editor example]] is a GUI over them; [[file:../../guides/theming.org::#theming-editor][designing with the editor]] explains the workflow.
+
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_color_contrast_ratio (a, b)= | WCAG 2.x contrast ratio between two colours | =(L1 + 0.05) / (L2 + 0.05)= on relative luminance, L1 the lighter; alpha ignored; 21 for black/white, 1 for a colour on itself |
+| =lrg_theme_generate_palette (self, accent, tint, depth, dark)= | Replace all 27 colour roles with a palette generated from =accent= | Sets =dark=; leaves metrics, motion, name, fonts and style rules alone; deterministic; one =::changed= |
+| =lrg_theme_get_n_contrast_pairs (void)= | Number of text/background role pairs the contrast helpers check | 12 |
+| =lrg_theme_get_contrast_pair (index, foreground, background)= | One pair, as two =LrgThemeColor= out parameters | Both out parameters optional; =FALSE= for an index out of range |
+| =lrg_theme_count_contrast_failures (self, min_ratio)= | How many pairs fall below =min_ratio= | Use in tests: === 0= at 4.5 means WCAG AA for every pair |
+| =lrg_theme_fix_contrast (self, min_ratio)= | Nudge colours until every pair reaches =min_ratio= | Returns the number of roles changed; one =::changed= if any; =min_ratio= is clamped to 1..21 |
+
+*** Generation
+:PROPERTIES:
+:CUSTOM_ID: theme-palette-generate
+:END:
+=lrg_theme_generate_palette()= works in HSL. The neutrals (=WINDOW=, =PANEL=, =SURFACE=, =POPUP=, the =CONTROL= family, =INPUT=, =BORDER=, =TRACK=, =TOOLTIP=, =TEXT=, =TEXT_MUTED=, =HANDLE=, =DISABLED=) all take the accent's *hue*; their saturation and lightness come from the two shape parameters:
+
+| Parameter | Range | Effect |
+|-----------+-------+--------|
+| =tint= | 0..1 | Saturation of the surfaces (up to 0.32 dark / 0.36 light) and of text (up to 0.22). 0 gives pure greys; 1 gives a strongly coloured "navy" or "cream" UI |
+| =depth= | 0..1 | Dark: the window's lightness drops from 0.115 to 0.04 and the step between window, panel and surface grows from 0.022 to 0.06. Light: the panel drops from white to 0.98 and the step grows from 0.018 to 0.048, so the window and controls sit further below the panel |
+| =dark= | boolean | Light text on dark layers stepping *up* (window < panel < surface), or dark text on light layers stepping *down* from a near-white panel |
+
+The layers in a dark palette, with =base= the window lightness and =step= the layer step: =WINDOW= base, =PANEL= base + step, =POPUP= base + 1.5 step, =SURFACE= base + 2 step, =CONTROL= a little above the surface with hover and pressed further up, =INPUT= and =TOOLTIP= below the window, =BORDER= and =TRACK= well above the surface. Text sits at lightness 0.93, muted text at 0.66 and disabled at 0.42. A light palette mirrors this (text 0.12, muted 0.40, disabled 0.66; the tooltip is dark).
+
+The status colours come from fixed tables (=SUCCESS= =#34d399= / =#16a34a=, =WARNING= =#fbbf24= / =#d97706=, =DANGER= =#f87171= / =#dc2626= for dark / light), =SHADOW= is black at =0xa8= alpha on dark and a tinted near-black at =0x38= on light, =VEIL= a tinted near-black. The accent family (=ACCENT_HOVER=, =ACCENT_PRESSED=, =FOCUS=, =SELECTION=, =LINK=, =TEXT_ON_ACCENT=) is derived exactly as =lrg_theme_set_accent()= does it (see [[file:../../guides/theming.org::#theming-accent][deriving from an accent]]), except that =LINK= is shaded further, in 6 % steps, until it reaches 4.5:1 on both =PANEL= and =SURFACE=: a cyan or yellow accent darkened 10 % still washes out on white.
+
+What the generator guarantees: text, muted text and links reach WCAG AA (4.5:1) on every surface they are listed against; text on the hover and pressed accent shades can drop to about 3:1 with mid-tone accents (=#7c6cff=, grey), because those shades follow =set_accent()=. Run =lrg_theme_fix_contrast()= afterwards for strict AA everywhere.
+
+*** Contrast pairs
+:PROPERTIES:
+:CUSTOM_ID: theme-palette-pairs
+:END:
+The pairs, in index order:
+
+| Index | Foreground | Background |
+|-------+------------+------------|
+| 0 | =TEXT= | =WINDOW= |
+| 1 | =TEXT= | =PANEL= |
+| 2 | =TEXT= | =SURFACE= |
+| 3 | =TEXT= | =CONTROL= |
+| 4 | =TEXT= | =INPUT= |
+| 5 | =TEXT= | =POPUP= |
+| 6 | =TEXT_MUTED= | =PANEL= |
+| 7 | =TEXT_MUTED= | =SURFACE= |
+| 8 | =TEXT_ON_ACCENT= | =ACCENT= |
+| 9 | =TEXT_ON_ACCENT= | =ACCENT_HOVER= |
+| 10 | =TEXT_ON_ACCENT= | =ACCENT_PRESSED= |
+| 11 | =LINK= | =PANEL= |
+
+Tooltips are not listed: tooltip text is not drawn from a theme role consistently yet.
+
+*** Fixing contrast
+:PROPERTIES:
+:CUSTOM_ID: theme-palette-fix
+:END:
+=lrg_theme_fix_contrast()= changes as little as it can:
+
+1. Each foreground role gets one direction for the whole call: towards white if white's *worst* contrast over all the backgrounds that role sits on beats black's, else towards black.
+2. For each failing pair, the foreground is mixed towards its extreme in 1/64 steps; the first step that reaches =min_ratio= wins.
+3. Only if the foreground reaches pure white or black and the pair still fails (a mid-tone background) does the background move, in the opposite direction, by the smallest step that passes.
+4. The pair list is walked again (at most 8 passes) until every pair passes. Because foregrounds only move towards their extreme and backgrounds only away from it, pairs that share a role cannot undo each other.
+
+Roles outside the pairs are never touched. Fixing an already-passing theme changes nothing and returns 0. With =min_ratio= 21 the result is black and white.
+
+#+begin_src c
+/* generate, then guarantee AA, then ship */
+g_autoptr(LrgTheme) theme = lrg_theme_new ();
+GrlColor            accent;
+
+lrg_color_parse ("#22d3ee", &accent);
+lrg_theme_generate_palette (theme, &accent, 0.4f, 0.7f, TRUE);
+lrg_theme_fix_contrast (theme, 4.5f);
+g_assert_cmpuint (lrg_theme_count_contrast_failures (theme, 4.5f), ==, 0);
+lrg_theme_save_to_file (theme, "data/ui/cyan.yaml", NULL);
+#+end_src
+
 ** Properties and signals
 :PROPERTIES:
 :CUSTOM_ID: theme-properties
