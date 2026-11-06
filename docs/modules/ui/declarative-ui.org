@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum ui
 #+created: 2026-11-06T00:00:00-05:00
-#+updated: 2026-11-06T00:00:00-05:00
-#+version: 1.0
+#+updated: 2026-11-06T12:00:00-05:00
+#+version: 1.1
 
 * Declarative UI
 :PROPERTIES:
@@ -66,6 +66,8 @@ A document is one of:
 | =variables:=  | Mapping of name to value, evaluated in order (each may use the previous ones); visible to the whole document and to its components |
 | =root:=       | The root node (a mapping), or a list that must give one widget                                                   |
 | =shortcuts:=  | List of ={accel:, action:, target:, target-type:}= keyboard shortcuts (see [[#document-shortcuts][Shortcuts]])              |
+| =menus:=      | Mapping of menu name to menu: named menus for =model:=, =context-menu:=, =submenu:= and =section:= (see [[#menus][Menus]])   |
+| =languages:=  | List of =LrgSyntax= language definitions or file names, registered for =LrgTextEditor= (see [[#text-editor-keys][Text editor]]) |
 | =type:=       | The mapping itself is the root node                                                                              |
 
 *** Shortcuts
@@ -84,7 +86,7 @@ Each entry is bound with =lrg_canvas_add_shortcut()= on the canvas the document'
 
 *Direction.* =direction: rtl= (=ltr=, =inherit=) on any widget node sets =LrgWidget:direction=, mirroring that subtree (see [[file:layout.org::#layout-direction][layout direction]]).
 
-Only the first YAML document of a stream is read. Anchors and aliases work as in any YAML.
+Only the first YAML document of a stream is read. Anchors and aliases work as in any YAML. =menus:= and =languages:= are also read from included files (menus become usable once the =include= node is expanded, like components).
 
 ** Widget nodes
 :PROPERTIES:
@@ -149,9 +151,9 @@ A property key takes its value converted to the property's type. Out-of-range va
 | =GrlVector2=                        | =[x, y]= or ={x:, y:}=                                                                                                                  |
 | =GStrv=                             | a list of text, or one scalar                                                                                                           |
 
-Other property types (objects, pointers, other boxed types) cannot be set from YAML and are reported as errors. Construct-only properties are passed to =g_object_new()=.
+Other property types (objects, pointers, other boxed types) cannot be set from YAML and are reported as errors, with two exceptions: a =GMenuModel= property (=model=, =context-menu=) takes a menu (see [[#menus][Menus]]), and =LrgTextEditor:syntax= is set by =language-file:=. A float =aspect-ratio= property also accepts ="16:9"= or ="4/3"=. Construct-only properties are passed to =g_object_new()=.
 
-*Order of application.* Construct-only properties, then the id, then the other keys in document order, then =items=, then =children= / =child= / =tabs=, then the /late/ properties =value=, =selected=, =active-tab=, =fraction=, =scroll-x=, =scroll-y= and =cursor-position= (which depend on ranges, items or content set before them), then the handlers. Setting a widget up therefore never fires the document's own handlers.
+*Order of application.* Construct-only properties, then the id, then the other keys in document order, then =items=, then =children= / =child= / =tabs=, then the /late/ properties =value=, =selected=, =active-tab=, =fraction=, =scroll-x=, =scroll-y=, =cursor-position=, =visible-child-name=, =visible-index= and =time= (which depend on ranges, items, pages or content set before them) together with the embedded documents =graph:=, =layout:=, =tracks:= and =markers:=, then the handlers. Setting a widget up therefore never fires the document's own handlers.
 
 *** Handlers
 :PROPERTIES:
@@ -225,6 +227,253 @@ look:
     checked+hovered: {opacity: 0.9}
   label: {foreground: white}
 #+end_src
+
+** Menus
+:PROPERTIES:
+:CUSTOM_ID: menus
+:END:
+Every =GMenuModel= property takes a menu: =LrgMenuBar:model=, =LrgMenu:model= and =LrgWidget:context-menu= (any widget). A menu is either a list of entries or the name of a menu declared under the top-level =menus:=. The loader builds a =GMenu= during expansion, so a mistake is reported (with its position) before anything is built.
+
+#+begin_src yaml
+menus:
+  file:
+    - {label: _New, action: app.new, accel: "<Ctrl>n", icon: plus}
+    - label: Open _Recent
+      submenu:
+        - {label: forest.rlevel, action: app.open, target: forest.rlevel}
+    - separator
+    - {label: Zoom 200%, action: view.zoom, target: "2.0", target-type: d}
+    - {label: Debug overlay, action: app.debug, if: "${debug}"}
+    - separator
+    - {label: _Quit, action: app.quit, accel: "<Ctrl>q", icon: close}
+  panels:
+    - {label: Scene, action: app.show-panel, target: scene}
+  view:
+    - {label: Reset layout, action: app.reset-layout}
+    - {section: panels, label: Panels}        # a labelled section, by name
+  main:
+    - {label: _File, submenu: file}
+    - {label: _View, submenu: view}
+
+root:
+  type: vbox
+  children:
+    - {type: menu-bar, id: menubar, model: main}
+    - type: node-graph
+      context-menu:                            # inline menu
+        - {label: Frame all, action: app.frame-all, icon: search}
+    - {type: menu, id: popup, model: file}     # popped up from code
+#+end_src
+
+| Entry key     | Value                                    | Meaning                                                                                       |
+|---------------+------------------------------------------+-----------------------------------------------------------------------------------------------|
+| =label=       | text                                     | The row text; =_= marks the mnemonic. Required for items and submenus, optional for sections  |
+| =action=      | ="prefix.action"=                        | The action the item activates (=G_MENU_ATTRIBUTE_ACTION=), looked up from the menu's owner     |
+| =target=      | scalar                                   | The action parameter; a string unless =target-type= says otherwise                            |
+| =target-type= | =GVariant= type string                   | =b=, =i=, =d=, =(si)=, ...; the target is parsed in GVariant text format                      |
+| =accel=       | accelerator (="<Ctrl><Shift>s"=)         | The shortcut label shown on the row (the ="accel"= attribute); bind it with =shortcuts:=      |
+| =icon=        | =LrgIcon= nick (=folder=, =gear=, =plus=, ...) | A vector icon on the row (=G_MENU_ATTRIBUTE_ICON=)                                     |
+| =submenu=     | menu (list or name)                      | The row opens a submenu                                                                       |
+| =section=     | menu (list or name)                      | The entry is a section (with an optional =label= header)                                      |
+| =separator=   | =true=                                   | Same as the bare entry =separator= (also =-= or =---=)                                        |
+| =if=          | expression                               | The entry is dropped when false                                                               |
+
+- *Separators* split the list into sections: the entries between two separators become one unlabelled section (=GMenu= has no separator item; =LrgMenu= draws a line between sections).
+- *Named menus* are resolved in the document's global scope (loader and document variables), not where they are used; they can use each other (=submenu: file=, =section: panels=). A menu that uses itself through names is an error (=menus nest too deeply=).
+- An entry is an item, a submenu or a section: =submenu= and =section= cannot be combined, and neither takes =action= / =target=. A =target= needs an =action=.
+- *Hot reload* compares the built menus (attributes and links, through named menus too): a property is set again only when its menu content changed; a removed =model= / =context-menu= becomes =NULL=.
+- Errors: unknown menu names, malformed entries, unknown entry keys (=LRG_UI_LOADER_ERROR_STRUCTURE=), bad action names, targets, accelerators and icon nicks (=LRG_UI_LOADER_ERROR_INVALID_VALUE=), a =menus:= that is not a mapping (=LRG_UI_LOADER_ERROR_STRUCTURE=).
+
+** Widget-specific keys
+:PROPERTIES:
+:CUSTOM_ID: widget-specific-keys
+:END:
+Every setting of these widgets is an ordinary GObject property (enums and flags by nick, colours, numbers, ...). The keys below cover what is not a property: per-child placement, embedded documents and models.
+
+| Key                          | Valid on                              | Value                                                   | Effect                                                    |
+|------------------------------+---------------------------------------+---------------------------------------------------------+-----------------------------------------------------------|
+| =anchor=                     | a child of =LrgAnchorLayout=          | preset nick or mapping (below)                          | =lrg_anchor_layout_set_child_data()=                      |
+| =page-name=                  | a child of =LrgSwitcher=              | text                                                    | =lrg_switcher_set_child_name()=                           |
+| =position=, =relative-to=    | an =LrgDockPanel= in an =LrgDockArea= | =LrgDockPosition= nick; id of an earlier panel           | Where =lrg_dock_area_add_panel()= docks it                 |
+| =layout=                     | =LrgDockArea=                         | a saved layout (mapping or its text)                    | =lrg_dock_area_load_layout()= after the panels             |
+| =language-file=              | =LrgTextEditor=                       | file name                                               | Loads, registers and sets an =LrgSyntax= (=syntax= property) |
+| =graph=, =graph-file=        | =LrgNodeGraph=                        | a graph document (mapping), or its file                 | =lrg_node_graph_load_yaml()=                               |
+| =tracks=, =markers=          | =LrgTimelineView=                     | lists (below)                                           | Tracks, clips, keyframes and markers through the C API     |
+| =aspect-ratio=               | any float =aspect-ratio= property     | ="16:9"=, ="4/3"= or a number                           | width / height                                            |
+
+Per-child keys are attributes of the child node: a component whose root carries =anchor:= can be used inside an =LrgAnchorLayout=. A per-child key under a parent that does not take it is an =LRG_UI_LOADER_ERROR_STRUCTURE= error (=children[0]: 'anchor' is only valid on a child of LrgAnchorLayout, not of LrgVBox=). The root of a watched document takes its own =anchor:= / =page-name:= when the host is an anchor layout or a switcher.
+
+*** Anchor layout
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-keys
+:END:
+#+begin_src yaml
+type: anchor-layout
+id: hud
+children:
+  - {type: label, id: crosshair, text: "+", anchor: center}
+  - type: progress-bar
+    id: health
+    anchor: {preset: top-left, offset: [16, 16]}
+  - type: label
+    id: toast
+    anchor: {preset: top-stretch, offsets: [72, 200, 0, 200], size: [0, 32], z-order: 10}
+#+end_src
+
+=anchor:= is an =LrgAnchorPreset= nick (=top-left=, =top=, =top-right=, =left=, =center=, =right=, =bottom-left=, =bottom=, =bottom-right=, =top-stretch=, =middle-stretch=, =bottom-stretch=, =left-stretch=, =center-stretch=, =right-stretch=, =fill=) or a mapping, applied in this order on top of =lrg_anchor_data_init()=:
+
+| Key         | Value                                         | Effect                                                                                       |
+|-------------+-----------------------------------------------+----------------------------------------------------------------------------------------------|
+| =preset=    | preset nick                                   | =lrg_anchor_data_set_preset()=: anchors and pivot                                            |
+| =min=       | =[x, y]= (fractions)                          | =min_x=, =min_y=                                                                             |
+| =max=       | =[x, y]=                                      | =max_x=, =max_y=                                                                             |
+| =align=     | =[x, y]= (0..1)                               | The pivot of pinned axes                                                                     |
+| =offset=    | =[x, y]=                                      | Like =lrg_anchor_layout_add()=: margins on stretched axes, offsets that move /inwards/ from right and bottom anchors on pinned ones |
+| =offsets=   | =[top, right, bottom, left]= (CSS order, 1, 2 or 4 values) or ={left:, top:, right:, bottom:}= | The four raw =LrgAnchorData= offsets                   |
+| =size=      | =[w, h]=                                      | =right= / =bottom= = size on pinned axes, auto-size off                                      |
+| =auto-size= | boolean                                       | Size pinned axes from the preferred size                                                     |
+| =z-order=   | integer                                       | Paint and hit-test order                                                                     |
+
+*** Switcher and size box
+:PROPERTIES:
+:CUSTOM_ID: switcher-size-box-keys
+:END:
+#+begin_src yaml
+type: switcher
+transition: slide-left          # LrgSwitcherTransition nick
+visible-child-name: options     # applied after the pages
+children:
+  - {type: vbox, id: title, page-name: title}
+  - type: vbox
+    id: options
+    page-name: options
+    children:
+      - {type: size-box, aspect-ratio: "16:9", width-override: 320}
+#+end_src
+
+=visible-child-name= and =visible-index= are late properties, so they see the pages. A hot reload keeps the page the user switched to unless one of them changes in the file; a removed =page-name= clears the name.
+
+*** Viewport and custom widget
+:PROPERTIES:
+:CUSTOM_ID: viewport-custom-keys
+:END:
+Plain properties (=fit=, =filter=, =mode=, =fixed-width=, =fixed-height=, =resolution-scale=, =continuous=, =clear-color=, =flip-y=, =lock-cursor= ...; =preferred-width=, =preferred-height=, =paint-box=). Their callbacks are signals, so =on:= can connect registered handlers (=on: {render: draw_scene}=, =on: {paint: paint_gauge}=). Render functions with their own user data and textures are connected from code: look the widget up by id after loading (=lrg_ui_loader_get_widget (loader, "scene")=) and call =lrg_viewport_set_render_func()= / =lrg_viewport_set_texture()= / =lrg_custom_widget_set_funcs()=. Look them up again in =::reloaded= in case the widget was rebuilt (only when its type or a construct-only value changed).
+
+*** Text editor
+:PROPERTIES:
+:CUSTOM_ID: text-editor-keys
+:END:
+#+begin_src yaml
+languages:
+  - name: studio-script          # an inline LrgSyntax definition
+    keywords: [on, do, end, let]
+    line-comment: "#"
+  - langs/toml-lite.yaml          # a file (relative to this document)
+  - {file: langs/ini-plus.yaml}
+root:
+  type: vbox
+  children:
+    - {type: text-editor, id: script, language: studio-script, show-line-numbers: true}
+    - {type: text-editor, id: config, language-file: langs/toml-lite.yaml}
+#+end_src
+
+- =languages:= entries are definitions in the =LrgSyntax= YAML schema (see [[file:widgets/syntax.org::#syntax-yaml][syntax]]), file names, or ={file: name}=. Expressions in inline definitions are evaluated with the document's variables. The languages are registered with =lrg_syntax_register()= once the whole document expanded, before any widget is built.
+- =language-file:= on an =LrgTextEditor= loads the file, registers the language and sets the editor's =syntax= directly.
+- A definition text that the loader already built (an unchanged reload) reuses the same =LrgSyntax=, so reloading does not stack copies in the global registry.
+- Language files are watched with the document: saving one reloads it. An editor with =language-file:= picks up the new definition; an editor with =language: name= keeps its highlighter until its =language= value changes or it is rebuilt.
+- Errors: a malformed definition is =LRG_UI_LOADER_ERROR_INVALID_VALUE= (=languages[0]: invalid language definition: ...=), an unreadable file =LRG_UI_LOADER_ERROR_IO=.
+
+*** Node graph
+:PROPERTIES:
+:CUSTOM_ID: node-graph-keys
+:END:
+#+begin_src yaml
+type: node-graph
+id: graph
+grid-style: dots
+graph:                     # the lrg_node_graph_to_yaml() format, inline
+  version: 1
+  view: {center-x: 280, center-y: 40, zoom: 0.8}
+  nodes:
+    - {id: tex, title: Texture, x: 0, y: 0, ports: [{name: color, direction: output, type: vec4}]}
+    - {id: out, title: Output, x: 300, y: 0, ports: [{name: albedo, direction: input, type: vec4}]}
+  links:
+    - {from: tex, output: color, to: out, input: albedo}
+#+end_src
+
+=graph:= holds the document inline (expressions work inside it), =graph-file:= names a file (relative to the document, watched with it). The loader writes the resolved mapping back as YAML text and checks it by loading it into a throwaway graph during expansion, so a malformed graph (unknown port in a link, duplicate ids, ...) is an =LRG_UI_LOADER_ERROR_INVALID_VALUE= error before anything is built. It is applied after the widget's properties (the document's =view= wins over =zoom= / =center-x= properties). The application's =::can-connect= can still refuse a link while building; that is logged, not an error. On reload the graph is loaded again only when the document's graph text changed, which replaces the graph's nodes (and drops their body widgets); a removed =graph:= clears the graph.
+
+*** Timeline view
+:PROPERTIES:
+:CUSTOM_ID: timeline-keys
+:END:
+#+begin_src yaml
+type: timeline-view
+id: timeline
+duration: 12
+time: 1.5                       # late: after duration
+snap: [markers, clips]
+tracks:
+  - name: Camera
+    color: "#89b4fa"
+    tracks:                     # nested tracks (a group)
+      - name: Position X
+        curve-lane: true
+        value-min: -10
+        value-max: 10
+        keyframes:
+          - {time: 0, value: 0, interpolation: ease}
+          - {time: 4, value: 6, interpolation: bezier, tangents: [0, 1.5]}
+          - [8, -4]             # [time, value, interpolation]
+  - name: Audio
+    clips:
+      - {start: 0, duration: 4.5, label: Intro, color: "#a6e3a1"}
+      - [5, 6, Theme]           # [start, duration, label]
+markers:
+  - {time: 6, label: Drop}
+  - [11.5, End]                 # [time, label], or just a time
+#+end_src
+
+| Entry      | Keys                                                                     | Created with                                                         |
+|------------+--------------------------------------------------------------------------+----------------------------------------------------------------------|
+| track      | =name=, =tracks=, =clips=, =keyframes=, any writable =LrgTimelineViewTrack= property (=color=, =height=, =collapsed=, =muted=, =locked=, =allow-overlap=, =curve-lane=, =curve-height=, =value-min=, =value-max=, =default-value=) | =lrg_timeline_view_track_new()= + =lrg_timeline_view_append_track()= |
+| clip       | =start=, =duration= (> 0), =label=, =color=                              | =lrg_timeline_view_add_clip()=, =lrg_timeline_view_set_clip_color()= |
+| keyframe   | =time=, =value=, =interpolation= (=step=, =linear= (default), =ease=, =bezier=), =tangents: [in, out]= | =lrg_timeline_view_add_keyframe()=, =lrg_timeline_view_set_keyframe_tangents()= |
+| marker     | =time=, =label=                                                          | =lrg_timeline_view_add_marker()=                                     |
+
+The loader remembers the tracks and markers it created. On reload, =tracks:= (or =markers:=) is applied again only when it changed in the document: the loader's tracks (or markers) are removed and recreated, so edits the user made to them are lost; tracks and markers added by code are left alone. Unchanged lists keep the same track objects and every user edit.
+
+*** Dock area
+:PROPERTIES:
+:CUSTOM_ID: dock-area-keys
+:END:
+#+begin_src yaml
+type: dock-area
+id: dock
+children:
+  - type: dock-panel
+    id: scene-panel              # also the panel id (layouts, relative-to)
+    title: Scene
+    icon: eye
+    closable: false
+    child: {type: viewport, id: scene}
+  - {type: dock-panel, id: graph-panel, title: Graph, position: right, relative-to: scene-panel,
+     child: {type: node-graph, id: graph}}
+  - {type: dock-panel, id: script-panel, title: Script, relative-to: graph-panel}   # a tab
+  - {type: dock-panel, id: timeline-panel, title: Timeline, position: bottom}      # the whole area's bottom
+layout:                          # optional: a saved layout, applied after the panels
+  version: 1
+  root:
+    split: vertical
+    ratio: 0.7
+    first: {tabs: [scene-panel, graph-panel, script-panel], active: scene-panel}
+    second: {tabs: [timeline-panel]}
+#+end_src
+
+- The children of an =LrgDockArea= must be =dock-panel= nodes. Each is docked in document order with =lrg_dock_area_add_panel()=: =position= (=left=, =right=, =top=, =bottom=, =center=; default =center=) relative to the panel named by =relative-to= (which must be listed earlier), or to the whole area without =relative-to=. =center= without =relative-to= adds a tab to the first stack.
+- A panel's =id= is both its widget name and its =LrgDockPanel:id=. Its content is =child:= (or a one-element =children:=).
+- =layout:= is a document from =lrg_dock_area_save_layout()=, as a mapping or as its text; it is checked during expansion.
+- *Hot reload*: panels are matched like children (by id). Reused panels stay where the user dragged them (=position= / =relative-to= only matter when a panel is first docked); new panels are docked at their =position=; panels gone from the document are removed; a panel that must be rebuilt takes its predecessor's place as a tab beside it. =layout:= is applied again only when it changed.
 
 ** Expressions
 :PROPERTIES:
@@ -407,6 +656,10 @@ The position is the value at fault (=(at line L, column C)= for documents given 
 | =<Field>=              | inside the body of component =Field=                     |
 | ={parts.yaml}=         | inside an included file                                  |
 | =components.Field=     | the declaration of a component                           |
+| =model[2].submenu[0]=  | an entry of a menu value                                 |
+| =menus.file[3]=        | an entry of a named menu                                 |
+| =tracks[0].clips[1]=   | a clip of the first timeline track                       |
+| =languages[1]=         | an entry of =languages:=                                 |
 
 Examples:
 
@@ -419,6 +672,11 @@ children[0]: component 'Loop' uses itself (Loop -> Loop)
 children[0]{b.yaml}.children[0]: include cycle: a.yaml -> b.yaml -> a.yaml
 (root): unknown handler 'on_ply' for signal 'clicked' (register it with lrg_ui_loader_add_handler())
 (document): YAML syntax error: did not find expected node content while parsing a flow node (at menu.yaml:3:1)
+children[0].model: unknown menu 'nope' (declare it under the top-level 'menus:') (at studio.yaml:9:14)
+children[1].children[0]: 'anchor' is only valid on a child of LrgAnchorLayout, not of LrgVBox (at hud.yaml:7:15)
+children[1].children[2]: 'relative-to: grph-panel' names no panel listed before this one (at studio.yaml:31:24)
+child: invalid 'graph': node graph YAML: ... (at studio.yaml:40:13)
+tracks[0].keyframes[2]: unknown LrgTimelineViewInterpolation value 'wobbly' (expected one of: step, linear, ease, bezier)
 #+end_example
 
 | Code                                    | Raised for                                                                                 |
@@ -468,11 +726,19 @@ children[0]{b.yaml}.children[0]: include cycle: a.yaml -> b.yaml -> a.yaml
 - *Handlers* are reconnected only when the widget's =on:= mapping changed.
 - *Ids*: after a reload =lrg_ui_loader_get_widget()= answers from the new tree.
 - *Root*: when the root itself must be rebuilt it is removed from the host and the new root added (at the end of the host's children).
+- *Per-child keys* (=anchor=, =page-name=) are re-applied through the parent when they change and reset when removed; children re-added for reordering get them again.
+- *Menus, graphs, layouts, tracks and markers*: see [[#menus][Menus]] and [[#widget-specific-keys][Widget-specific keys]]: each is applied again only when its resolved value changed.
 
 ** Worked example
 :PROPERTIES:
 :CUSTOM_ID: worked-example
 :END:
+Three more documents show the editor and game widgets:
+
+- =examples/data/ui/studio.yaml=: a menu bar (named menus, sections, submenus, accelerators, icons) over an =LrgDockArea= whose panels hold an =LrgViewport= (=scene=), an =LrgNodeGraph= with an inline graph and a context menu (=graph=), a script =LrgTextEditor= with an inline language (=script=), an =LrgTimelineView= with nested tracks, keyframes, clips and markers (=timeline=) and a read-only console (=console=). The ids are listed at the top of the file; =examples/ui-studio.c= loads it.
+- =examples/data/ui/hud.yaml=: an =LrgAnchorLayout= HUD (presets, offsets, a stretched banner with a z-order, a square =LrgSizeBox= minimap).
+- =examples/data/ui/pages.yaml=: an =LrgSwitcher= with named pages, a transition and buttons that switch pages through an action.
+
 =examples/data/ui/showcase-settings.yaml= is a full settings screen: a =Section= component (a titled card with a default slot), a =SliderRow= component (label, slider and live value with =id: slider-${name}=), a =Toggle= component (check box plus an optional note with =if=), audio channels generated with =for-each= over a list of mappings, quality presets generated with =repeat=, three tabs, combo boxes with =items=, a =look= override with a hovered glow, =appear= cascades and handlers. Load it with:
 
 #+begin_src C
@@ -587,7 +853,9 @@ root:
 :PROPERTIES:
 :CUSTOM_ID: limitations
 :END:
-- Object-typed properties (fonts, textures, themes) cannot be set from YAML; set them from code after loading (look the widget up by id).
+- Object-typed properties (fonts, textures, themes) cannot be set from YAML; set them from code after loading (look the widget up by id). Menu models and =LrgTextEditor:syntax= are the exceptions (=model:=, =context-menu:=, =language-file:=).
+- A changed =languages:= definition is registered on reload, but editors that name it with =language:= keep their old highlighter until their =language= value changes or they are rebuilt.
+- Reloading a changed =graph:=, =tracks:= or =markers:= replaces that content wholesale (user edits to it are lost); dock panel =position= / =relative-to= only matter when a panel is first docked.
 - Line and column point at the value (or the node) at fault; for values produced by expressions they point at the expression.
 - When the root of a watched document must be rebuilt it is appended to the host, not put back at its old index.
 - A removed explicit colour property cannot be reset in place, so its widget is rebuilt (it loses its state).

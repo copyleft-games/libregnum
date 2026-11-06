@@ -1,0 +1,252 @@
+# studio.yaml - an editor workspace for LrgUILoader
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# A menu bar over a dock area whose panels hold a viewport, a node graph,
+# a timeline, a script editor and a console. Everything is declared here:
+# the menu model (named menus under `menus:`), a context menu, the
+# script language (`languages:`), the graph document (`graph:`), the
+# timeline tracks, keyframes and markers (`tracks:` / `markers:`), and
+# where each panel docks (`position:` / `relative-to:`).
+#
+# Stable widget ids, for code that looks widgets up after loading:
+#
+#   studio          LrgVBox        the root
+#   menubar         LrgMenuBar     File / Edit / View / Help
+#   dock            LrgDockArea    the workspace
+#   scene-panel     LrgDockPanel   holds `scene`
+#   scene           LrgViewport    connect ::render from code (or on: render)
+#   graph-panel     LrgDockPanel   holds `graph`
+#   graph           LrgNodeGraph   loaded from the `graph:` document below
+#   script-panel    LrgDockPanel   holds `script`
+#   script          LrgTextEditor  language "studio-script"
+#   timeline-panel  LrgDockPanel   holds `timeline`
+#   timeline        LrgTimelineView
+#   console-panel   LrgDockPanel   holds `console`
+#   console         LrgTextEditor  read-only log
+#
+# Actions the menus and shortcuts use (insert an "app" action group on
+# the canvas, or on the root, to make them work):
+#   app.new app.open app.save app.save-as app.quit app.undo app.redo
+#   app.cut app.copy app.paste app.toggle-grid app.reset-layout
+#   app.show-panel (string target: a panel id) app.about
+#   app.frame-all app.play app.add-node (string target: a node kind)
+#
+# Load it with:
+#
+#   root = lrg_ui_loader_watch_file (loader, "data/ui/studio.yaml",
+#                                    LRG_CONTAINER (canvas), &error);
+#
+# and call lrg_ui_loader_poll (loader) every frame.
+
+variables:
+  accent: "#89b4fa"
+
+shortcuts:
+  - {accel: "<Ctrl>n", action: app.new}
+  - {accel: "<Ctrl>o", action: app.open}
+  - {accel: "<Ctrl>s", action: app.save}
+  - {accel: "<Ctrl>q", action: app.quit}
+  - {accel: space, action: app.play}
+
+# Named menus: referenced by name from `model:`, `submenu:`, `section:`
+# and `context-menu:`
+menus:
+  file:
+    - {label: _New, action: app.new, accel: "<Ctrl>n", icon: plus}
+    - {label: _Open..., action: app.open, accel: "<Ctrl>o", icon: folder}
+    - label: Open _Recent
+      submenu:
+        - {label: forest.rlevel, action: app.open, target: forest.rlevel}
+        - {label: cave.rlevel, action: app.open, target: cave.rlevel}
+    - separator
+    - {label: _Save, action: app.save, accel: "<Ctrl>s", icon: download}
+    - {label: Save _As..., action: app.save-as, accel: "<Ctrl><Shift>s"}
+    - separator
+    - {label: _Quit, action: app.quit, accel: "<Ctrl>q", icon: close}
+  edit:
+    - {label: _Undo, action: app.undo, accel: "<Ctrl>z"}
+    - {label: _Redo, action: app.redo, accel: "<Ctrl><Shift>z"}
+    - separator
+    - {label: Cu_t, action: app.cut, accel: "<Ctrl>x"}
+    - {label: _Copy, action: app.copy, accel: "<Ctrl>c"}
+    - {label: _Paste, action: app.paste, accel: "<Ctrl>v"}
+  panels:
+    - {label: Scene, action: app.show-panel, target: scene-panel, icon: eye}
+    - {label: Graph, action: app.show-panel, target: graph-panel}
+    - {label: Script, action: app.show-panel, target: script-panel, icon: edit}
+    - {label: Timeline, action: app.show-panel, target: timeline-panel, icon: clock}
+    - {label: Console, action: app.show-panel, target: console-panel}
+  view:
+    - {label: Show _Grid, action: app.toggle-grid}
+    - {label: _Reset Layout, action: app.reset-layout, icon: refresh}
+    - {section: panels, label: Panels}
+  help:
+    - {label: _About, action: app.about, icon: info}
+  main:
+    - {label: _File, submenu: file}
+    - {label: _Edit, submenu: edit}
+    - {label: _View, submenu: view}
+    - {label: _Help, submenu: help}
+  graph-context:
+    - label: Add Node
+      submenu:
+        - {label: Texture, action: app.add-node, target: texture}
+        - {label: Mix, action: app.add-node, target: mix}
+        - {label: Output, action: app.add-node, target: output}
+    - {label: Frame All, action: app.frame-all, icon: search}
+
+# A small language for the script editor
+languages:
+  - name: studio-script
+    base: code
+    extensions: ["*.sscript"]
+    line-comment: "#"
+    strings: "\"'"
+    keywords: [on, when, do, end, let, if, else, emit]
+    builtins: [spawn, play, stop, wait, log]
+    constants: [true, false, none]
+
+root:
+  type: vbox
+  id: studio
+  children:
+    - type: menu-bar
+      id: menubar
+      model: main
+
+    - type: dock-area
+      id: dock
+      fill-weight: 1
+      divider-size: 6
+      children:
+        - type: dock-panel
+          id: scene-panel
+          title: Scene
+          icon: eye
+          closable: false
+          child:
+            type: viewport
+            id: scene
+            fit: contain
+            fixed-width: 640
+            fixed-height: 360
+            clear-color: "#11111b"
+            continuous: true
+
+        - type: dock-panel
+          id: graph-panel
+          title: Graph
+          position: right
+          relative-to: scene-panel
+          child:
+            type: node-graph
+            id: graph
+            grid-style: dots
+            show-minimap: true
+            animate-links: true
+            context-menu: graph-context
+            graph:
+              version: 1
+              view: {center-x: 280, center-y: 40, zoom: 0.8}
+              nodes:
+                - id: tex
+                  title: Texture
+                  x: 0
+                  y: 0
+                  category: texture
+                  ports:
+                    - {name: uv, direction: input, type: vec2}
+                    - {name: color, direction: output, type: vec4}
+                - id: mix
+                  title: Mix
+                  x: 260
+                  y: 60
+                  ports:
+                    - {name: a, direction: input, type: vec4}
+                    - {name: b, direction: input, type: vec4}
+                    - {name: out, direction: output, type: vec4}
+                - id: out
+                  title: Output
+                  x: 520
+                  y: 40
+                  accent: "#f38ba8ff"
+                  ports:
+                    - {name: albedo, direction: input, type: vec4, multi-link: true}
+              links:
+                - {from: tex, output: color, to: mix, input: a}
+                - {from: mix, output: out, to: out, input: albedo}
+
+        - type: dock-panel
+          id: script-panel
+          title: Script
+          icon: edit
+          position: center
+          relative-to: graph-panel
+          child:
+            type: text-editor
+            id: script
+            language: studio-script
+            show-line-numbers: true
+            highlight-current-line: true
+            text: |
+              # Runs when the scene starts
+              on start do
+                let door = spawn("door", 4, 2)
+                play("intro")
+                when door.open do
+                  emit("level-complete")
+                end
+              end
+
+        - type: dock-panel
+          id: timeline-panel
+          title: Timeline
+          icon: clock
+          position: bottom
+          child:
+            type: timeline-view
+            id: timeline
+            duration: 12
+            fps: 30
+            time-format: timecode
+            loop: true
+            tracks:
+              - name: Camera
+                color: "${accent}"
+                tracks:
+                  - name: Position X
+                    curve-lane: true
+                    value-min: -10
+                    value-max: 10
+                    keyframes:
+                      - {time: 0, value: 0, interpolation: ease}
+                      - {time: 4, value: 6, interpolation: bezier, tangents: [0, 1.5]}
+                      - [8, -4]
+                      - [12, 0, step]
+              - name: Audio
+                color: "#a6e3a1"
+                clips:
+                  - {start: 0, duration: 4.5, label: Intro}
+                  - {start: 5, duration: 6, label: Theme, color: "#f9e2af"}
+              - name: Events
+                clips:
+                  - [2, 1, Door]
+            markers:
+              - {time: 0, label: Start}
+              - {time: 6, label: Drop}
+              - [11.5, End]
+
+        - type: dock-panel
+          id: console-panel
+          title: Console
+          position: center
+          relative-to: timeline-panel
+          child:
+            type: text-editor
+            id: console
+            read-only: true
+            text: |
+              [info] studio.yaml loaded
+              [info] 3 nodes, 2 links

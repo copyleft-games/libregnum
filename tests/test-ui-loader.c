@@ -1660,6 +1660,989 @@ test_showcase (void)
 	g_assert_true (lrg_widget_get_root (root) == LRG_WIDGET (canvas));
 }
 
+/* ==========================================================================
+ * Wave-3 widgets: menus, layout helpers, editors, graphs, timelines, docks
+ * ========================================================================== */
+
+/* String attribute @attr of item @i of @m, or NULL */
+static gchar *
+menu_attr (GMenuModel  *m,
+           gint         i,
+           const gchar *attr)
+{
+	gchar *s = NULL;
+
+	if (!g_menu_model_get_item_attribute (m, i, attr, "s", &s))
+		return NULL;
+	return s;
+}
+
+static void
+test_menus (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	g_autoptr(GMenuModel) file = NULL;
+	g_autoptr(GMenuModel) sec = NULL;
+	g_autoptr(GMenuModel) recent = NULL;
+	g_autoptr(GVariant) target = NULL;
+	g_autofree gchar *s = NULL;
+	GMenuModel *bar_model;
+	GMenuModel *menu_model;
+	GMenuModel *ctx;
+	LrgWidget *bar;
+	LrgWidget *menu;
+
+	root = load_ok (loader,
+		"variables: {debug: false}\n"
+		"menus:\n"
+		"  file:\n"
+		"    - {label: _New, action: app.new, accel: \"<Ctrl>n\", icon: plus}\n"
+		"    - label: Recent\n"
+		"      submenu: [{label: a.txt, action: app.open, target: a.txt}]\n"
+		"    - separator\n"
+		"    - {label: Zoom 2x, action: view.zoom, target: \"2.0\", target-type: d}\n"
+		"    - {label: Debug, action: app.debug, if: \"${debug}\"}\n"
+		"    - {separator: true}\n"
+		"    - {label: _Quit, action: app.quit, icon: CLOSE}\n"
+		"  main:\n"
+		"    - {label: _File, submenu: file}\n"
+		"    - {label: _Help, submenu: [{label: About, action: app.about}]}\n"
+		"root:\n"
+		"  type: vbox\n"
+		"  children:\n"
+		"    - {type: menu-bar, id: bar, model: main}\n"
+		"    - type: menu\n"
+		"      id: pop\n"
+		"      model:\n"
+		"        - {section: [{label: Cut, action: app.cut}], label: Clipboard}\n"
+		"        - {label: Paste, action: app.paste}\n"
+		"    - type: label\n"
+		"      id: target\n"
+		"      text: Right-click me\n"
+		"      context-menu: [{label: Inspect, action: app.inspect}]\n");
+
+	/* The menu bar: two titles linking to submenus */
+	bar = lrg_ui_loader_get_widget (loader, "bar");
+	g_assert_true (LRG_IS_MENU_BAR (bar));
+	bar_model = lrg_menu_bar_get_model (LRG_MENU_BAR (bar));
+	g_assert_nonnull (bar_model);
+	g_assert_cmpint (g_menu_model_get_n_items (bar_model), ==, 2);
+	g_assert_cmpuint (lrg_menu_bar_get_n_titles (LRG_MENU_BAR (bar)), ==, 2);
+	s = menu_attr (bar_model, 0, G_MENU_ATTRIBUTE_LABEL);
+	g_assert_cmpstr (s, ==, "_File");
+	g_clear_pointer (&s, g_free);
+
+	/* Separators split "file" into three sections; `if: false` drops Debug */
+	file = g_menu_model_get_item_link (bar_model, 0, G_MENU_LINK_SUBMENU);
+	g_assert_nonnull (file);
+	g_assert_cmpint (g_menu_model_get_n_items (file), ==, 3);
+	sec = g_menu_model_get_item_link (file, 0, G_MENU_LINK_SECTION);
+	g_assert_cmpint (g_menu_model_get_n_items (sec), ==, 2);
+	s = menu_attr (sec, 0, "accel");
+	g_assert_cmpstr (s, ==, "<Ctrl>n");
+	g_clear_pointer (&s, g_free);
+	s = menu_attr (sec, 0, G_MENU_ATTRIBUTE_ICON);
+	g_assert_cmpstr (s, ==, "plus");
+	g_clear_pointer (&s, g_free);
+	recent = g_menu_model_get_item_link (sec, 1, G_MENU_LINK_SUBMENU);
+	g_assert_nonnull (recent);
+	target = g_menu_model_get_item_attribute_value (recent, 0, G_MENU_ATTRIBUTE_TARGET, G_VARIANT_TYPE_STRING);
+	g_assert_cmpstr (g_variant_get_string (target, NULL), ==, "a.txt");
+	g_clear_pointer (&target, g_variant_unref);
+	g_clear_object (&sec);
+	sec = g_menu_model_get_item_link (file, 1, G_MENU_LINK_SECTION);
+	g_assert_cmpint (g_menu_model_get_n_items (sec), ==, 1);
+	target = g_menu_model_get_item_attribute_value (sec, 0, G_MENU_ATTRIBUTE_TARGET, G_VARIANT_TYPE_DOUBLE);
+	g_assert_nonnull (target);
+	g_assert_cmpfloat_with_epsilon (g_variant_get_double (target), 2.0, 1e-9);
+	g_clear_object (&sec);
+	sec = g_menu_model_get_item_link (file, 2, G_MENU_LINK_SECTION);
+	s = menu_attr (sec, 0, G_MENU_ATTRIBUTE_ICON);
+	g_assert_cmpstr (s, ==, "close");
+	g_clear_pointer (&s, g_free);
+
+	/* An LrgMenu with a labelled section */
+	menu = lrg_ui_loader_get_widget (loader, "pop");
+	g_assert_true (LRG_IS_MENU (menu));
+	menu_model = lrg_menu_get_model (LRG_MENU (menu));
+	g_assert_cmpint (g_menu_model_get_n_items (menu_model), ==, 2);
+	s = menu_attr (menu_model, 0, G_MENU_ATTRIBUTE_LABEL);
+	g_assert_cmpstr (s, ==, "Clipboard");
+	g_clear_pointer (&s, g_free);
+	g_assert_cmpuint (lrg_menu_get_n_entries (LRG_MENU (menu)), >=, 2);
+
+	/* A context menu on an ordinary widget */
+	ctx = lrg_widget_get_context_menu (lrg_ui_loader_get_widget (loader, "target"));
+	g_assert_nonnull (ctx);
+	s = menu_attr (ctx, 0, G_MENU_ATTRIBUTE_ACTION);
+	g_assert_cmpstr (s, ==, "app.inspect");
+}
+
+static void
+test_anchor_switcher_size (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	LrgAnchorLayout *al;
+	LrgAnchorData d;
+	LrgSwitcher *sw;
+
+	root = load_ok (loader,
+		"type: vbox\n"
+		"children:\n"
+		"  - type: anchor-layout\n"
+		"    id: hud\n"
+		"    children:\n"
+		"      - {type: label, id: a, text: A, anchor: bottom-right}\n"
+		"      - type: label\n"
+		"        id: b\n"
+		"        text: B\n"
+		"        anchor: {preset: top-right, offset: [16, 8], z-order: 3}\n"
+		"      - type: label\n"
+		"        id: c\n"
+		"        text: C\n"
+		"        anchor: {min: [0.25, 0.5], max: [0.75, 0.5], offsets: [10, 20, 30, 40], align: [0.5, 1]}\n"
+		"      - {type: label, id: d, text: D, anchor: {preset: center, size: [120, 40]}}\n"
+		"  - type: switcher\n"
+		"    id: sw\n"
+		"    transition: slide-up\n"
+		"    visible-child-name: two\n"
+		"    children:\n"
+		"      - {type: label, id: p1, text: One, page-name: one}\n"
+		"      - {type: label, id: p2, text: Two, page-name: two}\n"
+		"  - {type: size-box, id: s1, aspect-ratio: \"16:9\"}\n"
+		"  - {type: size-box, id: s2, aspect-ratio: 4/3}\n"
+		"  - {type: size-box, id: s3, aspect-ratio: 2}\n");
+
+	al = LRG_ANCHOR_LAYOUT (lrg_ui_loader_get_widget (loader, "hud"));
+	lrg_anchor_layout_get_child_data (al, lrg_ui_loader_get_widget (loader, "a"), &d);
+	g_assert_cmpfloat (d.min_x, ==, 1.0f);
+	g_assert_cmpfloat (d.min_y, ==, 1.0f);
+	g_assert_cmpfloat (d.align_x, ==, 1.0f);
+
+	/* offset: like lrg_anchor_layout_add(): inwards from the right */
+	lrg_anchor_layout_get_child_data (al, lrg_ui_loader_get_widget (loader, "b"), &d);
+	g_assert_cmpfloat (d.min_x, ==, 1.0f);
+	g_assert_cmpfloat (d.min_y, ==, 0.0f);
+	g_assert_cmpfloat (d.left, ==, -16.0f);
+	g_assert_cmpfloat (d.top, ==, 8.0f);
+	g_assert_cmpint (d.z_order, ==, 3);
+	g_assert_cmpint (lrg_anchor_layout_get_child_z_order (al, lrg_ui_loader_get_widget (loader, "b")), ==, 3);
+
+	/* offsets follow CSS order: top, right, bottom, left */
+	lrg_anchor_layout_get_child_data (al, lrg_ui_loader_get_widget (loader, "c"), &d);
+	g_assert_cmpfloat (d.min_x, ==, 0.25f);
+	g_assert_cmpfloat (d.max_x, ==, 0.75f);
+	g_assert_cmpfloat (d.min_y, ==, 0.5f);
+	g_assert_cmpfloat (d.top, ==, 10.0f);
+	g_assert_cmpfloat (d.right, ==, 20.0f);
+	g_assert_cmpfloat (d.bottom, ==, 30.0f);
+	g_assert_cmpfloat (d.left, ==, 40.0f);
+	g_assert_cmpfloat (d.align_x, ==, 0.5f);
+	g_assert_cmpfloat (d.align_y, ==, 1.0f);
+
+	/* size: fixed size on pinned axes, auto-size off */
+	lrg_anchor_layout_get_child_data (al, lrg_ui_loader_get_widget (loader, "d"), &d);
+	g_assert_cmpfloat (d.min_x, ==, 0.5f);
+	g_assert_cmpfloat (d.right, ==, 120.0f);
+	g_assert_cmpfloat (d.bottom, ==, 40.0f);
+	g_assert_false (d.auto_size);
+
+	/* Switcher: page names, the visible page set after the pages */
+	sw = LRG_SWITCHER (lrg_ui_loader_get_widget (loader, "sw"));
+	g_assert_cmpstr (lrg_switcher_get_child_name (sw, lrg_ui_loader_get_widget (loader, "p1")), ==, "one");
+	g_assert_cmpstr (lrg_switcher_get_visible_child_name (sw), ==, "two");
+	g_assert_cmpint (lrg_switcher_get_transition (sw), ==, LRG_SWITCHER_TRANSITION_SLIDE_UP);
+
+	/* Size boxes: ratios as "w:h", "w/h" or a number */
+	g_assert_cmpfloat_with_epsilon (lrg_size_box_get_aspect_ratio (LRG_SIZE_BOX (lrg_ui_loader_get_widget (loader, "s1"))),
+	                                16.0f / 9.0f, 1e-5);
+	g_assert_cmpfloat_with_epsilon (lrg_size_box_get_aspect_ratio (LRG_SIZE_BOX (lrg_ui_loader_get_widget (loader, "s2"))),
+	                                4.0f / 3.0f, 1e-5);
+	g_assert_cmpfloat_with_epsilon (lrg_size_box_get_aspect_ratio (LRG_SIZE_BOX (lrg_ui_loader_get_widget (loader, "s3"))),
+	                                2.0f, 1e-5);
+}
+
+static void
+on_viewport_render (LrgViewport *viewport,
+                    gpointer     user_data)
+{
+	(*(gint *)user_data)++;
+}
+
+static void
+test_viewport_custom (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	LrgViewport *vp;
+	LrgCustomWidget *cw;
+	GrlColor col;
+	gint renders = 0;
+
+	lrg_ui_loader_add_handler (loader, "on_render", G_CALLBACK (on_viewport_render), &renders);
+	root = load_ok (loader,
+		"type: vbox\n"
+		"children:\n"
+		"  - type: viewport\n"
+		"    id: scene\n"
+		"    fit: integer-scale\n"
+		"    filter: point\n"
+		"    fixed-width: 320\n"
+		"    fixed-height: 180\n"
+		"    continuous: true\n"
+		"    clear-color: \"#102030\"\n"
+		"    on: {render: on_render}\n"
+		"  - {type: custom-widget, id: gauge, preferred-width: 64, preferred-height: 32, paint-box: true}\n");
+
+	vp = LRG_VIEWPORT (lrg_ui_loader_get_widget (loader, "scene"));
+	g_assert_cmpint (lrg_viewport_get_fit (vp), ==, LRG_VIEWPORT_FIT_INTEGER_SCALE);
+	g_assert_true (lrg_viewport_get_continuous (vp));
+	lrg_viewport_get_clear_color (vp, &col);
+	g_assert_cmpuint (col.r, ==, 0x10);
+	g_assert_cmpuint (col.b, ==, 0x30);
+	g_assert_cmpuint (g_signal_handler_find (vp, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, &renders), !=, 0);
+
+	cw = LRG_CUSTOM_WIDGET (lrg_ui_loader_get_widget (loader, "gauge"));
+	g_assert_cmpfloat (lrg_custom_widget_get_preferred_width (cw), ==, 64.0f);
+	g_assert_true (lrg_custom_widget_get_paint_box (cw));
+}
+
+static void
+test_text_editor_languages (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *lang = NULL;
+	g_autofree gchar *doc = NULL;
+	g_autofree gchar *text = NULL;
+	LrgTextEditor *ed;
+
+	/* Inline definition, registered under its name */
+	root = load_ok (loader,
+		"languages:\n"
+		"  - name: loader-mini\n"
+		"    keywords: [fn, let]\n"
+		"    line-comment: \"//\"\n"
+		"type: text-editor\n"
+		"id: ed\n"
+		"language: loader-mini\n"
+		"show-line-numbers: true\n"
+		"tab-width: 2\n"
+		"text: |\n"
+		"  fn main\n"
+		"  let x\n");
+	ed = LRG_TEXT_EDITOR (root);
+	g_assert_nonnull (lrg_syntax_get_for_name ("loader-mini"));
+	g_assert_cmpstr (lrg_text_editor_get_language (ed), ==, "loader-mini");
+	g_assert_true (lrg_text_editor_get_syntax (ed) == lrg_syntax_get_for_name ("loader-mini"));
+	g_assert_true (lrg_text_editor_get_show_line_numbers (ed));
+	g_assert_cmpuint (lrg_text_editor_get_tab_width (ed), ==, 2);
+	g_assert_cmpuint (lrg_text_editor_get_line_count (ed), ==, 3);
+	text = lrg_text_editor_get_text (ed);
+	g_assert_cmpstr (text, ==, "fn main\nlet x\n");
+	g_clear_object (&root);
+
+	/* A second load of the same definition reuses the language */
+	{
+		LrgSyntax *first = lrg_syntax_get_for_name ("loader-mini");
+
+		g_clear_object (&root);
+		root = load_ok (loader,
+			"languages: [{name: loader-mini, keywords: [fn, let], line-comment: \"//\"}]\n"
+			"type: text-editor\n"
+			"language: loader-mini\n");
+		g_assert_true (lrg_syntax_get_for_name ("loader-mini") == first);
+		g_clear_object (&root);
+	}
+
+	/* language-file: and languages: [file] relative to the document */
+	dir = g_dir_make_tmp ("lrg-ui-lang-XXXXXX", &error);
+	g_assert_no_error (error);
+	lang = g_build_filename (dir, "tiny.yaml", NULL);
+	g_file_set_contents (lang, "name: loader-tiny\nkeywords: [yes]\n", -1, &error);
+	g_assert_no_error (error);
+	doc = g_build_filename (dir, "ed.yaml", NULL);
+	g_file_set_contents (doc,
+		"type: vbox\n"
+		"children:\n"
+		"  - {type: text-editor, id: e1, language-file: tiny.yaml}\n", -1, &error);
+	g_assert_no_error (error);
+	root = lrg_ui_loader_load_from_file (loader, doc, &error);
+	g_assert_no_error (error);
+	ed = LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "e1"));
+	g_assert_cmpstr (lrg_text_editor_get_language (ed), ==, "loader-tiny");
+	g_assert_nonnull (lrg_syntax_get_for_name ("loader-tiny"));
+	g_clear_object (&root);
+
+	g_file_set_contents (doc,
+		"languages: [tiny.yaml]\n"
+		"type: text-editor\n"
+		"language: loader-tiny\n", -1, &error);
+	g_assert_no_error (error);
+	root = lrg_ui_loader_load_from_file (loader, doc, &error);
+	g_assert_no_error (error);
+	g_assert_cmpstr (lrg_text_editor_get_language (LRG_TEXT_EDITOR (root)), ==, "loader-tiny");
+
+	g_unlink (doc);
+	g_unlink (lang);
+	g_rmdir (dir);
+}
+
+static const gchar *GRAPH_YAML =
+	"type: node-graph\n"
+	"id: g\n"
+	"show-minimap: true\n"
+	"grid-style: lines\n"
+	"graph:\n"
+	"  version: 1\n"
+	"  view: {center-x: 100, center-y: 50, zoom: 0.5}\n"
+	"  nodes:\n"
+	"    - id: a\n"
+	"      title: \"Source: ${label}\"\n"
+	"      x: 0\n"
+	"      y: 0\n"
+	"      accent: \"#ff8800ff\"\n"
+	"      ports: [{name: out, direction: output, type: f32}]\n"
+	"    - id: b\n"
+	"      title: Sink\n"
+	"      x: 200\n"
+	"      y: 40.5\n"
+	"      ports: [{name: in, direction: input, type: f32}]\n"
+	"  links: [{from: a, output: out, to: b, input: in}]\n";
+
+static void
+test_node_graph (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *gfile = NULL;
+	g_autofree gchar *doc = NULL;
+	g_auto(GValue) v = G_VALUE_INIT;
+	LrgNodeGraph *g;
+
+	g_value_init (&v, G_TYPE_STRING);
+	g_value_set_string (&v, "Noise");
+	lrg_ui_loader_set_variable (loader, "label", &v);
+
+	root = load_ok (loader, GRAPH_YAML);
+	g = LRG_NODE_GRAPH (root);
+	g_assert_cmpuint (lrg_node_graph_get_n_nodes (g), ==, 2);
+	g_assert_cmpuint (lrg_node_graph_get_n_links (g), ==, 1);
+	g_assert_cmpstr (lrg_graph_node_get_title (lrg_node_graph_get_node (g, "a")), ==, "Source: Noise");
+	g_assert_cmpfloat (lrg_graph_node_get_y (lrg_node_graph_get_node (g, "b")), ==, 40.5f);
+	g_assert_cmpfloat (lrg_node_graph_get_zoom (g), ==, 0.5f);
+	g_assert_true (lrg_node_graph_get_show_minimap (g));
+	g_clear_object (&root);
+
+	/* graph-file: relative to the document */
+	dir = g_dir_make_tmp ("lrg-ui-graph-XXXXXX", &error);
+	g_assert_no_error (error);
+	gfile = g_build_filename (dir, "g.yaml", NULL);
+	g_file_set_contents (gfile,
+		"version: 1\n"
+		"nodes:\n"
+		"  - {id: x, x: 0, y: 0, ports: [{name: o, direction: output}]}\n"
+		"  - {id: y, x: 1, y: 1, ports: [{name: i, direction: input}]}\n"
+		"  - {id: z, x: 2, y: 2}\n"
+		"links: []\n", -1, &error);
+	g_assert_no_error (error);
+	doc = g_build_filename (dir, "doc.yaml", NULL);
+	g_file_set_contents (doc, "type: node-graph\ngraph-file: g.yaml\n", -1, &error);
+	g_assert_no_error (error);
+	root = lrg_ui_loader_load_from_file (loader, doc, &error);
+	g_assert_no_error (error);
+	g_assert_cmpuint (lrg_node_graph_get_n_nodes (LRG_NODE_GRAPH (root)), ==, 3);
+
+	g_unlink (doc);
+	g_unlink (gfile);
+	g_rmdir (dir);
+}
+
+static void
+test_timeline (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	LrgTimelineView *tv;
+	LrgTimelineViewTrack *cam;
+	LrgTimelineViewTrack *px;
+	LrgTimelineViewTrack *audio;
+	GrlColor col;
+	gdouble lo;
+	gdouble hi;
+	guint k;
+
+	root = load_ok (loader,
+		"type: timeline-view\n"
+		"duration: 10\n"
+		"time: 2.5\n"
+		"fps: 24\n"
+		"snap: [markers, clips]\n"
+		"tracks:\n"
+		"  - name: Camera\n"
+		"    color: \"#89b4fa\"\n"
+		"    collapsed: false\n"
+		"    tracks:\n"
+		"      - name: PosX\n"
+		"        curve-lane: true\n"
+		"        value-min: -5\n"
+		"        value-max: 5\n"
+		"        keyframes:\n"
+		"          - {time: 0, value: 1, interpolation: step}\n"
+		"          - {time: 2, value: 3, interpolation: bezier, tangents: [0.5, -0.5]}\n"
+		"          - [4, -2]\n"
+		"  - name: Audio\n"
+		"    clips:\n"
+		"      - {start: 0, duration: 2, label: Intro, color: \"#ff0000\"}\n"
+		"      - [3, 1.5, Outro]\n"
+		"markers:\n"
+		"  - {time: 1, label: Hit}\n"
+		"  - [6, Boss]\n"
+		"  - 9\n");
+	tv = LRG_TIMELINE_VIEW (root);
+	g_assert_cmpuint (lrg_timeline_view_get_n_tracks (tv), ==, 3);
+	cam = lrg_timeline_view_find_track (tv, "Camera");
+	px = lrg_timeline_view_find_track (tv, "PosX");
+	audio = lrg_timeline_view_find_track (tv, "Audio");
+	g_assert_nonnull (cam);
+	g_assert_true (lrg_timeline_view_track_get_parent (px) == cam);
+	lrg_timeline_view_track_get_color (cam, &col);
+	g_assert_cmpuint (col.r, ==, 0x89);
+	g_assert_true (lrg_timeline_view_track_get_curve_lane (px));
+	lrg_timeline_view_track_get_value_range (px, &lo, &hi);
+	g_assert_cmpfloat (lo, ==, -5.0);
+	g_assert_cmpfloat (hi, ==, 5.0);
+	g_assert_cmpuint (lrg_timeline_view_get_n_keyframes (tv, px), ==, 3);
+	k = lrg_timeline_view_get_keyframe (tv, px, 0);
+	g_assert_cmpint (lrg_timeline_view_get_keyframe_interpolation (tv, k), ==, LRG_TIMELINE_VIEW_INTERPOLATION_STEP);
+	k = lrg_timeline_view_get_keyframe (tv, px, 2);
+	g_assert_cmpfloat (lrg_timeline_view_get_keyframe_value (tv, k), ==, -2.0);
+	g_assert_cmpint (lrg_timeline_view_get_keyframe_interpolation (tv, k), ==, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+	g_assert_cmpuint (lrg_timeline_view_get_n_clips (tv, audio), ==, 2);
+	g_assert_cmpuint (lrg_timeline_view_get_n_markers (tv), ==, 3);
+	g_assert_cmpfloat (lrg_timeline_view_get_time (tv), ==, 2.5);
+	g_assert_cmpuint (lrg_timeline_view_get_snap (tv), ==,
+	                  LRG_TIMELINE_VIEW_SNAP_MARKERS | LRG_TIMELINE_VIEW_SNAP_CLIPS);
+}
+
+static void
+test_dock (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	g_autofree gchar *desc = NULL;
+	LrgDockArea *area;
+	LrgDockPanel *p;
+
+	root = load_ok (loader,
+		"type: dock-area\n"
+		"id: dock\n"
+		"divider-size: 5\n"
+		"children:\n"
+		"  - {type: dock-panel, id: a, title: A, child: {type: label, id: la, text: a}}\n"
+		"  - {type: dock-panel, id: b, title: B, position: right, relative-to: a}\n"
+		"  - {type: dock-panel, id: c, title: C, closable: false, position: bottom, relative-to: b}\n"
+		"  - {type: dock-panel, id: d, title: D, relative-to: c}\n");
+	area = LRG_DOCK_AREA (root);
+	desc = lrg_dock_area_describe (area);
+	g_assert_cmpstr (desc, ==, "H(0.50,[a*],V(0.50,[b*],[c,d*]))");
+	p = lrg_dock_area_get_panel (area, "a");
+	g_assert_nonnull (p);
+	g_assert_true (LRG_WIDGET (p) == lrg_ui_loader_get_widget (loader, "a"));
+	g_assert_true (lrg_dock_panel_get_child (p) == lrg_ui_loader_get_widget (loader, "la"));
+	g_assert_false (lrg_dock_panel_get_closable (lrg_dock_area_get_panel (area, "c")));
+	g_assert_cmpfloat (lrg_dock_area_get_divider_size (area), ==, 5.0f);
+	g_clear_pointer (&desc, g_free);
+	g_clear_object (&root);
+
+	/* A saved layout (mapping form) rearranges the declared panels */
+	root = load_ok (loader,
+		"type: dock-area\n"
+		"layout:\n"
+		"  version: 1\n"
+		"  root:\n"
+		"    split: vertical\n"
+		"    ratio: 0.25\n"
+		"    first: {tabs: [b], active: b}\n"
+		"    second: {tabs: [a, c], active: c}\n"
+		"children:\n"
+		"  - {type: dock-panel, id: a}\n"
+		"  - {type: dock-panel, id: b, position: left, relative-to: a}\n"
+		"  - {type: dock-panel, id: c, relative-to: a}\n");
+	desc = lrg_dock_area_describe (LRG_DOCK_AREA (root));
+	g_assert_cmpstr (desc, ==, "V(0.25,[b*],[a,c*])");
+}
+
+/* --------------------------------------------------------------------------
+ * Hot reload of the wave-3 keys
+ * -------------------------------------------------------------------------- */
+
+static const gchar *W3_V1 =
+	"menus:\n"
+	"  m: [{label: One, action: app.one}]\n"
+	"type: vbox\n"
+	"id: root\n"
+	"children:\n"
+	"  - {type: menu-bar, id: bar, model: [{label: File, submenu: m}]}\n"
+	"  - type: anchor-layout\n"
+	"    id: hud\n"
+	"    children:\n"
+	"      - {type: label, id: tag, text: T, anchor: top-left}\n"
+	"      - {type: label, id: gone, text: G, anchor: center}\n"
+	"  - type: switcher\n"
+	"    id: sw\n"
+	"    children:\n"
+	"      - {type: label, id: p1, page-name: one}\n"
+	"      - {type: label, id: p2, page-name: two}\n"
+	"  - type: timeline-view\n"
+	"    id: tl\n"
+	"    tracks: [{name: A, clips: [[0, 1]]}]\n"
+	"    markers: [[1, M]]\n"
+	"  - type: dock-area\n"
+	"    id: dock\n"
+	"    children:\n"
+	"      - {type: dock-panel, id: pa, title: A}\n"
+	"      - {type: dock-panel, id: pb, title: B, position: right, relative-to: pa}\n"
+	"      - {type: dock-panel, id: pc, title: C, position: bottom, relative-to: pa}\n"
+	"  - type: node-graph\n"
+	"    id: graph\n"
+	"    graph: {version: 1, nodes: [{id: n1, x: 0, y: 0}]}\n";
+
+/* Same document with: the named menu changed, an anchor changed, a
+ * child removed, a page renamed, markers changed (tracks unchanged), a
+ * panel removed and one added, the graph unchanged */
+static const gchar *W3_V2 =
+	"menus:\n"
+	"  m: [{label: One, action: app.one}, {label: Two, action: app.two}]\n"
+	"type: vbox\n"
+	"id: root\n"
+	"children:\n"
+	"  - {type: menu-bar, id: bar, model: [{label: File, submenu: m}]}\n"
+	"  - type: anchor-layout\n"
+	"    id: hud\n"
+	"    children:\n"
+	"      - {type: label, id: tag, text: T, anchor: {preset: bottom-right, offset: [4, 4]}}\n"
+	"  - type: switcher\n"
+	"    id: sw\n"
+	"    children:\n"
+	"      - {type: label, id: p1, page-name: first}\n"
+	"      - {type: label, id: p2}\n"
+	"  - type: timeline-view\n"
+	"    id: tl\n"
+	"    tracks: [{name: A, clips: [[0, 1]]}]\n"
+	"    markers: [[1, M], [2, N]]\n"
+	"  - type: dock-area\n"
+	"    id: dock\n"
+	"    children:\n"
+	"      - {type: dock-panel, id: pa, title: A2}\n"
+	"      - {type: dock-panel, id: pb, title: B, position: right, relative-to: pa}\n"
+	"      - {type: dock-panel, id: pd, title: D, position: center, relative-to: pb}\n"
+	"  - type: node-graph\n"
+	"    id: graph\n"
+	"    graph: {version: 1, nodes: [{id: n1, x: 0, y: 0}]}\n";
+
+static void
+test_reload_wave3 (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgVBox) host = lrg_vbox_new ();
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *desc = NULL;
+	ReloadLog log = { 0 };
+	GMenuModel *model1;
+	GMenuModel *model2;
+	g_autoptr(GMenuModel) sub = NULL;
+	LrgWidget *tag;
+	LrgWidget *bar;
+	LrgWidget *dock;
+	LrgWidget *pa;
+	LrgWidget *graph;
+	LrgTimelineViewTrack *track_a;
+	LrgAnchorData d;
+
+	g_signal_connect (loader, "reloaded", G_CALLBACK (on_reloaded), &log);
+	g_signal_connect (loader, "reload-failed", G_CALLBACK (on_reload_failed), &log);
+	dir = g_dir_make_tmp ("lrg-ui-reload3-XXXXXX", &error);
+	g_assert_no_error (error);
+	path = g_build_filename (dir, "w3.yaml", NULL);
+	write_stamped (path, W3_V1, 1000000000);
+
+	g_assert_nonnull (lrg_ui_loader_watch_file (loader, path, LRG_CONTAINER (host), &error));
+	g_assert_no_error (error);
+	bar = lrg_ui_loader_get_widget (loader, "bar");
+	tag = lrg_ui_loader_get_widget (loader, "tag");
+	dock = lrg_ui_loader_get_widget (loader, "dock");
+	pa = lrg_ui_loader_get_widget (loader, "pa");
+	graph = lrg_ui_loader_get_widget (loader, "graph");
+	model1 = lrg_menu_bar_get_model (LRG_MENU_BAR (bar));
+	track_a = lrg_timeline_view_find_track (LRG_TIMELINE_VIEW (lrg_ui_loader_get_widget (loader, "tl")), "A");
+	desc = lrg_dock_area_describe (LRG_DOCK_AREA (dock));
+	g_assert_cmpstr (desc, ==, "H(0.50,V(0.50,[pa*],[pc*]),[pb*])");
+	g_clear_pointer (&desc, g_free);
+
+	/* The user drags a node in the graph: unchanged YAML keeps it */
+	lrg_graph_node_set_position (lrg_node_graph_get_node (LRG_NODE_GRAPH (graph), "n1"), 50.0f, 60.0f);
+
+	/* An invalid edit (unknown named menu) leaves everything alone */
+	write_stamped (path, "type: menu-bar\nmodel: nope\n", 1000000005);
+	g_assert_true (lrg_ui_loader_poll (loader));
+	g_assert_cmpuint (log.failed, ==, 1);
+	g_assert_true (g_str_has_prefix (log.last_error, "model: unknown menu 'nope'"));
+	g_assert_true (lrg_ui_loader_get_widget (loader, "bar") == bar);
+
+	write_stamped (path, W3_V2, 1000000010);
+	g_assert_true (lrg_ui_loader_poll (loader));
+	g_assert_cmpuint (log.reloaded, ==, 1);
+
+	/* Same widgets, new menu content (through the named menu) */
+	g_assert_true (lrg_ui_loader_get_widget (loader, "bar") == bar);
+	model2 = lrg_menu_bar_get_model (LRG_MENU_BAR (bar));
+	g_assert_true (model2 != model1);
+	sub = g_menu_model_get_item_link (model2, 0, G_MENU_LINK_SUBMENU);
+	g_assert_cmpint (g_menu_model_get_n_items (sub), ==, 2);
+
+	/* The anchor followed; the removed child is gone */
+	g_assert_true (lrg_ui_loader_get_widget (loader, "tag") == tag);
+	lrg_anchor_layout_get_child_data (LRG_ANCHOR_LAYOUT (lrg_ui_loader_get_widget (loader, "hud")), tag, &d);
+	g_assert_cmpfloat (d.min_x, ==, 1.0f);
+	g_assert_cmpfloat (d.left, ==, -4.0f);
+	g_assert_null (lrg_ui_loader_get_widget (loader, "gone"));
+
+	/* Page names: renamed, and removed (back to none) */
+	g_assert_cmpstr (lrg_switcher_get_child_name (LRG_SWITCHER (lrg_ui_loader_get_widget (loader, "sw")),
+	                                              lrg_ui_loader_get_widget (loader, "p1")), ==, "first");
+	g_assert_null (lrg_switcher_get_child_name (LRG_SWITCHER (lrg_ui_loader_get_widget (loader, "sw")),
+	                                            lrg_ui_loader_get_widget (loader, "p2")));
+
+	/* Tracks unchanged in the YAML: same track objects; markers replaced */
+	g_assert_true (lrg_timeline_view_find_track (LRG_TIMELINE_VIEW (lrg_ui_loader_get_widget (loader, "tl")), "A") == track_a);
+	g_assert_cmpuint (lrg_timeline_view_get_n_tracks (LRG_TIMELINE_VIEW (lrg_ui_loader_get_widget (loader, "tl"))), ==, 1);
+	g_assert_cmpuint (lrg_timeline_view_get_n_markers (LRG_TIMELINE_VIEW (lrg_ui_loader_get_widget (loader, "tl"))), ==, 2);
+
+	/* Dock: pa kept (title updated), pc removed, pd docked beside pb */
+	g_assert_true (lrg_ui_loader_get_widget (loader, "pa") == pa);
+	g_assert_cmpstr (lrg_dock_panel_get_title (LRG_DOCK_PANEL (pa)), ==, "A2");
+	g_assert_null (lrg_dock_area_get_panel (LRG_DOCK_AREA (dock), "pc"));
+	desc = lrg_dock_area_describe (LRG_DOCK_AREA (dock));
+	g_assert_cmpstr (desc, ==, "H(0.50,[pa*],[pb,pd*])");
+
+	/* The graph YAML did not change: the user's edit survived */
+	g_assert_cmpfloat (lrg_graph_node_get_x (lrg_node_graph_get_node (LRG_NODE_GRAPH (graph), "n1")), ==, 50.0f);
+
+	/* A panel whose content kind changes is rebuilt in place of the old one */
+	{
+		g_autofree gchar *v3 = NULL;
+		g_auto(GStrv) parts = g_strsplit (W3_V2, "pb, title: B, position", -1);
+		LrgWidget *old_pb = lrg_ui_loader_get_widget (loader, "pb");
+		LrgWidget *new_pb;
+
+		v3 = g_strjoinv ("pb, title: B, child: {type: label, id: pbl}, position", parts);
+		write_stamped (path, v3, 1000000020);
+		g_assert_true (lrg_ui_loader_poll (loader));
+		g_assert_cmpuint (log.reloaded, ==, 2);
+		new_pb = lrg_ui_loader_get_widget (loader, "pb");
+		g_assert_true (new_pb != old_pb);
+		g_assert_true (LRG_WIDGET (lrg_dock_area_get_panel (LRG_DOCK_AREA (dock), "pb")) == new_pb);
+		g_assert_true (lrg_dock_panel_get_child (LRG_DOCK_PANEL (new_pb)) == lrg_ui_loader_get_widget (loader, "pbl"));
+		g_clear_pointer (&desc, g_free);
+		desc = lrg_dock_area_describe (LRG_DOCK_AREA (dock));
+		g_assert_cmpstr (desc, ==, "H(0.50,[pa*],[pd,pb*])");
+	}
+
+	g_free (log.last_error);
+	g_unlink (path);
+	g_rmdir (dir);
+}
+
+/* A watched root takes its own anchor in an anchor-layout host; files
+ * named by graph-file: and language-file: are watched with the document */
+static void
+test_reload_wave3_files (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgAnchorLayout) host = lrg_anchor_layout_new ();
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *doc = NULL;
+	g_autofree gchar *gfile = NULL;
+	g_autofree gchar *lfile = NULL;
+	LrgWidget *root;
+	LrgWidget *graph;
+	LrgAnchorData d;
+
+	dir = g_dir_make_tmp ("lrg-ui-files3-XXXXXX", &error);
+	g_assert_no_error (error);
+	doc = g_build_filename (dir, "doc.yaml", NULL);
+	gfile = g_build_filename (dir, "g.yaml", NULL);
+	lfile = g_build_filename (dir, "l.yaml", NULL);
+	write_stamped (gfile, "version: 1\nnodes: [{id: a, x: 0, y: 0}]\n", 1000000000);
+	write_stamped (lfile, "name: files-lang-1\nkeywords: [a]\n", 1000000000);
+	write_stamped (doc,
+		"type: vbox\n"
+		"anchor: {preset: bottom-right, offset: [8, 8]}\n"
+		"children:\n"
+		"  - {type: node-graph, id: graph, graph-file: g.yaml}\n"
+		"  - {type: text-editor, id: ed, language-file: l.yaml}\n", 1000000000);
+
+	root = lrg_ui_loader_watch_file (loader, doc, LRG_CONTAINER (host), &error);
+	g_assert_no_error (error);
+	lrg_anchor_layout_get_child_data (host, root, &d);
+	g_assert_cmpfloat (d.min_x, ==, 1.0f);
+	g_assert_cmpfloat (d.left, ==, -8.0f);
+	graph = lrg_ui_loader_get_widget (loader, "graph");
+	g_assert_cmpuint (lrg_node_graph_get_n_nodes (LRG_NODE_GRAPH (graph)), ==, 1);
+	g_assert_cmpstr (lrg_text_editor_get_language (LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "ed"))), ==,
+	                 "files-lang-1");
+
+	/* Editing an embedded file reloads the document */
+	write_stamped (gfile, "version: 1\nnodes: [{id: a, x: 0, y: 0}, {id: b, x: 9, y: 9}]\n", 1000000010);
+	write_stamped (lfile, "name: files-lang-2\nkeywords: [a]\n", 1000000010);
+	g_assert_true (lrg_ui_loader_poll (loader));
+	g_assert_true (lrg_ui_loader_get_widget (loader, "graph") == graph);
+	g_assert_cmpuint (lrg_node_graph_get_n_nodes (LRG_NODE_GRAPH (graph)), ==, 2);
+	g_assert_cmpstr (lrg_text_editor_get_language (LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "ed"))), ==,
+	                 "files-lang-2");
+
+	g_unlink (doc);
+	g_unlink (gfile);
+	g_unlink (lfile);
+	g_rmdir (dir);
+}
+
+static void
+test_wave3_errors (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autofree gchar *msg = NULL;
+
+	/* --- menus ----------------------------------------------------------- */
+	g_free (load_err (loader, "type: menu-bar\nmodel: nope\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model: unknown menu 'nope' (declare it under the top-level 'menus:') (at line 2, column 8)"));
+	g_free (load_err (loader, "type: menu\nmodel: [42]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a menu entry must be a mapping or 'separator', got a scalar '42'"));
+	g_free (load_err (loader, "type: menu\nmodel: {label: x}\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model: a menu must be a list of entries or the name of a menu, got a mapping"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, colour: red}]\n", LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "model[0]: unknown key 'colour' in a menu entry"));
+	g_free (load_err (loader, "type: menu\nmodel: [{action: app.x}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a menu item needs a 'label'"));
+	g_free (load_err (loader, "type: menu\nmodel: [{submenu: []}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a menu submenu needs a 'label'"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, submenu: [], action: app.x}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a submenu has no 'action' or 'target' (its items do)"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, submenu: [], section: []}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a menu entry cannot be both a 'submenu' and a 'section'"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, action: quit}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a menu 'action' must be \"prefix.action\""));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, target: y}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a menu 'target' needs an 'action'"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, action: app.x, target: z, target-type: i}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "model[0]: cannot read 'z' as type i"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, action: app.x, accel: \"<Hyper>\"}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "model[0]: invalid accelerator '<Hyper>'"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, icon: unicorn}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: menu 'icon': unknown LrgIcon value 'unicorn'"));
+	g_free (load_err (loader, "type: menu\nmodel: [{separator: true, label: x}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0]: a separator entry takes no other keys"));
+	g_free (load_err (loader, "type: menu\nmodel: [{label: x, submenu: [{label: y, submenu: [7]}]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "model[0].submenu[0].submenu[0]: a menu entry must be a mapping or 'separator'"));
+	g_free (load_err (loader, "menus: [a]\ntype: menu\n", LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "menus: 'menus' must map menu names to menus, got a list"));
+	g_free (load_err (loader, "menus: {loop: [{label: x, submenu: loop}]}\ntype: menu\nmodel: loop\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "menus.loop"));
+	g_free (load_err (loader, "type: label\ncontext-menu: [{label: x, action: nope}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "context-menu[0]: a menu 'action' must be \"prefix.action\""));
+
+	/* --- per-child placement ------------------------------------------- */
+	g_free (load_err (loader, "type: vbox\nchildren: [{type: label, anchor: center}]\n",
+	                  LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "children[0]: 'anchor' is only valid on a child of LrgAnchorLayout, not of LrgVBox"));
+	g_free (load_err (loader, "type: anchor-layout\nchildren: [{type: label, anchor: middle}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "children[0]: 'anchor': unknown LrgAnchorPreset value 'middle'"));
+	g_free (load_err (loader, "type: anchor-layout\nchildren: [{type: label, anchor: {pivot: [0, 0]}}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "children[0]: 'anchor': unknown key 'pivot'"));
+	g_free (load_err (loader, "type: anchor-layout\nchildren: [{type: label, anchor: {offsets: [1, 2, 3]}}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "children[0]: 'anchor': 'offsets':"));
+	g_free (load_err (loader, "type: anchor-layout\nchildren: [{type: label, anchor: [1, 2]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "children[0]: 'anchor': expected a preset name or a mapping, got a list"));
+	g_free (load_err (loader, "type: scroll-box\nchild: {type: label, page-name: x}\n",
+	                  LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "child: 'page-name' is only valid on a child of LrgSwitcher"));
+	g_free (load_err (loader, "type: switcher\nchildren: [{type: label, page-name: [a]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "children[0]: 'page-name' must be text, got a list"));
+	g_free (load_err (loader, "type: size-box\naspect-ratio: \"16:x\"\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "(root): invalid value for property 'aspect-ratio' of LrgSizeBox"));
+
+	/* --- dock ------------------------------------------------------------ */
+	g_free (load_err (loader, "type: dock-area\nchildren: [{type: label}]\n", LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "children[0]: the children of LrgDockArea must be dock-panel nodes, not LrgLabel"));
+	g_free (load_err (loader, "type: dock-area\nchildren: [{type: dock-panel, id: a, relative-to: b}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "children[0]: 'relative-to: b' names no panel listed before this one"));
+	g_free (load_err (loader, "type: dock-area\nchildren: [{type: dock-panel, position: north}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "children[0]: 'position': unknown LrgDockPosition value 'north'"));
+	g_free (load_err (loader, "type: vbox\nchildren: [{type: dock-panel, position: left}]\n",
+	                  LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "children[0]: 'position' and 'relative-to' are only valid on a child of LrgDockArea"));
+	g_free (load_err (loader, "type: dock-area\nlayout: {version: 1, root: {split: diagonal}}\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): invalid 'layout':"));
+	g_free (load_err (loader, "type: dock-area\nlayout: [1]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "(root): 'layout' must be a saved layout (a mapping or its text), got a list"));
+
+	/* --- editor languages ------------------------------------------------- */
+	g_free (load_err (loader, "type: text-editor\nlanguage-file: /nonexistent/lang.yaml\n",
+	                  LRG_UI_LOADER_ERROR_IO, "(root): cannot read '/nonexistent/lang.yaml'"));
+	g_free (load_err (loader, "languages: [{base: code}]\ntype: label\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "languages[0]: invalid language definition:"));
+	g_free (load_err (loader, "languages: [{file: a.yaml, name: x}]\ntype: label\n", LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "languages[0]: a language file entry is {file: name} and nothing else"));
+	g_free (load_err (loader, "languages: [[1]]\ntype: label\n", LRG_UI_LOADER_ERROR_STRUCTURE,
+	                  "languages[0]: a language entry must be a definition mapping or a file name, got a list"));
+	g_free (load_err (loader, "type: label\nlanguage-file: x.yaml\n", LRG_UI_LOADER_ERROR_UNKNOWN_PROPERTY,
+	                  "(root): unknown property 'language-file' on LrgLabel"));
+
+	/* --- node graph ------------------------------------------------------- */
+	g_free (load_err (loader,
+	                  "type: node-graph\ngraph: {version: 1, nodes: [{id: a, x: 0, y: 0}], links: [{from: a, output: o, to: b, input: i}]}\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): invalid 'graph':"));
+	g_free (load_err (loader, "type: node-graph\ngraph: 12\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "(root): 'graph' must be a graph document (a mapping), got a scalar"));
+	g_free (load_err (loader, "type: node-graph\ngraph-file: /nonexistent/g.yaml\n", LRG_UI_LOADER_ERROR_IO,
+	                  "(root): cannot read '/nonexistent/g.yaml'"));
+
+	/* --- timeline --------------------------------------------------------- */
+	g_free (load_err (loader, "type: timeline-view\ntracks: {name: a}\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "(root): 'tracks' must be a list of tracks, got a mapping"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, volume: 3}]\n",
+	                  LRG_UI_LOADER_ERROR_UNKNOWN_PROPERTY, "tracks[0].volume: unknown track key 'volume'"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, height: big}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "tracks[0].height: invalid value for track property 'height': expected a number"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, clips: [{start: 1}]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "tracks[0].clips[0]: 'duration' is missing"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, clips: [[1, 0]]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "tracks[0].clips[0]: 'duration' must be positive"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, clips: [{start: 1, duration: 1, tint: red}]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "tracks[0].clips[0]: unknown clip key 'tint'"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, keyframes: [[0, 1, wobbly]]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "tracks[0].keyframes[0]: unknown LrgTimelineViewInterpolation value 'wobbly'"));
+	g_free (load_err (loader, "type: timeline-view\ntracks: [{name: a, tracks: [{name: b, keyframes: [[1]]}]}]\n",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "tracks[0].tracks[0].keyframes[0]: a keyframe list has 2 to 3 elements, got 1"));
+	g_free (load_err (loader, "type: timeline-view\nmarkers: [{time: x}]\n", LRG_UI_LOADER_ERROR_INVALID_VALUE,
+	                  "markers[0]: 'time': expected a number"));
+	g_free (load_err (loader, "type: vbox\ntracks: []\n", LRG_UI_LOADER_ERROR_UNKNOWN_PROPERTY,
+	                  "(root): unknown property 'tracks' on LrgVBox"));
+
+	/* The top-level key list names the new keys */
+	msg = load_err (loader, "flavour: lime\n", LRG_UI_LOADER_ERROR_STRUCTURE, "(root): unknown top-level key 'flavour'");
+	g_assert_nonnull (strstr (msg, "menus, languages"));
+}
+
+/* Finds an example file whether the test runs from the repo root or tests/ */
+static gchar *
+find_example (const gchar *name)
+{
+	static const gchar *prefixes[] = { "examples/data/ui", "../examples/data/ui", "../../examples/data/ui" };
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (prefixes); i++)
+	{
+		g_autofree gchar *p = g_build_filename (prefixes[i], name, NULL);
+
+		if (g_file_test (p, G_FILE_TEST_IS_REGULAR))
+			return g_steal_pointer (&p);
+	}
+	g_error ("example %s not found", name);
+	return NULL;
+}
+
+static void
+test_wave3_examples (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(GError) error = NULL;
+	g_autoptr(LrgCanvas) canvas = lrg_canvas_new ();
+	g_autofree gchar *studio = find_example ("studio.yaml");
+	g_autofree gchar *hud = find_example ("hud.yaml");
+	g_autofree gchar *pages = find_example ("pages.yaml");
+	g_autofree gchar *desc = NULL;
+	static const gchar *ids[] = {
+		"studio", "menubar", "dock", "scene", "graph", "timeline", "script", "console", NULL
+	};
+	LrgWidget *root;
+	guint i;
+
+	lrg_widget_set_size (LRG_WIDGET (canvas), 1280.0f, 720.0f);
+
+	/* studio.yaml: the ids the ui-studio example relies on */
+	root = lrg_ui_loader_watch_file (loader, studio, LRG_CONTAINER (canvas), &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (root);
+	for (i = 0; ids[i] != NULL; i++)
+		g_assert_nonnull (lrg_ui_loader_get_widget (loader, ids[i]));
+	g_assert_true (LRG_IS_MENU_BAR (lrg_ui_loader_get_widget (loader, "menubar")));
+	g_assert_cmpuint (lrg_menu_bar_get_n_titles (LRG_MENU_BAR (lrg_ui_loader_get_widget (loader, "menubar"))), ==, 4);
+	g_assert_true (LRG_IS_VIEWPORT (lrg_ui_loader_get_widget (loader, "scene")));
+	g_assert_cmpuint (lrg_node_graph_get_n_nodes (LRG_NODE_GRAPH (lrg_ui_loader_get_widget (loader, "graph"))), ==, 3);
+	g_assert_cmpuint (lrg_node_graph_get_n_links (LRG_NODE_GRAPH (lrg_ui_loader_get_widget (loader, "graph"))), ==, 2);
+	g_assert_nonnull (lrg_widget_get_context_menu (lrg_ui_loader_get_widget (loader, "graph")));
+	g_assert_cmpuint (lrg_timeline_view_get_n_markers (LRG_TIMELINE_VIEW (lrg_ui_loader_get_widget (loader, "timeline"))), ==, 3);
+	g_assert_cmpstr (lrg_text_editor_get_language (LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "script"))), ==,
+	                 "studio-script");
+	g_assert_true (lrg_text_editor_get_read_only (LRG_TEXT_EDITOR (lrg_ui_loader_get_widget (loader, "console"))));
+	desc = lrg_dock_area_describe (LRG_DOCK_AREA (lrg_ui_loader_get_widget (loader, "dock")));
+	g_assert_cmpstr (desc, ==, "V(0.75,H(0.50,[scene-panel*],[graph-panel,script-panel*]),[timeline-panel,console-panel*])");
+	lrg_widget_layout (LRG_WIDGET (canvas));
+
+	/* A forced reload of an unchanged document keeps every widget */
+	{
+		LrgWidget *graph = lrg_ui_loader_get_widget (loader, "graph");
+
+		g_assert_true (lrg_ui_loader_reload (loader, &error));
+		g_assert_no_error (error);
+		g_assert_true (lrg_ui_loader_get_widget (loader, "graph") == graph);
+	}
+	lrg_ui_loader_unwatch_file (loader, studio);
+	lrg_container_remove_child (LRG_CONTAINER (canvas), root);
+
+	/* hud.yaml */
+	root = lrg_ui_loader_watch_file (loader, hud, LRG_CONTAINER (canvas), &error);
+	g_assert_no_error (error);
+	g_assert_true (LRG_IS_ANCHOR_LAYOUT (root));
+	g_assert_cmpfloat_with_epsilon (lrg_size_box_get_aspect_ratio (LRG_SIZE_BOX (lrg_ui_loader_get_widget (loader, "minimap-box"))),
+	                                1.0f, 1e-6);
+	g_assert_nonnull (lrg_ui_loader_get_widget (loader, "slot-4"));
+	lrg_widget_layout (LRG_WIDGET (canvas));
+	lrg_ui_loader_unwatch_file (loader, hud);
+	lrg_container_remove_child (LRG_CONTAINER (canvas), root);
+
+	/* pages.yaml */
+	root = lrg_ui_loader_watch_file (loader, pages, LRG_CONTAINER (canvas), &error);
+	g_assert_no_error (error);
+	g_assert_cmpstr (lrg_switcher_get_visible_child_name (LRG_SWITCHER (lrg_ui_loader_get_widget (loader, "pages"))), ==,
+	                 "title");
+	g_assert_cmpfloat_with_epsilon (lrg_size_box_get_aspect_ratio (LRG_SIZE_BOX (lrg_ui_loader_get_widget (loader, "preview"))),
+	                                16.0f / 9.0f, 1e-5);
+	lrg_widget_layout (LRG_WIDGET (canvas));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1681,6 +2664,17 @@ main (int   argc,
 	g_test_add_func ("/ui-loader/reload/diff", test_reload_diff);
 	g_test_add_func ("/ui-loader/reload/details", test_reload_details);
 	g_test_add_func ("/ui-loader/showcase", test_showcase);
+	g_test_add_func ("/ui-loader/wave3/menus", test_menus);
+	g_test_add_func ("/ui-loader/wave3/anchor-switcher-size", test_anchor_switcher_size);
+	g_test_add_func ("/ui-loader/wave3/viewport-custom", test_viewport_custom);
+	g_test_add_func ("/ui-loader/wave3/text-editor", test_text_editor_languages);
+	g_test_add_func ("/ui-loader/wave3/node-graph", test_node_graph);
+	g_test_add_func ("/ui-loader/wave3/timeline", test_timeline);
+	g_test_add_func ("/ui-loader/wave3/dock", test_dock);
+	g_test_add_func ("/ui-loader/wave3/reload", test_reload_wave3);
+	g_test_add_func ("/ui-loader/wave3/reload-files", test_reload_wave3_files);
+	g_test_add_func ("/ui-loader/wave3/errors", test_wave3_errors);
+	g_test_add_func ("/ui-loader/wave3/examples", test_wave3_examples);
 
 	return g_test_run ();
 }

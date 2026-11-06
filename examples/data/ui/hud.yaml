@@ -1,0 +1,83 @@
+# hud.yaml - a game HUD laid out with LrgAnchorLayout
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Every child of the anchor layout carries an `anchor:`: a preset nick
+# (top-left, top, top-right, left, center, right, bottom-left, bottom,
+# bottom-right, top-stretch, middle-stretch, bottom-stretch, left-stretch,
+# center-stretch, right-stretch, fill) or a mapping with preset, offset,
+# offsets, size, min, max, align, auto-size and z-order. The layout is
+# pointer-transparent, so clicks between the HUD pieces reach the game.
+#
+# Stable widget ids:
+#
+#   hud            LrgAnchorLayout  the root
+#   health         LrgProgressBar   top-left, 16 px in from the corner
+#   mana           LrgProgressBar   under the health bar
+#   score          LrgLabel         top-right
+#   minimap-box    LrgSizeBox       bottom-right, square (aspect-ratio 1:1)
+#   minimap        LrgViewport      inside the size box
+#   crosshair      LrgLabel         centre of the screen
+#   toast          LrgLabel         top-stretch banner, drawn above the rest
+#   hotbar         LrgHBox          bottom centre
+#
+# Loader variables (optional): `hp`, `mp`, `score`.
+
+variables:
+  hp: "${default(hp, 72)}"
+  mp: "${default(mp, 40)}"
+  score: "${default(score, 1250)}"
+
+root:
+  type: anchor-layout
+  id: hud
+  children:
+    - type: progress-bar
+      id: health
+      value: "${hp}"
+      max: 100
+      min-size: [220, 18]
+      anchor: {preset: top-left, offset: [16, 16]}
+
+    - type: progress-bar
+      id: mana
+      value: "${mp}"
+      max: 100
+      min-size: [180, 12]
+      anchor: {preset: top-left, offset: [16, 42]}
+
+    - type: label
+      id: score
+      text: "Score ${score}"
+      font-size: 24
+      anchor: {preset: top-right, offset: [16, 16]}
+
+    - type: size-box
+      id: minimap-box
+      aspect-ratio: "1:1"
+      width-override: 180
+      anchor: {preset: bottom-right, offset: [16, 16]}
+      children:
+        - {type: viewport, id: minimap, fit: cover, clear-color: "#181825"}
+
+    - type: label
+      id: crosshair
+      text: "+"
+      font-size: 28
+      anchor: center
+
+    - type: label
+      id: toast
+      text: Checkpoint reached
+      alignment: center
+      anchor: {preset: top-stretch, offsets: [72, 200, 0, 200], size: [0, 32], z-order: 10}
+
+    - type: hbox
+      id: hotbar
+      spacing: 6
+      anchor: {preset: bottom, offset: [0, 20]}
+      children:
+        - repeat: 5
+          var: slot
+          body: {type: button, id: "slot-${slot}", text: "${slot + 1}", min-size: [44, 44]}

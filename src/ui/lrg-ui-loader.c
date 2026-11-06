@@ -62,6 +62,18 @@
 #include "lrg-tab-view.h"
 #include "lrg-text-input.h"
 #include "lrg-vbox.h"
+#include "lrg-menu.h"
+#include "lrg-menu-bar.h"
+#include "lrg-anchor-layout.h"
+#include "lrg-switcher.h"
+#include "lrg-size-box.h"
+#include "lrg-viewport.h"
+#include "lrg-custom-widget.h"
+#include "lrg-text-editor.h"
+#include "lrg-syntax.h"
+#include "lrg-node-graph.h"
+#include "lrg-timeline-view.h"
+#include "lrg-dock-area.h"
 #include "lrg-canvas.h"
 #include "lrg-ui-actions.h"
 #include "../lrg-enums.h"
@@ -2794,7 +2806,14 @@ typedef enum
 	ATTR_APPEAR,
 	ATTR_MIN_SIZE,
 	ATTR_MAX_SIZE,
-	ATTR_ITEMS
+	ATTR_ITEMS,
+	ATTR_ANCHOR,       /* child of an LrgAnchorLayout: placement in `anchor` */
+	ATTR_PAGE_NAME,    /* child of an LrgSwitcher: page name in `text` */
+	ATTR_DOCK_PLACE,   /* LrgDockPanel in an LrgDockArea: `ival` position, `text` relative-to */
+	ATTR_DOCK_LAYOUT,  /* LrgDockArea: lrg_dock_area_load_layout() document in `text` */
+	ATTR_GRAPH,        /* LrgNodeGraph: lrg_node_graph_load_yaml() document in `text` */
+	ATTR_TRACKS,       /* LrgTimelineView: TrackSpec tree in `specs` */
+	ATTR_MARKERS       /* LrgTimelineView: MarkerSpec array in `specs` */
 } AttrKind;
 
 typedef struct
@@ -2837,6 +2856,11 @@ typedef struct
 	GStrv       strv;      /* ATTR_CLASS, ATTR_ITEMS */
 	gfloat      f[2];      /* ATTR_MIN_SIZE / ATTR_MAX_SIZE; ATTR_APPEAR delay in f[0] */
 	gint        appear;    /* ATTR_APPEAR */
+	gboolean    child;     /* a per-child setting applied through the parent */
+	gint        ival;      /* ATTR_DOCK_PLACE: LrgDockPosition */
+	gchar      *text;      /* ATTR_PAGE_NAME, ATTR_DOCK_PLACE, ATTR_DOCK_LAYOUT, ATTR_GRAPH */
+	GPtrArray  *specs;     /* ATTR_TRACKS: TrackSpec *; ATTR_MARKERS: MarkerSpec * */
+	LrgAnchorData anchor;  /* ATTR_ANCHOR */
 } UiAttr;
 
 typedef struct _UiNode UiNode;
@@ -2909,6 +2933,9 @@ ui_attr_free (gpointer data)
 	if (a->looks != NULL)
 		g_array_unref (a->looks);
 	g_strfreev (a->strv);
+	g_free (a->text);
+	if (a->specs != NULL)
+		g_ptr_array_unref (a->specs);
 	g_free (a);
 }
 
@@ -3070,6 +3097,7 @@ struct _LrgUILoader
 	GHashTable  *ids;          /* gchar * -> GWeakRef * */
 	GPtrArray   *docs;         /* LiveDoc * */
 	gint         polling;
+	GHashTable  *syntax_cache; /* definition text -> LrgSyntax *, reused across reloads */
 };
 
 G_DEFINE_FINAL_TYPE (LrgUILoader, lrg_ui_loader, G_TYPE_OBJECT)
@@ -3334,6 +3362,8 @@ typedef struct
 	Scope       *globals;        /* loader variables + document variables */
 	guint        instance;
 	guint        depth;
+	GHashTable  *menus;          /* name -> Lv *: top-level `menus:` */
+	GPtrArray   *syntaxes;       /* LrgSyntax *: `languages:` and `language-file:` */
 } Ctx;
 
 static gboolean expand_item (Ctx *c, Lv *item, Env *env, const gchar *path,
@@ -3994,7 +4024,8 @@ parse_action_target (const Lv  *target,
 			return FALSE;
 		}
 	}
-	*out = g_variant_ref_sink (v);
+	/* g_variant_new_string() is floating, g_variant_parse() is not */
+	*out = g_variant_take_ref (v);
 	return TRUE;
 }
 
@@ -4134,7 +4165,7 @@ is_late_property (const gchar *name)
 {
 	static const gchar *late[] = {
 		"value", "selected", "active-tab", "fraction", "scroll-x", "scroll-y",
-		"cursor-position", NULL
+		"cursor-position", "visible-child-name", "visible-index", "time", NULL
 	};
 
 	return g_strv_contains (late, name);
@@ -4234,6 +4265,1816 @@ put_handlers (LrgUILoader  *self,
 	a = ui_attr_new (ATTR_ON, "on", value);
 	a->handlers = g_steal_pointer (&hs);
 	ui_node_put_attr (node, a);
+	return TRUE;
+}
+
+static gboolean check_keys (const Lv *map, const gchar **allowed, const gchar *what,
+                            const gchar *path, GError **error);
+
+/* --------------------------------------------------------------------------
+ * Writing a value back as YAML
+ *
+ * Embedded documents (`graph:`, `layout:`, `languages:` entries) are
+ * handed to parsers that take YAML text, so the resolved value is
+ * written back in flow style (which is also JSON). Plain scalars stay
+ * plain when they are simple words or numbers, so they keep their YAML
+ * type; everything else is double-quoted.
+ * -------------------------------------------------------------------------- */
+
+static gboolean
+emit_plain_ok (const gchar *s)
+{
+	const gchar *p;
+
+	if (s == NULL || *s == '\0')
+		return FALSE;
+	/* "-" or "-x" would read as a sequence entry or need context */
+	if (s[0] == '-' && !g_ascii_isdigit (s[1]) && s[1] != '.')
+		return FALSE;
+	for (p = s; *p != '\0'; p++)
+	{
+		if (!g_ascii_isalnum (*p) && *p != '_' && *p != '.' && *p != '+' && *p != '-')
+			return FALSE;
+	}
+	return TRUE;
+}
+
+static void
+emit_quoted (GString     *out,
+             const gchar *s)
+{
+	const guchar *p;
+
+	g_string_append_c (out, '"');
+	for (p = (const guchar *)s; *p != '\0'; p++)
+	{
+		switch (*p)
+		{
+		case '"':
+			g_string_append (out, "\\\"");
+			break;
+		case '\\':
+			g_string_append (out, "\\\\");
+			break;
+		case '\n':
+			g_string_append (out, "\\n");
+			break;
+		case '\t':
+			g_string_append (out, "\\t");
+			break;
+		case '\r':
+			g_string_append (out, "\\r");
+			break;
+		default:
+			if (*p < 0x20)
+				g_string_append_printf (out, "\\x%02x", (guint)*p);
+			else
+				g_string_append_c (out, (gchar)*p);
+			break;
+		}
+	}
+	g_string_append_c (out, '"');
+}
+
+static void
+lv_emit (GString  *out,
+         const Lv *v)
+{
+	guint i;
+
+	switch (v->kind)
+	{
+	case LV_SCALAR:
+		if (!v->quoted && emit_plain_ok (v->str))
+			g_string_append (out, v->str);
+		else
+			emit_quoted (out, v->str);
+		break;
+	case LV_SEQ:
+		g_string_append_c (out, '[');
+		for (i = 0; i < v->items->len; i++)
+		{
+			if (i > 0)
+				g_string_append (out, ", ");
+			lv_emit (out, g_ptr_array_index (v->items, i));
+		}
+		g_string_append_c (out, ']');
+		break;
+	case LV_MAP:
+		g_string_append_c (out, '{');
+		for (i = 0; i < v->items->len; i++)
+		{
+			if (i > 0)
+				g_string_append (out, ", ");
+			emit_quoted (out, g_ptr_array_index (v->keys, i));
+			g_string_append (out, ": ");
+			lv_emit (out, g_ptr_array_index (v->items, i));
+		}
+		g_string_append_c (out, '}');
+		break;
+	case LV_NULL:
+	default:
+		g_string_append (out, "null");
+		break;
+	}
+}
+
+/* lv_to_yaml: (transfer full) the YAML text of @v */
+static gchar *
+lv_to_yaml (const Lv *v)
+{
+	GString *out = g_string_new (NULL);
+
+	lv_emit (out, v);
+	g_string_append_c (out, '\n');
+	return g_string_free (out, FALSE);
+}
+
+/*
+ * resolve_file_path:
+ * A file named in a document: relative to the file the value comes
+ * from, or to the current directory for documents given as text.
+ */
+static gchar *
+resolve_file_path (Env         *env,
+                   const gchar *rel)
+{
+	g_autofree gchar *base = NULL;
+
+	base = env->file != NULL ? g_path_get_dirname (env->file) : g_get_current_dir ();
+	return g_canonicalize_filename (rel, base);
+}
+
+/*
+ * read_doc_file:
+ * Reads a file a document refers to (`graph-file:`, `language-file:`,
+ * `languages: [{file:}]`) and adds it to the files a watched document
+ * follows, so editing it triggers a reload.
+ */
+static gchar *
+read_doc_file (Ctx          *c,
+               const gchar  *full,
+               const Lv     *at,
+               const gchar  *path,
+               GError      **error)
+{
+	g_autoptr(GError) local = NULL;
+	gchar *contents = NULL;
+
+	if (!g_ptr_array_find_with_equal_func (c->files, full, g_str_equal, NULL))
+		g_ptr_array_add (c->files, g_strdup (full));
+	if (!g_file_get_contents (full, &contents, NULL, &local))
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_IO, path, at, "cannot read '%s': %s", full, local->message);
+		return NULL;
+	}
+	return contents;
+}
+
+/* --------------------------------------------------------------------------
+ * Menus
+ *
+ * A menu is a list of entries:
+ *   - {label: _Open, action: app.open, accel: "<Ctrl>o", icon: folder}
+ *   - {label: Export, submenu: [...]}           (or submenu: menu-name)
+ *   - {section: [...], label: Recent}           (label optional)
+ *   - separator                                 (or {separator: true})
+ * or the name of a menu declared under the top-level `menus:`. Entries
+ * between separators are grouped into sections. The result is a GMenu,
+ * built during expansion like every other value.
+ * -------------------------------------------------------------------------- */
+
+#define UI_MAX_MENU_DEPTH (32)
+
+static gboolean
+is_separator_entry (const Lv *e)
+{
+	return e->kind == LV_SCALAR &&
+	       (g_strcmp0 (e->str, "separator") == 0 || g_strcmp0 (e->str, "-") == 0 ||
+	        g_strcmp0 (e->str, "---") == 0);
+}
+
+static GMenu *menu_from_lv (Ctx *c, Lv *v, const gchar *path, guint depth, GError **error);
+
+/* Resolves the `menus:` entry @name and builds it */
+static GMenu *
+menu_from_name (Ctx          *c,
+                const Lv     *name,
+                const gchar  *path,
+                guint         depth,
+                GError      **error)
+{
+	g_autoptr(Lv) r = NULL;
+	g_autofree gchar *mp = NULL;
+	Lv *def;
+
+	def = c->menus != NULL ? g_hash_table_lookup (c->menus, name->str) : NULL;
+	if (def == NULL)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, name,
+		           "unknown menu '%s' (declare it under the top-level 'menus:')", name->str);
+		return NULL;
+	}
+	mp = g_strdup_printf ("menus.%s", name->str);
+	r = lv_resolve (def, c->globals, mp, error);
+	if (r == NULL)
+		return NULL;
+	return menu_from_lv (c, r, mp, depth + 1, error);
+}
+
+/* Builds one mapping entry of a menu into a GMenuItem */
+static GMenuItem *
+menu_item_from_lv (Ctx          *c,
+                   Lv           *e,
+                   const gchar  *path,
+                   guint         depth,
+                   GError      **error)
+{
+	static const gchar *keys[] = {
+		"label", "action", "target", "target-type", "accel", "icon", "submenu", "section",
+		"separator", "if", NULL
+	};
+	g_autoptr(GMenuItem) item = NULL;
+	g_autoptr(GVariant) target = NULL;
+	g_autofree gchar *msg = NULL;
+	Lv *label_lv = lv_map_get (e, "label");
+	Lv *action = lv_map_get (e, "action");
+	Lv *accel = lv_map_get (e, "accel");
+	Lv *icon = lv_map_get (e, "icon");
+	Lv *sub = lv_map_get (e, "submenu");
+	Lv *sec = lv_map_get (e, "section");
+	const gchar *label = NULL;
+
+	if (!check_keys (e, keys, "a menu entry", path, error))
+		return NULL;
+	if (label_lv != NULL && label_lv->kind != LV_NULL)
+	{
+		if (label_lv->kind != LV_SCALAR)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, label_lv,
+			           "a menu 'label' must be text, got %s", lv_kind_name (label_lv));
+			return NULL;
+		}
+		label = label_lv->str;
+	}
+	if (sub != NULL && sec != NULL)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, e,
+		           "a menu entry cannot be both a 'submenu' and a 'section'");
+		return NULL;
+	}
+	if ((sub != NULL || sec != NULL) && (action != NULL || lv_map_get (e, "target") != NULL))
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, action != NULL ? action : e,
+		           "a %s has no 'action' or 'target' (its items do)", sub != NULL ? "submenu" : "section");
+		return NULL;
+	}
+	if (sec == NULL && label == NULL)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, e,
+		           "a menu %s needs a 'label'", sub != NULL ? "submenu" : "item");
+		return NULL;
+	}
+
+	/* Submenus and sections link to a nested menu */
+	if (sub != NULL || sec != NULL)
+	{
+		g_autofree gchar *sp = path_join (path, "%s", sub != NULL ? "submenu" : "section");
+		g_autoptr(GMenu) inner = menu_from_lv (c, sub != NULL ? sub : sec, sp, depth + 1, error);
+
+		if (inner == NULL)
+			return NULL;
+		item = sub != NULL ? g_menu_item_new_submenu (label, G_MENU_MODEL (inner))
+		                   : g_menu_item_new_section (label, G_MENU_MODEL (inner));
+	}
+	else
+	{
+		item = g_menu_item_new (label, NULL);
+		if (action != NULL)
+		{
+			if (action->kind != LV_SCALAR || !is_action_name (action->str))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, action,
+				           "a menu 'action' must be \"prefix.action\"");
+				return NULL;
+			}
+			if (!parse_action_target (lv_map_get (e, "target"), lv_map_get (e, "target-type"), &target, &msg))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, e, "%s", msg);
+				return NULL;
+			}
+			g_menu_item_set_action_and_target_value (item, action->str, target);
+		}
+		else if (lv_map_get (e, "target") != NULL)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, lv_map_get (e, "target"),
+			           "a menu 'target' needs an 'action'");
+			return NULL;
+		}
+	}
+
+	/* Decorations: the accelerator label and a vector icon */
+	if (accel != NULL)
+	{
+		if (accel->kind != LV_SCALAR || !lrg_accel_parse (accel->str, NULL, NULL))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, accel,
+			           "invalid accelerator '%s'", accel->kind == LV_SCALAR ? accel->str : "?");
+			return NULL;
+		}
+		g_menu_item_set_attribute (item, "accel", "s", accel->str);
+	}
+	if (icon != NULL)
+	{
+		GEnumClass *ec;
+		gint value;
+
+		if (!conv_enum (LRG_TYPE_ICON, icon, &value, &msg))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, icon, "menu 'icon': %s", msg);
+			return NULL;
+		}
+		ec = g_type_class_ref (LRG_TYPE_ICON);
+		g_menu_item_set_attribute (item, G_MENU_ATTRIBUTE_ICON, "s", g_enum_get_value (ec, value)->value_nick);
+		g_type_class_unref (ec);
+	}
+	return g_steal_pointer (&item);
+}
+
+/*
+ * menu_from_lv:
+ * Builds a GMenu from a resolved menu value: a list of entries or the
+ * name of a `menus:` entry. @depth guards against menus that use
+ * themselves through names.
+ */
+static GMenu *
+menu_from_lv (Ctx          *c,
+              Lv           *v,
+              const gchar  *path,
+              guint         depth,
+              GError      **error)
+{
+	g_autoptr(GMenu) menu = NULL;
+	g_autoptr(GMenu) group = NULL;
+	gboolean grouped = FALSE;
+	guint i;
+
+	if (depth > UI_MAX_MENU_DEPTH)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, v,
+		           "menus nest too deeply (does a menu use itself?)");
+		return NULL;
+	}
+	if (v->kind == LV_SCALAR)
+		return menu_from_name (c, v, path, depth, error);
+	if (v->kind == LV_NULL)
+		return g_menu_new ();
+	if (v->kind != LV_SEQ)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, v,
+		           "a menu must be a list of entries or the name of a menu, got %s", lv_kind_name (v));
+		return NULL;
+	}
+
+	/* Separators split the list into sections */
+	for (i = 0; i < v->items->len && !grouped; i++)
+	{
+		Lv *e = g_ptr_array_index (v->items, i);
+
+		grouped = is_separator_entry (e) ||
+		          (e->kind == LV_MAP && lv_map_get (e, "separator") != NULL);
+	}
+
+	menu = g_menu_new ();
+	group = grouped ? g_menu_new () : NULL;
+	for (i = 0; i < v->items->len; i++)
+	{
+		Lv *e = g_ptr_array_index (v->items, i);
+		g_autofree gchar *ep = path_join (path, "[%u]", i);
+		g_autoptr(GMenuItem) item = NULL;
+		gboolean sep;
+
+		if (e->kind != LV_MAP && !is_separator_entry (e))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e,
+			           "a menu entry must be a mapping or 'separator', got %s%s%s%s", lv_kind_name (e),
+			           e->kind == LV_SCALAR ? " '" : "", e->kind == LV_SCALAR ? e->str : "",
+			           e->kind == LV_SCALAR ? "'" : "");
+			return NULL;
+		}
+
+		/* `if:` drops the entry */
+		if (e->kind == LV_MAP && lv_map_get (e, "if") != NULL)
+		{
+			EVal ev = { 0 };
+			gboolean keep;
+
+			ev_from_lv (&ev, lv_map_get (e, "if"));
+			keep = ev_truthy (&ev);
+			ev_clear (&ev);
+			if (!keep)
+				continue;
+		}
+
+		sep = is_separator_entry (e);
+		if (!sep && e->kind == LV_MAP && lv_map_get (e, "separator") != NULL)
+		{
+			gboolean b = FALSE;
+			g_autofree gchar *msg = NULL;
+
+			if (e->keys->len != 1 && !(e->keys->len == 2 && lv_map_get (e, "if") != NULL))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e,
+				           "a separator entry takes no other keys");
+				return NULL;
+			}
+			if (!conv_bool (lv_map_get (e, "separator"), &b, &msg))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "'separator': %s", msg);
+				return NULL;
+			}
+			if (!b)
+				continue;
+			sep = TRUE;
+		}
+		if (sep)
+		{
+			if (g_menu_model_get_n_items (G_MENU_MODEL (group)) > 0)
+			{
+				g_menu_append_section (menu, NULL, G_MENU_MODEL (group));
+				g_object_unref (group);
+				group = g_menu_new ();
+			}
+			continue;
+		}
+
+		item = menu_item_from_lv (c, e, ep, depth, error);
+		if (item == NULL)
+			return NULL;
+		g_menu_append_item (grouped ? group : menu, item);
+	}
+	if (grouped && g_menu_model_get_n_items (G_MENU_MODEL (group)) > 0)
+		g_menu_append_section (menu, NULL, G_MENU_MODEL (group));
+	return g_steal_pointer (&menu);
+}
+
+/*
+ * menu_describe:
+ * A canonical text form of a menu model (attributes and links, in
+ * order), stored as the attribute's value so a hot reload re-applies a
+ * menu only when its content changed, including through named menus.
+ */
+static void
+menu_describe (GMenuModel *m,
+               GString    *out)
+{
+	gint n;
+	gint i;
+
+	n = g_menu_model_get_n_items (m);
+	g_string_append_c (out, '[');
+	for (i = 0; i < n; i++)
+	{
+		g_autoptr(GMenuAttributeIter) ai = g_menu_model_iterate_item_attributes (m, i);
+		g_autoptr(GMenuLinkIter) li = g_menu_model_iterate_item_links (m, i);
+		const gchar *name;
+		GVariant *value;
+		GMenuModel *link;
+
+		g_string_append_c (out, '(');
+		while (g_menu_attribute_iter_get_next (ai, &name, &value))
+		{
+			g_autofree gchar *txt = g_variant_print (value, TRUE);
+
+			g_string_append_printf (out, "%s=%s;", name, txt);
+			g_variant_unref (value);
+		}
+		while (g_menu_link_iter_get_next (li, &name, &link))
+		{
+			g_string_append_printf (out, "%s:", name);
+			menu_describe (link, out);
+			g_object_unref (link);
+		}
+		g_string_append_c (out, ')');
+	}
+	g_string_append_c (out, ']');
+}
+
+/* register_menus: the top-level `menus:` mapping (name -> menu) */
+static gboolean
+register_menus (Ctx          *c,
+                Lv           *menus,
+                GError      **error)
+{
+	guint i;
+
+	if (menus->kind != LV_MAP)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, "menus", menus,
+		           "'menus' must map menu names to menus, got %s", lv_kind_name (menus));
+		return FALSE;
+	}
+	for (i = 0; i < menus->keys->len; i++)
+	{
+		const gchar *name = g_ptr_array_index (menus->keys, i);
+
+		g_hash_table_replace (c->menus, g_strdup (name), lv_ref (g_ptr_array_index (menus->items, i)));
+	}
+	return TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * Languages (LrgSyntax) for LrgTextEditor
+ * -------------------------------------------------------------------------- */
+
+/*
+ * syntax_for_text:
+ * Builds a language from definition text, reusing the language built
+ * from identical text before (so reloading a document does not stack
+ * up copies in the global registry).
+ */
+static LrgSyntax *
+syntax_for_text (Ctx          *c,
+                 const gchar  *text,
+                 const Lv     *at,
+                 const gchar  *path,
+                 GError      **error)
+{
+	g_autoptr(GError) local = NULL;
+	LrgSyntax *syn;
+
+	syn = g_hash_table_lookup (c->self->syntax_cache, text);
+	if (syn != NULL)
+		return g_object_ref (syn);
+	syn = lrg_syntax_new_from_yaml (text, -1, &local);
+	if (syn == NULL)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, at,
+		           "invalid language definition: %s", local->message);
+		return NULL;
+	}
+	g_hash_table_insert (c->self->syntax_cache, g_strdup (text), g_object_ref (syn));
+	return syn;
+}
+
+/* syntax_from_file: a language definition file named in the document */
+static LrgSyntax *
+syntax_from_file (Ctx          *c,
+                  Env          *env,
+                  const gchar  *rel,
+                  const Lv     *at,
+                  const gchar  *path,
+                  gchar       **contents_out,
+                  GError      **error)
+{
+	g_autofree gchar *full = resolve_file_path (env, rel);
+	g_autofree gchar *contents = NULL;
+	LrgSyntax *syn;
+
+	contents = read_doc_file (c, full, at, path, error);
+	if (contents == NULL)
+		return NULL;
+	syn = syntax_for_text (c, contents, at, path, error);
+	if (syn != NULL && contents_out != NULL)
+		*contents_out = g_steal_pointer (&contents);
+	return syn;
+}
+
+/*
+ * register_languages:
+ * The top-level `languages:` list: each entry is a language definition
+ * (the LrgSyntax YAML schema), a file name, or {file: name}. The
+ * languages are registered once the whole document expanded.
+ */
+static gboolean
+register_languages (Ctx          *c,
+                    Lv           *langs,
+                    Env          *env,
+                    GError      **error)
+{
+	g_autoptr(Lv) r = NULL;
+	guint n;
+	guint i;
+
+	r = lv_resolve (langs, env->scope, "languages", error);
+	if (r == NULL)
+		return FALSE;
+	if (r->kind != LV_SEQ && r->kind != LV_MAP && r->kind != LV_SCALAR)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, "languages", langs,
+		           "'languages' must be a list of language definitions or file names, got %s",
+		           lv_kind_name (r));
+		return FALSE;
+	}
+	n = r->kind == LV_SEQ ? r->items->len : 1;
+	for (i = 0; i < n; i++)
+	{
+		Lv *e = r->kind == LV_SEQ ? g_ptr_array_index (r->items, i) : r;
+		g_autofree gchar *ep = g_strdup_printf ("languages[%u]", i);
+		LrgSyntax *syn = NULL;
+		Lv *file = NULL;
+
+		if (e->kind == LV_SCALAR)
+			file = e;
+		else if (e->kind == LV_MAP && lv_map_get (e, "file") != NULL)
+		{
+			file = lv_map_get (e, "file");
+			if (e->keys->len != 1 || file->kind != LV_SCALAR)
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, ep, e,
+				           "a language file entry is {file: name} and nothing else");
+				return FALSE;
+			}
+		}
+		if (file != NULL)
+			syn = syntax_from_file (c, env, file->str, file, ep, NULL, error);
+		else if (e->kind == LV_MAP)
+		{
+			g_autofree gchar *text = lv_to_yaml (e);
+
+			syn = syntax_for_text (c, text, e, ep, error);
+		}
+		else
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, ep, e,
+			           "a language entry must be a definition mapping or a file name, got %s",
+			           lv_kind_name (e));
+			return FALSE;
+		}
+		if (syn == NULL)
+			return FALSE;
+		g_ptr_array_add (c->syntaxes, syn);
+	}
+	return TRUE;
+}
+
+/* --------------------------------------------------------------------------
+ * Per-child settings: `anchor:` (LrgAnchorLayout), `page-name:`
+ * (LrgSwitcher), `position:` / `relative-to:` (LrgDockPanel in an
+ * LrgDockArea). They are attributes of the child node, checked against
+ * the parent in node_check() and applied through the parent.
+ * -------------------------------------------------------------------------- */
+
+/* Reads [x, y] or {x:, y:} into two floats */
+static gboolean
+conv_pair (const Lv     *v,
+           const gchar  *kx,
+           const gchar  *ky,
+           gfloat       *x,
+           gfloat       *y,
+           gchar       **msg)
+{
+	if (v->kind == LV_SEQ && v->items->len == 2)
+		return conv_float (g_ptr_array_index (v->items, 0), x, msg) &&
+		       conv_float (g_ptr_array_index (v->items, 1), y, msg);
+	if (v->kind == LV_MAP)
+	{
+		Lv *a = lv_map_get (v, kx);
+		Lv *b = lv_map_get (v, ky);
+
+		return (a == NULL || conv_float (a, x, msg)) && (b == NULL || conv_float (b, y, msg));
+	}
+	if (v->kind == LV_SCALAR && conv_float (v, x, msg))
+	{
+		*y = *x;
+		return TRUE;
+	}
+	*msg = g_strdup_printf ("expected [%s, %s], got %s", kx, ky, lv_kind_name (v));
+	return FALSE;
+}
+
+/*
+ * parse_anchor:
+ * `anchor: top-right` (an LrgAnchorPreset nick) or a mapping:
+ * {preset:, min: [x, y], max: [x, y], offset: [x, y], offsets: [l, t, r, b]
+ *  (or {left:, top:, right:, bottom:}), size: [w, h], align: [x, y],
+ *  auto-size:, z-order:}. The preset is applied first; `offset` works
+ * like lrg_anchor_layout_add() (positive values move inwards from right
+ * and bottom anchors); `size` fixes the size of pinned axes (auto-size
+ * off).
+ */
+static gboolean
+parse_anchor (const Lv       *v,
+              LrgAnchorData  *d,
+              gchar         **msg)
+{
+	static const gchar *keys[] = {
+		"preset", "min", "max", "offset", "offsets", "size", "align", "auto-size", "z-order", NULL
+	};
+	Lv *x;
+	gint preset;
+	guint i;
+
+	lrg_anchor_data_init (d);
+	if (v->kind == LV_SCALAR)
+	{
+		if (!conv_enum (LRG_TYPE_ANCHOR_PRESET, v, &preset, msg))
+			return FALSE;
+		lrg_anchor_data_set_preset (d, (LrgAnchorPreset)preset);
+		return TRUE;
+	}
+	if (v->kind != LV_MAP)
+	{
+		*msg = g_strdup_printf ("expected a preset name or a mapping, got %s", lv_kind_name (v));
+		return FALSE;
+	}
+	for (i = 0; i < v->keys->len; i++)
+	{
+		const gchar *k = g_ptr_array_index (v->keys, i);
+		guint j;
+		gboolean found = FALSE;
+
+		for (j = 0; keys[j] != NULL && !found; j++)
+			found = key_equal (k, keys[j]);
+		if (!found)
+		{
+			*msg = g_strdup_printf ("unknown key '%s' (expected preset, min, max, offset, offsets, size, "
+			                        "align, auto-size, z-order)", k);
+			return FALSE;
+		}
+	}
+
+	/* Anchors and pivot: the preset, then explicit anchors */
+	if ((x = lv_map_get (v, "preset")) != NULL)
+	{
+		if (!conv_enum (LRG_TYPE_ANCHOR_PRESET, x, &preset, msg))
+			return FALSE;
+		lrg_anchor_data_set_preset (d, (LrgAnchorPreset)preset);
+	}
+	if ((x = lv_map_get (v, "min")) != NULL && !conv_pair (x, "x", "y", &d->min_x, &d->min_y, msg))
+		return FALSE;
+	if ((x = lv_map_get (v, "max")) != NULL && !conv_pair (x, "x", "y", &d->max_x, &d->max_y, msg))
+		return FALSE;
+	if ((x = lv_map_get (v, "align")) != NULL && !conv_pair (x, "x", "y", &d->align_x, &d->align_y, msg))
+		return FALSE;
+
+	/* Offsets: the lrg_anchor_layout_add() shorthand, or all four */
+	if ((x = lv_map_get (v, "offset")) != NULL)
+	{
+		gfloat ox = 0.0f;
+		gfloat oy = 0.0f;
+
+		if (!conv_pair (x, "x", "y", &ox, &oy, msg))
+			return FALSE;
+		if (d->max_x > d->min_x)
+			d->left = d->right = ox;
+		else
+			d->left = d->min_x >= 1.0f ? -ox : ox;
+		if (d->max_y > d->min_y)
+			d->top = d->bottom = oy;
+		else
+			d->top = d->min_y >= 1.0f ? -oy : oy;
+	}
+	if ((x = lv_map_get (v, "offsets")) != NULL)
+	{
+		LrgInsets in;
+
+		if (!conv_insets (x, &in, msg))
+		{
+			g_autofree gchar *m = *msg;
+
+			*msg = g_strdup_printf ("'offsets': %s", m);
+			return FALSE;
+		}
+		d->left = in.left;
+		d->top = in.top;
+		d->right = in.right;
+		d->bottom = in.bottom;
+	}
+	if ((x = lv_map_get (v, "size")) != NULL)
+	{
+		if (!conv_pair (x, "width", "height", &d->right, &d->bottom, msg))
+			return FALSE;
+		d->auto_size = FALSE;
+	}
+	if ((x = lv_map_get (v, "auto-size")) != NULL && !conv_bool (x, &d->auto_size, msg))
+		return FALSE;
+	if ((x = lv_map_get (v, "z-order")) != NULL)
+	{
+		gdouble z;
+
+		if (!conv_integer (x, G_MININT, G_MAXINT, &z, msg))
+			return FALSE;
+		d->z_order = (gint)z;
+	}
+	return TRUE;
+}
+
+/* Name of the parent type a per-child attribute needs */
+static GType
+child_attr_parent_type (const UiAttr *a)
+{
+	switch (a->kind)
+	{
+	case ATTR_ANCHOR:
+		return LRG_TYPE_ANCHOR_LAYOUT;
+	case ATTR_PAGE_NAME:
+		return LRG_TYPE_SWITCHER;
+	case ATTR_DOCK_PLACE:
+		return LRG_TYPE_DOCK_AREA;
+	default:
+		return G_TYPE_INVALID;
+	}
+}
+
+/*
+ * check_child_attrs:
+ * Every per-child attribute of @child must fit its parent @parent_type
+ * (G_TYPE_INVALID for content set through a property or a tab).
+ */
+static gboolean
+check_child_attrs (GType         parent_type,
+                   UiNode       *child,
+                   GError      **error)
+{
+	guint i;
+
+	for (i = 0; i < child->attrs->len; i++)
+	{
+		UiAttr *a = g_ptr_array_index (child->attrs, i);
+		GType need;
+
+		if (!a->child)
+			continue;
+		need = child_attr_parent_type (a);
+		if (parent_type == G_TYPE_INVALID || !g_type_is_a (parent_type, need))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, child->path, a->value,
+			           "%s only valid on a child of %s%s%s",
+			           a->kind == ATTR_DOCK_PLACE ? "'position' and 'relative-to' are" :
+			           a->kind == ATTR_ANCHOR ? "'anchor' is" : "'page-name' is",
+			           g_type_name (need),
+			           parent_type != G_TYPE_INVALID ? ", not of " : "",
+			           parent_type != G_TYPE_INVALID ? g_type_name (parent_type) : "");
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+/* Applies one per-child attribute through @parent (no-op elsewhere) */
+static void
+child_attr_apply (LrgContainer *parent,
+                  LrgWidget    *w,
+                  UiAttr       *a)
+{
+	if (parent == NULL)
+		return;
+	switch (a->kind)
+	{
+	case ATTR_ANCHOR:
+		if (LRG_IS_ANCHOR_LAYOUT (parent))
+			lrg_anchor_layout_set_child_data (LRG_ANCHOR_LAYOUT (parent), w, &a->anchor);
+		break;
+	case ATTR_PAGE_NAME:
+		if (LRG_IS_SWITCHER (parent))
+			lrg_switcher_set_child_name (LRG_SWITCHER (parent), w, a->text);
+		break;
+	case ATTR_DOCK_PLACE:
+		/* The placement only matters when the panel is docked */
+	default:
+		break;
+	}
+}
+
+/* Puts a per-child setting back to its default */
+static void
+child_attr_reset (LrgContainer *parent,
+                  LrgWidget    *w,
+                  UiAttr       *a)
+{
+	LrgAnchorData d;
+
+	if (parent == NULL)
+		return;
+	switch (a->kind)
+	{
+	case ATTR_ANCHOR:
+		if (LRG_IS_ANCHOR_LAYOUT (parent))
+		{
+			lrg_anchor_data_init (&d);
+			lrg_anchor_layout_set_child_data (LRG_ANCHOR_LAYOUT (parent), w, &d);
+		}
+		break;
+	case ATTR_PAGE_NAME:
+		if (LRG_IS_SWITCHER (parent))
+			lrg_switcher_set_child_name (LRG_SWITCHER (parent), w, NULL);
+		break;
+	default:
+		break;
+	}
+}
+
+/* --------------------------------------------------------------------------
+ * LrgTimelineView `tracks:` and `markers:`
+ * -------------------------------------------------------------------------- */
+
+typedef struct
+{
+	gdouble   start;
+	gdouble   duration;
+	gchar    *label;
+	gboolean  has_color;
+	GrlColor  color;
+} ClipSpec;
+
+typedef struct
+{
+	gdouble  time;
+	gdouble  value;
+	gint     interpolation;
+	gboolean has_tangents;
+	gdouble  in_slope;
+	gdouble  out_slope;
+} KeySpec;
+
+typedef struct
+{
+	gchar     *name;
+	GPtrArray *props;      /* UiAttr * (ATTR_PROP on LrgTimelineViewTrack) */
+	GArray    *clips;      /* ClipSpec */
+	GArray    *keys;       /* KeySpec */
+	GPtrArray *children;   /* TrackSpec * */
+} TrackSpec;
+
+typedef struct
+{
+	gdouble  time;
+	gchar   *label;
+} MarkerSpec;
+
+static void
+clip_spec_clear (gpointer data)
+{
+	g_free (((ClipSpec *)data)->label);
+}
+
+static void
+track_spec_free (gpointer data)
+{
+	TrackSpec *t = data;
+
+	g_free (t->name);
+	g_ptr_array_unref (t->props);
+	g_array_unref (t->clips);
+	g_array_unref (t->keys);
+	g_ptr_array_unref (t->children);
+	g_free (t);
+}
+
+static void
+marker_spec_free (gpointer data)
+{
+	MarkerSpec *m = data;
+
+	g_free (m->label);
+	g_free (m);
+}
+
+/* Reads a number member of a mapping, or element @idx of a list */
+static gboolean
+spec_number (const Lv     *v,
+             const gchar  *key,
+             guint         idx,
+             gboolean      required,
+             gdouble      *out,
+             gchar       **msg)
+{
+	Lv *x = NULL;
+
+	if (v->kind == LV_MAP)
+		x = lv_map_get (v, key);
+	else if (v->kind == LV_SEQ && idx < v->items->len)
+		x = g_ptr_array_index (v->items, idx);
+	if (x == NULL)
+	{
+		if (required)
+			*msg = g_strdup_printf ("'%s' is missing", key);
+		return !required;
+	}
+	if (!conv_number (x, out, msg))
+	{
+		g_autofree gchar *m = *msg;
+
+		*msg = g_strdup_printf ("'%s': %s", key, m);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* Reads a text member of a mapping, or element @idx of a list */
+static gboolean
+spec_text (const Lv     *v,
+           const gchar  *key,
+           guint         idx,
+           gchar       **out,
+           gchar       **msg)
+{
+	Lv *x = NULL;
+
+	if (v->kind == LV_MAP)
+		x = lv_map_get (v, key);
+	else if (v->kind == LV_SEQ && idx < v->items->len)
+		x = g_ptr_array_index (v->items, idx);
+	if (x == NULL || x->kind == LV_NULL)
+		return TRUE;
+	if (x->kind != LV_SCALAR)
+	{
+		*msg = g_strdup_printf ("'%s' must be text, got %s", key, lv_kind_name (x));
+		return FALSE;
+	}
+	*out = g_strdup (x->str);
+	return TRUE;
+}
+
+/* Rejects unknown keys of a mapping entry; lists are positional */
+static gboolean
+spec_check_keys (const Lv     *v,
+                 const gchar **allowed,
+                 const gchar  *what,
+                 guint         max_len,
+                 gchar       **msg)
+{
+	guint i;
+	guint j;
+
+	if (v->kind == LV_SEQ)
+	{
+		if (v->items->len < 2 || v->items->len > max_len)
+		{
+			*msg = g_strdup_printf ("a %s list has 2 to %u elements, got %u", what, max_len, v->items->len);
+			return FALSE;
+		}
+		return TRUE;
+	}
+	if (v->kind != LV_MAP)
+	{
+		*msg = g_strdup_printf ("a %s must be a mapping or a list, got %s", what, lv_kind_name (v));
+		return FALSE;
+	}
+	for (i = 0; i < v->keys->len; i++)
+	{
+		const gchar *k = g_ptr_array_index (v->keys, i);
+		gboolean found = FALSE;
+
+		for (j = 0; allowed[j] != NULL && !found; j++)
+			found = key_equal (k, allowed[j]);
+		if (!found)
+		{
+			g_autofree gchar *list = g_strjoinv (", ", (gchar **)allowed);
+
+			*msg = g_strdup_printf ("unknown %s key '%s' (expected %s)", what, k, list);
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+static gboolean parse_tracks (Lv *list, const gchar *path, GPtrArray *out, guint depth, GError **error);
+
+/*
+ * parse_track:
+ * One entry of `tracks:`: {name:, tracks: [...], clips: [...],
+ * keyframes: [...], <any LrgTimelineViewTrack property>}.
+ * Clips are {start:, duration:, label:, color:} or [start, duration,
+ * label]; keyframes {time:, value:, interpolation:, tangents: [in, out]}
+ * or [time, value, interpolation].
+ */
+static TrackSpec *
+parse_track (Lv           *v,
+             const gchar  *path,
+             guint         depth,
+             GError      **error)
+{
+	static const gchar *clip_keys[] = { "start", "duration", "label", "color", NULL };
+	static const gchar *key_keys[] = { "time", "value", "interpolation", "tangents", NULL };
+	g_autofree gchar *msg = NULL;
+	TrackSpec *t;
+	GObjectClass *klass;
+	guint i;
+
+	if (v->kind != LV_MAP)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, v,
+		           "a track must be a mapping, got %s", lv_kind_name (v));
+		return NULL;
+	}
+	t = g_new0 (TrackSpec, 1);
+	t->props = g_ptr_array_new_with_free_func (ui_attr_free);
+	t->clips = g_array_new (FALSE, TRUE, sizeof (ClipSpec));
+	g_array_set_clear_func (t->clips, clip_spec_clear);
+	t->keys = g_array_new (FALSE, TRUE, sizeof (KeySpec));
+	t->children = g_ptr_array_new_with_free_func (track_spec_free);
+
+	klass = g_type_class_ref (LRG_TYPE_TIMELINE_VIEW_TRACK);
+	for (i = 0; i < v->keys->len; i++)
+	{
+		const gchar *k = g_ptr_array_index (v->keys, i);
+		Lv *x = g_ptr_array_index (v->items, i);
+		g_autofree gchar *kp = path_join (path, "%s", k);
+
+		/* --- nested tracks ------------------------------------------- */
+		if (key_equal (k, "tracks"))
+		{
+			if (!parse_tracks (x, path, t->children, depth + 1, error))
+				goto fail;
+			continue;
+		}
+
+		/* --- clips ---------------------------------------------------- */
+		if (key_equal (k, "clips") || key_equal (k, "keyframes"))
+		{
+			gboolean clips = key_equal (k, "clips");
+			guint j;
+
+			if (x->kind != LV_SEQ)
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, kp, x,
+				           "'%s' must be a list, got %s", k, lv_kind_name (x));
+				goto fail;
+			}
+			for (j = 0; j < x->items->len; j++)
+			{
+				Lv *e = g_ptr_array_index (x->items, j);
+				g_autofree gchar *ep = path_join (kp, "[%u]", j);
+				gboolean ok;
+
+				if (clips)
+				{
+					ClipSpec cs = { 0 };
+					Lv *col;
+
+					ok = spec_check_keys (e, clip_keys, "clip", 3, &msg) &&
+					     spec_number (e, "start", 0, TRUE, &cs.start, &msg) &&
+					     spec_number (e, "duration", 1, TRUE, &cs.duration, &msg) &&
+					     spec_text (e, "label", 2, &cs.label, &msg);
+					if (ok && cs.duration <= 0.0)
+					{
+						msg = g_strdup ("'duration' must be positive");
+						ok = FALSE;
+					}
+					col = e->kind == LV_MAP ? lv_map_get (e, "color") : NULL;
+					if (ok && col != NULL)
+					{
+						ok = conv_color (col, &cs.color, &msg);
+						cs.has_color = ok;
+					}
+					if (!ok)
+					{
+						g_free (cs.label);
+						set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
+						goto fail;
+					}
+					g_array_append_val (t->clips, cs);
+				}
+				else
+				{
+					KeySpec ks = { 0 };
+					Lv *ip = NULL;
+					Lv *tan;
+
+					ks.interpolation = LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR;
+					ok = spec_check_keys (e, key_keys, "keyframe", 3, &msg) &&
+					     spec_number (e, "time", 0, TRUE, &ks.time, &msg) &&
+					     spec_number (e, "value", 1, TRUE, &ks.value, &msg);
+					if (ok)
+						ip = e->kind == LV_MAP ? lv_map_get (e, "interpolation") :
+						     (e->items->len > 2 ? g_ptr_array_index (e->items, 2) : NULL);
+					if (ok && ip != NULL)
+						ok = conv_enum (LRG_TYPE_TIMELINE_VIEW_INTERPOLATION, ip, &ks.interpolation, &msg);
+					tan = e->kind == LV_MAP ? lv_map_get (e, "tangents") : NULL;
+					if (ok && tan != NULL)
+					{
+						gfloat a = 0.0f;
+						gfloat b = 0.0f;
+
+						ok = conv_pair (tan, "in", "out", &a, &b, &msg);
+						ks.has_tangents = ok;
+						ks.in_slope = a;
+						ks.out_slope = b;
+					}
+					if (!ok)
+					{
+						set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
+						goto fail;
+					}
+					g_array_append_val (t->keys, ks);
+				}
+			}
+			continue;
+		}
+
+		/* --- the name and the track's properties ---------------------- */
+		{
+			g_autofree gchar *pname = g_strdelimit (g_strdup (k), "_", '-');
+			GParamSpec *pspec = g_object_class_find_property (klass, pname);
+			UiAttr *a;
+
+			if (pspec == NULL || !(pspec->flags & G_PARAM_WRITABLE) ||
+			    g_type_is_a (G_PARAM_SPEC_VALUE_TYPE (pspec), G_TYPE_OBJECT))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_UNKNOWN_PROPERTY, kp, x,
+				           "unknown track key '%s' (expected name, tracks, clips, keyframes or a "
+				           "writable LrgTimelineViewTrack property)", k);
+				goto fail;
+			}
+			a = ui_attr_new (ATTR_PROP, pspec->name, x);
+			a->pspec = pspec;
+			if (!conv_property (pspec, x, &a->gvalue, &msg))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, kp, x,
+				           "invalid value for track property '%s': %s", k, msg);
+				ui_attr_free (a);
+				goto fail;
+			}
+			if (g_strcmp0 (pspec->name, "name") == 0)
+			{
+				g_free (t->name);
+				t->name = g_value_dup_string (&a->gvalue);
+			}
+			g_ptr_array_add (t->props, a);
+		}
+	}
+	g_type_class_unref (klass);
+	return t;
+
+fail:
+	g_type_class_unref (klass);
+	track_spec_free (t);
+	return NULL;
+}
+
+static gboolean
+parse_tracks (Lv           *list,
+              const gchar  *path,
+              GPtrArray    *out,
+              guint         depth,
+              GError      **error)
+{
+	guint i;
+
+	if (depth > 32)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, list, "tracks nest too deeply");
+		return FALSE;
+	}
+	if (list->kind != LV_SEQ)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, list,
+		           "'tracks' must be a list of tracks, got %s", lv_kind_name (list));
+		return FALSE;
+	}
+	for (i = 0; i < list->items->len; i++)
+	{
+		g_autofree gchar *tp = path_join (path, "tracks[%u]", i);
+		TrackSpec *t = parse_track (g_ptr_array_index (list->items, i), tp, depth, error);
+
+		if (t == NULL)
+			return FALSE;
+		g_ptr_array_add (out, t);
+	}
+	return TRUE;
+}
+
+/* `markers:`: a list of {time:, label:} or [time, label] */
+static gboolean
+parse_markers (Lv           *list,
+               const gchar  *path,
+               GPtrArray    *out,
+               GError      **error)
+{
+	static const gchar *keys[] = { "time", "label", NULL };
+	guint i;
+
+	if (list->kind != LV_SEQ)
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, list,
+		           "'markers' must be a list of {time:, label:}, got %s", lv_kind_name (list));
+		return FALSE;
+	}
+	for (i = 0; i < list->items->len; i++)
+	{
+		Lv *e = g_ptr_array_index (list->items, i);
+		g_autofree gchar *ep = path_join (path, "markers[%u]", i);
+		g_autofree gchar *msg = NULL;
+		MarkerSpec *m = g_new0 (MarkerSpec, 1);
+
+		if (e->kind == LV_SCALAR)
+		{
+			if (!conv_number (e, &m->time, &msg))
+			{
+				marker_spec_free (m);
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
+				return FALSE;
+			}
+		}
+		else if (!spec_check_keys (e, keys, "marker", 2, &msg) ||
+		         !spec_number (e, "time", 0, TRUE, &m->time, &msg) ||
+		         !spec_text (e, "label", 1, &m->label, &msg))
+		{
+			marker_spec_free (m);
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, ep, e, "%s", msg);
+			return FALSE;
+		}
+		g_ptr_array_add (out, m);
+	}
+	return TRUE;
+}
+
+static GQuark
+timeline_tracks_quark (void)
+{
+	return g_quark_from_static_string ("lrg-ui-loader-tracks");
+}
+
+static GQuark
+timeline_markers_quark (void)
+{
+	return g_quark_from_static_string ("lrg-ui-loader-markers");
+}
+
+/* TRUE when @track is (still) one of @tv's tracks */
+static gboolean
+timeline_has_track (LrgTimelineView      *tv,
+                    LrgTimelineViewTrack *track)
+{
+	guint n = lrg_timeline_view_get_n_tracks (tv);
+	guint i;
+
+	for (i = 0; i < n; i++)
+	{
+		if (lrg_timeline_view_get_track (tv, i) == track)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* Removes the top-level tracks the loader added (with everything on them) */
+static void
+timeline_clear_tracks (LrgTimelineView *tv)
+{
+	GPtrArray *made = g_object_steal_qdata (G_OBJECT (tv), timeline_tracks_quark ());
+	guint i;
+
+	if (made == NULL)
+		return;
+	for (i = 0; i < made->len; i++)
+	{
+		LrgTimelineViewTrack *t = g_ptr_array_index (made, i);
+
+		if (timeline_has_track (tv, t))
+			lrg_timeline_view_remove_track (tv, t);
+	}
+	g_ptr_array_unref (made);
+}
+
+static void
+timeline_clear_markers (LrgTimelineView *tv)
+{
+	GArray *ids = g_object_steal_qdata (G_OBJECT (tv), timeline_markers_quark ());
+	guint i;
+
+	if (ids == NULL)
+		return;
+	for (i = 0; i < ids->len; i++)
+		lrg_timeline_view_remove_marker (tv, g_array_index (ids, guint, i));
+	g_array_unref (ids);
+}
+
+/* Creates the tracks of @specs (nested in @parent) with their content */
+static void
+timeline_add_tracks (LrgTimelineView      *tv,
+                     GPtrArray            *specs,
+                     LrgTimelineViewTrack *parent,
+                     GPtrArray            *made)
+{
+	guint i;
+	guint j;
+
+	for (i = 0; i < specs->len; i++)
+	{
+		TrackSpec *s = g_ptr_array_index (specs, i);
+		g_autoptr(LrgTimelineViewTrack) track = lrg_timeline_view_track_new (s->name);
+
+		for (j = 0; j < s->props->len; j++)
+		{
+			UiAttr *a = g_ptr_array_index (s->props, j);
+
+			g_object_set_property (G_OBJECT (track), a->pspec->name, &a->gvalue);
+		}
+		lrg_timeline_view_append_track (tv, track, parent);
+		if (made != NULL)
+			g_ptr_array_add (made, g_object_ref (track));
+
+		for (j = 0; j < s->clips->len; j++)
+		{
+			ClipSpec *cs = &g_array_index (s->clips, ClipSpec, j);
+			guint id = lrg_timeline_view_add_clip (tv, track, cs->start, cs->duration, cs->label);
+
+			if (cs->has_color)
+				lrg_timeline_view_set_clip_color (tv, id, &cs->color);
+		}
+		for (j = 0; j < s->keys->len; j++)
+		{
+			KeySpec *ks = &g_array_index (s->keys, KeySpec, j);
+			guint id = lrg_timeline_view_add_keyframe (tv, track, ks->time, ks->value,
+			                                           (LrgTimelineViewInterpolation)ks->interpolation);
+
+			if (ks->has_tangents)
+				lrg_timeline_view_set_keyframe_tangents (tv, id, ks->in_slope, ks->out_slope);
+		}
+		timeline_add_tracks (tv, s->children, track, NULL);
+	}
+}
+
+/* Replaces the loader's tracks (or markers) of @tv by @a's */
+static void
+timeline_apply (LrgTimelineView *tv,
+                UiAttr          *a)
+{
+	guint i;
+
+	if (a->kind == ATTR_TRACKS)
+	{
+		GPtrArray *made = g_ptr_array_new_with_free_func (g_object_unref);
+
+		timeline_clear_tracks (tv);
+		timeline_add_tracks (tv, a->specs, NULL, made);
+		g_object_set_qdata_full (G_OBJECT (tv), timeline_tracks_quark (), made,
+		                         (GDestroyNotify)g_ptr_array_unref);
+	}
+	else
+	{
+		GArray *ids = g_array_new (FALSE, FALSE, sizeof (guint));
+
+		timeline_clear_markers (tv);
+		for (i = 0; i < a->specs->len; i++)
+		{
+			MarkerSpec *m = g_ptr_array_index (a->specs, i);
+			guint id = lrg_timeline_view_add_marker (tv, m->time, m->label);
+
+			g_array_append_val (ids, id);
+		}
+		g_object_set_qdata_full (G_OBJECT (tv), timeline_markers_quark (), ids,
+		                         (GDestroyNotify)g_array_unref);
+	}
+}
+
+/* --------------------------------------------------------------------------
+ * Embedded documents: `graph:` / `graph-file:` (LrgNodeGraph) and
+ * `layout:` (LrgDockArea). They are checked during expansion by loading
+ * them into a throwaway widget, so a bad document fails before anything
+ * is built.
+ * -------------------------------------------------------------------------- */
+
+static gboolean
+check_graph_text (const gchar  *text,
+                  const Lv     *at,
+                  const gchar  *path,
+                  GError      **error)
+{
+	g_autoptr(LrgNodeGraph) probe = lrg_node_graph_new ();
+	g_autoptr(GError) local = NULL;
+
+	if (g_object_is_floating (probe))
+		g_object_ref_sink (probe);
+	if (!lrg_node_graph_load_yaml (probe, text, -1, &local))
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, at, "invalid 'graph': %s", local->message);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static gboolean
+check_layout_text (const gchar  *text,
+                   const Lv     *at,
+                   const gchar  *path,
+                   GError      **error)
+{
+	g_autoptr(LrgDockArea) probe = lrg_dock_area_new ();
+	g_autoptr(GError) local = NULL;
+
+	if (g_object_is_floating (probe))
+		g_object_ref_sink (probe);
+	if (!lrg_dock_area_load_layout (probe, text, &local))
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, at, "invalid 'layout': %s", local->message);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * parse_aspect_ratio:
+ * "16:9" or "16/9" for an `aspect-ratio` property; gives a number
+ * scalar, or NULL when @v is not in that form (it is then converted as
+ * an ordinary number).
+ */
+static Lv *
+parse_aspect_ratio (const Lv *v)
+{
+	g_auto(GStrv) parts = NULL;
+	gdouble w;
+	gdouble h;
+	g_autofree gchar *num = NULL;
+
+	if (v->kind != LV_SCALAR || strpbrk (v->str, ":/") == NULL)
+		return NULL;
+	parts = g_strsplit_set (v->str, ":/", -1);
+	if (g_strv_length (parts) != 2)
+		return NULL;
+	g_strstrip (parts[0]);
+	g_strstrip (parts[1]);
+	if (!parse_number_text (parts[0], &w) || !parse_number_text (parts[1], &h) || h <= 0.0)
+		return NULL;
+	num = num_to_string (w / h);
+	return lv_new_scalar (num, FALSE, v);
+}
+
+/*
+ * node_set_widget_key:
+ * The keys added for the wave-3 widgets: menu models (`model:`,
+ * `context-menu:`), per-child placement (`anchor:`, `page-name:`,
+ * `position:` / `relative-to:`), `language-file:`, `graph:` /
+ * `graph-file:`, `layout:`, `tracks:` and `markers:`. Sets *@handled to
+ * FALSE when @key is none of them.
+ */
+static gboolean
+node_set_widget_key (Ctx           *c,
+                     UiNode        *node,
+                     GObjectClass  *klass,
+                     const gchar   *key,
+                     Lv            *val,
+                     Lv            *r,
+                     Env           *env,
+                     const gchar   *path,
+                     gboolean      *handled,
+                     GError       **error)
+{
+	g_autofree gchar *msg = NULL;
+	g_autofree gchar *pname = g_strdelimit (g_strdup (key), "_", '-');
+	GParamSpec *pspec = g_object_class_find_property (klass, pname);
+	UiAttr *a;
+
+	*handled = TRUE;
+
+	/* --- GMenuModel properties: a menu (list) or a `menus:` name ------- */
+	if (pspec != NULL && (pspec->flags & G_PARAM_WRITABLE) &&
+	    g_type_is_a (G_PARAM_SPEC_VALUE_TYPE (pspec), G_TYPE_MENU_MODEL))
+	{
+		g_autofree gchar *mp = path_join (path, "%s", pspec->name);
+		g_autoptr(GMenu) menu = menu_from_lv (c, r, mp, 0, error);
+		g_autoptr(Lv) desc_lv = NULL;
+		GString *desc;
+
+		if (menu == NULL)
+			return FALSE;
+		desc = g_string_new (NULL);
+		menu_describe (G_MENU_MODEL (menu), desc);
+		desc_lv = lv_new_scalar (desc->str, TRUE, val);
+		g_string_free (desc, TRUE);
+		a = ui_attr_new (ATTR_PROP, pspec->name, desc_lv);
+		a->pspec = pspec;
+		g_value_init (&a->gvalue, G_PARAM_SPEC_VALUE_TYPE (pspec));
+		g_value_set_object (&a->gvalue, menu);
+		a->construct = (pspec->flags & G_PARAM_CONSTRUCT_ONLY) != 0;
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+	if (pspec == NULL && key_equal (key, "context-menu"))
+	{
+		set_error (error, LRG_UI_LOADER_ERROR_UNKNOWN_PROPERTY, path, val,
+		           "'context-menu' needs the LrgWidget:context-menu property, which %s does not have",
+		           g_type_name (node->type));
+		return FALSE;
+	}
+
+	/* --- `aspect-ratio: "16:9"` ---------------------------------------- */
+	if (pspec != NULL && g_strcmp0 (pspec->name, "aspect-ratio") == 0 &&
+	    (G_PARAM_SPEC_VALUE_TYPE (pspec) == G_TYPE_FLOAT || G_PARAM_SPEC_VALUE_TYPE (pspec) == G_TYPE_DOUBLE))
+	{
+		g_autoptr(Lv) num = parse_aspect_ratio (r);
+
+		if (num != NULL)
+		{
+			a = ui_attr_new (ATTR_PROP, pspec->name, r);
+			a->pspec = pspec;
+			if (!conv_property (pspec, num, &a->gvalue, &msg))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+				           "invalid value for property '%s' of %s: %s", key, g_type_name (node->type), msg);
+				ui_attr_free (a);
+				return FALSE;
+			}
+			ui_node_put_attr (node, a);
+			return TRUE;
+		}
+		*handled = FALSE;
+		return TRUE;
+	}
+
+	/* Everything below is a key that is not a property of the type */
+	if (pspec != NULL)
+	{
+		*handled = FALSE;
+		return TRUE;
+	}
+
+	/* --- per-child placement ----------------------------------------- */
+	if (key_equal (key, "anchor"))
+	{
+		a = ui_attr_new (ATTR_ANCHOR, "anchor", r);
+		a->child = TRUE;
+		if (!parse_anchor (r, &a->anchor, &msg))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val, "'anchor': %s", msg);
+			ui_attr_free (a);
+			return FALSE;
+		}
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+	if (key_equal (key, "page-name"))
+	{
+		if (r->kind != LV_SCALAR)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+			           "'page-name' must be text, got %s", lv_kind_name (r));
+			return FALSE;
+		}
+		a = ui_attr_new (ATTR_PAGE_NAME, "page-name", r);
+		a->child = TRUE;
+		a->text = g_strdup (r->str);
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+	if ((key_equal (key, "position") || key_equal (key, "relative-to")) &&
+	    g_type_is_a (node->type, LRG_TYPE_DOCK_PANEL))
+	{
+		UiAttr *old = ui_node_find_attr (node, "dock-place");
+		g_autoptr(Lv) both = lv_new (LV_MAP, val);
+
+		/* One attribute holds both keys; its value is {position, relative-to} */
+		a = ui_attr_new (ATTR_DOCK_PLACE, "dock-place", NULL);
+		a->child = TRUE;
+		a->ival = old != NULL ? old->ival : (gint)LRG_DOCK_POSITION_CENTER;
+		a->text = old != NULL ? g_strdup (old->text) : NULL;
+		if (old != NULL)
+		{
+			guint i;
+
+			for (i = 0; i < old->value->keys->len; i++)
+			{
+				if (!key_equal (g_ptr_array_index (old->value->keys, i), key))
+					lv_map_add (both, g_ptr_array_index (old->value->keys, i),
+					            lv_ref (g_ptr_array_index (old->value->items, i)));
+			}
+		}
+		lv_map_add (both, key_equal (key, "position") ? "position" : "relative-to", lv_ref (r));
+		lv_unref (a->value);
+		a->value = lv_ref (both);
+		if (key_equal (key, "position"))
+		{
+			if (!conv_enum (LRG_TYPE_DOCK_POSITION, r, &a->ival, &msg))
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val, "'position': %s", msg);
+				ui_attr_free (a);
+				return FALSE;
+			}
+		}
+		else
+		{
+			if (r->kind != LV_SCALAR)
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+				           "'relative-to' must be a panel id, got %s", lv_kind_name (r));
+				ui_attr_free (a);
+				return FALSE;
+			}
+			g_free (a->text);
+			a->text = g_strdup (r->str);
+		}
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
+	/* --- LrgTextEditor `language-file:` -------------------------------- */
+	if (key_equal (key, "language-file") && g_type_is_a (node->type, LRG_TYPE_TEXT_EDITOR))
+	{
+		g_autofree gchar *contents = NULL;
+		g_autoptr(LrgSyntax) syn = NULL;
+		g_autoptr(Lv) stamp = NULL;
+		GParamSpec *sp = g_object_class_find_property (klass, "syntax");
+
+		if (r->kind != LV_SCALAR || *r->str == '\0')
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+			           "'language-file' must be a file name");
+			return FALSE;
+		}
+		syn = syntax_from_file (c, env, r->str, val, path, &contents, error);
+		if (syn == NULL)
+			return FALSE;
+		g_ptr_array_add (c->syntaxes, g_object_ref (syn));
+
+		/* The value is the file's text: editing the file re-applies it */
+		stamp = lv_new_scalar (contents, TRUE, val);
+		a = ui_attr_new (ATTR_PROP, "syntax", stamp);
+		a->pspec = sp;
+		g_value_init (&a->gvalue, LRG_TYPE_SYNTAX);
+		g_value_set_object (&a->gvalue, syn);
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
+	/* --- LrgNodeGraph `graph:` / `graph-file:` ------------------------- */
+	if ((key_equal (key, "graph") || key_equal (key, "graph-file")) &&
+	    g_type_is_a (node->type, LRG_TYPE_NODE_GRAPH))
+	{
+		g_autofree gchar *text = NULL;
+		g_autoptr(Lv) stamp = NULL;
+
+		if (key_equal (key, "graph-file"))
+		{
+			g_autofree gchar *full = NULL;
+
+			if (r->kind != LV_SCALAR || *r->str == '\0')
+			{
+				set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+				           "'graph-file' must be a file name");
+				return FALSE;
+			}
+			full = resolve_file_path (env, r->str);
+			text = read_doc_file (c, full, val, path, error);
+			if (text == NULL)
+				return FALSE;
+		}
+		else if (r->kind == LV_MAP)
+			text = lv_to_yaml (r);
+		else if (r->kind == LV_SCALAR && r->quoted)
+			text = g_strdup (r->str);
+		else
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+			           "'graph' must be a graph document (a mapping), got %s", lv_kind_name (r));
+			return FALSE;
+		}
+		if (!check_graph_text (text, val, path, error))
+			return FALSE;
+		stamp = lv_new_scalar (text, TRUE, val);
+		a = ui_attr_new (ATTR_GRAPH, "graph", stamp);
+		a->text = g_steal_pointer (&text);
+		a->late = TRUE;
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
+	/* --- LrgDockArea `layout:` ------------------------------------------ */
+	if (key_equal (key, "layout") && g_type_is_a (node->type, LRG_TYPE_DOCK_AREA))
+	{
+		g_autofree gchar *text = NULL;
+
+		if (r->kind == LV_MAP)
+			text = lv_to_yaml (r);
+		else if (r->kind == LV_SCALAR)
+			text = g_strdup (r->str);
+		else
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, path, val,
+			           "'layout' must be a saved layout (a mapping or its text), got %s", lv_kind_name (r));
+			return FALSE;
+		}
+		if (!check_layout_text (text, val, path, error))
+			return FALSE;
+		a = ui_attr_new (ATTR_DOCK_LAYOUT, "layout", r);
+		a->text = g_steal_pointer (&text);
+		a->late = TRUE;
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
+	/* --- LrgTimelineView `tracks:` / `markers:` --------------------------- */
+	if ((key_equal (key, "tracks") || key_equal (key, "markers")) &&
+	    g_type_is_a (node->type, LRG_TYPE_TIMELINE_VIEW))
+	{
+		gboolean tracks = key_equal (key, "tracks");
+		GPtrArray *specs;
+
+		specs = g_ptr_array_new_with_free_func (tracks ? track_spec_free : marker_spec_free);
+		if (!(tracks ? parse_tracks (r, path, specs, 0, error) : parse_markers (r, path, specs, error)))
+		{
+			g_ptr_array_unref (specs);
+			return FALSE;
+		}
+		a = ui_attr_new (tracks ? ATTR_TRACKS : ATTR_MARKERS, tracks ? "tracks" : "markers", r);
+		a->specs = specs;
+		a->late = TRUE;
+		ui_node_put_attr (node, a);
+		return TRUE;
+	}
+
+	*handled = FALSE;
 	return TRUE;
 }
 
@@ -4545,6 +6386,16 @@ node_set_key (Ctx           *c,
 		return TRUE;
 	}
 
+	/* --- Keys of the menu, layout, editor, graph, timeline and dock widgets */
+	{
+		gboolean handled = FALSE;
+
+		if (!node_set_widget_key (c, node, klass, key, val, r, env, path, &handled, error))
+			return FALSE;
+		if (handled)
+			return TRUE;
+	}
+
 	/* --- A GObject property ------------------------------------------- */
 	{
 		g_autofree gchar *pname = NULL;
@@ -4580,12 +6431,68 @@ node_set_key (Ctx           *c,
 	}
 }
 
+/*
+ * check_dock_children:
+ * An LrgDockArea holds LrgDockPanel nodes only, and a panel's
+ * `relative-to:` must name a panel listed before it.
+ */
+static gboolean
+check_dock_children (UiNode       *node,
+                     GError      **error)
+{
+	guint i;
+	guint j;
+
+	for (i = 0; i < node->children->len; i++)
+	{
+		UiNode *cn = g_ptr_array_index (node->children, i);
+		UiAttr *place;
+		gboolean found = FALSE;
+
+		if (!g_type_is_a (cn->type, LRG_TYPE_DOCK_PANEL))
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, cn->path, cn->src,
+			           "the children of LrgDockArea must be dock-panel nodes, not %s", g_type_name (cn->type));
+			return FALSE;
+		}
+		place = ui_node_find_attr (cn, "dock-place");
+		if (place == NULL || place->text == NULL)
+			continue;
+		for (j = 0; j < i && !found; j++)
+			found = g_strcmp0 (((UiNode *)g_ptr_array_index (node->children, j))->id, place->text) == 0;
+		if (!found)
+		{
+			set_error (error, LRG_UI_LOADER_ERROR_INVALID_VALUE, cn->path, place->value,
+			           "'relative-to: %s' names no panel listed before this one", place->text);
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
 /* Checks a finished node: children only where they can go */
 static gboolean
 node_check (UiNode       *node,
             const gchar  *path,
             GError      **error)
 {
+	guint i;
+
+	/* Per-child settings must fit the parent they end up in */
+	for (i = 0; i < node->children->len; i++)
+	{
+		if (!check_child_attrs (node->child_prop != NULL ? G_TYPE_INVALID : node->type,
+		                        g_ptr_array_index (node->children, i), error))
+			return FALSE;
+	}
+	for (i = 0; i < node->tabs->len; i++)
+	{
+		if (!check_child_attrs (G_TYPE_INVALID, ((UiTab *)g_ptr_array_index (node->tabs, i))->content, error))
+			return FALSE;
+	}
+	if (g_type_is_a (node->type, LRG_TYPE_DOCK_AREA) && !check_dock_children (node, error))
+		return FALSE;
+
 	if (node->children->len == 0)
 		return TRUE;
 	if (node->child_prop != NULL)
@@ -5509,6 +7416,8 @@ expand_document (Ctx          *c,
 
 	if (comps != NULL && !register_components (c, comps, env->file, error))
 		return FALSE;
+	if (lv_map_get (doc, "menus") != NULL && !register_menus (c, lv_map_get (doc, "menus"), error))
+		return FALSE;
 
 	/* Document variables, in order (each may use the previous ones) */
 	e2 = *env;
@@ -5541,6 +7450,14 @@ expand_document (Ctx          *c,
 			c->globals = vscope;
 	}
 
+	/* Languages see the document's variables */
+	if (lv_map_get (doc, "languages") != NULL && !register_languages (c, lv_map_get (doc, "languages"), &e2, error))
+	{
+		c->globals = saved_globals;
+		scope_free (vscope);
+		return FALSE;
+	}
+
 	if (lv_map_get (doc, "type") != NULL || lv_map_get (doc, "repeat") != NULL ||
 	    lv_map_get (doc, "for-each") != NULL || lv_map_get (doc, "include") != NULL)
 	{
@@ -5557,7 +7474,8 @@ expand_document (Ctx          *c,
 		{
 			const gchar *k = g_ptr_array_index (doc->keys, i);
 
-			if (key_equal (k, "components") || key_equal (k, "variables") || key_equal (k, "shortcuts"))
+			if (key_equal (k, "components") || key_equal (k, "variables") || key_equal (k, "shortcuts") ||
+			    key_equal (k, "menus") || key_equal (k, "languages"))
 				continue;
 			lv_map_add (node, k, lv_ref (g_ptr_array_index (doc->items, i)));
 		}
@@ -5571,10 +7489,11 @@ expand_document (Ctx          *c,
 			const gchar *k = g_ptr_array_index (doc->keys, i);
 
 			if (!key_equal (k, "components") && !key_equal (k, "variables") && !key_equal (k, "root") &&
-			    !key_equal (k, "shortcuts"))
+			    !key_equal (k, "shortcuts") && !key_equal (k, "menus") && !key_equal (k, "languages"))
 			{
 				set_error (error, LRG_UI_LOADER_ERROR_STRUCTURE, path, g_ptr_array_index (doc->items, i),
-				           "unknown top-level key '%s' (expected type, components, variables, shortcuts or root)", k);
+				           "unknown top-level key '%s' (expected type, components, variables, shortcuts, "
+				           "menus, languages or root)", k);
 				ok = FALSE;
 				break;
 			}
@@ -5695,6 +7614,8 @@ expand_text (LrgUILoader  *self,
 	c.files = files;
 	c.file_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify)lv_unref);
 	c.globals = globals;
+	c.menus = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify)lv_unref);
+	c.syntaxes = g_ptr_array_new_with_free_func (g_object_unref);
 	if (file != NULL)
 		g_ptr_array_add (c.include_stack, g_strdup (file));
 
@@ -5724,6 +7645,17 @@ expand_text (LrgUILoader  *self,
 			g_clear_pointer (&root, ui_node_unref);
 	}
 
+	/* Everything checked: make the document's languages findable */
+	if (root != NULL)
+	{
+		guint i;
+
+		for (i = 0; i < c.syntaxes->len; i++)
+			lrg_syntax_register (g_ptr_array_index (c.syntaxes, i));
+	}
+
+	g_hash_table_unref (c.menus);
+	g_ptr_array_unref (c.syntaxes);
 	g_hash_table_unref (c.components);
 	g_ptr_array_unref (c.include_stack);
 	g_ptr_array_unref (c.comp_stack);
@@ -5904,9 +7836,57 @@ apply_attr (LrgWidget *w,
 		for (i = 0; a->strv[i] != NULL; i++)
 			lrg_combo_box_append (LRG_COMBO_BOX (w), a->strv[i]);
 		break;
+	case ATTR_ANCHOR:
+	case ATTR_PAGE_NAME:
+	case ATTR_DOCK_PLACE:
+		/* Through the parent; a widget being built has none yet and
+		 * gets them from apply_child_attrs() once it is added */
+		child_attr_apply (lrg_widget_get_parent (w), w, a);
+		break;
+	case ATTR_DOCK_LAYOUT:
+		{
+			g_autoptr(GError) local = NULL;
+
+			if (!lrg_dock_area_load_layout (LRG_DOCK_AREA (w), a->text, &local))
+				lrg_message (LRG_LOG_DOMAIN, "UI loader: dock layout not applied: %s", local->message);
+			break;
+		}
+	case ATTR_GRAPH:
+		{
+			g_autoptr(GError) local = NULL;
+
+			/* Checked during expansion; only the application's
+			 * ::can-connect can still refuse a link here */
+			if (!lrg_node_graph_load_yaml (LRG_NODE_GRAPH (w), a->text, -1, &local))
+				lrg_message (LRG_LOG_DOMAIN, "UI loader: graph partly loaded: %s", local->message);
+			break;
+		}
+	case ATTR_TRACKS:
+	case ATTR_MARKERS:
+		timeline_apply (LRG_TIMELINE_VIEW (w), a);
+		break;
 	case ATTR_ON:
 	default:
 		break;
+	}
+}
+
+/* Applies the per-child settings of @w's node through its parent */
+static void
+apply_child_attrs (LrgWidget *w)
+{
+	WidgetRecord *rec = widget_get_record (w);
+	LrgContainer *parent = lrg_widget_get_parent (w);
+	guint i;
+
+	if (rec == NULL || parent == NULL)
+		return;
+	for (i = 0; i < rec->node->attrs->len; i++)
+	{
+		UiAttr *a = g_ptr_array_index (rec->node->attrs, i);
+
+		if (a->child)
+			child_attr_apply (parent, w, a);
 	}
 }
 
@@ -5926,6 +7906,9 @@ prop_resettable (UiAttr *a)
 	def = g_param_spec_get_default_value (a->pspec);
 	if (G_VALUE_HOLDS_BOXED (def) && g_value_get_boxed (def) == NULL)
 		return G_VALUE_TYPE (def) == LRG_TYPE_INSETS;
+	/* Menus and highlighters accept NULL (no menu, plain text) */
+	if (g_type_is_a (G_VALUE_TYPE (def), G_TYPE_MENU_MODEL) || g_type_is_a (G_VALUE_TYPE (def), LRG_TYPE_SYNTAX))
+		return TRUE;
 	if (G_VALUE_HOLDS_OBJECT (def) && g_value_get_object (def) == NULL)
 		return FALSE;
 	return TRUE;
@@ -5983,12 +7966,48 @@ reset_attr (LrgWidget    *w,
 	case ATTR_ITEMS:
 		lrg_combo_box_remove_all (LRG_COMBO_BOX (w));
 		break;
+	case ATTR_ANCHOR:
+	case ATTR_PAGE_NAME:
+		child_attr_reset (lrg_widget_get_parent (w), w, a);
+		break;
+	case ATTR_GRAPH:
+		lrg_node_graph_clear (LRG_NODE_GRAPH (w));
+		break;
+	case ATTR_TRACKS:
+		timeline_clear_tracks (LRG_TIMELINE_VIEW (w));
+		break;
+	case ATTR_MARKERS:
+		timeline_clear_markers (LRG_TIMELINE_VIEW (w));
+		break;
+	case ATTR_DOCK_PLACE:
+	case ATTR_DOCK_LAYOUT:
+		/* The user's arrangement stays */
 	default:
 		break;
 	}
 }
 
 static LrgWidget *build_widget (UiNode *n);
+
+/*
+ * dock_add_panel:
+ * Docks a panel the loader built at its `position:` relative to the
+ * panel named by `relative-to:` (the whole area when there is none, or
+ * when that panel is gone). The default is a tab in the first stack.
+ */
+static void
+dock_add_panel (LrgDockArea  *area,
+                LrgDockPanel *panel)
+{
+	WidgetRecord *rec = widget_get_record (LRG_WIDGET (panel));
+	UiAttr *place = rec != NULL ? ui_node_find_attr (rec->node, "dock-place") : NULL;
+	LrgDockPanel *rel = NULL;
+
+	if (place != NULL && place->text != NULL)
+		rel = lrg_dock_area_get_panel (area, place->text);
+	lrg_dock_area_add_panel (area, panel, rel,
+	                         place != NULL ? (LrgDockPosition)place->ival : LRG_DOCK_POSITION_CENTER);
+}
 
 /* Adds already-built children / tabs to @w following @n's layout */
 static void
@@ -6050,6 +8069,9 @@ build_widget (UiNode *n)
 
 	if (n->id != NULL)
 		lrg_widget_set_name (w, n->id);
+	/* A dock panel's id (layout persistence, relative-to) is its YAML id */
+	if (n->id != NULL && LRG_IS_DOCK_PANEL (w))
+		lrg_dock_panel_set_id (LRG_DOCK_PANEL (w), n->id);
 
 	/* Early values */
 	for (i = 0; i < n->attrs->len; i++)
@@ -6084,7 +8106,13 @@ build_widget (UiNode *n)
 	{
 		g_autoptr(LrgWidget) child = build_widget (g_ptr_array_index (n->children, i));
 
-		attach_child (w, n, child);
+		if (LRG_IS_DOCK_AREA (w))
+			dock_add_panel (LRG_DOCK_AREA (w), LRG_DOCK_PANEL (child));
+		else
+		{
+			attach_child (w, n, child);
+			apply_child_attrs (child);
+		}
 	}
 
 	/* Late values, then handlers */
@@ -6287,7 +8315,72 @@ sync_children (LrgWidget *w,
 		g_ptr_array_set_size (now, 0);
 	}
 	for (i = now->len; i < desired->len; i++)
+	{
 		lrg_container_add_child (c, g_ptr_array_index (desired, i));
+		apply_child_attrs (g_ptr_array_index (desired, i));
+	}
+}
+
+/*
+ * sync_dock:
+ * Diffs an LrgDockArea's panels. Panels are matched like children;
+ * reused panels stay where the user put them, new panels are docked at
+ * their `position:`, a rebuilt panel takes its predecessor's place (as a
+ * tab beside it) and panels gone from the document are removed.
+ */
+static void
+sync_dock (LrgWidget *w,
+           UiNode    *n)
+{
+	LrgDockArea *area = LRG_DOCK_AREA (w);
+	g_autoptr(GList) all = lrg_dock_area_get_panels (area);
+	/* Held: a rebuilt panel's predecessor is released by the area */
+	g_autoptr(GPtrArray) live = g_ptr_array_new_with_free_func (g_object_unref);
+	g_autoptr(GPtrArray) matched = g_ptr_array_new ();
+	g_autoptr(GPtrArray) keep = g_ptr_array_new_with_free_func (g_object_unref);
+	GList *l;
+	guint i;
+
+	for (l = all; l != NULL; l = l->next)
+	{
+		if (widget_get_record (LRG_WIDGET (l->data)) != NULL)
+			g_ptr_array_add (live, g_object_ref (l->data));
+	}
+	match_widgets (n->children, live, matched);
+
+	for (i = 0; i < n->children->len; i++)
+	{
+		UiNode *cn = g_ptr_array_index (n->children, i);
+		LrgWidget *m = g_ptr_array_index (matched, i);
+		LrgWidget *next;
+
+		if (m != NULL)
+		{
+			next = sync_widget (m, cn);
+			if (next != m)
+			{
+				/* Rebuilt: dock the new panel beside the old one, then drop it */
+				lrg_dock_area_add_panel (area, LRG_DOCK_PANEL (next), LRG_DOCK_PANEL (m), LRG_DOCK_POSITION_CENTER);
+				lrg_dock_area_remove_panel (area, LRG_DOCK_PANEL (m));
+				g_ptr_array_index (matched, i) = next;
+			}
+		}
+		else
+		{
+			next = build_widget (cn);
+			dock_add_panel (area, LRG_DOCK_PANEL (next));
+		}
+		g_ptr_array_add (keep, next);
+	}
+
+	/* Panels the document no longer has */
+	for (i = 0; i < live->len; i++)
+	{
+		LrgWidget *lw = g_ptr_array_index (live, i);
+
+		if (!g_ptr_array_find (keep, lw, NULL))
+			lrg_dock_area_remove_panel (area, LRG_DOCK_PANEL (lw));
+	}
 }
 
 /* Diffs a single child set through a property (scroll box, dialog) */
@@ -6405,7 +8498,11 @@ sync_widget (LrgWidget *w,
 	old = ui_node_ref (rec->node);
 
 	if (g_strcmp0 (old->id, n->id) != 0)
+	{
 		lrg_widget_set_name (w, n->id);
+		if (LRG_IS_DOCK_PANEL (w))
+			lrg_dock_panel_set_id (LRG_DOCK_PANEL (w), n->id);
+	}
 
 	/* Removed attributes first */
 	for (i = 0; i < old->attrs->len; i++)
@@ -6463,6 +8560,8 @@ sync_widget (LrgWidget *w,
 		sync_tabs (w, n);
 	else if (n->child_prop != NULL && n->children->len == 1)
 		sync_single_child (w, n);
+	else if (LRG_IS_DOCK_AREA (w))
+		sync_dock (w, n);
 	else if (LRG_IS_CONTAINER (w))
 		sync_children (w, n);
 
@@ -6884,7 +8983,10 @@ live_doc_reload (LrgUILoader  *self,
 		    lrg_widget_get_parent (LRG_WIDGET (old_root)) == LRG_CONTAINER (host))
 			lrg_container_remove_child (LRG_CONTAINER (host), LRG_WIDGET (old_root));
 		if (host != NULL)
+		{
 			lrg_container_add_child (LRG_CONTAINER (host), new_root);
+			apply_child_attrs (new_root);
+		}
 		g_weak_ref_set (&d->root, new_root);
 		remember_root (self, new_root);
 	}
@@ -6944,6 +9046,7 @@ lrg_ui_loader_finalize (GObject *object)
 	g_hash_table_unref (self->ids);
 	g_ptr_array_unref (self->roots);
 	g_ptr_array_unref (self->docs);
+	g_hash_table_unref (self->syntax_cache);
 	if (self->self_module != NULL)
 		g_module_close (self->self_module);
 
@@ -6980,6 +9083,18 @@ lrg_ui_loader_class_init (LrgUILoaderClass *klass)
 	g_type_ensure (LRG_TYPE_TAB_VIEW);
 	g_type_ensure (LRG_TYPE_TEXT_INPUT);
 	g_type_ensure (LRG_TYPE_VBOX);
+	g_type_ensure (LRG_TYPE_MENU);
+	g_type_ensure (LRG_TYPE_MENU_BAR);
+	g_type_ensure (LRG_TYPE_ANCHOR_LAYOUT);
+	g_type_ensure (LRG_TYPE_SWITCHER);
+	g_type_ensure (LRG_TYPE_SIZE_BOX);
+	g_type_ensure (LRG_TYPE_VIEWPORT);
+	g_type_ensure (LRG_TYPE_CUSTOM_WIDGET);
+	g_type_ensure (LRG_TYPE_TEXT_EDITOR);
+	g_type_ensure (LRG_TYPE_NODE_GRAPH);
+	g_type_ensure (LRG_TYPE_TIMELINE_VIEW);
+	g_type_ensure (LRG_TYPE_DOCK_AREA);
+	g_type_ensure (LRG_TYPE_DOCK_PANEL);
 
 	/**
 	 * LrgUILoader::reloaded:
@@ -7018,6 +9133,7 @@ lrg_ui_loader_init (LrgUILoader *self)
 	self->ids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, weak_ref_free);
 	self->roots = g_ptr_array_new_with_free_func (weak_ref_free);
 	self->docs = g_ptr_array_new_with_free_func (live_doc_free);
+	self->syntax_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
 }
 
 /* ==========================================================================
@@ -7251,6 +9367,9 @@ lrg_ui_loader_watch_file (LrgUILoader   *self,
 	root = build_widget (node);
 	attach_shortcuts (root, node);
 	lrg_container_add_child (host, root);
+	/* A root inside an LrgAnchorLayout / LrgSwitcher host takes its
+	 * own `anchor:` / `page-name:` */
+	apply_child_attrs (root);
 
 	/* Watching the same path again replaces the previous watch */
 	d = find_doc (self, path);
