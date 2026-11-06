@@ -741,6 +741,71 @@ test_panel_fill_children (void)
 	g_object_unref (w);
 }
 
+static void
+test_part_look_overrides_beat_rules (void)
+{
+	g_autoptr(LrgTheme)     theme = lrg_theme_new ();
+	g_autoptr(LrgStyleRule) rule = lrg_style_rule_new ("TestBlock", NULL, LRG_UI_PART_BOX,
+	                                                   LRG_WIDGET_STATE_NONE);
+	g_autoptr(LrgStyleRule) hover_rule = lrg_style_rule_new ("TestBlock", NULL, LRG_UI_PART_BOX,
+	                                                         LRG_WIDGET_STATE_HOVERED);
+	g_autoptr(LrgWidget)    w = block_new (10.0f, 10.0f);
+	GrlColor                from_rule = { 10, 0, 0, 255 };
+	GrlColor                from_hover_rule = { 20, 0, 0, 255 };
+	GrlColor                mine = { 99, 0, 0, 255 };
+	GrlColor                mine_hover = { 120, 0, 0, 255 };
+	LrgPartLook             look;
+	LrgPartLook             over;
+	gint                    i;
+
+	lrg_part_look_set_background (lrg_style_rule_get_look (rule), &from_rule);
+	lrg_part_look_set_radius (lrg_style_rule_get_look (rule), 9.0f);
+	lrg_part_look_set_background (lrg_style_rule_get_look (hover_rule), &from_hover_rule);
+	lrg_theme_add_style_rule (theme, rule);
+	lrg_theme_add_style_rule (theme, hover_rule);
+	lrg_widget_set_theme (w, theme);
+
+	/* The theme applies by default */
+	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, &look);
+	g_assert_cmpuint (look.background.r, ==, 10);
+
+	/* "Actually I want this": an instance override wins in every state,
+	 * and only for the fields it sets (the rule's radius survives) */
+	lrg_part_look_init (&over);
+	lrg_part_look_set_background (&over, &mine);
+	lrg_widget_set_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, &over);
+	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, &look);
+	g_assert_cmpuint (look.background.r, ==, 99);
+	g_assert_cmpfloat (look.radii.top_left, ==, 9.0f);
+	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+	g_assert_cmpuint (look.background.r, ==, 99);
+
+	/* A more specific (hovered) override wins over the general one */
+	lrg_part_look_init (&over);
+	lrg_part_look_set_background (&over, &mine_hover);
+	lrg_widget_set_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &over);
+	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+	g_assert_cmpuint (look.background.r, ==, 120);
+	g_assert_nonnull (lrg_widget_get_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED));
+
+	/* Springs still blend between the overridden looks */
+	lrg_widget_set_state_flags (w, LRG_WIDGET_STATE_HOVERED);
+	for (i = 0; i < 4; i++)
+		lrg_widget_step (w, 1.0f / 60.0f);
+	lrg_widget_resolve_look (w, LRG_UI_PART_BOX, &look);
+	g_assert_cmpuint (look.background.r, >, 99);
+	g_assert_cmpuint (look.background.r, <, 120);
+
+	/* Removing one override falls back; clearing all restores the theme */
+	lrg_widget_set_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, NULL);
+	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+	g_assert_cmpuint (look.background.r, ==, 99);
+	lrg_widget_clear_part_looks (w);
+	lrg_widget_resolve_look_for_state (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+	g_assert_cmpuint (look.background.r, ==, 20);
+	g_assert_null (lrg_widget_get_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -771,6 +836,7 @@ main (int   argc,
 	g_test_add_func ("/ui/layout/remove-all", test_remove_all_relayouts);
 	g_test_add_func ("/ui/layout/panel-fill-children", test_panel_fill_children);
 	g_test_add_func ("/ui/style/rule-edit-invalidates", test_rule_edit_invalidates);
+	g_test_add_func ("/ui/style/part-look-overrides", test_part_look_overrides_beat_rules);
 
 	return g_test_run ();
 }

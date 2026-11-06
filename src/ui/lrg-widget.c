@@ -110,9 +110,18 @@ typedef struct
 	LrgWidgetState  state;
 	gboolean        focusable;
 	gboolean        pointer_transparent;
+	GArray         *part_looks;  /* PartOverride, NULL until used */
 	LrgSpring       hover;
 	LrgSpring       press;
 } LrgWidgetPrivate;
+
+/* A per-instance look override (lrg_widget_set_part_look) */
+typedef struct
+{
+	LrgUIPart       part;
+	LrgWidgetState  state;
+	LrgPartLook     look;
+} PartOverride;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgWidget, lrg_widget, G_TYPE_OBJECT)
 
@@ -308,6 +317,7 @@ lrg_widget_finalize (GObject *object)
 
 	g_clear_pointer (&priv->name, g_free);
 	g_clear_pointer (&priv->classes, g_array_unref);
+	g_clear_pointer (&priv->part_looks, g_array_unref);
 	g_clear_object (&priv->theme);
 
 	G_OBJECT_CLASS (lrg_widget_parent_class)->finalize (object);
@@ -1670,6 +1680,118 @@ lrg_widget_resolve_look_for_state (LrgWidget      *self,
 	lrg_theme_resolve_look (lrg_widget_get_theme (self), G_OBJECT_TYPE (self),
 	                        (const GQuark *) (gpointer) priv->classes->data,
 	                        priv->classes->len, part, state, look);
+
+	/* Explicit values beat the theme: the widget's own setters, then
+	 * per-instance overrides, least specific state first */
+	if (klass->style_overrides != NULL)
+		klass->style_overrides (self, part, state, look);
+
+	if (priv->part_looks != NULL)
+	{
+		guint pass;
+		guint i;
+
+		/* specificity = number of required state bits; apply in
+		 * increasing order so the most specific wins */
+		for (pass = 0; pass <= 32; pass++)
+		{
+			for (i = 0; i < priv->part_looks->len; i++)
+			{
+				PartOverride *o = &g_array_index (priv->part_looks, PartOverride, i);
+				guint         bits = 0;
+				guint         v;
+
+				if (o->part != part || (state & o->state) != o->state)
+					continue;
+				for (v = (guint) o->state; v != 0; v &= v - 1)
+					bits++;
+				if (bits == pass)
+					lrg_part_look_merge (look, &o->look);
+			}
+		}
+	}
+}
+
+void
+lrg_widget_set_part_look (LrgWidget         *self,
+                          LrgUIPart          part,
+                          LrgWidgetState     state,
+                          const LrgPartLook *look)
+{
+	LrgWidgetPrivate *priv;
+	guint             i;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	priv = lrg_widget_get_instance_private (self);
+
+	/* Replace or remove an existing override for (part, state) */
+	for (i = 0; priv->part_looks != NULL && i < priv->part_looks->len; i++)
+	{
+		PartOverride *o = &g_array_index (priv->part_looks, PartOverride, i);
+
+		if (o->part == part && o->state == state)
+		{
+			if (look != NULL)
+				o->look = *look;
+			else
+				g_array_remove_index (priv->part_looks, i);
+			lrg_widget_queue_layout (self);
+			return;
+		}
+	}
+
+	if (look == NULL)
+		return;
+
+	if (priv->part_looks == NULL)
+		priv->part_looks = g_array_new (FALSE, FALSE, sizeof (PartOverride));
+	{
+		PartOverride o;
+
+		o.part = part;
+		o.state = state;
+		o.look = *look;
+		g_array_append_val (priv->part_looks, o);
+	}
+
+	/* A size field may change the preferred size */
+	lrg_widget_queue_layout (self);
+}
+
+const LrgPartLook *
+lrg_widget_get_part_look (LrgWidget      *self,
+                          LrgUIPart       part,
+                          LrgWidgetState  state)
+{
+	LrgWidgetPrivate *priv;
+	guint             i;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), NULL);
+	priv = lrg_widget_get_instance_private (self);
+
+	for (i = 0; priv->part_looks != NULL && i < priv->part_looks->len; i++)
+	{
+		PartOverride *o = &g_array_index (priv->part_looks, PartOverride, i);
+
+		if (o->part == part && o->state == state)
+			return &o->look;
+	}
+	return NULL;
+}
+
+void
+lrg_widget_clear_part_looks (LrgWidget *self)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	priv = lrg_widget_get_instance_private (self);
+
+	if (priv->part_looks != NULL && priv->part_looks->len > 0)
+	{
+		g_array_set_size (priv->part_looks, 0);
+		lrg_widget_queue_layout (self);
+	}
 }
 
 void

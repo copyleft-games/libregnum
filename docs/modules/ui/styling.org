@@ -30,8 +30,10 @@ This page covers the data types (=src/ui/lrg-style.h=), rule matching and the re
  ├─ resting = resolve_for_state (base)
  │    ├─ lrg_part_look_init (&look)                    all transparent, opacity 1
  │    ├─ klass->style_defaults (widget, part, base, &look)    built-in look from theme roles
- │    └─ lrg_theme_resolve_look (theme, type, classes, part, base, &look)
- │         matching rules merged least specific first (cached per theme)
+ │    ├─ lrg_theme_resolve_look (theme, type, classes, part, base, &look)
+ │    │    matching rules merged least specific first (cached per theme)
+ │    ├─ klass->style_overrides (widget, part, base, &look)   explicit setters
+ │    └─ per-instance lrg_widget_set_part_look () overrides, least specific first
  │
  ├─ if hover spring h > 0.001:
  │    hovered = resolve_for_state (base | HOVERED)
@@ -44,6 +46,69 @@ This page covers the data types (=src/ui/lrg-style.h=), rule matching and the re
  lrg_widget_paint_box (widget, list, &look, x, y, w, h)
       glow -> drop shadow -> fill / gradient + inner border, all at look.opacity
 #+end_example
+
+** Precedence: the theme applies unless you say otherwise
+:PROPERTIES:
+:CUSTOM_ID: styling-precedence
+:END:
+Four layers decide a part's look, each overriding only the fields it sets (see [[#styling-merge][the set mask]]):
+
+| Order | Layer | Who sets it | Typical use |
+|-------+-------+-------------+-------------|
+| 1 | =style_defaults()= | the widget class, from theme roles and metrics | how every button looks out of the box |
+| 2 | theme style rules | the theme ([[#styling-rules][style rules]], YAML =styles:=) | restyle all primary buttons, all panels with class =card= |
+| 3 | =style_overrides()= | the widget's explicit setters, e.g. =lrg_button_set_normal_color()=, =lrg_panel_set_corner_radius()= | "this button is red" |
+| 4 | =lrg_widget_set_part_look()= | the application, on one instance, for any part and state | force any field of any part, even ones without a setter |
+
+Later layers win, so a value set on a widget always beats the theme: the theme decides everything you did not decide yourself. Hover and press still blend between the resolved resting, hovered and pressed looks, so overridden colours animate like themed ones.
+
+*** Per-instance overrides
+:PROPERTIES:
+:CUSTOM_ID: styling-part-look-overrides
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_widget_set_part_look= | =void lrg_widget_set_part_look (LrgWidget *self, LrgUIPart part, LrgWidgetState state, const LrgPartLook *look);= | Copies =look=; only its set fields apply. =state= lists states that must all be active (=LRG_WIDGET_STATE_NONE= = always). Several overrides for one part merge from the fewest to the most required states. =NULL= removes the override for exactly (=part=, =state=). Queues layout (a size field may change the preferred size). |
+| =lrg_widget_get_part_look= | =const LrgPartLook * lrg_widget_get_part_look (LrgWidget *self, LrgUIPart part, LrgWidgetState state);= | The override stored for exactly (=part=, =state=), or =NULL=. Owned by the widget. |
+| =lrg_widget_clear_part_looks= | =void lrg_widget_clear_part_looks (LrgWidget *self);= | Removes every override; the theme takes over again. |
+
+#+begin_src c
+/* A gold "buy" button whatever the theme says, glowing on hover */
+LrgPartLook look;
+GrlColor    gold = { 0xf5, 0xb7, 0x00, 0xff };
+GrlColor    glow = { 0xf5, 0xb7, 0x00, 0x90 };
+
+lrg_part_look_init (&look);
+lrg_part_look_set_background (&look, &gold);
+lrg_widget_set_part_look (LRG_WIDGET (buy), LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, &look);
+
+lrg_part_look_init (&look);
+lrg_part_look_set_glow (&look, &glow, 24.0f);
+lrg_widget_set_part_look (LRG_WIDGET (buy), LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+#+end_src
+
+*** Writing style_overrides() in a widget
+:PROPERTIES:
+:CUSTOM_ID: styling-style-overrides
+:END:
+A widget with explicit setters keeps =style_defaults()= purely theme-driven and applies the explicit values in =style_overrides()=, chaining up to the parent class. Set only the fields the explicit value concerns:
+
+#+begin_src c
+static void
+my_widget_style_overrides (LrgWidget      *widget,
+                           LrgUIPart       part,
+                           LrgWidgetState  state,
+                           LrgPartLook    *look)
+{
+	MyWidget *self = MY_WIDGET (widget);
+
+	if (LRG_WIDGET_CLASS (my_widget_parent_class)->style_overrides != NULL)
+		LRG_WIDGET_CLASS (my_widget_parent_class)->style_overrides (widget, part, state, look);
+
+	if (part == LRG_UI_PART_BOX && self->fill_set)
+		lrg_part_look_set_background (look, &self->fill);
+}
+#+end_src
 
 ** Parts
 :PROPERTIES:

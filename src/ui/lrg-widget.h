@@ -110,6 +110,7 @@ G_DECLARE_DERIVABLE_TYPE (LrgWidget, lrg_widget, LRG, WIDGET, GObject)
  * @style_defaults: Built-in look of a part in a state
  * @arrange: Called after the widget's rectangle was assigned
  * @step: Advances the widget's own animations
+ * @style_overrides: Explicit per-widget values that beat theme rules
  *
  * The class structure for #LrgWidget.
  *
@@ -211,8 +212,25 @@ struct _LrgWidgetClass
 	gboolean (*step)           (LrgWidget *self,
 	                            gfloat     delta_time);
 
+	/**
+	 * LrgWidgetClass::style_overrides:
+	 * @self: the widget
+	 * @part: the part being drawn
+	 * @state: the state to describe
+	 * @look: (inout): look after defaults and theme rules
+	 *
+	 * Applies values the application set explicitly on this widget
+	 * (e.g. lrg_button_set_normal_color()). Runs after the theme's
+	 * style rules, so an explicit value always wins: the theme applies
+	 * unless the widget was told otherwise.
+	 */
+	void     (*style_overrides) (LrgWidget      *self,
+	                             LrgUIPart       part,
+	                             LrgWidgetState  state,
+	                             LrgPartLook    *look);
+
 	/*< private >*/
-	gpointer _reserved[4];
+	gpointer _reserved[3];
 };
 
 /* ==========================================================================
@@ -971,6 +989,59 @@ void lrg_widget_resolve_look_for_state (LrgWidget      *self,
                                         LrgUIPart       part,
                                         LrgWidgetState  state,
                                         LrgPartLook    *look);
+
+/**
+ * lrg_widget_set_part_look:
+ * @self: an #LrgWidget
+ * @part: the part to override
+ * @state: states that must all be active for the override to apply;
+ *   %LRG_WIDGET_STATE_NONE applies in every state
+ * @look: (nullable): the fields to force (only the fields marked in
+ *   its set mask are used), or %NULL to remove this override
+ *
+ * Overrides the look of one part of this widget instance. Overrides
+ * are applied last, after the widget's defaults, the theme's style
+ * rules and the widget's own explicit setters, so they always win.
+ * Several overrides for one part merge from the least to the most
+ * specific state, like style rules. Hover and press still blend
+ * between the resolved looks.
+ *
+ * |[<!-- language="C" -->
+ * LrgPartLook look;
+ *
+ * lrg_part_look_init (&look);
+ * lrg_part_look_set_background (&look, &gold);
+ * lrg_widget_set_part_look (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+ * ]|
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_part_look (LrgWidget         *self,
+                               LrgUIPart          part,
+                               LrgWidgetState     state,
+                               const LrgPartLook *look);
+
+/**
+ * lrg_widget_get_part_look:
+ * @self: an #LrgWidget
+ * @part: a part
+ * @state: the exact state the override was set for
+ *
+ * Returns: (transfer none) (nullable): the override set with
+ *   lrg_widget_set_part_look() for exactly (@part, @state), or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+const LrgPartLook * lrg_widget_get_part_look (LrgWidget      *self,
+                                              LrgUIPart       part,
+                                              LrgWidgetState  state);
+
+/**
+ * lrg_widget_clear_part_looks:
+ * @self: an #LrgWidget
+ *
+ * Removes every override set with lrg_widget_set_part_look().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_clear_part_looks (LrgWidget *self);
 
 /**
  * lrg_widget_paint_box:
