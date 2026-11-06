@@ -28,7 +28,7 @@
 #
 # Actions the menus and shortcuts use (insert an "app" action group on
 # the canvas, or on the root, to make them work):
-#   app.new app.open app.save app.save-as app.quit app.undo app.redo
+#   app.new app.open app.open-recent(s) app.save app.save-as app.quit app.undo app.redo
 #   app.cut app.copy app.paste app.toggle-grid app.reset-layout
 #   app.show-panel (string target: a panel id) app.about
 #   app.frame-all app.play app.add-node (string target: a node kind)
@@ -58,8 +58,8 @@ menus:
     - {label: _Open..., action: app.open, accel: "<Ctrl>o", icon: folder}
     - label: Open _Recent
       submenu:
-        - {label: forest.rlevel, action: app.open, target: forest.rlevel}
-        - {label: cave.rlevel, action: app.open, target: cave.rlevel}
+        - {label: forest.rlevel, action: app.open-recent, target: forest.rlevel}
+        - {label: cave.rlevel, action: app.open-recent, target: cave.rlevel}
     - separator
     - {label: _Save, action: app.save, accel: "<Ctrl>s", icon: download}
     - {label: Save _As..., action: app.save-as, accel: "<Ctrl><Shift>s"}

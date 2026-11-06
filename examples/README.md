@@ -61,6 +61,15 @@ cd examples
 |---------|-------------|---------------|
 | `replay-demo` | Headless: records a deterministic physics game to a replay file, plays it back, then runs it as two rollback peers over a lossy simulated network | [docs](../docs/modules/replay/index.org) |
 
+### User Interface
+
+| Example | Description | Documentation |
+|---------|-------------|---------------|
+| `ui-showcase` | Every retained UI widget across 17 pages: menus, glass, motion, data, pickers, editor, graph, timeline, dock | [docs](../docs/examples/ui-showcase.org) |
+| `ui-studio` | Tool app from YAML: menu bar, dock, 3D viewport animated by a timeline, node graph, script editor and console | [docs](../docs/examples/ui-studio.org) |
+| `ui-theme-editor` | Live theme editor with palette generation and contrast checks | [docs](../docs/examples/ui-theme-editor.org) |
+| `game-ui-menu` | Gamepad-navigable game menu over a live scene, themed from YAML | [docs](../docs/examples/ui-game-menu.org) |
+
 ### Asset Rendering
 
 | Example | Description |
@@ -74,6 +83,7 @@ Example data files are located in:
 
 - `data/` - General game data (sprites, levels, etc.)
 - `data/dlcs/` - Sample DLC manifest files for `game-dlc-store`
+- `data/ui/` - Declarative UI documents (`studio.yaml`, `hud.yaml`, `pages.yaml`)
 - `mods/` - Sample native mods for `game-creature-collector`
 
 ## Platform Support

@@ -140,7 +140,8 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/dlc-store.org][DLC Store Demo]]* - DLC ownership verification, content gating, trial support, and store integration
 - *[[file:examples/native-dlc.org][Native DLC Example]]* - Loading native GModule shared libraries as DLC content
 - *[[file:examples/ui-basics.org][UI Basics]]* - A minimal retained-UI program: canvas, theme preset, button, switch and slider
-- *[[file:examples/ui-showcase.org][UI Showcase]]* - App-style tour of every widget, theme presets and accents, motion, gradient cards, toasts, a modal dialog and a 10,000-row list
+- *[[file:examples/ui-showcase.org][UI Showcase]]* - App-style tour of every widget, theme presets and accents, motion, gradient cards, toasts, a modal dialog and a 10,000-row list, a menu bar with actions and shortcuts, context menus, right-to-left layout, an anchor-layout HUD, a live 3D viewport, a code editor and console, a node graph, a timeline and a dock area
+- *[[file:examples/ui-studio.org][UI Studio]]* - A docked tool application loaded from YAML: menu bar, 3D viewport, node graph, a timeline whose curves animate the scene, script editor, console, global shortcuts, theme switching and a dock layout saved as YAML
 - *[[file:examples/ui-theme-editor.org][UI Theme Editor]]* - Live theme designer: palette generation from an accent with tint and depth, all 27 colour roles and metrics, a live widget preview, WCAG contrast badges with auto-fix, YAML export
 - *[[file:examples/ui-game-menu.org][Game UI Menu]]* - Game menus over a live scene: YAML theme, virtual resolution with a pointer transform, gamepad navigation, pause modal and achievement toasts
 
@@ -234,6 +235,12 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:modules/ui/canvas-api.org][LrgCanvas API]] - Every LrgCanvas and LrgCanvasInput function: rendering, input frames, focus, popups
 - [[file:modules/ui/widget-api-reference.org][Widget API reference]] - Every public function of every widget class, one section per widget
 - [[file:modules/ui/inspector.org][UI Inspector]] - Tree snapshots, paths, pick mode, highlight overlay, timings and the =lrg_ui_*= MCP tools
+- [[file:modules/ui/actions.org][Actions and Shortcuts]] - Widget-scoped GIO actions, the built-in =app= / =ui= groups, keyboard shortcuts, accelerators, right-to-left layout
+- Menus: [[file:modules/ui/widgets/menu.org][LrgMenu]] (popup and context menus from a =GMenuModel=), [[file:modules/ui/widgets/menu-bar.org][LrgMenuBar]]
+- Layout helpers: [[file:modules/ui/widgets/anchor-layout.org][LrgAnchorLayout]] (HUD anchoring), [[file:modules/ui/widgets/switcher.org][LrgSwitcher]] (pages with transitions), [[file:modules/ui/widgets/size-box.org][LrgSizeBox]] (size and aspect constraints)
+- Embedding: [[file:modules/ui/widgets/viewport.org][LrgViewport]] (render textures and 3D scenes in the layout), [[file:modules/ui/widgets/custom-widget.org][LrgCustomWidget]] (paint / step / event callbacks without subclassing)
+- Editing: [[file:modules/ui/widgets/text-editor.org][LrgTextEditor]], [[file:modules/ui/widgets/syntax.org][LrgSyntax]] (highlighting languages)
+- Tools: [[file:modules/ui/widgets/node-graph.org][LrgNodeGraph]], [[file:modules/ui/widgets/timeline-view.org][LrgTimelineView]], [[file:modules/ui/widgets/dock-area.org][LrgDockArea]]
 - [[file:modules/paint/index.org][Paint Module]] - The instanced SDF pipeline ([[file:modules/paint/paint-list.org][LrgPaintList]], [[file:modules/paint/paint-renderer.org][LrgPaintRenderer]], [[file:modules/paint/text.org][SDF text, fallback fonts and bidi]])
 - [[file:modules/tween/spring.org][Springs and Motion]] - =LrgSpring=, motion presets, reduced motion
 - [[file:modules/gui/index.org][GUI Module]] - The immediate-mode editor GUI (shares the paint renderer and themes)

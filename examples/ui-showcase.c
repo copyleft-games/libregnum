@@ -10,15 +10,23 @@
  * dialog, a 10,000-row virtualized list and table, a tree, icon tiles,
  * pickers, glass materials and effect shaders, layout glide, the
  * dynamic island, Markdown with rich-text effects, a hot-reloaded YAML
- * screen and the UI inspector.
+ * screen, the UI inspector, a menu bar driven by GIO actions and
+ * shortcuts, card context menus, right-to-left layout, an anchor-layout
+ * HUD, a switcher and a size box, a live 3D viewport and a custom
+ * widget, a code editor with a console, a node graph, a playing
+ * timeline and a dock area.
  *
  * Controls:
- *   Mouse                 everything
+ *   Mouse                 everything (right-click a card for its menu)
  *   Tab / Shift+Tab       move focus (focus ring appears)
  *   Arrows / gamepad      spatial focus navigation, list cursor, sliders
  *   Enter / Space / A     activate the focused widget
  *   Escape / B            close popups and dialogs, leave pick mode
  *   F12                   inspector pick mode (hover highlights, click selects)
+ *   Ctrl+Q                quit (app.quit)
+ *   Ctrl+1 .. Ctrl+9      open pages (show.page)
+ *   Ctrl+Shift+R          right-to-left layout (show.rtl)
+ *   F1                    list the shortcuts
  *
  * Run with --help for options (theme, motion, page, screenshots).
  */
@@ -76,6 +84,12 @@ enum
 	PAGE_PICKERS,
 	PAGE_GLASS,
 	PAGE_MOTION,
+	PAGE_LAYOUT,
+	PAGE_VIEWPORT,
+	PAGE_EDITOR,
+	PAGE_GRAPH,
+	PAGE_TIMELINE,
+	PAGE_DOCK,
 	PAGE_MARKDOWN,
 	PAGE_DECLARATIVE,
 	PAGE_INSPECTOR,
@@ -84,7 +98,8 @@ enum
 
 static const gchar *page_names[N_PAGES] = {
 	"Controls", "Cards", "Feedback", "List", "Data", "Pickers",
-	"Glass", "Motion", "Markdown", "Declarative", "Inspector"
+	"Glass", "Motion", "Layout", "Viewport", "Editor", "Graph", "Timeline",
+	"Dock", "Markdown", "Declarative", "Inspector"
 };
 
 /* Effect palettes for the glass page, by built-in effect name. Effects
@@ -753,6 +768,48 @@ typedef struct
 	LrgLabel         *inspect_timings;
 	LrgWidget        *inspect_target;
 	LrgMarkdownLabel *inspect_json;
+
+	/* Menu bar, actions ("show.*") and shortcuts */
+	LrgMenuBar         *menubar;
+	GSimpleActionGroup *actions;
+	LrgComboBox        *theme_combo;
+	LrgComboBox        *motion_combo;
+	gboolean            syncing_menu;  /* guards combo <-> action echo */
+	gboolean            quit;          /* set by app.quit (quit-requested) */
+	gchar              *shot_request;  /* File > Save screenshot, taken after the next render */
+
+	/* Layout page */
+	LrgSwitcher      *switcher;
+	LrgComboBox      *transition_combo;
+	LrgSizeBox       *size_box;
+	LrgLabel         *size_label;
+
+	/* Viewport page */
+	LrgViewport      *viewport;
+	GrlCamera3D      *camera;
+	gfloat            yaw;
+	gfloat            pitch;
+	gfloat            distance;
+	gfloat            scene_time;
+	Model             cube;
+	gboolean          cube_loaded;
+	LrgLabel         *viewport_status;
+	gfloat            spectrum_phase;
+
+	/* Editor page */
+	LrgTextEditor    *code;
+	LrgComboBox      *language_combo;
+	LrgTextEditor    *console_log;
+	LrgTextEditor    *console_input;
+
+	/* Graph, timeline and dock pages */
+	LrgNodeGraph     *graph;
+	LrgTimelineView  *timeline;
+	LrgTimelineViewTrack *track_x;
+	LrgTimelineViewTrack *track_y;
+	LrgTimelineViewTrack *track_size;
+	LrgTimelineViewTrack *track_hue;
+	LrgDockArea      *dock;
 } Showcase;
 
 static void show_toast (Showcase *app, const gchar *title, const gchar *message, LrgToastKind kind);
@@ -920,21 +977,35 @@ set_accent (Showcase       *app,
 	add_glass_rules (theme);
 }
 
+/* The header combo boxes go through the same actions as the menus, so
+ * the radio marks follow them (the actions set the combos back, guarded
+ * by syncing_menu) */
 static void
 on_theme_changed (LrgComboBox *combo,
                   gpointer     user_data)
 {
-	apply_theme (user_data, lrg_combo_box_get_selected_text (combo));
+	Showcase    *app = user_data;
+	const gchar *name = lrg_combo_box_get_selected_text (combo);
+
+	if (app->syncing_menu || name == NULL)
+		return;
+	app->syncing_menu = TRUE;
+	g_action_group_activate_action (G_ACTION_GROUP (app->actions), "theme", g_variant_new_string (name));
+	app->syncing_menu = FALSE;
 }
 
 static void
 on_motion_changed (LrgComboBox *combo,
                    gpointer     user_data)
 {
-	gint i = lrg_combo_box_get_selected (combo);
+	Showcase    *app = user_data;
+	const gchar *name = lrg_combo_box_get_selected_text (combo);
 
-	if (i >= 0 && i < (gint) G_N_ELEMENTS (motions))
-		lrg_theme_set_motion (lrg_theme_get_default (), motions[i].motion);
+	if (app->syncing_menu || name == NULL)
+		return;
+	app->syncing_menu = TRUE;
+	g_action_group_activate_action (G_ACTION_GROUP (app->actions), "motion", g_variant_new_string (name));
+	app->syncing_menu = FALSE;
 }
 
 static void
@@ -946,10 +1017,7 @@ on_accent_clicked (LrgButton *button,
 	GrlColor     accent;
 
 	if (lrg_color_parse (hex, &accent))
-	{
-		set_accent (app, &accent);
-		sync_pickers_to_accent (app);
-	}
+		g_action_group_activate_action (G_ACTION_GROUP (app->actions), "accent", g_variant_new_string (hex));
 }
 
 /* ==========================================================================
@@ -1123,11 +1191,148 @@ build_controls_page (Showcase *app)
 	return LRG_WIDGET (grid);
 }
 
+static const gchar *accent_names[] = { "Violet", "Cyan", "Mint", "Amber", "Coral", "Pink" };
+
+/* append_item: a menu item with an optional icon and a display-only
+ * accelerator (the real binding is a canvas shortcut; without an accel
+ * attribute the menu would look the shortcut up itself) */
+static void
+append_item (GMenu       *menu,
+             const gchar *label,
+             const gchar *detailed_action,
+             const gchar *icon,
+             const gchar *accel)
+{
+	g_autoptr(GMenuItem) item = g_menu_item_new (label, detailed_action);
+
+	if (icon != NULL)
+		g_menu_item_set_attribute (item, "icon", "s", icon);
+	if (accel != NULL)
+		g_menu_item_set_attribute (item, "accel", "s", accel);
+	g_menu_append_item (menu, item);
+}
+
+/* ==========================================================================
+ * Card context menus: a "card" action group on each card, so the same
+ * menu model acts on whichever card was right-clicked
+ * ========================================================================== */
+
+/* card_sync: title text and which elevation actions are enabled (the
+ * menu greys out disabled items) */
+static void
+card_sync (LrgPanel *panel)
+{
+	GActionGroup     *group = lrg_widget_get_action_group (LRG_WIDGET (panel), "card");
+	LrgLabel         *title = g_object_get_data (G_OBJECT (panel), "title");
+	guint             elevation = lrg_panel_get_elevation (panel);
+	g_autofree gchar *text = g_strdup_printf ("Elevation %u", elevation);
+
+	lrg_label_set_text (title, text);
+	g_simple_action_set_enabled (G_SIMPLE_ACTION (g_action_map_lookup_action (G_ACTION_MAP (group), "raise")),
+	                             elevation < 3);
+	g_simple_action_set_enabled (G_SIMPLE_ACTION (g_action_map_lookup_action (G_ACTION_MAP (group), "lower")),
+	                             elevation > 0);
+}
+
+static void
+on_card_raise (GSimpleAction *action,
+               GVariant      *parameter,
+               gpointer       user_data)
+{
+	LrgPanel *panel = user_data;
+
+	lrg_panel_set_elevation (panel, MIN (lrg_panel_get_elevation (panel) + 1, 3));
+	card_sync (panel);
+}
+
+static void
+on_card_lower (GSimpleAction *action,
+               GVariant      *parameter,
+               gpointer       user_data)
+{
+	LrgPanel *panel = user_data;
+	guint     elevation = lrg_panel_get_elevation (panel);
+
+	lrg_panel_set_elevation (panel, elevation > 0 ? elevation - 1 : 0);
+	card_sync (panel);
+}
+
+static void
+on_card_replay (GSimpleAction *action,
+                GVariant      *parameter,
+                gpointer       user_data)
+{
+	lrg_widget_play_appear (LRG_WIDGET (user_data));
+}
+
+/* on_card_inspect: select the card in the inspector and go there */
+static void
+on_card_inspect (GSimpleAction *action,
+                 GVariant      *parameter,
+                 gpointer       user_data)
+{
+	Showcase *app = g_object_get_data (G_OBJECT (user_data), "showcase");
+
+	app->inspect_target = LRG_WIDGET (user_data);
+	lrg_ui_inspector_set_selected (app->inspector, LRG_WIDGET (user_data));
+	g_action_group_activate_action (G_ACTION_GROUP (app->actions), "page", g_variant_new_string ("inspector"));
+}
+
+/* card_menu_model: card.* items, then the canvas-wide accent radio,
+ * which resolves from the card up to the canvas's "show" group */
+static GMenuModel *
+card_menu_model (void)
+{
+	GMenu            *menu = g_menu_new ();
+	g_autoptr(GMenu)  card_items = g_menu_new ();
+	g_autoptr(GMenu)  accent = g_menu_new ();
+	guint             i;
+
+	append_item (card_items, "_Raise elevation", "card.raise", "chevron-up", NULL);
+	append_item (card_items, "_Lower elevation", "card.lower", "chevron-down", NULL);
+	append_item (card_items, "Re_play the pop", "card.replay", "refresh", NULL);
+	append_item (card_items, "_Inspect", "card.inspect", "search", NULL);
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (card_items));
+	for (i = 0; i < G_N_ELEMENTS (accents); i++)
+	{
+		g_autoptr(GMenuItem) item = g_menu_item_new (accent_names[i], NULL);
+
+		g_menu_item_set_action_and_target_value (item, "show.accent", g_variant_new_string (accents[i]));
+		g_menu_append_item (accent, item);
+	}
+	g_menu_append_section (menu, "Accent", G_MENU_MODEL (accent));
+	return G_MENU_MODEL (menu);
+}
+
+/* attach_card_menu: the shared model plus this card's own group */
+static void
+attach_card_menu (Showcase   *app,
+                  LrgPanel   *panel,
+                  LrgLabel   *title,
+                  GMenuModel *model)
+{
+	const GActionEntry entries[] = {
+		{ "raise",   on_card_raise,   NULL, NULL, NULL, { 0 } },
+		{ "lower",   on_card_lower,   NULL, NULL, NULL, { 0 } },
+		{ "replay",  on_card_replay,  NULL, NULL, NULL, { 0 } },
+		{ "inspect", on_card_inspect, NULL, NULL, NULL, { 0 } }
+	};
+	g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new ();
+
+	g_object_set_data (G_OBJECT (panel), "showcase", app);
+	g_object_set_data (G_OBJECT (panel), "title", title);
+	g_action_map_add_action_entries (G_ACTION_MAP (group), entries, G_N_ELEMENTS (entries), panel);
+	lrg_widget_insert_action_group (LRG_WIDGET (panel), "card", G_ACTION_GROUP (group));
+	lrg_widget_set_context_menu (LRG_WIDGET (panel), model);
+	card_sync (panel);
+}
+
 static LrgWidget *
 build_cards_page (Showcase *app)
 {
-	LrgGrid *grid = lrg_grid_new (3);
-	guint    i;
+	LrgGrid               *grid = lrg_grid_new (3);
+	g_autoptr(GMenuModel)  menu = card_menu_model ();
+	guint                  i;
 
 	lrg_grid_set_column_spacing (grid, 24.0f);
 	lrg_grid_set_row_spacing (grid, 24.0f);
@@ -1147,8 +1352,14 @@ build_cards_page (Showcase *app)
 		lrg_container_set_padding (LRG_CONTAINER (panel), 22.0f);
 		lrg_widget_set_appear (LRG_WIDGET (panel), LRG_APPEAR_POP, 0.06f * (gfloat) i);
 		lrg_container_set_spacing (LRG_CONTAINER (box), 8.0f);
-		add (box, label_with_class (title, "heading"));
-		add (box, label_with_class ("Gradient fill from a theme\nstyle rule; hover to glow.", NULL));
+		{
+			LrgLabel *heading = label_with_class (title, "heading");
+
+			lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (heading));
+			attach_card_menu (app, panel, heading, menu);
+			g_object_unref (heading);
+		}
+		add (box, label_with_class ("Gradient fill from a theme style\nrule; hover to glow, right-click\nfor its context menu.", NULL));
 		lrg_container_add_child (LRG_CONTAINER (panel), LRG_WIDGET (box));
 		g_object_unref (box);
 		g_ptr_array_add (app->cards, panel);
@@ -2505,6 +2716,10 @@ update_inspector_labels (Showcase *app)
 	g_autofree gchar *json = NULL;
 	g_autoptr(GString) md = g_string_new ("```\n");
 
+	/* View > Inspector pick mode shows a check mark from this state */
+	if (app->actions != NULL)
+		g_simple_action_set_state (G_SIMPLE_ACTION (g_action_map_lookup_action (G_ACTION_MAP (app->actions), "pick")),
+		                           g_variant_new_boolean (lrg_ui_inspector_get_pick_mode (app->inspector)));
 	lrg_label_set_text (app->inspect_mode, lrg_ui_inspector_get_pick_mode (app->inspector)
 	                    ? "Pick mode: ON  (hover highlights, click selects, Escape leaves)"
 	                    : "Pick mode: off  (press F12)");
@@ -2676,6 +2891,1110 @@ build_inspector_page (Showcase *app)
  * Navigation
  * ========================================================================== */
 
+/* ==========================================================================
+ * Layout page: anchor layout HUD, switcher, size box
+ * ========================================================================== */
+
+/* paint_radar: a minimap for the HUD, a radar sweep that turns with the
+ * list time (a pure function of it, so captures are reproducible) */
+static void
+paint_radar (LrgCustomWidget *widget,
+             LrgPaintList    *list,
+             gfloat           x,
+             gfloat           y,
+             gfloat           width,
+             gfloat           height,
+             gpointer         user_data)
+{
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	gfloat    r = MIN (width, height) * 0.5f;
+	gfloat    cx = x + width * 0.5f;
+	gfloat    cy = y + height * 0.5f;
+	gdouble   t = lrg_paint_list_get_time (list);
+	gfloat    a = (gfloat) fmod (t * 1.6, G_PI * 2.0);
+	GrlColor  ring;
+	GrlColor  dim;
+	GrlColor  sweep;
+	GrlColor  blip;
+	guint     i;
+
+	color_hex ("#04121f", 0.72f, &dim);
+	color_hex ("#22d3ee", 0.85f, &ring);
+	lrg_paint_list_shadow (list, x, y, width, height, r, 18.0f, 0.0f, 0.0f, 4.0f,
+	                       lrg_theme_get_color (theme, LRG_THEME_COLOR_SHADOW));
+	lrg_paint_list_circle (list, cx, cy, r, &dim);
+	lrg_paint_list_border (list, x, y, width, height, r, 2.0f, &ring);
+	lrg_paint_list_border (list, cx - r * 0.55f, cy - r * 0.55f, r * 1.1f, r * 1.1f, r * 0.55f, 1.0f, &ring);
+
+	/* The sweep: a fan of fading lines trailing the beam */
+	for (i = 0; i < 14; i++)
+	{
+		gfloat aa = a - (gfloat) i * 0.05f;
+
+		color_hex ("#22d3ee", 0.9f * (1.0f - (gfloat) i / 14.0f), &sweep);
+		lrg_paint_list_line (list, cx, cy, cx + cosf (aa) * r * 0.95f, cy + sinf (aa) * r * 0.95f,
+		                     2.0f, &sweep);
+	}
+
+	/* Two contacts, the player in the middle */
+	color_hex ("#f43f5e", 1.0f, &blip);
+	lrg_paint_list_circle (list, cx + r * 0.42f, cy - r * 0.30f, 4.0f, &blip);
+	color_hex ("#fbbf24", 1.0f, &blip);
+	lrg_paint_list_circle (list, cx - r * 0.25f, cy + r * 0.50f, 4.0f, &blip);
+	lrg_paint_list_circle (list, cx, cy, 3.0f, &ring);
+}
+
+/* paint_crosshair: four ticks and a dot that breathe with the list time */
+static void
+paint_crosshair (LrgCustomWidget *widget,
+                 LrgPaintList    *list,
+                 gfloat           x,
+                 gfloat           y,
+                 gfloat           width,
+                 gfloat           height,
+                 gpointer         user_data)
+{
+	gfloat   cx = x + width * 0.5f;
+	gfloat   cy = y + height * 0.5f;
+	gfloat   gap = 7.0f + 2.0f * (gfloat) sin (lrg_paint_list_get_time (list) * 3.0);
+	GrlColor c;
+
+	color_hex ("#ffffff", 0.92f, &c);
+	lrg_paint_list_line (list, cx - gap - 9.0f, cy, cx - gap, cy, 2.0f, &c);
+	lrg_paint_list_line (list, cx + gap, cy, cx + gap + 9.0f, cy, 2.0f, &c);
+	lrg_paint_list_line (list, cx, cy - gap - 9.0f, cx, cy - gap, 2.0f, &c);
+	lrg_paint_list_line (list, cx, cy + gap, cx, cy + gap + 9.0f, 2.0f, &c);
+	lrg_paint_list_circle (list, cx, cy, 2.0f, &c);
+}
+
+/* custom_painter: a fixed-size LrgCustomWidget with a paint callback */
+static LrgCustomWidget *
+custom_painter (gfloat width,
+                gfloat height,
+                void (*paint) (LrgCustomWidget *, LrgPaintList *, gfloat, gfloat, gfloat, gfloat, gpointer),
+                gpointer user_data)
+{
+	LrgCustomWidget      *w = lrg_custom_widget_new ();
+	LrgCustomWidgetFuncs  funcs = { 0 };
+
+	funcs.paint = paint;
+	lrg_custom_widget_set_funcs (w, &funcs, user_data, NULL);
+	lrg_custom_widget_set_preferred_width (w, width);
+	lrg_custom_widget_set_preferred_height (w, height);
+	return w;
+}
+
+/* hud_chip: a frosted glass pill holding a row of widgets */
+static LrgHBox *
+hud_chip (LrgPanel **panel_out)
+{
+	LrgPanel *panel = lrg_panel_new ();
+	LrgHBox  *row = hrow (10.0f);
+
+	lrg_widget_add_class (LRG_WIDGET (panel), "glass-frosted");
+	lrg_panel_set_elevation (panel, 2);
+	lrg_panel_set_fill_children (panel, TRUE);
+	lrg_container_set_padding (LRG_CONTAINER (panel), 12.0f);
+	lrg_container_add_child (LRG_CONTAINER (panel), LRG_WIDGET (row));
+	g_object_unref (row);
+	*panel_out = panel;
+	return row;
+}
+
+static const struct { const gchar *name; LrgSwitcherTransition transition; } transitions[] = {
+	{ "Crossfade",   LRG_SWITCHER_TRANSITION_CROSSFADE },
+	{ "Slide",       LRG_SWITCHER_TRANSITION_SLIDE },
+	{ "Slide up",    LRG_SWITCHER_TRANSITION_SLIDE_UP },
+	{ "Slide down",  LRG_SWITCHER_TRANSITION_SLIDE_DOWN },
+	{ "Zoom",        LRG_SWITCHER_TRANSITION_ZOOM },
+	{ "None",        LRG_SWITCHER_TRANSITION_NONE }
+};
+
+static void
+on_transition_changed (LrgComboBox *combo,
+                       gpointer     user_data)
+{
+	Showcase *app = user_data;
+	gint      i = lrg_combo_box_get_selected (combo);
+
+	if (i >= 0 && i < (gint) G_N_ELEMENTS (transitions))
+		lrg_switcher_set_transition (app->switcher, transitions[i].transition);
+}
+
+/* on_switch_step: Previous / Next buttons, wrapping around */
+static void
+on_switch_step (LrgButton *button,
+                gpointer   user_data)
+{
+	Showcase *app = user_data;
+	gint      step = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "step"));
+	gint      n = (gint) lrg_container_get_child_count (LRG_CONTAINER (app->switcher));
+	gint      i = lrg_switcher_get_visible_index (app->switcher);
+
+	if (n > 0)
+		lrg_switcher_set_visible_index (app->switcher, ((i + step) % n + n) % n);
+}
+
+static LrgWidget *
+build_layout_page (Showcase *app)
+{
+	static const struct { const gchar *title; const gchar *text; } slides[] = {
+		{ "Play",     "Continue where you left off:\nchapter 3, the flooded vault." },
+		{ "Options",  "Video, audio and controls.\nPages keep their own state." },
+		{ "Credits",  "Made with libregnum.\nTransitions run on springs." }
+	};
+	LrgVBox          *page = vcol (20.0f);
+	LrgHBox          *row = hrow (20.0f);
+	LrgOverlay       *stage = lrg_overlay_new ();
+	LrgAnchorLayout  *hud = lrg_anchor_layout_new ();
+	LrgPanel         *panel;
+	LrgHBox          *chip;
+	LrgVBox          *box;
+	LrgHBox          *controls;
+	LrgButton        *btn;
+	LrgProgressBar   *hp;
+	guint             i;
+
+	/* An anchor layout over the glass page's backdrop: each HUD element
+	 * pinned to an edge or corner, so resizing the window keeps them put */
+	box = card (LRG_CONTAINER (page), "LrgAnchorLayout: a game HUD pinned to the corners", NULL);
+	lrg_widget_set_min_size (LRG_WIDGET (stage), 0.0f, 280.0f);
+	add (stage, g_object_new (SHOWCASE_TYPE_BACKDROP, NULL));
+
+	chip = hud_chip (&panel);
+	add (chip, showcase_icon_new (LRG_ICON_HEART, 18.0f, LRG_THEME_COLOR_DANGER));
+	hp = lrg_progress_bar_new ();
+	lrg_progress_bar_set_value (hp, 82.0);
+	lrg_widget_set_min_size (LRG_WIDGET (hp), 150.0f, 0.0f);
+	lrg_widget_set_valign (LRG_WIDGET (hp), LRG_ALIGN_CENTER);
+	add (chip, hp);
+	add (chip, label_with_class ("82", NULL));
+	lrg_anchor_layout_add (hud, LRG_WIDGET (panel), LRG_ANCHOR_PRESET_TOP_LEFT, 16.0f, 16.0f);
+	g_object_unref (panel);
+
+	lrg_anchor_layout_add (hud, LRG_WIDGET (custom_painter (96.0f, 96.0f, paint_radar, NULL)),
+	                       LRG_ANCHOR_PRESET_TOP_RIGHT, 16.0f, 16.0f);
+	lrg_anchor_layout_add (hud, LRG_WIDGET (custom_painter (48.0f, 48.0f, paint_crosshair, NULL)),
+	                       LRG_ANCHOR_PRESET_CENTER, 0.0f, 0.0f);
+
+	chip = hud_chip (&panel);
+	add (chip, showcase_icon_new (LRG_ICON_STAR, 16.0f, LRG_THEME_COLOR_WARNING));
+	add (chip, label_with_class ("Objective: reach the flooded vault", NULL));
+	lrg_anchor_layout_add (hud, LRG_WIDGET (panel), LRG_ANCHOR_PRESET_TOP, 0.0f, 16.0f);
+	g_object_unref (panel);
+
+	chip = hud_chip (&panel);
+	add (chip, label_with_class ("E", "heading"));
+	add (chip, label_with_class ("Open the vault door", NULL));
+	lrg_anchor_layout_add (hud, LRG_WIDGET (panel), LRG_ANCHOR_PRESET_BOTTOM, 0.0f, 16.0f);
+	g_object_unref (panel);
+
+	chip = hud_chip (&panel);
+	add (chip, label_with_class ("24", "title"));
+	add (chip, label_with_class ("/ 120", "muted"));
+	lrg_anchor_layout_add (hud, LRG_WIDGET (panel), LRG_ANCHOR_PRESET_BOTTOM_RIGHT, 16.0f, 16.0f);
+	g_object_unref (panel);
+
+	add (stage, hud);
+	add (box, stage);
+
+	/* A switcher with a transition picker */
+	box = card (LRG_CONTAINER (row), "LrgSwitcher: one page at a time", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	controls = hrow (10.0f);
+	app->transition_combo = lrg_combo_box_new ();
+	for (i = 0; i < G_N_ELEMENTS (transitions); i++)
+		lrg_combo_box_append (app->transition_combo, transitions[i].name);
+	lrg_combo_box_set_selected (app->transition_combo, 1);
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->transition_combo), 1.0f);
+	g_signal_connect (app->transition_combo, "changed", G_CALLBACK (on_transition_changed), app);
+	lrg_container_add_child (LRG_CONTAINER (controls), LRG_WIDGET (app->transition_combo));
+	btn = lrg_button_new ("Previous");
+	g_object_set_data (G_OBJECT (btn), "step", GINT_TO_POINTER (-1));
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_switch_step), app);
+	add (controls, btn);
+	btn = lrg_button_new ("Next");
+	lrg_widget_add_class (LRG_WIDGET (btn), "primary");
+	g_object_set_data (G_OBJECT (btn), "step", GINT_TO_POINTER (1));
+	g_signal_connect (btn, "clicked", G_CALLBACK (on_switch_step), app);
+	add (controls, btn);
+	add (box, controls);
+
+	app->switcher = lrg_switcher_new ();
+	lrg_switcher_set_transition (app->switcher, LRG_SWITCHER_TRANSITION_SLIDE);
+	lrg_widget_set_min_size (LRG_WIDGET (app->switcher), 0.0f, 150.0f);
+	for (i = 0; i < G_N_ELEMENTS (slides); i++)
+	{
+		g_autofree gchar *klass = g_strdup_printf ("card-%u", (i * 2) % 6);
+		LrgPanel         *slide = lrg_panel_new ();
+		LrgVBox          *inner = vcol (8.0f);
+
+		lrg_widget_add_class (LRG_WIDGET (slide), klass);
+		lrg_panel_set_fill_children (slide, TRUE);
+		lrg_container_set_padding (LRG_CONTAINER (slide), 20.0f);
+		add (inner, label_with_class (slides[i].title, "title"));
+		add (inner, label_with_class (slides[i].text, NULL));
+		add (slide, inner);
+		lrg_switcher_add_named (app->switcher, LRG_WIDGET (slide), slides[i].title);
+		g_object_unref (slide);
+	}
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->switcher));
+
+	/* A size box holding its child at 16:9 inside whatever it gets */
+	box = card (LRG_CONTAINER (row), "LrgSizeBox: 16:9 at any size", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	app->size_label = label_with_class ("", "muted");
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->size_label));
+	app->size_box = lrg_size_box_new ();
+	lrg_size_box_set_aspect_ratio (app->size_box, 16.0f / 9.0f);
+	lrg_widget_set_min_size (LRG_WIDGET (app->size_box), 0.0f, 196.0f);
+	{
+		LrgPanel *frame = lrg_panel_new ();
+		LrgLabel *ratio = label_with_class ("16 : 9", "title");
+
+		lrg_widget_add_class (LRG_WIDGET (frame), "card-5");
+		lrg_panel_set_elevation (frame, 2);
+		lrg_panel_set_fill_children (frame, TRUE);
+		lrg_widget_set_halign (LRG_WIDGET (ratio), LRG_ALIGN_CENTER);
+		lrg_widget_set_valign (LRG_WIDGET (ratio), LRG_ALIGN_CENTER);
+		add (frame, ratio);
+		lrg_size_box_set_child (app->size_box, LRG_WIDGET (frame));
+		g_object_unref (frame);
+	}
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->size_box));
+
+	add (page, row);
+	return LRG_WIDGET (page);
+}
+
+/* update_size_label: report the size box child's allocation */
+static void
+update_size_label (Showcase *app)
+{
+	LrgWidget        *child = lrg_size_box_get_child (app->size_box);
+	g_autofree gchar *text = NULL;
+
+	if (child == NULL)
+		return;
+	text = g_strdup_printf ("Child %.0f x %.0f in a %.0f x %.0f box",
+	                        lrg_widget_get_width (child), lrg_widget_get_height (child),
+	                        lrg_widget_get_width (LRG_WIDGET (app->size_box)),
+	                        lrg_widget_get_height (LRG_WIDGET (app->size_box)));
+	lrg_label_set_text (app->size_label, text);
+}
+
+/* ==========================================================================
+ * Viewport page: a live 3D scene through LrgViewport and GrlCamera3D,
+ * and an animated LrgCustomWidget
+ * ========================================================================== */
+
+/* load_shaded_cube: a unit cube mesh with per-face grey vertex colours,
+ * so a flat tint still reads as a lit solid (raylib's default shader
+ * multiplies the vertex colour by the tint) */
+static Model
+load_shaded_cube (void)
+{
+	Mesh   src = GenMeshCube (1.0f, 1.0f, 1.0f);
+	Mesh   mesh = { 0 };
+	gint   i;
+
+	mesh.vertexCount = src.vertexCount;
+	mesh.triangleCount = src.triangleCount;
+	mesh.vertices = MemAlloc ((guint) src.vertexCount * 3 * sizeof (gfloat));
+	mesh.normals = MemAlloc ((guint) src.vertexCount * 3 * sizeof (gfloat));
+	mesh.texcoords = MemAlloc ((guint) src.vertexCount * 2 * sizeof (gfloat));
+	mesh.colors = MemAlloc ((guint) src.vertexCount * 4);
+	mesh.indices = MemAlloc ((guint) src.triangleCount * 3 * sizeof (gushort));
+	memcpy (mesh.vertices, src.vertices, (gsize) src.vertexCount * 3 * sizeof (gfloat));
+	memcpy (mesh.normals, src.normals, (gsize) src.vertexCount * 3 * sizeof (gfloat));
+	memcpy (mesh.texcoords, src.texcoords, (gsize) src.vertexCount * 2 * sizeof (gfloat));
+	memcpy (mesh.indices, src.indices, (gsize) src.triangleCount * 3 * sizeof (gushort));
+
+	/* Light from above-front-right: brightness = ambient + diffuse */
+	for (i = 0; i < src.vertexCount; i++)
+	{
+		gfloat nx = src.normals[i * 3 + 0];
+		gfloat ny = src.normals[i * 3 + 1];
+		gfloat nz = src.normals[i * 3 + 2];
+		gfloat d = MAX (0.0f, nx * 0.40f + ny * 0.80f + nz * 0.45f);
+		guint8 v = (guint8) CLAMP (95.0f + 160.0f * d, 0.0f, 255.0f);
+
+		mesh.colors[i * 4 + 0] = v;
+		mesh.colors[i * 4 + 1] = v;
+		mesh.colors[i * 4 + 2] = v;
+		mesh.colors[i * 4 + 3] = 255;
+	}
+	UnloadMesh (src);
+	UploadMesh (&mesh, false);
+	return LoadModelFromMesh (mesh);
+}
+
+/* orbit_apply: place the camera on a sphere around the scene centre */
+static void
+orbit_apply (Showcase *app)
+{
+	gfloat cp = cosf (app->pitch);
+
+	grl_camera3d_set_position_xyz (app->camera,
+	                               app->distance * cp * sinf (app->yaw),
+	                               0.6f + app->distance * sinf (app->pitch),
+	                               app->distance * cp * cosf (app->yaw));
+}
+
+/* draw_scene: the viewport's render function. Texture mode is active on
+ * the viewport's own render texture; this runs from the canvas step,
+ * outside the UI paint pass, so 3D mode is free to use */
+static void
+draw_scene (LrgViewport      *viewport,
+            GrlRenderTexture *target,
+            gfloat            width,
+            gfloat            height,
+            gpointer          user_data)
+{
+	static const gchar *hues[] = { "#7c6cff", "#22d3ee", "#34d399", "#fbbf24", "#ff7a45", "#f472b6" };
+	Showcase *app = user_data;
+	gfloat    t = app->scene_time;
+	guint     i;
+
+	grl_camera3d_begin (app->camera);
+	DrawGrid (16, 0.5f);
+
+	/* A ring of cubes bobbing and spinning around a large centre cube */
+	for (i = 0; i < G_N_ELEMENTS (hues); i++)
+	{
+		gfloat   a = t * 0.5f + (gfloat) i * (gfloat) G_PI / 3.0f;
+		Vector3  pos = { cosf (a) * 2.6f, 0.45f + 0.25f * sinf (t * 2.0f + (gfloat) i), sinf (a) * 2.6f };
+		Vector3  axis = { 0.3f, 1.0f, 0.2f };
+		Vector3  scale = { 0.6f, 0.6f, 0.6f };
+		GrlColor c;
+		Color    tint;
+
+		lrg_color_parse (hues[i], &c);
+		tint.r = c.r;
+		tint.g = c.g;
+		tint.b = c.b;
+		tint.a = 255;
+		if (app->cube_loaded)
+		{
+			DrawModelEx (app->cube, pos, axis, t * 90.0f + (gfloat) i * 40.0f, scale, tint);
+		}
+	}
+	if (app->cube_loaded)
+	{
+		Vector3 pos = { 0.0f, 0.8f, 0.0f };
+		Vector3 axis = { 0.0f, 1.0f, 0.0f };
+		Vector3 scale = { 1.4f, 1.4f, 1.4f };
+
+		DrawModelEx (app->cube, pos, axis, t * 30.0f, scale, (Color){ 180, 170, 255, 255 });
+	}
+	DrawSphere ((Vector3){ cosf (t) * 1.2f, 2.2f + 0.2f * sinf (t * 3.0f), sinf (t) * 1.2f },
+	            0.18f, (Color){ 251, 191, 36, 255 });
+	grl_camera3d_end (app->camera);
+}
+
+/* on_viewport_move: left-drag orbits; the status line shows the pointer
+ * in texture coordinates */
+static void
+on_viewport_move (LrgViewport *viewport,
+                  gfloat       u,
+                  gfloat       v,
+                  gfloat       dx,
+                  gfloat       dy,
+                  gpointer     user_data)
+{
+	Showcase         *app = user_data;
+	g_autofree gchar *text = NULL;
+
+	if (lrg_viewport_get_dragging (viewport))
+	{
+		app->yaw -= dx * 0.01f;
+		app->pitch = CLAMP (app->pitch + dy * 0.01f, -0.2f, 1.4f);
+		orbit_apply (app);
+	}
+	text = g_strdup_printf ("Pointer at texel %.0f, %.0f  -  yaw %.2f  pitch %.2f  distance %.1f",
+	                        u, v, app->yaw, app->pitch, app->distance);
+	lrg_label_set_text (app->viewport_status, text);
+}
+
+static void
+on_viewport_scroll (LrgViewport *viewport,
+                    gfloat       u,
+                    gfloat       v,
+                    gfloat       scroll_x,
+                    gfloat       scroll_y,
+                    gpointer     user_data)
+{
+	Showcase *app = user_data;
+
+	app->distance = CLAMP (app->distance * (1.0f - scroll_y * 0.1f), 3.0f, 20.0f);
+	orbit_apply (app);
+}
+
+static void
+on_resolution_changed (LrgSlider *slider,
+                       gpointer   user_data)
+{
+	Showcase *app = user_data;
+
+	lrg_viewport_set_resolution_scale (app->viewport, (gfloat) lrg_slider_get_value (slider));
+}
+
+/* spectrum_step: the custom widget's own clock (the canvas calls it
+ * every frame with the frame time); TRUE keeps the canvas animating */
+static gboolean
+spectrum_step (LrgCustomWidget *widget,
+               gfloat           delta_time,
+               gpointer         user_data)
+{
+	Showcase *app = user_data;
+
+	app->spectrum_phase += delta_time;
+	return TRUE;
+}
+
+/* spectrum_paint: a fake audio spectrum, rounded bars with an accent
+ * gradient and a glowing peak cap, purely from spectrum_phase */
+static void
+spectrum_paint (LrgCustomWidget *widget,
+                LrgPaintList    *list,
+                gfloat           x,
+                gfloat           y,
+                gfloat           width,
+                gfloat           height,
+                gpointer         user_data)
+{
+	Showcase       *app = user_data;
+	LrgTheme       *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	const GrlColor *accent = lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	const GrlColor *track = lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
+	GrlColor        top;
+	GrlColor        cap;
+	LrgCornerRadii  radii;
+	guint           n = 24;
+	gfloat          gap = 4.0f;
+	gfloat          bw = (width - gap * (gfloat) (n - 1)) / (gfloat) n;
+	gfloat          p = app->spectrum_phase;
+	guint           i;
+
+	color_hex ("#f472b6", 1.0f, &top);
+	lrg_corner_radii_init_uniform (&radii, bw * 0.5f);
+	for (i = 0; i < n; i++)
+	{
+		gfloat           f = (gfloat) i / (gfloat) n;
+		gfloat           level = 0.18f + 0.38f * (0.5f + 0.5f * sinf (p * (2.0f + f * 3.0f) + f * 9.0f))
+		                         + 0.30f * (0.5f + 0.5f * sinf (p * 5.3f + f * 21.0f)) * (1.0f - f);
+		gfloat           bh = MIN (1.0f, level) * height;
+		gfloat           bx = x + (gfloat) i * (bw + gap);
+		LrgPaintGradient g;
+
+		lrg_paint_list_rect (list, bx, y, bw, height, bw * 0.5f, track);
+		lrg_paint_gradient_init_linear (&g, accent, &top, 90.0f);
+		lrg_paint_list_rect_ex (list, bx, y + height - bh, bw, bh, &radii, NULL, &g, 0.0f, NULL);
+		lrg_paint_color_with_alpha (&top, 0.9f, &cap);
+		lrg_paint_list_shadow (list, bx, y + height - bh, bw, 4.0f, 2.0f, 10.0f, 0.0f, 0.0f, 0.0f, &cap);
+	}
+}
+
+static LrgWidget *
+build_viewport_page (Showcase *app)
+{
+	LrgHBox              *page = hrow (20.0f);
+	LrgVBox              *side = vcol (20.0f);
+	LrgVBox              *box;
+	LrgPanel             *panel;
+	LrgSlider            *res;
+	LrgCustomWidget      *spectrum;
+	LrgCustomWidgetFuncs  funcs = { 0 };
+	GrlColor              clear;
+
+	/* The camera orbits the scene centre; the cube model needs a GL
+	 * context, which exists because the window opens before build_ui */
+	app->camera = grl_camera3d_new ();
+	grl_camera3d_set_target_xyz (app->camera, 0.0f, 0.6f, 0.0f);
+	grl_camera3d_set_fovy (app->camera, 45.0f);
+	app->yaw = 0.7f;
+	app->pitch = 0.45f;
+	app->distance = 8.0f;
+	orbit_apply (app);
+	if (IsWindowReady ())
+	{
+		app->cube = load_shaded_cube ();
+		app->cube_loaded = TRUE;
+	}
+
+	box = card (LRG_CONTAINER (page), "LrgViewport: a live 3D scene", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 2.0f);
+	app->viewport = lrg_viewport_new ();
+	color_hex ("#0b1026", 1.0f, &clear);
+	lrg_viewport_set_clear_color (app->viewport, &clear);
+	lrg_viewport_set_render_func (app->viewport, draw_scene, app, NULL);
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->viewport), 1.0f);
+	g_signal_connect (app->viewport, "pointer-move", G_CALLBACK (on_viewport_move), app);
+	g_signal_connect (app->viewport, "pointer-scroll", G_CALLBACK (on_viewport_scroll), app);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->viewport));
+	app->viewport_status = label_with_class ("Drag to orbit, wheel to zoom", "muted");
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->viewport_status));
+
+	/* Render resolution: the texture follows the widget times this */
+	box = card (LRG_CONTAINER (side), "Resolution scale", NULL);
+	add (box, label_with_class ("0.25 renders 1/16 of the pixels\nand upscales; 2 supersamples.", "muted"));
+	res = lrg_slider_new_with_range (0.25, 2.0, 0.25);
+	lrg_slider_set_value (res, 1.0);
+	g_signal_connect (res, "value-changed", G_CALLBACK (on_resolution_changed), app);
+	add (box, res);
+
+	/* An LrgCustomWidget: paint + step callbacks, no subclass */
+	box = card (LRG_CONTAINER (side), "LrgCustomWidget", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	spectrum = lrg_custom_widget_new ();
+	funcs.paint = spectrum_paint;
+	funcs.step = spectrum_step;
+	lrg_custom_widget_set_funcs (spectrum, &funcs, app, NULL);
+	lrg_custom_widget_set_preferred_height (spectrum, 140.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (spectrum), 1.0f);
+	add (box, spectrum);
+	add (box, label_with_class ("24 bars from one paint callback;\nthe phase advances in step().", "muted"));
+
+	lrg_widget_set_fill_weight (LRG_WIDGET (side), 1.0f);
+	add (page, side);
+	return LRG_WIDGET (page);
+}
+
+/* ==========================================================================
+ * Editor page: LrgTextEditor with syntax highlighting, and a console
+ * ========================================================================== */
+
+static const struct { const gchar *language; const gchar *text; } code_samples[] = {
+	{ "c",
+	  "/* player.c - a GObject with a spring-driven health bar */\n"
+	  "#include <libregnum.h>\n"
+	  "\n"
+	  "#define MAX_HEALTH (100)\n"
+	  "\n"
+	  "struct _GamePlayer\n"
+	  "{\n"
+	  "\tGObject    parent_instance;\n"
+	  "\tgint       health;\n"
+	  "\tLrgSpring  bar;\n"
+	  "};\n"
+	  "\n"
+	  "G_DEFINE_FINAL_TYPE (GamePlayer, game_player, G_TYPE_OBJECT)\n"
+	  "\n"
+	  "void\n"
+	  "game_player_damage (GamePlayer *self,\n"
+	  "                    gint        amount)\n"
+	  "{\n"
+	  "\tg_return_if_fail (GAME_IS_PLAYER (self));\n"
+	  "\n"
+	  "\tself->health = CLAMP (self->health - amount, 0, MAX_HEALTH);\n"
+	  "\tlrg_spring_set_target (&self->bar, (gfloat) self->health / MAX_HEALTH);\n"
+	  "\tif (self->health == 0)\n"
+	  "\t\tg_signal_emit_by_name (self, \"died\");\n"
+	  "}\n" },
+	{ "yaml",
+	  "# studio.yaml - a docked tool window, loaded by LrgUILoader\n"
+	  "shortcuts:\n"
+	  "  - {accel: \"<Ctrl>q\", action: app.quit}\n"
+	  "  - {accel: space, action: studio.play}\n"
+	  "root:\n"
+	  "  type: vbox\n"
+	  "  children:\n"
+	  "    - type: menu-bar\n"
+	  "      id: menubar\n"
+	  "    - type: dock-area\n"
+	  "      id: dock\n"
+	  "      fill-weight: 1\n"
+	  "      panels:\n"
+	  "        - {id: scene, title: Scene, icon: eye}\n"
+	  "        - {id: graph, title: Graph, position: right}\n"
+	  "        - &console {id: console, title: Console, closable: true}\n"
+	  "theme: 'midnight'   # or daylight, catppuccin-latte ...\n"
+	  "rate: 1.5\n"
+	  "enabled: true\n" },
+	{ "glsl",
+	  "#version 330\n"
+	  "\n"
+	  "uniform sampler2D albedo;\n"
+	  "uniform float     time;\n"
+	  "in vec2           uv;\n"
+	  "out vec4          frag;\n"
+	  "\n"
+	  "void main ()\n"
+	  "{\n"
+	  "    /* Scroll the texture and pulse its brightness */\n"
+	  "    vec4 c = texture (albedo, uv + vec2 (time * 0.1, 0.0));\n"
+	  "    frag = vec4 (c.rgb * (0.8 + 0.2 * sin (time * 3.0)), c.a);\n"
+	  "}\n" },
+	{ "lua",
+	  "-- door.lua: open the vault when the player has the key\n"
+	  "local Door = {}\n"
+	  "\n"
+	  "function Door.on_interact (door, player)\n"
+	  "  if player:has_item (\"vault-key\") then\n"
+	  "    door:play (\"open\", { speed = 1.5 })\n"
+	  "    return true\n"
+	  "  end\n"
+	  "  ui.toast ([[It is locked.]])\n"
+	  "  return false\n"
+	  "end\n"
+	  "\n"
+	  "return Door\n" }
+};
+
+static void
+on_language_changed (LrgComboBox *combo,
+                     gpointer     user_data)
+{
+	Showcase    *app = user_data;
+	const gchar *language = lrg_combo_box_get_selected_text (combo);
+	guint        i;
+
+	if (language == NULL)
+		return;
+	lrg_text_editor_set_language (app->code, language);
+
+	/* Languages with a sample get it; the rest re-highlight the text */
+	for (i = 0; i < G_N_ELEMENTS (code_samples); i++)
+		if (g_strcmp0 (code_samples[i].language, language) == 0)
+			lrg_text_editor_set_text (app->code, code_samples[i].text);
+}
+
+static void console_print (Showcase *app, const gchar *format, ...) G_GNUC_PRINTF (2, 3);
+
+/* console_print: append one line to the console log; the log follows
+ * new output while its caret sits at the end */
+static void
+console_print (Showcase    *app,
+               const gchar *format,
+               ...)
+{
+	g_autofree gchar *line = NULL;
+	g_autofree gchar *with_nl = NULL;
+	va_list           args;
+
+	va_start (args, format);
+	line = g_strdup_vprintf (format, args);
+	va_end (args);
+	with_nl = g_strconcat ("\n", line, NULL);
+	lrg_text_editor_append (app->console_log, with_nl);
+}
+
+static void run_console_command (Showcase *app, const gchar *command);
+
+/* on_console_submit: Enter in the input runs its text as a command */
+static void
+on_console_submit (LrgTextEditor *input,
+                   gpointer       user_data)
+{
+	Showcase         *app = user_data;
+	g_autofree gchar *text = lrg_text_editor_get_text (input);
+
+	g_strstrip (text);
+	if (text[0] != '\0')
+		run_console_command (app, text);
+	lrg_text_editor_set_text (input, "");
+}
+
+static LrgWidget *
+build_editor_page (Showcase *app)
+{
+	LrgHBox            *page = hrow (20.0f);
+	LrgVBox            *box;
+	LrgHBox            *bar;
+	LrgPanel           *panel;
+	LrgLabel           *spacer;
+	g_auto(GStrv)       languages = lrg_syntax_list_languages ();
+	guint               i;
+
+	/* The code editor with a language picker */
+	box = card (LRG_CONTAINER (page), NULL, &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 3.0f);
+	bar = hrow (10.0f);
+	add (bar, label_with_class ("LrgTextEditor", "heading"));
+	spacer = label_with_class ("", NULL);
+	lrg_widget_set_fill_weight (LRG_WIDGET (spacer), 1.0f);
+	lrg_widget_set_valign (LRG_WIDGET (spacer), LRG_ALIGN_CENTER);
+	add (bar, spacer);
+	app->language_combo = lrg_combo_box_new ();
+	for (i = 0; languages != NULL && languages[i] != NULL; i++)
+	{
+		lrg_combo_box_append (app->language_combo, languages[i]);
+		if (g_strcmp0 (languages[i], "c") == 0)
+			lrg_combo_box_set_selected (app->language_combo, (gint) i);
+	}
+	lrg_widget_set_min_size (LRG_WIDGET (app->language_combo), 150.0f, 0.0f);
+	g_signal_connect (app->language_combo, "changed", G_CALLBACK (on_language_changed), app);
+	lrg_container_add_child (LRG_CONTAINER (bar), LRG_WIDGET (app->language_combo));
+	add (box, bar);
+
+	app->code = lrg_text_editor_new ();
+	lrg_text_editor_set_language (app->code, "c");
+	lrg_text_editor_set_show_line_numbers (app->code, TRUE);
+	lrg_text_editor_set_text (app->code, code_samples[0].text);
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->code), 1.0f);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->code));
+	add (box, label_with_class ("Ctrl+F find, Ctrl+Z undo, Tab indents, Ctrl+C / V clipboard", "muted"));
+
+	/* The console: a read-only log and a submit-on-enter input */
+	box = card (LRG_CONTAINER (page), "Console", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	lrg_widget_set_max_size (LRG_WIDGET (panel), 380.0f, 0.0f);
+	app->console_log = lrg_text_editor_new ();
+	lrg_text_editor_set_read_only (app->console_log, TRUE);
+	lrg_text_editor_set_max_lines (app->console_log, 500);
+	lrg_text_editor_set_highlight_current_line (app->console_log, FALSE);
+	lrg_text_editor_set_wrap (app->console_log, TRUE);
+	lrg_text_editor_set_text (app->console_log,
+	                          "libregnum console. Type 'help' and press Enter.");
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->console_log), 1.0f);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->console_log));
+	app->console_input = lrg_text_editor_new ();
+	lrg_text_editor_set_submit_on_enter (app->console_input, TRUE);
+	lrg_text_editor_set_placeholder (app->console_input, "Type a command, e.g. help");
+	lrg_text_editor_set_highlight_current_line (app->console_input, FALSE);
+	lrg_widget_set_min_size (LRG_WIDGET (app->console_input), 0.0f, 40.0f);
+	lrg_widget_set_max_size (LRG_WIDGET (app->console_input), 0.0f, 40.0f);
+	g_signal_connect (app->console_input, "submit", G_CALLBACK (on_console_submit), app);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->console_input));
+	console_print (app, "> echo hello");
+	console_print (app, "hello");
+
+	return LRG_WIDGET (page);
+}
+
+/* ==========================================================================
+ * Graph page: a shader graph in LrgNodeGraph
+ * ========================================================================== */
+
+static LrgGraphNode *
+graph_node (LrgNodeGraph *graph,
+            const gchar  *id,
+            const gchar  *title,
+            const gchar  *category,
+            gfloat        x,
+            gfloat        y)
+{
+	LrgGraphNode *node = lrg_node_graph_add_node (graph, id, title, x, y);
+
+	lrg_graph_node_set_category (node, category);
+	return node;
+}
+
+static LrgWidget *
+build_graph_page (Showcase *app)
+{
+	LrgVBox      *box;
+	LrgPanel     *panel;
+	LrgVBox      *page = vcol (0.0f);
+	LrgGraphNode *n;
+	LrgSlider    *speed;
+
+	box = card (LRG_CONTAINER (page),
+	            "LrgNodeGraph: drag cards, drag from a port to wire, wheel to zoom, F frames all", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	app->graph = lrg_node_graph_new ();
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->graph), 1.0f);
+
+	n = graph_node (app->graph, "uv", "UV", "input", 0.0f, 0.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "uv", "vec2");
+	n = graph_node (app->graph, "time", "Time", "input", 0.0f, 140.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "seconds", "float");
+	speed = lrg_slider_new_with_range (0.0, 4.0, 0.1);
+	lrg_slider_set_value (speed, 1.5);
+	lrg_widget_set_min_size (LRG_WIDGET (speed), 120.0f, 24.0f);
+	lrg_graph_node_set_body (n, LRG_WIDGET (speed));
+	g_object_unref (speed);
+
+	n = graph_node (app->graph, "noise", "Noise", "texture", 260.0f, -40.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "uv", "vec2");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "offset", "float");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "value", "float");
+	n = graph_node (app->graph, "albedo", "Albedo texture", "texture", 260.0f, 140.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "uv", "vec2");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "color", "vec4");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "alpha", "float");
+
+	n = graph_node (app->graph, "mix", "Mix", "math", 520.0f, 30.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "a", "vec4");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "b", "vec4");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "factor", "float");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "out", "vec4");
+	n = graph_node (app->graph, "tint", "Tint colour", "input", 260.0f, 300.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "color", "vec4");
+	n = graph_node (app->graph, "fresnel", "Fresnel", "lighting", 520.0f, 230.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "power", "float");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_OUTPUT, "rim", "float");
+
+	n = graph_node (app->graph, "out", "Material output", "output", 780.0f, 100.0f);
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "albedo", "vec4");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "emission", "float");
+	lrg_graph_node_add_port (n, LRG_GRAPH_PORT_INPUT, "alpha", "float");
+
+	lrg_node_graph_connect_by_name (app->graph, "uv", "uv", "noise", "uv", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "uv", "uv", "albedo", "uv", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "time", "seconds", "noise", "offset", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "albedo", "color", "mix", "a", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "tint", "color", "mix", "b", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "noise", "value", "mix", "factor", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "mix", "out", "out", "albedo", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "fresnel", "rim", "out", "emission", NULL);
+	lrg_node_graph_connect_by_name (app->graph, "albedo", "alpha", "out", "alpha", NULL);
+
+	lrg_node_graph_set_show_minimap (app->graph, TRUE);
+	lrg_node_graph_set_animate_links (app->graph, TRUE);
+	lrg_node_graph_set_snap_to_grid (app->graph, TRUE);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->graph));
+	return LRG_WIDGET (page);
+}
+
+/* ==========================================================================
+ * Timeline page: LrgTimelineView playing, its curves driving a stage
+ * ========================================================================== */
+
+/* stage_paint: a ball whose position, size and hue are sampled from the
+ * timeline's curves at the playhead with lrg_timeline_view_evaluate() */
+static void
+stage_paint (LrgCustomWidget *widget,
+             LrgPaintList    *list,
+             gfloat           x,
+             gfloat           y,
+             gfloat           width,
+             gfloat           height,
+             gpointer         user_data)
+{
+	Showcase       *app = user_data;
+	LrgTheme       *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	gdouble         t = lrg_timeline_view_get_time (app->timeline);
+	gfloat          fx = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_x, t);
+	gfloat          fy = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_y, t);
+	gfloat          size = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_size, t);
+	gfloat          hue = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_hue, t);
+	Color           c = ColorFromHSV (hue, 0.75f, 1.0f);
+	GrlColor        ball = { c.r, c.g, c.b, 255 };
+	GrlColor        glow;
+	GrlColor        floor_line;
+	gfloat          bx = x + 40.0f + fx * (width - 80.0f);
+	gfloat          by = y + height - 24.0f - fy * (height - 60.0f);
+	gfloat          r = 10.0f + size * 18.0f;
+
+	lrg_paint_list_rect (list, x, y, width, height, 12.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_INPUT));
+	lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER), 1.0f, &floor_line);
+	lrg_paint_list_line (list, x + 20.0f, y + height - 24.0f + r * 0.0f, x + width - 20.0f,
+	                     y + height - 24.0f, 1.0f, &floor_line);
+	/* The whole path as a dotted trail: the same curves sampled over the
+	 * sequence, brighter near the playhead */
+	{
+		gdouble duration = lrg_timeline_view_get_duration (app->timeline);
+		guint   i;
+
+		for (i = 0; i <= 96; i++)
+		{
+			gdouble  st = duration * (gdouble) i / 96.0;
+			gfloat   px = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_x, st);
+			gfloat   py = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_y, st);
+			gfloat   near = 1.0f - MIN (1.0f, (gfloat) fabs (st - t) / 1.5f);
+			GrlColor dot;
+
+			lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED),
+			                            0.25f + 0.6f * near, &dot);
+			lrg_paint_list_circle (list, x + 40.0f + px * (width - 80.0f),
+			                       y + height - 24.0f - py * (height - 60.0f), 1.5f + 1.5f * near, &dot);
+		}
+	}
+	lrg_paint_color_with_alpha (&ball, 0.55f, &glow);
+	lrg_paint_list_shadow (list, bx - r, by - r, r * 2.0f, r * 2.0f, r, 26.0f, 0.0f, 0.0f, 0.0f, &glow);
+	lrg_paint_list_circle (list, bx, by, r, &ball);
+}
+
+static LrgTimelineViewTrack *
+curve_track (Showcase             *app,
+             const gchar          *name,
+             const gchar          *hex,
+             LrgTimelineViewTrack *parent,
+             gdouble               min,
+             gdouble               max)
+{
+	LrgTimelineViewTrack *track = lrg_timeline_view_add_track (app->timeline, name, parent);
+	GrlColor              c;
+
+	lrg_color_parse (hex, &c);
+	lrg_timeline_view_track_set_color (track, &c);
+	lrg_timeline_view_track_set_curve_lane (track, TRUE);
+	lrg_timeline_view_track_set_value_range (track, min, max);
+	lrg_timeline_view_track_set_curve_height (track, 56.0f);
+	return track;
+}
+
+static LrgWidget *
+build_timeline_page (Showcase *app)
+{
+	LrgVBox              *page = vcol (20.0f);
+	LrgVBox              *box;
+	LrgPanel             *panel;
+	LrgTimelineViewTrack *group;
+	LrgTimelineViewTrack *track;
+	LrgCustomWidget      *stage;
+	LrgCustomWidgetFuncs  funcs = { 0 };
+	GrlColor              c;
+	guint                 id;
+
+	app->timeline = lrg_timeline_view_new ();
+	lrg_timeline_view_set_duration (app->timeline, 8.0);
+	lrg_timeline_view_set_fps (app->timeline, 30.0);
+	lrg_timeline_view_set_loop (app->timeline, TRUE);
+
+	/* Clips: a camera track and an audio track */
+	track = lrg_timeline_view_add_track (app->timeline, "Camera", NULL);
+	lrg_timeline_view_add_clip (app->timeline, track, 0.0, 2.5, "Wide shot");
+	lrg_timeline_view_add_clip (app->timeline, track, 2.5, 3.0, "Close-up");
+	id = lrg_timeline_view_add_clip (app->timeline, track, 5.5, 2.5, "Crane");
+	color_hex ("#f472b6", 1.0f, &c);
+	lrg_timeline_view_set_clip_color (app->timeline, id, &c);
+	track = lrg_timeline_view_add_track (app->timeline, "Music", NULL);
+	color_hex ("#34d399", 1.0f, &c);
+	lrg_timeline_view_track_set_color (track, &c);
+	lrg_timeline_view_add_clip (app->timeline, track, 0.0, 6.0, "theme.ogg");
+	lrg_timeline_view_add_clip (app->timeline, track, 6.2, 1.8, "sting.ogg");
+
+	/* Curves under a "Ball" group: they drive the stage above */
+	group = lrg_timeline_view_add_track (app->timeline, "Ball", NULL);
+	app->track_x = curve_track (app, "Position X", "#22d3ee", group, 0.0, 1.0);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_x, 0.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_x, 4.0, 1.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_x, 8.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	app->track_y = curve_track (app, "Height", "#fbbf24", group, 0.0, 1.0);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 0.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 1.0, 1.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 2.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 3.0, 0.7, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 4.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 5.0, 0.45, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 6.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 7.0, 0.25, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_y, 8.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+	app->track_size = curve_track (app, "Size", "#a855f7", group, 0.0, 1.0);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_size, 0.0, 0.3, LRG_TIMELINE_VIEW_INTERPOLATION_STEP);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_size, 2.5, 0.8, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_size, 5.5, 0.5, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_size, 8.0, 0.3, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+	app->track_hue = curve_track (app, "Hue", "#ff7a45", group, 0.0, 360.0);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_hue, 0.0, 190.0, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+	lrg_timeline_view_add_keyframe (app->timeline, app->track_hue, 8.0, 330.0, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+
+	lrg_timeline_view_add_marker (app->timeline, 2.5, "Cut");
+	lrg_timeline_view_add_marker (app->timeline, 5.5, "Crane");
+	lrg_timeline_view_set_playing (app->timeline, TRUE);
+
+	/* The stage: an LrgCustomWidget reading the curves every frame */
+	box = card (LRG_CONTAINER (page), "Curves driving a stage: lrg_timeline_view_evaluate() at the playhead", NULL);
+	stage = lrg_custom_widget_new ();
+	funcs.paint = stage_paint;
+	lrg_custom_widget_set_funcs (stage, &funcs, app, NULL);
+	lrg_custom_widget_set_preferred_height (stage, 150.0f);
+	add (box, stage);
+
+	box = card (LRG_CONTAINER (page),
+	            "LrgTimelineView: scrub the ruler, drag clips and keys, Ctrl+wheel zooms, Space plays", &panel);
+	lrg_widget_set_fill_weight (LRG_WIDGET (panel), 1.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->timeline), 1.0f);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (app->timeline));
+	return LRG_WIDGET (page);
+}
+
+/* ==========================================================================
+ * Dock page: LrgDockArea with tabbed, splittable, floatable panels
+ * ========================================================================== */
+
+static LrgDockPanel *
+dock_panel (LrgDockArea     *dock,
+            const gchar     *id,
+            const gchar     *title,
+            const gchar     *icon,
+            LrgWidget       *child,
+            LrgDockPanel    *relative,
+            LrgDockPosition  position)
+{
+	LrgDockPanel *panel = lrg_dock_panel_new (id, title);
+
+	lrg_dock_panel_set_icon (panel, icon);
+	lrg_dock_panel_set_child (panel, child);
+	g_object_unref (child);
+	lrg_dock_area_add_panel (dock, panel, relative, position);
+	g_object_unref (panel);
+	return panel;
+}
+
+static LrgWidget *
+build_dock_page (Showcase *app)
+{
+	static const gchar *outline[] = {
+		"World", "  Camera", "  Sun", "  Player", "    Weapon", "  Vault door", "  Enemies (12)"
+	};
+	LrgVBox      *page = vcol (12.0f);
+	LrgVBox      *col;
+	LrgWrapBox   *assets;
+	LrgTextEditor *log;
+	LrgDockPanel *scene;
+	LrgDockPanel *hierarchy;
+	LrgWidget    *backdrop;
+	guint         i;
+
+	add (page, label_with_class ("Drag a tab onto another stack's edge to split it, onto a tab strip to "
+	                             "join it, or out of the area to float it. Drag dividers to resize.",
+	                             "muted"));
+	app->dock = lrg_dock_area_new ();
+	lrg_widget_set_fill_weight (LRG_WIDGET (app->dock), 1.0f);
+
+	backdrop = g_object_new (SHOWCASE_TYPE_BACKDROP, NULL);
+	scene = dock_panel (app->dock, "scene", "Scene", "eye", backdrop, NULL, LRG_DOCK_POSITION_CENTER);
+	lrg_dock_panel_set_closable (scene, FALSE);
+
+	col = vcol (6.0f);
+	lrg_container_set_padding (LRG_CONTAINER (col), 12.0f);
+	for (i = 0; i < G_N_ELEMENTS (outline); i++)
+		add (col, label_with_class (outline[i], i == 3 ? NULL : "muted"));
+	hierarchy = dock_panel (app->dock, "hierarchy", "Hierarchy", "menu", LRG_WIDGET (col), NULL,
+	                        LRG_DOCK_POSITION_LEFT);
+
+	col = vcol (10.0f);
+	lrg_container_set_padding (LRG_CONTAINER (col), 12.0f);
+	add (col, label_with_class ("Player", "heading"));
+	{
+		LrgSlider *speed = lrg_slider_new_with_range (0.0, 10.0, 0.5);
+
+		/* Label above control: the panel can be narrow */
+		lrg_slider_set_value (speed, 6.5);
+		add (col, label_with_class ("Speed", "muted"));
+		add (col, speed);
+	}
+	add (col, lrg_checkbox_new ("Visible in game"));
+	add (col, label_with_class ("Team", "muted"));
+	add (col, lrg_spin_box_new_with_range (1.0, 4.0, 1.0));
+	dock_panel (app->dock, "inspector", "Inspector", "gear", LRG_WIDGET (col), NULL, LRG_DOCK_POSITION_RIGHT);
+
+	log = lrg_text_editor_new ();
+	lrg_text_editor_set_read_only (log, TRUE);
+	lrg_text_editor_set_highlight_current_line (log, FALSE);
+	lrg_text_editor_set_text (log, "[info] level loaded in 84 ms\n[info] 12 enemies spawned\n"
+	                               "[warn] texture 'vault_door.png' is not a power of two\n"
+	                               "[info] autosave complete");
+	dock_panel (app->dock, "log", "Log", "file", LRG_WIDGET (log), scene, LRG_DOCK_POSITION_BOTTOM);
+
+	assets = lrg_wrap_box_new ();
+	lrg_container_set_padding (LRG_CONTAINER (assets), 12.0f);
+	lrg_container_set_spacing (LRG_CONTAINER (assets), 14.0f);
+	for (i = LRG_ICON_NONE + 1; i < LRG_ICON_NONE + 13; i++)
+		add (assets, showcase_icon_new ((LrgIcon) i, 28.0f, LRG_THEME_COLOR_ACCENT));
+	dock_panel (app->dock, "assets", "Assets", "folder", LRG_WIDGET (assets), hierarchy,
+	            LRG_DOCK_POSITION_CENTER);
+	lrg_dock_area_present_panel (app->dock, hierarchy);
+	lrg_dock_area_set_panel_share (app->dock, scene, 0.62f);
+	lrg_dock_area_set_panel_share (app->dock, hierarchy, 0.38f);
+
+	lrg_container_add_child (LRG_CONTAINER (page), LRG_WIDGET (app->dock));
+	return LRG_WIDGET (page);
+}
+
 static void
 show_page (Showcase *app,
            guint     index)
@@ -2685,6 +4004,15 @@ show_page (Showcase *app,
 	for (i = 0; i < N_PAGES; i++)
 		lrg_widget_set_visible (app->page[i], i == index);
 	app->current_page = (gint) index;
+
+	/* View > Go to page shows the radio dot on this page */
+	if (app->actions != NULL)
+	{
+		g_autofree gchar *lower = g_ascii_strdown (page_names[index], -1);
+
+		g_simple_action_set_state (G_SIMPLE_ACTION (g_action_map_lookup_action (G_ACTION_MAP (app->actions), "page")),
+		                           g_variant_new_string (lower));
+	}
 
 	switch (index)
 	{
@@ -2724,6 +4052,385 @@ on_nav_selection (LrgListView *list,
 
 	if (pos != LRG_LIST_VIEW_INVALID_POSITION)
 		show_page (user_data, pos);
+}
+
+/* ==========================================================================
+ * Menu bar, actions and shortcuts
+ *
+ * Every menu item is a GIO action in the "show" group on the canvas (or
+ * a built-in "app." / "ui." action). Stateful actions drive the marks:
+ * a string state draws a radio dot on the item whose target matches
+ * (theme, motion, accent, page), a boolean state a check mark (RTL,
+ * pick mode). The header combo boxes and the menus stay in sync because
+ * both go through the same actions.
+ * ========================================================================== */
+
+static GSimpleAction *
+show_action (Showcase    *app,
+             const gchar *name)
+{
+	return G_SIMPLE_ACTION (g_action_map_lookup_action (G_ACTION_MAP (app->actions), name));
+}
+
+/* on_theme_action: show.theme(s), a radio over the presets. The
+ * built-in ui.theme would put a fresh preset on the canvas; the
+ * showcase also needs its card and glass style rules, so it rebuilds
+ * the default theme through apply_theme() instead */
+static void
+on_theme_action (GSimpleAction *action,
+                 GVariant      *parameter,
+                 gpointer       user_data)
+{
+	Showcase            *app = user_data;
+	const gchar         *name = g_variant_get_string (parameter, NULL);
+	const gchar * const *presets = lrg_theme_list_presets ();
+	guint                i;
+
+	for (i = 0; presets[i] != NULL; i++)
+	{
+		if (g_strcmp0 (presets[i], name) != 0)
+			continue;
+		g_simple_action_set_state (action, g_variant_new_string (name));
+		apply_theme (app, name);
+		if (!app->syncing_menu && app->theme_combo != NULL)
+		{
+			app->syncing_menu = TRUE;
+			lrg_combo_box_set_selected (app->theme_combo, (gint) i);
+			app->syncing_menu = FALSE;
+		}
+		return;
+	}
+	show_toast (app, "Unknown theme", name, LRG_TOAST_KIND_WARNING);
+}
+
+/* on_motion_action: show.motion(s), a radio over the motion presets */
+static void
+on_motion_action (GSimpleAction *action,
+                  GVariant      *parameter,
+                  gpointer       user_data)
+{
+	Showcase    *app = user_data;
+	const gchar *name = g_variant_get_string (parameter, NULL);
+	guint        i;
+
+	for (i = 0; i < G_N_ELEMENTS (motions); i++)
+	{
+		if (g_ascii_strcasecmp (motions[i].name, name) != 0)
+			continue;
+		g_simple_action_set_state (action, parameter);
+		lrg_theme_set_motion (lrg_theme_get_default (), motions[i].motion);
+		if (!app->syncing_menu && app->motion_combo != NULL)
+		{
+			app->syncing_menu = TRUE;
+			lrg_combo_box_set_selected (app->motion_combo, (gint) i);
+			app->syncing_menu = FALSE;
+		}
+		return;
+	}
+}
+
+/* on_accent_action: show.accent(s), a radio over the swatch colours */
+static void
+on_accent_action (GSimpleAction *action,
+                  GVariant      *parameter,
+                  gpointer       user_data)
+{
+	Showcase *app = user_data;
+	GrlColor  accent;
+
+	if (lrg_color_parse (g_variant_get_string (parameter, NULL), &accent))
+	{
+		g_simple_action_set_state (action, parameter);
+		set_accent (app, &accent);
+		sync_pickers_to_accent (app);
+	}
+}
+
+/* on_rtl_action: show.rtl, a check item. Flips the canvas default
+ * direction through the built-in ui.direction action */
+static void
+on_rtl_action (GSimpleAction *action,
+               GVariant      *parameter,
+               gpointer       user_data)
+{
+	Showcase          *app = user_data;
+	g_autoptr(GVariant) state = g_action_get_state (G_ACTION (action));
+	gboolean           rtl = !g_variant_get_boolean (state);
+
+	g_simple_action_set_state (action, g_variant_new_boolean (rtl));
+	lrg_widget_activate_action (LRG_WIDGET (app->canvas), "ui.direction",
+	                            g_variant_new_string (rtl ? "rtl" : "ltr"));
+}
+
+/* on_page_action: show.page(s), a radio over the sidebar pages */
+static void
+on_page_action (GSimpleAction *action,
+                GVariant      *parameter,
+                gpointer       user_data)
+{
+	Showcase    *app = user_data;
+	const gchar *name = g_variant_get_string (parameter, NULL);
+	guint        i;
+
+	for (i = 0; i < N_PAGES; i++)
+		if (g_ascii_strcasecmp (page_names[i], name) == 0)
+			lrg_list_view_select (app->nav, i);
+}
+
+/* on_pick_action: show.pick, a check item mirroring inspector pick mode */
+static void
+on_pick_action (GSimpleAction *action,
+                GVariant      *parameter,
+                gpointer       user_data)
+{
+	toggle_pick_mode (user_data);
+}
+
+static void
+on_toasts_action (GSimpleAction *action,
+                  GVariant      *parameter,
+                  gpointer       user_data)
+{
+	show_toast (user_data, "Welcome back", "Last played 2 hours ago.", LRG_TOAST_KIND_INFO);
+	show_toast (user_data, "Achievement unlocked", "Pixel perfect: no damage taken.", LRG_TOAST_KIND_SUCCESS);
+}
+
+static void
+on_dialog_action (GSimpleAction *action,
+                  GVariant      *parameter,
+                  gpointer       user_data)
+{
+	Showcase *app = user_data;
+
+	lrg_dialog_present (app->dialog, app->canvas);
+}
+
+/* on_screenshot_action: the capture happens after the next render (see
+ * the main loop); the file goes to the user's cache directory */
+static void
+on_screenshot_action (GSimpleAction *action,
+                      GVariant      *parameter,
+                      gpointer       user_data)
+{
+	Showcase         *app = user_data;
+	g_autofree gchar *dir = g_build_filename (g_get_user_cache_dir (), "libregnum", NULL);
+	g_autofree gchar *name = g_strdup_printf ("ui-showcase-%s.png", page_names[MAX (app->current_page, 0)]);
+
+	g_mkdir_with_parents (dir, 0755);
+	g_free (app->shot_request);
+	app->shot_request = g_build_filename (dir, name, NULL);
+}
+
+static void
+on_reload_action (GSimpleAction *action,
+                  GVariant      *parameter,
+                  gpointer       user_data)
+{
+	Showcase          *app = user_data;
+	g_autoptr(GError)  error = NULL;
+
+	if (lrg_ui_loader_reload (app->loader, &error))
+		show_toast (app, "Reloaded", "The declarative page was rebuilt.", LRG_TOAST_KIND_SUCCESS);
+	else
+		show_toast (app, "Reload failed", error != NULL ? error->message : "nothing is watched",
+		            LRG_TOAST_KIND_DANGER);
+}
+
+static void
+on_shortcuts_action (GSimpleAction *action,
+                     GVariant      *parameter,
+                     gpointer       user_data)
+{
+	show_toast (user_data, "Keyboard shortcuts",
+	            "Ctrl+Q quit, Ctrl+1..9 pages, Ctrl+Shift+R right-to-left, Ctrl+D dialog, "
+	            "Ctrl+Shift+S screenshot, F5 reload YAML, F12 pick mode, F1 this help.",
+	            LRG_TOAST_KIND_INFO);
+}
+
+static void
+on_about_action (GSimpleAction *action,
+                 GVariant      *parameter,
+                 gpointer       user_data)
+{
+	show_toast (user_data, "libregnum UI showcase",
+	            "A GObject game engine on raylib. AGPL-3.0-or-later.", LRG_TOAST_KIND_INFO);
+}
+
+/* build_menu_model: File / View / Theme / Motion / Help */
+static GMenuModel *
+build_menu_model (void)
+{
+	GMenu               *bar = g_menu_new ();
+	g_autoptr(GMenu)     file = g_menu_new ();
+	g_autoptr(GMenu)     file_demo = g_menu_new ();
+	g_autoptr(GMenu)     file_io = g_menu_new ();
+	g_autoptr(GMenu)     file_quit = g_menu_new ();
+	g_autoptr(GMenu)     view = g_menu_new ();
+	g_autoptr(GMenu)     pages = g_menu_new ();
+	g_autoptr(GMenu)     view_opts = g_menu_new ();
+	g_autoptr(GMenu)     theme = g_menu_new ();
+	g_autoptr(GMenu)     presets = g_menu_new ();
+	g_autoptr(GMenu)     accent = g_menu_new ();
+	g_autoptr(GMenu)     motion = g_menu_new ();
+	g_autoptr(GMenu)     help = g_menu_new ();
+	const gchar * const *names = lrg_theme_list_presets ();
+	guint                i;
+
+	/* File */
+	append_item (file_demo, "Show _toasts", "show.toasts", "info", NULL);
+	append_item (file_demo, "Open _dialog", "show.dialog", "edit", NULL);
+	g_menu_append_section (file, NULL, G_MENU_MODEL (file_demo));
+	append_item (file_io, "Save _screenshot", "show.screenshot", "download", NULL);
+	append_item (file_io, "_Reload YAML page", "show.reload", "refresh", NULL);
+	g_menu_append_section (file, NULL, G_MENU_MODEL (file_io));
+	append_item (file_quit, "_Quit", "app.quit", "close", NULL);
+	g_menu_append_section (file, NULL, G_MENU_MODEL (file_quit));
+	g_menu_append_submenu (bar, "_File", G_MENU_MODEL (file));
+
+	/* View: a page submenu (radio), RTL and pick mode (checks) */
+	for (i = 0; i < N_PAGES; i++)
+	{
+		g_autofree gchar *lower = g_ascii_strdown (page_names[i], -1);
+		g_autofree gchar *detailed = g_strdup_printf ("show.page::%s", lower);
+
+		append_item (pages, page_names[i], detailed, NULL, NULL);
+	}
+	g_menu_append_submenu (view, "_Go to page", G_MENU_MODEL (pages));
+	append_item (view_opts, "_Right-to-left layout", "show.rtl", NULL, NULL);
+	append_item (view_opts, "Inspector _pick mode", "show.pick", NULL, "F12");
+	g_menu_append_section (view, NULL, G_MENU_MODEL (view_opts));
+	g_menu_append_submenu (bar, "_View", G_MENU_MODEL (view));
+
+	/* Theme: presets and accents, both radio groups */
+	for (i = 0; names[i] != NULL; i++)
+	{
+		g_autoptr(GMenuItem) item = g_menu_item_new (names[i], NULL);
+
+		g_menu_item_set_action_and_target_value (item, "show.theme", g_variant_new_string (names[i]));
+		g_menu_append_item (presets, item);
+	}
+	g_menu_append_section (theme, "Preset", G_MENU_MODEL (presets));
+	for (i = 0; i < G_N_ELEMENTS (accents); i++)
+	{
+		g_autoptr(GMenuItem) item = g_menu_item_new (accent_names[i], NULL);
+
+		g_menu_item_set_action_and_target_value (item, "show.accent", g_variant_new_string (accents[i]));
+		g_menu_append_item (accent, item);
+	}
+	g_menu_append_section (theme, "Accent", G_MENU_MODEL (accent));
+	g_menu_append_submenu (bar, "_Theme", G_MENU_MODEL (theme));
+
+	/* Motion */
+	for (i = 0; i < G_N_ELEMENTS (motions); i++)
+	{
+		g_autoptr(GMenuItem) item = g_menu_item_new (motions[i].name, NULL);
+
+		g_menu_item_set_action_and_target_value (item, "show.motion", g_variant_new_string (motions[i].name));
+		g_menu_append_item (motion, item);
+	}
+	g_menu_append_submenu (bar, "_Motion", G_MENU_MODEL (motion));
+
+	/* Help */
+	append_item (help, "_Keyboard shortcuts", "show.shortcuts", "search", NULL);
+	append_item (help, "_About", "show.about", "info", NULL);
+	g_menu_append_submenu (bar, "_Help", G_MENU_MODEL (help));
+
+	return G_MENU_MODEL (bar);
+}
+
+/* install_actions: the "show" group, the shortcuts, and app.quit */
+static void
+install_actions (Showcase *app)
+{
+	const GActionEntry entries[] = {
+		{ "theme",      on_theme_action,      "s",  "'midnight'", NULL, { 0 } },
+		{ "motion",     on_motion_action,     "s",  "'Smooth'",   NULL, { 0 } },
+		{ "accent",     on_accent_action,     "s",  "''",         NULL, { 0 } },
+		{ "page",       on_page_action,       "s",  "'controls'", NULL, { 0 } },
+		{ "rtl",        on_rtl_action,        NULL, "false",      NULL, { 0 } },
+		{ "pick",       on_pick_action,       NULL, "false",      NULL, { 0 } },
+		{ "toasts",     on_toasts_action,     NULL, NULL,         NULL, { 0 } },
+		{ "dialog",     on_dialog_action,     NULL, NULL,         NULL, { 0 } },
+		{ "screenshot", on_screenshot_action, NULL, NULL,         NULL, { 0 } },
+		{ "reload",     on_reload_action,     NULL, NULL,         NULL, { 0 } },
+		{ "shortcuts",  on_shortcuts_action,  NULL, NULL,         NULL, { 0 } },
+		{ "about",      on_about_action,      NULL, NULL,         NULL, { 0 } }
+	};
+	guint i;
+
+	app->actions = g_simple_action_group_new ();
+	g_action_map_add_action_entries (G_ACTION_MAP (app->actions), entries, G_N_ELEMENTS (entries), app);
+	lrg_widget_insert_action_group (LRG_WIDGET (app->canvas), "show", G_ACTION_GROUP (app->actions));
+
+	/* The theme radio starts on the theme that is actually active */
+	g_simple_action_set_state (show_action (app, "theme"),
+	                           g_variant_new_string (lrg_theme_get_name (lrg_theme_get_default ())));
+
+	/* Shortcuts: the menus show them next to their items */
+	lrg_canvas_add_shortcut (app->canvas, "<Ctrl>q", "app.quit", NULL);
+	lrg_canvas_add_shortcut (app->canvas, "<Ctrl>d", "show.dialog", NULL);
+	lrg_canvas_add_shortcut (app->canvas, "<Ctrl><Shift>s", "show.screenshot", NULL);
+	lrg_canvas_add_shortcut (app->canvas, "F5", "show.reload", NULL);
+	lrg_canvas_add_shortcut (app->canvas, "<Ctrl><Shift>r", "show.rtl", NULL);
+	lrg_canvas_add_shortcut (app->canvas, "F1", "show.shortcuts", NULL);
+	for (i = 0; i < 9 && i < N_PAGES; i++)
+	{
+		g_autofree gchar *accel = g_strdup_printf ("<Ctrl>%u", i + 1);
+		g_autofree gchar *lower = g_ascii_strdown (page_names[i], -1);
+
+		lrg_canvas_add_shortcut (app->canvas, accel, "show.page", g_variant_new_string (lower));
+	}
+}
+
+/* ==========================================================================
+ * Console commands (Editor page)
+ * ========================================================================== */
+
+static void
+run_console_command (Showcase    *app,
+                     const gchar *command)
+{
+	g_auto(GStrv) argv = g_strsplit (command, " ", 2);
+	const gchar  *verb = argv[0];
+	const gchar  *arg = argv[1] != NULL ? g_strstrip (argv[1]) : NULL;
+
+	console_print (app, "> %s", command);
+	if (g_strcmp0 (verb, "help") == 0)
+	{
+		console_print (app, "help                 this list");
+		console_print (app, "echo TEXT            print TEXT");
+		console_print (app, "theme NAME           switch theme (show.theme)");
+		console_print (app, "page NAME            open a sidebar page (show.page)");
+		console_print (app, "rtl                  toggle right-to-left (show.rtl)");
+		console_print (app, "toast TEXT           raise a toast (ui.toast)");
+		console_print (app, "clear                empty the log");
+		console_print (app, "quit                 leave (app.quit)");
+	}
+	else if (g_strcmp0 (verb, "echo") == 0)
+		console_print (app, "%s", arg != NULL ? arg : "");
+	else if (g_strcmp0 (verb, "clear") == 0)
+		lrg_text_editor_set_text (app->console_log, "");
+	else if (g_strcmp0 (verb, "theme") == 0 && arg != NULL)
+		g_action_group_activate_action (G_ACTION_GROUP (app->actions), "theme", g_variant_new_string (arg));
+	else if (g_strcmp0 (verb, "page") == 0 && arg != NULL)
+		g_action_group_activate_action (G_ACTION_GROUP (app->actions), "page", g_variant_new_string (arg));
+	else if (g_strcmp0 (verb, "rtl") == 0)
+		g_action_group_activate_action (G_ACTION_GROUP (app->actions), "rtl", NULL);
+	else if (g_strcmp0 (verb, "toast") == 0 && arg != NULL)
+		lrg_widget_activate_action (LRG_WIDGET (app->console_log), "ui.toast", g_variant_new_string (arg));
+	else if (g_strcmp0 (verb, "quit") == 0)
+		lrg_widget_activate_action (LRG_WIDGET (app->console_log), "app.quit", NULL);
+	else
+		console_print (app, "unknown command '%s' (try help)", verb);
+}
+
+static void
+on_quit_requested (LrgCanvas *canvas,
+                   gpointer   user_data)
+{
+	Showcase *app = user_data;
+
+	app->quit = TRUE;
 }
 
 static void
@@ -2775,13 +4482,22 @@ build_ui (Showcase *app)
 	g_object_unref (side_box);
 	add (app->root, sidebar);
 
-	/* Header: page title area + theme, motion and accent pickers */
+	/* Actions first: the menu bar and combo boxes route through them */
+	install_actions (app);
+	g_signal_connect (app->canvas, "quit-requested", G_CALLBACK (on_quit_requested), app);
+
+	/* Header: the menu bar + theme, motion and accent pickers */
 	lrg_container_set_spacing (LRG_CONTAINER (header), 10.0f);
 	{
-		LrgLabel *title = label_with_class ("Make it flashy", "title");
+		g_autoptr(GMenuModel) model = build_menu_model ();
 
-		lrg_widget_set_fill_weight (LRG_WIDGET (title), 1.0f);
-		add (header, title);
+		LrgLabel             *spacer = label_with_class ("", NULL);
+
+		app->menubar = lrg_menu_bar_new_from_model (model);
+		lrg_widget_set_valign (LRG_WIDGET (app->menubar), LRG_ALIGN_CENTER);
+		lrg_container_add_child (LRG_CONTAINER (header), LRG_WIDGET (app->menubar));
+		lrg_widget_set_fill_weight (LRG_WIDGET (spacer), 1.0f);
+		add (header, spacer);
 	}
 	for (i = 0; i < G_N_ELEMENTS (accents); i++)
 	{
@@ -2806,11 +4522,13 @@ build_ui (Showcase *app)
 			lrg_combo_box_set_selected (theme_combo, (gint) i);
 	}
 	g_signal_connect (theme_combo, "changed", G_CALLBACK (on_theme_changed), app);
+	app->theme_combo = theme_combo;
 	add (header, theme_combo);
 	for (i = 0; i < G_N_ELEMENTS (motions); i++)
 		lrg_combo_box_append (motion_combo, motions[i].name);
 	lrg_combo_box_set_selected (motion_combo, 0);
 	g_signal_connect (motion_combo, "changed", G_CALLBACK (on_motion_changed), app);
+	app->motion_combo = motion_combo;
 	add (header, motion_combo);
 
 	lrg_container_set_spacing (LRG_CONTAINER (main_box), 20.0f);
@@ -2828,13 +4546,20 @@ build_ui (Showcase *app)
 	app->page[PAGE_PICKERS] = build_pickers_page (app);
 	app->page[PAGE_GLASS] = build_glass_page (app);
 	app->page[PAGE_MOTION] = build_motion_page (app);
+	app->page[PAGE_LAYOUT] = build_layout_page (app);
+	app->page[PAGE_VIEWPORT] = build_viewport_page (app);
+	app->page[PAGE_EDITOR] = build_editor_page (app);
+	app->page[PAGE_GRAPH] = build_graph_page (app);
+	app->page[PAGE_TIMELINE] = build_timeline_page (app);
+	app->page[PAGE_DOCK] = build_dock_page (app);
 	app->page[PAGE_MARKDOWN] = build_markdown_page (app);
 	app->page[PAGE_DECLARATIVE] = build_declarative_page (app);
 	app->page[PAGE_INSPECTOR] = build_inspector_page (app);
 	for (i = 0; i < N_PAGES; i++)
 	{
 		gboolean fill = (i == PAGE_LIST || i == PAGE_DATA || i == PAGE_GLASS ||
-		                 i == PAGE_MARKDOWN || i == PAGE_DECLARATIVE);
+		                 i == PAGE_MARKDOWN || i == PAGE_DECLARATIVE || i == PAGE_VIEWPORT ||
+		                 i == PAGE_EDITOR || i == PAGE_GRAPH || i == PAGE_TIMELINE || i == PAGE_DOCK);
 
 		lrg_widget_set_appear (app->page[i], LRG_APPEAR_FLY_UP, 0.0f);
 		lrg_widget_set_valign (app->page[i], fill ? LRG_ALIGN_FILL : LRG_ALIGN_START);
@@ -2884,9 +4609,14 @@ main (int   argc,
 	gboolean                  opt_pick = FALSE;
 	gboolean                  opt_touch = FALSE;
 	gboolean                  opt_dump = FALSE;
+	gboolean                  opt_rtl = FALSE;
+	gint                      opt_menu = 0;
+	gboolean                  opt_context = FALSE;
+	g_autoptr(LrgMenu)        context = NULL;
 	Showcase                  app = { 0 };
 	gint                      frame = 0;
 	gboolean                  was_picking = FALSE;
+	gboolean                  graph_framed = FALSE;
 
 	GOptionEntry entries[] = {
 		{ "theme", 't', 0, G_OPTION_ARG_STRING, &opt_theme,
@@ -2895,13 +4625,18 @@ main (int   argc,
 		{ "motion", 'm', 0, G_OPTION_ARG_STRING, &opt_motion,
 		  "Motion preset (smooth, snappy, bouncy, wobbly, none)", "NAME" },
 		{ "page", 'p', 0, G_OPTION_ARG_STRING, &opt_page,
-		  "Start page (controls, cards, feedback, list, data, pickers, glass, motion, markdown, "
-		  "declarative, inspector)", "NAME" },
+		  "Start page (controls, cards, feedback, list, data, pickers, glass, motion, layout, viewport, "
+		  "editor, graph, timeline, dock, markdown, declarative, inspector)", "NAME" },
 		{ "toasts", 0, 0, G_OPTION_ARG_NONE, &opt_toasts, "Show a few toasts at start-up", NULL },
 		{ "dialog", 0, 0, G_OPTION_ARG_NONE, &opt_dialog, "Open the dialog at start-up", NULL },
 		{ "island", 0, 0, G_OPTION_ARG_NONE, &opt_island, "Expand the island (motion page) at start-up", NULL },
 		{ "pick", 0, 0, G_OPTION_ARG_NONE, &opt_pick, "Start in inspector pick mode", NULL },
 		{ "touch", 0, 0, G_OPTION_ARG_NONE, &opt_touch, "Poll touch points (touch screens)", NULL },
+		{ "rtl", 0, 0, G_OPTION_ARG_NONE, &opt_rtl, "Start in a right-to-left layout", NULL },
+		{ "menu", 0, 0, G_OPTION_ARG_INT, &opt_menu,
+		  "Open menu N of the menu bar (1 = File) on frame 10, keyboard style", "N" },
+		{ "context-menu", 0, 0, G_OPTION_ARG_NONE, &opt_context,
+		  "Open the first card's context menu on frame 30 (cards page)", NULL },
 		{ "dump-tree", 0, 0, G_OPTION_ARG_NONE, &opt_dump,
 		  "With --screenshot: print the inspector's JSON snapshot of the tree too", NULL },
 		{ "screenshot", 's', 0, G_OPTION_ARG_FILENAME, &opt_screenshot,
@@ -2922,9 +4657,13 @@ main (int   argc,
 		"  ui-showcase --page motion --island --motion bouncy\n"
 		"  ui-showcase --page declarative     (then edit examples/data/ui/showcase-settings.yaml)\n"
 		"  ui-showcase --page inspector --pick\n"
+		"  ui-showcase --page viewport          (drag the 3D scene to orbit)\n"
+		"  ui-showcase --page timeline --theme daylight\n"
+		"  ui-showcase --page dock --rtl\n"
 		"  ui-showcase --page feedback --toasts --dialog --screenshot dialog.png --frames 120\n"
 		"\n"
-		"Keys: Tab/arrows move focus, Enter activates, Escape cancels, F12 toggles inspector pick mode.\n");
+		"Keys: Tab/arrows move focus, Enter activates, Escape cancels, F12 toggles inspector pick mode,\n"
+		"Ctrl+Q quits, Ctrl+1..9 open pages, Ctrl+Shift+R toggles right-to-left, F1 lists shortcuts.\n");
 	if (!g_option_context_parse (ctx, &argc, &argv, &error))
 	{
 		g_printerr ("ui-showcase: %s\n", error->message);
@@ -2947,13 +4686,9 @@ main (int   argc,
 	build_ui (&app);
 
 	if (opt_motion != NULL)
-	{
-		guint i;
-
-		for (i = 0; i < G_N_ELEMENTS (motions); i++)
-			if (g_ascii_strcasecmp (opt_motion, motions[i].name) == 0)
-				lrg_theme_set_motion (lrg_theme_get_default (), motions[i].motion);
-	}
+		g_action_group_activate_action (G_ACTION_GROUP (app.actions), "motion", g_variant_new_string (opt_motion));
+	if (opt_rtl)
+		g_action_group_activate_action (G_ACTION_GROUP (app.actions), "rtl", NULL);
 	if (opt_page != NULL)
 	{
 		guint i;
@@ -2978,7 +4713,7 @@ main (int   argc,
 	if (opt_pick)
 		toggle_pick_mode (&app);
 
-	while (!grl_window_should_close (window))
+	while (!grl_window_should_close (window) && !app.quit)
 	{
 		gfloat w = (gfloat) GetScreenWidth ();
 		gfloat h = (gfloat) GetScreenHeight ();
@@ -3001,6 +4736,16 @@ main (int   argc,
 		}
 		if (app.current_page == PAGE_INSPECTOR && frame % 15 == 0)
 			update_inspector_timings (&app);
+		if (app.current_page == PAGE_LAYOUT)
+			update_size_label (&app);
+		if (app.current_page == PAGE_GRAPH && !graph_framed &&
+		    lrg_widget_get_width (LRG_WIDGET (app.graph)) > 0.0f)
+		{
+			/* Framing needs the graph's size: once, after its first layout */
+			lrg_node_graph_frame_all (app.graph, FALSE);
+			graph_framed = TRUE;
+		}
+		app.scene_time += GetFrameTime ();
 
 		/* Hot reload: a stat() of the watched YAML per frame */
 		lrg_ui_loader_poll (app.loader);
@@ -3009,9 +4754,31 @@ main (int   argc,
 			lrg_dialog_present (app.dialog, app.canvas);
 		if (opt_island && frame == 10)
 			lrg_island_set_expanded (app.island, TRUE);
+		if (opt_menu > 0 && frame == 10)
+			lrg_menu_bar_open_menu (app.menubar, (guint) (opt_menu - 1), TRUE);
+		if (opt_context && frame == 30 && app.cards->len > 0)
+		{
+			/* What the canvas does on a right click, done by hand */
+			LrgWidget *first = g_ptr_array_index (app.cards, 0);
+
+			context = lrg_menu_new_from_model (lrg_widget_get_context_menu (first));
+			lrg_menu_popup_at_point (context, first, lrg_widget_get_world_x (first) + 120.0f,
+			                         lrg_widget_get_world_y (first) + 60.0f);
+		}
 
 		grl_window_begin_drawing (window);
 		lrg_canvas_render (app.canvas);
+
+		/* File > Save screenshot: capture the frame just rendered */
+		if (app.shot_request != NULL)
+		{
+			Image shot = LoadImageFromScreen ();
+
+			if (ExportImage (shot, app.shot_request))
+				show_toast (&app, "Screenshot saved", app.shot_request, LRG_TOAST_KIND_SUCCESS);
+			UnloadImage (shot);
+			g_clear_pointer (&app.shot_request, g_free);
+		}
 
 		if (opt_screenshot != NULL && frame >= opt_frames)
 		{
@@ -3033,6 +4800,25 @@ main (int   argc,
 	}
 
 	lrg_ui_inspector_register_canvas (NULL);
+	if (app.cube_loaded)
+		UnloadModel (app.cube);
+	g_clear_object (&app.camera);
+	g_clear_object (&app.actions);
+	g_clear_object (&app.menubar);
+	g_clear_object (&app.transition_combo);
+	g_clear_object (&app.switcher);
+	g_clear_object (&app.size_box);
+	g_clear_object (&app.size_label);
+	g_clear_object (&app.viewport);
+	g_clear_object (&app.viewport_status);
+	g_clear_object (&app.code);
+	g_clear_object (&app.language_combo);
+	g_clear_object (&app.console_log);
+	g_clear_object (&app.console_input);
+	g_clear_object (&app.graph);
+	g_clear_object (&app.timeline);
+	g_clear_object (&app.dock);
+	g_free (app.shot_request);
 	g_clear_object (&app.loader);
 	g_clear_object (&app.dialog);
 	g_clear_object (&app.toast_mode);

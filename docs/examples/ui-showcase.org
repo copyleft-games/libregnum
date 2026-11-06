@@ -1,10 +1,10 @@
 #+title: UI Showcase Example
-#+description: Walkthrough of examples/ui-showcase.c, an app-style tour of every widget, theme presets, accent swatches, motion presets, gradient cards, toasts, a modal dialog, virtualized list and table, tree and icon tiles, pickers, glass materials and effect shaders, curves, the island and layout glide, Markdown with rich-text effects, a hot-reloaded YAML screen and the UI inspector
+#+description: Walkthrough of examples/ui-showcase.c, an app-style tour of every widget, theme presets, accent swatches, motion presets, gradient cards, toasts, a modal dialog, virtualized list and table, tree and icon tiles, pickers, glass materials and effect shaders, curves, the island and layout glide, Markdown with rich-text effects, a hot-reloaded YAML screen, the UI inspector, a menu bar with GIO actions and shortcuts, card context menus, right-to-left layout, an anchor-layout HUD, a switcher and a size box, a live 3D viewport and a custom widget, a code editor and console, a node graph, a playing timeline and a dock area
 #+authors: Zach Podbielniak
 #+categories: libregnum ui examples
 #+created: 2026-11-05T00:00:00-05:00
 #+updated: 2026-11-06T00:00:00-05:00
-#+version: 2.0
+#+version: 3.0
 
 * UI Showcase Example
 :PROPERTIES:
@@ -14,9 +14,9 @@
 *[[file:../index.org][Home]]* > Examples > UI Showcase
 #+end_quote
 
-=examples/ui-showcase.c= is an application-style tour of the retained UI framework. One window holds a sidebar with a page list and a header with accent swatches, a theme picker and a motion picker. Its eleven pages exercise every widget, the theme presets and accent derivation, spring motion presets, elevation shadows, gradient fills from theme style rules, staggered appear animations, toasts, a modal dialog, a virtualized list and a 10,000-row table, a tree with breadcrumbs, the built-in vector icons, colour, date and time pickers, glass materials and effect shaders over an animated backdrop, curves with travelling pulses, the dynamic island, layout glide, expanders, Markdown with rich-text effects, a hot-reloaded YAML screen and the UI inspector. It is the program to open when you want to see what the UI can do, and the source to read when you want a working pattern for a real tool or game launcher.
+=examples/ui-showcase.c= is an application-style tour of the retained UI framework. One window holds a sidebar with a page list and a header with a menu bar (File, View, Theme, Motion, Help), accent swatches, a theme picker and a motion picker. Its seventeen pages exercise every widget, the theme presets and accent derivation, spring motion presets, elevation shadows, gradient fills from theme style rules, staggered appear animations, toasts, a modal dialog, a virtualized list and a 10,000-row table, a tree with breadcrumbs, the built-in vector icons, colour, date and time pickers, glass materials and effect shaders over an animated backdrop, curves with travelling pulses, the dynamic island, layout glide, expanders, Markdown with rich-text effects, a hot-reloaded YAML screen, the UI inspector, game-HUD anchoring, page switching with transitions, aspect-ratio boxes, a live 3D scene in a viewport, a custom-painted widget, a syntax-highlighting editor with a console, a shader-style node graph, a playing timeline whose curves drive a stage, and a dock area of tabbed, splittable, floatable panels. Every menu item is a GIO action, shortcuts are bound on the canvas, cards have context menus, and the whole window can flip to right-to-left. It is the program to open when you want to see what the UI can do, and the source to read when you want a working pattern for a real tool or game launcher.
 
-For a five-minute introduction read [[file:ui-basics.org][UI Basics]] first. For game-style menus over a live scene, a fixed virtual resolution and gamepad-first navigation, see [[file:ui-game-menu.org][Game UI Menu]].
+For a five-minute introduction read [[file:ui-basics.org][UI Basics]] first. For the same widgets assembled into a docked tool application, see [[file:ui-studio.org][UI Studio]]. For game-style menus over a live scene, a fixed virtual resolution and gamepad-first navigation, see [[file:ui-game-menu.org][Game UI Menu]].
 
 [[file:images/ui-showcase-controls.png]]
 
@@ -35,6 +35,14 @@ For a five-minute introduction read [[file:ui-basics.org][UI Basics]] first. For
 - *Markdown page*: one =LrgMarkdownLabel= with headings, lists, links (=link-activated= raises a toast), inline and fenced code, a quote and rich-text effect tags (=[typewriter=60]=, =[wave]=, =[rainbow]=, =[shake]=, =[pulse]=, =[fade]=, =[s]=, =[color=..]=). ([[#ui-showcase-markdown-page][details]])
 - *Declarative page*: =examples/data/ui/showcase-settings.yaml= built by =LrgUILoader=, watched and polled every frame, so saving the file hot-reloads the live screen. ([[#ui-showcase-declarative-page][details]])
 - *Inspector page*: the canvas is registered with the UI inspector; F12 toggles pick mode, the selected widget is highlighted, its path, frame timings and =describe_widget()= JSON are shown live. ([[#ui-showcase-inspector-page][details]])
+- *Layout page*: an =LrgAnchorLayout= HUD (health, objective, radar minimap, crosshair, prompt, ammo) pinned over the animated backdrop, an =LrgSwitcher= with a transition picker and Previous / Next, and an =LrgSizeBox= holding a 16:9 child. ([[#ui-showcase-layout-page][details]])
+- *Viewport page*: an =LrgViewport= rendering a live 3D scene through =GrlCamera3D= (drag to orbit, wheel to zoom, a resolution-scale slider) and an =LrgCustomWidget= audio spectrum animated from its =step= callback. ([[#ui-showcase-viewport-page][details]])
+- *Editor page*: an =LrgTextEditor= with C, YAML, GLSL and Lua samples and a language picker over every =LrgSyntax= language, beside a console: a read-only log and a submit-on-enter input that runs commands through the same actions as the menus. ([[#ui-showcase-editor-page][details]])
+- *Graph page*: an =LrgNodeGraph= material graph (UV, Time with a slider body, Noise, Albedo texture, Tint, Mix, Fresnel, Material output) with animated wires, snapping and a minimap. ([[#ui-showcase-graph-page][details]])
+- *Timeline page*: an =LrgTimelineView= playing in a loop (camera and music clips, a "Ball" group of curve tracks, two markers) above a stage whose ball is positioned, sized and coloured by =lrg_timeline_view_evaluate()= at the playhead. ([[#ui-showcase-timeline-page][details]])
+- *Dock page*: an =LrgDockArea= with Hierarchy / Assets tabs, a Scene, an Inspector and a Log; drag tabs to split, join or float them. ([[#ui-showcase-dock-page][details]])
+- *Menu bar*: File, View (go to page, right-to-left, pick mode), Theme (preset and accent radios), Motion (radio) and Help, all GIO actions in a =show= group on the canvas, with keyboard shortcuts shown beside the items. ([[#ui-showcase-menus][details]])
+- *Context menus*: right-click a card for Raise / Lower elevation, Replay, Inspect and the accent radio; each card carries its own =card= action group. ([[#ui-showcase-context-menus][details]])
 - *Header*: six accent swatches that re-derive the accent family of the running theme, a combo box listing every preset from =lrg_theme_list_presets()=, and a motion preset combo box (Smooth, Snappy, Bouncy, Wobbly, None).
 - *Navigation*: the sidebar is itself an =LrgListView=; selecting a row shows that page, which flies up into place.
 
@@ -65,12 +73,15 @@ The options come from the =GOptionEntry= table in =main()=:
 | =--theme=           | =-t=  | =NAME=   | Theme preset: =midnight= (default), =daylight=, =catppuccin-mocha=, =catppuccin-latte=, =high-contrast= |
 | =--accent=          | =-a=  | =HEX=    | Accent colour, e.g. ='#22d3ee'= (quote it: =#= starts a shell comment in some contexts)       |
 | =--motion=          | =-m=  | =NAME=   | Motion preset: =smooth=, =snappy=, =bouncy=, =wobbly=, =none= (case-insensitive)              |
-| =--page=            | =-p=  | =NAME=   | Start page: =controls=, =cards=, =feedback=, =list=, =data=, =pickers=, =glass=, =motion=, =markdown=, =declarative=, =inspector= (case-insensitive) |
+| =--page=            | =-p=  | =NAME=   | Start page: =controls=, =cards=, =feedback=, =list=, =data=, =pickers=, =glass=, =motion=, =layout=, =viewport=, =editor=, =graph=, =timeline=, =dock=, =markdown=, =declarative=, =inspector= (case-insensitive) |
 | =--toasts=          |       |          | Show two toasts at start-up                                                                   |
 | =--dialog=          |       |          | Present the dialog on frame 10                                                                |
 | =--island=          |       |          | Expand the Motion page's island on frame 10                                                   |
 | =--pick=            |       |          | Start in inspector pick mode                                                                  |
 | =--touch=           |       |          | Poll touch points (=lrg_canvas_input_set_poll_touch()=), for touch screens                    |
+| =--rtl=             |       |          | Start in a right-to-left layout (activates =show.rtl=)                                        |
+| =--menu=            |       | =N=      | Open menu N of the menu bar (1 = File) on frame 10, keyboard style (for screenshots)          |
+| =--context-menu=    |       |          | Open the first card's context menu on frame 30 (Cards page, for screenshots)                  |
 | =--dump-tree=       |       |          | With =--screenshot=: also print =lrg_ui_inspector_snapshot_json()= to stdout                  |
 | =--screenshot=      | =-s=  | =PATH=   | Save a PNG of the window after =--frames= frames and exit                                     |
 | =--frames=          | =-f=  | =N=      | Frames to run before =--screenshot= (default 90)                                              |
@@ -88,6 +99,10 @@ ui-showcase --page motion --island --motion bouncy
 ui-showcase --page declarative      # then edit examples/data/ui/showcase-settings.yaml
 ui-showcase --page inspector --pick
 ui-showcase --page data --screenshot data.png --dump-tree > tree.json
+ui-showcase --page viewport          # drag the 3D scene to orbit
+ui-showcase --page timeline --theme daylight
+ui-showcase --page dock --rtl
+ui-showcase --page cards --context-menu --frames 60 --screenshot menu.png
 #+end_src
 
 An unknown =--theme= prints =ui-showcase: unknown theme 'NAME'= and leaves the built-in default theme in place, an unknown =--page= prints =ui-showcase: unknown page 'NAME'= and stays on Controls, and an unknown =--motion= is silently ignored.
@@ -104,6 +119,14 @@ An unknown =--theme= prints =ui-showcase: unknown theme 'NAME'= and leaves the b
 | =Enter= / =Space= / pad A   | Activate the focused widget                                                |
 | =Escape= / pad B            | Close the open popup (combo box list, dialog, picker); leave pick mode      |
 | =F12=                       | Toggle inspector pick mode: hover highlights, click selects               |
+| =Ctrl+Q=                    | Quit (=app.quit=)                                                          |
+| =Ctrl+1= .. =Ctrl+9=        | Open the first nine pages (=show.page=)                                    |
+| =Ctrl+Shift+R=              | Toggle right-to-left layout (=show.rtl=)                                   |
+| =Ctrl+D=                    | Open the dialog (=show.dialog=)                                            |
+| =Ctrl+Shift+S=              | Save a screenshot of the window to the user cache directory               |
+| =F5=                        | Reload the Declarative page's YAML                                         |
+| =F1=                        | Show the shortcut list as a toast                                          |
+| Right click / =Shift+F10= / Menu key | Context menu of the card under the pointer or with focus          |
 | Mouse wheel                 | Scroll the list view                                                       |
 
 Input handling is covered in [[file:../modules/ui/input-and-focus.org][Input and Focus]].
@@ -248,7 +271,7 @@ lrg_widget_set_fill_weight (LRG_WIDGET (app->nav), 1.0f);
 g_signal_connect (app->nav, "selection-changed", G_CALLBACK (on_nav_selection), app);
 #+end_src
 
-=lrg_widget_set_fill_weight()= gives a child a share of the box's spare space along the box's axis; with weight 1 the list takes all the height left under the two labels. The header uses the same trick on its title label so the pickers are pushed to the right edge.
+=lrg_widget_set_fill_weight()= gives a child a share of the box's spare space along the box's axis; with weight 1 the list takes all the height left under the two labels. The header uses the same trick on an empty spacer label after the menu bar, so the pickers are pushed to the right edge.
 
 The header holds six accent swatches. Each is an ordinary =LrgButton= with empty text, a fixed 36x36 size, a corner radius of half that (a circle), and a per-instance colour override. The hex string is attached as object data for the click handler:
 
@@ -284,11 +307,59 @@ g_signal_connect (theme_combo, "changed", G_CALLBACK (on_theme_changed), app);
 
 See [[file:../modules/ui/widgets/combo-box.org][Combo Box]] and [[file:../modules/ui/widgets/button.org][Button]].
 
+*** Menu bar, actions and shortcuts
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-menus
+:END:
+[[file:images/ui-showcase-menu.png]]
+
+The header starts with an =LrgMenuBar= built from a =GMenu= (=build_menu_model()=). Nothing in the menus holds a C callback: every item names a GIO action, and =install_actions()= puts a =GSimpleActionGroup= on the canvas under the prefix =show=, so the actions resolve from the menu bar (the owner of its menus) up to the canvas. Quitting uses the canvas's built-in =app.quit=, which only emits =LrgCanvas::quit-requested=; the handler sets =app->quit= and the main loop ends.
+
+#+begin_src C
+const GActionEntry entries[] = {
+	{ "theme",  on_theme_action,  "s",  "'midnight'", NULL, { 0 } },   /* radio */
+	{ "motion", on_motion_action, "s",  "'Smooth'",   NULL, { 0 } },   /* radio */
+	{ "accent", on_accent_action, "s",  "''",         NULL, { 0 } },   /* radio */
+	{ "page",   on_page_action,   "s",  "'controls'", NULL, { 0 } },   /* radio */
+	{ "rtl",    on_rtl_action,    NULL, "false",      NULL, { 0 } },   /* check */
+	{ "pick",   on_pick_action,   NULL, "false",      NULL, { 0 } },   /* check */
+	/* ... toasts, dialog, screenshot, reload, shortcuts, about ... */
+};
+
+app->actions = g_simple_action_group_new ();
+g_action_map_add_action_entries (G_ACTION_MAP (app->actions), entries, G_N_ELEMENTS (entries), app);
+lrg_widget_insert_action_group (LRG_WIDGET (app->canvas), "show", G_ACTION_GROUP (app->actions));
+lrg_canvas_add_shortcut (app->canvas, "<Ctrl>q", "app.quit", NULL);
+lrg_canvas_add_shortcut (app->canvas, "<Ctrl><Shift>r", "show.rtl", NULL);
+#+end_src
+
+| Menu   | Items                                                                                         | Action kind |
+|--------+-----------------------------------------------------------------------------------------------+-------------|
+| File   | Show toasts, Open dialog / Save screenshot, Reload YAML page / Quit                           | plain, =app.quit= |
+| View   | Go to page (submenu, one item per page), Right-to-left layout, Inspector pick mode            | string radio, boolean checks |
+| Theme  | Preset section (every =lrg_theme_list_presets()= name), Accent section (the six swatches)     | string radios |
+| Motion | Smooth, Snappy, Bouncy, Wobbly, None                                                          | string radio |
+| Help   | Keyboard shortcuts, About                                                                     | plain |
+
+*Marks come from action state.* A boolean state draws a check mark, a string state a radio dot on the item whose target equals it. Every handler therefore calls =g_simple_action_set_state()= after doing its work, and code paths that change the same thing elsewhere update the state too: =show_page()= sets =show.page=, =update_inspector_labels()= sets =show.pick= (so F12 and Escape in pick mode keep the check mark right).
+
+*Combo boxes and menus stay in sync.* The header's theme and motion combo boxes do not change anything themselves: their =changed= handlers activate =show.theme= / =show.motion=, and those handlers select the matching combo row. =app->syncing_menu= stops the echo (setting the combo emits =changed= again).
+
+*Theme through the action, not ui.theme.* The canvas's built-in =ui.theme= would put a fresh preset on the canvas, which would lose the card and glass style rules this program adds. =show.theme= instead calls =apply_theme()= (a new default theme with the rules re-added). The RTL check does use a built-in: =on_rtl_action()= flips its boolean state and activates =ui.direction= with ="rtl"= or ="ltr"=, which sets the canvas default direction; every container then mirrors (the sidebar moves to the right, menu bar titles start from the right, check marks and accelerators swap sides):
+
+[[file:images/ui-showcase-rtl.png]]
+
+[[file:images/ui-showcase-rtl-menu.png]]
+
+*Shortcuts in the menus.* Items get no =accel= attribute (except pick mode, whose F12 is polled by the main loop rather than bound): the menu shows whatever =lrg_canvas_get_accel_for_action()= returns for the item's action and target. =Ctrl+1= .. =Ctrl+9= are nine shortcuts to the same =show.page= action with different string targets, and the Go to page items show each one. Plain-letter shortcuts are never used: typing into the console must not trigger them.
+
+The console on the Editor page drives the same actions (=g_action_group_activate_action()=) and the built-in =ui.toast= and =app.quit= (=lrg_widget_activate_action()= from the log widget, resolving up to the canvas). See [[file:../modules/ui/actions.org][Actions and shortcuts]], [[file:../modules/ui/widgets/menu-bar.org][Menu Bar]] and [[file:../modules/ui/widgets/menu.org][Menu]].
+
 *** Pages in an overlay
 :PROPERTIES:
 :CUSTOM_ID: ui-showcase-pages
 :END:
-The eleven pages (indexed by the =PAGE_*= enum, named by =page_names[]=) are stacked in an =LrgOverlay=, which lays every child over the same rectangle. Only one is visible at a time. Each page gets a fly-up appear animation; the List, Data, Glass, Markdown and Declarative pages fill the overlay vertically, the others align to the top:
+The seventeen pages (indexed by the =PAGE_*= enum, named by =page_names[]=) are stacked in an =LrgOverlay=, which lays every child over the same rectangle. Only one is visible at a time. Each page gets a fly-up appear animation; the List, Data, Glass, Viewport, Editor, Graph, Timeline, Dock, Markdown and Declarative pages fill the overlay vertically, the others align to the top:
 
 #+begin_src C
 app->pages = lrg_overlay_new ();
@@ -299,7 +370,8 @@ app->page[PAGE_INSPECTOR] = build_inspector_page (app);
 for (i = 0; i < N_PAGES; i++)
 {
 	gboolean fill = (i == PAGE_LIST || i == PAGE_DATA || i == PAGE_GLASS ||
-	                 i == PAGE_MARKDOWN || i == PAGE_DECLARATIVE);
+	                 i == PAGE_MARKDOWN || i == PAGE_DECLARATIVE || i == PAGE_VIEWPORT ||
+	                 i == PAGE_EDITOR || i == PAGE_GRAPH || i == PAGE_TIMELINE || i == PAGE_DOCK);
 
 	lrg_widget_set_appear (app->page[i], LRG_APPEAR_FLY_UP, 0.0f);
 	lrg_widget_set_valign (app->page[i], fill ? LRG_ALIGN_FILL : LRG_ALIGN_START);
@@ -307,7 +379,7 @@ for (i = 0; i < N_PAGES; i++)
 }
 #+end_src
 
-Switching pages is just visibility. Because an appear animation plays "the first time the widget is painted and whenever it is shown again", making a page visible is enough to replay its fly-up. =show_page()= then does per-page extras: the cards and the Motion page's appear tiles replay their staggered entrances, the Markdown page restarts its typewriter (=lrg_markdown_label_reset_effects()=), and the Inspector page selects its sample card when nothing is selected so the highlight is visible at once:
+Switching pages is just visibility. Because an appear animation plays "the first time the widget is painted and whenever it is shown again", making a page visible is enough to replay its fly-up. =show_page()= then does per-page extras: the cards and the Motion page's appear tiles replay their staggered entrances, the Markdown page restarts its typewriter (=lrg_markdown_label_reset_effects()=), and the Inspector page selects its sample card when nothing is selected so the highlight is visible at once. It also sets the state of the =show.page= action, so View > Go to page shows a radio dot on the open page however it was opened:
 
 #+begin_src C
 for (i = 0; i < N_PAGES; i++)
@@ -412,6 +484,35 @@ for (i = 0; i < 6; i++)
 #+end_src
 
 Note the ownership: the card is added to the grid without an unref, and its reference is handed to =app->cards= (a =GPtrArray= with =g_object_unref= as its free function) so =show_page()= can replay the animations later.
+
+*** Card context menus
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-context-menus
+:END:
+[[file:images/ui-showcase-context-menu.png]]
+
+All six cards share one menu model (=card_menu_model()=) but each card has its own action group, inserted on the card under the prefix =card=. =lrg_widget_set_context_menu()= is all a widget needs: on an unhandled right click (or Shift+F10 / the Menu key with focus inside) the canvas opens an =LrgMenu= at the pointer, and its actions resolve from the card upwards, so =card.raise= finds this card's group while =show.accent= (the second section) continues up to the canvas.
+
+#+begin_src C
+static void
+attach_card_menu (Showcase *app, LrgPanel *panel, LrgLabel *title, GMenuModel *model)
+{
+	const GActionEntry entries[] = {
+		{ "raise",   on_card_raise,   NULL, NULL, NULL, { 0 } },
+		{ "lower",   on_card_lower,   NULL, NULL, NULL, { 0 } },
+		{ "replay",  on_card_replay,  NULL, NULL, NULL, { 0 } },
+		{ "inspect", on_card_inspect, NULL, NULL, NULL, { 0 } }
+	};
+	g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new ();
+
+	g_action_map_add_action_entries (G_ACTION_MAP (group), entries, G_N_ELEMENTS (entries), panel);
+	lrg_widget_insert_action_group (LRG_WIDGET (panel), "card", G_ACTION_GROUP (group));
+	lrg_widget_set_context_menu (LRG_WIDGET (panel), model);
+	card_sync (panel);
+}
+#+end_src
+
+=card_sync()= rewrites the card's heading ("Elevation N") and disables =raise= at elevation 3 and =lower= at 0; the menu greys disabled items out and skips them with the keyboard. =Inspect= selects the card in the UI inspector and activates =show.page= with ="inspector"=. =--context-menu= opens the first card's menu programmatically on frame 30 (=lrg_menu_new_from_model()= + =lrg_menu_popup_at_point()= with the card as owner, exactly what the canvas does) for screenshots.
 
 *** Feedback page: toasts and a modal dialog
 :PROPERTIES:
@@ -608,6 +709,147 @@ See [[file:../modules/paint/index.org::#paint-materials][Materials]], [[file:../
 *Touch.* A card explains the gesture support: scroll boxes, lists, tables, trees and tile views claim one-finger pans along their axis and flick with momentum; taps click and long presses right-click. =--touch= turns on =lrg_canvas_input_set_poll_touch()=, which is off by default because desktop raylib reports a held mouse button as touch point 0. The Markdown page's scroll box sets =lrg_scroll_box_set_kinetic (scroll, TRUE)=.
 
 See [[file:../modules/ui/widgets/island.org][Island]], [[file:../modules/ui/widgets/wrap-box.org][Wrap Box]], [[file:../modules/ui/widgets/expander.org][Expander]], [[file:../modules/ui/animation.org::#animation-layout-glide][Layout glide]] and [[file:../modules/ui/input-and-focus.org::#input-touch][Touch input]].
+
+*** Layout page: anchor layout, switcher, size box
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-layout-page
+:END:
+[[file:images/ui-showcase-layout.png]]
+
+=--theme daylight=:
+
+[[file:images/ui-showcase-layout-daylight.png]]
+
+*Anchor layout HUD.* An =LrgOverlay= stacks the Glass page's =ShowcaseBackdrop= and an =LrgAnchorLayout=. HUD elements are frosted-glass chips (=hud_chip()=: a =glass-frosted= panel around an hbox) and two =LrgCustomWidget= s with only a paint callback (=custom_painter()=): a radar minimap whose sweep turns with =lrg_paint_list_get_time()=, and a breathing crosshair. Each is pinned with a preset and an inward offset; resize the window and they stay in their corners:
+
+#+begin_src C
+lrg_anchor_layout_add (hud, LRG_WIDGET (health), LRG_ANCHOR_PRESET_TOP_LEFT, 16.0f, 16.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (objective), LRG_ANCHOR_PRESET_TOP, 0.0f, 16.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (radar), LRG_ANCHOR_PRESET_TOP_RIGHT, 16.0f, 16.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (crosshair), LRG_ANCHOR_PRESET_CENTER, 0.0f, 0.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (prompt), LRG_ANCHOR_PRESET_BOTTOM, 0.0f, 16.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (ammo), LRG_ANCHOR_PRESET_BOTTOM_RIGHT, 16.0f, 16.0f);
+#+end_src
+
+The anchor layout is pointer-transparent where it has no child, so clicks reach the backdrop (a game scene) underneath.
+
+*Switcher.* Three gradient slides (the =card-N= rules again) added with =lrg_switcher_add_named()=. The combo box sets the transition (Crossfade, Slide, Slide up, Slide down, Zoom, None; =Slide= picks left or right from the direction of travel), and Previous / Next step =lrg_switcher_set_visible_index()= with wrap-around.
+
+*Size box.* An =LrgSizeBox= with =lrg_size_box_set_aspect_ratio (box, 16.0f / 9.0f)= and a 196-unit minimum height holds a gradient panel; the child gets the largest 16:9 rectangle that fits, centred. =update_size_label()= (called from the frame loop while the page is open) prints the child and box sizes.
+
+See [[file:../modules/ui/widgets/anchor-layout.org][Anchor Layout]], [[file:../modules/ui/widgets/switcher.org][Switcher]], [[file:../modules/ui/widgets/size-box.org][Size Box]] and [[file:../modules/ui/widgets/custom-widget.org][Custom Widget]].
+
+*** Viewport page: a live 3D scene and a custom widget
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-viewport-page
+:END:
+[[file:images/ui-showcase-viewport.png]]
+
+=--theme daylight=:
+
+[[file:images/ui-showcase-viewport-daylight.png]]
+
+*The scene.* =lrg_viewport_set_render_func (viewport, draw_scene, app, NULL)= gives the viewport a C render function. The viewport calls it from its =step= (inside =lrg_canvas_update()=, which the inspector's input handling runs before drawing), between =BeginTextureMode()= and =EndTextureMode()= on its own render texture sized to the widget, so =draw_scene()= is free to use 3D mode: =grl_camera3d_begin()=, a grid, a ring of six bobbing, spinning cubes, a large centre cube and an orbiting sphere, all timed by =app->scene_time= (summed frame times). The paint pass then only samples the finished texture inside a themed, rounded frame.
+
+The cube is a raylib =Model= built once by =load_shaded_cube()=: =GenMeshCube()= copied into a new mesh with per-vertex grey levels from a fixed light direction, so the default shader's =vertex colour x tint= reads as a lit solid without a lighting shader. It needs a GL context, which exists because the window opens before =build_ui()=; it is unloaded before the window closes.
+
+*Orbit and zoom.* =pointer-move= gives texture-space coordinates and deltas; while =lrg_viewport_get_dragging()= is true the handler turns yaw and pitch and re-places the =GrlCamera3D= on a sphere (=orbit_apply()=); =pointer-scroll= scales the distance. The status label shows the texel under the pointer. The slider sets =lrg_viewport_set_resolution_scale()= (0.25 to 2): the texture follows the widget times the scale and is recreated once the size has settled.
+
+*LrgCustomWidget.* The spectrum has no subclass: an =LrgCustomWidgetFuncs= table with =paint= and =step=. =step= adds the frame time to =app->spectrum_phase= and returns =TRUE= (always animating); =paint= is a pure function of the phase and draws 24 rounded bars with an accent-to-pink gradient over theme track pills and a glowing cap:
+
+#+begin_src C
+LrgCustomWidgetFuncs funcs = { 0 };
+
+funcs.paint = spectrum_paint;
+funcs.step = spectrum_step;
+lrg_custom_widget_set_funcs (spectrum, &funcs, app, NULL);
+lrg_custom_widget_set_preferred_height (spectrum, 140.0f);
+#+end_src
+
+See [[file:../modules/ui/widgets/viewport.org][Viewport]] and [[file:../modules/ui/widgets/custom-widget.org][Custom Widget]].
+
+*** Editor page: text editor and console
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-editor-page
+:END:
+[[file:images/ui-showcase-editor.png]]
+
+=--theme daylight=:
+
+[[file:images/ui-showcase-editor-daylight.png]]
+
+*Code editor.* An =LrgTextEditor= with line numbers, starting on a GObject-style C sample. The combo box lists =lrg_syntax_list_languages()=; choosing one calls =lrg_text_editor_set_language()= and, for =c=, =yaml=, =glsl= and =lua=, loads the matching sample from =code_samples[]= (other languages re-highlight the current text). Undo, find (Ctrl+F), indentation and the clipboard are the editor's own.
+
+*Console.* Two more editors in a card capped at 380 units: a read-only, wrapping log with =max-lines= 500, and a one-line input with =submit-on-enter= and a placeholder (40 units high, min = max). =submit= runs =run_console_command()= and clears the input; output goes through =console_print()=, which uses =lrg_text_editor_append()= so the log follows new lines while its caret is at the end.
+
+| Command      | Effect                                              |
+|--------------+-----------------------------------------------------|
+| =help=       | List the commands                                   |
+| =echo TEXT=  | Print TEXT                                          |
+| =theme NAME= | Activate =show.theme= (a preset name)               |
+| =page NAME=  | Activate =show.page=                                |
+| =rtl=        | Activate =show.rtl=                                 |
+| =toast TEXT= | Activate the built-in =ui.toast=                    |
+| =clear=      | Empty the log                                       |
+| =quit=       | Activate the built-in =app.quit=                    |
+
+See [[file:../modules/ui/widgets/text-editor.org][Text Editor]] and [[file:../modules/ui/widgets/syntax.org][Syntax]].
+
+*** Graph page: a shader graph
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-graph-page
+:END:
+[[file:images/ui-showcase-graph.png]]
+
+=--theme daylight=:
+
+[[file:images/ui-showcase-graph-daylight.png]]
+
+=build_graph_page()= adds nine nodes with =lrg_node_graph_add_node()=, gives each a category (=input=, =texture=, =math=, =lighting=, =output=; the header gradient colour is picked from the category), typed ports (=vec2=, =vec4=, =float=; port and wire colours come from the type) and wires them with =lrg_node_graph_connect_by_name()=. The Time node has a body: an =LrgSlider= set with =lrg_graph_node_set_body()=, which becomes a real child of the graph, hit-tested and scaled with the card. Animated links send pulses from outputs to inputs, snap-to-grid is on and the minimap shows the whole graph.
+
+The graph is framed once, from the frame loop, the first time the page is open and the graph has a size: =lrg_node_graph_frame_all()= needs the widget's allocation.
+
+See [[file:../modules/ui/widgets/node-graph.org][Node Graph]].
+
+*** Timeline page: curves driving a stage
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-timeline-page
+:END:
+[[file:images/ui-showcase-timeline.png]]
+
+=--theme daylight=:
+
+[[file:images/ui-showcase-timeline-daylight.png]]
+
+An 8-second, 30 fps =LrgTimelineView= with =loop= on and =playing= set at start-up: the widget advances its own playhead on the canvas clock. Tracks: Camera (three clips, one recoloured), Music (two clips) and a "Ball" group with four curve tracks (Position X, Height, Size, Hue), each with a curve lane, a value range and keyframes using =ease=, =linear= and =step= interpolation. Two markers flag the cuts.
+
+The stage above is an =LrgCustomWidget= whose paint callback samples the curves at the playhead, the same curves the timeline draws:
+
+#+begin_src C
+gdouble t = lrg_timeline_view_get_time (app->timeline);
+gfloat  fx = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_x, t);
+gfloat  fy = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_y, t);
+gfloat  size = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_size, t);
+gfloat  hue = (gfloat) lrg_timeline_view_evaluate (app->timeline, app->track_hue, t);
+#+end_src
+
+It also samples the whole path (97 points over the duration) as a dotted trail that brightens near the playhead. Scrub the ruler, drag a keyframe or double-click a curve lane and the ball follows at once.
+
+See [[file:../modules/ui/widgets/timeline-view.org][Timeline View]].
+
+*** Dock page: a dock area
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-dock-page
+:END:
+[[file:images/ui-showcase-dock.png]]
+
+=--theme daylight=:
+
+[[file:images/ui-showcase-dock-daylight.png]]
+
+=build_dock_page()= creates an =LrgDockArea= and docks five =LrgDockPanel= s with =dock_panel()= (new panel, icon, child, =lrg_dock_area_add_panel()=): Scene (the backdrop; not closable) in the centre, Hierarchy on the left with Assets (a wrap box of icons) as a second tab, Inspector on the right, and Log (a read-only text editor) below the scene. =lrg_dock_area_set_panel_share()= then sets the scene to 62 % of its column and the left column to 38 % of its row. Drag a tab onto another stack's edge to split it, onto a tab strip to join it, or outside to float it in the canvas overlay layer; drag dividers to resize. [[file:ui-studio.org][UI Studio]] saves and restores such a layout as YAML.
+
+See [[file:../modules/ui/widgets/dock-area.org][Dock Area]].
 
 *** Markdown page
 :PROPERTIES:
@@ -873,6 +1115,7 @@ while (!grl_window_should_close (window))
 2. =lrg_ui_inspector_handle_input()= is =lrg_canvas_handle_input()= with the inspector's pick-mode filter in between (outside pick mode it passes everything through). It polls mouse, keyboard and gamepad, hit-tests, moves focus and dispatches events, then calls =lrg_canvas_update()= with the frame's delta time to advance every spring, appear animation and popup fade. Signal handlers (=clicked=, =changed=, =response=...) run inside this call. Call it every frame, even when you want to ignore input, or the UI stops animating.
 3. =lrg_ui_loader_poll()= checks the watched YAML and diffs a changed document into the live tree; its signals fire here.
 4. =lrg_canvas_render()= lays out what changed, records the tree into a paint list (=lrg_canvas_record()=) and draws it in batched SDF passes. See [[file:../modules/ui/canvas-api.org][Canvas API]] and [[file:../modules/paint/index.org][Paint]].
+5. *Quit and captures*: the loop also ends when =app.quit= set =app->quit= (=while (!grl_window_should_close (window) && !app.quit)=), and File > Save screenshot only records a path in =app->shot_request=; the capture happens right after =lrg_canvas_render()=, the one point where the back buffer holds the finished frame. Per-page work also lives here: the size-box label, =app->scene_time= for the 3D scene, and framing the node graph once it has a size.
 
 ** Screenshot mode
 :PROPERTIES:
@@ -915,6 +1158,12 @@ ui-showcase --page glass --screenshot /tmp/glass.png --dump-tree > /tmp/tree.jso
 - On the Motion page set Motion to Bouncy, open the island, then Shuffle the chips a few times quickly.
 - With the Declarative page open, change =text: Settings= to something else in =examples/data/ui/showcase-settings.yaml= and save; then break the indentation and save again.
 - Press F12 and click the table header, a chip or a glass card; the toast shows its path.
+- Open Theme in the menu bar and pick presets and accents: the radio dots, the header combo boxes and the swatches all follow. Press Ctrl+Shift+R and watch the whole window mirror, menus included.
+- Right-click a card and raise it to elevation 3: Raise greys out. Use Shift+F10 on a focused card for the keyboard version.
+- On the Viewport page drag the scene and drop the resolution scale to 0.25.
+- On the Editor page type =theme catppuccin-latte=, =page dock= or =toast hi= into the console.
+- On the Timeline page drag the Height keyframes and watch the ball's arc change; pause with the corner button and scrub.
+- On the Dock page drag the Log tab onto the Inspector, then drag Assets out of the area to float it.
 
 ** Extending it
 :PROPERTIES:
@@ -942,6 +1191,10 @@ ui-showcase --page glass --screenshot /tmp/glass.png --dump-tree > /tmp/tree.jso
 :CUSTOM_ID: ui-showcase-see-also
 :END:
 - [[file:ui-basics.org][UI Basics]]: the minimal program
+- [[file:ui-studio.org][UI Studio]]: the new widgets as a docked tool application, loaded from YAML
+- [[file:../modules/ui/actions.org][Actions and shortcuts]], [[file:../modules/ui/widgets/menu-bar.org][Menu Bar]], [[file:../modules/ui/widgets/menu.org][Menu]]
+- [[file:../modules/ui/widgets/anchor-layout.org][Anchor Layout]], [[file:../modules/ui/widgets/switcher.org][Switcher]], [[file:../modules/ui/widgets/size-box.org][Size Box]], [[file:../modules/ui/widgets/viewport.org][Viewport]], [[file:../modules/ui/widgets/custom-widget.org][Custom Widget]]
+- [[file:../modules/ui/widgets/text-editor.org][Text Editor]], [[file:../modules/ui/widgets/syntax.org][Syntax]], [[file:../modules/ui/widgets/node-graph.org][Node Graph]], [[file:../modules/ui/widgets/timeline-view.org][Timeline View]], [[file:../modules/ui/widgets/dock-area.org][Dock Area]]
 - [[file:ui-game-menu.org][Game UI Menu]]: virtual resolution, YAML theme, pause menu, gamepad
 - [[file:../modules/ui/index.org][UI module]], [[file:../modules/ui/widget.org][Widget]], [[file:../modules/ui/layout.org][Layout]], [[file:../modules/ui/container.org][Container]]
 - [[file:../modules/ui/styling.org][Styling]], [[file:../modules/ui/theme.org][Theme]], [[file:../guides/theming.org][Theming Guide]]

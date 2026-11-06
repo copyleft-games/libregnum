@@ -54,11 +54,13 @@ Core:
 - [[file:widget-api-reference.org][Widget API reference]]: every public function of every widget class, one section per widget.
 - [[file:tooltip.org][Tooltips]]: =LrgTooltip=, =LrgTooltipLayout=.
 - [[file:inspector.org][UI inspector]]: =LrgUIInspector=, tree snapshots, paths, pick mode, highlight overlay, timings, live property edits and the =lrg_ui_*= MCP tools.
+- [[file:actions.org][Actions and shortcuts]]: widget-scoped GIO action groups, the built-in =app= and =ui= actions, =lrg_canvas_add_shortcut()=, accelerator syntax, YAML wiring and right-to-left layout.
 
 Related:
 
 - [[file:../paint/index.org][Paint module]]: the SDF renderer underneath.
 - [[file:../tween/spring.org][Springs and motion]]: =LrgSpring=, motion presets, reduced motion.
+- Examples: [[file:../../examples/ui-showcase.org][UI Showcase]] (every widget, one page each) and [[file:../../examples/ui-studio.org][UI Studio]] (menu bar, dock area, viewport, node graph, timeline, editor and console as one tool app, loaded from YAML).
 - [[file:../../guides/theming.org][Theming guide]], [[file:../../guides/extending-ui.org][Extending the UI]] (custom widgets), [[file:../../guides/ui-migration.org][Migration guide]] (porting pre-paint code).
 
 ** Widget pages
@@ -100,6 +102,18 @@ Related:
 | =LrgTimePicker= | [[file:widgets/time-picker.org][time-picker]] | segmented time field |
 | =LrgBreadcrumb= | [[file:widgets/breadcrumb.org][breadcrumb]] | path trail with collapsing middle |
 | =LrgMarkdownLabel= | [[file:widgets/markdown-label.org][markdown-label]] | wrapped markdown text with links |
+| =LrgMenu= | [[file:widgets/menu.org][menu]] | popup / context menu from a =GMenuModel= |
+| =LrgMenuBar= | [[file:widgets/menu-bar.org][menu-bar]] | application menu bar |
+| =LrgViewport= | [[file:widgets/viewport.org][viewport]] | render texture / 3D scene in the layout |
+| =LrgCustomWidget= | [[file:widgets/custom-widget.org][custom-widget]] | paint, step and event callbacks without a subclass |
+| =LrgAnchorLayout= | [[file:widgets/anchor-layout.org][anchor-layout]] | anchors and offsets (game HUDs) |
+| =LrgSwitcher= | [[file:widgets/switcher.org][switcher]] | one visible page with transitions |
+| =LrgSizeBox= | [[file:widgets/size-box.org][size-box]] | size overrides, min / max, aspect ratio |
+| =LrgTextEditor= | [[file:widgets/text-editor.org][text-editor]] | multi-line code editor |
+| =LrgSyntax= | [[file:widgets/syntax.org][syntax]] | highlighting languages for the editor |
+| =LrgNodeGraph= | [[file:widgets/node-graph.org][node-graph]] | node editor with typed ports and wires |
+| =LrgTimelineView= | [[file:widgets/timeline-view.org][timeline-view]] | multi-track sequencer with curves |
+| =LrgDockArea= / =LrgDockPanel= | [[file:widgets/dock-area.org][dock-area]] | tabbed, splittable, floatable panels |
 | =LrgGrid= | [[file:layout.org::#layout-grid][grid layout]] | layout container |
 
 ** Quick start

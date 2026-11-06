@@ -55,6 +55,32 @@ copied) brought to both UI stacks:
   auto-fix, YAML export); `examples/ui-showcase` covers every feature.
 - Fixed: `LrgRichText` `[[` escape, `[typewriter speed=N]` and per-span
   effect indexing.
+- **Actions and shortcuts**: GTK-style widget-scoped GIO action groups
+  (`lrg_widget_insert_action_group()`, `lrg_widget_activate_action()`), the
+  canvas's built-in `app` / `ui` actions (quit, show/hide/toggle, page,
+  theme, motion, direction, focus, toast), `lrg_canvas_add_shortcut()` with
+  accelerator parsing and labels, YAML `shortcuts:` and action handlers, and
+  right-to-left layout (`LrgWidgetDirection`, mirrored containers).
+- **Menus**: `LrgMenu` (popup and context menus from a `GMenuModel`, check
+  and radio marks from action state, submenus with a safe triangle, gliding
+  highlight, type-ahead), `LrgMenuBar`, and `lrg_widget_set_context_menu()`.
+- **Layout and embedding**: `LrgAnchorLayout` (HUD anchors and offsets),
+  `LrgSwitcher` (pages with crossfade, slide and zoom transitions),
+  `LrgSizeBox` (overrides, min/max, aspect ratio), `LrgViewport` (render
+  textures and 3D scenes inside the layout, pointer mapping, fit modes) and
+  `LrgCustomWidget` (paint/step/event callbacks without subclassing).
+- **Tool widgets**: `LrgTextEditor` with incremental `LrgSyntax` highlighting
+  (C, GLSL, Lua, Python, Bash, YAML, JSON, Markdown, INI and YAML-defined
+  languages), `LrgNodeGraph` (typed ports, gradient wires, minimap, body
+  widgets, YAML), `LrgTimelineView` (tracks, clips, keyframe curves,
+  markers, playback, `lrg_timeline_view_evaluate()`) and `LrgDockArea`
+  (tabbed, splittable, floatable panels with YAML layout persistence).
+- **Examples**: `examples/ui-showcase` gains a menu bar wired to actions and
+  shortcuts, card context menus, `--rtl`, and Layout, Viewport, Editor,
+  Graph, Timeline and Dock pages; the new `examples/ui-studio` is a docked
+  tool app loaded from `examples/data/ui/studio.yaml` (C fallback) whose
+  timeline keyframes animate a live 3D scene, with a console, global
+  shortcuts, theme switching and a dock layout saved as YAML.
 - Not planned: platform look emulation, native accessibility bridges, a
   Vulkan backend, colour emoji and complex-script shaping beyond Arabic.
 

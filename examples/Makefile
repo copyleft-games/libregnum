@@ -145,7 +145,7 @@ endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
-EXAMPLES += ui-showcase game-ui-menu ui-theme-editor
+EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio
 
 # Editor standalone (only built when BUILD_EDITOR_UI=1)
 ifeq ($(BUILD_EDITOR_UI),1)
@@ -250,6 +250,10 @@ $(EXAMPLES_BUILDDIR)/render-yaml-taco-truck$(EXE_EXT): render-yaml-taco-truck.c 
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/ui-showcase$(EXE_EXT): ui-showcase.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/ui-studio$(EXE_EXT): ui-studio.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
