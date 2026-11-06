@@ -1,0 +1,141 @@
+* Expander
+:PROPERTIES:
+:CUSTOM_ID: expander
+:END:
+=LrgExpander= is a card with a header (a chevron and a title) above a content child that is revealed or hidden. Opening and closing drive one /reveal/ spring from 0 to 1:
+- the expander *measures* as header height + reveal x content height, so its parent re-lays out smoothly every frame (the expander's =step()= queues a layout while the spring moves);
+- the content is laid out at its full preferred height and *clipped* to the revealed band (and faded with it), so it never squashes;
+- the chevron turns 90 degrees (right to down) with the same spring.
+=lrg_canvas_update()= returns =TRUE= while the content opens or closes and =FALSE= once it rests. Before the first frame (and with =LRG_MOTION_NONE=) changes snap.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: expander-creation
+:END:
+#+begin_src C
+LrgExpander *advanced = lrg_expander_new ("Advanced settings");
+
+lrg_expander_set_child (advanced, LRG_WIDGET (settings_box));
+lrg_expander_set_expanded (advanced, FALSE);
+#+end_src
+
+** Header and content
+:PROPERTIES:
+:CUSTOM_ID: expander-header
+:END:
+The header is a private focusable child widget (=lrg_expander_get_header()=), =CONTROL_HEIGHT= tall and as wide as the expander. Keyboard and gamepad focus land on it, so a click inside the content never focuses the expander. A click (press and release on the header) or ACTIVATE on the focused header (Enter / Space / gamepad A) toggles.
+
+The content (=lrg_expander_set_child()= / =lrg_expander_get_child()=) sits below the header inside the container =padding= (default 8). The expander shows and hides it itself: it is hidden while fully collapsed, so focus navigation never reaches into a closed expander.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: expander-properties
+:END:
+| Property   | Type       | Default | Meaning                         |
+|------------+------------+---------+---------------------------------|
+| =title=    | =gchar *=  | ""      | Header text                     |
+| =expanded= | =gboolean= | FALSE   | Content revealed (or revealing) |
+Accessors: =lrg_expander_get_title()= / =lrg_expander_set_title()=, =lrg_expander_get_expanded()= / =lrg_expander_set_expanded()=, =lrg_expander_toggle()=, and =lrg_expander_get_reveal()= for the current spring value (0 closed .. 1 open; may overshoot slightly with bouncy motion). The expander carries the =open= state flag while expanded.
+
+| Signal    | Arguments           | Emitted                                                   |
+|-----------+---------------------+-----------------------------------------------------------|
+| =toggled= | =gboolean expanded= | It opened or closed (click, ACTIVATE or code), at the start of the animation |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: expander-parts
+:END:
+| Part     | State                | Built-in look                                           |
+|----------+----------------------+---------------------------------------------------------|
+| =box=    | resting              | Card: =SURFACE=, =BORDER= border, =CORNER_RADIUS=; the border colour also draws the divider under the header |
+| =box=    | =disabled=           | 45 % opacity                                            |
+| =header= | resting              | Transparent                                             |
+| =header= | =hovered= / =pressed= | =CONTROL_HOVER= / =CONTROL_PRESSED=                    |
+| =label=  | resting              | Title in =TEXT=, =FONT_SIZE=                            |
+| =arrow=  | resting              | Chevron in =TEXT_MUTED=, half the font size             |
+| =arrow=  | =hovered=            | =TEXT=                                                  |
+| =arrow=  | =open=               | =ACCENT=                                                |
+| =focus=  | focus visible        | Core focus ring around the header                       |
+Header parts blend with the header widget's hover and press springs.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: expander-keyboard
+:END:
+| Input                     | Action                          |
+|---------------------------+---------------------------------|
+| Tab / gamepad directions  | Focus the header like a button  |
+| Enter / Space / gamepad A | Toggle                          |
+Arrow keys are left to focus navigation.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: expander-theming
+:END:
+#+begin_src yaml
+styles:
+  # Flat expanders inside a panel
+  - widget: LrgExpander
+    class: flat
+    part: box
+    background: "#00000000"
+    border-width: 0
+  - widget: LrgExpander
+    part: label
+    foreground: "#ececf1"
+  - widget: LrgExpander
+    part: arrow
+    state: [open]
+    foreground: "#fbbf24"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: expander-example
+:END:
+#+begin_src C
+static void
+on_toggled (LrgExpander *exp,
+            gboolean     expanded,
+            gpointer     user_data)
+{
+	g_message ("%s %s", lrg_expander_get_title (exp), expanded ? "opened" : "closed");
+}
+
+LrgVBox     *page = lrg_vbox_new ();
+LrgExpander *audio = lrg_expander_new ("Audio");
+LrgExpander *video = lrg_expander_new ("Video");
+
+lrg_expander_set_child (audio, LRG_WIDGET (audio_settings));
+lrg_expander_set_child (video, LRG_WIDGET (video_settings));
+lrg_container_add_child (LRG_CONTAINER (page), LRG_WIDGET (audio));
+lrg_container_add_child (LRG_CONTAINER (page), LRG_WIDGET (video));
+g_signal_connect (audio, "toggled", G_CALLBACK (on_toggled), NULL);
+
+/* Accordion: opening one closes the other */
+lrg_expander_toggle (audio);
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: expander-notes
+:END:
+- The preferred width is the larger of the header (chevron + title) and the content plus padding.
+- Containers above the expander re-measure every frame of the animation; wrap tall content in a [[file:scroll-box.org][scroll box]] when the page may overflow.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: expander-api
+:END:
+- =lrg_expander_new (const gchar *title)=
+- =lrg_expander_get_title= / =lrg_expander_set_title=
+- =lrg_expander_set_child= / =lrg_expander_get_child=
+- =lrg_expander_get_expanded= / =lrg_expander_set_expanded=, =lrg_expander_toggle=
+- =lrg_expander_get_reveal=, =lrg_expander_get_header=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: expander-related
+:END:
+- [[file:panel.org][Panel]]
+- [[file:tree-view.org][Tree view]]
