@@ -220,6 +220,9 @@
 #include "ui/lrg-menu-bar.h"
 #include "ui/lrg-viewport.h"
 #include "ui/lrg-custom-widget.h"
+#include "ui/lrg-anchor-layout.h"
+#include "ui/lrg-switcher.h"
+#include "ui/lrg-size-box.h"
 #include "ui/lrg-ui-actions.h"
 
 /* Tilemap module */

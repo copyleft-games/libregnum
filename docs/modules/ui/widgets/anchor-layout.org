@@ -1,0 +1,158 @@
+* Anchor Layout
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout
+:END:
+=LrgAnchorLayout= places its children freely, each by its own anchors, offsets and pivot. It is libregnum's take on Unreal's Slate canvas (=SConstraintCanvas=) and Godot's anchors, and the container to build game HUDs with: the health bar stays in the top-left corner, the minimap in the top-right, the interaction prompt bottom-centre and the crosshair in the middle, whatever the window size.
+
+Each child has two anchors per axis, expressed as fractions of the layout's content rectangle (0 = left / top edge, 1 = right / bottom edge, values outside 0..1 are allowed). Per axis:
+- *Pinned* (the two anchors are equal): the child's pivot point sits on the anchor, shifted by the near offset (=left= / =top=). Its size is its preferred size (auto-size, the default) or the far offset (=right= / =bottom=) when auto-size is off.
+- *Stretched* (max anchor > min anchor): the child spans from =left= past the min anchor to =right= before the max anchor; the offsets are margins.
+Children may lie partly or wholly outside the layout; nothing is clipped.
+
+#+begin_example
+          min_x = 0.25                 max_x = 0.75
+              |                            |
+  +-----------+----------------------------+-----------+  <- layout (W x H)
+  |           |                            |           |
+  |  [HP]     |<-left->+----------+<-right->|      [MAP]|  TOP_LEFT, TOP_RIGHT pinned
+  |           |        | stretched|         |           |
+  |           |        |  child   |         |           |
+  |           |        +----------+         |           |
+  |                         (+)                         |  CENTER: pivot (0.5, 0.5) on the anchor
+  |                                                     |
+  |                  [ Press E to open ]                |  BOTTOM: pivot (0.5, 1) on (0.5, 1),
+  +-----------------------------------------------------+          offset top = -24
+  pinned axis:    x = W * min_x + left - align_x * width
+  stretched axis: x = W * min_x + left
+                  width = W * max_x - right - x
+#+end_example
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-creation
+:END:
+#+begin_src C
+LrgAnchorLayout *hud = lrg_anchor_layout_new ();
+
+/* Presets with an inward offset (x, y) */
+lrg_anchor_layout_add (hud, LRG_WIDGET (health), LRG_ANCHOR_PRESET_TOP_LEFT, 16.0f, 16.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (minimap), LRG_ANCHOR_PRESET_TOP_RIGHT, 16.0f, 16.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (prompt), LRG_ANCHOR_PRESET_BOTTOM, 0.0f, 48.0f);
+lrg_anchor_layout_add (hud, LRG_WIDGET (crosshair), LRG_ANCHOR_PRESET_CENTER, 0.0f, 0.0f);
+
+/* Or plain add + per-child setters (what the YAML loader does) */
+lrg_container_add_child (LRG_CONTAINER (hud), LRG_WIDGET (subtitles));
+lrg_anchor_layout_set_child_anchors (hud, LRG_WIDGET (subtitles), 0.1f, 0.8f, 0.9f, 0.8f);
+lrg_anchor_layout_set_child_offsets (hud, LRG_WIDGET (subtitles), 0.0f, 0.0f, 0.0f, 0.0f);
+lrg_anchor_layout_set_child_alignment (hud, LRG_WIDGET (subtitles), 0.0f, 1.0f);
+lrg_anchor_layout_set_child_z_order (hud, LRG_WIDGET (subtitles), 5);
+#+end_src
+
+The layout is usually given the whole canvas (=lrg_container_add_child (canvas, hud)= and a FILL alignment, or an explicit =lrg_widget_allocate()=).
+
+** Presets
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-presets
+:END:
+=LrgAnchorPreset= sets the anchors and the pivot together (=lrg_anchor_data_set_preset()=, =lrg_anchor_layout_set_child_preset()=). Offsets, auto-size and z-order are not touched.
+| Preset                 | Anchors (min_x, min_y) - (max_x, max_y) | Pivot      |
+|------------------------+-----------------------------------------+------------|
+| =TOP_LEFT=             | (0, 0) - (0, 0)                         | (0, 0)     |
+| =TOP=                  | (0.5, 0) - (0.5, 0)                     | (0.5, 0)   |
+| =TOP_RIGHT=            | (1, 0) - (1, 0)                         | (1, 0)     |
+| =LEFT=                 | (0, 0.5) - (0, 0.5)                     | (0, 0.5)   |
+| =CENTER=               | (0.5, 0.5) - (0.5, 0.5)                 | (0.5, 0.5) |
+| =RIGHT=                | (1, 0.5) - (1, 0.5)                     | (1, 0.5)   |
+| =BOTTOM_LEFT=          | (0, 1) - (0, 1)                         | (0, 1)     |
+| =BOTTOM=               | (0.5, 1) - (0.5, 1)                     | (0.5, 1)   |
+| =BOTTOM_RIGHT=         | (1, 1) - (1, 1)                         | (1, 1)     |
+| =TOP_STRETCH=          | (0, 0) - (1, 0)                         | (0, 0)     |
+| =MIDDLE_STRETCH=       | (0, 0.5) - (1, 0.5)                     | (0, 0.5)   |
+| =BOTTOM_STRETCH=       | (0, 1) - (1, 1)                         | (0, 1)     |
+| =LEFT_STRETCH=         | (0, 0) - (0, 1)                         | (0, 0)     |
+| =CENTER_STRETCH=       | (0.5, 0) - (0.5, 1)                     | (0.5, 0)   |
+| =RIGHT_STRETCH=        | (1, 0) - (1, 1)                         | (1, 0)     |
+| =FILL=                 | (0, 0) - (1, 1)                         | (0, 0)     |
+=lrg_anchor_layout_add()= converts its (x, y) offset so positive values always point inwards: on pinned axes anchored at 1 the offset is negated; on stretched axes it is used as both margins.
+
+** Per-child placement
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-child-data
+:END:
+Placement lives in the boxed =LrgAnchorData= (=min_x=, =min_y=, =max_x=, =max_y=, =left=, =top=, =right=, =bottom=, =align_x=, =align_y=, =auto_size=, =z_order=), attached to the child. =lrg_anchor_data_init()= fills the defaults (top-left, no offsets, pivot (0, 0), auto-size on, z-order 0); =lrg_anchor_data_copy()= / =lrg_anchor_data_free()= manage heap copies.
+| Function                                    | Sets                                                     |
+|---------------------------------------------+----------------------------------------------------------|
+| =lrg_anchor_layout_set_child_anchors=       | min / max anchors (a max below the min is clamped to it) |
+| =lrg_anchor_layout_set_child_offsets=       | left, top, right, bottom                                 |
+| =lrg_anchor_layout_set_child_alignment=     | pivot (0..1 each)                                        |
+| =lrg_anchor_layout_set_child_auto_size=     | preferred size (TRUE) or right / bottom as size (FALSE)  |
+| =lrg_anchor_layout_set_child_z_order=       | stacking order, higher on top                            |
+| =lrg_anchor_layout_set_child_preset=        | anchors + pivot from a preset                            |
+| =lrg_anchor_layout_set_child_data=          | everything at once                                       |
+| =lrg_anchor_layout_get_child_data=          | copies everything out                                    |
+| =lrg_anchor_layout_get_child_z_order=       | reads the z-order                                        |
+=lrg_anchor_compute_rect()= runs the anchor math alone (data, area size, preferred size in; rectangle out), for tools and editors that preview placements.
+
+** Layout behaviour
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-behaviour
+:END:
+| Aspect          | Behaviour                                                                                                    |
+|-----------------+--------------------------------------------------------------------------------------------------------------|
+| Anchor area     | The layout rectangle minus =padding= (=LrgContainer:padding=)                                                 |
+| Margins         | The child's margin is part of the anchored rectangle (preferred size includes it, fixed sizes include it)    |
+| Alignment       | The child's own halign / valign apply inside its rectangle (=lrg_widget_place_in_slot()=)                    |
+| Z-order         | The child list is kept sorted (stable): paint order and hit-test order always agree                          |
+| Hidden children | Skipped                                                                                                      |
+| Right to left   | Mirrored by the core: anchors, offsets and pivot mirror together (TOP_LEFT ends up top-right)                 |
+| Preferred size  | Large enough that every child lies inside (pinned: per side of its anchor; stretched: margins + preferred)   |
+| Input           | Pointer-transparent: clicks on empty space fall through to whatever lies beneath (the game)                  |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-properties
+:END:
+No properties of its own beyond =LrgContainer:padding=; per-child settings go through the functions above. No signals.
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-styling
+:END:
+The layout paints nothing itself (no parts); only its children are drawn. Put a panel inside if a backdrop is wanted.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-yaml
+:END:
+Supported by =LrgUILoader= as =LrgAnchorLayout=; per-child keys map onto the per-child functions (the integration pass documents the exact keys).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-pitfalls
+:END:
+- Children outside the layout are painted but cannot be clicked: the canvas only descends into a container where the pointer is inside it. Give the HUD the whole screen.
+- Changing a z-order re-sorts the container's child list by taking children out and adding them back (=notify::parent= fires twice per moved child). Do not rely on child indices across z-order changes.
+- Per-child data is stored on the child; it travels with it if the child is moved to another anchor layout.
+- With auto-size on (the default) =right= / =bottom= are ignored on pinned axes; turn it off to give a fixed size.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-see-also
+:END:
+- [[file:overlay.org][Overlay]] (children stacked by alignment and margin only)
+- [[file:size-box.org][Size box]] (aspect-ratio viewports inside a HUD)
+- [[file:switcher.org][Switcher]]
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: anchor-layout-api
+:END:
+- =lrg_anchor_layout_new (void)=
+- =lrg_anchor_layout_add (self, child, preset, offset_x, offset_y)=
+- =lrg_anchor_layout_get_child_data= / =lrg_anchor_layout_set_child_data=
+- =lrg_anchor_layout_set_child_preset=, =lrg_anchor_layout_set_child_anchors=, =lrg_anchor_layout_set_child_offsets=
+- =lrg_anchor_layout_set_child_alignment=, =lrg_anchor_layout_set_child_auto_size=
+- =lrg_anchor_layout_set_child_z_order= / =lrg_anchor_layout_get_child_z_order=
+- =lrg_anchor_data_init=, =lrg_anchor_data_copy=, =lrg_anchor_data_free=, =lrg_anchor_data_set_preset=, =lrg_anchor_data_get_type=
+- =lrg_anchor_compute_rect=
+- =lrg_anchor_preset_get_type= (=LRG_TYPE_ANCHOR_PRESET=)

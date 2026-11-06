@@ -1,0 +1,125 @@
+* Switcher
+:PROPERTIES:
+:CUSTOM_ID: switcher
+:END:
+=LrgSwitcher= shows exactly one of its children (pages) at a time, like Slate's =SWidgetSwitcher= or GTK's =GtkStack=. Hidden pages are not laid out, painted, stepped into focus navigation or hit-tested. Pages can be named, so menus, tabs and the =ui.page= action switch by name through the =visible-child-name= property.
+
+Switching animates on a spring that follows the widget's motion (=lrg_widget_set_motion()=, inherited from the theme): crossfade, slides (fixed directions, or following page order and mirrored right to left), and zoom. During a transition both pages are painted, but only the incoming page receives the pointer. The non-homogeneous switcher can also glide its requested size between pages (=interpolate-size=), so a parent box grows or shrinks smoothly.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: switcher-creation
+:END:
+#+begin_src C
+LrgSwitcher *pages = lrg_switcher_new ();
+
+lrg_switcher_add_named (pages, LRG_WIDGET (main_menu), "main");
+lrg_switcher_add_named (pages, LRG_WIDGET (options), "options");
+lrg_switcher_add_named (pages, LRG_WIDGET (credits), "credits");
+lrg_switcher_set_transition (pages, LRG_SWITCHER_TRANSITION_SLIDE);
+
+/* Later, from a button handler */
+lrg_switcher_set_visible_child_name (pages, "options");
+
+/* Or by index / widget, or once with a different transition */
+lrg_switcher_set_visible_index (pages, 0);
+lrg_switcher_set_visible_child_full (pages, LRG_WIDGET (credits), LRG_SWITCHER_TRANSITION_ZOOM);
+#+end_src
+
+Pages added with plain =lrg_container_add_child()= work too (unnamed until =lrg_switcher_set_child_name()=). The first page added becomes visible.
+
+** Transitions
+:PROPERTIES:
+:CUSTOM_ID: switcher-transitions
+:END:
+| =LrgSwitcherTransition= | Incoming page                               | Outgoing page                   | Clipped |
+|-------------------------+---------------------------------------------+---------------------------------+---------|
+| =NONE=                  | appears                                     | disappears                      | -       |
+| =CROSSFADE= (default)   | fades in, on top                            | fades out                       | no      |
+| =SLIDE_LEFT=            | slides in from the right                    | pushed out to the left          | yes     |
+| =SLIDE_RIGHT=           | slides in from the left                     | pushed out to the right         | yes     |
+| =SLIDE_UP=              | slides in from the bottom                   | pushed up                       | yes     |
+| =SLIDE_DOWN=            | slides in from the top                      | pushed down                     | yes     |
+| =SLIDE=                 | =SLIDE_LEFT= to a later page, =SLIDE_RIGHT= to an earlier one; swapped right to left | | yes |
+| =ZOOM=                  | grows from 92 % while fading in             | grows to 108 % while fading out | yes     |
+
+- *First frame*: a switch before the switcher was ever stepped by the canvas is instant, so a freshly built screen never animates in.
+- *Reduced motion* (=lrg_motion_get_reduced()=), motion =LRG_MOTION_NONE=, an explicit =NONE= transition or a switcher without a size: instant.
+- *Interrupting*: switching back to the page being left turns the transition around smoothly (the spring is mirrored, both pages keep their place and speed). Switching to a third page mid-way restarts the transition from the page that was coming in; the page that was leaving disappears.
+- =transition-running=, =lrg_switcher_get_transition_progress()= (0 to 1; bouncy motions may overshoot) and =lrg_switcher_get_previous_child()= expose the state; =lrg_canvas_update()= returns =TRUE= while it runs.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: switcher-behaviour
+:END:
+| Aspect           | Behaviour                                                                                                  |
+|------------------+------------------------------------------------------------------------------------------------------------|
+| Page visibility  | Managed by the switcher through each page's =visible= flag (do not toggle it yourself)                     |
+| Layout           | The visible page (and the outgoing one during a transition) gets the content rectangle via =lrg_widget_place_in_slot()= |
+| Hit-testing      | Only the visible (incoming) page; empty space is pointer-transparent                                       |
+| Focus            | Keyboard focus inside a page being hidden is cleared                                                       |
+| Removing a page  | It gets =visible= back and loses its name; removing the visible page shows the first remaining one          |
+| Homogeneous      | Preferred size of the largest page (default); otherwise of the visible page                               |
+| Interpolate size | Not homogeneous: the preferred size springs from the old page's to the new page's                         |
+| Right to left    | Pages are mirrored by the core; =SLIDE= reverses its direction                                             |
+| Input            | None of its own: the switcher handles no events                                                            |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: switcher-properties
+:END:
+| Property             | Type                    | Default     | Meaning                                                     |
+|----------------------+-------------------------+-------------+-------------------------------------------------------------|
+| =visible-child=      | =LrgWidget=             | first page  | The page shown (or being switched to)                       |
+| =visible-child-name= | =gchararray=            | first name  | Name of the page shown; setting it switches (=ui.page=)     |
+| =visible-index=      | =gint=                  | 0 / -1      | Position of the page shown among the children               |
+| =transition=         | =LrgSwitcherTransition= | =crossfade= | Default transition                                          |
+| =homogeneous=        | =gboolean=              | =TRUE=      | Request the largest page's size                             |
+| =interpolate-size=   | =gboolean=              | =FALSE=     | Glide the requested size between pages                      |
+| =transition-running= | =gboolean= (read-only)  | =FALSE=     | A transition is animating                                   |
+All are =G_PARAM_EXPLICIT_NOTIFY=: =visible-child=, =visible-child-name= and =visible-index= notify together once per switch. No signals beyond =notify=.
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: switcher-styling
+:END:
+The switcher paints no parts of its own; the motion preset of the widget (or theme) shapes every transition, e.g. =lrg_widget_set_motion (LRG_WIDGET (pages), LRG_MOTION_BOUNCY)= for an overshooting slide.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: switcher-yaml
+:END:
+Supported by =LrgUILoader= as =LrgSwitcher=; =visible-child-name=, =transition=, =homogeneous= and =interpolate-size= are plain properties, page names are a per-child setting (the integration pass documents the key).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: switcher-pitfalls
+:END:
+- Do not call =lrg_widget_set_visible()= on pages: the switcher owns that flag.
+- During a transition the outgoing page is painted through its paint method directly; legacy widgets that only implement =draw()= vanish at the start of the transition instead of animating out.
+- Paint-list transform groups move shapes but not clip rectangles, so a scroll box inside a sliding page keeps its clip in place while its content slides (content is cut at the scroll box's resting rectangle for the duration of the slide).
+- The incoming page is hit-tested at its final rectangle even while it is still sliding in.
+- =lrg_switcher_set_visible_child_name()= with an unknown name logs a warning and does nothing.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: switcher-see-also
+:END:
+- [[file:anchor-layout.org][Anchor layout]]
+- [[file:overlay.org][Overlay]]
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: switcher-api
+:END:
+- =lrg_switcher_new (void)=
+- =lrg_switcher_add_named (self, child, name)=
+- =lrg_switcher_get_child_name= / =lrg_switcher_set_child_name=, =lrg_switcher_get_child_by_name=
+- =lrg_switcher_get_visible_child= / =lrg_switcher_set_visible_child=, =lrg_switcher_set_visible_child_full (self, child, transition)=
+- =lrg_switcher_get_visible_child_name= / =lrg_switcher_set_visible_child_name=
+- =lrg_switcher_get_visible_index= / =lrg_switcher_set_visible_index=
+- =lrg_switcher_get_transition= / =lrg_switcher_set_transition=
+- =lrg_switcher_get_homogeneous= / =lrg_switcher_set_homogeneous=
+- =lrg_switcher_get_interpolate_size= / =lrg_switcher_set_interpolate_size=
+- =lrg_switcher_get_transition_running=, =lrg_switcher_get_transition_progress=, =lrg_switcher_get_previous_child=
+- =lrg_switcher_transition_get_type= (=LRG_TYPE_SWITCHER_TRANSITION=)
