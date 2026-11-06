@@ -126,7 +126,7 @@ Lerp blends *all* fields, set or not, and unset colours are transparent: a shado
 :END:
 | Function | Purpose |
 |----------+---------|
-| =lrg_part_look_new ()= / =_copy ()= / =_free ()= | Boxed allocation (=g_autoptr (LrgPartLook)=) |
+| =lrg_part_look_new ()= / =lrg_part_look_copy ()= / =lrg_part_look_free ()= | Boxed allocation (=g_autoptr (LrgPartLook)=), see [[#styling-boxed-types][boxed types]] |
 | =lrg_part_look_init (self)= | Reset (see above) |
 | =lrg_part_look_merge (self, overlay)= | Copy the fields set in =overlay= |
 | =lrg_part_look_lerp (a, b, t, out)= | Blend two looks |
@@ -139,6 +139,27 @@ Lerp blends *all* fields, set or not, and unset colours are transparent: a shado
 | =lrg_part_look_set_opacity (self, opacity)= | Part opacity |
 | =lrg_part_look_set_size (self, size)= | Part-specific size |
 | =lrg_part_look_set_glow (self, color, size)= | Outer glow (two bits) |
+
+*** Boxed types and GTypes
+:PROPERTIES:
+:CUSTOM_ID: styling-boxed-types
+:END:
+=LrgPartLook= is a plain value struct; C code keeps it on the stack and resets it with =lrg_part_look_init()=. The boxed and flags types exist for =GValue=, properties, signals and introspection bindings. A look holds no pointers, so copies are flat and independent.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_part_look_get_type= | =GType lrg_part_look_get_type (void) G_GNUC_CONST;= | The boxed =GType= (=LRG_TYPE_PART_LOOK=), copied with =lrg_part_look_copy()=, freed with =lrg_part_look_free()= |
+| =lrg_part_look_new= | =LrgPartLook * lrg_part_look_new (void);= | (transfer full) an empty look (as after =lrg_part_look_init()=) |
+| =lrg_part_look_copy= | =LrgPartLook * lrg_part_look_copy (const LrgPartLook *self);= | (transfer full) flat copy, =set= mask included |
+| =lrg_part_look_free= | =void lrg_part_look_free (LrgPartLook *self);= | =self= is (nullable); =g_autoptr (LrgPartLook)= is supported |
+| =lrg_part_look_fields_get_type= | =GType lrg_part_look_fields_get_type (void) G_GNUC_CONST;= | The =GFlags= type (=LRG_TYPE_PART_LOOK_FIELDS=) of the =set= mask: =LRG_PART_LOOK_BACKGROUND=, =FOREGROUND=, =BORDER=, =BORDER_WIDTH=, =RADII=, =SHADOW=, =SHADOW_BLUR=, =SHADOW_OFFSET=, =GRADIENT=, =OPACITY=, =SIZE=, =GLOW=, =GLOW_SIZE=, and =LRG_PART_LOOK_ALL=. Registered by hand in =lrg-style.c= (nicks are the lower-case suffixes), so YAML loaders and inspectors can print or parse a mask |
+
+#+begin_src c
+/* Print which fields a resolved look carries, e.g. "LRG_PART_LOOK_BACKGROUND | LRG_PART_LOOK_RADII" */
+g_autofree gchar *mask = g_flags_to_string (LRG_TYPE_PART_LOOK_FIELDS, look.set);
+
+g_debug ("box look sets: %s", mask);
+#+end_src
 
 ** Built-in looks: style_defaults()
 :PROPERTIES:
@@ -224,6 +245,42 @@ lrg_theme_add_style_rule (theme, text);
 lrg_theme_add_style_rule (theme, hot);
 
 lrg_widget_add_class (LRG_WIDGET (delete_button), "danger");
+#+end_src
+
+*** LrgStyleRule functions
+:PROPERTIES:
+:CUSTOM_ID: styling-rule-api
+:END:
+A rule is reference counted (atomically) and immutable except for its look; the selector (type name, class, part, state) is fixed at creation.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_style_rule_get_type= | =GType lrg_style_rule_get_type (void) G_GNUC_CONST;= | The boxed =GType= (=LRG_TYPE_STYLE_RULE=); its copy function is =lrg_style_rule_ref()= and its free function =lrg_style_rule_unref()=, so a =GValue= shares the rule instead of duplicating it |
+| =lrg_style_rule_new= | =LrgStyleRule * lrg_style_rule_new (const gchar *widget_type, const gchar *style_class, LrgUIPart part, LrgWidgetState state);= | (transfer full) with an empty look. =widget_type= (nullable) is a type name such as ="LrgButton"= (subclasses match too); =style_class= (nullable); =state= flags must all be active, =LRG_WIDGET_STATE_NONE= matches every state |
+| =lrg_style_rule_ref= | =LrgStyleRule * lrg_style_rule_ref (LrgStyleRule *self);= | (transfer full) returns =self= with one more reference |
+| =lrg_style_rule_unref= | =void lrg_style_rule_unref (LrgStyleRule *self);= | (transfer full) drops a reference, freeing the rule at zero; =g_autoptr (LrgStyleRule)= calls it |
+| =lrg_style_rule_get_look= | =LrgPartLook * lrg_style_rule_get_look (LrgStyleRule *self);= | (transfer none) the look the rule applies; edit it in place before adding the rule to a theme, or call =lrg_theme_style_rules_changed()= after editing a rule the theme already holds (the theme caches resolved looks) |
+| =lrg_style_rule_get_widget_type= | =const gchar * lrg_style_rule_get_widget_type (LrgStyleRule *self);= | (nullable) (transfer none) the type *name*, =NULL= for any widget |
+| =lrg_style_rule_get_style_class= | =const gchar * lrg_style_rule_get_style_class (LrgStyleRule *self);= | (nullable) (transfer none) the class, =NULL= for any |
+| =lrg_style_rule_get_part= | =LrgUIPart lrg_style_rule_get_part (LrgStyleRule *self);= | The single part the rule styles |
+| =lrg_style_rule_get_state= | =LrgWidgetState lrg_style_rule_get_state (LrgStyleRule *self);= | The states the rule requires |
+| =lrg_style_rule_get_specificity= | =guint lrg_style_rule_get_specificity (LrgStyleRule *self);= | See [[#styling-specificity][specificity]] |
+| =lrg_style_rule_matches= | =gboolean lrg_style_rule_matches (LrgStyleRule *self, GType widget_type, const GQuark *classes, guint n_classes, LrgUIPart part, LrgWidgetState state);= | =classes= is (array length=n_classes) (nullable); see [[#styling-matching][matching]] |
+
+The getters let tools list a theme's rules, for example an inspector that dumps every rule touching a widget:
+
+#+begin_src c
+static void
+dump_rule (LrgStyleRule *rule)
+{
+	g_autofree gchar *state = g_flags_to_string (LRG_TYPE_WIDGET_STATE, lrg_style_rule_get_state (rule));
+
+	g_print ("%s.%s part=%d state=%s specificity=%u\n",
+	         lrg_style_rule_get_widget_type (rule) != NULL ? lrg_style_rule_get_widget_type (rule) : "*",
+	         lrg_style_rule_get_style_class (rule) != NULL ? lrg_style_rule_get_style_class (rule) : "*",
+	         (gint) lrg_style_rule_get_part (rule), state,
+	         lrg_style_rule_get_specificity (rule));
+}
 #+end_src
 
 *** Matching
@@ -352,6 +409,23 @@ Style rules in a theme file are a list under =styles:=. Each entry is a mapping;
 | =radius= | canvas units (radial; 0 = half the diagonal) | 0 |
 
 Colours are hex strings =#rgb=, =#rgba=, =#rrggbb= or =#rrggbbaa= (the =#= is optional for =lrg_color_parse()=). *Quote them*: in YAML an unquoted =#= starts a comment, so =background: #7c6cff= is an empty value and fails with "expected a hex colour".
+
+*** Colour strings
+:PROPERTIES:
+:CUSTOM_ID: styling-color-strings
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_color_parse= | =gboolean lrg_color_parse (const gchar *text, GrlColor *out);= | Parses =#rgb=, =#rgba=, =#rrggbb= or =#rrggbbaa= (=#= optional) into =out= (out caller-allocates). Returns =FALSE= on anything else |
+| =lrg_color_to_string= | =gchar * lrg_color_to_string (const GrlColor *color);= | (transfer full) lower-case =#rrggbb=, or =#rrggbbaa= when alpha is not 255; free with =g_free()=. The inverse of =lrg_color_parse()=, used when saving themes |
+
+#+begin_src c
+GrlColor          c;
+g_autofree gchar *hex = NULL;
+
+if (lrg_color_parse ("7C6CFF80", &c))
+	hex = lrg_color_to_string (&c);   /* "#7c6cff80" */
+#+end_src
 
 *** Annotated example
 :PROPERTIES:

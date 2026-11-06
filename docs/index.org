@@ -226,6 +226,8 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:modules/ui/animation.org][Animation]] - Hover/press springs, appear transitions, popup motion, reduced motion
 - [[file:modules/ui/input-and-focus.org][Input, Focus and Popups]] - Input frames, bubbling, capture, focus navigation, popups
 - [[file:modules/ui/ui-event.org][LrgUIEvent]] - Event types and accessors
+- [[file:modules/ui/canvas-api.org][LrgCanvas API]] - Every LrgCanvas and LrgCanvasInput function: rendering, input frames, focus, popups
+- [[file:modules/ui/widget-api-reference.org][Widget API reference]] - Every public function of every widget class, one section per widget
 - [[file:modules/paint/index.org][Paint Module]] - The instanced SDF pipeline ([[file:modules/paint/paint-list.org][LrgPaintList]], [[file:modules/paint/paint-renderer.org][LrgPaintRenderer]])
 - [[file:modules/tween/spring.org][Springs and Motion]] - =LrgSpring=, motion presets, reduced motion
 - [[file:modules/gui/index.org][GUI Module]] - The immediate-mode editor GUI (shares the paint renderer and themes)

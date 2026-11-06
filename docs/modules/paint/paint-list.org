@@ -248,7 +248,7 @@ test_card_paints_shadow_first (void)
 :PROPERTIES:
 :CUSTOM_ID: paint-list-types
 :END:
-All are boxed types with =_copy= / =_free= and =g_autoptr= support; C code keeps them on the stack.
+All are boxed types with =_copy= / =_free= and =g_autoptr= support; C code keeps them on the stack. Full signatures, ownership and examples are in [[#paint-list-boxed-types][Boxed types and GTypes]].
 
 | Type | Fields | Helpers |
 |------+--------+---------|
@@ -267,6 +267,79 @@ All are boxed types with =_copy= / =_free= and =g_autoptr= support; C code keeps
 | =lrg_paint_color_with_alpha (color, alpha, out)= | Replaces the alpha (0..1) |
 | =lrg_paint_color_luminance (color)= | WCAG 2.x relative luminance, 0..1 |
 | =lrg_paint_color_contrast (a, b)= | WCAG contrast ratio 1..21 between two opaque colours; 4.5 is the body-text minimum |
+
+*** Boxed types and GTypes
+:PROPERTIES:
+:CUSTOM_ID: paint-list-boxed-types
+:END:
+The three value types are registered as =GBoxed= types so they can travel through =GValue=, properties, signals and GObject Introspection. Copies are flat (=g_memdup2()= of the struct: none of them own pointers), so a copy never shares state with the original. Every =_free= accepts =NULL=, and =G_DEFINE_AUTOPTR_CLEANUP_FUNC= is declared for each type, so =g_autoptr (LrgCornerRadii)= and friends work. C code normally keeps these structs on the stack and uses the =_init_*= helpers; the heap functions exist mainly for bindings and for storing a value in a =GValue=.
+
+**** LrgCornerRadii
+:PROPERTIES:
+:CUSTOM_ID: paint-list-corner-radii
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_corner_radii_get_type= | =GType lrg_corner_radii_get_type (void) G_GNUC_CONST;= | The boxed =GType=, also available as =LRG_TYPE_CORNER_RADII= |
+| =lrg_corner_radii_new= | =LrgCornerRadii * lrg_corner_radii_new (gfloat top_left, gfloat top_right, gfloat bottom_right, gfloat bottom_left);= | (transfer full); free with =lrg_corner_radii_free()= |
+| =lrg_corner_radii_copy= | =LrgCornerRadii * lrg_corner_radii_copy (const LrgCornerRadii *self);= | (transfer full) flat copy; =self= must not be =NULL= |
+| =lrg_corner_radii_free= | =void lrg_corner_radii_free (LrgCornerRadii *self);= | =self= is (nullable) |
+| =lrg_corner_radii_init_uniform= | =void lrg_corner_radii_init_uniform (LrgCornerRadii *self, gfloat radius);= | (out caller-allocates): all four corners set to =radius= |
+| =lrg_corner_radii_scale= | =void lrg_corner_radii_scale (LrgCornerRadii *self, gfloat factor);= | Multiplies every corner by =factor= in place |
+
+Radii are in canvas units and are clamped to half the shorter side when drawn, so =G_MAXFLOAT= always gives a pill or a circle. =lrg_corner_radii_scale()= is what a squash or zoom animation uses to keep corners proportional to a scaled box:
+
+#+begin_src c
+LrgCornerRadii radii;
+
+/* the theme radius, shrunk with the box while a button is pressed */
+lrg_corner_radii_init_uniform (&radii, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+lrg_corner_radii_scale (&radii, 0.96f);
+#+end_src
+
+**** LrgPaintGradient
+:PROPERTIES:
+:CUSTOM_ID: paint-list-gradient
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_paint_gradient_get_type= | =GType lrg_paint_gradient_get_type (void) G_GNUC_CONST;= | The boxed =GType=, also =LRG_TYPE_PAINT_GRADIENT= |
+| =lrg_paint_gradient_copy= | =LrgPaintGradient * lrg_paint_gradient_copy (const LrgPaintGradient *self);= | (transfer full) flat copy |
+| =lrg_paint_gradient_free= | =void lrg_paint_gradient_free (LrgPaintGradient *self);= | =self= is (nullable) |
+| =lrg_paint_gradient_init_linear= | =void lrg_paint_gradient_init_linear (LrgPaintGradient *self, const GrlColor *start, const GrlColor *end, gfloat angle);= | (out caller-allocates); =angle= in degrees, 0 = left to right, 90 = top to bottom |
+| =lrg_paint_gradient_init_radial= | =void lrg_paint_gradient_init_radial (LrgPaintGradient *self, const GrlColor *start, const GrlColor *end, gfloat center_x, gfloat center_y, gfloat radius);= | (out caller-allocates); =start= is the centre colour, =end= the edge colour; =center_x= / =center_y= are fractions (0..1) of the rectangle; =radius= is the distance in canvas units where =end= is reached, 0 means half the rectangle's diagonal |
+
+Both =_init_*= functions zero the whole struct first, so stale fields of a reused gradient never leak into the new one. There is no =_new=: declare the struct and initialise it, then pass it to =lrg_paint_list_rect_ex()= (or put it in an =LrgPartLook=). A radial example, a soft spotlight centred slightly above the middle of a panel:
+
+#+begin_src c
+LrgPaintGradient glow;
+GrlColor centre = { 255, 255, 255, 40 };
+GrlColor edge = { 255, 255, 255, 0 };
+
+lrg_paint_gradient_init_radial (&glow, &centre, &edge, 0.5f, 0.35f, 0.0f);
+lrg_paint_list_rect_ex (list, x, y, w, h, &radii, NULL, &glow, 0.0f, NULL);
+#+end_src
+
+**** LrgPaintInstance
+:PROPERTIES:
+:CUSTOM_ID: paint-list-instance-boxed
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_paint_instance_get_type= | =GType lrg_paint_instance_get_type (void) G_GNUC_CONST;= | The boxed =GType=, also =LRG_TYPE_PAINT_INSTANCE= |
+| =lrg_paint_instance_copy= | =LrgPaintInstance * lrg_paint_instance_copy (const LrgPaintInstance *self);= | (transfer full) copy of the 96-byte GPU record |
+| =lrg_paint_instance_free= | =void lrg_paint_instance_free (LrgPaintInstance *self);= | =self= is (nullable) |
+| =lrg_paint_instance_get_prim= | =LrgPaintPrim lrg_paint_instance_get_prim (const LrgPaintInstance *self);= | Decodes =params[2]= into an =LrgPaintPrim= |
+
+Instances returned by =lrg_paint_list_get_instance()= are (transfer none) and point into the list's growable array; =lrg_paint_instance_copy()= is how a test or inspector keeps one past further recording or a =lrg_paint_list_clear()=:
+
+#+begin_src c
+g_autoptr(LrgPaintInstance) first = NULL;
+
+first = lrg_paint_instance_copy (lrg_paint_list_get_instance (list, 0));
+lrg_paint_list_clear (list);
+g_assert_cmpint (lrg_paint_instance_get_prim (first), ==, LRG_PAINT_PRIM_RECT);
+#+end_src
 
 ** Pitfalls
 :PROPERTIES:

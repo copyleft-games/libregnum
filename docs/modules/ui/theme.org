@@ -96,6 +96,7 @@ Metrics (=LRG_THEME_METRIC_COUNT= = 18) and defaults: =FONT_SIZE= 16, =FONT_SIZE
 | =lrg_theme_add_style_rule (self, rule)= | Append a rule | The theme refs it; emits =::changed= |
 | =lrg_theme_clear_style_rules (self)= | Remove every rule | Emits =::changed= when there were any |
 | =lrg_theme_get_style_rules (self)= | The rules in insertion order | (transfer none) (element-type LrgStyleRule) |
+| =lrg_theme_style_rules_changed (self)= | Tell the theme a rule already in it was edited in place | =void lrg_theme_style_rules_changed (LrgTheme *self);= Drops the cached resolutions (bumps the generation) and emits =::changed=; call it after changing a look returned by =lrg_style_rule_get_look()= for a rule the theme already holds |
 | =lrg_theme_resolve_look (self, widget_type, classes, n_classes, part, state, look)= | Merge matching rules onto =look=, least specific first | Cached per (type, part, state, classes) until the theme changes |
 
 See [[file:styling.org::#styling-rules][style rules]] for matching and specificity.
@@ -159,23 +160,73 @@ Errors use =LRG_THEME_ERROR= (=PARSE=, =INVALID=, =FONT=). The file format is do
 :PROPERTIES:
 :CUSTOM_ID: theme-legacy
 :END:
-The original per-colour and per-size accessors still work and are aliases of roles and metrics, so older code and saved settings keep functioning:
+The original per-colour and per-size accessors still work. They are thin aliases of colour roles and metrics, so older code and saved settings keep functioning and a legacy setter is indistinguishable from the modern call it forwards to (it emits =::changed= and notifies both the legacy property and the role).
 
-| Legacy accessor pair | Now |
-|----------------------+-----|
-| =lrg_theme_get/set_primary_color= | =ACCENT= (use =lrg_theme_set_accent()= to derive the family) |
-| =lrg_theme_get/set_secondary_color= | =CONTROL= |
-| =lrg_theme_get/set_accent_color= | =FOCUS= (note: not =ACCENT=) |
-| =lrg_theme_get/set_background_color= | =WINDOW= |
-| =lrg_theme_get/set_surface_color= | =PANEL= |
-| =lrg_theme_get/set_text_color= | =TEXT= |
-| =lrg_theme_get/set_text_secondary_color= | =TEXT_MUTED= |
-| =lrg_theme_get/set_border_color= | =BORDER= |
-| =lrg_theme_get/set_error_color= | =DANGER= |
-| =lrg_theme_get/set_success_color= | =SUCCESS= |
-| =lrg_theme_get/set_font_size_small / _normal / _large= | =FONT_SIZE_SMALL= / =FONT_SIZE= / =FONT_SIZE_LARGE= |
-| =lrg_theme_get/set_border_width=, =_corner_radius= | metrics of the same name |
-| =lrg_theme_get/set_padding_small / _normal / _large= | independent legacy values (new code uses =PADDING_X=, =PADDING_Y=, =SPACING=) |
+*** Legacy colours
+:PROPERTIES:
+:CUSTOM_ID: theme-legacy-colors
+:END:
+Every getter returns (transfer none) a pointer into the theme, valid until that role changes; =lrg_theme_get_<name> (self)= is exactly =lrg_theme_get_color (self, LRG_THEME_COLOR_<ROLE>)= and the setter is =lrg_theme_set_color()=, which copies =color=.
+
+| Getter | Setter | Role | Notes |
+|--------+--------+------+-------|
+| =const GrlColor * lrg_theme_get_primary_color (LrgTheme *self);= | =void lrg_theme_set_primary_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_ACCENT= | use =lrg_theme_set_accent()= instead when you want the hover / pressed / link / focus / selection family derived too |
+| =const GrlColor * lrg_theme_get_secondary_color (LrgTheme *self);= | =void lrg_theme_set_secondary_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_CONTROL= |  |
+| =const GrlColor * lrg_theme_get_accent_color (LrgTheme *self);= | =void lrg_theme_set_accent_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_FOCUS= | note: the legacy /accent/ is the focus colour, not =ACCENT= |
+| =const GrlColor * lrg_theme_get_background_color (LrgTheme *self);= | =void lrg_theme_set_background_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_WINDOW= |  |
+| =const GrlColor * lrg_theme_get_surface_color (LrgTheme *self);= | =void lrg_theme_set_surface_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_PANEL= | panels, cards |
+| =const GrlColor * lrg_theme_get_text_color (LrgTheme *self);= | =void lrg_theme_set_text_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_TEXT= |  |
+| =const GrlColor * lrg_theme_get_text_secondary_color (LrgTheme *self);= | =void lrg_theme_set_text_secondary_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_TEXT_MUTED= |  |
+| =const GrlColor * lrg_theme_get_border_color (LrgTheme *self);= | =void lrg_theme_set_border_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_BORDER= |  |
+| =const GrlColor * lrg_theme_get_error_color (LrgTheme *self);= | =void lrg_theme_set_error_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_DANGER= |  |
+| =const GrlColor * lrg_theme_get_success_color (LrgTheme *self);= | =void lrg_theme_set_success_color (LrgTheme *self, const GrlColor *color);= | =LRG_THEME_COLOR_SUCCESS= |  |
+
+*** Legacy sizes
+:PROPERTIES:
+:CUSTOM_ID: theme-legacy-sizes
+:END:
+The font sizes, border width and corner radius forward to =lrg_theme_get_metric()= / =lrg_theme_set_metric()= (which does not queue layout: call =lrg_widget_queue_layout()= on affected trees, or rely on the canvas noticing the theme generation change). The three paddings are *independent* legacy values, not metrics: new code uses =PADDING_X=, =PADDING_Y= and =SPACING=.
+
+| Getter | Setter | Backed by |
+|--------+--------+-----------|
+| =gfloat lrg_theme_get_font_size_small (LrgTheme *self);= | =void lrg_theme_set_font_size_small (LrgTheme *self, gfloat size);= | =LRG_THEME_METRIC_FONT_SIZE_SMALL= |
+| =gfloat lrg_theme_get_font_size_normal (LrgTheme *self);= | =void lrg_theme_set_font_size_normal (LrgTheme *self, gfloat size);= | =LRG_THEME_METRIC_FONT_SIZE= |
+| =gfloat lrg_theme_get_font_size_large (LrgTheme *self);= | =void lrg_theme_set_font_size_large (LrgTheme *self, gfloat size);= | =LRG_THEME_METRIC_FONT_SIZE_LARGE= |
+| =gfloat lrg_theme_get_border_width (LrgTheme *self);= | =void lrg_theme_set_border_width (LrgTheme *self, gfloat width);= | =LRG_THEME_METRIC_BORDER_WIDTH= |
+| =gfloat lrg_theme_get_corner_radius (LrgTheme *self);= | =void lrg_theme_set_corner_radius (LrgTheme *self, gfloat radius);= | =LRG_THEME_METRIC_CORNER_RADIUS= |
+| =gfloat lrg_theme_get_padding_small (LrgTheme *self);= | =void lrg_theme_set_padding_small (LrgTheme *self, gfloat padding);= | own field (default 4); setter emits =::changed= only on a real change |
+| =gfloat lrg_theme_get_padding_normal (LrgTheme *self);= | =void lrg_theme_set_padding_normal (LrgTheme *self, gfloat padding);= | own field (default 8); setter emits =::changed= only on a real change |
+| =gfloat lrg_theme_get_padding_large (LrgTheme *self);= | =void lrg_theme_set_padding_large (LrgTheme *self, gfloat padding);= | own field (default 16); setter emits =::changed= only on a real change |
+
+*** Legacy font, dark flag and errors
+:PROPERTIES:
+:CUSTOM_ID: theme-legacy-misc
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_theme_get_default_font= | =GrlFont * lrg_theme_get_default_font (LrgTheme *self);= | (transfer none) (nullable). The font =draw()=-based widgets use. Lazily initialised once per process from =LrgFontManager= when a window is open; =NULL= headless |
+| =lrg_theme_set_default_font= | =void lrg_theme_set_default_font (LrgTheme *self, GrlFont *font);= | =font= (nullable) is referenced. Notifies =default-font= and emits =::changed= when it changes. Paint-based widgets use =lrg_theme_get_ui_font()= instead, which falls back to this font |
+| =lrg_theme_get_dark= | =gboolean lrg_theme_get_dark (LrgTheme *self);= | =TRUE= (the default) for light text on dark surfaces |
+| =lrg_theme_set_dark= | =void lrg_theme_set_dark (LrgTheme *self, gboolean dark);= | Only changes how =lrg_theme_set_accent()= derives the accent family; it does not recolour the other roles (load a light preset for that). Notifies =dark= and emits =::changed= on change |
+| =lrg_theme_error_quark= | =GQuark lrg_theme_error_quark (void);= | The =LRG_THEME_ERROR= domain (="lrg-theme-error-quark"=) with codes =LRG_THEME_ERROR_PARSE= (not YAML or not a mapping), =LRG_THEME_ERROR_INVALID= (a key holds the wrong kind of value) and =LRG_THEME_ERROR_FONT= (a font could not be loaded) |
+
+#+begin_src c
+static const GrlColor red = { 230, 70, 70, 255 };
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgTheme) theme = lrg_theme_new_from_file ("themes/arcade.yaml", &error);
+
+if (theme == NULL)
+{
+	if (g_error_matches (error, LRG_THEME_ERROR, LRG_THEME_ERROR_FONT))
+		g_warning ("theme font missing, using the system UI font: %s", error->message);
+	else
+		g_warning ("bad theme file: %s", error->message);
+	return;
+}
+
+/* legacy code keeps working: this is lrg_theme_set_color (theme, LRG_THEME_COLOR_DANGER, &red) */
+lrg_theme_set_error_color (theme, &red);
+#+end_src
 
 ** Example: a theme built in code
 :PROPERTIES:

@@ -153,6 +153,7 @@ The fields are public: read =value= every frame; setting =response= / =damping= 
 | =lrg_spring_init_full (self, value, response, damping)= | At rest with explicit parameters | =response >= 0=, =damping > 0= (checked) |
 | =lrg_spring_new (value, motion)= | Heap-allocated spring | (transfer full); for bindings |
 | =lrg_spring_copy (self)= / =lrg_spring_free (self)= | Boxed copy / free | =free= accepts =NULL=; =g_autoptr (LrgSpring)= supported |
+| =lrg_spring_get_type= | =GType lrg_spring_get_type (void) G_GNUC_CONST;= | The boxed =GType= behind =LRG_TYPE_SPRING= (registered with =G_DEFINE_BOXED_TYPE= over =lrg_spring_copy()= / =lrg_spring_free()=); lets a spring live in a =GValue=, a property or a signal argument, and is what introspection bindings see. The copy is flat: value, velocity, target and parameters are duplicated, nothing is shared |
 | =lrg_spring_set_motion (self, motion)= | Changes response and damping only | Value, velocity and target untouched |
 | =lrg_spring_set_target (self, target)= | Retargets, keeping velocity | Motion bends smoothly |
 | =lrg_spring_snap (self, value)= | Jumps to =value= (and targets it), zero velocity | |

@@ -828,7 +828,8 @@ gboolean lrg_widget_has_class (LrgWidget   *self,
  * @self: an #LrgWidget
  * @n_classes: (out): number of classes
  *
- * Returns: (transfer none) (array length=n_classes): the classes as quarks
+ * Returns: (array length=n_classes) (element-type GQuark): the classes as
+ *   quarks, owned by the widget
  */
 LRG_AVAILABLE_IN_ALL
 const GQuark * lrg_widget_get_classes (LrgWidget *self,

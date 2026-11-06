@@ -95,11 +95,33 @@ Mostly used by the canvas and by tests that call =lrg_widget_handle_event()= dir
 | =lrg_ui_event_new_mouse_button (type, button, x, y)= | =MOUSE_BUTTON_DOWN= / =UP=; =button= is a =GrlMouseButton= (0 left, 1 right, 2 middle) |
 | =lrg_ui_event_new_key (type, key)= | =KEY_DOWN= / =KEY_UP= |
 | =lrg_ui_event_new_scroll (x, y, scroll_x, scroll_y)= | =SCROLL= |
-| =lrg_ui_event_new_focus_in ()= / =new_focus_out ()= | =FOCUS_IN= / =FOCUS_OUT= |
+| =lrg_ui_event_new_focus_in ()= / =lrg_ui_event_new_focus_out ()= | =FOCUS_IN= / =FOCUS_OUT= (no pointer data; keyboard focus only) |
 | =lrg_ui_event_new_text_input (codepoint)= | =TEXT_INPUT= |
 | =lrg_ui_event_copy (self)= / =lrg_ui_event_free (self)= | Boxed copy / free |
 
 Note the argument order of =lrg_ui_event_new_mouse_button()=: the button comes *before* the coordinates.
+
+*** Focus events and the boxed type
+:PROPERTIES:
+:CUSTOM_ID: ui-event-boxed
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_ui_event_get_type= | =GType lrg_ui_event_get_type (void) G_GNUC_CONST;= | The boxed =GType= (=LRG_TYPE_UI_EVENT=), registered over =lrg_ui_event_copy()= / =lrg_ui_event_free()=; lets events travel through =GValue= and signal marshallers and is what bindings see |
+| =lrg_ui_event_new_focus_in= | =LrgUIEvent * lrg_ui_event_new_focus_in (void);= | (transfer full) =LRG_UI_EVENT_FOCUS_IN= |
+| =lrg_ui_event_new_focus_out= | =LrgUIEvent * lrg_ui_event_new_focus_out (void);= | (transfer full) =LRG_UI_EVENT_FOCUS_OUT=. The canvas sends it to the old focus before =FOCUS_IN= reaches the new one (=lrg_canvas_set_focused_widget()=). It does not bubble |
+| =lrg_ui_event_copy= | =LrgUIEvent * lrg_ui_event_copy (const LrgUIEvent *self);= | (transfer full) field-wise copy; the =target= pointer is copied as-is (not referenced) |
+| =lrg_ui_event_free= | =void lrg_ui_event_free (LrgUIEvent *self);= | =g_autoptr (LrgUIEvent)= is supported |
+
+A test that checks a text field stops editing when it loses focus (outside a canvas, so the event is delivered by hand):
+
+#+begin_src c
+g_autoptr(LrgUIEvent) out = lrg_ui_event_new_focus_out ();
+
+lrg_text_input_set_focused (field, TRUE);
+lrg_widget_handle_event (LRG_WIDGET (field), out);
+g_assert_false (lrg_text_input_get_focused (field));
+#+end_src
 
 ** Accessors
 :PROPERTIES:
@@ -123,7 +145,13 @@ Setters used by the canvas (and tests): =lrg_ui_event_set_target()=, =lrg_ui_eve
 :PROPERTIES:
 :CUSTOM_ID: ui-event-consumed
 :END:
-=lrg_ui_event_get_consumed()=, =set_consumed()= and =consume()= remain for compatibility, but the canvas decides propagation *only from =handle_event='s return value*; the flag is not consulted. Return =TRUE= to stop an event. (=handle_event= receives a =const= event, so the old pattern of calling =lrg_ui_event_consume()= inside it is no longer meaningful.)
+| Function | Signature |
+|----------+-----------|
+| =lrg_ui_event_get_consumed= | =gboolean lrg_ui_event_get_consumed (const LrgUIEvent *self);= |
+| =lrg_ui_event_set_consumed= | =void lrg_ui_event_set_consumed (LrgUIEvent *self, gboolean consumed);= |
+| =lrg_ui_event_consume= | =void lrg_ui_event_consume (LrgUIEvent *self);= (same as =lrg_ui_event_set_consumed (self, TRUE)=) |
+
+=lrg_ui_event_get_consumed()=, =lrg_ui_event_set_consumed()= and =lrg_ui_event_consume()= remain for compatibility, but the canvas decides propagation *only from =handle_event='s return value*; the flag is not consulted. Return =TRUE= to stop an event. (=handle_event= receives a =const= event, so the old pattern of calling =lrg_ui_event_consume()= inside it is no longer meaningful.)
 
 ** Testing with events
 :PROPERTIES:

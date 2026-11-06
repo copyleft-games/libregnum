@@ -49,6 +49,8 @@ Core:
 - [[file:animation.org][Animation]]: hover and press springs, eased looks, appear transitions and stagger, popup transitions, reduced motion.
 - [[file:input-and-focus.org][Input, focus and popups]]: =LrgCanvasInput=, dispatch and bubbling, capture, hover, focus navigation, ACTIVATE / CANCEL, the popup layer, testing.
 - [[file:ui-event.org][LrgUIEvent]]: event types and accessors.
+- [[file:canvas-api.org][LrgCanvas API]]: every =LrgCanvas= and =LrgCanvasInput= function with its signature (rendering, input frames, focus, navigation, popups, the boxed input type).
+- [[file:widget-api-reference.org][Widget API reference]]: every public function of every widget class, one section per widget.
 - [[file:tooltip.org][Tooltips]]: =LrgTooltip=, =LrgTooltipLayout=.
 
 Related:

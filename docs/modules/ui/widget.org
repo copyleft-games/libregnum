@@ -56,7 +56,7 @@ The class has five reserved pointers for future vfuncs.
 :END:
 | Function | Purpose | Notes |
 |----------+---------+-------|
-| =lrg_widget_get_x= / =set_x=, =get_y= / =set_y= | Position relative to the parent | |
+| =lrg_widget_get_x= / =lrg_widget_set_x=, =lrg_widget_get_y= / =lrg_widget_set_y= | Position relative to the parent | Setting notifies =x= / =y= only when the value changes; layouts overwrite it on the next allocation, so set positions only on absolutely placed children |
 | =lrg_widget_get_width= / =set_width=, =get_height= / =set_height= | Size | Negative values clamp to 0; a container whose size changes queues layout |
 | =lrg_widget_set_position (self, x, y)= / =set_size (self, w, h)= | Both at once | One batched notify |
 | =lrg_widget_allocate (self, x, y, w, h)= | Assign the rectangle and =arrange()= | What layouts call (usually via =place_in_slot()=) |
@@ -83,10 +83,10 @@ The class has five reserved pointers for future vfuncs.
 :END:
 | Function | Purpose |
 |----------+---------|
-| =lrg_widget_set_margin (self, &insets)=, =set_margin_all (self, m)=, =get_margin (self, &insets)= | Space around the widget in its slot (=LrgInsets=: =left=, =top=, =right=, =bottom=; boxed with =lrg_insets_new/copy/free=) |
-| =lrg_widget_set_halign= / =set_valign=, =get_*= | =LrgAlign= in the slot (default =FILL=) |
-| =lrg_widget_set_fill_weight= / =get_fill_weight= | Share of a box's spare space (default 0) |
-| =lrg_widget_set_min_size= / =set_max_size=, =get_*= | Size bounds (0 = none) |
+| =lrg_widget_set_margin (self, &insets)=, =lrg_widget_set_margin_all (self, m)=, =lrg_widget_get_margin (self, &insets)= | Space around the widget in its slot (=LrgInsets=: =left=, =top=, =right=, =bottom=; boxed, see [[#widget-insets][LrgInsets]]) |
+| =lrg_widget_set_halign= / =lrg_widget_set_valign=, =lrg_widget_get_halign= / =lrg_widget_get_valign= | =LrgAlign= in the slot (default =FILL=) |
+| =lrg_widget_set_fill_weight= / =lrg_widget_get_fill_weight= | Share of a box's spare space (default 0) |
+| =lrg_widget_set_min_size= / =lrg_widget_set_max_size=, =lrg_widget_get_min_size= / =lrg_widget_get_max_size= | Size bounds (0 = none) |
 | =lrg_widget_get_preferred_size (self, &w, &h)= | =measure()= clamped to min/max |
 | =lrg_widget_place_in_slot (self, x, y, w, h)= | Allocate inside a slot honouring the hints |
 | =lrg_widget_queue_layout (self)= | Mark self and ancestors for layout |
@@ -102,10 +102,10 @@ Full semantics, box and grid rules, and a custom-container walkthrough: [[file:l
 :END:
 | Function | Purpose | Notes |
 |----------+---------+-------|
-| =lrg_widget_add_class= / =remove_class= / =has_class= | Style classes that theme rules can target (="primary"=, ="flat"=, ="danger"=) | Stored as quarks |
+| =lrg_widget_add_class= / =lrg_widget_remove_class= / =lrg_widget_has_class= | Style classes that theme rules can target (="primary"=, ="flat"=, ="danger"=) | Stored as quarks |
 | =lrg_widget_get_classes (self, &n)= | The classes | (transfer none) (array length=n) |
 | =lrg_widget_get_state_flags (self)= | Current =LrgWidgetState= | |
-| =lrg_widget_set_state_flags= / =unset_state_flags= | Turn flags on / off | Emits =::state-changed= when anything changes; retargets the springs |
+| =lrg_widget_set_state_flags= / =lrg_widget_unset_state_flags= | Turn flags on / off | Emits =::state-changed= when anything changes; retargets the springs |
 | =lrg_widget_get_focusable= / =set_focusable= | Can take keyboard / gamepad / click focus | Interactive widgets set it in =init= |
 | =lrg_widget_get_pointer_transparent= / =set_pointer_transparent= | Hit tests pass through the widget itself (children still hit) | Full-screen layers |
 
@@ -119,6 +119,113 @@ Full semantics, box and grid rules, and a custom-container walkthrough: [[file:l
 | =LRG_WIDGET_STATE_CHECKED= | =checked= | the widget (check boxes, switches, toggle buttons, tabs) |
 | =LRG_WIDGET_STATE_SELECTED= | =selected= | the widget (list rows, tabs) |
 | =LRG_WIDGET_STATE_OPEN= | =open= | canvas: a popup anchored to the widget is open |
+
+** Accessor signatures
+:PROPERTIES:
+:CUSTOM_ID: widget-accessor-signatures
+:END:
+The tables above group related calls; this is the exact prototype of each position, layout-hint, style-class and state accessor, copied from =src/ui/lrg-widget.h=. Every function takes a non-=NULL= =LrgWidget= (checked with =g_return_if_fail=).
+
+*** Position
+:PROPERTIES:
+:CUSTOM_ID: widget-sig-position
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_widget_get_x= | =gfloat lrg_widget_get_x (LrgWidget *self);= | X relative to the parent |
+| =lrg_widget_set_x= | =void lrg_widget_set_x (LrgWidget *self, gfloat x);= | Notifies =x= when it changes. Children of a box are repositioned by the next layout, so this is for absolutely placed widgets (a canvas, a panel, an overlay layer) |
+| =lrg_widget_get_y= | =gfloat lrg_widget_get_y (LrgWidget *self);= | Y relative to the parent |
+| =lrg_widget_set_y= | =void lrg_widget_set_y (LrgWidget *self, gfloat y);= | Notifies =y= when it changes |
+
+Painting and hit tests use world coordinates: read them with =lrg_widget_get_world_x()= / =lrg_widget_get_world_y()=, which add every parent offset to these values.
+
+*** Layout hints
+:PROPERTIES:
+:CUSTOM_ID: widget-sig-layout-hints
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_widget_set_margin= | =void lrg_widget_set_margin (LrgWidget *self, const LrgInsets *margin);= | Copies =margin= |
+| =lrg_widget_set_margin_all= | =void lrg_widget_set_margin_all (LrgWidget *self, gfloat margin);= | Same margin on all four sides |
+| =lrg_widget_get_margin= | =void lrg_widget_get_margin (LrgWidget *self, LrgInsets *margin);= | =margin= is (out caller-allocates) |
+| =lrg_widget_set_halign= | =void lrg_widget_set_halign (LrgWidget *self, LrgAlign align);= | Default =LRG_ALIGN_FILL= |
+| =lrg_widget_get_halign= | =LrgAlign lrg_widget_get_halign (LrgWidget *self);= | Horizontal alignment inside the parent's slot |
+| =lrg_widget_set_valign= | =void lrg_widget_set_valign (LrgWidget *self, LrgAlign align);= | Default =LRG_ALIGN_FILL= |
+| =lrg_widget_get_valign= | =LrgAlign lrg_widget_get_valign (LrgWidget *self);= | Vertical alignment inside the parent's slot |
+| =lrg_widget_set_fill_weight= | =void lrg_widget_set_fill_weight (LrgWidget *self, gfloat weight);= | 0 (the default) takes only the preferred size along a box's axis |
+| =lrg_widget_get_fill_weight= | =gfloat lrg_widget_get_fill_weight (LrgWidget *self);= | The widget's share of the parent box's spare space |
+| =lrg_widget_set_min_size= | =void lrg_widget_set_min_size (LrgWidget *self, gfloat width, gfloat height);= | 0 for no bound; negatives clamp to 0; queues layout |
+| =lrg_widget_get_min_size= | =void lrg_widget_get_min_size (LrgWidget *self, gfloat *width, gfloat *height);= | Both outs are (out) (optional): pass =NULL= for the axis you do not need |
+| =lrg_widget_set_max_size= | =void lrg_widget_set_max_size (LrgWidget *self, gfloat width, gfloat height);= | 0 for no bound; negatives clamp to 0; queues layout |
+| =lrg_widget_get_max_size= | =void lrg_widget_get_max_size (LrgWidget *self, gfloat *width, gfloat *height);= | (out) (optional); 0 means unbounded |
+
+#+begin_src c
+gfloat min_w;
+gfloat max_w;
+
+/* A text field that grows with the window between 160 and 480 units */
+lrg_widget_set_fill_weight (LRG_WIDGET (entry), 1.0f);
+lrg_widget_set_min_size (LRG_WIDGET (entry), 160.0f, 0.0f);
+lrg_widget_set_max_size (LRG_WIDGET (entry), 480.0f, 0.0f);
+
+lrg_widget_get_min_size (LRG_WIDGET (entry), &min_w, NULL);
+lrg_widget_get_max_size (LRG_WIDGET (entry), &max_w, NULL);
+g_assert_cmpfloat (lrg_widget_get_fill_weight (LRG_WIDGET (entry)), ==, 1.0f);
+g_assert_cmpint (lrg_widget_get_halign (LRG_WIDGET (entry)), ==, LRG_ALIGN_FILL);
+g_assert_cmpint (lrg_widget_get_valign (LRG_WIDGET (entry)), ==, LRG_ALIGN_FILL);
+#+end_src
+
+*** Style classes and state flags
+:PROPERTIES:
+:CUSTOM_ID: widget-sig-classes-state
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_widget_add_class= | =void lrg_widget_add_class (LrgWidget *self, const gchar *style_class);= | Adds the class once (stored as a =GQuark=); queues layout because a rule may change metrics |
+| =lrg_widget_remove_class= | =void lrg_widget_remove_class (LrgWidget *self, const gchar *style_class);= | No-op when the widget does not carry the class; otherwise removes it and queues layout. =style_class= must not be =NULL= |
+| =lrg_widget_has_class= | =gboolean lrg_widget_has_class (LrgWidget *self, const gchar *style_class);= | =TRUE= if the widget carries =style_class= |
+| =lrg_widget_get_classes= | =const GQuark * lrg_widget_get_classes (LrgWidget *self, guint *n_classes);= | (transfer none) (array length=n_classes) |
+| =lrg_widget_get_state_flags= | =LrgWidgetState lrg_widget_get_state_flags (LrgWidget *self);= | Current flags |
+| =lrg_widget_set_state_flags= | =void lrg_widget_set_state_flags (LrgWidget *self, LrgWidgetState flags);= | ORs =flags= in; emits =state-changed= (with the previous flags) only when something changed |
+| =lrg_widget_unset_state_flags= | =void lrg_widget_unset_state_flags (LrgWidget *self, LrgWidgetState flags);= | Clears =flags=; emits =state-changed= only when something changed, and retargets the hover / press springs so looks ease back |
+
+The canvas owns =HOVERED=, =PRESSED=, =FOCUSED= and =FOCUS_VISIBLE=; a widget sets and clears its own =CHECKED=, =SELECTED= and =OPEN=:
+
+#+begin_src c
+static void
+my_toggle_set_active (MyToggle *self, gboolean active)
+{
+	if (active)
+		lrg_widget_set_state_flags (LRG_WIDGET (self), LRG_WIDGET_STATE_CHECKED);
+	else
+		lrg_widget_unset_state_flags (LRG_WIDGET (self), LRG_WIDGET_STATE_CHECKED);
+}
+
+/* a "compact" toolbar toggles a class instead of a property */
+if (lrg_widget_has_class (LRG_WIDGET (bar), "compact"))
+	lrg_widget_remove_class (LRG_WIDGET (bar), "compact");
+else
+	lrg_widget_add_class (LRG_WIDGET (bar), "compact");
+#+end_src
+
+** LrgInsets
+:PROPERTIES:
+:CUSTOM_ID: widget-insets
+:END:
+=LrgInsets= is a four-float value struct (=left=, =top=, =right=, =bottom=) used for widget margins and container padding. It is a boxed type with =g_autoptr= support; copies are flat. C code keeps it on the stack.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_insets_get_type= | =GType lrg_insets_get_type (void) G_GNUC_CONST;= | The boxed =GType=, also =LRG_TYPE_INSETS=; used by =GValue= and bindings |
+| =lrg_insets_new= | =LrgInsets * lrg_insets_new (gfloat left, gfloat top, gfloat right, gfloat bottom);= | (transfer full) |
+| =lrg_insets_copy= | =LrgInsets * lrg_insets_copy (const LrgInsets *self);= | (transfer full) flat copy |
+| =lrg_insets_free= | =void lrg_insets_free (LrgInsets *self);= | =self= is (nullable) |
+
+#+begin_src c
+LrgInsets m = { 8.0f, 4.0f, 8.0f, 4.0f };
+
+lrg_widget_set_margin (LRG_WIDGET (button), &m);
+#+end_src
 
 ** Springs and appearance
 :PROPERTIES:

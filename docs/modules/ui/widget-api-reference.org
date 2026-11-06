@@ -1,0 +1,663 @@
+#+title: Widget API reference
+#+description: Every public function of every LrgWidget subclass, grouped by widget, with signatures, ownership and behaviour notes
+#+authors: Zach Podbielniak
+#+categories: libregnum ui widget reference
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* Widget API reference
+:PROPERTIES:
+:CUSTOM_ID: widget-api-reference
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Widget API reference
+#+end_quote
+
+This page lists *every* public function of each widget class in =src/ui/=, one section per widget, with the prototype copied from the header, ownership and nullability annotations and what the call actually does (including the checks it makes and what it queues or emits). The per-widget pages linked from each section explain looks, parts, input handling and theming; this page is the place to look up a single call.
+
+Conventions that hold for every table below:
+
+- Every function takes a non-=NULL= instance of its class as =self= and checks it with =g_return_if_fail= / =g_return_val_if_fail=.
+- Constructors return a (transfer full) reference. =LrgWidget= derives from plain =GObject= (no floating references): a container takes its own reference in =lrg_container_add_child()=, so drop yours after adding, or hold it in a =g_autoptr=.
+- Colour getters return (transfer none) pointers into the widget, valid until the matching setter runs; colour setters copy the colour and require it to be non-=NULL= unless noted.
+- "Reported" defaults: the legacy appearance properties (=*-color=, =corner-radius=, =font-size=, ...) keep their pre-paint default values in their getters, but the widget draws with the theme until a value is set explicitly. Setting one makes it win over the theme for that widget; theme style rules still apply on top.
+- Setters notify their property only when the value changes, and queue a layout when the change can affect the preferred size.
+
+The base class (=LrgWidget=: geometry, layout hints, state, looks) is in [[file:widget.org][LrgWidget]], containers (=lrg_container_add_child()= ...) in [[file:container.org][LrgContainer]], and the root =LrgCanvas= in [[file:canvas-api.org][LrgCanvas API]].
+
+| Widget | Header | Section |
+|--------+--------+---------|
+| =LrgButton= | =src/ui/lrg-button.h= | [[#wref-button][LrgButton]] |
+| =LrgCheckbox= | =src/ui/lrg-checkbox.h= | [[#wref-checkbox][LrgCheckbox]] |
+| =LrgComboBox= | =src/ui/lrg-combo-box.h= | [[#wref-combo-box][LrgComboBox]] |
+| =LrgDialog= | =src/ui/lrg-dialog.h= | [[#wref-dialog][LrgDialog]] |
+| =LrgGrid= | =src/ui/lrg-grid.h= | [[#wref-grid][LrgGrid]] |
+| =LrgHBox= | =src/ui/lrg-hbox.h= | [[#wref-hbox][LrgHBox]] |
+| =LrgImage= | =src/ui/lrg-image.h= | [[#wref-image][LrgImage]] |
+| =LrgLabel= | =src/ui/lrg-label.h= | [[#wref-label][LrgLabel]] |
+| =LrgListView= | =src/ui/lrg-list-view.h= | [[#wref-list-view][LrgListView]] |
+| =LrgOverlay= | =src/ui/lrg-overlay.h= | [[#wref-overlay][LrgOverlay]] |
+| =LrgPanel= | =src/ui/lrg-panel.h= | [[#wref-panel][LrgPanel]] |
+| =LrgProgressBar= | =src/ui/lrg-progress-bar.h= | [[#wref-progress-bar][LrgProgressBar]] |
+| =LrgScrollBox= | =src/ui/lrg-scroll-box.h= | [[#wref-scroll-box][LrgScrollBox]] |
+| =LrgSeparator= | =src/ui/lrg-separator.h= | [[#wref-separator][LrgSeparator]] |
+| =LrgSlider= | =src/ui/lrg-slider.h= | [[#wref-slider][LrgSlider]] |
+| =LrgSpinBox= | =src/ui/lrg-spin-box.h= | [[#wref-spin-box][LrgSpinBox]] |
+| =LrgTabView= | =src/ui/lrg-tab-view.h= | [[#wref-tab-view][LrgTabView]] |
+| =LrgTextInput= | =src/ui/lrg-text-input.h= | [[#wref-text-input][LrgTextInput]] |
+| =LrgToast= | =src/ui/lrg-toast.h= | [[#wref-toast][LrgToast]] |
+| =LrgToastQueue= | =src/ui/lrg-toast-queue.h= | [[#wref-toast-queue][LrgToastQueue]] |
+| =LrgVBox= | =src/ui/lrg-vbox.h= | [[#wref-vbox][LrgVBox]] |
+
+* LrgButton
+:PROPERTIES:
+:CUSTOM_ID: wref-button
+:END:
+A themed push button with a label, hover and press springs and the =primary=, =flat= and =danger= style classes. Type: final, derives from =LrgWidget=, header =src/ui/lrg-button.h=. Signals: =clicked= (no arguments), =hovered= (=gboolean is_hovered=). Concepts, parts and theming: [[file:widgets/button.org][Button widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_button_new= | =LrgButton * lrg_button_new (const gchar *text);= | Creates a new button widget. =text= is (nullable). Returns (transfer full): A new =LrgButton= |
+| =lrg_button_get_text= | =const gchar * lrg_button_get_text (LrgButton *self);= | Gets the button's text. Returns (transfer none) (nullable): The text |
+| =lrg_button_set_text= | =void lrg_button_set_text (LrgButton *self, const gchar *text);= | Sets the button's text. =text= is (nullable). |
+| =lrg_button_get_normal_color= | =const GrlColor * lrg_button_get_normal_color (LrgButton *self);= | (transfer none). The explicit resting colour, or the legacy grey default when never set (the button then draws with the theme's =CONTROL=) |
+| =lrg_button_set_normal_color= | =void lrg_button_set_normal_color (LrgButton *self, const GrlColor *color);= | Copies =color=; from now on it is the resting background, and hover / pressed shades are derived from it unless set too |
+| =lrg_button_get_hover_color= | =const GrlColor * lrg_button_get_hover_color (LrgButton *self);= | (transfer none). Explicit hover colour or the legacy default |
+| =lrg_button_set_hover_color= | =void lrg_button_set_hover_color (LrgButton *self, const GrlColor *color);= | Copies =color=; replaces the theme's =CONTROL_HOVER= for this button |
+| =lrg_button_get_pressed_color= | =const GrlColor * lrg_button_get_pressed_color (LrgButton *self);= | (transfer none). Explicit pressed colour or the legacy default |
+| =lrg_button_set_pressed_color= | =void lrg_button_set_pressed_color (LrgButton *self, const GrlColor *color);= | Copies =color=; replaces the theme's =CONTROL_PRESSED= for this button |
+| =lrg_button_get_text_color= | =const GrlColor * lrg_button_get_text_color (LrgButton *self);= | (transfer none). Explicit label colour or the legacy white default |
+| =lrg_button_set_text_color= | =void lrg_button_set_text_color (LrgButton *self, const GrlColor *color);= | Copies =color=; replaces the theme's =TEXT= / =TEXT_ON_ACCENT= |
+| =lrg_button_get_corner_radius= | =gfloat lrg_button_get_corner_radius (LrgButton *self);= | The explicit radius, or 4 (reported only) when the theme's =CORNER_RADIUS= is in use |
+| =lrg_button_set_corner_radius= | =void lrg_button_set_corner_radius (LrgButton *self, gfloat radius);= | Replaces the theme's =CORNER_RADIUS= for this button |
+| =lrg_button_get_is_hovered= | =gboolean lrg_button_get_is_hovered (LrgButton *self);= | Mirror of =LRG_WIDGET_STATE_HOVERED= (set by the canvas) |
+| =lrg_button_get_is_pressed= | =gboolean lrg_button_get_is_pressed (LrgButton *self);= | Mirror of =LRG_WIDGET_STATE_PRESSED= (set by the canvas) |
+
+* LrgCheckbox
+:PROPERTIES:
+:CUSTOM_ID: wref-checkbox
+:END:
+A labelled two-state control drawn as a check box, a radio button or a sliding switch (=LrgCheckboxStyle=). Type: final, derives from =LrgWidget=, header =src/ui/lrg-checkbox.h=. Signals: =toggled= (=gboolean checked=). Concepts, parts and theming: [[file:widgets/checkbox.org][Checkbox widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_checkbox_new= | =LrgCheckbox * lrg_checkbox_new (const gchar *label);= | Creates a new checkbox widget. =label= is (nullable). Returns (transfer full): A new =LrgCheckbox= |
+| =lrg_checkbox_new_with_style= | =LrgCheckbox * lrg_checkbox_new_with_style (const gchar *label, LrgCheckboxStyle style);= | Creates a new checkbox drawn as a check box, a radio button or a sliding switch. =label= is (nullable). Returns (transfer full): A new =LrgCheckbox= |
+| =lrg_checkbox_get_checked= | =gboolean lrg_checkbox_get_checked (LrgCheckbox *self);= | Gets whether the checkbox is checked. Returns =TRUE= if checked |
+| =lrg_checkbox_set_checked= | =void lrg_checkbox_set_checked (LrgCheckbox *self, gboolean checked);= | Updates =LRG_WIDGET_STATE_CHECKED= and starts the check animation; emits =toggled= only when the state changes |
+| =lrg_checkbox_toggle= | =void lrg_checkbox_toggle (LrgCheckbox *self);= | Same as =lrg_checkbox_set_checked (self, !checked)=; for a radio-style checkbox this is what a click does |
+| =lrg_checkbox_get_check_progress= | =gfloat lrg_checkbox_get_check_progress (LrgCheckbox *self);= | The check animation: 0 when fully unchecked, 1 when fully checked, in between (and briefly beyond, with bouncy motion) while the mark draws in or the switch knob slides. Returns the animation progress |
+| =lrg_checkbox_get_style= | =LrgCheckboxStyle lrg_checkbox_get_style (LrgCheckbox *self);= | Returns how the indicator is drawn |
+| =lrg_checkbox_set_style= | =void lrg_checkbox_set_style (LrgCheckbox *self, LrgCheckboxStyle style);= | Changes how the indicator is drawn. A switch is wider than a box, so this queues a layout. =style=: =LRG_CHECKBOX_STYLE_CHECK=, =LRG_CHECKBOX_STYLE_RADIO= or =LRG_CHECKBOX_STYLE_SWITCH=. |
+| =lrg_checkbox_get_label= | =const gchar * lrg_checkbox_get_label (LrgCheckbox *self);= | Gets the checkbox's label text. Returns (transfer none) (nullable): The label text |
+| =lrg_checkbox_set_label= | =void lrg_checkbox_set_label (LrgCheckbox *self, const gchar *label);= | Sets the checkbox's label text. =label= is (nullable). |
+| =lrg_checkbox_get_box_size= | =gfloat lrg_checkbox_get_box_size (LrgCheckbox *self);= | Explicit indicator height, or 20 (reported) while the theme's =CHECK_SIZE= is used |
+| =lrg_checkbox_set_box_size= | =void lrg_checkbox_set_box_size (LrgCheckbox *self, gfloat size);= | Replaces =CHECK_SIZE= (a switch is 1.75 times as wide); queues layout |
+| =lrg_checkbox_get_spacing= | =gfloat lrg_checkbox_get_spacing (LrgCheckbox *self);= | Explicit gap to the label, or 8 (reported) while the theme's =SPACING= is used |
+| =lrg_checkbox_set_spacing= | =void lrg_checkbox_set_spacing (LrgCheckbox *self, gfloat spacing);= | Replaces =SPACING=; queues layout |
+| =lrg_checkbox_get_box_color= | =const GrlColor * lrg_checkbox_get_box_color (LrgCheckbox *self);= | (transfer none). Explicit unchecked fill or the legacy grey default |
+| =lrg_checkbox_set_box_color= | =void lrg_checkbox_set_box_color (LrgCheckbox *self, const GrlColor *color);= | Replaces the theme's =CONTROL= (=TRACK= for switches) for the unchecked indicator |
+| =lrg_checkbox_get_check_color= | =const GrlColor * lrg_checkbox_get_check_color (LrgCheckbox *self);= | (transfer none). Explicit checked fill or the legacy green default |
+| =lrg_checkbox_set_check_color= | =void lrg_checkbox_set_check_color (LrgCheckbox *self, const GrlColor *color);= | Replaces the theme's =ACCENT= for the checked indicator |
+| =lrg_checkbox_get_text_color= | =const GrlColor * lrg_checkbox_get_text_color (LrgCheckbox *self);= | (transfer none). Explicit label colour or the legacy white default |
+| =lrg_checkbox_set_text_color= | =void lrg_checkbox_set_text_color (LrgCheckbox *self, const GrlColor *color);= | Replaces the theme's =TEXT= for the label |
+| =lrg_checkbox_get_font_size= | =gfloat lrg_checkbox_get_font_size (LrgCheckbox *self);= | Explicit label size, or 20 (reported) while the theme's =FONT_SIZE= is used |
+| =lrg_checkbox_set_font_size= | =void lrg_checkbox_set_font_size (LrgCheckbox *self, gfloat size);= | Replaces =FONT_SIZE=; queues layout |
+
+* LrgComboBox
+:PROPERTIES:
+:CUSTOM_ID: wref-combo-box
+:END:
+A button showing the selected item that opens a popup list through the canvas popup layer. Type: final, derives from =LrgWidget=, header =src/ui/lrg-combo-box.h=. Signals: =changed= (no arguments). Concepts, parts and theming: [[file:widgets/combo-box.org][Combo box widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_combo_box_new= | =LrgComboBox * lrg_combo_box_new (void);= | Creates an empty combo box with nothing selected. Returns (transfer full): a new =LrgComboBox= |
+| =lrg_combo_box_append= | =void lrg_combo_box_append (LrgComboBox *self, const gchar *text);= | Adds an item at the end of the list. Closes the popup if it is open. |
+| =lrg_combo_box_remove_all= | =void lrg_combo_box_remove_all (LrgComboBox *self);= | Removes every item and clears the selection (emitting =LrgComboBox::changed= if something was selected). |
+| =lrg_combo_box_get_n_items= | =guint lrg_combo_box_get_n_items (LrgComboBox *self);= | Returns the number of items |
+| =lrg_combo_box_get_item_text= | =const gchar * lrg_combo_box_get_item_text (LrgComboBox *self, guint index);= | =index=: an item index. Returns (transfer none) (nullable): the label of item =index=, or =NULL= if =index= is out of range |
+| =lrg_combo_box_get_selected= | =gint lrg_combo_box_get_selected (LrgComboBox *self);= | Returns the selected item index, or -1 for none |
+| =lrg_combo_box_set_selected= | =void lrg_combo_box_set_selected (LrgComboBox *self, gint index);= | Selects an item. Out-of-range indices select nothing. Emits =LrgComboBox::changed= when the selection changes. =index=: an item index, or -1 to select nothing. |
+| =lrg_combo_box_get_selected_text= | =const gchar * lrg_combo_box_get_selected_text (LrgComboBox *self);= | Returns (transfer none) (nullable): the selected item's label, or =NULL= when nothing is selected |
+| =lrg_combo_box_get_placeholder= | =const gchar * lrg_combo_box_get_placeholder (LrgComboBox *self);= | Returns (transfer none) (nullable): the text shown when nothing is selected |
+| =lrg_combo_box_set_placeholder= | =void lrg_combo_box_set_placeholder (LrgComboBox *self, const gchar *placeholder);= | =placeholder=: text shown, muted, when nothing is selected. =placeholder= is (nullable). |
+| =lrg_combo_box_popup= | =void lrg_combo_box_popup (LrgComboBox *self);= | Opens the item list below the combo box. The combo box must be inside an =LrgCanvas=. Does nothing if the list is already open. |
+| =lrg_combo_box_popdown= | =void lrg_combo_box_popdown (LrgComboBox *self);= | Closes the item list if it is open. |
+| =lrg_combo_box_get_popup_open= | =gboolean lrg_combo_box_get_popup_open (LrgComboBox *self);= | Returns =TRUE= while the item list is open |
+
+* LrgDialog
+:PROPERTIES:
+:CUSTOM_ID: wref-dialog
+:END:
+A modal message box with a title, body text, optional content and a right-aligned button row, presented as a canvas popup. Type: final, derives from =LrgContainer=, header =src/ui/lrg-dialog.h=. Signals: =response= (=gint response_id=). Concepts, parts and theming: [[file:widgets/dialog.org][Dialog widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_dialog_new= | =LrgDialog * lrg_dialog_new (const gchar *title, const gchar *body);= | =title=: heading text; =body=: message text; explicit line breaks are kept and long lines are word-wrapped. =title= is (nullable); =body= is (nullable). Returns (transfer full): a new =LrgDialog= |
+| =lrg_dialog_get_title= | =const gchar * lrg_dialog_get_title (LrgDialog *self);= | Returns (transfer none) (nullable): the heading text |
+| =lrg_dialog_set_title= | =void lrg_dialog_set_title (LrgDialog *self, const gchar *title);= | =title=: heading text. =title= is (nullable). |
+| =lrg_dialog_get_body= | =const gchar * lrg_dialog_get_body (LrgDialog *self);= | Returns (transfer none) (nullable): the message text |
+| =lrg_dialog_set_body= | =void lrg_dialog_set_body (LrgDialog *self, const gchar *body);= | =body=: message text. =body= is (nullable). |
+| =lrg_dialog_get_content= | =LrgWidget * lrg_dialog_get_content (LrgDialog *self);= | Returns (transfer none) (nullable): the extra content widget |
+| =lrg_dialog_set_content= | =void lrg_dialog_set_content (LrgDialog *self, LrgWidget *content);= | The content gets the dialog's inner width and its own preferred height. It comes before the buttons in Tab order. =content=: a widget shown between the body text and the buttons (a form, an image, a list...), or =NULL= to remove it. =content= is (nullable). |
+| =lrg_dialog_add_button= | =LrgButton * lrg_dialog_add_button (LrgDialog *self, const gchar *label, gint response_id, gboolean primary);= | Adds a button to the right-aligned button row, after the existing ones. Adding a second primary button demotes the first. =response_id=: id emitted with =LrgDialog::response= when clicked; =primary=: =TRUE= for the main action: it gets the "primary" style class, initial focus, and is triggered by Enter / gamepad A on the dialog background. Returns (transfer none): the new button |
+| =lrg_dialog_get_primary_button= | =LrgButton * lrg_dialog_get_primary_button (LrgDialog *self);= | Returns (transfer none) (nullable): the primary button |
+| =lrg_dialog_present= | =void lrg_dialog_present (LrgDialog *self, LrgCanvas *canvas);= | Shows the dialog as a modal popup centred on =canvas=: a veil dims everything behind it, the dialog rises into place, input outside it is blocked and focus moves to the primary button. A dialog that is still fading out from a previous close cannot be presented again until the fade finishes. |
+| =lrg_dialog_close= | =void lrg_dialog_close (LrgDialog *self);= | Dismisses the dialog without emitting a response. Focus returns to the widget that had it before the dialog was presented. |
+| =lrg_dialog_respond= | =void lrg_dialog_respond (LrgDialog *self, gint response_id);= | Emits =LrgDialog::response= with =response_id=, then closes the dialog. This is what the buttons and Escape do. |
+| =lrg_dialog_get_presented= | =gboolean lrg_dialog_get_presented (LrgDialog *self);= | Returns =TRUE= while the dialog is open on a canvas |
+
+* LrgGrid
+:PROPERTIES:
+:CUSTOM_ID: wref-grid
+:END:
+A container that places visible children into equal cells, left to right and top to bottom. Type: final, derives from =LrgContainer=, header =src/ui/lrg-grid.h=. Signals: none. Concepts, parts and theming: [[file:layout.org::#layout-grid][Grid layout]] (no separate widget page).
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_grid_new= | =LrgGrid * lrg_grid_new (guint columns);= | (transfer full). =columns= must be at least 1. Cells fill left to right, top to bottom, with visible children only; all cells share the size of the largest child |
+| =lrg_grid_get_columns= | =guint lrg_grid_get_columns (LrgGrid *self);= | The column count (at least 1); the row count follows from the number of visible children |
+| =lrg_grid_set_columns= | =void lrg_grid_set_columns (LrgGrid *self, guint columns);= | =columns= must be >= 1 (checked). Notifies =columns= and re-lays out the children at once when it changes |
+| =lrg_grid_get_column_spacing= | =gfloat lrg_grid_get_column_spacing (LrgGrid *self);= | Horizontal gap between columns in canvas units (default 0) |
+| =lrg_grid_set_column_spacing= | =void lrg_grid_set_column_spacing (LrgGrid *self, gfloat spacing);= | =spacing= must be >= 0 (checked). Notifies =column-spacing= and re-lays out the children when it changes |
+| =lrg_grid_get_row_spacing= | =gfloat lrg_grid_get_row_spacing (LrgGrid *self);= | Vertical gap between rows in canvas units (default 0) |
+| =lrg_grid_set_row_spacing= | =void lrg_grid_set_row_spacing (LrgGrid *self, gfloat spacing);= | =spacing= must be >= 0 (checked). Notifies =row-spacing= and re-lays out the children when it changes |
+
+#+begin_src c
+/* A 4-column inventory: 8 units between slots, 8 between rows */
+g_autoptr(LrgGrid) bag = lrg_grid_new (4);
+guint             i;
+
+lrg_grid_set_column_spacing (bag, 8.0f);
+lrg_grid_set_row_spacing (bag, 8.0f);
+for (i = 0; i < 12; i++)
+	lrg_container_add_child (LRG_CONTAINER (bag), make_slot (i));
+
+g_assert_cmpuint (lrg_grid_get_columns (bag), ==, 4);
+g_assert_cmpfloat (lrg_grid_get_column_spacing (bag), ==, lrg_grid_get_row_spacing (bag));
+#+end_src
+
+* LrgHBox
+:PROPERTIES:
+:CUSTOM_ID: wref-hbox
+:END:
+A container that lays children out left to right, sharing spare width by fill weight. Type: final, derives from =LrgContainer=, header =src/ui/lrg-hbox.h=. Signals: none. Concepts, parts and theming: [[file:widgets/hbox.org][HBox widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_hbox_new= | =LrgHBox * lrg_hbox_new (void);= | Creates a new horizontal box container. Returns (transfer full): A new =LrgHBox= |
+| =lrg_hbox_get_homogeneous= | =gboolean lrg_hbox_get_homogeneous (LrgHBox *self);= | Gets whether children are given equal widths. Returns =TRUE= if homogeneous |
+| =lrg_hbox_set_homogeneous= | =void lrg_hbox_set_homogeneous (LrgHBox *self, gboolean homogeneous);= | =TRUE= gives every visible child the same width (the widest preferred width); queues layout |
+
+* LrgImage
+:PROPERTIES:
+:CUSTOM_ID: wref-image
+:END:
+Draws a texture (or a sprite-sheet region of one) with a scale mode, tint and optional rounded corners. Type: final, derives from =LrgWidget=, header =src/ui/lrg-image.h=. Signals: none. Concepts, parts and theming: [[file:widgets/image.org][Image widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_image_new= | =LrgImage * lrg_image_new (void);= | Creates a new image widget without a texture. Returns (transfer full): A new =LrgImage= |
+| =lrg_image_new_with_texture= | =LrgImage * lrg_image_new_with_texture (GrlTexture *texture);= | Creates a new image widget with the specified texture. =texture= is (nullable). Returns (transfer full): A new =LrgImage= |
+| =lrg_image_get_texture= | =GrlTexture * lrg_image_get_texture (LrgImage *self);= | Gets the texture being displayed. Returns (transfer none) (nullable): The texture, or =NULL= |
+| =lrg_image_set_texture= | =void lrg_image_set_texture (LrgImage *self, GrlTexture *texture);= | Sets the texture to display. =texture= is (nullable). |
+| =lrg_image_get_scale_mode= | =LrgImageScaleMode lrg_image_get_scale_mode (LrgImage *self);= | Gets the image scaling mode. Returns the scale mode |
+| =lrg_image_set_scale_mode= | =void lrg_image_set_scale_mode (LrgImage *self, LrgImageScaleMode mode);= | Sets how the image is scaled to fit the widget bounds. - =LRG_IMAGE_SCALE_MODE_FIT=: Scale to fit, maintaining aspect ratio - =LRG_IMAGE_SCALE_MODE_FILL=: Scale to fill, cropping if needed - =LRG_IMAGE_SCALE_MODE_STRETCH=: Stretch to exact widget size - =LRG_IMAGE_SCALE_MODE_TILE=: Tile the texture to fill the area |
+| =lrg_image_get_tint= | =const GrlColor * lrg_image_get_tint (LrgImage *self);= | Gets the color tint applied to the texture. Returns (transfer none): The tint color |
+| =lrg_image_set_tint= | =void lrg_image_set_tint (LrgImage *self, const GrlColor *tint);= | Sets the color tint applied to the texture. Use white (255, 255, 255, 255) for no tint. |
+| =lrg_image_get_source_rect= | =const GrlRectangle * lrg_image_get_source_rect (LrgImage *self);= | Gets the source rectangle for sprite sheet rendering. Returns (transfer none) (nullable): The source rectangle, or =NULL= |
+| =lrg_image_set_source_rect= | =void lrg_image_set_source_rect (LrgImage *self, const GrlRectangle *rect);= | Sets the source rectangle to draw from the texture. This is useful for sprite sheets and texture atlases. Pass =NULL= to draw the entire texture. =rect=: the source rectangle, or =NULL= for whole texture. =rect= is (nullable). |
+| =lrg_image_clear_source_rect= | =void lrg_image_clear_source_rect (LrgImage *self);= | Clears the source rectangle so the entire texture is drawn. |
+| =lrg_image_get_corner_radius= | =gfloat lrg_image_get_corner_radius (LrgImage *self);= | Gets the radius of the image's rounded corners. Returns the corner radius (0 = square corners) |
+| =lrg_image_set_corner_radius= | =void lrg_image_set_corner_radius (LrgImage *self, gfloat radius);= | Rounds the image's corners (anti-aliased). Use half the shorter side for a circular avatar. Applies to every scale mode except =LRG_IMAGE_SCALE_MODE_TILE=. =radius=: corner radius, 0 for square corners. |
+
+* LrgLabel
+:PROPERTIES:
+:CUSTOM_ID: wref-label
+:END:
+Static text in the theme's UI font; multi-line text is supported. Type: final, derives from =LrgWidget=, header =src/ui/lrg-label.h=. Signals: none. Concepts, parts and theming: [[file:widgets/label.org][Label widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_label_new= | =LrgLabel * lrg_label_new (const gchar *text);= | Creates a new label widget. =text= is (nullable). Returns (transfer full): A new =LrgLabel= |
+| =lrg_label_get_text= | =const gchar * lrg_label_get_text (LrgLabel *self);= | Gets the label's text. Returns (transfer none) (nullable): The text |
+| =lrg_label_set_text= | =void lrg_label_set_text (LrgLabel *self, const gchar *text);= | Sets the label's text. =text= is (nullable). |
+| =lrg_label_get_font= | =GrlFont * lrg_label_get_font (LrgLabel *self);= | (transfer none) (nullable): the explicit font; =NULL= means the theme's UI font |
+| =lrg_label_set_font= | =void lrg_label_set_font (LrgLabel *self, GrlFont *font);= | =font= (nullable) is referenced; =NULL= returns to the theme's UI font. Queues layout |
+| =lrg_label_get_font_size= | =gfloat lrg_label_get_font_size (LrgLabel *self);= | Explicit size, or 20 (reported) while the theme size for the label's class is used |
+| =lrg_label_set_font_size= | =void lrg_label_set_font_size (LrgLabel *self, gfloat size);= | Replaces the theme size; queues layout |
+| =lrg_label_get_color= | =const GrlColor * lrg_label_get_color (LrgLabel *self);= | (transfer none). Explicit colour or the legacy white default |
+| =lrg_label_set_color= | =void lrg_label_set_color (LrgLabel *self, const GrlColor *color);= | Replaces the theme's =TEXT= / =TEXT_MUTED= for this label |
+| =lrg_label_get_alignment= | =LrgTextAlignment lrg_label_get_alignment (LrgLabel *self);= | Gets the label's text alignment. Returns the alignment |
+| =lrg_label_set_alignment= | =void lrg_label_set_alignment (LrgLabel *self, LrgTextAlignment alignment);= | Horizontal alignment of each line inside the label's width |
+
+* LrgListView
+:PROPERTIES:
+:CUSTOM_ID: wref-list-view
+:END:
+A virtualised, scrollable list over a =GListModel= with a row factory, keyboard cursor and none / single / multiple selection. Type: final, derives from =LrgContainer=, header =src/ui/lrg-list-view.h=. Signals: =selection-changed= (no arguments), =row-activated= (=guint position=). Concepts, parts and theming: [[file:widgets/list-view.org][List view widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_list_view_new= | =LrgListView * lrg_list_view_new (void);= | Creates an empty list view with the default row factory (a label showing each item's "string", "text", "name", "label" or "title" property, else its type name) and single selection. Returns (transfer full): a new =LrgListView= |
+| =lrg_list_view_set_model= | =void lrg_list_view_set_model (LrgListView *self, GListModel *model);= | Shows =model=. The view follows its =GListModel::items-changed= signal; the selection is cleared. =model= is (nullable). |
+| =lrg_list_view_get_model= | =GListModel * lrg_list_view_get_model (LrgListView *self);= | Returns (transfer none) (nullable): the model |
+| =lrg_list_view_set_factory= | =void lrg_list_view_set_factory (LrgListView *self, LrgListViewCreateFunc create, LrgListViewBindFunc bind, gpointer user_data, GDestroyNotify destroy);= | Sets how rows are made. Existing rows are thrown away and rebuilt. =create=: makes row widgets, or =NULL= for the default label rows; =bind=: fills a row for an item, or =NULL= for the default; =destroy=: frees =user_data= when the factory is replaced. =create= is (nullable) (scope notified); =bind= is (nullable) (scope notified); =destroy= is (nullable). |
+| =lrg_list_view_get_row_height= | =gfloat lrg_list_view_get_row_height (LrgListView *self);= | The configured row height; 0 (the default) means the theme's =ROW_HEIGHT= metric |
+| =lrg_list_view_set_row_height= | =void lrg_list_view_set_row_height (LrgListView *self, gfloat row_height);= | =row_height=: height of every row in canvas units, 0 for the theme's =ROW_HEIGHT=; negatives clamp to 0. Every row has the same height, which is what lets the view realise only the visible rows. Queues layout and notifies =row-height= when it changes |
+| =lrg_list_view_get_selection_mode= | =LrgSelectionMode lrg_list_view_get_selection_mode (LrgListView *self);= | Returns how many rows can be selected |
+| =lrg_list_view_set_selection_mode= | =void lrg_list_view_set_selection_mode (LrgListView *self, LrgSelectionMode mode);= | Changing the mode trims the selection to fit it. =mode=: none, single (the default) or multiple (Ctrl / Shift click). |
+| =lrg_list_view_get_selected= | =guint lrg_list_view_get_selected (LrgListView *self);= | Returns the selected position (the cursor row if it is selected, otherwise the lowest selected position), or =LRG_LIST_VIEW_INVALID_POSITION= |
+| =lrg_list_view_get_n_selected= | =guint lrg_list_view_get_n_selected (LrgListView *self);= | Number of selected rows (0 or 1 in single mode, any number in multiple mode) |
+| =lrg_list_view_is_selected= | =gboolean lrg_list_view_is_selected (LrgListView *self, guint position);= | =TRUE= if the row at =position= is selected; positions past the model's end are never selected |
+| =lrg_list_view_select= | =void lrg_list_view_select (LrgListView *self, guint position);= | Selects =position= and moves the cursor there. In single mode it replaces the selection, in multiple mode it is added; in none mode nothing is selected. |
+| =lrg_list_view_unselect= | =void lrg_list_view_unselect (LrgListView *self, guint position);= | Removes =position= from the selection; emits =selection-changed= only if it was selected. The cursor stays where it is |
+| =lrg_list_view_unselect_all= | =void lrg_list_view_unselect_all (LrgListView *self);= | Clears the selection; emits =selection-changed= once, and only when something was selected |
+| =lrg_list_view_get_cursor= | =guint lrg_list_view_get_cursor (LrgListView *self);= | Returns the keyboard cursor row, or =LRG_LIST_VIEW_INVALID_POSITION= |
+| =lrg_list_view_scroll_to= | =void lrg_list_view_scroll_to (LrgListView *self, guint position, gboolean animate);= | Scrolls by the smallest amount that shows the whole row at =position=; =animate= glides on the scroll spring (ignored with reduced motion) |
+| =lrg_list_view_get_scroll_offset= | =gfloat lrg_list_view_get_scroll_offset (LrgListView *self);= | The vertical offset currently displayed, in canvas units (0 at the top). While a kinetic or animated scroll runs this is the in-between value, not the target |
+| =lrg_list_view_get_row_widget= | =LrgWidget * lrg_list_view_get_row_widget (LrgListView *self, guint position);= | =position=: a model position. Returns (transfer none) (nullable): the row widget currently bound to =position=, or =NULL= when that row is not realized (scrolled away) |
+| =lrg_list_view_get_n_rows= | =guint lrg_list_view_get_n_rows (LrgListView *self);= | Returns number of row widgets alive (visible range plus buffer), independent of the model size |
+
+#+begin_src c
+/* Multi-select list of save slots with tall rows */
+lrg_list_view_set_model (list, G_LIST_MODEL (saves));
+lrg_list_view_set_selection_mode (list, LRG_SELECTION_MODE_MULTIPLE);
+lrg_list_view_set_row_height (list, 48.0f);
+
+lrg_list_view_select (list, 0);
+lrg_list_view_select (list, 3);
+g_assert_cmpuint (lrg_list_view_get_n_selected (list), ==, 2);
+g_assert_true (lrg_list_view_is_selected (list, 3));
+
+lrg_list_view_unselect (list, 0);      /* selection-changed */
+lrg_list_view_unselect_all (list);     /* selection-changed once */
+lrg_list_view_unselect_all (list);     /* nothing selected: no signal */
+
+/* where the view currently is, e.g. to restore it after a rebuild */
+saved_offset = lrg_list_view_get_scroll_offset (list);
+#+end_src
+
+* LrgOverlay
+:PROPERTIES:
+:CUSTOM_ID: wref-overlay
+:END:
+Stacks children on top of each other in the same rectangle; each is placed by its own alignment and margin. Type: final, derives from =LrgContainer=, header =src/ui/lrg-overlay.h=. Signals: none. Concepts, parts and theming: [[file:widgets/overlay.org][Overlay widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_overlay_new= | =LrgOverlay * lrg_overlay_new (void);= | Creates an empty overlay. Add layers with =lrg_container_add_child()=; later children are drawn and hit-tested on top. Each child is placed in the whole content area by its own halign, valign and margin. Returns (transfer full): a new =LrgOverlay= |
+
+* LrgPanel
+:PROPERTIES:
+:CUSTOM_ID: wref-panel
+:END:
+A container with a themed surface, border, corner radius and an elevation-driven drop shadow. Type: final, derives from =LrgContainer=, header =src/ui/lrg-panel.h=. Signals: none. Concepts, parts and theming: [[file:widgets/panel.org][Panel widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_panel_new= | =LrgPanel * lrg_panel_new (void);= | Creates a new panel widget. Returns (transfer full): A new =LrgPanel= |
+| =lrg_panel_get_background_color= | =const GrlColor * lrg_panel_get_background_color (LrgPanel *self);= | (transfer none). Explicit fill or the legacy grey default while the theme's =PANEL= is drawn |
+| =lrg_panel_set_background_color= | =void lrg_panel_set_background_color (LrgPanel *self, const GrlColor *color);= | Replaces =PANEL= for this panel |
+| =lrg_panel_get_border_color= | =const GrlColor * lrg_panel_get_border_color (LrgPanel *self);= | (transfer none) (nullable). The explicit border colour; =NULL= when none was set (the theme's =BORDER= hairline is drawn) or after it was set to =NULL= |
+| =lrg_panel_set_border_color= | =void lrg_panel_set_border_color (LrgPanel *self, const GrlColor *color);= | =color= (nullable): a colour replaces the theme's =BORDER=; =NULL= removes the border |
+| =lrg_panel_get_border_width= | =gfloat lrg_panel_get_border_width (LrgPanel *self);= | Explicit border width, or 1 (reported) while the theme's =BORDER_WIDTH= is used |
+| =lrg_panel_set_border_width= | =void lrg_panel_set_border_width (LrgPanel *self, gfloat width);= | Replaces =BORDER_WIDTH= |
+| =lrg_panel_get_corner_radius= | =gfloat lrg_panel_get_corner_radius (LrgPanel *self);= | Explicit radius, or 0 (reported) while the theme's =CORNER_RADIUS= is used |
+| =lrg_panel_set_corner_radius= | =void lrg_panel_set_corner_radius (LrgPanel *self, gfloat radius);= | Replaces =CORNER_RADIUS= |
+| =lrg_panel_get_elevation= | =guint lrg_panel_get_elevation (LrgPanel *self);= | Gets how far the panel floats above what is behind it. Returns the elevation, 0 (flat) to 3 |
+| =lrg_panel_set_elevation= | =void lrg_panel_set_elevation (LrgPanel *self, guint elevation);= | Sets the panel's elevation. Each step casts a larger, softer drop shadow derived from the theme's SHADOW_BLUR and SHADOW_OFFSET_Y metrics. The default is 1. =elevation=: 0 (flat, no shadow) to 3 (floating); larger values are clamped to 3. |
+| =lrg_panel_get_fill_children= | =gboolean lrg_panel_get_fill_children (LrgPanel *self);= | Returns =TRUE= if children are laid out in the padded content box |
+| =lrg_panel_set_fill_children= | =void lrg_panel_set_fill_children (LrgPanel *self, gboolean fill_children);= | Off by default, so existing code that positions panel children by hand keeps working. Turn it on to frame a box, grid or card. =fill_children=: lay children out inside the padded content box (honouring their margin, alignment and min/max size) instead of leaving them where they were positioned; the panel then measures as its largest child plus padding. |
+
+#+begin_src c
+/* A floating card that frames a vbox: the panel lays the box out in its padded content area */
+g_autoptr(LrgPanel) card = lrg_panel_new ();
+
+lrg_panel_set_elevation (card, 2);
+lrg_panel_set_fill_children (card, TRUE);          /* queues layout */
+lrg_container_add_child (LRG_CONTAINER (card), LRG_WIDGET (column));
+g_assert_true (lrg_panel_get_fill_children (card));
+#+end_src
+
+* LrgProgressBar
+:PROPERTIES:
+:CUSTOM_ID: wref-progress-bar
+:END:
+A track with a gradient fill that eases towards the value on a spring, or a shimmering indeterminate sweep. Type: final, derives from =LrgWidget=, header =src/ui/lrg-progress-bar.h=. Signals: none (use =notify::value=). Concepts, parts and theming: [[file:widgets/progress-bar.org][Progress bar widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_progress_bar_new= | =LrgProgressBar * lrg_progress_bar_new (void);= | Creates a new progress bar widget. Returns (transfer full): A new =LrgProgressBar= |
+| =lrg_progress_bar_get_value= | =gdouble lrg_progress_bar_get_value (LrgProgressBar *self);= | The value, within 0..=max= |
+| =lrg_progress_bar_set_value= | =void lrg_progress_bar_set_value (LrgProgressBar *self, gdouble value);= | Clamped to 0..=max=; notifies =value= when it changes. The drawn fill eases towards it on a spring |
+| =lrg_progress_bar_get_max= | =gdouble lrg_progress_bar_get_max (LrgProgressBar *self);= | The maximum (default 100) |
+| =lrg_progress_bar_set_max= | =void lrg_progress_bar_set_max (LrgProgressBar *self, gdouble max);= | =max= must be > 0 (checked). A value above the new maximum is clamped (and =value= notified) |
+| =lrg_progress_bar_get_fraction= | =gdouble lrg_progress_bar_get_fraction (LrgProgressBar *self);= | Gets the progress fraction (value / max). Returns the fraction (0.0 to 1.0) |
+| =lrg_progress_bar_get_display_fraction= | =gdouble lrg_progress_bar_get_display_fraction (LrgProgressBar *self);= | Gets the fraction currently drawn. The fill eases towards =lrg_progress_bar_get_fraction()= on a spring each time the bar is painted, so right after a value change the two differ. Returns the drawn fraction (0.0 to 1.0, may overshoot briefly with bouncy motion) |
+| =lrg_progress_bar_get_indeterminate= | =gboolean lrg_progress_bar_get_indeterminate (LrgProgressBar *self);= | =TRUE= while the bar shows the shimmering sweep instead of the value fill |
+| =lrg_progress_bar_set_indeterminate= | =void lrg_progress_bar_set_indeterminate (LrgProgressBar *self, gboolean indeterminate);= | Switches between the value fill and the indeterminate animation. The value is kept and shown again when switched back. =indeterminate=: =TRUE= to show a shimmering segment sliding across the track instead of a fill (for work of unknown length). |
+| =lrg_progress_bar_get_show_text= | =gboolean lrg_progress_bar_get_show_text (LrgProgressBar *self);= | =TRUE= when the bar draws its percentage (=NN%=) |
+| =lrg_progress_bar_set_show_text= | =void lrg_progress_bar_set_show_text (LrgProgressBar *self, gboolean show);= | Draws =NN%= centred on the bar; makes the preferred height fit the small font. Queues layout |
+| =lrg_progress_bar_get_orientation= | =LrgOrientation lrg_progress_bar_get_orientation (LrgProgressBar *self);= | =LRG_ORIENTATION_HORIZONTAL= (default, fills left to right) or =LRG_ORIENTATION_VERTICAL= (fills bottom to top) |
+| =lrg_progress_bar_set_orientation= | =void lrg_progress_bar_set_orientation (LrgProgressBar *self, LrgOrientation orientation);= | Swaps the preferred size's axes, so it queues layout; notifies =orientation= when it changes |
+| =lrg_progress_bar_get_background_color= | =const GrlColor * lrg_progress_bar_get_background_color (LrgProgressBar *self);= | (transfer none). The explicit track colour, or the legacy grey default while the theme's =TRACK= is drawn |
+| =lrg_progress_bar_set_background_color= | =void lrg_progress_bar_set_background_color (LrgProgressBar *self, const GrlColor *color);= | Copies =color= (not =NULL=); from now on it is the track colour instead of the theme's =TRACK= |
+| =lrg_progress_bar_get_fill_color= | =const GrlColor * lrg_progress_bar_get_fill_color (LrgProgressBar *self);= | (transfer none). The explicit fill colour, or the legacy green default while the theme's accent gradient is drawn |
+| =lrg_progress_bar_set_fill_color= | =void lrg_progress_bar_set_fill_color (LrgProgressBar *self, const GrlColor *color);= | Copies =color= (not =NULL=); the fill becomes a gradient starting from this colour instead of =ACCENT= to =ACCENT_HOVER= |
+| =lrg_progress_bar_get_text_color= | =const GrlColor * lrg_progress_bar_get_text_color (LrgProgressBar *self);= | (transfer none). The explicit percentage colour, or the legacy white default while the theme's =TEXT= is used |
+| =lrg_progress_bar_set_text_color= | =void lrg_progress_bar_set_text_color (LrgProgressBar *self, const GrlColor *color);= | Copies =color= (not =NULL=); replaces =TEXT= for the percentage |
+| =lrg_progress_bar_get_corner_radius= | =gfloat lrg_progress_bar_get_corner_radius (LrgProgressBar *self);= | The explicit radius, or 4 (reported only) while the bar is drawn as a pill |
+| =lrg_progress_bar_set_corner_radius= | =void lrg_progress_bar_set_corner_radius (LrgProgressBar *self, gfloat radius);= | =radius= must be >= 0 (checked). Once set, the track and fill use it instead of the pill shape |
+
+#+begin_src c
+/* A vertical health bar in the danger colour with square corners */
+static const GrlColor red = { 220, 60, 60, 255 };
+
+lrg_progress_bar_set_orientation (hp, LRG_ORIENTATION_VERTICAL);
+lrg_progress_bar_set_fill_color (hp, &red);
+lrg_progress_bar_set_corner_radius (hp, 2.0f);
+lrg_progress_bar_set_max (hp, player->max_hp);
+lrg_progress_bar_set_value (hp, player->hp);      /* the fill eases there */
+
+g_assert_cmpfloat (lrg_progress_bar_get_value (hp), <=, lrg_progress_bar_get_max (hp));
+g_assert_false (lrg_progress_bar_get_indeterminate (hp));
+g_assert_false (lrg_progress_bar_get_show_text (hp));
+#+end_src
+
+* LrgScrollBox
+:PROPERTIES:
+:CUSTOM_ID: wref-scroll-box
+:END:
+A viewport onto one child with kinetic, rubber-banding scrolling and overlay scrollbars. Type: final, derives from =LrgContainer=, header =src/ui/lrg-scroll-box.h=. Signals: none (use =notify::scroll-x= / =notify::scroll-y=). Concepts, parts and theming: [[file:widgets/scroll-box.org][Scroll box widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_scroll_box_new= | =LrgScrollBox * lrg_scroll_box_new (void);= | Creates an empty scroll box that scrolls vertically. Put the content in with =lrg_scroll_box_set_child()=. Returns (transfer full): a new =LrgScrollBox= |
+| =lrg_scroll_box_set_child= | =void lrg_scroll_box_set_child (LrgScrollBox *self, LrgWidget *child);= | Sets the one widget shown through the viewport. It is given its preferred size (stretched to the viewport on axes that do not scroll) and moved as the box scrolls. Use this rather than =lrg_container_add_child()=. =child=: the content widget, or =NULL= to remove it. =child= is (nullable). |
+| =lrg_scroll_box_get_child= | =LrgWidget * lrg_scroll_box_get_child (LrgScrollBox *self);= | Returns (transfer none) (nullable): the content widget |
+| =lrg_scroll_box_get_scroll_x= | =gfloat lrg_scroll_box_get_scroll_x (LrgScrollBox *self);= | Returns the horizontal offset currently displayed |
+| =lrg_scroll_box_set_scroll_x= | =void lrg_scroll_box_set_scroll_x (LrgScrollBox *self, gfloat scroll_x);= | Jumps horizontally without animation (clamped to the range, and only when =hscroll= is on); same as =lrg_scroll_box_scroll_to (self, scroll_x, current_y, FALSE)= |
+| =lrg_scroll_box_get_scroll_y= | =gfloat lrg_scroll_box_get_scroll_y (LrgScrollBox *self);= | The vertical offset currently displayed, in canvas units; during a rubber band it can briefly leave 0..max |
+| =lrg_scroll_box_set_scroll_y= | =void lrg_scroll_box_set_scroll_y (LrgScrollBox *self, gfloat scroll_y);= | Jumps vertically without animation (clamped, only when =vscroll= is on); keeps the horizontal target |
+| =lrg_scroll_box_get_hscroll= | =gboolean lrg_scroll_box_get_hscroll (LrgScrollBox *self);= | Returns =TRUE= if the content can scroll horizontally |
+| =lrg_scroll_box_set_hscroll= | =void lrg_scroll_box_set_hscroll (LrgScrollBox *self, gboolean enabled);= | =enabled=: allow horizontal scrolling (default =FALSE=). Turning it off snaps back to x = 0 and makes the child as wide as the viewport. Queues layout |
+| =lrg_scroll_box_get_vscroll= | =gboolean lrg_scroll_box_get_vscroll (LrgScrollBox *self);= | =TRUE= (the default) if the content can scroll vertically |
+| =lrg_scroll_box_set_vscroll= | =void lrg_scroll_box_set_vscroll (LrgScrollBox *self, gboolean enabled);= | =enabled=: allow vertical scrolling. Turning it off snaps back to y = 0 and makes the child as tall as the viewport. Queues layout |
+| =lrg_scroll_box_get_kinetic= | =gboolean lrg_scroll_box_get_kinetic (LrgScrollBox *self);= | Returns =TRUE= if scrolling glides and rubber-bands |
+| =lrg_scroll_box_set_kinetic= | =void lrg_scroll_box_set_kinetic (LrgScrollBox *self, gboolean kinetic);= | =kinetic=: =TRUE= (default) for spring-smoothed wheel scrolling, glide and rubber-banding at the ends; =FALSE= jumps straight to each offset (tool UIs, tests) |
+| =lrg_scroll_box_scroll_to= | =void lrg_scroll_box_scroll_to (LrgScrollBox *self, gfloat x, gfloat y, gboolean animate);= | Scrolls to an offset, clamped to the scroll range. =animate=: glide there with the scroll spring instead of jumping. |
+| =lrg_scroll_box_get_max_scroll= | =void lrg_scroll_box_get_max_scroll (LrgScrollBox *self, gfloat *x, gfloat *y);= | The scroll range: content size minus viewport size, never negative. =x= is (out) (optional); =y= is (out) (optional). |
+| =lrg_scroll_box_scroll_to_widget= | =void lrg_scroll_box_scroll_to_widget (LrgScrollBox *self, LrgWidget *descendant);= | Scrolls (animated) by the smallest amount that brings =descendant= fully into view; if it is larger than the viewport its top-left corner is shown. The box also does this by itself when keyboard or gamepad focus moves to a descendant. |
+
+#+begin_src c
+/* A wide changelog: scroll both ways, no glide (a tool window) */
+lrg_scroll_box_set_child (box, LRG_WIDGET (changelog));
+lrg_scroll_box_set_hscroll (box, TRUE);
+lrg_scroll_box_set_vscroll (box, TRUE);
+lrg_scroll_box_set_kinetic (box, FALSE);
+
+/* restore the reading position saved last session */
+lrg_scroll_box_set_scroll_x (box, prefs->changelog_x);
+lrg_scroll_box_set_scroll_y (box, prefs->changelog_y);
+
+/* on close */
+prefs->changelog_y = lrg_scroll_box_get_scroll_y (box);
+if (lrg_scroll_box_get_vscroll (box))
+	prefs->changelog_x = lrg_scroll_box_get_scroll_x (box);
+#+end_src
+
+* LrgSeparator
+:PROPERTIES:
+:CUSTOM_ID: wref-separator
+:END:
+A thin horizontal or vertical rule between groups of widgets. Type: final, derives from =LrgWidget=, header =src/ui/lrg-separator.h=. Signals: none. Concepts, parts and theming: [[file:widgets/separator.org][Separator widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_separator_new= | =LrgSeparator * lrg_separator_new (void);= | Creates a horizontal separator. In a vertical box it stretches across the box's width. Returns (transfer full): a new =LrgSeparator= |
+| =lrg_separator_new_with_orientation= | =LrgSeparator * lrg_separator_new_with_orientation (LrgOrientation orientation);= | =orientation=: direction of the line. Returns (transfer full): a new =LrgSeparator= |
+| =lrg_separator_get_orientation= | =LrgOrientation lrg_separator_get_orientation (LrgSeparator *self);= | Returns the direction of the line |
+| =lrg_separator_set_orientation= | =void lrg_separator_set_orientation (LrgSeparator *self, LrgOrientation orientation);= | =orientation=: =LRG_ORIENTATION_HORIZONTAL= (a line across, the default) or =LRG_ORIENTATION_VERTICAL= (a line down). |
+
+* LrgSlider
+:PROPERTIES:
+:CUSTOM_ID: wref-slider
+:END:
+A draggable thumb on a track for picking a value in a range, with step snapping and keyboard / gamepad control. Type: final, derives from =LrgWidget=, header =src/ui/lrg-slider.h=. Signals: =value-changed= (no arguments). Concepts, parts and theming: [[file:widgets/slider.org][Slider widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_slider_new= | =LrgSlider * lrg_slider_new (void);= | Creates a new slider widget with default range (0 to 100). Returns (transfer full): A new =LrgSlider= |
+| =lrg_slider_new_with_range= | =LrgSlider * lrg_slider_new_with_range (gdouble min, gdouble max, gdouble step);= | Creates a new slider widget with the specified range. Returns (transfer full): A new =LrgSlider= |
+| =lrg_slider_get_value= | =gdouble lrg_slider_get_value (LrgSlider *self);= | Gets the current slider value. Returns the current value |
+| =lrg_slider_set_value= | =void lrg_slider_set_value (LrgSlider *self, gdouble value);= | Sets the current slider value. The value is clamped to the valid range and snapped to the step increment. |
+| =lrg_slider_get_min= | =gdouble lrg_slider_get_min (LrgSlider *self);= | Gets the minimum value. Returns the minimum value |
+| =lrg_slider_set_min= | =void lrg_slider_set_min (LrgSlider *self, gdouble min);= | Sets the minimum value. |
+| =lrg_slider_get_max= | =gdouble lrg_slider_get_max (LrgSlider *self);= | Gets the maximum value. Returns the maximum value |
+| =lrg_slider_set_max= | =void lrg_slider_set_max (LrgSlider *self, gdouble max);= | Sets the maximum value. |
+| =lrg_slider_get_step= | =gdouble lrg_slider_get_step (LrgSlider *self);= | Gets the step increment. Returns the step increment |
+| =lrg_slider_set_step= | =void lrg_slider_set_step (LrgSlider *self, gdouble step);= | Sets the step increment. |
+| =lrg_slider_set_range= | =void lrg_slider_set_range (LrgSlider *self, gdouble min, gdouble max);= | Sets the value range. |
+| =lrg_slider_get_fraction= | =gdouble lrg_slider_get_fraction (LrgSlider *self);= | Gets the current value as a fraction of the range (0.0 to 1.0). Returns the fraction |
+| =lrg_slider_get_orientation= | =LrgOrientation lrg_slider_get_orientation (LrgSlider *self);= | Gets the slider orientation. Returns the orientation |
+| =lrg_slider_set_orientation= | =void lrg_slider_set_orientation (LrgSlider *self, LrgOrientation orientation);= | Sets the slider orientation. |
+| =lrg_slider_get_track_color= | =const GrlColor * lrg_slider_get_track_color (LrgSlider *self);= | (transfer none). The explicit track colour, or the legacy grey default while the theme's =TRACK= is drawn |
+| =lrg_slider_set_track_color= | =void lrg_slider_set_track_color (LrgSlider *self, const GrlColor *color);= | Copies =color= (not =NULL=); replaces =TRACK=. Notifies =track-color= only on a real change |
+| =lrg_slider_get_fill_color= | =const GrlColor * lrg_slider_get_fill_color (LrgSlider *self);= | (transfer none). The explicit fill colour, or the legacy blue default while the theme's =ACCENT= family is drawn |
+| =lrg_slider_set_fill_color= | =void lrg_slider_set_fill_color (LrgSlider *self, const GrlColor *color);= | Copies =color= (not =NULL=); the fill uses it and derives hover / pressed shades from it |
+| =lrg_slider_get_handle_color= | =const GrlColor * lrg_slider_get_handle_color (LrgSlider *self);= | (transfer none). The explicit thumb colour, or the legacy white default while the theme's =HANDLE= is drawn |
+| =lrg_slider_set_handle_color= | =void lrg_slider_set_handle_color (LrgSlider *self, const GrlColor *color);= | Copies =color= (not =NULL=); replaces =HANDLE= for the thumb |
+| =lrg_slider_get_handle_size= | =gfloat lrg_slider_get_handle_size (LrgSlider *self);= | The explicit thumb diameter, or 20 (reported only) while the theme's =HANDLE_SIZE= metric is used |
+| =lrg_slider_set_handle_size= | =void lrg_slider_set_handle_size (LrgSlider *self, gfloat size);= | =size= must be >= 1 (checked). Replaces =HANDLE_SIZE=; the cross-axis preferred size (1.3 thumbs) follows, so it queues layout |
+| =lrg_slider_get_track_thickness= | =gfloat lrg_slider_get_track_thickness (LrgSlider *self);= | The explicit track thickness, or 6 (reported only) while the track is about a quarter of the thumb |
+| =lrg_slider_set_track_thickness= | =void lrg_slider_set_track_thickness (LrgSlider *self, gfloat thickness);= | =thickness= must be >= 1 (checked). From now on the track is drawn this thick |
+
+#+begin_src c
+/* A chunky volume slider in brand colours */
+static const GrlColor groove = { 40, 40, 52, 255 };
+static const GrlColor knob = { 250, 250, 255, 255 };
+
+lrg_slider_set_track_color (volume, &groove);
+lrg_slider_set_handle_color (volume, &knob);
+lrg_slider_set_handle_size (volume, 28.0f);         /* queues layout */
+lrg_slider_set_track_thickness (volume, 10.0f);
+
+g_assert_cmpfloat (lrg_slider_get_handle_size (volume), ==, 28.0f);
+g_assert_cmpfloat (lrg_slider_get_track_thickness (volume), ==, 10.0f);
+g_assert_cmpint (lrg_slider_get_track_color (volume)->r, ==, 40);
+g_assert_cmpint (lrg_slider_get_handle_color (volume)->r, ==, 250);
+/* never set: reports the legacy blue while the theme's accent family is drawn */
+g_assert_nonnull (lrg_slider_get_fill_color (volume));
+#+end_src
+
+* LrgSpinBox
+:PROPERTIES:
+:CUSTOM_ID: wref-spin-box
+:END:
+A numeric field with decrement / increment arrows, wheel and drag scrubbing and a fixed number of decimals. Type: final, derives from =LrgWidget=, header =src/ui/lrg-spin-box.h=. Signals: =value-changed= (no arguments). Concepts, parts and theming: [[file:widgets/spin-box.org][Spin box widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_spin_box_new= | =LrgSpinBox * lrg_spin_box_new (void);= | Creates a spin box for values 0..100 in steps of 1, shown without decimals. Returns (transfer full): a new =LrgSpinBox= |
+| =lrg_spin_box_new_with_range= | =LrgSpinBox * lrg_spin_box_new_with_range (gdouble min, gdouble max, gdouble step);= | =min=: smallest value; =max=: largest value; =step=: amount one click, key press or wheel notch changes the value. Returns (transfer full): a new =LrgSpinBox= starting at =min= |
+| =lrg_spin_box_get_value= | =gdouble lrg_spin_box_get_value (LrgSpinBox *self);= | Returns the current value |
+| =lrg_spin_box_set_value= | =void lrg_spin_box_set_value (LrgSpinBox *self, gdouble value);= | Clamped to [=min=, =max=]; emits =value-changed= (and notifies =value=) when the value actually changes |
+| =lrg_spin_box_get_min= | =gdouble lrg_spin_box_get_min (LrgSpinBox *self);= | The smallest value (default 0) |
+| =lrg_spin_box_set_min= | =void lrg_spin_box_set_min (LrgSpinBox *self, gdouble min);= | When =min= exceeds the current maximum the maximum is raised to match (and notified); the value is re-clamped (which may emit =value-changed=). Queues layout, since the widest text can change |
+| =lrg_spin_box_get_max= | =gdouble lrg_spin_box_get_max (LrgSpinBox *self);= | The largest value (default 100) |
+| =lrg_spin_box_set_max= | =void lrg_spin_box_set_max (LrgSpinBox *self, gdouble max);= | When =max= is below the current minimum the minimum is lowered to match; the value is re-clamped. Queues layout |
+| =lrg_spin_box_set_range= | =void lrg_spin_box_set_range (LrgSpinBox *self, gdouble min, gdouble max);= | =min= <= =max= (checked). Sets both in the order that never inverts the range, with one batched notify |
+| =lrg_spin_box_get_step= | =gdouble lrg_spin_box_get_step (LrgSpinBox *self);= | Returns the step increment |
+| =lrg_spin_box_set_step= | =void lrg_spin_box_set_step (LrgSpinBox *self, gdouble step);= | Change per arrow click, key press, wheel notch or 6 units of horizontal scrub |
+| =lrg_spin_box_get_digits= | =guint lrg_spin_box_get_digits (LrgSpinBox *self);= | Number of decimals shown (0..10, default 0) |
+| =lrg_spin_box_set_digits= | =void lrg_spin_box_set_digits (LrgSpinBox *self, guint digits);= | Clamped to 10. Only the display changes; the value is not rounded. Queues layout |
+| =lrg_spin_box_get_text= | =gchar * lrg_spin_box_get_text (LrgSpinBox *self);= | (transfer full) the value formatted with =digits= decimals, as displayed; free with =g_free()= |
+| =lrg_spin_box_spin= | =void lrg_spin_box_spin (LrgSpinBox *self, gint steps);= | Changes the value by =steps= times the step, clamped to the range. =steps=: number of steps to move (negative moves down). |
+
+#+begin_src c
+/* Field of view in degrees with one decimal */
+lrg_spin_box_set_min (fov, 60.0);
+lrg_spin_box_set_max (fov, 120.0);
+lrg_spin_box_set_step (fov, 0.5);
+lrg_spin_box_set_digits (fov, 1);
+lrg_spin_box_set_value (fov, 90.0);
+
+g_assert_cmpfloat (lrg_spin_box_get_max (fov), ==, 120.0);
+g_assert_cmpuint (lrg_spin_box_get_digits (fov), ==, 1);
+
+lrg_spin_box_set_max (fov, 30.0);   /* min follows down to 30; value clamps to 30 */
+#+end_src
+
+* LrgTabView
+:PROPERTIES:
+:CUSTOM_ID: wref-tab-view
+:END:
+A tab bar of headers above (or below) a content area showing one page at a time, with a sliding active-tab indicator. Type: final, derives from =LrgContainer=, header =src/ui/lrg-tab-view.h=. Signals: =tab-changed= (=guint index=). Concepts, parts and theming: [[file:tab-view.org][Tab view page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_tab_view_new= | =LrgTabView * lrg_tab_view_new (void);= | Creates a new tab view widget. Returns (transfer full): A new =LrgTabView= |
+| =lrg_tab_view_add_tab= | =void lrg_tab_view_add_tab (LrgTabView *self, const gchar *label, LrgWidget *content);= | Adds a new tab with the specified label and content widget. The tab view takes a reference to the content widget. =content=: the widget to display when this tab is active. |
+| =lrg_tab_view_remove_tab= | =void lrg_tab_view_remove_tab (LrgTabView *self, guint index);= | Removes the tab at the specified index. The content widget's reference is released. |
+| =lrg_tab_view_get_tab_count= | =guint lrg_tab_view_get_tab_count (LrgTabView *self);= | Gets the number of tabs in the view. Returns the tab count |
+| =lrg_tab_view_get_active_tab= | =guint lrg_tab_view_get_active_tab (LrgTabView *self);= | Gets the index of the currently active tab. Returns the active tab index |
+| =lrg_tab_view_set_active_tab= | =void lrg_tab_view_set_active_tab (LrgTabView *self, guint index);= | Sets which tab is currently active and visible. Emits the "tab-changed" signal if the tab changes. |
+| =lrg_tab_view_get_tab_position= | =LrgTabPosition lrg_tab_view_get_tab_position (LrgTabView *self);= | Gets the position of the tab bar (top or bottom). Returns the tab bar position |
+| =lrg_tab_view_set_tab_position= | =void lrg_tab_view_set_tab_position (LrgTabView *self, LrgTabPosition position);= | Sets whether the tab bar appears at the top or bottom of the content area. |
+| =lrg_tab_view_get_tab_height= | =gfloat lrg_tab_view_get_tab_height (LrgTabView *self);= | Gets the height of the tab bar in pixels. Returns the tab bar height |
+| =lrg_tab_view_set_tab_height= | =void lrg_tab_view_set_tab_height (LrgTabView *self, gfloat height);= | Sets the height of the tab bar. |
+| =lrg_tab_view_get_tab_content= | =LrgWidget * lrg_tab_view_get_tab_content (LrgTabView *self, guint index);= | Gets the content widget for the tab at the specified index. Returns (transfer none) (nullable): The content widget, or =NULL= |
+| =lrg_tab_view_get_tab_label= | =const gchar * lrg_tab_view_get_tab_label (LrgTabView *self, guint index);= | Gets the label text for the tab at the specified index. Returns (transfer none) (nullable): The tab label, or =NULL= |
+| =lrg_tab_view_set_tab_label= | =void lrg_tab_view_set_tab_label (LrgTabView *self, guint index, const gchar *label);= | =label= (nullable), copied; queues layout (header widths change) |
+| =lrg_tab_view_get_indicator_rect= | =gboolean lrg_tab_view_get_indicator_rect (LrgTabView *self, gfloat *x, gfloat *y, gfloat *width, gfloat *height);= | Gets where the active-tab indicator is heading: the strip under (or, with the tab bar at the bottom, over) the active tab's header. The drawn indicator slides and resizes towards this rectangle on springs whenever the active tab changes. =x=: left edge, in world coordinates; =y=: top edge, in world coordinates; =height=: height (the indicator thickness). =x= is (out) (optional); =y= is (out) (optional); =width= is (out) (optional); =height= is (out) (optional). Returns =FALSE= (and zeros) when the view has no tabs |
+
+* LrgTextInput
+:PROPERTIES:
+:CUSTOM_ID: wref-text-input
+:END:
+A single-line editable text field with selection, clipboard, password mode and a placeholder. Type: final, derives from =LrgWidget=, header =src/ui/lrg-text-input.h=. Signals: =text-changed= (no arguments), =submitted= (no arguments; Enter). Concepts, parts and theming: [[file:widgets/text-input.org][Text input widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_text_input_new= | =LrgTextInput * lrg_text_input_new (void);= | Creates a new text input widget. Returns (transfer full): A new =LrgTextInput= |
+| =lrg_text_input_new_with_placeholder= | =LrgTextInput * lrg_text_input_new_with_placeholder (const gchar *placeholder);= | Creates a new text input widget with placeholder text. =placeholder=: placeholder text to display when empty. =placeholder= is (nullable). Returns (transfer full): A new =LrgTextInput= |
+| =lrg_text_input_get_text= | =const gchar * lrg_text_input_get_text (LrgTextInput *self);= | (transfer none) the current text; =NULL= until text was set or typed |
+| =lrg_text_input_set_text= | =void lrg_text_input_set_text (LrgTextInput *self, const gchar *text);= | =text= (nullable) replaces the whole text (copied); the cursor and selection anchor are clamped into the new text. Notifies =text= and emits =text-changed= only when the text differs |
+| =lrg_text_input_get_placeholder= | =const gchar * lrg_text_input_get_placeholder (LrgTextInput *self);= | Gets the placeholder text. Returns (transfer none) (nullable): The placeholder text |
+| =lrg_text_input_set_placeholder= | =void lrg_text_input_set_placeholder (LrgTextInput *self, const gchar *placeholder);= | Sets the placeholder text shown when the input is empty. =placeholder= is (nullable). |
+| =lrg_text_input_get_max_length= | =guint lrg_text_input_get_max_length (LrgTextInput *self);= | Gets the maximum text length. Returns maximum length (0 = unlimited) |
+| =lrg_text_input_set_max_length= | =void lrg_text_input_set_max_length (LrgTextInput *self, guint max_length);= | Characters allowed, 0 for unlimited; typing and pasting stop at the limit |
+| =lrg_text_input_get_password_mode= | =gboolean lrg_text_input_get_password_mode (LrgTextInput *self);= | Gets whether password mode is enabled. Returns =TRUE= if password mode is enabled |
+| =lrg_text_input_set_password_mode= | =void lrg_text_input_set_password_mode (LrgTextInput *self, gboolean password_mode);= | Masks the text with =*=; password inputs never copy or cut to the clipboard |
+| =lrg_text_input_get_cursor_position= | =gint lrg_text_input_get_cursor_position (LrgTextInput *self);= | Gets the cursor position (in UTF-8 characters). Returns the cursor position |
+| =lrg_text_input_set_cursor_position= | =void lrg_text_input_set_cursor_position (LrgTextInput *self, gint position);= | Caret position in characters, clamped to the text; clears the selection |
+| =lrg_text_input_get_selection= | =gboolean lrg_text_input_get_selection (LrgTextInput *self, gint *start, gint *end);= | Gets the selected range in UTF-8 characters, ordered so that =start= <= =end=. With nothing selected both are the cursor position. =end=: one past the last selected character. =start= is (out) (optional); =end= is (out) (optional). Returns =TRUE= if a non-empty range is selected |
+| =lrg_text_input_set_selection= | =void lrg_text_input_set_selection (LrgTextInput *self, gint anchor, gint cursor);= | Selects the characters between =anchor= and =cursor= (either order; values are clamped to the text). Equal values just move the cursor. =anchor=: the fixed end of the selection, in characters; =cursor=: the moving end, where the cursor goes. |
+| =lrg_text_input_select_all= | =void lrg_text_input_select_all (LrgTextInput *self);= | Selects the whole text (what Ctrl+A does). |
+| =lrg_text_input_get_selected_text= | =gchar * lrg_text_input_get_selected_text (LrgTextInput *self);= | Returns (transfer full) (nullable): the selected text, or =NULL= when nothing is selected |
+| =lrg_text_input_delete_selection= | =gboolean lrg_text_input_delete_selection (LrgTextInput *self);= | Deletes the selected text, if any, emitting =LrgTextInput::text-changed=. Returns =TRUE= if something was deleted |
+| =lrg_text_input_insert_text= | =void lrg_text_input_insert_text (LrgTextInput *self, const gchar *text);= | Inserts =text= at the cursor, replacing the selection, as if typed. Control characters (newlines, tabs ...) are dropped and the result is cut to =LrgTextInput:max-length=. |
+| =lrg_text_input_copy_clipboard= | =void lrg_text_input_copy_clipboard (LrgTextInput *self);= | Copies the selection to the clipboard (Ctrl+C). Without a window the text goes to a process-wide fallback clipboard instead, so editing also works headless. Password inputs never copy. |
+| =lrg_text_input_cut_clipboard= | =void lrg_text_input_cut_clipboard (LrgTextInput *self);= | Copies the selection to the clipboard and deletes it (Ctrl+X). |
+| =lrg_text_input_paste_clipboard= | =void lrg_text_input_paste_clipboard (LrgTextInput *self);= | Inserts the clipboard text at the cursor, replacing the selection (Ctrl+V). See =lrg_text_input_copy_clipboard()= for the headless fallback. |
+| =lrg_text_input_get_focused= | =gboolean lrg_text_input_get_focused (LrgTextInput *self);= | =TRUE= while the input has keyboard focus (follows the canvas focus) |
+| =lrg_text_input_set_focused= | =void lrg_text_input_set_focused (LrgTextInput *self, gboolean focused);= | Inside a canvas this moves the canvas focus (=FOCUS_IN= / =FOCUS_OUT= then update the flag); outside one it sets the flag directly |
+| =lrg_text_input_get_font_size= | =gfloat lrg_text_input_get_font_size (LrgTextInput *self);= | Explicit size, or 20 (reported) while the theme's =FONT_SIZE= is used |
+| =lrg_text_input_set_font_size= | =void lrg_text_input_set_font_size (LrgTextInput *self, gfloat size);= | Replaces =FONT_SIZE=; queues layout |
+| =lrg_text_input_get_text_color= | =const GrlColor * lrg_text_input_get_text_color (LrgTextInput *self);= | (transfer none). Explicit colour or the legacy default; the theme's =TEXT= is drawn until set |
+| =lrg_text_input_set_text_color= | =void lrg_text_input_set_text_color (LrgTextInput *self, const GrlColor *color);= | Replaces =TEXT= |
+| =lrg_text_input_get_background_color= | =const GrlColor * lrg_text_input_get_background_color (LrgTextInput *self);= | (transfer none). Explicit fill or the legacy default; the theme's =INPUT= is drawn until set |
+| =lrg_text_input_set_background_color= | =void lrg_text_input_set_background_color (LrgTextInput *self, const GrlColor *color);= | Replaces =INPUT= |
+| =lrg_text_input_get_border_color= | =const GrlColor * lrg_text_input_get_border_color (LrgTextInput *self);= | (transfer none). Explicit border or the legacy default; the theme's =BORDER= is drawn until set |
+| =lrg_text_input_set_border_color= | =void lrg_text_input_set_border_color (LrgTextInput *self, const GrlColor *color);= | Replaces =BORDER= while unfocused; a focused input always shows =ACCENT= |
+| =lrg_text_input_get_placeholder_color= | =const GrlColor * lrg_text_input_get_placeholder_color (LrgTextInput *self);= | (transfer none). Explicit placeholder colour or the legacy default; =TEXT_MUTED= until set |
+| =lrg_text_input_set_placeholder_color= | =void lrg_text_input_set_placeholder_color (LrgTextInput *self, const GrlColor *color);= | Replaces =TEXT_MUTED= for the placeholder |
+| =lrg_text_input_get_corner_radius= | =gfloat lrg_text_input_get_corner_radius (LrgTextInput *self);= | Explicit radius, or 4 (reported) while the theme's =CORNER_RADIUS= is used |
+| =lrg_text_input_set_corner_radius= | =void lrg_text_input_set_corner_radius (LrgTextInput *self, gfloat radius);= | Replaces =CORNER_RADIUS= |
+| =lrg_text_input_get_padding= | =gfloat lrg_text_input_get_padding (LrgTextInput *self);= | Explicit inner padding, or 8 (reported) while the theme's =PADDING_X= / =PADDING_Y= are used |
+| =lrg_text_input_set_padding= | =void lrg_text_input_set_padding (LrgTextInput *self, gfloat padding);= | Replaces =PADDING_X= / =PADDING_Y= with one value; queues layout |
+
+* LrgToast
+:PROPERTIES:
+:CUSTOM_ID: wref-toast
+:END:
+A transient notification card with a title, message, kind colour and a timer. Type: final, derives from =LrgWidget=, header =src/ui/lrg-toast.h=. Signals: =dismissed= (no arguments). Concepts, parts and theming: [[file:widgets/toast.org][Toast widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_toast_kind_get_type= | =GType lrg_toast_kind_get_type (void);= | The =GEnum= type (=LRG_TYPE_TOAST_KIND=) of =LrgToastKind=, registered by hand in =lrg-toast.c=: =LRG_TOAST_KIND_INFO= (nick =info=, accent colour), =SUCCESS= (=success=), =WARNING= (=warning=) and =DANGER= (=danger=). Used by the =kind= property and for parsing kinds from data files |
+| =lrg_toast_new= | =LrgToast * lrg_toast_new (const gchar *title, const gchar *message);= | Creates an =LRG_TOAST_KIND_INFO= toast that lasts =LRG_TOAST_DEFAULT_DURATION= seconds. Show it with =lrg_toast_queue_show()=. =message=: muted detail text; explicit line breaks are kept. =title= is (nullable); =message= is (nullable). Returns (transfer full): a new =LrgToast= |
+| =lrg_toast_get_title= | =const gchar * lrg_toast_get_title (LrgToast *self);= | Returns (transfer none) (nullable): the title |
+| =lrg_toast_set_title= | =void lrg_toast_set_title (LrgToast *self, const gchar *title);= | =title= (nullable), copied; queues layout |
+| =lrg_toast_get_message= | =const gchar * lrg_toast_get_message (LrgToast *self);= | Returns (transfer none) (nullable): the message |
+| =lrg_toast_set_message= | =void lrg_toast_set_message (LrgToast *self, const gchar *message);= | =message= (nullable), copied; queues layout |
+| =lrg_toast_get_kind= | =LrgToastKind lrg_toast_get_kind (LrgToast *self);= | Returns the kind |
+| =lrg_toast_set_kind= | =void lrg_toast_set_kind (LrgToast *self, LrgToastKind kind);= | Picks the toast's colour role (=ACCENT=, =SUCCESS=, =WARNING= or =DANGER=); notifies =kind= when it changes |
+| =lrg_toast_get_duration= | =gdouble lrg_toast_get_duration (LrgToast *self);= | Returns seconds the toast stays up; 0 means until dismissed |
+| =lrg_toast_set_duration= | =void lrg_toast_set_duration (LrgToast *self, gdouble duration);= | =duration=: seconds to stay up, or 0 to stay until clicked or dismissed with =lrg_toast_dismiss()=. |
+| =lrg_toast_get_elapsed= | =gdouble lrg_toast_get_elapsed (LrgToast *self);= | Returns seconds the toast has been showing (paused while hovered) |
+| =lrg_toast_get_remaining_fraction= | =gfloat lrg_toast_get_remaining_fraction (LrgToast *self);= | Returns 1 when just shown, falling to 0 when it expires; always 1 for toasts without a duration |
+| =lrg_toast_advance= | =gboolean lrg_toast_advance (LrgToast *self, gdouble seconds);= | Runs the toast's clock (the toast queue does this every frame). The clock does not run while the pointer is over the toast. Dismisses the toast when its duration runs out. Returns =TRUE= if the toast is dismissed (now or before) |
+| =lrg_toast_dismiss= | =void lrg_toast_dismiss (LrgToast *self);= | Ends the toast early; emits =LrgToast::dismissed= once. A toast queue then fades it out and removes it. |
+| =lrg_toast_get_dismissed= | =gboolean lrg_toast_get_dismissed (LrgToast *self);= | Returns =TRUE= once the toast expired or was dismissed |
+
+#+begin_src c
+/* Kinds round-trip through their nicks, e.g. from a quest data file */
+GEnumClass *klass = g_type_class_ref (LRG_TYPE_TOAST_KIND);   /* lrg_toast_kind_get_type () */
+GEnumValue *v = g_enum_get_value_by_nick (klass, "warning");
+g_autoptr(LrgToast) toast = lrg_toast_new ("Low supplies", "Return to camp before nightfall");
+
+if (v != NULL)
+	lrg_toast_set_kind (toast, (LrgToastKind) v->value);
+lrg_toast_queue_show (toasts, toast);
+g_type_class_unref (klass);
+#+end_src
+
+* LrgToastQueue
+:PROPERTIES:
+:CUSTOM_ID: wref-toast-queue
+:END:
+The pointer-transparent layer that shows toasts in a corner in replace, sequence or stack mode. Type: final, derives from =LrgContainer=, header =src/ui/lrg-toast-queue.h=. Signals: none. Concepts, parts and theming: [[file:widgets/toast.org][Toast widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_toast_queue_new= | =LrgToastQueue * lrg_toast_queue_new (void);= | Creates a queue in =LRG_TOAST_MODE_STACK= mode showing up to three toasts in the bottom-right corner. Add it to a canvas as the last child; when it has no size of its own it covers its parent. It is pointer-transparent: clicks only stop on the toasts themselves. Returns (transfer full): a new =LrgToastQueue= |
+| =lrg_toast_queue_get_mode= | =LrgToastMode lrg_toast_queue_get_mode (LrgToastQueue *self);= | Returns how new toasts are shown |
+| =lrg_toast_queue_set_mode= | =void lrg_toast_queue_set_mode (LrgToastQueue *self, LrgToastMode mode);= | =mode=: =LRG_TOAST_MODE_REPLACE= (a new toast pushes the current one out), =LRG_TOAST_MODE_SEQUENCE= (one at a time, in order) or =LRG_TOAST_MODE_STACK= (up to =LrgToastQueue:max-visible= at once). |
+| =lrg_toast_queue_get_max_visible= | =guint lrg_toast_queue_get_max_visible (LrgToastQueue *self);= | Returns the most toasts shown at once in stack mode |
+| =lrg_toast_queue_set_max_visible= | =void lrg_toast_queue_set_max_visible (LrgToastQueue *self, guint max_visible);= | =max_visible=: at least 1; extra toasts wait their turn. |
+| =lrg_toast_queue_get_toast_halign= | =LrgAlign lrg_toast_queue_get_toast_halign (LrgToastQueue *self);= | Returns the horizontal corner / edge toasts sit at |
+| =lrg_toast_queue_set_toast_halign= | =void lrg_toast_queue_set_toast_halign (LrgToastQueue *self, LrgAlign align);= | =align=: =LRG_ALIGN_START= (left), =LRG_ALIGN_CENTER=, =LRG_ALIGN_END= (right) or =LRG_ALIGN_FILL= (full width). |
+| =lrg_toast_queue_get_toast_valign= | =LrgAlign lrg_toast_queue_get_toast_valign (LrgToastQueue *self);= | Returns the vertical edge toasts stack from |
+| =lrg_toast_queue_set_toast_valign= | =void lrg_toast_queue_set_toast_valign (LrgToastQueue *self, LrgAlign align);= | =align=: =LRG_ALIGN_START= (top: newest on top, the stack grows down), =LRG_ALIGN_END= or =LRG_ALIGN_FILL= (bottom: newest at the bottom, the stack grows up) or =LRG_ALIGN_CENTER=. |
+| =lrg_toast_queue_get_auto_advance= | =gboolean lrg_toast_queue_get_auto_advance (LrgToastQueue *self);= | Returns whether the canvas frame clock advances the toasts |
+| =lrg_toast_queue_set_auto_advance= | =void lrg_toast_queue_set_auto_advance (LrgToastQueue *self, gboolean auto_advance);= | =auto_advance=: =TRUE= (default) to run time from the canvas frame clock (each =lrg_canvas_update()= advances the queue by its delta time); =FALSE= to drive it only with =lrg_toast_queue_advance()= (paused games, manual control). |
+| =lrg_toast_queue_show= | =void lrg_toast_queue_show (LrgToastQueue *self, LrgToast *toast);= | Shows =toast= now or queues it, depending on the mode. =toast=: a toast not shown anywhere else; the queue takes its own reference. =toast= is (transfer none). |
+| =lrg_toast_queue_advance= | =void lrg_toast_queue_advance (LrgToastQueue *self, gdouble seconds);= | Runs the clocks of the visible toasts and the enter / leave / re-flow springs, removes toasts that finished fading out and brings in waiting ones. When =LrgToastQueue:auto-advance= is on, the canvas calls this every frame with its delta time (=lrg_canvas_update()=), so an explicit call adds to the frame clock (skips ahead) rather than replacing it; painting never advances time. Turn auto-advance off to drive time only through this function. |
+| =lrg_toast_queue_clear= | =void lrg_toast_queue_clear (LrgToastQueue *self);= | Dismisses every visible and waiting toast. |
+| =lrg_toast_queue_get_n_visible= | =guint lrg_toast_queue_get_n_visible (LrgToastQueue *self);= | Returns toasts on screen and not dismissed (toasts fading out after a dismissal are not counted) |
+| =lrg_toast_queue_get_n_pending= | =guint lrg_toast_queue_get_n_pending (LrgToastQueue *self);= | Returns toasts waiting to be shown |
+| =lrg_toast_queue_get_visible_toast= | =LrgToast * lrg_toast_queue_get_visible_toast (LrgToastQueue *self, guint index);= | =index=: 0 for the oldest visible toast. Returns (transfer none) (nullable): a visible, not dismissed toast |
+
+* LrgVBox
+:PROPERTIES:
+:CUSTOM_ID: wref-vbox
+:END:
+A container that lays children out top to bottom, sharing spare height by fill weight. Type: final, derives from =LrgContainer=, header =src/ui/lrg-vbox.h=. Signals: none. Concepts, parts and theming: [[file:widgets/vbox.org][VBox widget page]].
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_vbox_new= | =LrgVBox * lrg_vbox_new (void);= | Creates a new vertical box container. Returns (transfer full): A new =LrgVBox= |
+| =lrg_vbox_get_homogeneous= | =gboolean lrg_vbox_get_homogeneous (LrgVBox *self);= | Gets whether children are given equal heights. Returns =TRUE= if homogeneous |
+| =lrg_vbox_set_homogeneous= | =void lrg_vbox_set_homogeneous (LrgVBox *self, gboolean homogeneous);= | =TRUE= gives every visible child the same height (the tallest preferred height); queues layout |
+
+* See also
+:PROPERTIES:
+:CUSTOM_ID: wref-see-also
+:END:
+- [[file:index.org][UI module]] (with the index of per-widget pages)
+- [[file:widget.org][LrgWidget]], [[file:container.org][LrgContainer]], [[file:canvas-api.org][LrgCanvas API]]
+- [[file:styling.org][Styling]] and [[file:theme.org][LrgTheme]] for the theme colours and metrics the notes refer to

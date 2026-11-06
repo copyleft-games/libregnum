@@ -399,8 +399,8 @@ void lrg_paint_measure_text (GrlFont     *font,
 /**
  * lrg_paint_list_callback:
  * @self: an #LrgPaintList
- * @func: (scope notified): function that draws with raw graylib
- * @user_data: (closure): data for @func
+ * @func: (scope notified) (closure user_data) (destroy destroy): function that draws with raw graylib
+ * @user_data: data for @func
  * @destroy: (nullable): frees @user_data when the list is cleared
  *
  * Records a call into immediate-mode drawing at this point of the
