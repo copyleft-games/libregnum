@@ -1568,6 +1568,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-view-state.h \
 	src/editor/lrg-editor-play-session.h \
 	src/editor/lrg-editor-viewport-nav.h \
+	src/editor/lrg-asset-meta.h \
+	src/editor/lrg-editor-vcs.h \
 	src/editor/lrg-editor-document.h \
 	src/editor/lrg-prefab.h
 SOURCES += \
@@ -1602,6 +1604,8 @@ SOURCES += \
 	src/editor/lrg-editor-view-state.c \
 	src/editor/lrg-editor-play-session.c \
 	src/editor/lrg-editor-viewport-nav.c \
+	src/editor/lrg-asset-meta.c \
+	src/editor/lrg-editor-vcs.c \
 	src/editor/lrg-editor-document.c \
 	src/editor/lrg-prefab.c
 ifeq ($(BUILD_EDITOR_UI),1)

@@ -15,10 +15,16 @@
  *
  * Workers never touch the cache object: a job carries everything it needs
  * plus a reference to the result queue, and dispose waits for the pool.
+ *
+ * GPU kinds (models, fonts) each have their own renderer slot
+ * (renderers[kind]); the CPU kinds (images, schematics, waveforms) need
+ * none. Textures and fonts key their entries on their sidecar's settings
+ * hash as well, see entry_settings_hash().
  */
 
 #include "lrg-thumbnail-cache.h"
 #include "lrg-asset-database.h"
+#include "lrg-asset-meta.h"
 #include "../lrg-enums.h"
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -29,6 +35,22 @@
 
 #define MIN_SIZE (16)
 #define MAX_SIZE (512)
+
+/* Settings-hash characters kept in a cache key. */
+#define HASH_CHARS (12)
+
+/* Above this many interleaved samples a waveform is downmixed to mono
+ * and resampled before LoadWaveSamples (bounds the float buffer to
+ * 16 MiB). */
+#define WAVE_MAX_SAMPLES (4u * 1024u * 1024u)
+
+/* Renderer slot of a GPU kind. */
+typedef struct
+{
+	LrgThumbnailRenderFunc func;
+	gpointer               data;
+	GDestroyNotify         destroy;
+} Renderer;
 
 typedef struct
 {
@@ -55,9 +77,8 @@ struct _LrgThumbnailCache
 	GAsyncQueue            *results;    /* Result* */
 	GHashTable             *pending;    /* path -> TRUE (main thread) */
 	GQueue                  gpu_queue;  /* gchar* paths */
-	LrgThumbnailRenderFunc  render;
-	gpointer                render_data;
-	GDestroyNotify          render_destroy;
+	Renderer                model;      /* LRG_THUMBNAIL_KIND_MODEL */
+	Renderer                font;       /* LRG_THUMBNAIL_KIND_FONT */
 };
 
 enum
@@ -69,6 +90,56 @@ enum
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE (LrgThumbnailCache, lrg_thumbnail_cache, G_TYPE_OBJECT)
+
+GType
+lrg_thumbnail_kind_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_THUMBNAIL_KIND_NONE, "LRG_THUMBNAIL_KIND_NONE", "none" },
+			{ LRG_THUMBNAIL_KIND_IMAGE, "LRG_THUMBNAIL_KIND_IMAGE", "image" },
+			{ LRG_THUMBNAIL_KIND_SCHEMATIC, "LRG_THUMBNAIL_KIND_SCHEMATIC", "schematic" },
+			{ LRG_THUMBNAIL_KIND_WAVEFORM, "LRG_THUMBNAIL_KIND_WAVEFORM", "waveform" },
+			{ LRG_THUMBNAIL_KIND_MODEL, "LRG_THUMBNAIL_KIND_MODEL", "model" },
+			{ LRG_THUMBNAIL_KIND_FONT, "LRG_THUMBNAIL_KIND_FONT", "font" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgThumbnailKind"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+LrgThumbnailKind
+lrg_thumbnail_cache_get_kind (const gchar *path)
+{
+	if (path == NULL)
+		return LRG_THUMBNAIL_KIND_NONE;
+	switch (lrg_asset_database_classify (path))
+	{
+	case LRG_ASSET_TYPE_TEXTURE: return LRG_THUMBNAIL_KIND_IMAGE;
+	case LRG_ASSET_TYPE_LEVEL:
+	case LRG_ASSET_TYPE_PREFAB:  return LRG_THUMBNAIL_KIND_SCHEMATIC;
+	case LRG_ASSET_TYPE_AUDIO:   return LRG_THUMBNAIL_KIND_WAVEFORM;
+	case LRG_ASSET_TYPE_MODEL:   return LRG_THUMBNAIL_KIND_MODEL;
+	case LRG_ASSET_TYPE_FONT:    return LRG_THUMBNAIL_KIND_FONT;
+	default:                     return LRG_THUMBNAIL_KIND_NONE;
+	}
+}
+
+static void
+renderer_clear (Renderer *r)
+{
+	if (r->destroy != NULL && r->data != NULL)
+		r->destroy (r->data);
+	r->func = NULL;
+	r->data = NULL;
+	r->destroy = NULL;
+}
 
 static void
 result_free (gpointer data)
@@ -119,12 +190,41 @@ lrg_thumbnail_cache_make_key (const gchar *path,
                               gint64       mtime_usec,
                               goffset      size)
 {
+	return lrg_thumbnail_cache_make_key_full (path, mtime_usec, size, NULL);
+}
+
+gchar *
+lrg_thumbnail_cache_make_key_full (const gchar *path,
+                                   gint64       mtime_usec,
+                                   goffset      size,
+                                   const gchar *settings_hash)
+{
 	g_autofree gchar *hash = NULL;
 
 	g_return_val_if_fail (path != NULL, NULL);
 
 	hash = path_hash (path);
+	if (settings_hash != NULL && *settings_hash != '\0')
+		return g_strdup_printf ("%s-%" G_GINT64_FORMAT "-%" G_GOFFSET_FORMAT "-%.*s.png", hash, mtime_usec, size,
+		                        HASH_CHARS, settings_hash);
 	return g_strdup_printf ("%s-%" G_GINT64_FORMAT "-%" G_GOFFSET_FORMAT ".png", hash, mtime_usec, size);
+}
+
+/* The sidecar settings hash that keys @abs_path's thumbnail: textures
+ * and fonts with a readable ".meta" only (their previews depend on
+ * import settings); NULL otherwise. */
+static gchar *
+entry_settings_hash (const gchar *abs_path)
+{
+	LrgThumbnailKind        kind = lrg_thumbnail_cache_get_kind (abs_path);
+	g_autoptr(LrgAssetMeta) meta = NULL;
+
+	if (kind != LRG_THUMBNAIL_KIND_IMAGE && kind != LRG_THUMBNAIL_KIND_FONT)
+		return NULL;
+	meta = lrg_asset_meta_load_for_asset (abs_path, NULL);
+	if (meta == NULL)
+		return NULL;
+	return lrg_asset_meta_get_settings_hash (meta);
 }
 
 /* Absolute, canonical form so "a/../b.png" and "b.png" share an entry. */
@@ -433,6 +533,127 @@ render_schematic (const gchar  *path,
 	return img;
 }
 
+/* Applies the sidecar's texture max-size (the longest edge after
+ * import) so the preview shows what the game will load. Takes @image. */
+static GrlImage *
+apply_import_settings (const gchar *path,
+                       GrlImage    *image)
+{
+	g_autoptr(LrgAssetMeta) meta = lrg_asset_meta_load_for_asset (path, NULL);
+	guint                   max_size;
+	gint                    w, h;
+	gfloat                  scale;
+	GrlImage               *scaled;
+
+	if (meta == NULL)
+		return image;
+	max_size = lrg_asset_meta_get_texture_max_size (meta);
+	w = grl_image_get_width (image);
+	h = grl_image_get_height (image);
+	if (max_size == 0 || (guint) MAX (w, h) <= max_size)
+		return image;
+	scale = (gfloat) max_size / (gfloat) MAX (w, h);
+	scaled = grl_image_resized (image, MAX (1, (gint) roundf (w * scale)), MAX (1, (gint) roundf (h * scale)));
+	g_object_unref (image);
+	return scaled;
+}
+
+GrlImage *
+lrg_thumbnail_cache_render_waveform (const gchar  *path,
+                                     guint         width,
+                                     guint         height,
+                                     GError      **error)
+{
+	g_autoptr(GrlWave) wave = NULL;
+	g_autofree gfloat *samples = NULL;
+	GrlColor           bg = { 30, 30, 46, 255 };
+	GrlColor           mid_line = { 49, 50, 68, 255 };
+	GrlColor           ink = { 166, 173, 200, 255 };
+	GrlImage          *img;
+	gsize              count = 0;
+	guint              channels, frames, x;
+	gfloat             mid, half;
+
+	g_return_val_if_fail (path != NULL, NULL);
+	g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+	width = CLAMP (width, MIN_SIZE, MAX_SIZE);
+	height = CLAMP (height, MIN_SIZE, MAX_SIZE);
+
+	/* 1. Decode. raylib's LoadWave only reads and decodes the file
+	 * (dr_wav / stb_vorbis / dr_flac / dr_mp3): no audio device, no GL,
+	 * no shared state, so it is safe on the worker thread. */
+	if (!g_file_test (path, G_FILE_TEST_IS_REGULAR))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No such file %s", path);
+		return NULL;
+	}
+	wave = grl_wave_new_from_file (path, error);
+	if (wave == NULL)
+		return NULL;
+	if (!grl_wave_is_valid (wave))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Cannot decode audio %s", path);
+		return NULL;
+	}
+
+	/* 2. Bound memory: long files are downmixed and resampled so the float
+	 * copy stays under WAVE_MAX_SAMPLES. A min/max envelope of a few
+	 * hundred columns loses nothing visible. */
+	channels = MAX (1u, grl_wave_get_channels (wave));
+	frames = grl_wave_get_frame_count (wave);
+	if ((guint64) frames * channels > WAVE_MAX_SAMPLES)
+	{
+		guint64            rate = grl_wave_get_sample_rate (wave);
+		guint              new_rate = (guint) MAX ((guint64) 1000, rate * WAVE_MAX_SAMPLES / MAX ((guint64) 1, frames));
+		g_autoptr(GrlWave) small = grl_wave_format (wave, new_rate, 16, 1);
+
+		if (small != NULL && grl_wave_is_valid (small))
+		{
+			grl_wave_free (wave);
+			wave = g_steal_pointer (&small);
+			channels = 1;
+			frames = grl_wave_get_frame_count (wave);
+		}
+	}
+	samples = grl_wave_load_samples (wave, &count);
+	if (samples != NULL && channels > 0)
+		frames = (guint) MIN ((gsize) frames, count / channels);
+	else
+		frames = 0;
+
+	/* 3. Draw: background, centre line, then per column the min/max of
+	 * every sample (all channels) that falls in it. */
+	img = grl_image_new_color ((gint) width, (gint) height, &bg);
+	mid = (gfloat) (height / 2);
+	half = (gfloat) height * 0.45f;
+	grl_image_draw_line (img, 0, (gint) roundf (mid), (gint) width - 1, (gint) roundf (mid), &mid_line);
+	for (x = 0; frames > 0 && x < width; x++)
+	{
+		guint64 f0 = (guint64) frames * x / width;
+		guint64 f1 = MAX (f0 + 1, (guint64) frames * (x + 1) / width);
+		gfloat  lo = 0.0f, hi = 0.0f;
+		guint64 f;
+		guint   c;
+		gint    y0, y1;
+
+		for (f = f0; f < f1 && f < frames; f++)
+			for (c = 0; c < channels; c++)
+			{
+				gfloat v = samples[f * channels + c];
+
+				lo = MIN (lo, v);
+				hi = MAX (hi, v);
+			}
+		lo = CLAMP (lo, -1.0f, 1.0f);
+		hi = CLAMP (hi, -1.0f, 1.0f);
+		y0 = (gint) roundf (mid - hi * half);
+		y1 = (gint) roundf (mid - lo * half);
+		grl_image_draw_line (img, (gint) x, y0, (gint) x, y1, &ink);
+	}
+	return img;
+}
+
 GrlImage *
 lrg_thumbnail_cache_render_cpu (const gchar  *path,
                                 guint         size,
@@ -460,10 +681,12 @@ lrg_thumbnail_cache_render_cpu (const gchar  *path,
 			g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Cannot decode image %s", path);
 			return NULL;
 		}
-		return g_steal_pointer (&image);
+		return apply_import_settings (path, g_steal_pointer (&image));
 	}
 	if (type == LRG_ASSET_TYPE_LEVEL || type == LRG_ASSET_TYPE_PREFAB)
 		return render_schematic (path, size, error);
+	if (type == LRG_ASSET_TYPE_AUDIO)
+		return lrg_thumbnail_cache_render_waveform (path, size, size, error);
 
 	g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "No CPU thumbnail for %s", path);
 	return NULL;
@@ -513,11 +736,8 @@ lrg_thumbnail_cache_dispose (GObject *object)
 		g_thread_pool_free (self->pool, TRUE, TRUE);
 		self->pool = NULL;
 	}
-	if (self->render_destroy != NULL && self->render_data != NULL)
-		self->render_destroy (self->render_data);
-	self->render = NULL;
-	self->render_data = NULL;
-	self->render_destroy = NULL;
+	renderer_clear (&self->model);
+	renderer_clear (&self->font);
 
 	G_OBJECT_CLASS (lrg_thumbnail_cache_parent_class)->dispose (object);
 }
@@ -607,6 +827,7 @@ lrg_thumbnail_cache_get_entry_path (LrgThumbnailCache *self,
 {
 	g_autofree gchar *abs = NULL;
 	g_autofree gchar *key = NULL;
+	g_autofree gchar *settings = NULL;
 	gint64            mtime;
 	goffset           size;
 
@@ -616,7 +837,8 @@ lrg_thumbnail_cache_get_entry_path (LrgThumbnailCache *self,
 	abs = canonical (path);
 	if (!stat_file (abs, &mtime, &size))
 		return NULL;
-	key = lrg_thumbnail_cache_make_key (abs, mtime, size);
+	settings = entry_settings_hash (abs);
+	key = lrg_thumbnail_cache_make_key_full (abs, mtime, size, settings);
 	return g_build_filename (self->dir, key, NULL);
 }
 
@@ -634,26 +856,45 @@ lrg_thumbnail_cache_lookup (LrgThumbnailCache *self,
 static gboolean
 needs_gpu (const gchar *path)
 {
-	return lrg_asset_database_classify (path) == LRG_ASSET_TYPE_MODEL;
+	LrgThumbnailKind k = lrg_thumbnail_cache_get_kind (path);
+
+	return k == LRG_THUMBNAIL_KIND_MODEL || k == LRG_THUMBNAIL_KIND_FONT;
 }
 
 static gboolean
 cpu_kind (const gchar *path)
 {
-	LrgAssetType t = lrg_asset_database_classify (path);
+	LrgThumbnailKind k = lrg_thumbnail_cache_get_kind (path);
 
-	return t == LRG_ASSET_TYPE_TEXTURE || t == LRG_ASSET_TYPE_LEVEL || t == LRG_ASSET_TYPE_PREFAB;
+	return k == LRG_THUMBNAIL_KIND_IMAGE || k == LRG_THUMBNAIL_KIND_SCHEMATIC || k == LRG_THUMBNAIL_KIND_WAVEFORM;
+}
+
+/* The renderer slot of a GPU kind, NULL for other kinds. */
+static Renderer *
+renderer_for (LrgThumbnailCache *self,
+              LrgThumbnailKind   kind)
+{
+	if (kind == LRG_THUMBNAIL_KIND_MODEL)
+		return &self->model;
+	if (kind == LRG_THUMBNAIL_KIND_FONT)
+		return &self->font;
+	return NULL;
 }
 
 gboolean
 lrg_thumbnail_cache_is_supported (LrgThumbnailCache *self,
                                   const gchar       *path)
 {
+	Renderer *r;
+
 	g_return_val_if_fail (LRG_IS_THUMBNAIL_CACHE (self), FALSE);
 
 	if (path == NULL)
 		return FALSE;
-	return cpu_kind (path) || (needs_gpu (path) && self->render != NULL);
+	if (cpu_kind (path))
+		return TRUE;
+	r = renderer_for (self, lrg_thumbnail_cache_get_kind (path));
+	return r != NULL && r->func != NULL;
 }
 
 gchar *
@@ -664,6 +905,7 @@ lrg_thumbnail_cache_store (LrgThumbnailCache  *self,
 {
 	g_autofree gchar *abs = NULL;
 	g_autofree gchar *key = NULL;
+	g_autofree gchar *settings = NULL;
 	gint64            mtime;
 	goffset           size;
 
@@ -677,7 +919,8 @@ lrg_thumbnail_cache_store (LrgThumbnailCache  *self,
 		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Cannot stat %s", abs);
 		return NULL;
 	}
-	key = lrg_thumbnail_cache_make_key (abs, mtime, size);
+	settings = entry_settings_hash (abs);
+	key = lrg_thumbnail_cache_make_key_full (abs, mtime, size, settings);
 	return store_to (self->dir, abs, key, image, self->size, error);
 }
 
@@ -698,14 +941,16 @@ lrg_thumbnail_cache_generate (LrgThumbnailCache  *self,
 	if (needs_gpu (path))
 	{
 		g_autofree gchar *abs = canonical (path);
+		LrgThumbnailKind  kind = lrg_thumbnail_cache_get_kind (path);
+		Renderer         *r = renderer_for (self, kind);
 
-		if (self->render == NULL)
+		if (r == NULL || r->func == NULL)
 		{
-			g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-			             "Model thumbnails need a renderer (a window)");
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "%s thumbnails need a renderer (a window)",
+			             kind == LRG_THUMBNAIL_KIND_FONT ? "Font" : "Model");
 			return NULL;
 		}
-		image = self->render (abs, self->size, self->render_data);
+		image = r->func (abs, self->size, r->data);
 		if (image == NULL)
 		{
 			g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot render %s", abs);
@@ -742,13 +987,32 @@ lrg_thumbnail_cache_set_renderer (LrgThumbnailCache      *self,
                                   gpointer                user_data,
                                   GDestroyNotify          destroy)
 {
+	lrg_thumbnail_cache_set_kind_renderer (self, LRG_THUMBNAIL_KIND_MODEL, func, user_data, destroy);
+}
+
+void
+lrg_thumbnail_cache_set_kind_renderer (LrgThumbnailCache      *self,
+                                       LrgThumbnailKind        kind,
+                                       LrgThumbnailRenderFunc  func,
+                                       gpointer                user_data,
+                                       GDestroyNotify          destroy)
+{
+	Renderer *r;
+
 	g_return_if_fail (LRG_IS_THUMBNAIL_CACHE (self));
 
-	if (self->render_destroy != NULL && self->render_data != NULL)
-		self->render_destroy (self->render_data);
-	self->render = func;
-	self->render_data = user_data;
-	self->render_destroy = destroy;
+	r = renderer_for (self, kind);
+	if (r == NULL)
+	{
+		g_critical ("lrg_thumbnail_cache_set_kind_renderer: kind %d has no renderer slot", (gint) kind);
+		if (destroy != NULL && user_data != NULL)
+			destroy (user_data);
+		return;
+	}
+	renderer_clear (r);
+	r->func = func;
+	r->data = user_data;
+	r->destroy = destroy;
 }
 
 gboolean

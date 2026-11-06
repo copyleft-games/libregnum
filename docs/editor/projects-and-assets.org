@@ -2,8 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: projects-and-assets
 :END:
-This document covers =LrgProject= (the =project.ryaml= manifest) and
-=LrgAssetDatabase= / =LrgAssetEntry= (recursive asset discovery and classification).
+This document covers =LrgProject= (the =project.ryaml= manifest), =LrgAssetDatabase= / =LrgAssetEntry= (recursive asset discovery and classification), =LrgAssetMeta= (the =.meta= sidecar holding each asset's stable GUID and import settings), the asset thumbnail cache and =LrgEditorVcs= (git status badges).
 
 #+begin_quote
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Projects and Assets
@@ -157,6 +156,215 @@ LrgAssetType type = lrg_asset_database_classify ("door.glb");
 | =LRG_ASSET_TYPE_PREFAB= | =.rprefab= |
 | =LRG_ASSET_TYPE_TILESET= | =.tileset=, =.tsx= |
 | =LRG_ASSET_TYPE_SCENE= | =.yaml=, =.scene= |
+
+** Asset Sidecars (.meta files)
+:PROPERTIES:
+:CUSTOM_ID: asset-sidecars
+:END:
+Since 0.8.1 every asset can carry a YAML sidecar named after it with =.meta= appended (=hero.png= has =hero.png.meta=). The sidecar gives the asset an identity that survives renames and moves, and holds the import settings the editor applies to previews. =LrgAssetMeta= reads and writes it; =LrgAssetDatabase= loads, creates and moves sidecars together with their assets.
+
+*** File Format
+:PROPERTIES:
+:CUSTOM_ID: meta-file-format
+:END:
+#+begin_src yaml
+version: 1
+guid: 3f0c1b8e-6d1f-4e55-9a51-0b3c2b8f6c11
+importer: texture
+settings:
+  filter: point
+  mipmaps: false
+  wrap: clamp
+  srgb: true
+  max-size: 512
+#+end_src
+
+| Key | Meaning |
+|-----+---------|
+| =version= | Sidecar format version (=LRG_ASSET_META_VERSION=, currently 1); added on save when missing |
+| =guid= | The asset's stable identifier: a random UUID v4 for assets created by the editor, or the legacy SHA-256 of the relative path for assets that predate sidecars (see [[#guid-stability][GUID Stability and Migration]]) |
+| =importer= | Which importer reads the asset: =texture=, =model=, =audio=, =font=, =script=, =level=, =prefab=, =tileset=, =scene=, =cad= or =generic= (=lrg_asset_meta_importer_for_type()= maps an =LrgAssetType= to it) |
+| =settings= | A mapping of importer settings; any key not stored reads as its default |
+
+Unknown keys are preserved. The whole document is kept as a yaml-glib tree, so keys the editor does not know, at the top level or inside =settings=, nested mappings and sequences, and comments all survive a load, edit and save. A sidecar written by a newer editor can therefore be edited by an older one without losing data.
+
+*** Import Settings
+:PROPERTIES:
+:CUSTOM_ID: import-settings
+:END:
+The known settings per importer, with their defaults and the typed accessors:
+
+| Importer | Key | Type | Default | Accessors |
+|----------+-----+------+---------+-----------|
+| =texture= | =filter= | =point= / =bilinear= / =trilinear= | =bilinear= | =lrg_asset_meta_get/set_texture_filter()= (=LrgAssetTextureFilter=) |
+| =texture= | =mipmaps= | boolean | =false= | =lrg_asset_meta_get/set_texture_mipmaps()= |
+| =texture= | =wrap= | =repeat= / =clamp= / =mirror= | =repeat= | =lrg_asset_meta_get/set_texture_wrap()= (=LrgAssetTextureWrap=) |
+| =texture= | =srgb= | boolean | =true= | =lrg_asset_meta_get/set_texture_srgb()= |
+| =texture= | =max-size= | integer 0..16384 (0 = no limit) | =0= | =lrg_asset_meta_get/set_texture_max_size()= |
+| =model= | =scale= | number > 0 | =1= | =lrg_asset_meta_get/set_model_scale()= |
+| =model= | =up-axis= | =y= / =z= | =y= | =lrg_asset_meta_get/set_model_up_axis()= (=LrgAssetUpAxis=) |
+| =model= | =generate-normals= | boolean | =false= | =lrg_asset_meta_get/set_model_generate_normals()= |
+| =model= | =import-animations= | boolean | =true= | =lrg_asset_meta_get/set_model_import_animations()= |
+| =audio= | =mode= | =stream= / =sample= | =sample= | =lrg_asset_meta_get/set_audio_mode()= (=LrgAssetAudioMode=) |
+| =audio= | =loop= | boolean | =false= | =lrg_asset_meta_get/set_audio_loop()= |
+| =audio= | =volume= | number 0..4 | =1= | =lrg_asset_meta_get/set_audio_volume()= |
+| =font= | =size= | integer 1..1024 (pixels) | =32= | =lrg_asset_meta_get/set_font_size()= |
+| =font= | =codepoints= | comma-separated code points and inclusive ranges, decimal, =0x= or =U+= hex | =32-126= | =lrg_asset_meta_get/set_font_codepoints()=, =lrg_asset_meta_parse_codepoints()= |
+
+Import settings are applied in editor previews only in 0.8.1 (for example a texture thumbnail honours =max-size=); the runtime loaders do not read sidecars yet. That engine work is tracked in [[file:gap-analysis.org][the gap analysis]].
+
+*** Generic Access for IPC and Property Grids
+:PROPERTIES:
+:CUSTOM_ID: meta-generic-access
+:END:
+Besides the typed accessors there are two generic layers:
+
+- *Scalars by key*: =lrg_asset_meta_get_setting_string/int/double/boolean()= return the stored value or the importer default; the matching setters store without validation. =lrg_asset_meta_has_setting()= tells stored from defaulted, =lrg_asset_meta_remove_setting()= resets a key, =lrg_asset_meta_get_setting_keys()= lists what is stored.
+- *GVariant*: =lrg_asset_meta_get_setting_variant()= returns a typed value (=b=, =x=, =d= or =s= for known keys; unknown scalars are typed by their text; mappings become =a{sv}= and sequences =av=). =lrg_asset_meta_set_setting_variant()= is the validating setter used by IPC: booleans accept =b= or ="true"= / ="false"=, integers any integral number, choices one of the allowed strings, numeric ranges are enforced, the font code points must parse, and =NULL= resets to the default. =lrg_asset_meta_to_variant()= describes the whole sidecar as ={guid, importer, settings}= with defaults filled in; json-glib's =json_gvariant_serialize()= turns it into the IPC reply.
+
+Property grids can build their rows from =lrg_asset_meta_list_known_settings()= (keys in display order), =lrg_asset_meta_get_setting_choices()= (combo values) and =lrg_asset_meta_get_default_setting()=. Changes emit =LrgAssetMeta::setting-changed=, detailed by the key (=setting-changed::filter=).
+
+=lrg_asset_meta_get_settings_hash()= hashes the effective settings (stored values over defaults, keys sorted, importer included, GUID excluded); caches key on it.
+
+#+begin_src C
+g_autoptr(GError)       error = NULL;
+g_autoptr(LrgAssetMeta) meta = lrg_asset_meta_load_for_asset ("assets/hero.png", &error);
+
+if (meta == NULL && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    meta = lrg_asset_meta_new_for_asset ("assets/hero.png");   /* fresh UUID */
+
+lrg_asset_meta_set_texture_filter (meta, LRG_ASSET_TEXTURE_FILTER_POINT);
+if (!lrg_asset_meta_set_setting_variant (meta, "max-size", g_variant_new_int64 (256), &error))
+    g_warning ("%s", error->message);
+lrg_asset_meta_save_to_file (meta, "assets/hero.png.meta", &error);
+#+end_src
+
+** GUID Stability and Migration
+:PROPERTIES:
+:CUSTOM_ID: guid-stability
+:END:
+Up to 0.8.0 an asset's GUID was the lowercase hex SHA-256 of its path relative to the asset directory, so renaming a file changed its identity. 0.8.1 moves the GUID into the sidecar while keeping every existing value:
+
+1. A scan loads =<file>.meta= when present and uses its =guid=.
+2. When the sidecar is missing, the scan creates one in memory whose =guid= is the old value (=lrg_asset_meta_compute_legacy_guid()=, the same SHA-256 of the relative path). References saved by 0.8.0 keep resolving.
+3. With =LrgAssetDatabase:write-meta= set, those new sidecars are written at the end of the scan. From then on the GUID lives in the file and follows the asset through renames and moves.
+4. A sidecar without a =guid= key adopts the legacy value; a sidecar that cannot be parsed is logged and left untouched (it may be mid merge-conflict), the asset uses its legacy GUID in memory.
+5. Two assets claiming the same GUID (a file copied together with its sidecar outside the editor) are resolved in path order: the first keeps it, the later one gets a fresh UUID.
+
+Brand-new assets created by the editor (duplicates, imports) get a random UUID v4 (=g_uuid_string_random()=).
+
+*** Writing Sidecars (write-meta and the Write Guard)
+:PROPERTIES:
+:CUSTOM_ID: write-meta
+:END:
+=lrg_asset_database_new()= starts with =write-meta= off, so read-only tools (=lrgeditorctl=, validators, the =asset.list= IPC) never modify a project by scanning it. The editor turns it on with =lrg_asset_database_set_write_meta (db, TRUE)=. =lrg_asset_database_write_pending_metas()= writes missing or modified sidecars explicitly and =lrg_asset_database_save_meta()= writes one entry's sidecar (for =asset.meta.set=).
+
+Every write passes =lrg_asset_database_is_writable_path()=: the target must resolve (symlinks included) inside one of the search directories, and neither the file nor any folder between it and the search directory may be hidden. Hidden files such as =.gitignore= are listed but never get a sidecar, and VCS folders (=.git=, =.hg=, =.svn=) are not scanned at all.
+
+*** Rename, Move, Duplicate and Trash
+:PROPERTIES:
+:CUSTOM_ID: asset-file-operations
+:END:
+The editor's file operations go through the database so the sidecar always travels with its asset. Each takes a path relative to a search directory or an absolute path, and rescans when it is done.
+
+| Function | Effect |
+|----------+--------|
+| =lrg_asset_database_rename (db, path, new_name, &error)= | Renames a file and its sidecar, or a folder. Sidecars that only existed in memory are written first, so the GUID is kept even when =write-meta= is off. Fails with =G_IO_ERROR_EXISTS= / =INVALID_FILENAME=. |
+| =lrg_asset_database_move (db, path, dest_dir, &error)= | Moves a file (with its sidecar) or a folder into another folder inside the search directories. |
+| =lrg_asset_database_duplicate (db, path, &error)= | Copies a file to =name copy.ext= (then =name copy 2.ext=, ...) with a copy of its sidecar under a fresh UUID; import settings are kept. Returns the new entry. |
+| =lrg_asset_database_trash (db, path, &error)= | Moves the file and its sidecar (or a folder) to the desktop trash with =g_file_trash()=. |
+
+If moving the sidecar fails after the asset moved, the asset is moved back so the pair never splits.
+
+*** Orphaned Sidecars
+:PROPERTIES:
+:CUSTOM_ID: orphaned-sidecars
+:END:
+Sidecars are never listed as assets. A sidecar whose asset is gone (deleted or renamed outside the editor) is reported by =lrg_asset_database_get_orphaned_metas()= (absolute paths) after each scan, so the assets panel can offer to delete them or to re-attach them to a renamed file.
+
+*** Lookups
+:PROPERTIES:
+:CUSTOM_ID: asset-lookups
+:END:
+=lrg_asset_database_lookup_guid()= finds an entry by GUID and =lrg_asset_database_lookup_path()= by relative or absolute path. Each entry exposes =lrg_asset_entry_get_meta()=, =lrg_asset_entry_has_meta_file()=, =lrg_asset_entry_get_full_path()= and =lrg_asset_entry_get_search_dir()= in addition to the 0.8.0 accessors.
+
+** Asset Thumbnails
+:PROPERTIES:
+:CUSTOM_ID: asset-thumbnails
+:END:
+=LrgThumbnailCache= stores PNG thumbnails named =<sha1 of the absolute path>-<mtime µs>-<size>.png=. Textures and fonts that have a sidecar append the first 12 hex digits of the sidecar's settings hash (=lrg_thumbnail_cache_make_key_full()=), so editing an import setting regenerates the preview while a GUID-only change does not.
+
+=lrg_thumbnail_cache_get_kind()= tells how a file is previewed:
+
+| Kind | Files | Where it renders |
+|------+-------+------------------|
+| =LRG_THUMBNAIL_KIND_IMAGE= | textures | worker thread; downscaled to the sidecar's =max-size= first (=filter= and =srgb= do not change a thumbnail) |
+| =LRG_THUMBNAIL_KIND_SCHEMATIC= | levels, prefabs | worker thread; top-down node schematic |
+| =LRG_THUMBNAIL_KIND_WAVEFORM= | wav, ogg, flac, mp3 | worker thread; =lrg_thumbnail_cache_render_waveform()= |
+| =LRG_THUMBNAIL_KIND_MODEL= | models | main (GL) thread through the renderer set with =lrg_thumbnail_cache_set_renderer()= |
+| =LRG_THUMBNAIL_KIND_FONT= | ttf, otf | main (GL) thread through the renderer set with =lrg_thumbnail_cache_set_kind_renderer (cache, LRG_THUMBNAIL_KIND_FONT, ...)= |
+
+*Waveforms* are decoded with raylib's =LoadWave= / =LoadWaveSamples= (through graylib's =GrlWave=). Decoding only reads the file, it needs no audio device and no GL context, so it runs on the worker thread. Each image column gets the minimum and maximum of every sample (all channels) that falls in it, drawn as a centred vertical bar in a neutral grey over a dark background with a faint centre line. Files over about four million samples are downmixed to mono and resampled before the float conversion so memory stays bounded.
+
+*Font samples* need GL, so the UI provides the hook. The callback receives the absolute font path and the requested size on the GL thread and returns a =GrlImage=: load the font with the sidecar's =size= and =codepoints= (=lrg_asset_meta_load_for_asset()=, =lrg_asset_meta_parse_codepoints()=), draw a sample such as "Aa Bb 123" into a render texture of the requested size, and read it back. Without a font hook, fonts are reported as unsupported.
+
+** Version Control Badges (LrgEditorVcs)
+:PROPERTIES:
+:CUSTOM_ID: vcs-badges
+:END:
+=LrgEditorVcs= tells the editor which project files differ from git's =HEAD= (badges on asset tiles and folders) and which branch is checked out (shown in the breadcrumb). Version control is optional: outside a git work tree, or when =git= is not installed, every query answers "unmodified", =is-repo= is =FALSE= and nothing is logged.
+
+*** How It Runs
+:PROPERTIES:
+:CUSTOM_ID: vcs-how-it-runs
+:END:
+A refresh runs, through =GSubprocess= on the thread-default main context:
+
+#+begin_src sh
+git rev-parse --show-toplevel        # once, finds the work tree root
+git --no-optional-locks status --porcelain=v1 -z --ignored --branch
+#+end_src
+
+The branch comes from the =--branch= header of the same status call (one process per refresh, and it also names unborn branches: "No commits yet on main" gives =main=, a detached =HEAD= gives =HEAD=). Optional locks are off (=GIT_OPTIONAL_LOCKS=0=) so a background refresh never competes with the user's own git commands for =index.lock=, and an inherited =GIT_DIR= / =GIT_WORK_TREE= is ignored.
+
+=lrg_editor_vcs_queue_refresh()= is debounced (=debounce-ms=, default 250): any number of requests within the delay run git once, and requests that arrive while git is running schedule exactly one more run. =LrgEditorVcs::changed= fires when a refresh finishes inside a repository (and once when the project stops being one). =lrg_editor_vcs_refresh_sync()= runs git synchronously for IPC handlers and headless tools.
+
+*** Statuses
+:PROPERTIES:
+:CUSTOM_ID: vcs-statuses
+:END:
+Git's two-letter =XY= code folds into =LrgEditorVcsStatus=:
+
+| Status | Letter | From =XY= |
+|--------+--------+-----------|
+| =CONFLICTED= | =!= | any =U=, or =AA= / =DD= |
+| =RENAMED= | =R= | =R= in either column (keyed by the new path) |
+| =DELETED= | =D= | =D= in either column |
+| =ADDED= | =A= | =A= or =C= |
+| =MODIFIED= | =M= | =M= or =T= |
+| =UNTRACKED= | =U= | =??= |
+| =IGNORED= | =I= | =!!= |
+| =UNMODIFIED= | (none) | clean, or not reported |
+
+*** Lookups and Folders
+:PROPERTIES:
+:CUSTOM_ID: vcs-lookups
+:END:
+Statuses are keyed by paths relative to the project directory, which may be a subdirectory of the repository (paths outside it are dropped). =lrg_editor_vcs_get_status()= accepts those relative paths or absolute paths; absolute paths are resolved with =realpath= (falling back to the deepest existing folder for deleted files), so =/home/...= and =/var/home/...= spellings both work. Files inside an untracked or ignored folder (reported once as =dir/=) inherit its status.
+
+=lrg_editor_vcs_get_directory_status()= gives a folder its badge: an untracked or ignored folder reports that; otherwise the most significant status found below it, in the order conflicted > modified > deleted > renamed > added > untracked (ignored files do not count). =lrg_editor_vcs_directory_has_changes()= is the boolean form.
+
+#+begin_src C
+g_autoptr(LrgEditorVcs) vcs = lrg_editor_vcs_new (project_dir);
+
+g_signal_connect (vcs, "changed", G_CALLBACK (on_vcs_changed), panel);
+lrg_editor_vcs_queue_refresh (vcs);   /* also call it from the file watcher */
+
+/* in on_vcs_changed: */
+LrgEditorVcsStatus s = lrg_editor_vcs_get_status (vcs, "assets/hero.png");
+gchar badge = lrg_editor_vcs_status_to_letter (s);
+const gchar *branch = lrg_editor_vcs_get_branch (vcs);   /* NULL outside a repo */
+#+end_src
 
 ** See Also
 :PROPERTIES:
