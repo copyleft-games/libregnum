@@ -603,9 +603,27 @@ static void
 test_app_palette (Fixture       *f,
                   gconstpointer  data)
 {
-	/* The command palette widget is Wave 4 (P6); the action exists */
-	g_assert_true (lrg_editor_actions_has (lrg_editor_app_get_actions (f->app), "tools.palette"));
-	g_test_skip ("Wave 4: the command palette panel is not built yet");
+	/* Fuzzy action search runs "Select All" */
+	new_project (f);
+	efx_frames (f, 2);
+	lrg_editor_select (f->editor, NULL, FALSE);
+	g_assert_true (lrg_editor_app_activate_action (f->app, "tools.palette"));
+	efx_frames (f, 2);
+	efx_type (f, "select all");
+	efx_key (f, GRL_KEY_ENTER, NOMOD);
+	efx_frames (f, 1);
+	g_assert_cmpuint (n_selected (f), ==, 3);
+
+	/* "@name" jumps to a node */
+	lrg_editor_select (f->editor, NULL, FALSE);
+	g_assert_true (lrg_editor_app_activate_action (f->app, "tools.palette"));
+	efx_frames (f, 2);
+	efx_type (f, "@camera");
+	efx_key (f, GRL_KEY_ENTER, NOMOD);
+	efx_frames (f, 1);
+	g_assert_cmpuint (n_selected (f), ==, 1);
+	g_assert_cmpstr (lrg_node_get_name (lrg_editor_selection_get_primary (lrg_editor_get_selection (f->editor))),
+	                 ==, "Camera");
 }
 
 static void
@@ -654,9 +672,16 @@ test_app_dialogs (Fixture       *f,
 		g_assert_null (closed);
 	}
 
-	/* Preferences: a notification until Wave 4, no dialog */
+	/* Preferences: a real dialog, Escape closes it */
 	g_assert_true (lrg_editor_app_activate_action (f->app, "edit.preferences"));
-	efx_frames (f, 2);
+	efx_frames (f, 3);
+	{
+		g_autofree gchar *p = ui_dialog (f);
+
+		g_assert_cmpstr (p, ==, "preferences");
+	}
+	efx_key (f, GRL_KEY_ESCAPE, NOMOD);
+	efx_frames (f, 30);
 	g_assert_null (ui_dialog (f));
 
 	/* Shortcuts work again once no dialog is open */

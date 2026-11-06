@@ -38,7 +38,11 @@ fx_split (EditorAppFixture *f,
 
 	*old_panel = NULL;
 	if (found != NULL)
+	{
+		/* The shell hosts the split: lay it out before measuring */
+		efx_frames (f, 3);
 		return LRG_EDITOR_VIEWPORT_SPLIT (found);
+	}
 
 	dock = lrg_dock_area_get_panel (lrg_editor_app_get_dock (f->app), "viewport");
 	g_assert_nonnull (dock);

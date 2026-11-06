@@ -189,8 +189,11 @@ make_panel (LrgEditorApp *self,
 static void
 create_panels (LrgEditorApp *self)
 {
-	self->viewport_panel = lrg_editor_viewport_panel_new (self);
-	make_panel (self, "viewport", "Viewport", "eye", LRG_WIDGET (self->viewport_panel), FALSE);
+	/* The split owns all four viewport panels; viewport 0 is the one
+	 * the 0.8.0 "viewport" rect and screenshots refer to */
+	self->viewport_split = lrg_editor_viewport_split_new (self);
+	self->viewport_panel = lrg_editor_viewport_split_get_panel (self->viewport_split, 0);
+	make_panel (self, "viewport", "Viewport", "eye", LRG_WIDGET (self->viewport_split), FALSE);
 	make_panel (self, "hierarchy", "Hierarchy", "list", LRG_WIDGET (lrg_editor_hierarchy_panel_new (self)), TRUE);
 	make_panel (self, "inspector", "Inspector", "gear", LRG_WIDGET (lrg_editor_inspector_panel_new (self)), TRUE);
 	make_panel (self, "assets", "Assets", "folder", LRG_WIDGET (lrg_editor_assets_panel_new (self)), TRUE);
@@ -922,6 +925,8 @@ static const gchar *starter_level =
 	"      rotation: [-0.9, 0.6, 0.0]\n"
 	"    visual:\n"
 	"      kind: light\n"
+	"      params:\n"
+	"        light_type: directional\n"
 	"  - name: Camera\n"
 	"    transform:\n"
 	"      location: [0.0, 3.0, 8.0]\n"
@@ -1281,6 +1286,13 @@ editor_app_open_file (LrgEditorApp *self,
 {
 	g_autoptr(GError) error = NULL;
 	g_autofree gchar *abs = editor_app_project_path (self, path);
+
+	/* script-editor "internal": the code panel takes it (only when the
+	 * panel exists, or open_script would come back here) */
+	if (g_strcmp0 (lrg_editor_settings_get_script_editor (self->settings), "internal") == 0 &&
+	    g_object_get_data (G_OBJECT (self), "lrg-editor-code-panel") != NULL &&
+	    lrg_editor_code_panel_open_script (self, path, line))
+		return;
 
 	if (!lrg_external_editor_open (self->external, abs, line, col, &error))
 		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot open %s: %s", abs, error->message);
@@ -1884,8 +1896,6 @@ editor_cpu_affinity_disabled (void)
 gint
 lrg_editor_app_run (LrgEditorApp *self)
 {
-	LrgViewport *viewport;
-
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), 1);
 
 	if (!has_display ())
@@ -1965,14 +1975,13 @@ lrg_editor_app_run (LrgEditorApp *self)
 	editor_dialog_close_all (self);
 	editor_thumbnails_window_closing (self);
 	lrg_editor_scene_renderer_release (self->renderer);
-	viewport = lrg_editor_viewport_panel_get_viewport (self->viewport_panel);
-	lrg_viewport_set_mode (viewport, LRG_VIEWPORT_MODE_TEXTURE);
+	lrg_editor_viewport_split_set_gpu_enabled (self->viewport_split, FALSE);
 	lrg_canvas_input_detach_latch ();
 	grl_frame_sync_reset ();	/* its fences belong to the context closing */
 	grl_fast2d_shutdown ();	/* graylib's 2D batch, ditto */
 	CloseWindow ();
 	self->window_open = FALSE;
-	lrg_viewport_set_mode (viewport, LRG_VIEWPORT_MODE_RENDER);
+	lrg_editor_viewport_split_set_gpu_enabled (self->viewport_split, TRUE);
 	return 0;
 }
 

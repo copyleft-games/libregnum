@@ -133,7 +133,7 @@ What the established editors offer and where it lives here.
 
 Panels can be closed (except the viewport), reopened from View > Panels, dragged by their tab onto another panel's edge or centre to split or tab them, and resized with the splitters. The layout (=LrgDockArea= YAML under =ui-layout=) is saved with the preferences; View > Reset Layout restores the default (viewport in the centre, hierarchy left, inspector and tiles right, assets, console, problems, history, timeline, profiler and code tabbed below).
 
-In 0.8.1 Wave 3 the hierarchy, inspector, assets, console, problems, history, tiles, timeline, profiler and code panels are placeholders ("Hierarchy (Wave 4)") while their widgets are rebuilt on the new toolkit; their features stay available through actions and IPC. The command palette, quick open and the preferences editor are also Wave 4: their actions show a notification meanwhile.
+Each panel has its own section below: [[#editor-panel-viewport][Viewport]], [[#editor-panel-hierarchy][Hierarchy]], [[#editor-panel-inspector][Inspector]], [[#editor-panel-assets][Assets]], [[#editor-panel-console][Console]], [[#editor-panel-history][History]], [[#editor-panel-problems][Problems]], [[#editor-panel-timeline][Timeline]], [[#editor-panel-tiles][Tiles]], [[#editor-panel-profiler][Profiler]] and [[#editor-panel-code][Code]], plus [[#editor-panel-preferences][Preferences]], [[#editor-panel-palette][Command palette and Quick Open]] and [[#editor-panel-dialogs][Dialogs]].
 
 ** Viewport
 :PROPERTIES:
@@ -430,13 +430,14 @@ The menu bar's =GMenuModel= (=lrg_editor_window_get_menu_model()=) has the 0.8.0
 :END:
 | Panel id    | Widget                     | Default place                 |
 |-------------+----------------------------+-------------------------------|
-| =viewport=  | =LrgEditorViewportPanel=   | centre (not closable)         |
+| =viewport=  | =LrgEditorViewportSplit= (1-4 =LrgEditorViewportPanel=) | centre (not closable) |
 | =hierarchy= | =LrgEditorHierarchyPanel=  | left                          |
 | =inspector= | =LrgEditorInspectorPanel=  | right                         |
 | =tiles=     | =LrgEditorTilesPanel=      | tab next to the inspector     |
 | =assets=    | =LrgEditorAssetsPanel=     | bottom                        |
 | =console=   | =LrgEditorConsolePanel=    | tab next to assets            |
-| =problems=, =history= | placeholder label | tabs next to assets           |
+| =problems=  | =LrgEditorProblemsPanel=   | tab next to assets            |
+| =history=   | =LrgEditorHistoryPanel=    | tab next to assets            |
 | =timeline=  | =LrgEditorTimelinePanel=   | tab next to assets            |
 | =profiler=  | =LrgEditorProfilerPanel=   | tab next to assets            |
 | =code=      | =LrgEditorCodePanel=       | tab next to assets            |
@@ -463,7 +464,7 @@ GPU resources (lit shader, primitive meshes, model and texture caches) are creat
 :PROPERTIES:
 :CUSTOM_ID: architecture-dialogs
 :END:
-Modal dialogs are =LrgDialog= and =LrgFileDialog= (in-app, not the desktop portal): unsaved changes (Save / Don't Save / Cancel), open level and save level as (=.rlevel= filter), open project (folder), import scene, save as prefab and instantiate prefab (=.rprefab=), new project, new script, crash recovery (Restore / Discard / Later), about, keyboard shortcuts and a project settings summary. One is open at a time; its id is =LrgEditorViewState:dialog= and =ui.state= ="dialog"= (the 0.8.0 strings). Escape cancels. Without a window an unsaved-changes request proceeds without asking, as in 0.8.0.
+Modal dialogs are =LrgDialog= and =LrgFileDialog= (in-app, not the desktop portal): unsaved changes (Save / Don't Save / Cancel), open level and save level as (=.rlevel= filter), open project (folder), import scene, save as prefab and instantiate prefab (=.rprefab=), new project, new script, crash recovery (Restore / Discard / Later), about, keyboard shortcuts, editable project settings and preferences (see [[#editor-panel-dialogs][Dialogs]] and [[#editor-panel-preferences][Preferences]]). One is open at a time; its id is =LrgEditorViewState:dialog= and =ui.state= ="dialog"= (the 0.8.0 strings). Escape cancels. Without a window an unsaved-changes request proceeds without asking, as in 0.8.0.
 
 *** Projects, assets and version control
 :PROPERTIES:
@@ -537,7 +538,7 @@ The editor redraws every frame, so panels avoid work proportional to the whole l
 
 - *Pacing*: the window runs with vsync and caps at the largest whole fraction of the monitor's refresh rate that is at most 75 fps (60 on 60/120 Hz, 72 on 144 Hz, 55 on 165 Hz), so frames always span the same number of vblanks; a fixed 60 cap on a 144 Hz monitor alternated two- and three-vblank frames. Like games, the editor keeps its UI thread on a hybrid CPU's performance cores (=LRG_CPU_AFFINITY=none= to opt out) and bounds its frames in flight to 2 with graylib's frame sync (=grl_frame_sync_end_drawing()= in place of =EndDrawing()=; =LRG_MAX_FRAMES_IN_FLIGHT= overrides it, see [[file:../performance.org::#input-latency][input latency]]).
 
-- *Panels*: the console, hierarchy and asset panels of 0.8.0 kept row caches against the log ring and the node tree serial (below); their retained replacements (Wave 4) use list and tree views over =GListModel=, which lay out only visible rows. =LrgEditorLog= still keeps per-level tallies, so the status bar counters (=lrg_editor_log_count_level()=) do not walk the ring.
+- *Panels*: the console, hierarchy and asset panels of 0.8.0 kept row caches against the log ring and the node tree serial (below); their retained replacements use list and tree views over =GListModel=, which lay out only visible rows. =LrgEditorLog= still keeps per-level tallies, so the status bar counters (=lrg_editor_log_count_level()=) do not walk the ring.
 - *0.8.0 console*: each log record is formatted (timestamp, level, domain), casefolded for the filter and measured once, when it first appears, into a row cache mirrored from the log ring; the filtered row list is extended incrementally and rebuilt only when the level toggles or the filter text change. Only the rows inside the scroll view are laid out; the rows above and below become one spacer each, of the same total height and of the widest row's width, so scrolling and the horizontal extent are unchanged. A row whose context menu is open keeps building it while it scrolls out of view. =LrgEditorLog= keeps running per-level tallies, so the console tab and status bar badges (=lrg_editor_log_count_level()=) do not walk the ring.
 - *0.8.0 hierarchy*: rows outside the tree's view submit only their tree node (keyed by GUID, so open state, layout, keyboard navigation order and a held row behave as before) and skip the toggles, label, measuring, drop targets and menu; the row being renamed, the one being revealed and one with an open context menu are always drawn in full. The node count (outliner header, status bar, viewport overlay) and the filter's match set are cached against a process-wide node tree serial (bumped when nodes are created, destroyed, re-parented, renamed or given a new GUID) and recomputed only when it or the filter text changes. =LrgEditorSelection= keeps a hash set beside its ordered array, so the per-row "is selected" test is constant time.
 - *Viewport rendering*: the scene walk passes each node's world matrix down to its children (one local matrix composed per node instead of a walk back to the root), and icons take their position from it. Mesh and sprite assets are looked up by the node's asset string as written, one hash lookup per node per frame, with the absolute path built and the file loaded only on first use; that map is cleared when the project or level directory (what relative paths resolve against) changes. =grid-size= and =grid-extent= are re-read from the settings only after a =notify=.
@@ -632,3 +633,947 @@ When the file is found ~lrg_editor_settings_get_theme_file~ returns it and ~lrg_
 | ~lrg_editor_settings_get_path (settings)~       | The file the settings were loaded from                     |
 
 =tests/test-editor-settings-migrate.c= covers the layout grammar (nested splits, tabs, clamping, invalid input, the depth limit; every converted layout is loaded into a real =LrgDockArea=), keybindings with alternatives and junk, all four legacy theme names plus preset and path passthrough, the theme lookup, the one-time backup, idempotency, preserved unknown keys, the version bump and both shipped theme files.
+
+** Assets panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets
+:END:
+The Assets panel (=LrgEditorAssetsPanel=, =src/editor/ui/lrg-editor-assets-panel.{h,c}=, dock id =assets=, docked at the bottom) is the project's file browser. It lists one folder at a time, rooted at the open project (or, without a project, at the open level's folder), as a grid of live thumbnails or as a sortable list, with git badges on every entry. Every file operation goes through =LrgAssetDatabase=, so a renamed, moved or duplicated asset keeps (or, for a duplicate, gets a fresh) GUID in its =.meta= sidecar; see [[file:projects-and-assets.org::#assets-panel][Projects and Assets: the Assets panel]] for the data side.
+
+#+begin_example
++-------------------------------------------------------------------------+
+| (o main)  Demo > assets > textures      [Filter files ] [All types v] [#] [+] |
++-------------------------------------------------------------------------+
+|  [folder]  [hero.png]  [crate.png]  [player.lua]  [jump.wav]  [ui.ttf]   |
+|   sprites      M                     code tile     waveform    "Aa Bb"   |
++-------------------------------------------------------------------------+
+| 6 items, 1 selected                                                     |
++-------------------------------------------------------------------------+
+#+end_example
+
+*** Toolbar
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-toolbar
+:END:
+| Part | Widget | Behaviour |
+|------+--------+-----------|
+| Branch chip | painted by the panel | The branch =LrgEditorVcs= reports (=lrg_editor_vcs_get_branch()=), in an accent pill; hidden outside a git repository |
+| Path | =LrgBreadcrumb= (=assets-breadcrumb=) | The project folder, then one segment per sub folder; a click goes there; collapses to an ellipsis when narrow. Segments are drop targets (move an asset up) |
+| Name filter | =LrgTextInput= (=assets-filter=) | Fuzzy match (=lrg_editor_fuzzy_score()=) on file and folder names; Escape clears it |
+| Type filter | =LrgComboBox= (=assets-type=) | All types, Textures, Models, Audio, Fonts, Scripts, Levels, Prefabs, Tilesets, Scenes, CAD (the index is the =LrgAssetType=). Folders stay visible unless a name filter hides them |
+| View toggle | flat icon button (=assets-view-toggle=) | Grid (four tiles icon, checked look) or list (rows icon); the same state as View > Asset Thumbnails (=view.asset-grid=) |
+| New | flat "+" button (=assets-new=) | The background menu below the button |
+
+*** Grid and list
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-views
+:END:
+Both views show the same =GListStore= (the folder listing after the filters, folders first), so sorting the list also orders the grid and the selection carries over when switching. Hidden files and =.meta= sidecars are never listed.
+
+*Grid* (=LrgTileView= =assets-grid=, 108 x 124 tiles, multi-selection): each tile is a preview, the ellipsized name and the git badge in the preview's top-right corner.
+
+| Entry | Preview |
+|-------+---------|
+| Folder | the folder icon in the warning colour |
+| Script | a live code tile: the first 12 lines of the file tokenized with its =LrgSyntax= language and painted run by run in the token colours (=lrg_syntax_get_token_color()=) on an =INPUT= sheet; nothing is cached as an image, so it follows the theme |
+| Texture, level, prefab | the thumbnail cache's CPU thumbnail |
+| Audio | the waveform thumbnail (=LRG_THUMBNAIL_KIND_WAVEFORM=, decoded on the worker thread) |
+| Font | the font sample ("Aa Bb 123") through the font renderer the shell registers on the cache while a window is open |
+| Model | the model render (GPU, while a window is open) |
+| Anything else, or a thumbnail still coming | a rounded square in the type colour with the type letter (L P S T M A F Ts Sc C), dimmed while pending |
+
+*List* (=LrgTable= =assets-list=, multi-selection): Name (type glyph and name), Type, Size (=g_format_size()=), Modified (local time), Git (badge). Every column sorts (folders stay first).
+
+*Git badges*: the letter of =lrg_editor_vcs_status_to_letter()= (=M= modified, =A= added, =U= untracked, =D= deleted, =R= renamed, =!= conflicted, =I= ignored) in a pill tinted with the status colour (warning for modified, success for added and untracked, danger for deleted and conflicted, link for renamed, muted for ignored). A folder shows the most significant status below it (=lrg_editor_vcs_get_directory_status()=). Badges update on =LrgEditorVcs::changed=; the shell's folder monitors queue the git refresh.
+
+*** Mouse and keyboard
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-input
+:END:
+| Input | Effect |
+|-------+--------|
+| Click / Ctrl+click / Shift+click | Select / toggle / select the range |
+| Double click, Enter | Open: folders are entered; levels and prefabs open in the editor; scripts open in the code panel when Preferences > =script-editor= is =internal= (the =code.open= action or IPC method), else in the external editor (=$EDITOR= / Emacs as in 0.8.0); media open in the desktop application |
+| Right click | Selects the entry under the pointer (keeping a multi-selection it is part of) and opens the entry menu; on empty space it clears the selection and opens the background menu. Shift+F10 / Menu opens the menu for the selection |
+| Drag | Tiles and rows are drag sources: =application/x-lrg-asset= with the project-relative path, or =application/x-lrg-asset-list= (a =GStrv=) for a multi-selection. A press on one tile of a multi-selection drags the whole selection |
+| Drop on a folder | Folder tiles, folder rows and breadcrumb segments take asset drags and move them there (=lrg_asset_database_move()=, sidecars along); the folder under the pointer is outlined in the accent colour, other spots refuse the drop |
+| Arrows, Page Up/Down, Home, End | Move the cursor (Shift extends) |
+| F2 | Inline rename of the selected entry: a text field over its name with the stem selected; Enter renames (=lrg_asset_database_rename()=), Escape or a click elsewhere cancels |
+| Delete | Move the selection to the trash after a confirmation dialog (Enter confirms) |
+| Backspace | Up one folder (not above the project), selecting the folder you came from |
+
+*** Context menus
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-menus
+:END:
+The entry menu has every 0.8.0 entry plus Copy GUID and Import Settings: Open (Open Folder), Open in External Editor, Place in Scene (prefabs become linked instances, models, textures and CAD parts become nodes, at the active camera's target, one undo step), Import Settings... (files whose importer has settings), Rename (F2), Duplicate (files; a copy named "name copy.ext" with a fresh GUID), Move to Trash (Delete), Copy Path (project-relative, one per line for several), Copy GUID, Show in File Manager. The background menu has New Folder and New Level (created in the folder, then renamed inline), New Script... (the New Script dialog), Refresh, Show in File Manager, Grid View (check) and, when the last scan found sidecars without an asset, Remove Orphaned Sidecars (N).
+
+The menus are =GMenuModel=s on the panel's =LrgWidget:context-menu=; their actions live in a =GSimpleActionGroup= inserted on the panel as =assets=: =assets.open=, =open-external=, =place=, =import-settings=, =rename=, =duplicate=, =trash=, =copy-path=, =copy-guid=, =show-in-file-manager=, =new-folder=, =new-level=, =new-script=, =refresh=, =clean-orphans= and the stateful =grid-view=. Entry actions act on the entries the menu was opened for (else the selection), so =lrg_widget_activate_action (panel, "assets.duplicate", NULL)= duplicates the selection.
+
+*** Import Settings dialog
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-import
+:END:
+=lrg_editor_assets_panel_show_import_settings()= (and the menu entry) opens an =LrgDialog= whose content is an =LrgPropertyGrid= (=assets-import-grid=) over a private =LrgPropertySource= adapter of the asset's sidecar: one row per =lrg_asset_meta_list_known_settings()= key, typed by =lrg_asset_meta_get_default_setting()= (=b= boolean, =x= int64, =d= double, =s= string), choice keys with an =enum-strings:= hint from =lrg_asset_meta_get_setting_choices()= so they show a combo box. =get_state()= reports =DEFAULT= for keys that are not stored; reset removes the key. Every edit goes through =lrg_asset_meta_set_setting_variant()= (out-of-range or unknown values are refused with a warning toast), is written right away with =lrg_asset_database_save_meta()= and drops the asset's thumbnail, so a texture preview follows =max-size=.
+
+*** Actions and IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-ipc
+:END:
+At construction the panel gives the shell's =view.asset-grid= (toggle, checked while the grid shows) and =tools.refresh-assets= (rescan the project database, queue a git refresh, list again) actions their callbacks, and registers these IPC methods (thin wrappers on =LrgAssetDatabase=; paths are project-relative or absolute and must lie inside the project):
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =asset.reveal= | =path= | Shows the Assets panel, the folder containing =path= (clearing filters that hide it), selects and scrolls to it: =path relative is_dir guid directory index= |
+| =asset.rename= | =path=, =name= | Renames the file (sidecar along, GUID kept) or folder: =path relative is_dir guid= of the new name |
+| =asset.move= | =path=, =dest= (a folder; "" is the project root) | Moves it there: the new =path relative is_dir guid= |
+| =asset.duplicate= | =path= | Copies a file as "name copy.ext" with a fresh GUID: the copy's =path relative is_dir guid= |
+| =asset.trash= | =path= | Moves the file and its sidecar (or a folder) to the desktop trash, without a confirmation: =path trashed= |
+| =asset.orphans= | =trash= (optional boolean) | Rescans and lists the sidecars whose asset is gone (=orphans=, project-relative); with =trash: true= moves them to the trash (=trashed= count) |
+
+Errors: a missing parameter is =invalid-params=, a path outside the project or that does not exist =not-found=, a name that exists or is invalid =invalid-params=, any other failure =failed=. Each method rescans, re-lists the panel and queues a git refresh.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| ~lrg_editor_assets_panel_new (app)~ | The panel; registers the actions and IPC methods above |
+| ~lrg_editor_assets_panel_get_app (self)~ | The application (weak) |
+| ~lrg_editor_assets_panel_get_directory / set_directory (self, dir)~ | The folder shown (property =directory=); folders outside the project are refused |
+| ~lrg_editor_assets_panel_get_grid_view / set_grid_view (self, grid)~ | Grid or list (property =grid-view=, default =TRUE=) |
+| ~lrg_editor_assets_panel_get_filter / set_filter (self, filter)~ | The name filter (property =filter=) |
+| ~lrg_editor_assets_panel_get_type_filter / set_type_filter (self, type)~ | The type filter, =LRG_ASSET_TYPE_UNKNOWN= for all (property =type-filter=) |
+| ~lrg_editor_assets_panel_refresh (self)~ | List the folder again now |
+| ~lrg_editor_assets_panel_get_n_entries (self)~, ~get_entry_path (self, index)~, ~find_entry (self, path)~ | The entries shown, in display order |
+| ~lrg_editor_assets_panel_get_entry_vcs_status (self, index)~ | The status the entry's badge shows |
+| ~lrg_editor_assets_panel_get_selected_paths (self)~ | The selection, absolute paths |
+| ~lrg_editor_assets_panel_reveal (self, path)~ | Navigate to and select a file (=asset.reveal=) |
+| ~lrg_editor_assets_panel_begin_rename (self, path)~, ~get_renaming (self)~ | Inline rename (F2) |
+| ~lrg_editor_assets_panel_show_import_settings (self, path)~ | The Import Settings dialog |
+
+*** Implementation notes
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-impl
+:END:
+- *Following the app.* The panel is created before any project opens and the app replaces its =LrgAssetDatabase= and =LrgEditorVcs= on every project change, so =step()= (and every public entry point) compares the app's base directory and =vcs= pointer with what it follows: a new root shows that folder, a new =LrgEditorVcs= gets the =::changed= handler. Hidden panels do not step; IPC and API calls sync first.
+- *Listing.* Non-recursive, like 0.8.0: a =GFileMonitor= on the folder marks the listing dirty and the next frame lists it again, carrying the selection over by path. Tiles and cells read the git status cached on their item, so =::changed= only recomputes the items.
+- *Thumbnails.* Tiles call =editor_thumbnail_texture()= (=lrg-editor-thumbnails.c=), which requests a thumbnail on first use and uploads at most four textures per frame, only while a window exists; headless the type glyph is drawn. An import-settings edit calls =editor_thumbnails_file_changed()= so the preview is regenerated with the new settings hash.
+- *Without a project.* A lone level's folder is browsed with a private =LrgAssetDatabase= (sidecars are written only by the operations that need them, as =lrg_asset_database_rename()= does).
+- Tests: =tests/test-editor-app-assets.c= (navigation through the breadcrumb, double click and Backspace; typed and type filters; the grid / list toggle and =view.asset-grid=; a git badge on a modified file and its folder; F2 rename keeping the GUID; duplicate with a fresh GUID; Delete with confirmation; a drag onto a folder; the Import Settings grid writing the =.meta=; the context menu and Copy GUID; opening a level; every =asset.*= method; the colours of the script tile).
+
+** Inspector panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector
+:END:
+=LrgEditorInspectorPanel= (=src/editor/ui/lrg-editor-inspector-panel.h=, since 0.8.1) shows and edits the selected nodes. It is built from one =LrgPropertyGrid= per section (see [[file:../modules/ui/property-grid.org][Property grid]]) over =LrgEditorNodeSource= objects (see [[file:level-model.org::#node-property-source][Node property source]]), so every 0.8.0 inspector feature now comes with multi-node editing, mixed values, state markers, copy and paste, a filter and one undo step per drag. With nothing selected it shows the level's own properties; while play mode runs it inspects the live object instead.
+
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-layout
+:END:
+| Block           | Widget name(s)                                   | Content                                                                                                     |
+|-----------------+--------------------------------------------------+-------------------------------------------------------------------------------------------------------------|
+| Toolbar         | =inspector-toolbar=, =inspector-title=, =inspector-filter=, =inspector-lock= | Title ("Cube", "3 nodes", "Level", "Cube (live)"), a filter that filters every grid, the lock toggle |
+| Live banner     | =inspector-live-banner=, =inspector-live-title=  | "Live values" over "Changes are discarded on Stop" (=WARNING= tint), only while inspecting the play world  |
+| Prefab bar      | =inspector-prefab-bar=, =inspector-prefab-source=, =-select=, =-apply=, =-revert=, =-unlink=, =-relink= | For nodes of a prefab instance (=ACCENT= tint), see below                   |
+| Level           | =inspector-level=, =inspector-grid-level=, =inspector-project-settings= | Nothing selected: name and 2D view (undoable), file, node count, project name and root; Project Settings… |
+| Node            | =inspector-section-header=, =inspector-grid-header= | =LRG_EDITOR_NODE_SECTION_HEADER=: name, visible, locked, 2D, read-only path and GUID                     |
+| Transform       | =inspector-section-transform=, =inspector-grid-transform= | Location, rotation (degrees), scale (uniform lock), read-only world position                       |
+| Visual          | =inspector-section-visual=, =inspector-grid-visual= | Kind, primitive, asset (picker, drop target), material, parameter bag                                    |
+| One per component | =inspector-component-<key>=, =inspector-grid-component-<key>=, =inspector-remove-<key>= | The registered type's properties and raw stored values; Remove Component        |
+| Add Component   | =inspector-add-component=                        | Opens the component picker                                                                                  |
+| Scripts         | =inspector-section-scripts=, =inspector-grid-scripts=, =inspector-script-open-<i>=, =inspector-script-remove-<i>=, =inspector-new-script=, =inspector-attach-script= | Per-binding enabled / language / path rows, a row per script with Open and Remove, New Script…, Attach…; the section is a drop target for script assets |
+| Live            | =inspector-live=, =inspector-live-component-<key>=, =inspector-live-grid-<key>= | One grid per component of the live object                                          |
+A component /key/ is the type name, with =#2=, =#3= … for further components of the same type (=Health=, =Health#2=), the convention of prefab override paths. The widget names are stable so tests, tutorials and =lrgeditorctl screenshot= scripts can find the widgets (=lrg_widget_find()=).
+
+*** Selection, multi-edit and undo
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-multi
+:END:
+- On every selection change each grid gets =lrg_editor_node_source_new_for_nodes()= for the selection (the primary node first, so its order, scripts and prefab lead). Grids keep their rows when the schema stays the same, and component sections are pooled by key, so selecting another node of the same shape rebuilds nothing and keeps focus.
+- Each grid is wired with =lrg_editor_node_source_connect_grid()= (=LRG_PROPERTY_APPLY_DELEGATE=): a scrub of the location's X axis across three nodes is ONE undo step, each node keeps its own Y and Z, and Escape during the drag restores every node and records nothing.
+- Values the nodes disagree on show as mixed (an em dash per vector axis, an indeterminate check box …). A component section appears only when every inspected node has that component key.
+- The structure (which sections, script rows, prefab bar) is rebuilt only when a signature of the inspected nodes changes (component keys, script paths, prefab link and override count, live object). Drag previews and value edits only refresh rows, through the sources' own =property-changed= emissions.
+- Asset and script paths are checked against the project directory (=lrg_editor_node_source_set_asset_root()=), so missing files show the =INVALID= marker.
+
+*** Pickers
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-pickers
+:END:
+One searchable popup (=inspector-picker=, with =inspector-picker-search=, rows =inspector-picker-item-<n>= and =inspector-picker-custom=) serves three purposes. Typing filters with the palette's fuzzy score (best first), Up / Down move the highlight, Enter or a click chooses, Escape or a click outside closes it.
+| Opened by                                   | Lists                                                                 | Typed text not in the list                    |
+|---------------------------------------------+-----------------------------------------------------------------------+-----------------------------------------------|
+| Add Component…, =node.add-component=        | Registered names whose =GType= is an =LrgComponent= (default engine registry) | "Add "<text>" (custom type)" (as 0.8.0)  |
+| Attach… (Scripts)                           | Script assets of the project's asset database                         | "Attach "<text>""                             |
+| A reference row's pick button (=pick-requested=) | =asset:kind= hints: assets of that kind; =node-ref= / =object-ref=: every node (name, path, GUID) | "Use "<text>"" for assets           |
+The reference pick answers with =lrg_property_grid_set_reference_value()=: a GUID string for string properties, the node object for object-typed ones. The same candidates fill the reference rows' drop-downs (=lrg_property_grid_set_reference_func()=). Adding a component or attaching a script applies to every inspected node as one undo step.
+
+*** Scripts
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-scripts
+:END:
+The scripts grid edits enabled, language and path per binding (paths are =asset:script= reference rows with their own drop targets). Below it, one row per script of the primary node: the file button opens it (=editor_app_open_file()=: the configured external editor, Emacs or the code panel), the trash button detaches the binding with that path from every inspected node. New Script… opens the new-script dialog for the primary node; Attach… opens the script picker. Dropping an =application/x-lrg-asset= payload whose file is a script (by extension) anywhere on the Scripts section attaches it to every inspected node (=lrg_editor_inspector_panel_attach_script()=); absolute paths inside the project are stored project-relative.
+
+*** Prefab instances
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-prefabs
+:END:
+When the primary node belongs to a linked prefab instance (=lrg_prefab_find_owner()=) the prefab bar shows the source file as a link button (opens the prefab), the override count, and:
+| Button        | Does                                                                                         |
+|---------------+----------------------------------------------------------------------------------------------|
+| Select Source | Selects the instance root that carries the link (disabled when it is already the selection)  |
+| Apply All     | =lrg_editor_prefab_apply()= with every override: writes the prefab, syncs the other instances |
+| Revert All    | =lrg_editor_prefab_revert()= with every override                                             |
+| Unlink        | =lrg_editor_prefab_unlink()=                                                                 |
+| Relink        | For a 0.8.0 instance (only the old marker): =lrg_editor_prefab_relink()=                     |
+Overridden rows carry the grid's accent bar. Their context menu adds "Apply to Prefab" and "Revert to Prefab" after Reset / Copy / Paste: actions =insp.apply-override= and =insp.revert-override= on the grid, with the property name as parameter (=lrg_widget_activate_action (row, "insp.revert-override", g_variant_new_string ("location"))=). They call =lrg_editor_node_source_apply_override()= / =lrg_editor_node_source_revert_override()= for every inspected node whose row is overridden, inside one undo group. "Reset to default" on an overridden row reverts it to the prefab's value (=lrg_editor_node_source_connect_grid()= does this).
+
+*** Inspector lock
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-lock
+:END:
+The lock button (and the action =inspector.toggle-lock=, View > Lock Inspector in the palette) keeps the inspector on the nodes it shows while the selection moves on (=lrg_editor_inspector_panel_set_locked()=). The first locked node's GUID is stored in the view state's =inspector-lock= (see [[file:view-model.org][View model]]); setting that property from elsewhere (IPC, a script) locks the inspector to that node, clearing it unlocks. When every locked node leaves the level (deleted, another level opened) the inspector unlocks itself.
+
+*** Live inspection
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-live
+:END:
+While play mode runs (=LrgEditorPlaySession=) the inspector shows a live object instead of the authoring sections:
+- the object picked in the hierarchy's Live tab: the inspector connects to =LrgEditorHierarchyPanel::live-selected= (found with =lrg_editor_hierarchy_panel_find()=) and starts from =lrg_editor_hierarchy_panel_get_live_selection()=; =lrg_editor_inspector_panel_set_live_object()= does the same from code (=NULL= goes back to following the selection);
+- otherwise the live object made from the inspected node (=lrg_editor_play_session_get_object_for_node()=).
+Each component of the object gets a grid over an =LrgObjectPropertySource= in =LRG_PROPERTY_APPLY_DIRECT= mode (the =LrgComponent= base properties other than =enabled= are hidden), re-read on every =LrgEditorPlaySession::ticked=, so the values move with the simulation. Edits go straight into the play world and are discarded on Stop, as the warning banner says. A row's context menu adds "Apply to Level" (action =live.apply=, parameter the property name), which calls =lrg_editor_play_session_apply_to_level()=: the value is copied into the authoring node's component description as an undoable command and survives the restore on Stop. On Stop the live grids drop their components and the authoring sections return.
+
+*** Actions
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-actions
+:END:
+| Id                      | Label             | Category | Does                                                         |
+|-------------------------+-------------------+----------+--------------------------------------------------------------|
+| =inspector.toggle-lock= | Lock Inspector    | View     | Toggles the lock (a toggle action: its checked state is the lock) |
+| =node.add-component=    | Add Component…    | Node     | Shows the inspector and opens the component picker (enabled with a selection) |
+Both are registered by the panel at construction (=lrg_editor_actions_add()=), with no default shortcut.
+
+*** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-ipc
+:END:
+Registered on the app's server by the panel. They build their own node sources, so they work for any node and in =--headless= mode. Targets: =nodes= (array of GUIDs or paths) or =node= (one); without either, the nodes the inspector shows (or the selection). =section= is =header=, =transform=, =visual=, =component= (with =component=, a component key) or =scripts=.
+| Method                      | Params                                                    | Result                                                                                          |
+|-----------------------------+-----------------------------------------------------------+-------------------------------------------------------------------------------------------------|
+| =inspector.list=            | target, =section?=, =component?=                          | ={nodes, section, component?, rows}=, or without a section ={nodes, sections: [{section, component?, rows}]}= for every section (components every node has) |
+| =inspector.get=             | target, =section=, =component?=, =name=                   | One row                                                                                          |
+| =inspector.set=             | target, =section=, =component?=, =name=, =value=          | The row after the edit; ONE undo step across all nodes ("Set <label>")                           |
+| =inspector.reset=           | target, =section=, =component?=, =name=                   | The row; overridden prefab properties revert to the prefab, others go to their default; one step |
+| =inspector.revert_override= | target, =section=, =component?=, =name=                   | The row plus =count=; an error when nothing is overridden                                         |
+| =inspector.apply_override=  | target, =section=, =component?=, =name=                   | The row plus =count= (writes and saves the prefab)                                               |
+| =inspector.state=           | none                                                      | ={nodes, locked, lock, live, live_type?, components, prefab}=                                     |
+A row is ={name, label, group, hint, type, read_only, value, mixed, state, override_path?}=: =type= is the =GType= name, =state= an array of ="default"=, ="overridden"=, ="animated"=, ="invalid"=. Values are JSON booleans, numbers and strings; vectors are arrays of numbers; enums and flags are nicks (="ranged"=, ="fire|acid"=); colours ="#rrggbbaa"=; anything else the text =lrg_property_value_to_string()= writes. =inspector.set= takes the same forms (numbers also fit enums and flags; strings are parsed with =lrg_property_value_from_string()=).
+#+begin_src sh
+# Move two nodes to the same X in one undo step
+lrgeditorctl call inspector.set '{"nodes":["Crate","Crate 2"],"section":"transform","name":"location","value":[4,0,0]}'
+# Set an enum component property by nick
+lrgeditorctl call inspector.set '{"node":"Orc","section":"component","component":"health","name":"kind","value":"ranged"}'
+#+end_src
+
+*** Enum and flags values in levels
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-enum-nicks
+:END:
+Component values of enum and flags types are written to =.rlevel= files as their nicks (=kind: ranged=, =resist: fire|acid=) by =lrg-level-serializer.c= (=lrg_property_value_to_string()=), and =lrg_level_instantiate()= parses strings back for enum and flags properties (=lrg_property_value_from_string()=, which also accepts the full value names 0.8.0 wrote) and accepts plain numbers. Before 0.8.1 an enum chosen in the inspector was saved as its C value name and silently dropped when the level was instantiated.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-api
+:END:
+| Function                                                                 | Purpose                                                    |
+|--------------------------------------------------------------------------+------------------------------------------------------------|
+| =lrg_editor_inspector_panel_new()=, =lrg_editor_inspector_panel_get_app()= | Create (the window does) / the app                        |
+| =lrg_editor_inspector_panel_get_nodes()=                                 | The inspected nodes (selection or locked nodes)           |
+| =lrg_editor_inspector_panel_get_grid()=                                  | The grid of a section (a component by key)                 |
+| =lrg_editor_inspector_panel_get_level_grid()=                            | The level's grid                                           |
+| =lrg_editor_inspector_panel_get_locked()=, =lrg_editor_inspector_panel_set_locked()= | The lock                                         |
+| =lrg_editor_inspector_panel_get_live_object()=, =lrg_editor_inspector_panel_set_live_object()= | The live object shown / pick one        |
+| =lrg_editor_inspector_panel_get_live_grid()=                             | The live grid of a component key                           |
+| =lrg_editor_inspector_panel_show_add_component()=                        | Open the component picker                                  |
+| =lrg_editor_inspector_panel_attach_script()=                             | Attach a script to every inspected node (one undo step)    |
+
+*** Testing
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-inspector-tests
+:END:
+=tests/test-editor-app-inspector.c= drives the panel through the app's canvas and IPC: level section, row reuse, a three-node scrub as one undo step, Escape, mixed values, an enum combo on a registered component, the Add Component popup (filter, choose, custom type, remove), a script drop, prefab override marker and revert, the lock (button, view state, deletion), live inspection with Apply to Level, every =inspector.*= method, the enum / flags nick round trip through save, load and instantiate, plus the =LrgSpinBox= scrub gestures and the =LrgCheckbox= inconsistent state.
+
+** Console, History and Problems panels
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-console
+:END:
+Three panels share =src/editor/ui/lrg-editor-console-panel.{h,c}=: =LrgEditorConsolePanel= (panel id =console=), =LrgEditorHistoryPanel= (=history=) and =LrgEditorProblemsPanel= (=problems=). They dock as tabs next to Assets. All three are final =LrgContainer= subclasses with a chip toolbar on top and a virtualized =LrgListView= below; every row is painted (icon, colour, text) by a recycled =LrgCustomWidget=, so a log of thousands of records costs only the visible rows.
+
+*** Console
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-console-log
+:END:
+The console mirrors the =LrgEditorLog= ring: every GLib log record (the editor installs a log writer), the game's output when it runs with F6 (domain =game=, levels guessed from the usual =WARNING= / =CRITICAL= prefixes) and the console's own echo and replies. Each record is formatted once when it first appears; the rows passing the filter live in a =GListStore=. Records only leave the ring at the front and arrive at the back, so the mirror is updated incrementally every frame the panel is shown (and on demand by the getters); a ring that does not match (a clear, a race with a logging thread) is rebuilt.
+
+| Part | Widget name | Behaviour |
+|------+-------------+-----------|
+| Level chips | =console-errors=, =console-warnings=, =console-messages=, =console-debug= | Toggle a level group; the badge is the number of records of that group in the ring, whatever the filter. Errors are =ERROR= and =CRITICAL=, messages are =MESSAGE= and =INFO=. Debug is off by default |
+| Search | =console-search= | Case-insensitive; a row passes when its message or its domain contains the text |
+| Follow | =console-follow= | Auto-scroll to the newest row when records arrive (on by default) |
+| Copy, Copy All | =console-copy=, =console-copy-all= | The selected row, or every shown row, as "HH:MM:SS level domain: message" lines, to the clipboard |
+| Clear | =console-clear= | Empties the log (=lrg_editor_log_clear()=) |
+| Log | =console-list= | Rows: level icon, time, domain, message coloured by level; rows with a source location show a file mark, and double click (or Enter) opens the file at its line in the external editor. Right click: Copy Row, Copy All, Clear |
+| Command line | =console-command=, =console-run= | Enter or Run executes; Up / Down walk the last 200 commands (newest first; Down past the newest clears the line) |
+
+The command line accepts exactly what the 0.8.0 console did:
+
+| Input | Effect |
+|-------+--------|
+| =help= | Lists the commands and every IPC method |
+| =clear= | Clears the log |
+| =:ID= | Runs an editor action, e.g. =:view.top=; a disabled or unknown id logs a warning |
+| =::= (or =:=) | Lists the action ids |
+| =METHOD key=value ...= | An IPC call; the words are split like a shell command line and the values become JSON booleans (=true=, =false=), integers, numbers, arrays (=[1,2,3]=) or strings, e.g. =node.create name="Big Door" primitive=cube= |
+| ={"method": ...}= | A raw JSON request |
+
+The request goes through =lrg_editor_server_dispatch()= and the reply is logged (as a warning when it carries an error), so anything the IPC protocol can do is available from the console.
+
+Actions registered by the panel: =console.copy=, =console.copy-all=, =console.clear= and =console.focus= (show the panel and focus the command line).
+
+| API | Use |
+|-----+-----|
+| =lrg_editor_console_panel_new (app)= | Creates the panel (the window does this) |
+| =lrg_editor_console_panel_get_app (self)= | The application, =NULL= once it is gone |
+| =lrg_editor_console_panel_execute (self, line)= | Runs a command line as if typed (also recorded in the history) |
+| =lrg_editor_console_panel_get_levels= / =lrg_editor_console_panel_set_levels (self, levels)= | The =LrgEditorConsoleLevels= flags shown (=LRG_EDITOR_CONSOLE_LEVEL_ERROR=, =LRG_EDITOR_CONSOLE_LEVEL_WARNING=, =LRG_EDITOR_CONSOLE_LEVEL_MESSAGE=, =LRG_EDITOR_CONSOLE_LEVEL_DEBUG=, =LRG_EDITOR_CONSOLE_LEVEL_ALL=, =LRG_EDITOR_CONSOLE_LEVEL_NONE=); =lrg_editor_console_levels_get_type()= is its =GType= |
+| =lrg_editor_console_panel_get_search= / =lrg_editor_console_panel_set_search (self, text)= | The search text |
+| =lrg_editor_console_panel_get_autoscroll= / =lrg_editor_console_panel_set_autoscroll (self, on)= | Follow new records |
+| =lrg_editor_console_panel_get_n_shown (self)= | Rows passing the filter (syncs first) |
+| =lrg_editor_console_panel_get_row_text (self, i)= | A shown row as copied |
+| =lrg_editor_console_panel_get_level_count (self, level)= | Records of a level group in the ring |
+
+*** History
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-history
+:END:
+=LrgEditorHistoryPanel= lists "(initial state)", then every undo step oldest first, then the redo stack in the order Ctrl+Shift+Z would apply it, dimmed and marked "(undone)". The current state has an accent bar and a check. Clicking a row calls =lrg_editor_jump_to_history()= with that row's index, so the document undoes or redoes to exactly that point and the undone steps stay listed. The toolbar has Undo, Redo, the "N of LIMIT steps" readout and Clear History (=lrg_editor_clear_history()=). The rows are rebuilt on the frame after the editor's =changed= or =level-replaced= signal.
+
+| API | Use |
+|-----+-----|
+| =lrg_editor_history_panel_new (app)= | Creates the panel |
+| =lrg_editor_history_panel_get_n_rows (self)= | Rows (steps + 1) |
+| =lrg_editor_history_panel_get_row_label (self, i)= | "N. Description" (with "  (undone)" on the redo stack) |
+| =lrg_editor_history_panel_activate_row (self, i)= | What a click does |
+
+*** Problems
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-problems
+:END:
+=LrgEditorProblemsPanel= shows the app's validation results (=lrg_editor_validate_level()=, re-run automatically, debounced, after every edit): one row per problem with a severity icon and colour, the node path, the message and the problem code as a chip. The toolbar shows error / warning / info counts and *Validate Now* (=problems-validate=). With no problems the panel says so. A click selects the problem's node; a double click (or Enter) opens the file of a script problem at line 1 (through the =code.open= IPC method when the code panel registered it, else the external editor) or frames the node (=view.focus=).
+
+| API | Use |
+|-----+-----|
+| =lrg_editor_problems_panel_new (app)= | Creates the panel |
+| =lrg_editor_problems_panel_get_n_rows (self)= | Problems listed (syncs with the last validation) |
+| =lrg_editor_problems_panel_activate_row (self, i, open)= | Click (=open= =FALSE=) or double click (=TRUE=) |
+
+** Profiler panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-profiler
+:END:
+=LrgEditorProfilerPanel= (=src/editor/ui/lrg-editor-profiler-panel.{h,c}=, panel id =profiler=) shows frame times and the sections of the default =LrgProfiler= (=lrg_profiler_get_default()=).
+
+- *When it records.* The profiler is enabled while the panel is shown (its tab raised and the panel docked) or play-in-editor runs, or while an IPC client pinned it; otherwise the panel turns it off again (only if it turned it on). Enabling, disabling and clearing happen in an idle between two frames, never while a section is open (a section begun with the profiler off and ended with it on would be reported as unmatched).
+- *The frame tap.* The panel adds an invisible, pointer-transparent =LrgCustomWidget= as a canvas overlay; overlays are stepped by every =lrg_canvas_update()=, so the tap sees every frame even while the panel is a hidden tab. It records the frame's delta time in a ring of =LRG_EDITOR_PROFILER_FRAMES= (300) frames and refreshes the table four times a second. Times come only from the canvas clock, so tests are deterministic.
+- *Graph* (=profiler-graph=): one bar per frame, newest on the right, green within 16.6 ms, amber within 33.3 ms, red above; dashed guides at 16.6 ms (60 fps) and 33.3 ms (30 fps); the scale grows with the peak (40 ms at least). Hovering a bar shows a marker and "12.30 ms (81 fps) frame -N".
+- *Table* (=profiler-table=): section, last, average and maximum milliseconds and calls; every column sorts (the default is average, slowest first).
+- *Toolbar*: a Recording / Idle indicator, Pause / Resume (freezes graph and table), Clear, and a readout of the last frame, fps, average and peak.
+- *Play.* The panel hands the profiler to the play session (=lrg_editor_play_session_set_profiler()=), which times every tick under =play.tick=.
+
+Actions: =profiler.pause= (checked while paused) and =profiler.clear=.
+
+*IPC* =profiler.sample= (params optional): =frames= (how many recent frame times, default 60, at most what was recorded) and =enable= (=true= pins the profiler on, =false= unpins it). The reply:
+
+#+begin_src json
+{ "enabled": true, "pinned": false, "paused": false, "frame_ms": 16.67,
+  "frames": [16.67, 16.67, 16.9],
+  "sections": [ { "name": "play.tick", "last_ms": 0.21, "avg_ms": 0.2, "min_ms": 0.18, "max_ms": 0.4, "count": 120 } ] }
+#+end_src
+
+| API | Use |
+|-----+-----|
+| =lrg_editor_profiler_panel_new (app)= | Creates the panel, registers =profiler.sample= and the actions |
+| =lrg_editor_profiler_panel_get_profiler (self)= | The profiler shown (the default one) |
+| =lrg_editor_profiler_panel_get_paused= / =lrg_editor_profiler_panel_set_paused (self, paused)= | Freeze recording |
+| =lrg_editor_profiler_panel_clear (self)= | Empty the ring and the table; the profiler's sections are cleared before the next frame |
+| =lrg_editor_profiler_panel_get_frames (self, &n)= | The recorded frame times in ms, oldest first (free with =g_free()=) |
+| =lrg_editor_profiler_panel_get_n_sections (self)= | Sections in the table (refreshes it) |
+| =lrg_editor_profiler_panel_get_hovered_frame (self)= | The frame under the pointer, or -1 |
+
+The editor's own phases (=ui.input=, =ui.update=, =viewport.render[i]=, =play.tick=) appear in the table once the frame loop wraps them in =lrg_profiler_begin_section()= / =lrg_profiler_end_section()= on the default profiler.
+
+** Timeline panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-timeline
+:END:
+=LrgEditorTimelinePanel= (=src/editor/ui/lrg-editor-timeline-panel.{h,c}=, panel id =timeline=) edits the level's =LrgTimeline= s on an =LrgTimelineView=. The data model, the undoable =lrg_editor_timeline_*= API and the preview semantics are in [[file:editor-tools.org::#timeline-panel][Editor Tools > The Timeline panel]]; this section covers the widget.
+
+- *Toolbar* (=timeline-toolbar=): the timeline picker (=timeline-picker=), a name field (=timeline-name=; Enter is New), New, Rename and Delete; Loop and Autoplay toggles; the length (=timeline-length=).
+- *Transport* (=timeline-transport=): previous key, Play / Pause (=K=), Stop, next key (=Alt+Left= / =Alt+Right=); Key (=I=, every selected node's transform at the playhead, one undo step); Delete Keys; the easing picker (=timeline-easing=, every =LrgEasingType=; it sets the easing of new keys and re-eases the selected keys); the playhead readout.
+- *View* (=timeline-view=): one group track per node in the order the timeline first mentions it (each node gets its own colour; missing nodes read "(missing GUID)"), one child track per animated channel (=location.x= ... =scale.z=, =color.r= ..., =roughness=, =metallic=, =param.NAME=). Keys are diamonds when linear and circles when eased. Click selects (Shift / Ctrl extend), a rubber band selects several, dragging retimes every selected key, Delete removes them. The ruler scrubs. Groups collapse and keep their state across rebuilds. Right click: Insert Keyframe, Delete Selected Keys and a *Key Easing* menu (Linear, then Ease In / Ease Out / Ease In Out by family).
+- *One undo step per gesture.* The view edits its own copy first and reports keyframe-moved / -removed / -added when the gesture ends; the panel queues those and applies them on its next step inside one =lrg_editor_begin_group()= / =lrg_editor_end_group()=, so dragging five keys is one undo step. Times snap to 10 ms (the view's grid snapping runs at 100 frames per second, and the panel rounds again). A value changed on a curve lane becomes =lrg_editor_timeline_set_key()= with the key's easing.
+- *Preview.* The view state's =timeline-time= is the truth: scrubbing calls the editor's preview seek (nodes posed outside the undo history, rest values restored on Stop, save, play or switching timelines), and the transport drives the editor's preview playback (ticked by the app). The view's own playback is never used and its play button is hidden, so the panel, the =timeline.*= IPC methods and the actions always agree.
+- *Look.* The =look= property (=LrgCanvasLook=, default =LRG_CANVAS_LOOK_AUTO=, which follows the editor theme) is forwarded to the view.
+
+Actions registered by the panel: =timeline.rename= and =timeline.delete= (the current timeline, the name field's text), and =timeline.delete-key= (now the view's whole selection, falling back to the single key IPC selected).
+
+| API | Use |
+|-----+-----|
+| =lrg_editor_timeline_panel_new (app)= | Creates the panel |
+| =lrg_editor_timeline_panel_get_view (self)= | The =LrgTimelineView= |
+| =lrg_editor_timeline_panel_get_look= / =lrg_editor_timeline_panel_set_look (self, look)= | The view's visual preset |
+| =lrg_editor_timeline_panel_refresh (self)= | Rebuild now (it happens by itself on the next frame) |
+| =lrg_editor_timeline_panel_find_track (self, guid, channel)= | The view track of a channel (=NULL= channel: the node's group) |
+| =lrg_editor_timeline_panel_find_keyframe (self, guid, channel, time)= | The view keyframe id of a key, or =LRG_EDITOR_TIMELINE_PANEL_INVALID_KEY= |
+| =lrg_editor_timeline_panel_set_key_easing (self, easing)= | Easing of new keys and of the selected keys (one step) |
+
+** Tiles panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-tiles
+:END:
+=LrgEditorTilesPanel= (=src/editor/ui/lrg-editor-tiles-panel.{h,c}=, panel id =tiles=, a tab next to the inspector) edits the tilemap settings of the primary selection when it is a tilemap node; with anything else selected it says "Select a tilemap node to paint it". Painting happens in the viewport; the contract between the two is the view state's =tile-tool= / =tile-mode= and the app's =LrgEditorTilePainter= (tile, layer, brush size). Tool and mode changes go through the =tilemap.*= actions, grid / layer / tileset edits through undoable node snapshots. The content scrolls.
+
+| Section | Widgets | Behaviour |
+|---------+---------+-----------|
+| Header | =tiles-node=, =tiles-paint= | The node's name and the paint-mode toggle (=B=, =tilemap.paint-mode=) |
+| Tools | =tiles-tool-brush=, =-eraser=, =-rect=, =-fill=, =-pick=, =tiles-brush=, =tiles-tile= | The checked chip is the view state's tool; choosing one turns paint mode on. Brush size 1..16 (also =[= / =]=), current tile id |
+| Grid | =tiles-create-grid= or =tiles-width=, =tiles-height=, =tiles-tile-width=, =tiles-tile-height= | Create an empty 16 x 16 grid, or resize the grid and the tileset slicing (one undo step per change) |
+| Tileset | =tiles-tileset= | A drop zone for =LRG_EDITOR_TILES_ASSET_TYPE= ("application/x-lrg-asset") string payloads, e.g. an image dragged from the Assets panel; it lights up while a matching drag hovers it. Paths inside the project are stored relative to it (one undo step, "Set Tileset") |
+| Layers | =tiles-layer-N=, =tiles-layer-eye-N=, =tiles-add-layer=, =tiles-remove-layer=, =tiles-layer-name=, =tiles-rename-layer= | Top layer first. The eye shows / hides a layer (undoable), clicking a name makes it current, + / - add or remove the current layer (=tilemap.add-layer= / =-remove-layer=), Rename (or Enter in the name field, or =tilemap.rename-layer=) renames the current layer (undoable) |
+| Palette | =tiles-palette= | The tileset image sliced by the grid's tile size; click a tile to paint with it (eraser and eyedropper switch back to the brush, paint mode turns on). Without an image: 8 x 4 numbered swatches in the colours the viewport uses for untextured tiles. Hovered and current tiles are highlighted. Headless, only the image's size is read (no texture) |
+
+| API | Use |
+|-----+-----|
+| =lrg_editor_tiles_panel_new (app)= | Creates the panel, registers =tilemap.rename-layer= |
+| =lrg_editor_tiles_panel_get_target (self)= | The tilemap node edited, or =NULL= |
+| =lrg_editor_tiles_panel_set_tileset (self, path)= | What a drop does |
+| =lrg_editor_tiles_panel_rename_layer (self, layer, name)= | Rename a layer (one step) |
+| =lrg_editor_tiles_panel_set_layer_visible (self, layer, visible)= | The eye toggle (one step) |
+| =lrg_editor_tiles_panel_get_palette_size (self, &cols, &rows)= | The palette grid |
+
+** Input latch
+:PROPERTIES:
+:CUSTOM_ID: editor-input-latch
+:END:
+raylib samples the mouse buttons and modifier keys once per frame, so a press and a release that both land between two frames (a touchpad tap, =xdotool=, a quick click on a slow software-GL frame) never show up as edges, and a chord typed faster than a frame (Ctrl down, S, Ctrl up) arrives without its Ctrl. Since 0.8.1 =lrg_canvas_input_poll()= (=src/ui/lrg-canvas-input.c=) handles this for every canvas, not only the editor: on the first poll on a window it chains GLFW mouse-button and key callbacks in front of raylib's (raylib's still run), counts the events between two polls, and merges them into the polled frame with =lrg_canvas_input_apply_latch()=:
+
+- a latched button press missing from =buttons_pressed= becomes a press edge, plus a release edge when the button is no longer in =buttons_down=;
+- latched key presses missing from =keys= are appended;
+- when the frame has key presses, the modifiers latched with them are added to =modifiers=;
+- a key pressed and released within the frame gets its release in =keys_released=.
+
+| API | Use |
+|-----+-----|
+| =lrg_canvas_input_latch_button (button, pressed)= | Feed a button event (other backends, tests) |
+| =lrg_canvas_input_latch_key (key, pressed, modifiers)= | Feed a key event with the modifiers reported with it |
+| =lrg_canvas_input_apply_latch (frame)= | Merge and empty the latch (=lrg_canvas_input_poll()= calls it) |
+| =lrg_canvas_input_clear_latch ()= | Forget what was latched |
+| =lrg_canvas_input_set_latch_enabled= / =lrg_canvas_input_get_latch_enabled= | Turn the GLFW feed off (restores raylib's callbacks) |
+| =lrg_canvas_input_detach_latch ()= | Restore raylib's callbacks on the current window before =CloseWindow()= (the next poll on a new window attaches again) |
+
+=tests/test-editor-app-panels.c= covers the latch headless (=/editor-app/panels/latch/*=): a click within a frame, held presses, chords, appended presses, isolated releases, and a click shorter than a frame reaching an =LrgButton= through a canvas.
+
+** Hierarchy panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy
+:END:
+The Hierarchy panel (=LrgEditorHierarchyPanel=, panel id =hierarchy=, docked left by default) is the outliner of the open level: every =LrgNode= as a row of an =LrgTreeView=, with its kind, its name and its visibility and lock toggles. It is where nodes are selected, renamed, re-parented, reordered, grouped, filtered and created, and where assets from the asset browser are dropped to become nodes. While play-in-editor runs a second tab lists the live game objects of the play world. It has every feature of the 0.8.0 immediate-mode outliner and adds the node model, a reveal that scrolls exactly to the node, drag and drop through the toolkit's DnD sessions with a refused-drop state, Alt drops that keep world transforms, the prefab menu and the Live tab.
+
+*** At a glance
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-overview
+:END:
+#+begin_example
++----------------------------------+
+| [ Filter nodes             ] [+] |   search field (Ctrl+F), create menu
+| (   Scene   |   Live  * )        |   only while playing
+| Demo  .  12 nodes                |   level name and node count / matches
+| v [] Lights               (o)    |   kind glyph, name, eye, lock
+|     * Sun                 (o)    |
+|   # Ground                (o) L  |   locked
+|   <> Crate      oo .      (o)    |   prefab instance: accent, link, override dot
++----------------------------------+
+#+end_example
+
+| Feature | How |
+|---------+-----|
+| Select | Click a row. Ctrl+click toggles, Shift+click selects the range from the anchor (the last plain or Ctrl click), Shift+Up/Down extend from the keyboard. A click below the rows clears the selection. |
+| Follow outside selections | Picking in the viewport, Emacs, the palette or IPC reveals the primary node: collapsed ancestors open and the tree scrolls by the smallest amount that shows the row. |
+| Rename | F2 (the =node.rename= action), a double click, Enter on the cursor row, the context menu's Rename, or =hierarchy.rename=. Enter commits (one undo step through ~lrg_editor_rename_node~), Escape cancels, an empty name is refused. |
+| Visibility and lock | The eye (and lock) toggles at the trailing edge of each row, or H and Ctrl+L for the selection. Each toggle is one undo step; a toggle click does not change the selection. The lock icon shows on hover and while locked. |
+| Reparent / reorder | Drag a row: onto the middle of a row makes it a child, onto its top or bottom quarter places it before or after. Hold Alt to keep the world transform. A selected row drags the whole selection. One undo step. |
+| Drop assets | Models and textures become mesh and sprite nodes, prefabs linked instances, scripts attach to the row's node. |
+| Filter | Ctrl+F (=edit.find=) focuses the field; matches (case-insensitive name or GUID substring) and their ancestors are shown, expanded; ancestors that only lead to a match are muted. |
+| Context menu | Right click a row or the empty area (see [[#editor-panel-hierarchy-menu][Context menu]]). |
+| Create | The + button (top level) or Create Child in the context menu. |
+| Live tab | While playing: the play world's game objects; selecting one emits =live-selected= for the inspector. |
+
+*** Rows
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-rows
+:END:
+A row is a private =HierarchyRow= widget (an =LrgContainer= with an =LrgLabel= for the name, so the tree's inline rename covers exactly the label). From the leading edge:
+
+- *Indentation and arrow*: drawn by the tree view (16 units per level). The arrow turns with a spring; clicking it toggles the branch.
+- *Kind glyph*, painted from SDF primitives in the theme's colours: a sun in the =warning= colour for lights, a camera body and lens in the =link= colour, a speaker in =success= for audio emitters, a filled triangle for mesh assets, a picture frame for sprites, four tiles for tilemaps, a gear for CAD parts, an outlined box for primitives, a folder for empty nodes with children and a ring for empty leaves. A linked prefab instance root (or a 0.8.0 instance) gets an accent diamond.
+- *Name*: the =text= colour; the =accent= colour for every node of a linked prefab instance (root and mirrored children); half alpha for hidden nodes and for ancestors shown only because a descendant matches the filter.
+- *Markers*: two linked rings for a linked instance root, a =warning= dot when that instance has overrides, a =success= dot when the node has scripts.
+- *Eye and lock*: two squares of the row height at the trailing edge. The eye is drawn when visible and a small ring when hidden; the lock in the =warning= colour when locked, muted under the pointer otherwise.
+
+Rows read their node live while painting, and follow =notify::name= for the label, so a rename, a toggle or an undo shows in the next frame without re-binding. All colours come from the theme, so the panel follows every preset and theme file.
+
+*** Selection
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-selection
+:END:
+The tree runs in =LRG_SELECTION_MODE_MULTIPLE=; its gestures (REPLACE, TOGGLE, EXTEND) produce the set. Two handlers mirror it:
+
+- *Tree to editor* (=LrgTreeView::selection-changed=): the tree's selected items become the editor selection with ~lrg_editor_select_nodes~, the cursor item last (primary). After a Ctrl or Shift click, selected nodes that have no row (inside collapsed branches) are kept, so a toggle never loses them.
+- *Editor to tree* (=LrgEditorSelection::changed=): the primary node is revealed (~lrg_tree_view_reveal~ with the node model's parent function), then the tree's set becomes the selected nodes that have rows, primary last so it is the cursor and the range anchor. Nothing changes when the sets already agree.
+
+A guard flag stops the two from feeding each other. A reveal requested before the panel is laid out (the panel was closed or just docked) is repeated on the next frame.
+
+*** Rename
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-rename
+:END:
+~lrg_editor_hierarchy_panel_start_rename~ switches to the Scene tab, clears a filter that hides the node, reveals it and calls ~lrg_tree_view_start_editing~; when the tree is not laid out yet the edit starts on the next frame. The panel replaces the 0.8.1 placeholder of the =node.rename= action (F2, enabled with a primary selection), which first shows the panel. The tree's =edit-label= handler trims the text, refuses an empty name (the field stays open after Enter), renames through ~lrg_editor_rename_node~ (one undo step) and reports it in the status bar. The tree view's own F2 (cursor row) and =row-activated= (double click, Enter) do the same.
+
+*** Drag and drop
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-dnd
+:END:
+The panel follows the [[file:../modules/ui/drag-and-drop.org::#dnd-types][payload conventions]].
+
+*Source.* Every row carries an =LrgDragSource=. =prepare= returns an object payload of type =application/x-lrg-node= holding the grabbed =LrgNode=, allowing MOVE and LINK, labelled with the node name or "N nodes" when the row is part of a larger selection. Presses on the eye and lock toggles and presses while a rename is open do not drag.
+
+*Target.* The tree view carries one =LrgDropTarget= for =application/x-lrg-node=, =application/x-lrg-asset= and =application/x-lrg-prefab= (all actions, =paint-highlight= off: the tree paints its own indicator). On =motion= the panel asks ~lrg_tree_view_get_drop_position~ for the row and position (top quarter BEFORE, middle INTO, bottom quarter AFTER; below the last row AFTER the last root item) and shows it with ~lrg_tree_view_set_drop_indicator~ (an insertion line or a highlighted row). For node payloads the moving set is the selected roots when the grabbed node is selected, else the node; a drop whose new parent is one of them or inside one of them is refused (=motion= returns NONE: no indicator, the chip fades, a release is not a drop). =leave= clears the indicator.
+
+*Node drops.* INTO appends to the row's node and expands it; BEFORE / AFTER insert next to it under its parent, adjusting the index for nodes that move down within the same parent. All moves are one undo group ("Move Node" / "Move Nodes") of ~lrg_editor_move_node~ calls. The LINK action (Alt held, or Ctrl+Shift) passes =keep_world= TRUE, like =node.move= with =--keep-world=: the node stays where it is in the world and its local transform is recomputed under the new parent. A plain drop keeps the local transform.
+
+*Asset drops.* The payload string is the project-relative path, classified with ~lrg_asset_database_classify~:
+
+| Asset | Result |
+|-------+--------|
+| =.rprefab= | ~lrg_editor_instantiate_prefab~ (a linked instance) under the target parent |
+| model (=.glb=, =.gltf=, =.obj=...) | a =mesh= node named after the file, its visual asset set to the path, one undo group |
+| texture (=.png=...) | a =sprite= node, the same way |
+| script (=.lua=, =.py=...) | attached to the row's node with ~lrg_editor_add_script~ (needs a row) |
+| anything else | refused with a status message |
+
+INTO makes the new node a child of the row's node, BEFORE / AFTER a sibling at the indicated index, empty space a top-level node. The new node is selected.
+
+*** Context menu
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-menu
+:END:
+A right click on a row selects it (unless it is already part of the selection) and opens an =LrgMenu= built from a =GMenuModel= at the pointer. Editor actions are referenced as =editor.<id>= (enabled states follow the registry); row-specific entries use the panel's own =hierarchy= action group and act on the clicked node.
+
+| Section | Entries |
+|---------+---------|
+| Edit | Rename (=hierarchy.rename=), Duplicate, Delete |
+| Clipboard | Cut, Copy, Paste as Child (=hierarchy.paste-child=: the system clipboard when it holds a node list, else the editor clipboard) |
+| Structure | Create Child > (every Create kind, =hierarchy.create-child=), Group Selection, Ungroup, Save as Prefab... |
+| Prefab (linked instances) | Select Source Prefab, Select Instance Root (on a child of an instance), Revert All Overrides, Apply All Overrides (both need overrides), Unlink |
+| Prefab (0.8.0 instances) | Select Source Prefab, Relink |
+| View | Focus Selection, Toggle Visibility, Toggle Lock, Attach Script..., Open Scripts in Editor |
+| Copy | Copy GUID, Copy Path (=hierarchy.copy-guid=, =hierarchy.copy-path=, to the clipboard) |
+
+Select Source Prefab copies the prefab's project-relative path to the clipboard and, when an IPC method =asset.reveal= is registered (=params: {"path": ...}=), calls it so the asset browser shows the file. Revert, Apply, Unlink and Relink call ~lrg_editor_prefab_revert~, ~lrg_editor_prefab_apply~, ~lrg_editor_prefab_unlink~ and ~lrg_editor_prefab_relink~ (each one undo step; Apply also rewrites the prefab file and syncs the other instances).
+
+A right click on the empty area below the rows opens Create > (top level, =hierarchy.create=), Paste and Select All. The + button next to the search field opens the Create kinds for the top level.
+
+*** Filter
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-filter
+:END:
+The search field filters as you type: ~lrg_editor_node_model_set_filter~ narrows every store to the matches and their ancestors and the panel expands every shown branch. The info line shows "N matches of M nodes", and a placeholder when nothing matches. Clearing the field shows everything again and reveals the primary selection. =edit.find= (Ctrl+F) shows the panel, switches to the Scene tab, focuses the field and selects its text. Revealing or renaming a node the filter hides clears the filter first.
+
+*** Live tab
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-live
+:END:
+When the play session emits =started= a pill switch "Scene | Live" appears under the search field (with a red dot: the simulation runs). The Live page is a flat =LrgTreeView= named =hierarchy-live= over ~lrg_editor_play_session_get_objects~ (the session's =GListModel= of =LrgGameObject=, updated as the world changes); rows show the name of the authoring node (~lrg_editor_play_session_get_node_for_object~), or the object's type. Selecting a row sets the live selection and emits:
+
+#+begin_src C
+/* LrgEditorHierarchyPanel::live-selected */
+void (*live_selected) (LrgEditorHierarchyPanel *panel,
+                       GObject                 *object,   /* LrgGameObject, or NULL */
+                       gpointer                 user_data);
+#+end_src
+
+The inspector connects to it (find the panel with ~lrg_editor_hierarchy_panel_find (app)~) to show the live object, and can read it later with ~lrg_editor_hierarchy_panel_get_live_selection~. When the session emits =stopped= the tab disappears, the Scene page returns and =live-selected= is emitted with =NULL=. Edits on the Scene page while playing are play-time edits (discarded on Stop) exactly as in the viewport.
+
+*** The node model
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-model
+:END:
+=LrgEditorNodeModel= (=src/editor/lrg-editor-node-model.h=, headless, usable by any GListModel consumer) presents a level's node tree as one =GListStore= of =LrgNode= per parent:
+
+- ~lrg_editor_node_model_get_root_model~ is the top level (children of the level root); ~lrg_editor_node_model_get_children~ returns a node's store, created on first use and the same object from then on (a leaf gets an empty store that fills later, so the tree view keeps following it).
+- *Incremental sync.* =LrgLevel::node-added= reconciles the parent's store and the stores of the added subtree; =node-removed= the store that showed the node; =node-changed= and the shown properties of a node (=name=, =guid=, =visible=, =locked=, =is-2d=, =visual=, =prefab-link=, not transforms) emit =items-changed (pos, 1, 1)=. Re-parenting, reordering and prefab syncs are not signalled by the level: the model listens to =LrgEditor::changed= and reconciles every store when the process-wide node tree serial moved. Each reconcile is the smallest =g_list_store_splice= (the common prefix and suffix stay), so views keep rows, expansion and selection. Stores of detached subtrees (deleted, waiting in the undo history) stay current for the undo.
+- *Level replacement.* =LrgEditor::level-replaced= drops every store and makes a new root store (=notify::root-model=); views bound with ~lrg_editor_node_model_bind_tree_view~ follow it.
+- *Filter.* ~lrg_editor_node_model_set_filter~ (case-insensitive substring of the name or the GUID) keeps the matches and their ancestors in the stores; ~lrg_editor_node_model_is_match~ tells a match from an ancestor, ~lrg_editor_node_model_get_n_matches~ counts them (or all nodes without a filter). Renames, additions, removals and moves re-apply it.
+- *Parent function.* ~lrg_editor_node_model_get_parent~ (=NULL= for top-level nodes) is the tree view's parent function, so ~lrg_tree_view_reveal~ opens exactly the ancestors of a node that never had a row.
+- A model made with ~lrg_editor_node_model_new_for_level~ (no editor) follows the level signals; call ~lrg_editor_node_model_sync~ after moving nodes directly.
+
+#+begin_src C
+g_autoptr(LrgEditorNodeModel) model = lrg_editor_node_model_new (editor);
+LrgTreeView *view = lrg_tree_view_new ();
+
+lrg_tree_view_set_selection_mode (view, LRG_SELECTION_MODE_MULTIPLE);
+lrg_editor_node_model_bind_tree_view (model, view);    /* model, children and parent functions */
+lrg_editor_node_model_set_filter (model, "light");     /* lights and their ancestors */
+#+end_src
+
+*** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-ipc
+:END:
+Registered by the panel when it is constructed (the user data is the app; the panel is looked up per call, so the methods fail with =failed= once it is gone).
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =hierarchy.reveal= | =guid= (or =node=: a GUID or name path), =select= (default =true=) | ={"guid", "row", "rect", "revealed"}=; shows the panel, clears a filter that hides the node, expands its ancestors and scrolls to it |
+| =hierarchy.rename= | =guid= (or =node=), optional =name= | ={"guid", "name", "editing"}=; with =name= renames now (undoable), without it selects the node and opens the inline field |
+| =hierarchy.filter= | =text= (absent or ="" clears) | the number of matches |
+| =hierarchy.state= | none | ={"page", "live", "filter", "matches", "editing", "tree": [x,y,w,h], "tab-scene", "tab-live", "rows": [{"guid", "row", "rect", "name", "depth", "expanded", "selected"}]}=; the tab rectangles only while playing, the rows are the flattened visible tree |
+
+#+begin_src sh
+lrgeditorctl call hierarchy.reveal '{"node": "Lights/Sun"}'
+lrgeditorctl call hierarchy.rename '{"guid": "4f0c...", "name": "Key Light"}'
+lrgeditorctl call hierarchy.filter '{"text": "crate"}'
+#+end_src
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| ~lrg_editor_hierarchy_panel_new (app)~ | The panel; registers its actions and IPC methods (the window calls it) |
+| ~lrg_editor_hierarchy_panel_find (app)~ | The app's hierarchy panel, docked or not |
+| ~lrg_editor_hierarchy_panel_get_tree_view~ / ~_get_live_view~ | The two trees (=hierarchy-tree=, =hierarchy-live=) |
+| ~lrg_editor_hierarchy_panel_get_node_model~ | The =LrgEditorNodeModel= behind the tree |
+| ~lrg_editor_hierarchy_panel_get_search_input~ | The filter field (=hierarchy-search=) |
+| ~lrg_editor_hierarchy_panel_set_filter (self, text)~ | Filter from code (fills the field) |
+| ~lrg_editor_hierarchy_panel_focus_search~ | What Ctrl+F does |
+| ~lrg_editor_hierarchy_panel_reveal (self, node, select)~ | Expand ancestors and scroll to a node |
+| ~lrg_editor_hierarchy_panel_start_rename (self, node)~ | Open the inline rename field |
+| ~lrg_editor_hierarchy_panel_popup_context_menu (self, node, x, y)~ / ~_get_context_menu~ | The context menu (node or empty-area variant) |
+| ~lrg_editor_hierarchy_panel_get_page~ / ~_set_page~ | ="scene"= or ="live"= (live only while playing) |
+| ~lrg_editor_hierarchy_panel_get_live_selection~ | The selected live =LrgGameObject= |
+| signal =live-selected (GObject *object)= | Live tab selection changed (=NULL= when play stops) |
+
+Widget names for tests and =ui.state= clients: =hierarchy-panel=, =hierarchy-search=, =hierarchy-add= (the + button), =hierarchy-tree=, =hierarchy-row= (each row), =hierarchy-live=, =hierarchy-menu=.
+
+*** Tests
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-hierarchy-tests
+:END:
+- =tests/test-editor-node-model.c= (headless): additions (including a level without an editor), removal and undo of single nodes and subtrees, reparenting and reordering through the editor (minimal splices) and through ~lrg_editor_node_model_sync~, renames and toggles re-binding (and transforms not), level replacement, the name and GUID filter with renames and additions, the parent function with a bound tree view's reveal and a replaced level.
+- =tests/test-editor-app-hierarchy.c= (canvas-driven): click, Ctrl and Shift selection mirrored into the editor, clearing below the rows, an outside selection expanding and scrolling, rename by F2 and typing, Escape, the action and a double click, the context menu (selects the row, Duplicate, Copy GUID, the empty-area variant), the prefab section of a linked instance (Select Source, Revert All enabled only with overrides, Unlink), drag to reparent (also a multi-selection) with one undo step, reorder before and after, refusal into the own subtree and onto itself, Alt keeping world transforms, asset drops (model node, script attach), the eye toggle, Ctrl+F filtering, the Live tab during play with =live-selected=, and the four IPC methods.
+
+** Viewport panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-viewport
+:END:
+The viewport area is =LrgEditorViewportSplit= (=src/editor/ui/lrg-editor-viewport-split.{h,c}=) holding up to four =LrgEditorViewportPanel= widgets (=src/editor/ui/lrg-editor-viewport-panel.{h,c}=). Each panel shows one camera of the =LrgEditorViewState= with its own render mode and overlays; the scene is drawn by =LrgEditorSceneRenderer= (=lrg-editor-scene-renderer.{h,c}=) with the engine's lights, shadows, sky and post effects, and every 2D overlay (gizmo, orientation axes, box select, stats, play frame) is painted with =LrgPaintList= by =lrg-editor-gizmo-paint.{h,c}=. A lone =lrg_editor_viewport_panel_new()= still works (viewport 0, no splitting) for embedders.
+
+*** Layouts and the active viewport
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-layouts
+:END:
+- *Layouts* follow =LrgEditorViewState:layout=: =single= (panel 0), =split-h= (0 | 1), =split-v= (0 / 1) and =quad= (top 0 | 1, bottom 2 | 3) in nested =LrgSplitter= panes. Panel /i/ always shows camera /i/, so switching layouts keeps every viewport's camera, render mode, overlays and the splitter positions (the split owns all four panels and three splitters and only re-parents them).
+- *Default cameras*: viewport 0 is the perspective camera; 1, 2 and 3 start as the orthographic Top, Front and Right axis views (the view state's defaults), so =quad= is the classic four-view layout.
+- *Active viewport*: a press in a viewport, a wheel turn over it, or hovering it while no gesture runs makes it the view state's active viewport. Keyboard shortcuts, =view.*= actions and IPC calls without a =viewport= parameter act on it. In split layouts it carries an accent outline that fades in with a spring.
+- *Maximise* (header button, =lrg_editor_viewport_split_set_maximized()=): shows one viewport alone without changing the layout; a second press or any layout change restores the layout.
+- *Navigation* is shared: one =LrgEditorViewportNav= acts on the active camera, and only the panel that took the press of a gesture ("nav owner") reacts to its =click=, =box-select= and =context-menu= signals, so a split layout picks once.
+
+*** Header bar
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-header
+:END:
+Each panel has a slim header strip: the two combo boxes on the left (=vpN-header=) and three icon buttons on the right (=vpN-tools=); names below are prefixed =vpN-= for viewport /N/. In narrow split viewports the combo boxes shrink (and their text clips) before the icons move.
+
+| Widget | Name | What it does |
+|--------+------+--------------|
+| View preset combo | =view-preset= | Perspective, Orthographic, Top, Bottom, Front, Back, Right, Left, 2D for this viewport's camera (through the view state's axis views); follows the camera |
+| Render mode combo | =render-mode= | Lit, Unlit, Wireframe, Normals, Lighting (lighting only) |
+| Overlays button (eye icon) | =overlays= | A menu of check items bound to the panel's =vp= action group (=vp.overlay-grid=, =vp.overlay-shadows=, ...): Grid, Gizmos, Icons, Bounds, Stats under /Overlays/, Scene Lighting, Shadows, Sky, Post Processing under /Rendering/ |
+| Camera button | =preview-toggle= | Turns the camera preview on or off (accent fill while on) |
+| Maximise button | =maximize= | Shows this viewport alone; corner brackets point in while maximised |
+
+*** Rendering
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-rendering
+:END:
+- *Render on demand.* Viewports are =LrgViewport= widgets in render mode with =continuous= off. A panel marks itself dirty on =LrgEditorViewState::camera-changed= / =::viewport-changed= for its index, on the active viewport, layout, tile mode and timeline time changing, on =LrgEditor::changed= and =::level-replaced=, on the level's =node-added= / =node-removed= / =node-changed=, on selection changes, on play start/stop/pause and when =lrg_editor_scene_renderer_get_generation()= moves (an asset reloaded, the base directory or the grid settings changed). Its step (which runs before the viewport's) queues one render. It renders every frame only while playing, while the timeline plays, during a gizmo drag or tile stroke, and while the active viewport navigates (fly, orbit, pan, zoom, axis gizmo). =lrg_editor_viewport_panel_get_render_pending()= exposes the flag.
+- *Lights* (=lrg_editor_scene_renderer_sync_lights()=): every visible LIGHT node becomes an =LrgLightSet= light. A light whose =light_type= visual param is the string ="directional"= is the sun (the first one; it shines down the node's local -Z); every other light is a point light at the node's world position with =range= as radius (default 10), =intensity= as intensity (default 1) and the material colour (white without a material). The engine's 3D light set has no spot lights: lights with =spot_angle= > 0 (or =light_type: spot=) are previewed as point lights. A level without a directional light gets the default editor sun (travelling along (0.5, -0.75, -0.45), from the upper left of the default camera, so shadows fall into view) so the scene stays readable; turning the /Scene Lighting/ overlay off lights the scene with that sun only. Ambient is a fixed dark blue-grey.
+- *Shadows*: with /Shadows/ on, in perspective viewports and the lit modes, an =LrgShadowRenderer= (3 cascades of 2048 texels reaching 60 units, 3 x 3 filter, strength 0.85) renders the directional light's cascades for that viewport's camera before the scene and hands them to the light set. Orthographic and 2D viewports draw without shadows. Point-light cube shadows are not used (no shadow priorities in the level format yet).
+- *Sky*: with /Sky/ on, perspective viewports draw an =LrgSkyDome= behind the scene with its sun along the directional light. Weather and day/night preview are not wired: a level has no environment block declaring them yet (see the gap analysis, "Lights"); when it does, the dome's time of day and =LrgWeatherManager= fog plug in here.
+- *Post processing* (preview only, never saved into the level): with /Post Processing/ on, each viewport (and the camera preview) has an =LrgPostProcessor= (=lrg_editor_scene_renderer_get_post_processor()=) holding =LrgFxaa= (="fxaa"=), =LrgBloom= (="bloom"=, threshold 0.75, intensity 0.6), =LrgVignette= (="vignette"=, intensity 0.35) and =LrgColorGrade= (="color-grade"=, contrast 1.05, saturation 1.08). The scene is rendered into an offscreen image, the editor's =post.fs= pass applies FXAA, soft-knee bloom with a highlight shoulder and the vignette with those effects' parameters and enable flags, and =lrg_color_grade_draw_texture()= grades the result into the viewport. The engine's own =LrgPostProcessor= capture/render path and the FXAA, bloom and vignette =apply= methods are still stubs, which is why the editor runs the passes itself.
+- *Render modes*: Lit (the light set's shader with shadows; falls back to the editor's =lit.fs= one-light shader without GLSL 330), Unlit (=unlit.fs=, texture times material colour), Wireframe (unlit in rlgl wire mode), Normals (=normals.fs=, world normals as colours) and Lighting Only (the light set's shader on white surfaces). Tilemaps and icon lines use rlgl's default shader in every mode.
+- *Shaders*: =data/editor/shaders/scene.vs.glsl=, =lit.fs.glsl=, =unlit.fs.glsl=, =normals.fs.glsl= and =post.fs.glsl= are the readable sources. The library embeds them as string literals generated byte for byte from those files (=lrg_editor_scene_renderer_get_shader_source()=), so an installed editor needs no data files; =/editor-app/viewport/shader-sources= fails when a =.glsl= and its literal drift apart. Edit the =.glsl=, then regenerate the literal block in =lrg-editor-scene-renderer.c= (each line becomes ="...\n"=).
+- *Missing assets*: mesh, sprite and tileset references that do not resolve (=lrg_editor_scene_renderer_is_asset_missing()=) are drawn as magenta wire boxes in the scene and get a magenta screen box with a "missing: file" tag in the overlay, in every render mode.
+
+*** Overlays painted on top
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-overlays
+:END:
+The panel turns the renderer's own 2D pass off (=lrg_editor_scene_renderer_set_draw_overlays (renderer, FALSE)=; embedders keep the old behaviour by default) and paints, with a pointer-transparent =LrgCustomWidget= above the viewport:
+- the transform gizmo of the current tool (rings and the view ring for rotate; arms, arrow heads and plane squares for translate; arms and boxes for scale) in every viewport through its own camera, hovered handle and dragged handle in yellow, other handles dimmed while dragging; the geometry is the one =LrgEditorGizmo= hit-tests;
+- the drag readout next to the pointer ("Move dx 1.25 dy 0.00 dz -0.50", "Rotate 45.0 deg", "Scale x1.50 ...");
+- the box-select rectangle (accent fill and border);
+- the orientation axes bottom left at (=LRG_EDITOR_NAV_GIZMO_MARGIN=, height - margin) = (vx + 46, vy + h - 46), the geometry =LrgEditorViewportNav= hit-tests (=tests/editor-x11-smoke.sh= drags it);
+- the stats chip top right (nodes, selection, fps, point lights and whether the sun is the level's, draw calls; just nodes and fps in viewports narrower than 520 px) in the theme font on glass;
+- the hovered tile cell while painting a tilemap (danger colour while erasing);
+- the play-mode frame (success colour, warning while paused) with a "PLAYING" / "PAUSED" pill and the play keys;
+- the empty-level hint, the drop crosshair and label, and the active-viewport outline.
+
+*** Camera preview
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-camera-preview
+:END:
+When the primary selection is a CAMERA node, the preview is enabled (header camera button, =lrg_editor_viewport_panel_set_preview_enabled()=) and the panel is the active viewport, a picture-in-picture =LrgViewport= (=vpN-camera-preview=) appears bottom right: 30 % of the viewport width (120 to 360 px), the camera's =aspect= visual param or 16:9, rounded with the theme's radius and shadow. It renders through =lrg_editor_scene_renderer_camera_node_view()= (the node's world position, local -Z forward, local +Y up, =fov=, =near=, =far= params) in Lit mode with the host viewport's lighting, shadow, sky and post overlays, into post slot =LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT=.
+
+*** Drag and drop
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-drops
+:END:
+Each panel is an =LrgDropTarget= for =application/x-lrg-asset= (a project-relative path string) and =application/x-lrg-node= (the =LrgNode=), highlighted while a drag hovers, with a crosshair and a label ("Place crate.glb", "Instance door.rprefab", "Attach patrol.lua", "Open dungeon.rlevel"). Dropping an asset (=lrg_editor_viewport_panel_drop_asset()=, one undo step "Place Asset"): models, textures and CAD files become a node at the ground point under the pointer (y = 0 in 3D, z = 0 in 2D; snapped when snapping is on) and are selected; a prefab becomes a linked instance there; a script is attached to the node under the pointer; a level is opened (after the unsaved-changes question). Dropping a node selects it and frames it in that viewport.
+
+*** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-ipc
+:END:
+Registered by the split (and the lone panel) from =lrg-editor-viewport-split.c=; all act on the view state, so they also work =--headless=. =viewport= is an index (omitted or -1: the active viewport).
+
+| Method | Params | Reply |
+|--------+--------+-------|
+| =view.layout= | =layout= (optional: =single=, =split-h=, =split-v=, =quad=) | ={"layout": "quad", "viewports": 4, "active_viewport": 0}= |
+| =view.render_mode= | =viewport=, =mode= (optional: =lit=, =unlit=, =wireframe=, =normals=, =lighting-only=) | ={"viewport": 1, "mode": "wireframe"}= |
+| =view.overlay= | =viewport=, =name= (optional overlay nick: =grid=, =gizmos=, =icons=, =bounds=, =stats=, =scene-lighting=, =shadows=, =sky=, =post=), =enabled= (optional; omitted toggles) | ={"viewport": 0, "overlays": {"grid": true, "shadows": false, ...}}= |
+
+=view.get=, =view.set=, =view.focus= take =viewport= as before; =view.screenshot= (without =window=) captures the active viewport. The layout and all four cameras persist in the settings (=viewport-layout=, =viewport-cameras=) through =lrg_editor_view_state_load_settings()= / =save_settings()=, which the shell calls on load and save.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_viewport_split_new (app)= | The viewport area the window hosts |
+| =lrg_editor_viewport_split_get_panel= / =get_n_visible= / =get_active_panel= | Panels and what is on screen |
+| =lrg_editor_viewport_split_set_maximized= / =get_maximized= | Temporary single view |
+| =lrg_editor_viewport_split_set_gpu_enabled= | Free (FALSE) or restore every panel's render textures around =CloseWindow()= |
+| =lrg_editor_viewport_split_register_methods (app)= | The three IPC methods (idempotent) |
+| =lrg_editor_viewport_panel_new= / =new_for_index= | One viewport (0, or camera /i/) |
+| =lrg_editor_viewport_panel_get_index= / =get_viewport= / =get_header= | Parts of a panel |
+| =lrg_editor_viewport_panel_get_preview= / =get_preview_node= / =set_preview_enabled= / =get_preview_enabled= | Camera preview |
+| =lrg_editor_viewport_panel_get_render_pending= | Render-on-demand flag |
+| =lrg_editor_viewport_panel_drop_asset= | Place an asset as a drop would |
+| =lrg_editor_viewport_panel_set_gpu_enabled= | Free or restore one panel's render textures |
+| =lrg_editor_scene_renderer_render_view= | Render through any =LrgEditorView= into the bound target |
+| =lrg_editor_scene_renderer_set_draw_overlays= / =get_draw_overlays= | The renderer's own 2D pass (default on) |
+| =lrg_editor_scene_renderer_get_light_set= / =sync_lights= / =has_scene_sun= | Engine lighting from the level |
+| =lrg_editor_scene_renderer_get_shadow_renderer= / =get_sky_dome= / =get_post_processor= | The engine objects behind the overlays |
+| =lrg_editor_scene_renderer_get_generation= / =is_asset_missing= | Change counter, missing references |
+| =lrg_editor_scene_renderer_camera_node_view= | The view through a camera node |
+| =lrg_editor_scene_renderer_get_shader_source= | The embedded GLSL |
+| =lrg_editor_gizmo_paint_transform= / =format_delta= / =drag_readout= / =axes= / =box_select= / =chip= / =tile_hover= / =play_frame= / =missing_asset= / =active_outline= | The overlay painters |
+
+*** Testing
+:PROPERTIES:
+:CUSTOM_ID: editor-viewport-testing
+:END:
+=tests/test-editor-app-viewport.c= drives the split through the canvas and IPC: layout switching (1, 2 and 4 panels, maximise), the active viewport (click and hover), per-viewport cameras through =view.*=, =view.render_mode= / =view.overlay= and the header combo boxes, an asset drop at the picked ground point with one undo step (directly and through a canvas drag session), the camera preview, a gizmo drag through the panel with one undo step, render on demand, the light set built from the level, missing assets, the overlay painters and the embedded shaders. =/editor-app/viewport/gpu-render= checks that the five render modes differ and that sky, shadows and post change the lit image; it runs only on an X display without Wayland, i.e. under =xrun.sh=.
+
+** Preferences
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-preferences
+:END:
+Edit > Preferences (Ctrl+,, action =edit.preferences=) opens the Preferences dialog: an =LrgDialog= (=ui.state= dialog ="preferences"=) whose content is an =LrgEditorPreferences= (=src/editor/ui/lrg-editor-preferences.{h,c}=), a tab view of six pages above a footer with *Reset All* and *Edit editor.yaml*. Every change is written to =LrgEditorSettings= at once and applies live; closing the dialog (Close, Escape) saves =editor.yaml= with =lrg_editor_app_save_settings()=. The keys themselves are described in [[#preferences][Preferences (editor.yaml)]].
+
+#+begin_example
++- Preferences ---------------------------------------------------------+
+| General | Appearance | External Editor | Viewport | Keybindings | Server |
+|  Theme                                                                 |
+|  [Mocha *] [Macchiato] [Frappe] [Latte]                                |
+|  [Midnight] [Daylight] [High Contrast]          (cards preview colours)|
+|  [Load YAML...]                                                        |
+|  > Interface   UI scale [1.00]  Font size [16]  Font file [        ]   |
+| [Reset All] [Edit editor.yaml]                                 [Close] |
++------------------------------------------------------------------------+
+#+end_example
+
+*** Pages
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-preferences-pages
+:END:
+| Page (id) | Contents |
+|-----------+----------|
+| General (=general=) | Documents: autosave interval, undo steps kept, reload levels changed on disk, ask before discarding changes; Session: reopen the last project |
+| Appearance (=appearance=) | The theme gallery: one painted card per built-in theme (the five =LrgTheme= presets =catppuccin-mocha=, =catppuccin-latte=, =midnight=, =daylight=, =high-contrast= and the shipped files =catppuccin-macchiato= and =catppuccin-frappe=), each previewing that theme's window, panel, surface, text, accent and status colours; the chosen one has an accent ring and a check. A click sets =theme= and the whole editor re-themes in the same frame (the app's own =notify= handler rebuilds the canvas theme). *Load YAML...* opens an =LrgFileDialog= (=.yaml= / =.yml=) on top of the dialog and, when the file loads as a theme, sets =theme= to its path (it then gets a card of its own). Below: UI scale, font size and font file |
+| External Editor (=external-editor=) | Scripts open in (=script-editor=: =internal= opens the [[#editor-panel-code][code editor]], =external= the external editor, =emacs= a connected Emacs), the external editor preset (every =lrg_external_editor_list_presets()= id), the custom command template, run in a terminal (auto / always / never), the terminal; Emacs: use a connected Emacs, server name. Live status lines: what =auto= resolves to and from where (=lrg_external_editor_resolve_preset()=), the exact command a file would open with (=lrg_external_editor_build_argv()= on a sample path) and whether Emacs is connected; *Test* opens =editor.yaml= with the external editor |
+| Viewport (=viewport=) | Snapping (snap by default, move / rotate / scale steps), Grid (show, cell size, half extent), Camera (navigation scheme default / blender / trackpad, field of view, fly speed, orbit speed, invert Y) |
+| Keybindings (=keybindings=) | The shortcut table, see [[#editor-panel-preferences-keys][Keybindings]] |
+| Server (=server=) | Start the server, socket path; the listening socket and the number of connected clients; *Copy socket path*, *Start now* |
+
+The settings pages are =LrgPropertyGrid= views. Each grid's source is a small =LrgPropertySource= that lists a fixed set of =LrgEditorSettings= properties with the dialog's labels, sections (property groups) and hints (=range:min,max,step= for numbers, =enum-strings:...= for choices) and reads and writes them through an =LrgObjectPropertySource= on the settings, so values are the settings' own =GParamSpec= types and reset-to-default works per row. A write is followed by the live application of that key: =snap-*= reaches =lrg_editor_set_snap*()=, =history-limit= the undo stack, =camera-fov= and =camera-fly-speed= the view state, =grid-visible= the grid overlay of every visible viewport; =camera-navigation=, =camera-invert-y= and =camera-orbit-speed= are followed by the navigator (=lrg_editor_viewport_nav_bind_settings()=) and =theme=, =ui-scale= and =font-size= by the app. Changes made elsewhere (IPC, Reset All) refresh the rows through the source's =property-changed= signal.
+
+*Reset All* (=lrg_editor_preferences_reset_all()=) restores every key and every keybinding to its default, keeping what is not a preference (=ui-layout= and =layout=, the recent lists, =settings-version=, the viewport layout and cameras), and reapplies the settings. *Edit editor.yaml* saves, closes the dialog and opens the file where =script-editor= says (the code editor or the external editor).
+
+*** Keybindings
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-preferences-keys
+:END:
+The Keybindings page lists every registered action under its category: the label, one chip per accelerator (=lrg_editor_accel_to_label()=, e.g. =Ctrl+Shift+Z=), an =x= after each chip, =+= and, when the bindings differ from the defaults, *Reset*.
+
+- *Capture.* Click a chip to replace that alternative, or =+= to add one: the chip reads "Press keys..." and the table takes keyboard focus. The next key press with its modifiers becomes the accelerator (=lrg_accel_name()=, e.g. =<Ctrl>j=); a modifier key alone keeps waiting; Escape cancels; Backspace or Delete alone removes the alternative. The result is stored with =lrg_editor_actions_set_accels()=, which writes the =keybindings= override of =editor.yaml=, and the window re-registers its canvas shortcuts on the registry's =accels-changed= signal, so the new key works as soon as the dialog closes (shortcuts never fire behind a dialog). Rebinding a key that another action uses moves nothing: both keep it and the conflict is shown.
+- *Conflicts.* Every chip whose accelerator is bound to more than one action is drawn in the theme's warning colour, and a summary next to the filter counts them (=lrg_editor_actions_find_conflicts()=).
+- *Search.* The filter field matches labels, categories and ids (the registry's fuzzy search) and the key names of the shortcuts, so "ctrl+s" finds every action bound to Ctrl+S.
+- *Reset.* *Reset* restores one action's defaults; *Reset All Shortcuts* every overridden one.
+
+The same table, read-only, is Help > Keyboard Shortcuts (=lrg_editor_preferences_create_keymap (app, FALSE)=): bound actions only, plus the viewport's mouse navigation, live while open (it follows rebinding), with *Edit Keybindings...* to jump to this page.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-preferences-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_preferences_present (app, page)= | Open the dialog on a page (=NULL= for General); returns its =LrgEditorPreferences= |
+| =lrg_editor_preferences_new (app)= | The pages without a dialog (to embed) |
+| =lrg_editor_preferences_get_page= / =set_page= | Page ids =general=, =appearance=, =external-editor=, =viewport=, =keybindings=, =server= |
+| =lrg_editor_preferences_get_grid (self, page)= | The =LrgPropertyGrid= of a settings page |
+| =lrg_editor_preferences_get_capturing= | The action whose shortcut is being captured |
+| =lrg_editor_preferences_reset_all= | Reset All |
+| =lrg_editor_preferences_create_keymap (app, editable)= | The shortcut table on its own |
+
+IPC: =preferences.open= ={page?}= opens the dialog (on a page) and returns the page id; an unknown page is =invalid-params=. =lrgeditorctl call preferences.open page=keybindings=.
+
+Named widgets for tests and automation: =preferences=, =prefs-tabs=, =prefs-grid:PAGE=, =theme-gallery=, =theme-load=, =prefs-reset-all=, =prefs-edit-yaml=, =keymap=, =keymap-filter=, =keymap-conflicts=, =keymap-reset-all=, =kb-row:ID=, =kb-chip:ID:N=, =kb-remove:ID:N=, =kb-add:ID=, =kb-reset:ID=.
+
+** Command palette and Quick Open
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-palette
+:END:
+The command palette (Ctrl+Shift+P or F1, action =tools.palette=) and quick open (Ctrl+P, =tools.quick-open=) are one widget, =LrgEditorPalette= (=src/editor/ui/lrg-editor-palette.{h,c}=): a popup that springs down (=LRG_APPEAR_FLY_DOWN=) centred under the menu bar, with a query field and up to twelve ranked rows. It is not modal: a click outside or Escape closes it. While it shows, =LrgEditorViewState:palette-open= is true, which =ui.state= reports as ="palette": true=. The editor makes one palette per app when its code panel is created and keeps it as object data =lrg-editor-palette= on the app.
+
+#+begin_example
++------------------------------------------------------------------+
+| (search) select a|                                                |
+|------------------------------------------------------------------|
+|| > Edit: Select All                                   [Ctrl+A]   |
+|  > Edit: Deselect                                 [Ctrl+Shift+A] |
+|  > Node: Save as Prefab...                                       |
+| 3 commands   @ jumps to a node   Enter run   Esc close           |
++------------------------------------------------------------------+
+#+end_example
+
+| Mode | Lists | Row | Enter |
+|------+-------+-----+-------|
+| Commands (=LRG_EDITOR_PALETTE_MODE_COMMANDS=) | Every action, ranked by =lrg_editor_actions_search()= (fuzzy over "Category: Label" and the id) | "Category: Label" with the matched letters in the accent colour, the first shortcut as a chip on the right; actions that cannot run now are greyed | Closes the palette, then runs the action. A disabled action does not run; the palette stays and the status bar says why |
+| Nodes (a query starting with =@=) | The level's nodes whose name fuzzy-matches the rest of the query | The name, then the parent path | Selects the node and frames it (=lrg_editor_view_state_focus_selection()=) |
+| Files (=LRG_EDITOR_PALETTE_MODE_FILES=) | The project's files (=lrg_editor_fuzzy_score()= over the relative path; a match in the file name ranks above a match in folder names) | The relative path with matches lit | Levels and prefabs open in the editor (asking about unsaved changes); textures, audio, models and fonts with the desktop's application; everything else (scripts, YAML, text) where =script-editor= says, i.e. the code editor when it is =internal= |
+
+Keys: typing filters at once; Up / Down move the highlight (wrapping), Page Up / Page Down by a page, the mouse wheel scrolls, a click runs a row, Enter runs the highlighted one. The footer counts the matches and repeats the keys.
+
+*Project scan.* Each time quick open opens it scans the project folder (the open project, else the level's folder) on a worker thread (=GTask=): hidden entries (=.git=, =.cache=...), =build/=, =node_modules/=, =trees/=, =.meta= sidecars and backup files (=~=) are skipped, symbolic links are not followed, and the walk stops at =LRG_EDITOR_PALETTE_FILE_LIMIT= (20000) files. The previous list stays usable while the new one is built (the row area says "Scanning the project..." when there is none yet); a newer scan cancels an older one. Only the visible rows are painted, so 20000 files cost one fuzzy pass per keystroke.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-palette-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_palette_present (self, mode, query)= | Show (or switch) with an optional starting query |
+| =lrg_editor_palette_dismiss= / =get_open= / =get_mode= | |
+| =lrg_editor_palette_get_query= / =set_query= | The query (setting it re-ranks) |
+| =lrg_editor_palette_get_n_results= / =get_result (i)= | Results best first: action id, relative path or node GUID |
+| =lrg_editor_palette_get_selected= / =set_selected= / =activate= | The highlight and Enter |
+| =lrg_editor_palette_get_scanning= / =get_n_files= | The quick-open scan |
+
+IPC: =palette.open= ={mode?: "commands" | "files", query?}= shows the palette and returns ={open results scanning}= (=open= is false while a dialog is up: the palette never opens over one). Opening any dialog closes the palette.
+
+** Code editor
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-code
+:END:
+The Code panel (=LrgEditorCodePanel=, =src/editor/ui/lrg-editor-code-panel.{h,c}=, dock id =code=, a tab of the bottom area) is a built-in editor for scripts and data files: an =LrgTabView= with one =LrgTextEditor= per open file (line numbers, current-line highlight, auto indent, undo, find, bracket matching), coloured with the =LrgSyntax= that =lrg_syntax_get_for_filename()= picks (Lua, Python, JavaScript, C, Emacs Lisp, YAML, Markdown, INI and the other registered languages). A toolbar row holds Save, Reload, Close and Go to Line and a status line "Ln 12, Col 4 · lua · scripts/door.lua (modified)". With no file open, a hint takes the tab view's place.
+
+*Where files open.* =LrgEditorSettings:script-editor= (Preferences > External Editor > Scripts open in) decides: =internal= opens scripts here; =external= (the default) and =emacs= keep the external editor and Emacs flows. =lrg_editor_code_panel_open_script (app, path, line)= applies the setting; it is what Node > Open Scripts in Editor (=node.open-scripts=, Ctrl+E, re-registered by the panel), the New Script dialog, quick open and Edit editor.yaml use. The =code.open= action and IPC method always open here.
+
+| Feature | Behaviour |
+|---------+-----------|
+| Dirty marks | A tab whose text differs from the file shows a dot after its title (undoing back to the saved text clears it) |
+| Save | The File > Save shortcut (Ctrl+S by default, or whatever =file.save= and =code.save= are bound to) saves the focused tab while keyboard focus is inside the panel; anywhere else it still saves the level. The key reaches the text editor first and bubbles up to the panel, which handles it before the canvas shortcuts. =code.save-all= saves every dirty tab |
+| Close | Ctrl+W in the panel, the toolbar or =code.close-tab=. A dirty tab asks "Save changes?" (Save / Don't Save / Cancel; =ui.state= dialog ="confirm"=) |
+| Go to line | Ctrl+G in the panel, the toolbar or =code.goto-line=: a small dialog (="goto-line"=); also =code.open= with a line |
+| Reload on external change | Each tab has a =GFileMonitor=. A changed file is compared with the text last read or written (so our own saves are ignored): a clean tab reloads silently keeping the caret; a dirty one asks "File changed on disk" (="code-reload"=): *Reload* takes the disk version, *Keep Mine* keeps the tab (and does not ask again for that change). =lrg_editor_code_panel_check_disk()= runs the same check on demand |
+| Text only | Files that are not UTF-8 text, contain NUL bytes or exceed 8 MiB are refused with an error |
+
+*** Actions and IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-code-ipc
+:END:
+Registry actions (category Code, no default shortcuts; bind them in Preferences): =code.save=, =code.save-all=, =code.close-tab=, =code.reload=, =code.goto-line=. The panel also inserts a GIO action group =code= on the canvas with parameterised actions: =code.open= (string target ="PATH"= or ="PATH:LINE"=), =code.goto-line= (int32), =code.save=, =code.save-all=, =code.close=, =code.reload= (e.g. =lrg_widget_activate_action (canvas, "code.open", g_variant_new_string ("scripts/door.lua:12"))=, or a menu item ="code.open::scripts/door.lua"=).
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =code.open= | =path= (absolute or project relative), =line= (optional, 1-based) | the tab ={path tab active dirty line column lines language}=; a missing file is =not-found=, a binary or unreadable one =failed= |
+| =code.list= | | the open tabs in tab order |
+| =code.save= | =path= (optional; default the active tab) | the tab; =not-found= when that file is not open |
+
+=lrgeditorctl code open PATH[:LINE]=, =code list= and =code save [PATH]= wrap them; the MCP tools are =code_open=, =code_list= and =code_save=.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-code-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_code_panel_open (self, path, line, error)= | Open or switch to a file (caret on =line=) |
+| =lrg_editor_code_panel_save= / =save_all= / =close (self, path, force)= | |
+| =lrg_editor_code_panel_goto_line= | Caret to a 1-based line of the active tab |
+| =lrg_editor_code_panel_check_disk= | Compare open files with the disk now |
+| =lrg_editor_code_panel_get_n_files= / =get_path= / =get_active_path= / =get_editor= / =is_dirty= | Inspect the tabs |
+| =lrg_editor_code_panel_open_script (app, path, line)= | Open where =script-editor= says |
+
+** Dialogs
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-dialogs
+:END:
+=src/editor/ui/lrg-editor-dialogs.c= holds the editor's dialogs; each reports the 0.8.0 id in =ui.state= ="dialog"=, closes on Escape, and keeps the editor's shortcuts off while it shows.
+
+| Dialog (id) | Opened by | Contents |
+|-------------+-----------+----------|
+| Unsaved changes (=confirm=) | closing, opening or reloading with unsaved changes | Save / Don't Save / Cancel |
+| File (=file=) | Open Level, Save As, Open Project, Import Scene, Save as Prefab, Instantiate Prefab | =LrgFileDialog= with the matching filter |
+| New Project (=new-project=) | File > New Project | Name and folder; refuses while the open level has unsaved changes |
+| New Script (=new-script=) | Node > Attach Script | Name (Enter creates) and language: Lua, Python, JavaScript (GJS), C (crispy), Emacs Lisp; the template comes from the language; the script is attached to the node the dialog was opened for and opens where =script-editor= says |
+| Recover Autosave (=recover=) | opening a level with a newer autosave | Restore (loads it, keeps the level's path, marks it modified), Discard Autosave (to the trash), Later |
+| About (=about=) | Help > About | Version, description, copyright, AGPL-3.0-or-later, the IPC socket; Documentation, Source code and License buttons |
+| Keyboard Shortcuts (=shortcuts=) | Help > Keyboard Shortcuts (Ctrl+/) | The live, searchable shortcut table and the viewport mouse gestures; Edit Keybindings... opens Preferences on Keybindings |
+| Project Settings (=project-settings=) | File > Project Settings | Editable: name, default level (with Use current), game module, run command (={project} {level} {module}=), scripts folder and the asset folder list (Remove per folder, an Add field); Save writes =project.ryaml= through the =LrgProject= setters and =lrg_project_save()= |
+| Preferences (=preferences=) | Edit > Preferences | See [[#editor-panel-preferences][Preferences]] |
+| Save changes? (=confirm=), File changed on disk (=code-reload=), Go to Line (=goto-line=) | the code editor | See [[#editor-panel-code][Code editor]] |
+
+*** Testing
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-dialogs-testing
+:END:
+=tests/test-editor-app-dialogs.c= drives all of this headless through the canvas and the IPC: a theme card click re-themes the canvas (a preset and a shipped theme file), a settings row applies live and =editor.yaml= is saved on close; "+" on the Keybindings page captures Ctrl+J (a lone Ctrl keeps waiting) and the new shortcut toggles visibility after the dialog closes, a conflict is reported, Reset and the remove button work; Reset All keeps the layout; the palette runs "select all" picked by fuzzy search, "@camera" selects the camera, a disabled action does not run, arrows wrap; quick open waits for the scan, skips hidden folders, opens a level and (with =script-editor= internal) a script in the code panel; the project settings form saves =project.ryaml=; New Script creates, attaches and opens a Python script; the shortcut table filters by key name, follows rebinding and leads to the Keybindings page; About; the code panel opens with syntax and caret, marks dirty, saves with the panel-scoped Ctrl+S without saving the level, reloads a clean tab changed on disk, asks for a dirty one, asks before closing a dirty tab and opens through the =code.open= GIO action; =code.open= / =code.list= / =code.save= over IPC with their errors, and =node.open-scripts= routed by =script-editor=.

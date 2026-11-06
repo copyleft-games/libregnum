@@ -1821,6 +1821,15 @@ on_history_changed (LrgEditor *editor,
 	LRG_EDITOR_HISTORY_PANEL (user_data)->dirty = TRUE;
 }
 
+/* ::level-replaced carries the new level before user_data */
+static void
+on_history_level_replaced (LrgEditor *editor,
+                           LrgLevel  *level,
+                           gpointer   user_data)
+{
+	LRG_EDITOR_HISTORY_PANEL (user_data)->dirty = TRUE;
+}
+
 static void
 on_history_selection (LrgListView *list,
                       gpointer     user_data)
@@ -1941,7 +1950,7 @@ lrg_editor_history_panel_new (LrgEditorApp *app)
 	g_set_weak_pointer (&self->app, app);
 	self->editor = g_object_ref (lrg_editor_app_get_editor (app));
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_history_changed), self);
-	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_history_changed), self);
+	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_history_level_replaced), self);
 	history_rebuild (self);
 	return self;
 }

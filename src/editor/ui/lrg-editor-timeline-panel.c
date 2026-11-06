@@ -1038,6 +1038,15 @@ on_editor_changed (LrgEditor *editor,
 	LRG_EDITOR_TIMELINE_PANEL (user_data)->dirty = TRUE;
 }
 
+/* ::level-replaced carries the new level before user_data */
+static void
+on_level_replaced_dirty (LrgEditor *editor,
+                         LrgLevel  *level,
+                         gpointer   user_data)
+{
+	LRG_EDITOR_TIMELINE_PANEL (user_data)->dirty = TRUE;
+}
+
 static void
 lrg_editor_timeline_panel_get_property (GObject    *object,
                                         guint       prop_id,
@@ -1335,7 +1344,7 @@ lrg_editor_timeline_panel_new (LrgEditorApp *app)
 	self->editor = g_object_ref (lrg_editor_app_get_editor (app));
 	self->view_state = g_object_ref (lrg_editor_app_get_view_state (app));
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_editor_changed), self);
-	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_editor_changed), self);
+	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_level_replaced_dirty), self);
 
 	actions = lrg_editor_app_get_actions (app);
 	lrg_editor_actions_add (actions, "timeline.rename", "Rename Timeline", "Animation", NULL, a_timeline_rename,

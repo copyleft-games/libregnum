@@ -32,6 +32,7 @@
 #include "lrg-editor-app.h"
 #include "lrg-editor-window.h"
 #include "lrg-editor-viewport-panel.h"
+#include "lrg-editor-viewport-split.h"
 #include "lrg-editor-scene-renderer.h"
 #include "lrg-editor-legacy-input.h"
 #include "../lrg-editor.h"
@@ -125,7 +126,8 @@ struct _LrgEditorApp
 	gchar                *applied_theme;  /* theme value the theme was built from */
 	gdouble               applied_scale;
 	GHashTable           *panels;         /* id -> LrgDockPanel* (owned refs, docked or not) */
-	LrgEditorViewportPanel *viewport_panel;
+	LrgEditorViewportPanel *viewport_panel;   /* viewport 0 of the split */
+	LrgEditorViewportSplit *viewport_split;
 	gpointer              legacy;         /* EditorLegacyInput (lrg-editor-legacy-input.c) */
 
 	/* Frame state */

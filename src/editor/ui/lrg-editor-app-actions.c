@@ -1782,7 +1782,14 @@ m_ui_state (LrgEditorServer  *server,
 		GEnumValue *mode = g_enum_get_value (modes, lrg_editor_view_state_get_render_mode (self->view, (gint) i));
 
 		json_object_set_int_member (vp, "index", i);
-		json_object_set_array_member (vp, "rect", i == 0 ? rect_array (x, y, w, h) : rect_array (0, 0, 0, 0));
+		{
+			gfloat vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f;
+
+			/* Each viewport of the split; hidden ones report zeros */
+			editor_viewport_panel_get_rect (lrg_editor_viewport_split_get_panel (self->viewport_split, i),
+			                                &vx, &vy, &vw, &vh);
+			json_object_set_array_member (vp, "rect", rect_array (vx, vy, vw, vh));
+		}
 		json_object_set_string_member (vp, "render_mode", mode != NULL ? mode->value_nick : "lit");
 		json_object_set_boolean_member (vp, "mode_2d", lrg_editor_view_state_get_camera (self->view, (gint) i)->view_2d);
 		json_array_add_object_element (viewports, vp);

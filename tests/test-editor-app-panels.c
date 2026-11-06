@@ -77,6 +77,18 @@ find (EditorAppFixture *f,
 	return w;
 }
 
+/* A named widget inside @root (the docked copy of a panel shares names) */
+static LrgWidget *
+in_panel (LrgWidget   *root,
+          const gchar *name)
+{
+	LrgWidget *w = lrg_widget_find (root, name);
+
+	if (w == NULL)
+		g_error ("no widget named %s", name);
+	return w;
+}
+
 /* Creates a node over IPC and returns its GUID (owned). */
 static gchar *
 create_node (EditorAppFixture *f,
@@ -292,7 +304,8 @@ test_history_jump (EditorAppFixture *f,
 	g_assert_cmpstr (lrg_editor_history_panel_get_row_label (history, 0), ==, "0. (initial state)");
 
 	/* Click the first step: two steps are undone (and stay listed) */
-	list = LRG_LIST_VIEW (find (f, "history-list"));
+	list = LRG_LIST_VIEW (lrg_widget_find (LRG_WIDGET (history), "history-list"));
+	g_assert_nonnull (list);
 	g_assert_true (lrg_list_view_get_row_rect (list, 1, &x, &y, &w, &h));
 	efx_click (f, x + w * 0.5f, y + h * 0.5f);
 	g_assert_cmpuint (lrg_editor_get_undo_count (editor), ==, 1);
@@ -334,20 +347,20 @@ test_problems_select (EditorAppFixture *f,
 
 	problems = LRG_EDITOR_PROBLEMS_PANEL (dock_extra (f, "problems-p5",
 	                                                  LRG_WIDGET (lrg_editor_problems_panel_new (f->app))));
-	efx_click_widget (f, find (f, "problems-validate"));
+	efx_click_widget (f, in_panel (LRG_WIDGET (problems), "problems-validate"));
 	g_assert_cmpuint (lrg_editor_problems_panel_get_n_rows (problems), ==, 0);
-	g_assert_true (lrg_widget_get_visible (find (f, "problems-none")));
+	g_assert_true (lrg_widget_get_visible (in_panel (LRG_WIDGET (problems), "problems-none")));
 
 	/* A name with a slash is a problem; Validate Now lists it */
 	bad = create_node (f, "{'name':'left/right'}");
 	lrg_editor_selection_clear (lrg_editor_get_selection (editor));
-	efx_click_widget (f, find (f, "problems-validate"));
+	efx_click_widget (f, in_panel (LRG_WIDGET (problems), "problems-validate"));
 	n = lrg_editor_problems_panel_get_n_rows (problems);
 	g_assert_cmpuint (n, >=, 1);
-	g_assert_false (lrg_widget_get_visible (find (f, "problems-none")));
+	g_assert_false (lrg_widget_get_visible (in_panel (LRG_WIDGET (problems), "problems-none")));
 
 	/* Clicking the row selects the node (the level had no other problem) */
-	list = LRG_LIST_VIEW (find (f, "problems-list"));
+	list = LRG_LIST_VIEW (in_panel (LRG_WIDGET (problems), "problems-list"));
 	row = 0;
 	g_assert_true (lrg_list_view_get_row_rect (list, (guint) row, &x, &y, &w, &h));
 	efx_click (f, x + w * 0.5f, y + h * 0.5f);
@@ -419,8 +432,9 @@ test_profiler_sample (EditorAppFixture *f,
 	g_free (frames);
 	frames = lrg_editor_profiler_panel_get_frames (prof, &n);
 	g_assert_cmpuint (n, ==, 0);
+	/* The shell reports its own phases (ui.update, ui.input) */
 	efx_frame (f);
-	g_assert_cmpuint (lrg_editor_profiler_panel_get_n_sections (prof), ==, 0);
+	g_assert_cmpuint (lrg_editor_profiler_panel_get_n_sections (prof), >=, 2);
 
 	/* Hidden and idle: the panel turns the profiler off again */
 	present (f, "assets");
