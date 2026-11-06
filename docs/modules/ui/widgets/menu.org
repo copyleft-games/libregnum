@@ -1,0 +1,265 @@
+* Menu Widget
+:PROPERTIES:
+:CUSTOM_ID: menu-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: menu-overview
+:END:
+=LrgMenu= is a popup menu: a floating surface with rows of commands, built from a =GMenuModel= (=GMenu=), the GLib-standard description of menus that GTK and GApplication also use. It opens on the canvas popup layer, anchored to a widget (a button, a menu bar title) or at a point (a context menu), with a soft shadow, the theme's popup radius and the canvas's appear / ghost-close animations.
+
+What it does:
+- Rows come from the model: items (label, GIO action and target, accelerator, icon), sections (fenced by separators, optionally with a muted header), and submenus (nested =LrgMenu= popups beside their item).
+- Choosing an item closes the whole menu chain, runs the item's action through =lrg_widget_activate_action()= on the widget the menu was opened for (its /owner/), and emits =activated= with the action name.
+- Rows reflect their action live: a boolean-state action draws a check mark, a string-state action draws a radio dot on the item whose target matches, and items whose action is missing or disabled are greyed out and skipped by the keyboard.
+- The highlight is one rounded shape that glides from row to row on springs (Raven-style sliding highlight) and fades in and out.
+- Submenus open after the pointer rests on their item for a short delay (=submenu-delay=, 0.2 s), or at once with Right / Enter. A /safe triangle/ keeps the submenu open while the pointer travels diagonally towards it across other rows.
+- Full keyboard support: Up / Down (wrapping, skipping separators, headers and disabled rows), Right / Left open and close submenus, Enter / Space activate, Escape closes one level, and type-ahead by first letter (or mnemonic).
+- Right-to-left layouts mirror everything: submenus open to the left, chevrons point left, labels and accelerators swap sides, and Left becomes the "open submenu" key.
+
+All timing (hover delay, the safe-triangle grace period, type-ahead reset, the highlight glide) runs in the widget's =step()= on the canvas clock, so tests drive it deterministically with =lrg_canvas_update()=.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: menu-creation
+:END:
+#+begin_src c
+g_autoptr(GMenu)     model = g_menu_new ();
+g_autoptr(GMenu)     edit = g_menu_new ();
+g_autoptr(GMenu)     view = g_menu_new ();
+g_autoptr(GMenuItem) undo = g_menu_item_new ("_Undo", "doc.undo");
+g_autoptr(LrgMenu)   menu = NULL;
+
+/* Items carry an action, an optional target, an accel and an icon */
+g_menu_item_set_attribute (undo, "accel", "s", "<Ctrl>z");
+g_menu_item_set_attribute (undo, "icon", "s", "refresh");
+g_menu_append_item (edit, undo);
+g_menu_append (edit, "_Redo", "doc.redo");
+g_menu_append_section (model, NULL, G_MENU_MODEL (edit));
+
+/* A labelled section: a separator, a muted header, then its items */
+g_menu_append (view, "Show _grid", "doc.grid");          /* boolean state: check mark */
+g_menu_append (view, "Light", "doc.theme::light");        /* string state: radio */
+g_menu_append (view, "Dark", "doc.theme::dark");
+g_menu_append_section (model, "View", G_MENU_MODEL (view));
+
+menu = lrg_menu_new_from_model (G_MENU_MODEL (model));
+#+end_src
+
+The menu resolves =doc.undo= from its owner up through the owner's ancestors to the canvas (see [[file:../actions.org][actions]]), so insert the action group on the canvas or on a container around the owner:
+
+#+begin_src c
+lrg_widget_insert_action_group (LRG_WIDGET (canvas), "doc", G_ACTION_GROUP (doc_actions));
+#+end_src
+
+** Model attributes
+:PROPERTIES:
+:CUSTOM_ID: menu-model-attributes
+:END:
+| Attribute / link | Type | Meaning |
+|------------------+------+---------|
+| =label= | =s= | Row text. =_x= marks the mnemonic =x=, =__= is a literal underscore. |
+| =action= | =s= | Action name, "prefix.name". =g_menu_item_new()= splits detailed names ("doc.theme::dark") into action and target. |
+| =target= | any | Parameter passed to the action; for string-state actions, the radio value. |
+| =accel= | =s= | Accelerator ("<Ctrl><Shift>s"), shown right-aligned as =lrg_accel_to_label()= formats it. Display only: register the shortcut itself with =lrg_canvas_add_shortcut()=. Without this attribute the row shows the shortcut bound to its action and target on the canvas (=lrg_canvas_get_accel_for_action()=), so usually you only register the shortcut. |
+| =icon= | =s= | An =LrgIcon= nick ("folder", "gear", "trash"), drawn in the leading gutter when the row has no check or radio mark. |
+| section link | model | Separator before and after, plus a header row when the section has a label. Empty sections add nothing; separators are never leading, trailing or doubled. |
+| submenu link | model | The row opens a nested menu; a chevron is drawn at its trailing edge. |
+
+An item is enabled when its action is found and enabled (GTK's rule: an item whose action cannot be found is insensitive). Submenu rows are always enabled. Separators and headers are never highlighted.
+
+The menu follows =items-changed= on its top-level model and rebuilds its rows (closing an open submenu). Edits inside a section or submenu model are picked up at the next rebuild; edit through the top-level model, or call =lrg_menu_set_model()= again.
+
+** Opening and closing
+:PROPERTIES:
+:CUSTOM_ID: menu-opening
+:END:
+| Function | Use |
+|----------+-----|
+| =lrg_menu_popup_at_widget (menu, widget, placement)= | Open next to a widget (=LRG_POPUP_PLACEMENT_BELOW=, =ABOVE=, =LEFT=, =RIGHT=); flips when it does not fit. The widget becomes the owner and gets =LRG_WIDGET_STATE_OPEN=. |
+| =lrg_menu_popup_at_point (menu, owner, x, y)= | Context menu with its corner at a canvas point; flips horizontally and vertically near the edges. |
+| =lrg_menu_popup_at_rect (menu, owner, x, y, w, h, placement)= | Open next to an arbitrary rectangle in canvas coordinates (a menu bar title, a cell of a custom widget). |
+| =lrg_menu_close (menu)= | Close the menu and its submenus; they fade out as ghosts. |
+
+Opening gives the menu keyboard focus. Re-opening an open menu moves it. Closing (by any path: item chosen, Escape, click outside, code) emits =closed= and returns focus to the owner when it is focusable. A click outside the menu stack closes it (the click still reaches what is underneath).
+
+Below / above placements align the menu's leading edge with the anchor: its left edge, or its right edge in right-to-left layouts.
+
+** Context menus
+:PROPERTIES:
+:CUSTOM_ID: menu-context
+:END:
+A context menu is a menu opened at the pointer from a secondary-button press. =LrgWidget= has no generic event signal, so hook the press in the widget's own =handle_event= (or in a subclass / =LrgCustomWidget= event handler). =MOUSE_BUTTON_DOWN= with button 1 is the right button.
+
+Every mouse button captures the pointer: after the right press, moves and the right release go to the widget the press went down on, not to the menu under the pointer. Forward them with =lrg_menu_forward_pointer_event()= at the top of the handler, so press-drag-release picks a row in one gesture:
+
+#+begin_src c
+static gboolean
+my_item_handle_event (LrgWidget        *widget,
+                      const LrgUIEvent *event)
+{
+	MyItem *self = MY_ITEM (widget);
+
+	/* Captured moves / releases while the menu is open belong to it */
+	if (lrg_menu_get_open (self->context_menu) &&
+	    lrg_menu_forward_pointer_event (self->context_menu, event))
+		return TRUE;
+
+	if (lrg_ui_event_get_event_type (event) == LRG_UI_EVENT_MOUSE_BUTTON_DOWN &&
+	    lrg_ui_event_get_button (event) == 1)
+	{
+		LrgWidget *canvas = lrg_widget_get_root (widget);
+
+		/* Canvas coordinates: world minus the canvas origin */
+		lrg_menu_popup_at_point (self->context_menu, widget,
+		                         lrg_ui_event_get_x (event) - lrg_widget_get_world_x (canvas),
+		                         lrg_ui_event_get_y (event) - lrg_widget_get_world_y (canvas));
+		return TRUE;
+	}
+	return MY_ITEM_CLASS (my_item_parent_class)->handle_event (widget, event);
+}
+#+end_src
+
+The release of the press that opened the menu does not activate anything: a release only activates once the pointer has moved inside the menu or a button was pressed in it. Dragging onto a row and releasing (either button) picks that row. =LrgMenuBar= forwards the same way for its titles.
+
+** Pointer, keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: menu-input
+:END:
+| Input | Effect |
+|-------+--------|
+| Pointer over a row | Highlight glides to it. Over a separator, header, disabled row or the padding the highlight fades out (an open submenu's item stays lit). |
+| Pointer rests on a submenu row | Its submenu opens after =submenu-delay=. Resting on another row closes an open submenu after the same delay. |
+| Pointer heading into an open submenu | Rows crossed inside the safe triangle (from the last pointer position to the submenu's near edge) do not take the highlight; if the pointer stops on one, it takes over after 1.5 × =submenu-delay=. |
+| Pointer enters a submenu | Keyboard focus follows it. |
+| Click / release on an item | Close the chain, run the action, emit =activated=. On a submenu row: open it at once. |
+| Up / Down | Previous / next enabled row, wrapping, skipping separators and headers. |
+| Home / End | First / last enabled row. |
+| Right (Left in RTL) | On a submenu row: open it, focus it, highlight its first row. Otherwise: emit =move-out= (a menu bar switches to the next title). |
+| Left (Right in RTL) | In a submenu: close it, focus back on the parent. In a top-level menu: emit =move-out=. |
+| Enter / Space / gamepad A | Activate the highlighted row (opens a submenu row). |
+| Escape / gamepad B | Close this level only; focus returns to the parent menu (or the owner). |
+| Typing a letter | Highlight the next row whose mnemonic (or first letter) matches, cycling through repeats; letters typed within a second extend the prefix and match whole labels. |
+| Tab | Swallowed: focus stays in the menu. |
+| Mouse wheel | Swallowed. |
+
+Mnemonic underlines are drawn while the menu is driven by the keyboard (opened with keys, or after a key press).
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: menu-properties
+:END:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =model= | =GMenuModel= | read/write | The menu description |
+| =open= | boolean | read | Whether the menu is showing |
+| =highlighted= | =gint= (default -1) | read/write | Highlighted row; rows that cannot be highlighted clear it |
+| =submenu-delay= | =gfloat= (default 0.2) | read/write | Seconds to rest on a submenu row before it opens; submenus inherit it |
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: menu-signals
+:END:
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =activated= | =const gchar *action= | On the top-level menu, after an item was chosen, the chain closed and the action ran |
+| =closed= | none | The menu left the screen, by any path |
+| =move-out= | =gint direction= (-1 Left, 1 Right) | On the top-level menu: Left / Right with no submenu to open or close |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: menu-parts
+:END:
+| Part | Default look | Notes |
+|------+--------------+-------|
+| =popup= | =POPUP= fill, =BORDER= hairline, =POPUP_RADIUS=, =SHADOW= with =SHADOW_BLUR= / =SHADOW_OFFSET_Y= | The menu surface |
+| =item= | =CONTROL_HOVER= fill, =CORNER_RADIUS=, =TEXT= foreground | The gliding highlight is the =hovered= look; the =disabled= look's foreground (=DISABLED=) greys disabled rows; =pressed= → =CONTROL_PRESSED= |
+| =label= | =TEXT_MUTED= foreground | Accelerator text (=disabled= → =DISABLED=) |
+| =header= | =TEXT_MUTED=, size =FONT_SIZE_SMALL= | Section headers |
+| =mark= | =ACCENT= foreground | Check marks and radio dots |
+| =arrow= | =TEXT_MUTED= foreground | Submenu chevrons (the open submenu's chevron uses the row text colour) |
+| =track= | =BORDER= background | Separator lines |
+| =focus= | no ring | The highlight shows keyboard position |
+
+Submenus copy their parent's style classes when they are created, so a rule aimed at a class reaches the whole chain.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: menu-theming
+:END:
+#+begin_src yaml
+styles:
+  # Accent highlight with a soft glow
+  - widget: LrgMenu
+    part: item
+    state: hovered
+    background: "#7c6cff55"
+    glow: "#7c6cff40"
+    glow-size: 6
+  # Rounder, deeper menu surface
+  - widget: LrgMenu
+    part: popup
+    radius: 14
+    shadow-blur: 30
+  # Pink check marks
+  - widget: LrgMenu
+    part: mark
+    foreground: "#f5c2e7"
+#+end_src
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: menu-yaml
+:END:
+Supported by =LrgUILoader= as =LrgMenu= (the integration pass documents the model syntax). Its settings are real properties (=model=, =submenu-delay=).
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: menu-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_menu_new ()= | Empty menu |
+| =lrg_menu_new_from_model (model)= | Menu showing a =GMenuModel= |
+| =lrg_menu_get_model (self)= / =lrg_menu_set_model (self, model)= | The description |
+| =lrg_menu_popup_at_widget (self, widget, placement)= | Open next to a widget |
+| =lrg_menu_popup_at_point (self, owner, x, y)= | Open as a context menu at a canvas point |
+| =lrg_menu_popup_at_rect (self, owner, x, y, w, h, placement)= | Open next to a rectangle |
+| =lrg_menu_close (self)= | Close it and its submenus |
+| =lrg_menu_get_open (self)= | Whether it is showing |
+| =lrg_menu_get_owner (self)= | The widget actions resolve from (a submenu reports its top-level menu's owner) |
+| =lrg_menu_get_parent_menu (self)= | The menu a submenu was opened from |
+| =lrg_menu_get_open_submenu (self)= | The submenu open from this menu |
+| =lrg_menu_get_n_entries (self)= | Number of rows (separators and headers included) |
+| =lrg_menu_get_entry_kind (self, index)= | =LrgMenuEntryKind= of a row |
+| =lrg_menu_get_entry_label (self, index)= | Row label without mnemonic markers |
+| =lrg_menu_get_entry_action (self, index)= | Row action name |
+| =lrg_menu_get_entry_enabled (self, index)= | Whether the row can be highlighted and activated |
+| =lrg_menu_get_entry_rect (self, index, &x, &y, &w, &h)= | Row rectangle in world coordinates |
+| =lrg_menu_get_highlighted (self)= / =lrg_menu_set_highlighted (self, index)= | The highlighted row |
+| =lrg_menu_activate_entry (self, index)= | Do what clicking the row does |
+| =lrg_menu_get_submenu_delay (self)= / =lrg_menu_set_submenu_delay (self, delay)= | Hover delay for submenus |
+| =lrg_menu_forward_pointer_event (self, event)= | Deliver a captured move / release to the open menu chain under the pointer |
+| =lrg_menu_split_mnemonic (text, &mnemonic)= | Strip "_" markers; returns the display text and the mnemonic's byte offset |
+| =lrg_menu_entry_kind_get_type ()= | =GType= of =LrgMenuEntryKind= (=LRG_MENU_ENTRY_ITEM=, =LRG_MENU_ENTRY_SUBMENU=, =LRG_MENU_ENTRY_SEPARATOR=, =LRG_MENU_ENTRY_HEADER=) |
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: menu-pitfalls
+:END:
+- An item without an action, or whose action is not reachable from the owner, is disabled. Insert the action group on the canvas or on an ancestor of the owner before opening the menu.
+- The =accel= attribute only labels the row; register the shortcut with =lrg_canvas_add_shortcut()= so it works while the menu is closed (and then the attribute is unnecessary).
+- A widget that opens a menu from a press holds the pointer capture until release; without =lrg_menu_forward_pointer_event()= the drag-release gesture does not reach the menu.
+- A stateful boolean action used as a check item must have no parameter type; =GSimpleAction= then toggles it on activation by itself.
+- Context menus need the owner on a canvas; =lrg_menu_popup_at_point()= takes canvas coordinates, not world coordinates (they differ when the canvas is not at the origin).
+- Hover delays and the highlight glide only advance when the canvas is updated; a paused game loop that stops calling =lrg_canvas_update()= freezes them.
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: menu-related
+:END:
+- [[file:menu-bar.org][Menu bar]]: a row of menus built from one model.
+- [[file:combo-box.org][Combo box]]: picking one value from a list.
+- [[file:canvas.org][Canvas]]: the popup layer, focus and shortcuts.
+- [[file:../actions.org][Actions and shortcuts]]

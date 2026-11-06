@@ -1,0 +1,179 @@
+* Menu Bar Widget
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-overview
+:END:
+=LrgMenuBar= is the classic application menu bar: a horizontal strip of titles ("File", "Edit", "View"), each opening an [[file:menu.org][LrgMenu]] below it. It is built from one =GMenuModel=: every top-level item with a submenu link is a title; a top-level item with only an action is a plain bar button that runs its action when clicked.
+
+What it does:
+- A rounded pill glides between titles on a bouncy spring, following the pointer, the keyboard cursor or the open menu, and deepens while its menu is open.
+- Click a title to open its menu; click it again to close it. While a menu is open, hovering another title switches to it at once.
+- Press a title, drag onto a row and release to pick it in one gesture (the bar forwards the captured pointer to the open menus).
+- Left / Right inside an open menu move to the neighbouring title (wrapping), opening its menu with the first row highlighted.
+- Keyboard navigation of the bar itself (the job of F10 / Alt in desktop applications) with =lrg_menu_bar_focus_titles()=; mnemonic underlines show while it is keyboard driven, and typing a title's mnemonic opens it.
+- Right-to-left layouts place the first title at the right edge, align menus to the right edge of their title and swap the meaning of Left / Right.
+
+The bar is the owner of its menus, so their actions resolve from the bar up through its ancestors to the canvas.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-creation
+:END:
+#+begin_src c
+g_autoptr(GMenu)      bar_model = g_menu_new ();
+g_autoptr(GMenu)      file = g_menu_new ();
+g_autoptr(GMenu)      view = g_menu_new ();
+g_autoptr(LrgMenuBar) bar = NULL;
+
+g_menu_append (file, "_New", "app.new");
+g_menu_append (file, "_Quit", "app.quit");
+g_menu_append (view, "Show _grid", "app.grid");
+
+g_menu_append_submenu (bar_model, "_File", G_MENU_MODEL (file));
+g_menu_append_submenu (bar_model, "_View", G_MENU_MODEL (view));
+g_menu_append (bar_model, "_Run", "app.run");   /* a plain bar button */
+
+bar = lrg_menu_bar_new_from_model (G_MENU_MODEL (bar_model));
+lrg_container_add_child (LRG_CONTAINER (top_column), LRG_WIDGET (bar));
+#+end_src
+
+Its preferred height is the theme's =CONTROL_HEIGHT= and its preferred width the sum of its titles; give it the full width of the window with fill weight or an explicit size. Sections in the bar model are flattened (no separators in a bar).
+
+** F10 and Alt
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-f10
+:END:
+The canvas delivers keys to the focused widget, so a bar sees F10 only while it has focus (F10 then toggles keyboard navigation). To make F10 work from anywhere, route it through an action and a canvas shortcut:
+
+#+begin_src c
+static void
+on_focus_menu_bar (GSimpleAction *action,
+                   GVariant      *parameter,
+                   gpointer       user_data)
+{
+	lrg_menu_bar_focus_titles (LRG_MENU_BAR (user_data));
+}
+
+g_autoptr(GSimpleAction) focus_bar = g_simple_action_new ("focus-menu-bar", NULL);
+
+g_signal_connect (focus_bar, "activate", G_CALLBACK (on_focus_menu_bar), bar);
+g_action_map_add_action (G_ACTION_MAP (app_actions), G_ACTION (focus_bar));
+lrg_canvas_add_shortcut (canvas, "F10", "app.focus-menu-bar", NULL);
+#+end_src
+
+Alt+letter mnemonics work the same way: register one shortcut per title (for example ="<Alt>f"=) whose action calls =lrg_menu_bar_open_menu (bar, index, TRUE)=. While the bar has focus, typing the letter alone opens the title.
+
+** Pointer, keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-input
+:END:
+| Where | Input | Effect |
+|-------+-------+--------|
+| Bar | Pointer over a title | Pill glides to it |
+| Bar, menu open | Pointer over another title | Switch to that title's menu |
+| Bar | Click a title | Open its menu; click it again to close; a plain bar button runs its action |
+| Bar | Press, drag onto a row, release | Pick that row |
+| Bar focused | Left / Right | Move the keyboard cursor (wrapping; mirrored in RTL) |
+| Bar focused | Down / Up / Enter / Space / gamepad A | Open the highlighted title with its first row highlighted |
+| Bar focused | A letter | Open the title whose mnemonic (or first letter) matches |
+| Bar focused | F10 | Toggle keyboard navigation |
+| Bar focused | Escape / gamepad B | Leave keyboard navigation |
+| Open menu | Left / Right (no submenu to open or close) | Previous / next title's menu, wrapping |
+| Open menu | Escape | Close it; focus returns to the bar with the title still highlighted |
+
+Everything else inside an open menu behaves as described in [[file:menu.org::#menu-input][menu input]].
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-properties
+:END:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =model= | =GMenuModel= | read/write | The bar description |
+| =open-index= | =gint= (default -1) | read | Title whose menu is open |
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-signals
+:END:
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =activated= | =const gchar *action= | An item of one of the bar's menus, or a plain bar button, was chosen and its action ran |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-parts
+:END:
+| Part | Default look | Notes |
+|------+--------------+-------|
+| =box= | =PANEL= fill | The bar surface |
+| =track= | =BORDER= background, size =BORDER_WIDTH= | Hairline along the bottom edge (size 0 hides it) |
+| =item= | =CONTROL_HOVER= fill, =CORNER_RADIUS= | The gliding pill; =open= / =pressed= → =CONTROL_PRESSED= |
+| =label= | =TEXT= foreground | Titles; =disabled= → =DISABLED= (plain buttons with a disabled action) |
+| =focus= | no ring | The pill shows the keyboard cursor |
+
+The bar's menus are ordinary =LrgMenu= widgets (style them with =widget: LrgMenu=); they copy the bar's style classes when created and open with the =fly-down= appear animation.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-theming
+:END:
+#+begin_src yaml
+styles:
+  # Glassy bar with an accent pill
+  - widget: LrgMenuBar
+    part: box
+    material: glass
+  - widget: LrgMenuBar
+    part: item
+    state: open
+    background: "#7c6cff"
+  - widget: LrgMenuBar
+    part: track
+    size: 0
+#+end_src
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-yaml
+:END:
+Supported by =LrgUILoader= as =LrgMenuBar= (the integration pass documents the model syntax). Its setting is the =model= property.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_menu_bar_new ()= | Empty bar |
+| =lrg_menu_bar_new_from_model (model)= | Bar showing a =GMenuModel= |
+| =lrg_menu_bar_get_model (self)= / =lrg_menu_bar_set_model (self, model)= | The description |
+| =lrg_menu_bar_get_n_titles (self)= | Number of titles |
+| =lrg_menu_bar_get_title (self, index)= | Title text without mnemonic markers |
+| =lrg_menu_bar_get_title_rect (self, index, &x, &y, &w, &h)= | Title rectangle in world coordinates |
+| =lrg_menu_bar_get_menu (self, index)= | The title's =LrgMenu= (created on first use; =NULL= for a plain button) |
+| =lrg_menu_bar_open_menu (self, index, keyboard)= | Open a title's menu (or run a plain button) |
+| =lrg_menu_bar_close (self)= | Close the open menu |
+| =lrg_menu_bar_get_open_index (self)= | Title whose menu is open, or -1 |
+| =lrg_menu_bar_get_highlighted (self)= | Title under the pointer or keyboard cursor, or -1 |
+| =lrg_menu_bar_focus_titles (self)= | Start keyboard navigation (F10) |
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-pitfalls
+:END:
+- The bar must be on a canvas to open menus.
+- Replacing or editing the bar model closes the open menu and drops the cached menus (their =LrgMenu= pointers become invalid).
+- Plain bar buttons are greyed out when their action cannot be found from the bar.
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: menu-bar-related
+:END:
+- [[file:menu.org][Menu]]
+- [[file:../actions.org][Actions and shortcuts]]
+- [[file:canvas.org][Canvas]]
