@@ -182,6 +182,7 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-size-box.h \
 	src/ui/lrg-text-editor.h \
 	src/ui/lrg-syntax.h \
+	src/ui/lrg-node-graph.h \
 	src/ui/lrg-ui-actions.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
@@ -873,6 +874,7 @@ SOURCES := \
 	src/ui/lrg-size-box.c \
 	src/ui/lrg-text-editor.c \
 	src/ui/lrg-syntax.c \
+	src/ui/lrg-node-graph.c \
 	src/ui/lrg-ui-actions.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \

@@ -1,0 +1,362 @@
+* Node Graph
+:PROPERTIES:
+:CUSTOM_ID: node-graph
+:END:
+=LrgNodeGraph= is a node editor on an infinite canvas: cards with typed input and output ports, joined by glowing Bezier wires. It is built for shader graphs, dialogue trees, behaviour trees and visual scripting, and handles hundreds of nodes and a thousand links smoothly because it only paints what intersects the view.
+
+The model is three small GObjects declared in =lrg-node-graph.h=:
+- =LrgGraphNode=: an id, a title, a position in /graph units/, a category or explicit accent colour (the header), input and output ports, and an optional body widget (a slider, a preview, any =LrgWidget=).
+- =LrgGraphPort=: an input (left edge) or output (right edge) with a name, a type (a =GQuark= used for compatibility and colour, =0= / =NULL= for "any") and a multi-link flag.
+- =LrgGraphLink=: a wire from an output port to an input port of another node.
+
+The graph owns its nodes (in stacking order, the last on top) and its links (in creation order); nodes own their ports. Every getter returns a borrowed pointer.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: node-graph-creation
+:END:
+#+begin_src C
+LrgNodeGraph *graph = lrg_node_graph_new ();
+LrgGraphNode *tex;
+LrgGraphNode *mul;
+LrgGraphNode *out;
+
+tex = lrg_node_graph_add_node (graph, "tex", "Texture", 0.0f, 0.0f);
+lrg_graph_node_set_category (tex, "texture");
+lrg_graph_node_add_port (tex, LRG_GRAPH_PORT_INPUT, "uv", "vec2");
+lrg_graph_node_add_port (tex, LRG_GRAPH_PORT_OUTPUT, "color", "vec4");
+
+mul = lrg_node_graph_add_node (graph, "mul", "Multiply", 280.0f, -40.0f);
+lrg_graph_node_set_category (mul, "math");
+lrg_graph_node_add_port (mul, LRG_GRAPH_PORT_INPUT, "a", "vec4");
+lrg_graph_node_add_port (mul, LRG_GRAPH_PORT_INPUT, "b", "float");
+lrg_graph_node_add_port (mul, LRG_GRAPH_PORT_OUTPUT, "out", "vec4");
+
+out = lrg_node_graph_add_node (graph, "out", "Output", 560.0f, 40.0f);
+lrg_graph_node_add_port (out, LRG_GRAPH_PORT_INPUT, "albedo", "vec4");
+
+lrg_node_graph_connect_by_name (graph, "tex", "color", "mul", "a", NULL);
+lrg_node_graph_connect_by_name (graph, "mul", "out", "out", "albedo", NULL);
+
+lrg_node_graph_set_show_minimap (graph, TRUE);
+lrg_node_graph_set_animate_links (graph, TRUE);
+lrg_node_graph_frame_all (graph, FALSE);
+#+end_src
+
+A node can also be built first and added later: =lrg_graph_node_new (id, title)=, ports with =lrg_graph_node_add_port()=, then =lrg_node_graph_append_node()= (the graph takes a reference). A =NULL= id gets an automatic ="node-N"=; a duplicate id is refused with a warning.
+
+** Coordinates and the view
+:PROPERTIES:
+:CUSTOM_ID: node-graph-view
+:END:
+Nodes live in graph units. The view maps them to canvas units (the coordinates of UI events and paint lists):
+
+#+begin_example
+screen = widget_centre + (graph - centre) * zoom
+#+end_example
+
+=center-x= / =center-y= is the graph point shown in the middle of the widget, =zoom= the scale (clamped to =min-zoom= .. =max-zoom=, 0.2 .. 2.5 by default). Convert with =lrg_node_graph_graph_to_screen()= and =lrg_node_graph_screen_to_graph()=; both use the /displayed/ view.
+
+Zoom and centre are springs (=LRG_MOTION_SMOOTH=, or none when the widget's motion is =NONE=):
+- =lrg_node_graph_set_view (graph, cx, cy, zoom, animate)= moves the three independently.
+- =lrg_node_graph_zoom_at (graph, x, y, zoom, animate)= is /anchored/: only the zoom glides and the centre is recomputed every frame so the graph point under (=x=, =y=) stays exactly under it for the whole glide. The mouse wheel uses it about the pointer.
+- =lrg_node_graph_frame_all()= (Home) and =lrg_node_graph_frame_selection()= (F) fit the nodes with a 48-unit margin, zooming in at most to 1.
+- =lrg_node_graph_pan_by()= scrolls like a drag; a running glide continues relative to the content.
+- =lrg_node_graph_set_zoom()= zooms about the widget centre without animation.
+
+=lrg_node_graph_get_zoom()= and =lrg_node_graph_get_center()= return the targets (what the properties report and notify); =lrg_node_graph_get_displayed_zoom()= returns the spring value currently painted. The first frame after the widget appears snaps every spring, so a new screen never animates in.
+
+** Cards
+:PROPERTIES:
+:CUSTOM_ID: node-graph-cards
+:END:
+A card is a rounded SDF rectangle: a 28-unit header with a left-to-right gradient of the node's accent (explicit =lrg_graph_node_set_accent()=, else a stable palette colour picked from the category, else the theme accent), the title in whichever of the header foreground, =TEXT=, black or white contrasts with it, then one 22-unit row per port pair (inputs on the left, outputs on the right, labels inset), then the body slot. The width fits the title, the widest input label beside the widest output label and the body's preferred width, never below =min-width= (140). Geometry is measured from the theme fonts and cached until the title, ports, body or font size change; read it with =lrg_node_graph_get_node_bounds()= and =lrg_node_graph_get_port_position()=.
+
+Each card has two springs: /lift/ deepens and spreads its shadow (0.35 when selected, 1 while dragged), /selection/ fades in the accent outline. The keyboard cursor card gets the theme focus ring when focus is visible.
+
+Port dots are filled when linked and rings when free; the hovered port grows and glows. Port colours come from =lrg_graph_port_get_color()=: an explicit colour, else a palette colour keyed by the type name (darkened on light themes so wires keep their contrast), or the theme accent for "any".
+
+Below a zoom of 0.4 text is not drawn (cards, headers and ports still are), and below 0.45 body widgets are hidden.
+
+** Wires
+:PROPERTIES:
+:CUSTOM_ID: node-graph-wires
+:END:
+A link is one =lrg_paint_list_curve()= instance: a cubic Bezier with horizontal tangents (longer for distant or backwards ports), a gradient from the output port's colour to the input port's colour and a soft glow. The glow strengthens on hover, when either node is selected, and most when the link itself is selected. With =animate-links= three pulses travel from output to input; they move with the paint list time, so they cost no relayout and =lrg_canvas_update()= does not report them as animation.
+
+** Connection rules
+:PROPERTIES:
+:CUSTOM_ID: node-graph-connect
+:END:
+=lrg_node_graph_connect (graph, output, input, &error)= checks, in order:
+1. structure: an output and an input of two /different/ nodes of this graph (=LRG_NODE_GRAPH_ERROR_INVALID_PORTS=);
+2. no identical link yet (=LRG_NODE_GRAPH_ERROR_EXISTS=);
+3. the =can-connect= signal (=LRG_NODE_GRAPH_ERROR_INCOMPATIBLE=).
+Then a port that does not accept several links (inputs by default, see =lrg_graph_port_set_multi_link()=) loses its old link (=link-removed=) and the new one is added (=link-added=). =lrg_node_graph_can_connect()= runs checks 1 and 3 without connecting.
+
+=can-connect= is a boolean signal whose first handler decides; without one the default allows equal types or "any" on either side. Override it for conversions:
+
+#+begin_src C
+static gboolean
+on_can_connect (LrgNodeGraph *graph,
+                LrgGraphPort *output,
+                LrgGraphPort *input,
+                gpointer      user_data)
+{
+	GQuark from = lrg_graph_port_get_port_type (output);
+	GQuark to = lrg_graph_port_get_port_type (input);
+
+	/* floats promote to vectors; otherwise types must match */
+	if (from == g_quark_from_static_string ("float"))
+		return TRUE;
+	return from == 0 || to == 0 || from == to;
+}
+
+g_signal_connect (graph, "can-connect", G_CALLBACK (on_can_connect), NULL);
+#+end_src
+
+The handler is also asked once per candidate port when a wire drag starts (to highlight compatible ports), so keep it cheap.
+
+** Pointer and touch
+:PROPERTIES:
+:CUSTOM_ID: node-graph-pointer
+:END:
+| Input                                   | Action |
+|-----------------------------------------+--------|
+| Wheel                                   | Zoom about the pointer (x1.15 per notch), anchored glide |
+| Horizontal wheel                        | Pan |
+| Middle drag, or Space + left drag       | Pan (the pointer is captured, so the drag continues outside the widget) |
+| Left press on a port                    | Pull a wire out of it |
+| Left press on a connected input         | Detach its (last) link and pull it from the output end: re-route or drop it |
+| Release a wire within 26 units of a compatible port | Connect (the wire snaps to it while in reach) |
+| Release a wire on empty canvas          | =link-dropped (port, x, y)= in graph units (spawn-node menus) |
+| Left press on a card                    | Select it (unless already selected), raise it, arm a move |
+| Drag a card                             | Move every selected card; =node-moved= per card on release |
+| Plain click on a selected card          | Select only it |
+| Shift + click                           | Add to the selection |
+| Ctrl + click                            | Toggle the card in the selection |
+| Double click on a card                  | =node-activated= |
+| Left press on a wire                    | Select the link |
+| Left drag on empty canvas               | Rubber band: selects every card it touches (live); Shift / Ctrl add to the previous selection |
+| Click in the minimap                    | Centre the view there (drag to scrub) |
+| Touch drag on empty canvas              | Pan (=PAN= events) |
+| Touch drag on a card                    | Replayed as a mouse drag: moves it |
+| Pinch                                   | Zoom about the pinch centre (=ZOOM= events) |
+While a wire is dragged, ports it may land on grow and glow and the rest fade to 30 %. Right clicks are not consumed, so an application can open context menus.
+
+=lrg_node_graph_node_at()=, =lrg_node_graph_port_at()= (9 canvas units around a dot) and =lrg_node_graph_link_at()= (6 units around a wire) expose the same hit testing, in canvas coordinates. Port hits respect stacking: a port under a card above it is not found.
+
+** Keyboard
+:PROPERTIES:
+:CUSTOM_ID: node-graph-keyboard
+:END:
+The graph is focusable (a click on it focuses it). Keys typed into a body widget stay with that widget. Only the keys below are consumed (with no Shift / Alt, and Ctrl only for Ctrl+A / Ctrl+D); other combinations fall through to canvas shortcuts. The graph handles its own direction (=lrg_widget_class_set_handles_direction=): graph coordinates are never mirrored in RTL layouts.
+| Key               | Action |
+|-------------------+--------|
+| Arrows            | Move the cursor to the nearest card in that direction (selects it, scrolls it into view); consumed even at the edge |
+| Enter / gamepad A | =node-activated= for the cursor card |
+| Delete, Backspace | =lrg_node_graph_delete_selection()= |
+| Ctrl+A            | Select all |
+| Ctrl+D            | =lrg_node_graph_duplicate_selection()= |
+| F                 | Frame the selection (everything when nothing is selected) |
+| Home              | Frame all |
+| Space             | Arms Space + drag panning (not an activation) |
+| Escape            | Cancels a drag in progress (a live wire, a move, a rubber band) |
+
+** Selection, deletion, duplication
+:PROPERTIES:
+:CUSTOM_ID: node-graph-selection
+:END:
+=lrg_node_graph_select_node (graph, node, extend)=, =lrg_node_graph_unselect_node()=, =lrg_node_graph_select_all()=, =lrg_node_graph_unselect_all()=, =lrg_node_graph_get_selected_nodes()= (stacking order), =lrg_node_graph_get_n_selected()=, =lrg_graph_node_get_selected()=. One link can be selected instead (=lrg_node_graph_select_link()=, =lrg_node_graph_get_selected_link()=). =selection-changed= fires once per change. =lrg_node_graph_get_cursor_node()= is the keyboard cursor.
+
+=lrg_node_graph_duplicate_selection()= copies the selected cards (title, category, accent, min-width, ports with their types, flags and colours) two grid cells down-right with ids ="<id>-copy"= (then ="-copy-2"= ...), copies the links between copied cards, and selects the copies. Bodies are not copied: =node-duplicated (original, copy)= lets the application build one.
+
+** Body widgets
+:PROPERTIES:
+:CUSTOM_ID: node-graph-body
+:END:
+#+begin_src C
+LrgSlider *speed = lrg_slider_new_with_range (0.0, 4.0, 0.1);
+
+lrg_widget_set_min_size (LRG_WIDGET (speed), 120.0f, 24.0f);
+lrg_graph_node_set_body (time_node, LRG_WIDGET (speed));
+#+end_src
+The body becomes a child of the graph (=LrgNodeGraph= is an =LrgContainer=) while its node is in it. It is allocated over the card's body slot at the card's /on-screen/ size, so the canvas hit-tests it and sends it events like any widget (its text keeps its size; only the slot scales). Culled cards and every card below a zoom of 0.45 give their body an empty rectangle, so it is neither painted nor reachable. The card grows to the body's preferred size, which is re-read on every layout.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: node-graph-properties
+:END:
+| Property        | Type               | Default | Meaning |
+|-----------------+--------------------+---------+---------|
+| =zoom=          | =gfloat=           | 1       | Target zoom; setting it zooms about the centre |
+| =center-x=      | =gfloat=           | 0       | Graph x at the widget centre (target) |
+| =center-y=      | =gfloat=           | 0       | Graph y at the widget centre (target) |
+| =min-zoom=      | =gfloat=           | 0.2     | Smallest zoom |
+| =max-zoom=      | =gfloat=           | 2.5     | Largest zoom |
+| =grid-size=     | =gfloat=           | 24      | Grid cell in graph units; snap step |
+| =grid-style=    | =LrgNodeGraphGrid= | =lines= | =none=, =dots= or =lines= |
+| =snap-to-grid=  | =gboolean=         | =FALSE= | Dragged cards land on the grid (the grabbed card snaps, the others keep their offsets) |
+| =show-minimap=  | =gboolean=         | =FALSE= | Overview in the bottom-right corner (180 x 120) |
+| =animate-links= | =gboolean=         | =FALSE= | Pulses flow along wires |
+
+=LrgGraphNode= properties: =id= (construct-only), =title=, =category=, =accent= (=GrlColor=, nullable), =x=, =y=, =min-width=, =body=, =selected= (read-only). =LrgGraphPort=: =name=, =direction=, =type-name= (construct-only), =multi-link=, =color= (nullable). =LrgGraphLink=: =output=, =input= (read-only).
+
+| Signal              | Arguments                         | Emitted |
+|---------------------+-----------------------------------+---------|
+| =node-added=        | =LrgGraphNode *node=              | After a node was added (also duplicates and loads) |
+| =node-removed=      | =LrgGraphNode *node=              | After a node and its links were removed |
+| =node-moved=        | =LrgGraphNode *node=              | =lrg_graph_node_set_position()=, and once per card when a drag ends |
+| =node-activated=    | =LrgGraphNode *node=              | Double click, Enter on the cursor card |
+| =node-duplicated=   | =LrgGraphNode *original, *copy=   | Per copy made by Ctrl+D |
+| =link-added=        | =LrgGraphLink *link=              | After a link was made |
+| =link-removed=      | =LrgGraphLink *link=              | After a link was removed (still valid during the emission) |
+| =link-dropped=      | =LrgGraphPort *port, gfloat x, y= | A wire dropped on empty canvas (graph units) |
+| =can-connect=       | =LrgGraphPort *output, *input= -> =gboolean= | Asked before every link; first handler wins |
+| =selection-changed= | none                              | Node or link selection changed |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: node-graph-parts
+:END:
+Looks are resolved once per paint and shared by every card, so a theme rule or =lrg_widget_set_part_look()= restyles all of them.
+| Part        | State      | Built-in look |
+|-------------+------------+---------------|
+| =box=       | resting    | Canvas: =WINDOW= / =PANEL= mix, =BORDER= outline, =CORNER_RADIUS= |
+| =box=       | =disabled= | 45 % opacity (every part) |
+| =item=      | resting    | Card: =SURFACE=, =BORDER= outline, radius 1.25 x =CORNER_RADIUS= (min 6), =SHADOW= with =SHADOW_BLUR= / =SHADOW_OFFSET_Y= |
+| =item=      | =selected= | Border =ACCENT= 2 wide: the selection outline |
+| =header=    | resting    | Background =ACCENT= (accent of cards without category / accent), foreground =TEXT_ON_ACCENT= (title) |
+| =label=     | resting    | Port labels in =TEXT_MUTED= |
+| =mark=      | resting    | Port dots: =size= 10, ring (free ports) =SURFACE= 2 wide |
+| =track=     | resting    | Grid: background minor lines / dots (=BORDER= 35 %), foreground major (=BORDER= 75 %) |
+| =fill=      | resting    | Wires: =size= 2.5 thickness, glow =ACCENT= 40 % 5 wide, foreground for the minimap view rectangle |
+| =indicator= | resting    | Rubber band: =ACCENT= 12 % fill, =ACCENT= border |
+| =popup=     | resting    | Minimap panel: =POPUP= 92 %, =BORDER=, =POPUP_RADIUS=, shadow |
+| =focus=     | focus visible | Core focus ring; also drawn around the cursor card |
+
+#+begin_src yaml
+styles:
+  - widget: LrgNodeGraph
+    part: item
+    background: "#1b1b22"
+    radius: 10
+  - widget: LrgNodeGraph
+    part: fill
+    size: 3.5
+#+end_src
+
+** Serialization
+:PROPERTIES:
+:CUSTOM_ID: node-graph-yaml
+:END:
+=lrg_node_graph_to_yaml (graph, &length, &error)= writes the view, the nodes and the links with yaml-glib; =lrg_node_graph_load_yaml (graph, data, length, &error)= replaces the graph's content with such a document:
+
+#+begin_src yaml
+version: 1
+view: { center-x: 280.0, center-y: 40.0, zoom: 0.8 }
+nodes:
+  - id: tex
+    title: Texture
+    x: 0.0
+    y: 0.0
+    category: texture
+    ports:
+      - { name: uv, direction: input, type: vec2 }
+      - { name: color, direction: output, type: vec4 }
+  - id: out
+    title: Output
+    x: 560.0
+    y: 40.0
+    accent: "#f38ba8ff"
+    ports:
+      - { name: albedo, direction: input, type: vec4, multi-link: true }
+links:
+  - { from: tex, output: color, to: out, input: albedo }
+#+end_src
+Optional node keys: =title=, =category=, =accent= (=#rrggbb= or =#rrggbbaa=), =min-width=; port keys: =type= (absent for "any"), =multi-link= (written only when it differs from the default), =color=. Body widgets are not saved.
+
+Loading validates the whole document first (scalar types, unique node ids, unique port names per direction, link ends naming existing ports of two different nodes) and fails with =LRG_NODE_GRAPH_ERROR_PARSE= without touching the graph. Links are then restored with =lrg_node_graph_connect()=, so the application's =can-connect= still applies: a refused link stops the load with that error, keeping the nodes and the links restored before it. Saving a loaded graph reproduces the document.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: node-graph-performance
+:END:
+- Cards (with a 32-unit margin for shadows and port dots) and wires (by their control polygon's box) outside the view are skipped; =lrg_node_graph_get_paint_stats()= reports how many were painted last time.
+- A card costs about ten instances plus one per glyph; a wire is one instance. Below a zoom of 0.4 glyphs are dropped.
+- Grid lines are one instance each; dots are skipped when more than 4000 would be needed, and both levels fade out before they get dense.
+- Hit tests reject cards and wires by bounding boxes before exact tests, so pointer motion over 500 nodes and 1000 links stays cheap.
+- Node geometry is cached; text is measured only when a title, port or font size changes.
+
+** YAML (UI loader)
+:PROPERTIES:
+:CUSTOM_ID: node-graph-loader
+:END:
+Supported by =LrgUILoader= as =LrgNodeGraph=; every setting above is a GObject property. Nodes are model objects rather than child widgets: create them from code, or load a graph document with =lrg_node_graph_load_yaml()=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: node-graph-pitfalls
+:END:
+- Event coordinates and every =*_at()= function are in canvas units; node positions, port positions, =link-dropped= and the YAML document are in graph units. Convert with =lrg_node_graph_screen_to_graph()=.
+- Raising a card (pressing it) also moves its body to the front of the graph's children, so bodies hit-test in card order. A body of a lower card can still sit over the /card/ (not the body) of a higher one and take that click.
+- =node-moved= is not emitted on every pointer motion during a drag (watch =notify::x= / =notify::y= for that).
+- Removing a node from a =node-removed= or =link-removed= handler is allowed; the graph re-checks its state after each emission.
+- =lrg_node_graph_load_yaml()= clears the graph first: existing bodies are dropped with their nodes.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: node-graph-api
+:END:
+Enums and errors:
+- =LrgGraphPortDirection= (=lrg_graph_port_direction_get_type=), =LrgNodeGraphGrid= (=lrg_node_graph_grid_get_type=)
+- =LrgNodeGraphError=, =LRG_NODE_GRAPH_ERROR=, =lrg_node_graph_error_quark=
+
+=LrgGraphPort=:
+- =lrg_graph_port_get_name=, =lrg_graph_port_get_direction=, =lrg_graph_port_get_port_type=, =lrg_graph_port_get_type_name=, =lrg_graph_port_get_node=
+- =lrg_graph_port_get_multi_link= / =lrg_graph_port_set_multi_link=
+- =lrg_graph_port_get_color= / =lrg_graph_port_set_color=, =lrg_graph_port_get_n_links=
+
+=LrgGraphNode=:
+- =lrg_graph_node_new (id, title)=, =lrg_graph_node_get_id=, =lrg_graph_node_get_graph=, =lrg_graph_node_get_selected=
+- =lrg_graph_node_get_title= / =lrg_graph_node_set_title=, =lrg_graph_node_get_category= / =lrg_graph_node_set_category=, =lrg_graph_node_get_accent= / =lrg_graph_node_set_accent=
+- =lrg_graph_node_get_x=, =lrg_graph_node_get_y=, =lrg_graph_node_set_position=, =lrg_graph_node_get_min_width= / =lrg_graph_node_set_min_width=
+- =lrg_graph_node_get_body= / =lrg_graph_node_set_body=
+- =lrg_graph_node_add_port (node, direction, name, type_name)=, =lrg_graph_node_remove_port=, =lrg_graph_node_get_n_ports=, =lrg_graph_node_get_port=, =lrg_graph_node_find_port=
+
+=LrgGraphLink=:
+- =lrg_graph_link_get_output=, =lrg_graph_link_get_input=
+
+=LrgNodeGraph= model:
+- =lrg_node_graph_new=, =lrg_node_graph_add_node (graph, id, title, x, y)=, =lrg_node_graph_append_node=, =lrg_node_graph_remove_node=, =lrg_node_graph_clear=
+- =lrg_node_graph_get_n_nodes=, =lrg_node_graph_get_nth_node=, =lrg_node_graph_get_node (graph, id)=, =lrg_node_graph_get_nodes=
+- =lrg_node_graph_can_connect=, =lrg_node_graph_connect=, =lrg_node_graph_connect_by_name=, =lrg_node_graph_disconnect=, =lrg_node_graph_disconnect_port=
+- =lrg_node_graph_get_n_links=, =lrg_node_graph_get_nth_link=, =lrg_node_graph_get_links=, =lrg_node_graph_get_port_links=, =lrg_node_graph_find_link=
+
+Selection:
+- =lrg_node_graph_select_node=, =lrg_node_graph_unselect_node=, =lrg_node_graph_select_all=, =lrg_node_graph_unselect_all=
+- =lrg_node_graph_get_selected_nodes=, =lrg_node_graph_get_n_selected=, =lrg_node_graph_get_selected_link=, =lrg_node_graph_select_link=, =lrg_node_graph_get_cursor_node=
+- =lrg_node_graph_delete_selection=, =lrg_node_graph_duplicate_selection=
+
+View:
+- =lrg_node_graph_get_zoom= / =lrg_node_graph_set_zoom=, =lrg_node_graph_get_displayed_zoom=, =lrg_node_graph_get_center=, =lrg_node_graph_set_view=, =lrg_node_graph_zoom_at=, =lrg_node_graph_pan_by=
+- =lrg_node_graph_frame_all=, =lrg_node_graph_frame_selection=, =lrg_node_graph_graph_to_screen=, =lrg_node_graph_screen_to_graph=
+
+Geometry and hit testing:
+- =lrg_node_graph_get_node_bounds=, =lrg_node_graph_get_port_position=, =lrg_node_graph_node_at=, =lrg_node_graph_port_at=, =lrg_node_graph_link_at=, =lrg_node_graph_get_paint_stats=
+
+Settings:
+- =lrg_node_graph_get_min_zoom=, =lrg_node_graph_get_max_zoom=, =lrg_node_graph_set_zoom_range=
+- =lrg_node_graph_get_grid_size= / =lrg_node_graph_set_grid_size=, =lrg_node_graph_get_grid_style= / =lrg_node_graph_set_grid_style=, =lrg_node_graph_get_snap_to_grid= / =lrg_node_graph_set_snap_to_grid=
+- =lrg_node_graph_get_show_minimap= / =lrg_node_graph_set_show_minimap=, =lrg_node_graph_get_animate_links= / =lrg_node_graph_set_animate_links=
+
+Serialization:
+- =lrg_node_graph_to_yaml=, =lrg_node_graph_load_yaml=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: node-graph-related
+:END:
+- [[file:canvas.org][Canvas]] (input, focus, popups for spawn-node menus)
+- [[file:../../paint/index.org][Paint]] (=lrg_paint_list_curve()=)
+- [[file:viewport.org][Viewport]]

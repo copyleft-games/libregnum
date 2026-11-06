@@ -91,6 +91,7 @@ TEST_SOURCES := \
 	test-ui-loader.c \
 	test-ui-inspector.c \
 	test-ui-motion.c \
+	test-ui-node-graph.c \
 	test-ui-text-editor.c \
 	test-ui-actions.c \
 	test-ui-layout-helpers.c \
