@@ -310,6 +310,66 @@ A press outside a non-modal popup closes it ("light dismiss"), and the press sti
 
 The popup then lingers as a *ghost* for its closing animation: it is painted (no longer hit-tested or focusable) while a snappy spring runs from 1 to 0, scaled from 100 % to 92 % around the anchor's centre (or its own centre without an anchor) and faded out, with a modal veil fading too. When the spring falls below 0.01 the canvas drops its references and unparents the widget. A dismissed popup should not be shown again until its ghost is gone (its parent is still set during the fade, and =show_popup= requires a parentless popup); create a new popup or wait a few frames.
 
+** Touch input and gestures
+:PROPERTIES:
+:CUSTOM_ID: input-touch
+:END:
+The canvas turns raw touch points into the same events mice and keyboards produce, plus three gesture events. Touch points arrive in the input frame:
+
+- =lrg_canvas_input_add_touch (input, id, x, y)= adds one finger (canvas coordinates, up to =LRG_CANVAS_INPUT_MAX_TOUCHES= = 10) to a frame you build yourself;
+- =lrg_canvas_input_set_poll_touch (TRUE)= makes =lrg_canvas_input_poll()= read raylib's touch points (=GetTouchPointCount= / =GetTouchPosition= / =GetTouchPointId=) through the pointer transform. It is off by default because desktop raylib reports the mouse as touch point 0 while a button is held, which would turn every click into a gesture. Turn it on for touch screens (Android, tablets, kiosks). =lrg_canvas_input_get_poll_touch()= reads it back.
+
+*** The recogniser
+:PROPERTIES:
+:CUSTOM_ID: input-touch-recogniser
+:END:
+=process_input= runs a small state machine whenever a frame carries touches (or a gesture is still in progress):
+
+| Gesture | Rule | Delivered as |
+|---------+------+--------------|
+| Tap | finger lifts within 10 units (the slop) of where it went down, before 0.5 s | left =MOUSE_BUTTON_DOWN= + =UP= at the touch point, so buttons click |
+| Long press | finger held still for 0.5 s | right click at the touch point (context menus) |
+| Pan | finger moves past the slop | =PAN= events offered to the widget under the start point, then its ancestors; the first one returning =TRUE= claims the drag |
+| Unclaimed drag | no widget claimed the first =PAN= | replayed as a left mouse drag (sliders, splitters and text selection work unchanged) |
+| Pan end | claimed finger lifts | =PAN_END= to the claimer with the smoothed release velocity |
+| Pinch | a second finger goes down | =ZOOM= events (bubbling) at the centre between the fingers |
+
+The tap and mouse-replay paths reuse the normal pointer pipeline, so hover, capture, focus-visible and activation flashes behave as for a mouse.
+
+*** Gesture events
+:PROPERTIES:
+:CUSTOM_ID: input-touch-events
+:END:
+| Type | Constructor | Accessors |
+|------+-------------+-----------|
+| =LRG_UI_EVENT_PAN= | =lrg_ui_event_new_pan (x, y, dx, dy)= | =lrg_ui_event_get_delta_x()=, =lrg_ui_event_get_delta_y()=: movement since the previous PAN |
+| =LRG_UI_EVENT_PAN_END= | =lrg_ui_event_new_pan_end (x, y, vx, vy)= | =lrg_ui_event_get_velocity_x()=, =lrg_ui_event_get_velocity_y()=: canvas units per second at release |
+| =LRG_UI_EVENT_ZOOM= | =lrg_ui_event_new_zoom (x, y, scale)= | =lrg_ui_event_get_scale()=: finger distance ratio since the previous ZOOM (1 = no change) |
+
+Claim a pan only when it is for you. =LrgScrollBox=, =LrgListView=, =LrgTable=, =LrgTreeView= and =LrgTileView= claim it when their axis can scroll and the drag runs mostly along that axis, so a horizontal swipe inside a vertical list still reaches a horizontal scroller around it. While panning they follow the finger exactly (with a half-speed rubber band past the ends), and on =PAN_END= they flick: the offset coasts on the release velocity for about 0.35 s and springs back if it overshot.
+
+#+begin_src C
+static gboolean
+my_map_handle_event (LrgWidget        *widget,
+                     const LrgUIEvent *event)
+{
+	MyMap *self = MY_MAP (widget);
+
+	switch (lrg_ui_event_get_event_type (event))
+	{
+	case LRG_UI_EVENT_PAN:
+		self->offset_x += lrg_ui_event_get_delta_x (event);
+		self->offset_y += lrg_ui_event_get_delta_y (event);
+		return TRUE;   /* claim the drag */
+	case LRG_UI_EVENT_ZOOM:
+		self->zoom *= lrg_ui_event_get_scale (event);
+		return TRUE;
+	default:
+		return LRG_WIDGET_CLASS (my_map_parent_class)->handle_event (widget, event);
+	}
+}
+#+end_src
+
 ** Driving the canvas yourself: replays and tests
 :PROPERTIES:
 :CUSTOM_ID: input-testing
@@ -449,6 +509,7 @@ If you skip input for a frame (a cutscene), still call =lrg_canvas_update (canva
 :PROPERTIES:
 :CUSTOM_ID: input-pitfalls
 :END:
+- *Touch polling on desktop*: leave =lrg_canvas_input_set_poll_touch()= off unless the device really has a touch screen; desktop raylib reports a held mouse button as touch point 0.
 - *Handle arrows you use.* A widget that consumes arrow keys (sliders, spin boxes, text cursors) must return =TRUE= for them, otherwise focus moves away as well.
 - *Do not rely on hover for focus.* =FOCUS_IN= / =FOCUS_OUT= are keyboard focus only.
 - *Containers must not re-dispatch bubbling events* to children in custom =handle_event= implementations; check =lrg_ui_event_get_bubbling()= and chain up.

@@ -86,6 +86,7 @@ Related:
 | =LrgImage= | [[file:widgets/image.org][image]] | display |
 | =LrgSeparator= | [[file:widgets/separator.org][separator]] | display |
 | =LrgToast= / =LrgToastQueue= | [[file:widgets/toast.org][toast]] | notification layer |
+| =LrgIsland= | [[file:widgets/island.org][island]] | morphing compact/expanded panel |
 | =LrgGrid= | [[file:layout.org::#layout-grid][grid layout]] | layout container |
 
 ** Quick start

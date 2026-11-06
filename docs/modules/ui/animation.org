@@ -158,6 +158,19 @@ show_main_menu (LrgWidget *menu)
 
 Showing the menu container replays the container's own appear; children with appear animations replay only when they themselves are shown or told to play, hence the loop. Keep total cascades under ~0.4 s; longer feels sluggish on repeated visits.
 
+** Layout glide
+:PROPERTIES:
+:CUSTOM_ID: animation-layout-glide
+:END:
+=lrg_widget_set_animate_layout (widget, TRUE)= makes a widget /glide/ to a new position instead of jumping when its parent re-lays it out (a list item reordered, a wrap box reflowing, a sibling expanding above it). The widget keeps a spring per axis on its painted position:
+
+- the first allocation places it directly (nothing glides in from the origin);
+- each later allocation retargets the springs to the new position, keeping their velocity, so an interrupted glide stays smooth;
+- =lrg_widget_paint()= translates the widget's paint group by (glide - actual), so the pixels lag behind while *layout and hit-testing use the final position* (as with appear transitions);
+- the springs use the widget's motion (=LRG_MOTION_NONE= or reduced motion snaps).
+
+Only the position glides, not the size. =lrg_widget_get_animate_layout()= reads the flag; it is off by default because most layouts should be still.
+
 ** Popups: open and close
 :PROPERTIES:
 :CUSTOM_ID: animation-popups
@@ -192,6 +205,12 @@ The override is per widget, not inherited by children; scope a different motion 
 =lrg_motion_set_reduced (TRUE)= (or =lrg_motion_follow_accessibility (settings)=) makes every spring jump to its target and drops appear delays: looks switch instantly between states, appear animations show the final state on the first frame, popups open and close without transitions. Nothing else changes: state, focus rings, colours and layout are identical, so a reduced-motion UI is fully functional. The =high-contrast= theme uses =motion: none=, which has the same effect for its widgets' springs (appear animations still run with a smooth spring there unless reduced motion is on).
 
 For debugging, =lrg_motion_set_speed (0.1f)= slows all UI motion tenfold.
+
+** Island: a morphing panel
+:PROPERTIES:
+:CUSTOM_ID: animation-island
+:END:
+[[file:widgets/island.org][=LrgIsland=]] is the showcase of the spring model: one pill morphs between a compact and an expanded child, with width, height and corner radius on springs and a sequential cross-fade between the two children. See its page for details.
 
 ** Performance
 :PROPERTIES:
