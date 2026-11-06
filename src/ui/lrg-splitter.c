@@ -18,7 +18,7 @@
  * every frame); drags and plain changes snap.
  *
  * The handle is a private focusable child (a plain LrgWidget, painted
- * by the splitter as the THUMB part), so clicks inside the panes never
+ * by the splitter as the HANDLE part), so clicks inside the panes never
  * give the splitter keyboard focus; arrows on the focused handle move
  * it by 10 units, Home / End collapse the start / end pane.
  */
@@ -280,7 +280,7 @@ lrg_splitter_style_defaults (LrgWidget      *widget,
 	LrgTheme *theme = lrg_widget_get_theme (widget);
 	GrlColor  c;
 
-	if (part == LRG_UI_PART_THUMB)
+	if (part == LRG_UI_PART_HANDLE)
 	{
 		/* The divider: a hairline in BORDER at rest, a thicker
 		 * translucent accent when hovered, solid ACCENT while dragged */
@@ -318,7 +318,7 @@ lrg_splitter_style_defaults (LrgWidget      *widget,
 /*
  * paint_handle:
  *
- * The THUMB look blended by the handle widget's hover spring and
+ * The HANDLE look blended by the handle widget's hover spring and
  * pressed fully while dragging: a line along the handle, thicker as
  * it highlights, plus a grip pill in the middle.
  */
@@ -339,15 +339,15 @@ paint_handle (LrgSplitter  *self,
 	gfloat       gl;
 
 	hover = MAX (hover, press);
-	lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_THUMB, LRG_WIDGET_STATE_NONE, &look);
+	lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_HANDLE, LRG_WIDGET_STATE_NONE, &look);
 	if (hover > 0.001f)
 	{
-		lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_THUMB, LRG_WIDGET_STATE_HOVERED, &variant);
+		lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_HANDLE, LRG_WIDGET_STATE_HOVERED, &variant);
 		lrg_part_look_lerp (&look, &variant, hover, &look);
 	}
 	if (press > 0.001f)
 	{
-		lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_THUMB,
+		lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_HANDLE,
 		                                   LRG_WIDGET_STATE_HOVERED | LRG_WIDGET_STATE_PRESSED, &variant);
 		lrg_part_look_lerp (&look, &variant, press, &look);
 	}

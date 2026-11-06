@@ -29,7 +29,7 @@ lrg_splitter_set_default_fraction (split, 0.25f);
 :PROPERTIES:
 :CUSTOM_ID: splitter-handle
 :END:
-The handle is a private focusable child widget (=lrg_splitter_get_handle()=). Keyboard and gamepad focus land on it, never on the splitter itself, so clicking inside a pane does not give the splitter the arrow keys. The splitter paints it as the =thumb= part: a hairline with a grip pill in the middle that thickens and turns accent under the pointer, solid =ACCENT= with a glow while dragged. The core focus ring surrounds it after keyboard navigation.
+The handle is a private focusable child widget (=lrg_splitter_get_handle()=). Keyboard and gamepad focus land on it, never on the splitter itself, so clicking inside a pane does not give the splitter the arrow keys. The splitter paints it as the =handle= part: a hairline with a grip pill in the middle that thickens and turns accent under the pointer, solid =ACCENT= with a glow while dragged. The core focus ring surrounds it after keyboard navigation.
 
 - Press and drag: the handle follows the pointer (the grab offset is kept; the pointer is captured, so the drag continues outside the splitter). =drag-begin= / =drag-end= bracket it; =lrg_splitter_get_dragging()= reports it.
 - Double click (two presses within 0.4 s of canvas time): back to the default fraction, animated.
@@ -60,12 +60,12 @@ The handle is a private focusable child widget (=lrg_splitter_get_handle()=). Ke
 :END:
 | Part    | State       | Built-in look                                                         |
 |---------+-------------+-----------------------------------------------------------------------|
-| =thumb= | resting     | Line in =BORDER=, =BORDER_WIDTH= thick; grip pill in =TEXT_MUTED=      |
-| =thumb= | =hovered=   | =ACCENT= at 70 %, 4 thick; grip in =ACCENT=                           |
-| =thumb= | =pressed=   | Solid =ACCENT=, 4 thick, accent glow (while dragging)                  |
-| =thumb= | =disabled=  | 45 % opacity                                                          |
+| =handle= | resting     | Line in =BORDER=, =BORDER_WIDTH= thick; grip pill in =TEXT_MUTED=      |
+| =handle= | =hovered=   | =ACCENT= at 70 %, 4 thick; grip in =ACCENT=                           |
+| =handle= | =pressed=   | Solid =ACCENT=, 4 thick, accent glow (while dragging)                  |
+| =handle= | =disabled=  | 45 % opacity                                                          |
 | =focus= | focus visible | Core focus ring around the handle                                   |
-The look blends with the handle widget's hover and press springs. =size= is the line thickness, =foreground= the grip colour. (There is no dedicated =handle= part in =LrgUIPart=; the splitter handle is the =thumb= part.)
+The look blends with the handle widget's hover and press springs. =size= is the line thickness, =foreground= the grip colour.
 
 ** Keyboard and gamepad
 :PROPERTIES:
@@ -88,11 +88,11 @@ Arrows across the orientation are not consumed, so focus navigation still works.
 styles:
   # A visible bar instead of a hairline
   - widget: LrgSplitter
-    part: thumb
+    part: handle
     background: "#34343c"
     size: 3
   - widget: LrgSplitter
-    part: thumb
+    part: handle
     state: [pressed]
     background: "#34d399"
 #+end_src

@@ -6005,6 +6005,7 @@ lrg_ui_part_get_type (void)
             { LRG_UI_PART_TOOLTIP, "LRG_UI_PART_TOOLTIP", "tooltip" },
             { LRG_UI_PART_FOCUS, "LRG_UI_PART_FOCUS", "focus" },
             { LRG_UI_PART_VEIL, "LRG_UI_PART_VEIL", "veil" },
+            { LRG_UI_PART_HANDLE, "LRG_UI_PART_HANDLE", "handle" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

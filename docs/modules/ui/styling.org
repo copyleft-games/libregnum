@@ -136,6 +136,7 @@ my_widget_style_overrides (LrgWidget      *widget,
 | =LRG_UI_PART_TOOLTIP= | =tooltip= | Tooltip surface | tooltip |
 | =LRG_UI_PART_FOCUS= | =focus= | Focus ring | every widget |
 | =LRG_UI_PART_VEIL= | =veil= | Modal backdrop | dialogs |
+| =LRG_UI_PART_HANDLE= | =handle= | Draggable divider between panes | splitter |
 
 =LRG_UI_PART_COUNT= is the number of parts. Which parts a specific widget draws is listed on its page under [[file:index.org::#ui-widget-pages][widget pages]].
 

@@ -6432,6 +6432,7 @@ GType lrg_widget_state_get_type (void) G_GNUC_CONST;
  * @LRG_UI_PART_TOOLTIP: tooltip surface
  * @LRG_UI_PART_FOCUS: focus ring
  * @LRG_UI_PART_VEIL: modal backdrop
+ * @LRG_UI_PART_HANDLE: draggable divider between panes (splitters)
  *
  * A named, separately styled piece of a widget. Style rules can target a part, e.g. the knob of a slider.
  */
@@ -6454,7 +6455,8 @@ typedef enum
     LRG_UI_PART_SCROLL_THUMB,
     LRG_UI_PART_TOOLTIP,
     LRG_UI_PART_FOCUS,
-    LRG_UI_PART_VEIL
+    LRG_UI_PART_VEIL,
+    LRG_UI_PART_HANDLE
 } LrgUIPart;
 
 LRG_AVAILABLE_IN_ALL
@@ -6466,7 +6468,7 @@ GType lrg_ui_part_get_type (void) G_GNUC_CONST;
  *
  * Number of #LrgUIPart values.
  */
-#define LRG_UI_PART_COUNT (LRG_UI_PART_VEIL + 1)
+#define LRG_UI_PART_COUNT (LRG_UI_PART_HANDLE + 1)
 
 /**
  * LrgThemeColor:
