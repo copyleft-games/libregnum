@@ -1,10 +1,10 @@
 #+title: UI Showcase Example
-#+description: Walkthrough of examples/ui-showcase.c, an app-style tour of every widget, theme presets, accent swatches, motion presets, gradient cards, toasts, a modal dialog and a 10,000-row virtualized list
+#+description: Walkthrough of examples/ui-showcase.c, an app-style tour of every widget, theme presets, accent swatches, motion presets, gradient cards, toasts, a modal dialog, virtualized list and table, tree and icon tiles, pickers, glass materials and effect shaders, curves, the island and layout glide, Markdown with rich-text effects, a hot-reloaded YAML screen and the UI inspector
 #+authors: Zach Podbielniak
 #+categories: libregnum ui examples
 #+created: 2026-11-05T00:00:00-05:00
-#+updated: 2026-11-05T00:00:00-05:00
-#+version: 1.0
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 2.0
 
 * UI Showcase Example
 :PROPERTIES:
@@ -14,7 +14,7 @@
 *[[file:../index.org][Home]]* > Examples > UI Showcase
 #+end_quote
 
-=examples/ui-showcase.c= is an application-style tour of the retained UI framework. One window holds a sidebar with a page list and a header with accent swatches, a theme picker and a motion picker. The four pages exercise every widget, the theme presets and accent derivation, spring motion presets, elevation shadows, gradient fills from theme style rules, staggered appear animations, toasts, a modal dialog and a virtualized list of 10,000 rows. It is the program to open when you want to see what the UI can do, and the source to read when you want a working pattern for a real tool or game launcher.
+=examples/ui-showcase.c= is an application-style tour of the retained UI framework. One window holds a sidebar with a page list and a header with accent swatches, a theme picker and a motion picker. Its eleven pages exercise every widget, the theme presets and accent derivation, spring motion presets, elevation shadows, gradient fills from theme style rules, staggered appear animations, toasts, a modal dialog, a virtualized list and a 10,000-row table, a tree with breadcrumbs, the built-in vector icons, colour, date and time pickers, glass materials and effect shaders over an animated backdrop, curves with travelling pulses, the dynamic island, layout glide, expanders, Markdown with rich-text effects, a hot-reloaded YAML screen and the UI inspector. It is the program to open when you want to see what the UI can do, and the source to read when you want a working pattern for a real tool or game launcher.
 
 For a five-minute introduction read [[file:ui-basics.org][UI Basics]] first. For game-style menus over a live scene, a fixed virtual resolution and gamepad-first navigation, see [[file:ui-game-menu.org][Game UI Menu]].
 
@@ -27,9 +27,18 @@ For a five-minute introduction read [[file:ui-basics.org][UI Basics]] first. For
 - *Controls page*: buttons in the default, =primary=, =flat=, =danger= and disabled styles; a switch, a checkbox and a radio-style toggle; a slider wired to a progress bar plus an indeterminate progress bar; a text input with placeholder and a spin box; a tab view; a separator. Each group sits in an elevated card panel in a two-column grid.
 - *Cards page*: six panels with gradient fills that come from theme style rules (=card-0= .. =card-5=), elevations 0 to 3, a coloured glow on hover, and a "pop" appear animation staggered across the grid that replays each time the page opens.
 - *Feedback page*: buttons that raise =info=, =success=, =warning= and =danger= toasts, a combo box that switches the toast queue between stack, sequence and replace modes, and a button that presents a modal =LrgDialog= whose response raises another toast.
-- *Data page*: an =LrgListView= over a =GListStore= of 10,000 items with multiple selection. Only the visible rows exist as widgets; a label reports the selection and activating a row raises a toast.
+- *List page*: an =LrgListView= over a =GListStore= of 10,000 items with multiple selection. Only the visible rows exist as widgets; a label reports the selection and activating a row raises a toast.
+- *Data page*: an =LrgTreeView= of a fake game project and an =LrgTable= of 10,000 adventurers (sortable, resizable, striped columns) side by side in an =LrgSplitter=, an =LrgBreadcrumb= following the tree selection, and an =LrgTileView= with one tile per built-in vector icon (=LrgIcon=, drawn by =lrg_paint_list_icon()=). ([[#ui-showcase-data-page][details]])
+- *Pickers page*: an inline =LrgColorPicker= and a popup-mode one, both driving the live theme accent, an accent preview, three =LrgRating= styles, =LrgDatePicker=, =LrgTimePicker= in 24- and 12-hour modes, and a second breadcrumb mirroring the tree. ([[#ui-showcase-pickers-page][details]])
+- *Glass page*: a vivid backdrop of drifting gradient blobs and pulsing curves, clear, frosted and tinted glass cards, one button per effect shader (shimmer, aurora, neon, spotlight, ripple, grain, plasma, mesh-gradient) and a node graph with gradient wires and travelling pulses. Materials and effects come from theme style rules. ([[#ui-showcase-glass-page][details]])
+- *Motion page*: an =LrgIsland= that morphs into music controls, an =LrgWrapBox= of chips that glide when added, removed or shuffled, replayable appear transitions, =LrgExpander= s and a note on touch gestures. ([[#ui-showcase-motion-page][details]])
+- *Markdown page*: one =LrgMarkdownLabel= with headings, lists, links (=link-activated= raises a toast), inline and fenced code, a quote and rich-text effect tags (=[typewriter=60]=, =[wave]=, =[rainbow]=, =[shake]=, =[pulse]=, =[fade]=, =[s]=, =[color=..]=). ([[#ui-showcase-markdown-page][details]])
+- *Declarative page*: =examples/data/ui/showcase-settings.yaml= built by =LrgUILoader=, watched and polled every frame, so saving the file hot-reloads the live screen. ([[#ui-showcase-declarative-page][details]])
+- *Inspector page*: the canvas is registered with the UI inspector; F12 toggles pick mode, the selected widget is highlighted, its path, frame timings and =describe_widget()= JSON are shown live. ([[#ui-showcase-inspector-page][details]])
 - *Header*: six accent swatches that re-derive the accent family of the running theme, a combo box listing every preset from =lrg_theme_list_presets()=, and a motion preset combo box (Smooth, Snappy, Bouncy, Wobbly, None).
 - *Navigation*: the sidebar is itself an =LrgListView=; selecting a row shows that page, which flies up into place.
+
+[[file:images/ui-showcase-glass.png]]
 
 ** Building and running
 :PROPERTIES:
@@ -43,7 +52,7 @@ make -C examples
 ./examples/build/release/examples/ui-showcase
 #+end_src
 
-The examples Makefile writes binaries to =build/release/examples/= relative to =examples/= (=build/debug/examples/= for a debug build). Examples link libregnum statically by default, so no =LD_LIBRARY_PATH= is needed. The showcase loads no data files, so it can run from any directory.
+The examples Makefile writes binaries to =build/release/examples/= relative to =examples/= (=build/debug/examples/= for a debug build). Examples link libregnum statically by default, so no =LD_LIBRARY_PATH= is needed. The only data file is the Declarative page's =showcase-settings.yaml=; =find_settings_file()= looks for it as =data/ui/=, =examples/data/ui/= or =../../../data/ui/= relative to the current directory, then relative to the executable (=/proc/self/exe=), so the example works when started from the repository root, from =examples/= or from its build directory. Without the file the page shows a note and everything else still works.
 
 *** Command-line options
 :PROPERTIES:
@@ -56,9 +65,13 @@ The options come from the =GOptionEntry= table in =main()=:
 | =--theme=           | =-t=  | =NAME=   | Theme preset: =midnight= (default), =daylight=, =catppuccin-mocha=, =catppuccin-latte=, =high-contrast= |
 | =--accent=          | =-a=  | =HEX=    | Accent colour, e.g. ='#22d3ee'= (quote it: =#= starts a shell comment in some contexts)       |
 | =--motion=          | =-m=  | =NAME=   | Motion preset: =smooth=, =snappy=, =bouncy=, =wobbly=, =none= (case-insensitive)              |
-| =--page=            | =-p=  | =NAME=   | Start page: =controls=, =cards=, =feedback=, =data= (case-insensitive)                        |
+| =--page=            | =-p=  | =NAME=   | Start page: =controls=, =cards=, =feedback=, =list=, =data=, =pickers=, =glass=, =motion=, =markdown=, =declarative=, =inspector= (case-insensitive) |
 | =--toasts=          |       |          | Show two toasts at start-up                                                                   |
 | =--dialog=          |       |          | Present the dialog on frame 10                                                                |
+| =--island=          |       |          | Expand the Motion page's island on frame 10                                                   |
+| =--pick=            |       |          | Start in inspector pick mode                                                                  |
+| =--touch=           |       |          | Poll touch points (=lrg_canvas_input_set_poll_touch()=), for touch screens                    |
+| =--dump-tree=       |       |          | With =--screenshot=: also print =lrg_ui_inspector_snapshot_json()= to stdout                  |
 | =--screenshot=      | =-s=  | =PATH=   | Save a PNG of the window after =--frames= frames and exit                                     |
 | =--frames=          | =-f=  | =N=      | Frames to run before =--screenshot= (default 90)                                              |
 | =--license=         |       |          | Print the AGPLv3 notice and exit                                                              |
@@ -69,10 +82,15 @@ ui-showcase
 ui-showcase --theme catppuccin-latte --motion bouncy
 ui-showcase --page cards --accent '#ff7a45'
 ui-showcase --page feedback --toasts --dialog --screenshot dialog.png --frames 120
-ui-showcase -t high-contrast -p data
+ui-showcase -t high-contrast -p list
+ui-showcase --page glass --theme catppuccin-mocha
+ui-showcase --page motion --island --motion bouncy
+ui-showcase --page declarative      # then edit examples/data/ui/showcase-settings.yaml
+ui-showcase --page inspector --pick
+ui-showcase --page data --screenshot data.png --dump-tree > tree.json
 #+end_src
 
-An unknown =--theme= prints =ui-showcase: unknown theme 'NAME'= and leaves the built-in default theme in place. An unknown =--motion= or =--page= is silently ignored.
+An unknown =--theme= prints =ui-showcase: unknown theme 'NAME'= and leaves the built-in default theme in place, an unknown =--page= prints =ui-showcase: unknown page 'NAME'= and stays on Controls, and an unknown =--motion= is silently ignored.
 
 *** Controls
 :PROPERTIES:
@@ -84,7 +102,8 @@ An unknown =--theme= prints =ui-showcase: unknown theme 'NAME'= and leaves the b
 | =Tab= / =Shift+Tab=         | Move keyboard focus; the focus ring appears                                |
 | Arrow keys / D-pad / stick  | Spatial focus navigation, list cursor, slider and spin box steps           |
 | =Enter= / =Space= / pad A   | Activate the focused widget                                                |
-| =Escape= / pad B            | Close the open popup (combo box list, dialog)                              |
+| =Escape= / pad B            | Close the open popup (combo box list, dialog, picker); leave pick mode      |
+| =F12=                       | Toggle inspector pick mode: hover highlights, click selects               |
 | Mouse wheel                 | Scroll the list view                                                       |
 
 Input handling is covered in [[file:../modules/ui/input-and-focus.org][Input and Focus]].
@@ -98,23 +117,41 @@ Everything the callbacks need lives in one plain struct on =main()='s stack, pas
 #+begin_src C
 typedef struct
 {
-	LrgCanvas      *canvas;
-	LrgHBox        *root;
-	LrgListView    *nav;
-	LrgOverlay     *pages;
-	LrgWidget      *page[4];
-	GPtrArray      *cards;       /* LrgPanel, for replaying their appear */
-	LrgToastQueue  *toasts;
-	LrgComboBox    *toast_mode;
-	LrgProgressBar *progress;
-	LrgSlider      *volume;
-	LrgLabel       *selection;
-	LrgDialog      *dialog;
-	gchar          *accent;
+	LrgCanvas        *canvas;
+	LrgHBox          *root;
+	LrgListView      *nav;
+	LrgOverlay       *pages;
+	LrgWidget        *page[N_PAGES];
+	gint              current_page;
+	GPtrArray        *cards;       /* LrgPanel, for replaying their appear */
+	LrgToastQueue    *toasts;
+	/* ... controls, feedback and list page widgets ... */
+	gchar            *accent;
+
+	ShowcaseNode     *project;     /* tree root, owned */
+	LrgTreeView      *tree;
+	LrgTable         *table;
+	LrgBreadcrumb    *crumbs[2];   /* data page and pickers page */
+	LrgColorPicker   *pickers[2];  /* inline and popup, both drive the accent */
+	gboolean          syncing;     /* guards picker <-> accent echo */
+
+	LrgIsland        *island;
+	LrgWrapBox       *chips;
+	GPtrArray        *appear_tiles;
+
+	LrgMarkdownLabel *markdown;
+
+	LrgUILoader      *loader;
+	LrgPanel         *yaml_host;
+
+	LrgUIInspector   *inspector;
+	LrgWidget        *inspect_target;
+	LrgMarkdownLabel *inspect_json;
+	/* ... status labels ... */
 } Showcase;
 #+end_src
 
-Most of these are borrowed pointers into the widget tree. The fields that keep their own reference (=dialog=, =toast_mode=, =selection=, =nav=, =pages=, =root=, =toasts=, =canvas=) are released with =g_clear_object()= at the end of =main()=. =accent= remembers the hex string of the chosen swatch so it survives a theme switch.
+Most of these are borrowed pointers into the widget tree. The fields that keep their own reference (the dialog, the canvas, the root, and widgets added with =lrg_container_add_child()= without an unref, such as =tree=, =table=, =pickers=, =crumbs=, =chips=) are released with =g_clear_object()= at the end of =main()=; =project= owns the tree model. =accent= remembers the hex string of the chosen swatch so it survives a theme switch.
 
 ** Building the widget tree
 :PROPERTIES:
@@ -133,8 +170,16 @@ LrgCanvas
 │           ├── Controls page (LrgGrid, 2 columns)
 │           ├── Cards page    (LrgGrid, 3 columns)
 │           ├── Feedback page (LrgVBox)
-│           └── Data page     (LrgVBox with an LrgListView)
-└── LrgToastQueue (covers the canvas, toasts bottom-right)
+│           ├── List page     (LrgVBox with an LrgListView)
+│           ├── Data page     (breadcrumb, LrgSplitter [tree | table], LrgTileView)
+│           ├── Pickers page  (LrgHBox of two card columns)
+│           ├── Glass page    (LrgOverlay: ShowcaseBackdrop under a content LrgVBox)
+│           ├── Motion page   (LrgIsland, wrap box, appear tiles, expanders)
+│           ├── Markdown page (LrgScrollBox > LrgPanel > LrgMarkdownLabel)
+│           ├── Declarative   (LrgVBox, YAML root added to an LrgPanel host)
+│           └── Inspector     (state, sample card, describe_widget JSON)
+├── overlay layer: LrgToastQueue (covers the canvas, toasts bottom-right)
+└── overlay layer: the inspector's highlight widget (while registered)
 #+end_example
 
 *** Two small helpers
@@ -243,39 +288,42 @@ See [[file:../modules/ui/widgets/combo-box.org][Combo Box]] and [[file:../module
 :PROPERTIES:
 :CUSTOM_ID: ui-showcase-pages
 :END:
-The four pages are stacked in an =LrgOverlay=, which lays every child over the same rectangle. Only one is visible at a time. Each page gets a fly-up appear animation; the Data page fills the overlay vertically (the list should use all the height), the others align to the top:
+The eleven pages (indexed by the =PAGE_*= enum, named by =page_names[]=) are stacked in an =LrgOverlay=, which lays every child over the same rectangle. Only one is visible at a time. Each page gets a fly-up appear animation; the List, Data, Glass, Markdown and Declarative pages fill the overlay vertically, the others align to the top:
 
 #+begin_src C
 app->pages = lrg_overlay_new ();
 lrg_widget_set_fill_weight (LRG_WIDGET (app->pages), 1.0f);
-app->page[0] = build_controls_page (app);
-app->page[1] = build_cards_page (app);
-app->page[2] = build_feedback_page (app);
-app->page[3] = build_data_page (app);
-for (i = 0; i < G_N_ELEMENTS (app->page); i++)
+app->page[PAGE_CONTROLS] = build_controls_page (app);
+/* ... one build_*_page () per page ... */
+app->page[PAGE_INSPECTOR] = build_inspector_page (app);
+for (i = 0; i < N_PAGES; i++)
 {
+	gboolean fill = (i == PAGE_LIST || i == PAGE_DATA || i == PAGE_GLASS ||
+	                 i == PAGE_MARKDOWN || i == PAGE_DECLARATIVE);
+
 	lrg_widget_set_appear (app->page[i], LRG_APPEAR_FLY_UP, 0.0f);
-	lrg_widget_set_valign (app->page[i], i == 3 ? LRG_ALIGN_FILL : LRG_ALIGN_START);
+	lrg_widget_set_valign (app->page[i], fill ? LRG_ALIGN_FILL : LRG_ALIGN_START);
 	add (app->pages, app->page[i]);
 }
 #+end_src
 
-Switching pages is just visibility. Because an appear animation plays "the first time the widget is painted and whenever it is shown again", making a page visible is enough to replay its fly-up. The cards additionally replay their own staggered pop:
+Switching pages is just visibility. Because an appear animation plays "the first time the widget is painted and whenever it is shown again", making a page visible is enough to replay its fly-up. =show_page()= then does per-page extras: the cards and the Motion page's appear tiles replay their staggered entrances, the Markdown page restarts its typewriter (=lrg_markdown_label_reset_effects()=), and the Inspector page selects its sample card when nothing is selected so the highlight is visible at once:
 
 #+begin_src C
-static void
-show_page (Showcase *app,
-           guint     index)
+for (i = 0; i < N_PAGES; i++)
+	lrg_widget_set_visible (app->page[i], i == index);
+app->current_page = (gint) index;
+
+switch (index)
 {
-	guint i;
-
-	for (i = 0; i < G_N_ELEMENTS (app->page); i++)
-		lrg_widget_set_visible (app->page[i], i == index);
-
-	/* Cards pop in again each time their page opens */
-	if (index == 1)
-		for (i = 0; i < app->cards->len; i++)
-			lrg_widget_play_appear (g_ptr_array_index (app->cards, i));
+case PAGE_CARDS:
+	for (i = 0; i < app->cards->len; i++)
+		lrg_widget_play_appear (g_ptr_array_index (app->cards, i));
+	break;
+case PAGE_MARKDOWN:
+	lrg_markdown_label_reset_effects (app->markdown);
+	break;
+/* ... PAGE_MOTION, PAGE_INSPECTOR ... */
 }
 #+end_src
 
@@ -422,11 +470,11 @@ on_dialog_clicked (LrgButton *button,
 
 =lrg_dialog_present()= shows the dialog as a modal popup centred on the canvas: a veil dims everything behind it, input outside is blocked, focus is trapped inside and moves to the primary button. The =response= handler raises a success toast for id 1 and an info toast otherwise. See [[file:../modules/ui/widgets/toast.org][Toast]] and [[file:../modules/ui/widgets/dialog.org][Dialog]].
 
-*** Data page: a 10,000-row virtualized list
+*** List page: a 10,000-row virtualized list
 :PROPERTIES:
-:CUSTOM_ID: ui-showcase-data-page
+:CUSTOM_ID: ui-showcase-list-page
 :END:
-[[file:images/ui-showcase-data.png]]
+[[file:images/ui-showcase-list.png]]
 
 The list view only creates row widgets for the rows on screen and rebinds them as you scroll, so the model can be large:
 
@@ -446,6 +494,183 @@ g_signal_connect (list, "row-activated", G_CALLBACK (on_list_activated), app);
 
 =selection-changed= updates the status label from =lrg_list_view_get_selected()=; =row-activated= (double-click, Enter or pad A on the cursor row) receives the position and raises a toast. The page itself has =LRG_ALIGN_FILL= (set in =build_ui()=) so the list gets the whole height. See [[file:../modules/ui/widgets/list-view.org][List View]].
 
+*** Data page: tree, table, splitter, breadcrumb and icon tiles
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-data-page
+:END:
+[[file:images/ui-showcase-data.png]]
+
+=build_data_page()= stacks a breadcrumb, an =LrgSplitter= and an =LrgTileView= in a box.
+
+*Tree.* =ShowcaseNode= is a small =GObject= (name, =LrgIcon=, a =GListStore= of children for folders, a borrowed parent pointer). =build_project()= makes a fake game project. The tree gets its children through a callback (transfer full, =NULL= for leaves) and its rows from a factory: an =hbox= of a =ShowcaseIcon= and a label, bound per item. Folders are painted in the =ACCENT= role, files in =TEXT_MUTED=:
+
+#+begin_src C
+lrg_tree_view_set_children_func (app->tree, tree_children, NULL, NULL);
+lrg_tree_view_set_factory (app->tree, tree_create_row, tree_bind_row, NULL, NULL);
+lrg_tree_view_set_model (app->tree, G_LIST_MODEL (roots));
+lrg_tree_view_set_indent (app->tree, 18.0f);
+lrg_tree_view_expand (app->tree, G_OBJECT (app->project));
+/* assets and assets/sprites are expanded and hero.png selected */
+#+end_src
+
+=ShowcaseIcon= is the smallest possible custom widget: an =LrgWidget= subclass with a =measure()= (its size) and a =paint()= that calls =lrg_paint_list_icon()= in the theme colour of its role, so it follows theme and accent changes. It is pointer-transparent so clicks reach the row.
+
+*Breadcrumbs.* =on_tree_selection()= walks the selected node's parents and refills both breadcrumbs (this page and the Pickers page) with =lrg_breadcrumb_append_with_data()=, each segment holding a reference to its node. =activated= on a segment selects that node in the tree (or clears the selection for the root), which rebuilds the path.
+
+*Table.* 10,000 =ShowcaseRow= objects (id, name, role, level, power, region as typed read-only properties). Five columns are property columns, which sort numbers numerically and strings with =g_utf8_collate()= when the model is a =GListStore=; the Power column is a formatted cell function with its own sort function:
+
+#+begin_src C
+lrg_table_add_property_column (app->table, "Name", "name", 130.0f,
+                               LRG_TABLE_COLUMN_RESIZABLE | LRG_TABLE_COLUMN_SORTABLE);
+col = lrg_table_add_column (app->table, "Power", power_cell, NULL, NULL, 80.0f,
+                            LRG_TABLE_COLUMN_RESIZABLE | LRG_TABLE_COLUMN_SORTABLE);
+lrg_table_set_sort_func (app->table, col, by_power, NULL, NULL);
+lrg_table_set_striped (app->table, TRUE);
+lrg_table_set_selection_mode (app->table, LRG_SELECTION_MODE_MULTIPLE);
+lrg_table_set_sort (app->table, 3, FALSE);   /* highest level first */
+#+end_src
+
+=sort-changed= updates the status line above the table; =row-activated= raises a toast. Click a header to sort, click again to flip, drag a header edge to resize.
+
+*Splitter.* The tree column and the table column are the splitter's start and end children, with minimum sizes 180 and 360 and a default fraction of 0.27 (=lrg_splitter_reset()= returns to it; double-clicking the handle does the same).
+
+*Tiles.* One tile per =LrgIcon= value: the loop runs while =lrg_paint_icon_get_name()= returns a nick, so new icons appear automatically. The tile factory is a vertical box of a 30-unit =ShowcaseIcon= and a muted label; =tile-activated= shows the C call that draws the icon.
+
+Widget references: [[file:../modules/ui/widgets/tree-view.org][Tree View]], [[file:../modules/ui/widgets/table.org][Table]], [[file:../modules/ui/widgets/splitter.org][Splitter]], [[file:../modules/ui/widgets/breadcrumb.org][Breadcrumb]], [[file:../modules/ui/widgets/tile-view.org][Tile View]], [[file:../modules/paint/index.org::#paint-icons][Icons]].
+
+*** Pickers page: colour, rating, date, time, breadcrumb
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-pickers-page
+:END:
+[[file:images/ui-showcase-pickers.png]]
+
+The left column holds an inline =LrgColorPicker= (with a six-colour palette and no alpha strip) and, beside it, the same picker in popup mode (a swatch button that opens the full picker in a popup). Both connect =color-changed= to =on_picker_changed()=, which calls =set_accent()=: =lrg_theme_set_accent()= on the default theme, then the theme's style rules are rebuilt because the tinted-glass rule uses the accent. =sync_pickers_to_accent()= pushes the new colour into the other picker under the =syncing= guard so the echo does not re-enter; the header swatches call it too. The "Accent preview" card (primary button, switch, slider, progress bar) shows the derived accent family.
+
+The picker is kept at its preferred width (=LRG_ALIGN_START=): its height grows with its width, and =measure()= cannot know the width it will get (see [[#ui-showcase-limits][Limitations]]).
+
+The right column has three ratings (half stars with =lrg_rating_set_allow_half()=, six hearts, four read-only circles), an =LrgDatePicker= with the =%a %d %b %Y= format, two =LrgTimePicker= s (24-hour =21:30=, and 12-hour with seconds) and the second breadcrumb. =value-changed= and =date-changed= raise toasts.
+
+Widget references: [[file:../modules/ui/widgets/color-picker.org][Color Picker]], [[file:../modules/ui/widgets/rating.org][Rating]], [[file:../modules/ui/widgets/date-picker.org][Date Picker]], [[file:../modules/ui/widgets/time-picker.org][Time Picker]].
+
+*** Glass page: materials, effects and curves
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-glass-page
+:END:
+[[file:images/ui-showcase-glass-latte.png]]
+
+The page is an =LrgOverlay= with two children: =ShowcaseBackdrop= underneath and the content box on top. Glass needs something to look at, so the backdrop paints a rounded diagonal gradient, six radial-gradient blobs (saturated centre to transparent) orbiting their home points on Lissajous paths, and three full-width curves with pulses:
+
+#+begin_src C
+gdouble t = lrg_paint_list_get_time (list);   /* the canvas clock */
+gfloat  cx = x + w * (bx + ax * (gfloat) sin (t * speed + phase));
+gfloat  cy = y + h * (by + ay * (gfloat) cos (t * speed * 1.3 + phase));
+
+lrg_paint_gradient_init_radial (&g, &centre, &edge, 0.5f, 0.5f, r);
+lrg_paint_list_rect_ex (list, cx - r, cy - r, r * 2.0f, r * 2.0f, NULL, NULL, &g, 0.0f, NULL);
+#+end_src
+
+=paint()= is a pure function of the list time, which =LrgCanvas= sets from its own clock each frame, so the motion is deterministic and screenshots are reproducible. The backdrop implements =measure()= returning 0x0: the default =LrgWidget= measure reports the current size, which would make a page that contains a filling widget grow with every layout.
+
+*Materials through the theme.* The three cards are plain =LrgPanel= s with a style class; =add_glass_rules()= adds one rule per class, so the look is a theme concern:
+
+| Class           | Material  | Glass parameters                                                    |
+|-----------------+-----------+---------------------------------------------------------------------|
+| =glass-clear=   | =GLASS=   | frost 0.15, refraction 14, dispersion 0.5, rim light 0.9, faint tint |
+| =glass-frosted= | =FROSTED= | blur 22, saturation 1.4, a white veil (stronger on light themes)    |
+| =glass-tinted=  | =TINTED=  | the background (the accent at 35 % alpha) is the tint               |
+
+#+begin_src C
+lrg_part_look_set_material (lrg_style_rule_get_look (frosted), LRG_PAINT_MATERIAL_FROSTED);
+lrg_part_look_set_glass (lrg_style_rule_get_look (frosted), &glass);
+lrg_theme_add_style_rule (theme, frosted);
+#+end_src
+
+*Effects through the theme.* For every name from =lrg_paint_effect_list_names()= the rules add =fx-NAME= on =LrgButton=: the =BOX= part gets =lrg_part_look_set_effect()=, a 14-unit radius and a fixed three-colour palette (=fx_palettes[]=), and the =LABEL= part white text so the label reads on every theme. The page creates one button per name in a four-column grid; hover and press feed the effect's springs, and =spotlight= / =ripple= follow the pointer (the canvas passes it to the paint list). Registered user effects would show up as extra buttons using the theme's colours.
+
+*Curves.* =ShowcaseWires= paints a five-node graph on a frosted card: cubic Beziers that leave and enter horizontally, each with a start/end gradient, a glow and two pulses (=LrgPaintCurveStyle=), then the node chips (shadow, surface fill, border, icon, label) on top.
+
+See [[file:../modules/paint/index.org::#paint-materials][Materials]], [[file:../modules/paint/index.org::#paint-effects][Effects]], [[file:../modules/paint/index.org::#paint-curves][Curves]] and [[file:../modules/ui/styling.org::#styling-materials][Styling: materials and effects]].
+
+*** Motion page: island, layout glide, appear, expanders, touch
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-motion-page
+:END:
+[[file:images/ui-showcase-motion.png]]
+
+*Island.* =build_island()= gives an =LrgIsland= a compact child (play icon + track title and time) and an expanded child (track info, a seek slider, Prev / Pause / Next). The island is centred (=LRG_ALIGN_CENTER=; a filled island could not change width). Clicking its background toggles it; clicks on the buttons inside do not. =--island= expands it on frame 10. On light themes the island paints with its dark twin.
+
+*Wrap box with glide.* Chips are pill buttons with =lrg_widget_set_animate_layout (chip, TRUE)= and a =POP= appear. Add appends one (it pops in, the rest stay), Remove first removes child 0 (every later chip glides to its new slot), and Shuffle re-adds the same widgets in a Fisher-Yates order from a small fixed-seed LCG: each chip keeps its glide springs and flies to its new place while layout and hit-testing already use the final positions. The wrap box has a maximum width of 560: its preferred width is its single-line length, which would otherwise widen the row it shares with the expanders.
+
+*Appear transitions.* Five gradient tiles (reusing the =card-N= rules) with =FADE=, =POP=, =ZOOM=, =FLY_UP= and =DROP= and a 0.08 s stagger, replayed by the Replay button and whenever the page opens.
+
+*Expanders.* Three =LrgExpander= s with muted label bodies; the first starts open.
+
+*Touch.* A card explains the gesture support: scroll boxes, lists, tables, trees and tile views claim one-finger pans along their axis and flick with momentum; taps click and long presses right-click. =--touch= turns on =lrg_canvas_input_set_poll_touch()=, which is off by default because desktop raylib reports a held mouse button as touch point 0. The Markdown page's scroll box sets =lrg_scroll_box_set_kinetic (scroll, TRUE)=.
+
+See [[file:../modules/ui/widgets/island.org][Island]], [[file:../modules/ui/widgets/wrap-box.org][Wrap Box]], [[file:../modules/ui/widgets/expander.org][Expander]], [[file:../modules/ui/animation.org::#animation-layout-glide][Layout glide]] and [[file:../modules/ui/input-and-focus.org::#input-touch][Touch input]].
+
+*** Markdown page
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-markdown-page
+:END:
+[[file:images/ui-showcase-markdown.png]]
+
+One =LrgMarkdownLabel= inside a padded panel inside a vertical-only =LrgScrollBox= (=lrg_scroll_box_set_hscroll (scroll, FALSE)= so the label wraps to the viewport instead of growing sideways). The text (=markdown_text=) has H1 / H2 headings with rules, bold, italic and bold-italic, nested bullets, a numbered list, inline code chips, a quote, a fenced code block, two links and rich-text tags: =[typewriter=60]= on the intro sentence, =[wave]=, =[rainbow]=, =[shake]=, =[pulse]=, =[s]=, =[color=#f472b6]=, =[u]= and =[fade]=.
+
+#+begin_src C
+app->markdown = lrg_markdown_label_new (markdown_text);
+g_signal_connect (app->markdown, "link-activated", G_CALLBACK (on_markdown_link), app);
+#+end_src
+
+=on_markdown_link()= raises a toast with the URL. Opening the page calls =lrg_markdown_label_reset_effects()= so the typewriter replays. See [[file:../modules/ui/widgets/markdown-label.org][Markdown Label]].
+
+*** Declarative page: YAML with hot reload
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-declarative-page
+:END:
+[[file:images/ui-showcase-declarative.png]]
+
+The page hosts =examples/data/ui/showcase-settings.yaml= (components with parameters and slots, =${expressions}=, =for-each=, =repeat=, =if=, tabs, look overrides, appear cascades and handlers; see the comments at the top of the file). =build_declarative_page()= registers the three handlers the document names and watches the file:
+
+#+begin_src C
+app->loader = lrg_ui_loader_new ();
+lrg_ui_loader_add_handler (app->loader, "settings_apply", G_CALLBACK (on_settings_apply), app);
+lrg_ui_loader_add_handler (app->loader, "settings_reset", G_CALLBACK (on_settings_reset), app);
+lrg_ui_loader_add_handler (app->loader, "settings_slider_changed", G_CALLBACK (on_settings_slider), app);
+g_signal_connect (app->loader, "reloaded", G_CALLBACK (on_yaml_reloaded), app);
+g_signal_connect (app->loader, "reload-failed", G_CALLBACK (on_yaml_reload_failed), app);
+lrg_ui_loader_watch_file (app->loader, app->yaml_path, LRG_CONTAINER (app->yaml_host), &error);
+#+end_src
+
+The frame loop calls =lrg_ui_loader_poll (app.loader)= every frame (a =stat()= of the watched files). Save the YAML while the example runs and the new document is diffed into the live widgets: matched by =id=, then type and order, so slider positions and the open tab survive; =reloaded= raises a success toast. A document with a mistake changes nothing and =reload-failed= shows the error (with the node path and position) in a danger toast.
+
+=on_settings_slider()= shows how handlers find their siblings: the loader sets each =id= as the widget name, so the slider =slider-music= looks up =value-music= with =lrg_ui_loader_get_widget()= and updates its text.
+
+See [[file:../modules/ui/declarative-ui.org][Declarative UI]].
+
+*** Inspector page
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-inspector-page
+:END:
+[[file:images/ui-showcase-inspector.png]]
+
+=build_ui()= registers the canvas with =lrg_ui_inspector_register_canvas()= (the MCP tools =lrg_ui_tree=, =lrg_ui_pick=, =lrg_ui_get_widget=, =lrg_ui_set_property=, =lrg_ui_highlight= and =lrg_ui_timings= then see this UI when the program runs an MCP server), and the frame loop replaces =lrg_canvas_handle_input()= with the inspector's input seam:
+
+#+begin_src C
+if (IsKeyPressed (KEY_F12))
+	toggle_pick_mode (&app);
+lrg_ui_inspector_handle_input (app.inspector);
+#+end_src
+
+In pick mode hovering outlines the widget under the pointer and a left click selects it (emitting =picked=, which raises a toast with its path) without the click reaching the app; Escape leaves pick mode, which the loop notices by comparing =lrg_ui_inspector_get_pick_mode()= with the previous frame. The page shows:
+
+- the pick mode state, the selected widget's type and the last three segments of its path;
+- the frame timings from =lrg_ui_inspector_get_timings()= (step, layout and record microseconds, instances, commands, draw calls), refreshed every 15 frames;
+- a named "Sample card" (=sample-card= with =cancel= and =ok= buttons) that is selected when the page first opens, so the highlight (bounds, margin and a =Type#name w×h= tag) is visible right away;
+- the first lines of =lrg_ui_inspector_describe_widget()= for the selection, in a Markdown code block (the mono face).
+
+=--pick= starts in pick mode; =--dump-tree= prints =lrg_ui_inspector_snapshot_json()= after a screenshot, which is handy for checking layout in scripts. See [[file:../modules/ui/inspector.org][UI Inspector]].
+
 ** Theming
 :PROPERTIES:
 :CUSTOM_ID: ui-showcase-theming
@@ -456,7 +681,7 @@ The showcase never holds on to an =LrgTheme=. Widgets read the process-wide defa
 :PROPERTIES:
 :CUSTOM_ID: ui-showcase-presets
 :END:
-=apply_theme()= is used both at start-up (=--theme=) and from the theme combo box. It builds a fresh preset, re-applies the remembered accent, re-adds the card style rules (a new theme has none) and installs it as the default:
+=apply_theme()= is used both at start-up (=--theme=) and from the theme combo box. It builds a fresh preset, re-applies the remembered accent, re-adds the card and glass/effect style rules (a new theme has none) and installs it as the default:
 
 #+begin_src C
 static void
@@ -475,6 +700,7 @@ apply_theme (Showcase    *app,
 	if (app->accent != NULL && lrg_color_parse (app->accent, &accent))
 		lrg_theme_set_accent (theme, &accent);
 	add_card_rules (theme);
+	add_glass_rules (theme);
 	lrg_theme_set_default (theme);
 }
 #+end_src
@@ -489,19 +715,21 @@ Clicking a swatch changes the accent of the *current* default theme in place. =l
 
 #+begin_src C
 static void
-on_accent_clicked (LrgButton *button,
-                   gpointer   user_data)
+set_accent (Showcase       *app,
+            const GrlColor *accent)
 {
-	Showcase   *app = user_data;
-	const gchar *hex = g_object_get_data (G_OBJECT (button), "accent");
-	GrlColor    accent;
+	LrgTheme *theme = lrg_theme_get_default ();
 
 	g_free (app->accent);
-	app->accent = g_strdup (hex);
-	if (lrg_color_parse (hex, &accent))
-		lrg_theme_set_accent (lrg_theme_get_default (), &accent);
+	app->accent = lrg_color_to_string (accent);
+	lrg_theme_set_accent (theme, accent);
+	lrg_theme_clear_style_rules (theme);
+	add_card_rules (theme);
+	add_glass_rules (theme);
 }
 #+end_src
+
+The swatch handler and both colour pickers go through =set_accent()=. The style rules are rebuilt because the tinted-glass rule bakes the accent into its background (the presets add no rules of their own, so clearing them is safe here). Afterwards =sync_pickers_to_accent()= shows the new colour in the pickers.
 
 The hex is also stored in =app->accent= so that =apply_theme()= can carry it over to the next preset.
 
@@ -619,9 +847,19 @@ while (!grl_window_should_close (window))
 	lrg_widget_set_size (LRG_WIDGET (app.root), w, h);
 	lrg_widget_set_size (LRG_WIDGET (app.toasts), w, h);
 
-	lrg_canvas_handle_input (app.canvas);
+	/* F12 toggles pick mode; input goes through the inspector */
+	if (IsKeyPressed (KEY_F12))
+		toggle_pick_mode (&app);
+	lrg_ui_inspector_handle_input (app.inspector);
+	/* ... refresh the inspector labels and timings ... */
+
+	/* Hot reload: a stat () of the watched YAML per frame */
+	lrg_ui_loader_poll (app.loader);
+
 	if (opt_dialog && frame == 10)
 		lrg_dialog_present (app.dialog, app.canvas);
+	if (opt_island && frame == 10)
+		lrg_island_set_expanded (app.island, TRUE);
 
 	grl_window_begin_drawing (window);
 	lrg_canvas_render (app.canvas);
@@ -632,8 +870,9 @@ while (!grl_window_should_close (window))
 #+end_src
 
 1. *Window-size following*: the canvas, the root box and the toast layer are sized to the window every frame. Setting the same size again is free; a changed size re-runs layout.
-2. =lrg_canvas_handle_input()= polls mouse, keyboard and gamepad, hit-tests, moves focus and dispatches events, then calls =lrg_canvas_update()= with the frame's delta time to advance every spring, appear animation and popup fade. Signal handlers (=clicked=, =changed=, =response=...) run inside this call. Call it every frame, even when you want to ignore input, or the UI stops animating.
-3. =lrg_canvas_render()= lays out what changed, records the tree into a paint list (=lrg_canvas_record()=) and draws it in batched SDF passes. See [[file:../modules/ui/canvas-api.org][Canvas API]] and [[file:../modules/paint/index.org][Paint]].
+2. =lrg_ui_inspector_handle_input()= is =lrg_canvas_handle_input()= with the inspector's pick-mode filter in between (outside pick mode it passes everything through). It polls mouse, keyboard and gamepad, hit-tests, moves focus and dispatches events, then calls =lrg_canvas_update()= with the frame's delta time to advance every spring, appear animation and popup fade. Signal handlers (=clicked=, =changed=, =response=...) run inside this call. Call it every frame, even when you want to ignore input, or the UI stops animating.
+3. =lrg_ui_loader_poll()= checks the watched YAML and diffs a changed document into the live tree; its signals fire here.
+4. =lrg_canvas_render()= lays out what changed, records the tree into a paint list (=lrg_canvas_record()=) and draws it in batched SDF passes. See [[file:../modules/ui/canvas-api.org][Canvas API]] and [[file:../modules/paint/index.org][Paint]].
 
 ** Screenshot mode
 :PROPERTIES:
@@ -653,7 +892,13 @@ if (opt_screenshot != NULL && frame >= opt_frames)
 }
 #+end_src
 
-The default of 90 frames (1.5 s at 60 fps) lets appear animations and the theme's springs settle. With =--dialog= the dialog opens on frame 10, so its rise has finished well before frame 90. The images in this page were produced this way under a headless X server, e.g. =ui-showcase --theme daylight --page feedback --dialog --screenshot feedback.png=.
+The default of 90 frames (1.5 s at 60 fps) lets appear animations and the theme's springs settle. With =--dialog= the dialog opens on frame 10, so its rise has finished well before frame 90. The images in this page were produced this way under a headless X server, e.g. =ui-showcase --theme daylight --page feedback --dialog --screenshot feedback.png= or =ui-showcase --theme catppuccin-latte --page glass --screenshot glass.png=. Because effects, curve pulses and the glass backdrop animate on the canvas clock (summed frame deltas, never a wall clock), the same =--frames= gives nearly the same picture every run.
+
+With =--dump-tree= the program also prints the inspector's JSON snapshot of the whole tree (every widget's type, name, classes, state, world rectangle and resolved look) after saving the PNG. Pipe it to a file and check rectangles to find widgets that overflow the window:
+
+#+begin_src sh
+ui-showcase --page glass --screenshot /tmp/glass.png --dump-tree > /tmp/tree.json
+#+end_src
 
 ** Things to try
 :PROPERTIES:
@@ -663,17 +908,34 @@ The default of 90 frames (1.5 s at 60 fps) lets appear animations and the theme'
 - Press =Tab= and then use the arrow keys or a gamepad D-pad: focus moves spatially across the grid, and the focus ring springs between widgets.
 - Set Motion to Wobbly and hover the buttons; set it to None to see the same UI with no animation.
 - Switch the toast mode to Sequence and click Info four times quickly.
-- On the Data page, Shift-click and Ctrl-click rows to build a multiple selection, then press Enter on the cursor row.
+- On the List page, Shift-click and Ctrl-click rows to build a multiple selection, then press Enter on the cursor row.
+- On the Data page, sort the table by Power, drag the splitter handle, select a file in the tree and then click a breadcrumb segment.
+- Drag the hue strip on the Pickers page and watch every page (primary buttons, focus rings, the tinted glass) follow.
+- Hover the spotlight and ripple buttons on the Glass page and press them; switch to a light theme and compare the frosted cards.
+- On the Motion page set Motion to Bouncy, open the island, then Shuffle the chips a few times quickly.
+- With the Declarative page open, change =text: Settings= to something else in =examples/data/ui/showcase-settings.yaml= and save; then break the indentation and save again.
+- Press F12 and click the table header, a chip or a glass card; the toast shows its path.
 
 ** Extending it
 :PROPERTIES:
 :CUSTOM_ID: ui-showcase-extend
 :END:
-- *A new page*: write a =build_*_page()= returning an =LrgWidget *=, grow =page[]= and =page_names[]= to five entries, and assign it in =build_ui()=. The nav list, =--page= and the appear animation pick it up automatically.
+- *A new page*: write a =build_*_page()= returning an =LrgWidget *=, add a =PAGE_*= value before =N_PAGES= and its name to =page_names[]=, and assign it in =build_ui()=. The nav list, =--page= and the appear animation pick it up automatically.
+- *A user effect*: register a GLSL snippet with =lrg_paint_effect_register()= before =apply_theme()=; =add_glass_rules()= and the Glass page iterate =lrg_paint_effect_list_names()=, so it gets an =fx-NAME= rule and a button.
 - *Your own card look*: add a rule with a different =LrgPartLook= field (border, radii, shadow) in =add_card_rules()=, or match a state such as =LRG_WIDGET_STATE_PRESSED=.
 - *Richer list rows*: replace the default rows with =lrg_list_view_set_factory()= (a =create= and a =bind= callback), as shown in [[file:../modules/ui/widgets/list-view.org][List View]].
 - *Theme from a file*: replace =lrg_theme_new_preset()= with =lrg_theme_new_from_file()= and ship a YAML theme, as [[file:ui-game-menu.org][Game UI Menu]] does.
 - *Dialog with content*: =lrg_dialog_set_content()= puts any widget (a form, a list) between the body text and the buttons.
+
+** Limitations
+:PROPERTIES:
+:CUSTOM_ID: ui-showcase-limits
+:END:
+- *Height for width.* =measure()= receives no width, so widgets whose height depends on their width need care: the inline colour picker is kept at its preferred width (stretched wider it lays out taller than it measured and spills over the content below), the wrap box is capped at 560 units, and the Markdown scroll box disables horizontal scrolling so the label wraps to the viewport.
+- *Default measure.* A plain =LrgWidget= subclass without =measure()= reports its current size; a filling widget (the glass backdrop) must report 0x0 or the page grows with each layout.
+- *Material and effect looks in YAML.* The declarative loader's =look:= mapping accepts colours, borders, radii, shadows, gradients, opacity, size and glow but not =material=, =glass= or =effect=; the Glass page therefore builds its rules in C (theme files do support them).
+- *Rich-text effects in stills.* =[pulse]= fades the alpha to 0 and back, and =[shake]= jitters glyphs, so a screenshot can catch "pulse" nearly invisible or "shake" looking ragged.
+- *Touch* is only polled with =--touch=; on desktops the gestures can be driven from tests through =lrg_canvas_input_add_touch()=.
 
 ** See also
 :PROPERTIES:
@@ -685,3 +947,4 @@ The default of 90 frames (1.5 s at 60 fps) lets appear animations and the theme'
 - [[file:../modules/ui/styling.org][Styling]], [[file:../modules/ui/theme.org][Theme]], [[file:../guides/theming.org][Theming Guide]]
 - [[file:../modules/ui/animation.org][Animation]], [[file:../modules/ui/input-and-focus.org][Input and Focus]], [[file:../modules/ui/canvas-api.org][Canvas API]]
 - [[file:../modules/paint/index.org][Paint]]
+- [[file:../modules/ui/declarative-ui.org][Declarative UI]], [[file:../modules/ui/inspector.org][UI Inspector]]
