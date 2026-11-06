@@ -337,9 +337,9 @@ lrg_scroll_box_step (LrgWidget *widget,
 
 	follow_focus (self);
 	if (self->hscroll)
-		moving |= lrg_scroll_axis_step (&self->ax, delta_time);
+		moving |= lrg_scroll_axis_step_snap (&self->ax, delta_time);
 	if (self->vscroll)
-		moving |= lrg_scroll_axis_step (&self->ay, delta_time);
+		moving |= lrg_scroll_axis_step_snap (&self->ay, delta_time);
 	if (moving)
 		lrg_scroll_fx_poke (&self->fx);
 	apply_offsets (self);

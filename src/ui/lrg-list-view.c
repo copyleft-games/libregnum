@@ -745,7 +745,7 @@ lrg_list_view_step (LrgWidget *widget,
 	if (self->ay.bar == NULL)
 		return FALSE;
 
-	moving = lrg_scroll_axis_step (&self->ay, delta_time);
+	moving = lrg_scroll_axis_step_snap (&self->ay, delta_time);
 	if (moving)
 		lrg_scroll_fx_poke (&self->fx);
 	sync_rows (self);

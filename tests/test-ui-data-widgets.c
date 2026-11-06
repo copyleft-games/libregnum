@@ -1328,6 +1328,8 @@ test_presets_smoke (void)
 	TreeLog               log = { 0 };
 	LrgTreeView          *tree;
 	guint                 i;
+	guint                 k;
+	guint                 shapes;
 
 	lrg_widget_set_theme (LRG_WIDGET (canvas), theme);
 	lrg_table_add_property_column (table, "Name", "name", 100.0f, LRG_TABLE_COLUMN_SORTABLE);
@@ -1361,7 +1363,14 @@ test_presets_smoke (void)
 		lrg_theme_apply_preset (theme, presets[i]);
 		settle (canvas, 600);
 		list = lrg_canvas_record (canvas);
-		g_assert_cmpuint (lrg_paint_list_get_n_instances (list), >, 50);
+
+		/* Glyphs (IMAGE instances) need the font atlas, which only
+		 * exists with a window; count the shapes, which do not */
+		shapes = 0;
+		for (k = 0; k < lrg_paint_list_get_n_instances (list); k++)
+			if (lrg_paint_instance_get_prim (lrg_paint_list_get_instance (list, k)) != LRG_PAINT_PRIM_IMAGE)
+				shapes++;
+		g_assert_cmpuint (shapes, >, 20);
 	}
 }
 
