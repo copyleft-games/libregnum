@@ -3508,6 +3508,111 @@ parse_gradient (const Lv         *v,
 }
 
 /*
+ * look_number_in:
+ * A number between @lo and @hi (inclusive) for look field @what.
+ */
+static gboolean
+look_number_in (const Lv     *v,
+                gfloat       *out,
+                gfloat        lo,
+                gfloat        hi,
+                const gchar  *what,
+                gchar       **msg)
+{
+	if (!conv_float (v, out, msg))
+		return FALSE;
+	if (*out < lo || *out > hi)
+	{
+		*msg = g_strdup_printf ("%s: %g is outside %g..%g", what, (gdouble)*out, (gdouble)lo, (gdouble)hi);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * look_glass:
+ * A "glass:" mapping (frost, refraction, saturation, tint, rim,
+ * dispersion, blur) over the default glass, with the ranges theme YAML
+ * enforces.
+ */
+static gboolean
+look_glass (const Lv       *v,
+            LrgPaintGlass  *out,
+            gchar         **msg)
+{
+	guint i;
+
+	if (v == NULL || v->kind != LV_MAP)
+	{
+		*msg = g_strdup_printf ("'glass' must be a mapping, got %s", lv_kind_name (v));
+		return FALSE;
+	}
+	lrg_paint_glass_init_default (out);
+	for (i = 0; i < v->keys->len; i++)
+	{
+		const gchar *k = g_ptr_array_index (v->keys, i);
+		const Lv    *f = g_ptr_array_index (v->items, i);
+		gboolean     ok;
+
+		if (key_equal (k, "frost"))
+			ok = look_number_in (f, &out->frost, 0.0f, 1.0f, "glass.frost", msg);
+		else if (key_equal (k, "refraction"))
+			ok = look_number_in (f, &out->refraction, 0.0f, 256.0f, "glass.refraction", msg);
+		else if (key_equal (k, "saturation"))
+			ok = look_number_in (f, &out->saturation, 0.0f, 4.0f, "glass.saturation", msg);
+		else if (key_equal (k, "rim"))
+			ok = look_number_in (f, &out->rim_light, 0.0f, 1.0f, "glass.rim", msg);
+		else if (key_equal (k, "dispersion"))
+			ok = look_number_in (f, &out->dispersion, 0.0f, 1.0f, "glass.dispersion", msg);
+		else if (key_equal (k, "blur"))
+			ok = look_number_in (f, &out->blur_radius, 0.0f, 256.0f, "glass.blur", msg);
+		else if (key_equal (k, "tint"))
+			ok = conv_color (f, &out->tint, msg);
+		else
+		{
+			*msg = g_strdup_printf ("unknown glass field '%s' (expected frost, refraction, saturation, "
+			                        "tint, rim, dispersion or blur)", k);
+			ok = FALSE;
+		}
+		if (!ok)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * look_effect_colors:
+ * One colour or a list of one to three; missing ones repeat the last.
+ */
+static gboolean
+look_effect_colors (const Lv     *v,
+                    LrgPartLook  *look,
+                    gchar       **msg)
+{
+	GrlColor c[3];
+	guint    n = 1;
+	guint    i;
+
+	if (v != NULL && v->kind == LV_SEQ)
+	{
+		n = v->items->len;
+		if (n < 1 || n > 3)
+		{
+			*msg = g_strdup_printf ("'effect-colors' takes one to three colours, got %u", n);
+			return FALSE;
+		}
+		for (i = 0; i < n; i++)
+			if (!conv_color (g_ptr_array_index (v->items, i), &c[i], msg))
+				return FALSE;
+	}
+	else if (!conv_color (v, &c[0], msg))
+		return FALSE;
+
+	lrg_part_look_set_effect_colors (look, &c[0], n > 1 ? &c[1] : NULL, n > 2 ? &c[2] : NULL);
+	return TRUE;
+}
+
+/*
  * parse_look_spec:
  * One part's look: field keys fill an #LrgPartLook; keys naming widget
  * states ("hovered", "checked+hovered") nest a look for those states.
@@ -3625,6 +3730,55 @@ parse_look_spec (const Lv       *spec,
 			ok = conv_float (v, &l->glow_size, msg);
 			l->set |= LRG_PART_LOOK_GLOW_SIZE;
 		}
+		else if (key_equal (k, "material"))
+		{
+			gint material = LRG_PAINT_MATERIAL_NONE;
+
+			ok = conv_enum (LRG_TYPE_PAINT_MATERIAL, v, &material, msg);
+			if (ok)
+				lrg_part_look_set_material (l, (LrgPaintMaterial)material);
+		}
+		else if (key_equal (k, "glass"))
+		{
+			LrgPaintGlass glass;
+
+			ok = look_glass (v, &glass, msg);
+			if (ok)
+				lrg_part_look_set_glass (l, &glass);
+		}
+		else if (key_equal (k, "effect"))
+		{
+			/* "none" clears an inherited effect; anything else must be a
+			 * built-in or already registered effect */
+			if (v == NULL || v->kind != LV_SCALAR)
+			{
+				*msg = g_strdup_printf ("'effect' must be an effect name, got %s", lv_kind_name (v));
+				ok = FALSE;
+			}
+			else if (g_strcmp0 (v->str, "none") == 0)
+			{
+				lrg_part_look_set_effect (l, NULL);
+				ok = TRUE;
+			}
+			else if (lrg_paint_effect_lookup (v->str) < 0)
+			{
+				*msg = g_strdup_printf ("unknown effect '%s' (register user effects before loading)", v->str);
+				ok = FALSE;
+			}
+			else
+			{
+				lrg_part_look_set_effect (l, v->str);
+				ok = TRUE;
+			}
+		}
+		else if (key_equal (k, "effect-colors"))
+			ok = look_effect_colors (v, l, msg);
+		else if (key_equal (k, "effect-intensity"))
+		{
+			ok = look_number_in (v, &num, 0.0f, 4.0f, "effect-intensity", msg);
+			if (ok)
+				lrg_part_look_set_effect_intensity (l, num);
+		}
 		else if (parse_state_key (k, &st))
 		{
 			ok = parse_look_spec (v, part, (LrgWidgetState)(state | st), out, msg);
@@ -3634,7 +3788,8 @@ parse_look_spec (const Lv       *spec,
 		{
 			*msg = g_strdup_printf ("unknown look field '%s' (expected background, foreground, border, "
 			                        "border-width, radius, shadow, shadow-blur, shadow-offset-y, gradient, "
-			                        "opacity, size, glow, glow-size or a state such as hovered)", k);
+			                        "opacity, size, glow, glow-size, material, glass, effect, effect-colors, "
+			                        "effect-intensity or a state such as hovered)", k);
 			ok = FALSE;
 		}
 		if (!ok)

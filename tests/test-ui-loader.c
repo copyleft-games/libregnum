@@ -442,6 +442,60 @@ test_convert_custom (void)
 	                  "(root): property 'state-flags' of LrgLabel is read-only"));
 }
 
+/* look: material, glass and effect fields, as theme YAML has them */
+static void
+test_look_fx (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) w = NULL;
+	const LrgPartLook *look;
+
+	w = load_ok (loader,
+		"type: panel\n"
+		"look:\n"
+		"  box:\n"
+		"    material: frosted\n"
+		"    glass: {frost: 0.8, blur: 24, tint: '#20406080', rim: 0.5}\n"
+		"    effect: aurora\n"
+		"    effect-colors: ['#ff0000', '#00ff00']\n"
+		"    effect-intensity: 0.6\n"
+		"    hovered:\n"
+		"      effect: none\n");
+	look = lrg_widget_get_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+	g_assert_nonnull (look);
+	g_assert_true (look->set & LRG_PART_LOOK_MATERIAL);
+	g_assert_cmpint (look->material, ==, LRG_PAINT_MATERIAL_FROSTED);
+	g_assert_true (look->set & LRG_PART_LOOK_GLASS);
+	g_assert_cmpfloat_with_epsilon (look->glass.frost, 0.8f, 0.0001f);
+	g_assert_cmpfloat_with_epsilon (look->glass.blur_radius, 24.0f, 0.0001f);
+	g_assert_cmpfloat_with_epsilon (look->glass.rim_light, 0.5f, 0.0001f);
+	g_assert_cmpuint (look->glass.tint.g, ==, 0x40);
+	g_assert_true (look->set & LRG_PART_LOOK_EFFECT);
+	g_assert_cmpstr (g_quark_to_string (look->effect), ==, "aurora");
+	g_assert_true (look->set & LRG_PART_LOOK_EFFECT_COLORS);
+	g_assert_cmpuint (look->effect_params.color1.r, ==, 255);
+	g_assert_cmpuint (look->effect_params.color2.g, ==, 255);
+	g_assert_cmpuint (look->effect_params.color3.g, ==, 255);   /* repeats the last */
+	g_assert_cmpfloat_with_epsilon (look->effect_params.intensity, 0.6f, 0.0001f);
+
+	look = lrg_widget_get_part_look (w, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+	g_assert_nonnull (look);
+	g_assert_true (look->set & LRG_PART_LOOK_EFFECT);
+	g_assert_cmpuint (look->effect, ==, 0);
+
+	/* Validation matches theme YAML */
+	g_free (load_err (loader, "{type: panel, look: {box: {material: marble}}}",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): 'look'"));
+	g_free (load_err (loader, "{type: panel, look: {box: {glass: {frost: 2}}}}",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): 'look': glass.frost: 2 is outside 0..1"));
+	g_free (load_err (loader, "{type: panel, look: {box: {glass: {shine: 1}}}}",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): 'look': unknown glass field 'shine'"));
+	g_free (load_err (loader, "{type: panel, look: {box: {effect: lava}}}",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): 'look': unknown effect 'lava'"));
+	g_free (load_err (loader, "{type: panel, look: {box: {effect-colors: [red, red, red, red]}}}",
+	                  LRG_UI_LOADER_ERROR_INVALID_VALUE, "(root): 'look': 'effect-colors' takes one to three"));
+}
+
 /* ==========================================================================
  * Special keys
  * ========================================================================== */
@@ -1613,6 +1667,7 @@ main (int   argc,
 	g_test_add_func ("/ui-loader/convert/insets", test_convert_insets);
 	g_test_add_func ("/ui-loader/convert/custom", test_convert_custom);
 	g_test_add_func ("/ui-loader/special-keys", test_special_keys);
+	g_test_add_func ("/ui-loader/look-fx", test_look_fx);
 	g_test_add_func ("/ui-loader/expressions", test_expressions);
 	g_test_add_func ("/ui-loader/components", test_components);
 	g_test_add_func ("/ui-loader/structural", test_structural);

@@ -170,6 +170,11 @@ The signal must exist on the widget's type. The handler name is looked up among 
 | =size=                        | number                                                        | =size=                                      |
 | =glow=                        | colour, or ={color:, size:}=                                  | =glow= (+ =glow_size=)                      |
 | =glow-size=                   | number                                                        | =glow_size=                                 |
+| =material=                    | =none=, =blur=, =glass=, =frosted= or =tinted= (=LrgPaintMaterial= nicks) | =material= (=material_opacity= 1)   |
+| =glass=                       | ={frost: 0..1, refraction: 0..256, saturation: 0..4, tint: colour, rim: 0..1, dispersion: 0..1, blur: 0..256}=, over the default glass | =glass= |
+| =effect=                      | a built-in or registered effect name, or =none= to clear an inherited one | =effect=                        |
+| =effect-colors=               | one colour or a list of one to three (missing ones repeat the last) | =effect_params= colours             |
+| =effect-intensity=            | 0..4                                                          | =effect_params.intensity=                   |
 | a state (=hovered=, =pressed=, =focused=, =focus-visible=, =disabled=, =checked=, =selected=, =open=, or a combination =checked+hovered=) | a look | the same part, for those states (nests) |
 
 #+begin_src yaml
