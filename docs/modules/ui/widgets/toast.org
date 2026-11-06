@@ -11,7 +11,11 @@
 #+begin_src c
 /* once, after the rest of the UI so it is on top */
 LrgToastQueue *toasts = lrg_toast_queue_new ();
-lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (toasts));
+
+/* The overlay layer keeps toasts above dialogs and their veil; adding
+ * the queue as an ordinary child also works, but a modal dialog then
+ * dims it */
+lrg_canvas_add_overlay (canvas, LRG_WIDGET (toasts));
 
 /* whenever something happens */
 g_autoptr(LrgToast) toast = lrg_toast_new ("Saved", "Your level was written to disk.");
@@ -141,7 +145,7 @@ hud_init (Hud *hud)
 	lrg_toast_queue_set_mode (hud->toasts, LRG_TOAST_MODE_STACK);
 	lrg_toast_queue_set_max_visible (hud->toasts, 4);
 	lrg_toast_queue_set_toast_valign (hud->toasts, LRG_ALIGN_START);   /* top-right */
-	lrg_container_add_child (LRG_CONTAINER (hud->canvas), LRG_WIDGET (hud->toasts));
+	lrg_canvas_add_overlay (hud->canvas, LRG_WIDGET (hud->toasts));
 	g_object_unref (hud->toasts);   /* the canvas owns it */
 }
 

@@ -364,4 +364,46 @@ LrgPopupPlacement lrg_canvas_place_popup (gfloat             canvas_width,
                                           gfloat            *x,
                                           gfloat            *y);
 
+/* ==========================================================================
+ * Overlay layer
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_add_overlay:
+ * @self: an #LrgCanvas
+ * @widget: a widget without a parent; the canvas takes a reference
+ *
+ * Adds @widget to the overlay layer, which is drawn and hit-tested
+ * above everything else, including popups and the veil of a modal
+ * dialog. Use it for notifications (an #LrgToastQueue), HUD layers and
+ * cursors that must stay visible and bright while a dialog is open.
+ * Overlay widgets are not reached by focus navigation; make full-layer
+ * widgets pointer-transparent so clicks reach what is underneath.
+ * The widget is parented to the canvas (coordinates and theme) and
+ * sized like any canvas child: give it a size, or let it size itself.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_add_overlay (LrgCanvas *self,
+                             LrgWidget *widget);
+
+/**
+ * lrg_canvas_remove_overlay:
+ * @self: an #LrgCanvas
+ * @widget: a widget added with lrg_canvas_add_overlay()
+ *
+ * Removes @widget from the overlay layer and releases it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_remove_overlay (LrgCanvas *self,
+                                LrgWidget *widget);
+
+/**
+ * lrg_canvas_get_n_overlays:
+ * @self: an #LrgCanvas
+ *
+ * Returns: number of widgets in the overlay layer
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_canvas_get_n_overlays (LrgCanvas *self);
+
 G_END_DECLS

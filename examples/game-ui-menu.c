@@ -462,7 +462,7 @@ build_ui (Game *game)
 	game->toasts = lrg_toast_queue_new ();
 	lrg_toast_queue_set_toast_valign (game->toasts, LRG_ALIGN_START);
 	lrg_widget_set_size (LRG_WIDGET (game->toasts), VIRTUAL_W, VIRTUAL_H);
-	lrg_container_add_child (LRG_CONTAINER (game->canvas), LRG_WIDGET (game->toasts));
+	lrg_canvas_add_overlay (game->canvas, LRG_WIDGET (game->toasts));
 }
 
 /* ==========================================================================

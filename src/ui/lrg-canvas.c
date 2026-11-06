@@ -58,6 +58,9 @@ struct _LrgCanvas
 	GArray       *popups;           /* PopupEntry, open */
 	GArray       *closing;          /* PopupEntry, fading out */
 
+	/* Overlay layer: above popups and their veils (toasts, HUD) */
+	GPtrArray    *overlays;         /* owned refs */
+
 	/* Rendering */
 	LrgPaintList *paint;
 
@@ -215,6 +218,14 @@ lrg_canvas_dispose (GObject *object)
 		g_array_set_size (self->popups, 0);
 	if (self->closing != NULL)
 		g_array_set_size (self->closing, 0);
+	if (self->overlays != NULL)
+	{
+		guint i;
+
+		for (i = 0; i < self->overlays->len; i++)
+			_lrg_widget_set_parent (g_ptr_array_index (self->overlays, i), NULL);
+		g_ptr_array_set_size (self->overlays, 0);
+	}
 
 	G_OBJECT_CLASS (lrg_canvas_parent_class)->dispose (object);
 }
@@ -227,6 +238,7 @@ lrg_canvas_finalize (GObject *object)
 	g_clear_pointer (&self->hover_path, g_ptr_array_unref);
 	g_clear_pointer (&self->popups, g_array_unref);
 	g_clear_pointer (&self->closing, g_array_unref);
+	g_clear_pointer (&self->overlays, g_ptr_array_unref);
 	g_clear_object (&self->paint);
 
 	G_OBJECT_CLASS (lrg_canvas_parent_class)->finalize (object);
@@ -383,6 +395,7 @@ lrg_canvas_init (LrgCanvas *self)
 	g_array_set_clear_func (self->popups, popup_entry_clear);
 	self->closing = g_array_new (FALSE, TRUE, sizeof (PopupEntry));
 	g_array_set_clear_func (self->closing, popup_entry_clear);
+	self->overlays = g_ptr_array_new_with_free_func (g_object_unref);
 	self->paint = lrg_paint_list_new ();
 	self->navigation_enabled = TRUE;
 	self->last_mouse_x = -1.0f;
@@ -468,7 +481,15 @@ lrg_canvas_widget_at_point (LrgCanvas *self,
 
 	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
 
-	/* Popups are on top; the newest first */
+	/* The overlay layer is above everything, newest first */
+	for (i = (gint) self->overlays->len - 1; i >= 0; i--)
+	{
+		hit = find_widget_at_point_recursive (g_ptr_array_index (self->overlays, i), x, y);
+		if (hit != NULL)
+			return hit;
+	}
+
+	/* Popups are next; the newest first */
 	modal = top_modal_index (self);
 	for (i = (gint) self->popups->len - 1; i >= 0; i--)
 	{
@@ -1383,6 +1404,9 @@ lrg_canvas_update (LrgCanvas *self,
 		busy |= lrg_spring_step (&e->veil, delta_time);
 	}
 
+	for (i = 0; i < self->overlays->len; i++)
+		busy |= lrg_widget_step (g_ptr_array_index (self->overlays, i), delta_time);
+
 	/* Closing ghosts: run down, then release */
 	for (i = 0; i < self->closing->len;)
 	{
@@ -1453,6 +1477,8 @@ lrg_canvas_record (LrgCanvas *self)
 			queue_layout_all (root);
 			for (i = 0; i < self->popups->len; i++)
 				queue_layout_all (g_array_index (self->popups, PopupEntry, i).popup);
+			for (i = 0; i < self->overlays->len; i++)
+				queue_layout_all (g_ptr_array_index (self->overlays, i));
 		}
 		g_set_weak_pointer (&self->seen_theme, theme);
 		self->seen_generation = lrg_theme_get_generation (theme);
@@ -1462,6 +1488,8 @@ lrg_canvas_record (LrgCanvas *self)
 	lrg_widget_layout (root);
 	for (i = 0; i < self->popups->len; i++)
 		lrg_widget_layout (g_array_index (self->popups, PopupEntry, i).popup);
+	for (i = 0; i < self->overlays->len; i++)
+		lrg_widget_layout (g_ptr_array_index (self->overlays, i));
 
 	lrg_paint_list_clear (self->paint);
 	if (!lrg_widget_get_visible (root))
@@ -1502,6 +1530,10 @@ lrg_canvas_record (LrgCanvas *self)
 		lrg_widget_paint (e->popup, self->paint);
 	}
 
+	/* The overlay layer, above popups and veils */
+	for (i = 0; i < self->overlays->len; i++)
+		lrg_widget_paint (g_ptr_array_index (self->overlays, i), self->paint);
+
 	return self->paint;
 }
 
@@ -1520,4 +1552,49 @@ lrg_canvas_get_paint_list (LrgCanvas *self)
 	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
 
 	return self->paint;
+}
+
+/* ==========================================================================
+ * Overlay layer
+ * ========================================================================== */
+
+void
+lrg_canvas_add_overlay (LrgCanvas *self,
+                        LrgWidget *widget)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+	g_return_if_fail (LRG_IS_WIDGET (widget));
+	g_return_if_fail (lrg_widget_get_parent (widget) == NULL);
+
+	/* Parented to the canvas for coordinates and theme, but kept out of
+	 * the child list: drawn and hit-tested above popups */
+	g_ptr_array_add (self->overlays, g_object_ref (widget));
+	_lrg_widget_set_parent (widget, LRG_CONTAINER (self));
+	lrg_widget_queue_layout (widget);
+}
+
+void
+lrg_canvas_remove_overlay (LrgCanvas *self,
+                           LrgWidget *widget)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+	g_return_if_fail (LRG_IS_WIDGET (widget));
+
+	if (!g_ptr_array_find (self->overlays, widget, NULL))
+		return;
+
+	if (self->capture != NULL &&
+	    (self->capture == widget || lrg_widget_is_ancestor (self->capture, widget)))
+		g_clear_object (&self->capture);
+	update_hover (self, NULL);
+	_lrg_widget_set_parent (widget, NULL);
+	g_ptr_array_remove (self->overlays, widget);
+}
+
+guint
+lrg_canvas_get_n_overlays (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), 0);
+
+	return self->overlays->len;
 }

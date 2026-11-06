@@ -31,7 +31,7 @@
  * Private Data
  * ========================================================================== */
 
-/* Seconds for one indeterminate sweep across the track */
+/* Seconds for one indeterminate sweep there and back */
 #define SWEEP_PERIOD (1.6f)
 
 /* Indeterminate segment length as a fraction of the track */
@@ -277,9 +277,17 @@ paint_indeterminate (LrgProgressBar    *self,
     gfloat     length = horizontal ? w : h;
     gfloat     seg = length * SWEEP_SEGMENT;
     gfloat     t = self->sweep;
-    gfloat     eased = t * t * (3.0f - 2.0f * t);
-    gfloat     start = -seg + eased * (length + seg);
+    gfloat     p;
+    gfloat     eased;
+    gfloat     start;
     GrlColor   shine;
+
+    /* Ping-pong inside the track: the segment glides end to end and
+     * back, easing at each end, and is always fully visible (a sweep
+     * that left the track showed only a sliver in many frames) */
+    p = t < 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
+    eased = p * p * (3.0f - 2.0f * p);
+    start = eased * (length - seg);
 
     lrg_paint_list_push_clip (list, x, y, w, h);
 

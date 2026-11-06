@@ -731,9 +731,10 @@ build_ui (Showcase *app)
 
 	lrg_container_add_child (LRG_CONTAINER (app->canvas), LRG_WIDGET (app->root));
 
-	/* Toasts float above everything, bottom-right */
+	/* Toasts live in the overlay layer: above everything, even a
+	 * modal dialog's veil, bottom-right */
 	app->toasts = lrg_toast_queue_new ();
-	lrg_container_add_child (LRG_CONTAINER (app->canvas), LRG_WIDGET (app->toasts));
+	lrg_canvas_add_overlay (app->canvas, LRG_WIDGET (app->toasts));
 
 	lrg_list_view_select (app->nav, 0);
 	show_page (app, 0);

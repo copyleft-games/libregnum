@@ -371,11 +371,11 @@ Note the ownership: the card is added to the grid without an unref, and its refe
 :END:
 [[file:images/ui-showcase-toasts.png]]
 
-The toast queue is created in =build_ui()= and added to the canvas *after* the root box, so it is painted on top. It is a pointer-transparent layer that covers the canvas and stacks toasts in the bottom-right corner:
+The toast queue is created in =build_ui()= and put in the canvas overlay layer (=lrg_canvas_add_overlay()=), which is painted above everything, including a modal dialog and its veil. It is a pointer-transparent layer that covers the canvas and stacks toasts in the bottom-right corner:
 
 #+begin_src C
 app->toasts = lrg_toast_queue_new ();
-lrg_container_add_child (LRG_CONTAINER (app->canvas), LRG_WIDGET (app->toasts));
+lrg_canvas_add_overlay (app->canvas, LRG_WIDGET (app->toasts));
 #+end_src
 
 Raising a toast is three calls. The queue takes its own reference:

@@ -578,7 +578,14 @@ lrg_tab_view_layout_children (LrgContainer *container)
     gfloat      width = lrg_widget_get_width (LRG_WIDGET (container));
     gfloat      height = lrg_widget_get_height (LRG_WIDGET (container));
     gfloat      content_y;
+    gfloat      inset_x;
+    gfloat      inset_y;
     guint       i;
+
+    inset_x = lrg_theme_get_metric (lrg_widget_get_theme (LRG_WIDGET (container)),
+                                    LRG_THEME_METRIC_PADDING_X);
+    inset_y = lrg_theme_get_metric (lrg_widget_get_theme (LRG_WIDGET (container)),
+                                    LRG_THEME_METRIC_PADDING_Y);
 
     content_y = self->tab_position == LRG_TAB_POSITION_TOP ? self->tab_height + padding : padding;
 
@@ -589,9 +596,12 @@ lrg_tab_view_layout_children (LrgContainer *container)
         if (entry->content == NULL)
             continue;
 
-        lrg_widget_place_in_slot (entry->content, padding, content_y,
-                                  MAX (width - padding * 2.0f, 0.0f),
-                                  MAX (height - self->tab_height - padding * 2.0f, 0.0f));
+        /* Inset by the theme's control padding so content does not sit
+         * against the edge of the content box */
+        lrg_widget_place_in_slot (entry->content, padding + inset_x, content_y + inset_y,
+                                  MAX (width - padding * 2.0f - inset_x * 2.0f, 0.0f),
+                                  MAX (height - self->tab_height - padding * 2.0f - inset_y * 2.0f,
+                                       0.0f));
 
         /* Only the active tab's content is visible */
         if (lrg_widget_get_visible (entry->content) != (i == self->active_tab))

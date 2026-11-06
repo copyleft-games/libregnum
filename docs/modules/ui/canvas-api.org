@@ -122,6 +122,26 @@ See [[file:input-and-focus.org::#input-popups][the popup layer]] for modality, l
 :END:
 =LrgCanvasInput= is a value struct; its fields (pointer, button masks, wheel, up to =LRG_CANVAS_INPUT_MAX_KEYS= (16) keys and characters, modifiers, =nav=, =activate=, =cancel=, =delta_time=) are described in [[file:input-and-focus.org::#input-frames][input frames]]. C code keeps it on the stack and resets it with =lrg_canvas_input_init()= every frame.
 
+** Overlay layer
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-overlay
+:END:
+The overlay layer sits above the widget tree, every popup and the veil of a modal popup: it is painted last and hit-tested first. Put notifications (an =LrgToastQueue=), HUD layers or custom cursors there so they stay visible and bright while a dialog is open. Overlay widgets are parented to the canvas (coordinates, theme) but are not children: focus navigation never visits them, so keep them non-interactive or pointer-transparent layers with clickable pieces (like toast cards).
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_add_overlay= | =void lrg_canvas_add_overlay (LrgCanvas *self, LrgWidget *widget);= | =widget= must have no parent; the canvas takes a reference. Laid out, stepped, painted (above popups) and hit-tested (before popups) every frame. |
+| =lrg_canvas_remove_overlay= | =void lrg_canvas_remove_overlay (LrgCanvas *self, LrgWidget *widget);= | Releases the widget and unparents it; drops any pointer capture inside it. No-op for widgets not in the layer. |
+| =lrg_canvas_get_n_overlays= | =guint lrg_canvas_get_n_overlays (LrgCanvas *self);= | Number of overlay widgets. |
+
+#+begin_src c
+LrgToastQueue *toasts = lrg_toast_queue_new ();
+
+/* Toasts stay above dialogs and their veil */
+lrg_canvas_add_overlay (canvas, LRG_WIDGET (toasts));
+g_object_unref (toasts);
+#+end_src
+
 ** Functions
 :PROPERTIES:
 :CUSTOM_ID: canvas-input-api-functions

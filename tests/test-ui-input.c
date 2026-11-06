@@ -910,6 +910,43 @@ test_popup_modal_traps (CanvasFixture *fixture,
 }
 
 static void
+test_overlay_layer (CanvasFixture *fixture,
+                    gconstpointer  user_data)
+{
+	g_autoptr(GString) log = g_string_new (NULL);
+	TestProbe         *dialog = probe_new ("dialog", log, 0, 0, 300, 200, FALSE);
+	TestProbe         *layer = probe_new ("layer", log, 0, 0, 800, 600, FALSE);
+	TestProbe         *chip = probe_new ("chip", log, 700, 500, 60, 40, FALSE);
+
+	lrg_widget_set_pointer_transparent (LRG_WIDGET (layer), TRUE);
+	lrg_container_add_child (LRG_CONTAINER (layer), LRG_WIDGET (chip));
+	lrg_canvas_add_overlay (fixture->canvas, LRG_WIDGET (layer));
+	g_assert_cmpuint (lrg_canvas_get_n_overlays (fixture->canvas), ==, 1);
+	g_assert_true (lrg_widget_get_root (LRG_WIDGET (chip)) == LRG_WIDGET (fixture->canvas));
+
+	/* A modal popup swallows clicks outside it... except on the overlay */
+	lrg_canvas_show_popup (fixture->canvas, LRG_WIDGET (dialog), NULL,
+	                       LRG_POPUP_PLACEMENT_CENTER, TRUE);
+	g_assert_true (lrg_canvas_widget_at_point (fixture->canvas, 720, 520) == LRG_WIDGET (chip));
+	g_assert_null (lrg_canvas_widget_at_point (fixture->canvas, 20, 20));
+	click_at (fixture->canvas, 720, 520);
+	g_assert_true (log_has (log, "chip:down"));
+
+	/* Focus navigation never lands on the overlay */
+	lrg_widget_set_focusable (LRG_WIDGET (chip), TRUE);
+	frame_nav (fixture->canvas, LRG_NAV_DIRECTION_NEXT);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) != LRG_WIDGET (chip));
+
+	lrg_canvas_remove_overlay (fixture->canvas, LRG_WIDGET (layer));
+	g_assert_cmpuint (lrg_canvas_get_n_overlays (fixture->canvas), ==, 0);
+	g_assert_null (lrg_widget_get_parent (LRG_WIDGET (layer)));
+
+	g_object_unref (dialog);
+	g_object_unref (layer);
+	g_object_unref (chip);
+}
+
+static void
 test_popup_stack_dismiss (CanvasFixture *fixture,
                           gconstpointer  user_data)
 {
@@ -982,6 +1019,7 @@ main (int   argc,
     ADD ("/ui/input/popup/light-dismiss", test_popup_light_dismiss);
     ADD ("/ui/input/popup/modal", test_popup_modal_traps);
     ADD ("/ui/input/popup/stack", test_popup_stack_dismiss);
+    ADD ("/ui/input/popup/overlay-layer", test_overlay_layer);
 
 #undef ADD
 
