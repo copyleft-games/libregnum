@@ -407,7 +407,7 @@ LrgToast * lrg_notification_get_toast (LrgNotification *self);
  *   the toast queue
  * @cancellable: (nullable): a #GCancellable
  * @callback: (scope async): called when the notification is up
- * @user_data: (closure): data for @callback
+ * @user_data: data for @callback
  *
  * Shows the notification, or updates it in place when it is already
  * shown (the server replaces it; a toast changes its text). Unless

@@ -355,7 +355,7 @@ void lrg_header_bar_activate_button (LrgHeaderBar       *self,
  * @self: an #LrgHeaderBar
  * @funcs: (nullable): the window operations (copied), or %NULL for the
  *   default raylib ones
- * @user_data: (closure): data passed to every function
+ * @user_data: (nullable): data passed to every function
  * @destroy: (nullable): frees @user_data when the functions are replaced
  *   or the bar is finalised
  *
