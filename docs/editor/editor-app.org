@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum editor
 #+created: 2026-10-24T22:10:00-04:00
-#+updated: 2026-10-24T22:10:00-04:00
-#+version: 1.0
+#+updated: 2026-11-06T18:00:00-05:00
+#+version: 1.1
 
 * The libregnum Editor Application
 :PROPERTIES:
@@ -14,7 +14,7 @@
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Editor Application
 #+end_quote
 
-=lrgeditor= is the libregnum editor: a level, scene and world editor in the spirit of the Unity, Godot and Unreal editors, built entirely from libregnum. Its UI is drawn by libregnum's own immediate-mode GUI toolkit (=LrgGuiContext=, =src/gui/=), its viewport renders with the engine's raylib backend, its documents are =LrgEditor= / =LrgLevel= and its play mode runs an =LrgWorld=. Code and data files open in your own editor (=$EDITOR= by default, with first-party Emacs integration), and every editor feature can be driven over a local socket.
+=lrgeditor= is the libregnum editor: a level, scene and world editor in the spirit of the Unity, Godot and Unreal editors, built entirely from libregnum. Since 0.8.1 its UI is drawn by libregnum's own retained UI toolkit (=LrgCanvas= and its widgets, =src/ui/=; 0.8.0 used the immediate-mode =src/gui/=, which stays in the engine), its viewport renders with the engine's raylib backend, its documents are =LrgEditor= / =LrgLevel= and its play mode runs an =LrgWorld=. Code and data files open in your own editor (=$EDITOR= by default, with first-party Emacs integration), and every editor feature can be driven over a local socket.
 
 The application lives in =src/editor/ui/= (=LrgEditorApp=, public header =lrg-editor-app.h=) and the program in =src/launcher/lrgeditor.c=.
 
@@ -116,22 +116,24 @@ What the established editors offer and where it lives here.
 :END:
 #+begin_example
  File Edit Create Node View Play Tools Help
- [Select][Move][Rotate][Scale] [World][Snap] 1.00 m 15 deg 0.10  [3D]  [Play][Pause][Step][Stop] [Run Game]
+ [Select][Move][Rotate][Scale] [World][Snap] [-1.00+][-15+][-0.10+] [3D] [Play][Pause][Step][Stop] [Run Game] Layout [single]
 +-----------+-------------------------------------+-------------+
 | Hierarchy | Viewport                            | Inspector   |
-|           |                                     | History     |
+|           |                                     |             |
 |           +-------------------------------------+             |
-|           | Assets | Console | Problems         |             |
+|           | Assets | Console | Problems | ...     | Tiles       |
 +-----------+-------------------------------------+-------------+
  main.rlevel *  status message             3 selected  12 nodes  0 errors  IPC emacs  60 fps
 #+end_example
 
 - *Menu bar*: every menu item is an action, showing its current shortcut and enabled/checked state. Alt + the first letter (Alt+F, Alt+E, Alt+C, Alt+N, Alt+V, Alt+P, Alt+T, Alt+H) opens a menu from the keyboard; Escape closes it.
-- *Toolbar*: tools, space, snap with live-editable increments, 2D/3D, play controls, run game.
+- *Toolbar*: tools, space, snap with spin boxes for the increments, 2D/3D, play controls, run game, and the viewport layout picker (=single=, =split-h=, =split-v=, =quad=; drawing split viewports arrives with the viewport panel work, the layout is already stored in the view state).
 - *Status bar*: document and dirty marker, play state, a "changed on disk: Reload / Keep mine" prompt, the last status message, selection and node counts, log counters (click to open the console), IPC state ("emacs" when libregnum.el is connected), frame rate.
 - *Toasts*: transient notifications in the bottom right (info, success, warning, error).
 
-Panels can be closed (except the viewport), reopened from View > Panels, dragged by their tab onto another panel's edge or centre to split or tab them, and resized with the splitters. The layout is saved with the preferences.
+Panels can be closed (except the viewport), reopened from View > Panels, dragged by their tab onto another panel's edge or centre to split or tab them, and resized with the splitters. The layout (=LrgDockArea= YAML under =ui-layout=) is saved with the preferences; View > Reset Layout restores the default (viewport in the centre, hierarchy left, inspector and tiles right, assets, console, problems, history, timeline, profiler and code tabbed below).
+
+In 0.8.1 Wave 3 the hierarchy, inspector, assets, console, problems, history, tiles, timeline, profiler and code panels are placeholders ("Hierarchy (Wave 4)") while their widgets are rebuilt on the new toolkit; their features stay available through actions and IPC. The command palette, quick open and the preferences editor are also Wave 4: their actions show a notification meanwhile.
 
 ** Viewport
 :PROPERTIES:
@@ -269,6 +271,7 @@ ui-layout: null                  # LrgDockArea YAML, managed by the editor
 | =ui-layout=        | =LrgDockArea= YAML                                | none       | The dock layout of the 0.8.1 window. The 0.8.0 =layout= key is left untouched next to it so a downgrade still finds its layout. |
 | =viewport-layout=  | =single=, =split-h=, =split-v=, =quad=            | =single=   | How many viewports and how they are arranged (=split-h= is side by side, =split-v= stacked). |
 | =script-editor=    | =external=, =internal=, =emacs=                   | =external= | Where scripts open: the external editor (see =external-editor=), the built-in code panel, or a connected Emacs. |
+| =viewport-cameras= | four camera records (=lrg_editor_view_state_cameras_to_string()=) | none | The cameras of the four viewports (position, target, fov, ortho height, flags), restored on start; see [[file:view-model.org::#settings][View Model]]. |
 
 Unknown values of =viewport-layout= and =script-editor= are ignored with a log message and the previous value stays.
 
@@ -276,7 +279,7 @@ Unknown values of =viewport-layout= and =script-editor= are ignored with a log m
 :PROPERTIES:
 :CUSTOM_ID: preferences-theme
 :END:
-=theme= takes one of three forms. An =LrgTheme= preset name (=midnight=, =daylight=, =catppuccin-mocha=, =catppuccin-latte=, =high-contrast=) selects that preset. A value with a directory separator or ending in =.yaml= / =.yml= is the path of a theme YAML file. The 0.8.0 names are still read: =mocha= resolves to =catppuccin-mocha=, =latte= to =catppuccin-latte=, and =macchiato= and =frappe= to the closest preset (=catppuccin-mocha=) unless their exact palettes ship as =data/editor/themes/<name>.yaml=. An unknown name falls back to =catppuccin-mocha=. The default value is still =mocha= so 0.8.0 reads the file back unchanged. ~lrg_editor_settings_get_theme_preset~ and ~lrg_editor_settings_get_theme_file~ do this resolution.
+=theme= takes one of three forms. An =LrgTheme= preset name (=midnight=, =daylight=, =catppuccin-mocha=, =catppuccin-latte=, =high-contrast=) selects that preset. A value with a directory separator or ending in =.yaml= / =.yml= is the path of a theme YAML file. The 0.8.0 names are still read: =mocha= resolves to =catppuccin-mocha=, =latte= to =catppuccin-latte=, and =macchiato= and =frappe= to the shipped theme files =data/editor/themes/catppuccin-macchiato.yaml= and =catppuccin-frappe.yaml= (the settings migration rewrites them to those names, see [[#settings-migration][Settings migration]]; without the files they fall back to =catppuccin-mocha=). An unknown name falls back to =catppuccin-mocha=. The default value is still =mocha= so 0.8.0 reads the file back unchanged. ~lrg_editor_settings_get_theme_preset~ and ~lrg_editor_settings_get_theme_file~ do this resolution; the app builds its =LrgTheme= from the file when there is one (=lrg_theme_new_from_file()=), else from the preset, and scales every theme metric by =ui-scale= x =font-size= / 16. Changing =theme=, =ui-scale= or =font-size= applies live.
 
 ** Default shortcuts
 :PROPERTIES:
@@ -374,6 +377,100 @@ The =LrgGuiKey= helpers of 0.8.0 (~lrg_editor_shortcut_parse~, ~lrg_editor_short
 :END:
 File > New Project creates =levels/=, =scripts/=, =assets/=, =prefabs/=, a =project.ryaml= and a starter level (sun, camera, ground). File > Project Settings edits the name, default level, game module (=game_output=), run command and scripts folder. See [[file:projects-and-assets.org][Projects and Assets]] for the manifest format.
 
+** Architecture
+:PROPERTIES:
+:CUSTOM_ID: architecture
+:END:
+Since 0.8.1 the application is three layers: the editor core (=LrgEditor=, documents, commands, IPC server; unchanged), a headless view model (=LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=, see [[file:view-model.org][View Model]]) and a retained UI on =src/ui/=. Everything a tool, test or IPC client can see or change lives in the first two, so the same state is driven by the widgets, by =view.*= / =play.*= / =timeline.*= IPC and by =lrgeditor --headless=.
+
+#+begin_example
+LrgEditorApp
+ |- core: LrgEditor, LrgEditorSettings, LrgEditorActions, LrgEditorServer, LrgEditorLog,
+ |        LrgExternalEditor, LrgProject, LrgAssetDatabase (write-meta), LrgEditorVcs, thumbnails
+ |- view model: LrgEditorViewState, LrgEditorViewportNav, LrgEditorPlaySession,
+ |              LrgEditorGizmo, LrgEditorTilePainter
+ '- UI: LrgCanvas
+         |- LrgEditorWindow (LrgContainer)
+         |    |- LrgMenuBar          GMenuModel from the action registry ("editor.<id>")
+         |    |- toolbar             tool / snap / play buttons, snap spin boxes, layout picker
+         |    |- LrgDockArea         one LrgDockPanel per panel
+         |    |    '- viewport: LrgEditorViewportPanel > LrgViewport (render mode)
+         |    |                     > LrgEditorSceneRenderer
+         |    '- status bar
+         '- overlay: LrgToastQueue
+#+end_example
+
+*** The frame
+:PROPERTIES:
+:CUSTOM_ID: architecture-frame
+:END:
+=lrg_editor_app_run()= opens the window and loops: drain the GLib main context (IPC, file monitors, file dialogs, the game process), poll an =LrgCanvasInput= from raylib (=lrg_canvas_input_poll()=, plus a GLFW latch so presses and chords shorter than a frame are not lost), =lrg_editor_app_process_frame()=, then =BeginDrawing()=, =lrg_canvas_render()=, the pending window screenshot and =EndDrawing()= (through graylib's frame sync).
+
+=lrg_editor_app_process_frame (app, input, width, height)= is the whole per-frame logic and needs no window:
+
+1. Size the canvas, window and toast overlay; take the "editor" action group off the canvas while a modal dialog is open (so shortcuts cannot fire behind it).
+2. =editor_window_refresh()=: =lrg_editor_actions_refresh_state()= (menus follow enabled / checked states), re-register canvas shortcuts when bindings changed, copy the model into the toolbar and status bar.
+3. Lay out, then =lrg_canvas_process_input()=: shortcuts, menus, dialogs and the viewport get the input; the canvas clock advances (springs, the viewport's render into its texture).
+4. Tick navigation (held fly keys), the play session, timeline playback, thumbnails, autosave and the debounced validation; update the window title.
+5. Headless (no window), record the canvas so popups and widgets are laid out for =ui.state=.
+
+=lrg_editor_app_run_headless()= runs step 4 every 100 ms from a GLib timeout instead.
+
+*** Actions, menus and shortcuts
+:PROPERTIES:
+:CUSTOM_ID: architecture-actions
+:END:
+=LrgEditorActions= is a plain =GActionGroup=; =LrgMenu= looks actions up with =lrg_widget_lookup_action()=, which needs a =GActionMap=. The window therefore mirrors the registry into a =GSimpleActionGroup= inserted as =editor= (boolean-stateful actions for toggles), kept in step through the registry's =action-added= / =-removed= / =-enabled-changed= / =-state-changed= signals; activating a mirror action runs the registry action. A second group, =win=, holds what has no registry action: =win.open-recent-level= / =win.open-recent-project= (string target), =win.create= (node kind: =empty cube sphere plane cylinder cone torus rectangle circle light camera audio sprite mesh tilemap=) and =win.panel-<id>= (boolean, View > Panels).
+
+The menu bar's =GMenuModel= (=lrg_editor_window_get_menu_model()=) has the 0.8.0 menus in the 0.8.0 order and contents, with mnemonics (=_File=), so Alt+F, Alt+E, Alt+C, Alt+N, Alt+V, Alt+P, Alt+T and Alt+H open them. Every accelerator of every action is registered with =lrg_canvas_add_shortcut()= on =editor.<id>=, and re-registered on =accels-changed=. The canvas offers a key to the focused widget first (a text field keeps Ctrl+C), then to shortcuts, then to the menu bar's mnemonics. The viewport consumes W A S D Q E only while flying.
+
+*** Panels
+:PROPERTIES:
+:CUSTOM_ID: architecture-panels
+:END:
+| Panel id    | Widget                     | Default place                 |
+|-------------+----------------------------+-------------------------------|
+| =viewport=  | =LrgEditorViewportPanel=   | centre (not closable)         |
+| =hierarchy= | =LrgEditorHierarchyPanel=  | left                          |
+| =inspector= | =LrgEditorInspectorPanel=  | right                         |
+| =tiles=     | =LrgEditorTilesPanel=      | tab next to the inspector     |
+| =assets=    | =LrgEditorAssetsPanel=     | bottom                        |
+| =console=   | =LrgEditorConsolePanel=    | tab next to assets            |
+| =problems=, =history= | placeholder label | tabs next to assets           |
+| =timeline=  | =LrgEditorTimelinePanel=   | tab next to assets            |
+| =profiler=  | =LrgEditorProfilerPanel=   | tab next to assets            |
+| =code=      | =LrgEditorCodePanel=       | tab next to assets            |
+
+Every panel widget is created with =lrg_<panel>_new (app)=. The app keeps a reference to every =LrgDockPanel=, docked or closed, so View > Panels can re-dock a closed panel where the default layout has it.
+
+*** The viewport
+:PROPERTIES:
+:CUSTOM_ID: architecture-viewport
+:END:
+=LrgEditorViewportPanel= holds an =LrgViewport= in =LRG_VIEWPORT_MODE_RENDER= whose render function hands its texture to =LrgEditorSceneRenderer= (grid, nodes, icons, selection bounds, transform gizmo, orientation axes, box-select rectangle and overlay text; the same look as 0.8.0). Input follows the view model's "Wave 3 wiring": a press goes to tile painting (paint mode on a tilemap), then =lrg_editor_viewport_nav_pointer_press()=, then the transform gizmo, else =lrg_editor_viewport_nav_press_empty()=; the navigator's =click= picks (with cycling through overlapping nodes), =box-select= selects and =context-menu= opens the viewport menu. Key releases bubble to the panel (held fly keys), and losing focus releases them. =view.screenshot= reads the viewport's render texture back.
+
+*** Scene renderer
+:PROPERTIES:
+:CUSTOM_ID: scene-renderer
+:END:
+=LrgEditorSceneRenderer= draws what an editor viewport shows. It uses only raylib and rlgl, never the immediate-mode GUI, with fixed Catppuccin Mocha colours. Create one per editor with =lrg_editor_scene_renderer_new (editor)= and bind its inputs: =set_settings()= (=grid-size= and =grid-extent=, re-read on notify), =set_base_dir()= (what relative asset paths resolve against; changing it forgets the per-asset lookups), =set_gizmo()= and =set_playing()= (darker background during play).
+
+Call =lrg_editor_scene_renderer_render (renderer, view_state, viewport, nav, active, width, height)= from an =LrgViewport= render callback, inside =BeginTextureMode()= on a =width= x =height= target; it clears the target itself. =viewport= is the camera index (-1 for the active one); the camera's render mode (=WIREFRAME= draws in wire mode, the other modes are lit for now) and overlay flags (=GRID=, =ICONS=, =GIZMOS=, =STATS=) are honoured. The transform gizmo is drawn only when =active=; the orientation axes and the box-select rectangle come from =nav= (nullable) so they match its hit testing. =get_drawn()= returns the draw calls of the last render.
+
+GPU resources (lit shader, primitive meshes, model and texture caches) are created on the first render; =render()= returns =FALSE= and draws nothing without a window. =forget_asset (abs_path)= drops one cached model or texture (live reload). =release()= frees all GPU resources and must be called before =CloseWindow()=. =render_model_thumbnail()= and =render_font_thumbnail()= return a size x size =GrlImage= for the thumbnail cache's GPU hooks (models; font samples "Aa Bb 123" at the size and code points of the font's =.meta= sidecar); they run outside any texture mode.
+
+*** Dialogs
+:PROPERTIES:
+:CUSTOM_ID: architecture-dialogs
+:END:
+Modal dialogs are =LrgDialog= and =LrgFileDialog= (in-app, not the desktop portal): unsaved changes (Save / Don't Save / Cancel), open level and save level as (=.rlevel= filter), open project (folder), import scene, save as prefab and instantiate prefab (=.rprefab=), new project, new script, crash recovery (Restore / Discard / Later), about, keyboard shortcuts and a project settings summary. One is open at a time; its id is =LrgEditorViewState:dialog= and =ui.state= ="dialog"= (the 0.8.0 strings). Escape cancels. Without a window an unsaved-changes request proceeds without asking, as in 0.8.0.
+
+*** Projects, assets and version control
+:PROPERTIES:
+:CUSTOM_ID: architecture-projects
+:END:
+Opening a project scans it with an =LrgAssetDatabase= that has =write-meta= on, so missing =.meta= sidecars are created (the editor is the only writer; =lrgeditorctl=, validators and the =asset.list= IPC method scan read-only). An =LrgEditorVcs= follows the project's git status. The project root and its asset folders are monitored: a changed file drops its thumbnail and cached GPU copy, a changed =.rprefab= syncs its linked instances (=lrg_editor_prefab_changed()=, a no-op when they are up to date, e.g. after our own save) and git status is refreshed (debounced). The thumbnail cache gets the model and font GPU hooks while a window is open.
+
 ** Embedding and automation
 :PROPERTIES:
 :CUSTOM_ID: embedding
@@ -383,19 +480,54 @@ File > New Project creates =levels/=, =scripts/=, =assets/=, =prefabs/=, a =proj
 #+begin_src c
 g_autoptr(LrgEditor)    editor = lrg_editor_new ();
 g_autoptr(LrgEditorApp) app = lrg_editor_app_new (editor);
+g_autoptr(LrgDockPanel) panel = lrg_dock_panel_new ("my-tool", "My Tool");
 
 lrg_editor_app_load_settings (app, NULL, NULL);
 lrg_editor_actions_add (lrg_editor_app_get_actions (app), "mytool.bake", "Bake Lighting",
-                        "My Tool", "Ctrl+Alt+B", bake_cb, NULL, NULL, editor);
+                        "My Tool", "<Ctrl><Alt>b", bake_cb, NULL, NULL, editor);
+lrg_dock_panel_set_child (panel, my_widget);
+lrg_editor_app_add_panel (app, panel, "tab:inspector");
 lrg_editor_server_register_method (lrg_editor_app_get_server (app), "mytool.bake",
                                    bake_method, editor, NULL);
 lrg_editor_app_start_server (app, NULL, NULL);
 return lrg_editor_app_run (app);
 #+end_src
 
-Custom actions appear in menus (via the palette), the keybinding editor and =action.run=. See =examples/editor-standalone.c=.
+Custom actions get a mirror =editor.<id>= action and their shortcut immediately, appear in the keybinding list, Help > Keyboard Shortcuts and =action.run=. See =examples/editor-standalone.c= (unchanged since 0.8.0).
 
-The app can also be driven without a window, one frame at a time, with =lrg_editor_app_frame()= and a synthetic =LrgGuiInput= -- this is how =tests/test-editor-app.c= exercises shortcuts, the palette, dialogs, play mode, saving and live reload. =lrg_editor_app_run_headless()= serves IPC only.
+*** API
+:PROPERTIES:
+:CUSTOM_ID: embedding-api
+:END:
+| Function | Since | Use |
+|----------+-------+-----|
+| =lrg_editor_app_process_frame (app, input, width, height)= | 0.8.1 | One frame from an =LrgCanvasInput= (canvas coordinates), no window needed |
+| =lrg_editor_app_get_canvas (app)= | 0.8.1 | The =LrgCanvas= (exists headless too) |
+| =lrg_editor_app_get_window (app)= | 0.8.1 | The =LrgEditorWindow= (menu bar, toolbar, dock, status bar, toasts) |
+| =lrg_editor_app_get_dock (app)= | 0.8.1 | The =LrgDockArea= |
+| =lrg_editor_app_add_panel (app, panel, where)= | 0.8.1 | Dock a custom =LrgDockPanel=: =left=, =right=, =top=, =bottom=, =center= or =tab:<panel-id>= |
+| =lrg_editor_app_get_view_state (app)= | 0.8.1 | Cameras, layout, render modes, dialog, timeline playhead, tile tool |
+| =lrg_editor_app_get_viewport_nav (app)= | 0.8.1 | Viewport navigation |
+| =lrg_editor_app_get_play_session (app)= | 0.8.1 | Play-in-editor |
+| =lrg_editor_window_get_menu_bar=, =get_menu_model=, =get_toasts=, =get_widget (window, name)= | 0.8.1 | The chrome's widgets (=get_widget= takes =toolbar=, =statusbar=, =status-reload=, =status-keep=, =status-counters=, =snap-move=, =snap-rotate=, =snap-scale=, =viewport-layout= or =tool:<action-id>=) |
+| =lrg_editor_viewport_panel_get_viewport (panel)= | 0.8.1 | The =LrgViewport= of the viewport panel |
+| =lrg_editor_gui_input_to_canvas (input, previous, out)=, =lrg_editor_gui_key_to_grl (key)= | 0.8.1 | Translate a 0.8.0 =LrgGuiInput= frame |
+| =lrg_editor_app_frame (app, gui_input, w, h)= | deprecated 0.8.1 | Routed through the translation above, then =process_frame= |
+| =lrg_editor_app_get_gui (app)= | deprecated 0.8.1 | Returns =NULL= |
+
+*** Migrating from LrgGui embedding
+:PROPERTIES:
+:CUSTOM_ID: embedding-migration
+:END:
+Code that drove the 0.8.0 editor with =lrg_editor_app_frame()= and an =LrgGuiInput= keeps compiling (with a deprecation warning) and working: the frame is translated into an =LrgCanvasInput= by =lrg_editor_gui_input_to_canvas()=. Button presses and releases are found by comparing with the previous call's buttons, key releases by comparing =key_down= arrays (so release a held key by clearing its =key_down= entry), key presses, repeats, typed text, the wheel and the modifiers are copied, and =LrgGuiKey= values are mapped to =GrlKey=. To move over:
+
+- Build an =LrgCanvasInput= yourself (=lrg_canvas_input_init()=, set =pointer_x/y=, =buttons_down= / =buttons_pressed= / =buttons_released= with =LRG_CANVAS_BUTTON_MASK()=, =lrg_canvas_input_add_key()=, =lrg_canvas_input_add_key_release()=, =lrg_canvas_input_add_text()=, =modifiers=, =delta_time=) and call =lrg_editor_app_process_frame()=; or poll it from raylib with =lrg_canvas_input_poll()=.
+- Drawing: =lrg_canvas_render (lrg_editor_app_get_canvas (app))= between =BeginDrawing()= and =EndDrawing()= replaces rendering the GUI draw list.
+- =lrg_editor_app_get_gui()= returns =NULL=; inspect widgets through the canvas instead (=lrg_widget_find()=, =lrg_canvas_record()= and the paint list), and use =ui.state= for menu and viewport rectangles.
+- Custom panels: wrap your widget in an =LrgDockPanel= and call =lrg_editor_app_add_panel()= instead of drawing into an =LrgGuiDock= panel.
+- Shortcuts: write accelerators (=<Ctrl><Alt>b=); the 0.8.0 =Ctrl+Alt+B= syntax is still accepted (see [[#keybindings][Keybinding syntax]]).
+
+=tests/editor-app-fixture.h= shows the headless pattern: it builds frames with pointer, button, key and text helpers, clicks widgets by their rectangles and sends IPC requests through =lrg_editor_server_dispatch()=.
 
 ** Frame cost
 :PROPERTIES:
@@ -405,8 +537,9 @@ The editor redraws every frame, so panels avoid work proportional to the whole l
 
 - *Pacing*: the window runs with vsync and caps at the largest whole fraction of the monitor's refresh rate that is at most 75 fps (60 on 60/120 Hz, 72 on 144 Hz, 55 on 165 Hz), so frames always span the same number of vblanks; a fixed 60 cap on a 144 Hz monitor alternated two- and three-vblank frames. Like games, the editor keeps its UI thread on a hybrid CPU's performance cores (=LRG_CPU_AFFINITY=none= to opt out) and bounds its frames in flight to 2 with graylib's frame sync (=grl_frame_sync_end_drawing()= in place of =EndDrawing()=; =LRG_MAX_FRAMES_IN_FLIGHT= overrides it, see [[file:../performance.org::#input-latency][input latency]]).
 
-- *Console*: each log record is formatted (timestamp, level, domain), casefolded for the filter and measured once, when it first appears, into a row cache mirrored from the log ring; the filtered row list is extended incrementally and rebuilt only when the level toggles or the filter text change. Only the rows inside the scroll view are laid out; the rows above and below become one spacer each, of the same total height and of the widest row's width, so scrolling and the horizontal extent are unchanged. A row whose context menu is open keeps building it while it scrolls out of view. =LrgEditorLog= keeps running per-level tallies, so the console tab and status bar badges (=lrg_editor_log_count_level()=) do not walk the ring.
-- *Hierarchy*: rows outside the tree's view submit only their tree node (keyed by GUID, so open state, layout, keyboard navigation order and a held row behave as before) and skip the toggles, label, measuring, drop targets and menu; the row being renamed, the one being revealed and one with an open context menu are always drawn in full. The node count (outliner header, status bar, viewport overlay) and the filter's match set are cached against a process-wide node tree serial (bumped when nodes are created, destroyed, re-parented, renamed or given a new GUID) and recomputed only when it or the filter text changes. =LrgEditorSelection= keeps a hash set beside its ordered array, so the per-row "is selected" test is constant time.
+- *Panels*: the console, hierarchy and asset panels of 0.8.0 kept row caches against the log ring and the node tree serial (below); their retained replacements (Wave 4) use list and tree views over =GListModel=, which lay out only visible rows. =LrgEditorLog= still keeps per-level tallies, so the status bar counters (=lrg_editor_log_count_level()=) do not walk the ring.
+- *0.8.0 console*: each log record is formatted (timestamp, level, domain), casefolded for the filter and measured once, when it first appears, into a row cache mirrored from the log ring; the filtered row list is extended incrementally and rebuilt only when the level toggles or the filter text change. Only the rows inside the scroll view are laid out; the rows above and below become one spacer each, of the same total height and of the widest row's width, so scrolling and the horizontal extent are unchanged. A row whose context menu is open keeps building it while it scrolls out of view. =LrgEditorLog= keeps running per-level tallies, so the console tab and status bar badges (=lrg_editor_log_count_level()=) do not walk the ring.
+- *0.8.0 hierarchy*: rows outside the tree's view submit only their tree node (keyed by GUID, so open state, layout, keyboard navigation order and a held row behave as before) and skip the toggles, label, measuring, drop targets and menu; the row being renamed, the one being revealed and one with an open context menu are always drawn in full. The node count (outliner header, status bar, viewport overlay) and the filter's match set are cached against a process-wide node tree serial (bumped when nodes are created, destroyed, re-parented, renamed or given a new GUID) and recomputed only when it or the filter text changes. =LrgEditorSelection= keeps a hash set beside its ordered array, so the per-row "is selected" test is constant time.
 - *Viewport rendering*: the scene walk passes each node's world matrix down to its children (one local matrix composed per node instead of a walk back to the root), and icons take their position from it. Mesh and sprite assets are looked up by the node's asset string as written, one hash lookup per node per frame, with the absolute path built and the file loaded only on first use; that map is cleared when the project or level directory (what relative paths resolve against) changes. =grid-size= and =grid-extent= are re-read from the settings only after a =notify=.
 
 ** Related documentation
@@ -418,4 +551,84 @@ The editor redraws every frame, so panels avoid work proportional to the whole l
 - [[file:ipc-protocol.org][IPC protocol]] -- every method and event
 - [[file:lrgeditorctl.org][lrgeditorctl and MCP]] -- kubectl-style control of running editors; AI agents
 - [[file:editor-runtime.org][Editor runtime]] -- =LrgEditor=, commands, selection, gizmo math
-- [[file:../modules/gui/index.org][Immediate-mode GUI]] -- the toolkit the editor is drawn with
+- [[file:view-model.org][View model]] -- =LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=
+- [[file:../modules/ui/index.org][UI toolkit]] -- the retained toolkit the editor is drawn with since 0.8.1
+- [[file:../modules/gui/index.org][Immediate-mode GUI]] -- the 0.8.0 toolkit (still in the engine)
+
+** Settings migration
+:PROPERTIES:
+:CUSTOM_ID: settings-migration
+:END:
+An =editor.yaml= written by 0.8.0 has no =settings-version= key and loads as version 1. On start-up the editor calls ~lrg_editor_settings_migrate (settings, NULL, &error)~ (=lrg-editor-settings-migrate.h=), which brings the file to version 2 once: it backs the file up, converts the layout, the keybindings and the theme name, sets =settings-version: 2= and saves. Everything else (=ui-scale=, fonts, camera and snap settings, recent files, keys the editor does not know) is kept as it is. A version-2 file is left alone, so the call is cheap on every start and running it twice changes nothing.
+
+*** When it runs and the backup
+:PROPERTIES:
+:CUSTOM_ID: settings-migration-backup
+:END:
+~lrg_editor_settings_needs_migration~ is true while =settings-version= is below =LRG_EDITOR_SETTINGS_VERSION= (2). The file migrated is the =path= argument, else the file the settings were loaded from (~lrg_editor_settings_get_path~), else the default path. Before anything is rewritten the existing file is copied to =editor.yaml.v0.8.0.bak= (=LRG_EDITOR_SETTINGS_BACKUP_SUFFIX=); an existing backup is never overwritten, so after a downgrade and a second upgrade the backup is still the first 0.8.0 file. Settings that were never on disk get no backup. If the backup cannot be written the migration stops with an error and changes nothing. A symlinked =editor.yaml= (for example one managed by GNU Stow) is written through to its target instead of being replaced by a plain file.
+
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: settings-migration-layout
+:END:
+The 0.8.0 window stored its dock layout under =layout= in the compact =LrgGuiDock= grammar: =split(D,RATIO,A,B)= with =D= =v= (children side by side) or =h= (stacked), and =tabs(ACTIVE,id,...)= for a tab stack. ~lrg_editor_settings_convert_legacy_layout~ parses it exactly as 0.8.0 did (blanks between tokens, ratios clamped to 0.05 - 0.95, the active index clamped to the tab count, at most 64 levels) and writes the =LrgDockArea= YAML of [[file:../modules/ui/widgets/dock-area.org::#dock-area-persistence][dock area persistence]] into =ui-layout=. The old =layout= key is left untouched so 0.8.0 still finds its layout after a downgrade. Panel ids are copied unchanged: =viewport=, =hierarchy=, =inspector=, =assets=, =console=, =problems=, =history=, =tiles= and =timeline= are the same panels in 0.8.1.
+
+| 0.8.0                       | =LrgDockArea= YAML                                   |
+|-----------------------------+------------------------------------------------------|
+| =split(v,0.20,A,B)=         | ={ split: horizontal, ratio: 0.2, first: A, second: B }= |
+| =split(h,0.72,A,B)=         | ={ split: vertical, ratio: 0.72, first: A, second: B }= |
+| =tabs(1,console,assets)=    | ={ tabs: [console, assets], active: assets }=        |
+| (no floating panels)        | =floating: []=                                       |
+
+For example =split(v,0.20,tabs(0,hierarchy),split(h,0.72,tabs(0,viewport),tabs(1,console,assets)))= becomes the dock tree =H(0.20,[hierarchy*],V(0.72,[viewport*],[console,assets*]))= (in =lrg_dock_area_describe()= notation). A layout string that does not parse leaves =ui-layout= empty, so the window starts with its default layout, and logs a message with the parse error. A =ui-layout= that is already present is never replaced.
+
+*** Keybindings
+:PROPERTIES:
+:CUSTOM_ID: settings-migration-keybindings
+:END:
+Every override is rewritten in accelerator syntax with ~lrg_editor_settings_convert_legacy_shortcut~, which runs ~lrg_editor_shortcut_to_accel~ on each =|=-separated alternative on its own: =Ctrl+Shift+Z|Ctrl+Y= becomes =<Ctrl><Shift>z|<Ctrl>y=, =Num7= =KP_7=, =Ctrl+,= =<Ctrl>comma=; values already in accelerator syntax stay as they are and =""= (an unbinding) stays =""=. An alternative that does not convert is dropped and the rest are kept (=Shift+F5|Wibble= becomes =<Shift>F5=); a value with no valid alternative is removed, so the action gets its default shortcut back. Both cases log a message naming the action and the old text.
+
+*** Theme
+:PROPERTIES:
+:CUSTOM_ID: settings-migration-theme
+:END:
+~lrg_editor_settings_convert_legacy_theme~ maps the four 0.8.0 names (case-insensitively); any other value, a preset name or a theme file path, is kept.
+
+| 0.8.0       | 0.8.1                  | Resolves to                                               |
+|-------------+------------------------+-----------------------------------------------------------|
+| =mocha=     | =catppuccin-mocha=     | the built-in preset                                       |
+| =latte=     | =catppuccin-latte=     | the built-in preset                                       |
+| =macchiato= | =catppuccin-macchiato= | =data/editor/themes/catppuccin-macchiato.yaml=            |
+| =frappe=    | =catppuccin-frappe=    | =data/editor/themes/catppuccin-frappe.yaml=               |
+
+The two theme files use the official Catppuccin Macchiato and Frappé palettes mapped onto the same colour roles and metrics as the =catppuccin-mocha= preset, and load with ~lrg_theme_new_from_file~. The migrated value is the bare name, not a path, so it survives the editor being moved or reinstalled. A bare theme name that is neither a preset nor a 0.8.0 name is looked up as a file by ~lrg_editor_settings_find_theme_file~: =NAME.yaml= (or =NAME= when it already ends in =.yaml= / =.yml=) in
+
+1. each directory of =$LRG_EDITOR_THEME_PATH= (separated like =$PATH=),
+2. =$XDG_DATA_HOME/libregnum/editor/themes= (your own themes),
+3. =PREFIX/share/libregnum/editor/themes= when the library was built with =LRG_DATADIR=,
+4. =libregnum/editor/themes= under each directory of =$XDG_DATA_DIRS=,
+5. =data/editor/themes= next to the running executable or in one of its parents (an uninstalled build tree).
+
+When the file is found ~lrg_editor_settings_get_theme_file~ returns it and ~lrg_editor_settings_get_theme_preset~ returns =NULL=; when it is not, the name falls back to the =catppuccin-mocha= preset like any unknown name. The 0.8.0 names themselves keep resolving to presets (=macchiato= and =frappe= to =catppuccin-mocha=) in a file that has not been migrated yet.
+
+*** Other keys
+:PROPERTIES:
+:CUSTOM_ID: settings-migration-other
+:END:
+=ui-scale= is not converted: the window applies it as the canvas pointer transform and the theme scale. The migration does not add keys; the 0.8.1 keys (=ui-layout=, =script-editor=, =viewport-layout= and =viewport-cameras=, the four viewport cameras as written by ~lrg_editor_view_state_cameras_to_string~, default =""=) are written with their defaults on the first save.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: settings-migration-api
+:END:
+| Function                                        | Use                                                        |
+|-------------------------------------------------+------------------------------------------------------------|
+| ~lrg_editor_settings_migrate (settings, path, error)~ | Back up, convert, set version 2 and save; no-op when current |
+| ~lrg_editor_settings_needs_migration (settings)~ | =settings-version= is below 2                              |
+| ~lrg_editor_settings_convert_legacy_layout (layout, error)~ | 0.8.0 layout string to =LrgDockArea= YAML, or =NULL= with =G_IO_ERROR_INVALID_DATA= |
+| ~lrg_editor_settings_convert_legacy_shortcut (shortcut)~ | Lenient conversion to accelerators, or =NULL= if nothing is valid |
+| ~lrg_editor_settings_convert_legacy_theme (theme)~ | 0.8.1 theme value for a 0.8.0 name                         |
+| ~lrg_editor_settings_find_theme_file (name)~    | The theme file for a bare name, or =NULL=                  |
+| ~lrg_editor_settings_get_path (settings)~       | The file the settings were loaded from                     |
+
+=tests/test-editor-settings-migrate.c= covers the layout grammar (nested splits, tabs, clamping, invalid input, the depth limit; every converted layout is loaded into a real =LrgDockArea=), keybindings with alternatives and junk, all four legacy theme names plus preset and path passthrough, the theme lookup, the one-time backup, idempotency, preserved unknown keys, the version bump and both shipped theme files.

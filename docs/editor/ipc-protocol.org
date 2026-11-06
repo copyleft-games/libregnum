@@ -134,7 +134,7 @@ Every editing method goes through the editor's undo stack.
 | =edit.copy= / =edit.cut= / =edit.paste= |                                         | clipboard text / =true= / pasted nodes       |
 | =tool.set=           | =tool= (=select translate rotate scale=), =space= (=world local=), =snap= | editor info          |
 | =prefab.instantiate= | =path=, =parent=                                           | the instance                                 |
-| =prefab.save=        | =node=, =path=                                             | the path                                     |
+| =prefab.save=        | =node=, =path=                                             | the path; linked instances of =path= in the level are synced (one undo group), and saving an instance over its own source applies its overrides instead |
 | =log.tail=           | =count=                                                    | recent log records                           |
 
 ** Tilemap methods
@@ -171,6 +171,51 @@ Keyframed animation stored in the level (see [[file:editor-tools.org::#animation
 | =timeline.ease=     | =name=, =node=, =time=, =easing=, =channel=                            | =changed= |
 | =timeline.sample=   | =name=, =time= (wrapped or clamped to the clip)                        | =time=, =values [{node channel value}]= (nothing is written) |
 
+** Asset sidecar methods
+:PROPERTIES:
+:CUSTOM_ID: asset-meta-methods
+:END:
+Read and edit an asset's =.meta= sidecar (see [[file:projects-and-assets.org][Projects and Assets]]). Headless: they work on a plain =LrgEditorServer=. =path= is the asset (or its =.meta= file), absolute or relative to the project directory (=lrg_editor_server_set_project_dir()=, else the current directory). The reply describes the sidecar as =lrg_asset_meta_to_variant()= does: =guid=, =importer= and =settings= (an object with every known setting of the importer at its effective value, defaults included, plus any unknown keys), plus =path= (the absolute asset path) and =exists= (whether the =.meta= file is on disk).
+
+| Method           | Params                                                                 | Result |
+|------------------+------------------------------------------------------------------------+--------|
+| =asset.meta.get= | =path=                                                                 | =guid importer settings path exists=; without a sidecar, the one the asset database would create in memory (importer from the extension, the 0.8.0 legacy guid of the project-relative path); nothing is written |
+| =asset.meta.set= | =path=, =settings= (={key: value or null}=, null resets to the default), =guid= (optional, replaces the identifier); at least one of the two | same as =asset.meta.get= with =exists: true= |
+
+=asset.meta.set= is all or nothing: every value is validated with =lrg_asset_meta_set_setting_variant()= (booleans, integral numbers, choices such as =filter= =point bilinear trilinear=, numeric ranges such as =max-size= 0..16384) and the sidecar is written only when all of them are accepted; one bad key or value is =invalid-params= and the file is left untouched. A sidecar that cannot be parsed (for instance mid merge conflict) is =failed= and is never overwritten. A missing asset is =not-found=. The write goes straight to =<path>.meta= and is not on the undo stack (like a file save).
+
+** Version control methods
+:PROPERTIES:
+:CUSTOM_ID: vcs-methods
+:END:
+Git status of the project directory through =LrgEditorVcs= (=lrg_editor_vcs_refresh_sync()=, so the answer is always fresh). Headless; the server keeps one tracker and replaces it when the project directory changes.
+
+| Method       | Params                                                   | Result |
+|--------------+----------------------------------------------------------+--------|
+| =vcs.status= |                                                          | =repository= (bool), =branch= (string, ="HEAD"= when detached, null outside a repository), =files [{path status letter}]= sorted by path: every path git reports that is not clean (untracked or ignored folders appear once with a trailing =/=) |
+| =vcs.status= | =path= (a file or folder, project relative or absolute)  | ={path status letter}= for that path; a folder reports its aggregated badge status |
+
+=status= is an =LrgEditorVcsStatus= nick (=unmodified modified added deleted renamed untracked ignored conflicted=) and =letter= the one-letter badge (=M A D R U I !=, a space for unmodified). Outside a git work tree the reply is ={"repository": false, "branch": null, "files": []}=, not an error; a git failure inside a repository is =failed=.
+
+** Linked prefab methods
+:PROPERTIES:
+:CUSTOM_ID: prefab-link-methods
+:END:
+Overrides and links of prefab instances (see [[file:prefabs.org][Prefabs]]). Headless; every mutation is undoable. =node= may be an instance root or any node inside an instance: a node that carries a link is used as is (a nested instance root acts on its own link), otherwise the instance that governs it (=lrg_prefab_find_owner()=). Override keys are the =LrgPrefabLink= keys: a property path for the root (=visible=, =transform/scale=, =components/Health/max=), =<guid>:path= for other nodes, =children/+<guid>= and =children/-<source-guid>= for added and removed children.
+
+The instance description returned by several methods is ={node name source source_guid linked overrides}=: =node= is the instance root's guid, =source= the prefab path (for an unlinked node the 0.8.0 marker, i.e. what =prefab.relink= would use, or null), =source_guid= the prefab's asset guid or null, =linked= a boolean and =overrides= the sorted key list (empty when unlinked).
+
+| Method             | Params                                                                 | Result |
+|--------------------+------------------------------------------------------------------------+--------|
+| =prefab.overrides= | =node=                                                                 | instance description; an unlinked node is not an error (=linked: false=) |
+| =prefab.apply=     | =node=, =keys= (optional array; default every override)                | instance description plus =applied= (keys written to the prefab) and =synced= (instances that changed when the dependents were synced) |
+| =prefab.revert=    | =node=, =keys= (optional array; default every override, then a full sync) | instance description (the remaining overrides) |
+| =prefab.sync=      | =path= (optional prefab file)                                          | =synced= (instances that changed), =prefabs= (sources synced); without =path= every prefab used by an outermost linked instance in the level |
+| =prefab.relink=    | =node=, =path= (optional; default the node's 0.8.0 marker)             | instance description |
+| =prefab.unlink=    | =node=                                                                 | =node=, =linked: false=, =unlinked= (whether there was a link to break) |
+
+=prefab.apply= writes the source file, saves it and syncs every other dependent instance as one undo group (undo restores the file too). =prefab.revert= with several keys is one undo step. =prefab.sync= with a =path= also syncs instances of prefabs that nest it; instances that are already current record nothing, so a second sync reports 0. Errors: a missing =node= or a =keys= value that is not an array of strings is =invalid-params=; an unknown node, a key that is not in the instance's override set (checked before anything changes) or a missing prefab file is =not-found=; acting on a node that is not part of a linked instance (=apply=, =revert=), or a prefab that cannot be loaded or saved, is =failed= with the reason.
+
 ** Application methods
 :PROPERTIES:
 :CUSTOM_ID: app-methods
@@ -181,10 +226,10 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 |-------------------+-----------------------------------------------------+-----------------------------------------------------|
 | =action.list=     |                                                     | =[{id label category shortcut enabled checked}]=    |
 | =action.run=      | =id=                                                | =true=; =not-found= if unknown or disabled          |
-| =view.get=        |                                                     | camera =position target fovy orthographic ortho_height mode_2d= |
-| =view.set=        | any of =position=, =target= (arrays), =orthographic=, =ortho_height=, =mode_2d= | the view          |
-| =view.focus=      | =node= (optional: frame the selection or all)       | the view                                            |
-| =view.screenshot= | =path= (.png), =window= (whole window, written after the next frame) | the path; fails headless         |
+| =view.get=        | =viewport= (optional index 0..3; default the active viewport) | camera =position target fovy orthographic ortho_height mode_2d viewport= |
+| =view.set=        | any of =position=, =target= (arrays), =orthographic=, =ortho_height=, =mode_2d=; =viewport= | the view (=mode_2d= resets the camera first, the other values then apply) |
+| =view.focus=      | =node= (optional: frame the selection or all), =viewport= | the view                                       |
+| =view.screenshot= | =path= (.png), =window= (whole window, written after the next frame) | the path; the viewport image is read back from its render texture; fails headless |
 | =play.start= / =play.stop= / =play.pause= / =play.step= / =play.state= |        | =playing paused time running=                       |
 | =run.start= / =run.stop= |                                              | play state                                          |
 | =project.info=    |                                                     | =root name default_level game_output run_command scripts_dir asset_dirs= |
@@ -193,7 +238,7 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =level.validate=  |                                                     | =[{severity code node path message file}]=          |
 | =level.import=    | =path= (Blender scene YAML)                         | =true=                                              |
 | =ui.notify=       | =message=, =level= (0 info, 1 success, 2 warning, 3 error) | =true=; shows a toast                        |
-| =ui.state=        |                                                     | =menu= (open top-level menu or null), =dialog=, =palette=, =nav= (=none fly orbit pan box zoom gizmo=), =viewport_hovered=, =window=, =fps=, =frame_height=, =menubar= (header rects by label), =viewport= (rect), =input= (=x y buttons [left right middle] mods=) as last seen |
+| =ui.state=        |                                                     | see [[#ui-state][ui.state]] |
 | =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
 | =tilemap.tool=    | any of =tool= (=brush eraser rect fill pick=), =tile=, =layer=, =brush=, =mode= (paint mode on/off) | =tool mode tile layer brush target hover= (=[x, y]= cell under the pointer or null) |
 | =timeline.play=   | =name= (else the panel's timeline), =from=, =playing= (default true) | =name time playing previewing=        |
@@ -202,7 +247,32 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =timeline.state=  |                                                     | =name time playing previewing=                      |
 | =asset.thumbnail= | =path= (project relative or absolute), =wait= (generate now) | =path thumbnail pending cache=; textures, levels, prefabs; models need a window |
 
-The app also overrides =level.save= so a timeline preview is put back before writing (the pose is never saved).
+The app also overrides =level.save= so a timeline preview is put back before writing (the pose is never saved). The =view.*=, =play.*=, =timeline.*= and =tilemap.tool= methods act on the headless view model (=LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=, see [[file:view-model.org][View Model]]), so they work the same with =lrgeditor --headless=. =view.*= take an optional =viewport= index (0..3; omitted or -1 is the active viewport).
+
+*** ui.state
+:PROPERTIES:
+:CUSTOM_ID: ui-state
+:END:
+What the UI is doing and the last input it saw, for tools, tests (=tests/editor-x11-smoke.sh= clicks the =menubar= rectangles) and diagnosing "my clicks do nothing". Since 0.8.1 the values come from the retained UI (=LrgMenuBar=, =LrgMenu=, the viewport widget) and the headless view model, with the 0.8.0 field names and meanings unchanged; the fields marked 0.8.1 are new.
+
+| Field              | Since | Meaning |
+|--------------------+-------+---------|
+| =menu=             | 0.8.0 | Label of the open top-level menu (=lrg_menu_bar_get_open_title()=), or null |
+| =menubar=          | 0.8.0 | ={"File": [x, y, w, h], "Edit": ..., ...}= title rectangles in window pixels (=lrg_menu_bar_get_title_rect()=), labels without mnemonic markers |
+| =frame_height=     | 0.8.0 | Height of a menu row (=lrg_menu_get_row_height()=): the first item of an open menu is about one row under its title |
+| =dialog=           | 0.8.0 | Open modal dialog id or null: =confirm=, =file=, =new-project=, =new-script=, =recover=, =about=, =shortcuts=, =project-settings= (=preferences= arrives with the preferences panel) |
+| =palette=          | 0.8.0 | Command palette or quick open showing |
+| =nav=              | 0.8.0 | Navigation in progress: =none fly orbit pan box zoom gizmo= (=lrg_editor_nav_mode_to_string()=) |
+| =viewport=         | 0.8.0 | =[x, y, w, h]= of the viewport image (viewport 0) in window pixels |
+| =viewport_hovered= | 0.8.0 | The pointer is over the viewport |
+| =window=           | 0.8.0 | The editor has a window (false headless) |
+| =fps=              | 0.8.0 | Smoothed frame rate |
+| =input=            | 0.8.0 | =x y buttons [left right middle] mods= of the last frame (=mods= is an =LrgInputModifiers= mask since 0.8.1: Shift 1, Ctrl 2, Alt 4, Super 8) |
+| =viewports=        | 0.8.1 | One entry per viewport of the layout: =index rect render_mode mode_2d= (only viewport 0 is drawn until split viewports land) |
+| =active_viewport=  | 0.8.1 | Index of the viewport keys and =view.*= without =viewport= act on |
+| =layout=           | 0.8.1 | Viewport layout: =single split-h split-v quad= |
+| =panels=           | 0.8.1 | Ids of the docked panels |
+| =focus=            | 0.8.1 | Name (or type) of the widget with keyboard focus, or null |
 
 ** Examples
 :PROPERTIES:

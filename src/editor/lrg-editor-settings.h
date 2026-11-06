@@ -17,7 +17,8 @@
  * `viewport-layout`, theme preset names or paths, accelerator-syntax
  * keybindings). A file without the key is a 0.8.0 file and loads with
  * version 1; it is still read as is (legacy theme names and "Ctrl+S"
- * keybindings keep working) and the editor migrates it.
+ * keybindings keep working) and the editor migrates it with
+ * lrg_editor_settings_migrate() (lrg-editor-settings-migrate.h).
  *
  * Settings live in a YAML file, by default
  * `$XDG_CONFIG_HOME/libregnum/editor.yaml` (override with the
@@ -367,8 +368,10 @@ const gchar * lrg_editor_settings_get_viewport_layout (LrgEditorSettings *self);
  * resolves to: a preset name is returned as is; the 0.8.0 names map
  * "mocha" to "catppuccin-mocha", "latte" to "catppuccin-latte", and
  * "macchiato" and "frappe" to "catppuccin-mocha" (their closest preset;
- * an editor shipping data/editor/themes/NAME.yaml may load that instead);
- * an unknown name gives "catppuccin-mocha".
+ * the settings migration rewrites them to "catppuccin-macchiato" and
+ * "catppuccin-frappe", which name shipped theme files); any other bare
+ * name that lrg_editor_settings_find_theme_file() finds is a file theme
+ * (%NULL here); an unknown name gives "catppuccin-mocha".
  *
  * Returns: (transfer none) (nullable): the preset name, or %NULL when the
  *   theme is a file (see lrg_editor_settings_get_theme_file())
@@ -380,13 +383,61 @@ const gchar * lrg_editor_settings_get_theme_preset (LrgEditorSettings *self);
  * lrg_editor_settings_get_theme_file:
  * @self: an #LrgEditorSettings
  *
- * The theme YAML path when #LrgEditorSettings:theme names a file (it
- * contains a directory separator or ends in ".yaml" / ".yml").
+ * The theme YAML path when #LrgEditorSettings:theme names a file: the
+ * value itself when it contains a directory separator or ends in ".yaml"
+ * / ".yml", or, for a bare name that is neither a preset nor a 0.8.0
+ * name (e.g. "catppuccin-macchiato"), the file
+ * lrg_editor_settings_find_theme_file() finds for it. The lookup is
+ * cached per theme name.
  *
- * Returns: (transfer none) (nullable): the path, or %NULL for a preset or
- *   legacy name
+ * Returns: (transfer none) (nullable): the path, or %NULL for a preset,
+ *   a legacy name or a name without a theme file
  */
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_editor_settings_get_theme_file (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_find_theme_file:
+ * @name: a bare theme name such as "catppuccin-macchiato" (".yaml" is
+ *   appended unless it ends in ".yaml" or ".yml")
+ *
+ * Looks up the theme file NAME.yaml in, in order: each directory of
+ * `$LRG_EDITOR_THEME_PATH` (separated like `$PATH`),
+ * `$XDG_DATA_HOME/libregnum/editor/themes`, the install prefix's
+ * `share/libregnum/editor/themes` (when the library was built with
+ * `LRG_DATADIR`), `libregnum/editor/themes` under each of
+ * `$XDG_DATA_DIRS`, and finally `data/editor/themes` in the executable's
+ * directory or one of its parents (an uninstalled build tree). The
+ * editor ships "catppuccin-macchiato" and "catppuccin-frappe" there.
+ *
+ * Returns: (transfer full) (nullable): the file's path, or %NULL when
+ *   @name is not a bare name or no directory has it
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_settings_find_theme_file (const gchar *name);
+
+/**
+ * lrg_editor_settings_get_viewport_cameras:
+ * @self: an #LrgEditorSettings
+ *
+ * Returns: (transfer none) (nullable): the saved viewport cameras
+ *   (#LrgEditorSettings:viewport-cameras), "" when none are saved
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_viewport_cameras (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_get_path:
+ * @self: an #LrgEditorSettings
+ *
+ * The file lrg_editor_settings_load() last read (or tried to read: a
+ * missing file is remembered too), which lrg_editor_settings_save() and
+ * lrg_editor_settings_migrate() use when given %NULL.
+ *
+ * Returns: (transfer none) (nullable): the path, or %NULL if nothing was
+ *   loaded
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_path (LrgEditorSettings *self);
 
 G_END_DECLS

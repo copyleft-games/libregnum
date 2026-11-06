@@ -21,6 +21,7 @@
 #include <glib/gstdio.h>
 #include <string.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #define KEYBINDINGS_KEY "keybindings"
 #define VERSION_KEY     "settings-version"
@@ -111,6 +112,14 @@ struct _LrgEditorSettings
 	gchar      *ui_layout;
 	gchar      *script_editor;
 	gchar      *viewport_layout;
+	gchar      *viewport_cameras;
+
+	/* Theme file lookup cache: the bare theme name last resolved with
+	 * lrg_editor_settings_find_theme_file() and its result, so the
+	 * transfer-none lrg_editor_settings_get_theme_file() has storage and
+	 * repeated calls do not touch the file system. */
+	gchar      *theme_lookup_name;
+	gchar      *theme_lookup_path;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorSettings, lrg_editor_settings, G_TYPE_OBJECT)
@@ -154,6 +163,7 @@ enum
 	PROP_UI_LAYOUT,
 	PROP_SCRIPT_EDITOR,
 	PROP_VIEWPORT_LAYOUT,
+	PROP_VIEWPORT_CAMERAS,
 	N_PROPS
 };
 
@@ -194,6 +204,9 @@ lrg_editor_settings_finalize (GObject *object)
 	g_free (self->ui_layout);
 	g_free (self->script_editor);
 	g_free (self->viewport_layout);
+	g_free (self->viewport_cameras);
+	g_free (self->theme_lookup_name);
+	g_free (self->theme_lookup_path);
 
 	G_OBJECT_CLASS (lrg_editor_settings_parent_class)->finalize (object);
 }
@@ -244,6 +257,7 @@ lrg_editor_settings_get_property (GObject    *object,
 	case PROP_UI_LAYOUT:                g_value_set_string (value, self->ui_layout); break;
 	case PROP_SCRIPT_EDITOR:            g_value_set_string (value, self->script_editor); break;
 	case PROP_VIEWPORT_LAYOUT:          g_value_set_string (value, self->viewport_layout); break;
+	case PROP_VIEWPORT_CAMERAS:         g_value_set_string (value, self->viewport_cameras); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -371,6 +385,21 @@ lrg_editor_settings_set_property (GObject      *object,
 	case PROP_VIEWPORT_LAYOUT:
 		set_choice (self, &self->viewport_layout, viewport_layout_values, value, pspec);
 		break;
+	case PROP_VIEWPORT_CAMERAS:
+		/* NULL (also what an empty YAML value reads as) means "", so
+		 * the key round-trips through the file unchanged */
+		if (g_value_get_string (value) == NULL)
+		{
+			GValue empty = G_VALUE_INIT;
+
+			g_value_init (&empty, G_TYPE_STRING);
+			g_value_set_static_string (&empty, "");
+			set_str_notify (self, &self->viewport_cameras, &empty, pspec);
+			g_value_unset (&empty);
+		}
+		else
+			set_str_notify (self, &self->viewport_cameras, value, pspec);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -456,7 +485,9 @@ lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
 	 *
 	 * UI colour theme: an #LrgTheme preset name ("midnight", "daylight",
 	 * "catppuccin-mocha", "catppuccin-latte", "high-contrast"), the path
-	 * of a theme YAML file, or one of the 0.8.0 names ("mocha",
+	 * of a theme YAML file, the bare name of a shipped or user theme file
+	 * (see lrg_editor_settings_find_theme_file(), e.g.
+	 * "catppuccin-macchiato"), or one of the 0.8.0 names ("mocha",
 	 * "macchiato", "frappe", "latte"), which are still read and resolve
 	 * as described in lrg_editor_settings_get_theme_preset(). The default
 	 * stays "mocha" so 0.8.0 can read the file back.
@@ -738,6 +769,22 @@ lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
 	properties[PROP_VIEWPORT_LAYOUT] =
 		g_param_spec_string ("viewport-layout", "Viewport Layout",
 		                     "single, split-h, split-v or quad", viewport_layout_values[0], RW_EXPLICIT);
+
+	/**
+	 * LrgEditorSettings:viewport-cameras:
+	 *
+	 * The four viewport cameras as written by
+	 * lrg_editor_view_state_cameras_to_string(): camera records separated
+	 * by ";", each twelve comma separated numbers (opaque to this class).
+	 * Empty means "start from the default cameras"; setting %NULL stores
+	 * "". Read and written by
+	 * lrg_editor_view_state_load_settings() and
+	 * lrg_editor_view_state_save_settings().
+	 */
+	properties[PROP_VIEWPORT_CAMERAS] =
+		g_param_spec_string ("viewport-cameras", "Viewport Cameras",
+		                     "Saved viewport cameras (LrgEditorViewState string)",
+		                     "", RW_EXPLICIT);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -1179,6 +1226,21 @@ lrg_editor_settings_save (LrgEditorSettings  *self,
 	else
 		resolved = lrg_editor_settings_get_default_path ();
 
+	/* A symlinked editor.yaml (e.g. managed by GNU Stow) is written
+	 * through: g_file_set_contents() renames a temporary file over the
+	 * path, which would otherwise replace the link with a plain file. */
+	if (g_file_test (resolved, G_FILE_TEST_IS_SYMLINK))
+	{
+		gchar *real = realpath (resolved, NULL);
+
+		if (real != NULL)
+		{
+			g_free (resolved);
+			resolved = g_strdup (real);
+			free (real);
+		}
+	}
+
 	dir = g_path_get_dirname (resolved);
 	if (g_mkdir_with_parents (dir, 0700) != 0)
 	{
@@ -1411,6 +1473,54 @@ theme_is_file (const gchar *theme)
 	       g_str_has_suffix (theme, ".yaml") || g_str_has_suffix (theme, ".yml");
 }
 
+/*
+ * theme_is_builtin_name:
+ *
+ * TRUE for a preset name or a 0.8.0 legacy name (case-insensitively):
+ * those always resolve to a preset and are never looked up as files, so
+ * a stray file in a theme directory cannot shadow them.
+ */
+static gboolean
+theme_is_builtin_name (const gchar *theme)
+{
+	gsize i;
+
+	for (i = 0; theme_presets[i] != NULL; i++)
+		if (g_ascii_strcasecmp (theme, theme_presets[i]) == 0)
+			return TRUE;
+	for (i = 0; i < G_N_ELEMENTS (legacy_themes); i++)
+		if (g_ascii_strcasecmp (theme, legacy_themes[i].legacy) == 0)
+			return TRUE;
+	return FALSE;
+}
+
+/*
+ * lookup_named_theme:
+ *
+ * The shipped or user theme file for a bare, non-builtin theme name
+ * (e.g. "catppuccin-macchiato", what the 0.8.1 migration writes for the
+ * 0.8.0 "macchiato"), cached per name in @self.
+ *
+ * Returns: (transfer none) (nullable): the file, or %NULL
+ */
+static const gchar *
+lookup_named_theme (LrgEditorSettings *self,
+                    const gchar       *theme)
+{
+	if (theme_is_file (theme) || theme_is_builtin_name (theme))
+		return NULL;
+
+	/* Same name as last time: answer from the cache (also caches misses) */
+	if (g_strcmp0 (self->theme_lookup_name, theme) != 0)
+	{
+		g_free (self->theme_lookup_name);
+		g_free (self->theme_lookup_path);
+		self->theme_lookup_name = g_strdup (theme);
+		self->theme_lookup_path = lrg_editor_settings_find_theme_file (theme);
+	}
+	return self->theme_lookup_path;
+}
+
 const gchar *
 lrg_editor_settings_get_theme_preset (LrgEditorSettings *self)
 {
@@ -1433,6 +1543,10 @@ lrg_editor_settings_get_theme_preset (LrgEditorSettings *self)
 		if (g_ascii_strcasecmp (theme, legacy_themes[i].legacy) == 0)
 			return legacy_themes[i].preset;
 
+	/* A name with a theme file in the search path is a file theme */
+	if (lookup_named_theme (self, theme) != NULL)
+		return NULL;
+
 	/* Unknown name: the editor's default look */
 	return "catppuccin-mocha";
 }
@@ -1442,7 +1556,159 @@ lrg_editor_settings_get_theme_file (LrgEditorSettings *self)
 {
 	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
 
-	if (self->theme == NULL || *self->theme == '\0' || !theme_is_file (self->theme))
+	if (self->theme == NULL || *self->theme == '\0')
 		return NULL;
-	return self->theme;
+	if (theme_is_file (self->theme))
+		return self->theme;
+
+	/* A bare name found as NAME.yaml in a theme directory */
+	return lookup_named_theme (self, self->theme);
+}
+
+const gchar *
+lrg_editor_settings_get_viewport_cameras (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	return self->viewport_cameras;
+}
+
+const gchar *
+lrg_editor_settings_get_path (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	return self->loaded_path;
+}
+
+/* ==========================================================================
+ * Theme file lookup
+ * ========================================================================== */
+
+/* Maximum number of parent directories walked up from the executable when
+ * looking for an uninstalled source tree's data/editor/themes. */
+#define THEME_TREE_MAX_UP (6)
+
+/*
+ * try_theme_dir:
+ *
+ * @dir/@file if it is a regular file, else %NULL.
+ */
+static gchar *
+try_theme_dir (const gchar *dir,
+               const gchar *file)
+{
+	g_autofree gchar *candidate = NULL;
+
+	if (dir == NULL || *dir == '\0')
+		return NULL;
+	candidate = g_build_filename (dir, file, NULL);
+	if (g_file_test (candidate, G_FILE_TEST_IS_REGULAR))
+		return g_steal_pointer (&candidate);
+	return NULL;
+}
+
+/*
+ * try_source_tree:
+ *
+ * Walks up from the running executable's directory looking for
+ * data/editor/themes/@file, so an editor (or a test) run from an
+ * uninstalled build tree finds the themes it was built with. Uses
+ * /proc/self/exe; on systems without it the walk is skipped.
+ */
+static gchar *
+try_source_tree (const gchar *file)
+{
+	g_autofree gchar *exe = NULL;
+	g_autofree gchar *dir = NULL;
+	guint             up;
+
+	exe = g_file_read_link ("/proc/self/exe", NULL);
+	if (exe == NULL)
+		return NULL;
+	dir = g_path_get_dirname (exe);
+
+	for (up = 0; up < THEME_TREE_MAX_UP; up++)
+	{
+		g_autofree gchar *themes = g_build_filename (dir, "data", "editor", "themes", NULL);
+		gchar            *found = try_theme_dir (themes, file);
+		gchar            *parent;
+
+		if (found != NULL)
+			return found;
+		parent = g_path_get_dirname (dir);
+		if (g_strcmp0 (parent, dir) == 0)
+		{
+			g_free (parent);
+			break;
+		}
+		g_free (dir);
+		dir = parent;
+	}
+	return NULL;
+}
+
+gchar *
+lrg_editor_settings_find_theme_file (const gchar *name)
+{
+	g_autofree gchar *file = NULL;
+	const gchar      *env;
+	const gchar * const *sys;
+	gchar            *found;
+	gsize             i;
+
+	g_return_val_if_fail (name != NULL, NULL);
+
+	/* 1. Only bare names: no directories, no "." / ".." */
+	if (*name == '\0' || strchr (name, '/') != NULL || strchr (name, G_DIR_SEPARATOR) != NULL ||
+	    g_strcmp0 (name, ".") == 0 || g_strcmp0 (name, "..") == 0)
+		return NULL;
+	if (g_str_has_suffix (name, ".yaml") || g_str_has_suffix (name, ".yml"))
+		file = g_strdup (name);
+	else
+		file = g_strconcat (name, ".yaml", NULL);
+
+	/* 2. $LRG_EDITOR_THEME_PATH: directories separated like $PATH */
+	env = g_getenv ("LRG_EDITOR_THEME_PATH");
+	if (env != NULL && *env != '\0')
+	{
+		g_auto(GStrv) dirs = g_strsplit (env, G_SEARCHPATH_SEPARATOR_S, -1);
+
+		for (i = 0; dirs[i] != NULL; i++)
+			if ((found = try_theme_dir (dirs[i], file)) != NULL)
+				return found;
+	}
+
+	/* 3. The user's own themes: $XDG_DATA_HOME/libregnum/editor/themes */
+	{
+		g_autofree gchar *user = g_build_filename (g_get_user_data_dir (), "libregnum",
+		                                           "editor", "themes", NULL);
+
+		if ((found = try_theme_dir (user, file)) != NULL)
+			return found;
+	}
+
+	/* 4. The install prefix the library was built for */
+#ifdef LRG_DATADIR
+	{
+		g_autofree gchar *installed = g_build_filename (LRG_DATADIR, "libregnum",
+		                                                "editor", "themes", NULL);
+
+		if ((found = try_theme_dir (installed, file)) != NULL)
+			return found;
+	}
+#endif
+
+	/* 5. $XDG_DATA_DIRS (e.g. /usr/local/share, /usr/share) */
+	sys = g_get_system_data_dirs ();
+	for (i = 0; sys != NULL && sys[i] != NULL; i++)
+	{
+		g_autofree gchar *dir = g_build_filename (sys[i], "libregnum", "editor", "themes", NULL);
+
+		if ((found = try_theme_dir (dir, file)) != NULL)
+			return found;
+	}
+
+	/* 6. An uninstalled build tree next to the running executable */
+	return try_source_tree (file);
 }

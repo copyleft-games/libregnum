@@ -1585,6 +1585,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-asset-meta.h \
 	src/editor/lrg-editor-vcs.h \
 	src/editor/lrg-editor-document.h \
+	src/editor/lrg-editor-settings-migrate.h \
+	src/editor/lrg-editor-node-model.h \
 	src/editor/lrg-editor-node-source.h \
 	src/editor/lrg-prefab.h
 SOURCES += \
@@ -1622,13 +1624,47 @@ SOURCES += \
 	src/editor/lrg-asset-meta.c \
 	src/editor/lrg-editor-vcs.c \
 	src/editor/lrg-editor-document.c \
+	src/editor/lrg-editor-settings-migrate.c \
+	src/editor/lrg-editor-node-model.c \
 	src/editor/lrg-editor-node-source.c \
 	src/editor/lrg-prefab.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
+	src/editor/ui/lrg-editor-window.h \
+	src/editor/ui/lrg-editor-legacy-input.h \
+	src/editor/ui/lrg-editor-hierarchy-panel.h \
+	src/editor/ui/lrg-editor-inspector-panel.h \
+	src/editor/ui/lrg-editor-viewport-panel.h \
+	src/editor/ui/lrg-editor-viewport-split.h \
+	src/editor/ui/lrg-editor-scene-renderer.h \
+	src/editor/ui/lrg-editor-gizmo-paint.h \
+	src/editor/ui/lrg-editor-assets-panel.h \
+	src/editor/ui/lrg-editor-console-panel.h \
+	src/editor/ui/lrg-editor-tiles-panel.h \
+	src/editor/ui/lrg-editor-timeline-panel.h \
+	src/editor/ui/lrg-editor-profiler-panel.h \
+	src/editor/ui/lrg-editor-code-panel.h \
+	src/editor/ui/lrg-editor-palette.h \
+	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
 SOURCES += \
 	src/editor/ui/lrg-editor-app.c \
+	src/editor/ui/lrg-editor-window.c \
+	src/editor/ui/lrg-editor-legacy-input.c \
+	src/editor/ui/lrg-editor-hierarchy-panel.c \
+	src/editor/ui/lrg-editor-inspector-panel.c \
+	src/editor/ui/lrg-editor-viewport-panel.c \
+	src/editor/ui/lrg-editor-viewport-split.c \
+	src/editor/ui/lrg-editor-scene-renderer.c \
+	src/editor/ui/lrg-editor-gizmo-paint.c \
+	src/editor/ui/lrg-editor-assets-panel.c \
+	src/editor/ui/lrg-editor-console-panel.c \
+	src/editor/ui/lrg-editor-tiles-panel.c \
+	src/editor/ui/lrg-editor-timeline-panel.c \
+	src/editor/ui/lrg-editor-profiler-panel.c \
+	src/editor/ui/lrg-editor-code-panel.c \
+	src/editor/ui/lrg-editor-palette.c \
+	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \
 	src/editor/ui/lrg-editor-dialogs.c \
 	src/editor/ui/lrg-editor-play.c \
@@ -2352,6 +2388,8 @@ ifeq ($(BUILD_EDITOR_UI),1)
 	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
 	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/emacs/site-lisp
 	$(INSTALL_DATA) editors/emacs/libregnum.el $(DESTDIR)$(DATADIR)/emacs/site-lisp/
+	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/libregnum/editor/themes
+	$(INSTALL_DATA) data/editor/themes/catppuccin-macchiato.yaml data/editor/themes/catppuccin-frappe.yaml $(DESTDIR)$(DATADIR)/libregnum/editor/themes/
 endif
 endif
 ifeq ($(BUILD_EDITOR),1)
@@ -2394,6 +2432,7 @@ uninstall:
 	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgeditor$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
+	$(RM) $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-macchiato.yaml $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-frappe.yaml
 	$(RM) $(DESTDIR)$(BINDIR)/lrgeditorctl$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/bash-completion/completions/lrgeditorctl
 ifeq ($(BUILD_GIR),1)

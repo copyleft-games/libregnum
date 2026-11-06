@@ -235,7 +235,7 @@ guint n = lrg_editor_prefab_changed (editor, "prefabs/wheel.rprefab");
 :PROPERTIES:
 :CUSTOM_ID: signals-and-ipc
 :END:
-=LrgEditor::prefab-synced (path, n_instances)= is emitted after =lrg_editor_prefab_changed()= (and therefore after saving or applying to a prefab). The IPC methods =prefab.overrides=, =prefab.apply=, =prefab.revert=, =prefab.sync= and =prefab.relink= are planned for the editor server; until they land, =prefab.save= still writes the file without syncing.
+=LrgEditor::prefab-synced (path, n_instances)= is emitted after =lrg_editor_prefab_changed()= (and therefore after saving or applying to a prefab). The IPC methods =prefab.overrides=, =prefab.apply=, =prefab.revert=, =prefab.sync=, =prefab.relink= and =prefab.unlink= drive the same API headless, and =prefab.save= goes through =lrg_editor_save_prefab()=, so saving over IPC also syncs linked instances (see [[file:ipc-protocol.org::#prefab-link-methods][IPC Protocol]]).
 
 *** Limits
 :PROPERTIES:

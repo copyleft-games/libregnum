@@ -462,6 +462,8 @@
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"
+#include "editor/lrg-editor-settings-migrate.h"
+#include "editor/lrg-editor-node-model.h"
 #include "editor/lrg-editor-node-source.h"
 #include "editor/lrg-editor-shortcut-legacy.h"
 #include "editor/lrg-editor-view-state.h"
@@ -472,6 +474,22 @@
 #include "editor/lrg-editor-document.h"
 #ifdef LRG_BUILD_EDITOR_UI
 #include "editor/ui/lrg-editor-app.h"
+#include "editor/ui/lrg-editor-window.h"
+#include "editor/ui/lrg-editor-legacy-input.h"
+#include "editor/ui/lrg-editor-hierarchy-panel.h"
+#include "editor/ui/lrg-editor-inspector-panel.h"
+#include "editor/ui/lrg-editor-viewport-panel.h"
+#include "editor/ui/lrg-editor-viewport-split.h"
+#include "editor/ui/lrg-editor-scene-renderer.h"
+#include "editor/ui/lrg-editor-gizmo-paint.h"
+#include "editor/ui/lrg-editor-assets-panel.h"
+#include "editor/ui/lrg-editor-console-panel.h"
+#include "editor/ui/lrg-editor-tiles-panel.h"
+#include "editor/ui/lrg-editor-timeline-panel.h"
+#include "editor/ui/lrg-editor-profiler-panel.h"
+#include "editor/ui/lrg-editor-code-panel.h"
+#include "editor/ui/lrg-editor-palette.h"
+#include "editor/ui/lrg-editor-preferences.h"
 #endif
 #endif
 

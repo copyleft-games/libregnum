@@ -250,6 +250,8 @@ TEST_SOURCES := \
 	test-editor-app.c \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
+	test-editor-settings-migrate.c \
+	test-editor-node-model.c \
 	test-editor-node-source.c \
 	test-ui-dnd.c \
 	test-ui-property-grid.c \

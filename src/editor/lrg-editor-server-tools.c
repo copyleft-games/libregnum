@@ -9,10 +9,15 @@
  *   tilemap.get / configure / paint / rect / fill / pick
  *   timeline.list / get / add / remove / set / key / unkey / move-key /
  *            ease / sample
+ *   asset.meta.get / set     (".meta" sidecars, see lrg-asset-meta.h)
+ *   vcs.status               (git status of the project, lrg-editor-vcs.h)
+ *   prefab.overrides / apply / revert / sync / relink / unlink
+ *                            (linked prefab instances, lrg-prefab.h)
  *
- * Every mutation goes through LrgEditorTilePainter or the
- * lrg_editor_timeline_* API, so it is one undo step and raises the usual
- * "changed" event. See docs/editor/ipc-protocol.org for the reference.
+ * Every level mutation goes through LrgEditorTilePainter, the
+ * lrg_editor_timeline_* or the lrg_editor_prefab_* API, so it is one undo
+ * step and raises the usual "changed" event. asset.meta.set writes the
+ * sidecar file directly (not undoable, like a file save). See docs/editor/ipc-protocol.org for the reference.
  */
 
 #include "lrg-editor-server-private.h"
@@ -24,8 +29,12 @@
 #include "lrg-node-visual.h"
 #include "lrg-node-tilemap.h"
 #include "lrg-timeline.h"
+#include "lrg-asset-meta.h"
+#include "lrg-editor-vcs.h"
+#include "lrg-prefab.h"
 #include "../lrg-enums.h"
 #include <math.h>
+#include <string.h>
 
 /* ==========================================================================
  * Parameter helpers
@@ -917,6 +926,736 @@ m_timeline_sample (LrgEditorServer  *server,
 }
 
 /* ==========================================================================
+ * Shared helpers for the asset, VCS and prefab methods
+ * ========================================================================== */
+
+/* Sets a FAILED error from @cause (keeps its message); returns NULL. */
+static JsonNode *
+failed_from (GError **error,
+             GError  *cause)
+{
+	g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+	                     (cause != NULL && cause->message != NULL) ? cause->message : "Operation failed");
+	return NULL;
+}
+
+/* A string member, or JSON null for %NULL. */
+static void
+set_str_or_null (JsonObject  *o,
+                 const gchar *key,
+                 const gchar *value)
+{
+	if (value != NULL)
+		json_object_set_string_member (o, key, value);
+	else
+		json_object_set_null_member (o, key);
+}
+
+/*
+ * The project directory the server resolves relative paths against: the
+ * one set with lrg_editor_server_set_project_dir(), else the current
+ * directory (the same fallback lrg-editor-server.c's resolve_path() uses).
+ */
+static gchar *
+project_dir_of (LrgEditorServer *server)
+{
+	const gchar *dir = lrg_editor_server_get_project_dir (server);
+
+	return (dir != NULL) ? g_canonicalize_filename (dir, NULL) : g_get_current_dir ();
+}
+
+/* @path made absolute against the project directory, canonicalized. */
+static gchar *
+tools_resolve_path (LrgEditorServer *server,
+                    const gchar     *path)
+{
+	g_autofree gchar *base = NULL;
+
+	if (g_path_is_absolute (path))
+		return g_canonicalize_filename (path, NULL);
+	base = project_dir_of (server);
+	return g_canonicalize_filename (path, base);
+}
+
+/*
+ * Reads "keys" (an optional array of strings) into a NULL-terminated strv.
+ * Absent or null -> TRUE with *out = NULL ("all"); anything that is not
+ * an array of strings is an invalid-params error.
+ */
+static gboolean
+p_keys (JsonObject   *p,
+        GStrv        *out,
+        GError      **error)
+{
+	JsonNode  *n;
+	JsonArray *arr;
+	GPtrArray *keys;
+	guint      i;
+
+	*out = NULL;
+	if (!has (p, "keys"))
+		return TRUE;
+	n = json_object_get_member (p, "keys");
+	if (!JSON_NODE_HOLDS_ARRAY (n))
+		return invalid (error, "'%s' must be an array of override keys", "keys");
+
+	arr = json_node_get_array (n);
+	keys = g_ptr_array_new_with_free_func (g_free);
+	for (i = 0; i < json_array_get_length (arr); i++)
+	{
+		JsonNode *e = json_array_get_element (arr, i);
+
+		if (!JSON_NODE_HOLDS_VALUE (e) || json_node_get_value_type (e) != G_TYPE_STRING)
+		{
+			g_ptr_array_free (keys, TRUE);
+			return invalid (error, "'%s' entries must be strings", "keys");
+		}
+		g_ptr_array_add (keys, g_strdup (json_node_get_string (e)));
+	}
+	g_ptr_array_add (keys, NULL);
+	g_ptr_array_set_free_func (keys, NULL);
+	*out = (GStrv) g_ptr_array_free (keys, FALSE);
+	return TRUE;
+}
+
+/* ==========================================================================
+ * Asset sidecars (asset.meta.get / asset.meta.set)
+ * ========================================================================== */
+
+/*
+ * Resolves the "path" parameter to the absolute ASSET path. A path that
+ * names the sidecar itself ("foo.png.meta") is accepted and mapped back
+ * to its asset, so callers can pass either.
+ */
+static gchar *
+require_asset_path (LrgEditorServer  *server,
+                    JsonObject       *p,
+                    GError          **error)
+{
+	const gchar      *path = require_str (p, "path", error);
+	g_autofree gchar *full = NULL;
+
+	if (path == NULL)
+		return NULL;
+	full = tools_resolve_path (server, path);
+	if (lrg_asset_meta_is_meta_path (full))
+		full[strlen (full) - strlen (".meta")] = '\0';
+	return g_steal_pointer (&full);
+}
+
+/*
+ * The 0.8.0 identifier of @full: the SHA-256 of its path relative to the
+ * project directory. Assets outside the project fall back to their file
+ * name, which is what a flat search directory would have produced.
+ */
+static gchar *
+legacy_guid_for (LrgEditorServer *server,
+                 const gchar     *full)
+{
+	g_autofree gchar *base = project_dir_of (server);
+	g_autofree gchar *prefix = g_strconcat (base, G_DIR_SEPARATOR_S, NULL);
+	g_autofree gchar *name = NULL;
+
+	if (g_str_has_prefix (full, prefix))
+		return lrg_asset_meta_compute_legacy_guid (full + strlen (prefix));
+	name = g_path_get_basename (full);
+	return lrg_asset_meta_compute_legacy_guid (name);
+}
+
+/*
+ * Loads the sidecar of @full, or describes the one the asset database
+ * would create in memory (importer from the extension, legacy guid). A
+ * hand-written sidecar without a guid adopts the legacy guid, like the
+ * database does. An unreadable sidecar is an error: it may be in the
+ * middle of a merge conflict and must never be replaced.
+ */
+static LrgAssetMeta *
+load_meta (LrgEditorServer  *server,
+           const gchar      *full,
+           gboolean         *exists,
+           GError          **error)
+{
+	g_autofree gchar       *meta_path = lrg_asset_meta_path_for_asset (full);
+	g_autofree gchar       *legacy = NULL;
+	g_autoptr(LrgAssetMeta) meta = NULL;
+	g_autoptr(GError)       local = NULL;
+
+	*exists = g_file_test (meta_path, G_FILE_TEST_IS_REGULAR);
+	if (!*exists && !g_file_test (full, G_FILE_TEST_EXISTS))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "No asset '%s'", full);
+		return NULL;
+	}
+
+	legacy = legacy_guid_for (server, full);
+	if (*exists)
+	{
+		meta = lrg_asset_meta_new_from_file (meta_path, &local);
+		if (meta == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+			             "Cannot read sidecar '%s': %s", meta_path, local->message);
+			return NULL;
+		}
+		if (lrg_asset_meta_get_guid (meta) == NULL)
+			lrg_asset_meta_set_guid (meta, legacy);
+	}
+	else
+	{
+		meta = lrg_asset_meta_new_for_asset (full);
+		lrg_asset_meta_set_guid (meta, legacy);
+		lrg_asset_meta_set_dirty (meta, FALSE);
+	}
+	return g_steal_pointer (&meta);
+}
+
+/* {guid, importer, settings} plus "path" (the asset) and "exists". */
+static JsonNode *
+meta_to_json (LrgAssetMeta *meta,
+              const gchar  *full,
+              gboolean      exists)
+{
+	g_autoptr(GVariant) v = lrg_asset_meta_to_variant (meta);
+	JsonNode           *n = json_gvariant_serialize (v);
+	JsonObject         *o = json_node_get_object (n);
+
+	json_object_set_string_member (o, "path", full);
+	json_object_set_boolean_member (o, "exists", exists);
+	return n;
+}
+
+static JsonNode *
+m_asset_meta_get (LrgEditorServer  *server,
+                  JsonObject       *params,
+                  gpointer          user_data,
+                  GError          **error)
+{
+	g_autofree gchar       *full = require_asset_path (server, params, error);
+	g_autoptr(LrgAssetMeta) meta = NULL;
+	gboolean                exists = FALSE;
+
+	/* Read-only: a missing sidecar is described, never written. */
+	if (full == NULL || (meta = load_meta (server, full, &exists, error)) == NULL)
+		return NULL;
+	return meta_to_json (meta, full, exists);
+}
+
+static JsonNode *
+m_asset_meta_set (LrgEditorServer  *server,
+                  JsonObject       *params,
+                  gpointer          user_data,
+                  GError          **error)
+{
+	g_autofree gchar       *full = require_asset_path (server, params, error);
+	g_autofree gchar       *meta_path = NULL;
+	g_autoptr(LrgAssetMeta) meta = NULL;
+	g_autoptr(GError)       local = NULL;
+	g_autoptr(GList)        members = NULL;
+	JsonObject             *settings = NULL;
+	const gchar            *guid = p_str (params, "guid");
+	gboolean                exists = FALSE;
+	GList                  *l;
+
+	if (full == NULL)
+		return NULL;
+
+	/* Validate the shape of the request before touching anything. */
+	if (has (params, "settings"))
+	{
+		JsonNode *s = json_object_get_member (params, "settings");
+
+		if (!JSON_NODE_HOLDS_OBJECT (s))
+		{
+			invalid (error, "'%s' must be an object of key: value (null resets)", "settings");
+			return NULL;
+		}
+		settings = json_node_get_object (s);
+	}
+	if (has (params, "guid") && (guid == NULL || *guid == '\0'))
+	{
+		invalid (error, "'%s' must be a non-empty string", "guid");
+		return NULL;
+	}
+	if (settings == NULL && guid == NULL)
+	{
+		invalid (error, "Need '%s' and/or 'guid'", "settings");
+		return NULL;
+	}
+
+	if ((meta = load_meta (server, full, &exists, error)) == NULL)
+		return NULL;
+
+	/*
+	 * All or nothing: every value is validated on the freshly loaded
+	 * in-memory sidecar, and the file is written only after all of them
+	 * were accepted. A failure simply drops @meta.
+	 */
+	if (settings != NULL)
+		members = json_object_get_members (settings);
+	for (l = members; l != NULL; l = l->next)
+	{
+		const gchar        *key = (const gchar *) l->data;
+		JsonNode           *jv = json_object_get_member (settings, key);
+		g_autoptr(GVariant) value = NULL;
+
+		if (!JSON_NODE_HOLDS_NULL (jv))
+		{
+			/* Scalars map to b / x / d / s, objects to a{sv}, arrays to
+			 * av; the setter converts numbers and checks ranges. */
+			value = json_gvariant_deserialize (jv, NULL, &local);
+			if (value == NULL)
+			{
+				g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+				             "Bad value for setting '%s': %s", key, local->message);
+				return NULL;
+			}
+			value = g_variant_take_ref (value);
+		}
+		if (!lrg_asset_meta_set_setting_variant (meta, key, value, &local))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Invalid setting '%s': %s", key, local->message);
+			return NULL;
+		}
+	}
+	if (guid != NULL)
+		lrg_asset_meta_set_guid (meta, guid);
+
+	meta_path = lrg_asset_meta_path_for_asset (full);
+	if (!lrg_asset_meta_save_to_file (meta, meta_path, &local))
+		return failed_from (error, local);
+	return meta_to_json (meta, full, TRUE);
+}
+
+/* ==========================================================================
+ * Version control (vcs.status)
+ * ========================================================================== */
+
+#define TOOLS_VCS_KEY "lrg-editor-server-tools-vcs"
+
+/*
+ * The server's git status tracker, kept as object data so repeated calls
+ * reuse it; it is replaced when the project directory changed since it
+ * was created.
+ */
+static LrgEditorVcs *
+server_vcs (LrgEditorServer *server)
+{
+	g_autofree gchar *dir = project_dir_of (server);
+	LrgEditorVcs     *vcs = g_object_get_data (G_OBJECT (server), TOOLS_VCS_KEY);
+
+	if (vcs == NULL || g_strcmp0 (lrg_editor_vcs_get_project_dir (vcs), dir) != 0)
+	{
+		vcs = lrg_editor_vcs_new (dir);
+		g_object_set_data_full (G_OBJECT (server), TOOLS_VCS_KEY, vcs, g_object_unref);
+	}
+	return vcs;
+}
+
+/* g_ptr_array_sort() comparator for an array of strings. */
+static gint
+compare_str_ptr (gconstpointer a,
+                 gconstpointer b)
+{
+	return g_strcmp0 (*(const gchar *const *) a, *(const gchar *const *) b);
+}
+
+static JsonObject *
+vcs_entry (const gchar        *path,
+           LrgEditorVcsStatus  status)
+{
+	JsonObject *o = json_object_new ();
+	gchar       letter[2];
+
+	letter[0] = lrg_editor_vcs_status_to_letter (status);
+	letter[1] = '\0';
+	json_object_set_string_member (o, "path", path);
+	json_object_set_string_member (o, "status", lrg_editor_vcs_status_to_string (status));
+	json_object_set_string_member (o, "letter", letter);
+	return o;
+}
+
+static JsonNode *
+m_vcs_status (LrgEditorServer  *server,
+              JsonObject       *params,
+              gpointer          user_data,
+              GError          **error)
+{
+	LrgEditorVcs         *vcs = server_vcs (server);
+	const gchar          *path = p_str (params, "path");
+	g_autoptr(GError)     local = NULL;
+	g_autoptr(GPtrArray)  paths = NULL;
+	GHashTable           *statuses;
+	GHashTableIter        it;
+	gpointer              key, value;
+	JsonObject           *o;
+	JsonArray            *files;
+	guint                 i;
+
+	if (has (params, "path") && path == NULL)
+	{
+		invalid (error, "'%s' must be a string", "path");
+		return NULL;
+	}
+
+	/* Fresh data: IPC answers must not depend on a pending debounce. */
+	if (!lrg_editor_vcs_refresh_sync (vcs, NULL, &local))
+		return failed_from (error, local);
+
+	if (path != NULL)
+	{
+		g_autofree gchar   *full = tools_resolve_path (server, path);
+		LrgEditorVcsStatus  status;
+
+		/* Folders aggregate (the asset browser's badge rule). */
+		if (g_file_test (full, G_FILE_TEST_IS_DIR))
+			status = lrg_editor_vcs_get_directory_status (vcs, full);
+		else
+			status = lrg_editor_vcs_get_status (vcs, full);
+		return obj_node (vcs_entry (path, status));
+	}
+
+	o = json_object_new ();
+	files = json_array_new ();
+	json_object_set_boolean_member (o, "repository", lrg_editor_vcs_get_is_repo (vcs));
+	set_str_or_null (o, "branch", lrg_editor_vcs_get_branch (vcs));
+
+	/* Every reported path except clean ones, sorted for stable output. */
+	statuses = lrg_editor_vcs_get_statuses (vcs);
+	paths = g_ptr_array_new ();
+	if (statuses != NULL)
+	{
+		g_hash_table_iter_init (&it, statuses);
+		while (g_hash_table_iter_next (&it, &key, &value))
+			if ((LrgEditorVcsStatus) GPOINTER_TO_INT (value) != LRG_EDITOR_VCS_STATUS_UNMODIFIED)
+				g_ptr_array_add (paths, key);
+	}
+	g_ptr_array_sort (paths, compare_str_ptr);
+	for (i = 0; i < paths->len; i++)
+	{
+		const gchar *rel = g_ptr_array_index (paths, i);
+
+		json_array_add_object_element (files, vcs_entry (rel, (LrgEditorVcsStatus)
+		                                                 GPOINTER_TO_INT (g_hash_table_lookup (statuses, rel))));
+	}
+	json_object_set_array_member (o, "files", files);
+	return obj_node (o);
+}
+
+/* ==========================================================================
+ * Linked prefabs (prefab.overrides / apply / revert / sync / relink /
+ * unlink)
+ * ========================================================================== */
+
+/*
+ * The instance root a request about @node acts on: @node itself when it
+ * carries a link (an instance root, possibly nested), else the instance
+ * that governs it (lrg_prefab_find_owner()), else @node (unlinked).
+ */
+static LrgNode *
+instance_for (LrgNode *node)
+{
+	LrgNode *owner;
+
+	if (lrg_node_get_prefab_link (node) != NULL)
+		return node;
+	owner = lrg_prefab_find_owner (node);
+	return (owner != NULL) ? owner : node;
+}
+
+/* Like require_node(), then the instance root; must be linked. */
+static LrgNode *
+require_linked_instance (LrgEditorServer  *server,
+                         JsonObject       *p,
+                         GError          **error)
+{
+	LrgNode       *node = require_node (server, p, error);
+	LrgNode       *root;
+	LrgPrefabLink *link;
+
+	if (node == NULL)
+		return NULL;
+	root = instance_for (node);
+	link = lrg_node_get_prefab_link (root);
+	if (link == NULL || lrg_prefab_link_get_source_path (link) == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "Node '%s' is not part of a linked prefab instance",
+		             lrg_node_get_name (node) != NULL ? lrg_node_get_name (node) : lrg_node_get_guid (node));
+		return NULL;
+	}
+	return root;
+}
+
+/*
+ * Checks that every key in @keys is in the instance's override set
+ * (exact match), so apply/revert either act on all of them or on none.
+ */
+static gboolean
+check_keys (LrgNode      *root,
+            gchar *const *keys,
+            GError      **error)
+{
+	LrgPrefabLink *link = lrg_node_get_prefab_link (root);
+	guint          i;
+
+	for (i = 0; keys != NULL && keys[i] != NULL; i++)
+		if (!lrg_prefab_link_contains_override (link, keys[i]))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "No override '%s' on instance '%s'", keys[i], lrg_node_get_guid (root));
+			return FALSE;
+		}
+	return TRUE;
+}
+
+/* {node, name, source, source_guid, linked, overrides} for @root. */
+static JsonObject *
+instance_json (LrgNode *root)
+{
+	LrgPrefabLink *link = lrg_node_get_prefab_link (root);
+	const gchar   *source = (link != NULL) ? lrg_prefab_link_get_source_path (link) : NULL;
+	gboolean       linked = (source != NULL);
+	JsonObject    *o = json_object_new ();
+	JsonArray     *arr = json_array_new ();
+	g_auto(GStrv)  keys = NULL;
+	guint          i;
+
+	json_object_set_string_member (o, "node", lrg_node_get_guid (root));
+	set_str_or_null (o, "name", lrg_node_get_name (root));
+	/* Unlinked: the 0.8.0 marker, i.e. what prefab.relink would use. */
+	set_str_or_null (o, "source", linked ? source : lrg_prefab_get_marker_source (root));
+	set_str_or_null (o, "source_guid", linked ? lrg_prefab_link_get_source_guid (link) : NULL);
+	json_object_set_boolean_member (o, "linked", linked);
+	if (linked)
+		keys = lrg_prefab_link_get_overrides (link);
+	for (i = 0; keys != NULL && keys[i] != NULL; i++)
+		json_array_add_string_element (arr, keys[i]);
+	json_object_set_array_member (o, "overrides", arr);
+	return o;
+}
+
+static JsonNode *
+m_prefab_overrides (LrgEditorServer  *server,
+                    JsonObject       *params,
+                    gpointer          user_data,
+                    GError          **error)
+{
+	LrgNode *node = require_node (server, params, error);
+
+	/* An unlinked node is not an error: "linked": false says it all. */
+	return (node != NULL) ? obj_node (instance_json (instance_for (node))) : NULL;
+}
+
+/* Adds each LrgEditor::prefab-synced count to a guint. */
+static void
+on_prefab_synced (LrgEditor   *editor,
+                  const gchar *path,
+                  guint        n_instances,
+                  gpointer     user_data)
+{
+	*(guint *) user_data += n_instances;
+}
+
+static JsonNode *
+m_prefab_apply (LrgEditorServer  *server,
+                JsonObject       *params,
+                gpointer          user_data,
+                GError          **error)
+{
+	LrgEditor         *editor = lrg_editor_server_get_editor (server);
+	LrgNode           *root = require_linked_instance (server, params, error);
+	g_auto(GStrv)      keys = NULL;
+	g_autoptr(GError)  local = NULL;
+	JsonObject        *o;
+	guint              synced = 0;
+	guint              applied;
+	gulong             handler;
+	gboolean           ok;
+
+	if (root == NULL || !p_keys (params, &keys, error) || !check_keys (root, keys, error))
+		return NULL;
+
+	/* Each listed key is applied; NULL applies every override. */
+	applied = (keys != NULL) ? g_strv_length (keys)
+	                         : lrg_prefab_link_get_n_overrides (lrg_node_get_prefab_link (root));
+
+	/* The editor syncs the dependents itself; count them via the signal. */
+	handler = g_signal_connect (editor, "prefab-synced", G_CALLBACK (on_prefab_synced), &synced);
+	ok = lrg_editor_prefab_apply (editor, root, (const gchar *const *) keys, &local);
+	g_signal_handler_disconnect (editor, handler);
+	if (!ok)
+		return failed_from (error, local);
+
+	o = instance_json (root);
+	json_object_set_int_member (o, "applied", applied);
+	json_object_set_int_member (o, "synced", synced);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_prefab_revert (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgEditor         *editor = lrg_editor_server_get_editor (server);
+	LrgNode           *root = require_linked_instance (server, params, error);
+	g_auto(GStrv)      keys = NULL;
+	g_autoptr(GError)  local = NULL;
+	gboolean           ok = TRUE;
+	guint              i;
+
+	if (root == NULL || !p_keys (params, &keys, error) || !check_keys (root, keys, error))
+		return NULL;
+
+	if (keys == NULL)
+		ok = lrg_editor_prefab_revert (editor, root, NULL, &local);
+	else
+	{
+		/* Several keys are one undo step. A key below an earlier one
+		 * may already be gone; reverting it again is a no-op. */
+		lrg_editor_begin_group (editor, "Revert Overrides");
+		for (i = 0; ok && keys[i] != NULL; i++)
+			ok = lrg_editor_prefab_revert (editor, root, keys[i], &local);
+		lrg_editor_end_group (editor);
+	}
+	if (!ok)
+		return failed_from (error, local);
+	return obj_node (instance_json (root));
+}
+
+/* lrg_node_foreach(): distinct canonical sources of outermost instances. */
+static gboolean
+collect_sources (LrgNode  *node,
+                 gpointer  user_data)
+{
+	GPtrArray     *sources = user_data;
+	LrgPrefabLink *link = lrg_node_get_prefab_link (node);
+	gchar         *canon;
+
+	if (link == NULL || lrg_prefab_link_get_source_path (link) == NULL || lrg_prefab_find_owner (node) != node)
+		return TRUE;
+	canon = g_canonicalize_filename (lrg_prefab_link_get_source_path (link), NULL);
+	if (g_ptr_array_find_with_equal_func (sources, canon, g_str_equal, NULL))
+		g_free (canon);
+	else
+		g_ptr_array_add (sources, canon);
+	return TRUE;
+}
+
+static JsonNode *
+m_prefab_sync (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgEditor            *editor = lrg_editor_server_get_editor (server);
+	const gchar          *path = p_str (params, "path");
+	g_autoptr(GPtrArray)  sources = NULL;
+	JsonObject           *o;
+	guint                 synced = 0;
+	guint                 i;
+
+	if (has (params, "path") && path == NULL)
+	{
+		invalid (error, "'%s' must be a string", "path");
+		return NULL;
+	}
+
+	sources = g_ptr_array_new_with_free_func (g_free);
+	if (path != NULL)
+	{
+		gchar *full = tools_resolve_path (server, path);
+
+		if (!g_file_test (full, G_FILE_TEST_IS_REGULAR))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "No prefab '%s'", full);
+			g_free (full);
+			return NULL;
+		}
+		g_ptr_array_add (sources, full);
+	}
+	else
+		lrg_node_foreach (lrg_level_get_root (lrg_editor_get_level (editor)), collect_sources, sources);
+
+	/*
+	 * lrg_editor_prefab_changed() also syncs instances of prefabs that
+	 * nest the path. Several sources are one undo step; an instance that
+	 * is already current records nothing and is not counted twice.
+	 */
+	lrg_editor_begin_group (editor, "Sync Prefabs");
+	for (i = 0; i < sources->len; i++)
+		synced += lrg_editor_prefab_changed (editor, g_ptr_array_index (sources, i));
+	lrg_editor_end_group (editor);
+
+	o = json_object_new ();
+	json_object_set_int_member (o, "synced", synced);
+	json_object_set_int_member (o, "prefabs", sources->len);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_prefab_relink (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgNode           *node = require_node (server, params, error);
+	const gchar       *path = p_str (params, "path");
+	g_autofree gchar  *full = NULL;
+	g_autoptr(GError)  local = NULL;
+
+	if (node == NULL)
+		return NULL;
+	if (has (params, "path") && path == NULL)
+	{
+		invalid (error, "'%s' must be a string", "path");
+		return NULL;
+	}
+
+	/* Without "path" the 0.8.0 marker on the node names the source. */
+	if (path != NULL)
+	{
+		full = tools_resolve_path (server, path);
+		if (!g_file_test (full, G_FILE_TEST_IS_REGULAR))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "No prefab '%s'", full);
+			return NULL;
+		}
+	}
+	if (!lrg_editor_prefab_relink (lrg_editor_server_get_editor (server), node, full, &local))
+		return failed_from (error, local);
+	return obj_node (instance_json (node));
+}
+
+static JsonNode *
+m_prefab_unlink (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgNode    *node = require_node (server, params, error);
+	LrgNode    *root;
+	JsonObject *o;
+
+	if (node == NULL)
+		return NULL;
+	root = instance_for (node);
+
+	/* Idempotent: "unlinked" tells whether there was a link to break. */
+	o = json_object_new ();
+	json_object_set_boolean_member (o, "unlinked",
+	                                lrg_editor_prefab_unlink (lrg_editor_server_get_editor (server), root));
+	json_object_set_string_member (o, "node", lrg_node_get_guid (root));
+	json_object_set_boolean_member (o, "linked", FALSE);
+	return obj_node (o);
+}
+
+/* ==========================================================================
  * Registration
  * ========================================================================== */
 
@@ -944,6 +1683,15 @@ editor_server_register_tools (LrgEditorServer *self)
 		{ "timeline.move-key", m_timeline_move_key },
 		{ "timeline.ease", m_timeline_ease },
 		{ "timeline.sample", m_timeline_sample },
+		{ "asset.meta.get", m_asset_meta_get },
+		{ "asset.meta.set", m_asset_meta_set },
+		{ "vcs.status", m_vcs_status },
+		{ "prefab.overrides", m_prefab_overrides },
+		{ "prefab.apply", m_prefab_apply },
+		{ "prefab.revert", m_prefab_revert },
+		{ "prefab.sync", m_prefab_sync },
+		{ "prefab.relink", m_prefab_relink },
+		{ "prefab.unlink", m_prefab_unlink },
 	};
 	gsize i;
 

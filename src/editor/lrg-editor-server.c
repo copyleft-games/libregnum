@@ -2190,8 +2190,13 @@ m_prefab_save (LrgEditorServer  *self,
 	if (node == NULL || (path = require_string (params, "path", error)) == NULL)
 		return NULL;
 
+	/*
+	 * lrg_editor_save_prefab() writes the file and then syncs every linked
+	 * instance that depends on it (one undo group); saving an instance over
+	 * its own source is "apply all overrides" so its guid map stays valid.
+	 */
 	full = resolve_path (self, path);
-	return lrg_prefab_save (node, full, error) ? json_string_node (full) : NULL;
+	return lrg_editor_save_prefab (self->editor, node, full, error) ? json_string_node (full) : NULL;
 }
 
 /* ---- log ---- */
