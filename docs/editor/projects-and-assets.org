@@ -280,7 +280,7 @@ If moving the sidecar fails after the asset moved, the asset is moved back so th
 :PROPERTIES:
 :CUSTOM_ID: orphaned-sidecars
 :END:
-Sidecars are never listed as assets. A sidecar whose asset is gone (deleted or renamed outside the editor) is reported by =lrg_asset_database_get_orphaned_metas()= (absolute paths) after each scan, so the assets panel can offer to delete them or to re-attach them to a renamed file.
+Sidecars are never listed as assets. A sidecar whose asset is gone (deleted or renamed outside the editor) is reported by =lrg_asset_database_get_orphaned_metas()= (absolute paths) after each scan. The Assets panel's background menu then offers Remove Orphaned Sidecars (N), which moves them to the trash, and the =asset.orphans= IPC method lists them (and trashes them with =trash: true=). Re-attaching a sidecar to a file renamed outside the editor is done by renaming the sidecar to match.
 
 *** Lookups
 :PROPERTIES:
@@ -365,6 +365,25 @@ LrgEditorVcsStatus s = lrg_editor_vcs_get_status (vcs, "assets/hero.png");
 gchar badge = lrg_editor_vcs_status_to_letter (s);
 const gchar *branch = lrg_editor_vcs_get_branch (vcs);   /* NULL outside a repo */
 #+end_src
+
+** The Assets Panel
+:PROPERTIES:
+:CUSTOM_ID: assets-panel
+:END:
+The editor's Assets panel is the user-facing side of everything above; its widgets, input and menus are described in [[file:editor-app.org::#editor-panel-assets][Editor Application: Assets panel]]. How it uses the data layer:
+
+- *Listing*: one folder at a time, rooted at the project, read with =GDir= (not the database, which lists files only): folders first, hidden files and =.meta= sidecars skipped, each entry classified with =lrg_asset_database_classify()=.
+- *Operations*: Rename (F2, inline), drag onto a folder or breadcrumb segment (move), Duplicate and Move to Trash call =lrg_asset_database_rename()=, =_move()=, =_duplicate()= and =_trash()= on the app's database (write-meta on), so the sidecar always travels and the GUID survives (a duplicate gets a fresh one). A rename or move of the open level, or of a folder containing it, updates the editor's document path. New Folder and New Level create the entry and start an inline rename.
+- *Copy GUID* reads =lrg_asset_entry_get_guid()= (rescanning once for a file the database has not seen yet).
+- *Import Settings*: a property grid over the entry's =LrgAssetMeta= built from =lrg_asset_meta_list_known_settings()=, =lrg_asset_meta_get_default_setting()= (row type) and =lrg_asset_meta_get_setting_choices()= (combo values); edits go through =lrg_asset_meta_set_setting_variant()=, are saved with =lrg_asset_database_save_meta()= and invalidate the asset's thumbnail.
+- *Thumbnails*: =LrgThumbnailCache= kinds as in the table above; scripts are not cached at all but painted live (first 12 lines, =LrgSyntax= colours).
+- *Git*: badges from =lrg_editor_vcs_get_status()= / =lrg_editor_vcs_get_directory_status()=, the branch from =lrg_editor_vcs_get_branch()= in a chip left of the breadcrumb, all refreshed on =LrgEditorVcs::changed=.
+
+*** IPC
+:PROPERTIES:
+:CUSTOM_ID: assets-panel-ipc
+:END:
+The panel registers =asset.reveal= ={path}=, =asset.rename= ={path, name}=, =asset.move= ={path, dest}=, =asset.duplicate= ={path}=, =asset.trash= ={path}= and =asset.orphans= ={trash?}=, thin wrappers on the database functions above that also refresh the panel and git status; results and errors are listed in [[file:editor-app.org::#editor-panel-assets-ipc][Editor Application: Actions and IPC]]. Together with =asset.list=, =asset.meta.get= / =asset.meta.set= and =asset.thumbnail= they cover the asset workflow from Emacs or =lrgeditorctl=.
 
 ** See Also
 :PROPERTIES:
