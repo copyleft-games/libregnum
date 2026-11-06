@@ -40,7 +40,7 @@ lrg_color_picker_set_popup_mode (button, TRUE);
 lrg_color_picker_set_show_alpha (button, FALSE);
 #+end_src
 
-Preferred size: =CONTROL_HEIGHT= × 7.5 wide; the height follows the rows (the square is two thirds as tall as it is wide). In popup mode it is =CONTROL_HEIGHT= tall and about 1.6 × =CONTROL_HEIGHT= wide. Widen the picker and the square grows with it.
+Preferred size: =CONTROL_HEIGHT= × 7.5 wide; the height follows the rows (the square is two thirds as tall as it is wide). In popup mode it is =CONTROL_HEIGHT= tall and about 1.6 × =CONTROL_HEIGHT= wide. Widen the picker and the square widens with it; it grows taller only as far as the allocated height allows (layout measures the picker at its preferred width, so in a box that stretches it sideways the square stays at the measured height rather than spilling over what lies below, never shorter than 40 units).
 
 ** Properties
 :PROPERTIES:

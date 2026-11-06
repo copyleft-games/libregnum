@@ -372,12 +372,13 @@ strip_height (LrgWidget *widget)
  *
  * Every region of the full picker for @width, relative to the picker:
  * square, hue strip, optional alpha strip, preview + hex row, swatch
- * rows. The square is two thirds as tall as it is wide.
+ * rows. The square is @sv_height tall (see compute_layout()).
  */
 static void
-compute_layout (LrgColorPicker *self,
-                gfloat          width,
-                Layout         *out)
+compute_layout_with (LrgColorPicker *self,
+                     gfloat          width,
+                     gfloat          sv_height,
+                     Layout         *out)
 {
 	LrgWidget *widget = LRG_WIDGET (self);
 	gfloat     pad = picker_pad (widget);
@@ -392,7 +393,7 @@ compute_layout (LrgColorPicker *self,
 
 	memset (out, 0, sizeof (Layout));
 
-	out->sv = (GrlRectangle) { pad, y, iw, roundf (iw * 0.66f) };
+	out->sv = (GrlRectangle) { pad, y, iw, sv_height };
 	y += out->sv.height + gap + 2.0f;
 
 	out->hue = (GrlRectangle) { pad, y, iw, strip };
@@ -433,6 +434,29 @@ compute_layout (LrgColorPicker *self,
 	out->height = y + pad;
 }
 
+/*
+ * compute_layout:
+ *
+ * The layout for @width. The square is two thirds as tall as it is
+ * wide, but when @max_height is positive (the allocated height) and the
+ * picker would not fit, the square gives up the difference (down to 40
+ * units), so a picker allocated wider than it measured never spills
+ * over what lies below it.
+ */
+static void
+compute_layout (LrgColorPicker *self,
+                gfloat          width,
+                gfloat          max_height,
+                Layout         *out)
+{
+	gfloat pad = picker_pad (LRG_WIDGET (self));
+	gfloat sv_height = roundf (MAX (40.0f, width - pad * 2.0f) * 0.66f);
+
+	compute_layout_with (self, width, sv_height, out);
+	if (max_height > 0.0f && out->height > max_height && sv_height > 40.0f)
+		compute_layout_with (self, width, MAX (40.0f, sv_height - (out->height - max_height)), out);
+}
+
 /* preferred_width: width of a full picker */
 static gfloat
 preferred_width (LrgWidget *widget)
@@ -447,7 +471,8 @@ current_layout (LrgColorPicker *self,
 {
 	gfloat w = lrg_widget_get_width (LRG_WIDGET (self));
 
-	compute_layout (self, w > 0.0f ? w : preferred_width (LRG_WIDGET (self)), out);
+	compute_layout (self, w > 0.0f ? w : preferred_width (LRG_WIDGET (self)),
+	                w > 0.0f ? lrg_widget_get_height (LRG_WIDGET (self)) : 0.0f, out);
 }
 
 /* swatch_rect: swatch @index (palette, then recent), relative */
@@ -1289,7 +1314,7 @@ lrg_color_picker_measure (LrgWidget *widget,
 		*height = ch;
 		return;
 	}
-	compute_layout (self, preferred_width (widget), &lay);
+	compute_layout (self, preferred_width (widget), 0.0f, &lay);
 	*width = preferred_width (widget);
 	*height = lay.height;
 }

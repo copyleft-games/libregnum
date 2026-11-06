@@ -361,6 +361,29 @@ test_color_hue_and_alpha (Fixture       *fixture,
 	}
 }
 
+/* Allocated wider than it measured, the picker still fits its height:
+ * the square gives up the difference instead of spilling below */
+static void
+test_color_wide_fits (Fixture       *fixture,
+                      gconstpointer  user_data)
+{
+	LrgColorPicker *picker = lrg_color_picker_new ();
+	GrlRectangle    sv;
+	GrlRectangle    sw;
+	gfloat          pw;
+	gfloat          ph;
+
+	(void) user_data;
+
+	lrg_widget_get_preferred_size (LRG_WIDGET (picker), &pw, &ph);
+	add (fixture, picker, 10.0f, 10.0f, pw * 2.0f, ph);
+	g_assert_true (lrg_color_picker_get_area_bounds (picker, LRG_COLOR_PICKER_AREA_SV, &sv));
+	g_assert_true (lrg_color_picker_get_area_bounds (picker, LRG_COLOR_PICKER_AREA_SWATCHES, &sw));
+	g_assert_cmpfloat (sv.width, >, pw);
+	g_assert_cmpfloat (sw.y + sw.height, <=, 10.0f + ph + 0.5f);
+	g_assert_cmpfloat (sv.height, >=, 40.0f);
+}
+
 static void
 test_color_hex_entry (Fixture       *fixture,
                       gconstpointer  user_data)
@@ -1643,6 +1666,7 @@ main (int   argc,
 	ADD ("/ui/pickers/color/sv-click-drag", test_color_sv_click_and_drag);
 	ADD ("/ui/pickers/color/hue-alpha", test_color_hue_and_alpha);
 	ADD ("/ui/pickers/color/hex-entry", test_color_hex_entry);
+	ADD ("/ui/pickers/color/wide-fits", test_color_wide_fits);
 	ADD ("/ui/pickers/color/keyboard-swatches", test_color_keyboard_and_swatches);
 	ADD ("/ui/pickers/color/popup-mode", test_color_popup_mode);
 
