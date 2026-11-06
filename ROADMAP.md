@@ -31,6 +31,32 @@ copied) brought to both UI stacks:
   shadows under popups and tooltips and `lrg_gui_style_init_from_theme()`.
 - Fixed: canvas clicks passed (x, y, button) as (button, x, y); text input
   produced uppercase-only ASCII.
+- **Glass and effects**: backdrop blur and clear/frosted/tinted glass
+  materials (dual-Kawase, refraction rim, dispersion), eight effect shaders
+  (shimmer, aurora, neon, spotlight, ripple, grain, plasma, mesh-gradient)
+  plus user GLSL snippets, gradient Bezier wires with glow and travelling
+  pulses, 36 vector icons and SVG icons; all reachable from theme style rules
+  and YAML looks.
+- **Text**: SDF glyphs from a shared, incrementally packed atlas (outline,
+  glow, shadow, crisp at any scale), font fallback chains (symbols,
+  monochrome emoji, CJK, Arabic, Hebrew), kerning, optional fribidi bidi
+  reordering and Arabic shaping; used by `src/ui` widgets and the editor GUI.
+- **Declarative UI**: `LrgUILoader` builds widget trees from YAML with
+  components, expressions, includes, signal handlers, looks and hot-reload
+  diffing.
+- **Motion**: layout glide (`animate-layout`), `LrgIsland` morphing panel,
+  touch gestures (tap, long press, pan with flick scrolling, pinch zoom).
+- **Widgets**: table, tree view, tile view, splitter, expander, wrap box,
+  colour picker, rating, date and time pickers, breadcrumb, and a markdown
+  label built on `LrgRichText` (rich-text effect tags pass through).
+- **Tools**: `LrgUIInspector` (tree snapshots, paths, pick mode, highlight,
+  timings, live property edits) with six `lrg_ui_*` MCP tools;
+  `examples/ui-theme-editor` (palette from an accent, WCAG contrast check and
+  auto-fix, YAML export); `examples/ui-showcase` covers every feature.
+- Fixed: `LrgRichText` `[[` escape, `[typewriter speed=N]` and per-span
+  effect indexing.
+- Not planned: platform look emulation, native accessibility bridges, a
+  Vulkan backend, colour emoji and complex-script shaping beyond Arabic.
 
 ### v0.6.0
 
