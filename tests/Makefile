@@ -434,10 +434,15 @@ GENERATED_HEADERS := ../src/lrg-version.h ../src/config.h
 $(GENERATED_HEADERS):
 	@$(MAKE) -C .. generate
 
-# Pattern rule for test compilation
+# Pattern rule for test compilation. -MMD -MP writes a .d file next to
+# each binary listing the headers it includes, so changing a public
+# struct (e.g. LrgCanvasInput) rebuilds the tests that embed it instead
+# of leaving stale binaries that crash on the new layout.
 $(TEST_BUILDDIR)/test-%: test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
-	@$(CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+	@$(CC) $(TEST_CFLAGS) -MMD -MP -MF $@.d -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
+-include $(wildcard $(TEST_BUILDDIR)/*.d)
 
 # The replay tests share the deterministic scenario
 $(TEST_BUILDDIR)/test-replay $(TEST_BUILDDIR)/test-rollback: replay-scenario.h
