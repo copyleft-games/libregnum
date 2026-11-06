@@ -250,6 +250,7 @@ TEST_SOURCES := \
 	test-editor-app.c \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
+	test-editor-actions.c \
 	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \

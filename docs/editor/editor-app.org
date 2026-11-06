@@ -210,7 +210,7 @@ F6 runs the game as its own process. The command comes from the project (Project
 :PROPERTIES:
 :CUSTOM_ID: preferences
 :END:
-Preferences are edited live in Edit > Preferences (Ctrl+,) and written when the dialog closes; "Edit editor.yaml" opens the file in your editor. The file is =$XDG_CONFIG_HOME/libregnum/editor.yaml= (override with =--settings= or =LRG_EDITOR_CONFIG=). Unknown keys are preserved.
+Preferences are edited live in Edit > Preferences (Ctrl+,) and written when the dialog closes; "Edit editor.yaml" opens the file in your editor. The file is =$XDG_CONFIG_HOME/libregnum/editor.yaml= (override with =--settings= or =LRG_EDITOR_CONFIG=). Unknown keys are preserved, so a file written by a newer editor survives a round trip through an older one. Every key is a property of =LrgEditorSettings= under the same name.
 
 #+begin_src yaml
 external-editor: auto            # auto | emacsclient | emacs | nvim | vim | gvim | helix | kakoune |
@@ -221,7 +221,10 @@ terminal-command: null           # wrapper for terminal editors, e.g. "gst -e"
 editor-in-terminal: auto         # auto | always | never
 emacs-integration: true          # open files in a connected Emacs first
 emacs-server-name: null          # emacsclient -s NAME
-theme: mocha                     # mocha | macchiato | frappe | latte
+settings-version: 2              # file format; absent = a 0.8.0 file (read as 1)
+theme: mocha                     # preset: midnight | daylight | catppuccin-mocha |
+                                 #   catppuccin-latte | high-contrast; a theme YAML path;
+                                 #   or a 0.8.0 name: mocha | macchiato | frappe | latte
 ui-scale: 1
 font-size: 16
 font-path: null                  # default: DejaVu / Noto / Liberation / Adwaita / Open Sans if installed
@@ -242,21 +245,44 @@ camera-orbit-speed: 0.35         # degrees per pixel
 camera-invert-y: false
 camera-navigation: default       # default | blender | trackpad
 camera-fov: 50
+viewport-layout: single          # single | split-h | split-v | quad
+script-editor: external          # external | internal | emacs
 server-enabled: true
 server-socket: null              # default $XDG_RUNTIME_DIR/libregnum/editor-PID.sock
-keybindings:                     # action id -> shortcut; "" unbinds; "A|B" alternatives
-  tool.scale: Ctrl+Alt+K
-  edit.redo: Ctrl+Y|Ctrl+Shift+Z
+keybindings:                     # action id -> accelerator; "" unbinds; "A|B" alternatives
+  tool.scale: <Ctrl><Alt>k
+  edit.redo: <Ctrl>y|<Ctrl><Shift>z
+  view.top: Num7                 # 0.8.0 syntax is still read
 recent-projects: []
 recent-levels: []
-layout: split(v,0.180,tabs(0,hierarchy),...)   # managed by the editor
+layout: split(v,0.180,tabs(0,hierarchy),...)   # 0.8.0 layout, kept for downgrades
+ui-layout: null                  # LrgDockArea YAML, managed by the editor
 #+end_src
+
+*** Settings keys added in 0.8.1
+:PROPERTIES:
+:CUSTOM_ID: preferences-0-8-1
+:END:
+| Key                | Values                                            | Default    | Meaning |
+|--------------------+---------------------------------------------------+------------+---------|
+| =settings-version= | integer                                           | 2          | File format. A non-empty file without the key was written by 0.8.0 and loads as 1, which makes the editor migrate it (and write =editor.yaml.v0.8.0.bak= first). Read it with ~lrg_editor_settings_get_settings_version~. |
+| =ui-layout=        | =LrgDockArea= YAML                                | none       | The dock layout of the 0.8.1 window. The 0.8.0 =layout= key is left untouched next to it so a downgrade still finds its layout. |
+| =viewport-layout=  | =single=, =split-h=, =split-v=, =quad=            | =single=   | How many viewports and how they are arranged (=split-h= is side by side, =split-v= stacked). |
+| =script-editor=    | =external=, =internal=, =emacs=                   | =external= | Where scripts open: the external editor (see =external-editor=), the built-in code panel, or a connected Emacs. |
+
+Unknown values of =viewport-layout= and =script-editor= are ignored with a log message and the previous value stays.
+
+*** Themes
+:PROPERTIES:
+:CUSTOM_ID: preferences-theme
+:END:
+=theme= takes one of three forms. An =LrgTheme= preset name (=midnight=, =daylight=, =catppuccin-mocha=, =catppuccin-latte=, =high-contrast=) selects that preset. A value with a directory separator or ending in =.yaml= / =.yml= is the path of a theme YAML file. The 0.8.0 names are still read: =mocha= resolves to =catppuccin-mocha=, =latte= to =catppuccin-latte=, and =macchiato= and =frappe= to the closest preset (=catppuccin-mocha=) unless their exact palettes ship as =data/editor/themes/<name>.yaml=. An unknown name falls back to =catppuccin-mocha=. The default value is still =mocha= so 0.8.0 reads the file back unchanged. ~lrg_editor_settings_get_theme_preset~ and ~lrg_editor_settings_get_theme_file~ do this resolution.
 
 ** Default shortcuts
 :PROPERTIES:
 :CUSTOM_ID: shortcuts
 :END:
-Help > Keyboard Shortcuts (Ctrl+/) shows the live table; every one can be rebound.
+Help > Keyboard Shortcuts (Ctrl+/) shows the live table; every one can be rebound. The table below uses display labels; in =editor.yaml= and the API they are written as accelerators (see [[#keybindings][Keybinding syntax]]).
 
 | Area  | Shortcut                       | Action                         |
 |-------+--------------------------------+--------------------------------|
@@ -285,6 +311,62 @@ Help > Keyboard Shortcuts (Ctrl+/) shows the live table; every one can be reboun
 | Animation | I / K                      | Insert keyframe for the selection / play-pause the timeline |
 | Animation | Alt+Left / Alt+Right       | Previous / next keyframe       |
 | Help  | Ctrl+/                         | Keyboard shortcuts             |
+
+** Keybinding syntax
+:PROPERTIES:
+:CUSTOM_ID: keybindings
+:END:
+Since 0.8.1 shortcuts are GTK-style accelerators: zero or more modifiers in angle brackets followed by one key name. The 0.8.0 "Ctrl+Shift+S" syntax is still accepted wherever a shortcut comes in, so old =editor.yaml= files, scripts and embedders keep working.
+
+*** Accelerators
+:PROPERTIES:
+:CUSTOM_ID: keybindings-accel
+:END:
+- Modifiers: =<Ctrl>= (also =<Control>=, =<Primary>=), =<Shift>=, =<Alt>=, =<Super>= (also =<Meta>=). The editor writes them in the order Ctrl, Alt, Shift, Super.
+- Keys: letters in lower case (=<Shift>= is explicit: =<Ctrl><Shift>z=), digits, =F1= to =F12=, =KP_0= to =KP_9= and =KP_Add= / =KP_Subtract= / =KP_Multiply= / =KP_Divide= / =KP_Decimal= / =KP_Enter=, =Escape=, =Return=, =Tab=, =BackSpace=, =Delete=, =Insert=, =Home=, =End=, =Page_Up=, =Page_Down=, =Up=, =Down=, =Left=, =Right=, =space=, and punctuation by name: =minus=, =equal=, =plus= (the same key as =equal=), =comma=, =period=, =slash=, =backslash=, =semicolon=, =apostrophe=, =grave=, =bracketleft=, =bracketright=. The full list is in ~lrg_accel_parse~ ([[file:../modules/ui/actions.org][UI actions]]).
+- Several alternatives go in one string separated by =|=, e.g. =<Ctrl><Shift>z|<Ctrl>y=; menus show the first.
+- =""= unbinds an action; removing the key restores the default.
+
+*** The 0.8.0 syntax
+:PROPERTIES:
+:CUSTOM_ID: keybindings-legacy
+:END:
+Strings like =Ctrl+Shift+2=, =Num7=, =Ctrl+,= or =Shift+F5|F8= are converted with ~lrg_editor_shortcut_to_accel~ when they are read: from =editor.yaml=, from ~lrg_editor_actions_add~ (the app's built-in defaults are still written this way) and from ~lrg_editor_actions_set_accels~. An alternative that already looks like an accelerator (it has a =<Modifier>= or is a bare accelerator key name such as =KP_7= or =comma=) passes through unchanged.
+
+| 0.8.0                 | Accelerator              |
+|-----------------------+--------------------------|
+| =Ctrl+S=              | =<Ctrl>s=                |
+| Ctrl+Shift+Z\vert{}Ctrl+Y | <Ctrl><Shift>z\vert{}<Ctrl>y |
+| =Ctrl+Shift+2=        | =<Ctrl><Shift>2=         |
+| =Num7=, =Ctrl+Num7=   | =KP_7=, =<Ctrl>KP_7=     |
+| =Ctrl+,= / =Ctrl+/=   | =<Ctrl>comma= / =<Ctrl>slash= |
+| === / =-= / =Ctrl++=  | =equal= / =minus= / =<Ctrl>plus= |
+| =[= / =]=             | =bracketleft= / =bracketright= |
+| =PageUp= / =Backspace= / =Enter= / =Esc= / =Del= | =Page_Up= / =BackSpace= / =Return= / =Escape= / =Delete= |
+| =Alt+Up=, =Shift+F5=  | =<Alt>Up=, =<Shift>F5=   |
+| =Meta+X= (0.8.0 Meta was Alt) | =<Alt>x=          |
+| =Win+L= / =Logo+L=    | =<Super>l=               |
+
+~lrg_editor_shortcut_to_accel~ is strict (one invalid alternative rejects the whole string, so a migration can drop it with a log line); bindings read from settings or defaults are lenient (an invalid alternative is dropped, the rest stay bound). ~lrg_editor_settings_get_keybinding~ returns the stored text as written; ~lrg_editor_settings_get_keybinding_accel~ returns it converted. The settings migration (=settings-version= 1 to 2) rewrites the stored values as accelerators.
+
+*** Actions as a GActionGroup
+:PROPERTIES:
+:CUSTOM_ID: keybindings-gaction
+:END:
+=LrgEditorActions= implements =GActionGroup=. Every action is named by its id (=file.save=, =edit.select-all=; ids are letters, digits, =-= and =.=, checked with ~g_action_name_is_valid~ when registered), so with the registry inserted on a widget as group =editor= a menu item refers to =editor.file.save=. Actions are enabled when their enabled callback says so; toggles (actions with a checked callback, such as =view.grid=) have a boolean state, every other action is stateless, and none takes a parameter. Activating a toggle with a boolean target, or changing its state, runs it only when the value differs.
+
+The callbacks are polled: ~lrg_editor_actions_refresh_state~ (called once per frame by the window) emits =action-enabled-changed= and =action-state-changed= only for actions whose value changed, and running an action refreshes right away.
+
+| Function | Use |
+|----------+-----|
+| ~lrg_editor_actions_get_accels (actions, id)~ | Effective accelerators (user override or default), one per element |
+| ~lrg_editor_actions_get_default_accels (actions, id)~ | Built-in accelerators |
+| ~lrg_editor_actions_set_accels (actions, id, accels)~ | Override (written to =editor.yaml= when the registry has settings); an empty array unbinds, =NULL= restores the default |
+| ~lrg_editor_actions_find_by_accel (actions, key, mods)~ | The enabled action bound to a =GrlKey= chord |
+| =accels-changed= signal (detailed by id) | The effective accelerators of an action changed |
+| ~lrg_editor_accel_to_label (accel)~ | Menu text: <Ctrl><Shift>z\vert{}<Ctrl>y becomes "Ctrl+Shift+Z, Ctrl+Y" |
+
+The =LrgGuiKey= helpers of 0.8.0 (~lrg_editor_shortcut_parse~, ~lrg_editor_shortcut_format~, ~lrg_editor_actions_find_by_shortcut~, ~lrg_editor_actions_get_shortcut~, ~lrg_editor_actions_get_default_shortcut~) still work and are deprecated in =lrg-editor-shortcut-legacy.h= for one release. ~lrg_editor_actions_find_by_shortcut~ matches bindings in either syntax, and the two string getters return 0.8.0 text (as written, or converted from accelerators).
 
 ** Projects
 :PROPERTIES:

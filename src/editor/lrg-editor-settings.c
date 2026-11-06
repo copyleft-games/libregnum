@@ -15,6 +15,7 @@
  */
 
 #include "lrg-editor-settings.h"
+#include "lrg-editor-actions.h"
 #include <yaml-glib.h>
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -22,6 +23,36 @@
 #include <errno.h>
 
 #define KEYBINDINGS_KEY "keybindings"
+#define VERSION_KEY     "settings-version"
+
+/* Default theme: a legacy name, so a 0.8.0 editor reading the file back
+ * still understands it. It resolves to the "catppuccin-mocha" preset. */
+#define DEFAULT_THEME   "mocha"
+
+/* Accepted values of the enumerated string keys (first is the default). */
+static const gchar * const script_editor_values[] = { "external", "internal", "emacs", NULL };
+static const gchar * const viewport_layout_values[] = { "single", "split-h", "split-v", "quad", NULL };
+
+/* Legacy (0.8.0) theme names and the built-in LrgTheme preset each one
+ * resolves to. macchiato and frappe have no exact preset; they resolve to
+ * the closest dark one (the editor may load data/editor/themes/NAME.yaml
+ * for the exact palette). */
+static const struct
+{
+	const gchar *legacy;
+	const gchar *preset;
+} legacy_themes[] = {
+	{ "mocha", "catppuccin-mocha" },
+	{ "macchiato", "catppuccin-mocha" },
+	{ "frappe", "catppuccin-mocha" },
+	{ "latte", "catppuccin-latte" }
+};
+
+/* LrgTheme preset names (lrg_theme_list_presets()); kept here so the
+ * headless editor core does not link the UI toolkit for a name check. */
+static const gchar * const theme_presets[] = {
+	"midnight", "daylight", "catppuccin-mocha", "catppuccin-latte", "high-contrast", NULL
+};
 
 struct _LrgEditorSettings
 {
@@ -74,6 +105,12 @@ struct _LrgEditorSettings
 	gchar     **recent_projects;
 	gchar     **recent_levels;
 	gchar      *layout;
+
+	/* 0.8.1 */
+	gint        settings_version;
+	gchar      *ui_layout;
+	gchar      *script_editor;
+	gchar      *viewport_layout;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorSettings, lrg_editor_settings, G_TYPE_OBJECT)
@@ -113,6 +150,10 @@ enum
 	PROP_RECENT_PROJECTS,
 	PROP_RECENT_LEVELS,
 	PROP_LAYOUT,
+	PROP_SETTINGS_VERSION,
+	PROP_UI_LAYOUT,
+	PROP_SCRIPT_EDITOR,
+	PROP_VIEWPORT_LAYOUT,
 	N_PROPS
 };
 
@@ -150,6 +191,9 @@ lrg_editor_settings_finalize (GObject *object)
 	g_strfreev (self->recent_projects);
 	g_strfreev (self->recent_levels);
 	g_free (self->layout);
+	g_free (self->ui_layout);
+	g_free (self->script_editor);
+	g_free (self->viewport_layout);
 
 	G_OBJECT_CLASS (lrg_editor_settings_parent_class)->finalize (object);
 }
@@ -196,6 +240,10 @@ lrg_editor_settings_get_property (GObject    *object,
 	case PROP_RECENT_PROJECTS:          g_value_set_boxed (value, self->recent_projects); break;
 	case PROP_RECENT_LEVELS:            g_value_set_boxed (value, self->recent_levels); break;
 	case PROP_LAYOUT:                   g_value_set_string (value, self->layout); break;
+	case PROP_SETTINGS_VERSION:         g_value_set_int (value, self->settings_version); break;
+	case PROP_UI_LAYOUT:                g_value_set_string (value, self->ui_layout); break;
+	case PROP_SCRIPT_EDITOR:            g_value_set_string (value, self->script_editor); break;
+	case PROP_VIEWPORT_LAYOUT:          g_value_set_string (value, self->viewport_layout); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -218,6 +266,57 @@ set_strv (gchar        ***field,
 	*field = g_value_dup_boxed (value);
 	if (*field == NULL)
 		*field = g_new0 (gchar *, 1);
+}
+
+/*
+ * set_str_notify:
+ *
+ * Setter for the G_PARAM_EXPLICIT_NOTIFY string properties: stores the
+ * value and notifies only on a change.
+ */
+static void
+set_str_notify (LrgEditorSettings  *self,
+                gchar             **field,
+                const GValue       *value,
+                GParamSpec         *pspec)
+{
+	const gchar *v = g_value_get_string (value);
+
+	if (g_strcmp0 (*field, v) == 0)
+		return;
+	g_free (*field);
+	*field = g_strdup (v);
+	g_object_notify_by_pspec (G_OBJECT (self), pspec);
+}
+
+/*
+ * set_choice:
+ *
+ * Like set_str_notify() for a key with a fixed set of values: NULL
+ * selects the default (the first value); an unknown value is ignored
+ * with a message, keeping the current one.
+ */
+static void
+set_choice (LrgEditorSettings   *self,
+            gchar              **field,
+            const gchar * const *choices,
+            const GValue        *value,
+            GParamSpec          *pspec)
+{
+	const gchar *v = g_value_get_string (value);
+	GValue       fixed = G_VALUE_INIT;
+
+	if (v == NULL)
+		v = choices[0];
+	if (!g_strv_contains (choices, v))
+	{
+		g_message ("editor settings: invalid value '%s' for '%s'; ignored", v, pspec->name);
+		return;
+	}
+	g_value_init (&fixed, G_TYPE_STRING);
+	g_value_set_static_string (&fixed, v);
+	set_str_notify (self, field, &fixed, pspec);
+	g_value_unset (&fixed);
 }
 
 static void
@@ -262,6 +361,16 @@ lrg_editor_settings_set_property (GObject      *object,
 	case PROP_RECENT_PROJECTS:          set_strv (&self->recent_projects, value); break;
 	case PROP_RECENT_LEVELS:            set_strv (&self->recent_levels, value); break;
 	case PROP_LAYOUT:                   set_str (&self->layout, value); break;
+	case PROP_SETTINGS_VERSION:
+		lrg_editor_settings_set_settings_version (self, g_value_get_int (value));
+		break;
+	case PROP_UI_LAYOUT:                set_str_notify (self, &self->ui_layout, value, pspec); break;
+	case PROP_SCRIPT_EDITOR:
+		set_choice (self, &self->script_editor, script_editor_values, value, pspec);
+		break;
+	case PROP_VIEWPORT_LAYOUT:
+		set_choice (self, &self->viewport_layout, viewport_layout_values, value, pspec);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -269,6 +378,7 @@ lrg_editor_settings_set_property (GObject      *object,
 }
 
 #define RW (G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS)
+#define RW_EXPLICIT (RW | G_PARAM_EXPLICIT_NOTIFY)
 
 static void
 lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
@@ -344,10 +454,15 @@ lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
 	/**
 	 * LrgEditorSettings:theme:
 	 *
-	 * UI colour theme ("mocha", "macchiato", "frappe", "latte").
+	 * UI colour theme: an #LrgTheme preset name ("midnight", "daylight",
+	 * "catppuccin-mocha", "catppuccin-latte", "high-contrast"), the path
+	 * of a theme YAML file, or one of the 0.8.0 names ("mocha",
+	 * "macchiato", "frappe", "latte"), which are still read and resolve
+	 * as described in lrg_editor_settings_get_theme_preset(). The default
+	 * stays "mocha" so 0.8.0 can read the file back.
 	 */
 	properties[PROP_THEME] =
-		g_param_spec_string ("theme", "Theme", "UI theme", "mocha", RW);
+		g_param_spec_string ("theme", "Theme", "UI theme", DEFAULT_THEME, RW);
 
 	/**
 	 * LrgEditorSettings:ui-scale:
@@ -579,6 +694,51 @@ lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
 	properties[PROP_LAYOUT] =
 		g_param_spec_string ("layout", "Layout", "Saved panel layout", NULL, RW);
 
+	/**
+	 * LrgEditorSettings:settings-version:
+	 *
+	 * Format version of the settings file. New settings and files written
+	 * by 0.8.1 carry %LRG_EDITOR_SETTINGS_VERSION (2); a non-empty file
+	 * without the key was written by 0.8.0 or earlier and loads as 1, which
+	 * tells the editor to migrate it (layout, keybindings, theme).
+	 */
+	properties[PROP_SETTINGS_VERSION] =
+		g_param_spec_int ("settings-version", "Settings Version",
+		                  "Settings file format version",
+		                  1, G_MAXINT, LRG_EDITOR_SETTINGS_VERSION, RW_EXPLICIT);
+
+	/**
+	 * LrgEditorSettings:ui-layout:
+	 *
+	 * Saved dock layout of the 0.8.1 editor window, as #LrgDockArea YAML
+	 * (opaque to this class). The 0.8.0 #LrgEditorSettings:layout key is
+	 * kept untouched beside it so an older editor still finds its layout.
+	 */
+	properties[PROP_UI_LAYOUT] =
+		g_param_spec_string ("ui-layout", "UI Layout", "Saved dock layout (LrgDockArea YAML)",
+		                     NULL, RW_EXPLICIT);
+
+	/**
+	 * LrgEditorSettings:script-editor:
+	 *
+	 * Where scripts open: "external" (the external editor, see
+	 * #LrgEditorSettings:external-editor), "internal" (the editor's code
+	 * panel) or "emacs" (a connected Emacs). Other values are ignored.
+	 */
+	properties[PROP_SCRIPT_EDITOR] =
+		g_param_spec_string ("script-editor", "Script Editor",
+		                     "internal, external or emacs", script_editor_values[0], RW_EXPLICIT);
+
+	/**
+	 * LrgEditorSettings:viewport-layout:
+	 *
+	 * Viewport arrangement: "single", "split-h" (two side by side),
+	 * "split-v" (two stacked) or "quad". Other values are ignored.
+	 */
+	properties[PROP_VIEWPORT_LAYOUT] =
+		g_param_spec_string ("viewport-layout", "Viewport Layout",
+		                     "single, split-h, split-v or quad", viewport_layout_values[0], RW_EXPLICIT);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
 	/**
@@ -598,6 +758,7 @@ lrg_editor_settings_class_init (LrgEditorSettingsClass *klass)
 static void
 lrg_editor_settings_init (LrgEditorSettings *self)
 {
+	self->settings_version = LRG_EDITOR_SETTINGS_VERSION;
 	self->keybindings = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 	self->unknown = g_hash_table_new_full (g_str_hash, g_str_equal, g_free,
 	                                       (GDestroyNotify) yaml_node_unref);
@@ -839,6 +1000,11 @@ apply_root (LrgEditorSettings  *self,
 	keys = yaml_mapping_get_members (map);
 
 	g_object_freeze_notify (G_OBJECT (self));
+
+	/* A non-empty file without a version predates the key (0.8.0). An
+	 * explicit value read below overrides this. */
+	if (keys != NULL && !yaml_mapping_has_member (map, VERSION_KEY))
+		lrg_editor_settings_set_settings_version (self, 1);
 	for (l = keys; l != NULL; l = l->next)
 	{
 		const gchar *key = l->data;
@@ -1162,4 +1328,121 @@ lrg_editor_settings_list_keybindings (LrgEditorSettings *self)
 
 	return g_list_sort (g_hash_table_get_keys (self->keybindings),
 	                    (GCompareFunc) g_strcmp0);
+}
+
+gchar *
+lrg_editor_settings_get_keybinding_accel (LrgEditorSettings *self,
+                                          const gchar       *action)
+{
+	const gchar *raw;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+	g_return_val_if_fail (action != NULL, NULL);
+
+	/* Unset stays NULL, an unbinding stays "", anything else is converted
+	 * from whichever syntax it was written in. */
+	raw = g_hash_table_lookup (self->keybindings, action);
+	if (raw == NULL)
+		return NULL;
+	if (*raw == '\0')
+		return g_strdup ("");
+	return lrg_editor_shortcut_to_accel (raw);
+}
+
+/* ==========================================================================
+ * 0.8.1 keys
+ * ========================================================================== */
+
+gint
+lrg_editor_settings_get_settings_version (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), 0);
+
+	return self->settings_version;
+}
+
+void
+lrg_editor_settings_set_settings_version (LrgEditorSettings *self,
+                                          gint               version)
+{
+	g_return_if_fail (LRG_IS_EDITOR_SETTINGS (self));
+	g_return_if_fail (version >= 1);
+
+	if (self->settings_version == version)
+		return;
+	self->settings_version = version;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SETTINGS_VERSION]);
+}
+
+const gchar *
+lrg_editor_settings_get_ui_layout (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	return self->ui_layout;
+}
+
+const gchar *
+lrg_editor_settings_get_script_editor (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	return self->script_editor;
+}
+
+const gchar *
+lrg_editor_settings_get_viewport_layout (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	return self->viewport_layout;
+}
+
+/*
+ * theme_is_file:
+ *
+ * A theme value names a file when it has a directory separator or a YAML
+ * extension; preset and legacy names have neither.
+ */
+static gboolean
+theme_is_file (const gchar *theme)
+{
+	return strchr (theme, '/') != NULL || strchr (theme, G_DIR_SEPARATOR) != NULL ||
+	       g_str_has_suffix (theme, ".yaml") || g_str_has_suffix (theme, ".yml");
+}
+
+const gchar *
+lrg_editor_settings_get_theme_preset (LrgEditorSettings *self)
+{
+	const gchar *theme;
+	gsize        i;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	theme = (self->theme != NULL && *self->theme != '\0') ? self->theme : DEFAULT_THEME;
+	if (theme_is_file (theme))
+		return NULL;
+
+	/* Preset names verbatim (case-insensitively, returning our spelling) */
+	for (i = 0; theme_presets[i] != NULL; i++)
+		if (g_ascii_strcasecmp (theme, theme_presets[i]) == 0)
+			return theme_presets[i];
+
+	/* 0.8.0 names */
+	for (i = 0; i < G_N_ELEMENTS (legacy_themes); i++)
+		if (g_ascii_strcasecmp (theme, legacy_themes[i].legacy) == 0)
+			return legacy_themes[i].preset;
+
+	/* Unknown name: the editor's default look */
+	return "catppuccin-mocha";
+}
+
+const gchar *
+lrg_editor_settings_get_theme_file (LrgEditorSettings *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SETTINGS (self), NULL);
+
+	if (self->theme == NULL || *self->theme == '\0' || !theme_is_file (self->theme))
+		return NULL;
+	return self->theme;
 }

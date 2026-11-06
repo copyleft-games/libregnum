@@ -1564,6 +1564,7 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-validate.h \
 	src/editor/lrg-asset-database.h \
 	src/editor/lrg-project.h \
+	src/editor/lrg-editor-shortcut-legacy.h \
 	src/editor/lrg-prefab.h
 SOURCES += \
 	src/editor/lrg-component-desc.c \

@@ -12,6 +12,13 @@
  * and snap defaults, autosave, recent files, keybinding overrides and the
  * saved panel layout.
  *
+ * Format versions: a file written by 0.8.1 carries `settings-version: 2`
+ * and may use the 0.8.1 keys (`ui-layout`, `script-editor`,
+ * `viewport-layout`, theme preset names or paths, accelerator-syntax
+ * keybindings). A file without the key is a 0.8.0 file and loads with
+ * version 1; it is still read as is (legacy theme names and "Ctrl+S"
+ * keybindings keep working) and the editor migrates it.
+ *
  * Settings live in a YAML file, by default
  * `$XDG_CONFIG_HOME/libregnum/editor.yaml` (override with the
  * `LRG_EDITOR_CONFIG` environment variable). Every GObject property of
@@ -40,6 +47,16 @@ G_BEGIN_DECLS
  * Maximum number of entries kept in each recent-files list.
  */
 #define LRG_EDITOR_SETTINGS_MAX_RECENT (12)
+
+/**
+ * LRG_EDITOR_SETTINGS_VERSION:
+ *
+ * The settings file format this version writes (#LrgEditorSettings:settings-version).
+ * Version 1 is the 0.8.0 format (no version key); version 2 adds
+ * ui-layout, script-editor, viewport-layout, theme preset names and
+ * accelerator-syntax keybindings.
+ */
+#define LRG_EDITOR_SETTINGS_VERSION (2)
 
 #define LRG_TYPE_EDITOR_SETTINGS (lrg_editor_settings_get_type ())
 
@@ -231,9 +248,15 @@ const gchar * const * lrg_editor_settings_get_recent_levels (LrgEditorSettings *
  * @self: an #LrgEditorSettings
  * @action: an action id, e.g. "file.save"
  *
+ * The stored override exactly as written. Since 0.8.1 the editor writes
+ * accelerator syntax ("<Ctrl>s", alternatives separated by "|"); files
+ * from 0.8.0 hold the older "Ctrl+S" syntax, which is still accepted
+ * everywhere. Use lrg_editor_settings_get_keybinding_accel() to read the
+ * value converted to accelerators.
+ *
  * Returns: (transfer none) (nullable): the user's shortcut for @action
- *   (e.g. "Ctrl+S"), "" if the user unbound it, or %NULL to use the
- *   action's default
+ *   (e.g. "<Ctrl>s" or "Ctrl+S"), "" if the user unbound it, or %NULL to
+ *   use the action's default
  */
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_editor_settings_get_keybinding (LrgEditorSettings *self,
@@ -245,6 +268,10 @@ const gchar * lrg_editor_settings_get_keybinding (LrgEditorSettings *self,
  * @action: an action id
  * @shortcut: (nullable): the shortcut, "" to unbind, or %NULL to restore
  *   the default
+ *
+ * Stores an override as given (either syntax is accepted; new code should
+ * write accelerators, e.g. from lrg_editor_shortcut_to_accel()) and emits
+ * #LrgEditorSettings::keybindings-changed.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_settings_set_keybinding (LrgEditorSettings *self,
@@ -260,5 +287,106 @@ void lrg_editor_settings_set_keybinding (LrgEditorSettings *self,
  */
 LRG_AVAILABLE_IN_ALL
 GList * lrg_editor_settings_list_keybindings (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_get_keybinding_accel:
+ * @self: an #LrgEditorSettings
+ * @action: an action id
+ *
+ * The override for @action converted to accelerator syntax with
+ * lrg_editor_shortcut_to_accel(), whichever syntax it was stored in.
+ *
+ * Returns: (transfer full) (nullable): the accelerators ("|"-separated),
+ *   "" if the user unbound @action, or %NULL when there is no override or
+ *   the stored text is not a valid shortcut
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_settings_get_keybinding_accel (LrgEditorSettings *self,
+                                                  const gchar       *action);
+
+/* ==========================================================================
+ * 0.8.1 keys
+ * ========================================================================== */
+
+/**
+ * lrg_editor_settings_get_settings_version:
+ * @self: an #LrgEditorSettings
+ *
+ * Returns: the file format version (see #LrgEditorSettings:settings-version)
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_editor_settings_get_settings_version (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_set_settings_version:
+ * @self: an #LrgEditorSettings
+ * @version: the format version (at least 1)
+ *
+ * Sets the format version; the migration sets %LRG_EDITOR_SETTINGS_VERSION
+ * after rewriting a 0.8.0 file.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_settings_set_settings_version (LrgEditorSettings *self,
+                                               gint               version);
+
+/**
+ * lrg_editor_settings_get_ui_layout:
+ * @self: an #LrgEditorSettings
+ *
+ * Returns: (transfer none) (nullable): the saved #LrgDockArea YAML
+ *   (#LrgEditorSettings:ui-layout)
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_ui_layout (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_get_script_editor:
+ * @self: an #LrgEditorSettings
+ *
+ * Returns: (transfer none): "internal", "external" or "emacs"
+ *   (#LrgEditorSettings:script-editor)
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_script_editor (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_get_viewport_layout:
+ * @self: an #LrgEditorSettings
+ *
+ * Returns: (transfer none): "single", "split-h", "split-v" or "quad"
+ *   (#LrgEditorSettings:viewport-layout)
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_viewport_layout (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_get_theme_preset:
+ * @self: an #LrgEditorSettings
+ *
+ * The built-in #LrgTheme preset the #LrgEditorSettings:theme value
+ * resolves to: a preset name is returned as is; the 0.8.0 names map
+ * "mocha" to "catppuccin-mocha", "latte" to "catppuccin-latte", and
+ * "macchiato" and "frappe" to "catppuccin-mocha" (their closest preset;
+ * an editor shipping data/editor/themes/NAME.yaml may load that instead);
+ * an unknown name gives "catppuccin-mocha".
+ *
+ * Returns: (transfer none) (nullable): the preset name, or %NULL when the
+ *   theme is a file (see lrg_editor_settings_get_theme_file())
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_theme_preset (LrgEditorSettings *self);
+
+/**
+ * lrg_editor_settings_get_theme_file:
+ * @self: an #LrgEditorSettings
+ *
+ * The theme YAML path when #LrgEditorSettings:theme names a file (it
+ * contains a directory separator or ends in ".yaml" / ".yml").
+ *
+ * Returns: (transfer none) (nullable): the path, or %NULL for a preset or
+ *   legacy name
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_settings_get_theme_file (LrgEditorSettings *self);
 
 G_END_DECLS
