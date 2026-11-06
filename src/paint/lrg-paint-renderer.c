@@ -509,6 +509,41 @@ static const gchar *fragment_main =
 	"    return body + halo * (1.0 - body.a);\n"
 	"}\n"
 	"\n"
+	/*
+	 * Glyph: one cell of an SDF font atlas. The field stores the signed
+	 * distance to the outline (128 on the edge, ±127 at the spread);
+	 * v_data.x is the spread in canvas units, so d below is in canvas
+	 * units, positive inside. w is the size of one screen pixel in
+	 * canvas units, from the derivatives, so the smoothstep ramp stays
+	 * about one pixel wide at any scale or transform. Outline, glow
+	 * and softness are offsets of the same distance.
+	 */
+	"vec4 shade_glyph (vec2 dpx, vec2 dpy)\n"
+	"{\n"
+	"    vec2  f = (v_pos - v_rect.xy) / max (v_rect.zw - v_rect.xy, vec2 (1e-4));\n"
+	"    vec2  px = clamp (mix (v_extra.xy, v_extra.zw, f), v_extra.xy + 0.5, v_extra.zw - 0.5);\n"
+	"    float s = texture (u_tex, px / vec2 (textureSize (u_tex, 0))).r;\n"
+	"    if (f.x < 0.0 || f.y < 0.0 || f.x > 1.0 || f.y > 1.0)\n"
+	"        s = 0.0;\n"
+	"    float d = (s * 255.0 - 128.0) / 127.0 * v_data.x + v_data.z;\n"
+	"    float w = max (0.5 * (length (dpx) + length (dpy)), 1e-4);\n"
+	/* the field ends at the spread: effects must fade out before it */
+	"    float reach = max (v_data.x * 0.9, 0.5 * w);\n"
+	"    float aa = min (0.5 * w + v_data.y, max (reach - v_data.z, 0.5 * w));\n"
+	"    vec4  outc = premul (v_color) * smoothstep (-aa, aa, d);\n"
+	"    float ow = v_params.x;\n"
+	"    if (ow > 0.0) {\n"
+	"        vec4 rim = premul (v_border) * smoothstep (-aa, aa, d + ow);\n"
+	"        outc = outc + rim * (1.0 - outc.a);\n"
+	"    }\n"
+	"    float gr = min (v_params.y, reach - ow);\n"
+	"    if (gr > 0.0) {\n"
+	"        float g = 1.0 - smoothstep (0.0, gr, -(d + ow));\n"
+	"        outc = outc + premul (v_color2) * (g * g) * (1.0 - outc.a);\n"
+	"    }\n"
+	"    return outc;\n"
+	"}\n"
+	"\n"
 	"void main ()\n"
 	"{\n"
 	/* derivatives first, while every fragment of the quad is active */
@@ -545,6 +580,8 @@ static const gchar *fragment_main =
 	"    } else if (prim == 4) {\n"
 	"        float d = sd_triangle (v_pos, v_rect.xy, v_rect.zw, v_extra.xy);\n"
 	"        outc = premul (v_color) * clamp (0.5 - d, 0.0, 1.0);\n"
+	"    } else if (prim == 9) {\n"
+	"        outc = shade_glyph (dpx, dpy);\n"
 	"    } else if (prim == 8) {\n"
 	"        outc = shade_curve ();\n"
 	"    } else if (prim == 5 || prim == 6) {\n"

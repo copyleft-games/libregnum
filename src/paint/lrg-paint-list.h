@@ -356,10 +356,14 @@ void lrg_paint_list_image (LrgPaintList       *self,
  * @spacing: extra space between characters
  * @color: text colour
  *
- * Records text as one image instance per glyph, sampling the font's
- * atlas. Text and shapes therefore share batches as long as a single
- * font atlas is in use. The origin is snapped to whole units for
- * crisp glyphs. The list keeps a reference to @font until cleared.
+ * Records text as one instance per glyph. When an #LrgPaintFont is
+ * bound to @font (or, for %NULL, set as the default with
+ * lrg_paint_font_set_default()) the glyphs are SDF glyph instances
+ * from the shared atlas, crisp at any scale, with fallback fonts and
+ * bidi reordering; otherwise they are image instances sampling the
+ * bitmap font's atlas. Either way text and shapes share batches as
+ * long as a single atlas texture is in use. The origin is snapped to
+ * whole units. The list keeps a reference to @font until cleared.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_paint_list_text (LrgPaintList   *self,
@@ -372,6 +376,30 @@ void lrg_paint_list_text (LrgPaintList   *self,
                           const GrlColor *color);
 
 /**
+ * lrg_paint_list_text_styled:
+ * @self: an #LrgPaintList
+ * @font: (nullable): font, %NULL for the default font
+ * @text: UTF-8 text; '\n' starts a new line
+ * @x: left edge
+ * @y: top edge
+ * @size: font size in canvas units
+ * @style: colour, spacing, outline, glow, shadow and direction
+ *
+ * lrg_paint_list_text() with a full #LrgPaintTextStyle. When an
+ * #LrgPaintFont is bound to @font (see lrg_paint_font_bind()) the text
+ * is drawn from its distance-field atlas with every effect of @style;
+ * bitmap fonts only use the colour and spacing.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_text_styled (LrgPaintList            *self,
+                                 GrlFont                 *font,
+                                 const gchar             *text,
+                                 gfloat                   x,
+                                 gfloat                   y,
+                                 gfloat                   size,
+                                 const LrgPaintTextStyle *style);
+
+/**
  * lrg_paint_measure_text:
  * @font: (nullable): font, %NULL for the built-in default font
  * @text: UTF-8 text
@@ -380,10 +408,12 @@ void lrg_paint_list_text (LrgPaintList   *self,
  * @width: (out) (optional): width of the widest line
  * @height: (out) (optional): total height of all lines
  *
- * Measures text exactly as lrg_paint_list_text() lays it out. Needs
- * the font's glyph data only; for %NULL fonts it needs a window
- * (raylib's default font is created with the GL context) and reports
- * an estimate without one.
+ * Measures text exactly as lrg_paint_list_text() lays it out, through
+ * the bound #LrgPaintFont when there is one (no window needed). For
+ * bitmap fonts it needs the font's glyph data only; for %NULL fonts
+ * without a default #LrgPaintFont it needs a window (raylib's default
+ * font is created with the GL context) and reports an estimate
+ * without one.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_paint_measure_text (GrlFont     *font,

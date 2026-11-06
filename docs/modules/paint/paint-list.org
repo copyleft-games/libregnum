@@ -104,8 +104,9 @@ paint_card (LrgPaintList *list,
 :END:
 | Function | Purpose | Nullable / notes |
 |----------+---------+------------------|
-| =lrg_paint_list_text (self, font, text, x, y, size, spacing, color)= | Records UTF-8 text, one image instance per glyph, sampling the font atlas | =font= =NULL= = raylib's built-in font (needs a window); ='\n'= starts a new line at =1.2 * size=; origin snapped to whole units; the list refs =font= until cleared |
-| =lrg_paint_measure_text (font, text, size, spacing, width, height)= | Measures exactly as =lrg_paint_list_text()= lays out | =width= / =height= (out, optional); width = widest line without the trailing spacing; height = =size + (lines - 1) * 1.2 * size=; without glyph data returns an estimate (=0.55 * size= per character) |
+| =lrg_paint_list_text (self, font, text, x, y, size, spacing, color)= | Records UTF-8 text, one instance per glyph | With an =LrgPaintFont= bound to =font= (=lrg_paint_font_bind()=; the theme does this for its UI font) or set as the default for =NULL= (=lrg_paint_font_set_default()=): SDF glyph instances with fallback fonts and bidi; otherwise image instances sampling the bitmap atlas. =font= =NULL= without a default = raylib's built-in font (needs a window); ='\n'= starts a new line at =1.2 * size=; origin snapped to whole units; the list refs =font= until cleared |
+| =lrg_paint_list_text_styled (self, font, text, x, y, size, style)= | Same with an =LrgPaintTextStyle=: colour, spacing, outline, glow, drop shadow, base direction | Effects need an SDF font; bitmap fonts use only the colour and spacing. See [[file:text.org::#text-styles][Text: styles]] |
+| =lrg_paint_measure_text (font, text, size, spacing, width, height)= | Measures exactly as =lrg_paint_list_text()= lays out | Through the bound =LrgPaintFont= when there is one (no window needed, same bidi, fallbacks and kerning as drawing). =width= / =height= (out, optional); width = widest line without the trailing spacing; height = =size + (lines - 1) * 1.2 * size=; bitmap fonts without glyph data return an estimate (=0.55 * size= per character) |
 
 Text and shapes share batches as long as one font atlas is in use. Pass the theme's UI font straight through:
 
@@ -123,7 +124,7 @@ lrg_paint_list_text (list, font, "Continue",
                      size, 0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
 #+end_src
 
-Glyphs are placed exactly where raylib's =DrawTextCodepoint()= would put them (glyph offsets and atlas padding included), so measurement agrees with legacy =MeasureTextEx()= for the same font. Spaces and tabs advance the pen but emit no instance.
+With a bitmap font, glyphs are placed exactly where raylib's =DrawTextCodepoint()= would put them (glyph offsets and atlas padding included), so measurement agrees with legacy =MeasureTextEx()= for the same font. Spaces and tabs advance the pen but emit no instance. With an SDF font, advances come unrounded from the font's =hmtx= table plus GPOS kerning, so the same string can be a fraction of a unit narrower or wider than with the bitmap font; layout and drawing always agree with each other. The full SDF pipeline is described in [[file:text.org][Text]].
 
 ** State stacks
 :PROPERTIES:
@@ -499,7 +500,7 @@ Fields: =color_start=, =color_end=, =glow=, =glow_size=, =pulse_color=, =pulse_c
 :END:
 - Pass world coordinates; relative coordinates draw at the canvas origin.
 - Measure and draw with the same font, size and spacing, or alignment drifts.
-- =lrg_paint_list_text()= with a =NULL= font records nothing headless; tests that count glyph instances need a real font.
+- =lrg_paint_list_text()= with a =NULL= font records nothing headless; tests that count glyph instances need a real font, or an SDF font set with =lrg_paint_font_set_default()= (SDF glyph instances are recorded headless, with texture 0).
 - Do not keep instance pointers across further recording.
 - Effects and curve pulses only move when someone calls =lrg_paint_list_set_time()= before rendering and keeps redrawing; a list recorded once stays still.
 - Glass sees only what was drawn *into the same target before it*; a UI rendered into its own transparent render texture shows nothing behind its glass. Draw the UI over the scene, or the scene into the UI's target first.

@@ -6221,6 +6221,7 @@ lrg_paint_prim_get_type (void)
             { LRG_PAINT_PRIM_GLASS, "LRG_PAINT_PRIM_GLASS", "glass" },
             { LRG_PAINT_PRIM_EFFECT, "LRG_PAINT_PRIM_EFFECT", "effect" },
             { LRG_PAINT_PRIM_CURVE, "LRG_PAINT_PRIM_CURVE", "curve" },
+            { LRG_PAINT_PRIM_GLYPH, "LRG_PAINT_PRIM_GLYPH", "glyph" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

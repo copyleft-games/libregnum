@@ -6711,6 +6711,8 @@ GType lrg_selection_mode_get_type (void) G_GNUC_CONST;
  *   refraction, rim light)
  * @LRG_PAINT_PRIM_EFFECT: rounded rectangle filled by an animated effect
  * @LRG_PAINT_PRIM_CURVE: cubic Bezier stroke with gradient, glow and pulses
+ * @LRG_PAINT_PRIM_GLYPH: one glyph of an SDF font atlas, with optional
+ *   outline, glow and softness
  *
  * Shape drawn by one #LrgPaintInstance.
  */
@@ -6724,7 +6726,8 @@ typedef enum
     LRG_PAINT_PRIM_BLUR,
     LRG_PAINT_PRIM_GLASS,
     LRG_PAINT_PRIM_EFFECT,
-    LRG_PAINT_PRIM_CURVE
+    LRG_PAINT_PRIM_CURVE,
+    LRG_PAINT_PRIM_GLYPH
 } LrgPaintPrim;
 
 LRG_AVAILABLE_IN_ALL

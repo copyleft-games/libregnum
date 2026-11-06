@@ -21,6 +21,7 @@ Pages in this module:
 - This page: why the pipeline exists, the instance layout, the shader maths, batching, groups, clip/opacity stacks, headless behaviour, mixing with raw raylib drawing, materials (backdrop blur and glass) and their cost model, effect shaders and the user-effect snippet contract, curves, icons, pitfalls and credits.
 - [[file:paint-list.org][LrgPaintList]]: the recording API reference with examples.
 - [[file:paint-renderer.org][LrgPaintRenderer]]: the drawing API reference with examples.
+- [[file:text.org][Text]]: SDF fonts (=LrgPaintFont=), the glyph atlas, fallback chains, bidirectional text and the theme's font settings.
 
 ** Why an SDF paint pipeline
 :PROPERTIES:
@@ -126,8 +127,9 @@ Location 0 (=a_corner=) is the static six-vertex unit quad (two triangles in ray
 | =LRG_PAINT_PRIM_GLASS= (6) | box corners | per-corner radii | unused | blur radius | frost, refraction, saturation, rim light | tint (opacity *not* applied) | unused | unused | 0 |
 | =LRG_PAINT_PRIM_EFFECT= (7) | box corners | per-corner radii | unused | unused | hover, press, intensity, effect id | palette colour 1 | palette colour 2 | palette colour 3 | 0 |
 | =LRG_PAINT_PRIM_CURVE= (8) | end points P0 and P3 | pulse colour as straight RGBA floats 0..1 | unused | thickness | inner control points P1 (=extra[0..1]=) and P2 (=extra[2..3]=) | colour at the start | colour at the end | glow colour | 0 |
+| =LRG_PAINT_PRIM_GLYPH= (9) | glyph quad including the distance field's padding | unused | outline width | glow radius | the field's cell in the atlas, in *pixels* (x0, y0, x1, y1) | fill | glow colour | outline colour | GL id of the glyph atlas page |
 
-=data= per primitive: blur and glass hold (dispersion, rim bevel width, opacity, 0); effects hold (speed, scale, opacity, 0); curves hold (glow size, pulse count, pulse speed, pulse phase). It is zero for the older primitives. Blur, glass and effect instances carry the list opacity in =data[2]= instead of in their colours, because the shader fades their whole result (a faded glass slab must let the frame through, not just lose its tint).
+=data= per primitive: blur and glass hold (dispersion, rim bevel width, opacity, 0); effects hold (speed, scale, opacity, 0); curves hold (glow size, pulse count, pulse speed, pulse phase); glyphs hold (distance scale, softness, dilation, 0), see [[file:text.org::#text-shader][Text: the glyph shader]]. It is zero for the older primitives. Blur, glass and effect instances carry the list opacity in =data[2]= instead of in their colours, because the shader fades their whole result (a faded glass slab must let the frame through, not just lose its tint).
 
 Colours are stored as straight (non-premultiplied) RGBA8 with the list's current opacity already multiplied into the alpha byte at record time. The shader premultiplies.
 
@@ -260,6 +262,8 @@ body *= texture (u_tex, mix (extra.xy, extra.zw, f));
 #+end_src
 
 =f= is the fragment's position inside the destination box (0..1); =extra= holds the source UV rectangle, so any sub-region of a texture or atlas can be drawn, and the radius rounds the corners of the picture. =color= is the tint (white = unchanged).
+
+This is the path of bitmap fonts (a =GrlFont= with no =LrgPaintFont= bound). Text from an =LrgPaintFont= uses =LRG_PAINT_PRIM_GLYPH= instead: the atlas holds a signed distance field and the shader computes coverage from it with a screen-space-derivative smoothstep, plus outline and glow; see [[file:text.org::#text-shader][Text: the glyph shader]].
 
 **** Gradients
 :PROPERTIES:

@@ -797,6 +797,355 @@ test_paint_box_materials (void)
 	                 LRG_PAINT_PRIM_EFFECT);
 }
 
+/* ==========================================================================
+ * Palette generation and contrast
+ * ========================================================================== */
+
+static void
+test_contrast_ratio_known_values (void)
+{
+	GrlColor black = { 0, 0, 0, 255 };
+	GrlColor white = { 255, 255, 255, 255 };
+	GrlColor grey = { 119, 119, 119, 255 };
+	GrlColor clear_white = { 255, 255, 255, 0 };
+
+	/* The WCAG extremes */
+	g_assert_cmpfloat_with_epsilon (lrg_color_contrast_ratio (&black, &white), 21.0f, 0.001f);
+	g_assert_cmpfloat_with_epsilon (lrg_color_contrast_ratio (&white, &black), 21.0f, 0.001f);
+	g_assert_cmpfloat_with_epsilon (lrg_color_contrast_ratio (&grey, &grey), 1.0f, 0.0001f);
+	g_assert_cmpfloat_with_epsilon (lrg_color_contrast_ratio (&white, &white), 1.0f, 0.0001f);
+
+	/* #777777 on white is the classic "just fails AA" grey: 4.48 */
+	g_assert_cmpfloat_with_epsilon (lrg_color_contrast_ratio (&grey, &white), 4.48f, 0.01f);
+
+	/* Alpha is ignored */
+	g_assert_cmpfloat_with_epsilon (lrg_color_contrast_ratio (&clear_white, &black), 21.0f, 0.001f);
+
+	/* Same maths as the role-based helper */
+	{
+		g_autoptr(LrgTheme) theme = lrg_theme_new ();
+
+		g_assert_cmpfloat (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_TEXT, LRG_THEME_COLOR_PANEL), ==,
+		                   lrg_color_contrast_ratio (lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT),
+		                                             lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL)));
+	}
+}
+
+static void
+test_generate_palette_deterministic (void)
+{
+	g_autoptr(LrgTheme) a = lrg_theme_new ();
+	g_autoptr(LrgTheme) b = lrg_theme_new_preset ("catppuccin-latte");
+	GrlColor            accent;
+	gint                count = 0;
+	guint               i;
+
+	g_assert_true (lrg_color_parse ("#22d3ee", &accent));
+	g_signal_connect (a, "changed", G_CALLBACK (on_changed_count), &count);
+
+	/* Same inputs on different starting themes give identical colours */
+	lrg_theme_generate_palette (a, &accent, 0.4f, 0.6f, TRUE);
+	lrg_theme_generate_palette (b, &accent, 0.4f, 0.6f, TRUE);
+	for (i = 0; i < LRG_THEME_COLOR_COUNT; i++)
+		g_assert_true (color_eq (lrg_theme_get_color (a, i), lrg_theme_get_color (b, i)));
+	g_assert_cmpint (count, ==, 1);
+
+	/* ... and running it again changes nothing */
+	lrg_theme_generate_palette (a, &accent, 0.4f, 0.6f, TRUE);
+	for (i = 0; i < LRG_THEME_COLOR_COUNT; i++)
+		g_assert_true (color_eq (lrg_theme_get_color (a, i), lrg_theme_get_color (b, i)));
+
+	/* The accent family is derived as lrg_theme_set_accent() does */
+	{
+		g_autoptr(LrgTheme) c = lrg_theme_new ();
+
+		lrg_theme_set_dark (c, TRUE);
+		lrg_theme_set_accent (c, &accent);
+		g_assert_true (color_eq (lrg_theme_get_color (a, LRG_THEME_COLOR_ACCENT), &accent));
+		g_assert_true (color_eq (lrg_theme_get_color (a, LRG_THEME_COLOR_ACCENT_HOVER),
+		                         lrg_theme_get_color (c, LRG_THEME_COLOR_ACCENT_HOVER)));
+		g_assert_true (color_eq (lrg_theme_get_color (a, LRG_THEME_COLOR_ACCENT_PRESSED),
+		                         lrg_theme_get_color (c, LRG_THEME_COLOR_ACCENT_PRESSED)));
+		g_assert_true (color_eq (lrg_theme_get_color (a, LRG_THEME_COLOR_SELECTION),
+		                         lrg_theme_get_color (c, LRG_THEME_COLOR_SELECTION)));
+		g_assert_true (color_eq (lrg_theme_get_color (a, LRG_THEME_COLOR_FOCUS),
+		                         lrg_theme_get_color (c, LRG_THEME_COLOR_FOCUS)));
+		g_assert_true (color_eq (lrg_theme_get_color (a, LRG_THEME_COLOR_TEXT_ON_ACCENT),
+		                         lrg_theme_get_color (c, LRG_THEME_COLOR_TEXT_ON_ACCENT)));
+	}
+
+	/* Metrics, motion and name are left alone */
+	g_assert_cmpstr (lrg_theme_get_name (b), ==, "catppuccin-latte");
+	g_assert_cmpfloat (lrg_theme_get_metric (b, LRG_THEME_METRIC_CORNER_RADIUS), ==, 10.0f);
+	g_assert_cmpint (lrg_theme_get_motion (b), ==, LRG_MOTION_BOUNCY);
+}
+
+static void
+test_generate_palette_dark_light (void)
+{
+	g_autoptr(LrgTheme) theme = lrg_theme_new ();
+	GrlColor            accent;
+	gfloat              window_l;
+	gfloat              panel_l;
+	gfloat              text_l;
+
+	g_assert_true (lrg_color_parse ("#7c6cff", &accent));
+
+	/* Dark: dark layers stepping up, light text */
+	lrg_theme_generate_palette (theme, &accent, 0.3f, 0.5f, TRUE);
+	g_assert_true (lrg_theme_get_dark (theme));
+	window_l = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_WINDOW));
+	panel_l = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL));
+	text_l = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+	g_assert_cmpfloat (window_l, <, 0.05f);
+	g_assert_cmpfloat (panel_l, >, window_l);
+	g_assert_cmpfloat (lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_SURFACE)), >, panel_l);
+	g_assert_cmpfloat (text_l, >, 0.7f);
+
+	/* Light: light surfaces, dark text */
+	lrg_theme_generate_palette (theme, &accent, 0.3f, 0.5f, FALSE);
+	g_assert_false (lrg_theme_get_dark (theme));
+	window_l = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_WINDOW));
+	panel_l = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL));
+	text_l = lrg_paint_color_luminance (lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+	g_assert_cmpfloat (window_l, >, 0.6f);
+	g_assert_cmpfloat (panel_l, >, window_l);
+	g_assert_cmpfloat (text_l, <, 0.05f);
+
+	/* Depth spreads the dark layers further apart */
+	{
+		gfloat flat;
+		gfloat deep;
+
+		lrg_theme_generate_palette (theme, &accent, 0.3f, 0.0f, TRUE);
+		flat = lrg_theme_get_contrast (theme, LRG_THEME_COLOR_SURFACE, LRG_THEME_COLOR_WINDOW);
+		lrg_theme_generate_palette (theme, &accent, 0.3f, 1.0f, TRUE);
+		deep = lrg_theme_get_contrast (theme, LRG_THEME_COLOR_SURFACE, LRG_THEME_COLOR_WINDOW);
+		g_assert_cmpfloat (deep, >, flat);
+	}
+
+	/* Tint 0 gives pure greys, tint 1 carries the accent's hue */
+	{
+		const GrlColor *panel;
+
+		lrg_theme_generate_palette (theme, &accent, 0.0f, 0.5f, TRUE);
+		panel = lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL);
+		g_assert_cmpuint (panel->r, ==, panel->g);
+		g_assert_cmpuint (panel->g, ==, panel->b);
+
+		lrg_theme_generate_palette (theme, &accent, 1.0f, 0.5f, TRUE);
+		panel = lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL);
+		/* #7c6cff is blue-violet: blue leads */
+		g_assert_cmpuint (panel->b, >, panel->g);
+	}
+
+	/* Generated palettes already read well */
+	{
+		static const gchar *hexes[] = { "#7c6cff", "#22d3ee", "#34d399", "#fbbf24", "#ff3d7f", "#808080" };
+		guint               i;
+
+		for (i = 0; i < G_N_ELEMENTS (hexes); i++)
+		{
+			guint d;
+
+			g_assert_true (lrg_color_parse (hexes[i], &accent));
+			for (d = 0; d < 2; d++)
+			{
+				guint p;
+
+				lrg_theme_generate_palette (theme, &accent, 0.5f, 0.5f, d == 0);
+				g_assert_cmpuint (lrg_theme_count_contrast_failures (theme, 3.0f), ==, 0);
+
+				/* Everything but text on the accent shades is AA */
+				for (p = 0; p < lrg_theme_get_n_contrast_pairs (); p++)
+				{
+					LrgThemeColor fg;
+					LrgThemeColor bg;
+
+					lrg_theme_get_contrast_pair (p, &fg, &bg);
+					if (fg != LRG_THEME_COLOR_TEXT_ON_ACCENT)
+						g_assert_cmpfloat (lrg_theme_get_contrast (theme, fg, bg), >=, 4.5f);
+				}
+			}
+		}
+	}
+}
+
+static void
+test_contrast_pairs (void)
+{
+	LrgThemeColor fg;
+	LrgThemeColor bg;
+	guint         n = lrg_theme_get_n_contrast_pairs ();
+	guint         i;
+
+	g_assert_cmpuint (n, >=, 8);
+	for (i = 0; i < n; i++)
+	{
+		g_assert_true (lrg_theme_get_contrast_pair (i, &fg, &bg));
+		g_assert_cmpint (fg, !=, bg);
+		g_assert_cmpint ((gint) fg, <, LRG_THEME_COLOR_COUNT);
+		g_assert_cmpint ((gint) bg, <, LRG_THEME_COLOR_COUNT);
+	}
+	g_assert_true (lrg_theme_get_contrast_pair (0, &fg, &bg));
+	g_assert_cmpint (fg, ==, LRG_THEME_COLOR_TEXT);
+	g_assert_cmpint (bg, ==, LRG_THEME_COLOR_WINDOW);
+	g_assert_true (lrg_theme_get_contrast_pair (0, NULL, NULL));
+	g_assert_false (lrg_theme_get_contrast_pair (n, &fg, &bg));
+}
+
+/* assert_all_pairs_pass: every listed pair reaches @min */
+static void
+assert_all_pairs_pass (LrgTheme *theme,
+                       gfloat    min)
+{
+	guint i;
+
+	for (i = 0; i < lrg_theme_get_n_contrast_pairs (); i++)
+	{
+		LrgThemeColor fg;
+		LrgThemeColor bg;
+
+		lrg_theme_get_contrast_pair (i, &fg, &bg);
+		if (lrg_theme_get_contrast (theme, fg, bg) < min)
+			g_error ("%s: pair %u (%d on %d) is %.2f, wanted %.2f",
+			         lrg_theme_get_name (theme), i, fg, bg,
+			         (gdouble) lrg_theme_get_contrast (theme, fg, bg), (gdouble) min);
+	}
+	g_assert_cmpuint (lrg_theme_count_contrast_failures (theme, min), ==, 0);
+}
+
+static void
+test_fix_contrast_presets (void)
+{
+	const gchar * const *presets = lrg_theme_list_presets ();
+	guint                i;
+
+	for (i = 0; presets[i] != NULL; i++)
+	{
+		g_autoptr(LrgTheme) theme = lrg_theme_new_preset (presets[i]);
+		g_autoptr(LrgTheme) before = lrg_theme_copy (theme);
+		guint               c;
+
+		lrg_theme_fix_contrast (theme, 4.5f);
+		assert_all_pairs_pass (theme, 4.5f);
+
+		/* Fixing again is a no-op */
+		g_assert_cmpuint (lrg_theme_fix_contrast (theme, 4.5f), ==, 0);
+
+		/* Roles outside the pairs are never touched */
+		for (c = 0; c < LRG_THEME_COLOR_COUNT; c++)
+		{
+			guint    p;
+			gboolean in_pair = FALSE;
+
+			for (p = 0; p < lrg_theme_get_n_contrast_pairs (); p++)
+			{
+				LrgThemeColor fg;
+				LrgThemeColor bg;
+
+				lrg_theme_get_contrast_pair (p, &fg, &bg);
+				in_pair = in_pair || fg == (LrgThemeColor) c || bg == (LrgThemeColor) c;
+			}
+			if (!in_pair)
+				g_assert_true (color_eq (lrg_theme_get_color (theme, c), lrg_theme_get_color (before, c)));
+		}
+
+		/* AAA works too */
+		lrg_theme_fix_contrast (theme, 7.0f);
+		assert_all_pairs_pass (theme, 7.0f);
+	}
+}
+
+static void
+test_fix_contrast_bad_theme (void)
+{
+	g_autoptr(LrgTheme) theme = lrg_theme_new ();
+	GrlColor            c;
+	gint                count = 0;
+	guint               changed;
+	guint               i;
+
+	/* Everything mid-grey, text the same as its backgrounds, text on
+	 * accent identical to the accent: every pair fails */
+	lrg_theme_set_name (theme, "bad");
+	lrg_color_parse ("#777777", &c);
+	for (i = 0; i < LRG_THEME_COLOR_COUNT; i++)
+		lrg_theme_set_color (theme, i, &c);
+	lrg_color_parse ("#8a8a8a", &c);
+	lrg_theme_set_color (theme, LRG_THEME_COLOR_PANEL, &c);
+	lrg_color_parse ("#6f6f6f", &c);
+	lrg_theme_set_color (theme, LRG_THEME_COLOR_SURFACE, &c);
+	g_assert_cmpuint (lrg_theme_count_contrast_failures (theme, 4.5f), ==, lrg_theme_get_n_contrast_pairs ());
+
+	g_signal_connect (theme, "changed", G_CALLBACK (on_changed_count), &count);
+	changed = lrg_theme_fix_contrast (theme, 4.5f);
+	g_assert_cmpuint (changed, >, 0);
+	g_assert_cmpint (count, ==, 1);
+	assert_all_pairs_pass (theme, 4.5f);
+
+	/* Light text on a dark-but-not-enough background: only the text
+	 * moves, and only as far as needed */
+	{
+		g_autoptr(LrgTheme) t2 = lrg_theme_new ();
+		GrlColor            panel;
+		gfloat              ratio;
+
+		lrg_color_parse ("#5a5a66", &c);
+		lrg_theme_set_color (t2, LRG_THEME_COLOR_TEXT_MUTED, &c);
+		panel = *lrg_theme_get_color (t2, LRG_THEME_COLOR_PANEL);
+		lrg_theme_fix_contrast (t2, 4.5f);
+		g_assert_true (color_eq (lrg_theme_get_color (t2, LRG_THEME_COLOR_PANEL), &panel));
+		ratio = lrg_theme_get_contrast (t2, LRG_THEME_COLOR_TEXT_MUTED, LRG_THEME_COLOR_PANEL);
+		g_assert_cmpfloat (ratio, >=, 4.5f);
+		/* the surface pair (lighter) decides how far it moves */
+		ratio = lrg_theme_get_contrast (t2, LRG_THEME_COLOR_TEXT_MUTED, LRG_THEME_COLOR_SURFACE);
+		g_assert_cmpfloat (ratio, >=, 4.5f);
+		g_assert_cmpfloat (ratio, <, 4.8f);
+	}
+}
+
+static void
+test_generated_yaml_round_trip (void)
+{
+	static const struct { const gchar *hex; gfloat tint; gfloat depth; gboolean dark; } cases[] = {
+		{ "#7c6cff", 0.3f, 0.5f, TRUE },
+		{ "#22d3ee", 0.8f, 0.9f, TRUE },
+		{ "#ff7a45", 0.2f, 0.1f, FALSE },
+		{ "#16a34a", 1.0f, 1.0f, FALSE }
+	};
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (cases); i++)
+	{
+		g_autoptr(LrgTheme) theme = lrg_theme_new ();
+		g_autoptr(LrgTheme) back = NULL;
+		g_autoptr(GError)   error = NULL;
+		g_autofree gchar   *yaml = NULL;
+		GrlColor            accent;
+		guint               c;
+
+		g_assert_true (lrg_color_parse (cases[i].hex, &accent));
+		lrg_theme_generate_palette (theme, &accent, cases[i].tint, cases[i].depth, cases[i].dark);
+		lrg_theme_fix_contrast (theme, 4.5f);
+		lrg_theme_set_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS, 13.0f);
+		lrg_theme_set_name (theme, "generated");
+
+		yaml = lrg_theme_to_data (theme, NULL, &error);
+		g_assert_no_error (error);
+		back = lrg_theme_new_from_data (yaml, -1, &error);
+		g_assert_no_error (error);
+		g_assert_nonnull (back);
+
+		for (c = 0; c < LRG_THEME_COLOR_COUNT; c++)
+			g_assert_true (color_eq (lrg_theme_get_color (theme, c), lrg_theme_get_color (back, c)));
+		g_assert_cmpint (lrg_theme_get_dark (back), ==, cases[i].dark);
+		g_assert_cmpfloat (lrg_theme_get_metric (back, LRG_THEME_METRIC_CORNER_RADIUS), ==, 13.0f);
+		g_assert_cmpstr (lrg_theme_get_name (back), ==, "generated");
+		g_assert_cmpuint (lrg_theme_count_contrast_failures (back, 4.5f), ==, 0);
+	}
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -824,6 +1173,14 @@ main (int   argc,
 	g_test_add_func ("/ui/theme/yaml/materials", test_yaml_materials);
 	g_test_add_func ("/ui/style/look-materials", test_part_look_materials);
 	g_test_add_func ("/ui/style/paint-box-materials", test_paint_box_materials);
+
+	g_test_add_func ("/ui/theme/contrast/ratio", test_contrast_ratio_known_values);
+	g_test_add_func ("/ui/theme/contrast/pairs", test_contrast_pairs);
+	g_test_add_func ("/ui/theme/contrast/fix-presets", test_fix_contrast_presets);
+	g_test_add_func ("/ui/theme/contrast/fix-bad-theme", test_fix_contrast_bad_theme);
+	g_test_add_func ("/ui/theme/palette/deterministic", test_generate_palette_deterministic);
+	g_test_add_func ("/ui/theme/palette/dark-light", test_generate_palette_dark_light);
+	g_test_add_func ("/ui/theme/palette/yaml-round-trip", test_generated_yaml_round_trip);
 
 	return g_test_run ();
 }

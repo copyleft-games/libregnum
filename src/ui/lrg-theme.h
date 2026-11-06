@@ -18,6 +18,7 @@
 #include "../lrg-version.h"
 #include "../lrg-enums.h"
 #include "lrg-style.h"
+#include "../paint/lrg-paint-font.h"
 
 G_BEGIN_DECLS
 
@@ -924,6 +925,109 @@ gboolean lrg_theme_load_ui_font (LrgTheme     *self,
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_theme_get_font_path (LrgTheme *self);
 
+/* ==========================================================================
+ * SDF text
+ * ========================================================================== */
+
+/**
+ * lrg_theme_get_paint_font:
+ * @self: an #LrgTheme
+ *
+ * The distance-field font the theme's UI text is drawn with. Built on
+ * first use (no window needed) from, in order: the `font:` file, the
+ * `font-family:`, or the system UI font; then the theme's
+ * `font-fallbacks:` and the system fallbacks (symbols, Arabic, Hebrew,
+ * monochrome emoji, CJK). Themes with none of these settings share one
+ * font of the same face lrg_theme_get_ui_font() picks (Adwaita Sans,
+ * Inter, Cantarell, Noto Sans, ...), falling back to
+ * lrg_paint_font_get_system_default(). When the UI font is loaded (with
+ * a window) this font is bound to it with lrg_paint_font_bind(), so
+ * widgets drawing with lrg_theme_get_ui_font() get SDF text.
+ *
+ * Returns: (transfer none) (nullable): the SDF font, or %NULL when
+ *   SDF text is off or no font is installed
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPaintFont * lrg_theme_get_paint_font (LrgTheme *self);
+
+/**
+ * lrg_theme_set_paint_font:
+ * @self: an #LrgTheme
+ * @font: (nullable): the SDF font, or %NULL to build one from the
+ *   theme's settings again
+ *
+ * Replaces the theme's SDF font (and rebinds an already loaded UI font
+ * to it).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_theme_set_paint_font (LrgTheme     *self,
+                               LrgPaintFont *font);
+
+/**
+ * lrg_theme_get_font_family:
+ * @self: an #LrgTheme
+ *
+ * Returns: (nullable): the `font-family:` setting
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_theme_get_font_family (LrgTheme *self);
+
+/**
+ * lrg_theme_set_font_family:
+ * @self: an #LrgTheme
+ * @family: (nullable): a family name such as "Noto Sans", found with
+ *   lrg_paint_font_find_file(); %NULL for the system UI font
+ *
+ * Sets the family of the SDF UI font. A `font:` file, when set, wins.
+ * The fonts are reloaded on next use.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_theme_set_font_family (LrgTheme    *self,
+                                const gchar *family);
+
+/**
+ * lrg_theme_get_font_fallbacks:
+ * @self: an #LrgTheme
+ *
+ * Returns: (nullable) (array zero-terminated=1) (transfer none): the
+ *   `font-fallbacks:` setting
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * const * lrg_theme_get_font_fallbacks (LrgTheme *self);
+
+/**
+ * lrg_theme_set_font_fallbacks:
+ * @self: an #LrgTheme
+ * @fallbacks: (nullable) (array zero-terminated=1): family names or
+ *   font files (entries containing '/' or ending in .ttf/.otf/.ttc),
+ *   tried in order before the system fallbacks
+ *
+ * Sets the theme's fallback fonts. The fonts are reloaded on next use.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_theme_set_font_fallbacks (LrgTheme            *self,
+                                   const gchar * const *fallbacks);
+
+/**
+ * lrg_theme_get_sdf_text:
+ * @self: an #LrgTheme
+ *
+ * Returns: %TRUE (the default) when UI text uses SDF fonts
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_theme_get_sdf_text (LrgTheme *self);
+
+/**
+ * lrg_theme_set_sdf_text:
+ * @self: an #LrgTheme
+ * @enabled: %FALSE to draw UI text with the bitmap #GrlFont only
+ *
+ * Turns SDF text on or off (YAML `sdf-text:`).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_theme_set_sdf_text (LrgTheme *self,
+                             gboolean  enabled);
+
 /**
  * LRG_THEME_ERROR:
  *
@@ -948,5 +1052,121 @@ typedef enum
 
 LRG_AVAILABLE_IN_ALL
 GQuark lrg_theme_error_quark (void);
+
+/* ==========================================================================
+ * Palette generation and contrast
+ * ========================================================================== */
+
+/**
+ * lrg_color_contrast_ratio:
+ * @a: a colour
+ * @b: another colour
+ *
+ * WCAG 2.x contrast ratio between two colours, computed from their
+ * relative luminance: (L1 + 0.05) / (L2 + 0.05) with L1 the lighter.
+ * Alpha is ignored. Black on white gives 21, a colour on itself 1.
+ * Body text wants 4.5 or more (AA), 7 or more is AAA; large text and
+ * UI shapes want 3 or more.
+ *
+ * Returns: the contrast ratio, 1..21
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_color_contrast_ratio (const GrlColor *a,
+                                 const GrlColor *b);
+
+/**
+ * lrg_theme_generate_palette:
+ * @self: an #LrgTheme
+ * @accent: the brand colour every other colour is derived from
+ * @tint: 0..1, how much of the accent's hue bleeds into the neutral
+ *   surfaces, borders and text (0 gives pure greys)
+ * @depth: 0..1, how far the surfaces sit from the middle and how far
+ *   window, panel, surface and popup step apart (0 is a soft, flat
+ *   palette; 1 is deep, high-contrast layering)
+ * @dark: %TRUE for light text on dark surfaces
+ *
+ * Replaces every colour role with a palette generated from one accent.
+ * The neutrals (window, panel, surface, popup, control states, input,
+ * border, track, tooltip, text, muted text, disabled) take the
+ * accent's hue at a saturation set by @tint and lightness steps set
+ * by @depth; status colours, shadow and veil come from fixed dark or
+ * light tables; the accent family (hover, pressed, focus, selection,
+ * link, text on accent) is derived exactly as lrg_theme_set_accent()
+ * does, except that the link is shaded further if needed to reach 4.5:1
+ * on panels and surfaces. Text, muted text and links read at WCAG AA
+ * on every surface; text on the hover and pressed accent shades can
+ * fall to about 3:1 with mid-tone accents, which
+ * lrg_theme_fix_contrast() raises. Sets #LrgTheme:dark to @dark. Metrics, motion, name, fonts and
+ * style rules are left alone. The result depends only on the
+ * arguments, and #LrgTheme::changed is emitted once.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_theme_generate_palette (LrgTheme       *self,
+                                 const GrlColor *accent,
+                                 gfloat          tint,
+                                 gfloat          depth,
+                                 gboolean        dark);
+
+/**
+ * lrg_theme_get_n_contrast_pairs:
+ *
+ * The number of foreground/background role pairs that carry text in
+ * the built-in widgets, see lrg_theme_get_contrast_pair().
+ *
+ * Returns: the number of pairs
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_theme_get_n_contrast_pairs (void);
+
+/**
+ * lrg_theme_get_contrast_pair:
+ * @index: a pair index, below lrg_theme_get_n_contrast_pairs()
+ * @foreground: (out) (optional): the role drawn on top (text)
+ * @background: (out) (optional): the role drawn underneath
+ *
+ * One of the role pairs lrg_theme_fix_contrast() checks: text on
+ * window, panel, surface, control, input and popup; muted text on
+ * panel and surface; text on accent over the accent and its hover and
+ * pressed shades; link on panel.
+ *
+ * Returns: %TRUE if @index is valid
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_theme_get_contrast_pair (guint          index,
+                                      LrgThemeColor *foreground,
+                                      LrgThemeColor *background);
+
+/**
+ * lrg_theme_count_contrast_failures:
+ * @self: an #LrgTheme
+ * @min_ratio: the contrast ratio every pair must reach, e.g. 4.5
+ *
+ * Returns: how many of the pairs from lrg_theme_get_contrast_pair()
+ *   fall below @min_ratio
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_theme_count_contrast_failures (LrgTheme *self,
+                                         gfloat    min_ratio);
+
+/**
+ * lrg_theme_fix_contrast:
+ * @self: an #LrgTheme
+ * @min_ratio: the contrast ratio to reach, 1..21 (4.5 for WCAG AA
+ *   body text, 7 for AAA)
+ *
+ * Nudges colours until every pair from lrg_theme_get_contrast_pair()
+ * reaches @min_ratio, changing as little as possible: each foreground
+ * role moves towards white or black (whichever has the better worst
+ * case over all the backgrounds it sits on) by the smallest step that
+ * passes; only when the foreground is already at that extreme does
+ * the background move away from it. Pairs that share a role are
+ * rechecked until all pass.
+ * #LrgTheme::changed is emitted once if anything changed.
+ *
+ * Returns: the number of colour roles that were changed
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_theme_fix_contrast (LrgTheme *self,
+                              gfloat    min_ratio);
 
 G_END_DECLS

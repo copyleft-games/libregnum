@@ -23,6 +23,7 @@
 #include <yaml-glib.h>
 
 #include "lrg-theme.h"
+#include "../paint/lrg-paint-font.h"
 #include "../text/lrg-font-manager.h"
 #include "../lrg-log.h"
 
@@ -54,6 +55,13 @@ struct _LrgTheme
 	GrlFont   *ui_font;
 	gchar     *font_path;
 	gboolean   ui_font_attempted;
+
+	/* SDF text (LrgPaintFont) */
+	gchar        *font_family;
+	gchar       **font_fallbacks;
+	gboolean      sdf_text;
+	LrgPaintFont *paint_font;
+	gboolean      paint_font_attempted;
 
 	/* Style rules and the resolution cache */
 	GPtrArray  *rules;        /* LrgStyleRule */
@@ -116,6 +124,8 @@ static guint       signals[N_SIGNALS];
 
 static LrgTheme   *default_theme = NULL;
 static gboolean    font_init_attempted = FALSE;
+
+static void        reset_paint_font (LrgTheme *self);
 
 /* Legacy colour property -> role */
 static const LrgThemeColor legacy_roles[] = {
@@ -396,6 +406,9 @@ lrg_theme_finalize (GObject *object)
 	g_clear_object (&self->default_font);
 	g_clear_object (&self->ui_font);
 	g_clear_pointer (&self->font_path, g_free);
+	g_clear_pointer (&self->font_family, g_free);
+	g_clear_pointer (&self->font_fallbacks, g_strfreev);
+	g_clear_object (&self->paint_font);
 	g_clear_pointer (&self->name, g_free);
 	g_clear_pointer (&self->rules, g_ptr_array_unref);
 	g_clear_pointer (&self->look_cache, g_hash_table_unref);
@@ -722,6 +735,7 @@ lrg_theme_init (LrgTheme *self)
 	self->padding_small = 4.0f;
 	self->padding_normal = 8.0f;
 	self->padding_large = 16.0f;
+	self->sdf_text = TRUE;
 
 	apply_preset_values (self, find_preset (DEFAULT_PRESET));
 }
@@ -831,6 +845,12 @@ lrg_theme_copy (LrgTheme *self)
 	if (self->ui_font != NULL)
 		copy->ui_font = g_object_ref (self->ui_font);
 	copy->ui_font_attempted = self->ui_font_attempted;
+	copy->font_family = g_strdup (self->font_family);
+	copy->font_fallbacks = g_strdupv (self->font_fallbacks);
+	copy->sdf_text = self->sdf_text;
+	if (self->paint_font != NULL)
+		copy->paint_font = g_object_ref (self->paint_font);
+	copy->paint_font_attempted = self->paint_font_attempted;
 
 	for (i = 0; i < self->rules->len; i++)
 		g_ptr_array_add (copy->rules, lrg_style_rule_ref (g_ptr_array_index (self->rules, i)));
@@ -1260,7 +1280,15 @@ lrg_theme_get_ui_font (LrgTheme *self)
 			self->ui_font = load_font_file (ui_font_candidates[i]);
 
 		if (self->ui_font != NULL)
-			lrg_debug (LRG_LOG_DOMAIN_UI, "UI font loaded");
+		{
+			LrgPaintFont *sdf = lrg_theme_get_paint_font (self);
+
+			/* Widgets pass this GrlFont to the paint text calls; the
+			 * binding routes them to the SDF font */
+			if (sdf != NULL)
+				lrg_paint_font_bind (sdf, self->ui_font);
+			lrg_debug (LRG_LOG_DOMAIN_UI, "UI font loaded%s", sdf != NULL ? " (SDF)" : "");
+		}
 	}
 
 	return self->ui_font != NULL ? self->ui_font : lrg_theme_get_default_font (self);
@@ -1299,6 +1327,9 @@ lrg_theme_load_ui_font (LrgTheme     *self,
 
 	g_free (self->font_path);
 	self->font_path = g_strdup (path);
+	reset_paint_font (self);
+	if (lrg_theme_get_paint_font (self) != NULL)
+		lrg_paint_font_bind (self->paint_font, font);
 	lrg_theme_set_ui_font (self, font);
 	g_object_unref (font);
 	return TRUE;
@@ -1310,6 +1341,214 @@ lrg_theme_get_font_path (LrgTheme *self)
 	g_return_val_if_fail (LRG_IS_THEME (self), NULL);
 
 	return self->font_path;
+}
+
+/* ==========================================================================
+ * SDF text
+ * ========================================================================== */
+
+/* reset_paint_font: forget the SDF font so it is rebuilt from the
+ * current settings on next use */
+static void
+reset_paint_font (LrgTheme *self)
+{
+	g_clear_object (&self->paint_font);
+	self->paint_font_attempted = FALSE;
+}
+
+/* reset_fonts: settings changed; reload both UI fonts lazily */
+static void
+reset_fonts (LrgTheme *self)
+{
+	reset_paint_font (self);
+	g_clear_object (&self->ui_font);
+	self->ui_font_attempted = FALSE;
+}
+
+/* looks_like_path: fallback entries naming a file rather than a family */
+static gboolean
+looks_like_path (const gchar *entry)
+{
+	return strchr (entry, '/') != NULL ||
+	       g_str_has_suffix (entry, ".ttf") || g_str_has_suffix (entry, ".otf") ||
+	       g_str_has_suffix (entry, ".ttc") || g_str_has_suffix (entry, ".TTF") ||
+	       g_str_has_suffix (entry, ".OTF") || g_str_has_suffix (entry, ".TTC");
+}
+
+/*
+ * build_paint_font:
+ *
+ * The SDF font for the theme's settings: the font file, else the
+ * family, else the system UI face; then the theme's fallbacks in order
+ * and the system fallbacks. With no font settings at all, one shared
+ * font of the face the bitmap UI font uses (first of
+ * ui_font_candidates) is used, so every theme shares one set of glyphs.
+ */
+static LrgPaintFont *
+build_paint_font (LrgTheme *self)
+{
+	g_autoptr(GError) error = NULL;
+	LrgPaintFont     *font = NULL;
+	guint             i;
+
+	if (self->font_path == NULL && self->font_family == NULL &&
+	    (self->font_fallbacks == NULL || self->font_fallbacks[0] == NULL))
+	{
+		/* Same face the bitmap UI font picks (Adwaita Sans, Inter, ...),
+		 * built once and shared by every theme without font settings */
+		static gboolean      tried = FALSE;
+		static LrgPaintFont *shared = NULL;
+
+		if (!tried)
+		{
+			tried = TRUE;
+			for (i = 0; shared == NULL && ui_font_candidates[i] != NULL; i++)
+				if (g_file_test (ui_font_candidates[i], G_FILE_TEST_IS_REGULAR))
+					shared = lrg_paint_font_new_from_file (ui_font_candidates[i], NULL);
+			if (shared != NULL)
+				lrg_paint_font_add_system_fallbacks (shared);
+			else if (lrg_paint_font_get_system_default () != NULL)
+				shared = g_object_ref (lrg_paint_font_get_system_default ());
+		}
+		return shared != NULL ? g_object_ref (shared) : NULL;
+	}
+
+	if (self->font_path != NULL)
+	{
+		font = lrg_paint_font_new_from_file (self->font_path, &error);
+		if (font == NULL)
+		{
+			lrg_warning (LRG_LOG_DOMAIN_UI, "theme font: %s", error->message);
+			g_clear_error (&error);
+		}
+	}
+	if (font == NULL && self->font_family != NULL)
+	{
+		font = lrg_paint_font_new_for_family (self->font_family, &error);
+		if (font == NULL)
+		{
+			lrg_warning (LRG_LOG_DOMAIN_UI, "theme font-family: %s", error->message);
+			g_clear_error (&error);
+		}
+	}
+	if (font == NULL)
+		font = lrg_paint_font_new_for_family ("sans-serif", NULL);
+	if (font == NULL)
+		return NULL;
+
+	for (i = 0; self->font_fallbacks != NULL && self->font_fallbacks[i] != NULL; i++)
+	{
+		const gchar             *entry = self->font_fallbacks[i];
+		g_autoptr(LrgPaintFont)  fallback = NULL;
+
+		fallback = looks_like_path (entry)
+		           ? lrg_paint_font_new_from_file (entry, &error)
+		           : lrg_paint_font_new_for_family (entry, &error);
+		if (fallback == NULL)
+		{
+			lrg_debug (LRG_LOG_DOMAIN_UI, "theme font fallback skipped: %s", error->message);
+			g_clear_error (&error);
+			continue;
+		}
+		lrg_paint_font_add_fallback (font, fallback);
+	}
+	lrg_paint_font_add_system_fallbacks (font);
+	return font;
+}
+
+LrgPaintFont *
+lrg_theme_get_paint_font (LrgTheme *self)
+{
+	g_return_val_if_fail (LRG_IS_THEME (self), NULL);
+
+	if (!self->sdf_text)
+		return NULL;
+	if (self->paint_font == NULL && !self->paint_font_attempted)
+	{
+		self->paint_font_attempted = TRUE;
+		self->paint_font = build_paint_font (self);
+	}
+	return self->paint_font;
+}
+
+void
+lrg_theme_set_paint_font (LrgTheme     *self,
+                          LrgPaintFont *font)
+{
+	g_return_if_fail (LRG_IS_THEME (self));
+	g_return_if_fail (font == NULL || LRG_IS_PAINT_FONT (font));
+
+	g_set_object (&self->paint_font, font);
+	self->paint_font_attempted = font != NULL;
+	if (self->ui_font != NULL)
+		lrg_paint_font_bind (self->sdf_text ? lrg_theme_get_paint_font (self) : NULL,
+		                     self->ui_font);
+	notify_changed (self);
+}
+
+const gchar *
+lrg_theme_get_font_family (LrgTheme *self)
+{
+	g_return_val_if_fail (LRG_IS_THEME (self), NULL);
+
+	return self->font_family;
+}
+
+void
+lrg_theme_set_font_family (LrgTheme    *self,
+                           const gchar *family)
+{
+	g_return_if_fail (LRG_IS_THEME (self));
+
+	if (g_strcmp0 (self->font_family, family) == 0)
+		return;
+	g_free (self->font_family);
+	self->font_family = g_strdup (family);
+	reset_fonts (self);
+	notify_changed (self);
+}
+
+const gchar * const *
+lrg_theme_get_font_fallbacks (LrgTheme *self)
+{
+	g_return_val_if_fail (LRG_IS_THEME (self), NULL);
+
+	return (const gchar * const *) self->font_fallbacks;
+}
+
+void
+lrg_theme_set_font_fallbacks (LrgTheme           *self,
+                              const gchar * const *fallbacks)
+{
+	g_return_if_fail (LRG_IS_THEME (self));
+
+	g_strfreev (self->font_fallbacks);
+	self->font_fallbacks = (fallbacks != NULL && fallbacks[0] != NULL)
+	                       ? g_strdupv ((gchar **) fallbacks) : NULL;
+	reset_fonts (self);
+	notify_changed (self);
+}
+
+gboolean
+lrg_theme_get_sdf_text (LrgTheme *self)
+{
+	g_return_val_if_fail (LRG_IS_THEME (self), FALSE);
+
+	return self->sdf_text;
+}
+
+void
+lrg_theme_set_sdf_text (LrgTheme *self,
+                        gboolean  enabled)
+{
+	g_return_if_fail (LRG_IS_THEME (self));
+
+	enabled = !!enabled;
+	if (self->sdf_text == enabled)
+		return;
+	self->sdf_text = enabled;
+	reset_fonts (self);
+	notify_changed (self);
 }
 
 /* ==========================================================================
@@ -1437,7 +1676,8 @@ lrg_theme_resolve_look (LrgTheme       *self,
  * ========================================================================== */
 
 static const gchar * const top_level_keys[] = {
-	"name", "dark", "motion", "preset", "accent", "font", "colors", "metrics", "styles", NULL
+	"name", "dark", "motion", "preset", "accent", "font", "font-family", "font-fallbacks",
+	"font-size", "sdf-text", "colors", "metrics", "styles", NULL
 };
 
 static const gchar * const style_keys[] = {
@@ -1921,6 +2161,10 @@ typedef struct
 	gboolean      has_accent;
 	GrlColor      accent;
 	gchar        *font;
+	gchar        *font_family;
+	gchar       **font_fallbacks;
+	gboolean      has_fallbacks;
+	gint          sdf_text;      /* -1 unset */
 	gboolean      color_set[LRG_THEME_COLOR_COUNT];
 	GrlColor      colors[LRG_THEME_COLOR_COUNT];
 	gboolean      metric_set[LRG_THEME_METRIC_COUNT];
@@ -1933,6 +2177,8 @@ staged_clear (Staged *s)
 {
 	g_clear_pointer (&s->name, g_free);
 	g_clear_pointer (&s->font, g_free);
+	g_clear_pointer (&s->font_family, g_free);
+	g_clear_pointer (&s->font_fallbacks, g_strfreev);
 	g_clear_pointer (&s->rules, g_ptr_array_unref);
 }
 
@@ -1952,6 +2198,7 @@ parse_document (const gchar  *data,
 	memset (s, 0, sizeof (Staged));
 	s->dark = -1;
 	s->motion = -1;
+	s->sdf_text = -1;
 	s->rules = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_style_rule_unref);
 
 	if (!yaml_parser_load_from_data (parser, data, length, &local))
@@ -2030,6 +2277,82 @@ parse_document (const gchar  *data,
 		s->font = (base_dir != NULL && !g_path_is_absolute (t))
 		          ? g_build_filename (base_dir, t, NULL)
 		          : g_strdup (t);
+	}
+
+	/* font-family: a family name for SDF text */
+	if ((node = yaml_mapping_get_member (root, "font-family")) != NULL)
+	{
+		const gchar *t = scalar_of (node);
+
+		if (t == NULL)
+		{
+			g_set_error_literal (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+			                     "font-family: expected a family name");
+			return FALSE;
+		}
+		s->font_family = g_strdup (t);
+	}
+
+	/* font-fallbacks: family names or font files, tried in order */
+	if ((node = yaml_mapping_get_member (root, "font-fallbacks")) != NULL)
+	{
+		YamlSequence *seq;
+		GPtrArray    *list;
+		guint         n;
+		guint         i;
+
+		if (yaml_node_get_node_type (node) != YAML_NODE_SEQUENCE)
+		{
+			g_set_error_literal (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+			                     "font-fallbacks: expected a list of family names or files");
+			return FALSE;
+		}
+		seq = yaml_node_get_sequence (node);
+		n = yaml_sequence_get_length (seq);
+		list = g_ptr_array_new ();
+		for (i = 0; i < n; i++)
+		{
+			const gchar *t = scalar_of (yaml_sequence_get_element (seq, i));
+
+			if (t == NULL || *t == '\0')
+			{
+				g_ptr_array_free (list, TRUE);
+				g_set_error (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+				             "font-fallbacks[%u]: expected a family name or file", i);
+				return FALSE;
+			}
+			/* files resolve against the theme file's directory */
+			g_ptr_array_add (list, (base_dir != NULL && looks_like_path (t) && !g_path_is_absolute (t))
+			                       ? g_build_filename (base_dir, t, NULL) : g_strdup (t));
+		}
+		g_ptr_array_add (list, NULL);
+		s->font_fallbacks = (gchar **) g_ptr_array_free (list, FALSE);
+		s->has_fallbacks = TRUE;
+	}
+
+	/* sdf-text: draw UI text from distance-field atlases */
+	if ((node = yaml_mapping_get_member (root, "sdf-text")) != NULL)
+	{
+		const gchar *t = scalar_of (node);
+
+		if (g_strcmp0 (t, "true") == 0 || g_strcmp0 (t, "yes") == 0)
+			s->sdf_text = 1;
+		else if (g_strcmp0 (t, "false") == 0 || g_strcmp0 (t, "no") == 0)
+			s->sdf_text = 0;
+		else
+		{
+			g_set_error_literal (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+			                     "sdf-text: expected true or false");
+			return FALSE;
+		}
+	}
+
+	/* font-size: shorthand for metrics.font-size (metrics win) */
+	if ((node = yaml_mapping_get_member (root, "font-size")) != NULL)
+	{
+		if (!parse_number_node (node, &s->metrics[LRG_THEME_METRIC_FONT_SIZE], "font-size", error))
+			return FALSE;
+		s->metric_set[LRG_THEME_METRIC_FONT_SIZE] = TRUE;
 	}
 
 	/* colors: role nick -> hex */
@@ -2169,8 +2492,24 @@ apply_staged (LrgTheme *self,
 	{
 		g_free (self->font_path);
 		self->font_path = g_steal_pointer (&s->font);
-		g_clear_object (&self->ui_font);
-		self->ui_font_attempted = FALSE;
+		reset_fonts (self);
+	}
+	if (s->font_family != NULL)
+	{
+		g_free (self->font_family);
+		self->font_family = g_steal_pointer (&s->font_family);
+		reset_fonts (self);
+	}
+	if (s->has_fallbacks)
+	{
+		g_strfreev (self->font_fallbacks);
+		self->font_fallbacks = g_steal_pointer (&s->font_fallbacks);
+		reset_fonts (self);
+	}
+	if (s->sdf_text >= 0 && self->sdf_text != (s->sdf_text != 0))
+	{
+		self->sdf_text = s->sdf_text != 0;
+		reset_fonts (self);
 	}
 }
 
@@ -2418,6 +2757,18 @@ lrg_theme_to_data (LrgTheme  *self,
 	yaml_mapping_set_string_member (root, "motion", enum_nick (LRG_TYPE_MOTION, self->motion));
 	if (self->font_path != NULL)
 		yaml_mapping_set_string_member (root, "font", self->font_path);
+	if (self->font_family != NULL)
+		yaml_mapping_set_string_member (root, "font-family", self->font_family);
+	if (self->font_fallbacks != NULL)
+	{
+		g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+
+		for (i = 0; self->font_fallbacks[i] != NULL; i++)
+			yaml_sequence_add_string_element (seq, self->font_fallbacks[i]);
+		yaml_mapping_set_sequence_member (root, "font-fallbacks", seq);
+	}
+	if (!self->sdf_text)
+		yaml_mapping_set_boolean_member (root, "sdf-text", FALSE);
 
 	for (i = 0; i < LRG_THEME_COLOR_COUNT; i++)
 		set_color_member (colors, enum_nick (LRG_TYPE_THEME_COLOR, (gint) i), &self->colors[i]);
@@ -2460,4 +2811,425 @@ lrg_theme_save_to_file (LrgTheme     *self,
 	if (data == NULL)
 		return FALSE;
 	return g_file_set_contents (path, data, (gssize) len, error);
+}
+
+/* ==========================================================================
+ * Palette generation and contrast
+ * ========================================================================== */
+
+gfloat
+lrg_color_contrast_ratio (const GrlColor *a,
+                          const GrlColor *b)
+{
+	g_return_val_if_fail (a != NULL, 1.0f);
+	g_return_val_if_fail (b != NULL, 1.0f);
+
+	/* WCAG relative luminance lives with the other colour maths in the
+	 * paint module; this is the theme-level name for it */
+	return lrg_paint_color_contrast (a, b);
+}
+
+/*
+ * color_to_hsl:
+ *
+ * sRGB 8-bit colour to hue (0..1), saturation and lightness (0..1).
+ * Grey colours report hue 0.
+ */
+static void
+color_to_hsl (const GrlColor *c,
+              gdouble        *h,
+              gdouble        *s,
+              gdouble        *l)
+{
+	gdouble r = (gdouble) c->r / 255.0;
+	gdouble g = (gdouble) c->g / 255.0;
+	gdouble b = (gdouble) c->b / 255.0;
+	gdouble max = MAX (r, MAX (g, b));
+	gdouble min = MIN (r, MIN (g, b));
+	gdouble d = max - min;
+
+	*l = (max + min) / 2.0;
+	if (d <= 0.0)
+	{
+		*h = 0.0;
+		*s = 0.0;
+		return;
+	}
+
+	*s = *l > 0.5 ? d / (2.0 - max - min) : d / (max + min);
+	if (max == r)
+		*h = (g - b) / d + (g < b ? 6.0 : 0.0);
+	else if (max == g)
+		*h = (b - r) / d + 2.0;
+	else
+		*h = (r - g) / d + 4.0;
+	*h /= 6.0;
+}
+
+/* hue_channel: one channel of the standard HSL -> RGB conversion */
+static gdouble
+hue_channel (gdouble p,
+             gdouble q,
+             gdouble t)
+{
+	if (t < 0.0)
+		t += 1.0;
+	if (t > 1.0)
+		t -= 1.0;
+	if (t < 1.0 / 6.0)
+		return p + (q - p) * 6.0 * t;
+	if (t < 0.5)
+		return q;
+	if (t < 2.0 / 3.0)
+		return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+	return p;
+}
+
+/*
+ * hsl_color:
+ *
+ * Hue/saturation/lightness (0..1, clamped) plus an 8-bit alpha to an
+ * sRGB colour, rounded to the nearest channel value.
+ */
+static GrlColor
+hsl_color (gdouble h,
+           gdouble s,
+           gdouble l,
+           guint8  alpha)
+{
+	GrlColor out;
+	gdouble  r;
+	gdouble  g;
+	gdouble  b;
+
+	s = CLAMP (s, 0.0, 1.0);
+	l = CLAMP (l, 0.0, 1.0);
+
+	if (s <= 0.0)
+	{
+		r = g = b = l;
+	}
+	else
+	{
+		gdouble q = l < 0.5 ? l * (1.0 + s) : l + s - l * s;
+		gdouble p = 2.0 * l - q;
+
+		r = hue_channel (p, q, h + 1.0 / 3.0);
+		g = hue_channel (p, q, h);
+		b = hue_channel (p, q, h - 1.0 / 3.0);
+	}
+
+	out.r = (guint8) CLAMP ((gint) (r * 255.0 + 0.5), 0, 255);
+	out.g = (guint8) CLAMP ((gint) (g * 255.0 + 0.5), 0, 255);
+	out.b = (guint8) CLAMP ((gint) (b * 255.0 + 0.5), 0, 255);
+	out.a = alpha;
+	return out;
+}
+
+void
+lrg_theme_generate_palette (LrgTheme       *self,
+                            const GrlColor *accent,
+                            gfloat          tint,
+                            gfloat          depth,
+                            gboolean        dark)
+{
+	GrlColor *c;
+	GrlColor  status;
+	gdouble   hue;
+	gdouble   accent_s;
+	gdouble   accent_l;
+	gdouble   ns;       /* saturation of the surfaces */
+	gdouble   ts;       /* saturation of text */
+	gdouble   base;
+	gdouble   step;
+	guint     i;
+
+	g_return_if_fail (LRG_IS_THEME (self));
+	g_return_if_fail (accent != NULL);
+
+	c = self->colors;
+	tint = CLAMP (tint, 0.0f, 1.0f);
+	depth = CLAMP (depth, 0.0f, 1.0f);
+	dark = !!dark;
+
+	/* The neutrals share the accent's hue; tint decides how strongly
+	 * (a fully tinted dark theme reads as "navy", not "blue") */
+	color_to_hsl (accent, &hue, &accent_s, &accent_l);
+	ns = (gdouble) tint * (dark ? 0.32 : 0.36);
+	ts = (gdouble) tint * 0.22;
+
+	if (dark)
+	{
+		/* Depth pushes the window towards black and spreads the layers
+		 * further apart, so cards lift off the window more */
+		base = 0.115 - 0.075 * (gdouble) depth;
+		step = 0.022 + 0.038 * (gdouble) depth;
+
+		c[LRG_THEME_COLOR_WINDOW] = hsl_color (hue, ns, base, 255);
+		c[LRG_THEME_COLOR_PANEL] = hsl_color (hue, ns, base + step, 255);
+		c[LRG_THEME_COLOR_SURFACE] = hsl_color (hue, ns, base + 2.0 * step, 255);
+		c[LRG_THEME_COLOR_POPUP] = hsl_color (hue, ns, base + 1.5 * step, 255);
+		c[LRG_THEME_COLOR_CONTROL] = hsl_color (hue, ns, base + 2.0 * step + 0.015, 255);
+		c[LRG_THEME_COLOR_CONTROL_HOVER] = hsl_color (hue, ns, base + 2.0 * step + 0.060, 255);
+		c[LRG_THEME_COLOR_CONTROL_PRESSED] = hsl_color (hue, ns, base + 2.0 * step + 0.105, 255);
+		c[LRG_THEME_COLOR_INPUT] = hsl_color (hue, ns, base - 0.35 * step, 255);
+		c[LRG_THEME_COLOR_BORDER] = hsl_color (hue, ns, base + 2.0 * step + 0.075, 255);
+		c[LRG_THEME_COLOR_TRACK] = hsl_color (hue, ns, base + 2.0 * step + 0.090, 255);
+		c[LRG_THEME_COLOR_TOOLTIP] = hsl_color (hue, ns, base - 0.5 * step, 255);
+		c[LRG_THEME_COLOR_TEXT] = hsl_color (hue, ts, 0.93, 255);
+		c[LRG_THEME_COLOR_TEXT_MUTED] = hsl_color (hue, ts, 0.66, 255);
+		c[LRG_THEME_COLOR_HANDLE] = hsl_color (hue, ts * 0.5, 0.96, 255);
+		c[LRG_THEME_COLOR_DISABLED] = hsl_color (hue, ts, 0.42, 255);
+		c[LRG_THEME_COLOR_SHADOW] = hsl_color (hue, 0.0, 0.0, 0xa8);
+		c[LRG_THEME_COLOR_VEIL] = hsl_color (hue, ns, 0.02, 0x99);
+	}
+	else
+	{
+		/* Light: the panel is (nearly) white and everything else steps
+		 * down from it; depth darkens the window and the controls */
+		step = 0.018 + 0.030 * (gdouble) depth;
+		base = 1.0 - 0.02 * (gdouble) depth;
+
+		c[LRG_THEME_COLOR_PANEL] = hsl_color (hue, ns, base, 255);
+		c[LRG_THEME_COLOR_WINDOW] = hsl_color (hue, ns, base - 2.2 * step - 0.01, 255);
+		c[LRG_THEME_COLOR_SURFACE] = hsl_color (hue, ns, base - 0.9 * step, 255);
+		c[LRG_THEME_COLOR_POPUP] = hsl_color (hue, ns, base, 255);
+		c[LRG_THEME_COLOR_CONTROL] = hsl_color (hue, ns, base - 2.5 * step - 0.02, 255);
+		c[LRG_THEME_COLOR_CONTROL_HOVER] = hsl_color (hue, ns, base - 2.5 * step - 0.055, 255);
+		c[LRG_THEME_COLOR_CONTROL_PRESSED] = hsl_color (hue, ns, base - 2.5 * step - 0.09, 255);
+		c[LRG_THEME_COLOR_INPUT] = hsl_color (hue, ns, base, 255);
+		c[LRG_THEME_COLOR_BORDER] = hsl_color (hue, ns, base - 4.5 * step - 0.06, 255);
+		c[LRG_THEME_COLOR_TRACK] = hsl_color (hue, ns, base - 4.5 * step - 0.07, 255);
+		c[LRG_THEME_COLOR_TOOLTIP] = hsl_color (hue, ts, 0.16, 255);
+		c[LRG_THEME_COLOR_TEXT] = hsl_color (hue, ts, 0.12, 255);
+		c[LRG_THEME_COLOR_TEXT_MUTED] = hsl_color (hue, ts, 0.40, 255);
+		c[LRG_THEME_COLOR_HANDLE] = hsl_color (hue, 0.0, 1.0, 255);
+		c[LRG_THEME_COLOR_DISABLED] = hsl_color (hue, ts, 0.66, 255);
+		c[LRG_THEME_COLOR_SHADOW] = hsl_color (hue, ns, 0.12, 0x38);
+		c[LRG_THEME_COLOR_VEIL] = hsl_color (hue, ns, 0.08, 0x55);
+	}
+
+	/* Status colours: bright on dark, deeper on light, so both read */
+	lrg_color_parse (dark ? "#34d399" : "#16a34a", &status);
+	c[LRG_THEME_COLOR_SUCCESS] = status;
+	lrg_color_parse (dark ? "#fbbf24" : "#d97706", &status);
+	c[LRG_THEME_COLOR_WARNING] = status;
+	lrg_color_parse (dark ? "#f87171" : "#dc2626", &status);
+	c[LRG_THEME_COLOR_DANGER] = status;
+
+	/* The accent family last: hover/pressed/link shades depend on the
+	 * dark flag, exactly as lrg_theme_set_accent() derives them */
+	self->dark = dark;
+	derive_accent (self, accent);
+
+	/* Links are body text: a bright accent (cyan, yellow) shaded for a
+	 * light theme still washes out on white, so keep shading it
+	 * towards the text side until it reads on panels and surfaces */
+	for (i = 0; i < 25; i++)
+	{
+		GrlColor *link = &c[LRG_THEME_COLOR_LINK];
+
+		if (lrg_paint_color_contrast (link, &c[LRG_THEME_COLOR_PANEL]) >= 4.5f &&
+		    lrg_paint_color_contrast (link, &c[LRG_THEME_COLOR_SURFACE]) >= 4.5f)
+			break;
+		lrg_paint_color_shade (link, dark ? 0.06f : -0.06f, link);
+	}
+
+	/* Every legacy colour property changed; tell listeners once each */
+	g_object_freeze_notify (G_OBJECT (self));
+	for (i = 0; i < G_N_ELEMENTS (legacy_roles); i++)
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PRIMARY_COLOR + i]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DARK]);
+	g_object_thaw_notify (G_OBJECT (self));
+
+	notify_changed (self);
+}
+
+/* Role pairs that carry text in the built-in widgets */
+static const struct { LrgThemeColor fg; LrgThemeColor bg; } contrast_pairs[] = {
+	{ LRG_THEME_COLOR_TEXT,           LRG_THEME_COLOR_WINDOW },
+	{ LRG_THEME_COLOR_TEXT,           LRG_THEME_COLOR_PANEL },
+	{ LRG_THEME_COLOR_TEXT,           LRG_THEME_COLOR_SURFACE },
+	{ LRG_THEME_COLOR_TEXT,           LRG_THEME_COLOR_CONTROL },
+	{ LRG_THEME_COLOR_TEXT,           LRG_THEME_COLOR_INPUT },
+	{ LRG_THEME_COLOR_TEXT,           LRG_THEME_COLOR_POPUP },
+	{ LRG_THEME_COLOR_TEXT_MUTED,     LRG_THEME_COLOR_PANEL },
+	{ LRG_THEME_COLOR_TEXT_MUTED,     LRG_THEME_COLOR_SURFACE },
+	{ LRG_THEME_COLOR_TEXT_ON_ACCENT, LRG_THEME_COLOR_ACCENT },
+	{ LRG_THEME_COLOR_TEXT_ON_ACCENT, LRG_THEME_COLOR_ACCENT_HOVER },
+	{ LRG_THEME_COLOR_TEXT_ON_ACCENT, LRG_THEME_COLOR_ACCENT_PRESSED },
+	{ LRG_THEME_COLOR_LINK,           LRG_THEME_COLOR_PANEL }
+};
+
+guint
+lrg_theme_get_n_contrast_pairs (void)
+{
+	return G_N_ELEMENTS (contrast_pairs);
+}
+
+gboolean
+lrg_theme_get_contrast_pair (guint          index,
+                             LrgThemeColor *foreground,
+                             LrgThemeColor *background)
+{
+	if (index >= G_N_ELEMENTS (contrast_pairs))
+		return FALSE;
+
+	if (foreground != NULL)
+		*foreground = contrast_pairs[index].fg;
+	if (background != NULL)
+		*background = contrast_pairs[index].bg;
+	return TRUE;
+}
+
+guint
+lrg_theme_count_contrast_failures (LrgTheme *self,
+                                   gfloat    min_ratio)
+{
+	guint failures = 0;
+	guint i;
+
+	g_return_val_if_fail (LRG_IS_THEME (self), 0);
+
+	for (i = 0; i < G_N_ELEMENTS (contrast_pairs); i++)
+		if (lrg_paint_color_contrast (&self->colors[contrast_pairs[i].fg],
+		                              &self->colors[contrast_pairs[i].bg]) < min_ratio)
+			failures++;
+	return failures;
+}
+
+/* Fraction steps tried when nudging a colour; the first that passes wins */
+#define FIX_STEPS (64)
+
+/*
+ * nudge_towards:
+ * @color: (inout): the colour to move
+ * @other: the colour it must contrast with
+ * @to_white: move towards white (%TRUE) or black
+ * @min_ratio: the ratio to reach
+ *
+ * Mixes @color towards white or black by the smallest fraction (in
+ * 1/FIX_STEPS steps) that reaches @min_ratio against @other, keeping
+ * its alpha. Linear scan rather than bisection: contrast is not
+ * monotonic in the mix when @color starts on the far side of @other.
+ *
+ * Returns: %TRUE if @min_ratio was reached; otherwise @color ends at
+ *   the extreme
+ */
+static gboolean
+nudge_towards (GrlColor       *color,
+               const GrlColor *other,
+               gboolean        to_white,
+               gfloat          min_ratio)
+{
+	GrlColor goal;
+	GrlColor mixed;
+	guint    i;
+
+	goal.r = goal.g = goal.b = to_white ? 255 : 0;
+	goal.a = color->a;
+
+	for (i = 1; i <= FIX_STEPS; i++)
+	{
+		lrg_paint_color_mix (color, &goal, (gfloat) i / (gfloat) FIX_STEPS, &mixed);
+		if (lrg_paint_color_contrast (&mixed, other) >= min_ratio)
+		{
+			*color = mixed;
+			return TRUE;
+		}
+	}
+
+	*color = goal;
+	return FALSE;
+}
+
+/* Upper bound on passes over the pair list; pairs sharing a role may
+ * need a recheck after another pair moved it */
+#define FIX_MAX_PASSES (8)
+
+guint
+lrg_theme_fix_contrast (LrgTheme *self,
+                        gfloat    min_ratio)
+{
+	static const GrlColor white = { 255, 255, 255, 255 };
+	static const GrlColor black = { 0, 0, 0, 255 };
+	GrlColor              original[LRG_THEME_COLOR_COUNT];
+	gboolean              to_white[LRG_THEME_COLOR_COUNT] = { FALSE };
+	guint                 changed = 0;
+	guint                 pass;
+	guint                 i;
+
+	g_return_val_if_fail (LRG_IS_THEME (self), 0);
+
+	min_ratio = CLAMP (min_ratio, 1.0f, 21.0f);
+	memcpy (original, self->colors, sizeof (original));
+
+	/* Pick one direction per foreground role up front, from all the
+	 * backgrounds it sits on: towards white if white's worst contrast
+	 * beats black's. A fixed direction means foregrounds only ever
+	 * move towards an extreme and backgrounds only away from it, so
+	 * pairs sharing a role cannot undo each other */
+	for (i = 0; i < G_N_ELEMENTS (contrast_pairs); i++)
+	{
+		LrgThemeColor fg = contrast_pairs[i].fg;
+		gfloat        worst_white = 21.0f;
+		gfloat        worst_black = 21.0f;
+		guint         j;
+
+		for (j = 0; j < G_N_ELEMENTS (contrast_pairs); j++)
+		{
+			if (contrast_pairs[j].fg != fg)
+				continue;
+			worst_white = MIN (worst_white, lrg_paint_color_contrast (&white, &self->colors[contrast_pairs[j].bg]));
+			worst_black = MIN (worst_black, lrg_paint_color_contrast (&black, &self->colors[contrast_pairs[j].bg]));
+		}
+		to_white[fg] = worst_white >= worst_black;
+	}
+
+	for (pass = 0; pass < FIX_MAX_PASSES; pass++)
+	{
+		gboolean all_pass = TRUE;
+
+		for (i = 0; i < G_N_ELEMENTS (contrast_pairs); i++)
+		{
+			GrlColor *fg = &self->colors[contrast_pairs[i].fg];
+			GrlColor *bg = &self->colors[contrast_pairs[i].bg];
+			gboolean  up = to_white[contrast_pairs[i].fg];
+
+			if (lrg_paint_color_contrast (fg, bg) >= min_ratio)
+				continue;
+			all_pass = FALSE;
+
+			/* 1. Move the text towards its extreme by the smallest
+			 *    step that reads */
+			if (nudge_towards (fg, bg, up, min_ratio))
+				continue;
+
+			/* 2. The text is pure white/black and still fails (a
+			 *    mid-tone background): push the background away */
+			nudge_towards (bg, fg, !up, min_ratio);
+		}
+
+		if (all_pass)
+			break;
+	}
+
+	/* Count what moved and keep legacy property listeners informed */
+	g_object_freeze_notify (G_OBJECT (self));
+	for (i = 0; i < LRG_THEME_COLOR_COUNT; i++)
+	{
+		guint l;
+
+		if (memcmp (&original[i], &self->colors[i], sizeof (GrlColor)) == 0)
+			continue;
+		changed++;
+		for (l = 0; l < G_N_ELEMENTS (legacy_roles); l++)
+			if (legacy_roles[l] == (LrgThemeColor) i)
+				g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PRIMARY_COLOR + l]);
+	}
+	g_object_thaw_notify (G_OBJECT (self));
+
+	if (changed > 0)
+		notify_changed (self);
+	return changed;
 }

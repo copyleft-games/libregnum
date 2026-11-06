@@ -40,6 +40,46 @@ void _lrg_paint_list_text_font (LrgPaintList   *self,
                                 const GrlColor *color);
 
 /*
+ * _lrg_paint_list_glyph:
+ * @self: an #LrgPaintList
+ * @rect: x0, y0, x1, y1 of the glyph quad (distance field padding included)
+ * @atlas: x0, y0, x1, y1 of the glyph's field in the atlas, in pixels
+ * @texture: GL texture of the atlas page (0 headless)
+ * @dist_scale: canvas units spanned by the field's half range (spread)
+ * @softness: extra edge blur in canvas units (shadows), 0 for crisp
+ * @dilate: grows the glyph by this many canvas units (shadow of an
+ *   outlined glyph)
+ * @outline: outline width in canvas units
+ * @glow: glow radius in canvas units
+ * @color: fill colour
+ * @outline_color: (nullable): outline colour
+ * @glow_color: (nullable): glow colour
+ *
+ * Records one %LRG_PAINT_PRIM_GLYPH instance with the current clip and
+ * opacity. Used by #LrgPaintFont.
+ */
+void _lrg_paint_list_glyph (LrgPaintList   *self,
+                            const gfloat   *rect,
+                            const gfloat   *atlas,
+                            guint           texture,
+                            gfloat          dist_scale,
+                            gfloat          softness,
+                            gfloat          dilate,
+                            gfloat          outline,
+                            gfloat          glow,
+                            const GrlColor *color,
+                            const GrlColor *outline_color,
+                            const GrlColor *glow_color);
+
+/*
+ * _lrg_paint_list_keep:
+ * @self: an #LrgPaintList
+ * @object: a #GObject to keep alive until the list is cleared
+ */
+void _lrg_paint_list_keep (LrgPaintList *self,
+                           gpointer      object);
+
+/*
  * _lrg_paint_instance_get_bounds:
  * @inst: an instance
  * @x0: (out): left

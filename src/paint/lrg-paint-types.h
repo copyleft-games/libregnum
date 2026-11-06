@@ -193,6 +193,85 @@ void lrg_paint_gradient_init_radial (LrgPaintGradient *self,
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgPaintGradient, lrg_paint_gradient_free)
 
 /* ==========================================================================
+ * LrgPaintTextStyle
+ * ========================================================================== */
+
+#define LRG_TYPE_PAINT_TEXT_STYLE (lrg_paint_text_style_get_type ())
+
+/**
+ * LrgPaintTextStyle:
+ * @color: fill colour of the glyphs
+ * @spacing: extra space added after every glyph, in canvas units
+ * @outline_width: outline thickness around each glyph in canvas
+ *   units, 0 for none
+ * @outline_color: outline colour
+ * @glow_radius: width of a soft halo outside the glyph (and its
+ *   outline) in canvas units, 0 for none
+ * @glow_color: halo colour
+ * @shadow_offset_x: horizontal offset of the drop shadow
+ * @shadow_offset_y: vertical offset of the drop shadow
+ * @shadow_softness: blur of the drop shadow edge in canvas units
+ * @shadow_color: drop shadow colour; alpha 0 disables the shadow
+ * @direction: base direction of each line: %LRG_TEXT_DIRECTION_AUTO
+ *   takes it from the first strong character
+ *
+ * How a run of SDF text is drawn by lrg_paint_font_draw_text() and
+ * lrg_paint_list_text_styled(). Outline, glow and shadow are evaluated
+ * from the glyph's distance field in the same instance batch as the
+ * glyph, so they are cheap; their reach is limited by the font's SDF
+ * spread (see lrg_paint_font_get_max_effect()).
+ *
+ * Bitmap fonts (no #LrgPaintFont) only honour @color and @spacing.
+ */
+typedef struct
+{
+	GrlColor         color;
+	gfloat           spacing;
+	gfloat           outline_width;
+	GrlColor         outline_color;
+	gfloat           glow_radius;
+	GrlColor         glow_color;
+	gfloat           shadow_offset_x;
+	gfloat           shadow_offset_y;
+	gfloat           shadow_softness;
+	GrlColor         shadow_color;
+	LrgTextDirection direction;
+} LrgPaintTextStyle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_paint_text_style_get_type (void) G_GNUC_CONST;
+
+/**
+ * lrg_paint_text_style_init:
+ * @self: (out caller-allocates): style to set
+ * @color: (nullable): fill colour, %NULL for opaque white
+ *
+ * Plain text in @color: no spacing, outline, glow or shadow, automatic
+ * direction.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_text_style_init (LrgPaintTextStyle *self,
+                                const GrlColor    *color);
+
+/**
+ * lrg_paint_text_style_copy:
+ * @self: an #LrgPaintTextStyle
+ *
+ * Returns: (transfer full): a copy of @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPaintTextStyle * lrg_paint_text_style_copy (const LrgPaintTextStyle *self);
+
+/**
+ * lrg_paint_text_style_free:
+ * @self: (nullable): an #LrgPaintTextStyle
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_text_style_free (LrgPaintTextStyle *self);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgPaintTextStyle, lrg_paint_text_style_free)
+
+/* ==========================================================================
  * LrgPaintInstance
  * ========================================================================== */
 

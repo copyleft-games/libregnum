@@ -17,6 +17,7 @@
 #include <raylib.h>
 
 #include "lrg-paint-list.h"
+#include "lrg-paint-font.h"
 #include "lrg-paint-private.h"
 #include "../lrg-log.h"
 
@@ -336,6 +337,16 @@ keep_ref (LrgPaintList *self,
 		return;
 
 	g_ptr_array_add (self->refs, g_object_ref (object));
+}
+
+void
+_lrg_paint_list_keep (LrgPaintList *self,
+                      gpointer      object)
+{
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+	g_return_if_fail (G_IS_OBJECT (object));
+
+	keep_ref (self, object);
 }
 
 /* resolve_font: the raylib font behind @font, or raylib's default */
@@ -936,6 +947,54 @@ _lrg_paint_list_text_font (LrgPaintList   *self,
 }
 
 void
+_lrg_paint_list_glyph (LrgPaintList   *self,
+                       const gfloat   *rect,
+                       const gfloat   *atlas,
+                       guint           texture,
+                       gfloat          dist_scale,
+                       gfloat          softness,
+                       gfloat          dilate,
+                       gfloat          outline,
+                       gfloat          glow,
+                       const GrlColor *color,
+                       const GrlColor *outline_color,
+                       const GrlColor *glow_color)
+{
+	LrgPaintInstance inst;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	if (bounds_outside_clip (self, rect[0], rect[1], rect[2], rect[3]))
+		return;
+
+	/*
+	 * Layout of a glyph instance:
+	 *   rect   quad in canvas units (the field's padding included)
+	 *   extra  the field's rectangle in atlas pixels; the shader divides
+	 *          by the bound texture's size, so a page can grow without
+	 *          invalidating instances already recorded
+	 *   params outline width, glow radius
+	 *   data   distance scale (canvas units at the field's full range),
+	 *          softness, dilation
+	 *   color / border / color2   fill / outline / glow colours
+	 */
+	init_instance (self, &inst, LRG_PAINT_PRIM_GLYPH);
+	memcpy (inst.rect, rect, sizeof (inst.rect));
+	memcpy (inst.extra, atlas, sizeof (inst.extra));
+	inst.params[0] = outline;
+	inst.params[1] = glow;
+	inst.data[0] = dist_scale;
+	inst.data[1] = softness;
+	inst.data[2] = dilate;
+	color_to_bytes (self, color, inst.color);
+	color_to_bytes (self, outline > 0.0f ? outline_color : NULL, inst.border);
+	color_to_bytes (self, glow > 0.0f ? glow_color : NULL, inst.color2);
+	inst.texture = texture;
+
+	append_instance (self, &inst);
+}
+
+void
 lrg_paint_list_text (LrgPaintList   *self,
                      GrlFont        *font,
                      const gchar    *text,
@@ -945,12 +1004,27 @@ lrg_paint_list_text (LrgPaintList   *self,
                      gfloat          spacing,
                      const GrlColor *color)
 {
-	Font        storage;
-	const Font *rl;
+	Font          storage;
+	const Font   *rl;
+	LrgPaintFont *sdf;
 
 	g_return_if_fail (LRG_IS_PAINT_LIST (self));
 	g_return_if_fail (text != NULL);
 	g_return_if_fail (color != NULL);
+
+	/* An SDF font bound to @font (or the default for NULL) wins */
+	sdf = lrg_paint_font_lookup (font);
+	if (sdf != NULL)
+	{
+		LrgPaintTextStyle style;
+
+		lrg_paint_text_style_init (&style, color);
+		style.spacing = spacing;
+		if (font != NULL)
+			keep_ref (self, font);
+		lrg_paint_font_draw_text (sdf, self, text, -1, x, y, size, &style);
+		return;
+	}
 
 	rl = resolve_font (font, &storage);
 	if (rl->glyphCount == 0 || rl->texture.id == 0)
@@ -963,6 +1037,33 @@ lrg_paint_list_text (LrgPaintList   *self,
 }
 
 void
+lrg_paint_list_text_styled (LrgPaintList            *self,
+                            GrlFont                 *font,
+                            const gchar             *text,
+                            gfloat                   x,
+                            gfloat                   y,
+                            gfloat                   size,
+                            const LrgPaintTextStyle *style)
+{
+	LrgPaintFont *sdf;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+	g_return_if_fail (text != NULL);
+	g_return_if_fail (style != NULL);
+
+	sdf = lrg_paint_font_lookup (font);
+	if (sdf == NULL)
+	{
+		lrg_paint_list_text (self, font, text, x, y, size, style->spacing, &style->color);
+		return;
+	}
+
+	if (font != NULL)
+		keep_ref (self, font);
+	lrg_paint_font_draw_text (sdf, self, text, -1, x, y, size, style);
+}
+
+void
 lrg_paint_measure_text (GrlFont     *font,
                         const gchar *text,
                         gfloat       size,
@@ -970,16 +1071,26 @@ lrg_paint_measure_text (GrlFont     *font,
                         gfloat      *width,
                         gfloat      *height)
 {
-	Font         storage;
-	const Font  *rl;
-	const gchar *p;
-	gfloat       scale;
-	gfloat       line_w = 0.0f;
-	gfloat       max_w = 0.0f;
-	guint        lines = 1;
-	guint        glyphs_on_line = 0;
+	Font          storage;
+	const Font   *rl;
+	const gchar  *p;
+	LrgPaintFont *sdf;
+	gfloat        scale;
+	gfloat        line_w = 0.0f;
+	gfloat        max_w = 0.0f;
+	guint         lines = 1;
+	guint         glyphs_on_line = 0;
 
 	g_return_if_fail (text != NULL);
+
+	/* Same font choice as lrg_paint_list_text() */
+	sdf = lrg_paint_font_lookup (font);
+	if (sdf != NULL)
+	{
+		lrg_paint_font_measure_text (sdf, text, -1, size, spacing, LRG_TEXT_DIRECTION_AUTO,
+		                             width, height);
+		return;
+	}
 
 	rl = resolve_font (font, &storage);
 
@@ -1423,6 +1534,12 @@ lrg_paint_list_transform_group (LrgPaintList *self,
 		}
 		if (prim == LRG_PAINT_PRIM_CURVE)
 			inst->data[0] *= scale;    /* glow size */
+		if (prim == LRG_PAINT_PRIM_GLYPH)
+		{
+			inst->data[0] *= scale;    /* distance scale */
+			inst->data[1] *= scale;    /* softness */
+			inst->data[2] *= scale;    /* dilation */
+		}
 
 		if (opacity < 1.0f)
 		{
