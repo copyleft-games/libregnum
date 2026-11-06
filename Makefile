@@ -122,6 +122,9 @@ PUBLIC_HEADERS := \
 	src/shapes/lrg-circle3d.h \
 	src/shapes/lrg-torus3d.h \
 	src/shapes/lrg-icosphere3d.h \
+	src/paint/lrg-paint-types.h \
+	src/paint/lrg-paint-list.h \
+	src/paint/lrg-paint-renderer.h \
 	src/ui/lrg-ui-event.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
@@ -447,6 +450,7 @@ PUBLIC_HEADERS := \
 	src/tween/lrg-tween-parallel.h \
 	src/tween/lrg-tween-manager.h \
 	src/tween/lrg-keyframe-curve.h \
+	src/tween/lrg-spring.h \
 	src/transition/lrg-transition.h \
 	src/transition/lrg-fade-transition.h \
 	src/transition/lrg-wipe-transition.h \
@@ -771,6 +775,9 @@ SOURCES := \
 	src/shapes/lrg-torus3d.c \
 	src/shapes/lrg-icosphere3d.c \
 	src/shapes/lrg-shape3d-mesh.c \
+	src/paint/lrg-paint-types.c \
+	src/paint/lrg-paint-list.c \
+	src/paint/lrg-paint-renderer.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
@@ -1101,6 +1108,7 @@ SOURCES := \
 	src/tween/lrg-tween-parallel.c \
 	src/tween/lrg-tween-manager.c \
 	src/tween/lrg-keyframe-curve.c \
+	src/tween/lrg-spring.c \
 	src/transition/lrg-transition.c \
 	src/transition/lrg-fade-transition.c \
 	src/transition/lrg-wipe-transition.c \

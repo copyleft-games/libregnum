@@ -6200,3 +6200,45 @@ lrg_selection_mode_get_type (void)
 
     return g_define_type_id__volatile;
 }
+
+GType
+lrg_paint_prim_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_PRIM_RECT, "LRG_PAINT_PRIM_RECT", "rect" },
+            { LRG_PAINT_PRIM_SHADOW, "LRG_PAINT_PRIM_SHADOW", "shadow" },
+            { LRG_PAINT_PRIM_LINE, "LRG_PAINT_PRIM_LINE", "line" },
+            { LRG_PAINT_PRIM_IMAGE, "LRG_PAINT_PRIM_IMAGE", "image" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintPrim"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_paint_command_kind_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_COMMAND_INSTANCES, "LRG_PAINT_COMMAND_INSTANCES", "instances" },
+            { LRG_PAINT_COMMAND_CALLBACK, "LRG_PAINT_COMMAND_CALLBACK", "callback" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintCommandKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}

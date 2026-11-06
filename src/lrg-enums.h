@@ -6693,5 +6693,43 @@ LRG_AVAILABLE_IN_ALL
 GType lrg_selection_mode_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_SELECTION_MODE (lrg_selection_mode_get_type ())
 
+/**
+ * LrgPaintPrim:
+ * @LRG_PAINT_PRIM_RECT: rounded rectangle with optional border and gradient
+ * @LRG_PAINT_PRIM_SHADOW: soft blurred rounded rectangle
+ * @LRG_PAINT_PRIM_LINE: line segment with round caps
+ * @LRG_PAINT_PRIM_IMAGE: textured rounded rectangle (images and glyphs)
+ *
+ * Shape drawn by one #LrgPaintInstance.
+ */
+typedef enum
+{
+    LRG_PAINT_PRIM_RECT,
+    LRG_PAINT_PRIM_SHADOW,
+    LRG_PAINT_PRIM_LINE,
+    LRG_PAINT_PRIM_IMAGE
+} LrgPaintPrim;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_paint_prim_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PAINT_PRIM (lrg_paint_prim_get_type ())
+
+/**
+ * LrgPaintCommandKind:
+ * @LRG_PAINT_COMMAND_INSTANCES: a batch of instances drawn in one call
+ * @LRG_PAINT_COMMAND_CALLBACK: a user callback drawing with raw graylib
+ *
+ * Kind of entry in an #LrgPaintList command stream.
+ */
+typedef enum
+{
+    LRG_PAINT_COMMAND_INSTANCES,
+    LRG_PAINT_COMMAND_CALLBACK
+} LrgPaintCommandKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_paint_command_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PAINT_COMMAND_KIND (lrg_paint_command_kind_get_type ())
+
 G_END_DECLS
 

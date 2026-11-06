@@ -35,6 +35,7 @@ G_BEGIN_DECLS
 #define LRG_LOG_DOMAIN_ECS        "Libregnum-ECS"
 #define LRG_LOG_DOMAIN_INPUT      "Libregnum-Input"
 #define LRG_LOG_DOMAIN_UI         "Libregnum-UI"
+#define LRG_LOG_DOMAIN_PAINT      "Libregnum-Paint"
 #define LRG_LOG_DOMAIN_TILEMAP    "Libregnum-Tilemap"
 #define LRG_LOG_DOMAIN_DIALOG     "Libregnum-Dialog"
 #define LRG_LOG_DOMAIN_INVENTORY  "Libregnum-Inventory"

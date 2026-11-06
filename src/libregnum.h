@@ -164,6 +164,10 @@
 #include "shapes/lrg-icosphere3d.h"
 
 /* UI module */
+#include "paint/lrg-paint-types.h"
+#include "paint/lrg-paint-list.h"
+#include "paint/lrg-paint-renderer.h"
+#include "tween/lrg-spring.h"
 #include "ui/lrg-ui-event.h"
 #include "ui/lrg-widget.h"
 #include "ui/lrg-container.h"
