@@ -251,6 +251,9 @@ TEST_SOURCES := \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
 	test-editor-actions.c \
+	test-editor-view-state.c \
+	test-editor-play-session.c \
+	test-editor-viewport-nav.c \
 	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \

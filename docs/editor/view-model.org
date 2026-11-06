@@ -1,0 +1,247 @@
+#+title: Editor View Model
+#+description: The headless view model of lrgeditor: LrgEditorViewState, LrgEditorViewportNav and LrgEditorPlaySession.
+
+* Editor View Model
+:PROPERTIES:
+:CUSTOM_ID: view-model
+:END:
+The editor's UI-agnostic state and logic live in three headless GObjects in =src/editor/=. None of them includes a UI toolkit header or needs a window, so the same state is driven by the viewport widget, the IPC methods (=view.*=, =play.*=, =timeline.*=, =tilemap.tool=, =ui.state=), =lrgeditor --headless= and plain GTest suites.
+
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > View Model
+#+end_quote
+
+| Type                   | Header                          | What it owns                                                                                                         |
+|------------------------+---------------------------------+----------------------------------------------------------------------------------------------------------------------|
+| =LrgEditorViewState=   | =lrg-editor-view-state.h=       | Up to four viewport cameras, layout, active viewport, render modes, overlays, nav mode, dialog, palette, timeline playhead, inspector lock, status, play state, tile tool |
+| =LrgEditorViewCamera=  | =lrg-editor-view-state.h=       | One camera (boxed) and the pure camera commands: axis views, orbit steps, zoom, ortho toggle, 2D, focus and frame      |
+| =LrgEditorViewportNav= | =lrg-editor-viewport-nav.h=     | The fly / orbit / pan / box / zoom / orientation-gizmo state machine, its held keys and the three mouse schemes        |
+| =LrgEditorPlaySession= | =lrg-editor-play-session.h=     | Play-in-editor: private =LrgWorld=, fixed-step ticks, pause and step, exact restore on Stop, live object model, GUID map, apply-to-level, profiler section |
+
+Document state that =LrgEditor= already owns (the transform tool, snapping, the transform space, the selection) is not duplicated anywhere here: the view state only holds a reference to the editor (=LrgEditorViewState:editor=) and reads it.
+
+** Design
+:PROPERTIES:
+:CUSTOM_ID: design
+:END:
+The old immediate-mode app kept all of this in =struct _LrgEditorApp= and polled the GUI once per frame. The view model splits it along one rule: anything a test, an IPC client or a second front end needs to see or change is a notifying property on a headless object; anything about pixels and paint stays in the widgets.
+
+- Every value is a property with =G_PARAM_EXPLICIT_NOTIFY=; setters notify only on a real change, so binding widgets to properties never loops.
+- Cameras are not properties of their own per viewport; they are reached with =lrg_editor_view_state_get_camera (state, index)= (=-1= is the active viewport) and every change emits =camera-changed (index)=. The =camera=, =render-mode= and =overlays= properties mirror the active viewport and are re-notified when the active viewport changes.
+- Navigation writes into the view state: =LrgEditorViewportNav= moves the active camera and mirrors its mode into =LrgEditorViewState:nav-mode=, which is what =ui.state= reports as ="nav"=.
+- The play session does not touch the UI: the caller connects to =started=, =stopped=, =paused= and =ticked= to set the status line, append log lines, emit the ="play"= IPC event and drive timeline autoplay, and copies =LrgEditorPlaySession:state= into =LrgEditorViewState:play-state=.
+
+** LrgEditorViewState
+:PROPERTIES:
+:CUSTOM_ID: view-state
+:END:
+#+begin_src C
+g_autoptr(LrgEditorViewState) view = lrg_editor_view_state_new (editor);
+
+lrg_editor_view_state_load_settings (view, settings);       /* fov, fly speed, grid, layout, cameras */
+lrg_editor_view_state_set_layout (view, LRG_EDITOR_VIEWPORT_LAYOUT_QUAD);
+lrg_editor_view_state_set_active_viewport (view, 1);
+lrg_editor_view_state_set_viewport_size (view, 1, 640.0f, 360.0f);
+lrg_editor_view_state_set_render_mode (view, 1, LRG_EDITOR_RENDER_MODE_WIREFRAME);
+lrg_editor_view_state_toggle_overlay (view, -1, LRG_EDITOR_VIEW_OVERLAY_GRID);
+lrg_editor_view_state_focus_selection (view);                /* "F" in the active viewport */
+#+end_src
+
+*** Layouts and viewports
+:PROPERTIES:
+:CUSTOM_ID: layouts
+:END:
+=LrgEditorViewportLayout= is =SINGLE= (1 viewport), =SPLIT_H= and =SPLIT_V= (2) or =QUAD= (4). The nicks =single=, =split-h=, =split-v= and =quad= are the strings stored in the settings (=layout-name= property, =lrg_editor_view_state_set_layout_name()=). Four cameras always exist; a layout only decides how many are shown. Changing the layout clamps the active viewport, and =lrg_editor_view_state_next_viewport()= cycles through the shown ones (the =view.next-viewport= action). New viewports 1, 2 and 3 start on the top, front and right axis views.
+
+*** Render modes and overlays
+:PROPERTIES:
+:CUSTOM_ID: render-modes
+:END:
+Each viewport has an =LrgEditorRenderMode= (=lit=, =unlit=, =wireframe=, =normals=, =lighting-only=) and an =LrgEditorViewOverlays= flag set (=grid=, =gizmos=, =icons=, =bounds=, =stats=, =scene-lighting=, =shadows=, =sky=, =post=). New viewports use =LRG_EDITOR_VIEW_OVERLAYS_DEFAULT= (everything except bounds and post). The old global toggles map onto the active viewport: =view.grid= toggles =GRID=, =view.icons= =ICONS=, =view.stats= =STATS=, and =view.wireframe= switches the render mode between =lit= and =wireframe=. A change emits =viewport-changed (index)=.
+
+*** UI state
+:PROPERTIES:
+:CUSTOM_ID: ui-state
+:END:
+| Property              | Type                 | Meaning (and the IPC field it serves)                                                            |
+|-----------------------+----------------------+--------------------------------------------------------------------------------------------------|
+| =nav-mode=            | =LrgEditorNavMode=   | Navigation in progress; =lrg_editor_nav_mode_to_string()= gives =ui.state= ="nav"=               |
+| =dialog=              | string, nullable     | Open modal dialog id, =ui.state= ="dialog"= (=preferences=, =project-settings=, =file=, =confirm=, =new-project=, =new-script=, =about=, =shortcuts=, =recover=) |
+| =palette-open=        | boolean              | Command palette or quick open showing, =ui.state= ="palette"=                                   |
+| =timeline-name=       | string, nullable     | Timeline shown in the panel, =timeline.state= ="name"=                                          |
+| =timeline-time=       | float                | Playhead in seconds, =timeline.state= ="time"=                                                  |
+| =timeline-playing=    | boolean              | =timeline.state= ="playing"=                                                                     |
+| =timeline-previewing= | boolean              | =timeline.state= ="previewing"=                                                                  |
+| =inspector-lock=      | string, nullable     | GUID the inspector is locked to                                                                  |
+| =status=              | string, nullable     | Status line text                                                                                 |
+| =play-state=          | =LrgEditorPlayState= | =stopped=, =playing=, =paused= (mirrored from the play session)                                 |
+| =tile-tool=           | =LrgEditorTileTool=  | =tilemap.tool= ="tool"= (=brush=, =eraser=, =rect=, =fill=, =pick=)                             |
+| =tile-mode=           | boolean              | =tilemap.tool= ="mode"=: the viewport's left button paints tiles                                |
+| =fov=                 | double               | Field of view cameras reset to (=camera-fov= setting)                                           |
+| =fly-speed=           | double               | Fly speed in units per second (=camera-fly-speed= setting; the wheel changes it while flying)   |
+
+*** Settings
+:PROPERTIES:
+:CUSTOM_ID: settings
+:END:
+=lrg_editor_view_state_load_settings()= reads =camera-fov=, =camera-fly-speed= and =grid-visible= (applied to every viewport), and, when the settings object has them as string properties, =viewport-layout= (a layout nick) and =viewport-cameras=. =lrg_editor_view_state_save_settings()= writes =grid-visible= from viewport 0 and the same two optional keys; it does not save the file. The optional keys are looked up at run time with =g_object_class_find_property()=, so the view state works with settings objects that predate them.
+
+=viewport-cameras= holds =lrg_editor_view_state_cameras_to_string()=: four camera records separated by =;=, each the twelve comma separated numbers of =lrg_editor_view_camera_to_string()= (position xyz, target xyz, fovy, ortho height, orthographic, 2D, axis view, ortho-from-align). Numbers are written with =%.9g= in the C locale, so a round trip is exact.
+
+** LrgEditorViewCamera
+:PROPERTIES:
+:CUSTOM_ID: view-camera
+:END:
+A boxed struct: an embedded =LrgEditorView= (position, target, up, fovy, ortho height, orthographic, clip planes, viewport size) plus =view_2d=, =ortho_from_align= and =axis_view=. The pose is stored as position and target rather than as angles on purpose: a top view must look exactly down =-Y= with screen-up =-Z= as before, and a yaw/pitch representation would leave a tiny horizontal component that flips the screen basis. The angles are derived instead:
+
+#+begin_src C
+gfloat yaw   = lrg_editor_view_camera_get_yaw (camera);      /* atan2 (dx, dz), 0 = on +Z */
+gfloat pitch = lrg_editor_view_camera_get_pitch (camera);    /* + = above the target */
+gfloat dist  = lrg_editor_view_camera_get_distance (camera);
+lrg_editor_view_camera_set_orbit (camera, yaw, pitch, dist); /* same pose back */
+
+LrgEditorView view;
+lrg_editor_view_camera_to_view (camera, &view);              /* for lrg_editor_pick() etc. */
+#+end_src
+
+*** Camera commands
+:PROPERTIES:
+:CUSTOM_ID: camera-commands
+:END:
+The commands are the old app functions moved verbatim in behaviour; =tests/test-editor-view-state.c= checks them against the raw =lrg_editor_view_*= math.
+
+| Function                                  | Old code                       | Action / key                                                    |
+|-------------------------------------------+--------------------------------+-----------------------------------------------------------------|
+| =lrg_editor_view_camera_reset=            | =editor_view_reset=            | Reset Camera; in 2D an ortho view down -Z from (0, 0, 50), height 20 |
+| =lrg_editor_view_camera_set_axis_view=    | =editor_view_align=            | KP_1 front, KP_3 right, KP_7 top; Ctrl for the opposite side   |
+| =lrg_editor_view_camera_orbit=            | =editor_view_orbit=            | Orbit; no-op in 2D; leaves an aligned ortho view for perspective |
+| =lrg_editor_view_camera_orbit_step=       | =a_orbit_*=                    | KP_4 / KP_6 / KP_8 / KP_2 in 15 degree steps                    |
+| =lrg_editor_view_camera_zoom_step=        | =a_zoom_in= / =a_zoom_out=     | = and -, x0.8 / x1.25                                           |
+| =lrg_editor_view_camera_toggle_ortho=     | =a_view_persp=                 | KP_5; explicit, so orbiting keeps it                            |
+| =lrg_editor_view_camera_set_2d=           | =a_toggle_2d=                  | Ctrl+Shift+2                                                     |
+| =lrg_editor_view_camera_focus_selection=  | =editor_app_frame_selection=   | F; frames all when nothing is selected                          |
+| =lrg_editor_view_camera_frame_all=        | =editor_app_frame_all=         | Home; resets the camera for an empty level                      |
+| =lrg_editor_view_camera_fly=, =pan=, =dolly= | navigation                  | Used by =LrgEditorViewportNav=                                  |
+
+Auto-perspective follows Blender: aligning to an axis outside 2D mode turns the camera orthographic and sets =ortho_from_align=; the next orbit, or a fly look or planar fly move, returns to perspective. A pure vertical (Q/E) fly move and panning keep the axis view. The =LrgEditorViewState= wrappers (=lrg_editor_view_state_set_axis_view()= and friends) run the command on the active camera and emit =camera-changed= only if it really moved.
+
+** LrgEditorViewportNav
+:PROPERTIES:
+:CUSTOM_ID: viewport-nav
+:END:
+The viewport widget converts its input to viewport-local pixels and calls the navigator; each call says whether navigation consumed the event, and the widget gives the rest to the transform gizmo and picking.
+
+#+begin_src C
+nav = lrg_editor_viewport_nav_new (view);
+lrg_editor_viewport_nav_bind_settings (nav, settings);   /* scheme, invert-y, orbit speed */
+g_signal_connect (nav, "click", G_CALLBACK (on_pick), self);
+g_signal_connect (nav, "box-select", G_CALLBACK (on_box_select), self);
+g_signal_connect (nav, "context-menu", G_CALLBACK (on_context_menu), self);
+
+/* pointer press */
+if (!lrg_editor_viewport_nav_pointer_press (nav, button, x, y, mods) &&
+    button == GRL_MOUSE_BUTTON_LEFT &&
+    !lrg_editor_gizmo_begin_drag (gizmo, &view, x, y))
+	lrg_editor_viewport_nav_press_empty (nav, x, y);       /* arms click / box select */
+
+/* every frame */
+if (lrg_editor_viewport_nav_tick (nav, dt))
+	queue_redraw ();
+#+end_src
+
+*** Gestures
+:PROPERTIES:
+:CUSTOM_ID: gestures
+:END:
+| Gesture                         | default          | blender          | trackpad                   | 2D camera |
+|---------------------------------+------------------+------------------+----------------------------+-----------|
+| Right drag                      | fly look         | fly look         | fly look                   | pan       |
+| Right click (no motion)         | =context-menu=   | =context-menu=   | =context-menu=             | =context-menu= |
+| Middle drag                     | pan              | orbit            | pan                        | pan       |
+| Shift + middle drag             | pan              | pan              | pan                        | pan       |
+| Ctrl + middle drag              | pan              | zoom (x1.01 / px)| pan                        | pan       |
+| Alt + left drag                 | orbit            | orbit            | orbit                      | pan       |
+| Alt + Shift + left drag         | pan              | pan              | pan                        | pan       |
+| Left drag on orientation gizmo  | orbit            | orbit            | orbit                      | (no gizmo)|
+| Left click on a gizmo axis end  | align (ortho)    | align            | align                      | (no gizmo)|
+| Wheel                           | dolly x0.87      | dolly x0.87      | orbit 4 deg/unit; Shift pan 12 px/unit; Ctrl dolly | dolly / ortho height (trackpad: pan) |
+| Wheel while flying              | fly speed x1.2   | fly speed x1.2   | fly speed x1.2             |           |
+| W A S D Q E while flying        | move, Shift x3   | move, Shift x3   | move, Shift x3             |           |
+
+Orbit and fly look use =orbit-speed= degrees per pixel (default 0.35) and honour =invert-y=. Orbit and gizmo drags only start turning once the pointer has moved =LRG_EDITOR_NAV_CLICK_SLOP= (4) pixels from the press; that is also what separates a right click (menu) from a right drag and a gizmo click (align) from a gizmo drag. A left press that navigation did not take arms box selection with =lrg_editor_viewport_nav_press_empty()=: moving more than the slop turns it into =LRG_EDITOR_NAV_MODE_BOX= (paint =lrg_editor_viewport_nav_get_box_rect()=) and the release emits =box-select (x0, y0, x1, y1, mods)=; otherwise the release emits =click (x, y, mods)=.
+
+*** Held keys and focus
+:PROPERTIES:
+:CUSTOM_ID: held-keys
+:END:
+The navigator keeps its own held-key set from =key_down= / =key_up=; =tick (dt)= moves the camera at =fly-speed * dt= (three times faster with Shift) while flying. While flying, =key_down= and =key_up= return =TRUE= for W, A, S, D, Q and E so the shortcuts bound to those keys (W is the move tool) do not also fire; the old app did fire them. =lrg_editor_viewport_nav_focus_lost()= forgets every held key and ends any gesture without emitting =click=, =box-select= or =context-menu=, so a key-up lost to another window cannot leave the camera flying.
+
+*** Orientation gizmo
+:PROPERTIES:
+:CUSTOM_ID: orientation-gizmo
+:END:
+The gizmo sits =LRG_EDITOR_NAV_GIZMO_MARGIN= (46) pixels from the viewport's left and bottom edges, with axes =LRG_EDITOR_NAV_GIZMO_RADIUS= (30) long and ends hit within =LRG_EDITOR_NAV_GIZMO_END_HIT= (9) pixels. =lrg_editor_viewport_nav_get_gizmo_end()= gives each end's screen offset and depth for painting (draw far ends first), =lrg_editor_viewport_nav_gizmo_hit()= hit-tests, and =axis-hot= is the hovered end (0..5 = +X +Y +Z -X -Y -Z, 6 = the disc, -1 = none).
+
+** LrgEditorPlaySession
+:PROPERTIES:
+:CUSTOM_ID: play-session
+:END:
+#+begin_src C
+session = lrg_editor_play_session_new (editor);
+lrg_editor_play_session_set_profiler (session, profiler);      /* times "play.tick" */
+g_signal_connect (session, "ticked", G_CALLBACK (on_ticked), self);
+
+if (!lrg_editor_play_session_start (session, &error))           /* F5 */
+	notify_error (error);
+lrg_editor_play_session_tick (session, frame_dt);               /* every frame */
+lrg_editor_play_session_toggle_pause (session);                 /* F7 */
+lrg_editor_play_session_step (session, NULL);                   /* F10 */
+lrg_editor_play_session_stop (session);                         /* Shift+F5 */
+#+end_src
+
+*** Start, tick and stop
+:PROPERTIES:
+:CUSTOM_ID: play-lifecycle
+:END:
+- Start snapshots every node with a GUID (=lrg_node_copy_state()=), the undo count and the dirty flag, instantiates the level into a private =LrgWorld= with =lrg_level_instantiate()= and records what instantiation wrote into each entity, so only real simulation changes flow back.
+- A tick simulates =CLAMP (delta, 0, 0.1)= seconds, or exactly 1/60 s after =step()=, then writes moved positions (x/y), roll (from the entity rotation in degrees) and uniform scale back onto the nodes, refreshes the live object model and emits =ticked (delta)=.
+- Stop drops the world, undoes every command made while playing (they stay redoable), restores node state from the snapshot where the simulation changed it, re-applies "apply to level" values as one undo step, and marks the document clean again if it was clean at start and nothing was applied. Disposing a playing session stops it first.
+- End a timeline preview before =start()=: the session does not know about timelines, so a preview would leak into the snapshot.
+
+*** Live inspection
+:PROPERTIES:
+:CUSTOM_ID: live-inspection
+:END:
+=lrg_editor_play_session_get_objects()= is a =GListModel= of =LrgGameObject= in world order, the same object for the session's lifetime; it is filled on start, emptied on stop, and diffed after every tick so a spawned or destroyed object is one small =items-changed=. The GUID map works both ways: =get_object_for_node()=, =get_object_for_guid()=, =get_node_for_object()= and =get_guid_for_object()=. Objects that game code spawns have no node.
+
+=lrg_editor_play_session_apply_to_level (session, object, component, property, &error)= copies a live component property into the matching =LrgComponentDesc= of the authoring node with =lrg_editor_set_component_value()=. The description is found by the component's registry type name and its position among the object's components of that type, which is how instantiation created them. The value keeps the type already stored under that key, or becomes one of the types the level loader produces (boolean, int64, double, string). Because Stop undoes play-time commands, the applied values are remembered and re-applied after the restore, all together as one undo step named "Apply Play Changes".
+
+*** Run Game
+:PROPERTIES:
+:CUSTOM_ID: run-game
+:END:
+Run Game (Ctrl+F5, =run.start=) still lives in the app: it saves through the app, reads the project's run command and streams the child's output into the editor log, so it is not part of the headless session.
+
+** IPC fields served
+:PROPERTIES:
+:CUSTOM_ID: ipc-fields
+:END:
+| IPC                                   | Field                                                   | Source                                                                       |
+|---------------------------------------+---------------------------------------------------------+------------------------------------------------------------------------------|
+| =view.get= / =view.set= / =view.focus= | =position=, =target=, =fovy=, =orthographic=, =ortho_height= | =camera->view= of =lrg_editor_view_state_get_camera (view, viewport)=        |
+|                                       | =mode_2d=                                               | =camera->view_2d= (set: =lrg_editor_view_camera_set_2d()=)                   |
+|                                       | optional =viewport= parameter                           | camera index; omitted = =-1=, the active viewport                            |
+| =play.state= (and start/stop/pause/step) | =playing=, =paused=, =time=                          | =is_playing()=, =is_paused()=, =get_time()= of the play session             |
+|                                       | =running=                                               | the app's Run Game process                                                   |
+| =ui.state=                            | =nav=                                                   | =lrg_editor_nav_mode_to_string (lrg_editor_view_state_get_nav_mode (view))=  |
+|                                       | =dialog=, =palette=                                     | =get_dialog()=, =get_palette_open()=                                         |
+| =timeline.state=                      | =name=, =time=, =playing=, =previewing=                 | the =timeline-*= properties                                                  |
+| =tilemap.tool=                        | =tool=, =mode=                                          | =tile-tool= (=lrg_editor_tile_tool_from_string()=), =tile-mode=              |
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+- =tests/test-editor-view-state.c=: property notification, layouts and active-viewport clamping, per-viewport render modes and overlays, nav and tile-tool strings, camera conversion and string round trips, equivalence with the old =LrgEditorView= math, axis views with auto-perspective, 2D, focus selection and frame all, settings load/save.
+- =tests/test-editor-viewport-nav.c=: every navigation scenario of =test-editor-app.c= and =editor-x11-smoke.sh= as events (right-drag fly, right click menu, gizmo drag and click, KP_7/KP_4/KP_5, wheel, schemes), plus held-key flying over frames with Shift and wheel speed, focus loss, invert-y, box select and click, 2D and split layouts.
+- =tests/test-editor-play-session.c=: start / tick / stop with exact restore (transforms, names, undo and redo counts, dirty flag), pause and step timing, the GUID map, live-model =items-changed= for spawned and destroyed objects, apply-to-level as one undo step that survives Stop, the profiler section and stopping on dispose.

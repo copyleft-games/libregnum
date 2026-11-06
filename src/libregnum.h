@@ -456,6 +456,9 @@
 #include "editor/lrg-project.h"
 #include "editor/lrg-prefab.h"
 #include "editor/lrg-editor-shortcut-legacy.h"
+#include "editor/lrg-editor-view-state.h"
+#include "editor/lrg-editor-play-session.h"
+#include "editor/lrg-editor-viewport-nav.h"
 #ifdef LRG_BUILD_EDITOR_UI
 #include "editor/ui/lrg-editor-app.h"
 #endif
