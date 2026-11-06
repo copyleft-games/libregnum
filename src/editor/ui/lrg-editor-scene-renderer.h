@@ -22,6 +22,11 @@
 #include "../../lrg-types.h"
 #include "../lrg-editor-view-state.h"
 #include "../lrg-editor-viewport-nav.h"
+#include "../lrg-editor-math.h"
+#include "../../graphics/lrg-light-set.h"
+#include "../../lighting/lrg-shadow-renderer.h"
+#include "../../graphics/lrg-sky-dome.h"
+#include "../../postprocess/lrg-post-processor.h"
 
 G_BEGIN_DECLS
 
@@ -166,6 +171,221 @@ gboolean lrg_editor_scene_renderer_render (LrgEditorSceneRenderer *self,
                                            gboolean                active,
                                            gfloat                  width,
                                            gfloat                  height);
+
+/**
+ * LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT:
+ *
+ * The post-processing slot of the camera preview (picture in picture);
+ * slots 0 .. %LRG_EDITOR_VIEW_MAX_VIEWPORTS - 1 belong to the viewports.
+ */
+#define LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT (LRG_EDITOR_VIEW_MAX_VIEWPORTS)
+
+/**
+ * lrg_editor_scene_renderer_render_view:
+ * @self: an #LrgEditorSceneRenderer
+ * @view: the camera, sized to the target (width and height are replaced
+ *   by @width and @height)
+ * @view_2d: whether the camera is a 2D (XY plane) camera
+ * @slot: the post-processing slot (a viewport index or
+ *   %LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT)
+ * @mode: the render mode
+ * @overlays: the overlays (grid, icons, bounds, scene lighting, shadows,
+ *   sky, post); the 2D ones (gizmos, stats) are drawn only with
+ *   lrg_editor_scene_renderer_set_draw_overlays() on
+ * @width: render target width in pixels
+ * @height: render target height in pixels
+ *
+ * Renders the level through an arbitrary camera into the bound render
+ * target (the camera preview uses it with a camera node's view, see
+ * lrg_editor_scene_renderer_camera_node_view()). Same contract as
+ * lrg_editor_scene_renderer_render().
+ *
+ * Returns: %FALSE (and draws nothing) when no window is open
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_scene_renderer_render_view (LrgEditorSceneRenderer *self,
+                                                const LrgEditorView    *view,
+                                                gboolean                view_2d,
+                                                guint                   slot,
+                                                LrgEditorRenderMode     mode,
+                                                LrgEditorViewOverlays   overlays,
+                                                gfloat                  width,
+                                                gfloat                  height);
+
+/**
+ * lrg_editor_scene_renderer_set_draw_overlays:
+ * @self: an #LrgEditorSceneRenderer
+ * @draw_overlays: whether lrg_editor_scene_renderer_render() draws the
+ *   2D overlays (gizmo, orientation axes, box select, view label, stats)
+ *   into the image itself
+ *
+ * On by default for embedders that show the image as is. The editor's
+ * viewport panels turn it off and paint those overlays with
+ * #LrgPaintList instead (see lrg-editor-gizmo-paint.h), so they stay
+ * crisp and update without re-rendering the scene.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_draw_overlays (LrgEditorSceneRenderer *self,
+                                                  gboolean                draw_overlays);
+
+/**
+ * lrg_editor_scene_renderer_get_draw_overlays:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Returns: whether the 2D overlays are drawn into the image
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_scene_renderer_get_draw_overlays (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_light_set:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The engine light set the lit render modes draw with. It is rebuilt
+ * from the level by lrg_editor_scene_renderer_sync_lights() (every
+ * render does that); its bookkeeping works without a window.
+ *
+ * Returns: (transfer none): the light set
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightSet * lrg_editor_scene_renderer_get_light_set (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_sync_lights:
+ * @self: an #LrgEditorSceneRenderer
+ * @scene_lighting: use the level's LIGHT nodes (overlay
+ *   %LRG_EDITOR_VIEW_OVERLAY_SCENE_LIGHTING); %FALSE lights the scene with
+ *   the default editor sun only
+ *
+ * Rebuilds the light set from the level: every visible LIGHT node whose
+ * "light_type" visual param is "directional" becomes the directional
+ * light (the first one wins; it shines down the node's local -Z), every
+ * other LIGHT node a point light at its world position with the
+ * "range" param as radius, the "intensity" param as intensity and the
+ * material colour (white without a material) as colour. There are no
+ * spot lights in the engine's 3D light set: "spot" lights (or a
+ * "spot_angle" above 0) are previewed as point lights. Without a
+ * directional light in the level the default editor sun is used so the
+ * scene stays readable. Works without a window.
+ *
+ * Returns: the number of the level's lights in the set (0 when
+ *   @scene_lighting is %FALSE)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_scene_renderer_sync_lights (LrgEditorSceneRenderer *self,
+                                             gboolean                scene_lighting);
+
+/**
+ * lrg_editor_scene_renderer_has_scene_sun:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Returns: %TRUE when the last lrg_editor_scene_renderer_sync_lights()
+ *   took the directional light from the level, %FALSE when it used the
+ *   default editor sun
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_scene_renderer_has_scene_sun (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_shadow_renderer:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The cascaded shadow maps of the directional light, used for
+ * perspective viewports with overlay %LRG_EDITOR_VIEW_OVERLAY_SHADOWS.
+ *
+ * Returns: (transfer none): the shadow renderer
+ */
+LRG_AVAILABLE_IN_ALL
+LrgShadowRenderer * lrg_editor_scene_renderer_get_shadow_renderer (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_sky_dome:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The sky drawn behind perspective viewports with overlay
+ * %LRG_EDITOR_VIEW_OVERLAY_SKY. Its sun follows the directional light.
+ *
+ * Returns: (transfer none): the sky dome
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSkyDome * lrg_editor_scene_renderer_get_sky_dome (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_post_processor:
+ * @self: an #LrgEditorSceneRenderer
+ * @slot: a viewport index or %LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT
+ *
+ * The preview post-processing chain of one viewport: an
+ * #LrgPostProcessor holding an #LrgFxaa ("fxaa"), #LrgBloom ("bloom"),
+ * #LrgVignette ("vignette") and #LrgColorGrade ("color-grade"). Change
+ * their parameters or enable flags to change the preview. Used only
+ * with overlay %LRG_EDITOR_VIEW_OVERLAY_POST.
+ *
+ * Returns: (transfer none) (nullable): the post processor, %NULL for a
+ *   slot out of range
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPostProcessor * lrg_editor_scene_renderer_get_post_processor (LrgEditorSceneRenderer *self,
+                                                                 guint                   slot);
+
+/**
+ * lrg_editor_scene_renderer_get_generation:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * A counter bumped whenever something the image depends on changed
+ * outside the level (an asset reloaded, the base directory or the grid
+ * settings changed), so viewports that render on demand know to redraw.
+ *
+ * Returns: the generation
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_scene_renderer_get_generation (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_is_asset_missing:
+ * @self: an #LrgEditorSceneRenderer
+ * @node: a node
+ *
+ * Whether @node references a model, sprite or tileset file that does
+ * not exist (resolved against the base directory). Works without a
+ * window; the viewport paints these nodes with magenta boxes.
+ *
+ * Returns: %TRUE when the node's asset is missing
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_scene_renderer_is_asset_missing (LrgEditorSceneRenderer *self,
+                                                     LrgNode                *node);
+
+/**
+ * lrg_editor_scene_renderer_camera_node_view:
+ * @node: a node (normally a CAMERA node)
+ * @width: target width in pixels
+ * @height: target height in pixels
+ * @out: (out caller-allocates): the view through @node
+ *
+ * The view through a camera node: its world position, looking down its
+ * local -Z with its local +Y up, with the "fov" (degrees), "near" and
+ * "far" visual params (60, 0.1 and 1000 when unset).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_camera_node_view (LrgNode       *node,
+                                                 gfloat         width,
+                                                 gfloat         height,
+                                                 LrgEditorView *out);
+
+/**
+ * lrg_editor_scene_renderer_get_shader_source:
+ * @name: a shader name: "scene.vs", "lit.fs", "unlit.fs", "normals.fs"
+ *   or "post.fs"
+ *
+ * The built-in GLSL of the editor's viewport shaders. The readable
+ * copies live in data/editor/shaders/@name.glsl; the library embeds
+ * them so an installed editor needs no data files.
+ *
+ * Returns: (nullable): the source, or %NULL for an unknown name
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_scene_renderer_get_shader_source (const gchar *name);
 
 /**
  * lrg_editor_scene_renderer_get_drawn:

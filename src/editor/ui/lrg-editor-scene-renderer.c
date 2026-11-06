@@ -38,6 +38,10 @@
 #include "../lrg-node-tilemap.h"
 #include "../lrg-asset-meta.h"
 #include "../../scene/lrg-material3d.h"
+#include "../../postprocess/effects/lrg-fxaa.h"
+#include "../../postprocess/effects/lrg-bloom.h"
+#include "../../postprocess/effects/lrg-vignette.h"
+#include "../../postprocess/effects/lrg-color-grade.h"
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
@@ -52,6 +56,10 @@
 #define OVERLAY_FONT_SIZE (15)
 #define OVERLAY_PAD       (6.0f)
 #define NAV_LABEL_SIZE    (12)
+
+#define DEFAULT_SUN_X     (0.5f)
+#define DEFAULT_SUN_Y     (-0.75f)
+#define DEFAULT_SUN_Z     (-0.45f)
 
 #define FONT_SAMPLE_TEXT  "Aa Bb 123"
 #define FONT_DEFAULT_SIZE (32u)
@@ -70,6 +78,52 @@
 #define COL_BG_EDIT       ((Color) { 30, 30, 46, 255 })
 #define COL_BG_PLAY       ((Color) { 24, 28, 38, 255 })
 
+#define N_POST_SLOTS (LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT + 1)
+
+/* Uniform locations of the post shader, in post_uniform_names order. */
+enum
+{
+	POST_LOC_RESOLUTION,
+	POST_LOC_FXAA_ON,
+	POST_LOC_FXAA_EDGE,
+	POST_LOC_FXAA_EDGE_MIN,
+	POST_LOC_BLOOM_ON,
+	POST_LOC_BLOOM_THRESHOLD,
+	POST_LOC_BLOOM_KNEE,
+	POST_LOC_BLOOM_INTENSITY,
+	POST_LOC_BLOOM_SIZE,
+	POST_LOC_BLOOM_TINT,
+	POST_LOC_VIGNETTE_ON,
+	POST_LOC_VIGNETTE_INTENSITY,
+	POST_LOC_VIGNETTE_RADIUS,
+	POST_LOC_VIGNETTE_SMOOTHNESS,
+	POST_LOC_VIGNETTE_COLOR,
+	N_POST_LOCS
+};
+
+static const gchar * const post_uniform_names[N_POST_LOCS] = {
+	"resolution", "fxaaOn", "fxaaEdge", "fxaaEdgeMin", "bloomOn", "bloomThreshold", "bloomKnee",
+	"bloomIntensity", "bloomSize", "bloomTint", "vignetteOn", "vignetteIntensity", "vignetteRadius",
+	"vignetteSmoothness", "vignetteColor"
+};
+
+/*
+ * One viewport's post chain: the engine effects that hold the parameters
+ * (LrgPostProcessor's own capture and render are not implemented in the
+ * engine yet, so the editor runs the passes itself), the scene image
+ * and the image after the editor's post pass, which LrgColorGrade then
+ * draws into the viewport.
+ */
+typedef struct
+{
+	LrgPostProcessor *processor;
+	RenderTexture2D   scene;
+	RenderTexture2D   out;
+	GrlTexture       *out_texture;   /* non-owning wrapper of out.texture */
+	gint              width;
+	gint              height;
+} PostSlot;
+
 struct _LrgEditorSceneRenderer
 {
 	GObject            parent_instance;
@@ -87,6 +141,7 @@ struct _LrgEditorSceneRenderer
 	gint               loc_light;
 	gint               loc_ambient;
 	Material           material;
+	Shader             flat;       /* rlgl's default shader */
 	Texture2D          white;
 	Mesh               cube;
 	Mesh               sphere;
@@ -109,6 +164,36 @@ struct _LrgEditorSceneRenderer
 	gdouble            grid_size;
 	guint              grid_extent;
 	gboolean           grid_dirty;
+
+	/* Render-mode shaders (data/editor/shaders, embedded) */
+	Shader             unlit;
+	gboolean           has_unlit;
+	Shader             normals;
+	gboolean           has_normals;
+	Shader             post;
+	gboolean           has_post;
+	gint               post_locs[N_POST_LOCS];
+
+	/* What the current walk draws with: its shader, and whether every
+	 * surface is forced to a white albedo (lighting-only mode). */
+	Shader             cur_shader;
+	gboolean           white_albedo;
+
+	/* Engine lighting: the light set built from the level, its cascaded
+	 * shadows and the sky. They live from construction on (their
+	 * bookkeeping is headless); only their GPU parts are released. */
+	LrgLightSet       *lights;
+	guint              n_scene_lights;
+	gboolean           scene_sun;
+	gfloat             sun_dir[3];
+	LrgShadowRenderer *shadows;
+	LrgSkyDome        *sky;
+
+	/* Per-viewport preview post-processing (plus the camera preview). */
+	PostSlot           post_slots[N_POST_SLOTS];
+
+	gboolean           draw_overlays;
+	guint              generation;
 
 	/* Node count for the stats line, recounted when the tree changes. */
 	guint              node_count;
@@ -261,8 +346,16 @@ with_alpha (Color   c,
  * GPU setup and teardown
  * ========================================================================== */
 
-static const gchar *lit_vs =
+/*
+ * The viewport shaders. data/editor/shaders/<name>.glsl holds the
+ * readable copies; these literals are generated from them byte for byte
+ * (tests/test-editor-app-viewport.c checks they match), so an installed
+ * editor works without data files.
+ */
+static const gchar shader_scene_vs[] =
 	"#version 330\n"
+	"/* lrgeditor scene vertex shader (lit, unlit and normals modes).\n"
+	" * raylib attribute and uniform names, so DrawMesh() feeds it. */\n"
 	"in vec3 vertexPosition;\n"
 	"in vec2 vertexTexCoord;\n"
 	"in vec3 vertexNormal;\n"
@@ -275,10 +368,13 @@ static const gchar *lit_vs =
 	"    fragTexCoord = vertexTexCoord;\n"
 	"    fragNormal = normalize (vec3 (matNormal * vec4 (vertexNormal, 0.0)));\n"
 	"    gl_Position = mvp * vec4 (vertexPosition, 1.0);\n"
-	"}\n";
+	"}\n"
+;
 
-static const gchar *lit_fs =
+static const gchar shader_lit_fs[] =
 	"#version 330\n"
+	"/* lrgeditor fallback lit shader: one two-sided directional light plus\n"
+	" * ambient. Used when the engine light set's shader is unavailable. */\n"
 	"in vec2 fragTexCoord;\n"
 	"in vec3 fragNormal;\n"
 	"uniform sampler2D texture0;\n"
@@ -293,7 +389,195 @@ static const gchar *lit_fs =
 	"    float l = ambient + (1.0 - ambient) * d;\n"
 	"    if (base.a < 0.01) discard;\n"
 	"    finalColor = vec4 (base.rgb * l, base.a);\n"
-	"}\n";
+	"}\n"
+;
+
+static const gchar shader_unlit_fs[] =
+	"#version 330\n"
+	"/* lrgeditor unlit mode: flat albedo (texture times material colour). */\n"
+	"in vec2 fragTexCoord;\n"
+	"in vec3 fragNormal;\n"
+	"uniform sampler2D texture0;\n"
+	"uniform vec4 colDiffuse;\n"
+	"out vec4 finalColor;\n"
+	"void main ()\n"
+	"{\n"
+	"    vec4 base = texture (texture0, fragTexCoord) * colDiffuse;\n"
+	"    if (base.a < 0.01) discard;\n"
+	"    finalColor = base;\n"
+	"}\n"
+;
+
+static const gchar shader_normals_fs[] =
+	"#version 330\n"
+	"/* lrgeditor normals mode: world-space normals as colours\n"
+	" * (x -> red, y -> green, z -> blue, remapped from -1..1 to 0..1). */\n"
+	"in vec2 fragTexCoord;\n"
+	"in vec3 fragNormal;\n"
+	"out vec4 finalColor;\n"
+	"void main ()\n"
+	"{\n"
+	"    vec3 n = normalize (fragNormal);\n"
+	"    finalColor = vec4 (n * 0.5 + 0.5, 1.0);\n"
+	"}\n"
+;
+
+static const gchar shader_post_fs[] =
+	"#version 330\n"
+	"/* lrgeditor preview post-processing, one pass over the scene image:\n"
+	" * FXAA, soft-knee bloom, a gentle highlight shoulder and a vignette.\n"
+	" * The parameters come from the viewport's LrgFxaa, LrgBloom and\n"
+	" * LrgVignette effects; colour grading runs after this pass through\n"
+	" * LrgColorGrade. Uses raylib's default vertex shader. */\n"
+	"in vec2 fragTexCoord;\n"
+	"in vec4 fragColor;\n"
+	"uniform sampler2D texture0;\n"
+	"uniform vec2 resolution;\n"
+	"uniform int fxaaOn;\n"
+	"uniform float fxaaEdge;\n"
+	"uniform float fxaaEdgeMin;\n"
+	"uniform int bloomOn;\n"
+	"uniform float bloomThreshold;\n"
+	"uniform float bloomKnee;\n"
+	"uniform float bloomIntensity;\n"
+	"uniform float bloomSize;\n"
+	"uniform vec3 bloomTint;\n"
+	"uniform int vignetteOn;\n"
+	"uniform float vignetteIntensity;\n"
+	"uniform float vignetteRadius;\n"
+	"uniform float vignetteSmoothness;\n"
+	"uniform vec3 vignetteColor;\n"
+	"out vec4 finalColor;\n"
+	"\n"
+	"float luma (vec3 c)\n"
+	"{\n"
+	"    return dot (c, vec3 (0.299, 0.587, 0.114));\n"
+	"}\n"
+	"\n"
+	"/* FXAA: blend along the local edge direction where contrast is high. */\n"
+	"vec3 fxaa (vec2 uv)\n"
+	"{\n"
+	"    vec2 px = 1.0 / resolution;\n"
+	"    vec3 rgb_nw = texture (texture0, uv + vec2 (-1.0, -1.0) * px).rgb;\n"
+	"    vec3 rgb_ne = texture (texture0, uv + vec2 (1.0, -1.0) * px).rgb;\n"
+	"    vec3 rgb_sw = texture (texture0, uv + vec2 (-1.0, 1.0) * px).rgb;\n"
+	"    vec3 rgb_se = texture (texture0, uv + vec2 (1.0, 1.0) * px).rgb;\n"
+	"    vec3 rgb_m = texture (texture0, uv).rgb;\n"
+	"    float l_nw = luma (rgb_nw);\n"
+	"    float l_ne = luma (rgb_ne);\n"
+	"    float l_sw = luma (rgb_sw);\n"
+	"    float l_se = luma (rgb_se);\n"
+	"    float l_m = luma (rgb_m);\n"
+	"    float l_min = min (l_m, min (min (l_nw, l_ne), min (l_sw, l_se)));\n"
+	"    float l_max = max (l_m, max (max (l_nw, l_ne), max (l_sw, l_se)));\n"
+	"    vec2 dir;\n"
+	"    float reduce;\n"
+	"    float rcp;\n"
+	"    vec3 a;\n"
+	"    vec3 b;\n"
+	"    float l_b;\n"
+	"\n"
+	"    if (l_max - l_min < max (fxaaEdgeMin, l_max * fxaaEdge))\n"
+	"        return rgb_m;\n"
+	"    dir.x = -((l_nw + l_ne) - (l_sw + l_se));\n"
+	"    dir.y = ((l_nw + l_sw) - (l_ne + l_se));\n"
+	"    reduce = max ((l_nw + l_ne + l_sw + l_se) * 0.03125, 1.0 / 128.0);\n"
+	"    rcp = 1.0 / (min (abs (dir.x), abs (dir.y)) + reduce);\n"
+	"    dir = clamp (dir * rcp, vec2 (-8.0), vec2 (8.0)) * px;\n"
+	"    a = 0.5 * (texture (texture0, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
+	"               texture (texture0, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
+	"    b = a * 0.5 + 0.25 * (texture (texture0, uv - dir * 0.5).rgb +\n"
+	"                          texture (texture0, uv + dir * 0.5).rgb);\n"
+	"    l_b = luma (b);\n"
+	"    return (l_b < l_min || l_b > l_max) ? a : b;\n"
+	"}\n"
+	"\n"
+	"/* The part of a colour above the bloom threshold, with a soft knee. */\n"
+	"vec3 bright (vec3 c)\n"
+	"{\n"
+	"    float l = max (c.r, max (c.g, c.b));\n"
+	"    float knee = max (bloomThreshold * bloomKnee, 0.0001);\n"
+	"    float soft = clamp (l - bloomThreshold + knee, 0.0, 2.0 * knee);\n"
+	"    float w;\n"
+	"\n"
+	"    soft = soft * soft / (4.0 * knee);\n"
+	"    w = max (soft, l - bloomThreshold) / max (l, 0.0001);\n"
+	"    return c * w;\n"
+	"}\n"
+	"\n"
+	"/* Three rings of eight taps, weighted towards the centre. */\n"
+	"vec3 bloom (vec2 uv)\n"
+	"{\n"
+	"    vec2 px = bloomSize / resolution;\n"
+	"    vec3 sum = vec3 (0.0);\n"
+	"    float total = 0.0;\n"
+	"    int ring;\n"
+	"    int i;\n"
+	"\n"
+	"    for (ring = 1; ring <= 3; ring++)\n"
+	"    {\n"
+	"        for (i = 0; i < 8; i++)\n"
+	"        {\n"
+	"            float a = 6.2831853 * (float (i) + 0.5 * float (ring)) / 8.0;\n"
+	"            float w = 1.0 / float (ring);\n"
+	"\n"
+	"            sum += bright (texture (texture0, uv + vec2 (cos (a), sin (a)) * px * float (ring)).rgb) * w;\n"
+	"            total += w;\n"
+	"        }\n"
+	"    }\n"
+	"    return sum / total;\n"
+	"}\n"
+	"\n"
+	"void main ()\n"
+	"{\n"
+	"    vec2 uv = fragTexCoord;\n"
+	"    vec3 color = (fxaaOn != 0) ? fxaa (uv) : texture (texture0, uv).rgb;\n"
+	"\n"
+	"    if (bloomOn != 0)\n"
+	"    {\n"
+	"        color += bloom (uv) * bloomIntensity * bloomTint;\n"
+	"        /* Shoulder: values above 0.8 roll off instead of clipping */\n"
+	"        color = mix (color, 0.8 + 0.2 * (1.0 - exp (-(color - 0.8) * 5.0)), step (0.8, color));\n"
+	"    }\n"
+	"    if (vignetteOn != 0)\n"
+	"    {\n"
+	"        vec2 d = uv - 0.5;\n"
+	"        float dist;\n"
+	"        float v;\n"
+	"\n"
+	"        d.x *= resolution.x / max (resolution.y, 1.0);\n"
+	"        dist = length (d) * 1.41421;\n"
+	"        v = smoothstep (vignetteRadius, vignetteRadius + max (vignetteSmoothness, 0.001), dist) * vignetteIntensity;\n"
+	"        color = mix (color, vignetteColor, v);\n"
+	"    }\n"
+	"    finalColor = vec4 (color, 1.0);\n"
+	"}\n"
+;
+
+static const struct
+{
+	const gchar *name;
+	const gchar *source;
+} shader_sources[] = {
+	{ "scene.vs", shader_scene_vs },
+	{ "lit.fs", shader_lit_fs },
+	{ "unlit.fs", shader_unlit_fs },
+	{ "normals.fs", shader_normals_fs },
+	{ "post.fs", shader_post_fs },
+};
+
+/* A shader that compiled to something other than rlgl's default one. */
+static gboolean
+load_shader (const gchar *vs,
+             const gchar *fs,
+             Shader      *out)
+{
+	*out = LoadShaderFromMemory (vs, fs);
+	if (IsShaderValid (*out) && out->id != rlGetShaderIdDefault ())
+		return TRUE;
+	memset (out, 0, sizeof *out);
+	return FALSE;
+}
 
 /* A torus around +Y, sized to the picking bounds. */
 static Mesh
@@ -376,19 +660,93 @@ ensure_gl (LrgEditorSceneRenderer *self)
 
 	self->material = LoadMaterialDefault ();
 	self->white = self->material.maps[MATERIAL_MAP_DIFFUSE].texture;
+	self->flat = self->material.shader;
+	self->cur_shader = self->flat;
 
-	/* The lit shader is optional: without GL 3.3 everything is flat. */
-	self->lit = LoadShaderFromMemory (lit_vs, lit_fs);
-	self->has_lit = IsShaderValid (self->lit) && self->lit.id != rlGetShaderIdDefault ();
+	/* The shaders are optional: without GL 3.3 everything is flat
+	 * (raylib's default shader). */
+	self->has_lit = load_shader (shader_scene_vs, shader_lit_fs, &self->lit);
 	if (self->has_lit)
 	{
 		self->loc_light = GetShaderLocation (self->lit, "lightDir");
 		self->loc_ambient = GetShaderLocation (self->lit, "ambient");
 		self->material.shader = self->lit;
+		self->cur_shader = self->lit;
+	}
+	self->has_unlit = load_shader (shader_scene_vs, shader_unlit_fs, &self->unlit);
+	self->has_normals = load_shader (shader_scene_vs, shader_normals_fs, &self->normals);
+	self->has_post = load_shader (NULL, shader_post_fs, &self->post);
+	if (self->has_post)
+	{
+		gint i;
+
+		for (i = 0; i < N_POST_LOCS; i++)
+			self->post_locs[i] = GetShaderLocation (self->post, post_uniform_names[i]);
 	}
 
 	self->has_gl = TRUE;
 	return TRUE;
+}
+
+/* A post slot's processor with the four preview effects. */
+static LrgPostProcessor *
+new_post_processor (void)
+{
+	LrgPostProcessor        *proc = lrg_post_processor_new (1, 1);
+	g_autoptr(LrgFxaa)       fxaa = lrg_fxaa_new ();
+	g_autoptr(LrgBloom)      bloom = lrg_bloom_new ();
+	g_autoptr(LrgVignette)   vignette = lrg_vignette_new ();
+	g_autoptr(LrgColorGrade) grade = lrg_color_grade_new ();
+
+	/* Preview defaults: a subtle look that reads in any scene */
+	lrg_bloom_set_threshold (bloom, 0.75f);
+	lrg_bloom_set_intensity (bloom, 0.6f);
+	lrg_vignette_set_intensity (vignette, 0.35f);
+	lrg_vignette_set_radius (vignette, 0.55f);
+	lrg_vignette_set_smoothness (vignette, 0.45f);
+	lrg_color_grade_set_contrast (grade, 1.05f);
+	lrg_color_grade_set_saturation (grade, 1.08f);
+	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (fxaa));
+	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (bloom));
+	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (vignette));
+	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (grade));
+	return proc;
+}
+
+/*
+ * The GPU parts of the engine objects: the light set's and colour
+ * grade's shaders, the shadow atlases and the post images. Objects that
+ * own a shader are replaced by fresh ones (keeping the post parameters
+ * is not worth the bookkeeping across a context loss); without a
+ * context only the CPU side is dropped.
+ */
+static void
+release_engine_gpu (LrgEditorSceneRenderer *self,
+                    gboolean                gl)
+{
+	guint i;
+
+	if (gl && self->shadows != NULL)
+		lrg_shadow_renderer_release_gpu (self->shadows);
+	if (self->lights != NULL)
+		lrg_light_set_set_shadow_renderer (self->lights, NULL);
+	g_clear_object (&self->lights);
+	self->lights = lrg_light_set_new ();
+	for (i = 0; i < N_POST_SLOTS; i++)
+	{
+		PostSlot *slot = &self->post_slots[i];
+
+		g_clear_object (&slot->out_texture);
+		if (gl && slot->scene.id != 0)
+			UnloadRenderTexture (slot->scene);
+		if (gl && slot->out.id != 0)
+			UnloadRenderTexture (slot->out);
+		memset (&slot->scene, 0, sizeof slot->scene);
+		memset (&slot->out, 0, sizeof slot->out);
+		slot->width = slot->height = 0;
+		g_clear_object (&slot->processor);
+		slot->processor = new_post_processor ();
+	}
 }
 
 /*
@@ -424,12 +782,22 @@ release_resources (LrgEditorSceneRenderer *self,
 		UnloadMesh (self->disc);
 		if (self->has_lit)
 			UnloadShader (self->lit);
+		if (self->has_unlit)
+			UnloadShader (self->unlit);
+		if (self->has_normals)
+			UnloadShader (self->normals);
+		if (self->has_post)
+			UnloadShader (self->post);
 	}
+	release_engine_gpu (self, gl);
 	/* The default material's shader and texture belong to rlgl; only its
 	 * map array is ours (plain CPU memory). */
 	MemFree (self->material.maps);
 	memset (&self->material, 0, sizeof self->material);
 	self->has_lit = FALSE;
+	self->has_unlit = FALSE;
+	self->has_normals = FALSE;
+	self->has_post = FALSE;
 	self->has_gl = FALSE;
 }
 
@@ -447,6 +815,7 @@ grid_settings_changed (GObject    *settings,
 	(void) settings;
 	(void) pspec;
 	self->grid_dirty = TRUE;
+	self->generation++;
 }
 
 /* Reads grid-size / grid-extent after a change (or defaults without
@@ -609,6 +978,13 @@ draw_mesh (LrgEditorSceneRenderer *self,
            Color                   color,
            Texture2D              *texture)
 {
+	/* Lighting-only mode lights a white surface */
+	if (self->white_albedo)
+	{
+		color = WHITE;
+		texture = NULL;
+	}
+	self->material.shader = self->cur_shader;
 	self->material.maps[MATERIAL_MAP_DIFFUSE].color = color;
 	self->material.maps[MATERIAL_MAP_DIFFUSE].texture = (texture != NULL) ? *texture : self->white;
 	DrawMesh (mesh, self->material, transform);
@@ -705,7 +1081,9 @@ typedef struct
 	LrgEditorSelection     *selection;
 	LrgNode                *primary;
 	gboolean                show_icons;
+	gboolean                show_bounds;
 	gboolean                tile_mode;
+	gboolean                casters_only;   /* shadow pass: meshes only */
 } SceneWalk;
 
 /* Colour of an untextured tile id (matches the tile palette swatches). */
@@ -849,6 +1227,22 @@ draw_node_geometry (SceneWalk    *walk,
 	if (visual == NULL)
 		return;
 
+	/* A shadow pass draws solid meshes only: no lines, sprites, tiles */
+	if (walk->casters_only)
+	{
+		LrgNodeVisualKind k = lrg_node_visual_get_kind (visual);
+
+		if (k == LRG_NODE_VISUAL_PRIMITIVE)
+		{
+			LrgPrimitiveType prim = lrg_node_visual_get_primitive (visual);
+
+			if (prim == LRG_PRIMITIVE_GRID || prim == LRG_PRIMITIVE_RECTANGLE_2D || prim == LRG_PRIMITIVE_CIRCLE_2D)
+				return;
+		}
+		else if (k != LRG_NODE_VISUAL_MESH_ASSET && k != LRG_NODE_VISUAL_CAD_PART)
+			return;
+	}
+
 	col = material_color (visual);
 	switch (lrg_node_visual_get_kind (visual))
 	{
@@ -903,6 +1297,8 @@ draw_node_geometry (SceneWalk    *walk,
 			Model       *model = (asset != NULL) ? get_model (self, asset) : NULL;
 			gint         i;
 
+			if (model == NULL && walk->casters_only)
+				break;
 			if (model == NULL)
 			{
 				/* Missing asset: a magenta placeholder the size of the bounds. */
@@ -913,10 +1309,17 @@ draw_node_geometry (SceneWalk    *walk,
 			}
 			for (i = 0; i < model->meshCount; i++)
 			{
-				Material mat = model->materials[model->meshMaterial[i]];
+				Material  mat = model->materials[model->meshMaterial[i]];
+				Texture2D saved = mat.maps[MATERIAL_MAP_DIFFUSE].texture;
 
-				mat.maps[MATERIAL_MAP_DIFFUSE].color = col;
+				/* The maps array is shared with the cached model: the
+				 * white override is undone right after the draw */
+				mat.shader = self->cur_shader;
+				mat.maps[MATERIAL_MAP_DIFFUSE].color = self->white_albedo ? WHITE : col;
+				if (self->white_albedo)
+					mat.maps[MATERIAL_MAP_DIFFUSE].texture = self->white;
 				DrawMesh (model->meshes[i], mat, mat_mul (model->transform, m));
+				mat.maps[MATERIAL_MAP_DIFFUSE].texture = saved;
 				self->drawn++;
 			}
 		}
@@ -1046,11 +1449,12 @@ draw_subtree (SceneWalk    *walk,
 	selected = (walk->selection != NULL) && lrg_editor_selection_contains (walk->selection, node);
 
 	draw_node_geometry (walk, node, world);
-	if (walk->show_icons)
+	if (walk->show_icons && !walk->casters_only)
 		draw_node_icon (walk, node, world, selected);
 
-	/* Selection: the picking bounds, primary brighter. */
-	if (selected)
+	/* Selection: the picking bounds, primary brighter; overlay BOUNDS
+	 * shows them faintly for every node. */
+	if ((selected || walk->show_bounds) && !walk->casters_only)
 	{
 		gfloat min[3], max[3];
 
@@ -1058,7 +1462,8 @@ draw_subtree (SceneWalk    *walk,
 		push_local (world);
 		DrawCubeWires ((Vector3) { (min[0] + max[0]) * 0.5f, (min[1] + max[1]) * 0.5f, (min[2] + max[2]) * 0.5f },
 		               (max[0] - min[0]) * 1.02f, (max[1] - min[1]) * 1.02f, (max[2] - min[2]) * 1.02f,
-		               node == walk->primary ? (Color) { 250, 179, 135, 255 } : (Color) { 249, 226, 175, 200 });
+		               node == walk->primary ? (Color) { 250, 179, 135, 255 }
+		               : selected ? (Color) { 249, 226, 175, 200 } : (Color) { 166, 173, 200, 90 });
 		rlPopMatrix ();
 	}
 
@@ -1533,6 +1938,15 @@ lrg_editor_scene_renderer_finalize (GObject *object)
 	g_clear_pointer (&self->models, g_hash_table_unref);
 	g_clear_pointer (&self->textures, g_hash_table_unref);
 	g_clear_pointer (&self->base_dir, g_free);
+	{
+		guint i;
+
+		for (i = 0; i < N_POST_SLOTS; i++)
+			g_clear_object (&self->post_slots[i].processor);
+	}
+	g_clear_object (&self->lights);
+	g_clear_object (&self->shadows);
+	g_clear_object (&self->sky);
 
 	G_OBJECT_CLASS (lrg_editor_scene_renderer_parent_class)->finalize (object);
 }
@@ -1609,6 +2023,24 @@ lrg_editor_scene_renderer_init (LrgEditorSceneRenderer *self)
 	self->grid_size = 1.0;
 	self->grid_extent = 50;
 	self->grid_dirty = TRUE;
+	self->draw_overlays = TRUE;
+
+	/* Engine lighting objects: headless bookkeeping, GPU parts on use */
+	self->lights = lrg_light_set_new ();
+	self->shadows = lrg_shadow_renderer_new ();
+	lrg_shadow_renderer_set_sun (self->shadows, 2048, 3, 60.0f, 0.6f);
+	lrg_shadow_renderer_set_filter (self->shadows, 1);
+	lrg_shadow_renderer_set_strength (self->shadows, 0.85f);
+	self->sky = lrg_sky_dome_new ();
+	self->sun_dir[0] = DEFAULT_SUN_X;
+	self->sun_dir[1] = DEFAULT_SUN_Y;
+	self->sun_dir[2] = DEFAULT_SUN_Z;
+	{
+		guint i;
+
+		for (i = 0; i < N_POST_SLOTS; i++)
+			self->post_slots[i].processor = new_post_processor ();
+	}
 }
 
 /* ==========================================================================
@@ -1667,6 +2099,7 @@ lrg_editor_scene_renderer_set_base_dir (LrgEditorSceneRenderer *self,
 	g_hash_table_remove_all (self->texture_by_asset);
 	g_free (self->base_dir);
 	self->base_dir = g_strdup (dir);
+	self->generation++;
 }
 
 const gchar *
@@ -1704,48 +2137,478 @@ lrg_editor_scene_renderer_get_playing (LrgEditorSceneRenderer *self)
 	return self->playing;
 }
 
-gboolean
-lrg_editor_scene_renderer_render (LrgEditorSceneRenderer *self,
-                                  LrgEditorViewState     *view,
-                                  gint                    viewport,
-                                  LrgEditorViewportNav   *nav,
-                                  gboolean                active,
-                                  gfloat                  width,
-                                  gfloat                  height)
-{
-	LrgEditorViewCamera  *cam;
-	LrgEditorView         v;
-	LrgEditorRenderMode   mode;
-	LrgEditorViewOverlays overlays;
-	LrgLevel             *level;
-	SceneWalk             walk;
-	gfloat                view_m[16], proj_m[16];
-	gboolean              wire;
+/* ==========================================================================
+ * Engine lighting: the light set from the level's LIGHT nodes
+ * ========================================================================== */
 
+
+/* A string visual param, or NULL. */
+static const gchar *
+param_string (LrgNodeVisual *visual,
+              const gchar   *name)
+{
+	const GValue *v = lrg_node_visual_get_param (visual, name);
+
+	return (v != NULL && G_VALUE_HOLDS_STRING (v)) ? g_value_get_string (v) : NULL;
+}
+
+/* A light's colour: its material colour (white without one) times
+ * @scale, clamped to 8 bits. */
+static GrlColor
+light_color (LrgNodeVisual *visual,
+             gfloat         scale)
+{
+	LrgMaterial3D *mat = lrg_node_visual_get_material (visual);
+	gfloat         rgba[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	GrlColor       c;
+
+	if (mat != NULL)
+		lrg_material3d_get_color (mat, &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+	c.r = (guint8) CLAMP (rgba[0] * scale * 255.0f, 0.0f, 255.0f);
+	c.g = (guint8) CLAMP (rgba[1] * scale * 255.0f, 0.0f, 255.0f);
+	c.b = (guint8) CLAMP (rgba[2] * scale * 255.0f, 0.0f, 255.0f);
+	c.a = 255;
+	return c;
+}
+
+static void
+normalize3 (gfloat *v)
+{
+	gfloat len = sqrtf (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+
+	if (len < 1e-6f)
+		return;
+	v[0] /= len;
+	v[1] /= len;
+	v[2] /= len;
+}
+
+typedef struct
+{
+	LrgEditorSceneRenderer *self;
+	guint                   count;
+	gboolean                have_sun;
+} LightWalk;
+
+/* Adds the LIGHT nodes of @node's visible subtree to the light set. */
+static void
+collect_lights (LightWalk    *lw,
+                LrgNode      *node,
+                const gfloat *parent_world)
+{
+	LrgEditorSceneRenderer *self = lw->self;
+	LrgNodeVisual          *visual;
+	GPtrArray              *children;
+	gfloat                  local[16], world[16];
+	guint                   i;
+
+	if (!lrg_node_get_visible (node))
+		return;
+	lrg_editor_node_get_local_matrix (node, local);
+	lrg_editor_math_multiply (parent_world, local, world);
+
+	visual = lrg_node_get_visual (node);
+	if (visual != NULL && lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_LIGHT)
+	{
+		gfloat       intensity = (gfloat) lrg_node_visual_get_param_double (visual, "intensity", 1.0);
+		const gchar *type = param_string (visual, "light_type");
+
+		if (g_strcmp0 (type, "directional") == 0)
+		{
+			/* The first directional light is the sun; it shines down
+			 * the node's local -Z like a camera looks */
+			if (!lw->have_sun)
+			{
+				const gfloat fwd[3] = { 0.0f, 0.0f, -1.0f };
+				GrlVector3   dir;
+				GrlColor     c = light_color (visual, intensity);
+
+				lrg_editor_math_transform_direction (world, fwd, self->sun_dir);
+				normalize3 (self->sun_dir);
+				dir.x = self->sun_dir[0];
+				dir.y = self->sun_dir[1];
+				dir.z = self->sun_dir[2];
+				lrg_light_set_set_directional (self->lights, &dir, &c);
+				lw->have_sun = TRUE;
+				lw->count++;
+			}
+		}
+		else
+		{
+			/* Point lights (and spot lights, which the engine's 3D
+			 * light set does not have: previewed as points) */
+			GrlColor c = light_color (visual, 1.0f);
+			gfloat   radius = (gfloat) lrg_node_visual_get_param_double (visual, "range", 10.0);
+			guint    id;
+
+			id = lrg_light_set_add_point_light (self->lights, world[12], world[13], world[14], &c,
+			                                    radius > 0.0f ? radius : 10.0f);
+			lrg_light_set_set_point_light_intensity (self->lights, id, MAX (intensity, 0.0f));
+			lw->count++;
+		}
+	}
+
+	children = lrg_node_get_children (node);
+	for (i = 0; children != NULL && i < children->len; i++)
+		collect_lights (lw, (LrgNode *) g_ptr_array_index (children, i), world);
+}
+
+guint
+lrg_editor_scene_renderer_sync_lights (LrgEditorSceneRenderer *self,
+                                       gboolean                scene_lighting)
+{
+	LrgLevel *level;
+	LightWalk lw;
+	GrlColor  ambient = { 58, 62, 78, 255 };
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), 0);
+
+	lrg_light_set_clear_point_lights (self->lights);
+	lrg_light_set_set_ambient (self->lights, &ambient);
+	lw.self = self;
+	lw.count = 0;
+	lw.have_sun = FALSE;
+
+	level = (self->editor != NULL) ? lrg_editor_get_level (self->editor) : NULL;
+	if (scene_lighting && level != NULL && lrg_level_get_root (level) != NULL)
+	{
+		LrgNode   *root = lrg_level_get_root (level);
+		GPtrArray *top = lrg_node_get_children (root);
+		gfloat     root_world[16];
+		guint      i;
+
+		lrg_editor_node_get_world_matrix (root, root_world);
+		for (i = 0; top != NULL && i < top->len; i++)
+			collect_lights (&lw, (LrgNode *) g_ptr_array_index (top, i), root_world);
+	}
+
+	/* No directional light in the level: the editor's preview sun */
+	if (!lw.have_sun)
+	{
+		GrlVector3 dir;
+		GrlColor   sun = { 214, 206, 192, 255 };
+
+		self->sun_dir[0] = DEFAULT_SUN_X;
+		self->sun_dir[1] = DEFAULT_SUN_Y;
+		self->sun_dir[2] = DEFAULT_SUN_Z;
+		normalize3 (self->sun_dir);
+		dir.x = self->sun_dir[0];
+		dir.y = self->sun_dir[1];
+		dir.z = self->sun_dir[2];
+		lrg_light_set_set_directional (self->lights, &dir, &sun);
+	}
+	self->scene_sun = lw.have_sun;
+	self->n_scene_lights = lw.count;
+	return lw.count;
+}
+
+gboolean
+lrg_editor_scene_renderer_has_scene_sun (LrgEditorSceneRenderer *self)
+{
 	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), FALSE);
-	g_return_val_if_fail (LRG_IS_EDITOR_VIEW_STATE (view), FALSE);
-	g_return_val_if_fail (nav == NULL || LRG_IS_EDITOR_VIEWPORT_NAV (nav), FALSE);
+
+	return self->scene_sun;
+}
+
+/* ==========================================================================
+ * Render targets inside the viewport's render callback
+ * ========================================================================== */
+
+/*
+ * Binds framebuffer @id (a render texture of @w x @h) as BeginTextureMode()
+ * would. raylib's texture modes do not nest, so switching between the
+ * viewport's target, the post images and the shadow passes goes through
+ * here; the viewport's own EndTextureMode() closes whichever is bound
+ * last, which is always its target again.
+ */
+static void
+enter_target (guint id,
+              gint  w,
+              gint  h)
+{
+	RenderTexture2D rt;
+
+	memset (&rt, 0, sizeof rt);
+	rt.id = id;
+	rt.texture.width = w;
+	rt.texture.height = h;
+	BeginTextureMode (rt);
+}
+
+/* The shader the walk draws with for @mode (NULL light-set shader: the
+ * editor's own fallbacks, then rlgl's default shader). */
+static Shader
+mode_shader (LrgEditorSceneRenderer *self,
+             LrgEditorRenderMode     mode,
+             GrlShader              *light_shader)
+{
+	switch (mode)
+	{
+	case LRG_EDITOR_RENDER_MODE_UNLIT:
+	case LRG_EDITOR_RENDER_MODE_WIREFRAME:
+		return self->has_unlit ? self->unlit : self->flat;
+	case LRG_EDITOR_RENDER_MODE_NORMALS:
+		return self->has_normals ? self->normals : self->flat;
+	case LRG_EDITOR_RENDER_MODE_LIT:
+	case LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY:
+	default:
+		if (light_shader != NULL)
+			return *(Shader *) grl_shader_get_handle (light_shader);
+		return self->has_lit ? self->lit : self->flat;
+	}
+}
+
+/* Walks the level's top-level nodes with @walk. */
+static void
+walk_level (SceneWalk *walk,
+            LrgLevel  *level)
+{
+	LrgNode   *root = lrg_level_get_root (level);
+	GPtrArray *top = lrg_node_get_children (root);
+	gfloat     root_world[16];
+	guint      i;
+
+	lrg_editor_node_get_world_matrix (root, root_world);
+	for (i = 0; top != NULL && i < top->len; i++)
+		draw_subtree (walk, (LrgNode *) g_ptr_array_index (top, i), root_world);
+	rlDrawRenderBatchActive ();
+}
+
+/*
+ * Renders this frame's shadow passes for @v: the cascades of the
+ * directional light around the view. The passes need the screen bound,
+ * so the viewport's target is left and re-entered afterwards.
+ *
+ * Returns: %TRUE when every pass rendered (the light set may sample them)
+ */
+static gboolean
+render_shadows (LrgEditorSceneRenderer *self,
+                const LrgEditorView    *v,
+                LrgLevel               *level,
+                guint                   outer,
+                gint                    w,
+                gint                    h)
+{
+	GrlShader *caster;
+	SceneWalk  walk;
+	gfloat     fwd[3];
+	guint      n, p;
+
+	fwd[0] = v->target[0] - v->position[0];
+	fwd[1] = v->target[1] - v->position[1];
+	fwd[2] = v->target[2] - v->position[2];
+	normalize3 (fwd);
+	n = lrg_shadow_renderer_update (self->shadows, self->lights, v->position, fwd, v->up, v->fovy,
+	                                (gfloat) w / (gfloat) MAX (h, 1), MAX (v->near_plane, 0.01f));
+	caster = lrg_shadow_renderer_get_caster_shader (self->shadows);
+	if (n == 0 || caster == NULL || level == NULL)
+		return FALSE;
+
+	memset (&walk, 0, sizeof walk);
+	walk.self = self;
+	walk.view = v;
+	walk.casters_only = TRUE;
+
+	rlDrawRenderBatchActive ();
+	EndTextureMode ();
+	self->cur_shader = *(Shader *) grl_shader_get_handle (caster);
+	self->white_albedo = FALSE;
+	for (p = 0; p < n; p++)
+	{
+		if (!lrg_shadow_renderer_begin_pass (self->shadows, p))
+			continue;
+		walk_level (&walk, level);
+		lrg_shadow_renderer_end_pass (self->shadows);
+	}
+	enter_target (outer, w, h);
+	return lrg_shadow_renderer_is_ready (self->shadows);
+}
+
+/* (Re)creates a post slot's images at @w x @h. */
+static gboolean
+ensure_post_slot (LrgEditorSceneRenderer *self,
+                  guint                   index,
+                  gint                    w,
+                  gint                    h)
+{
+	PostSlot *slot = &self->post_slots[index];
+
+	if (slot->scene.id != 0 && slot->width == w && slot->height == h)
+		return TRUE;
+	g_clear_object (&slot->out_texture);
+	if (slot->scene.id != 0)
+		UnloadRenderTexture (slot->scene);
+	if (slot->out.id != 0)
+		UnloadRenderTexture (slot->out);
+	slot->scene = LoadRenderTexture (w, h);
+	slot->out = LoadRenderTexture (w, h);
+	slot->width = w;
+	slot->height = h;
+	if (slot->scene.id == 0 || slot->out.id == 0)
+		return FALSE;
+	SetTextureFilter (slot->scene.texture, TEXTURE_FILTER_BILINEAR);
+	SetTextureWrap (slot->scene.texture, TEXTURE_WRAP_CLAMP);
+	slot->out_texture = grl_texture_new_from_handle (&slot->out.texture);
+	return TRUE;
+}
+
+static void
+post_uniform_float (LrgEditorSceneRenderer *self,
+                    gint                    loc,
+                    gfloat                  value)
+{
+	SetShaderValue (self->post, self->post_locs[loc], &value, SHADER_UNIFORM_FLOAT);
+}
+
+static void
+post_uniform_int (LrgEditorSceneRenderer *self,
+                  gint                    loc,
+                  gint                    value)
+{
+	SetShaderValue (self->post, self->post_locs[loc], &value, SHADER_UNIFORM_INT);
+}
+
+static gboolean
+effect_on (LrgPostEffect *effect)
+{
+	return effect != NULL && lrg_post_effect_is_enabled (effect);
+}
+
+/*
+ * The preview post chain: scene image -> post shader (FXAA, bloom,
+ * vignette, with the slot's effect parameters) -> LrgColorGrade into the
+ * viewport target.
+ */
+static void
+apply_post (LrgEditorSceneRenderer *self,
+            guint                   index,
+            guint                   outer,
+            gint                    w,
+            gint                    h)
+{
+	PostSlot      *slot = &self->post_slots[index];
+	LrgPostEffect *fxaa = lrg_post_processor_get_effect (slot->processor, "fxaa");
+	LrgPostEffect *bloom = lrg_post_processor_get_effect (slot->processor, "bloom");
+	LrgPostEffect *vignette = lrg_post_processor_get_effect (slot->processor, "vignette");
+	LrgPostEffect *grade = lrg_post_processor_get_effect (slot->processor, "color-grade");
+	Rectangle      src = { 0.0f, 0.0f, (gfloat) w, -(gfloat) h };
+	gfloat         res[2] = { (gfloat) w, (gfloat) h };
+	gfloat         rgb[3] = { 1.0f, 1.0f, 1.0f };
+
+	/* Pass 1: the post shader, scene -> out */
+	enter_target (slot->out.id, w, h);
+	ClearBackground (BLACK);
+	BeginShaderMode (self->post);
+	SetShaderValue (self->post, self->post_locs[POST_LOC_RESOLUTION], res, SHADER_UNIFORM_VEC2);
+	post_uniform_int (self, POST_LOC_FXAA_ON, effect_on (fxaa));
+	if (fxaa != NULL)
+	{
+		post_uniform_float (self, POST_LOC_FXAA_EDGE, lrg_fxaa_get_edge_threshold (LRG_FXAA (fxaa)));
+		post_uniform_float (self, POST_LOC_FXAA_EDGE_MIN, lrg_fxaa_get_edge_threshold_min (LRG_FXAA (fxaa)));
+	}
+	post_uniform_int (self, POST_LOC_BLOOM_ON, effect_on (bloom));
+	if (bloom != NULL)
+	{
+		post_uniform_float (self, POST_LOC_BLOOM_THRESHOLD, lrg_bloom_get_threshold (LRG_BLOOM (bloom)));
+		post_uniform_float (self, POST_LOC_BLOOM_KNEE, lrg_bloom_get_soft_knee (LRG_BLOOM (bloom)));
+		post_uniform_float (self, POST_LOC_BLOOM_INTENSITY, lrg_bloom_get_intensity (LRG_BLOOM (bloom)));
+		post_uniform_float (self, POST_LOC_BLOOM_SIZE, lrg_bloom_get_blur_size (LRG_BLOOM (bloom)));
+		lrg_bloom_get_tint (LRG_BLOOM (bloom), &rgb[0], &rgb[1], &rgb[2]);
+		SetShaderValue (self->post, self->post_locs[POST_LOC_BLOOM_TINT], rgb, SHADER_UNIFORM_VEC3);
+	}
+	post_uniform_int (self, POST_LOC_VIGNETTE_ON, effect_on (vignette));
+	if (vignette != NULL)
+	{
+		post_uniform_float (self, POST_LOC_VIGNETTE_INTENSITY, lrg_vignette_get_intensity (LRG_VIGNETTE (vignette)));
+		post_uniform_float (self, POST_LOC_VIGNETTE_RADIUS, lrg_vignette_get_radius (LRG_VIGNETTE (vignette)));
+		post_uniform_float (self, POST_LOC_VIGNETTE_SMOOTHNESS,
+		                    lrg_vignette_get_smoothness (LRG_VIGNETTE (vignette)));
+		lrg_vignette_get_color (LRG_VIGNETTE (vignette), &rgb[0], &rgb[1], &rgb[2]);
+		SetShaderValue (self->post, self->post_locs[POST_LOC_VIGNETTE_COLOR], rgb, SHADER_UNIFORM_VEC3);
+	}
+	DrawTextureRec (slot->scene.texture, src, (Vector2) { 0.0f, 0.0f }, WHITE);
+	EndShaderMode ();
+
+	/* Pass 2: colour grade, out -> the viewport target */
+	enter_target (outer, w, h);
+	if (effect_on (grade) && slot->out_texture != NULL)
+	{
+		GrlRectangle gsrc = { 0.0f, 0.0f, (gfloat) w, -(gfloat) h };
+		GrlRectangle gdst = { 0.0f, 0.0f, (gfloat) w, (gfloat) h };
+
+		lrg_color_grade_draw_texture (LRG_COLOR_GRADE (grade), slot->out_texture, &gsrc, &gdst);
+	}
+	else
+		DrawTextureRec (slot->out.texture, src, (Vector2) { 0.0f, 0.0f }, WHITE);
+	rlDrawRenderBatchActive ();
+}
+
+/*
+ * The whole render: lights, shadows, the scene (optionally into the
+ * post image), post, then the legacy 2D overlays.
+ */
+static gboolean
+render_core (LrgEditorSceneRenderer    *self,
+             const LrgEditorView       *in_view,
+             const LrgEditorViewCamera *cam,
+             gboolean                   view_2d,
+             guint                      slot,
+             LrgEditorRenderMode        mode,
+             LrgEditorViewOverlays      overlays,
+             gboolean                   tile_mode,
+             LrgEditorViewportNav      *nav,
+             gboolean                   active,
+             gfloat                     width,
+             gfloat                     height)
+{
+	LrgEditorView  v;
+	LrgLevel      *level;
+	GrlShader     *light_shader = NULL;
+	SceneWalk      walk;
+	gfloat         view_m[16], proj_m[16];
+	gboolean       wire, lit_mode, shadows_ok = FALSE, post = FALSE, perspective;
+	guint          outer;
+	gint           iw, ih;
 
 	self->drawn = 0;
 	if (!ensure_gl (self))
 		return FALSE;
 
-	/* Our own copy of the camera, sized to the target. */
-	cam = lrg_editor_view_state_get_camera (view, viewport);
-	v = cam->view;
+	v = *in_view;
 	v.width = MAX (width, 1.0f);
 	v.height = MAX (height, 1.0f);
-	mode = lrg_editor_view_state_get_render_mode (view, viewport);
-	overlays = lrg_editor_view_state_get_overlays (view, viewport);
+	iw = (gint) v.width;
+	ih = (gint) v.height;
 	wire = (mode == LRG_EDITOR_RENDER_MODE_WIREFRAME);
+	lit_mode = (mode == LRG_EDITOR_RENDER_MODE_LIT || mode == LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY);
+	perspective = !v.orthographic && !view_2d;
+	outer = rlGetActiveFramebuffer ();
+	level = (self->editor != NULL) ? lrg_editor_get_level (self->editor) : NULL;
+	if (level != NULL && lrg_level_get_root (level) == NULL)
+		level = NULL;
 
-	lrg_editor_view_get_view_matrix (&v, view_m);
-	lrg_editor_view_get_projection_matrix (&v, proj_m);
+	/* --- Lights and shadows ---------------------------------------------- */
+	lrg_editor_scene_renderer_sync_lights (self, (overlays & LRG_EDITOR_VIEW_OVERLAY_SCENE_LIGHTING) != 0);
+	if (lit_mode)
+		light_shader = lrg_light_set_get_shader (self->lights);
+	if (light_shader != NULL && (overlays & LRG_EDITOR_VIEW_OVERLAY_SHADOWS) && perspective && outer != 0)
+		shadows_ok = render_shadows (self, &v, level, outer, iw, ih);
+	lrg_light_set_set_shadow_renderer (self->lights, shadows_ok ? self->shadows : NULL);
+
+	/* --- Where the scene goes: the post image or the target itself ----- */
+	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_POST) && self->has_post && slot < N_POST_SLOTS && outer != 0 &&
+	    ensure_post_slot (self, slot, iw, ih))
+	{
+		post = TRUE;
+		enter_target (self->post_slots[slot].scene.id, iw, ih);
+	}
 
 	ClearBackground (self->playing ? COL_BG_PLAY : COL_BG_EDIT);
 
 	/* --- 3D pass ----------------------------------------------------------
 	 * BeginMode3D() with our own matrices (the same ones picking uses). */
+	lrg_editor_view_get_view_matrix (&v, view_m);
+	lrg_editor_view_get_projection_matrix (&v, proj_m);
 	rlDrawRenderBatchActive ();
 	rlMatrixMode (RL_PROJECTION);
 	rlPushMatrix ();
@@ -1756,66 +2619,267 @@ lrg_editor_scene_renderer_render (LrgEditorSceneRenderer *self,
 	rlMultMatrixf (view_m);
 	rlEnableDepthTest ();
 
-	if (self->has_lit)
+	/* The sky first, behind everything (perspective views only) */
+	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_SKY) && perspective)
 	{
-		const gfloat light[3] = { -0.35f, -0.85f, -0.4f };
-		gfloat       len = sqrtf (light[0] * light[0] + light[1] * light[1] + light[2] * light[2]);
-		gfloat       dir[3];
-		gfloat       ambient = 0.35f;
+		GrlVector3 eye;
+		GrlVector3 toward_sun;
 
-		dir[0] = light[0] / len;
-		dir[1] = light[1] / len;
-		dir[2] = light[2] / len;
-		SetShaderValue (self->lit, self->loc_light, dir, SHADER_UNIFORM_VEC3);
+		eye.x = v.position[0];
+		eye.y = v.position[1];
+		eye.z = v.position[2];
+		toward_sun.x = -self->sun_dir[0];
+		toward_sun.y = -self->sun_dir[1];
+		toward_sun.z = -self->sun_dir[2];
+		lrg_sky_dome_set_sun_direction (self->sky, &toward_sun);
+		lrg_sky_dome_set_radius (self->sky, CLAMP (v.far_plane * 0.5f, 1.0f, 500.0f));
+		lrg_sky_dome_draw (self->sky, &eye);
+		rlDrawRenderBatchActive ();
+	}
+
+	/* What the nodes draw with */
+	self->cur_shader = mode_shader (self, mode, light_shader);
+	self->white_albedo = (mode == LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY);
+	if (light_shader != NULL)
+		lrg_light_set_apply (self->lights, v.position[0], v.position[1], v.position[2]);
+	else if (lit_mode && self->has_lit)
+	{
+		gfloat ambient = 0.35f;
+
+		SetShaderValue (self->lit, self->loc_light, self->sun_dir, SHADER_UNIFORM_VEC3);
 		SetShaderValue (self->lit, self->loc_ambient, &ambient, SHADER_UNIFORM_FLOAT);
 	}
 
 	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_GRID) != 0)
-		draw_grid (self, &v, cam->view_2d);
+		draw_grid (self, &v, view_2d);
 
-	/* Nodes, icons and selection bounds in one walk of the tree. */
-	level = (self->editor != NULL) ? lrg_editor_get_level (self->editor) : NULL;
-	if (level != NULL && lrg_level_get_root (level) != NULL)
+	/* Nodes, icons and selection bounds in one walk of the tree */
+	if (level != NULL)
 	{
-		LrgNode   *root = lrg_level_get_root (level);
-		GPtrArray *top;
-		gfloat     root_world[16];
-		guint      i;
-
-		if (wire)
-			rlEnableWireMode ();
+		memset (&walk, 0, sizeof walk);
 		walk.self = self;
 		walk.view = &v;
 		walk.selection = lrg_editor_get_selection (self->editor);
 		walk.primary = (walk.selection != NULL) ? lrg_editor_selection_get_primary (walk.selection) : NULL;
 		walk.show_icons = (overlays & LRG_EDITOR_VIEW_OVERLAY_ICONS) != 0;
-		walk.tile_mode = lrg_editor_view_state_get_tile_mode (view);
-		lrg_editor_node_get_world_matrix (root, root_world);
-		top = lrg_node_get_children (root);
-		for (i = 0; top != NULL && i < top->len; i++)
-			draw_subtree (&walk, (LrgNode *) g_ptr_array_index (top, i), root_world);
-		rlDrawRenderBatchActive ();
+		walk.show_bounds = (overlays & LRG_EDITOR_VIEW_OVERLAY_BOUNDS) != 0;
+		walk.tile_mode = tile_mode;
+		if (wire)
+			rlEnableWireMode ();
+		walk_level (&walk, level);
 		if (wire)
 			rlDisableWireMode ();
 	}
+	self->white_albedo = FALSE;
+	self->cur_shader = self->has_lit ? self->lit : self->flat;
 
-	/* Back to the target's 2D projection (EndMode3D pops ours). */
+	/* Back to the target's 2D projection (EndMode3D pops ours) */
 	EndMode3D ();
 
-	/* --- 2D pass, viewport-local pixels ----------------------------------- */
-	if (active && self->gizmo != NULL && self->editor != NULL && (overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) != 0)
-		draw_gizmo (self, &v);
-	if (nav != NULL)
+	if (post)
+		apply_post (self, slot, outer, iw, ih);
+
+	/* --- Legacy 2D pass, viewport-local pixels ---------------------------- */
+	if (self->draw_overlays && self->editor != NULL)
 	{
-		if (!cam->view_2d)
-			draw_nav_gizmo (nav);
-		draw_box_select (nav);
+		if (active && self->gizmo != NULL && (overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) != 0)
+			draw_gizmo (self, &v);
+		if (nav != NULL)
+		{
+			if (!view_2d)
+				draw_nav_gizmo (nav);
+			draw_box_select (nav);
+		}
+		if (cam != NULL)
+			draw_overlay_text (self, cam, mode, (overlays & LRG_EDITOR_VIEW_OVERLAY_STATS) != 0, v.width);
 	}
-	if (self->editor != NULL)
-		draw_overlay_text (self, cam, mode, (overlays & LRG_EDITOR_VIEW_OVERLAY_STATS) != 0, v.width);
 	rlDrawRenderBatchActive ();
 
 	return TRUE;
+}
+
+gboolean
+lrg_editor_scene_renderer_render (LrgEditorSceneRenderer *self,
+                                  LrgEditorViewState     *view,
+                                  gint                    viewport,
+                                  LrgEditorViewportNav   *nav,
+                                  gboolean                active,
+                                  gfloat                  width,
+                                  gfloat                  height)
+{
+	LrgEditorViewCamera *cam;
+	guint                slot;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), FALSE);
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEW_STATE (view), FALSE);
+	g_return_val_if_fail (nav == NULL || LRG_IS_EDITOR_VIEWPORT_NAV (nav), FALSE);
+
+	cam = lrg_editor_view_state_get_camera (view, viewport);
+	slot = (viewport >= 0) ? (guint) viewport : lrg_editor_view_state_get_active_viewport (view);
+	return render_core (self, &cam->view, cam, cam->view_2d, slot,
+	                    lrg_editor_view_state_get_render_mode (view, viewport),
+	                    lrg_editor_view_state_get_overlays (view, viewport),
+	                    lrg_editor_view_state_get_tile_mode (view), nav, active, width, height);
+}
+
+gboolean
+lrg_editor_scene_renderer_render_view (LrgEditorSceneRenderer *self,
+                                       const LrgEditorView    *view,
+                                       gboolean                view_2d,
+                                       guint                   slot,
+                                       LrgEditorRenderMode     mode,
+                                       LrgEditorViewOverlays   overlays,
+                                       gfloat                  width,
+                                       gfloat                  height)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), FALSE);
+	g_return_val_if_fail (view != NULL, FALSE);
+
+	return render_core (self, view, NULL, view_2d, slot, mode, overlays, FALSE, NULL, FALSE, width, height);
+}
+
+void
+lrg_editor_scene_renderer_set_draw_overlays (LrgEditorSceneRenderer *self,
+                                             gboolean                draw_overlays)
+{
+	g_return_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self));
+
+	self->draw_overlays = draw_overlays ? TRUE : FALSE;
+}
+
+gboolean
+lrg_editor_scene_renderer_get_draw_overlays (LrgEditorSceneRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), FALSE);
+
+	return self->draw_overlays;
+}
+
+LrgLightSet *
+lrg_editor_scene_renderer_get_light_set (LrgEditorSceneRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	return self->lights;
+}
+
+LrgShadowRenderer *
+lrg_editor_scene_renderer_get_shadow_renderer (LrgEditorSceneRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	return self->shadows;
+}
+
+LrgSkyDome *
+lrg_editor_scene_renderer_get_sky_dome (LrgEditorSceneRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	return self->sky;
+}
+
+LrgPostProcessor *
+lrg_editor_scene_renderer_get_post_processor (LrgEditorSceneRenderer *self,
+                                              guint                   slot)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	if (slot >= N_POST_SLOTS)
+		return NULL;
+	return self->post_slots[slot].processor;
+}
+
+guint
+lrg_editor_scene_renderer_get_generation (LrgEditorSceneRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), 0);
+
+	return self->generation;
+}
+
+gboolean
+lrg_editor_scene_renderer_is_asset_missing (LrgEditorSceneRenderer *self,
+                                            LrgNode                *node)
+{
+	LrgNodeVisual     *visual;
+	LrgNodeVisualKind  kind;
+	const gchar       *asset;
+	g_autofree gchar  *abs = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+
+	visual = lrg_node_get_visual (node);
+	if (visual == NULL)
+		return FALSE;
+	kind = lrg_node_visual_get_kind (visual);
+	if (kind != LRG_NODE_VISUAL_MESH_ASSET && kind != LRG_NODE_VISUAL_SPRITE && kind != LRG_NODE_VISUAL_TILEMAP)
+		return FALSE;
+	asset = lrg_node_visual_get_asset (visual);
+	if (asset == NULL || *asset == '\0')
+		return kind != LRG_NODE_VISUAL_TILEMAP;   /* a tilemap may use plain swatches */
+
+	/* A load that failed is missing too (cached as NULL values) */
+	abs = resolve_path (self, asset);
+	if (g_hash_table_contains (self->models, abs) && g_hash_table_lookup (self->models, abs) == NULL)
+		return TRUE;
+	if (g_hash_table_contains (self->textures, abs) && g_hash_table_lookup (self->textures, abs) == NULL)
+		return TRUE;
+	return !g_file_test (abs, G_FILE_TEST_IS_REGULAR);
+}
+
+void
+lrg_editor_scene_renderer_camera_node_view (LrgNode       *node,
+                                            gfloat         width,
+                                            gfloat         height,
+                                            LrgEditorView *out)
+{
+	LrgNodeVisual *visual;
+	gfloat         world[16], fwd[3], up[3];
+	const gfloat   minus_z[3] = { 0.0f, 0.0f, -1.0f };
+	const gfloat   plus_y[3] = { 0.0f, 1.0f, 0.0f };
+
+	g_return_if_fail (LRG_IS_NODE (node));
+	g_return_if_fail (out != NULL);
+
+	lrg_editor_view_init_default (out, MAX (width, 1.0f), MAX (height, 1.0f));
+	lrg_editor_node_get_world_matrix (node, world);
+	lrg_editor_math_transform_direction (world, minus_z, fwd);
+	lrg_editor_math_transform_direction (world, plus_y, up);
+	normalize3 (fwd);
+	normalize3 (up);
+
+	out->position[0] = world[12];
+	out->position[1] = world[13];
+	out->position[2] = world[14];
+	out->target[0] = world[12] + fwd[0];
+	out->target[1] = world[13] + fwd[1];
+	out->target[2] = world[14] + fwd[2];
+	memcpy (out->up, up, sizeof up);
+	out->orthographic = FALSE;
+
+	visual = lrg_node_get_visual (node);
+	if (visual != NULL)
+	{
+		out->fovy = (gfloat) CLAMP (lrg_node_visual_get_param_double (visual, "fov", 60.0), 1.0, 179.0);
+		out->near_plane = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "near", 0.1), 0.001);
+		out->far_plane = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "far", 1000.0),
+		                               out->near_plane + 0.01);
+	}
+}
+
+const gchar *
+lrg_editor_scene_renderer_get_shader_source (const gchar *name)
+{
+	guint i;
+
+	g_return_val_if_fail (name != NULL, NULL);
+
+	for (i = 0; i < G_N_ELEMENTS (shader_sources); i++)
+		if (g_strcmp0 (shader_sources[i].name, name) == 0)
+			return shader_sources[i].source;
+	return NULL;
 }
 
 guint
@@ -1843,6 +2907,7 @@ lrg_editor_scene_renderer_forget_asset (LrgEditorSceneRenderer *self,
 	g_hash_table_remove_all (self->texture_by_asset);
 	g_hash_table_remove (self->models, abs_path);
 	g_hash_table_remove (self->textures, abs_path);
+	self->generation++;
 }
 
 GrlImage *
