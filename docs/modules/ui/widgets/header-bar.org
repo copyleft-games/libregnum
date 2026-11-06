@@ -1,0 +1,194 @@
+#+title: LrgHeaderBar
+#+description: A client-side title bar with start / end children, a centred title, window buttons and window dragging
+#+authors: Zach Podbielniak
+#+categories: libregnum ui widgets
+
+* Header bar
+:PROPERTIES:
+:CUSTOM_ID: header-bar
+:END:
+=LrgHeaderBar= is the title bar of a window that draws its own decorations (raylib's =FLAG_WINDOW_UNDECORATED=): tools, editors and launchers that want a GNOME-style bar with buttons in it instead of the system frame. It is an =LrgContainer= with three regions:
+
+#+begin_example
+[lead buttons][start children ...]        title        [... end children][trail buttons]
+#+end_example
+
+- *start children* are packed from the leading edge (the left in left-to-right);
+- *end children* are packed from the trailing edge inwards, so the first end child sits next to the window buttons;
+- the *title* (and optional smaller, muted *subtitle*), or a custom *title widget*, is centred on the whole bar, and pushed sideways only as far as needed to stay clear of the side groups; text that still does not fit is clipped;
+- the *window buttons* (minimise, maximise / restore, close) are painted by the bar itself as round, glass-friendly discs with vector glyphs, laid out from a GTK-style decoration layout string. Each has its own hover and press springs; the close button turns =DANGER= with on-accent glyphs when hovered.
+
+Pressing on empty bar space (or on an inert child such as a label) and dragging moves the OS window; a double click there toggles maximise.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: header-bar-creation
+:END:
+#+begin_src C
+LrgHeaderBar *bar = lrg_header_bar_new ();
+LrgButton    *open = lrg_button_new ("Open");
+LrgButton    *menu = lrg_button_new ("Menu");
+
+SetConfigFlags (FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_RESIZABLE);
+/* ... create the window and the canvas ... */
+
+lrg_header_bar_set_title (bar, "Document.txt");
+lrg_header_bar_set_subtitle (bar, "~/notes");
+lrg_header_bar_pack_start (bar, LRG_WIDGET (open));
+lrg_header_bar_pack_end (bar, LRG_WIDGET (menu));
+g_object_unref (open);
+g_object_unref (menu);
+
+/* Ask before closing when there are unsaved changes */
+g_signal_connect (bar, "close-requested", G_CALLBACK (on_close_requested), doc);
+/* The close button ends in app.quit -> LrgCanvas::quit-requested */
+g_signal_connect (canvas, "quit-requested", G_CALLBACK (on_quit), app);
+
+lrg_container_add_child (LRG_CONTAINER (main_vbox), LRG_WIDGET (bar));
+#+end_src
+
+=lrg_container_add_child()= packs at the start, like =lrg_header_bar_pack_start()=. =lrg_header_bar_set_child_packing()= moves an existing child between the groups (the loader uses it for a per-child =pack= key).
+
+** Decoration layout
+:PROPERTIES:
+:CUSTOM_ID: header-bar-decoration-layout
+:END:
+The =decoration-layout= property names the buttons and their side, exactly like GTK's =gtk-decoration-layout=: comma-separated names before the colon go to the leading edge, after it to the trailing edge.
+
+| Layout | Result |
+|--------+--------|
+| =":minimize,maximize,close"= (default) | all three at the trailing edge |
+| ="close:"= | macOS style: close alone at the leading edge |
+| ="menu:minimize,close"= | minimise and close at the trailing edge; =menu= is ignored |
+| ="close,minimize:maximize"= | close and minimise leading, maximise trailing |
+| ="minimize,close"= | no colon: everything at the leading edge (GTK behaviour) |
+
+Known names are =minimize=, =maximize= and =close=; whitespace is ignored, unknown names (=menu=, =icon=, =spacer=) are skipped, and each button is used once (the first occurrence wins). =lrg_header_bar_parse_decoration_layout()= exposes the parser. =show-window-buttons= hides all of them (e.g. in fullscreen) and gives their space back to the children.
+
+** Window operations
+:PROPERTIES:
+:CUSTOM_ID: header-bar-window
+:END:
+| Action | What happens |
+|--------+--------------|
+| Close button | emits =::close-requested=; unless a handler returns =TRUE=, activates ="app.quit"= with =lrg_widget_activate_action()=, which the canvas turns into =LrgCanvas::quit-requested= (an app's own "app" group on a nearer widget takes precedence) |
+| Minimise button | =MinimizeWindow()= |
+| Maximise button | =MaximizeWindow()=, or =RestoreWindow()= when =IsWindowMaximized()=; the glyph switches to a "restore" double frame while maximised |
+| Drag on empty space | the window follows the pointer: on every move, the pointer's offset from the press point is added to =GetWindowPosition()= with =SetWindowPosition()= |
+| Double click on empty space | toggles maximise (two presses within 0.4 s and 6 units) |
+
+All of these go through an =LrgHeaderBarWindowFuncs= table. The default table (=lrg_header_bar_get_default_window_funcs()=) calls raylib, and every call is guarded by =IsWindowReady()=, so a bar on a headless canvas is harmless. Install your own with =lrg_header_bar_set_window_funcs()= when the window is owned some other way, or in tests:
+
+#+begin_src C
+static const LrgHeaderBarWindowFuncs fake = {
+	fake_can_move, fake_get_position, fake_set_position,
+	fake_minimize, fake_is_maximized, fake_maximize, fake_restore
+};
+
+lrg_header_bar_set_window_funcs (bar, &fake, &window_state, NULL);
+#+end_src
+
+Any member may be =NULL= (a no-op). Passing =NULL= for the table restores the raylib functions.
+
+*** Wayland
+Wayland compositors do not let clients position their own windows, and GLFW's =glfwSetWindowPos()= is a no-op there (it only logs a "feature unavailable" error). The default =can_move= therefore returns =FALSE= on Wayland, and dragging the bar does nothing; maximise, minimise and close keep working. The platform is read from GLFW (=glfwGetPlatform()=, weakly linked from graylib's embedded GLFW 3.4); without it, a session with =XDG_SESSION_TYPE=wayland= and no =DISPLAY= counts as Wayland. Under XWayland (=GLFW= on its X11 backend) dragging works. A proper fix needs an interactive move request (=xdg_toplevel.move=, which GLFW does not expose); =lrg_header_bar_get_can_move_window()= tells an app whether dragging will work, e.g. to hide a "drag here" hint.
+
+The drag uses canvas coordinates as screen pixels. When the canvas is scaled to the window (a pointer transform or high-DPI scaling), the window moves by the scaled delta.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: header-bar-behaviour
+:END:
+| Input | Effect |
+|-------+--------|
+| Hover a window button | its hover spring lifts the disc to =CONTROL_HOVER= (=DANGER= for close) |
+| Press a window button, release on it | activates it (=lrg_header_bar_activate_button()=) |
+| Press a window button, release elsewhere | nothing |
+| Left press on drag area, move | drags the window (no-op where it cannot move) |
+| Double click on drag area | toggles maximise |
+| Clicks on interactive children | go to the children; the bar never sees them |
+
+The *drag area* (=lrg_header_bar_is_drag_area()=) is every point of the bar that is not on a window button and not on an interactive child: a visible, enabled, focusable widget, searched through nested containers. Labels, images and separators therefore drag, as in GTK. Presses on inert children reach the bar by bubbling. The header bar itself is not focusable and its window buttons are not in the keyboard focus chain (use shortcuts such as =<Ctrl>q= bound to ="app.quit"=).
+
+*** Right-to-left
+In right-to-left the whole bar mirrors: start children from the right, end children from the left, and the decoration layout's leading side is the right edge, so the default layout puts close at the far left with maximise and minimise to its right.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: header-bar-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_header_bar_new()= | Creates a bar with the default layout and no title |
+| =lrg_header_bar_pack_start()= / =lrg_header_bar_pack_end()= | Adds a child to the start / end group |
+| =lrg_header_bar_get_child_packing()= / =lrg_header_bar_set_child_packing()= | Whether a child is in the end group; move it |
+| =lrg_header_bar_get_title()= / =lrg_header_bar_set_title()= | Title text |
+| =lrg_header_bar_get_subtitle()= / =lrg_header_bar_set_subtitle()= | Subtitle under the title |
+| =lrg_header_bar_get_title_widget()= / =lrg_header_bar_set_title_widget()= | Custom centred widget (added as a child; replacing it removes the old one); =NULL= returns to the text title |
+| =lrg_header_bar_get_show_window_buttons()= / =lrg_header_bar_set_show_window_buttons()= | Draw the window buttons (default =TRUE=) |
+| =lrg_header_bar_get_decoration_layout()= / =lrg_header_bar_set_decoration_layout()= | Button layout string; =NULL= restores the default |
+| =lrg_header_bar_parse_decoration_layout()= | Parses a layout into leading / trailing button arrays; returns the count |
+| =lrg_header_bar_get_draggable()= / =lrg_header_bar_set_draggable()= | Whether drags and double clicks act on the window (default =TRUE=) |
+| =lrg_header_bar_is_drag_area()= | Whether a press at a world point would drag |
+| =lrg_header_bar_get_button_at()= | The window button under a world point |
+| =lrg_header_bar_get_button_rect()= | World rectangle of a shown window button, after mirroring |
+| =lrg_header_bar_activate_button()= | Does what clicking a window button does |
+| =lrg_header_bar_set_window_funcs()= | Replaces the window operations (copied; optional user data and destroy notify) |
+| =lrg_header_bar_get_default_window_funcs()= | The raylib window operations |
+| =lrg_header_bar_get_can_move_window()= | Whether dragging would actually move the window |
+| =lrg_header_bar_button_get_type()= | GType of =LrgHeaderBarButton= |
+
+=LrgHeaderBarButton=: =LRG_HEADER_BAR_BUTTON_NONE=, =LRG_HEADER_BAR_BUTTON_MINIMIZE=, =LRG_HEADER_BAR_BUTTON_MAXIMIZE=, =LRG_HEADER_BAR_BUTTON_CLOSE= (nicks =none=, =minimize=, =maximize=, =close=). =LRG_HEADER_BAR_DEFAULT_DECORATION_LAYOUT= is =":minimize,maximize,close"=.
+
+=LrgHeaderBarWindowFuncs= members: =can_move=, =get_position=, =set_position=, =minimize=, =is_maximized=, =maximize=, =restore=; each receives the =user_data= given to =lrg_header_bar_set_window_funcs()=.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: header-bar-properties
+:END:
+| Name | Type | Notes |
+|------+------+-------|
+| =title= | =gchar*= | centred title |
+| =subtitle= | =gchar*= | smaller line under the title |
+| =title-widget= | =LrgWidget= | replaces the text title |
+| =show-window-buttons= | =gboolean= | default =TRUE= |
+| =decoration-layout= | =gchar*= | default =":minimize,maximize,close"= |
+| =draggable= | =gboolean= | default =TRUE= |
+| =::close-requested= | signal, returns =gboolean= | before "app.quit"; return =TRUE= to stop it |
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: header-bar-styling
+:END:
+| Part | States | Default look |
+|------+--------+--------------|
+| =BOX= | | the bar: =PANEL= fill, square corners; the border colour and width are drawn only as a hairline along the bottom edge (=BORDER=, at least 1 unit). Materials apply, so a rule with =material: glass= gives a translucent bar over content |
+| =LABEL= | | title text colour (=TEXT=) |
+| =HEADER= | | subtitle text colour (=TEXT_MUTED=) |
+| =ITEM= | rest, =HOVERED=, =PRESSED=, =DISABLED= | window button discs: =CONTROL= at 55% alpha at rest, =CONTROL_HOVER= / =CONTROL_PRESSED=, glyph colour from the foreground; fully round |
+| =ITEM= + =SELECTED= | =HOVERED=, =PRESSED= | the close button (resolved with =SELECTED= added): =DANGER= (darker when pressed) with =TEXT_ON_ACCENT= glyph |
+
+Write theme rules for the close button with the =selected= state, e.g. =LrgHeaderBar ITEM selected:hovered=. Title and subtitle use the theme UI font at =FONT_SIZE= and =FONT_SIZE_SMALL=; window buttons are =CONTROL_HEIGHT * 0.72= across. Children are given their preferred size, centred vertically.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: header-bar-yaml
+:END:
+Supported by =LrgUILoader= as =LrgHeaderBar= (the integration pass fills in the details). Properties map directly; children need a per-child =pack: start|end= key (=lrg_header_bar_set_child_packing()=) and a =title-widget= child slot.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: header-bar-pitfalls
+:END:
+- =MaximizeWindow()= needs =FLAG_WINDOW_RESIZABLE=; without it raylib ignores the maximise button.
+- Dragging cannot work on Wayland (see above); test on X11 or XWayland.
+- A focusable container (rare) blocks dragging over its whole area.
+- The close button does nothing visible unless something handles ="app.quit"= (connect =LrgCanvas::quit-requested=) or =::close-requested=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: header-bar-see-also
+:END:
+- [[file:../actions.org][Actions]] for ="app.quit"= and shortcuts
+- [[file:menu-bar.org][LrgMenuBar]], which can be packed into the bar
+- [[file:../styling.org][Styling]]

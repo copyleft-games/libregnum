@@ -229,6 +229,9 @@
 #include "ui/lrg-timeline-view.h"
 #include "ui/lrg-dock-area.h"
 #include "ui/lrg-ui-actions.h"
+#include "ui/lrg-pagination.h"
+#include "ui/lrg-header-bar.h"
+#include "ui/lrg-notification.h"
 
 /* Tilemap module */
 #include "tilemap/lrg-tileset.h"
