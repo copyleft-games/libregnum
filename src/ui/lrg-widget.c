@@ -127,6 +127,12 @@ typedef struct
 
 	/* Layout direction set on this widget (INHERIT by default) */
 	LrgWidgetDirection direction;
+
+	/* Tab handling: -1 = the class default, else FALSE / TRUE */
+	gint            accepts_tab;
+
+	/* Menu opened by an unhandled right click / Menu key, nullable */
+	GMenuModel     *context_menu;
 } LrgWidgetPrivate;
 
 /* A per-instance look override (lrg_widget_set_part_look) */
@@ -160,6 +166,8 @@ enum
 	PROP_STATE_FLAGS,
 	PROP_THEME,
 	PROP_DIRECTION,
+	PROP_ACCEPTS_TAB,
+	PROP_CONTEXT_MENU,
 	N_PROPS
 };
 
@@ -335,6 +343,7 @@ lrg_widget_finalize (GObject *object)
 	g_clear_pointer (&priv->part_looks, g_array_unref);
 	g_clear_object (&priv->theme);
 	g_clear_pointer (&priv->action_groups, g_hash_table_unref);
+	g_clear_object (&priv->context_menu);
 
 	G_OBJECT_CLASS (lrg_widget_parent_class)->finalize (object);
 }
@@ -404,6 +413,12 @@ lrg_widget_get_property (GObject    *object,
 	case PROP_DIRECTION:
 		g_value_set_enum (value, priv->direction);
 		break;
+	case PROP_ACCEPTS_TAB:
+		g_value_set_boolean (value, lrg_widget_get_accepts_tab (self));
+		break;
+	case PROP_CONTEXT_MENU:
+		g_value_set_object (value, priv->context_menu);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -468,6 +483,12 @@ lrg_widget_set_property (GObject      *object,
 		break;
 	case PROP_DIRECTION:
 		lrg_widget_set_direction (self, g_value_get_enum (value));
+		break;
+	case PROP_ACCEPTS_TAB:
+		lrg_widget_set_accepts_tab (self, g_value_get_boolean (value));
+		break;
+	case PROP_CONTEXT_MENU:
+		lrg_widget_set_context_menu (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -612,6 +633,29 @@ lrg_widget_class_init (LrgWidgetClass *klass)
 	properties[PROP_DIRECTION] =
 		g_param_spec_enum ("direction", NULL, NULL, LRG_TYPE_WIDGET_DIRECTION,
 		                   LRG_WIDGET_DIRECTION_INHERIT, rw);
+	/**
+	 * LrgWidget:accepts-tab:
+	 *
+	 * Whether Tab and Shift+Tab are offered to the widget as
+	 * %LRG_UI_EVENT_KEY_DOWN while it has focus. When it handles them
+	 * (returns %TRUE) focus stays; otherwise focus moves as usual.
+	 * Ctrl+Tab always moves focus. Reading it returns the instance
+	 * value if one was set, else the class default
+	 * (lrg_widget_class_set_accepts_tab()).
+	 */
+	properties[PROP_ACCEPTS_TAB] =
+		g_param_spec_boolean ("accepts-tab", NULL, NULL, FALSE, rw);
+	/**
+	 * LrgWidget:context-menu:
+	 *
+	 * Menu model shown as a context menu (an #LrgMenu at the pointer,
+	 * with this widget as the action owner) when a right click on the
+	 * widget or a descendant is not handled, or when Shift+F10 / the
+	 * Menu key is pressed while the widget or a descendant has focus.
+	 * %NULL (the default) shows nothing.
+	 */
+	properties[PROP_CONTEXT_MENU] =
+		g_param_spec_object ("context-menu", NULL, NULL, G_TYPE_MENU_MODEL, rw);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -645,6 +689,7 @@ lrg_widget_init (LrgWidget *self)
 	lrg_spring_init (&priv->appear_spring, 1.0f, LRG_MOTION_SMOOTH);
 	lrg_spring_init (&priv->glide_x, 0.0f, LRG_MOTION_SMOOTH);
 	lrg_spring_init (&priv->glide_y, 0.0f, LRG_MOTION_SMOOTH);
+	priv->accepts_tab = -1;
 }
 
 /* ==========================================================================
@@ -2634,3 +2679,97 @@ lrg_widget_mirror_x (LrgWidget *self,
 	return 2.0f * wx + lrg_widget_get_width (self) - x - width;
 }
 
+/* ==========================================================================
+ * Tab handling and context menus
+ * ========================================================================== */
+
+static GQuark
+accepts_tab_quark (void)
+{
+	return g_quark_from_static_string ("lrg-widget-accepts-tab");
+}
+
+void
+lrg_widget_class_set_accepts_tab (LrgWidgetClass *klass,
+                                  gboolean        accepts_tab)
+{
+	g_return_if_fail (LRG_IS_WIDGET_CLASS (klass));
+
+	/* 1 = Tab navigates, 2 = Tab is offered first (0 = unset) */
+	g_type_set_qdata (G_TYPE_FROM_CLASS (klass), accepts_tab_quark (),
+	                  GINT_TO_POINTER (accepts_tab ? 2 : 1));
+}
+
+gboolean
+lrg_widget_class_get_accepts_tab (LrgWidgetClass *klass)
+{
+	GType type;
+
+	g_return_val_if_fail (LRG_IS_WIDGET_CLASS (klass), FALSE);
+
+	/* The nearest class that decided wins, like handles-direction */
+	for (type = G_TYPE_FROM_CLASS (klass); type != 0; type = g_type_parent (type))
+	{
+		gint v = GPOINTER_TO_INT (g_type_get_qdata (type, accepts_tab_quark ()));
+
+		if (v != 0)
+			return v == 2;
+		if (type == LRG_TYPE_WIDGET)
+			break;
+	}
+	return FALSE;
+}
+
+gboolean
+lrg_widget_get_accepts_tab (LrgWidget *self)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), FALSE);
+	priv = lrg_widget_get_instance_private (self);
+
+	/* An explicit instance value beats the class default */
+	if (priv->accepts_tab >= 0)
+		return priv->accepts_tab != 0;
+	return lrg_widget_class_get_accepts_tab (LRG_WIDGET_GET_CLASS (self));
+}
+
+void
+lrg_widget_set_accepts_tab (LrgWidget *self,
+                            gboolean   accepts_tab)
+{
+	LrgWidgetPrivate *priv;
+	gboolean          before;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	priv = lrg_widget_get_instance_private (self);
+
+	before = lrg_widget_get_accepts_tab (self);
+	priv->accepts_tab = accepts_tab ? 1 : 0;
+	if (before != !!accepts_tab)
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ACCEPTS_TAB]);
+}
+
+GMenuModel *
+lrg_widget_get_context_menu (LrgWidget *self)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), NULL);
+	priv = lrg_widget_get_instance_private (self);
+	return priv->context_menu;
+}
+
+void
+lrg_widget_set_context_menu (LrgWidget  *self,
+                             GMenuModel *model)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	g_return_if_fail (model == NULL || G_IS_MENU_MODEL (model));
+	priv = lrg_widget_get_instance_private (self);
+
+	if (g_set_object (&priv->context_menu, model))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_CONTEXT_MENU]);
+}

@@ -1862,7 +1862,9 @@ lrg_menu_handle_event (LrgWidget        *widget,
 			case GRL_KEY_ENTER:
 			case GRL_KEY_KP_ENTER:
 			case GRL_KEY_SPACE:
-				if (self->hot >= 0)
+				/* A held key must not activate the row (and then
+				 * whatever gets focus after the menu closes) */
+				if (self->hot >= 0 && !lrg_ui_event_get_repeat (event))
 					activate_row (self, self->hot, TRUE);
 				return TRUE;
 

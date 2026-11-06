@@ -1148,6 +1148,178 @@ test_editor_find (void)
 	g_assert_false (lrg_text_editor_find_next (ed));
 }
 
+/* expect_found: the selection is @line, [@sc, @ec) and reads @text */
+static void
+expect_found (LrgTextEditor *ed,
+              guint          line,
+              guint          sc,
+              guint          ec,
+              const gchar   *text)
+{
+	g_autofree gchar *sel = NULL;
+	guint             sl;
+	guint             a;
+	guint             el;
+	guint             b;
+
+	g_assert_true (lrg_text_editor_get_selection_bounds (ed, &sl, &a, &el, &b));
+	g_assert_cmpuint (sl, ==, line);
+	g_assert_cmpuint (el, ==, line);
+	g_assert_cmpuint (a, ==, sc);
+	g_assert_cmpuint (b, ==, ec);
+	sel = lrg_text_editor_get_selected_text (ed);
+	g_assert_cmpstr (sel, ==, text);
+}
+
+static void
+test_editor_find_unicode (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgTextEditor       *ed = editor_on (canvas, 400.0f, 200.0f);
+	LrgPaintList        *list;
+	guint                plain;
+
+	lrg_text_editor_set_text (ed, "xx\xC3\x84" "BC\n"            /* xxÄBC */
+	                              "STRASSE stra\xC3\x9F" "e\n"   /* STRASSE straße */
+	                              "\xCE\xA3\xCE\x8A\xCE\xA3\xCE\xA5\xCE\xA6\xCE\x9F\xCE\xA3\n" /* ΣΊΣΥΦΟΣ */
+	                              "a\xCC\x88" "x\n"              /* decomposed äx */
+	                              "\xC4\xB0stanbul");             /* İstanbul */
+	list = lrg_canvas_record (canvas);
+	plain = lrg_paint_list_get_n_instances (list);
+
+	/* precomposed: "äbc" finds "ÄBC" (bytes 2..6, columns 2..5) */
+	g_assert_true (lrg_text_editor_find (ed, "\xC3\xA4" "bc", FALSE));
+	expect_found (ed, 0, 2, 5, "\xC3\x84" "BC");
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 1);
+	g_assert_false (lrg_text_editor_find (ed, "\xC3\xA4" "bc", TRUE));
+
+	/* ß folds to ss: "straße" finds STRASSE and straße, both lengths */
+	lrg_text_editor_set_cursor (ed, 0, 0);
+	g_assert_true (lrg_text_editor_find (ed, "stra\xC3\x9F" "e", FALSE));
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 2);
+	expect_found (ed, 1, 0, 7, "STRASSE");
+	g_assert_true (lrg_text_editor_find_next (ed));
+	expect_found (ed, 1, 8, 14, "stra\xC3\x9F" "e");
+	g_assert_true (lrg_text_editor_find_previous (ed));
+	expect_found (ed, 1, 0, 7, "STRASSE");
+
+	/* matches get highlights on their real bytes */
+	list = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), >=, plain + 2);
+
+	/* the other way round, and "ss" matches a whole ß ... */
+	lrg_text_editor_set_cursor (ed, 0, 0);
+	g_assert_true (lrg_text_editor_find (ed, "STRASSE", FALSE));
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 2);
+	g_assert_true (lrg_text_editor_find (ed, "ss", FALSE));
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 2);
+	/* ... but "s" never matches half of one (3 in STRASSE, 1 in straße, 1 in İstanbul) */
+	g_assert_true (lrg_text_editor_find (ed, "s", FALSE));
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 5);
+
+	/* Greek: final sigma folds like medial sigma, accented capitals fold */
+	lrg_text_editor_set_cursor (ed, 0, 0);
+	g_assert_true (lrg_text_editor_find (ed, "\xCF\x83\xCE\xAF\xCF\x83\xCF\x85\xCF\x86\xCE\xBF\xCF\x82", FALSE));
+	expect_found (ed, 2, 0, 7, "\xCE\xA3\xCE\x8A\xCE\xA3\xCE\xA5\xCE\xA6\xCE\x9F\xCE\xA3");
+
+	/* precomposed needle finds decomposed text (2 characters, 3 bytes) */
+	lrg_text_editor_set_cursor (ed, 0, 0);
+	g_assert_true (lrg_text_editor_find (ed, "\xC3\x84" "X", FALSE));
+	expect_found (ed, 3, 0, 3, "a\xCC\x88" "x");
+	/*
+	 * a bare "a" does not match the start of a precomposed Ä, but does
+	 * match the base letter of a decomposed one (it is its own
+	 * character): STRASSE, straße, a+U+0308, İstanbul
+	 */
+	g_assert_true (lrg_text_editor_find (ed, "a", FALSE));
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 4);
+
+	/* İ folds to i + U+0307: the dotted needle finds it, a plain i does not */
+	lrg_text_editor_set_cursor (ed, 0, 0);
+	g_assert_true (lrg_text_editor_find (ed, "\xC4\xB0STANBUL", FALSE));
+	expect_found (ed, 4, 0, 8, "\xC4\xB0stanbul");
+	g_assert_true (lrg_text_editor_find (ed, "i\xCC\x87stanbul", FALSE));
+	expect_found (ed, 4, 0, 8, "\xC4\xB0stanbul");
+	g_assert_false (lrg_text_editor_find (ed, "istanbul", FALSE));
+
+	/* the fold cache follows edits */
+	g_assert_true (lrg_text_editor_find (ed, "\xC3\xA4" "bc", FALSE));
+	lrg_text_editor_set_text (ed, "abc \xC3\x84" "BC \xC3\xA4" "bc");
+	g_assert_cmpuint (lrg_text_editor_get_match_count (ed), ==, 2);
+}
+
+/* bracket_at: caret at (@line, @col); the pair found, or FALSE */
+static gboolean
+bracket_at (LrgTextEditor *ed,
+            guint          line,
+            guint          col,
+            guint         *ml,
+            guint         *mc)
+{
+	lrg_text_editor_set_cursor (ed, line, col);
+	return lrg_text_editor_get_bracket_match (ed, NULL, NULL, ml, mc);
+}
+
+static void
+test_editor_brackets (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgTextEditor       *ed = editor_on (canvas, 400.0f, 200.0f);
+	guint                l;
+	guint                c;
+	guint                ml;
+	guint                mc;
+
+	/* plain text: every bracket counts, so the "(" in the string nests */
+	lrg_text_editor_set_text (ed, "f (\"(\", x);");
+	g_assert_false (bracket_at (ed, 0, 3, &ml, &mc));
+	/* ... and the one in the string pairs with the outer closer */
+	g_assert_true (bracket_at (ed, 0, 5, &ml, &mc));
+	g_assert_cmpuint (mc, ==, 9);
+
+	/* C: the string's "(" is text; the outer pair matches */
+	lrg_text_editor_set_language (ed, "c");
+	g_assert_true (bracket_at (ed, 0, 3, &ml, &mc));
+	g_assert_true (lrg_text_editor_get_bracket_match (ed, &l, &c, NULL, NULL));
+	g_assert_cmpuint (l, ==, 0);
+	g_assert_cmpuint (c, ==, 2);
+	g_assert_cmpuint (ml, ==, 0);
+	g_assert_cmpuint (mc, ==, 9);
+	/* backwards from the closer too */
+	g_assert_true (bracket_at (ed, 0, 10, &ml, &mc));
+	g_assert_cmpuint (mc, ==, 2);
+	/* a caret on the bracket inside the string has no match */
+	g_assert_false (bracket_at (ed, 0, 5, &ml, &mc));
+
+	/* a bracket in a comment: no match, though a partner follows */
+	lrg_text_editor_set_text (ed, "/* ( */ b)");
+	g_assert_false (bracket_at (ed, 0, 4, &ml, &mc));
+	lrg_text_editor_set_language (ed, NULL);
+	g_assert_true (bracket_at (ed, 0, 4, &ml, &mc));
+	g_assert_cmpuint (mc, ==, 9);
+	lrg_text_editor_set_language (ed, "c");
+	g_assert_false (bracket_at (ed, 0, 4, &ml, &mc));
+
+	/* a closer in a comment is skipped while scanning */
+	lrg_text_editor_set_text (ed, "(a /* ) */ )");
+	g_assert_true (bracket_at (ed, 0, 12, &ml, &mc));
+	g_assert_cmpuint (mc, ==, 0);
+
+	/* multi-line comments (state carried across lines) and line comments */
+	lrg_text_editor_set_text (ed, "{\n/* }\n} */\n// }\n}");
+	g_assert_true (bracket_at (ed, 0, 1, &ml, &mc));
+	g_assert_cmpuint (ml, ==, 4);
+	g_assert_cmpuint (mc, ==, 0);
+	g_assert_true (bracket_at (ed, 4, 1, &ml, &mc));
+	g_assert_cmpuint (ml, ==, 0);
+	g_assert_false (bracket_at (ed, 2, 1, &ml, &mc));
+
+	/* painting after a scan still highlights correctly */
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (lrg_canvas_record (canvas)), >, 0);
+	g_assert_true (bracket_at (ed, 0, 1, &ml, &mc));
+	g_assert_cmpuint (ml, ==, 4);
+}
+
 static void
 test_editor_wrap (void)
 {
@@ -1665,6 +1837,8 @@ main (int   argc,
 	g_test_add_func ("/ui/text-editor/submit", test_editor_submit);
 	g_test_add_func ("/ui/text-editor/max-lines", test_editor_max_lines);
 	g_test_add_func ("/ui/text-editor/find", test_editor_find);
+	g_test_add_func ("/ui/text-editor/find-unicode", test_editor_find_unicode);
+	g_test_add_func ("/ui/text-editor/brackets", test_editor_brackets);
 	g_test_add_func ("/ui/text-editor/wrap", test_editor_wrap);
 	g_test_add_func ("/ui/text-editor/scroll", test_editor_scroll);
 	g_test_add_func ("/ui/text-editor/virtual", test_editor_virtual);

@@ -84,6 +84,26 @@ void _lrg_canvas_focus_widget (struct _LrgCanvas *self,
 void _lrg_canvas_emit_quit_requested (struct _LrgCanvas *self);
 
 /*
+ * Global key hooks (lrg-menu-bar.c). A widget that wants keys from
+ * anywhere in the canvas (a menu bar's F10 and Alt+mnemonic) registers
+ * a hook while it is in the canvas tree. Hooks run for KEY_DOWNs that
+ * neither the focused widget nor a shortcut handled, oldest first,
+ * until one returns TRUE; @key is a GrlKey and @mods LrgInputModifiers.
+ * The canvas holds the owner weakly, skips it while hidden or disabled
+ * and drops the hook once the owner left the canvas.
+ */
+typedef gboolean (*LrgCanvasKeyHook) (struct _LrgWidget *owner,
+                                      gint               key,
+                                      guint              mods);
+
+void  _lrg_canvas_add_key_hook     (struct _LrgCanvas  *self,
+                                    struct _LrgWidget  *owner,
+                                    LrgCanvasKeyHook    func);
+void  _lrg_canvas_remove_key_hook  (struct _LrgCanvas  *self,
+                                    struct _LrgWidget  *owner);
+guint _lrg_canvas_get_n_key_hooks  (struct _LrgCanvas  *self);
+
+/*
  * Built-in action groups (lrg-ui-actions.c), installed by every canvas
  * under "app" and "ui". They hold a weak reference to @canvas.
  */

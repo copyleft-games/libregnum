@@ -160,7 +160,7 @@ The graph is focusable (a click on it focuses it). Keys typed into a body widget
 | Ctrl+D            | =lrg_node_graph_duplicate_selection()= |
 | F                 | Frame the selection (everything when nothing is selected) |
 | Home              | Frame all |
-| Space             | Arms Space + drag panning (not an activation) |
+| Space             | Arms Space + drag panning (not an activation) until Space goes up (=LRG_UI_EVENT_KEY_UP=); releasing it mid-drag ends a Space pan, a middle-button pan carries on |
 | Escape            | Cancels a drag in progress (a live wire, a move, a rubber band) |
 
 ** Selection, deletion, duplication
@@ -292,7 +292,24 @@ Loading validates the whole document first (scalar types, unique node ids, uniqu
 :PROPERTIES:
 :CUSTOM_ID: node-graph-loader
 :END:
-Supported by =LrgUILoader= as =LrgNodeGraph=; every setting above is a GObject property. Nodes are model objects rather than child widgets: create them from code, or load a graph document with =lrg_node_graph_load_yaml()=.
+Supported by =LrgUILoader= as =LrgNodeGraph= (=type: node-graph=); every setting above is a GObject property. The content comes from =graph:= (the [[#node-graph-yaml][serialization format]] inline, expressions allowed) or =graph-file:= (a file relative to the document, watched with it), loaded with =lrg_node_graph_load_yaml()= after the properties (see [[file:../declarative-ui.org::#node-graph-keys][Declarative UI]]):
+
+#+begin_src yaml
+type: node-graph
+id: graph
+grid-style: dots
+show-minimap: true
+context-menu: [{label: Frame all, action: app.frame-all}]
+graph:
+  version: 1
+  nodes:
+    - {id: tex, title: Texture, x: 0, y: 0, ports: [{name: color, direction: output, type: vec4}]}
+    - {id: out, title: Output, x: 300, y: 0, ports: [{name: albedo, direction: input, type: vec4}]}
+  links:
+    - {from: tex, output: color, to: out, input: albedo}
+#+end_src
+
+The document is validated during expansion (a bad link is a loader error with the position of =graph:=). A hot reload loads the graph again only when its text changed (replacing the nodes, so their body widgets go); otherwise the user's edits stay. Bodies are attached from code: look the graph up by id and call =lrg_graph_node_set_body()=.
 
 ** Pitfalls
 :PROPERTIES:

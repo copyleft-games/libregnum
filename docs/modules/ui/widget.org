@@ -108,6 +108,9 @@ Full semantics, box and grid rules, and a custom-container walkthrough: [[file:l
 | =lrg_widget_set_state_flags= / =lrg_widget_unset_state_flags= | Turn flags on / off | Emits =::state-changed= when anything changes; retargets the springs |
 | =lrg_widget_get_focusable= / =set_focusable= | Can take keyboard / gamepad / click focus | Interactive widgets set it in =init= |
 | =lrg_widget_get_pointer_transparent= / =set_pointer_transparent= | Hit tests pass through the widget itself (children still hit) | Full-screen layers |
+| =lrg_widget_get_accepts_tab= / =lrg_widget_set_accepts_tab= | Tab / Shift+Tab reach the focused widget as =KEY_DOWN= before moving focus | Getter returns the instance value, else the class default; see [[file:input-and-focus.org::#input-tab-order][Tab order]] |
+| =lrg_widget_class_set_accepts_tab= / =lrg_widget_class_get_accepts_tab= | Class default for =accepts-tab= (inherited by subclasses) | Call from =class_init=; =LrgTextEditor= sets it |
+| =lrg_widget_get_context_menu= / =lrg_widget_set_context_menu= | =GMenuModel= opened by an unhandled right click / Shift+F10 / Menu key on the widget or a descendant | (transfer none) (nullable); see [[file:input-and-focus.org::#input-context-menus][context menus]] |
 
 | Flag | Nick | Managed by |
 |------+------+------------|
@@ -286,6 +289,9 @@ lrg_widget_set_margin (LRG_WIDGET (button), &m);
 | =focusable= | boolean | read/write | =FALSE= |
 | =state-flags= | =LrgWidgetState= | read-only | =NONE= |
 | =theme= | =LrgTheme= | read/write | =NULL= (inherit) |
+| =direction= | =LrgWidgetDirection= | read/write | =INHERIT= |
+| =accepts-tab= | boolean | read/write | class default (=FALSE= unless the class set it) |
+| =context-menu= | =GMenuModel= | read/write | =NULL= |
 
 All properties use explicit notification (notify only on change).
 

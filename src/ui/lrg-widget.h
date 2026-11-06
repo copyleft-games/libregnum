@@ -1282,6 +1282,84 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_widget_class_get_handles_direction (LrgWidgetClass *klass);
 
 /**
+ * lrg_widget_class_set_accepts_tab:
+ * @klass: a widget class
+ * @accepts_tab: %TRUE if instances want Tab / Shift+Tab by default
+ *
+ * Sets the class default of #LrgWidget:accepts-tab. Text editors and
+ * other widgets that insert tabs or indent call this from class_init;
+ * subclasses inherit the setting. A widget that accepts Tab still lets
+ * focus move by returning %FALSE for it (e.g. when read-only), and
+ * Ctrl+Tab always moves focus.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_class_set_accepts_tab (LrgWidgetClass *klass,
+                                       gboolean        accepts_tab);
+
+/**
+ * lrg_widget_class_get_accepts_tab:
+ * @klass: a widget class
+ *
+ * Returns: the class default of #LrgWidget:accepts-tab
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_class_get_accepts_tab (LrgWidgetClass *klass);
+
+/**
+ * lrg_widget_get_accepts_tab:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if Tab and Shift+Tab are offered to @self as
+ *   %LRG_UI_EVENT_KEY_DOWN before they move focus (the instance value
+ *   if set, else the class default)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_accepts_tab (LrgWidget *self);
+
+/**
+ * lrg_widget_set_accepts_tab:
+ * @self: an #LrgWidget
+ * @accepts_tab: offer Tab / Shift+Tab to @self while it has focus
+ *
+ * Overrides the class default for this instance. While @self has
+ * focus, Tab and Shift+Tab reach it as %LRG_UI_EVENT_KEY_DOWN
+ * (%GRL_KEY_TAB, Shift in the modifiers); focus moves only when it
+ * returns %FALSE. Ctrl+Tab always moves focus.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_accepts_tab (LrgWidget *self,
+                                 gboolean   accepts_tab);
+
+/**
+ * lrg_widget_get_context_menu:
+ * @self: an #LrgWidget
+ *
+ * Returns: (transfer none) (nullable): the context menu model
+ */
+LRG_AVAILABLE_IN_ALL
+GMenuModel * lrg_widget_get_context_menu (LrgWidget *self);
+
+/**
+ * lrg_widget_set_context_menu:
+ * @self: an #LrgWidget
+ * @model: (nullable): a #GMenuModel, or %NULL for none
+ *
+ * Gives @self a context menu, GTK style. When a right click on @self
+ * or one of its descendants is not handled by any widget on the way
+ * up, or Shift+F10 / the Menu key is pressed while @self or a
+ * descendant has focus and nothing handles it, the canvas opens an
+ * #LrgMenu built from @model: at the pointer for a click, below the
+ * focused widget for the keyboard (first row highlighted). Actions in
+ * the model are looked up from @self, so groups inserted on @self or
+ * its ancestors apply. The nearest ancestor with a context menu wins.
+ * Press-drag-release works without any code in the widget: the
+ * captured pointer follows the menu while it is over it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_context_menu (LrgWidget  *self,
+                                  GMenuModel *model);
+
+/**
  * lrg_widget_mirror_x:
  * @self: an #LrgWidget
  * @x: a world X coordinate inside @self

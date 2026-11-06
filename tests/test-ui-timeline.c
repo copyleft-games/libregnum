@@ -6,7 +6,7 @@
  *
  * LrgTimelineView: time <-> x mapping, ruler ticks, clip drag with
  * snapping, resize clamps, overlaps, keyframes and interpolation,
- * scrubbing, playback, culling, collapsed layout, editing.
+ * scrubbing, marker drag, playback, culling, collapsed layout, editing.
  *
  * Headless: the timeline sits on a canvas, is driven through
  * lrg_canvas_process_input() and stepped with lrg_canvas_update() at
@@ -631,6 +631,142 @@ test_scrub (void)
 	g_assert_cmpfloat (lrg_timeline_view_get_time (tl), ==, 0.0);
 }
 
+/* ==========================================================================
+ * Marker drag
+ * ========================================================================== */
+
+/* What the last marker-moved emission carried */
+typedef struct
+{
+	guint   count;
+	guint   marker;
+	gdouble old_time;
+	gdouble new_time;
+} MarkerMoved;
+
+static void
+on_marker_moved (LrgTimelineView *tl,
+                 guint            marker,
+                 gdouble          old_time,
+                 gdouble          new_time,
+                 gpointer         user_data)
+{
+	MarkerMoved *mm = user_data;
+
+	mm->count++;
+	mm->marker = marker;
+	mm->old_time = old_time;
+	mm->new_time = new_time;
+}
+
+/*
+ * The flag of a marker is the lower half of the ruler (y 15..30), from
+ * 3 units left of the marker to past its label; presses there grab the
+ * marker at y 25, a few units right of the marker line.
+ */
+#define FLAG_Y (25.0f)
+#define FLAG_X(t) (XT (t) + 5.0f)
+
+static void
+test_marker_drag (void)
+{
+	g_autoptr(LrgCanvas)  canvas = canvas_new ();
+	LrgTimelineViewTrack *a;
+	LrgTimelineViewTrack *b;
+	LrgTimelineView      *tl = fixture (canvas, &a, &b);
+	MarkerMoved           mm = { 0, 0, 0.0, 0.0 };
+	guint                 activated = 0;
+	guint                 m;
+	guint                 other;
+
+	g_signal_connect (tl, "marker-moved", G_CALLBACK (on_marker_moved), &mm);
+	g_signal_connect (tl, "marker-activated", G_CALLBACK (on_count_id), &activated);
+	m = lrg_timeline_view_add_marker (tl, 1.0, "A");
+
+	/* Dragging the flag moves the marker live; one signal at release
+	 * with the old and new time; no activation, the playhead stays */
+	drag (canvas, FLAG_X (1.0), FLAG_Y, FLAG_X (2.0), FLAG_Y, 0, FALSE);
+	g_assert_cmpfloat_with_epsilon (lrg_timeline_view_get_marker_time (tl, m), 2.0, 1e-9);
+	g_assert_cmpuint (mm.count, ==, 0);
+	frame (canvas, FLAG_X (2.0), FLAG_Y, FALSE, FALSE, TRUE, 0);
+	g_assert_cmpuint (mm.count, ==, 1);
+	g_assert_cmpuint (mm.marker, ==, m);
+	g_assert_cmpfloat_with_epsilon (mm.old_time, 1.0, 1e-9);
+	g_assert_cmpfloat_with_epsilon (mm.new_time, 2.0, 1e-9);
+	g_assert_cmpuint (activated, ==, 0);
+	g_assert_cmpfloat (lrg_timeline_view_get_time (tl), ==, 0.0);
+
+	/* Grid: without a magnet in reach the time rounds to the minor
+	 * tick (0.2 s at this zoom); Alt drags freely */
+	drag (canvas, FLAG_X (2.0), FLAG_Y, FLAG_X (2.53), FLAG_Y, 0, TRUE);
+	g_assert_cmpfloat_with_epsilon (lrg_timeline_view_get_marker_time (tl, m), 2.6, 1e-9);
+	drag (canvas, FLAG_X (2.6), FLAG_Y, FLAG_X (2.97), FLAG_Y, LRG_INPUT_MODIFIER_ALT, TRUE);
+	g_assert_cmpfloat_with_epsilon (lrg_timeline_view_get_marker_time (tl, m), 2.97, 1e-4);
+	g_assert_cmpuint (mm.count, ==, 3);
+
+	/* With fps the grid is a frame */
+	lrg_timeline_view_set_fps (tl, 24.0);
+	lrg_timeline_view_move_marker (tl, m, 2.0);
+	drag (canvas, FLAG_X (2.0), FLAG_Y, FLAG_X (2.5), FLAG_Y, 0, TRUE);
+	g_assert_cmpfloat_with_epsilon (lrg_timeline_view_get_marker_time (tl, m), 12.0 / 24.0 + 2.0, 1e-9);
+	lrg_timeline_view_set_fps (tl, 0.0);
+	g_assert_cmpuint (mm.count, ==, 4);
+
+	/* Snaps to another marker and to the playhead (not to itself) */
+	other = lrg_timeline_view_add_marker (tl, 5.0, NULL);
+	lrg_timeline_view_move_marker (tl, m, 3.0);
+	drag (canvas, FLAG_X (3.0), FLAG_Y, FLAG_X (4.95), FLAG_Y, 0, TRUE);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), ==, 5.0);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, other), ==, 5.0);
+	lrg_timeline_view_remove_marker (tl, other);
+
+	lrg_timeline_view_set_time (tl, 3.33);
+	lrg_timeline_view_move_marker (tl, m, 2.0);
+	drag (canvas, FLAG_X (2.0), FLAG_Y, FLAG_X (3.30), FLAG_Y, 0, TRUE);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), ==, 3.33);
+	g_assert_cmpfloat_with_epsilon (mm.new_time, 3.33, 1e-12);
+	g_assert_cmpfloat_with_epsilon (mm.old_time, 2.0, 1e-12);
+	g_assert_cmpuint (mm.count, ==, 6);
+
+	/* A drag that ends where it started emits nothing */
+	drag (canvas, FLAG_X (3.33), FLAG_Y, FLAG_X (3.33) + 30.0f, FLAG_Y, 0, FALSE);
+	frame (canvas, FLAG_X (3.33), FLAG_Y, TRUE, FALSE, FALSE, 0);
+	frame (canvas, FLAG_X (3.33), FLAG_Y, FALSE, FALSE, TRUE, 0);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), ==, 3.33);
+	g_assert_cmpuint (mm.count, ==, 6);
+
+	/* Esc mid-drag puts the marker back, with no signal, and the
+	 * release that follows neither moves nor activates it */
+	drag (canvas, FLAG_X (3.33), FLAG_Y, FLAG_X (5.0), FLAG_Y, 0, FALSE);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), !=, 3.33);
+	key (canvas, GRL_KEY_ESCAPE, 0);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), ==, 3.33);
+	frame (canvas, FLAG_X (5.0), FLAG_Y, FALSE, FALSE, TRUE, 0);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), ==, 3.33);
+	g_assert_cmpuint (mm.count, ==, 6);
+	g_assert_cmpuint (activated, ==, 0);
+
+	/* A click on the flag (no drag) still activates the marker */
+	click_at (canvas, FLAG_X (3.33), FLAG_Y);
+	g_assert_cmpuint (activated, ==, 1);
+	g_assert_cmpuint (mm.count, ==, 6);
+
+	/* The ruler away from a flag, and above the flags, still scrubs */
+	drag (canvas, XT (5.0), FLAG_Y, XT (5.4), FLAG_Y, 0, TRUE);
+	g_assert_cmpfloat_with_epsilon (lrg_timeline_view_get_time (tl), 5.4, 1e-9);
+	drag (canvas, FLAG_X (3.33), 5.0f, XT (1.0), 5.0f, 0, TRUE);
+	g_assert_cmpfloat_with_epsilon (lrg_timeline_view_get_time (tl), 1.0, 1e-9);
+	g_assert_cmpfloat (lrg_timeline_view_get_marker_time (tl, m), ==, 3.33);
+	g_assert_cmpuint (mm.count, ==, 6);
+
+	/* Removing the marker mid-drag ends the drag quietly */
+	drag (canvas, FLAG_X (3.33), FLAG_Y, FLAG_X (4.0), FLAG_Y, 0, FALSE);
+	g_assert_true (lrg_timeline_view_remove_marker (tl, m));
+	frame (canvas, FLAG_X (4.0), FLAG_Y, FALSE, FALSE, TRUE, 0);
+	g_assert_cmpuint (mm.count, ==, 6);
+	g_assert_cmpuint (lrg_timeline_view_get_n_markers (tl), ==, 0);
+}
+
 static void
 run_frames (LrgCanvas *canvas,
             guint      n)
@@ -1079,6 +1215,7 @@ main (int    argc,
 	g_test_add_func ("/ui/timeline/resize-clamps", test_resize_clamps);
 	g_test_add_func ("/ui/timeline/keyframes", test_keyframes);
 	g_test_add_func ("/ui/timeline/scrub", test_scrub);
+	g_test_add_func ("/ui/timeline/marker-drag", test_marker_drag);
 	g_test_add_func ("/ui/timeline/playback", test_playback);
 	g_test_add_func ("/ui/timeline/collapsed-layout", test_collapsed_layout);
 	g_test_add_func ("/ui/timeline/culling", test_culling);

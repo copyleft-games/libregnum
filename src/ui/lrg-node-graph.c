@@ -4293,12 +4293,14 @@ cancel_drag (LrgNodeGraph *self)
 	self->drag = DRAG_NONE;
 }
 
-/* space_held: Space (for Space + drag panning) is down */
+/*
+ * space_held: Space (for Space + drag panning) is down. Armed by the
+ * Space KEY_DOWN, disarmed by its KEY_UP (or losing focus): the canvas
+ * reports both, so no device polling is needed.
+ */
 static gboolean
 space_held (LrgNodeGraph *self)
 {
-	if (IsWindowReady ())
-		return self->space_armed && IsKeyDown (KEY_SPACE);
 	return self->space_armed;
 }
 
@@ -4534,7 +4536,6 @@ handle_release (LrgNodeGraph     *self,
 		break;
 	}
 	self->press_node = NULL;
-	self->space_armed = FALSE;
 	update_hover (self, self->pointer_x, self->pointer_y);
 	return TRUE;
 }
@@ -4771,6 +4772,16 @@ lrg_node_graph_handle_event (LrgWidget        *widget,
 		if (target != widget)
 			return FALSE;
 		return handle_key (self, lrg_ui_event_get_key (event), lrg_ui_event_get_modifiers (event));
+
+	case LRG_UI_EVENT_KEY_UP:
+		/* Releasing Space disarms Space + drag panning and ends a pan
+		 * it started (a middle-button pan carries on) */
+		if (target != widget || lrg_ui_event_get_key (event) != GRL_KEY_SPACE)
+			return FALSE;
+		self->space_armed = FALSE;
+		if (self->drag == DRAG_PAN && self->drag_button == GRL_MOUSE_BUTTON_LEFT)
+			self->drag = DRAG_NONE;
+		return TRUE;
 
 	case LRG_UI_EVENT_ACTIVATE:
 		if (target != widget || self->cursor == NULL)

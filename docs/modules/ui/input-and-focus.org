@@ -54,6 +54,7 @@ Input is split into two steps so that anything can drive a canvas:
 | =lrg_canvas_input_init (self)= | Reset to "nothing happened" (pointer at 0,0, no buttons, keys or navigation, =dt= 0) | Always init before filling by hand |
 | =lrg_canvas_input_add_key (self, key)= | Append a key press | Ignored once full |
 | =lrg_canvas_input_add_key_release (self, key)= | Append a key release | Ignored once full |
+| =lrg_canvas_input_add_key_repeat (self, key)= | Append an auto-repeated press of a held key (sets its bit in =keys_repeat=) | Ignored once full; becomes =lrg_ui_event_get_repeat()= |
 | =lrg_canvas_input_add_char (self, codepoint)= | Append a typed character | Ignored once full |
 | =lrg_canvas_input_add_text (self, utf8)= | Append every character of a string | Tests, on-screen keyboards |
 | =lrg_canvas_input_poll (self, delta_time)= | Fill from graylib (needs a window) | See below |
@@ -65,8 +66,9 @@ What =lrg_canvas_input_poll()= reads:
 - left, right and middle button down / pressed / released;
 - both wheel axes;
 - Shift, Ctrl, Alt and Super (left or right);
-- raylib's key-press queue; *Tab is not queued as a key*: it becomes =nav = NEXT= (=PREVIOUS= with Shift);
-- key releases (every key from Space to Menu is checked, Tab excepted) into =keys_released=;
+- raylib's key-press queue, Tab included (the canvas decides whether Tab reaches the focused widget or moves focus, see [[#input-tab-order][Tab order]]);
+- *auto-repeat*: every key from Space to Menu that the operating system repeated this frame (=grl_input_is_key_pressed_repeat()=, so the user's repeat delay and rate apply) is queued again with its bit set in =keys_repeat=; Shift, Ctrl, Alt and Super never repeat;
+- key releases (every key from Space to Menu is checked) into =keys_released=;
 - raylib's character queue (composed codepoints);
 - gamepad 0: D-pad up/down/left/right become =nav=, the bottom face button (A / Cross) =activate=, the right face button (B / Circle) =cancel=; when the D-pad gave nothing, the left stick becomes =nav= once it passes 0.6 on an axis (dominant axis wins), and it must return below 0.3 before it can navigate again (latched, so holding the stick moves one step).
 
@@ -75,16 +77,16 @@ What =lrg_canvas_input_poll()= reads:
 :CUSTOM_ID: input-process-order
 :END:
 1. Ends the previous frame's activation flash (see [[#input-activate][ACTIVATE]]).
-2. *Hit test*: =lrg_canvas_widget_at_point()= at the pointer (popups first, see [[#input-hit-testing][hit testing]]). The *target* for pointer events is the capture widget while a button is held, else the hit widget.
+2. *Hit test*: =lrg_canvas_widget_at_point()= at the pointer (popups first, see [[#input-hit-testing][hit testing]]). The *target* for pointer events is the capture widget while a button is held (or the popup it opened, while the pointer is over that, see [[#input-capture-popup][capture follows popups]]), else the hit widget.
 3. *Hover*: updates the hover path to the hit widget (=POINTER_LEAVE= / =POINTER_ENTER=, =HOVERED= flags).
 4. *Move*: if the pointer moved since the last frame, dispatches =MOUSE_MOVE= to the target; a capture widget gets =PRESSED= while the pointer is over it and loses it while outside.
-5. *Presses*: closes non-modal popups above the one clicked into (light dismiss); on a left press, focuses the nearest focusable ancestor of the hit widget (or clears focus when clicking empty space with no modal open); any press starts a capture on the hit widget when none is running (a left press adds =PRESSED=); then dispatches one =MOUSE_BUTTON_DOWN= per pressed button to the target.
+5. *Presses*: closes non-modal popups above the one clicked into (light dismiss); on a left press, focuses the nearest focusable ancestor of the hit widget (or clears focus when clicking empty space with no modal open); any press starts a capture on the hit widget when none is running (a left press adds =PRESSED=); then dispatches one =MOUSE_BUTTON_DOWN= per pressed button to the target. A right press nobody handled opens the nearest [[#input-context-menus][context menu]].
 6. *Releases*: dispatches one =MOUSE_BUTTON_UP= per released button to the capture widget (or the hit widget); the capture ends when every button it holds is released (a left release clears =PRESSED=).
 7. *Wheel*: =SCROLL= to the hit widget (not the capture).
-8. *Keys*: each key as =KEY_DOWN= to the focused widget (or, with nothing focused, the top popup), bubbling. If nobody handled it, a matching [[#input-shortcuts][shortcut]] fires (printable ones wait for step 10); if none ran: an arrow key moves focus spatially (when navigation is enabled), Enter / keypad Enter / Space activate the focus, Escape cancels.
+8. *Keys*: Tab and Shift+Tab follow the [[#input-tab-order][Tab rules]]. Every other key goes as =KEY_DOWN= (repeat flag set for auto-repeats) to the focused widget (or, with nothing focused, the top popup), bubbling. If nobody handled it, a matching [[#input-shortcuts][shortcut]] fires (printable ones wait for step 10); then the [[#input-global-keys][global key hooks]] (a menu bar's F10 and Alt+mnemonic); then Shift+F10 / Menu opens the focused widget's [[#input-context-menus][context menu]]; if none ran: an arrow key moves focus spatially (when navigation is enabled), Enter / keypad Enter / Space activate the focus, Escape cancels. The last two never happen on an auto-repeat, so holding Enter does not activate again and again.
 9. *Key releases*: each as =KEY_UP= to the same target, bubbling (no shortcuts, no navigation).
-10. *Characters*: each as =TEXT_INPUT= to the focused widget, bubbling. Then the held-back printable shortcuts fire if no character was accepted.
-11. *Navigation*: =nav= moves focus (when navigation is enabled), =activate= activates, =cancel= cancels.
+10. *Characters*: each as =TEXT_INPUT= to the focused widget, bubbling (skipped for the frame when Alt+mnemonic opened a menu, so the letter is not typed). Then the held-back printable shortcuts fire if no character was accepted.
+11. *Navigation*: =nav= =NEXT= / =PREVIOUS= follow the Tab rules; other directions are offered to the focused widget as arrow keys and move focus when unhandled (when navigation is enabled); =activate= activates, =cancel= cancels.
 12. *Animation*: =lrg_canvas_update (canvas, delta_time)= steps every spring.
 
 Key presses are dispatched before =nav=, so a widget that wants arrow keys must handle (return =TRUE= for) them; unhandled arrows navigate.
@@ -133,6 +135,14 @@ A widget that implements "click" should therefore treat =MOUSE_BUTTON_UP= with b
 
 Capture is released when the popup containing the captured widget is dismissed.
 
+*** Capture follows popups
+:PROPERTIES:
+:CUSTOM_ID: input-capture-popup
+:END:
+When the widget holding the capture opens a popup during the gesture (=lrg_canvas_show_popup()= with an anchor that is the capture widget, one of its ancestors or one of its descendants), the canvas hands the gesture on: from then until the buttons are released, the popup *and every popup stacked above it* (submenus) receive =MOUSE_MOVE= and =MOUSE_BUTTON_UP= whenever the pointer is over them; anywhere else the capture widget keeps receiving them. The capture widget loses =PRESSED= at the hand-over.
+
+This is what makes press-drag-release work for context menus and menu bars without any code in the widget: right-press, slide onto a row, release over it, and the menu activates the row. A menu bar still sees the drag cross its other titles (it switches menus), and a release outside every popup still reaches the widget that was pressed. Only the first popup of a gesture takes it over; =lrg_menu_forward_pointer_event()= is therefore no longer needed (it still works, for widgets that route events themselves).
+
 ** Hover
 :PROPERTIES:
 :CUSTOM_ID: input-hover
@@ -178,6 +188,8 @@ One widget per canvas has keyboard / gamepad focus (=lrg_canvas_get_focused_widg
 :PROPERTIES:
 :CUSTOM_ID: input-tab-order
 :END:
+Tab moves focus to the next widget, Shift+Tab to the previous one, with one exception: a focused widget with =accepts-tab= (=lrg_widget_set_accepts_tab()=, or =lrg_widget_class_set_accepts_tab()= for a whole class; =LrgTextEditor= sets it) gets Tab / Shift+Tab first, as =KEY_DOWN= with =GRL_KEY_TAB= (Shift in the modifiers, the repeat flag on auto-repeat). If it returns =TRUE= focus stays (an editor indented); if it returns =FALSE= (a read-only editor) focus moves as usual. Before moving, a [[#input-shortcuts][shortcut]] bound to the Tab combination fires instead if there is one. Ctrl+Tab and Ctrl+Shift+Tab are never offered to the widget, so focus can always leave. A hand-built frame's =nav = NEXT= / =PREVIOUS= follows exactly the same rules as Tab / Shift+Tab.
+
 =lrg_canvas_move_focus (canvas, LRG_NAV_DIRECTION_NEXT / PREVIOUS)= walks the *focus scope* in depth-first tree order (children in insertion order), wrapping at both ends. With nothing focused, NEXT starts at the first widget and PREVIOUS at the last. The scope is every navigable widget in the canvas tree followed by those in open popups; while a modal popup is open the scope is *only that popup* (focus trap).
 
 *** Spatial navigation
@@ -248,6 +260,39 @@ g_signal_connect (canvas, "cancel", G_CALLBACK (on_ui_cancel), game);
 3. Shortcuts on printable keys without Ctrl, Alt or Super wait until the frame's characters were delivered and only fire if no widget accepted a =TEXT_INPUT=, so typing never triggers them.
 
 Text-editing widgets should return =TRUE= for printable keys only when no Ctrl / Alt / Super is held (AltGr = Ctrl+Alt is text), so Ctrl+Q still quits from inside a text field; =LrgTextInput= does.
+
+** Context menus
+:PROPERTIES:
+:CUSTOM_ID: input-context-menus
+:END:
+GTK style: give any widget a =GMenuModel= with =lrg_widget_set_context_menu (widget, model)= (property =context-menu=, also settable from YAML). Then:
+
+- a *right press* on the widget or any descendant that no widget handled (=MOUSE_BUTTON_DOWN= with button 1 returned =FALSE= all the way up) opens an =LrgMenu= built from the model at the pointer;
+- *Shift+F10* or the *Menu* key, when the focused widget (or an ancestor) has a context menu and nothing handled the key, opens it below the focused widget with the first enabled row highlighted;
+- the nearest ancestor-or-self with a model wins, and it becomes the menu's *owner*: actions in the model resolve from it, so groups inserted on it or its ancestors apply;
+- press-drag-release works out of the box ([[#input-capture-popup][capture follows popups]]); a touch long press is a right click, so it opens the menu too.
+
+The canvas owns one shared =LrgMenu= for this; a widget that handles the right press itself (returns =TRUE=) keeps full control.
+
+#+begin_src c
+g_autoptr(GMenu) menu = g_menu_new ();
+
+g_menu_append (menu, "_Rename", "item.rename");
+g_menu_append (menu, "_Delete", "item.delete");
+lrg_widget_insert_action_group (row, "item", G_ACTION_GROUP (row_actions));
+lrg_widget_set_context_menu (row, G_MENU_MODEL (menu));
+#+end_src
+
+** Global key hooks
+:PROPERTIES:
+:CUSTOM_ID: input-global-keys
+:END:
+Some widgets need keys from anywhere in the canvas. An =LrgMenuBar= registers a canvas-level hook (a private API inside src/ui) when it joins a canvas tree, and the canvas drops it when the bar leaves, is destroyed or moves to another canvas. Hooks see a =KEY_DOWN= only after the focused widget and the shortcuts declined it, and only while their owner is visible and enabled. The menu bar uses it for:
+
+- *F10*: opens the first menu with the keyboard (first row highlighted); F10 again closes it;
+- *Alt+letter*: opens the menu whose title has that mnemonic (=_File= -> Alt+F; a title without a mnemonic answers to its first letter). The letter's =TEXT_INPUT= is dropped for that frame.
+
+A text widget that uses an Alt combination simply handles the =KEY_DOWN= (returns =TRUE=) and the bar never sees it; application shortcuts on Alt combinations also win over mnemonics.
 
 ** Popups
 :PROPERTIES:
@@ -527,6 +572,8 @@ If you skip input for a frame (a cutscene), still call =lrg_canvas_update (canva
 :CUSTOM_ID: input-pitfalls
 :END:
 - *Touch polling on desktop*: leave =lrg_canvas_input_set_poll_touch()= off unless the device really has a touch screen; desktop raylib reports a held mouse button as touch point 0.
+- *Tab is offered only to widgets with =accepts-tab=.* A custom widget that wants Tab (code editors, terminals) must set it; returning =TRUE= for =GRL_KEY_TAB= alone is not enough, because without the flag Tab moves focus before the widget sees it.
+- *Ignore repeats where they hurt.* Held keys arrive as repeated =KEY_DOWN=; check =lrg_ui_event_get_repeat()= before toggling or opening something on a key.
 - *Handle arrows you use.* A widget that consumes arrow keys (sliders, spin boxes, text cursors) must return =TRUE= for them, otherwise focus moves away as well.
 - *Do not rely on hover for focus.* =FOCUS_IN= / =FOCUS_OUT= are keyboard focus only.
 - *Containers must not re-dispatch bubbling events* to children in custom =handle_event= implementations; check =lrg_ui_event_get_bubbling()= and chain up.

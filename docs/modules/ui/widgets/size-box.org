@@ -74,7 +74,16 @@ Paints nothing itself: the bars are transparent (and pointer-transparent, so cli
 :PROPERTIES:
 :CUSTOM_ID: size-box-yaml
 :END:
-Supported by =LrgUILoader= as =LrgSizeBox=; every setting is a plain property (the integration pass may accept ="16:9"= style ratios).
+Supported by =LrgUILoader= as =LrgSizeBox= (=type: size-box=); every setting is a plain property. =aspect-ratio= also accepts ="16:9"= or ="4/3"= (width / height; quote it, YAML would otherwise read =16:9= as a sexagesimal number in some parsers):
+
+#+begin_src yaml
+type: size-box
+aspect-ratio: "16:9"
+width-override: 320
+max-height: 240
+children:
+  - {type: viewport, id: preview, fit: contain}
+#+end_src
 
 ** Pitfalls
 :PROPERTIES:

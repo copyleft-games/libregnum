@@ -35,6 +35,7 @@ struct _LrgUIEvent
     gfloat         dx;          /* PAN: movement; PAN_END: velocity */
     gfloat         dy;
     gfloat         scale;       /* ZOOM: factor since the last ZOOM */
+    gboolean       repeat;      /* KEY_DOWN: auto-repeat of a held key */
 };
 
 G_DEFINE_BOXED_TYPE (LrgUIEvent, lrg_ui_event,
@@ -611,4 +612,26 @@ lrg_ui_event_get_scale (const LrgUIEvent *self)
 {
     g_return_val_if_fail (self != NULL, 1.0f);
     return self->type == LRG_UI_EVENT_ZOOM ? self->scale : 1.0f;
+}
+
+/*
+ * lrg_ui_event_get_repeat / lrg_ui_event_set_repeat:
+ *
+ * See the header.
+ */
+gboolean
+lrg_ui_event_get_repeat (const LrgUIEvent *self)
+{
+    g_return_val_if_fail (self != NULL, FALSE);
+
+    return self->repeat;
+}
+
+void
+lrg_ui_event_set_repeat (LrgUIEvent *self,
+                         gboolean    repeat)
+{
+    g_return_if_fail (self != NULL);
+
+    self->repeat = !!repeat;
 }

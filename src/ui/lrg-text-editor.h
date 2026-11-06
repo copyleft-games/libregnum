@@ -309,7 +309,9 @@ void lrg_text_editor_outdent (LrgTextEditor *self);
  * lrg_text_editor_find:
  * @self: an #LrgTextEditor
  * @needle: (nullable): text to find (single line), %NULL or "" to stop
- * @case_sensitive: whether letters must match case (ASCII folding)
+ * @case_sensitive: whether letters must match case; when %FALSE, text
+ *   is compared after Unicode case folding and canonical decomposition
+ *   ("straße" finds "STRASSE", "äbc" finds "ÄBC")
  *
  * Highlights every match and selects the first one at or after the
  * caret (wrapping around).
@@ -351,6 +353,30 @@ gboolean lrg_text_editor_find_previous (LrgTextEditor *self);
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_text_editor_get_match_count (LrgTextEditor *self);
+
+/**
+ * lrg_text_editor_get_bracket_match:
+ * @self: an #LrgTextEditor
+ * @line: (out) (optional): line of the bracket at the caret
+ * @column: (out) (optional): its column in characters
+ * @match_line: (out) (optional): line of its partner
+ * @match_column: (out) (optional): the partner's column in characters
+ *
+ * The bracket pair the editor outlines: the bracket just before the
+ * caret if it has a partner, else the one just after it. With a
+ * language set, brackets inside strings and comments are ignored, both
+ * for nesting and at the caret (a caret on such a bracket has no
+ * match). The search is bounded, so a partner very far away is not
+ * found.
+ *
+ * Returns: %TRUE if the caret is next to a bracket with a partner
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_text_editor_get_bracket_match (LrgTextEditor *self,
+                                            guint         *line,
+                                            guint         *column,
+                                            guint         *match_line,
+                                            guint         *match_column);
 
 /* ==========================================================================
  * View

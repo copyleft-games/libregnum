@@ -277,7 +277,21 @@ while (!WindowShouldClose ())
 :PROPERTIES:
 :CUSTOM_ID: viewport-yaml
 :END:
-Supported by =LrgUILoader= as =LrgViewport= (every setting is a property: =fit=, =filter=, =resolution-scale=, =fixed-width=, =fixed-height=, =continuous=, ...). Connect =render= from code after loading.
+Supported by =LrgUILoader= as =LrgViewport= (=type: viewport=); every setting is a property (=mode=, =fit=, =filter=, =resolution-scale=, =fixed-width=, =fixed-height=, =resize-delay=, =continuous=, =auto-clear=, =clear-color=, =flip-y=, =lock-cursor=), enums by nick.
+
+#+begin_src yaml
+type: viewport
+id: scene
+fit: integer-scale
+filter: point
+fixed-width: 320
+fixed-height: 180
+continuous: true
+clear-color: "#11111b"
+on: {render: draw_scene, pointer-press: scene_click}   # handlers registered with lrg_ui_loader_add_handler()
+#+end_src
+
+Signals connect through =on:= like any widget's. A render function with its own state (=lrg_viewport_set_render_func()=) or a texture (=lrg_viewport_set_texture()=) is set from code: look the viewport up by id after loading, and again in =LrgUILoader::reloaded= in case it was rebuilt (only when its type or a construct-only value changed). See [[file:../declarative-ui.org::#viewport-custom-keys][Declarative UI]].
 
 ** Pitfalls
 :PROPERTIES:

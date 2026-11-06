@@ -157,7 +157,7 @@ An accelerator is zero or more modifiers in angle brackets followed by one key n
 | =lrg_accel_name (key, mods)= | Canonical accelerator (=<Ctrl><Alt><Shift><Super>= order, lower-case letters), the inverse of parse; =NULL= for unnamed keys |
 | =lrg_accel_to_label (accel)= | Display text: ="<Ctrl><Shift>s"= -> =Ctrl+Shift+S=, ="<Alt>Page_Up"= -> =Alt+PgUp=, ="Escape"= -> =Esc=, ="<Ctrl>plus"= -> =Ctrl++= |
 
-Tab is focus navigation and never reaches shortcuts. =lrg_canvas_input_poll()= reports Super as =LRG_INPUT_MODIFIER_SUPER=.
+Tab combinations can be shortcuts (for example ="<Ctrl>Tab"= for "next document"): they fire when a focused widget with =accepts-tab= did not take the key, before focus would move; a plain Tab shortcut replaces Tab navigation. =lrg_canvas_input_poll()= reports Super as =LRG_INPUT_MODIFIER_SUPER=.
 
 ** YAML
 :PROPERTIES:

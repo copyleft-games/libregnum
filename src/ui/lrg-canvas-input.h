@@ -80,7 +80,8 @@ typedef struct
  * @chars: composed characters typed this frame, oldest first
  * @n_chars: number of valid entries in @chars
  * @modifiers: modifier keys held this frame
- * @nav: focus-navigation request (gamepad D-pad/stick, Tab)
+ * @nav: focus-navigation request (gamepad D-pad/stick; %LRG_NAV_DIRECTION_NEXT
+ *   and %LRG_NAV_DIRECTION_PREVIOUS behave like Tab and Shift+Tab)
  * @activate: activate the focused widget (gamepad A / Enter / Space)
  * @cancel: cancel / back (gamepad B / Escape)
  * @delta_time: seconds since the previous frame (drives springs)
@@ -89,6 +90,8 @@ typedef struct
  * @keys_released: key releases this frame, oldest first (they become
  *   %LRG_UI_EVENT_KEY_UP events)
  * @n_keys_released: number of valid entries in @keys_released
+ * @keys_repeat: bit i set when @keys[i] is an auto-repeat of a held key
+ *   rather than a fresh press (it becomes lrg_ui_event_get_repeat())
  *
  * A plain value struct describing everything that happened to the
  * input devices during one frame. Zero it with lrg_canvas_input_init()
@@ -116,6 +119,7 @@ typedef struct
     guint            n_touches;
     GrlKey           keys_released[LRG_CANVAS_INPUT_MAX_KEYS];
     guint            n_keys_released;
+    guint            keys_repeat;
 } LrgCanvasInput;
 
 LRG_AVAILABLE_IN_ALL
@@ -172,6 +176,18 @@ void lrg_canvas_input_add_key (LrgCanvasInput *self,
                                GrlKey          key);
 
 /**
+ * lrg_canvas_input_add_key_repeat:
+ * @self: an #LrgCanvasInput
+ * @key: the key being held
+ *
+ * Appends an auto-repeated press of a held key (marked in
+ * @keys_repeat). Silently ignored once the frame is full.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_add_key_repeat (LrgCanvasInput *self,
+                                      GrlKey          key);
+
+/**
  * lrg_canvas_input_add_key_release:
  * @self: an #LrgCanvasInput
  * @key: the key that was released
@@ -213,8 +229,12 @@ void lrg_canvas_input_add_text (LrgCanvasInput *self,
  * Fills @self from the graylib input devices: mouse, wheel, the
  * key-press and character queues, modifiers, and the first gamepad
  * (D-pad and left stick become @nav, face buttons become @activate
- * and @cancel). Tab and Shift+Tab become %LRG_NAV_DIRECTION_NEXT and
- * %LRG_NAV_DIRECTION_PREVIOUS. The pointer is mapped through the
+ * and @cancel). Tab is queued as a key like any other: the canvas
+ * offers it to a focused widget that accepts Tab and otherwise moves
+ * focus (see lrg_widget_set_accepts_tab()). Keys held long enough to
+ * auto-repeat (the operating system's repeat delay and rate) are
+ * queued again every repeat with their @keys_repeat bit set; modifier
+ * keys never repeat. The pointer is mapped through the
  * process-wide pointer transform installed with
  * lrg_canvas_set_default_pointer_transform().
  *

@@ -21,6 +21,7 @@
 #include "lrg-canvas-private.h"
 #include "lrg-widget-private.h"
 #include "lrg-ui-actions.h"
+#include "lrg-menu.h"
 #include "../paint/lrg-paint-renderer.h"
 #include "../tween/lrg-spring.h"
 #include "../lrg-log.h"
@@ -45,6 +46,13 @@ typedef enum
 	TOUCH_PINCH,    /* two fingers: ZOOM events */
 	TOUCH_DONE      /* gesture finished; wait for every finger to lift */
 } TouchState;
+
+/* A global key handler (_lrg_canvas_add_key_hook), e.g. a menu bar */
+typedef struct
+{
+	GWeakRef          owner;
+	LrgCanvasKeyHook  func;
+} KeyHook;
 
 /* A keyboard shortcut (lrg_canvas_add_shortcut) */
 typedef struct
@@ -75,6 +83,10 @@ struct _LrgCanvas
 	GPtrArray    *hover_path;       /* owned refs, target first */
 	LrgWidget    *capture;          /* owned while a button is held */
 	guint         capture_buttons;  /* LRG_CANVAS_BUTTON_MASK bits held on it */
+	LrgWidget    *capture_popup;    /* owned: popup opened by the capture (it and the
+	                                   popups above it get the pointer while over them) */
+	LrgWidget    *context_menu;     /* owned LrgMenu for LrgWidget:context-menu */
+	GPtrArray    *key_hooks;        /* KeyHook*, global keys (menu bar F10 / Alt) */
 	LrgWidget    *pulse;            /* owned: activate press flash */
 	gfloat        last_mouse_x;
 	gfloat        last_mouse_y;
@@ -159,6 +171,15 @@ shortcut_clear (gpointer data)
 	g_clear_pointer (&sc->accel, g_free);
 	g_clear_pointer (&sc->action, g_free);
 	g_clear_pointer (&sc->target, g_variant_unref);
+}
+
+static void
+key_hook_free (gpointer data)
+{
+	KeyHook *h = data;
+
+	g_weak_ref_clear (&h->owner);
+	g_free (h);
 }
 
 static void
@@ -281,7 +302,11 @@ lrg_canvas_dispose (GObject *object)
 	if (self->hover_path != NULL)
 		g_ptr_array_set_size (self->hover_path, 0);
 	g_clear_object (&self->capture);
+	g_clear_object (&self->capture_popup);
 	g_clear_object (&self->pulse);
+	g_clear_object (&self->context_menu);
+	if (self->key_hooks != NULL)
+		g_ptr_array_set_size (self->key_hooks, 0);
 	g_clear_object (&self->pan_target);
 	if (self->popups != NULL)
 		g_array_set_size (self->popups, 0);
@@ -309,6 +334,7 @@ lrg_canvas_finalize (GObject *object)
 	g_clear_pointer (&self->closing, g_array_unref);
 	g_clear_pointer (&self->overlays, g_ptr_array_unref);
 	g_clear_pointer (&self->shortcuts, g_array_unref);
+	g_clear_pointer (&self->key_hooks, g_ptr_array_unref);
 	g_clear_object (&self->paint);
 
 	G_OBJECT_CLASS (lrg_canvas_parent_class)->finalize (object);
@@ -505,6 +531,7 @@ lrg_canvas_init (LrgCanvas *self)
 	self->last_mouse_y = -1.0f;
 	self->shortcuts = g_array_new (FALSE, TRUE, sizeof (Shortcut));
 	g_array_set_clear_func (self->shortcuts, shortcut_clear);
+	self->key_hooks = g_ptr_array_new_with_free_func (key_hook_free);
 	self->default_direction = LRG_WIDGET_DIRECTION_LTR;
 
 	/* Built-in actions every UI can bind to: "app.quit", "ui.show" ... */
@@ -1000,6 +1027,45 @@ popup_index_of (LrgCanvas *self,
 	return -1;
 }
 
+/* clear_capture: the pointer is free again */
+static void
+clear_capture (LrgCanvas *self)
+{
+	g_clear_object (&self->capture);
+	g_clear_object (&self->capture_popup);
+	self->capture_buttons = 0;
+}
+
+/*
+ * pointer_target:
+ *
+ * Where pointer moves and releases go. Without a capture: the widget
+ * under the pointer. With one: the capture, except while the capture
+ * opened a popup during the press (a context menu, a menu bar title):
+ * then that popup, and every popup stacked above it (submenus), get
+ * the pointer while it is over them, so press-drag-release picks a
+ * row in one gesture. Elsewhere the capture keeps it (a menu bar still
+ * sees the drag move to another title).
+ */
+static LrgWidget *
+pointer_target (LrgCanvas *self,
+                LrgWidget *hit)
+{
+	if (self->capture == NULL)
+		return hit;
+
+	if (self->capture_popup != NULL)
+	{
+		gint base = popup_index_of (self, self->capture_popup);
+
+		if (base < 0)
+			g_clear_object (&self->capture_popup);
+		else if (popup_index_of (self, hit) >= base)
+			return hit;
+	}
+	return self->capture;
+}
+
 /* ==========================================================================
  * Input
  * ========================================================================== */
@@ -1015,8 +1081,9 @@ lrg_canvas_handle_input (LrgCanvas *self)
 	lrg_canvas_process_input (self, &input);
 }
 
-/* dispatch_button: one event per button set in @mask */
-static void
+/* dispatch_button: one event per button set in @mask; returns the
+ * buttons whose event nobody handled */
+static guint
 dispatch_button (LrgCanvas            *self,
                  LrgWidget            *target,
                  LrgUIEventType        type,
@@ -1029,6 +1096,7 @@ dispatch_button (LrgCanvas            *self,
 		GRL_MOUSE_BUTTON_MIDDLE
 	};
 	guint i;
+	guint unhandled = 0;
 
 	for (i = 0; i < G_N_ELEMENTS (buttons); i++)
 	{
@@ -1040,8 +1108,10 @@ dispatch_button (LrgCanvas            *self,
 		event = lrg_ui_event_new_mouse_button (type, (gint) buttons[i],
 		                                       input->pointer_x, input->pointer_y);
 		lrg_ui_event_set_modifiers (event, input->modifiers);
-		dispatch_event (self, target, event);
+		if (!dispatch_event (self, target, event))
+			unhandled |= LRG_CANVAS_BUTTON_MASK (buttons[i]);
 	}
+	return unhandled;
 }
 
 /* arrow_direction: arrow key -> navigation direction */
@@ -1493,6 +1563,217 @@ lrg_canvas_set_default_direction (LrgCanvas          *self,
 		_lrg_widget_queue_layout_subtree (g_ptr_array_index (self->overlays, i));
 }
 
+/* ==========================================================================
+ * Tab, context menus and global key hooks
+ * ========================================================================== */
+
+/*
+ * handle_tab:
+ *
+ * Tab / Shift+Tab: a focused widget that accepts Tab gets it as a
+ * KEY_DOWN first (an editor indents) and keeps focus if it handles
+ * it; otherwise a shortcut bound to it fires, else focus moves to the
+ * next / previous widget. Ctrl+Tab skips the widget, so focus can
+ * always leave an editor.
+ */
+static void
+handle_tab (LrgCanvas         *self,
+            LrgInputModifiers  mods,
+            gboolean           repeat)
+{
+	LrgWidget *focused = self->focused_widget;
+	gint       sc;
+
+	if (focused != NULL && !(mods & LRG_INPUT_MODIFIER_CTRL) && lrg_widget_get_accepts_tab (focused))
+	{
+		g_autoptr(LrgUIEvent) ev = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_DOWN, GRL_KEY_TAB);
+
+		lrg_ui_event_set_modifiers (ev, mods);
+		lrg_ui_event_set_repeat (ev, repeat);
+		if (dispatch_event (self, focused, ev))
+			return;
+	}
+
+	sc = find_shortcut (self, GRL_KEY_TAB, mods);
+	if (sc >= 0 && fire_shortcut (self, sc))
+		return;
+
+	if (self->navigation_enabled)
+		lrg_canvas_move_focus (self, (mods & LRG_INPUT_MODIFIER_SHIFT) ? LRG_NAV_DIRECTION_PREVIOUS
+		                                                                : LRG_NAV_DIRECTION_NEXT);
+}
+
+/* is_context_menu_key: Shift+F10 or the Menu key */
+static gboolean
+is_context_menu_key (GrlKey            key,
+                     LrgInputModifiers mods)
+{
+	const LrgInputModifiers others = LRG_INPUT_MODIFIER_CTRL | LRG_INPUT_MODIFIER_ALT |
+	                                 LRG_INPUT_MODIFIER_SUPER;
+
+	if (mods & others)
+		return FALSE;
+	if (key == GRL_KEY_KB_MENU)
+		return TRUE;
+	return key == GRL_KEY_F10 && (mods & LRG_INPUT_MODIFIER_SHIFT);
+}
+
+/*
+ * open_context_menu:
+ * @from: the widget clicked (or focused, for the keyboard)
+ * @keyboard: open below @from with the first row highlighted, instead
+ *   of at (@x, @y)
+ *
+ * Finds the nearest widget from @from up that has a context-menu model
+ * (LrgWidget:context-menu) and opens the canvas's shared LrgMenu with
+ * it, owned by that widget so actions resolve from there.
+ *
+ * Returns: %TRUE if a menu opened
+ */
+static gboolean
+open_context_menu (LrgCanvas *self,
+                   LrgWidget *from,
+                   gboolean   keyboard,
+                   gfloat     x,
+                   gfloat     y)
+{
+	LrgWidget  *holder;
+	GMenuModel *model = NULL;
+	LrgMenu    *menu;
+	gfloat      cx = lrg_widget_get_world_x (LRG_WIDGET (self));
+	gfloat      cy = lrg_widget_get_world_y (LRG_WIDGET (self));
+
+	for (holder = from; holder != NULL && holder != LRG_WIDGET (self);
+	     holder = (LrgWidget *) lrg_widget_get_parent (holder))
+	{
+		model = lrg_widget_get_context_menu (holder);
+		if (model != NULL)
+			break;
+	}
+	if (model == NULL || holder == NULL || holder == LRG_WIDGET (self))
+		return FALSE;
+
+	if (self->context_menu == NULL)
+		self->context_menu = LRG_WIDGET (lrg_menu_new ());
+	menu = LRG_MENU (self->context_menu);
+	if (lrg_menu_get_open (menu))
+		lrg_menu_close (menu);
+	lrg_menu_set_model (menu, model);
+
+	if (keyboard)
+	{
+		guint i;
+
+		lrg_menu_popup_at_rect (menu, holder,
+		                        lrg_widget_get_world_x (from) - cx, lrg_widget_get_world_y (from) - cy,
+		                        lrg_widget_get_width (from), lrg_widget_get_height (from),
+		                        LRG_POPUP_PLACEMENT_BELOW);
+		for (i = 0; i < lrg_menu_get_n_entries (menu); i++)
+		{
+			if (lrg_menu_get_entry_enabled (menu, i))
+			{
+				lrg_menu_set_highlighted (menu, (gint) i);
+				break;
+			}
+		}
+	}
+	else
+		lrg_menu_popup_at_point (menu, holder, x - cx, y - cy);
+
+	return lrg_menu_get_open (menu);
+}
+
+/*
+ * run_key_hooks:
+ *
+ * Offers an unhandled key to the global key hooks, oldest first.
+ * Hooks whose owner died or left this canvas are dropped; owners that
+ * are hidden or disabled are skipped.
+ */
+static gboolean
+run_key_hooks (LrgCanvas         *self,
+               GrlKey             key,
+               LrgInputModifiers  mods)
+{
+	guint i;
+
+	for (i = 0; i < self->key_hooks->len;)
+	{
+		KeyHook              *h = g_ptr_array_index (self->key_hooks, i);
+		g_autoptr(LrgWidget)  owner = g_weak_ref_get (&h->owner);
+
+		if (owner == NULL || lrg_widget_get_root (owner) != LRG_WIDGET (self))
+		{
+			g_ptr_array_remove_index (self->key_hooks, i);
+			continue;
+		}
+		if (visible_chain (owner) && lrg_widget_get_enabled (owner) &&
+		    h->func (owner, (gint) key, (guint) mods))
+			return TRUE;
+		i++;
+	}
+	return FALSE;
+}
+
+void
+_lrg_canvas_add_key_hook (LrgCanvas        *self,
+                          LrgWidget        *owner,
+                          LrgCanvasKeyHook  func)
+{
+	KeyHook *h;
+	guint    i;
+
+	g_return_if_fail (LRG_IS_CANVAS (self));
+	g_return_if_fail (LRG_IS_WIDGET (owner));
+	g_return_if_fail (func != NULL);
+
+	for (i = 0; i < self->key_hooks->len; i++)
+	{
+		KeyHook              *e = g_ptr_array_index (self->key_hooks, i);
+		g_autoptr(LrgWidget)  o = g_weak_ref_get (&e->owner);
+
+		if (o == owner)
+		{
+			e->func = func;
+			return;
+		}
+	}
+
+	h = g_new0 (KeyHook, 1);
+	g_weak_ref_init (&h->owner, owner);
+	h->func = func;
+	g_ptr_array_add (self->key_hooks, h);
+}
+
+void
+_lrg_canvas_remove_key_hook (LrgCanvas *self,
+                             LrgWidget *owner)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	for (i = 0; i < self->key_hooks->len; i++)
+	{
+		KeyHook              *e = g_ptr_array_index (self->key_hooks, i);
+		g_autoptr(LrgWidget)  o = g_weak_ref_get (&e->owner);
+
+		if (o == owner)
+		{
+			g_ptr_array_remove_index (self->key_hooks, i);
+			return;
+		}
+	}
+}
+
+guint
+_lrg_canvas_get_n_key_hooks (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), 0);
+
+	return self->key_hooks->len;
+}
+
 void
 lrg_canvas_process_input (LrgCanvas            *self,
                           const LrgCanvasInput *input_in)
@@ -1508,6 +1789,8 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	GrlKey     deferred[LRG_CANVAS_INPUT_MAX_KEYS];
 	guint      n_deferred = 0;
 	gboolean   typed = FALSE;
+	gboolean   mnemonic = FALSE;
+	guint      unhandled;
 
 	g_return_if_fail (LRG_IS_CANVAS (self));
 	g_return_if_fail (input_in != NULL);
@@ -1534,9 +1817,10 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	mx = input->pointer_x;
 	my = input->pointer_y;
 
-	/* Pointer target: the captured widget wins while a button is held */
+	/* Pointer target: the captured widget wins while a button is held
+	 * (or the popup it opened, while the pointer is over that) */
 	hit = lrg_canvas_widget_at_point (self, mx, my);
-	target = self->capture != NULL ? self->capture : hit;
+	target = pointer_target (self, hit);
 
 	update_hover (self, hit);
 
@@ -1550,8 +1834,9 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		self->last_mouse_x = mx;
 		self->last_mouse_y = my;
 
-		/* A captured widget looks pressed only while the pointer is on it */
-		if (self->capture != NULL &&
+		/* A captured widget looks pressed only while the pointer is on it
+		 * (not once it handed the gesture to a popup it opened) */
+		if (self->capture != NULL && self->capture_popup == NULL &&
 		    (self->capture_buttons & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT)))
 		{
 			if (lrg_widget_contains_point (self->capture, mx, my))
@@ -1605,8 +1890,12 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		}
 
 		target = self->capture != NULL ? self->capture : hit;
-		dispatch_button (self, target, LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-		                 input->buttons_pressed, input);
+		unhandled = dispatch_button (self, target, LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
+		                             input->buttons_pressed, input);
+
+		/* An unhandled right press opens the nearest context menu */
+		if ((unhandled & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_RIGHT)) && hit != NULL)
+			open_context_menu (self, hit, FALSE, mx, my);
 	}
 
 	/* Releases go to the capture, which then lets go */
@@ -1614,7 +1903,7 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	{
 		g_autoptr(LrgWidget) released = self->capture != NULL ? g_object_ref (self->capture) : NULL;
 
-		dispatch_button (self, released != NULL ? released : hit,
+		dispatch_button (self, pointer_target (self, hit),
 		                 LRG_UI_EVENT_MOUSE_BUTTON_UP, input->buttons_released, input);
 
 		if (released != NULL && self->capture == released)
@@ -1623,7 +1912,7 @@ lrg_canvas_process_input (LrgCanvas            *self,
 				lrg_widget_unset_state_flags (released, LRG_WIDGET_STATE_PRESSED);
 			self->capture_buttons &= ~input->buttons_released;
 			if (self->capture_buttons == 0)
-				g_clear_object (&self->capture);
+				clear_capture (self);
 		}
 	}
 
@@ -1637,19 +1926,32 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		dispatch_event (self, hit, event);
 	}
 
-	/* Keys: the focused widget (or the top popup) first; then a
-	 * matching shortcut; then unhandled arrows navigate, Enter/Space
-	 * activate, Escape cancels. Printable shortcuts wait for the typed
-	 * characters below (see lrg_canvas_add_shortcut()). */
+	/*
+	 * Keys: the focused widget (or the top popup) first; then a
+	 * matching shortcut; then global key hooks (a menu bar's F10 and
+	 * Alt+mnemonic); then Shift+F10 / Menu opens a context menu,
+	 * unhandled arrows navigate, Enter/Space activate, Escape cancels
+	 * (the last two never on auto-repeat). Tab goes its own way (see
+	 * handle_tab()). Printable shortcuts wait for the typed characters
+	 * below (see lrg_canvas_add_shortcut()).
+	 */
 	key_target = self->focused_widget != NULL ? self->focused_widget : lrg_canvas_get_top_popup (self);
 	for (i = 0; i < input->n_keys; i++)
 	{
 		g_autoptr(LrgUIEvent) event = lrg_ui_event_new_key (LRG_UI_EVENT_KEY_DOWN, input->keys[i]);
 		GrlKey                key = input->keys[i];
+		gboolean              repeat = (input->keys_repeat & (1u << i)) != 0;
 		LrgNavDirection       dir;
 		gint                  sc;
 
+		if (key == GRL_KEY_TAB)
+		{
+			handle_tab (self, input->modifiers, repeat);
+			goto next_key;
+		}
+
 		lrg_ui_event_set_modifiers (event, input->modifiers);
+		lrg_ui_event_set_repeat (event, repeat);
 		if (!dispatch_event (self, key_target, event))
 		{
 			sc = find_shortcut (self, key, input->modifiers);
@@ -1662,9 +1964,23 @@ lrg_canvas_process_input (LrgCanvas            *self,
 			if (sc >= 0 && fire_shortcut (self, sc))
 				goto next_key;
 
+			if (run_key_hooks (self, key, input->modifiers))
+			{
+				/* Alt+letter opened a menu: drop the letter it typed */
+				if (input->modifiers & LRG_INPUT_MODIFIER_ALT)
+					mnemonic = TRUE;
+				goto next_key;
+			}
+
+			if (is_context_menu_key (key, input->modifiers) && self->focused_widget != NULL &&
+			    open_context_menu (self, self->focused_widget, TRUE, 0.0f, 0.0f))
+				goto next_key;
+
 			dir = arrow_direction (key);
 			if (dir != LRG_NAV_DIRECTION_NONE && self->navigation_enabled)
 				lrg_canvas_move_focus (self, dir);
+			else if (repeat)
+				;  /* holding Enter or Escape must not fire again and again */
 			else if (key == GRL_KEY_ENTER || key == GRL_KEY_KP_ENTER || key == GRL_KEY_SPACE)
 				lrg_canvas_activate_focus (self);
 			else if (key == GRL_KEY_ESCAPE)
@@ -1686,8 +2002,8 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		dispatch_event (self, key_target, event);
 	}
 
-	/* Typed characters */
-	for (i = 0; i < input->n_chars; i++)
+	/* Typed characters (none after Alt+mnemonic opened a menu) */
+	for (i = 0; i < input->n_chars && !mnemonic; i++)
 	{
 		g_autoptr(LrgUIEvent) event = lrg_ui_event_new_text_input (input->chars[i]);
 
@@ -1708,7 +2024,15 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	/* Gamepad / Tab navigation. Directions are offered to the focused
 	 * widget as arrow keys first (a list moves its cursor, a slider
 	 * steps); only unhandled ones move focus. */
-	if (input->nav != LRG_NAV_DIRECTION_NONE && self->navigation_enabled)
+	if (input->nav == LRG_NAV_DIRECTION_NEXT || input->nav == LRG_NAV_DIRECTION_PREVIOUS)
+	{
+		/* A Tab request from a hand-built frame: same rules as the key */
+		handle_tab (self, input->nav == LRG_NAV_DIRECTION_PREVIOUS
+		                  ? (LrgInputModifiers) (input->modifiers | LRG_INPUT_MODIFIER_SHIFT)
+		                  : (LrgInputModifiers) (input->modifiers & ~LRG_INPUT_MODIFIER_SHIFT),
+		            FALSE);
+	}
+	else if (input->nav != LRG_NAV_DIRECTION_NONE && self->navigation_enabled)
 	{
 		static const GrlKey arrows[] = {
 			GRL_KEY_NULL, GRL_KEY_UP, GRL_KEY_DOWN, GRL_KEY_LEFT, GRL_KEY_RIGHT
@@ -1908,6 +2232,21 @@ lrg_canvas_show_popup (LrgCanvas         *self,
 	if (anchor != NULL)
 		lrg_widget_set_state_flags (anchor, LRG_WIDGET_STATE_OPEN);
 
+	/*
+	 * Opened by the widget that holds the pointer (a press opened a
+	 * context menu or a menu bar title): hand the gesture on, so the
+	 * popup (and submenus above it) get moves and the release while
+	 * the pointer is over them. Only the first popup of a gesture
+	 * takes it; submenus are covered by being stacked above.
+	 */
+	if (self->capture != NULL && self->capture_popup == NULL && anchor != NULL &&
+	    (self->capture == anchor || lrg_widget_is_ancestor (self->capture, anchor) ||
+	     lrg_widget_is_ancestor (anchor, self->capture)))
+	{
+		self->capture_popup = g_object_ref (popup);
+		lrg_widget_unset_state_flags (self->capture, LRG_WIDGET_STATE_PRESSED);
+	}
+
 	/* A modal popup takes focus; keep the ring if it came by keyboard */
 	if (modal)
 	{
@@ -1957,7 +2296,9 @@ lrg_canvas_dismiss_popup (LrgCanvas *self,
 			           FALSE);
 		if (self->capture != NULL &&
 		    (self->capture == p || lrg_widget_is_ancestor (self->capture, p)))
-			g_clear_object (&self->capture);
+			clear_capture (self);
+		if (self->capture_popup == p)
+			g_clear_object (&self->capture_popup);
 		update_hover (self, NULL);
 
 		/* Fade out as a ghost, then release */
@@ -2225,7 +2566,7 @@ lrg_canvas_remove_overlay (LrgCanvas *self,
 
 	if (self->capture != NULL &&
 	    (self->capture == widget || lrg_widget_is_ancestor (self->capture, widget)))
-		g_clear_object (&self->capture);
+		clear_capture (self);
 	update_hover (self, NULL);
 	_lrg_widget_set_parent (widget, NULL);
 	g_ptr_array_remove (self->overlays, widget);

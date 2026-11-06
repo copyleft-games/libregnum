@@ -115,6 +115,20 @@ else
 	lrg_syntax_register (toml);   /* now "toml-lite", "tl" and *.tomlite resolve */
 #+end_src
 
+*** In UI documents
+:PROPERTIES:
+:CUSTOM_ID: syntax-ui-loader
+:END:
+=LrgUILoader= registers languages for the editors it builds: a document's top-level =languages:= takes definitions in this schema inline (expressions allowed), file names or ={file: name}=, and =language-file:= on an =LrgTextEditor= loads one file for that editor. Both register with =lrg_syntax_register()= once the document expanded without errors; an unchanged definition is reused across hot reloads instead of being registered again. See [[file:../declarative-ui.org::#text-editor-keys][Declarative UI]].
+
+#+begin_src yaml
+languages:
+  - {name: toml-lite, base: ini, extensions: ["*.tomlite"], line-comment: "#"}
+  - langs/studio-script.yaml
+type: text-editor
+language: toml-lite
+#+end_src
+
 ** Building a language in code
 :PROPERTIES:
 :CUSTOM_ID: syntax-code

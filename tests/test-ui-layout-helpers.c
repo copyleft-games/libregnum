@@ -625,6 +625,51 @@ test_switcher_properties (void)
 	g_assert_true (G_TYPE_IS_ENUM (LRG_TYPE_SWITCHER_TRANSITION));
 }
 
+/* A scroll box on a sliding page: its clip slides with its content
+ * (paint-list groups move clips pushed inside them) while the
+ * switcher's own clip stays put */
+static void
+test_switcher_slide_moves_inner_clip (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgWidget           *pages[3];
+	LrgSwitcher         *sw = switcher_new (canvas, pages);
+	LrgScrollBox        *scroll = lrg_scroll_box_new ();
+	LrgWidget           *content = block_new (77, 600.0f, 600.0f);
+	LrgPaintList        *list;
+	const LrgPaintInstance *inst;
+	gfloat               rest_offset;
+	gfloat               rest_x;
+
+	lrg_container_add_child (LRG_CONTAINER (scroll), content);
+	g_object_unref (content);
+	lrg_switcher_add_named (sw, LRG_WIDGET (scroll), "scroll");
+	g_object_unref (scroll);
+	lrg_widget_set_motion (LRG_WIDGET (sw), LRG_MOTION_SMOOTH);
+	lrg_switcher_set_transition (sw, LRG_SWITCHER_TRANSITION_SLIDE_LEFT);
+
+	/* At rest: where the scroll box clips its content */
+	lrg_switcher_set_visible_child_name (sw, "scroll");
+	settle (canvas);
+	list = lrg_canvas_record (canvas);
+	inst = block_instance (list, 77);
+	rest_x = inst->rect[0];
+	rest_offset = inst->clip[2] - inst->rect[0];
+	g_assert_cmpfloat (inst->clip[2], <=, 500.0f);
+
+	/* Slide it out: the clip travels with the content */
+	lrg_switcher_set_visible_child_name (sw, "one");
+	run_frames (canvas, 5);
+	g_assert_true (lrg_switcher_get_transition_running (sw));
+	list = lrg_canvas_record (canvas);
+	inst = block_instance (list, 77);
+	g_assert_cmpfloat (inst->rect[0], <, rest_x - 1.0f);
+	g_assert_cmpfloat_with_epsilon (inst->clip[2] - inst->rect[0], rest_offset, 0.5f);
+	g_assert_cmpfloat (inst->clip[2], <, 500.0f - 1.0f);
+	/* ...while the switcher's own edge still cuts the left side */
+	g_assert_cmpfloat (inst->clip[0], ==, 100.0f);
+}
+
 /* A transition paints both pages, hit-tests only the new one, settles */
 static void
 test_switcher_transition (void)
@@ -1060,6 +1105,7 @@ main (int    argc,
 	g_test_add_func ("/ui/switcher/visibility", test_switcher_visibility);
 	g_test_add_func ("/ui/switcher/properties", test_switcher_properties);
 	g_test_add_func ("/ui/switcher/transition", test_switcher_transition);
+	g_test_add_func ("/ui/switcher/slide-moves-inner-clip", test_switcher_slide_moves_inner_clip);
 	g_test_add_func ("/ui/switcher/interrupt", test_switcher_interrupt);
 	g_test_add_func ("/ui/switcher/slide-direction", test_switcher_slide_direction);
 	g_test_add_func ("/ui/switcher/reduced-motion", test_switcher_reduced_motion);

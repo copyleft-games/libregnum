@@ -234,6 +234,11 @@ struct _LrgTextEditor
 	/* Find */
 	gchar         *needle;
 	gboolean       needle_case;
+	GString       *needle_fold;    /* case-folded needle (insensitive find) */
+	Line          *fold_line;      /* line whose fold is cached below */
+	guint          fold_serial;    /* edit_serial the fold was made at */
+	GString       *fold_text;      /* case-folded copy of fold_line */
+	GArray        *fold_map;       /* guint per fold byte: source char byte */
 
 	/* Bracket match cache */
 	guint          bracket_serial;
@@ -241,6 +246,7 @@ struct _LrgTextEditor
 	gboolean       bracket_found;
 	Pos            bracket_a;
 	Pos            bracket_b;
+	GArray        *bracket_spans;  /* scratch spans for off-screen lines */
 
 	/* Properties */
 	gboolean       show_line_numbers;
@@ -1585,26 +1591,102 @@ bracket_partner (gchar c,
 }
 
 /*
+ * scan_spans:
+ *
+ * The highlight spans bracket matching tests line @i against, or %NULL
+ * without a language. The line's entry state is brought up to date
+ * first (state only, so the walk stays cheap); a line that already has
+ * painted spans reuses them, any other line is tokenized into a scratch
+ * array (not cached and not counted by the tokenize diagnostics, so a
+ * long scan does not leave spans behind for off-screen lines). The
+ * returned array is valid until the next call.
+ */
+static GArray *
+scan_spans (LrgTextEditor *self,
+            guint          i)
+{
+	Line *l;
+
+	if (self->syntax == NULL)
+		return NULL;
+	ensure_states (self, i, G_MAXUINT);
+	l = get_line (self, i);
+	if (l->spans != NULL && !l->dirty)
+		return l->spans;
+	g_array_set_size (self->bracket_spans, 0);
+	lrg_syntax_tokenize_line (self->syntax, l->text->str, (gssize) l->text->len,
+	                          l->state_in, self->bracket_spans);
+	return self->bracket_spans;
+}
+
+/*
+ * in_literal:
+ *
+ * Whether byte @b lies in a string, escape or comment span. Spans are
+ * sorted and disjoint, so a binary search finds the one covering @b.
+ * %NULL spans (no language) never hide anything.
+ */
+static gboolean
+in_literal (GArray *spans,
+            guint   b)
+{
+	guint lo = 0;
+	guint hi;
+
+	if (spans == NULL)
+		return FALSE;
+	hi = spans->len;
+	while (lo < hi)
+	{
+		guint          mid = lo + (hi - lo) / 2;
+		LrgSyntaxSpan *s = &g_array_index (spans, LrgSyntaxSpan, mid);
+
+		if (b < s->start)
+			hi = mid;
+		else if (b >= s->end)
+			lo = mid + 1;
+		else
+			return s->token == LRG_SYNTAX_TOKEN_STRING
+			       || s->token == LRG_SYNTAX_TOKEN_ESCAPE
+			       || s->token == LRG_SYNTAX_TOKEN_COMMENT;
+	}
+	return FALSE;
+}
+
+/*
  * scan_bracket:
  *
  * From the bracket at @p, walks forwards or backwards counting nesting
  * of the same pair until the partner (at most BRACKET_SCAN_LIMIT bytes).
+ *
+ * With a language set, brackets inside string, escape and comment
+ * tokens are invisible: they neither nest nor match, and a bracket at
+ * @p that is itself inside one has no partner at all. Each line's spans
+ * are fetched once, when the walk enters it.
  */
 static gboolean
 scan_bracket (LrgTextEditor *self,
               Pos            p,
               Pos           *out)
 {
-	gchar  open = get_line (self, p.line)->text->str[p.byte];
-	gint   dir;
-	gchar  close = bracket_partner (open, &dir);
-	gint   depth = 0;
-	guint  budget = BRACKET_SCAN_LIMIT;
-	guint  line = p.line;
-	gint64 b = (gint64) p.byte;
+	gchar   open = get_line (self, p.line)->text->str[p.byte];
+	gint    dir;
+	gchar   close = bracket_partner (open, &dir);
+	gint    depth = 0;
+	guint   budget = BRACKET_SCAN_LIMIT;
+	guint   line = p.line;
+	gint64  b = (gint64) p.byte;
+	GArray *spans;
 
 	if (dir == 0)
 		return FALSE;
+
+	/* 1. A bracket in a string or comment is text, not a bracket */
+	spans = scan_spans (self, line);
+	if (in_literal (spans, p.byte))
+		return FALSE;
+
+	/* 2. Walk, skipping literal bytes, until depth returns to zero */
 	while (budget-- > 0)
 	{
 		Line *l = get_line (self, line);
@@ -1613,17 +1695,21 @@ scan_bracket (LrgTextEditor *self,
 		{
 			gchar c = l->text->str[b];
 
-			if (c == open)
-				depth++;
-			else if (c == close && --depth == 0)
+			if ((c == open || c == close) && !in_literal (spans, (guint) b))
 			{
-				*out = pos_make (line, (guint) b);
-				return TRUE;
+				if (c == open)
+					depth++;
+				else if (--depth == 0)
+				{
+					*out = pos_make (line, (guint) b);
+					return TRUE;
+				}
 			}
 			b += dir;
 			continue;
 		}
-		/* next / previous line */
+
+		/* 3. Next / previous line (its spans are fetched once here) */
 		if (dir > 0)
 		{
 			if (line + 1 >= n_lines (self))
@@ -1638,6 +1724,7 @@ scan_bracket (LrgTextEditor *self,
 			line--;
 			b = (gint64) get_line (self, line)->text->len - 1;
 		}
+		spans = scan_spans (self, line);
 	}
 	return FALSE;
 }
@@ -1690,39 +1777,187 @@ update_brackets (LrgTextEditor *self)
  * Find
  * ========================================================================== */
 
-/* match_in: first match of the needle in @l at or after @from, or -1 */
+/*
+ * fold_append:
+ * @out: receives the folded text
+ * @map: (nullable): receives, per byte appended to @out, the byte of
+ *   @s (plus @base) of the character it came from
+ * @s: UTF-8 text
+ * @len: bytes of @s
+ * @base: added to the offsets written to @map
+ *
+ * Unicode case folding for case-insensitive find, one character at a
+ * time so every folded byte can be traced back to its source character:
+ * ASCII is lowered directly (the fast path); any other character goes
+ * through g_utf8_casefold() and then g_utf8_normalize() with
+ * %G_NORMALIZE_DEFAULT, which decomposes it ("ä" -> "a" + U+0308), so
+ * precomposed and decomposed spellings fold to the same bytes. Folding
+ * may change the byte length ("ß" -> "ss", "İ" -> "i" + U+0307); the map
+ * is what lets matches land on the right source bytes. Invalid bytes
+ * are copied through unchanged.
+ */
+static void
+fold_append (GString     *out,
+             GArray      *map,
+             const gchar *s,
+             gsize        len,
+             guint        base)
+{
+	gsize i = 0;
+
+	while (i < len)
+	{
+		guchar   c = (guchar) s[i];
+		gsize    before = out->len;
+		gsize    clen = 1;
+		gunichar ch;
+
+		if (c < 0x80)
+			g_string_append_c (out, g_ascii_tolower ((gchar) c));
+		else if ((ch = g_utf8_get_char_validated (s + i, (gssize) (len - i))) == (gunichar) -1
+		         || ch == (gunichar) -2)
+			g_string_append_c (out, (gchar) c);
+		else
+		{
+			g_autofree gchar *folded = NULL;
+			g_autofree gchar *norm = NULL;
+
+			clen = (gsize) (g_utf8_next_char (s + i) - (s + i));
+			folded = g_utf8_casefold (s + i, (gssize) clen);
+			norm = g_utf8_normalize (folded, -1, G_NORMALIZE_DEFAULT);
+			g_string_append (out, norm != NULL ? norm : folded);
+		}
+
+		/* every byte this character produced points back at it */
+		if (map != NULL)
+		{
+			guint src = base + (guint) i;
+
+			for (; before < out->len; before++)
+				g_array_append_val (map, src);
+		}
+		i += clen;
+	}
+}
+
+/*
+ * fold_line:
+ *
+ * Caches the folded copy of @l and its byte map. One line is cached,
+ * keyed by the line and the edit serial, so painting several rows of a
+ * wrapped line or counting many matches in it folds it once.
+ */
+static void
+fold_line (LrgTextEditor *self,
+           Line          *l)
+{
+	if (self->fold_line == l && self->fold_serial == self->edit_serial)
+		return;
+	g_string_truncate (self->fold_text, 0);
+	g_array_set_size (self->fold_map, 0);
+	fold_append (self->fold_text, self->fold_map, l->text->str, l->text->len, 0);
+	self->fold_line = l;
+	self->fold_serial = self->edit_serial;
+}
+
+/*
+ * match_folded:
+ *
+ * Case-insensitive search of the folded needle in the folded line. A
+ * match must start where a source character's fold starts and end where
+ * one ends: "s" does not match half of "ß", and "i" does not match the
+ * "i" of a folded "İ". The source range is read back through the map.
+ */
+static gssize
+match_folded (LrgTextEditor *self,
+              Line          *l,
+              guint          from,
+              guint         *end)
+{
+	const gchar *f;
+	const guint *map;
+	gsize        fl;
+	gsize        n = self->needle_fold->len;
+	gsize        k;
+
+	fold_line (self, l);
+	f = self->fold_text->str;
+	fl = self->fold_text->len;
+	map = (const guint *) (gpointer) self->fold_map->data;
+	if (n == 0 || fl < n)
+		return -1;
+
+	for (k = 0; k + n <= fl; k++)
+	{
+		/* only at character starts at or after @from */
+		if ((k > 0 && map[k] == map[k - 1]) || map[k] < from)
+			continue;
+		if (f[k] != self->needle_fold->str[0] || memcmp (f + k, self->needle_fold->str, n) != 0)
+			continue;
+		/* must not end inside one character's fold */
+		if (k + n < fl && map[k + n] == map[k + n - 1])
+			continue;
+		*end = k + n < fl ? map[k + n] : (guint) l->text->len;
+		return (gssize) map[k];
+	}
+	return -1;
+}
+
+/*
+ * match_in:
+ * @end: (out) (optional): byte after the match
+ *
+ * First match of the needle in @l starting at or after @from, or -1.
+ * Case-sensitive find compares bytes; otherwise the line is folded (see
+ * fold_append()) and the match may span a different number of bytes
+ * than the needle, so callers use @end, never strlen (needle).
+ */
 static gssize
 match_in (LrgTextEditor *self,
           Line          *l,
-          guint          from)
+          guint          from,
+          guint         *end)
 {
-	gsize n = strlen (self->needle);
-	gsize i;
+	gsize  n = strlen (self->needle);
+	gsize  i;
+	guint  e = 0;
+	gssize m = -1;
 
-	if (n == 0 || l->text->len < n)
-		return -1;
-	for (i = from; i + n <= l->text->len; i++)
+	if (!self->needle_case)
+		m = match_folded (self, l, from, &e);
+	else if (n > 0 && l->text->len >= n)
 	{
-		if (self->needle_case ? memcmp (l->text->str + i, self->needle, n) == 0
-		                      : g_ascii_strncasecmp (l->text->str + i, self->needle, n) == 0)
-			return (gssize) i;
+		for (i = from; i + n <= l->text->len; i++)
+		{
+			if (memcmp (l->text->str + i, self->needle, n) == 0)
+			{
+				m = (gssize) i;
+				e = (guint) (i + n);
+				break;
+			}
+		}
 	}
-	return -1;
+	if (m >= 0 && end != NULL)
+		*end = e;
+	return m;
 }
 
 /* match_before: last match in @l starting before @before, or -1 */
 static gssize
 match_before (LrgTextEditor *self,
               Line          *l,
-              guint          before)
+              guint          before,
+              guint         *end)
 {
 	gssize found = -1;
-	gssize m = match_in (self, l, 0);
+	guint  e = 0;
+	gssize m = match_in (self, l, 0, &e);
 
 	while (m >= 0 && (guint) m < before)
 	{
 		found = m;
-		m = match_in (self, l, (guint) m + 1);
+		*end = e;
+		m = match_in (self, l, (guint) m + 1, &e);
 	}
 	return found;
 }
@@ -1730,10 +1965,11 @@ match_before (LrgTextEditor *self,
 static void
 select_match (LrgTextEditor *self,
               guint          line,
-              guint          byte)
+              guint          byte,
+              guint          end)
 {
 	self->anchor = pos_make (line, byte);
-	self->cursor = pos_make (line, byte + (guint) strlen (self->needle));
+	self->cursor = pos_make (line, end);
 	self->break_coalesce = TRUE;
 	flush (self, TRUE);
 }
@@ -1749,11 +1985,12 @@ find_from (LrgTextEditor *self,
 	for (k = 0; k <= n; k++)
 	{
 		guint  line = (p.line + k) % n;
-		gssize m = match_in (self, get_line (self, line), k == 0 ? p.byte : 0);
+		guint  end = 0;
+		gssize m = match_in (self, get_line (self, line), k == 0 ? p.byte : 0, &end);
 
 		if (m >= 0 && !(k == n && (guint) m >= p.byte))
 		{
-			select_match (self, line, (guint) m);
+			select_match (self, line, (guint) m, end);
 			return TRUE;
 		}
 	}
@@ -2597,16 +2834,24 @@ paint_matches_row (LrgTextEditor     *self,
                    gfloat             y)
 {
 	gsize  n = strlen (self->needle);
-	gssize m = match_in (self, l, rs > n ? rs - (guint) n + 1 : 0);
+	guint  end = 0;
+	gssize m;
 
+	/*
+	 * A case-sensitive match is exactly n bytes, so one that reaches
+	 * into this row starts at most n - 1 bytes before it. Folded
+	 * matches can be longer or shorter than the needle: scan the line
+	 * from its start (the fold is cached per line, so this is cheap).
+	 */
+	m = match_in (self, l, self->needle_case && rs > n ? rs - (guint) n + 1 : 0, &end);
 	while (m >= 0 && (guint) m < re)
 	{
 		guint a = MAX ((guint) m, rs);
-		guint b = MIN ((guint) m + (guint) n, re);
+		guint b = MIN (end, re);
 
 		if (b > a)
 			paint_cells (self, pt, look, l, rs, a, b, 0.0f, y);
-		m = match_in (self, l, (guint) m + 1);
+		m = match_in (self, l, (guint) m + 1, &end);
 	}
 }
 
@@ -3308,6 +3553,10 @@ lrg_text_editor_finalize (GObject *object)
 	g_free (self->placeholder);
 	g_free (self->font);
 	g_free (self->needle);
+	g_string_free (self->needle_fold, TRUE);
+	g_string_free (self->fold_text, TRUE);
+	g_array_unref (self->fold_map);
+	g_array_unref (self->bracket_spans);
 
 	G_OBJECT_CLASS (lrg_text_editor_parent_class)->finalize (object);
 }
@@ -3457,6 +3706,9 @@ lrg_text_editor_class_init (LrgTextEditorClass *klass)
 	/* Code and logs are laid out left to right; the scrollbar zones are
 	 * placed for that, so the container must not mirror them in RTL */
 	lrg_widget_class_set_handles_direction (widget_class, TRUE);
+	/* Tab indents (KEY_DOWN reaches us before focus moves); read-only
+	 * editors return FALSE for it so focus can leave, as does Ctrl+Tab */
+	lrg_widget_class_set_accepts_tab (widget_class, TRUE);
 
 	/**
 	 * LrgTextEditor:text:
@@ -3636,6 +3888,11 @@ lrg_text_editor_init (LrgTextEditor *self)
 	self->layout_serial = 1;
 	self->natural_rows = 1;
 	self->bracket_serial = G_MAXUINT;
+	self->bracket_spans = g_array_new (FALSE, FALSE, sizeof (LrgSyntaxSpan));
+	self->needle_fold = g_string_new (NULL);
+	self->fold_text = g_string_new (NULL);
+	self->fold_map = g_array_new (FALSE, FALSE, sizeof (guint));
+	self->fold_serial = G_MAXUINT;
 
 	self->tab_width = 4;
 	self->highlight_line = TRUE;
@@ -4053,6 +4310,9 @@ lrg_text_editor_find (LrgTextEditor *self,
 		return FALSE;
 	self->needle = g_strdup (needle);
 	self->needle_case = case_sensitive;
+	g_string_truncate (self->needle_fold, 0);
+	if (!case_sensitive)
+		fold_append (self->needle_fold, NULL, needle, strlen (needle), 0);
 	sel_range (self, &a, &b);
 	return find_from (self, a);
 }
@@ -4090,11 +4350,12 @@ lrg_text_editor_find_previous (LrgTextEditor *self)
 	{
 		guint  line = (a.line + n - (k % n)) % n;
 		Line  *l = get_line (self, line);
-		gssize m = match_before (self, l, k == 0 ? a.byte : (guint) l->text->len + 1);
+		guint  end = 0;
+		gssize m = match_before (self, l, k == 0 ? a.byte : (guint) l->text->len + 1, &end);
 
 		if (m >= 0)
 		{
-			select_match (self, line, (guint) m);
+			select_match (self, line, (guint) m, end);
 			return TRUE;
 		}
 	}
@@ -4114,15 +4375,41 @@ lrg_text_editor_get_match_count (LrgTextEditor *self)
 	for (i = 0; i < n_lines (self); i++)
 	{
 		Line  *l = get_line (self, i);
-		gssize m = match_in (self, l, 0);
+		guint  end = 0;
+		gssize m = match_in (self, l, 0, &end);
 
+		/* non-overlapping: the next match starts after this one ends */
 		while (m >= 0)
 		{
 			count++;
-			m = match_in (self, l, (guint) m + (guint) strlen (self->needle));
+			m = match_in (self, l, end, &end);
 		}
 	}
 	return count;
+}
+
+gboolean
+lrg_text_editor_get_bracket_match (LrgTextEditor *self,
+                                   guint         *line,
+                                   guint         *column,
+                                   guint         *match_line,
+                                   guint         *match_column)
+{
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), FALSE);
+
+	/* the same cached pair painting uses */
+	update_brackets (self);
+	if (!self->bracket_found)
+		return FALSE;
+	if (line != NULL)
+		*line = self->bracket_a.line;
+	if (column != NULL)
+		*column = byte_to_char (get_line (self, self->bracket_a.line), self->bracket_a.byte);
+	if (match_line != NULL)
+		*match_line = self->bracket_b.line;
+	if (match_column != NULL)
+		*match_column = byte_to_char (get_line (self, self->bracket_b.line), self->bracket_b.byte);
+	return TRUE;
 }
 
 /* ==========================================================================
@@ -4248,6 +4535,8 @@ lrg_text_editor_set_syntax (LrgTextEditor *self,
 	g_free (self->language);
 	self->language = syntax != NULL ? g_strdup (lrg_syntax_get_name (syntax)) : NULL;
 	reset_highlight (self);
+	/* which brackets sit in strings / comments depends on the language */
+	self->bracket_serial = G_MAXUINT;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SYNTAX]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LANGUAGE]);
 }

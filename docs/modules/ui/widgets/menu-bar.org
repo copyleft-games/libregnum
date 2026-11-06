@@ -12,9 +12,9 @@
 What it does:
 - A rounded pill glides between titles on a bouncy spring, following the pointer, the keyboard cursor or the open menu, and deepens while its menu is open.
 - Click a title to open its menu; click it again to close it. While a menu is open, hovering another title switches to it at once.
-- Press a title, drag onto a row and release to pick it in one gesture (the bar forwards the captured pointer to the open menus).
+- Press a title, drag onto a row and release to pick it in one gesture (the canvas hands the captured pointer to the open menus while it is over them).
 - Left / Right inside an open menu move to the neighbouring title (wrapping), opening its menu with the first row highlighted.
-- Keyboard navigation of the bar itself (the job of F10 / Alt in desktop applications) with =lrg_menu_bar_focus_titles()=; mnemonic underlines show while it is keyboard driven, and typing a title's mnemonic opens it.
+- F10 and Alt+mnemonic work from anywhere in the canvas, with no setup; keyboard navigation of the bar itself also starts with =lrg_menu_bar_focus_titles()=; mnemonic underlines show while it is keyboard driven, and typing a title's mnemonic opens it.
 - Right-to-left layouts place the first title at the right edge, align menus to the right edge of their title and swap the meaning of Left / Right.
 
 The bar is the owner of its menus, so their actions resolve from the bar up through its ancestors to the canvas.
@@ -47,25 +47,14 @@ Its preferred height is the theme's =CONTROL_HEIGHT= and its preferred width the
 :PROPERTIES:
 :CUSTOM_ID: menu-bar-f10
 :END:
-The canvas delivers keys to the focused widget, so a bar sees F10 only while it has focus (F10 then toggles keyboard navigation). To make F10 work from anywhere, route it through an action and a canvas shortcut:
+A bar registers a global key hook on its canvas as soon as it joins the canvas tree (it is measured or stepped there), and the canvas drops the hook when the bar leaves, is destroyed or moves to another canvas (see [[file:../input-and-focus.org::#input-global-keys][global key hooks]]). With no code in the application:
 
-#+begin_src c
-static void
-on_focus_menu_bar (GSimpleAction *action,
-                   GVariant      *parameter,
-                   gpointer       user_data)
-{
-	lrg_menu_bar_focus_titles (LRG_MENU_BAR (user_data));
-}
+- *F10* from anywhere opens the first title that has a menu, with its first row highlighted; F10 again (the menu has focus then) closes it. A bar with only plain buttons gets keyboard navigation (=lrg_menu_bar_focus_titles()=) instead.
+- *Alt+letter* from anywhere opens the title whose mnemonic is that letter (="_File"= answers to Alt+F); a title without a mnemonic answers to its first letter. Digits work too. The character the key typed is dropped for that frame, so it does not land in a text field.
 
-g_autoptr(GSimpleAction) focus_bar = g_simple_action_new ("focus-menu-bar", NULL);
+The hook only sees keys nobody else wanted: the focused widget gets the =KEY_DOWN= first (a text widget that uses an Alt combination returns =TRUE= and keeps it), then canvas shortcuts (an application shortcut on ="<Alt>f"= wins over the mnemonic). A hidden or disabled bar takes no keys. With several bars on one canvas the first registered visible one that matches wins.
 
-g_signal_connect (focus_bar, "activate", G_CALLBACK (on_focus_menu_bar), bar);
-g_action_map_add_action (G_ACTION_MAP (app_actions), G_ACTION (focus_bar));
-lrg_canvas_add_shortcut (canvas, "F10", "app.focus-menu-bar", NULL);
-#+end_src
-
-Alt+letter mnemonics work the same way: register one shortcut per title (for example ="<Alt>f"=) whose action calls =lrg_menu_bar_open_menu (bar, index, TRUE)=. While the bar has focus, typing the letter alone opens the title.
+While the bar itself has focus, F10 toggles keyboard navigation and typing a title's letter alone opens it.
 
 ** Pointer, keyboard and gamepad
 :PROPERTIES:
@@ -81,6 +70,8 @@ Alt+letter mnemonics work the same way: register one shortcut per title (for exa
 | Bar focused | Down / Up / Enter / Space / gamepad A | Open the highlighted title with its first row highlighted |
 | Bar focused | A letter | Open the title whose mnemonic (or first letter) matches |
 | Bar focused | F10 | Toggle keyboard navigation |
+| Anywhere (unhandled) | F10 | Open the first menu by keyboard; again to close |
+| Anywhere (unhandled) | Alt+letter / Alt+digit | Open the title with that mnemonic (or first letter) |
 | Bar focused | Escape / gamepad B | Leave keyboard navigation |
 | Open menu | Left / Right (no submenu to open or close) | Previous / next title's menu, wrapping |
 | Open menu | Escape | Close it; focus returns to the bar with the title still highlighted |
@@ -141,7 +132,28 @@ styles:
 :PROPERTIES:
 :CUSTOM_ID: menu-bar-yaml
 :END:
-Supported by =LrgUILoader= as =LrgMenuBar= (the integration pass documents the model syntax). Its setting is the =model= property.
+Supported by =LrgUILoader= as =LrgMenuBar= (=type: menu-bar=). =model:= is a list of top-level entries, each a ={label:, submenu:}= (or a menu name declared under =menus:=); see [[file:../declarative-ui.org::#menus][Declarative UI]] for the entry keys.
+
+#+begin_src yaml
+menus:
+  file:
+    - {label: _New, action: app.new, accel: "<Ctrl>n", icon: plus}
+    - {label: _Open..., action: app.open, accel: "<Ctrl>o", icon: folder}
+    - separator
+    - {label: _Quit, action: app.quit, accel: "<Ctrl>q"}
+  main:
+    - {label: _File, submenu: file}
+    - {label: _Help, submenu: [{label: _About, action: app.about}]}
+shortcuts:
+  - {accel: "<Ctrl>n", action: app.new}
+  - {accel: "<Ctrl>q", action: app.quit}
+root:
+  type: vbox
+  children:
+    - {type: menu-bar, id: menubar, model: main}
+#+end_src
+
+=accel= only labels the row; bind the key with the document's =shortcuts:= (or =lrg_canvas_add_shortcut()=). =examples/data/ui/studio.yaml= has a complete File / Edit / View / Help bar.
 
 ** API Reference
 :PROPERTIES:
@@ -166,7 +178,8 @@ Supported by =LrgUILoader= as =LrgMenuBar= (the integration pass documents the m
 :PROPERTIES:
 :CUSTOM_ID: menu-bar-pitfalls
 :END:
-- The bar must be on a canvas to open menus.
+- The bar must be on a canvas to open menus, and it registers its F10 / Alt hook on the first layout or frame there: a bar built and fed keys in the same frame, before any =lrg_canvas_record()= or update, does not see them yet.
+- Any unhandled Alt+letter that matches a title opens it; bind application Alt shortcuts with =lrg_canvas_add_shortcut()= (they win) rather than in a widget that does not consume the key.
 - Replacing or editing the bar model closes the open menu and drops the cached menus (their =LrgMenu= pointers become invalid).
 - Plain bar buttons are greyed out when their action cannot be found from the bar.
 

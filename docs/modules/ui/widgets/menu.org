@@ -90,9 +90,19 @@ Below / above placements align the menu's leading edge with the anchor: its left
 :PROPERTIES:
 :CUSTOM_ID: menu-context
 :END:
-A context menu is a menu opened at the pointer from a secondary-button press. =LrgWidget= has no generic event signal, so hook the press in the widget's own =handle_event= (or in a subclass / =LrgCustomWidget= event handler). =MOUSE_BUTTON_DOWN= with button 1 is the right button.
+The easy way: set a model on the widget and let the canvas do the rest (GTK style):
 
-Every mouse button captures the pointer: after the right press, moves and the right release go to the widget the press went down on, not to the menu under the pointer. Forward them with =lrg_menu_forward_pointer_event()= at the top of the handler, so press-drag-release picks a row in one gesture:
+#+begin_src c
+g_autoptr(GMenu) menu = g_menu_new ();
+
+g_menu_append (menu, "_Rename", "item.rename");
+g_menu_append (menu, "_Delete", "item.delete");
+lrg_widget_set_context_menu (row, G_MENU_MODEL (menu));
+#+end_src
+
+An unhandled right press on =row= or any descendant opens an =LrgMenu= from the model at the pointer, owned by =row= (actions resolve from it); Shift+F10 or the Menu key opens it below the focused widget with the first row highlighted. The property is =context-menu=. See [[file:../input-and-focus.org::#input-context-menus][context menus]] in the input page.
+
+Opening a menu yourself from a press works without boilerplate too. When the widget that holds the pointer capture opens a popup during the press, the canvas hands the gesture to the popup: moves and the release over the menu (or a submenu) reach it, elsewhere they still reach the widget. So press-drag-release picks a row in one gesture:
 
 #+begin_src c
 static gboolean
@@ -100,11 +110,6 @@ my_item_handle_event (LrgWidget        *widget,
                       const LrgUIEvent *event)
 {
 	MyItem *self = MY_ITEM (widget);
-
-	/* Captured moves / releases while the menu is open belong to it */
-	if (lrg_menu_get_open (self->context_menu) &&
-	    lrg_menu_forward_pointer_event (self->context_menu, event))
-		return TRUE;
 
 	if (lrg_ui_event_get_event_type (event) == LRG_UI_EVENT_MOUSE_BUTTON_DOWN &&
 	    lrg_ui_event_get_button (event) == 1)
@@ -121,7 +126,9 @@ my_item_handle_event (LrgWidget        *widget,
 }
 #+end_src
 
-The release of the press that opened the menu does not activate anything: a release only activates once the pointer has moved inside the menu or a button was pressed in it. Dragging onto a row and releasing (either button) picks that row. =LrgMenuBar= forwards the same way for its titles.
+*Advanced*: =lrg_menu_forward_pointer_event (menu, event)= delivers a pointer event the widget received to the open menu chain under the pointer. It is no longer needed for the gestures above; use it only when a widget routes pointer events to a menu itself (for example events it synthesises, or a menu opened outside the press that started the capture).
+
+The release of the press that opened the menu does not activate anything: a release only activates once the pointer has moved inside the menu or a button was pressed in it. Dragging onto a row and releasing (either button) picks that row. =LrgMenuBar= relies on the same hand-over for its titles.
 
 ** Pointer, keyboard and gamepad
 :PROPERTIES:
@@ -212,7 +219,27 @@ styles:
 :PROPERTIES:
 :CUSTOM_ID: menu-yaml
 :END:
-Supported by =LrgUILoader= as =LrgMenu= (the integration pass documents the model syntax). Its settings are real properties (=model=, =submenu-delay=).
+Supported by =LrgUILoader= as =LrgMenu= (=type: menu=). =model:= takes a menu: a list of entries or the name of a menu declared under the document's top-level =menus:= (see [[file:../declarative-ui.org::#menus][Declarative UI]]). =submenu-delay= is a plain property. The same menu syntax works for =LrgWidget:context-menu= on any widget, which is the usual way to get a popup without code.
+
+#+begin_src yaml
+menus:
+  clipboard:
+    - {label: Cu_t, action: app.cut, accel: "<Ctrl>x"}
+    - {label: _Copy, action: app.copy, accel: "<Ctrl>c", icon: file}
+    - separator                                   # starts a new section
+    - {label: _Paste, action: app.paste, accel: "<Ctrl>v"}
+root:
+  type: vbox
+  children:
+    - {type: menu, id: popup, model: clipboard, submenu-delay: 0.2}
+    - type: text-input
+      context-menu:                               # inline, no LrgMenu needed
+        - {section: clipboard, label: Edit}
+        - label: Insert
+          submenu: [{label: Date, action: app.insert, target: date}]
+#+end_src
+
+Entry keys: =label= (=_= marks the mnemonic), =action= (="prefix.action"=), =target= / =target-type= (the parameter), =accel= (shown as the shortcut label), =icon= (an =LrgIcon= nick), =submenu= / =section= (a nested menu or a menu name), =separator=, =if=. Pop the menu from code after loading: =lrg_menu_popup_at_widget (LRG_MENU (lrg_ui_loader_get_widget (loader, "popup")), anchor, LRG_POPUP_PLACEMENT_BELOW)=. A hot reload sets =model= again only when the menu's content changed.
 
 ** API Reference
 :PROPERTIES:
@@ -240,7 +267,7 @@ Supported by =LrgUILoader= as =LrgMenu= (the integration pass documents the mode
 | =lrg_menu_get_highlighted (self)= / =lrg_menu_set_highlighted (self, index)= | The highlighted row |
 | =lrg_menu_activate_entry (self, index)= | Do what clicking the row does |
 | =lrg_menu_get_submenu_delay (self)= / =lrg_menu_set_submenu_delay (self, delay)= | Hover delay for submenus |
-| =lrg_menu_forward_pointer_event (self, event)= | Deliver a captured move / release to the open menu chain under the pointer |
+| =lrg_menu_forward_pointer_event (self, event)= | Advanced: deliver a pointer event received elsewhere to the open menu chain under the pointer (not needed for press-drag-release) |
 | =lrg_menu_split_mnemonic (text, &mnemonic)= | Strip "_" markers; returns the display text and the mnemonic's byte offset |
 | =lrg_menu_entry_kind_get_type ()= | =GType= of =LrgMenuEntryKind= (=LRG_MENU_ENTRY_ITEM=, =LRG_MENU_ENTRY_SUBMENU=, =LRG_MENU_ENTRY_SEPARATOR=, =LRG_MENU_ENTRY_HEADER=) |
 
@@ -250,7 +277,8 @@ Supported by =LrgUILoader= as =LrgMenu= (the integration pass documents the mode
 :END:
 - An item without an action, or whose action is not reachable from the owner, is disabled. Insert the action group on the canvas or on an ancestor of the owner before opening the menu.
 - The =accel= attribute only labels the row; register the shortcut with =lrg_canvas_add_shortcut()= so it works while the menu is closed (and then the attribute is unnecessary).
-- A widget that opens a menu from a press holds the pointer capture until release; without =lrg_menu_forward_pointer_event()= the drag-release gesture does not reach the menu.
+- A menu opened from a press receives the captured pointer only while the pointer is over the menu chain; a release elsewhere still goes to the pressed widget (and leaves the menu open), so do not close the menu on every =MOUSE_BUTTON_UP= the widget sees.
+- Held Enter / Space (auto-repeat) never activate a row: only a fresh press does.
 - A stateful boolean action used as a check item must have no parameter type; =GSimpleAction= then toggles it on activation by itself.
 - Context menus need the owner on a canvas; =lrg_menu_popup_at_point()= takes canvas coordinates, not world coordinates (they differ when the canvas is not at the origin).
 - Hover delays and the highlight glide only advance when the canvas is updated; a paused game loop that stops calling =lrg_canvas_update()= freezes them.

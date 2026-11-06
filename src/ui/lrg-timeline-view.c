@@ -27,7 +27,9 @@
  * Editing. Clips are dragged (snapping to the playhead, markers, other
  * clip edges and the grid, with a visible guide), resized from their
  * edges, keyframes dragged on the clip lane (time) or curve lane (time
- * and value); a drag in empty space selects with a rubber band. The
+ * and value), marker flags dragged along the ruler (a click without a
+ * drag activates the marker instead); a drag in empty space selects
+ * with a rubber band. The
  * pressed widget captures the pointer, so every drag is a small state
  * machine run from MOUSE_MOVE / MOUSE_BUTTON_UP.
  */
@@ -195,6 +197,7 @@ typedef struct
 	guint    id;
 	gdouble  time;
 	gchar   *label;
+	gboolean moving;   /* being dragged (not a snap target) */
 } Marker;
 
 /* A copied clip on the timeline's clipboard */
@@ -864,10 +867,12 @@ typedef enum
 	DRAG_NONE,
 	DRAG_PENDING_CLIP,   /* pressed on a clip, below the drag threshold */
 	DRAG_PENDING_KEY,    /* pressed on a keyframe, below the threshold */
+	DRAG_PENDING_MARKER, /* pressed on a marker flag, below the threshold */
 	DRAG_CLIPS,
 	DRAG_RESIZE_LEFT,
 	DRAG_RESIZE_RIGHT,
 	DRAG_KEYS,
+	DRAG_MARKER,
 	DRAG_SCRUB,
 	DRAG_BOX,
 	DRAG_VBAR,
@@ -980,7 +985,8 @@ struct _LrgTimelineView
 	gfloat                 press_x;
 	gfloat                 press_y;
 	gdouble                press_time;
-	guint                  grab_id;      /* clip / keyframe under the press */
+	guint                  grab_id;      /* clip / keyframe / marker under the press */
+	gdouble                marker_orig;  /* dragged marker's time before the drag */
 	gboolean               grab_curve;   /* keyframe grabbed in the curve lane */
 	GArray                *origs;        /* Orig */
 	GHashTable            *box_base;     /* selection before a box drag (ids, clips | keys tagged) */
@@ -1042,6 +1048,7 @@ enum
 	SIGNAL_KEYFRAME_MOVED,
 	SIGNAL_PLAYHEAD_MOVED,
 	SIGNAL_MARKER_ACTIVATED,
+	SIGNAL_MARKER_MOVED,
 	SIGNAL_SELECTION_CHANGED,
 	N_SIGNALS
 };
@@ -1756,7 +1763,8 @@ magnet_try (Magnet  *m,
  * find_magnet:
  *
  * The nearest snap target to @t within the snap distance: the
- * sequence ends, the playhead (unless scrubbing), markers, and the
+ * sequence ends, the playhead (unless scrubbing), markers (except a
+ * dragged one), and the
  * edges of clips and keyframe times that are not part of the drag.
  * Clips are searched per track with the sorted arrays, so this stays
  * cheap with thousands of clips.
@@ -1788,8 +1796,16 @@ find_magnet (LrgTimelineView *self,
 	if (playhead && (self->snap & LRG_TIMELINE_VIEW_SNAP_PLAYHEAD))
 		magnet_try (&m, self->time);
 	if (self->snap & LRG_TIMELINE_VIEW_SNAP_MARKERS)
+	{
 		for (i = 0; i < self->markers->len; i++)
-			magnet_try (&m, ((Marker *) g_ptr_array_index (self->markers, i))->time);
+		{
+			Marker *mk = g_ptr_array_index (self->markers, i);
+
+			/* a dragged marker never snaps to itself */
+			if (!mk->moving)
+				magnet_try (&m, mk->time);
+		}
+	}
 
 	if (self->snap & LRG_TIMELINE_VIEW_SNAP_CLIPS)
 	{
@@ -3735,6 +3751,62 @@ update_box (LrgTimelineView *self)
 	queue (self);
 }
 
+static Marker *lookup_marker (LrgTimelineView *self,
+                              guint            id);
+
+/*
+ * begin_marker_drag:
+ *
+ * The press on a marker flag went past the drag threshold: remember
+ * the marker's time (for Esc and for the marker-moved signal) and take
+ * it out of the snap targets.
+ */
+static void
+begin_marker_drag (LrgTimelineView *self)
+{
+	Marker *m = lookup_marker (self, self->grab_id);
+
+	if (m == NULL)
+	{
+		self->drag = DRAG_NONE;
+		return;
+	}
+	self->marker_orig = m->time;
+	m->moving = TRUE;
+	self->drag = DRAG_MARKER;
+}
+
+/*
+ * drag_marker:
+ *
+ * Moves the grabbed marker by the pointer's time offset since the
+ * press (so the flag keeps its grab point), snapped exactly like a
+ * keyframe: to the playhead, other markers, clip edges and keyframes
+ * in reach, else to the grid; Alt drags freely. The marker is clamped
+ * to the sequence and the array re-sorted so it paints at the drag
+ * time at once.
+ */
+static void
+drag_marker (LrgTimelineView       *self,
+             gfloat             x,
+             LrgInputModifiers  mods)
+{
+	Marker  *m = lookup_marker (self, self->grab_id);
+	gdouble  t;
+
+	if (m == NULL)
+		return;
+	t = self->marker_orig + (lrg_timeline_view_x_to_time (self, x) - self->press_time);
+	t = snap_time (self, CLAMP (t, 0.0, self->duration), TRUE, !(mods & LRG_INPUT_MODIFIER_ALT));
+	t = CLAMP (t, 0.0, self->duration);
+	if (t != m->time)
+	{
+		m->time = t;
+		marker_sort (self);
+	}
+	queue (self);
+}
+
 /* scrub: playhead to the pointer time, snapped to markers / clip edges */
 static void
 scrub (LrgTimelineView       *self,
@@ -3752,7 +3824,10 @@ scrub (LrgTimelineView       *self,
  *
  * Ends the gesture: emits one clip-moved / clip-resized /
  * keyframe-moved per item that really changed, or selection-changed
- * after a rubber band; drops the lift and the snap guide.
+ * after a rubber band; a marker drag emits marker-moved if the time
+ * changed, and a press on a flag that never became a drag activates
+ * the marker (the playhead jumps to it). Drops the lift and the snap
+ * guide.
  */
 static void
 finish_drag (LrgTimelineView *self)
@@ -3760,6 +3835,15 @@ finish_drag (LrgTimelineView *self)
 	DragKind kind = self->drag;
 	g_autoptr(GArray) moved = g_array_new (FALSE, FALSE, sizeof (guint));
 	guint    i;
+	Marker  *mk = NULL;
+
+	/* Markers: read the dragged / clicked marker before the state goes */
+	if (kind == DRAG_MARKER || kind == DRAG_PENDING_MARKER)
+	{
+		mk = lookup_marker (self, self->grab_id);
+		if (mk != NULL)
+			mk->moving = FALSE;
+	}
 
 	self->drag = DRAG_NONE;
 	self->snap_shown = FALSE;
@@ -3796,6 +3880,18 @@ finish_drag (LrgTimelineView *self)
 			g_signal_emit (self, signals[SIGNAL_CLIP_RESIZED], 0, id);
 		else if (kind == DRAG_KEYS && k != NULL)
 			g_signal_emit (self, signals[SIGNAL_KEYFRAME_MOVED], 0, k->track, id);
+	}
+
+	if (kind == DRAG_PENDING_MARKER && mk != NULL)
+	{
+		guint id = mk->id;
+
+		set_time_internal (self, mk->time);
+		g_signal_emit (self, signals[SIGNAL_MARKER_ACTIVATED], 0, id);
+	}
+	else if (kind == DRAG_MARKER && mk != NULL && mk->time != self->marker_orig)
+	{
+		g_signal_emit (self, signals[SIGNAL_MARKER_MOVED], 0, mk->id, self->marker_orig, mk->time);
 	}
 
 	if (kind == DRAG_BOX && self->box_base != NULL)
@@ -3840,6 +3936,22 @@ cancel_drag (LrgTimelineView *self)
 		}
 	}
 	g_array_set_size (self->origs, 0);
+
+	/* A dragged marker goes back to its time; a pending press on a
+	 * flag is dropped without activating it. Either way no signal. */
+	if (self->drag == DRAG_MARKER || self->drag == DRAG_PENDING_MARKER)
+	{
+		Marker *m = lookup_marker (self, self->grab_id);
+
+		if (m != NULL)
+		{
+			if (self->drag == DRAG_MARKER)
+				m->time = self->marker_orig;
+			m->moving = FALSE;
+			marker_sort (self);
+		}
+		self->drag = DRAG_NONE;
+	}
 	finish_drag (self);
 }
 
@@ -3961,8 +4073,10 @@ handle_press (LrgTimelineView       *self,
 		return TRUE;
 
 	case HIT_MARKER:
-		set_time_internal (self, lrg_timeline_view_get_marker_time (self, hit.id));
-		g_signal_emit (self, signals[SIGNAL_MARKER_ACTIVATED], 0, hit.id);
+		/* The flag wins over the scrub the rest of the ruler starts:
+		 * past the drag threshold it drags the marker, a release
+		 * before that is a click that activates it (finish_drag) */
+		self->drag = DRAG_PENDING_MARKER;
 		return TRUE;
 
 	case HIT_RULER:
@@ -4072,6 +4186,17 @@ handle_move (LrgTimelineView       *self,
 		begin_key_drag (self);
 		self->drag = DRAG_KEYS;
 		drag_keys (self, x, y, mods);
+		return TRUE;
+
+	case DRAG_PENDING_MARKER:
+		if (!past)
+			return TRUE;
+		begin_marker_drag (self);
+		drag_marker (self, x, mods);
+		return TRUE;
+
+	case DRAG_MARKER:
+		drag_marker (self, x, mods);
 		return TRUE;
 
 	case DRAG_CLIPS:
@@ -4840,12 +4965,29 @@ lrg_timeline_view_class_init (LrgTimelineViewClass *klass)
 	 * @self: the timeline
 	 * @marker: the marker id
 	 *
-	 * Emitted when a marker flag was clicked (the playhead jumps to it
-	 * first).
+	 * Emitted when a marker flag was clicked: pressed and released
+	 * without dragging it (the playhead jumps to it first).
 	 */
 	signals[SIGNAL_MARKER_ACTIVATED] =
 		g_signal_new ("marker-activated", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_UINT);
+
+	/**
+	 * LrgTimelineView::marker-moved:
+	 * @self: the timeline
+	 * @marker: the marker id
+	 * @old_time: the marker's time before the drag, in seconds
+	 * @new_time: the marker's time after the drag, in seconds
+	 *
+	 * Emitted once when a marker drag on the ruler is released and the
+	 * marker's time changed (never for Esc, which puts it back, nor
+	 * for lrg_timeline_view_move_marker()). The marker already sits at
+	 * @new_time; an undo stack can record (@marker, @old_time,
+	 * @new_time) and revert with lrg_timeline_view_move_marker().
+	 */
+	signals[SIGNAL_MARKER_MOVED] =
+		g_signal_new ("marker-moved", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 3, G_TYPE_UINT, G_TYPE_DOUBLE, G_TYPE_DOUBLE);
 
 	/**
 	 * LrgTimelineView::selection-changed:
@@ -5617,6 +5759,13 @@ lrg_timeline_view_remove_marker (LrgTimelineView *self,
 	m = lookup_marker (self, marker);
 	if (m == NULL)
 		return FALSE;
+
+	/* Removing the marker under a drag ends that drag quietly */
+	if ((self->drag == DRAG_MARKER || self->drag == DRAG_PENDING_MARKER) && self->grab_id == marker)
+	{
+		self->drag = DRAG_NONE;
+		self->snap_shown = FALSE;
+	}
 	g_ptr_array_remove (self->markers, m);
 	queue (self);
 	return TRUE;

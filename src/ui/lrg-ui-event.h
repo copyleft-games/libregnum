@@ -367,6 +367,29 @@ LRG_AVAILABLE_IN_ALL
 void lrg_ui_event_set_modifiers (LrgUIEvent        *self,
                                  LrgInputModifiers  modifiers);
 
+/**
+ * lrg_ui_event_get_repeat:
+ * @self: an #LrgUIEvent
+ *
+ * Whether a %LRG_UI_EVENT_KEY_DOWN comes from the key being held
+ * (operating system auto-repeat) rather than a fresh press. Widgets
+ * that toggle or open something on a key usually ignore repeats;
+ * cursor movement, deletion and scrolling usually honour them.
+ *
+ * Returns: %TRUE for an auto-repeated key press
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_ui_event_get_repeat (const LrgUIEvent *self);
+
+/**
+ * lrg_ui_event_set_repeat:
+ * @self: an #LrgUIEvent
+ * @repeat: %TRUE for an auto-repeated key press
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_ui_event_set_repeat (LrgUIEvent *self,
+                              gboolean    repeat);
+
 /* ==========================================================================
  * Touch gestures
  * ========================================================================== */

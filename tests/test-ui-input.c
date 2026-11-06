@@ -286,6 +286,9 @@ struct _TestProbe
 	GString     *log;       /* shared, not owned */
 	gchar       *tag;
 	gboolean     consume;   /* return TRUE from handle_event */
+	guint        tabs;      /* Tab KEY_DOWNs received (as the target) */
+	guint        repeats;   /* auto-repeated KEY_DOWNs received */
+	TestProbe   *popup;     /* shown anchored to us on a press, nullable */
 };
 
 G_DEFINE_FINAL_TYPE (TestProbe, test_probe, LRG_TYPE_CONTAINER)
@@ -315,6 +318,19 @@ test_probe_handle_event (LrgWidget        *widget,
                          const LrgUIEvent *event)
 {
 	TestProbe *self = TEST_PROBE (widget);
+
+	if (lrg_ui_event_get_event_type (event) == LRG_UI_EVENT_KEY_DOWN &&
+	    lrg_ui_event_get_target (event) == widget)
+	{
+		if (lrg_ui_event_get_key (event) == GRL_KEY_TAB)
+			self->tabs++;
+		if (lrg_ui_event_get_repeat (event))
+			self->repeats++;
+	}
+	if (self->popup != NULL && lrg_ui_event_get_event_type (event) == LRG_UI_EVENT_MOUSE_BUTTON_DOWN &&
+	    lrg_widget_get_parent (LRG_WIDGET (self->popup)) == NULL)
+		lrg_canvas_show_popup (LRG_CANVAS (lrg_widget_get_root (widget)), LRG_WIDGET (self->popup),
+		                       widget, LRG_POPUP_PLACEMENT_BELOW, FALSE);
 
 	if (self->log != NULL)
 		g_string_append_printf (self->log, "%s:%s%s ", self->tag,
@@ -605,6 +621,194 @@ test_tab_order (CanvasFixture *fixture,
 	g_object_unref (hidden);
 	g_object_unref (disabled);
 	g_object_unref (c);
+}
+
+/* frame_key_mods: one key press with modifiers held */
+static void
+frame_key_mods (LrgCanvas         *canvas,
+                GrlKey             key,
+                LrgInputModifiers  mods)
+{
+	LrgCanvasInput input;
+
+	frame_pointer (&input, -50.0f, -50.0f);
+	input.modifiers = mods;
+	lrg_canvas_input_add_key (&input, key);
+	lrg_canvas_process_input (canvas, &input);
+}
+
+/* Tab reaches a widget that accepts it; focus moves only when it
+ * declines, and Ctrl+Tab always moves */
+static void
+test_accepts_tab (CanvasFixture *fixture,
+                  gconstpointer  user_data)
+{
+	TestProbe *a = probe_new ("a", NULL, 0, 0, 50, 20, TRUE);
+	TestProbe *b = probe_new ("b", NULL, 0, 100, 50, 20, TRUE);
+	gboolean   prop;
+
+	lrg_container_add_child (LRG_CONTAINER (fixture->canvas), LRG_WIDGET (a));
+	lrg_container_add_child (LRG_CONTAINER (fixture->canvas), LRG_WIDGET (b));
+
+	/* Defaults: class FALSE, instance follows the class */
+	g_assert_false (lrg_widget_class_get_accepts_tab (LRG_WIDGET_GET_CLASS (a)));
+	g_assert_false (lrg_widget_get_accepts_tab (LRG_WIDGET (a)));
+
+	/* Not accepting: Tab never reaches a, focus moves */
+	lrg_canvas_set_focused_widget (fixture->canvas, LRG_WIDGET (a));
+	frame_key (fixture->canvas, GRL_KEY_TAB);
+	g_assert_cmpuint (a->tabs, ==, 0);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) == LRG_WIDGET (b));
+
+	/* Accepting and handling: a keeps focus */
+	g_object_set (a, "accepts-tab", TRUE, NULL);
+	g_object_get (a, "accepts-tab", &prop, NULL);
+	g_assert_true (prop);
+	a->consume = TRUE;
+	lrg_canvas_set_focused_widget (fixture->canvas, LRG_WIDGET (a));
+	frame_key (fixture->canvas, GRL_KEY_TAB);
+	g_assert_cmpuint (a->tabs, ==, 1);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) == LRG_WIDGET (a));
+	/* Shift+Tab too, and a hand-built nav request behaves the same */
+	frame_key_mods (fixture->canvas, GRL_KEY_TAB, LRG_INPUT_MODIFIER_SHIFT);
+	frame_nav (fixture->canvas, LRG_NAV_DIRECTION_NEXT);
+	g_assert_cmpuint (a->tabs, ==, 3);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) == LRG_WIDGET (a));
+
+	/* Ctrl+Tab skips the widget */
+	frame_key_mods (fixture->canvas, GRL_KEY_TAB, LRG_INPUT_MODIFIER_CTRL);
+	g_assert_cmpuint (a->tabs, ==, 3);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) == LRG_WIDGET (b));
+
+	/* Accepting but declining (e.g. read-only): focus moves on */
+	a->consume = FALSE;
+	lrg_canvas_set_focused_widget (fixture->canvas, LRG_WIDGET (a));
+	frame_key (fixture->canvas, GRL_KEY_TAB);
+	g_assert_cmpuint (a->tabs, ==, 4);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) == LRG_WIDGET (b));
+
+	/* The text editor class accepts Tab by default */
+	g_assert_true (lrg_widget_class_get_accepts_tab (g_type_class_peek (LRG_TYPE_TEXT_EDITOR) != NULL
+	                                                 ? g_type_class_peek (LRG_TYPE_TEXT_EDITOR)
+	                                                 : g_type_class_ref (LRG_TYPE_TEXT_EDITOR)));
+
+	g_object_unref (a);
+	g_object_unref (b);
+}
+
+/* Auto-repeated keys arrive flagged; they navigate but never activate
+ * or cancel */
+static void
+test_key_repeat (CanvasFixture *fixture,
+                 gconstpointer  user_data)
+{
+	g_autoptr(GString) log = g_string_new (NULL);
+	TestProbe         *a = probe_new ("a", log, 0, 0, 50, 20, TRUE);
+	TestProbe         *b = probe_new ("b", log, 0, 100, 50, 20, TRUE);
+	LrgCanvasInput     input;
+
+	lrg_container_add_child (LRG_CONTAINER (fixture->canvas), LRG_WIDGET (a));
+	lrg_container_add_child (LRG_CONTAINER (fixture->canvas), LRG_WIDGET (b));
+	lrg_canvas_set_focused_widget (fixture->canvas, LRG_WIDGET (a));
+
+	/* Frame bookkeeping: the repeat bit follows the key's slot */
+	lrg_canvas_input_init (&input);
+	lrg_canvas_input_add_key (&input, GRL_KEY_A);
+	lrg_canvas_input_add_key_repeat (&input, GRL_KEY_B);
+	g_assert_cmpuint (input.n_keys, ==, 2);
+	g_assert_cmpuint (input.keys_repeat, ==, 2u);
+
+	/* A held Enter reaches the widget flagged, but does not activate */
+	frame_pointer (&input, -50.0f, -50.0f);
+	lrg_canvas_input_add_key_repeat (&input, GRL_KEY_ENTER);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_cmpuint (a->repeats, ==, 1);
+	g_assert_false (log_has (log, "a:activate"));
+
+	/* Fresh Enter activates */
+	frame_key (fixture->canvas, GRL_KEY_ENTER);
+	g_assert_true (log_has (log, "a:activate"));
+
+	/* A held arrow still moves focus */
+	frame_pointer (&input, -50.0f, -50.0f);
+	lrg_canvas_input_add_key_repeat (&input, GRL_KEY_DOWN);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_true (lrg_canvas_get_focused_widget (fixture->canvas) == LRG_WIDGET (b));
+
+	/* A held Escape does not cancel */
+	g_string_truncate (log, 0);
+	frame_pointer (&input, -50.0f, -50.0f);
+	lrg_canvas_input_add_key_repeat (&input, GRL_KEY_ESCAPE);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_false (log_has (log, "cancel"));
+
+	g_object_unref (a);
+	g_object_unref (b);
+}
+
+/* A popup opened by the widget holding the pointer gets moves and the
+ * release while the pointer is over it; elsewhere the capture keeps
+ * them */
+static void
+test_capture_follows_popup (CanvasFixture *fixture,
+                            gconstpointer  user_data)
+{
+	g_autoptr(GString) log = g_string_new (NULL);
+	TestProbe         *a = probe_new ("a", log, 100, 100, 100, 40, FALSE);
+	TestProbe         *p = probe_new ("p", log, 0, 0, 150, 100, FALSE);
+	LrgCanvasInput     input;
+	gfloat             px;
+	gfloat             py;
+
+	a->consume = TRUE;
+	p->consume = TRUE;
+	a->popup = p;
+	lrg_container_add_child (LRG_CONTAINER (fixture->canvas), LRG_WIDGET (a));
+
+	/* Press on a: it opens p below itself */
+	click_at (fixture->canvas, -5.0f, -5.0f);
+	frame_pointer (&input, 150, 120);
+	input.buttons_down = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	input.buttons_pressed = input.buttons_down;
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_true (lrg_canvas_get_top_popup (fixture->canvas) == LRG_WIDGET (p));
+	/* a handed the gesture on: it no longer looks pressed */
+	g_assert_false (lrg_widget_get_state_flags (LRG_WIDGET (a)) & LRG_WIDGET_STATE_PRESSED);
+	px = lrg_widget_get_world_x (LRG_WIDGET (p)) + 20.0f;
+	py = lrg_widget_get_world_y (LRG_WIDGET (p)) + 20.0f;
+
+	/* Over the popup: it gets the move */
+	g_string_truncate (log, 0);
+	frame_pointer (&input, px, py);
+	input.buttons_down = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_true (log_has (log, "p:move"));
+	g_assert_false (log_has (log, "a:move"));
+
+	/* Off everything: back to the capture */
+	g_string_truncate (log, 0);
+	frame_pointer (&input, 700, 500);
+	input.buttons_down = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_true (log_has (log, "a:move"));
+
+	/* Release over the popup: the popup gets it, then the capture ends */
+	g_string_truncate (log, 0);
+	frame_pointer (&input, px, py);
+	input.buttons_released = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_true (log_has (log, "p:up"));
+	g_assert_false (log_has (log, "a:up"));
+	g_string_truncate (log, 0);
+	frame_pointer (&input, 700, 500);
+	lrg_canvas_process_input (fixture->canvas, &input);
+	g_assert_false (log_has (log, "a:move"));
+
+	lrg_canvas_dismiss_popup (fixture->canvas, LRG_WIDGET (p));
+	lrg_canvas_update (fixture->canvas, 1.0f);
+	a->popup = NULL;
+	g_object_unref (a);
+	g_object_unref (p);
 }
 
 static void
@@ -1010,6 +1214,9 @@ main (int   argc,
     ADD ("/ui/input/dispatch/pointer-transparent", test_pointer_transparent);
     ADD ("/ui/input/focus/click-and-visible", test_click_focus_and_visible);
     ADD ("/ui/input/focus/tab-order", test_tab_order);
+    ADD ("/ui/input/focus/accepts-tab", test_accepts_tab);
+    ADD ("/ui/input/keys/repeat", test_key_repeat);
+    ADD ("/ui/input/popup/capture-follows-popup", test_capture_follows_popup);
     ADD ("/ui/input/focus/spatial", test_spatial_navigation);
     ADD ("/ui/input/focus/arrows-handled", test_arrows_handled_by_widget);
     ADD ("/ui/input/focus/activate-cancel", test_activate_and_cancel);

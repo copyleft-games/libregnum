@@ -65,7 +65,8 @@ lrg_text_editor_append (log, "\n[info] level loaded");
 | Enter                              | Newline with auto-indent (one level more after =(= =[= ={= or =:=; ={\vert{}}= splits onto three lines) |
 | Enter with =submit-on-enter=       | Emits =submit=; Shift+Enter inserts a newline                          |
 | Ctrl+Enter without it              | Emits =submit=                                                         |
-| Tab / Shift+Tab                    | Tab or spaces to the next stop; with a multi-line selection indent / outdent every line |
+| Tab / Shift+Tab                    | Tab or spaces to the next stop; with a multi-line selection indent / outdent every line (the class accepts Tab, see =lrg_widget_set_accepts_tab()=) |
+| Ctrl+Tab / Ctrl+Shift+Tab          | Moves focus out of the editor (the canvas never offers Ctrl+Tab to it) |
 | Ctrl+A / C / X / V                 | Select all, copy, cut, paste (Ctrl+Insert / Shift+Insert too)          |
 | Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y     | Undo / redo                                                            |
 | Escape                             | Clears the selection (otherwise left to the canvas)                    |
@@ -75,6 +76,18 @@ lrg_text_editor_append (log, "\n[info] level loaded");
 Key consumption follows the shared shortcut rule: printable keys are consumed only without Ctrl, Alt or Super (AltGr, Ctrl+Alt together, still types), so application shortcuts such as Ctrl+S fire while the editor has focus; the Ctrl chords listed above are consumed. Arrows and editing keys are always consumed so focus does not move. In read-only mode typing, paste, cut and undo do nothing, selection and copy work, and Tab is not consumed.
 
 Typing coalesces into one undo step until the caret moves, 1.5 s of canvas time pass, or a word ends (a space after a non-space). Backspace and Delete runs coalesce the same way. =lrg_text_editor_set_text()= and dropping lines through =max-lines= clear the history.
+
+*** Bracket matching
+:PROPERTIES:
+:CUSTOM_ID: text-editor-brackets
+:END:
+While focused, the bracket just before the caret (or, if it has no partner, the one just after it) and its partner are outlined with the =indicator= look. The partner is found by counting nesting of the same pair (=()=, =[]=, ={}=) forwards or backwards, across lines, for at most 200 000 bytes. With a language set, brackets inside =STRING=, =ESCAPE= and =COMMENT= tokens are plain text: they neither count towards nesting nor match, and a caret next to one shows no pair (it does not pair with another bracket in the same string either). So in =f ("(", x)= the outer parentheses match. The token test uses the same per-line spans and carried state as painting (block comments and multi-line strings work); lines without painted spans are tokenized into a scratch array that is not cached. With no language, every bracket counts, as before. =lrg_text_editor_get_bracket_match()= returns the outlined pair.
+
+*** Find
+:PROPERTIES:
+:CUSTOM_ID: text-editor-find
+:END:
+=lrg_text_editor_find()= highlights every match (=indicator= / =checked=) and selects the first at or after the caret, wrapping. Case-sensitive find compares bytes. Case-insensitive find compares Unicode case folds: each character of the line and of the needle is folded with =g_utf8_casefold()= and decomposed with =g_utf8_normalize (G_NORMALIZE_DEFAULT)= (ASCII takes a direct lowercase fast path), and a per-byte map leads every folded byte back to the character it came from, so the selection and highlights cover the real source bytes even when folding changes the length. Examples: =äbc= finds =ÄBC=, =straße= finds =STRASSE= (and vice versa; =ss= matches a whole =ß=), =σίσυφος= finds =ΣΊΣΥΦΟΣ= (final and medial sigma fold alike), a precomposed =Ä= finds a decomposed =A= + U+0308. A match must begin and end on character boundaries of the source: =s= never matches half of a =ß=. The fold of the line being searched is cached until the next edit, so painting the rows of a wrapped line or counting matches folds it once.
 
 ** API
 :PROPERTIES:
@@ -96,6 +109,7 @@ Typing coalesces into one undo step until the caret moves, 1.5 s of canvas time 
 | =lrg_text_editor_indent=, =lrg_text_editor_outdent=          | One level on every touched line                            |
 | =lrg_text_editor_find (self, needle, case_sensitive)=        | Highlight matches, select the first at or after the caret  |
 | =lrg_text_editor_find_next=, =lrg_text_editor_find_previous=, =lrg_text_editor_get_match_count= | Step through matches (wrapping) |
+| =lrg_text_editor_get_bracket_match (self, &l, &c, &ml, &mc)= | The outlined bracket at the caret and its partner (character columns) |
 | =lrg_text_editor_scroll_to_line (self, line, animate)=       | Put a line at the top                                      |
 | =lrg_text_editor_get_scroll (self, &x, &y)=                  | Scroll targets                                             |
 | =lrg_text_editor_get_line_height=, =lrg_text_editor_get_row_count= | Metrics (rows exceed lines when wrapping)            |
@@ -176,16 +190,43 @@ styles:
 :PROPERTIES:
 :CUSTOM_ID: text-editor-yaml
 :END:
-Supported by =LrgUILoader= as =LrgTextEditor=; every setting is a GObject property (the integration pass documents the loader keys).
+Supported by =LrgUILoader= as =LrgTextEditor= (=type: text-editor=); every setting is a GObject property (=text=, =language=, =show-line-numbers=, =wrap=, =read-only=, =tab-width=, =insert-spaces=, =placeholder=, =submit-on-enter=, =max-lines=, =font=, =font-size=, =highlight-current-line=, =auto-indent=). Two loader keys bring languages (see [[file:../declarative-ui.org::#text-editor-keys][Declarative UI]]):
+
+- the document's top-level =languages:= registers =LrgSyntax= definitions (inline mappings in the [[file:syntax.org::#syntax-yaml][syntax schema]], file names, or ={file: name}=) before any widget is built, so =language: name= finds them;
+- =language-file: file.yaml= on the editor loads a definition, registers it and sets the editor's =syntax=.
+
+#+begin_src yaml
+languages:
+  - name: studio-script
+    keywords: [on, do, end, let]
+    builtins: [spawn, play]
+    line-comment: "#"
+root:
+  type: vbox
+  children:
+    - type: text-editor
+      id: script
+      language: studio-script
+      show-line-numbers: true
+      text: |
+        on start do
+          play("intro")
+        end
+    - {type: text-editor, id: config, language-file: langs/toml-lite.yaml, read-only: true}
+#+end_src
+
+Language files are watched with the document. A hot reload keeps the text the user typed unless =text:= changes in the file.
 
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: text-editor-pitfalls
 :END:
-- The canvas turns Tab into focus navigation before widgets see it, so Tab / Shift+Tab inside the editor only work when the host delivers =GRL_KEY_TAB= as a key (see the note in the agent report); =lrg_text_editor_indent()= / =lrg_text_editor_outdent()= are always available.
+- The editor class sets =accepts-tab= (=lrg_widget_class_set_accepts_tab()=), so the canvas offers Tab / Shift+Tab to it as =KEY_DOWN= before moving focus. A read-only editor returns =FALSE= for Tab, so focus moves on; an editable one keeps it, and Ctrl+Tab is the way out. Turn it off per instance with =lrg_widget_set_accepts_tab (editor, FALSE)= for single-purpose forms where Tab should always move focus.
+- Held keys auto-repeat (the canvas forwards the operating system's repeat as =KEY_DOWN= with =lrg_ui_event_get_repeat()= set), so arrows, Backspace, Delete and Enter repeat; typed characters repeat through the character queue.
 - Layout is a monospace grid: proportional fonts work but drift within a run of text. Wide (CJK) characters take two cells, tabs reach the next tab stop.
-- Find is single-line and folds ASCII case only.
-- Bracket matching ignores strings and comments and scans at most 200 000 bytes.
+- Find is single-line. Case folding is per character and has no locale: Turkish dotless / dotted i are not special-cased, so =İ= folds to =i= + U+0307 and is found by =İ= or =i̇= but not by a plain =i=. A bare base letter does match the base of a decomposed character (=a= finds the =a= of =a= + U+0308) but not a precomposed one (=a= does not find =ä=). Combining marks are not reordered, so two decomposed spellings with marks in different orders do not match.
+- Case-insensitive matches can be longer or shorter than the needle in bytes (=ß= vs =ss=); use the selection bounds, never =strlen (needle)=, to find where a match ends.
+- Bracket matching scans at most 200 000 bytes. Strings and comments are skipped only with a language set, and only as well as the language's tokenizer knows them (a bracket in a Markdown code span is still a bracket).
 - =lrg_text_editor_get_line()= returns internal storage valid until the next edit.
 - Do not add children with =lrg_container_add_child()=; the only children are the scrollbar zones.
 

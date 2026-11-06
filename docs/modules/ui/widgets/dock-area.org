@@ -274,7 +274,24 @@ The private =LrgDockFrame= (floating frames) uses =popup= for its surface (=PANE
 :PROPERTIES:
 :CUSTOM_ID: dock-area-yaml
 :END:
-Supported by =LrgUILoader= as =LrgDockArea= and =LrgDockPanel= (the integration pass fills in details). Every setting is a real property; panels added as plain children are docked as tabs, and a saved layout can be applied with =lrg_dock_area_load_layout()= after loading.
+Supported by =LrgUILoader= as =LrgDockArea= (=type: dock-area=) and =LrgDockPanel= (=type: dock-panel=). The area's children must be panels; each is docked in order with =lrg_dock_area_add_panel()= at its =position:= (=left=, =right=, =top=, =bottom=, =center=, default =center=) relative to the panel named by =relative-to:= (listed earlier), or to the whole area. A panel's =id= is also its =LrgDockPanel:id=; its content is =child:=. =layout:= (a =lrg_dock_area_save_layout()= document, as a mapping or text) is applied after the panels. See [[file:../declarative-ui.org::#dock-area-keys][Declarative UI]].
+
+#+begin_src yaml
+type: dock-area
+id: dock
+divider-size: 6
+children:
+  - {type: dock-panel, id: scene-panel, title: Scene, icon: eye, closable: false,
+     child: {type: viewport, id: scene}}
+  - {type: dock-panel, id: graph-panel, title: Graph, position: right, relative-to: scene-panel,
+     child: {type: node-graph, id: graph}}
+  - {type: dock-panel, id: script-panel, title: Script, relative-to: graph-panel,      # a tab beside Graph
+     child: {type: text-editor, id: script}}
+  - {type: dock-panel, id: timeline-panel, title: Timeline, position: bottom,          # bottom of the area
+     child: {type: timeline-view, id: timeline}}
+#+end_src
+
+A hot reload leaves reused panels where the user dragged them (=position= only matters when a panel is first docked), docks new panels, removes panels that left the document, and applies =layout:= again only when it changed. =examples/data/ui/studio.yaml= is a full editor workspace.
 
 ** Pitfalls
 :PROPERTIES:

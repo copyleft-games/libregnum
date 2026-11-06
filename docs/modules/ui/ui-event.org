@@ -138,8 +138,11 @@ g_assert_false (lrg_text_input_get_focused (field));
 | =lrg_ui_event_get_modifiers (self)= | =LrgInputModifiers= (=SHIFT=, =CTRL=, =ALT=) held when the event happened |
 | =lrg_ui_event_get_target (self)= | (transfer none) (nullable) widget the event was first delivered to |
 | =lrg_ui_event_get_bubbling (self)= | =TRUE= while the event travels up from the target |
+| =lrg_ui_event_get_repeat (self)= | =TRUE= for a =KEY_DOWN= produced by holding the key (operating system auto-repeat) |
 
-Setters used by the canvas (and tests): =lrg_ui_event_set_target()=, =lrg_ui_event_set_bubbling()=, =lrg_ui_event_set_modifiers()=.
+Setters used by the canvas (and tests): =lrg_ui_event_set_target()=, =lrg_ui_event_set_bubbling()=, =lrg_ui_event_set_modifiers()=, =lrg_ui_event_set_repeat()=.
+
+Auto-repeat: widgets that move a cursor, delete or scroll simply handle repeated =KEY_DOWN= like fresh ones; widgets that toggle, open or activate something on a key should ignore =KEY_DOWN= with =lrg_ui_event_get_repeat()= set (=LrgMenu= does for Enter / Space, and the canvas never activates or cancels on a repeat).
 
 ** Consumption flag (legacy)
 :PROPERTIES:

@@ -29,6 +29,7 @@
 
 #include "lrg-menu-bar.h"
 #include "lrg-canvas.h"
+#include "lrg-canvas-private.h"
 #include "../tween/lrg-spring.h"
 #include "../lrg-log.h"
 
@@ -71,6 +72,9 @@ struct _LrgMenuBar
 	LrgSpring   mark_w;
 	LrgSpring   mark_a;
 	gboolean    stepped;
+
+	/* Canvas our global key hook (F10, Alt+mnemonic) is registered on */
+	LrgCanvas  *hook_canvas;     /* weak */
 };
 
 G_DEFINE_FINAL_TYPE (LrgMenuBar, lrg_menu_bar, LRG_TYPE_WIDGET)
@@ -93,6 +97,7 @@ static GParamSpec *properties[N_PROPS];
 static guint       signals[N_SIGNALS];
 
 static void bar_rebuild (LrgMenuBar *self);
+static void sync_key_hook (LrgMenuBar *self);
 
 /* ==========================================================================
  * Helpers
@@ -461,6 +466,9 @@ lrg_menu_bar_measure (LrgWidget *widget,
 	gfloat      w = BAR_PAD * 2.0f;
 	guint       i;
 
+	/* Measured during a canvas layout: make F10 / Alt work right away */
+	sync_key_hook (self);
+
 	for (i = 0; i < self->titles->len; i++)
 		w += ceilf (text_width (theme, g_array_index (self->titles, BarTitle, i).label, size) + pad_x * 2.0f);
 
@@ -491,6 +499,7 @@ lrg_menu_bar_step (LrgWidget *widget,
 	gboolean    busy = FALSE;
 
 	self->swallow = -1;
+	sync_key_hook (self);
 
 	lrg_spring_set_motion (&self->mark_x, motion == LRG_MOTION_NONE ? motion : LRG_MOTION_BOUNCY);
 	lrg_spring_set_motion (&self->mark_w, motion == LRG_MOTION_NONE ? motion : LRG_MOTION_BOUNCY);
@@ -595,6 +604,125 @@ lrg_menu_bar_paint (LrgWidget    *widget,
 			                     0.0f, fg);
 		}
 	}
+}
+
+/* ==========================================================================
+ * Global keys: F10 and Alt+mnemonic from anywhere in the canvas
+ * ========================================================================== */
+
+/* key_char: the lower-case character of a letter or digit key, or 0 */
+static gunichar
+key_char (gint key)
+{
+	if (key >= (gint) GRL_KEY_A && key <= (gint) GRL_KEY_Z)
+		return (gunichar) ('a' + (key - (gint) GRL_KEY_A));
+	if (key >= (gint) GRL_KEY_ZERO && key <= (gint) GRL_KEY_NINE)
+		return (gunichar) ('0' + (key - (gint) GRL_KEY_ZERO));
+	return 0;
+}
+
+/*
+ * title_for_char:
+ *
+ * The title whose mnemonic is @c; titles without a mnemonic match on
+ * their first character. -1 when none does.
+ */
+static gint
+title_for_char (LrgMenuBar *self,
+                gunichar    c)
+{
+	guint i;
+
+	for (i = 0; i < self->titles->len; i++)
+	{
+		BarTitle    *t = &g_array_index (self->titles, BarTitle, i);
+		const gchar *s;
+
+		if (t->label == NULL || t->label[0] == '\0')
+			continue;
+		s = t->mnemonic >= 0 ? t->label + t->mnemonic : t->label;
+		if (g_unichar_tolower (g_utf8_get_char (s)) == c)
+			return (gint) i;
+	}
+	return -1;
+}
+
+/*
+ * bar_key_hook:
+ *
+ * The canvas offers us keys nobody else handled. F10 opens the first
+ * menu with the keyboard (or closes the open one); Alt+letter opens
+ * the menu with that mnemonic. Text widgets that use Alt combinations
+ * handle them first, so they never reach us.
+ */
+static gboolean
+bar_key_hook (LrgWidget *owner,
+              gint       key,
+              guint      mods)
+{
+	LrgMenuBar       *self = LRG_MENU_BAR (owner);
+	const guint       any = LRG_INPUT_MODIFIER_SHIFT | LRG_INPUT_MODIFIER_CTRL |
+	                        LRG_INPUT_MODIFIER_ALT | LRG_INPUT_MODIFIER_SUPER;
+	gunichar          c;
+	gint              idx;
+	guint             i;
+
+	if (self->titles->len == 0)
+		return FALSE;
+
+	if (key == (gint) GRL_KEY_F10 && (mods & any) == 0)
+	{
+		if (self->open_index >= 0)
+		{
+			lrg_menu_bar_close (self);
+			self->keyboard_mode = FALSE;
+			set_hot (self, -1);
+			return TRUE;
+		}
+		/* The first title with a menu, else just the titles */
+		for (i = 0; i < self->titles->len; i++)
+		{
+			if (g_array_index (self->titles, BarTitle, i).submodel != NULL)
+			{
+				lrg_menu_bar_open_menu (self, i, TRUE);
+				return TRUE;
+			}
+		}
+		lrg_menu_bar_focus_titles (self);
+		return TRUE;
+	}
+
+	if ((mods & LRG_INPUT_MODIFIER_ALT) &&
+	    !(mods & (LRG_INPUT_MODIFIER_CTRL | LRG_INPUT_MODIFIER_SUPER)))
+	{
+		c = key_char (key);
+		idx = c != 0 ? title_for_char (self, c) : -1;
+		if (idx < 0 || !title_enabled (self, title_at (self, idx)))
+			return FALSE;
+		lrg_menu_bar_open_menu (self, (guint) idx, TRUE);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/*
+ * sync_key_hook:
+ *
+ * Keeps the global key hook on the canvas we are in: registered when
+ * the bar joins a canvas tree (checked every step, which only runs on
+ * a canvas), moved when it changes canvas. The canvas drops the hook
+ * itself once we leave its tree, so this re-registers on return.
+ */
+static void
+sync_key_hook (LrgMenuBar *self)
+{
+	LrgCanvas *canvas = find_canvas (LRG_WIDGET (self));
+
+	if (self->hook_canvas != NULL && self->hook_canvas != canvas)
+		_lrg_canvas_remove_key_hook (self->hook_canvas, LRG_WIDGET (self));
+	g_set_weak_pointer (&self->hook_canvas, canvas);
+	if (canvas != NULL)
+		_lrg_canvas_add_key_hook (canvas, LRG_WIDGET (self), bar_key_hook);
 }
 
 /* activate_title: open a menu title, or run a plain button's action */
@@ -776,6 +904,10 @@ static void
 lrg_menu_bar_dispose (GObject *object)
 {
 	LrgMenuBar *self = LRG_MENU_BAR (object);
+
+	if (self->hook_canvas != NULL)
+		_lrg_canvas_remove_key_hook (self->hook_canvas, LRG_WIDGET (self));
+	g_clear_weak_pointer (&self->hook_canvas);
 
 	if (self->model != NULL && self->model_changed_id != 0)
 		g_signal_handler_disconnect (self->model, self->model_changed_id);

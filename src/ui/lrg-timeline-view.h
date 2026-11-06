@@ -830,6 +830,8 @@ gdouble lrg_timeline_view_evaluate (LrgTimelineView      *self,
  * @label: (nullable): flag text
  *
  * Adds a marker: a flag on the ruler and a line across the tracks.
+ * Clicking the flag activates the marker (#LrgTimelineView::marker-activated);
+ * dragging it moves the marker (#LrgTimelineView::marker-moved at release).
  *
  * Returns: the marker id
  */
@@ -854,6 +856,10 @@ gboolean lrg_timeline_view_remove_marker (LrgTimelineView *self,
  * @self: an #LrgTimelineView
  * @marker: a marker id
  * @time: new time
+ *
+ * Moves a marker (clamped at 0). Does not emit
+ * #LrgTimelineView::marker-moved, so an undo stack can call it to
+ * revert a drag.
  *
  * Returns: %TRUE if the marker exists
  */

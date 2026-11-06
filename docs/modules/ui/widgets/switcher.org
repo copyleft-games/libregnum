@@ -43,6 +43,7 @@ Pages added with plain =lrg_container_add_child()= work too (unnamed until =lrg_
 | =SLIDE=                 | =SLIDE_LEFT= to a later page, =SLIDE_RIGHT= to an earlier one; swapped right to left | | yes |
 | =ZOOM=                  | grows from 92 % while fading in             | grows to 108 % while fading out | yes     |
 
+- *Clips inside pages slide with them*: a scroll box (or any widget that clips) on a moving page keeps its clip glued to its content, because paint-list groups move the clips pushed inside them; the switcher's own clip, pushed before the page groups, stays put and cuts both pages (see [[file:../../paint/index.org::#paint-groups][paint groups]]).
 - *First frame*: a switch before the switcher was ever stepped by the canvas is instant, so a freshly built screen never animates in.
 - *Reduced motion* (=lrg_motion_get_reduced()=), motion =LRG_MOTION_NONE=, an explicit =NONE= transition or a switcher without a size: instant.
 - *Interrupting*: switching back to the page being left turns the transition around smoothly (the spring is mirrored, both pages keep their place and speed). Switching to a third page mid-way restarts the transition from the page that was coming in; the page that was leaving disappears.
@@ -89,7 +90,20 @@ The switcher paints no parts of its own; the motion preset of the widget (or the
 :PROPERTIES:
 :CUSTOM_ID: switcher-yaml
 :END:
-Supported by =LrgUILoader= as =LrgSwitcher=; =visible-child-name=, =transition=, =homogeneous= and =interpolate-size= are plain properties, page names are a per-child setting (the integration pass documents the key).
+Supported by =LrgUILoader= as =LrgSwitcher= (=type: switcher=). Each child takes a =page-name:= key (=lrg_switcher_set_child_name()=); =transition= is an =LrgSwitcherTransition= nick; =visible-child-name= and =visible-index= are applied after the pages are added (see [[file:../declarative-ui.org::#switcher-size-box-keys][Declarative UI]]).
+
+#+begin_src yaml
+type: switcher
+id: pages
+transition: slide-left
+interpolate-size: true
+visible-child-name: title
+children:
+  - {type: vbox, id: title, page-name: title}
+  - {type: vbox, id: options, page-name: options}
+#+end_src
+
+=page-name:= under a parent that is not a switcher is an error. A hot reload keeps the page the user switched to unless =visible-child-name= / =visible-index= changes in the file. =examples/data/ui/pages.yaml= switches pages from buttons through an action.
 
 ** Pitfalls
 :PROPERTIES:
@@ -97,7 +111,6 @@ Supported by =LrgUILoader= as =LrgSwitcher=; =visible-child-name=, =transition=,
 :END:
 - Do not call =lrg_widget_set_visible()= on pages: the switcher owns that flag.
 - During a transition the outgoing page is painted through its paint method directly; legacy widgets that only implement =draw()= vanish at the start of the transition instead of animating out.
-- Paint-list transform groups move shapes but not clip rectangles, so a scroll box inside a sliding page keeps its clip in place while its content slides (content is cut at the scroll box's resting rectangle for the duration of the slide).
 - The incoming page is hit-tested at its final rectangle even while it is still sliding in.
 - =lrg_switcher_set_visible_child_name()= with an unknown name logs a warning and does nothing.
 

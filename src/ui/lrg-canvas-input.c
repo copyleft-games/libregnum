@@ -78,6 +78,29 @@ lrg_canvas_input_add_key (LrgCanvasInput *self,
 }
 
 void
+lrg_canvas_input_add_key_repeat (LrgCanvasInput *self,
+                                 GrlKey          key)
+{
+    g_return_if_fail (self != NULL);
+
+    if (self->n_keys >= LRG_CANVAS_INPUT_MAX_KEYS)
+        return;
+
+    self->keys_repeat |= 1u << self->n_keys;
+    self->keys[self->n_keys++] = key;
+}
+
+/* is_modifier_key: Shift / Ctrl / Alt / Super never auto-repeat */
+static gboolean
+is_modifier_key (gint key)
+{
+    return key == (gint) GRL_KEY_LEFT_SHIFT || key == (gint) GRL_KEY_RIGHT_SHIFT ||
+           key == (gint) GRL_KEY_LEFT_CONTROL || key == (gint) GRL_KEY_RIGHT_CONTROL ||
+           key == (gint) GRL_KEY_LEFT_ALT || key == (gint) GRL_KEY_RIGHT_ALT ||
+           key == (gint) GRL_KEY_LEFT_SUPER || key == (gint) GRL_KEY_RIGHT_SUPER;
+}
+
+void
 lrg_canvas_input_add_key_release (LrgCanvasInput *self,
                                   GrlKey          key)
 {
@@ -245,27 +268,26 @@ lrg_canvas_input_poll (LrgCanvasInput *self,
         grl_input_is_key_down (GRL_KEY_RIGHT_SUPER))
         self->modifiers |= LRG_INPUT_MODIFIER_SUPER;
 
-    /* Key presses. Tab is navigation, not a key the focused widget
-     * sees; everything else is queued in order. */
+    /* Key presses, in order. Tab is queued too: the canvas decides
+     * whether the focused widget takes it or focus moves. */
     for (key = grl_input_get_key_pressed ();
          key != GRL_KEY_NULL;
          key = grl_input_get_key_pressed ())
     {
-        if (key == GRL_KEY_TAB)
-        {
-            self->nav = (self->modifiers & LRG_INPUT_MODIFIER_SHIFT)
-                        ? LRG_NAV_DIRECTION_PREVIOUS
-                        : LRG_NAV_DIRECTION_NEXT;
-            continue;
-        }
         lrg_canvas_input_add_key (self, key);
     }
 
-    /* Key releases: graylib has no release queue, so scan the key
-     * range (cheap: a few hundred table lookups). Tab stays navigation. */
+    /*
+     * Auto-repeat and releases: graylib has no queue for either, so
+     * scan the key range (cheap: a few hundred table lookups). Repeats
+     * follow the operating system's delay and rate (GLFW_REPEAT);
+     * modifiers are skipped so holding Shift does not flood the frame.
+     */
     for (k = (gint) GRL_KEY_SPACE; k <= (gint) GRL_KEY_KB_MENU; k++)
     {
-        if (k != (gint) GRL_KEY_TAB && grl_input_is_key_released ((GrlKey) k))
+        if (!is_modifier_key (k) && grl_input_is_key_pressed_repeat ((GrlKey) k))
+            lrg_canvas_input_add_key_repeat (self, (GrlKey) k);
+        if (grl_input_is_key_released ((GrlKey) k))
             lrg_canvas_input_add_key_release (self, (GrlKey) k);
     }
 

@@ -423,6 +423,115 @@ test_group_transform (void)
 	g_assert_cmpfloat (inst->rect[2], ==, 120.0f);
 }
 
+/*
+ * Clips pushed inside a group move with it; a clip pushed before the
+ * group began stays put and still cuts the moved shapes.
+ */
+static void
+test_group_moves_inner_clips (void)
+{
+	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+	const LrgPaintInstance *inst;
+	guint                   mark;
+
+	/* Outer clip (e.g. a switcher), then a sliding page with a scroll
+	 * box clip inside it */
+	lrg_paint_list_push_clip (list, 0.0f, 0.0f, 200.0f, 100.0f);
+	mark = lrg_paint_list_begin_group (list);
+	lrg_paint_list_rect (list, 0.0f, 0.0f, 10.0f, 10.0f, 0.0f, &C_RED);   /* outer clip only */
+	lrg_paint_list_push_clip (list, 10.0f, 10.0f, 50.0f, 40.0f);
+	lrg_paint_list_rect (list, 20.0f, 20.0f, 10.0f, 10.0f, 0.0f, &C_RED); /* scroll content */
+	lrg_paint_list_pop_clip (list);
+	lrg_paint_list_transform_group (list, mark, 1.0f, 0.0f, 0.0f, 30.0f, 5.0f, 1.0f);
+
+	/* The outer clip did not move */
+	inst = lrg_paint_list_get_instance (list, 0);
+	g_assert_cmpfloat (inst->rect[0], ==, 30.0f);
+	g_assert_cmpfloat (inst->clip[0], ==, 0.0f);
+	g_assert_cmpfloat (inst->clip[2], ==, 200.0f);
+
+	/* The inner clip moved with its content */
+	inst = lrg_paint_list_get_instance (list, 1);
+	g_assert_cmpfloat (inst->rect[0], ==, 50.0f);
+	g_assert_cmpfloat (inst->clip[0], ==, 40.0f);
+	g_assert_cmpfloat (inst->clip[1], ==, 15.0f);
+	g_assert_cmpfloat (inst->clip[2], ==, 90.0f);
+	g_assert_cmpfloat (inst->clip[3], ==, 55.0f);
+
+	/* A slide past the outer edge: the moved inner clip is cut by the
+	 * outer one, which stays where it was */
+	lrg_paint_list_transform_group (list, mark, 1.0f, 0.0f, 0.0f, 140.0f, 0.0f, 1.0f);
+	inst = lrg_paint_list_get_instance (list, 1);
+	g_assert_cmpfloat (inst->clip[0], ==, 180.0f);
+	g_assert_cmpfloat (inst->clip[2], ==, 200.0f);
+
+	lrg_paint_list_pop_clip (list);
+}
+
+/* Scaling moves an inner clip about the pivot like the shapes */
+static void
+test_group_scales_inner_clips (void)
+{
+	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+	const LrgPaintInstance *inst;
+	guint                   mark;
+
+	mark = lrg_paint_list_begin_group (list);
+	lrg_paint_list_push_clip (list, 0.0f, 0.0f, 100.0f, 100.0f);
+	lrg_paint_list_rect (list, 10.0f, 10.0f, 10.0f, 10.0f, 0.0f, &C_RED);
+	lrg_paint_list_pop_clip (list);
+	lrg_paint_list_rect (list, 10.0f, 10.0f, 10.0f, 10.0f, 0.0f, &C_RED); /* unclipped */
+	lrg_paint_list_transform_group (list, mark, 0.5f, 100.0f, 100.0f, 0.0f, 0.0f, 1.0f);
+
+	inst = lrg_paint_list_get_instance (list, 0);
+	g_assert_cmpfloat (inst->clip[0], ==, 50.0f);
+	g_assert_cmpfloat (inst->clip[1], ==, 50.0f);
+	g_assert_cmpfloat (inst->clip[2], ==, 100.0f);
+	g_assert_cmpfloat (inst->clip[3], ==, 100.0f);
+
+	/* Shapes recorded with nothing pushed stay unclipped */
+	inst = lrg_paint_list_get_instance (list, 1);
+	g_assert_cmpfloat (inst->clip[2], >, 1.0e6f);
+}
+
+/* Nested groups compose: inner transform, then the outer one moves
+ * the inner group's clip again (each node once per call) */
+static void
+test_group_nested_clips (void)
+{
+	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+	const LrgPaintInstance *inst;
+	guint                   outer;
+	guint                   inner;
+
+	outer = lrg_paint_list_begin_group (list);
+	inner = lrg_paint_list_begin_group (list);   /* same mark, nothing recorded yet */
+	g_assert_cmpuint (outer, ==, inner);
+	lrg_paint_list_push_clip (list, 0.0f, 0.0f, 10.0f, 10.0f);
+	lrg_paint_list_push_clip (list, 2.0f, 2.0f, 4.0f, 4.0f);
+	lrg_paint_list_rect (list, 0.0f, 0.0f, 10.0f, 10.0f, 0.0f, &C_RED);
+	lrg_paint_list_pop_clip (list);
+	lrg_paint_list_rect (list, 0.0f, 0.0f, 10.0f, 10.0f, 0.0f, &C_RED);
+	lrg_paint_list_pop_clip (list);
+	lrg_paint_list_transform_group (list, inner, 1.0f, 0.0f, 0.0f, 100.0f, 0.0f, 1.0f);
+	lrg_paint_list_transform_group (list, outer, 1.0f, 0.0f, 0.0f, 0.0f, 50.0f, 1.0f);
+
+	inst = lrg_paint_list_get_instance (list, 0);
+	g_assert_cmpfloat (inst->clip[0], ==, 102.0f);
+	g_assert_cmpfloat (inst->clip[1], ==, 52.0f);
+	g_assert_cmpfloat (inst->clip[2], ==, 106.0f);
+	g_assert_cmpfloat (inst->clip[3], ==, 56.0f);
+	inst = lrg_paint_list_get_instance (list, 1);
+	g_assert_cmpfloat (inst->clip[0], ==, 100.0f);
+	g_assert_cmpfloat (inst->clip[3], ==, 60.0f);
+
+	/* A clear forgets every node */
+	lrg_paint_list_clear (list);
+	lrg_paint_list_rect (list, 0.0f, 0.0f, 10.0f, 10.0f, 0.0f, &C_RED);
+	lrg_paint_list_transform_group (list, 0, 1.0f, 0.0f, 0.0f, 5.0f, 0.0f, 1.0f);
+	g_assert_cmpfloat (lrg_paint_list_get_instance (list, 0)->clip[2], >, 1.0e6f);
+}
+
 static void
 test_clear_resets (void)
 {
@@ -925,6 +1034,9 @@ main (int   argc,
 	g_test_add_func ("/paint/list/unbalanced-pops", test_unbalanced_pops_warn);
 	g_test_add_func ("/paint/list/opacity-stack", test_opacity_stack);
 	g_test_add_func ("/paint/list/group-transform", test_group_transform);
+	g_test_add_func ("/paint/list/group-moves-inner-clips", test_group_moves_inner_clips);
+	g_test_add_func ("/paint/list/group-scales-inner-clips", test_group_scales_inner_clips);
+	g_test_add_func ("/paint/list/group-nested-clips", test_group_nested_clips);
 	g_test_add_func ("/paint/list/clear", test_clear_resets);
 	g_test_add_func ("/paint/list/stress", test_stress);
 	g_test_add_func ("/paint/list/measure-headless", test_measure_without_window);

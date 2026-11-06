@@ -51,6 +51,24 @@ typedef struct
 	gfloat y1;
 } ClipRect;
 
+/*
+ * ClipNode:
+ *
+ * One lrg_paint_list_push_clip() call, kept until the list is cleared
+ * so group transforms can move clips pushed inside the group. Node ids
+ * are index + 1; id 0 means "nothing pushed".
+ */
+typedef struct
+{
+	gfloat x0;      /* the rectangle as pushed (not intersected) */
+	gfloat y0;
+	gfloat x1;
+	gfloat y1;
+	guint  parent;  /* node active when this one was pushed, or 0 */
+	guint  depth;   /* clip stack depth while this node is active (1 = outermost) */
+	guint  stamp;   /* last transform_group call that moved it */
+} ClipNode;
+
 struct _LrgPaintList
 {
 	GObject    parent_instance;
@@ -58,6 +76,10 @@ struct _LrgPaintList
 	GArray    *instances;   /* LrgPaintInstance */
 	GArray    *commands;    /* PaintCommand */
 	GArray    *clip_stack;  /* ClipRect */
+	GArray    *clip_nodes;  /* ClipNode, every push since the last clear */
+	GArray    *inst_clip;   /* guint per instance: its clip node id */
+	guint      clip_node;   /* node of the current clip, 0 = none */
+	guint      group_stamp; /* counts transform_group calls */
 	GArray    *alpha_stack; /* gfloat */
 	GPtrArray *refs;        /* GObjects kept alive until clear */
 
@@ -306,6 +328,7 @@ append_instance (LrgPaintList           *self,
 	      backdrop_can_join (self, last, inst))))
 	{
 		g_array_append_val (self->instances, *inst);
+		g_array_append_val (self->inst_clip, self->clip_node);
 		last->count++;
 		if (inst->texture != 0)
 			last->texture = inst->texture;
@@ -313,6 +336,7 @@ append_instance (LrgPaintList           *self,
 	}
 
 	g_array_append_val (self->instances, *inst);
+	g_array_append_val (self->inst_clip, self->clip_node);
 
 	{
 		PaintCommand cmd;
@@ -399,6 +423,8 @@ lrg_paint_list_finalize (GObject *object)
 	g_array_unref (self->instances);
 	g_array_unref (self->commands);
 	g_array_unref (self->clip_stack);
+	g_array_unref (self->clip_nodes);
+	g_array_unref (self->inst_clip);
 	g_array_unref (self->alpha_stack);
 	g_ptr_array_unref (self->refs);
 
@@ -420,6 +446,10 @@ lrg_paint_list_init (LrgPaintList *self)
 	self->commands = g_array_sized_new (FALSE, FALSE, sizeof (PaintCommand), 8);
 	g_array_set_clear_func (self->commands, clear_command);
 	self->clip_stack = g_array_new (FALSE, FALSE, sizeof (ClipRect));
+	self->clip_nodes = g_array_new (FALSE, FALSE, sizeof (ClipNode));
+	self->inst_clip = g_array_sized_new (FALSE, FALSE, sizeof (guint), 256);
+	self->clip_node = 0;
+	self->group_stamp = 0;
 	self->alpha_stack = g_array_new (FALSE, FALSE, sizeof (gfloat));
 	self->refs = g_ptr_array_new_with_free_func (g_object_unref);
 
@@ -446,6 +476,10 @@ lrg_paint_list_clear (LrgPaintList *self)
 	g_array_set_size (self->instances, 0);
 	g_array_set_size (self->commands, 0);
 	g_array_set_size (self->clip_stack, 0);
+	g_array_set_size (self->clip_nodes, 0);
+	g_array_set_size (self->inst_clip, 0);
+	self->clip_node = 0;
+	self->group_stamp = 0;
 	g_array_set_size (self->alpha_stack, 0);
 	g_ptr_array_set_size (self->refs, 0);
 
@@ -471,6 +505,21 @@ lrg_paint_list_push_clip (LrgPaintList *self,
 
 	g_array_append_val (self->clip_stack, self->clip);
 
+	/* Remember the push itself so a group transform can move it later */
+	{
+		ClipNode node;
+
+		node.x0 = x;
+		node.y0 = y;
+		node.x1 = x + MAX (width, 0.0f);
+		node.y1 = y + MAX (height, 0.0f);
+		node.parent = self->clip_node;
+		node.depth = self->clip_stack->len;
+		node.stamp = 0;
+		g_array_append_val (self->clip_nodes, node);
+		self->clip_node = self->clip_nodes->len;
+	}
+
 	/* Intersect; an empty intersection collapses to a zero box */
 	self->clip.x0 = MAX (self->clip.x0, x);
 	self->clip.y0 = MAX (self->clip.y0, y);
@@ -495,6 +544,8 @@ lrg_paint_list_pop_clip (LrgPaintList *self)
 
 	self->clip = g_array_index (self->clip_stack, ClipRect, self->clip_stack->len - 1);
 	g_array_set_size (self->clip_stack, self->clip_stack->len - 1);
+	if (self->clip_node != 0)
+		self->clip_node = g_array_index (self->clip_nodes, ClipNode, self->clip_node - 1).parent;
 }
 
 void
@@ -1474,6 +1525,117 @@ scale_alpha (guint8 *rgba,
 	rgba[3] = (guint8) CLAMP ((gint) ((gfloat) rgba[3] * factor + 0.5f), 0, 255);
 }
 
+/*
+ * clip_node_effective:
+ *
+ * The clip rectangle of node @id: the intersection of every pushed
+ * rectangle on its chain (as push_clip computes it), collapsed to a
+ * zero box when empty. Node 0 is unclipped.
+ */
+static void
+clip_node_effective (LrgPaintList *self,
+                     guint         id,
+                     gfloat       *out)
+{
+	out[0] = -UNCLIPPED;
+	out[1] = -UNCLIPPED;
+	out[2] = UNCLIPPED;
+	out[3] = UNCLIPPED;
+
+	while (id != 0)
+	{
+		const ClipNode *n = &g_array_index (self->clip_nodes, ClipNode, id - 1);
+
+		out[0] = MAX (out[0], n->x0);
+		out[1] = MAX (out[1], n->y0);
+		out[2] = MIN (out[2], n->x1);
+		out[3] = MIN (out[3], n->y1);
+		id = n->parent;
+	}
+	if (out[2] < out[0])
+		out[2] = out[0];
+	if (out[3] < out[1])
+		out[3] = out[1];
+}
+
+/*
+ * move_group_clips:
+ *
+ * The clip half of lrg_paint_list_transform_group(). Clips pushed (and
+ * popped) inside the group belong to it and move with it; clips that
+ * were already pushed when the group began stay where they are.
+ *
+ * At transform time the clip stack is back at the depth it had when
+ * the group began (pushes inside a group are balanced), so a node on
+ * an instance's chain deeper than the current depth was pushed inside
+ * the group: it cannot have existed before, because the stack was no
+ * deeper than that when the group began and popped nodes are never
+ * pushed again. Each such node's rectangle is transformed once per
+ * call (the stamp), then every affected instance gets its clip
+ * recomputed from its whole chain. Nested groups compose naturally:
+ * an inner group moves its nodes first, the outer group moves them
+ * again together with its own.
+ */
+static void
+move_group_clips (LrgPaintList *self,
+                  guint         mark,
+                  gfloat        scale,
+                  gfloat        pivot_x,
+                  gfloat        pivot_y,
+                  gfloat        translate_x,
+                  gfloat        translate_y)
+{
+	guint depth = self->clip_stack->len;
+	guint i;
+
+	if (self->clip_nodes->len == 0)
+		return;
+
+	self->group_stamp++;
+	if (self->group_stamp == 0)
+		self->group_stamp = 1;
+
+	for (i = mark; i < self->instances->len; i++)
+	{
+		guint             id = g_array_index (self->inst_clip, guint, i);
+		guint             walk;
+		LrgPaintInstance *inst;
+
+		if (id == 0 || g_array_index (self->clip_nodes, ClipNode, id - 1).depth <= depth)
+			continue;
+
+		/* Move this group's nodes on the chain (once each per call) */
+		for (walk = id; walk != 0; )
+		{
+			ClipNode *n = &g_array_index (self->clip_nodes, ClipNode, walk - 1);
+			gfloat    ax;
+			gfloat    ay;
+			gfloat    bx;
+			gfloat    by;
+
+			if (n->depth <= depth)
+				break;
+			if (n->stamp != self->group_stamp)
+			{
+				n->stamp = self->group_stamp;
+				ax = pivot_x + (n->x0 - pivot_x) * scale + translate_x;
+				ay = pivot_y + (n->y0 - pivot_y) * scale + translate_y;
+				bx = pivot_x + (n->x1 - pivot_x) * scale + translate_x;
+				by = pivot_y + (n->y1 - pivot_y) * scale + translate_y;
+				n->x0 = MIN (ax, bx);
+				n->y0 = MIN (ay, by);
+				n->x1 = MAX (ax, bx);
+				n->y1 = MAX (ay, by);
+			}
+			walk = n->parent;
+		}
+
+		/* Outer nodes kept, inner ones moved: re-intersect the chain */
+		inst = &g_array_index (self->instances, LrgPaintInstance, i);
+		clip_node_effective (self, id, inst->clip);
+	}
+}
+
 void
 lrg_paint_list_transform_group (LrgPaintList *self,
                                 guint         mark,
@@ -1558,6 +1720,8 @@ lrg_paint_list_transform_group (LrgPaintList *self,
 				inst->radii[3] *= opacity;
 		}
 	}
+
+	move_group_clips (self, mark, scale, pivot_x, pivot_y, translate_x, translate_y);
 }
 
 /* ==========================================================================

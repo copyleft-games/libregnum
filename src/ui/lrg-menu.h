@@ -363,14 +363,17 @@ void lrg_menu_set_submenu_delay (LrgMenu *self,
  * @self: an open top-level #LrgMenu
  * @event: a pointer event received by another widget
  *
- * Hands a captured pointer event to the menu chain. The canvas sends
- * every move and release to the widget a button went down on (the
- * capture), so when a press on a widget opens a menu (a context menu
- * on the right button, a menu bar title), the drag onto a row and the
- * release over it reach that widget, not the menu. Call this first in
- * the widget's event handler while its menu is open: moves and
- * releases over @self or one of its open submenus are delivered there
- * (highlight, submenu delay, activation on release).
+ * Advanced: hands a pointer event another widget received to the
+ * menu chain. Moves and releases over @self or one of its open
+ * submenus are delivered there (highlight, submenu delay, activation
+ * on release).
+ *
+ * Not needed for press-drag-release: when the widget holding the
+ * pointer capture opens a menu during the press, the canvas itself
+ * sends moves and the release to the menu chain while the pointer is
+ * over it (see lrg_widget_set_context_menu() for menus with no code at
+ * all). Use this only when a widget routes or synthesises pointer
+ * events for a menu itself.
  *
  * Returns: %TRUE if a menu under the pointer took the event
  */

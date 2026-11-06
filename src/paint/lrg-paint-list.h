@@ -644,10 +644,16 @@ guint lrg_paint_list_begin_group (LrgPaintList *self);
  * @translate_y: shift applied after scaling
  * @opacity: alpha multiplier, 0..1
  *
- * Scales, moves and fades every instance recorded since @mark. Clip
- * rectangles are left alone, so a widget sliding in from outside its
- * parent is still cut by the parent. Callbacks in the range are not
- * transformed.
+ * Scales, moves and fades every instance recorded since @mark.
+ *
+ * Clips pushed and popped inside the group (after
+ * lrg_paint_list_begin_group()) belong to it and move with it, so a
+ * scroll box on a sliding page keeps its clip glued to its content.
+ * Clips that were already pushed when the group began stay put, so a
+ * widget sliding in from outside its parent is still cut by the
+ * parent. Nested groups compose. The current clip stack must be back
+ * at the depth it had at @mark (balanced pushes inside the group).
+ * Callbacks in the range are not transformed.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_paint_list_transform_group (LrgPaintList *self,

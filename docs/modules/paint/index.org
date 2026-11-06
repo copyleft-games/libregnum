@@ -325,10 +325,11 @@ What a group transform does to each instance:
 - both =rect= points (or both line end points) move as points: =p' = pivot + (p - pivot) * scale + translate=; a triangle's third vertex in =extra= moves the same way;
 - radii, border width and the aux size (blur, thickness) are multiplied by =scale=, and so is a radial gradient's radius;
 - =color=, =color2= and =border= alphas are multiplied by =opacity=;
-- clip rectangles are *not* transformed, so a widget flying in from outside its parent is still cut by the parent;
+- clip rectangles pushed (and popped) *inside* the group move with it: each push is remembered as a clip node with its parent and stack depth, and every instance carries the node it was recorded under; at transform time any node on an instance's chain deeper than the current stack depth was pushed inside the group, so its rectangle is transformed (once per call) and the instance's clip is re-intersected from the whole chain. A scroll box on a sliding page therefore keeps its clip glued to its content;
+- clips that were already pushed when the group began are *not* transformed, so a widget flying in from outside its parent is still cut by the parent (the switcher pushes its own clip before it begins the page groups);
 - callbacks inside the range are not transformed (raw raylib drawing cannot be retargeted after the fact).
 
-Groups nest naturally: a child's appear transform is applied first (when the child finishes painting), the parent's afterwards over the combined range.
+Groups nest naturally: a child's appear transform is applied first (when the child finishes painting), the parent's afterwards over the combined range; clip nodes moved by the inner group are moved again by the outer one. The clip stack must be back at the depth it had at the mark when the group is transformed (pushes inside a group are balanced, which every widget paint method guarantees); a clip still pushed at transform time counts as outer and stays put.
 
 ** Clip and opacity stacks
 :PROPERTIES:
@@ -568,7 +569,7 @@ SVG icons (=LrgSvgIcon=) are parsed with graylib's SVG loader (=grl_svg_load_fro
 - *Borders are inside.* A 2-unit border on a 10-unit-wide box leaves 6 units of fill.
 - *Text origin is snapped* to whole units (=floorf (x + 0.5)=) for crisp glyphs; animate text with a group transform, not by feeding sub-pixel positions, if you need smooth sub-pixel motion.
 - *Callbacks split batches and are scissored in canvas units* applied as screen-space scissor rectangles; under a camera transform the scissor box does not follow the transform (instance clipping does). Avoid clipped callbacks inside transformed or scaled targets.
-- *Group transforms do not move clips or callbacks.*
+- *Group transforms move only the clips pushed inside the group*, never the ones pushed before it began, and never callbacks.
 - *One texture per batch.* Mixing images from many separate textures in one panel costs one draw call per switch.
 - *Do not hold =lrg_paint_list_get_instance()= pointers across appends*; the array can reallocate.
 

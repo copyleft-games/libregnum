@@ -584,6 +584,61 @@ test_middle_pan (Fixture       *f,
 	g_assert_cmpfloat_with_epsilon (cx, -100.0f, 0.01f);
 }
 
+/* key_up: one frame that releases @k with the pointer at (x, y) */
+static void
+key_up (LrgCanvas *canvas,
+        GrlKey     k,
+        gfloat     x,
+        gfloat     y)
+{
+	LrgCanvasInput input;
+
+	frame_pointer (&input, x, y);
+	lrg_canvas_input_add_key_release (&input, k);
+	lrg_canvas_process_input (canvas, &input);
+}
+
+/* Space + left drag pans; releasing Space (KEY_UP) disarms it and ends
+ * a pan it started, with no device polling */
+static void
+test_space_pan (Fixture       *f,
+                gconstpointer  data)
+{
+	gfloat cx;
+	gfloat cy;
+	gfloat cx0;
+
+	/* Focus the graph with a click on empty space, then hold Space */
+	click_at (f->canvas, 600.0f, 500.0f, 0);
+	lrg_node_graph_get_center (f->graph, &cx0, &cy);
+	key (f->canvas, GRL_KEY_SPACE, 0);
+
+	press_button (f->canvas, GRL_MOUSE_BUTTON_LEFT, 600.0f, 500.0f, 0);
+	drag_button (f->canvas, GRL_MOUSE_BUTTON_LEFT, 650.0f, 500.0f);
+	lrg_node_graph_get_center (f->graph, &cx, &cy);
+	g_assert_cmpfloat_with_epsilon (cx, cx0 - 50.0f, 0.01f);
+
+	/* Space up mid-drag: the pan stops following the pointer */
+	key_up (f->canvas, GRL_KEY_SPACE, 650.0f, 500.0f);
+	drag_button (f->canvas, GRL_MOUSE_BUTTON_LEFT, 750.0f, 500.0f);
+	release_button (f->canvas, GRL_MOUSE_BUTTON_LEFT, 750.0f, 500.0f);
+	lrg_node_graph_get_center (f->graph, &cx, &cy);
+	g_assert_cmpfloat_with_epsilon (cx, cx0 - 50.0f, 0.01f);
+
+	/* Disarmed: a plain left drag on empty space no longer pans */
+	drag (f->canvas, 600.0f, 500.0f, 700.0f, 500.0f, 4, 0);
+	lrg_node_graph_get_center (f->graph, &cx, &cy);
+	g_assert_cmpfloat_with_epsilon (cx, cx0 - 50.0f, 0.01f);
+
+	/* Armed stays armed across drags until Space goes up */
+	key (f->canvas, GRL_KEY_SPACE, 0);
+	drag (f->canvas, 600.0f, 500.0f, 610.0f, 500.0f, 2, 0);
+	drag (f->canvas, 600.0f, 500.0f, 610.0f, 500.0f, 2, 0);
+	lrg_node_graph_get_center (f->graph, &cx, &cy);
+	g_assert_cmpfloat_with_epsilon (cx, cx0 - 70.0f, 0.01f);
+	key_up (f->canvas, GRL_KEY_SPACE, 799.0f, 1.0f);
+}
+
 /* ==========================================================================
  * Hit testing
  * ========================================================================== */
@@ -1351,6 +1406,7 @@ main (int   argc,
 	ADD ("view-math", test_view_math);
 	ADD ("wheel-zoom", test_wheel_zoom);
 	ADD ("middle-pan", test_middle_pan);
+	ADD ("space-pan", test_space_pan);
 	ADD ("hit-testing", test_hit_testing);
 	ADD ("drag-connect", test_drag_connect);
 	ADD ("drag-move", test_drag_move);

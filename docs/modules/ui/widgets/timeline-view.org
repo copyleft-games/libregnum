@@ -66,8 +66,9 @@ Or let the widget play: =lrg_timeline_view_set_playing (tl, TRUE)= advances the 
 :END:
 | Input                                         | Where                     | Effect                                                                                           |
 |-----------------------------------------------+---------------------------+--------------------------------------------------------------------------------------------------|
-| Press / drag                                  | ruler                     | Scrub: the playhead follows the pointer (snapped to markers, clip edges, grid)                   |
-| Click                                         | marker flag               | Playhead jumps to the marker, =marker-activated=                                                 |
+| Press / drag                                  | ruler (not on a flag)     | Scrub: the playhead follows the pointer (snapped to markers, clip edges, grid)                   |
+| Click                                         | marker flag               | On release without a drag: playhead jumps to the marker, =marker-activated=                      |
+| Drag                                          | marker flag               | Move the marker (live), snapped like a keyframe; =marker-moved= at release if its time changed   |
 | Click                                         | play button (corner)      | Toggle =playing=                                                                                 |
 | Click                                         | chevron / speaker / lock  | Toggle the track's =collapsed= / =muted= / =locked=                                              |
 | Double click                                  | track name                | Toggle =collapsed=                                                                               |
@@ -79,7 +80,7 @@ Or let the widget play: =lrg_timeline_view_set_playing (tl, TRUE)= advances the 
 | Double click                                  | curve lane                | Add a linear keyframe there (=keyframe-added=)                                                   |
 | Drag                                          | empty lane                | Rubber band selection (Ctrl / Shift adds to the selection)                                       |
 | Alt held during a drag                        | any drag                  | No snapping                                                                                      |
-| Esc during a drag                             |                           | Put everything back                                                                              |
+| Esc during a drag                             |                           | Put everything back (a dragged marker returns to its time, no signal)                            |
 | Wheel / Shift + wheel / horizontal wheel      | anywhere                  | Scroll tracks vertically / horizontally (plain wheel scrolls time when the tracks fit)           |
 | Ctrl + wheel, pinch                           | anywhere                  | Zoom about the pointer (the time under it stays put while the zoom spring glides)                |
 | Touch pan                                     | anywhere                  | Scroll both axes, flick on release                                                               |
@@ -90,6 +91,8 @@ Or let the widget play: =lrg_timeline_view_set_playing (tl, TRUE)= advances the 
 | Enter / Space / gamepad A (ACTIVATE)          | focused                   | Toggle =playing=                                                                                 |
 
 Snapping (=snap= flags): a dragged clip snaps either edge (whichever is closer) onto the playhead, markers, the sequence ends and the edges of other clips and keyframes within =snap-distance= units, showing a glowing guide line; otherwise the start is quantized to the grid (frames with an fps, else the ruler's minor ticks). Overlaps: a move that would overlap a resting clip (on a track that forbids it) is refused for that frame, so the clip stops at its last valid place; resizing clamps at the neighbours and keeps at least one frame (10 ms without an fps).
+
+Marker drag: the flag (lower half of the ruler, from 3 units left of the marker line to the end of its label) wins over the scrub the rest of the ruler starts; the upper half of the ruler over a flag still scrubs. A press on a flag becomes a drag after 3 units of travel; the marker keeps its offset under the pointer and snaps with the same rules as a keyframe: to the playhead, other markers (never to itself), the sequence ends and clip / keyframe edges in reach, else to the grid; Alt drags freely. The marker is clamped to =[0, duration]= and painted at the drag time while dragging.
 
 Follow playhead: with =follow-playhead= (default on) the view pages so a playhead that leaves the view (playback, =set_time=, keys) sits 10 % in from the left edge. Scrubbing never scrolls.
 
@@ -229,7 +232,8 @@ Types: =lrg_timeline_view_get_type=, =lrg_timeline_view_track_get_type=, and the
 | =keyframe-removed=  | =LrgTimelineViewTrack *track, guint keyframe= | API remove or Delete                                 |
 | =keyframe-moved=    | =LrgTimelineViewTrack *track, guint keyframe= | End of a drag, or =move_keyframe()=                  |
 | =playhead-moved=    | =gdouble time=                    | Any playhead change (scrub, playback, keys, markers, API)        |
-| =marker-activated=  | =guint marker=                    | A marker flag was clicked                                        |
+| =marker-activated=  | =guint marker=                    | A marker flag was clicked (released without dragging)            |
+| =marker-moved=      | =guint marker, gdouble old_time, gdouble new_time= | Once at the end of a marker drag that changed its time (not on Esc, not for =move_marker()=) |
 | =selection-changed= | none                              | Clips or keyframes selected / unselected                         |
 
 Drags emit their signals once at release so an undo stack sees one entry per gesture; the model is updated live during the drag (read it from =notify= / paint if you need live feedback).
@@ -261,7 +265,37 @@ Clips get a white sheen on their top half and lift while dragged (shadow blur +1
 :PROPERTIES:
 :CUSTOM_ID: yaml
 :END:
-Supported by =LrgUILoader= as =LrgTimelineView= (the integration pass fills in the details). Every setting is a property; tracks are =LrgTimelineViewTrack= objects with properties too, added with =lrg_timeline_view_append_track()=.
+Supported by =LrgUILoader= as =LrgTimelineView= (=type: timeline-view=). Every setting is a property (=time= is applied after =duration=); =tracks:= and =markers:= build the content through the C API (see [[file:../declarative-ui.org::#timeline-keys][Declarative UI]]):
+
+#+begin_src yaml
+type: timeline-view
+id: timeline
+duration: 12
+fps: 30
+time-format: timecode
+snap: [markers, clips]
+tracks:
+  - name: Camera
+    color: "#89b4fa"
+    tracks:
+      - name: Position X
+        curve-lane: true
+        value-min: -10
+        value-max: 10
+        keyframes:
+          - {time: 0, value: 0, interpolation: ease}
+          - {time: 4, value: 6, interpolation: bezier, tangents: [0, 1.5]}
+          - [8, -4]
+  - name: Audio
+    clips:
+      - {start: 0, duration: 4.5, label: Intro, color: "#a6e3a1"}
+      - [5, 6, Theme]
+markers:
+  - {time: 6, label: Drop}
+  - [11.5, End]
+#+end_src
+
+A track takes =name=, nested =tracks=, =clips=, =keyframes= and any writable =LrgTimelineViewTrack= property; clips =start=, =duration=, =label=, =color= (or =[start, duration, label]=); keyframes =time=, =value=, =interpolation=, =tangents= (or =[time, value, interpolation]=); markers =time=, =label= (or =[time, label]= or a bare time). A hot reload rebuilds the loader's tracks (or markers) only when that list changed in the file; tracks added by code are never touched.
 
 ** Pitfalls
 :PROPERTIES:
@@ -273,6 +307,8 @@ Supported by =LrgUILoader= as =LrgTimelineView= (the integration pass fills in t
 - Locked tracks only refuse pointer edits; the API still edits them.
 - The muted flag is only visual; the application decides what muting does.
 - With =follow-playhead= on, every =set_time()= outside the view scrolls it; turn it off while the user browses during playback if that is not wanted.
+- =marker-activated= fires on release, not on press (a press on a flag may become a marker drag). =marker-moved= is the only signal of a marker drag and is not emitted by =lrg_timeline_view_move_marker()=; to undo a drag call =move_marker (marker, old_time)=.
+- Removing a marker while it is being dragged ends the drag without a signal.
 - Keyframe interpolation belongs to the segment that *starts* at the keyframe; the last keyframe's interpolation is unused.
 
 ** See also

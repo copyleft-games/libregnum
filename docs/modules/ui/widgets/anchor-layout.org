@@ -124,7 +124,38 @@ The layout paints nothing itself (no parts); only its children are drawn. Put a 
 :PROPERTIES:
 :CUSTOM_ID: anchor-layout-yaml
 :END:
-Supported by =LrgUILoader= as =LrgAnchorLayout=; per-child keys map onto the per-child functions (the integration pass documents the exact keys).
+Supported by =LrgUILoader= as =LrgAnchorLayout= (=type: anchor-layout=). Each child takes an =anchor:= key: a preset nick, or a mapping applied in the order =preset=, =min=, =max=, =align=, =offset=, =offsets=, =size=, =auto-size=, =z-order= (see [[file:../declarative-ui.org::#anchor-layout-keys][Declarative UI]]).
+
+#+begin_src yaml
+type: anchor-layout
+id: hud
+children:
+  - {type: label, id: crosshair, text: "+", anchor: center}
+  - type: progress-bar
+    id: health
+    anchor: {preset: top-left, offset: [16, 16]}            # like lrg_anchor_layout_add()
+  - type: label
+    id: score
+    anchor: {preset: top-right, offset: [16, 16], z-order: 2} # 16 in from the corner
+  - type: label
+    id: banner
+    anchor: {preset: top-stretch, offsets: [72, 200, 0, 200], size: [0, 32]}
+  - type: panel
+    anchor: {min: [0.25, 0.25], max: [0.75, 0.75]}           # a centred half-size box
+#+end_src
+
+| Key         | Maps to                                                          |
+|-------------+------------------------------------------------------------------|
+| =preset=    | =lrg_anchor_data_set_preset()= (anchors and pivot)                |
+| =min=, =max= | =min_x= / =min_y=, =max_x= / =max_y=                              |
+| =align=     | =align_x= / =align_y=                                            |
+| =offset=    | =[x, y]= with the =lrg_anchor_layout_add()= rules (inwards from right / bottom) |
+| =offsets=   | =left= / =top= / =right= / =bottom=: =[top, right, bottom, left]= (CSS order) or a mapping |
+| =size=      | =right= / =bottom= as the pinned size, =auto_size= off           |
+| =auto-size= | =auto_size=                                                      |
+| =z-order=   | =z_order= (=lrg_anchor_layout_set_child_z_order()=)              |
+
+=anchor:= under a parent that is not an anchor layout is an error. A hot reload re-applies a changed =anchor:= through =lrg_anchor_layout_set_child_data()= and resets a removed one to =lrg_anchor_data_init()=. =examples/data/ui/hud.yaml= is a full HUD.
 
 ** Pitfalls
 :PROPERTIES:

@@ -167,7 +167,25 @@ Inside a paint hook, =lrg_widget_resolve_look()= + =lrg_widget_paint_box()= draw
 :PROPERTIES:
 :CUSTOM_ID: custom-widget-yaml
 :END:
-Supported by =LrgUILoader= as =LrgCustomWidget= (=preferred-width=, =preferred-height=, =paint-box=); give it a =name= and connect the hooks from code after loading (=lrg_widget_find()=).
+Supported by =LrgUILoader= as =LrgCustomWidget= (=type: custom-widget=) with =preferred-width=, =preferred-height= and =paint-box=. Its hooks are signals, so =on:= can connect handlers registered with =lrg_ui_loader_add_handler()=; =lrg_custom_widget_set_funcs()= is called from code on the widget looked up by id:
+
+#+begin_src yaml
+type: custom-widget
+id: gauge
+preferred-width: 96
+preferred-height: 96
+paint-box: true
+on: {paint: paint_gauge, event: gauge_event}
+#+end_src
+
+#+begin_src C
+lrg_ui_loader_add_handler (loader, "paint_gauge", G_CALLBACK (paint_gauge), game);
+root = lrg_ui_loader_watch_file (loader, "data/ui/hud.yaml", LRG_CONTAINER (canvas), &error);
+/* or, with the vtable: */
+lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (lrg_ui_loader_get_widget (loader, "gauge")), &funcs, game, NULL);
+#+end_src
+
+See [[file:../declarative-ui.org::#viewport-custom-keys][Declarative UI]].
 
 ** Pitfalls
 :PROPERTIES:

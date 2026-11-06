@@ -168,7 +168,7 @@ Each shape fades individually; overlapping shapes in a faded subtree show throug
 | Function | Purpose | Notes |
 |----------+---------+-------|
 | =lrg_paint_list_begin_group (self)= | Returns a mark (the current instance count) | |
-| =lrg_paint_list_transform_group (self, mark, scale, pivot_x, pivot_y, translate_x, translate_y, opacity)= | Scales around the pivot, translates and fades every instance since =mark= | Clips and callbacks are not transformed; radii, borders, blur and thickness scale too |
+| =lrg_paint_list_transform_group (self, mark, scale, pivot_x, pivot_y, translate_x, translate_y, opacity)= | Scales around the pivot, translates and fades every instance since =mark= | Clips pushed inside the group move with it, clips pushed before it began stay put; callbacks are not transformed; radii, borders, blur and thickness scale too |
 
 Example, a "squash" on press independent of the widget machinery:
 

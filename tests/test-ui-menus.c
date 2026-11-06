@@ -462,7 +462,9 @@ G_DECLARE_FINAL_TYPE (TestTarget, test_target, TEST, TARGET, LrgWidget)
 struct _TestTarget
 {
 	LrgWidget  parent_instance;
-	LrgMenu   *menu;   /* owned */
+	LrgMenu   *menu;        /* owned */
+	gboolean   no_forward;  /* skip lrg_menu_forward_pointer_event () */
+	gboolean   eat_keys;    /* consume every KEY_DOWN */
 };
 
 G_DEFINE_FINAL_TYPE (TestTarget, test_target, LRG_TYPE_WIDGET)
@@ -473,7 +475,12 @@ test_target_handle_event (LrgWidget        *widget,
 {
 	TestTarget *self = TEST_TARGET (widget);
 
-	if (lrg_menu_get_open (self->menu) && lrg_menu_forward_pointer_event (self->menu, event))
+	if (self->eat_keys && lrg_ui_event_get_event_type (event) == LRG_UI_EVENT_KEY_DOWN)
+		return TRUE;
+	if (self->menu == NULL)
+		return FALSE;
+	if (!self->no_forward && lrg_menu_get_open (self->menu) &&
+	    lrg_menu_forward_pointer_event (self->menu, event))
 		return TRUE;
 
 	if (lrg_ui_event_get_event_type (event) == LRG_UI_EVENT_MOUSE_BUTTON_DOWN &&
@@ -552,6 +559,212 @@ test_context_drag_release (Fixture       *f,
 	g_assert_cmpuint (f->log->len, ==, 1);
 	g_assert_cmpstr (g_ptr_array_index (f->log, 0), ==, "save");
 	settle (f);
+}
+
+/* key_mods: one frame with @k pressed while @mods are held, and
+ * optionally the character it typed */
+static void
+key_mods (Fixture           *f,
+          GrlKey             k,
+          LrgInputModifiers  mods,
+          gunichar           typed)
+{
+	LrgCanvasInput input;
+
+	frame (f, &input);
+	input.modifiers = mods;
+	lrg_canvas_input_add_key (&input, k);
+	if (typed != 0)
+		lrg_canvas_input_add_char (&input, typed);
+	lrg_canvas_process_input (f->canvas, &input);
+}
+
+/*
+ * The canvas hands a press-opened popup the captured pointer while it
+ * is over it: a widget that opens a menu on a right press needs no
+ * forwarding for press-drag-release.
+ */
+static void
+test_context_capture_transfer (Fixture       *f,
+                               gconstpointer  data)
+{
+	g_autoptr(GMenu) model = file_model ();
+	TestTarget      *target = g_object_new (TEST_TYPE_TARGET, NULL);
+	guint            right = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_RIGHT);
+	LrgCanvasInput   input;
+	gfloat           x;
+	gfloat           y;
+
+	target->menu = lrg_menu_new_from_model (G_MENU_MODEL (model));
+	target->no_forward = TRUE;
+	lrg_container_add_child (LRG_CONTAINER (f->canvas), LRG_WIDGET (target));
+	g_object_unref (target);
+	lrg_widget_allocate (LRG_WIDGET (target), 200.0f, 150.0f, 300.0f, 300.0f);
+
+	move_to (f, 300.0f, 200.0f);
+	button_frame (f, 300.0f, 200.0f, right, TRUE);
+	g_assert_true (lrg_menu_get_open (target->menu));
+	row_center (target->menu, 1, &x, &y);
+	f->px = x;
+	f->py = y;
+	frame (f, &input);
+	input.buttons_down = right;
+	lrg_canvas_process_input (f->canvas, &input);
+	g_assert_cmpint (lrg_menu_get_highlighted (target->menu), ==, 1);
+	button_frame (f, x, y, right, FALSE);
+	g_assert_false (lrg_menu_get_open (target->menu));
+	g_assert_cmpuint (f->log->len, ==, 1);
+	g_assert_cmpstr (g_ptr_array_index (f->log, 0), ==, "save");
+	settle (f);
+
+	/* Released off the menu: the target still gets the release and
+	 * the menu stays open */
+	move_to (f, 300.0f, 200.0f);
+	button_frame (f, 300.0f, 200.0f, right, TRUE);
+	button_frame (f, 480.0f, 430.0f, right, FALSE);
+	g_assert_true (lrg_menu_get_open (target->menu));
+	lrg_menu_close (target->menu);
+	settle (f);
+}
+
+/* LrgWidget:context-menu: an unhandled right press on the widget or a
+ * descendant opens the model at the pointer, owned by the widget */
+static void
+test_context_menu_property (Fixture       *f,
+                            gconstpointer  data)
+{
+	g_autoptr(GMenu) model = file_model ();
+	LrgVBox         *box = lrg_vbox_new ();
+	LrgLabel        *label = lrg_label_new ("Right-click me");
+	TestTarget      *eater = g_object_new (TEST_TYPE_TARGET, NULL);
+	guint            right = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_RIGHT);
+	LrgCanvasInput   input;
+	LrgMenu         *menu;
+	GMenuModel      *got = NULL;
+	gfloat           x;
+	gfloat           y;
+
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (label));
+	g_object_unref (label);
+	lrg_container_add_child (LRG_CONTAINER (f->canvas), LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_allocate (LRG_WIDGET (box), 200.0f, 150.0f, 300.0f, 300.0f);
+	lrg_canvas_record (f->canvas);
+
+	/* Property round trip */
+	g_object_set (box, "context-menu", model, NULL);
+	g_object_get (box, "context-menu", &got, NULL);
+	g_assert_true (got == G_MENU_MODEL (model));
+	g_object_unref (got);
+	g_assert_true (lrg_widget_get_context_menu (LRG_WIDGET (box)) == G_MENU_MODEL (model));
+
+	/* Right press on the child: the box's menu opens at the pointer */
+	move_to (f, 210.0f, 160.0f);
+	button_frame (f, 210.0f, 160.0f, right, TRUE);
+	menu = LRG_MENU (lrg_canvas_get_top_popup (f->canvas));
+	g_assert_nonnull (menu);
+	g_assert_true (LRG_IS_MENU (menu));
+	g_assert_true (lrg_menu_get_open (menu));
+	g_assert_true (lrg_menu_get_owner (menu) == LRG_WIDGET (box));
+	g_assert_cmpfloat_with_epsilon (lrg_widget_get_world_x (LRG_WIDGET (menu)), 210.0f, 0.5f);
+
+	/* Drag onto Save and release: one gesture, no code in the box */
+	row_center (menu, 1, &x, &y);
+	f->px = x;
+	f->py = y;
+	frame (f, &input);
+	input.buttons_down = right;
+	lrg_canvas_process_input (f->canvas, &input);
+	button_frame (f, x, y, right, FALSE);
+	g_assert_false (lrg_menu_get_open (menu));
+	g_assert_cmpuint (f->log->len, ==, 1);
+	g_assert_cmpstr (g_ptr_array_index (f->log, 0), ==, "save");
+	settle (f);
+
+	/* A child that handles the right press itself wins */
+	eater->menu = NULL;
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (eater));
+	g_object_unref (eater);
+	lrg_canvas_record (f->canvas);
+	{
+		TestTarget *t = eater;
+		g_autoptr(GMenu) own = view_model ();
+
+		t->menu = lrg_menu_new_from_model (G_MENU_MODEL (own));
+		x = lrg_widget_get_world_x (LRG_WIDGET (t)) + 5.0f;
+		y = lrg_widget_get_world_y (LRG_WIDGET (t)) + 5.0f;
+		move_to (f, x, y);
+		button_frame (f, x, y, right, TRUE);
+		button_frame (f, x, y, right, FALSE);
+		g_assert_true (lrg_menu_get_open (t->menu));
+		g_assert_cmpuint (lrg_canvas_get_popup_count (f->canvas), ==, 1);
+		lrg_menu_close (t->menu);
+		settle (f);
+	}
+
+	/* No model: nothing opens */
+	lrg_widget_set_context_menu (LRG_WIDGET (box), NULL);
+	move_to (f, 210.0f, 160.0f);
+	button_frame (f, 210.0f, 160.0f, right, TRUE);
+	button_frame (f, 210.0f, 160.0f, right, FALSE);
+	g_assert_cmpuint (lrg_canvas_get_popup_count (f->canvas), ==, 0);
+}
+
+/* Shift+F10 and the Menu key open the focused widget's context menu
+ * below it, first row highlighted */
+static void
+test_context_menu_keyboard (Fixture       *f,
+                            gconstpointer  data)
+{
+	g_autoptr(GMenu) model = file_model ();
+	LrgMenu         *menu;
+
+	lrg_widget_set_context_menu (f->button, G_MENU_MODEL (model));
+	lrg_canvas_set_focused_widget (f->canvas, f->button);
+
+	key_mods (f, GRL_KEY_F10, LRG_INPUT_MODIFIER_SHIFT, 0);
+	menu = LRG_MENU (lrg_canvas_get_top_popup (f->canvas));
+	g_assert_nonnull (menu);
+	g_assert_true (lrg_menu_get_owner (menu) == f->button);
+	g_assert_cmpint (lrg_menu_get_highlighted (menu), ==, 0);
+	g_assert_cmpfloat (lrg_widget_get_world_y (LRG_WIDGET (menu)), >=, 70.0f);
+	key (f, GRL_KEY_ENTER);
+	g_assert_false (lrg_menu_get_open (menu));
+	g_assert_cmpuint (f->log->len, ==, 1);
+	g_assert_cmpstr (g_ptr_array_index (f->log, 0), ==, "open");
+	settle (f);
+
+	lrg_canvas_set_focused_widget (f->canvas, f->button);
+	key (f, GRL_KEY_KB_MENU);
+	g_assert_cmpuint (lrg_canvas_get_popup_count (f->canvas), ==, 1);
+	key (f, GRL_KEY_ESCAPE);
+	g_assert_cmpuint (lrg_canvas_get_popup_count (f->canvas), ==, 0);
+	settle (f);
+}
+
+/* A held Enter (auto-repeat) never activates a menu row */
+static void
+test_repeat_does_not_activate (Fixture       *f,
+                               gconstpointer  data)
+{
+	LrgMenu        *menu = open_file_menu (f);
+	LrgCanvasInput  input;
+
+	lrg_menu_set_highlighted (menu, 1);
+	frame (f, &input);
+	lrg_canvas_input_add_key_repeat (&input, GRL_KEY_ENTER);
+	lrg_canvas_process_input (f->canvas, &input);
+	g_assert_true (lrg_menu_get_open (menu));
+	g_assert_cmpuint (f->log->len, ==, 0);
+
+	/* Repeated arrows still move the highlight */
+	frame (f, &input);
+	lrg_canvas_input_add_key_repeat (&input, GRL_KEY_DOWN);
+	lrg_canvas_process_input (f->canvas, &input);
+	g_assert_cmpint (lrg_menu_get_highlighted (menu), >, 1);
+	lrg_menu_close (menu);
+	settle (f);
+	g_object_unref (menu);
 }
 
 static void
@@ -1183,6 +1396,70 @@ test_bar_arrows (Fixture       *f,
 	settle (f);
 }
 
+/* F10 and Alt+mnemonic reach the bar from anywhere in the canvas */
+static void
+test_bar_global_keys (Fixture       *f,
+                      gconstpointer  data)
+{
+	LrgMenuBar   *bar = add_bar (f);
+	LrgTextInput *entry = lrg_text_input_new ();
+	TestTarget   *eater = g_object_new (TEST_TYPE_TARGET, NULL);
+
+	lrg_container_add_child (LRG_CONTAINER (f->canvas), LRG_WIDGET (entry));
+	g_object_unref (entry);
+	lrg_widget_allocate (LRG_WIDGET (entry), 40.0f, 100.0f, 200.0f, 30.0f);
+	eater->eat_keys = TRUE;
+	lrg_widget_set_focusable (LRG_WIDGET (eater), TRUE);
+	lrg_container_add_child (LRG_CONTAINER (f->canvas), LRG_WIDGET (eater));
+	g_object_unref (eater);
+	lrg_widget_allocate (LRG_WIDGET (eater), 40.0f, 200.0f, 50.0f, 50.0f);
+	frames (f, 1);
+
+	/* F10 with focus elsewhere opens the first menu by keyboard */
+	lrg_canvas_set_focused_widget (f->canvas, f->button);
+	key (f, GRL_KEY_F10);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, 0);
+	g_assert_cmpint (lrg_menu_get_highlighted (lrg_menu_bar_get_menu (bar, 0)), ==, 0);
+	/* ...and F10 again (the menu has focus now) closes it */
+	key (f, GRL_KEY_F10);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+	settle (f);
+
+	/* Alt+V from a text field opens View; the typed 'v' is dropped */
+	lrg_canvas_set_focused_widget (f->canvas, LRG_WIDGET (entry));
+	key_mods (f, GRL_KEY_V, LRG_INPUT_MODIFIER_ALT, 'v');
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, 1);
+	g_assert_cmpstr (lrg_text_input_get_text (entry) != NULL ? lrg_text_input_get_text (entry) : "", ==, "");
+	lrg_menu_bar_close (bar);
+	settle (f);
+
+	/* A letter without a matching title, or plain V, does nothing */
+	lrg_canvas_set_focused_widget (f->canvas, f->button);
+	key_mods (f, GRL_KEY_Q, LRG_INPUT_MODIFIER_ALT, 0);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+	key_mods (f, GRL_KEY_V, LRG_INPUT_MODIFIER_NONE, 0);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+
+	/* A widget that consumes the key keeps it */
+	lrg_canvas_set_focused_widget (f->canvas, LRG_WIDGET (eater));
+	key_mods (f, GRL_KEY_F, LRG_INPUT_MODIFIER_ALT, 0);
+	key (f, GRL_KEY_F10);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+
+	/* A hidden bar takes nothing; removed from the canvas, its hook goes */
+	lrg_canvas_set_focused_widget (f->canvas, f->button);
+	lrg_widget_set_visible (LRG_WIDGET (bar), FALSE);
+	key (f, GRL_KEY_F10);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+	lrg_widget_set_visible (LRG_WIDGET (bar), TRUE);
+	g_object_ref (bar);
+	lrg_container_remove_child (LRG_CONTAINER (f->canvas), LRG_WIDGET (bar));
+	key (f, GRL_KEY_F10);
+	g_assert_cmpint (lrg_menu_bar_get_open_index (bar), ==, -1);
+	g_object_unref (bar);
+	settle (f);
+}
+
 static void
 test_bar_drag_release (Fixture       *f,
                        gconstpointer  data)
@@ -1425,6 +1702,10 @@ main (int    argc,
 	ADD ("/ui/menu/popup-placement", test_popup_placement);
 	ADD ("/ui/menu/context-release", test_context_release_does_not_activate);
 	ADD ("/ui/menu/context-drag-release", test_context_drag_release);
+	ADD ("/ui/menu/context-capture-transfer", test_context_capture_transfer);
+	ADD ("/ui/menu/context-menu-property", test_context_menu_property);
+	ADD ("/ui/menu/context-menu-keyboard", test_context_menu_keyboard);
+	ADD ("/ui/menu/repeat-does-not-activate", test_repeat_does_not_activate);
 	ADD ("/ui/menu/accel-from-shortcut", test_accel_from_shortcut);
 	ADD ("/ui/menu/hover-glide", test_hover_glide);
 	ADD ("/ui/menu/submenu-delay", test_submenu_delay);
@@ -1439,6 +1720,7 @@ main (int    argc,
 	ADD ("/ui/menu-bar/hover-switch", test_bar_hover_switch);
 	ADD ("/ui/menu-bar/arrows", test_bar_arrows);
 	ADD ("/ui/menu-bar/drag-release", test_bar_drag_release);
+	ADD ("/ui/menu-bar/global-keys", test_bar_global_keys);
 	ADD ("/ui/menu/rtl", test_rtl);
 	ADD ("/ui/menu/all-presets", test_all_presets);
 #undef ADD
