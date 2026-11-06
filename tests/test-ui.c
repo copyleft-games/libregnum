@@ -1139,7 +1139,7 @@ test_theme_spacing (void)
     g_assert_cmpfloat_with_epsilon (lrg_theme_get_padding_normal (theme), 8.0f, 0.0001f);
     g_assert_cmpfloat_with_epsilon (lrg_theme_get_padding_large (theme), 16.0f, 0.0001f);
     g_assert_cmpfloat_with_epsilon (lrg_theme_get_border_width (theme), 1.0f, 0.0001f);
-    g_assert_cmpfloat_with_epsilon (lrg_theme_get_corner_radius (theme), 4.0f, 0.0001f);
+    g_assert_cmpfloat_with_epsilon (lrg_theme_get_corner_radius (theme), 8.0f, 0.0001f);
 }
 
 /* ==========================================================================

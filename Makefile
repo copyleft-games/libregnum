@@ -144,6 +144,7 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-image.h \
 	src/ui/lrg-slider.h \
 	src/ui/lrg-text-input.h \
+	src/ui/lrg-style.h \
 	src/ui/lrg-theme.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
@@ -797,6 +798,7 @@ SOURCES := \
 	src/ui/lrg-image.c \
 	src/ui/lrg-slider.c \
 	src/ui/lrg-text-input.c \
+	src/ui/lrg-style.c \
 	src/ui/lrg-theme.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \

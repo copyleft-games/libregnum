@@ -168,6 +168,7 @@
 #include "paint/lrg-paint-list.h"
 #include "paint/lrg-paint-renderer.h"
 #include "tween/lrg-spring.h"
+#include "ui/lrg-style.h"
 #include "ui/lrg-ui-event.h"
 #include "ui/lrg-widget.h"
 #include "ui/lrg-container.h"

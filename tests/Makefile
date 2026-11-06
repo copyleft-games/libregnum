@@ -79,6 +79,7 @@ TEST_SOURCES := \
 	test-ui-input.c \
 	test-paint.c \
 	test-spring.c \
+	test-ui-theme.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \
