@@ -1,0 +1,287 @@
+#+title: Springs and Motion
+#+description: LrgSpring closed-form damped springs, LrgMotion presets and the global motion settings (speed, reduced motion)
+#+authors: Zach Podbielniak
+#+categories: libregnum tween ui animation
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* Springs and Motion
+:PROPERTIES:
+:CUSTOM_ID: spring
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Tween]]* > Springs
+#+end_quote
+
+=LrgSpring= (=src/tween/lrg-spring.h=) is a one-dimensional damped spring: a value that chases a target with physical, interruptible motion. It is what makes UI state changes feel alive: every widget's hover and press feedback, appear animations and popup open/close transitions run on springs. Unlike an =LrgTween= a spring has *no duration*: you only ever say where it should go, at any time, and retargeting mid-flight keeps the current velocity, so motion bends smoothly instead of restarting or jumping.
+
+The same header holds the =LrgMotion= presets (how motion feels) and two process-wide switches: a speed multiplier and reduced motion.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: spring-overview
+:END:
+#+begin_src c
+LrgSpring glow;
+
+lrg_spring_init (&glow, 0.0f, LRG_MOTION_BOUNCY);   /* at rest at 0 */
+
+/* when something happens */
+lrg_spring_set_target (&glow, 1.0f);
+
+/* every frame */
+if (lrg_spring_step (&glow, delta_time))
+	request_another_frame ();
+
+draw_with_intensity (glow.value);
+#+end_src
+
+=LrgSpring= is a plain value struct (also a boxed GType for bindings). Embed it in your own structs; there is nothing to free.
+
+** The physics
+:PROPERTIES:
+:CUSTOM_ID: spring-physics
+:END:
+A spring with displacement =x = value - target= obeys the damped harmonic oscillator
+
+#+begin_example
+x'' = -w0^2 x - 2 z w0 x'
+
+w0 = 2 pi / response      undamped angular frequency (rad/s)
+z  = damping              damping ratio (dimensionless)
+#+end_example
+
+=response= is the *period* of the undamped oscillation in seconds: roughly "how long one swing takes"; smaller is faster. =damping= decides the character: =1.0= is critically damped (the fastest approach with no overshoot), below 1 overshoots and oscillates, above 1 creeps in slowly. These two numbers are much easier to design with than stiffness and mass, which is why the API uses them (the same parametrisation as SwiftUI's spring animations).
+
+*** Closed-form steps
+:PROPERTIES:
+:CUSTOM_ID: spring-closed-form
+:END:
+=lrg_spring_step()= does not integrate the equation numerically. It evaluates the exact solution over the time step =t=, starting from the current displacement =d0= and velocity =v0=, in double precision. Three regimes:
+
+*Critically damped* (=|z - 1| < 1e-4=):
+
+#+begin_example
+c    = v0 + w0 d0
+d(t) = (d0 + c t) e^(-w0 t)
+v(t) = (v0 - w0 c t) e^(-w0 t)
+#+end_example
+
+*Under-damped* (=z < 1=), a decaying oscillation at the damped frequency =wd = w0 sqrt (1 - z^2)=:
+
+#+begin_example
+d(t) = e^(-z w0 t) ( d0 cos (wd t) + (v0 + z w0 d0) / wd * sin (wd t) )
+v(t) = e^(-z w0 t) ( v0 cos (wd t) - (z w0 v0 + w0^2 d0) / wd * sin (wd t) )
+#+end_example
+
+*Over-damped* (=z > 1=), the sum of two decaying exponentials with roots =r1,2 = -w0 (z -/+ sqrt (z^2 - 1))=:
+
+#+begin_example
+c2   = (v0 - r1 d0) / (r2 - r1)
+c1   = d0 - c2
+d(t) = c1 e^(r1 t) + c2 e^(r2 t)
+v(t) = r1 c1 e^(r1 t) + r2 c2 e^(r2 t)
+#+end_example
+
+The near-critical band exists because the other two formulas divide by =wd= or =r2 - r1=, which approach zero at =z = 1=.
+
+*** Frame-rate independence
+:PROPERTIES:
+:CUSTOM_ID: spring-frame-rate
+:END:
+Because each step is the exact solution of the ODE, the result depends only on the total elapsed time, not on how it was sliced: one step of 1/30 s lands exactly where two steps of 1/60 s do (up to float rounding). A UI animates identically at 30, 60, 144 Hz or with a variable frame time, and a replay or test can step with any =dt=. Numeric integrators (Euler, semi-implicit Euler) drift or even explode at large steps with stiff springs; this one cannot.
+
+*** The hitch cap (MAX_STEP)
+:PROPERTIES:
+:CUSTOM_ID: spring-max-step
+:END:
+A single step is clamped to *0.25 s* (after applying the global speed). When the game stalls (a level load, a breakpoint, a window drag) the next frame's =delta_time= can be seconds long; without the cap a spring would jump straight to its rest state, or worse, a bouncy one would be sampled at an arbitrary phase of its oscillation. With the cap the motion simply resumes. The flip side: frame-rate independence holds only for steps up to 0.25 s, i.e. above 4 FPS.
+
+*** Settling
+:PROPERTIES:
+:CUSTOM_ID: spring-settling
+:END:
+After each step, if =|displacement| < LRG_SPRING_EPSILON= (=0.0005=) *and* =|velocity| < 10 * LRG_SPRING_EPSILON= (=0.005= per second), the spring snaps exactly onto its target with zero velocity and =lrg_spring_step()= returns =FALSE=. =lrg_spring_is_settled()= is then =TRUE= (it tests exact equality: =value == target= and =velocity == 0=). This exact landing is what lets callers stop requesting frames, compare against the target with ===, and skip work for idle widgets. The epsilon is chosen for values on a 0..1 scale (hover and press progress); springs over large ranges (hundreds of pixels) settle visually long before they snap, which costs nothing but a few extra steps.
+
+** Motion presets
+:PROPERTIES:
+:CUSTOM_ID: spring-presets
+:END:
+=LrgMotion= names a (response, damping) pair. Themes and widgets pick presets, not raw numbers, so a whole UI changes character with one setting.
+
+| Preset | Nick | Response (s) | Damping | w0 (rad/s) | Overshoot | Settles (approx., 2 %) | Feels |
+|--------+------+--------------+---------+------------+-----------+------------------------+-------|
+| =LRG_MOTION_NONE= | =none= | 0 | 1.0 | - | - | instantly | No animation: values jump to their target |
+| =LRG_MOTION_SNAPPY= | =snappy= | 0.16 | 0.90 | 39.3 | ~0.2 % | ~0.11 s | Quick, nearly critical: press feedback, toggles |
+| =LRG_MOTION_SMOOTH= | =smooth= | 0.30 | 1.0 | 20.9 | none | ~0.28 s | Calm and precise, no overshoot (the default) |
+| =LRG_MOTION_BOUNCY= | =bouncy= | 0.38 | 0.52 | 16.5 | ~15 % | ~0.47 s | Visible overshoot, playful |
+| =LRG_MOTION_WOBBLY= | =wobbly= | 0.50 | 0.32 | 12.6 | ~35 % | ~1.0 s | Several oscillations, cartoony |
+
+Overshoot is =exp (-z pi / sqrt (1 - z^2))= of the distance travelled, for a spring starting at rest. Unknown enum values fall back to =SMOOTH=.
+
+Where presets are used in the UI:
+
+- =LrgTheme:motion= is the theme-wide preset; the built-in themes use =smooth= (midnight, daylight), =bouncy= (both Catppuccin presets) and =none= (high-contrast).
+- =lrg_widget_set_motion()= overrides it per widget (=-1= follows the theme again); =lrg_widget_get_motion()= returns the effective preset.
+- A widget's hover spring uses its motion; its press spring is always =snappy= (=none= if the motion is =none=) so a click registers instantly.
+- Appear animations use the widget's motion (=smooth= if that is =none=); =LRG_APPEAR_DROP= always uses =bouncy=.
+
+See [[file:../ui/animation.org][UI animation]] for how widgets use them.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: spring-api
+:END:
+*** LrgSpring
+:PROPERTIES:
+:CUSTOM_ID: spring-api-struct
+:END:
+| Field | Meaning |
+|-------+---------|
+| =value= | Current value |
+| =velocity= | Current velocity, units per second |
+| =target= | Value the spring moves towards |
+| =response= | Undamped period in seconds; 0 jumps straight to =target= |
+| =damping= | Damping ratio (> 0) |
+
+The fields are public: read =value= every frame; setting =response= / =damping= directly is fine, but use the functions to move the target.
+
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_spring_init (self, value, motion)= | At rest at =value= with a preset's parameters | (out caller-allocates) |
+| =lrg_spring_init_full (self, value, response, damping)= | At rest with explicit parameters | =response >= 0=, =damping > 0= (checked) |
+| =lrg_spring_new (value, motion)= | Heap-allocated spring | (transfer full); for bindings |
+| =lrg_spring_copy (self)= / =lrg_spring_free (self)= | Boxed copy / free | =free= accepts =NULL=; =g_autoptr (LrgSpring)= supported |
+| =lrg_spring_set_motion (self, motion)= | Changes response and damping only | Value, velocity and target untouched |
+| =lrg_spring_set_target (self, target)= | Retargets, keeping velocity | Motion bends smoothly |
+| =lrg_spring_snap (self, value)= | Jumps to =value= (and targets it), zero velocity | |
+| =lrg_spring_step (self, delta_time)= | Advances by =delta_time * speed= (capped at 0.25 s) | Returns =TRUE= while moving; jumps to the target when reduced motion is on or =response <= 0=; a zero step on an unsettled spring returns =TRUE= without moving |
+| =lrg_spring_is_settled (self)= | Exactly at rest on its target | |
+| =LRG_SPRING_EPSILON= | 0.0005, the settling distance | Speed threshold is ten times this |
+
+*** Motion settings
+:PROPERTIES:
+:CUSTOM_ID: spring-api-motion
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_motion_get_params (motion, response, damping)= | Looks up a preset | Out params optional |
+| =lrg_motion_set_speed (speed)= / =lrg_motion_get_speed ()= | Global time multiplier for every spring step (and appear delays) | Clamped to [0.01, 10]; 0.25 for slow-motion debugging of transitions |
+| =lrg_motion_set_reduced (reduced)= / =lrg_motion_get_reduced ()= | Reduced motion: every spring jumps to its target, appear delays and transitions are skipped | For players sensitive to motion |
+| =lrg_motion_follow_accessibility (settings)= | Mirrors =LrgAccessibilitySettings:reduce-motion= into reduced motion, now and on every change | =NULL= stops following; the subscription is dropped automatically if the settings object is finalized |
+
+** Reduced motion and accessibility
+:PROPERTIES:
+:CUSTOM_ID: spring-reduced-motion
+:END:
+Reduced motion is checked inside =lrg_spring_step()=, so it applies to every spring in the process, including your own, without any per-widget code: values still change, they just change instantly. Appear animations snap to their end state and stagger delays are dropped.
+
+Wire it to the player's accessibility setting once at startup:
+
+#+begin_src c
+LrgAccessibilitySettings *a11y = lrg_accessibility_settings_new ();
+
+/* load the saved settings ... */
+lrg_motion_follow_accessibility (a11y);
+#+end_src
+
+From then on toggling "Reduce motion" in your settings screen takes effect on the next frame. Call =lrg_motion_follow_accessibility (NULL)= to stop following (e.g. before replacing the settings object with another one; passing a new object also replaces the old subscription).
+
+The global speed is meant for development: =lrg_motion_set_speed (0.1f)= slows every UI transition ten times so you can inspect a bouncy overshoot or a popup ghost frame by frame.
+
+** Springs or LrgTween?
+:PROPERTIES:
+:CUSTOM_ID: spring-vs-tween
+:END:
+| Use a spring when | Use an =LrgTween= when |
+|-------------------+------------------------|
+| The target can change at any time (hover in/out, drag, scroll, follow the cursor) | The animation has a fixed start, end and duration (a cutscene camera move, a 2 s fade) |
+| Motion must stay continuous when interrupted | You need an exact duration or exact timing to sync with audio |
+| You want physical feel (overshoot, settle) from two intuitive numbers | You want a specific easing curve (=LrgEasing=: elastic, bounce, back, cubic ...) |
+| Many independent values each tick (one struct, no allocation, no manager) | You animate a GObject property by name, or chain sequences and parallels |
+| Frame-rate independence matters with a variable =dt= | You need loops, yoyo, callbacks on completion |
+
+A tween retargeted mid-flight either restarts (visible jump in velocity) or must be cancelled and rebuilt; a spring just takes the new target. Conversely a spring has no notion of "done at 0.5 s": it settles when the physics says so.
+
+The two compose: drive a tween for the choreography and let springs smooth its output, or tween a spring's target.
+
+** Worked example: a spring-driven indicator
+:PROPERTIES:
+:CUSTOM_ID: spring-example-indicator
+:END:
+A tab strip's selection indicator glides to the selected tab and keeps its velocity if the user clicks another tab mid-way. The widget steps its own spring from =paint()= using monotonic time (widgets' own extra springs are not stepped by the canvas):
+
+#+begin_src c
+struct _GameTabs
+{
+	LrgWidget  parent_instance;
+
+	LrgSpring  indicator_x;   /* left edge of the indicator */
+	gint64     last_us;       /* time of the previous paint */
+	guint      selected;
+};
+
+static void
+game_tabs_init (GameTabs *self)
+{
+	lrg_spring_init (&self->indicator_x, 0.0f, LRG_MOTION_SMOOTH);
+	self->last_us = 0;
+}
+
+void
+game_tabs_select (GameTabs *self,
+                  guint     index)
+{
+	self->selected = index;
+	/* retarget: an indicator already moving keeps its momentum */
+	lrg_spring_set_target (&self->indicator_x, (gfloat) index * TAB_WIDTH);
+}
+
+static void
+game_tabs_paint (LrgWidget    *widget,
+                 LrgPaintList *list)
+{
+	GameTabs *self = GAME_TABS (widget);
+	LrgTheme *theme = lrg_widget_get_theme (widget);
+	gint64    now = g_get_monotonic_time ();
+	gfloat    dt;
+	gfloat    x;
+	gfloat    y;
+
+	/* seconds since the last paint, clamped so a hitch can't skip
+	 * the whole motion (the spring caps at 0.25 s itself too) */
+	dt = self->last_us == 0 ? 0.0f : (gfloat) (now - self->last_us) / 1.0e6f;
+	self->last_us = now;
+	lrg_spring_set_motion (&self->indicator_x, lrg_widget_get_motion (widget));
+	lrg_spring_step (&self->indicator_x, MIN (dt, 0.1f));
+
+	x = lrg_widget_get_world_x (widget);
+	y = lrg_widget_get_world_y (widget);
+	/* ... tabs ... */
+	lrg_paint_list_rect (list, x + self->indicator_x.value, y + TAB_HEIGHT - 3.0f,
+	                     TAB_WIDTH, 3.0f, G_MAXFLOAT,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT));
+}
+#+end_src
+
+Following the widget's motion makes the indicator bounce in the Catppuccin themes, glide in midnight, and jump in high-contrast, with no extra code.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: spring-pitfalls
+:END:
+- *Step every frame*, including frames where nothing changed: a spring only moves when stepped. Widgets' built-in springs are stepped by the canvas (=lrg_canvas_update()=, called by =lrg_canvas_process_input()=); springs you add yourself are yours to step.
+- *Do not step twice per frame* (e.g. from both =update()= and =paint()=): the motion runs at double speed.
+- =lrg_spring_init()= also resets the target and velocity; use =lrg_spring_set_motion()= to change the feel of a moving spring.
+- Values overshoot with damping below 1. Clamp where an overshoot is invalid (an alpha above 1, a negative size): =CLAMP (s.value, 0.0f, 1.0f)=.
+- The settling epsilon is absolute; for very small ranges (< 0.01) scale your values up.
+- Global speed and reduced motion are process-wide, not per canvas.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: spring-see-also
+:END:
+- [[file:index.org][Tween module]] (=LrgTween=, easing, sequences)
+- [[file:../ui/animation.org][UI animation]] (hover/press springs, appear transitions, popups)
+- [[file:../accessibility/index.org][Accessibility]] (=LrgAccessibilitySettings=)

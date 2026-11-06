@@ -1,0 +1,221 @@
+#+title: UI Animation
+#+description: Hover and press springs, eased looks, appear transitions with stagger, popup open/close animation, reduced motion and motion presets
+#+authors: Zach Podbielniak
+#+categories: libregnum ui animation
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* UI Animation
+:PROPERTIES:
+:CUSTOM_ID: animation
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Animation
+#+end_quote
+
+Motion in the widget tree is built in, not bolted on: every widget has springs for hover and press that blend its looks between states, an optional entrance ("appear") animation applied after layout, and popups pop in and fade out as ghosts. Everything runs on [[file:../tween/spring.org][LrgSpring]], so it is interruptible, frame-rate independent, themed through a single motion preset, and switched off globally by reduced motion.
+
+** The layers of motion
+:PROPERTIES:
+:CUSTOM_ID: animation-layers
+:END:
+| Layer | Driven by | Visible as | Configure with |
+|-------+-----------+------------+----------------|
+| Hover | hover spring, target 1 while =HOVERED= | looks cross-fade to the hovered variant | widget / theme motion |
+| Press | press spring (always snappy), target 1 while =PRESSED= | looks cross-fade to the pressed variant | automatic |
+| Custom | =lrg_widget_get_hover_progress()= / =get_press_progress()= | anything a widget derives (squash, glow, slide) | widget code |
+| Appear | appear spring 0 to 1 after an optional delay | scale / move / fade of the whole widget subtree | =lrg_widget_set_appear()= |
+| Popups | appear (=POP= by default), close spring, veil spring | pop in, shrink and fade out, dimming | =lrg_canvas_show_popup()= / =dismiss_popup()= |
+| Activation | one-frame =PRESSED= on ACTIVATE | press spring kicks, then releases | automatic |
+
+All of them are stepped by =lrg_widget_step()=, which the canvas calls for its tree and popups from =lrg_canvas_update()= (itself called at the end of =lrg_canvas_process_input()=). Children of an invisible container are not stepped: hidden subtrees freeze until shown.
+
+** Hover and press springs
+:PROPERTIES:
+:CUSTOM_ID: animation-hover-press
+:END:
+Each widget owns two springs. Changing state flags retargets them immediately (=lrg_widget_set_state_flags()= / =unset_state_flags()=):
+
+- hover: target =1= while =LRG_WIDGET_STATE_HOVERED=, else =0=; uses the widget's motion (=lrg_widget_get_motion()=);
+- press: target =1= while =LRG_WIDGET_STATE_PRESSED=, else =0=; always =snappy= (=none= when the widget's motion is =none=), so a click registers instantly even in a wobbly theme.
+
+Because they are springs, moving the pointer quickly across a row of buttons produces overlapping partial fades rather than pops, and pressing during a hover fade continues from the current blend.
+
+=lrg_widget_get_hover_progress()= and =lrg_widget_get_press_progress()= return the spring values (0..1, briefly beyond with bouncy motion).
+
+** Eased looks
+:PROPERTIES:
+:CUSTOM_ID: animation-eased-looks
+:END:
+=lrg_widget_resolve_look()= turns the springs into visual change without any per-widget animation code: it resolves the resting look, then lerps towards the hovered look by the hover progress, then towards the pressed look by the press progress (each variant = =style_defaults()= + theme rules; details in [[file:styling.org::#styling-pipeline][styling]]). Every numeric field glides: colours, border width, corner radii, shadow blur and offset, opacity, part size, glow. A theme rule that gives hovered buttons a bigger shadow and a larger radius therefore animates both, at the speed and character of the theme's motion.
+
+Variants are only resolved while a spring is above 0.001, so resting widgets cost one resolution per part.
+
+** Custom motion from the springs
+:PROPERTIES:
+:CUSTOM_ID: animation-custom
+:END:
+Widgets can derive their own motion from the progress values. A press "squash" that scales the whole button down by 4 % around its centre:
+
+#+begin_src c
+static void
+game_button_paint (LrgWidget    *widget,
+                   LrgPaintList *list)
+{
+	gfloat x = lrg_widget_get_world_x (widget);
+	gfloat y = lrg_widget_get_world_y (widget);
+	gfloat w = lrg_widget_get_width (widget);
+	gfloat h = lrg_widget_get_height (widget);
+	gfloat p = CLAMP (lrg_widget_get_press_progress (widget), 0.0f, 1.0f);
+	guint  mark;
+
+	mark = lrg_paint_list_begin_group (list);
+	paint_button_body_and_label (widget, list, x, y, w, h);
+	if (p > 0.0f)
+		lrg_paint_list_transform_group (list, mark, 1.0f - 0.04f * p,
+		                                x + w * 0.5f, y + h * 0.5f,
+		                                0.0f, 0.0f, 1.0f);
+}
+#+end_src
+
+A slider thumb that grows on hover reads the thumb look's =size= (which the look blending already animates) or scales by =1 + 0.15 * hover=. Springs a widget adds for itself (an indicator position, a value display) must be stepped by the widget; see [[file:../tween/spring.org::#spring-example-indicator][the indicator example]].
+
+** Appear transitions
+:PROPERTIES:
+:CUSTOM_ID: animation-appear
+:END:
+=lrg_widget_set_appear (widget, appear, delay)= gives a widget an entrance animation, played:
+
+- the first time the widget is painted after =set_appear()= changed the kind;
+- every time the widget is shown again (=lrg_widget_set_visible (w, TRUE)= after being hidden);
+- on demand with =lrg_widget_play_appear()=.
+
+When it starts, the widget waits =delay= seconds (scaled by the global motion speed), then an appear spring runs from 0 to 1 with the widget's motion (=smooth= if the motion is =none=; =DROP= always uses =bouncy=). Each frame =lrg_widget_paint()= records the widget and its whole subtree inside a paint group and transforms the group by the progress =p=, around the widget's centre. *Layout and hit-testing see the final position immediately*; only the pixels move, so a button is clickable where it will land even while it flies in.
+
+With =rest = 1 - p= and a fly distance of 24 canvas units:
+
+| =LrgAppear= | Nick | Scale | Offset | Opacity | Notes |
+|-------------+------+-------+--------+---------+-------|
+| =LRG_APPEAR_NONE= | =none= | 1 | 0 | 1 | No animation |
+| =LRG_APPEAR_FADE= | =fade= | 1 | 0 | =p= | |
+| =LRG_APPEAR_POP= | =pop= | =0.85 + 0.15 p= | 0 | =min (1, 1.6 p)= | Opaque before fully grown; the popup default |
+| =LRG_APPEAR_ZOOM= | =zoom= | =0.5 + 0.5 p= | 0 | =p= | |
+| =LRG_APPEAR_FLY_UP= | =fly-up= | 1 | y + =24 rest= | =p= | Rises into place from below |
+| =LRG_APPEAR_FLY_DOWN= | =fly-down= | 1 | y - =24 rest= | =p= | Drops into place from above |
+| =LRG_APPEAR_FLY_LEFT= | =fly-left= | 1 | x + =24 rest= | =p= | Slides in from the right |
+| =LRG_APPEAR_FLY_RIGHT= | =fly-right= | 1 | x - =24 rest= | =p= | Slides in from the left |
+| =LRG_APPEAR_DROP= | =drop= | 1 | y - =38.4 rest= | =min (1, 2 p)= | Falls from above and settles with a bounce (bouncy spring) |
+
+Opacity is clamped to 0..1, but scale and offset follow the spring, so with bouncy or wobbly motion a =POP= briefly grows past 100 % and a =FLY_UP= overshoots upwards before settling: that is the intended "juice". During the delay =p = 0=, so the widget is invisible (or, for =POP=, invisible and small).
+
+The focus ring is inside the group and animates with the widget. Clip rectangles are not transformed: a widget flying in from outside its parent's clip is cut by the parent.
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_widget_set_appear (self, appear, delay)= | Set the kind and delay; changing the kind schedules a play; =NONE= snaps to the end state |
+| =lrg_widget_get_appear (self)= | The kind (also the =appear= property) |
+| =lrg_widget_play_appear (self)= | Restart now (no-op for =NONE=) |
+| =lrg_widget_get_appear_progress (self)= | 0 before it starts (pending or not yet painted), 1 when finished; can briefly exceed 1 |
+
+Note that calling =set_appear()= again with the same kind only updates the delay; use =play_appear()= to replay.
+
+*** Staggered cascades
+:PROPERTIES:
+:CUSTOM_ID: animation-stagger
+:END:
+Give siblings increasing delays for a cascade. A main menu whose buttons rise in one after another:
+
+#+begin_src c
+static void
+build_main_menu (LrgVBox *menu)
+{
+	static const gchar *labels[] = { "Continue", "New Game", "Options", "Quit" };
+	guint               i;
+
+	for (i = 0; i < G_N_ELEMENTS (labels); i++)
+	{
+		LrgButton *b = lrg_button_new (labels[i]);
+
+		/* 60 ms apart: fast enough to read as one gesture */
+		lrg_widget_set_appear (LRG_WIDGET (b), LRG_APPEAR_FLY_UP, 0.06f * (gfloat) i);
+		lrg_container_add_child (LRG_CONTAINER (menu), LRG_WIDGET (b));
+		g_object_unref (b);
+	}
+}
+
+/* showing the menu again replays the whole cascade */
+static void
+show_main_menu (LrgWidget *menu)
+{
+	GList *l;
+
+	lrg_widget_set_visible (menu, TRUE);
+	for (l = lrg_container_get_children (LRG_CONTAINER (menu)); l != NULL; l = l->next)
+		lrg_widget_play_appear (LRG_WIDGET (l->data));
+}
+#+end_src
+
+Showing the menu container replays the container's own appear; children with appear animations replay only when they themselves are shown or told to play, hence the loop. Keep total cascades under ~0.4 s; longer feels sluggish on repeated visits.
+
+** Popups: open and close
+:PROPERTIES:
+:CUSTOM_ID: animation-popups
+:END:
+- *Open*: =lrg_canvas_show_popup()= gives a popup without an appear kind =LRG_APPEAR_POP= (delay 0) and plays it. Set another kind on the popup before showing it to change that (=FLY_DOWN= for a dropdown, =ZOOM= for a dialog).
+- *Modal veil*: a smooth spring fades the =VEIL= colour in from transparent to the theme's veil alpha.
+- *Close*: =lrg_canvas_dismiss_popup()= turns the popup into a *ghost*: no longer interactive, painted while a snappy spring runs from 1 to 0, scaled =0.92 + 0.08 p= around the anchor's centre (so it visibly retreats into the widget that opened it) and faded by =p=; the veil fades out together. The ghost is released when the spring drops below 0.01.
+- The anchor carries =LRG_WIDGET_STATE_OPEN= while the popup is open, which its looks can animate (a combo arrow rotating, a menu button staying highlighted).
+
+** Activation flash
+:PROPERTIES:
+:CUSTOM_ID: animation-activation
+:END:
+Keyboard and gamepad activation have no physical press, so =lrg_canvas_activate_focus()= sets =PRESSED= for exactly one frame. The press spring kicks towards 1 and immediately back, which with a snappy spring reads as a short tap, the same feedback a mouse click gives.
+
+** Motion presets per theme and widget
+:PROPERTIES:
+:CUSTOM_ID: animation-presets
+:END:
+The character of all of the above comes from one =LrgMotion= preset:
+
+1. =lrg_widget_set_motion (widget, LRG_MOTION_BOUNCY)= overrides it for one widget (=-1= follows the theme again);
+2. otherwise the effective theme's =motion= (=lrg_theme_set_motion()=, or =motion:= in a theme file);
+3. the built-in presets: =midnight= and =daylight= are =smooth=, =catppuccin-mocha= and =catppuccin-latte= are =bouncy=, =high-contrast= is =none=.
+
+The override is per widget, not inherited by children; scope a different motion to a subtree with a theme copy (=lrg_theme_copy()= + =lrg_theme_set_motion()= + =lrg_widget_set_theme()=). Preset numbers are in [[file:../tween/spring.org::#spring-presets][the spring presets table]].
+
+** Reduced motion
+:PROPERTIES:
+:CUSTOM_ID: animation-reduced-motion
+:END:
+=lrg_motion_set_reduced (TRUE)= (or =lrg_motion_follow_accessibility (settings)=) makes every spring jump to its target and drops appear delays: looks switch instantly between states, appear animations show the final state on the first frame, popups open and close without transitions. Nothing else changes: state, focus rings, colours and layout are identical, so a reduced-motion UI is fully functional. The =high-contrast= theme uses =motion: none=, which has the same effect for its widgets' springs (appear animations still run with a smooth spring there unless reduced motion is on).
+
+For debugging, =lrg_motion_set_speed (0.1f)= slows all UI motion tenfold.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: animation-performance
+:END:
+- A settled spring returns from =lrg_spring_step()= after one comparison, so idle widgets cost almost nothing to step.
+- =lrg_canvas_update()= returns =TRUE= while anything (spring, appear delay, ghost, veil) is still moving; tools and menus that only redraw on demand can stop rendering when it returns =FALSE= and no input arrived.
+- Appear transforms touch only the instances of the animating widget, once per frame, after recording.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: animation-pitfalls
+:END:
+- Calling =lrg_canvas_update()= in addition to =lrg_canvas_handle_input()= / =process_input()= doubles every animation's speed.
+- Clamp spring-derived values where overshoot is invalid (alpha, sizes): bouncy and wobbly motion overshoot.
+- =set_appear()= with an unchanged kind does not replay; use =play_appear()=.
+- Appear transforms do not move callbacks recorded by legacy =draw()= widgets; port them to =paint()= to animate.
+- Hidden containers freeze their children's springs; a widget shown after a long time resumes from where it was (the 0.25 s step cap prevents jumps).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: animation-see-also
+:END:
+- [[file:../tween/spring.org][Springs and motion]]
+- [[file:styling.org][Styling]] (looks that the springs blend)
+- [[file:input-and-focus.org::#input-popups][Popups]] and [[file:input-and-focus.org::#input-activate][activation]]
+- [[file:../paint/index.org::#paint-groups][Paint groups]] (how appear transforms are applied)

@@ -1,0 +1,270 @@
+#+title: UI Migration Guide
+#+description: Porting code and custom widgets written before the paint rework: draw() to paint(), colours to looks, layout slots, event behaviour changes and the canvas input split
+#+authors: Zach Podbielniak
+#+categories: libregnum ui guide migration
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* UI Migration Guide
+:PROPERTIES:
+:CUSTOM_ID: migration
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > UI migration
+#+end_quote
+
+The UI module was reworked around the [[file:../modules/paint/index.org][SDF paint pipeline]], themed part looks, springs, and a new canvas event model. Most existing code keeps compiling and running: legacy =draw()= widgets are painted through callbacks, the old theme accessors alias the new roles, and container APIs are unchanged. A few *behaviour* changes can affect existing code (hover vs focus events, bubbling, click focus), and porting custom widgets to =paint()= is what unlocks the new look, animation and performance. This guide covers both.
+
+** What keeps working
+:PROPERTIES:
+:CUSTOM_ID: migration-compat
+:END:
+| Legacy API | Status |
+|------------+--------|
+| Overriding =LrgWidgetClass.draw= | Works. The widget is recorded as a paint callback that runs your =draw()= at its place in the paint order, scissored to the active clip. It ends the paint batch, does not get appear transforms, and does not blend looks. |
+| =lrg_widget_draw (widget)= | Works for every widget; for paint-only widgets it renders the =paint()= output immediately with a private renderer. |
+| =lrg_canvas_render()= / =lrg_canvas_handle_input()= | Same calls; now record + SDF render, and poll + =process_input()= (which also steps animations). |
+| =lrg_container_add_child= / =remove_child= / =layout_children= | Unchanged; =add_child= / =remove_child= still lay out immediately. |
+| =lrg_widget_set_position= / =set_size= | Unchanged; used for absolute placement. |
+| =lrg_theme_get/set_primary_color= ... =success_color=, font sizes, paddings, border width, corner radius | Aliases of roles and metrics (see [[file:../modules/ui/theme.org::#theme-legacy][the legacy table]]). |
+| =lrg_ui_event_*= constructors and accessors | Unchanged; new types and accessors added. |
+| Per-widget colour setters on built-in widgets | See each widget's page; ported widgets prefer theme looks. |
+
+** Behaviour changes
+:PROPERTIES:
+:CUSTOM_ID: migration-behaviour
+:END:
+*** Hover no longer sends FOCUS_IN / FOCUS_OUT
+:PROPERTIES:
+:CUSTOM_ID: migration-hover-focus
+:END:
+Before, moving the pointer over a widget sent it =LRG_UI_EVENT_FOCUS_IN= and leaving sent =FOCUS_OUT=. Now those events mean *keyboard focus* only. For hover:
+
+- react to =LRG_UI_EVENT_POINTER_ENTER= / =POINTER_LEAVE= (sent directly to every widget entering / leaving the hover path, not bubbling), or
+- read =lrg_widget_get_state_flags (w) & LRG_WIDGET_STATE_HOVERED=, or connect to =::state-changed=, or
+- better, let looks do it: describe the hovered look in =style_defaults()= and it animates by itself.
+
+#+begin_src c
+/* before */
+case LRG_UI_EVENT_FOCUS_IN:
+	self->is_hovered = TRUE;
+	return TRUE;
+
+/* after */
+case LRG_UI_EVENT_POINTER_ENTER:
+	self->is_hovered = TRUE;     /* or drop the field and use the HOVERED flag */
+	return FALSE;
+#+end_src
+
+*** Events bubble
+:PROPERTIES:
+:CUSTOM_ID: migration-bubbling
+:END:
+Events go to the target widget (under the pointer, capturing, or focused) and then to each ancestor until one returns =TRUE= from =handle_event=. Before, containers offered events to their children and the first to accept won. Consequences:
+
+- A parent now sees events its children did not handle. Return =FALSE= for events you do not use, and =TRUE= only when you really consumed one.
+- Return values matter more than before: =TRUE= stops ancestors (a scroll box will not scroll if a child consumed the wheel).
+- =lrg_ui_event_consume()= / the consumed flag does not stop bubbling; only the return value does.
+
+*** Containers do not re-broadcast bubbling events
+:PROPERTIES:
+:CUSTOM_ID: migration-no-rebroadcast
+:END:
+=LrgContainer='s default =handle_event= ignores events with =lrg_ui_event_get_bubbling()= =TRUE=. If your container overrides =handle_event= and loops over its children, add the same guard, or every event is delivered twice (once to the target, once more when it bubbles to you and you forward it down):
+
+#+begin_src c
+static gboolean
+game_inventory_handle_event (LrgWidget        *widget,
+                             const LrgUIEvent *event)
+{
+	/* the canvas already delivered it to the child under the pointer */
+	if (lrg_ui_event_get_bubbling (event))
+		return game_inventory_handle_own (GAME_INVENTORY (widget), event);
+
+	return LRG_WIDGET_CLASS (game_inventory_parent_class)->handle_event (widget, event);
+}
+#+end_src
+
+*** Clicks focus the nearest focusable widget
+:PROPERTIES:
+:CUSTOM_ID: migration-click-focus
+:END:
+A left press focuses the nearest focusable, enabled ancestor-or-self of the clicked widget, and clears focus when there is none (or when clicking empty canvas without a modal popup open). Widgets that should take focus must call =lrg_widget_set_focusable (self, TRUE)= in =init=. Code that set focus manually with =lrg_canvas_set_focused_widget()= on click can usually drop it.
+
+*** Pointer capture and click semantics
+:PROPERTIES:
+:CUSTOM_ID: migration-capture
+:END:
+The widget hit by a left press captures the pointer: it receives =MOUSE_MOVE= and the =MOUSE_BUTTON_UP= even outside its bounds. Widgets that tracked dragging with global mouse polling can use events instead. Implement "click" as a left release inside the widget.
+
+*** Mouse button routing fix
+:PROPERTIES:
+:CUSTOM_ID: migration-button-fix
+:END:
+Before, =lrg_canvas_handle_input()= passed the pointer x as the button number, so widgets checking for the left button only reacted when the pointer was at x < 1. Code that worked around this by ignoring the button can now check =lrg_ui_event_get_button (event) == GRL_MOUSE_BUTTON_LEFT=.
+
+*** Text input
+:PROPERTIES:
+:CUSTOM_ID: migration-text
+:END:
+Typed text arrives as =LRG_UI_EVENT_TEXT_INPUT= with a composed codepoint (=lrg_ui_event_get_codepoint()=), honouring layout, Shift and dead keys. Do not derive characters from =KEY_DOWN= key codes.
+
+*** Keyboard navigation
+:PROPERTIES:
+:CUSTOM_ID: migration-navigation
+:END:
+Unhandled arrow keys now move focus; Tab is no longer delivered as a key (it navigates); Enter / Space activate (=LRG_UI_EVENT_ACTIVATE=); Escape cancels. Widgets that use arrows must return =TRUE= for them; widgets that reacted to Enter via =KEY_DOWN= should handle =ACTIVATE= instead (so gamepad A works too). Games that use arrows for gameplay while UI is visible can call =lrg_canvas_set_navigation_enabled (canvas, FALSE)=.
+
+*** handle_input vs process_input
+:PROPERTIES:
+:CUSTOM_ID: migration-input-split
+:END:
+=lrg_canvas_handle_input (canvas)= = =lrg_canvas_input_poll (&in, GetFrameTime ())= + =lrg_canvas_process_input (canvas, &in)=, and =process_input= ends by stepping all animations (=lrg_canvas_update()=). Do not also call =lrg_canvas_update()= in the same frame. If you have your own input layer, build =LrgCanvasInput= frames and call =process_input= directly; coordinates must already be in canvas space ([[file:../modules/ui/input-and-focus.org::#input-frames][input frames]]).
+
+*** Visual changes
+:PROPERTIES:
+:CUSTOM_ID: migration-visual
+:END:
+- The default theme is the =midnight= preset; default corner radius is 8 (was 4). Restore with =lrg_theme_set_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS, 4.0f)= or =metrics: { corner-radius: 4 }=.
+- Built-in widgets draw with the theme's UI font (a system sans loaded at 64 px), so text metrics differ slightly from raylib's bitmap font; layouts that hard-coded text widths should measure instead (=lrg_paint_measure_text()=).
+- The canvas does not clear the background unless =lrg_canvas_set_paint_background (canvas, TRUE)=.
+
+** Porting a custom widget
+:PROPERTIES:
+:CUSTOM_ID: migration-porting
+:END:
+*** draw() to paint()
+:PROPERTIES:
+:CUSTOM_ID: migration-draw-to-paint
+:END:
+=paint (self, list)= records into an =LrgPaintList= instead of drawing. Coordinates are the same world coordinates you used in =draw()=. Typical translations:
+
+| Before (graylib) | After (paint list) |
+|------------------+--------------------|
+| =grl_draw_rectangle_rec (&r, &c)= | =lrg_paint_list_rect (list, r.x, r.y, r.width, r.height, 0.0f, &c)= |
+| =grl_draw_rectangle_rounded (&r, roundness, segments, &c)= | =lrg_paint_list_rect (list, x, y, w, h, radius, &c)= (a radius in units, not a roundness fraction; no segments) |
+| =grl_draw_rectangle_lines_ex (&r, thick, &c)= | =lrg_paint_list_border (list, x, y, w, h, radius, thick, &c)= (drawn inside) |
+| fill + outline pair | one =lrg_paint_list_rect_ex (..., &fill, NULL, width, &border)= |
+| =grl_draw_circle (cx, cy, r, &c)= | =lrg_paint_list_circle (list, cx, cy, r, &c)= |
+| =grl_draw_line_ex (&a, &b, thick, &c)= | =lrg_paint_list_line (list, ax, ay, bx, by, thick, &c)= |
+| =grl_draw_triangle (...)= | =lrg_paint_list_triangle (list, ...)= (any winding) |
+| =grl_draw_texture_pro (...)= | =lrg_paint_list_image (list, texture, &src, x, y, w, h, radius, &tint)= |
+| =grl_draw_text_ex (font, text, &pos, size, spacing, &c)= | =lrg_paint_list_text (list, font, text, x, y, size, spacing, &c)= |
+| =grl_font_measure_text_xy (...)= | =lrg_paint_measure_text (font, text, size, spacing, &w, &h)= |
+| =BeginScissorMode= / =EndScissorMode= | =lrg_paint_list_push_clip= / =pop_clip= (no batch break) |
+| manual alpha fading | =lrg_paint_list_push_opacity= / =pop_opacity=, or =lrg_widget_set_opacity()= |
+| anything else (3D, shaders) | =lrg_paint_list_callback (list, fn, data, destroy)= |
+
+New capabilities with no old equivalent: soft shadows (=lrg_paint_list_shadow()=), per-corner radii and gradients (=lrg_paint_list_rect_ex()=), and group transforms.
+
+*** Colours to looks
+:PROPERTIES:
+:CUSTOM_ID: migration-colors-to-looks
+:END:
+Hard-coded colours and per-state colour fields (=normal_color=, =hover_color=, =pressed_color=) become a =style_defaults()= implementation reading theme roles, and =paint()= resolves looks instead of choosing colours:
+
+#+begin_src c
+/* before: state picked a colour field */
+if (self->is_pressed)
+	bg = &self->pressed_color;
+else if (self->is_hovered)
+	bg = &self->hover_color;
+else
+	bg = &self->normal_color;
+grl_draw_rectangle_rounded (&rect, roundness, 8, bg);
+
+/* after: style_defaults() describes each state from the theme ... */
+static void
+game_tile_style_defaults (LrgWidget      *widget,
+                          LrgUIPart       part,
+                          LrgWidgetState  state,
+                          LrgPartLook    *look)
+{
+	LrgTheme *theme = lrg_widget_get_theme (widget);
+
+	if (part != LRG_UI_PART_BOX)
+	{
+		LRG_WIDGET_CLASS (game_tile_parent_class)->style_defaults (widget, part, state, look);
+		return;
+	}
+
+	if (state & LRG_WIDGET_STATE_PRESSED)
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_CONTROL_PRESSED));
+	else if (state & LRG_WIDGET_STATE_HOVERED)
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_CONTROL_HOVER));
+	else
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_CONTROL));
+	lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+	lrg_part_look_set_border (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER),
+	                          lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH));
+}
+
+/* ... and paint() draws the blended look */
+static void
+game_tile_paint (LrgWidget    *widget,
+                 LrgPaintList *list)
+{
+	LrgPartLook box;
+
+	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
+	lrg_widget_paint_box (widget, list, &box,
+	                      lrg_widget_get_world_x (widget), lrg_widget_get_world_y (widget),
+	                      lrg_widget_get_width (widget), lrg_widget_get_height (widget));
+}
+#+end_src
+
+The hover and pressed colours now fade in with the theme's motion, a theme file can restyle the tile with =widget: GameTile= rules, and the =is_hovered= / =is_pressed= fields can go (the canvas manages =HOVERED= and =PRESSED=). If your widget had public colour setters, keep them working by storing an override and applying it last in =style_defaults()= (or translate them into a per-widget style class plus a rule).
+
+*** Layout: layout_children with place_in_slot
+:PROPERTIES:
+:CUSTOM_ID: migration-layout
+:END:
+Containers that positioned children with =set_position()= + =set_size()= should switch to =lrg_widget_place_in_slot()=, which honours the child's margin, alignment and min/max, rounds to whole units, and lays the child out recursively (=set_size()= on a container child queues another layout pass instead):
+
+#+begin_src c
+/* before */
+lrg_widget_set_position (child, padding, y_offset);
+lrg_widget_set_size (child, container_width - padding * 2, child_height);
+
+/* after: the slot; the child decides how to sit in it */
+lrg_widget_place_in_slot (child, padding, y_offset, container_width - padding * 2, child_height);
+#+end_src
+
+Measure children with =lrg_widget_get_preferred_size()= (min/max applied) plus =lrg_widget_get_margin()= rather than =lrg_widget_measure()=. Call =lrg_widget_queue_layout (self)= from setters that change your preferred size (text, image, item count). Details: [[file:../modules/ui/layout.org][layout]].
+
+*** Interaction
+:PROPERTIES:
+:CUSTOM_ID: migration-interaction
+:END:
+- Call =lrg_widget_set_focusable (self, TRUE)= in =init= for interactive widgets.
+- Handle =LRG_UI_EVENT_ACTIVATE= (and =CANCEL= where it makes sense) so the widget works with keyboard and gamepad.
+- Return =TRUE= for arrow keys you use.
+- Use =CHECKED=, =SELECTED= and =OPEN= state flags (=lrg_widget_set_state_flags()=) for toggled/selected/open visuals so theme rules can target them.
+
+** Porting checklist
+:PROPERTIES:
+:CUSTOM_ID: migration-checklist
+:END:
+- [ ] Replace =draw()= with =paint()=; draw at =lrg_widget_get_world_x/y()=.
+- [ ] Remove hard-coded colours; implement =style_defaults()= from theme roles and metrics for every part and state; chain up for =FOCUS= and unknown parts.
+- [ ] In =style_defaults()=, test =PRESSED= before =HOVERED=, fill complete looks for every state, and use =opacity 0.45= for =DISABLED=.
+- [ ] In =paint()=, =lrg_widget_resolve_look()= each part and =lrg_widget_paint_box()= surfaces; text with =lrg_theme_get_ui_font()= and the theme's font-size metrics.
+- [ ] Measure text with =lrg_paint_measure_text()= using the same font, size and spacing as =paint()=.
+- [ ] Remove =is_hovered= / =is_pressed= bookkeeping; use state flags and =get_hover_progress()= / =get_press_progress()= for custom motion.
+- [ ] Replace =FOCUS_IN= / =FOCUS_OUT= hover handling with =POINTER_ENTER= / =POINTER_LEAVE=.
+- [ ] Return =FALSE= for unhandled events; containers: ignore bubbling events in =handle_event=.
+- [ ] Clicks: left =MOUSE_BUTTON_UP= inside the bounds; keyboard: =ACTIVATE=.
+- [ ] =lrg_widget_set_focusable (self, TRUE)= for interactive widgets; return =TRUE= for arrows you use.
+- [ ] Containers: =layout_children= with =place_in_slot()=; =measure= with preferred sizes + margins.
+- [ ] Call =lrg_widget_queue_layout()= when the preferred size changes.
+- [ ] Remove calls to =lrg_canvas_update()= next to =lrg_canvas_handle_input()=.
+- [ ] Check every theme preset (=lrg_theme_list_presets()=) and contrast (=lrg_theme_get_contrast()=).
+- [ ] Tests: drive input with =LrgCanvasInput= frames, record headless with =lrg_canvas_record()=, assert on =lrg_paint_list_get_instance()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: migration-see-also
+:END:
+- [[file:extending-ui.org][Extending the UI]] (a complete new-style widget)
+- [[file:../modules/ui/index.org][UI module]], [[file:../modules/paint/index.org][paint module]], [[file:theming.org][theming guide]]

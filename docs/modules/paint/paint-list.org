@@ -1,0 +1,280 @@
+#+title: LrgPaintList
+#+description: API reference for LrgPaintList: recording SDF shapes, text, images, clips, opacity, groups and callbacks
+#+authors: Zach Podbielniak
+#+categories: libregnum paint ui
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* LrgPaintList
+:PROPERTIES:
+:CUSTOM_ID: paint-list
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Paint]]* > LrgPaintList
+#+end_quote
+
+=LrgPaintList= (=src/paint/lrg-paint-list.h=, final =GObject=) is a recorded frame of 2D drawing: a flat array of =LrgPaintInstance= structs plus a short command stream of instance batches and callbacks. Widgets record into it from their =paint()= virtual method; =LrgPaintRenderer= draws it. Recording needs no window. See the [[file:index.org][module overview]] for how instances become pixels.
+
+** Lifecycle
+:PROPERTIES:
+:CUSTOM_ID: paint-list-lifecycle
+:END:
+#+begin_src c
+g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+
+/* every frame */
+lrg_paint_list_clear (list);          /* keeps the allocation */
+/* ... record ... */
+lrg_paint_renderer_render (lrg_paint_renderer_get_default (), list);
+#+end_src
+
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_new (void)= | Creates an empty list | (transfer full) |
+| =lrg_paint_list_clear (self)= | Drops all instances and commands, resets the clip and opacity stacks, releases texture/font references and runs callback destroy notifies | Memory is kept for the next frame |
+
+You rarely create lists yourself in widget code: =LrgCanvas= owns one per canvas and passes it to =paint()=. Create your own to draw UI-style shapes outside the widget tree (a HUD overlay, a debug view) or in tests.
+
+** Coordinates and colours
+:PROPERTIES:
+:CUSTOM_ID: paint-list-coordinates
+:END:
+- All coordinates are in canvas units with y pointing down. Widgets draw at their *world* position (=lrg_widget_get_world_x/y()=), not relative to their parent.
+- Colours are =GrlColor= (straight RGBA8). The current opacity (see [[#paint-list-opacity][opacity stack]]) is multiplied into the alpha at record time.
+- Shapes with nothing visible (zero size, fully transparent fill and border, or entirely outside the current clip) are not recorded.
+
+** Shapes
+:PROPERTIES:
+:CUSTOM_ID: paint-list-shapes
+:END:
+| Function | Purpose | Nullable / notes |
+|----------+---------+------------------|
+| =lrg_paint_list_rect (self, x, y, width, height, radius, color)= | Filled rounded rectangle, one radius for all corners | =color= required; radius clamped to half the shorter side |
+| =lrg_paint_list_rect_ex (self, x, y, width, height, radii, fill, gradient, border_width, border)= | Rectangle with every option: per-corner radii, solid or gradient fill, inner border | =radii= =NULL= = square corners; =fill= =NULL= = no fill; =gradient= =NULL= or kind =NONE= = use =fill=; =border= =NULL= or width 0 = no border |
+| =lrg_paint_list_border (self, x, y, width, height, radius, border_width, color)= | Unfilled rounded outline drawn inside the rectangle | A ring when radius >= half the side |
+| =lrg_paint_list_shadow (self, x, y, width, height, radius, blur, spread, offset_x, offset_y, color)= | Soft analytic drop shadow of a rounded rectangle | Record *before* the caster; alpha of =color= sets strength; negative =spread= shrinks |
+| =lrg_paint_list_circle (self, center_x, center_y, radius, color)= | Filled anti-aliased circle | A square rect with radius = half its side |
+| =lrg_paint_list_line (self, x0, y0, x1, y1, thickness, color)= | Line segment with round caps | =thickness= <= 0 records nothing |
+| =lrg_paint_list_triangle (self, x0, y0, x1, y1, x2, y2, color)= | Filled triangle, any winding | Arrows, chevrons, carets |
+| =lrg_paint_list_image (self, texture, source, x, y, width, height, radius, tint)= | Textured (optionally rounded) rectangle | =source= =NULL= = whole texture (pixels otherwise); =tint= =NULL= = white; the list refs =texture= until cleared |
+
+*** Example: a card with a shadow, gradient header and border
+:PROPERTIES:
+:CUSTOM_ID: paint-list-example-card
+:END:
+#+begin_src c
+static void
+paint_card (LrgPaintList *list,
+            gfloat        x,
+            gfloat        y)
+{
+	static const GrlColor shadow = { 0, 0, 0, 110 };
+	static const GrlColor panel = { 31, 31, 36, 255 };
+	static const GrlColor edge = { 52, 52, 60, 255 };
+	static const GrlColor top = { 124, 108, 255, 255 };
+	static const GrlColor bottom = { 70, 56, 200, 255 };
+	LrgCornerRadii        all;
+	LrgCornerRadii        header;
+	LrgPaintGradient      grad;
+
+	/* soft elevation: blur 18, pushed 6 units down */
+	lrg_paint_list_shadow (list, x, y, 320.0f, 200.0f, 12.0f,
+	                       18.0f, 0.0f, 0.0f, 6.0f, &shadow);
+
+	/* body with a 1-unit inner border */
+	lrg_corner_radii_init_uniform (&all, 12.0f);
+	lrg_paint_list_rect_ex (list, x, y, 320.0f, 200.0f, &all,
+	                        &panel, NULL, 1.0f, &edge);
+
+	/* header: only the top corners rounded, vertical gradient */
+	header.top_left = 12.0f;
+	header.top_right = 12.0f;
+	header.bottom_right = 0.0f;
+	header.bottom_left = 0.0f;
+	lrg_paint_gradient_init_linear (&grad, &top, &bottom, 90.0f);
+	lrg_paint_list_rect_ex (list, x, y, 320.0f, 44.0f, &header,
+	                        NULL, &grad, 0.0f, NULL);
+}
+#+end_src
+
+** Text
+:PROPERTIES:
+:CUSTOM_ID: paint-list-text
+:END:
+| Function | Purpose | Nullable / notes |
+|----------+---------+------------------|
+| =lrg_paint_list_text (self, font, text, x, y, size, spacing, color)= | Records UTF-8 text, one image instance per glyph, sampling the font atlas | =font= =NULL= = raylib's built-in font (needs a window); ='\n'= starts a new line at =1.2 * size=; origin snapped to whole units; the list refs =font= until cleared |
+| =lrg_paint_measure_text (font, text, size, spacing, width, height)= | Measures exactly as =lrg_paint_list_text()= lays out | =width= / =height= (out, optional); width = widest line without the trailing spacing; height = =size + (lines - 1) * 1.2 * size=; without glyph data returns an estimate (=0.55 * size= per character) |
+
+Text and shapes share batches as long as one font atlas is in use. Pass the theme's UI font straight through:
+
+#+begin_src c
+LrgTheme *theme = lrg_widget_get_theme (widget);
+GrlFont  *font = lrg_theme_get_ui_font (theme);     /* may be NULL headless */
+gfloat    size = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE);
+gfloat    w;
+gfloat    h;
+
+/* centre a label in a box */
+lrg_paint_measure_text (font, "Continue", size, 0.0f, &w, &h);
+lrg_paint_list_text (list, font, "Continue",
+                     bx + (bw - w) * 0.5f, by + (bh - h) * 0.5f,
+                     size, 0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+#+end_src
+
+Glyphs are placed exactly where raylib's =DrawTextCodepoint()= would put them (glyph offsets and atlas padding included), so measurement agrees with legacy =MeasureTextEx()= for the same font. Spaces and tabs advance the pen but emit no instance.
+
+** State stacks
+:PROPERTIES:
+:CUSTOM_ID: paint-list-stacks
+:END:
+*** Clip
+:PROPERTIES:
+:CUSTOM_ID: paint-list-clip
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_push_clip (self, x, y, width, height)= | Intersects the current clip with a rectangle | Per-pixel in the shader; never splits a batch |
+| =lrg_paint_list_pop_clip (self)= | Restores the previous clip | Unbalanced pop warns and is ignored |
+| =lrg_paint_list_get_clip (self, x, y, width, height)= | Current clip rectangle | All out params optional; unclipped is +/-1e7 |
+
+#+begin_src c
+/* a scroll area: children outside the viewport are culled, partly
+ * visible ones are cut per pixel */
+lrg_paint_list_push_clip (list, vx, vy, vw, vh);
+for (i = 0; i < n_rows; i++)
+	paint_row (list, vx, vy + i * row_h - scroll_y, vw, row_h);
+lrg_paint_list_pop_clip (list);
+#+end_src
+
+*** Opacity
+:PROPERTIES:
+:CUSTOM_ID: paint-list-opacity
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_push_opacity (self, opacity)= | Multiplies the current opacity (clamped 0..1) | Baked into each shape's alpha at record time |
+| =lrg_paint_list_pop_opacity (self)= | Restores the previous opacity | Unbalanced pop warns and is ignored |
+| =lrg_paint_list_get_opacity (self)= | Current accumulated opacity | |
+
+Each shape fades individually; overlapping shapes in a faded subtree show through each other slightly.
+
+** Groups
+:PROPERTIES:
+:CUSTOM_ID: paint-list-groups
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_begin_group (self)= | Returns a mark (the current instance count) | |
+| =lrg_paint_list_transform_group (self, mark, scale, pivot_x, pivot_y, translate_x, translate_y, opacity)= | Scales around the pivot, translates and fades every instance since =mark= | Clips and callbacks are not transformed; radii, borders, blur and thickness scale too |
+
+Example, a "squash" on press independent of the widget machinery:
+
+#+begin_src c
+guint  mark = lrg_paint_list_begin_group (list);
+gfloat p = lrg_widget_get_press_progress (widget);   /* 0..1 spring */
+gfloat cx = x + w * 0.5f;
+gfloat cy = y + h * 0.5f;
+
+paint_my_button (list, x, y, w, h);
+lrg_paint_list_transform_group (list, mark, 1.0f - 0.04f * p, cx, cy,
+                                0.0f, 0.0f, 1.0f);
+#+end_src
+
+** Escape hatch: callbacks
+:PROPERTIES:
+:CUSTOM_ID: paint-list-callbacks
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_callback (self, func, user_data, destroy)= | Records a call into raw graylib/raylib drawing at this point of the paint order | Ends the current batch; =destroy= (nullable) runs when the list is cleared or finalized; the active clip becomes a scissor rectangle |
+
+=LrgPaintCallback= is =void (*) (gpointer user_data)=. Use it for anything the instance pipeline cannot express: a 3D viewport, a custom shader, a particle system. Legacy widgets that only override =draw()= are recorded through one automatically.
+
+#+begin_src c
+static void
+draw_minimap (gpointer user_data)
+{
+	GameMinimap *map = user_data;
+
+	/* plain raylib: runs between paint batches, scissored to the clip */
+	game_minimap_draw (map);
+}
+
+lrg_paint_list_callback (list, draw_minimap, g_object_ref (map), g_object_unref);
+#+end_src
+
+** Inspection
+:PROPERTIES:
+:CUSTOM_ID: paint-list-inspection
+:END:
+For renderers, profiling and tests.
+
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_get_n_instances (self)= | Number of recorded instances | |
+| =lrg_paint_list_get_instance (self, index)= | One instance | (transfer none); valid until the list changes |
+| =lrg_paint_list_get_instances (self, n_instances)= | The whole instance array | (transfer none) (array length=n_instances); valid until the list changes |
+| =lrg_paint_list_get_n_commands (self)= | Number of commands (batches and callbacks) | |
+| =lrg_paint_list_get_command (self, index, first, count, texture)= | Kind of a command and, for batches, its instance range and GL texture | Out params optional |
+| =lrg_paint_list_get_command_clip (self, index, x0, y0, x1, y1)= | Clip active when a callback was recorded | Returns =FALSE= if it was unclipped |
+| =lrg_paint_list_run_callback (self, index)= | Invokes a recorded callback | Used by renderers |
+| =lrg_paint_instance_get_prim (instance)= | Decodes the instance's =LrgPaintPrim= | |
+
+A headless test asserting what a widget painted:
+
+#+begin_src c
+static void
+test_card_paints_shadow_first (void)
+{
+	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+	const LrgPaintInstance *inst;
+
+	paint_card (list, 10.0f, 10.0f);
+
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, 3);
+	inst = lrg_paint_list_get_instance (list, 0);
+	g_assert_cmpint (lrg_paint_instance_get_prim (inst), ==, LRG_PAINT_PRIM_SHADOW);
+	/* the shadow rect is the caster moved 6 units down */
+	g_assert_cmpfloat_with_epsilon (inst->rect[1], 16.0f, 0.001f);
+
+	/* everything is untextured: one batch */
+	g_assert_cmpuint (lrg_paint_list_get_n_commands (list), ==, 1);
+}
+#+end_src
+
+** Value types
+:PROPERTIES:
+:CUSTOM_ID: paint-list-types
+:END:
+All are boxed types with =_copy= / =_free= and =g_autoptr= support; C code keeps them on the stack.
+
+| Type | Fields | Helpers |
+|------+--------+---------|
+| =LrgCornerRadii= | =top_left=, =top_right=, =bottom_right=, =bottom_left= | =lrg_corner_radii_new()=, =_init_uniform (self, radius)=, =_scale (self, factor)= |
+| =LrgPaintGradient= | =kind=, =start=, =end=, =angle= (degrees, 0 = left to right, 90 = top to bottom), =center_x=, =center_y= (0..1), =radius= (0 = half the diagonal) | =lrg_paint_gradient_init_linear (self, start, end, angle)=, =_init_radial (self, start, end, cx, cy, radius)= |
+| =LrgPaintInstance= | see [[file:index.org::#paint-instance][the instance layout]] | =lrg_paint_instance_get_prim()= |
+
+*** Colour helpers
+:PROPERTIES:
+:CUSTOM_ID: paint-list-color-helpers
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_paint_color_mix (a, b, t, out)= | Linear blend including alpha (0 = =a=, 1 = =b=); used to cross-fade state looks |
+| =lrg_paint_color_shade (color, amount, out)= | -1..1: negative darkens towards black, positive lightens towards white, alpha kept; used to derive hover/pressed shades |
+| =lrg_paint_color_with_alpha (color, alpha, out)= | Replaces the alpha (0..1) |
+| =lrg_paint_color_luminance (color)= | WCAG 2.x relative luminance, 0..1 |
+| =lrg_paint_color_contrast (a, b)= | WCAG contrast ratio 1..21 between two opaque colours; 4.5 is the body-text minimum |
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: paint-list-pitfalls
+:END:
+- Pass world coordinates; relative coordinates draw at the canvas origin.
+- Measure and draw with the same font, size and spacing, or alignment drifts.
+- =lrg_paint_list_text()= with a =NULL= font records nothing headless; tests that count glyph instances need a real font.
+- Do not keep instance pointers across further recording.
+- A callback's =user_data= must outlive the list or be ref-counted with a =destroy= notify; it runs at render time, possibly after the recording widget changed.
+- See also the [[file:index.org::#paint-pitfalls][module-level pitfalls]].

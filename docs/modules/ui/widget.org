@@ -1,447 +1,303 @@
-* Widget Base Class
+#+title: LrgWidget
+#+description: API reference for LrgWidget: geometry, layout hints, state flags, springs, looks, painting, appear animations and virtual methods
+#+authors: Zach Podbielniak
+#+categories: libregnum ui widget
+#+created: 2025-12-01T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 2.0
+
+* LrgWidget
 :PROPERTIES:
-:CUSTOM_ID: widget-base-class
+:CUSTOM_ID: widget
 :END:
-=LrgWidget= is the abstract base class for all UI elements. It provides position, size, visibility, event handling, and the virtual method system.
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > LrgWidget
+#+end_quote
+
+=LrgWidget= (=src/ui/lrg-widget.h=, derivable =GObject=) is the base of every element in the retained-mode UI tree. It owns the widget's rectangle and visibility, its layout hints, its style classes and interaction state, two springs (hover and press) that animate its looks, an optional entrance animation, an optional scoped theme, and the virtual methods subclasses implement: =paint()=, =style_defaults()=, =measure()=, =arrange()= and =handle_event()=. =LrgWidget= itself is instantiable and draws nothing, which makes a plain =g_object_new (LRG_TYPE_WIDGET, NULL)= a handy spacer.
 
 ** Overview
 :PROPERTIES:
-:CUSTOM_ID: overview
+:CUSTOM_ID: widget-overview
 :END:
-Every UI element (button, label, container, etc.) inherits from =LrgWidget=. Widgets provide:
+#+begin_example
+            ┌─────────────── per frame, driven by LrgCanvas ────────────────┐
+ input  ──► handle_event ()       state flags ──► hover / press springs      │
+            (bubbling, capture)   (HOVERED, PRESSED, FOCUSED ...)    │       │
+                                                       lrg_widget_step ()     │
+ layout ──► measure () ──► allocate () ──► arrange () (containers: layout_children)
+                                                                     │       │
+ paint  ──► lrg_widget_paint ()                                      ▼       │
+              opacity, appear group ── paint ()  ── resolve_look () ── style_defaults ()
+                                         │                             + theme rules
+                                         └─ lrg_widget_paint_box () ── LrgPaintList
+              focus ring (FOCUS_VISIBLE)                                      │
+            └─────────────────────────────────────────────────────────────────┘
+#+end_example
 
-- *Position and Size* - Relative to parent, world coordinates
-- *Visibility* - Show/hide widgets
-- *State* - Enabled/disabled for input
-- *Events* - Mouse, keyboard, focus
-- *Virtual Methods* - Draw, measure, handle events
-
-** Position and Size
+** Virtual methods
 :PROPERTIES:
-:CUSTOM_ID: position-and-size
+:CUSTOM_ID: widget-vfuncs
 :END:
-*** Setting Position
+| VFunc | Signature | Default | Purpose |
+|-------+-----------+---------+---------|
+| =paint= | =void (*paint) (LrgWidget *self, LrgPaintList *list)= | nothing (containers: paint children in order) | Record the widget at its *world* position. Opacity, appear transforms and the focus ring are applied around it by =lrg_widget_paint()=. New widgets implement this. |
+| =style_defaults= | =void (*style_defaults) (LrgWidget *self, LrgUIPart part, LrgWidgetState state, LrgPartLook *look)= | the =FOCUS= ring look; other parts invisible | Fill the built-in look of =part= in exactly =state= from the theme. Chain up for parts you don't handle. See [[file:styling.org::#styling-defaults][styling]]. |
+| =measure= | =void (*measure) (LrgWidget *self, gfloat *w, gfloat *h)= | the current size | Preferred size *without* margin. See [[file:layout.org::#layout-measure][layout]]. |
+| =arrange= | =void (*arrange) (LrgWidget *self)= | nothing (containers: =layout_children()=) | Called after the rectangle was assigned or the widget was marked for layout. |
+| =handle_event= | =gboolean (*handle_event) (LrgWidget *self, const LrgUIEvent *event)= | =FALSE= (containers: forward non-bubbling events to children) | Return =TRUE= to consume and stop bubbling. See [[file:input-and-focus.org][input]]. |
+| =draw= | =void (*draw) (LrgWidget *self)= | renders =paint()= output immediately | *Legacy* immediate drawing with graylib. Widgets overriding only =draw= are painted through a paint callback. |
+
+The class has five reserved pointers for future vfuncs.
+
+** Geometry
 :PROPERTIES:
-:CUSTOM_ID: setting-position
+:CUSTOM_ID: widget-geometry
 :END:
-#+begin_src C
-/* Relative to parent container */
-lrg_widget_set_x(button, 50);
-lrg_widget_set_y(button, 100);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_widget_get_x= / =set_x=, =get_y= / =set_y= | Position relative to the parent | |
+| =lrg_widget_get_width= / =set_width=, =get_height= / =set_height= | Size | Negative values clamp to 0; a container whose size changes queues layout |
+| =lrg_widget_set_position (self, x, y)= / =set_size (self, w, h)= | Both at once | One batched notify |
+| =lrg_widget_allocate (self, x, y, w, h)= | Assign the rectangle and =arrange()= | What layouts call (usually via =place_in_slot()=) |
+| =lrg_widget_get_world_x= / =get_world_y= | Absolute position (all parent offsets added) | Use for painting and hit tests |
+| =lrg_widget_contains_point (self, x, y)= | World point inside the rectangle (half-open) | |
 
-/* Or both at once */
-lrg_widget_set_position(button, 50, 100);
-
-/* Query position */
-gfloat x = lrg_widget_get_x(button);
-gfloat y = lrg_widget_get_y(button);
-#+end_src
-
-*** Setting Size
+** Visibility, sensitivity and hierarchy
 :PROPERTIES:
-:CUSTOM_ID: setting-size
+:CUSTOM_ID: widget-visibility
 :END:
-#+begin_src C
-lrg_widget_set_width(button, 100);
-lrg_widget_set_height(button, 40);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_widget_get_visible= / =set_visible= | Shown or hidden | Hiding clears =HOVERED= / =PRESSED=; showing replays the appear animation; queues the parent's layout |
+| =lrg_widget_get_enabled= / =set_enabled= | Sensitive to input | Disabled widgets ignore events, cannot take focus, are skipped by hit tests and carry =LRG_WIDGET_STATE_DISABLED= |
+| =lrg_widget_get_parent (self)= | Parent container | (transfer none) (nullable); popups report the canvas |
+| =lrg_widget_get_root (self)= | Top-most ancestor (usually an =LrgCanvas=), or =self= | (transfer none); find the canvas with =LRG_IS_CANVAS (lrg_widget_get_root (w))= |
+| =lrg_widget_is_ancestor (self, ancestor)= | =ancestor= contains =self= at any depth | |
+| =lrg_widget_get_name= / =set_name= | Name for lookup and inspectors | nullable |
+| =lrg_widget_find (self, name)= | Depth-first search of =self= and descendants | (transfer none) (nullable) |
 
-/* Or both at once */
-lrg_widget_set_size(button, 100, 40);
-
-/* Query size */
-gfloat width = lrg_widget_get_width(button);
-gfloat height = lrg_widget_get_height(button);
-#+end_src
-
-*** World Coordinates
+** Layout hints
 :PROPERTIES:
-:CUSTOM_ID: world-coordinates
+:CUSTOM_ID: widget-layout-hints
 :END:
-Get absolute position accounting for parent positions:
+| Function | Purpose |
+|----------+---------|
+| =lrg_widget_set_margin (self, &insets)=, =set_margin_all (self, m)=, =get_margin (self, &insets)= | Space around the widget in its slot (=LrgInsets=: =left=, =top=, =right=, =bottom=; boxed with =lrg_insets_new/copy/free=) |
+| =lrg_widget_set_halign= / =set_valign=, =get_*= | =LrgAlign= in the slot (default =FILL=) |
+| =lrg_widget_set_fill_weight= / =get_fill_weight= | Share of a box's spare space (default 0) |
+| =lrg_widget_set_min_size= / =set_max_size=, =get_*= | Size bounds (0 = none) |
+| =lrg_widget_get_preferred_size (self, &w, &h)= | =measure()= clamped to min/max |
+| =lrg_widget_place_in_slot (self, x, y, w, h)= | Allocate inside a slot honouring the hints |
+| =lrg_widget_queue_layout (self)= | Mark self and ancestors for layout |
+| =lrg_widget_get_needs_layout (self)= | Dirty flag |
+| =lrg_widget_layout (self)= | Lay out marked subtrees now (the canvas does it every frame) |
+| =lrg_widget_measure (self, &w, &h)= | Call =measure()= |
 
-#+begin_src C
-/* Widget position in parent: (50, 100) */
-/* Parent position in its parent: (200, 200) */
-/* Grandparent position in its parent: (0, 0) */
+Full semantics, box and grid rules, and a custom-container walkthrough: [[file:layout.org][UI layout]].
 
-gfloat world_x = lrg_widget_get_world_x(button);  /* 250 */
-gfloat world_y = lrg_widget_get_world_y(button);  /* 300 */
-#+end_src
-
-** Visibility
+** Style classes and state
 :PROPERTIES:
-:CUSTOM_ID: visibility
+:CUSTOM_ID: widget-state
 :END:
-#+begin_src C
-/* Hide a widget */
-lrg_widget_set_visible(button, FALSE);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_widget_add_class= / =remove_class= / =has_class= | Style classes that theme rules can target (="primary"=, ="flat"=, ="danger"=) | Stored as quarks |
+| =lrg_widget_get_classes (self, &n)= | The classes | (transfer none) (array length=n) |
+| =lrg_widget_get_state_flags (self)= | Current =LrgWidgetState= | |
+| =lrg_widget_set_state_flags= / =unset_state_flags= | Turn flags on / off | Emits =::state-changed= when anything changes; retargets the springs |
+| =lrg_widget_get_focusable= / =set_focusable= | Can take keyboard / gamepad / click focus | Interactive widgets set it in =init= |
+| =lrg_widget_get_pointer_transparent= / =set_pointer_transparent= | Hit tests pass through the widget itself (children still hit) | Full-screen layers |
 
-/* Show a widget */
-lrg_widget_set_visible(button, TRUE);
+| Flag | Nick | Managed by |
+|------+------+------------|
+| =LRG_WIDGET_STATE_HOVERED= | =hovered= | canvas: pointer over the widget or a descendant |
+| =LRG_WIDGET_STATE_PRESSED= | =pressed= | canvas: left button held on it (while the pointer is over it), or a one-frame activation |
+| =LRG_WIDGET_STATE_FOCUSED= | =focused= | canvas: has focus |
+| =LRG_WIDGET_STATE_FOCUS_VISIBLE= | =focus-visible= | canvas: focus reached by keyboard / gamepad (focus ring shows) |
+| =LRG_WIDGET_STATE_DISABLED= | =disabled= | =lrg_widget_set_enabled()= |
+| =LRG_WIDGET_STATE_CHECKED= | =checked= | the widget (check boxes, switches, toggle buttons, tabs) |
+| =LRG_WIDGET_STATE_SELECTED= | =selected= | the widget (list rows, tabs) |
+| =LRG_WIDGET_STATE_OPEN= | =open= | canvas: a popup anchored to the widget is open |
 
-/* Query visibility */
-if (lrg_widget_get_visible(button))
+** Springs and appearance
+:PROPERTIES:
+:CUSTOM_ID: widget-appearance
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_widget_get_hover_progress (self)= | Hover spring, 0..1 | May overshoot briefly |
+| =lrg_widget_get_press_progress (self)= | Press spring, 0..1 | Always snappy |
+| =lrg_widget_step (self, dt)= | Advance springs and appear of the widget and its visible descendants | Called by =lrg_canvas_update()=; returns =TRUE= while animating |
+| =lrg_widget_get_opacity= / =set_opacity= | Opacity of the widget and its children (0..1) | Applied as a paint opacity push |
+| =lrg_widget_set_appear (self, appear, delay)= / =get_appear= | Entrance animation and delay | See [[file:animation.org::#animation-appear][appear transitions]] |
+| =lrg_widget_play_appear (self)= | Replay the entrance animation | |
+| =lrg_widget_get_appear_progress (self)= | 0 before start, 1 when done | |
+| =lrg_widget_get_theme= / =set_theme= | Effective theme / scoped theme for the subtree | =set_theme (NULL)= inherits; queues layout |
+| =lrg_widget_get_motion= / =set_motion (self, gint motion)= | Effective =LrgMotion= / per-widget override | =-1= follows the theme |
+
+** Looks and painting
+:PROPERTIES:
+:CUSTOM_ID: widget-looks
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_widget_resolve_look (self, part, &look)= | Look of =part= now: defaults + rules for resting, hovered and pressed variants, blended by the springs | Call from =paint()= |
+| =lrg_widget_resolve_look_for_state (self, part, state, &look)= | Defaults + rules for one exact state, no blending | Previews, tests |
+| =lrg_widget_paint_box (self, list, &look, x, y, w, h)= | Draw the standard surface: glow, shadow, fill / gradient, inner border, at the look's opacity | |
+| =lrg_widget_paint (self, list)= | Record the widget: opacity push, appear group, =paint()= (or the legacy =draw()= through a callback), focus ring when =FOCUS_VISIBLE= | Does nothing when invisible |
+| =lrg_widget_draw (self)= | Legacy: draw immediately | Renders =paint()= output with a private renderer for paint-only widgets |
+| =lrg_widget_handle_event (self, event)= | Call =handle_event()= if visible and enabled | |
+
+=lrg_widget_paint()= in detail:
+
+1. returns if invisible; starts a pending appear animation;
+2. pushes the widget's opacity (when below 1);
+3. marks a paint group;
+4. records the widget: =paint()=, or for a class that overrides =draw()= but not =paint()=, a paint callback that calls =draw()=;
+5. when =FOCUS_VISIBLE=: resolves the =FOCUS= look and draws a ring of its border width, 2 units outside the rectangle, with its radii;
+6. while the appear animation runs: transforms the group (scale around the centre, offset, fade);
+7. pops the opacity.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: widget-properties
+:END:
+| Property | Type | Access | Default |
+|----------+------+--------+---------|
+| =x=, =y= | float | read/write | 0 |
+| =width=, =height= | float (>= 0) | read/write | 0 |
+| =visible= | boolean | read/write | =TRUE= |
+| =enabled= | boolean | read/write | =TRUE= |
+| =parent= | =LrgContainer= | read-only | =NULL= |
+| =name= | string | read/write | =NULL= |
+| =margin= | =LrgInsets= | read/write | all 0 |
+| =halign=, =valign= | =LrgAlign= | read/write | =FILL= |
+| =fill-weight= | float | read/write | 0 |
+| =opacity= | float 0..1 | read/write | 1 |
+| =appear= | =LrgAppear= | read/write | =NONE= |
+| =focusable= | boolean | read/write | =FALSE= |
+| =state-flags= | =LrgWidgetState= | read-only | =NONE= |
+| =theme= | =LrgTheme= | read/write | =NULL= (inherit) |
+
+All properties use explicit notification (notify only on change).
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: widget-signals
+:END:
+| Signal | Signature | Emitted |
+|--------+-----------+---------|
+| =state-changed= | =void (LrgWidget *widget, LrgWidgetState previous)= | After the state flags changed; read the new flags with =lrg_widget_get_state_flags()= |
+
+** Example: a minimal paint-based widget
+:PROPERTIES:
+:CUSTOM_ID: widget-example
+:END:
+A coloured "chip" with a label; the full walkthrough (keyboard, properties, YAML styling) is in [[file:../../guides/extending-ui.org][extending the UI]].
+
+#+begin_src c
+struct _GameChip
 {
-    g_message("Widget is visible");
-}
-#+end_src
+	LrgWidget  parent_instance;
+	gchar     *text;
+};
 
-Invisible widgets are not drawn and don't receive input events.
+G_DEFINE_FINAL_TYPE (GameChip, game_chip, LRG_TYPE_WIDGET)
 
-** Enabled/Disabled State
-:PROPERTIES:
-:CUSTOM_ID: enableddisabled-state
-:END:
-#+begin_src C
-/* Disable input processing */
-lrg_widget_set_enabled(button, FALSE);
-
-/* Re-enable */
-lrg_widget_set_enabled(button, TRUE);
-
-/* Query state */
-if (!lrg_widget_get_enabled(button))
+static void
+game_chip_style_defaults (LrgWidget      *widget,
+                          LrgUIPart       part,
+                          LrgWidgetState  state,
+                          LrgPartLook    *look)
 {
-    g_message("Widget is disabled");
-}
-#+end_src
+	LrgTheme *theme = lrg_widget_get_theme (widget);
 
-Disabled widgets don't respond to events (mouse, keyboard, etc.).
-
-** Hierarchy
-:PROPERTIES:
-:CUSTOM_ID: hierarchy
-:END:
-*** Getting Parent
-:PROPERTIES:
-:CUSTOM_ID: getting-parent
-:END:
-#+begin_src C
-LrgContainer *parent = lrg_widget_get_parent(button);
-if (parent != NULL)
-{
-    g_message("Widget has a parent container");
-}
-#+end_src
-
-Only set when the widget is added to a container.
-
-** Hit Testing
-:PROPERTIES:
-:CUSTOM_ID: hit-testing
-:END:
-#+begin_src C
-/* Check if point is within widget bounds (world coordinates) */
-if (lrg_widget_contains_point(button, mouse_x, mouse_y))
-{
-    g_message("Point is inside button");
-}
-#+end_src
-
-Used for determining which widget receives mouse events.
-
-** Virtual Methods
-:PROPERTIES:
-:CUSTOM_ID: virtual-methods
-:END:
-Subclasses override these methods:
-
-*** Draw Method
-:PROPERTIES:
-:CUSTOM_ID: draw-method
-:END:
-Called each frame to render the widget:
-
-#+begin_src C
-/* In your widget subclass */
-gboolean my_widget_draw(LrgWidget *self)
-{
-    gfloat x = lrg_widget_get_world_x(self);
-    gfloat y = lrg_widget_get_world_y(self);
-    gfloat w = lrg_widget_get_width(self);
-    gfloat h = lrg_widget_get_height(self);
-
-    /* Draw using graylib functions */
-    GrlColor bg = GRL_COLOR(100, 100, 100, 255);
-    grl_draw_rectangle(x, y, w, h, &bg, FALSE);
-
-    return TRUE;
-}
-
-/* Call the virtual method */
-lrg_widget_draw(my_widget);
-#+end_src
-
-*** Measure Method
-:PROPERTIES:
-:CUSTOM_ID: measure-method
-:END:
-Calculate preferred size based on content:
-
-#+begin_src C
-gboolean my_widget_measure(LrgWidget *self,
-                           gfloat *preferred_width,
-                           gfloat *preferred_height)
-{
-    /* Calculate size based on content */
-    *preferred_width = 100;
-    *preferred_height = 40;
-    return TRUE;
-}
-
-/* Call the virtual method */
-gfloat pref_w, pref_h;
-lrg_widget_measure(my_widget, &pref_w, &pref_h);
-#+end_src
-
-*** Handle Event Method
-:PROPERTIES:
-:CUSTOM_ID: handle-event-method
-:END:
-Process input events:
-
-#+begin_src C
-gboolean my_widget_handle_event(LrgWidget *self,
-                                const LrgUIEvent *event)
-{
-    LrgUIEventType type = lrg_ui_event_get_event_type(event);
-
-    if (type == LRG_UI_EVENT_MOUSE_BUTTON_DOWN)
-    {
-        gint button = lrg_ui_event_get_button(event);
-        g_message("Mouse button %d clicked", button);
-        lrg_ui_event_consume(event);
-        return TRUE;  /* Consumed the event */
-    }
-
-    return FALSE;  /* Not handled, pass to parent */
+	if (part == LRG_UI_PART_BOX)
+	{
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme,
+			(state & LRG_WIDGET_STATE_HOVERED) ? LRG_THEME_COLOR_CONTROL_HOVER
+			                                   : LRG_THEME_COLOR_CONTROL));
+		lrg_part_look_set_radius (look, G_MAXFLOAT);          /* pill */
+	}
+	else if (part == LRG_UI_PART_LABEL)
+		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+	else
+		LRG_WIDGET_CLASS (game_chip_parent_class)->style_defaults (widget, part, state, look);
 }
 
-/* Call the virtual method */
-g_autoptr(LrgUIEvent) event = lrg_ui_event_new_mouse_button(
-    LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-    0,  /* left button */
-    100, 50
-);
-gboolean consumed = lrg_widget_handle_event(my_widget, event);
-#+end_src
-
-** Wrapper Methods
-:PROPERTIES:
-:CUSTOM_ID: wrapper-methods
-:END:
-These call the virtual methods:
-
-*** Drawing
-:PROPERTIES:
-:CUSTOM_ID: drawing
-:END:
-#+begin_src C
-/* Only draws if visible */
-lrg_widget_draw(button);
-#+end_src
-
-*** Measurement
-:PROPERTIES:
-:CUSTOM_ID: measurement
-:END:
-#+begin_src C
-gfloat preferred_width = 0, preferred_height = 0;
-lrg_widget_measure(button, &preferred_width, &preferred_height);
-#+end_src
-
-*** Event Handling
-:PROPERTIES:
-:CUSTOM_ID: event-handling
-:END:
-#+begin_src C
-g_autoptr(LrgUIEvent) event = lrg_ui_event_new_mouse_move(150, 200);
-gboolean consumed = lrg_widget_handle_event(button, event);
-#+end_src
-
-Only handles events if visible and enabled.
-
-** Common Patterns
-:PROPERTIES:
-:CUSTOM_ID: common-patterns
-:END:
-*** Widget State Management
-:PROPERTIES:
-:CUSTOM_ID: widget-state-management
-:END:
-#+begin_src C
-typedef struct
+static void
+game_chip_measure (LrgWidget *widget,
+                   gfloat    *w,
+                   gfloat    *h)
 {
-    LrgWidget *widget;
-    gboolean is_hovered;
-    gboolean is_focused;
-    gfloat opacity;
-} WidgetState;
+	GameChip *self = GAME_CHIP (widget);
+	LrgTheme *theme = lrg_widget_get_theme (widget);
+	gfloat    size = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	gfloat    tw;
+	gfloat    th;
 
-void update_widget_state(WidgetState *state)
-{
-    if (state->is_hovered)
-        state->opacity = 1.0f;
-    else
-        state->opacity = 0.8f;
-
-    if (!state->is_hovered && !state->is_focused)
-        lrg_widget_set_enabled(state->widget, FALSE);
-}
-#+end_src
-
-*** Hit Test and Interaction
-:PROPERTIES:
-:CUSTOM_ID: hit-test-and-interaction
-:END:
-#+begin_src C
-void handle_mouse_click(LrgCanvas *canvas, gfloat x, gfloat y)
-{
-    /* Find widget at click position */
-    LrgWidget *widget = lrg_canvas_widget_at_point(canvas, x, y);
-
-    if (widget == NULL)
-    {
-        g_message("Clicked on empty space");
-        return;
-    }
-
-    if (!lrg_widget_get_enabled(widget))
-    {
-        g_message("Widget is disabled");
-        return;
-    }
-
-    /* Create mouse event and dispatch */
-    g_autoptr(LrgUIEvent) event = lrg_ui_event_new_mouse_button(
-        LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-        0,  /* left button */
-        x, y
-    );
-
-    lrg_widget_handle_event(widget, event);
-}
-#+end_src
-
-*** Widget Visibility Toggle
-:PROPERTIES:
-:CUSTOM_ID: widget-visibility-toggle
-:END:
-#+begin_src C
-void toggle_widget_visibility(LrgWidget *widget)
-{
-    gboolean currently_visible = lrg_widget_get_visible(widget);
-    lrg_widget_set_visible(widget, !currently_visible);
+	lrg_paint_measure_text (lrg_theme_get_ui_font (theme), self->text, size, 0.0f, &tw, &th);
+	*w = tw + 2.0f * th;
+	*h = th * 1.8f;
 }
 
-void hide_all_in_container(LrgContainer *container)
+static void
+game_chip_paint (LrgWidget    *widget,
+                 LrgPaintList *list)
 {
-    guint count = lrg_container_get_child_count(container);
-    for (guint i = 0; i < count; i++)
-    {
-        LrgWidget *child = lrg_container_get_child(container, i);
-        lrg_widget_set_visible(child, FALSE);
-    }
+	GameChip   *self = GAME_CHIP (widget);
+	LrgTheme   *theme = lrg_widget_get_theme (widget);
+	gfloat      size = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	gfloat      x = lrg_widget_get_world_x (widget);
+	gfloat      y = lrg_widget_get_world_y (widget);
+	gfloat      w = lrg_widget_get_width (widget);
+	gfloat      h = lrg_widget_get_height (widget);
+	gfloat      tw;
+	gfloat      th;
+	LrgPartLook box;
+	LrgPartLook label;
+
+	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_LABEL, &label);
+	lrg_widget_paint_box (widget, list, &box, x, y, w, h);
+
+	lrg_paint_measure_text (lrg_theme_get_ui_font (theme), self->text, size, 0.0f, &tw, &th);
+	lrg_paint_list_text (list, lrg_theme_get_ui_font (theme), self->text,
+	                     x + (w - tw) * 0.5f, y + (h - th) * 0.5f, size, 0.0f, &label.foreground);
+}
+
+static void
+game_chip_class_init (GameChipClass *klass)
+{
+	LrgWidgetClass *widget_class = LRG_WIDGET_CLASS (klass);
+
+	/* finalize (freeing text) omitted for brevity */
+	widget_class->paint = game_chip_paint;
+	widget_class->style_defaults = game_chip_style_defaults;
+	widget_class->measure = game_chip_measure;
+}
+
+static void
+game_chip_init (GameChip *self)
+{
+	self->text = g_strdup ("");
 }
 #+end_src
-
-*** Measuring Widget Tree
-:PROPERTIES:
-:CUSTOM_ID: measuring-widget-tree
-:END:
-#+begin_src C
-void measure_widget_tree(LrgContainer *container)
-{
-    gfloat pref_w = 0, pref_h = 0;
-    lrg_widget_measure(LRG_WIDGET(container), &pref_w, &pref_h);
-
-    g_message("Container preferred size: %fx%f", pref_w, pref_h);
-
-    guint count = lrg_container_get_child_count(container);
-    for (guint i = 0; i < count; i++)
-    {
-        LrgWidget *child = lrg_container_get_child(container, i);
-        gfloat child_w = 0, child_h = 0;
-        lrg_widget_measure(child, &child_w, &child_h);
-        g_message("  Child %u: %fx%f", i, child_w, child_h);
-    }
-}
-#+end_src
-
-** API Reference
-:PROPERTIES:
-:CUSTOM_ID: api-reference
-:END:
-*** Position
-:PROPERTIES:
-:CUSTOM_ID: position
-:END:
-- =lrg_widget_get_x(LrgWidget *self)= - Get X position (relative)
-- =lrg_widget_set_x(LrgWidget *self, gfloat x)=
-- =lrg_widget_get_y(LrgWidget *self)= - Get Y position (relative)
-- =lrg_widget_set_y(LrgWidget *self, gfloat y)=
-- =lrg_widget_set_position(LrgWidget *self, gfloat x, gfloat y)=
-
-*** Size
-:PROPERTIES:
-:CUSTOM_ID: size
-:END:
-- =lrg_widget_get_width(LrgWidget *self)=
-- =lrg_widget_set_width(LrgWidget *self, gfloat width)=
-- =lrg_widget_get_height(LrgWidget *self)=
-- =lrg_widget_set_height(LrgWidget *self, gfloat height)=
-- =lrg_widget_set_size(LrgWidget *self, gfloat width, gfloat height)=
-
-*** World Coordinates
-:PROPERTIES:
-:CUSTOM_ID: world-coordinates-1
-:END:
-- =lrg_widget_get_world_x(LrgWidget *self)=
-- =lrg_widget_get_world_y(LrgWidget *self)=
-
-*** State
-:PROPERTIES:
-:CUSTOM_ID: state
-:END:
-- =lrg_widget_get_visible(LrgWidget *self)=
-- =lrg_widget_set_visible(LrgWidget *self, gboolean visible)=
-- =lrg_widget_get_enabled(LrgWidget *self)=
-- =lrg_widget_set_enabled(LrgWidget *self, gboolean enabled)=
-
-*** Hierarchy
-:PROPERTIES:
-:CUSTOM_ID: hierarchy-1
-:END:
-- =lrg_widget_get_parent(LrgWidget *self)= - Get parent container
-
-*** Hit Testing
-:PROPERTIES:
-:CUSTOM_ID: hit-testing-1
-:END:
-- =lrg_widget_contains_point(LrgWidget *self, gfloat x, gfloat y)=
-
-*** Virtual Methods
-:PROPERTIES:
-:CUSTOM_ID: virtual-methods-1
-:END:
-- =lrg_widget_draw(LrgWidget *self)=
-- =lrg_widget_measure(LrgWidget *self, gfloat *preferred_width, gfloat *preferred_height)=
-- =lrg_widget_handle_event(LrgWidget *self, const LrgUIEvent *event)=
 
 ** Notes
 :PROPERTIES:
-:CUSTOM_ID: notes
+:CUSTOM_ID: widget-notes
 :END:
-- All widgets are reference-counted GObjects
-- Position is relative to parent (except world functions)
-- Invisible or disabled widgets don't render or process events
-- Virtual methods are overridden by subclasses
-- World coordinates account for entire parent hierarchy
+- Paint at world coordinates; =x= / =y= are parent-relative.
+- Old widgets that implement only =draw()= keep working: they are recorded as paint callbacks (each one ends a paint batch) and do not get appear transforms. Port them to =paint()= (see [[file:../../guides/ui-migration.org][the migration guide]]).
+- Hovering no longer sends =FOCUS_IN= / =FOCUS_OUT=; use =POINTER_ENTER= / =POINTER_LEAVE= or the =HOVERED= state.
+- Call =lrg_widget_queue_layout()= whenever something that changes the preferred size changes.
 
 ** Related
 :PROPERTIES:
-:CUSTOM_ID: related
+:CUSTOM_ID: widget-related
 :END:
-- [[file:container.org][Container]] - Container widgets
-- [[file:ui-event.org][UI Events]] - Event system
-- [[file:index.org][UI Module Overview]] - Complete UI documentation
+- [[file:container.org][LrgContainer]], [[file:layout.org][layout]], [[file:styling.org][styling]], [[file:animation.org][animation]], [[file:input-and-focus.org][input and focus]]
+- [[file:../paint/paint-list.org][LrgPaintList]]
+- [[file:../../guides/extending-ui.org][Extending the UI]]

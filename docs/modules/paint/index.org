@@ -1,0 +1,408 @@
+#+title: Paint Module
+#+description: The SDF paint pipeline: LrgPaintList, LrgPaintInstance and LrgPaintRenderer, one instanced shader for every UI shape and glyph
+#+authors: Zach Podbielniak
+#+categories: libregnum paint ui gui rendering
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* Paint Module
+:PROPERTIES:
+:CUSTOM_ID: paint-module
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > Paint
+#+end_quote
+
+The paint module (=src/paint/=) is the 2D drawing layer underneath both of libregnum's UI toolkits. The retained-mode widget tree ([[file:../ui/index.org][UI module]]: =LrgWidget=, =LrgCanvas=) records each frame into an =LrgPaintList=, and the immediate-mode GUI ([[file:../gui/index.org][GUI module]], the editor) translates its draw list into one too. A single =LrgPaintRenderer= then draws the whole list with *one instanced signed-distance-field (SDF) shader*.
+
+Pages in this module:
+
+- This page: why the pipeline exists, the instance layout, the shader maths, batching, groups, clip/opacity stacks, headless behaviour, mixing with raw raylib drawing, pitfalls and credits.
+- [[file:paint-list.org][LrgPaintList]]: the recording API reference with examples.
+- [[file:paint-renderer.org][LrgPaintRenderer]]: the drawing API reference with examples.
+
+** Why an SDF paint pipeline
+:PROPERTIES:
+:CUSTOM_ID: paint-why
+:END:
+Before this module, widgets drew themselves straight to raylib (=DrawRectangleRounded()=, =DrawTextEx()=, scissor rectangles). That had four problems for a UI that should look modern:
+
+1. *Aliased, tessellated shapes.* raylib's rounded rectangles are triangle fans with a fixed segment count. Corners look faceted at large radii, edges are aliased without MSAA, and borders are separate outline geometry that never quite lines up with the fill.
+2. *No soft shadows or gradients.* A drop shadow needs a blur; the only cheap way is analytic, which needs a shader.
+3. *Too many draw calls.* Every scissor change, texture switch (text vs shapes) and blend change flushes raylib's batch. A dense editor frame was hundreds of draw calls.
+4. *No post-layout transforms.* Appear animations (pop, fly in, fade) need to scale and move a whole widget's drawing after it was recorded, which immediate drawing cannot do.
+
+The paint pipeline answers all four with one idea: *every shape is one GPU instance, and the fragment shader evaluates the shape's exact signed distance field*. From the distance it derives coverage analytically, so every edge is anti-aliased at any size, rounded corners are mathematically round, borders are a second threshold on the same distance, shadows are a smoothstep of the same distance, and gradients are a function of the pixel position. Text joins the same batches because every glyph is just a textured rectangle instance sampling the font atlas. Clipping is a per-instance rectangle tested in the shader, so pushing a clip never splits a batch. A typical frame of the editor or a game menu is one or two draw calls.
+
+** Pipeline overview
+:PROPERTIES:
+:CUSTOM_ID: paint-pipeline
+:END:
+#+begin_example
+ widgets / GUI backend                     LrgPaintList (CPU, no GL needed)
+ ---------------------                     ---------------------------------
+ lrg_paint_list_rect ()      ──┐           instances: [ I0 I1 I2 I3 ... In ]   96 bytes each
+ lrg_paint_list_shadow ()      │           commands:  [ BATCH(0..k, tex A)
+ lrg_paint_list_text ()        ├── record             CALLBACK(fn, clip)
+ lrg_paint_list_push_clip ()   │                      BATCH(k+1..n, tex B) ]
+ lrg_paint_list_callback ()  ──┘           clip stack, opacity stack, refs
+
+                    lrg_paint_renderer_render (renderer, list)
+                    ------------------------------------------
+                    1. rlDrawRenderBatchActive ()   flush raylib's pending draws
+                    2. upload all n instances once  (one rlUpdateVertexBuffer)
+                    3. for each command:
+                         BATCH    -> bind shader/VAO (once), bind texture,
+                                     re-point attributes at 'first',
+                                     glDrawArraysInstanced (6 verts, count)
+                         CALLBACK -> unbind pipeline, scissor to its clip,
+                                     run the raw raylib code, flush
+                    4. restore raylib state (default shader, alpha blending)
+
+                    GPU, per instance
+                    -----------------
+  vertex shader:   unit quad corner (0..1)^2 -> shape bounds + AA/blur pad,
+                   clamped to the instance clip rect -> MVP
+  fragment shader: clip test -> gradient colour -> signed distance d for the
+                   primitive -> coverage clamp (0.5 - d) / border / shadow ->
+                   premultiplied output
+#+end_example
+
+Recording is pure CPU work on plain arrays: no GL context is needed, so widget trees can be laid out and recorded headless (tests, servers, the CI). Only =lrg_paint_renderer_render()= touches the GPU, and it is a no-op returning =FALSE= without a window.
+
+** The instance: LrgPaintInstance
+:PROPERTIES:
+:CUSTOM_ID: paint-instance
+:END:
+Every primitive, including every glyph of text, is one =LrgPaintInstance=. It is the exact struct uploaded to the GPU (96 bytes, no padding), read by the vertex shader as nine attributes (the static unit-quad corner plus eight per-instance attributes with divisor 1).
+
+#+begin_src c
+typedef struct
+{
+	gfloat  rect[4];    /* x0, y0, x1, y1 (lines: the two end points)   */
+	gfloat  radii[4];   /* top-left, top-right, bottom-right, bottom-left */
+	gfloat  clip[4];    /* x0, y0, x1, y1 of the clip rectangle          */
+	gfloat  params[4];  /* border width, aux size, LrgPaintPrim, gradient */
+	gfloat  extra[4];   /* gradient dir/centre, UVs, triangle vertex     */
+	guint8  color[4];   /* fill or gradient start, straight RGBA8        */
+	guint8  color2[4];  /* gradient end, straight RGBA8                  */
+	guint8  border[4];  /* border colour, straight RGBA8                 */
+	guint32 texture;    /* GL texture id (images and glyphs), else 0     */
+} LrgPaintInstance;
+#+end_src
+
+| Field | Offset | Size | GPU attribute | Format |
+|-------+--------+------+---------------+--------|
+| =rect= | 0 | 16 | location 1 =i_rect= | 4 x float |
+| =radii= | 16 | 16 | location 2 =i_radii= | 4 x float |
+| =clip= | 32 | 16 | location 3 =i_clip= | 4 x float |
+| =params= | 48 | 16 | location 4 =i_params= | 4 x float |
+| =extra= | 64 | 16 | location 5 =i_extra= | 4 x float |
+| =color= | 80 | 4 | location 6 =i_color= | 4 x unsigned byte, normalized |
+| =color2= | 84 | 4 | location 7 =i_color2= | 4 x unsigned byte, normalized |
+| =border= | 88 | 4 | location 8 =i_border= | 4 x unsigned byte, normalized |
+| =texture= | 92 | 4 | not an attribute: selects the batch texture | uint32 |
+
+Location 0 (=a_corner=) is the static six-vertex unit quad (two triangles in raylib's winding: TL, BL, BR / TL, BR, TR).
+
+*** Field meaning per primitive
+:PROPERTIES:
+:CUSTOM_ID: paint-instance-fields
+:END:
+=params[2]= holds the =LrgPaintPrim= as a float (the shader rounds it), =params[3]= the =LrgPaintGradientKind=.
+
+| Primitive (=params[2]=) | =rect= | =radii= | =params[0]= | =params[1]= | =extra= | =color= | =color2= | =border= | =texture= |
+|------------------------+--------+---------+-------------+-------------+---------+---------+----------+----------+-----------|
+| =LRG_PAINT_PRIM_RECT= (0) | box corners | per-corner radii, clamped to half the shorter side | inner border width (clamped to half the shorter side) | unused | linear: =cos=, =sin= of the angle; radial: centre x, y (0..1), radius | fill or gradient start | gradient end | border colour | 0 |
+| =LRG_PAINT_PRIM_SHADOW= (1) | caster box moved by the offset and grown by the spread | uniform radius + spread | unused | blur | unused | shadow colour | unused | unused | 0 |
+| =LRG_PAINT_PRIM_LINE= (2) | end points x0, y0, x1, y1 | unused | unused | thickness | unused | line colour | unused | unused | 0 |
+| =LRG_PAINT_PRIM_IMAGE= (3) | destination box | uniform radius (rounded images, avatars) | unused | unused | UVs u0, v0, u1, v1 | tint | unused | unused | GL id of the texture or font atlas |
+| =LRG_PAINT_PRIM_TRIANGLE= (4) | vertices 0 and 1 | unused | unused | unused | =extra[0..1]= = vertex 2 | fill | unused | unused | 0 |
+
+Colours are stored as straight (non-premultiplied) RGBA8 with the list's current opacity already multiplied into the alpha byte at record time. The shader premultiplies.
+
+=lrg_paint_instance_get_prim()= decodes =params[2]= back into an =LrgPaintPrim=; tests use it together with =lrg_paint_list_get_instance()= to assert what a widget recorded.
+
+** The shaders
+:PROPERTIES:
+:CUSTOM_ID: paint-shaders
+:END:
+Both shaders are GLSL 330 and live as strings in =src/paint/lrg-paint-renderer.c=; they are compiled once, lazily, on the first render with a GL context current (=rlLoadShaderProgram()=). If compilation fails the renderer logs a warning once and stays disabled for the rest of the process (shapes are not drawn; callbacks are not run either, because =render()= returns early).
+
+*** Vertex shader: quad expansion
+:PROPERTIES:
+:CUSTOM_ID: paint-vertex-shader
+:END:
+Each instance becomes a screen-space quad that covers the shape plus a margin, so the anti-aliased fringe (and the blur of shadows) has pixels to land on:
+
+| Primitive | Quad bounds |
+|-----------+-------------|
+| line | bounding box of the two end points, grown by =thickness / 2 + 1= |
+| triangle | bounding box of the three vertices, grown by 1 |
+| shadow | =rect= grown by =blur + 1= |
+| rect, image | =rect= grown by 1 |
+
+The quad is then clamped to the instance's clip rectangle (=lo = max (lo, clip.xy)=, =hi = max (min (hi, clip.zw), lo)=), so fully clipped areas produce no fragments at all, and multiplied by =u_mvp=. =u_mvp= is computed on the CPU exactly the way raylib computes its own batch matrix: the pushed transform (=rlGetMatrixTransform()=) times the model-view (camera) times the projection. A paint list therefore follows =BeginMode2D()=, =rlPushMatrix()= translations and render-texture targets just like raylib's own drawing.
+
+All per-instance data is passed to the fragment shader with =flat= interpolation; only the position =v_pos= (in canvas units, before the MVP) is interpolated. Every distance computation happens in canvas units.
+
+*** Fragment shader: distance, coverage and colour
+:PROPERTIES:
+:CUSTOM_ID: paint-fragment-shader
+:END:
+In order, for every fragment:
+
+1. *Clip.* If =v_pos= lies outside =v_clip= the fragment is discarded. This is a per-pixel, per-instance clip, which is why =lrg_paint_list_push_clip()= never ends a batch.
+2. *Gradient.* The fill colour starts as =color= and is replaced by a gradient when =params[3]= is not =NONE= (see [[#paint-gradients][Gradients]]).
+3. *Signed distance =d=* to the primitive: negative inside, zero on the edge, positive outside, in canvas units.
+4. *Coverage* from =d=, then border, shadow or texture handling.
+5. *Premultiplied output*; fragments whose alpha ends up 0 are discarded.
+
+**** Rounded box with per-corner radii
+:PROPERTIES:
+:CUSTOM_ID: paint-sd-round-box
+:END:
+Rectangles, images and shadows share the rounded-box distance, evaluated relative to the box centre =c = (rect.xy + rect.zw) / 2= with half-size =b = |rect.zw - rect.xy| / 2=:
+
+#+begin_src glsl
+float sd_round_box (vec2 p, vec2 b, vec4 r)
+{
+    /* pick the radius of the quadrant p is in; y points down, so
+     * p.y < 0 is the top half: r = (tl, tr, br, bl) */
+    float rad = (p.x < 0.0) ? ((p.y < 0.0) ? r.x : r.w)
+                            : ((p.y < 0.0) ? r.y : r.z);
+    vec2 q = abs (p) - b + rad;
+    return min (max (q.x, q.y), 0.0) + length (max (q, 0.0)) - rad;
+}
+#+end_src
+
+The construction folds the point into the positive quadrant (=abs (p)=), shrinks the box by the radius so the corner becomes a point, measures the distance to that inner box (exact Euclidean distance outside, the larger axis distance inside), and subtracts the radius again, which re-inflates the corner into a perfect quarter circle. Choosing =rad= per quadrant gives independent corner radii. Radii larger than half the shorter side are clamped on the CPU, so =G_MAXFLOAT= always yields a pill or a circle (=lrg_paint_list_circle()= is exactly that: a square with radius = half its side).
+
+**** Coverage: analytic anti-aliasing
+:PROPERTIES:
+:CUSTOM_ID: paint-coverage
+:END:
+#+begin_src glsl
+coverage = clamp (0.5 - d, 0.0, 1.0);
+#+end_src
+
+A pixel whose centre is exactly on the edge (=d = 0=) gets 50 % coverage; one half a unit inside gets 100 %, half a unit outside 0 %. This is a one-unit box filter across the edge, which at 1 canvas unit = 1 pixel is what MSAA would converge to, for free and at any radius. Because the coverage is computed from the distance, a shape's size, position and radius can be fractional (springs animate them continuously) without shimmering.
+
+**** Inner border
+:PROPERTIES:
+:CUSTOM_ID: paint-border
+:END:
+#+begin_src glsl
+vec4 body = premul (fill);
+if (bw > 0.0)
+    body = mix (premul (border), body, clamp (0.5 - (d + bw), 0.0, 1.0));
+outc = body * clamp (0.5 - d, 0.0, 1.0);
+#+end_src
+
+The border is a second threshold on the same distance: the point is "inside the body" when =d < -bw=, i.e. at least the border width from the edge. Between =-bw= and =0= it is border colour, with its own anti-aliased transition, and the outer edge uses the normal coverage. The border is therefore drawn *inside* the rectangle: adding or animating a border never changes a widget's footprint, and borders follow per-corner radii exactly (the inner edge of the border is the offset curve of the outer edge). A border with a transparent fill (=lrg_paint_list_border()=) is a ring.
+
+**** Shadow
+:PROPERTIES:
+:CUSTOM_ID: paint-shadow
+:END:
+#+begin_src glsl
+float blur = max (params.y, 0.5);
+outc = premul (fill) * (1.0 - smoothstep (-blur, blur, d));
+#+end_src
+
+The shadow evaluates the rounded-box distance of the caster (moved by the offset and grown by the spread on the CPU) and fades from full strength at =d = -blur= (inside) to zero at =d = +blur= (outside), passing 50 % exactly on the caster's edge. =smoothstep= is a good approximation of a Gaussian-blurred box edge and costs one instance like any other shape, whatever the blur radius. A blur below 0.5 is raised to 0.5 so a zero-blur shadow is still anti-aliased. The shadow is a full shape: it is also drawn under the caster, so record it first and keep the caster opaque (a translucent caster shows its own shadow through itself).
+
+A /glow/ (=LrgPartLook.glow=) is the same primitive with no offset, a coloured shadow and a small positive spread.
+
+**** Line segment
+:PROPERTIES:
+:CUSTOM_ID: paint-sd-segment
+:END:
+#+begin_src glsl
+float sd_segment (vec2 p, vec2 a, vec2 b)
+{
+    vec2  pa = p - a;
+    vec2  ba = b - a;
+    float h = clamp (dot (pa, ba) / max (dot (ba, ba), 1e-6), 0.0, 1.0);
+    return length (pa - ba * h);
+}
+/* ... */
+float d = sd_segment (v_pos, rect.xy, rect.zw) - thickness * 0.5;
+#+end_src
+
+=h= is the parameter of the closest point on the segment, clamped to the segment, so the distance is to the segment itself; subtracting half the thickness turns the zero-width segment into a capsule. Lines therefore always have round caps, and a zero-length line is a dot.
+
+**** Triangle
+:PROPERTIES:
+:CUSTOM_ID: paint-sd-triangle
+:END:
+The exact signed distance to a triangle (after Inigo Quilez's =sdTriangle=): for each edge the distance to the clamped closest point, and the sign from the edge cross products, normalised by the triangle's winding =s = sign (e0 x e2)= so either winding works. Arrows, chevrons, carets and combo-box disclosure triangles are one instance with exact anti-aliased edges. Triangles use =color= only (no gradient).
+
+**** Image and glyph sampling
+:PROPERTIES:
+:CUSTOM_ID: paint-image
+:END:
+Images and glyphs are rounded boxes whose body colour is multiplied by a texture sample:
+
+#+begin_src glsl
+vec2 f = (v_pos - rect.xy) / max (rect.zw - rect.xy, vec2 (1e-4));
+body *= texture (u_tex, mix (extra.xy, extra.zw, f));
+#+end_src
+
+=f= is the fragment's position inside the destination box (0..1); =extra= holds the source UV rectangle, so any sub-region of a texture or atlas can be drawn, and the radius rounds the corners of the picture. =color= is the tint (white = unchanged).
+
+**** Gradients
+:PROPERTIES:
+:CUSTOM_ID: paint-gradients
+:END:
+Linear (=params[3] = 1=):
+
+#+begin_src glsl
+vec2  dir = extra.xy;                                   /* (cos a, sin a) */
+float ext = abs (dir.x) * hb.x + abs (dir.y) * hb.y;    /* box half-extent along dir */
+float t = clamp (dot (v_pos - c, dir) / (2.0 * max (ext, 1e-4)) + 0.5, 0.0, 1.0);
+fill = mix (color, color2, t);
+#+end_src
+
+The gradient is the projection of the pixel onto the direction, normalised by the box's extent along that direction, so it always runs from corner to corner of the rectangle: =angle = 0= goes from =start= at the left edge to =end= at the right edge, =90= from top to bottom (y points down), =45= from the top-left corner to the bottom-right corner.
+
+Radial (=params[3] = 2=):
+
+#+begin_src glsl
+vec2  ctr = mix (rect.xy, rect.zw, extra.xy);           /* centre as a fraction of the box */
+float t = clamp (length (v_pos - ctr) / max (extra.z, 1e-4), 0.0, 1.0);
+fill = mix (color, color2, t);
+#+end_src
+
+=start= is at the centre and =end= is reached at =radius= canvas units; a radius of 0 at record time means half the box diagonal, which reaches the corners when centred. Colours are mixed in straight sRGB space (no linearisation), the same as CSS.
+
+**** Premultiplied output and blending
+:PROPERTIES:
+:CUSTOM_ID: paint-premultiplied
+:END:
+=premul (c) = vec4 (c.rgb * c.a, c.a)=. The coverage multiplies all four channels, so the output is premultiplied, and the renderer blends with =ONE, ONE_MINUS_SRC_ALPHA= (=rlSetBlendFactors()= + =RL_BLEND_CUSTOM=). Premultiplied blending composes partially covered edges correctly (no dark fringes where a translucent edge meets another shape) and makes gradients between colours with different alphas correct. After the last batch the renderer returns raylib to =RL_BLEND_ALPHA=.
+
+** Batching
+:PROPERTIES:
+:CUSTOM_ID: paint-batching
+:END:
+The command stream holds two kinds of entries (=LrgPaintCommandKind=): =INSTANCES= batches (a contiguous run of instances drawn with one =glDrawArraysInstanced=) and =CALLBACK=s. When an instance is appended:
+
+- It *joins the last batch* when that batch is an instance batch and either the new instance is untextured (=texture == 0=), or the batch has no texture yet, or the batch already uses the same texture. Untextured shapes never sample, so they can ride along with any texture bound.
+- Otherwise it *starts a new batch*. The only things that split batches are therefore: *a second texture* in the same batch (at most one texture per batch: an image after text from another font, text in two different fonts interleaved, two different images) and *a callback* (each callback ends the current batch; the next instance starts a new one).
+- Clip changes, opacity changes, gradients, borders, shadows, triangles, lines and group transforms never split a batch.
+
+Consequences:
+
+- A whole UI drawn with one font and no images is *one draw call*, however many widgets, clips and shadows it has.
+- Interleaving two textures (A, B, A, B) costs one batch per switch, because the list keeps paint order; group your images when you can (e.g. draw all icons from one atlas).
+- =lrg_paint_renderer_get_draw_calls()= reports the instanced draws of the last render (callbacks are not counted); [[file:paint-renderer.org::#paint-renderer-profiling][profile]] with it.
+
+The whole instance array is uploaded once per render with a single =rlUpdateVertexBuffer()=; each batch then only re-points the attribute offsets at its first instance (GL 3.3 has no base-instance draw), binds its texture (raylib's 1x1 white default texture for untextured batches) and draws. The GPU buffer starts at 1024 instances and doubles as needed; it never shrinks.
+
+** Groups: post-layout transforms
+:PROPERTIES:
+:CUSTOM_ID: paint-groups
+:END:
+=lrg_paint_list_begin_group()= returns the current instance count as a mark; =lrg_paint_list_transform_group()= then scales (around a pivot), translates and fades every instance recorded since that mark, in place. This is how a widget's [[file:../ui/animation.org][appear animation]] is applied: =lrg_widget_paint()= marks, records the widget (and its whole subtree), then transforms the range, so layout and hit-testing see the final position while only the pixels move.
+
+What a group transform does to each instance:
+
+- both =rect= points (or both line end points) move as points: =p' = pivot + (p - pivot) * scale + translate=; a triangle's third vertex in =extra= moves the same way;
+- radii, border width and the aux size (blur, thickness) are multiplied by =scale=, and so is a radial gradient's radius;
+- =color=, =color2= and =border= alphas are multiplied by =opacity=;
+- clip rectangles are *not* transformed, so a widget flying in from outside its parent is still cut by the parent;
+- callbacks inside the range are not transformed (raw raylib drawing cannot be retargeted after the fact).
+
+Groups nest naturally: a child's appear transform is applied first (when the child finishes painting), the parent's afterwards over the combined range.
+
+** Clip and opacity stacks
+:PROPERTIES:
+:CUSTOM_ID: paint-stacks
+:END:
+- *Clip.* =push_clip= intersects the current clip with a rectangle; every instance recorded until the matching =pop_clip= is stamped with the intersection and cut per pixel in the shader. An empty intersection collapses to a zero-size box (everything is culled). With nothing pushed the clip is +/-1e7 units (effectively none). Shapes whose bounds (including blur or line thickness) lie entirely outside the current clip are not recorded at all, which makes scrolled-away content in long lists free. Callbacks record the clip active at that moment and the renderer applies it as a scissor rectangle around the call.
+- *Opacity.* =push_opacity= multiplies the current opacity; the value is baked into each instance's alpha bytes at record time. Each shape is faded individually, so overlapping children of a faded container show through each other slightly (there is no offscreen layer). That is the usual trade-off of immediate fading and is invisible for typical non-overlapping widgets.
+- Unbalanced pops log a warning and are ignored; =lrg_paint_list_clear()= resets both stacks.
+
+** Headless behaviour
+:PROPERTIES:
+:CUSTOM_ID: paint-headless
+:END:
+- =LrgPaintList= never needs a window: create, record, inspect and clear it in unit tests or a dedicated server.
+- Text needs glyph data. With a =GrlFont= whose glyphs are loaded the glyph instances are recorded; with the built-in font (=NULL=) and no window, raylib's default font does not exist yet, so =lrg_paint_list_text()= records nothing, and =lrg_paint_measure_text()= returns an estimate of =0.55 * size= per character. =lrg_theme_get_ui_font()= returns =NULL= (or the theme's legacy default font) without a window, because system fonts are only rasterised with a GL context.
+- =lrg_paint_renderer_render()= returns =FALSE= without a window and does nothing; =lrg_paint_renderer_is_available()= tells you in advance.
+- =LrgCanvas= exposes this: =lrg_canvas_record()= lays out and records without drawing, and =lrg_canvas_get_paint_list()= hands you the result to assert against. See [[file:../ui/input-and-focus.org::#input-testing][testing the UI headless]].
+
+** Interleaving with raw raylib drawing
+:PROPERTIES:
+:CUSTOM_ID: paint-interleaving
+:END:
+The renderer composes correctly with ordinary raylib drawing on both sides:
+
+- *Before:* =render()= starts with =rlDrawRenderBatchActive()=, so anything raylib had queued (your game scene, a background) lands underneath the paint list.
+- *After:* it unbinds its program and VAO and restores raylib's default texture slot and =RL_BLEND_ALPHA=, so raylib draws after it work normally.
+- *Inside:* =lrg_paint_list_callback()= records a call to raw graylib/raylib code at a point in the paint order. The renderer ends its pipeline, wraps the call in =BeginScissorMode()= / =EndScissorMode()= with the clip that was active when it was recorded (when one was), runs it and flushes raylib's batch so its output lands before the next instances. Legacy widgets that only implement =draw()= are painted this way automatically, and the GUI's 3D-viewport callbacks too.
+- The current camera and transform apply to the instances (see [[#paint-vertex-shader][vertex shader]]), so a paint list rendered inside =BeginMode2D()= or into a =RenderTexture2D= is transformed like raylib's own drawing.
+
+*** The blend-mode-flush pitfall
+:PROPERTIES:
+:CUSTOM_ID: paint-blend-flush
+:END:
+=rlSetBlendMode()= is not a plain state change in raylib: when the mode differs it *flushes raylib's pending batch* (=rlDrawRenderBatch()=), and that flush ends by unbinding the current shader program and vertex array, because raylib assumes they are its own. The renderer therefore sets its blend state *first* and binds its program and VAO *afterwards* (=begin_pipeline()= in =lrg-paint-renderer.c=):
+
+#+begin_src c
+/* Blend state first: rlSetBlendMode() flushes raylib's batch, and
+ * that flush unbinds whatever program and VAO are current */
+rlSetBlendFactors (RL_ONE, RL_ONE_MINUS_SRC_ALPHA, RL_FUNC_ADD);
+rlSetBlendMode (RL_BLEND_CUSTOM);
+
+rlEnableShader (self->shader);
+rlEnableVertexArray (self->vao);
+#+end_src
+
+Doing it the other way round draws nothing (or draws with raylib's default shader and garbage attributes) on every frame where raylib had pending geometry. The same applies to anyone extending the renderer or writing a custom rlgl pass: *never call raylib drawing or blend functions between binding your program and issuing your draw*. Inside a paint callback you are outside the pipeline, so any raylib call is safe there.
+
+Also note that rendering a paint list leaves raylib in =RL_BLEND_ALPHA=: if you render inside =BeginBlendMode (BLEND_ADDITIVE)=, re-enter your blend mode afterwards.
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: paint-performance
+:END:
+- Recording an instance is a =memset= of 96 bytes, a few float stores and an array append (amortised O(1)); the arrays keep their capacity across =lrg_paint_list_clear()=, so a steady-state frame allocates nothing.
+- Fragment cost is proportional to covered pixels plus the AA/blur margin. Large blurs on large shapes (full-screen modal shadows) are the most expensive thing you can draw; even so it is one instance and one smoothstep per pixel, far cheaper than any multi-pass blur.
+- Clipped-away shapes are culled at record time (bounds test) and, when partially visible, the quad itself is clamped to the clip, so hidden pixels are never shaded.
+- Text costs one instance per visible glyph (spaces and tabs emit none). The UI font is rasterised at 64 px with mipmaps and trilinear filtering, so small text stays clean without per-size atlases.
+- The list keeps a reference on each =GrlTexture= and =GrlFont= used until it is cleared, consecutive uses of the same object cost nothing extra.
+- Keep paint order texture-coherent to stay in one batch (see [[#paint-batching][Batching]]).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: paint-pitfalls
+:END:
+- *Units are canvas units, not pixels.* Anti-aliasing is one canvas unit wide. If you scale the canvas up with a camera (e.g. a virtual-resolution game upscaled 3x) edges get 3 pixels of softness; scaled down they alias. Lay UI out at the output resolution when crispness matters.
+- *Record shadows before their casters*, and keep casters opaque.
+- *Borders are inside.* A 2-unit border on a 10-unit-wide box leaves 6 units of fill.
+- *Text origin is snapped* to whole units (=floorf (x + 0.5)=) for crisp glyphs; animate text with a group transform, not by feeding sub-pixel positions, if you need smooth sub-pixel motion.
+- *Callbacks split batches and are scissored in canvas units* applied as screen-space scissor rectangles; under a camera transform the scissor box does not follow the transform (instance clipping does). Avoid clipped callbacks inside transformed or scaled targets.
+- *Group transforms do not move clips or callbacks.*
+- *One texture per batch.* Mixing images from many separate textures in one panel costs one draw call per switch.
+- *Do not hold =lrg_paint_list_get_instance()= pointers across appends*; the array can reallocate.
+
+** Credits and notice
+:PROPERTIES:
+:CUSTOM_ID: paint-credits
+:END:
+- The rounded-box, segment and triangle signed distance functions are the standard constructions documented by *Inigo Quilez* in his 2D distance function articles (https://iquilezles.org/articles/distfunctions2d/); they are re-derived and written for this shader.
+- The overall design, *one GPU instance per UI shape evaluated by a single SDF shader*, with glyphs batched alongside shapes and per-instance clip rectangles, was inspired by the *Raven* UI library (https://github.com/oscar-soirey/Raven), licensed Apache-2.0. libregnum reimplements the concepts from scratch on top of rlgl in gnu89 C; *no Raven code was copied*. The same inspiration applies to the theme/part-look styling model described in [[file:../ui/styling.org][UI styling]].
+
+*NOTICE.* libregnum is licensed AGPL-3.0-or-later. Raven is licensed under the Apache License, Version 2.0; because no Raven source code is included in libregnum, no Apache-2.0 notice file is required, and this acknowledgement is given as attribution of the design inspiration.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: paint-see-also
+:END:
+- [[file:paint-list.org][LrgPaintList reference]] and [[file:paint-renderer.org][LrgPaintRenderer reference]]
+- [[file:../ui/index.org][UI module]] (=LrgCanvas= records into a paint list) and [[file:../ui/styling.org][UI styling]] (part looks become paint calls via =lrg_widget_paint_box()=)
+- [[file:../gui/index.org::#raylib-backend][GUI raylib backend]] (the editor's draw list is translated into a paint list)
+- [[file:../tween/spring.org][Springs]] (what animates the shapes)

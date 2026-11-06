@@ -1,445 +1,225 @@
-* Theming System
+#+title: LrgTheme
+#+description: API reference for LrgTheme: colour roles, metrics, accent derivation, presets, motion, fonts, style rules and YAML
+#+authors: Zach Podbielniak
+#+categories: libregnum ui theme
+#+created: 2025-12-01T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 2.0
+
+* LrgTheme
 :PROPERTIES:
-:CUSTOM_ID: theming-system
+:CUSTOM_ID: theme
 :END:
-=LrgTheme= is the centralized styling system for the UI. It provides a singleton default theme with colors, fonts, and spacing values.
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Theme
+#+end_quote
+
+=LrgTheme= (=src/ui/lrg-theme.h=, final =GObject=) holds everything widgets need to look consistent: 27 colour roles, 18 metrics, a motion preset, a dark flag, a name, a UI font and a list of style rules. Every widget draws with an effective theme (its own, an ancestor's, or the process-wide default), reading roles and metrics instead of hard-coded values. This page is the API reference; [[file:../../guides/theming.org][the theming guide]] explains how to write theme files and use themes in a game, and [[file:styling.org][UI styling]] covers style rules.
 
 ** Overview
 :PROPERTIES:
-:CUSTOM_ID: overview
+:CUSTOM_ID: theme-overview
 :END:
-The theme system provides:
-
-- *Color Palette* - Consistent colors across the UI
-- *Typography* - Font sizes for different scales
-- *Spacing* - Standard padding and border widths
-
-** Getting the Default Theme
-:PROPERTIES:
-:CUSTOM_ID: getting-the-default-theme
-:END:
-#+begin_src C
-LrgTheme *theme = lrg_theme_get_default();
+#+begin_src c
+LrgTheme       *theme = lrg_widget_get_theme (widget);       /* effective theme */
+const GrlColor *panel = lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL);
+gfloat          pad = lrg_theme_get_metric (theme, LRG_THEME_METRIC_PADDING_X);
+GrlFont        *font = lrg_theme_get_ui_font (theme);         /* NULL headless */
 #+end_src
 
-The default theme is a singleton instance used by all widgets.
+A new theme (=lrg_theme_new()=) and the lazily created default theme start as the =midnight= preset.
 
-** Creating Custom Themes
+** The default theme and scoping
 :PROPERTIES:
-:CUSTOM_ID: creating-custom-themes
+:CUSTOM_ID: theme-default
 :END:
-#+begin_src C
-g_autoptr(LrgTheme) custom_theme = lrg_theme_new();
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_get_default (void)= | Process-wide default theme, created on first use | (transfer none) |
+| =lrg_theme_set_default (theme)= | Replace the default; widgets switch on the next frame | Refs =theme=; =NULL= = fresh built-in theme on next use; carries the legacy default font over when =theme= has none; does not queue layout |
+| =lrg_theme_new (void)= | New theme with the =midnight= values | (transfer full) |
+| =lrg_theme_copy (self)= | Deep copy: colours, metrics, motion, dark, name, fonts, legacy paddings; style rules shared by reference | (transfer full) |
+| =lrg_widget_set_theme (widget, theme)= | Scope a theme to a subtree | See [[file:widget.org][LrgWidget]] |
+| =lrg_widget_get_theme (widget)= | Effective theme: own, nearest ancestor's, or default | (transfer none) |
 
-/* Configure as needed */
-GrlColor custom_primary = GRL_COLOR(255, 0, 0, 255);
-lrg_theme_set_primary_color(custom_theme, &custom_primary);
-#+end_src
-
-** Color Palette
+** Colour roles
 :PROPERTIES:
-:CUSTOM_ID: color-palette
+:CUSTOM_ID: theme-colors
 :END:
-*** Primary Colors
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_get_color (self, role)= | Colour of an =LrgThemeColor= role | (transfer none); valid until the role changes |
+| =lrg_theme_set_color (self, role, color)= | Set one role | Emits =::changed=; notifies the matching legacy property |
+| =lrg_theme_set_accent (self, accent)= | Set =ACCENT= and derive =ACCENT_HOVER=, =ACCENT_PRESSED=, =LINK=, =FOCUS=, =SELECTION= and =TEXT_ON_ACCENT= | Derivation depends on =dark=; see [[file:../../guides/theming.org::#theming-accent][deriving from an accent]] |
+| =lrg_theme_get_contrast (self, fg, bg)= | WCAG contrast ratio (1..21) between two roles | 4.5 body text, 3 large text / UI shapes |
+
+The roles (=WINDOW=, =PANEL=, =SURFACE=, =BORDER=, =TEXT=, =TEXT_MUTED=, =TEXT_ON_ACCENT=, =ACCENT=, =ACCENT_HOVER=, =ACCENT_PRESSED=, =CONTROL=, =CONTROL_HOVER=, =CONTROL_PRESSED=, =INPUT=, =FOCUS=, =SELECTION=, =TRACK=, =HANDLE=, =POPUP=, =TOOLTIP=, =SHADOW=, =VEIL=, =SUCCESS=, =WARNING=, =DANGER=, =LINK=, =DISABLED=; =LRG_THEME_COLOR_COUNT= = 27) and what they are used for are tabled in [[file:../../guides/theming.org::#theming-roles][the theming guide]], with every preset's values.
+
+** Metrics
 :PROPERTIES:
-:CUSTOM_ID: primary-colors
+:CUSTOM_ID: theme-metrics
 :END:
-#+begin_src C
-LrgTheme *theme = lrg_theme_get_default();
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_get_metric (self, metric)= | Value of an =LrgThemeMetric= in canvas units | |
+| =lrg_theme_set_metric (self, metric, value)= | Set one metric | Emits =::changed=; notifies matching legacy properties; does not queue layout |
 
-GrlColor primary = GRL_COLOR(0, 100, 255, 255);
-lrg_theme_set_primary_color(theme, &primary);
+Metrics (=LRG_THEME_METRIC_COUNT= = 18) and defaults: =FONT_SIZE= 16, =FONT_SIZE_SMALL= 12, =FONT_SIZE_LARGE= 24, =FONT_SIZE_TITLE= 32, =CORNER_RADIUS= 8, =BORDER_WIDTH= 1, =CONTROL_HEIGHT= 36, =PADDING_X= 14, =PADDING_Y= 8, =SPACING= 8, =ROW_HEIGHT= 32, =POPUP_RADIUS= 12, =SHADOW_BLUR= 18, =SHADOW_OFFSET_Y= 6, =FOCUS_RING_WIDTH= 2, =SCROLLBAR_SIZE= 8, =CHECK_SIZE= 20, =HANDLE_SIZE= 18 (presets override some; see [[file:../../guides/theming.org::#theming-metrics][metrics]]).
 
-GrlColor secondary = GRL_COLOR(150, 150, 150, 255);
-lrg_theme_set_secondary_color(theme, &secondary);
-
-GrlColor accent = GRL_COLOR(255, 165, 0, 255);
-lrg_theme_set_accent_color(theme, &accent);
-#+end_src
-
-*** Background Colors
+** Identity, motion and change tracking
 :PROPERTIES:
-:CUSTOM_ID: background-colors
+:CUSTOM_ID: theme-identity
 :END:
-#+begin_src C
-GrlColor background = GRL_COLOR(20, 20, 30, 255);
-lrg_theme_set_background_color(theme, &background);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_get_name= / =set_name= | Theme name | nullable |
+| =lrg_theme_get_dark= / =set_dark= | Dark flag | Only affects how =set_accent()= derives shades |
+| =lrg_theme_get_motion= / =set_motion= | Spring preset for widget transitions | See [[file:animation.org][UI animation]] |
+| =lrg_theme_get_generation (self)= | Counter bumped on every change | Caches compare generations |
 
-GrlColor surface = GRL_COLOR(40, 40, 50, 255);
-lrg_theme_set_surface_color(theme, &surface);
-#+end_src
-
-*** Text Colors
+** Presets
 :PROPERTIES:
-:CUSTOM_ID: text-colors
+:CUSTOM_ID: theme-presets
 :END:
-#+begin_src C
-GrlColor text = GRL_COLOR(255, 255, 255, 255);
-lrg_theme_set_text_color(theme, &text);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_list_presets (void)= | =NULL=-terminated names: ="midnight"=, ="daylight"=, ="catppuccin-mocha"=, ="catppuccin-latte"=, ="high-contrast"= | (transfer none) |
+| =lrg_theme_new_preset (name)= | New theme from a preset | (transfer full) (nullable): =NULL= for unknown names |
+| =lrg_theme_apply_preset (self, name)= | Overwrite colours, metrics, motion, dark and name with a preset | Style rules and fonts kept; returns =FALSE= for unknown names; emits =::changed= |
 
-GrlColor text_secondary = GRL_COLOR(180, 180, 180, 255);
-lrg_theme_set_text_secondary_color(theme, &text_secondary);
-#+end_src
-
-*** Border Colors
+** Style rules
 :PROPERTIES:
-:CUSTOM_ID: border-colors
+:CUSTOM_ID: theme-rules
 :END:
-#+begin_src C
-GrlColor border = GRL_COLOR(100, 100, 100, 255);
-lrg_theme_set_border_color(theme, &border);
-#+end_src
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_add_style_rule (self, rule)= | Append a rule | The theme refs it; emits =::changed= |
+| =lrg_theme_clear_style_rules (self)= | Remove every rule | Emits =::changed= when there were any |
+| =lrg_theme_get_style_rules (self)= | The rules in insertion order | (transfer none) (element-type LrgStyleRule) |
+| =lrg_theme_resolve_look (self, widget_type, classes, n_classes, part, state, look)= | Merge matching rules onto =look=, least specific first | Cached per (type, part, state, classes) until the theme changes |
 
-*** Status Colors
+See [[file:styling.org::#styling-rules][style rules]] for matching and specificity.
+
+** Fonts
 :PROPERTIES:
-:CUSTOM_ID: status-colors
+:CUSTOM_ID: theme-fonts
 :END:
-#+begin_src C
-GrlColor error = GRL_COLOR(255, 50, 50, 255);
-lrg_theme_set_error_color(theme, &error);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_get_ui_font (self)= | Font paint-based widgets draw with | (transfer none) (nullable); loaded lazily with a window: theme font path, then system UI fonts (Adwaita Sans, Inter, Cantarell, Noto Sans, Open Sans, DejaVu Sans), then the legacy default font; =NULL= = raylib's built-in font |
+| =lrg_theme_set_ui_font (self, font)= | Install a =GrlFont= | =NULL= = pick automatically again; emits =::changed= |
+| =lrg_theme_load_ui_font (self, path, error)= | Load a TTF/OTF as the UI font | Needs a window; rasterised at 64 px with mipmaps and trilinear filtering; =LRG_THEME_ERROR_FONT= on failure |
+| =lrg_theme_get_font_path (self)= | Font file requested by the theme (YAML =font:= or =load_ui_font()=) | nullable |
+| =lrg_theme_get_default_font= / =set_default_font= | Legacy default font (used by =draw()=-based widgets) | Lazily initialised once per process from =LrgFontManager= (see [[file:../text/font-manager.org][font manager]]) |
 
-GrlColor success = GRL_COLOR(50, 255, 50, 255);
-lrg_theme_set_success_color(theme, &success);
-#+end_src
-
-** Typography
+** YAML
 :PROPERTIES:
-:CUSTOM_ID: typography
+:CUSTOM_ID: theme-yaml
 :END:
-*** Automatic Font Loading
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_theme_new_from_file (path, error)= | New theme from a file | (transfer full) (nullable) |
+| =lrg_theme_new_from_data (data, length, error)= | New theme from YAML text | =length= -1 for nul-terminated |
+| =lrg_theme_load_from_file (self, path, error)= | Apply a file on top of =self= | Relative =font:= resolved against the file's directory; error messages prefixed with the path |
+| =lrg_theme_load_from_data (self, data, length, error)= | Apply YAML text on top of =self= | Order: =preset=, =name= / =dark= / =motion=, =accent=, =colors= / =metrics=, =styles= appended, =font=; atomic (nothing changes on error); one =::changed= |
+| =lrg_theme_to_data (self, length, error)= | Serialise everything to YAML | (transfer full); loads back unchanged |
+| =lrg_theme_save_to_file (self, path, error)= | Write =to_data()= to a file | |
+
+Errors use =LRG_THEME_ERROR= (=PARSE=, =INVALID=, =FONT=). The file format is documented in [[file:../../guides/theming.org::#theming-file][the theming guide]] and the =styles:= schema in [[file:styling.org::#styling-yaml][styling]].
+
+** Properties and signals
 :PROPERTIES:
-:CUSTOM_ID: automatic-font-loading
+:CUSTOM_ID: theme-properties
 :END:
-The theme lazily initializes fonts from =LrgFontManager= on first access. When you call =lrg_theme_get_default_font()=, the theme:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =name= | string | read/write | Theme name |
+| =dark= | boolean (default =TRUE=) | read/write | Dark flag |
+| =motion= | =LrgMotion= | read/write | Transition preset |
+| =primary-color= | =GrlColor= | read/write | Legacy alias of =ACCENT= |
+| =secondary-color= | =GrlColor= | read/write | Legacy alias of =CONTROL= |
+| =accent-color= | =GrlColor= | read/write | Legacy alias of =FOCUS= |
+| =background-color= | =GrlColor= | read/write | Legacy alias of =WINDOW= |
+| =surface-color= | =GrlColor= | read/write | Legacy alias of =PANEL= |
+| =text-color= | =GrlColor= | read/write | Legacy alias of =TEXT= |
+| =text-secondary-color= | =GrlColor= | read/write | Legacy alias of =TEXT_MUTED= |
+| =border-color= | =GrlColor= | read/write | Legacy alias of =BORDER= |
+| =error-color= | =GrlColor= | read/write | Legacy alias of =DANGER= |
+| =success-color= | =GrlColor= | read/write | Legacy alias of =SUCCESS= |
+| =default-font= | =GrlFont= | read/write | Legacy default font |
+| =font-size-small= / =font-size-normal= / =font-size-large= | float | read/write | Aliases of =FONT_SIZE_SMALL= / =FONT_SIZE= / =FONT_SIZE_LARGE= |
+| =border-width= / =corner-radius= | float | read/write | Aliases of the metrics of the same name (corner radius default is now 8, was 4) |
+| =padding-small= / =padding-normal= / =padding-large= | float (4 / 8 / 16) | read/write | Legacy paddings; separate values, not metrics |
 
-1. Checks if a font was explicitly set via =lrg_theme_set_default_font()=
-2. If not, calls =lrg_font_manager_initialize()= to detect system fonts
-3. Returns the font manager's default font (typically Liberation Sans, Noto Sans, or DejaVu Sans)
-4. Falls back to =NULL= if no system fonts found (widgets use raylib's bitmap font)
+| Signal | Signature | Emitted |
+|--------+-----------+---------|
+| =changed= | =void (LrgTheme *theme)= | After any colour, metric, motion, font or style-rule change; batched loads emit it once |
 
-#+begin_src C
-LrgTheme *theme = lrg_theme_get_default ();
+** Legacy API
+:PROPERTIES:
+:CUSTOM_ID: theme-legacy
+:END:
+The original per-colour and per-size accessors still work and are aliases of roles and metrics, so older code and saved settings keep functioning:
 
-/* This triggers automatic system font detection */
-GrlFont *font = lrg_theme_get_default_font (theme);
+| Legacy accessor pair | Now |
+|----------------------+-----|
+| =lrg_theme_get/set_primary_color= | =ACCENT= (use =lrg_theme_set_accent()= to derive the family) |
+| =lrg_theme_get/set_secondary_color= | =CONTROL= |
+| =lrg_theme_get/set_accent_color= | =FOCUS= (note: not =ACCENT=) |
+| =lrg_theme_get/set_background_color= | =WINDOW= |
+| =lrg_theme_get/set_surface_color= | =PANEL= |
+| =lrg_theme_get/set_text_color= | =TEXT= |
+| =lrg_theme_get/set_text_secondary_color= | =TEXT_MUTED= |
+| =lrg_theme_get/set_border_color= | =BORDER= |
+| =lrg_theme_get/set_error_color= | =DANGER= |
+| =lrg_theme_get/set_success_color= | =SUCCESS= |
+| =lrg_theme_get/set_font_size_small / _normal / _large= | =FONT_SIZE_SMALL= / =FONT_SIZE= / =FONT_SIZE_LARGE= |
+| =lrg_theme_get/set_border_width=, =_corner_radius= | metrics of the same name |
+| =lrg_theme_get/set_padding_small / _normal / _large= | independent legacy values (new code uses =PADDING_X=, =PADDING_Y=, =SPACING=) |
 
-if (font != NULL)
+** Example: a theme built in code
+:PROPERTIES:
+:CUSTOM_ID: theme-example
+:END:
+#+begin_src c
+static LrgTheme *
+make_arcade_theme (void)
 {
-    /* Using system font (Liberation Sans, etc.) */
-}
-else
-{
-    /* No system fonts found - widgets fall back to raylib default */
-}
-#+end_src
+	static const GrlColor magenta = { 255, 64, 160, 255 };
+	static const GrlColor bg = { 8, 6, 20, 255 };
+	LrgTheme             *theme = lrg_theme_new_preset ("midnight");
+	g_autoptr(LrgStyleRule) pill = lrg_style_rule_new ("LrgButton", NULL,
+	                                                   LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
 
-*** Setting a Custom Font
-:PROPERTIES:
-:CUSTOM_ID: setting-a-custom-font
-:END:
-Override the auto-detected font with your own:
+	lrg_theme_set_name (theme, "arcade");
+	lrg_theme_set_motion (theme, LRG_MOTION_WOBBLY);
+	lrg_theme_set_accent (theme, &magenta);
+	lrg_theme_set_color (theme, LRG_THEME_COLOR_WINDOW, &bg);
+	lrg_theme_set_metric (theme, LRG_THEME_METRIC_FONT_SIZE, 20.0f);
+	lrg_theme_set_metric (theme, LRG_THEME_METRIC_CONTROL_HEIGHT, 44.0f);
 
-#+begin_src C
-LrgFontManager *fonts = lrg_font_manager_get_default ();
-lrg_font_manager_load_font (fonts, "my-font", "assets/fonts/Roboto.ttf", 16, NULL);
+	lrg_part_look_set_radius (lrg_style_rule_get_look (pill), G_MAXFLOAT);
+	lrg_theme_add_style_rule (theme, pill);
 
-GrlFont *font = lrg_font_manager_get_font (fonts, "my-font");
-lrg_theme_set_default_font (theme, font);
-#+end_src
-
-*** Font Sizes
-:PROPERTIES:
-:CUSTOM_ID: font-sizes
-:END:
-#+begin_src C
-lrg_theme_set_font_size_small (theme, 12.0f);
-lrg_theme_set_font_size_normal (theme, 16.0f);
-lrg_theme_set_font_size_large (theme, 24.0f);
-
-/* Query sizes */
-gfloat small = lrg_theme_get_font_size_small (theme);
-gfloat normal = lrg_theme_get_font_size_normal (theme);
-gfloat large = lrg_theme_get_font_size_large (theme);
-#+end_src
-
-*** Font Manager Integration
-:PROPERTIES:
-:CUSTOM_ID: font-manager-integration
-:END:
-The theme integrates with =LrgFontManager= for system font detection:
-
-#+begin_src C
-/* Font manager auto-loads these on initialization */
-/* ui-small  (12px) */
-/* ui-normal (16px) - set as default */
-/* ui-large  (24px) */
-
-LrgFontManager *fonts = lrg_font_manager_get_default ();
-
-/* Access specific sizes */
-GrlFont *small = lrg_font_manager_get_font (fonts, "ui-small");
-GrlFont *large = lrg_font_manager_get_font (fonts, "ui-large");
-#+end_src
-
-See [[../text/font-manager.md][Font Manager]] for details on system font paths and debugging.
-
-** Spacing
-:PROPERTIES:
-:CUSTOM_ID: spacing
-:END:
-*** Padding
-:PROPERTIES:
-:CUSTOM_ID: padding
-:END:
-#+begin_src C
-lrg_theme_set_padding_small(theme, 4.0f);
-lrg_theme_set_padding_normal(theme, 8.0f);
-lrg_theme_set_padding_large(theme, 16.0f);
-#+end_src
-
-*** Border
-:PROPERTIES:
-:CUSTOM_ID: border
-:END:
-#+begin_src C
-lrg_theme_set_border_width(theme, 2.0f);
-#+end_src
-
-*** Corner Radius
-:PROPERTIES:
-:CUSTOM_ID: corner-radius
-:END:
-#+begin_src C
-lrg_theme_set_corner_radius(theme, 4.0f);
-#+end_src
-
-** Using Theme in Widgets
-:PROPERTIES:
-:CUSTOM_ID: using-theme-in-widgets
-:END:
-Widgets typically use the default theme:
-
-#+begin_src C
-/* Button uses theme colors */
-g_autoptr(LrgButton) button = lrg_button_new("Click Me");
-GrlColor primary = grl_color_dup(lrg_theme_get_primary_color(theme));
-lrg_button_set_normal_color(button, &primary);
-#+end_src
-
-** Complete Theme Setup
-:PROPERTIES:
-:CUSTOM_ID: complete-theme-setup
-:END:
-#+begin_src C
-void setup_theme(void)
-{
-    LrgTheme *theme = lrg_theme_get_default();
-
-    /* Dark theme palette */
-    GrlColor bg = GRL_COLOR(20, 20, 30, 255);
-    GrlColor surface = GRL_COLOR(40, 40, 50, 255);
-    GrlColor primary = GRL_COLOR(100, 150, 255, 255);
-    GrlColor text = GRL_COLOR(220, 220, 220, 255);
-    GrlColor border = GRL_COLOR(80, 80, 100, 255);
-
-    lrg_theme_set_background_color(theme, &bg);
-    lrg_theme_set_surface_color(theme, &surface);
-    lrg_theme_set_primary_color(theme, &primary);
-    lrg_theme_set_text_color(theme, &text);
-    lrg_theme_set_border_color(theme, &border);
-
-    /* Typography */
-    lrg_theme_set_font_size_small(theme, 12.0f);
-    lrg_theme_set_font_size_normal(theme, 16.0f);
-    lrg_theme_set_font_size_large(theme, 24.0f);
-
-    /* Spacing */
-    lrg_theme_set_padding_small(theme, 4.0f);
-    lrg_theme_set_padding_normal(theme, 8.0f);
-    lrg_theme_set_padding_large(theme, 16.0f);
-    lrg_theme_set_border_width(theme, 1.0f);
-    lrg_theme_set_corner_radius(theme, 4.0f);
+	g_warn_if_fail (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_TEXT,
+	                                        LRG_THEME_COLOR_PANEL) >= 4.5f);
+	return theme;
 }
 #+end_src
-
-** Common Themes
-:PROPERTIES:
-:CUSTOM_ID: common-themes
-:END:
-*** Light Theme
-:PROPERTIES:
-:CUSTOM_ID: light-theme
-:END:
-#+begin_src C
-void apply_light_theme(void)
-{
-    LrgTheme *theme = lrg_theme_get_default();
-
-    GrlColor bg = GRL_COLOR(245, 245, 245, 255);
-    GrlColor surface = GRL_COLOR(255, 255, 255, 255);
-    GrlColor text = GRL_COLOR(30, 30, 30, 255);
-    GrlColor primary = GRL_COLOR(25, 118, 210, 255);
-    GrlColor border = GRL_COLOR(200, 200, 200, 255);
-
-    lrg_theme_set_background_color(theme, &bg);
-    lrg_theme_set_surface_color(theme, &surface);
-    lrg_theme_set_text_color(theme, &text);
-    lrg_theme_set_primary_color(theme, &primary);
-    lrg_theme_set_border_color(theme, &border);
-}
-#+end_src
-
-*** Dark Theme
-:PROPERTIES:
-:CUSTOM_ID: dark-theme
-:END:
-#+begin_src C
-void apply_dark_theme(void)
-{
-    LrgTheme *theme = lrg_theme_get_default();
-
-    GrlColor bg = GRL_COLOR(33, 33, 33, 255);
-    GrlColor surface = GRL_COLOR(48, 48, 48, 255);
-    GrlColor text = GRL_COLOR(229, 229, 229, 255);
-    GrlColor primary = GRL_COLOR(33, 150, 243, 255);
-    GrlColor border = GRL_COLOR(76, 76, 76, 255);
-
-    lrg_theme_set_background_color(theme, &bg);
-    lrg_theme_set_surface_color(theme, &surface);
-    lrg_theme_set_text_color(theme, &text);
-    lrg_theme_set_primary_color(theme, &primary);
-    lrg_theme_set_border_color(theme, &border);
-}
-#+end_src
-
-*** Retro/Pixel Art Theme
-:PROPERTIES:
-:CUSTOM_ID: retropixel-art-theme
-:END:
-#+begin_src C
-void apply_retro_theme(void)
-{
-    LrgTheme *theme = lrg_theme_get_default();
-
-    /* 16-color palette */
-    GrlColor bg = GRL_COLOR(0, 0, 0, 255);
-    GrlColor surface = GRL_COLOR(85, 85, 85, 255);
-    GrlColor text = GRL_COLOR(255, 255, 255, 255);
-    GrlColor primary = GRL_COLOR(0, 255, 0, 255);  /* Bright green */
-    GrlColor border = GRL_COLOR(170, 170, 170, 255);
-
-    lrg_theme_set_background_color(theme, &bg);
-    lrg_theme_set_surface_color(theme, &surface);
-    lrg_theme_set_text_color(theme, &text);
-    lrg_theme_set_primary_color(theme, &primary);
-    lrg_theme_set_border_color(theme, &border);
-
-    /* Large fonts for pixelated look */
-    lrg_theme_set_font_size_small(theme, 12.0f);
-    lrg_theme_set_font_size_normal(theme, 16.0f);
-    lrg_theme_set_font_size_large(theme, 24.0f);
-
-    /* No rounded corners for retro look */
-    lrg_theme_set_corner_radius(theme, 0.0f);
-}
-#+end_src
-
-** API Reference
-:PROPERTIES:
-:CUSTOM_ID: api-reference
-:END:
-*** Singleton Access
-:PROPERTIES:
-:CUSTOM_ID: singleton-access
-:END:
-- =lrg_theme_get_default()= - Get default theme
-- =lrg_theme_new()= - Create custom theme
-
-*** Primary Colors
-:PROPERTIES:
-:CUSTOM_ID: primary-colors-1
-:END:
-- =lrg_theme_get_primary_color(LrgTheme *self)=
-- =lrg_theme_set_primary_color(LrgTheme *self, const GrlColor *color)=
-- =lrg_theme_get_secondary_color(LrgTheme *self)=
-- =lrg_theme_set_secondary_color(LrgTheme *self, const GrlColor *color)=
-- =lrg_theme_get_accent_color(LrgTheme *self)=
-- =lrg_theme_set_accent_color(LrgTheme *self, const GrlColor *color)=
-
-*** Background Colors
-:PROPERTIES:
-:CUSTOM_ID: background-colors-1
-:END:
-- =lrg_theme_get_background_color(LrgTheme *self)=
-- =lrg_theme_set_background_color(LrgTheme *self, const GrlColor *color)=
-- =lrg_theme_get_surface_color(LrgTheme *self)=
-- =lrg_theme_set_surface_color(LrgTheme *self, const GrlColor *color)=
-
-*** Text Colors
-:PROPERTIES:
-:CUSTOM_ID: text-colors-1
-:END:
-- =lrg_theme_get_text_color(LrgTheme *self)=
-- =lrg_theme_set_text_color(LrgTheme *self, const GrlColor *color)=
-- =lrg_theme_get_text_secondary_color(LrgTheme *self)=
-- =lrg_theme_set_text_secondary_color(LrgTheme *self, const GrlColor *color)=
-
-*** Border/Status
-:PROPERTIES:
-:CUSTOM_ID: borderstatus
-:END:
-- =lrg_theme_get_border_color(LrgTheme *self)=
-- =lrg_theme_set_border_color(LrgTheme *self, const GrlColor *color)=
-- =lrg_theme_get_error_color(LrgTheme *self)=
-- =lrg_theme_set_error_color(LrgTheme *self, const GrlColor *color)=
-- =lrg_theme_get_success_color(LrgTheme *self)=
-- =lrg_theme_set_success_color(LrgTheme *self, const GrlColor *color)=
-
-*** Typography
-:PROPERTIES:
-:CUSTOM_ID: typography-1
-:END:
-- =lrg_theme_get_default_font(LrgTheme *self)=
-- =lrg_theme_set_default_font(LrgTheme *self, GrlFont *font)=
-- =lrg_theme_get_font_size_small(LrgTheme *self)=
-- =lrg_theme_set_font_size_small(LrgTheme *self, gfloat size)=
-- =lrg_theme_get_font_size_normal(LrgTheme *self)=
-- =lrg_theme_set_font_size_normal(LrgTheme *self, gfloat size)=
-- =lrg_theme_get_font_size_large(LrgTheme *self)=
-- =lrg_theme_set_font_size_large(LrgTheme *self, gfloat size)=
-
-*** Spacing
-:PROPERTIES:
-:CUSTOM_ID: spacing-1
-:END:
-- =lrg_theme_get_padding_small(LrgTheme *self)=
-- =lrg_theme_set_padding_small(LrgTheme *self, gfloat padding)=
-- =lrg_theme_get_padding_normal(LrgTheme *self)=
-- =lrg_theme_set_padding_normal(LrgTheme *self, gfloat padding)=
-- =lrg_theme_get_padding_large(LrgTheme *self)=
-- =lrg_theme_set_padding_large(LrgTheme *self, gfloat padding)=
-- =lrg_theme_get_border_width(LrgTheme *self)=
-- =lrg_theme_set_border_width(LrgTheme *self, gfloat width)=
-- =lrg_theme_get_corner_radius(LrgTheme *self)=
-- =lrg_theme_set_corner_radius(LrgTheme *self, gfloat radius)=
 
 ** Notes
 :PROPERTIES:
-:CUSTOM_ID: notes
+:CUSTOM_ID: theme-notes
 :END:
-- The default theme is a singleton
-- All widgets use the default theme unless overridden
-- Custom themes can be created for testing or multiple themes
-- Colors are mutable - changes affect all widgets using them
-- Spacing values are in pixels
-- Fonts are lazy-loaded from =LrgFontManager= on first access to =lrg_theme_get_default_font()=
-- System fonts (Liberation Sans, Noto Sans, DejaVu Sans) are auto-detected
+- Widgets read the theme every frame; colour changes show immediately. Size metric changes need a re-layout (see [[file:../../guides/theming.org::#theming-runtime][switching at runtime]]).
+- Every mutation invalidates the style-rule cache; editing a rule's look after adding it does not.
+- The legacy default font is initialised from the font manager once per process, by the first theme asked for it; themes created later have no legacy default font unless one is set (=lrg_theme_set_default()= carries it over).
 
 ** Related
 :PROPERTIES:
-:CUSTOM_ID: related
+:CUSTOM_ID: theme-related
 :END:
-- [[file:widget.org][Widget]] - Widget system
-- [[file:index.org][UI Module Overview]] - Complete UI documentation
-- [[../text/font-manager.md][Font Manager]] - Font loading and system font detection
-- [[file:widgets/label.org][Label Widget]] - Text display widget using theme fonts
+- [[file:../../guides/theming.org][Theming guide]]
+- [[file:styling.org][UI styling]]
+- [[file:../gui/index.org::#style-from-theme][lrg_gui_style_init_from_theme()]] (sharing a theme with the editor GUI)
+- [[file:../text/font-manager.org][Font manager]]
