@@ -146,6 +146,15 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-text-input.h \
 	src/ui/lrg-style.h \
 	src/ui/lrg-theme.h \
+	src/ui/lrg-overlay.h \
+	src/ui/lrg-scroll-box.h \
+	src/ui/lrg-separator.h \
+	src/ui/lrg-spin-box.h \
+	src/ui/lrg-combo-box.h \
+	src/ui/lrg-dialog.h \
+	src/ui/lrg-toast.h \
+	src/ui/lrg-toast-queue.h \
+	src/ui/lrg-list-view.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
@@ -800,6 +809,15 @@ SOURCES := \
 	src/ui/lrg-text-input.c \
 	src/ui/lrg-style.c \
 	src/ui/lrg-theme.c \
+	src/ui/lrg-overlay.c \
+	src/ui/lrg-scroll-box.c \
+	src/ui/lrg-separator.c \
+	src/ui/lrg-spin-box.c \
+	src/ui/lrg-combo-box.c \
+	src/ui/lrg-dialog.c \
+	src/ui/lrg-toast.c \
+	src/ui/lrg-toast-queue.c \
+	src/ui/lrg-list-view.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \

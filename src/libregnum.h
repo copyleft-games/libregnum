@@ -189,6 +189,15 @@
 #include "ui/lrg-slider.h"
 #include "ui/lrg-text-input.h"
 #include "ui/lrg-theme.h"
+#include "ui/lrg-overlay.h"
+#include "ui/lrg-scroll-box.h"
+#include "ui/lrg-separator.h"
+#include "ui/lrg-spin-box.h"
+#include "ui/lrg-combo-box.h"
+#include "ui/lrg-dialog.h"
+#include "ui/lrg-toast.h"
+#include "ui/lrg-toast-queue.h"
+#include "ui/lrg-list-view.h"
 
 /* Tilemap module */
 #include "tilemap/lrg-tileset.h"

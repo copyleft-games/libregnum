@@ -80,6 +80,9 @@ TEST_SOURCES := \
 	test-paint.c \
 	test-spring.c \
 	test-ui-theme.c \
+	test-ui-widgets.c \
+	test-ui-new-widgets.c \
+	test-ui-layout.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \
