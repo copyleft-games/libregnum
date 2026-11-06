@@ -62,14 +62,16 @@ Cells that already hold the painted id are skipped, so re-painting records nothi
 :PROPERTIES:
 :CUSTOM_ID: tiles-panel
 :END:
-View > Panels > Tiles (docked as a tab next to the inspector; Tilemap > Tiles Panel). For the selected tilemap node it shows:
+View > Panels > Tiles (docked as a tab next to the inspector; Tilemap > Tiles Panel). Since 0.8.1 it is =LrgEditorTilesPanel= on the retained toolkit (widget details and API: [[file:editor-app.org::#editor-panel-tiles][Editor Application > Tiles panel]]). For the selected tilemap node it shows, in a scrolling column:
 
-- the paint-mode toggle and the five tools;
-- brush size (also =[= / =]=) and the current tile id;
-- grid settings: width, height, tileset slicing (drags merge into one undo step);
-- the tileset path; drop an image from the Assets panel on it to set it;
-- layers, top first: visibility checkbox, click to make a layer current, + Layer / - Layer (undoable);
-- the palette: the tileset image sliced into its tiles, click one to paint with it. Without an image (or headless) it shows numbered colour swatches with the same colours the viewport uses for untextured tiles.
+- the node name and the paint-mode toggle (=B=);
+- the five tools as chips (the checked one is the view state's =tile-tool=; picking one turns paint mode on), brush size (also =[= / =]=) and the current tile id;
+- grid settings: Create Grid for a node that has none, else width, height and the tileset slicing (each change is one undo step);
+- the tileset: a drop zone that takes an image dragged from the Assets panel (payload =application/x-lrg-asset=); it lights up while a matching drag hovers it and stores project paths relative to the project;
+- layers, top first: an eye to show / hide (undoable), click a name to make it current, + / - Layer (undoable), and a name field with Rename (undoable, also =tilemap.rename-layer=);
+- the palette: the tileset image sliced into its tiles, click one to paint with it (eraser and eyedropper switch back to the brush), hovered and current tiles highlighted. Without an image (or headless) it shows 8 x 4 numbered colour swatches with the same colours the viewport uses for untextured tiles.
+
+The panel and the viewport share the view state's =tile-tool= / =tile-mode= and the app's =LrgEditorTilePainter=, so =tilemap.tool= over IPC, the actions and the panel always show the same tool, tile, layer and brush.
 
 The viewport shows the grid outline always, cell lines while painting the node, the brush footprint under the pointer, a rectangle preview, and a "Tiles: tool tile layer brush" readout. Tiles render as textured quads from the tileset in the node's XY plane (layers stack bottom first); 2D mode (=Ctrl+Shift+2=) is the natural way to paint.
 
@@ -158,9 +160,15 @@ Levels hold named timelines that keyframe node properties. The Timeline panel (V
 :PROPERTIES:
 :CUSTOM_ID: timeline-panel
 :END:
-- Toolbar: timeline chooser, name field + New, Delete, Play/Pause (=K=), Stop, Key (=I=: insert transform keys for every selected node at the playhead, as one undo step), Delete Key, the easing used for new keys (changing it also re-eases the selected key), Loop, Autoplay, length, and the playhead time.
-- Lanes: one row per track ("Node channel"; missing nodes in red) with a ruler; diamonds are keys. Click a diamond to select it, drag it to retime it (snaps to 10 ms, one undo step per drag). Click or drag anywhere else on the lanes to scrub.
+Since 0.8.1 the panel is =LrgEditorTimelinePanel= on an =LrgTimelineView= (widget details and API: [[file:editor-app.org::#editor-panel-timeline][Editor Application > Timeline panel]]).
+
+- Toolbar: timeline picker, name field + New (Enter), Rename, Delete; Loop and Autoplay toggles; the length.
+- Transport: previous key, Play/Pause (=K=), Stop, next key; Key (=I=: insert transform keys for every selected node at the playhead, as one undo step); Delete Keys; the easing used for new keys (changing it also re-eases every selected key, one undo step); the playhead time.
+- Tracks: one group per node (its own colour; missing nodes show "(missing GUID)"), one row per animated channel inside it, collapsible. Keys are diamonds when linear and circles when eased. Click selects a key (Shift / Ctrl add), drag a rubber band to select several, drag selected keys to retime them (snapped to 10 ms, one undo step for the whole drag, however many keys), Delete removes them. Right click offers Insert Keyframe, Delete Selected Keys and a Key Easing menu (Linear, Ease In / Out / In Out by family).
+- Ruler: click or drag to scrub (a non-destructive preview, see below).
 - =Alt+Left= / =Alt+Right= jump the playhead to the previous / next key of any track.
+
+Every edit goes through the undoable =lrg_editor_timeline_*= API and every scrub / play through the view state's timeline properties, so the panel, the =timeline.*= IPC methods, =lrgeditorctl timeline= and Emacs always agree.
 
 ** Preview semantics
 :PROPERTIES:
@@ -205,7 +213,7 @@ timelines:
 - =lrgeditorctl timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|play [NAME]|stop|seek TIME [NAME]|state]=.
 - MCP: =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=.
 - Emacs: =libregnum-timeline-key= (=C-c L k=; with =C-u= one channel and value), =libregnum-timeline-ease=, =libregnum-timeline-play= (=C-c L a=), =libregnum-timeline-seek=, =libregnum-timeline-stop= (=C-c L A=).
-- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=.
+- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.rename=, =timeline.delete=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=.
 
 * Asset thumbnails
 :PROPERTIES:
@@ -245,7 +253,7 @@ The Assets panel's grid view (the Grid/List button, or View > Asset Thumbnails) 
 :CUSTOM_ID: tools-limits
 :END:
 - Tilemaps: one tileset per node; no auto-tiling/terrain rules, no per-tile flips or rotation, no collision editing in the panel (the runtime =LrgTileset= properties are not authored here). =lrg_level_instantiate()= does not create runtime tilemaps; games convert with =lrg_node_tilemap_to_runtime()=.
-- Timelines: scalar channels only (colour is four tracks); no Bézier tangents (easing per segment instead); the timeline panel shows one row per track without per-node folding; play-in-editor animates the authoring nodes, not the runtime entities.
+- Timelines: scalar channels only (colour is four tracks); no Bézier tangents (easing per segment instead); play-in-editor animates the authoring nodes, not the runtime entities.
 - Thumbnails: no thumbnails for audio, fonts, scripts, tilesets (=.tileset=/=.tsx=) or CAD parts; a request still in flight when its file is invalidated may deliver the old image once (the next change or Rebuild Thumbnails fixes it).
 
 * Source map
@@ -262,9 +270,11 @@ The Assets panel's grid view (the Grid/List button, or View > Asset Thumbnails) 
 | =src/editor/lrg-editor-command.[ch]= | =LRG_EDITOR_CMD_TILES=, =LRG_EDITOR_CMD_TIMELINE= |
 | =src/editor/lrg-level-serializer.c= | =visual.tilemap= and =timelines:= YAML |
 | =src/editor/lrg-editor-server-tools.c= | =tilemap.*= and =timeline.*= IPC methods |
-| =src/editor/ui/lrg-editor-panel-tiles.c= | Tiles panel, viewport tile tool and overlay |
-| =src/editor/ui/lrg-editor-panel-timeline.c= | Timeline panel, preview, play-in-editor hooks |
+| =src/editor/ui/lrg-editor-tiles-panel.[ch]= | Tiles panel (=LrgEditorTilesPanel=) |
+| =src/editor/ui/lrg-editor-timeline-panel.[ch]= | Timeline panel (=LrgEditorTimelinePanel=) |
+| =src/editor/ui/lrg-editor-play.c= | timeline preview and play-in-editor hooks, tile target |
 | =src/editor/ui/lrg-editor-thumbnails.c= | per-project cache, uploads, invalidation |
 | =src/editor/ui/lrg-editor-render.c= | tilemap rendering, model thumbnail renders, asset forgetting |
 | =tests/test-editor-tilemap.c=, =test-editor-timeline.c=, =test-thumbnail-cache.c= | headless unit tests |
+| =tests/test-editor-app-panels.c= | Tiles and Timeline panels driven through the canvas |
 | =tests/test-editor-server.c=, =test-editor-app.c=, =editor-x11-smoke.sh=, =editorctl-smoke.sh= | IPC, app, real-input and CLI tests |
