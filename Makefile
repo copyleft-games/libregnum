@@ -188,6 +188,7 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-ui-actions.h \
 	src/ui/lrg-file-browser.h \
 	src/ui/lrg-file-dialog.h \
+	src/ui/lrg-block-editor.h \
 	src/ui/lrg-notification.h \
 	src/ui/lrg-header-bar.h \
 	src/ui/lrg-pagination.h \
@@ -887,6 +888,7 @@ SOURCES := \
 	src/ui/lrg-ui-actions.c \
 	src/ui/lrg-file-browser.c \
 	src/ui/lrg-file-dialog.c \
+	src/ui/lrg-block-editor.c \
 	src/ui/lrg-notification.c \
 	src/ui/lrg-header-bar.c \
 	src/ui/lrg-pagination.c \
