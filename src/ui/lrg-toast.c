@@ -21,6 +21,7 @@
 
 #include "lrg-toast.h"
 #include "../lrg-log.h"
+#include "../paint/lrg-paint-list.h"
 
 /* Card width: one width for every card so stacks line up */
 #define TOAST_WIDTH (340.0f)
@@ -34,6 +35,21 @@
 /* Progress hairline thickness */
 #define TOAST_HAIRLINE (2.0f)
 
+/* Gap above the button row and between buttons */
+#define TOAST_BUTTON_GAP (8.0f)
+
+/* One button on the card: its text, its action and where it was laid
+ * out (relative to the toast's top-left corner) */
+typedef struct
+{
+	gchar  *label;
+	gchar  *action;
+	gfloat  x;
+	gfloat  y;
+	gfloat  w;
+	gfloat  h;
+} ToastButton;
+
 struct _LrgToast
 {
 	LrgWidget     parent_instance;
@@ -44,6 +60,14 @@ struct _LrgToast
 	gdouble       duration;
 	gdouble       elapsed;
 	gboolean      dismissed;
+	LrgToastDismissReason reason;
+
+	/* Buttons along the bottom, the one under the pointer and the one
+	 * pressed (-1 for none), and the action run by a click on the card */
+	GArray       *buttons;
+	gint          hover_button;
+	gint          press_button;
+	gchar        *default_action;
 
 	/* Wrapped message, valid for wrap_width */
 	GPtrArray    *lines;
@@ -60,12 +84,14 @@ enum
 	PROP_KIND,
 	PROP_DURATION,
 	PROP_DISMISSED,
+	PROP_DEFAULT_ACTION,
 	N_PROPS
 };
 
 enum
 {
 	SIGNAL_DISMISSED,
+	SIGNAL_BUTTON_CLICKED,
 	N_SIGNALS
 };
 
@@ -94,6 +120,75 @@ lrg_toast_kind_get_type (void)
 	return type_id;
 }
 
+GType
+lrg_toast_dismiss_reason_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_TOAST_DISMISS_REASON_NONE, "LRG_TOAST_DISMISS_REASON_NONE", "none" },
+			{ LRG_TOAST_DISMISS_REASON_EXPIRED, "LRG_TOAST_DISMISS_REASON_EXPIRED", "expired" },
+			{ LRG_TOAST_DISMISS_REASON_CLICKED, "LRG_TOAST_DISMISS_REASON_CLICKED", "clicked" },
+			{ LRG_TOAST_DISMISS_REASON_BUTTON, "LRG_TOAST_DISMISS_REASON_BUTTON", "button" },
+			{ LRG_TOAST_DISMISS_REASON_PROGRAMMATIC, "LRG_TOAST_DISMISS_REASON_PROGRAMMATIC",
+			  "programmatic" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgToastDismissReason"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+
+	return type_id;
+}
+
+static void
+toast_button_clear (gpointer data)
+{
+	ToastButton *b = (ToastButton *) data;
+
+	g_clear_pointer (&b->label, g_free);
+	g_clear_pointer (&b->action, g_free);
+}
+
+/* dismiss_with: ends the toast once, remembering why */
+static void
+dismiss_with (LrgToast              *self,
+              LrgToastDismissReason  reason)
+{
+	if (self->dismissed)
+		return;
+	self->dismissed = TRUE;
+	self->reason = reason;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DISMISSED]);
+	g_signal_emit (self, signals[SIGNAL_DISMISSED], 0);
+}
+
+/* activate_detailed: runs a detailed action name ("app.undo",
+ * "app.open::recent", "app.zoom(2)") on the toast, so it is looked up
+ * through the toast's ancestors up to the canvas. A malformed name is
+ * logged and ignored. */
+static void
+activate_detailed (LrgToast    *self,
+                   const gchar *detailed)
+{
+	g_autofree gchar   *name = NULL;
+	g_autoptr(GVariant) target = NULL;
+	g_autoptr(GError)   error = NULL;
+
+	if (detailed == NULL || detailed[0] == '\0')
+		return;
+	if (!g_action_parse_detailed_name (detailed, &name, &target, &error))
+	{
+		lrg_warning (LRG_LOG_DOMAIN_UI, "toast action \"%s\": %s", detailed, error->message);
+		return;
+	}
+	if (!lrg_widget_activate_action (LRG_WIDGET (self), name, target))
+		lrg_debug (LRG_LOG_DOMAIN_UI, "toast action \"%s\" not found", name);
+}
+
 /* ==========================================================================
  * Layout helpers
  * ========================================================================== */
@@ -106,6 +201,8 @@ typedef struct
 	gfloat message_size;
 	gfloat title_h;
 	gfloat line_h;
+	gfloat button_size;   /* font size of button text */
+	gfloat button_h;      /* height of the button row, 0 without buttons */
 } ToastMetrics;
 
 static void
@@ -124,6 +221,15 @@ toast_metrics (LrgToast     *self,
 		lrg_paint_measure_text (font, self->title, m->title_size, 1.0f, NULL, &m->title_h);
 	lrg_paint_measure_text (font, "Ag", m->message_size, 1.0f, NULL, &m->line_h);
 	m->line_h = ceilf (m->line_h * 1.25f);
+	m->button_size = m->message_size;
+	m->button_h = 0.0f;
+	if (self->buttons->len > 0)
+	{
+		gfloat th = 0.0f;
+
+		lrg_paint_measure_text (font, "Ag", m->button_size, 1.0f, NULL, &th);
+		m->button_h = ceilf (th + lrg_theme_get_metric (theme, LRG_THEME_METRIC_PADDING_Y) * 1.2f);
+	}
 }
 
 /* text_w: width of @text at @size in the toast's font */
@@ -196,6 +302,60 @@ wrap_message (LrgToast *self,
 }
 
 /* kind_color: the theme colour role for the toast's kind */
+/* layout_buttons: lays the buttons out in a row along the bottom of a
+ * card of width @w and height @h, from the trailing edge (right, or
+ * left in right-to-left layouts) so the last-added button sits in the
+ * corner. Rects are stored relative to the toast. */
+static void
+layout_buttons (LrgToast           *self,
+                const ToastMetrics *m,
+                gfloat              w,
+                gfloat              h)
+{
+	GrlFont *font = lrg_theme_get_ui_font (lrg_widget_get_theme (LRG_WIDGET (self)));
+	gboolean rtl = lrg_widget_is_rtl (LRG_WIDGET (self));
+	gfloat   edge = w - m->pad;
+	gfloat   row_y = h - m->pad - TOAST_HAIRLINE - m->button_h;
+	guint    i;
+
+	for (i = self->buttons->len; i > 0; i--)
+	{
+		ToastButton *b = &g_array_index (self->buttons, ToastButton, i - 1);
+		gfloat       tw = 0.0f;
+
+		lrg_paint_measure_text (font, b->label, m->button_size, 1.0f, &tw, NULL);
+		b->w = ceilf (tw + m->pad * 1.5f);
+		b->h = m->button_h;
+		b->y = row_y;
+		b->x = edge - b->w;
+		edge = b->x - TOAST_BUTTON_GAP;
+
+		/* Mirror within the card for right-to-left layouts */
+		if (rtl)
+			b->x = w - b->x - b->w;
+	}
+}
+
+/* button_at: index of the button under world point (@x, @y), or -1 */
+static gint
+button_at (LrgToast *self,
+           gfloat    x,
+           gfloat    y)
+{
+	gfloat lx = x - lrg_widget_get_world_x (LRG_WIDGET (self));
+	gfloat ly = y - lrg_widget_get_world_y (LRG_WIDGET (self));
+	guint  i;
+
+	for (i = 0; i < self->buttons->len; i++)
+	{
+		ToastButton *b = &g_array_index (self->buttons, ToastButton, i);
+
+		if (lx >= b->x && lx < b->x + b->w && ly >= b->y && ly < b->y + b->h)
+			return (gint) i;
+	}
+	return -1;
+}
+
 static LrgThemeColor
 kind_color (LrgToastKind kind)
 {
@@ -265,6 +425,16 @@ lrg_toast_style_defaults (LrgWidget      *widget,
 		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
 		break;
 
+	case LRG_UI_PART_TAB:
+		/* Buttons: quiet pills with accent text that fill in on hover */
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme,
+			(state & LRG_WIDGET_STATE_PRESSED) ? LRG_THEME_COLOR_CONTROL_PRESSED :
+			(state & LRG_WIDGET_STATE_HOVERED) ? LRG_THEME_COLOR_CONTROL_HOVER :
+			LRG_THEME_COLOR_CONTROL));
+		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT));
+		lrg_part_look_set_radius (look, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS));
+		break;
+
 	default:
 		LRG_WIDGET_CLASS (lrg_toast_parent_class)->style_defaults (widget, part, state, look);
 		break;
@@ -290,6 +460,8 @@ lrg_toast_measure (LrgWidget *widget,
 	h = m.pad * 2.0f + m.title_h;
 	if (self->lines->len > 0)
 		h += (m.title_h > 0.0f ? TOAST_TEXT_GAP : 0.0f) + m.line_h * (gfloat) self->lines->len;
+	if (m.button_h > 0.0f)
+		h += TOAST_BUTTON_GAP + m.button_h;
 	*height = ceilf (h + TOAST_HAIRLINE);
 }
 
@@ -339,6 +511,30 @@ lrg_toast_paint (LrgWidget    *widget,
 		                     ty + m.line_h * (gfloat) i, m.message_size, 1.0f, &message.foreground);
 	lrg_paint_list_pop_clip (list);
 
+	/* Button row: each button resolves its own hover/pressed look */
+	if (self->buttons->len > 0)
+	{
+		layout_buttons (self, &m, w, h);
+		for (i = 0; i < self->buttons->len; i++)
+		{
+			ToastButton    *b = &g_array_index (self->buttons, ToastButton, i);
+			LrgWidgetState  st = LRG_WIDGET_STATE_NONE;
+			LrgPartLook     bl;
+			gfloat          tw = 0.0f;
+			gfloat          th = 0.0f;
+
+			if ((gint) i == self->hover_button)
+				st |= LRG_WIDGET_STATE_HOVERED;
+			if ((gint) i == self->press_button && (gint) i == self->hover_button)
+				st |= LRG_WIDGET_STATE_PRESSED;
+			lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_TAB, st, &bl);
+			lrg_widget_paint_box (widget, list, &bl, x + b->x, y + b->y, b->w, b->h);
+			lrg_paint_measure_text (font, b->label, m.button_size, 1.0f, &tw, &th);
+			lrg_paint_list_text (list, font, b->label, x + b->x + (b->w - tw) * 0.5f,
+			                     y + b->y + (b->h - th) * 0.5f, m.button_size, 1.0f, &bl.foreground);
+		}
+	}
+
 	/* Remaining-time hairline along the bottom, inside the corners */
 	if (self->duration > 0.0)
 	{
@@ -364,18 +560,64 @@ lrg_toast_handle_event (LrgWidget        *widget,
 	gboolean  inside = lrg_widget_contains_point (widget, lrg_ui_event_get_x (event),
 	                                              lrg_ui_event_get_y (event));
 
+	gint      hit = inside ? button_at (self, lrg_ui_event_get_x (event), lrg_ui_event_get_y (event)) : -1;
+
 	switch (lrg_ui_event_get_event_type (event))
 	{
+	case LRG_UI_EVENT_MOUSE_MOVE:
+		/* Track the button under the pointer for its hover look */
+		self->hover_button = hit;
+		return FALSE;
+
+	case LRG_UI_EVENT_POINTER_LEAVE:
+		self->hover_button = -1;
+		return FALSE;
+
 	case LRG_UI_EVENT_MOUSE_BUTTON_DOWN:
-		return lrg_ui_event_get_button (event) == 0 && inside;
+		if (lrg_ui_event_get_button (event) != 0 || !inside)
+			return FALSE;
+		self->press_button = hit;
+		self->hover_button = hit;
+		return TRUE;
 
 	case LRG_UI_EVENT_MOUSE_BUTTON_UP:
-		/* A click dismisses early */
-		if (lrg_ui_event_get_button (event) != 0)
-			return FALSE;
-		if (inside)
-			lrg_toast_dismiss (self);
-		return TRUE;
+		{
+			gint pressed = self->press_button;
+
+			if (lrg_ui_event_get_button (event) != 0)
+				return FALSE;
+			self->press_button = -1;
+			if (!inside)
+				return TRUE;
+
+			/* Released on the button it was pressed on: run its action.
+			 * The toast is kept alive across the handlers, which may
+			 * clear the queue that owns it. */
+			if (pressed >= 0)
+			{
+				if (hit == pressed)
+				{
+					g_autoptr(LrgToast) keep = g_object_ref (self);
+					ToastButton        *b = &g_array_index (self->buttons, ToastButton, pressed);
+					g_autofree gchar   *action = g_strdup (b->action);
+
+					activate_detailed (self, action);
+					g_signal_emit (self, signals[SIGNAL_BUTTON_CLICKED], 0, (guint) pressed, action);
+					dismiss_with (self, LRG_TOAST_DISMISS_REASON_BUTTON);
+				}
+				return TRUE;
+			}
+
+			/* A click on the card runs the default action and dismisses */
+			{
+				g_autoptr(LrgToast) keep = g_object_ref (self);
+				g_autofree gchar   *action = g_strdup (self->default_action);
+
+				activate_detailed (self, action);
+				dismiss_with (self, LRG_TOAST_DISMISS_REASON_CLICKED);
+			}
+			return TRUE;
+		}
 
 	default:
 		return FALSE;
@@ -394,6 +636,8 @@ lrg_toast_finalize (GObject *object)
 	g_clear_pointer (&self->title, g_free);
 	g_clear_pointer (&self->message, g_free);
 	g_clear_pointer (&self->lines, g_ptr_array_unref);
+	g_clear_pointer (&self->buttons, g_array_unref);
+	g_clear_pointer (&self->default_action, g_free);
 
 	G_OBJECT_CLASS (lrg_toast_parent_class)->finalize (object);
 }
@@ -423,6 +667,9 @@ lrg_toast_get_property (GObject    *object,
 	case PROP_DISMISSED:
 		g_value_set_boolean (value, self->dismissed);
 		break;
+	case PROP_DEFAULT_ACTION:
+		g_value_set_string (value, self->default_action);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -449,6 +696,9 @@ lrg_toast_set_property (GObject      *object,
 		break;
 	case PROP_DURATION:
 		lrg_toast_set_duration (self, g_value_get_double (value));
+		break;
+	case PROP_DEFAULT_ACTION:
+		lrg_toast_set_default_action (self, g_value_get_string (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -515,6 +765,16 @@ lrg_toast_class_init (LrgToastClass *klass)
 		g_param_spec_boolean ("dismissed", NULL, NULL, FALSE,
 		                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
+	/**
+	 * LrgToast:default-action:
+	 *
+	 * Detailed action name activated when the card itself (not one of
+	 * its buttons) is clicked, e.g. "app.show-inbox".
+	 */
+	properties[PROP_DEFAULT_ACTION] =
+		g_param_spec_string ("default-action", NULL, NULL, NULL,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
 	/**
@@ -527,6 +787,19 @@ lrg_toast_class_init (LrgToastClass *klass)
 	signals[SIGNAL_DISMISSED] =
 		g_signal_new ("dismissed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+
+	/**
+	 * LrgToast::button-clicked:
+	 * @self: the toast
+	 * @index: the button's index
+	 * @action: (nullable): its detailed action name
+	 *
+	 * Emitted when a button is clicked, after its action ran and before
+	 * the toast is dismissed with %LRG_TOAST_DISMISS_REASON_BUTTON.
+	 */
+	signals[SIGNAL_BUTTON_CLICKED] =
+		g_signal_new ("button-clicked", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_STRING);
 }
 
 static void
@@ -536,6 +809,10 @@ lrg_toast_init (LrgToast *self)
 	self->duration = LRG_TOAST_DEFAULT_DURATION;
 	self->lines = g_ptr_array_new_with_free_func (g_free);
 	self->wrap_width = -1.0f;
+	self->buttons = g_array_new (FALSE, TRUE, sizeof (ToastButton));
+	g_array_set_clear_func (self->buttons, toast_button_clear);
+	self->hover_button = -1;
+	self->press_button = -1;
 }
 
 /* ==========================================================================
@@ -667,7 +944,7 @@ lrg_toast_advance (LrgToast *self,
 		self->elapsed += seconds;
 
 	if (self->duration > 0.0 && self->elapsed >= self->duration)
-		lrg_toast_dismiss (self);
+		dismiss_with (self, LRG_TOAST_DISMISS_REASON_EXPIRED);
 	return self->dismissed;
 }
 
@@ -676,11 +953,7 @@ lrg_toast_dismiss (LrgToast *self)
 {
 	g_return_if_fail (LRG_IS_TOAST (self));
 
-	if (self->dismissed)
-		return;
-	self->dismissed = TRUE;
-	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DISMISSED]);
-	g_signal_emit (self, signals[SIGNAL_DISMISSED], 0);
+	dismiss_with (self, LRG_TOAST_DISMISS_REASON_PROGRAMMATIC);
 }
 
 gboolean
@@ -689,4 +962,125 @@ lrg_toast_get_dismissed (LrgToast *self)
 	g_return_val_if_fail (LRG_IS_TOAST (self), TRUE);
 
 	return self->dismissed;
+}
+
+LrgToastDismissReason
+lrg_toast_get_dismiss_reason (LrgToast *self)
+{
+	g_return_val_if_fail (LRG_IS_TOAST (self), LRG_TOAST_DISMISS_REASON_NONE);
+
+	return self->dismissed ? self->reason : LRG_TOAST_DISMISS_REASON_NONE;
+}
+
+guint
+lrg_toast_add_button (LrgToast    *self,
+                      const gchar *label,
+                      const gchar *detailed_action)
+{
+	ToastButton b = { NULL, NULL, 0.0f, 0.0f, 0.0f, 0.0f };
+
+	g_return_val_if_fail (LRG_IS_TOAST (self), 0);
+	g_return_val_if_fail (label != NULL, 0);
+
+	b.label = g_strdup (label);
+	b.action = g_strdup (detailed_action);
+	g_array_append_val (self->buttons, b);
+	lrg_widget_queue_layout (LRG_WIDGET (self));
+	return self->buttons->len - 1;
+}
+
+guint
+lrg_toast_get_n_buttons (LrgToast *self)
+{
+	g_return_val_if_fail (LRG_IS_TOAST (self), 0);
+
+	return self->buttons->len;
+}
+
+const gchar *
+lrg_toast_get_button_label (LrgToast *self,
+                            guint     index)
+{
+	g_return_val_if_fail (LRG_IS_TOAST (self), NULL);
+
+	if (index >= self->buttons->len)
+		return NULL;
+	return g_array_index (self->buttons, ToastButton, index).label;
+}
+
+const gchar *
+lrg_toast_get_button_action (LrgToast *self,
+                             guint     index)
+{
+	g_return_val_if_fail (LRG_IS_TOAST (self), NULL);
+
+	if (index >= self->buttons->len)
+		return NULL;
+	return g_array_index (self->buttons, ToastButton, index).action;
+}
+
+void
+lrg_toast_clear_buttons (LrgToast *self)
+{
+	g_return_if_fail (LRG_IS_TOAST (self));
+
+	if (self->buttons->len == 0)
+		return;
+	g_array_set_size (self->buttons, 0);
+	self->hover_button = -1;
+	self->press_button = -1;
+	lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+gboolean
+lrg_toast_get_button_rect (LrgToast *self,
+                           guint     index,
+                           gfloat   *x,
+                           gfloat   *y,
+                           gfloat   *width,
+                           gfloat   *height)
+{
+	ToastMetrics  m;
+	ToastButton  *b;
+
+	g_return_val_if_fail (LRG_IS_TOAST (self), FALSE);
+
+	if (index >= self->buttons->len)
+		return FALSE;
+
+	/* Lay out from the current size so the answer matches painting */
+	toast_metrics (self, &m);
+	layout_buttons (self, &m, lrg_widget_get_width (LRG_WIDGET (self)),
+	                lrg_widget_get_height (LRG_WIDGET (self)));
+	b = &g_array_index (self->buttons, ToastButton, index);
+	if (x != NULL)
+		*x = lrg_widget_get_world_x (LRG_WIDGET (self)) + b->x;
+	if (y != NULL)
+		*y = lrg_widget_get_world_y (LRG_WIDGET (self)) + b->y;
+	if (width != NULL)
+		*width = b->w;
+	if (height != NULL)
+		*height = b->h;
+	return TRUE;
+}
+
+const gchar *
+lrg_toast_get_default_action (LrgToast *self)
+{
+	g_return_val_if_fail (LRG_IS_TOAST (self), NULL);
+
+	return self->default_action;
+}
+
+void
+lrg_toast_set_default_action (LrgToast    *self,
+                              const gchar *detailed_action)
+{
+	g_return_if_fail (LRG_IS_TOAST (self));
+
+	if (g_strcmp0 (self->default_action, detailed_action) == 0)
+		return;
+	g_free (self->default_action);
+	self->default_action = g_strdup (detailed_action);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DEFAULT_ACTION]);
 }

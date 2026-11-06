@@ -307,7 +307,9 @@ drop_toast (LrgNotification *self)
 {
 	if (self->toast == NULL)
 		return;
-	g_clear_signal_handler (&self->toast_handler, self->toast);
+	/* Both the dismissed and the button-clicked handlers */
+	g_signal_handlers_disconnect_by_data (self->toast, self);
+	self->toast_handler = 0;
 	g_clear_object (&self->toast);
 }
 
@@ -398,13 +400,55 @@ toast_duration (LrgNotification *self)
 }
 
 /*
+ * on_toast_button_clicked:
+ *
+ * A toast button stands for the notification button at the same index.
+ * The toast buttons carry no action of their own, so the action runs
+ * once, here, on the notification's anchor (like a server's
+ * ActionInvoked). The toast then dismisses itself with the BUTTON
+ * reason, which on_toast_dismissed() reports as DISMISSED.
+ */
+static void
+on_toast_button_clicked (LrgToast    *toast,
+                         guint        index,
+                         const gchar *toast_action,
+                         gpointer     user_data)
+{
+	LrgNotification  *self = LRG_NOTIFICATION (user_data);
+	g_autofree gchar *action = NULL;
+
+	(void) toast_action;
+	if (toast != self->toast || index >= self->buttons->len)
+		return;
+	action = g_strdup (g_array_index (self->buttons, Button, index).action);
+	invoke (self, action, FALSE);
+}
+
+/*
+ * sync_toast_buttons:
+ *
+ * Mirrors the notification's buttons onto @toast (labels only; see
+ * on_toast_button_clicked()).
+ */
+static void
+sync_toast_buttons (LrgNotification *self,
+                    LrgToast        *toast)
+{
+	guint i;
+
+	lrg_toast_clear_buttons (toast);
+	for (i = 0; i < self->buttons->len; i++)
+		lrg_toast_add_button (toast, g_array_index (self->buttons, Button, i).label, NULL);
+}
+
+/*
  * on_toast_dismissed:
  *
- * Works out why the toast went: a click (the toast is still PRESSED
- * while it handles the release) invokes the default action and counts
- * as a dismissal; a finished timer is an expiry; anything else (the
- * queue was cleared) is undefined. Withdrawals are reported by
- * lrg_notification_withdraw() itself.
+ * Maps the toast's dismiss reason to a close reason: a click on the card
+ * invokes the default action and counts as a dismissal, as does a
+ * button (its action already ran); a finished timer is an expiry;
+ * anything else (the queue was cleared) is undefined. Withdrawals are
+ * reported by lrg_notification_withdraw() itself.
  */
 static void
 on_toast_dismissed (LrgToast *toast,
@@ -412,21 +456,27 @@ on_toast_dismissed (LrgToast *toast,
 {
 	LrgNotification            *self = LRG_NOTIFICATION (user_data);
 	LrgNotificationCloseReason  reason;
-	gdouble                     duration = lrg_toast_get_duration (toast);
 
 	if (self->withdrawing || toast != self->toast)
 		return;
 
 	g_object_ref (self);
-	if (lrg_widget_get_state_flags (LRG_WIDGET (toast)) & LRG_WIDGET_STATE_PRESSED)
+	switch (lrg_toast_get_dismiss_reason (toast))
 	{
+	case LRG_TOAST_DISMISS_REASON_CLICKED:
 		invoke (self, self->default_action, TRUE);
 		reason = LRG_NOTIFICATION_CLOSE_REASON_DISMISSED;
-	}
-	else if (duration > 0.0 && lrg_toast_get_elapsed (toast) >= duration)
+		break;
+	case LRG_TOAST_DISMISS_REASON_BUTTON:
+		reason = LRG_NOTIFICATION_CLOSE_REASON_DISMISSED;
+		break;
+	case LRG_TOAST_DISMISS_REASON_EXPIRED:
 		reason = LRG_NOTIFICATION_CLOSE_REASON_EXPIRED;
-	else
+		break;
+	default:
 		reason = LRG_NOTIFICATION_CLOSE_REASON_UNDEFINED;
+		break;
+	}
 
 	/* Invoking may have withdrawn or re-shown us */
 	if (self->toast == toast)
@@ -453,6 +503,7 @@ show_toast (LrgNotification *self)
 		lrg_toast_set_message (self->toast, self->body);
 		lrg_toast_set_kind (self->toast, toast_kind (self));
 		lrg_toast_set_duration (self->toast, toast_duration (self));
+		sync_toast_buttons (self, self->toast);
 		return TRUE;
 	}
 
@@ -464,8 +515,10 @@ show_toast (LrgNotification *self)
 	toast = lrg_toast_new (self->title, self->body);
 	lrg_toast_set_kind (toast, toast_kind (self));
 	lrg_toast_set_duration (toast, toast_duration (self));
+	sync_toast_buttons (self, toast);
 	self->toast = toast;
 	self->toast_handler = g_signal_connect (toast, "dismissed", G_CALLBACK (on_toast_dismissed), self);
+	g_signal_connect (toast, "button-clicked", G_CALLBACK (on_toast_button_clicked), self);
 	lrg_toast_queue_show (queue, toast);
 
 	set_backend (self, LRG_NOTIFICATION_BACKEND_TOAST);

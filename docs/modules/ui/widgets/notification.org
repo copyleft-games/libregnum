@@ -100,10 +100,11 @@ Mapping to =LrgToast=:
 | timeout 0 | until dismissed |
 | timeout n ms | n / 1000 seconds (the toast clock pauses while hovered) |
 | click on the toast | default action, =::activated=, then =::closed= (=DISMISSED=) |
+| click on a toast button | that button's action, =::action-invoked=, then =::closed= (=DISMISSED=) |
 | timer runs out | =::closed= (=EXPIRED=) |
 | =lrg_toast_queue_clear()= | =::closed= (=UNDEFINED=) |
 
-Toasts have no buttons yet, so buttons are not shown in-app; the default action still works.
+The notification's buttons appear as toast buttons ([[file:toast.org::#toast-buttons][Toast buttons]]), with the same labels in the same order. Their actions run once, on the notification's anchor (or the queue when there is none), exactly as a server's =ActionInvoked= would. The close reason comes from =lrg_toast_get_dismiss_reason()=.
 
 ** Close reasons
 :PROPERTIES:

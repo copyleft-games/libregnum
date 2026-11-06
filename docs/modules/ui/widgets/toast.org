@@ -36,6 +36,7 @@ A queue with no size of its own sizes itself to its parent and follows the paren
 | =kind= | =LrgToastKind= (default =INFO=) | read/write | Stripe and hairline colour |
 | =duration= | =gdouble= (default 3.5) | read/write | Seconds on screen; 0 = until dismissed |
 | =dismissed= | boolean | read | Expired or dismissed |
+| =default-action= | string | read/write | Detailed action name run when the card itself is clicked |
 
 | Kind | Colour role |
 |------+-------------|
@@ -46,7 +47,34 @@ A queue with no size of its own sizes itself to its parent and follows the paren
 
 | Signal | Arguments | When |
 |--------+-----------+------|
-| =dismissed= | none | Once: the time ran out, the card was clicked, or =lrg_toast_dismiss()= was called |
+| =dismissed= | none | Once: the time ran out, the card or a button was clicked, or =lrg_toast_dismiss()= was called; read =lrg_toast_get_dismiss_reason()= to tell which |
+| =button-clicked= | =guint index=, =gchar *action= | A button was clicked, after its action ran and before =dismissed= |
+
+*** Buttons
+:PROPERTIES:
+:CUSTOM_ID: toast-buttons
+:END:
+=lrg_toast_add_button (toast, "Undo", "app.undo")= adds a small pill to a row along the bottom of the card ("Undo", "View", "Retry"). Buttons are laid out from the trailing corner (right, or left in right-to-left layouts), in the order they were added. The action is a GIO detailed action name ("app.undo", "app.open::recent", "app.zoom(2)"); it is activated with =lrg_widget_activate_action()= on the toast, so it is found on the queue, its ancestors or the canvas, like menu and shortcut actions. A button click only counts when the press and the release land on the same button. Pass =NULL= as the action to handle the click yourself in =::button-clicked=.
+
+#+begin_src C
+LrgToast *toast = lrg_toast_new ("3 nodes deleted", NULL);
+
+lrg_toast_add_button (toast, "Undo", "app.undo");
+lrg_toast_set_default_action (toast, "app.show-history");
+lrg_toast_queue_show (queue, toast);
+#+end_src
+
+*** Dismiss reasons
+:PROPERTIES:
+:CUSTOM_ID: toast-dismiss-reasons
+:END:
+| =LrgToastDismissReason= | Cause |
+|-------------------------+-------|
+| =LRG_TOAST_DISMISS_REASON_NONE= | Still up |
+| =LRG_TOAST_DISMISS_REASON_EXPIRED= | Its duration ran out |
+| =LRG_TOAST_DISMISS_REASON_CLICKED= | The card was clicked (after =default-action= ran) |
+| =LRG_TOAST_DISMISS_REASON_BUTTON= | A button was clicked |
+| =LRG_TOAST_DISMISS_REASON_PROGRAMMATIC= | =lrg_toast_dismiss()= (also what =lrg_toast_queue_clear()= and replace mode use) |
 
 The toast keeps its own clock. =lrg_toast_advance (toast, seconds)= runs it; the queue calls it every frame. The clock pauses while the pointer is over the card, so the player can finish reading. =lrg_toast_get_elapsed()= and =lrg_toast_get_remaining_fraction()= expose it. Every card is 340 units wide, so stacks line up.
 
@@ -93,6 +121,7 @@ The toast keeps its own clock. =lrg_toast_advance (toast, seconds)= runs it; the
 | =label= | Title, =TEXT= | |
 | =item= | Message, =TEXT_MUTED= | |
 | =fill= | Remaining-time hairline, kind colour at 70% alpha | hidden when =duration= is 0 |
+| =tab= | Buttons: =CONTROL= pill, =ACCENT= text, =CORNER_RADIUS= | =hovered= → =CONTROL_HOVER=, =pressed= → =CONTROL_PRESSED= (per button) |
 
 ** Input
 :PROPERTIES:
@@ -183,7 +212,10 @@ lrg_canvas_render (hud.canvas);
 - =lrg_toast_get_duration= / =lrg_toast_set_duration=
 - =lrg_toast_get_elapsed=, =lrg_toast_get_remaining_fraction=
 - =lrg_toast_advance (LrgToast *self, gdouble seconds)=
-- =lrg_toast_dismiss=, =lrg_toast_get_dismissed=
+- =lrg_toast_dismiss=, =lrg_toast_get_dismissed=, =lrg_toast_get_dismiss_reason= (=LrgToastDismissReason=, =lrg_toast_dismiss_reason_get_type=)
+- =lrg_toast_add_button (LrgToast *self, const gchar *label, const gchar *detailed_action)=
+- =lrg_toast_get_n_buttons=, =lrg_toast_get_button_label=, =lrg_toast_get_button_action=, =lrg_toast_get_button_rect=, =lrg_toast_clear_buttons=
+- =lrg_toast_get_default_action= / =lrg_toast_set_default_action=
 - =lrg_toast_queue_new (void)=
 - =lrg_toast_queue_get_mode= / =lrg_toast_queue_set_mode=
 - =lrg_toast_queue_get_max_visible= / =lrg_toast_queue_set_max_visible=

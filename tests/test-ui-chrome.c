@@ -1667,6 +1667,161 @@ test_notify_fallback_toast (NotifyFixture *f,
 	g_assert_cmpint (f->close_reason, ==, LRG_NOTIFICATION_CLOSE_REASON_UNDEFINED);
 }
 
+/* Toast buttons in the in-app fallback: each notification button shows
+ * as a toast button, a click runs its action once (on the anchor) and
+ * closes the notification as DISMISSED without the default action. */
+static void
+test_notify_fallback_buttons (NotifyFixture *f,
+                              gconstpointer  data)
+{
+	g_autoptr(LrgNotification) n = notification_for (f);
+	LrgToast                  *toast;
+	gfloat                     bx, by, bw, bh;
+
+	lrg_notification_set_toast_queue (n, f->queue);
+	g_assert_true (show_and_wait (n, f->anchor, NULL));
+	toast = lrg_notification_get_toast (n);
+	g_assert_nonnull (toast);
+	g_assert_cmpuint (lrg_toast_get_n_buttons (toast), ==, 2);
+	g_assert_cmpstr (lrg_toast_get_button_label (toast, 0), ==, "Open inbox");
+	g_assert_cmpstr (lrg_toast_get_button_label (toast, 1), ==, "Archive");
+	g_assert_null (lrg_toast_get_button_action (toast, 0));
+
+	/* Click "Archive" */
+	frames (f->canvas, 60);
+	lrg_canvas_record (f->canvas);
+	g_assert_true (lrg_toast_get_button_rect (toast, 1, &bx, &by, &bw, &bh));
+	g_assert_cmpfloat (bw, >, 0.0f);
+	click_at (f->canvas, bx + bw * 0.5f, by + bh * 0.5f);
+	g_assert_cmpint (f->opens, ==, 1);
+	g_assert_cmpstr (f->open_target, ==, "archive");
+	g_assert_cmpstr (f->invoked, ==, "test.open('archive')");
+	g_assert_cmpint (f->activated, ==, 0);
+	g_assert_cmpint (f->shows, ==, 0);
+	g_assert_cmpint (f->closed, ==, 1);
+	g_assert_cmpint (f->close_reason, ==, LRG_NOTIFICATION_CLOSE_REASON_DISMISSED);
+}
+
+static void
+count_activate (gint *count)
+{
+	(*count)++;
+}
+
+static void
+on_toast_button (LrgToast    *toast,
+                 guint        index,
+                 const gchar *action,
+                 gpointer     user_data)
+{
+	gint *hits = user_data;
+
+	hits[0]++;
+	hits[1] = (gint) index;
+}
+
+/* LrgToast on its own: buttons sit in the bottom row, a button click
+ * runs its action and reports BUTTON; a card click runs the default
+ * action and reports CLICKED; dismiss() and expiry report their own
+ * reasons. */
+static void
+test_toast_buttons (void)
+{
+	g_autoptr(LrgCanvas)          canvas = lrg_canvas_new ();
+	g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new ();
+	g_autoptr(GSimpleAction)      undo = g_simple_action_new ("undo", NULL);
+	g_autoptr(GSimpleAction)      show = g_simple_action_new ("show", NULL);
+	LrgToastQueue                *queue = lrg_toast_queue_new ();
+	LrgToast                     *toast;
+	gint                          undos = 0;
+	gint                          shows = 0;
+	gint                          hits[2] = { 0, -1 };
+	gfloat                        bx, by, bw, bh, h_plain;
+	g_autoptr(LrgToast)           plain = lrg_toast_new ("Saved", "level.rlevel");
+
+	g_signal_connect_swapped (undo, "activate", G_CALLBACK (count_activate), &undos);
+	g_signal_connect_swapped (show, "activate", G_CALLBACK (count_activate), &shows);
+	g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (undo));
+	g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (show));
+	lrg_widget_insert_action_group (LRG_WIDGET (canvas), "t", G_ACTION_GROUP (group));
+	lrg_widget_set_size (LRG_WIDGET (canvas), 800.0f, 600.0f);
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (queue));
+
+	/* Buttons make the card taller */
+	lrg_widget_get_preferred_size (LRG_WIDGET (plain), NULL, &h_plain);
+	toast = lrg_toast_new ("Deleted", "3 nodes");
+	g_assert_cmpuint (lrg_toast_add_button (toast, "Undo", "t.undo"), ==, 0);
+	g_assert_cmpuint (lrg_toast_add_button (toast, "Details", NULL), ==, 1);
+	g_assert_cmpuint (lrg_toast_get_n_buttons (toast), ==, 2);
+	g_assert_cmpstr (lrg_toast_get_button_action (toast, 0), ==, "t.undo");
+	g_assert_null (lrg_toast_get_button_label (toast, 5));
+	{
+		gfloat h_buttons;
+
+		lrg_widget_get_preferred_size (LRG_WIDGET (toast), NULL, &h_buttons);
+		g_assert_cmpfloat (h_buttons, >, h_plain);
+	}
+	g_signal_connect (toast, "button-clicked", G_CALLBACK (on_toast_button), hits);
+	lrg_toast_queue_show (queue, toast);
+	frames (canvas, 60);
+	lrg_canvas_record (canvas);
+
+	/* Undo is left of Details, both inside the card's bottom half */
+	{
+		gfloat dx;
+
+		g_assert_true (lrg_toast_get_button_rect (toast, 0, &bx, &by, &bw, &bh));
+		g_assert_true (lrg_toast_get_button_rect (toast, 1, &dx, NULL, NULL, NULL));
+		g_assert_cmpfloat (bx, <, dx);
+		g_assert_cmpfloat (by, >, lrg_widget_get_world_y (LRG_WIDGET (toast)) +
+		                   lrg_widget_get_height (LRG_WIDGET (toast)) * 0.5f);
+		g_assert_false (lrg_toast_get_button_rect (toast, 2, NULL, NULL, NULL, NULL));
+	}
+	g_assert_cmpint (lrg_toast_get_dismiss_reason (toast), ==, LRG_TOAST_DISMISS_REASON_NONE);
+
+	/* Pressing a button and releasing off it does nothing */
+	press_at (canvas, bx + bw * 0.5f, by + bh * 0.5f);
+	release_at (canvas, bx - 40.0f, by + bh * 0.5f);
+	g_assert_cmpint (undos, ==, 0);
+	g_assert_false (lrg_toast_get_dismissed (toast));
+
+	/* A real click runs the action once and reports BUTTON */
+	click_at (canvas, bx + bw * 0.5f, by + bh * 0.5f);
+	g_assert_cmpint (undos, ==, 1);
+	g_assert_cmpint (hits[0], ==, 1);
+	g_assert_cmpint (hits[1], ==, 0);
+	g_assert_cmpint (lrg_toast_get_dismiss_reason (toast), ==, LRG_TOAST_DISMISS_REASON_BUTTON);
+
+	/* A click on the card runs the default action and reports CLICKED */
+	lrg_toast_queue_clear (queue);
+	toast = lrg_toast_new ("Hint", "Click me");
+	lrg_toast_set_default_action (toast, "t.show");
+	g_assert_cmpstr (lrg_toast_get_default_action (toast), ==, "t.show");
+	lrg_toast_queue_show (queue, toast);
+	frames (canvas, 60);
+	lrg_canvas_record (canvas);
+	click_at (canvas, lrg_widget_get_world_x (LRG_WIDGET (toast)) + 30.0f,
+	          lrg_widget_get_world_y (LRG_WIDGET (toast)) + 10.0f);
+	g_assert_cmpint (shows, ==, 1);
+	g_assert_cmpint (lrg_toast_get_dismiss_reason (toast), ==, LRG_TOAST_DISMISS_REASON_CLICKED);
+
+	/* dismiss() and expiry */
+	g_clear_object (&plain);
+	plain = lrg_toast_new ("A", NULL);
+	lrg_toast_dismiss (plain);
+	g_assert_cmpint (lrg_toast_get_dismiss_reason (plain), ==, LRG_TOAST_DISMISS_REASON_PROGRAMMATIC);
+	g_clear_object (&plain);
+	plain = lrg_toast_new ("B", NULL);
+	lrg_toast_set_duration (plain, 1.0);
+	lrg_toast_advance (plain, 2.0);
+	g_assert_cmpint (lrg_toast_get_dismiss_reason (plain), ==, LRG_TOAST_DISMISS_REASON_EXPIRED);
+
+	/* Clearing buttons shrinks the card back */
+	lrg_toast_add_button (plain, "X", NULL);
+	lrg_toast_clear_buttons (plain);
+	g_assert_cmpuint (lrg_toast_get_n_buttons (plain), ==, 0);
+}
+
 static void
 test_notify_in_app (NotifyFixture *f,
                     gconstpointer  data)
@@ -1918,6 +2073,9 @@ main (int   argc,
 	            notify_tear_down);
 	g_test_add ("/ui/notification/fallback-toast", NotifyFixture, NULL, notify_set_up, test_notify_fallback_toast,
 	            notify_tear_down);
+	g_test_add ("/ui/notification/fallback-buttons", NotifyFixture, NULL, notify_set_up, test_notify_fallback_buttons,
+	            notify_tear_down);
+	g_test_add_func ("/ui/toast/buttons", test_toast_buttons);
 	g_test_add ("/ui/notification/in-app", NotifyFixture, NULL, notify_set_up, test_notify_in_app,
 	            notify_tear_down);
 
