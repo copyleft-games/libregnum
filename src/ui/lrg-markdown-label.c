@@ -41,10 +41,9 @@
  *
  * Effects are animated from step(): lrg_rich_text_update() advances
  * each block's rich text (its completion state answers
- * lrg_markdown_label_get_effects_complete()), and a mirror
- * LrgTextEffect per effect span, made with the same type, speed and
- * character count, is advanced alongside and applied per glyph, because
- * LrgRichText does not expose its effect objects.
+ * lrg_markdown_label_get_effects_complete()), including its span
+ * effects (lrg_rich_text_get_span_effect()), which paint() applies per
+ * glyph with span-local character indices.
  *
  * Faces: bold, italic, bold-italic and monospace text use the fonts
  * named "ui-bold", "ui-italic", "ui-bold-italic" and "ui-mono" in the
@@ -882,21 +881,18 @@ parse_blocks (LrgMarkdownLabel *self)
 		lrg_rich_text_set_markup (b->rich, b->markup);
 		b->plain = unescape (lrg_rich_text_get_plain_text (b->rich), -1);
 
-		/* Mirror effects (LrgRichText keeps its own private) */
+		/*
+		 * The rich text's own span effects (lrg_rich_text_get_span_effect),
+		 * one entry per span: lrg_rich_text_update() advances them and
+		 * paint() applies them per glyph.
+		 */
 		b->effects = g_ptr_array_new_with_free_func (unref_effect);
 		for (k = 0; k < lrg_rich_text_get_span_count (b->rich); k++)
 		{
-			const LrgTextSpan *span = lrg_rich_text_get_span (b->rich, k);
-			LrgTextEffectType  type = lrg_text_span_get_effect_type (span);
-			LrgTextEffect     *effect = NULL;
+			LrgTextEffect *effect = lrg_rich_text_get_span_effect (b->rich, k);
 
-			if (type != LRG_TEXT_EFFECT_NONE && type != LRG_TEXT_EFFECT_CUSTOM)
-			{
-				effect = lrg_text_effect_new (type);
-				lrg_text_effect_set_speed (effect, lrg_text_span_get_effect_speed (span));
-				lrg_text_effect_set_char_count (effect,
-				                                (guint) g_utf8_strlen (lrg_text_span_get_text (span), -1));
-			}
+			if (effect != NULL)
+				g_object_ref (effect);
 			g_ptr_array_add (b->effects, effect);
 		}
 	}
@@ -1745,7 +1741,7 @@ lrg_markdown_label_arrange (LrgWidget *widget)
  *
  * Moves the link underline spring, and animates text effects: each
  * block's LrgRichText is advanced with lrg_rich_text_update() and the
- * mirror effects that paint() applies per glyph are advanced with it.
+ * its span effects, which paint() applies per glyph, advance with it.
  * Busy while any effect is still running (looping effects such as wave
  * never finish).
  */
@@ -1768,10 +1764,8 @@ lrg_markdown_label_step (LrgWidget *widget,
 		{
 			LrgTextEffect *effect = g_ptr_array_index (b->effects, k);
 
-			if (effect == NULL)
-				continue;
-			lrg_text_effect_update (effect, delta_time);
-			busy |= !lrg_text_effect_is_complete (effect);
+			if (effect != NULL)
+				busy |= !lrg_text_effect_is_complete (effect);
 		}
 	}
 
@@ -2563,12 +2557,8 @@ lrg_markdown_label_reset_effects (LrgMarkdownLabel *self)
 	for (i = 0; i < self->blocks->len; i++)
 	{
 		Block *b = &g_array_index (self->blocks, Block, i);
-		guint  k;
 
 		lrg_rich_text_reset_effects (b->rich);
-		for (k = 0; k < b->effects->len; k++)
-			if (g_ptr_array_index (b->effects, k) != NULL)
-				lrg_text_effect_reset (g_ptr_array_index (b->effects, k));
 	}
 }
 

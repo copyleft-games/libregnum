@@ -91,7 +91,10 @@ void lrg_rich_text_get_bounds (LrgRichText *self, gfloat *width, gfloat *height)
 #+begin_src C
 guint lrg_rich_text_get_span_count (LrgRichText *self);
 LrgTextSpan *lrg_rich_text_get_span (LrgRichText *self, guint index);
+LrgTextEffect *lrg_rich_text_get_span_effect (LrgRichText *self, guint index);
 #+end_src
+
+=lrg_rich_text_get_span_effect()= returns the animated effect of a span (or =NULL=): the object =lrg_rich_text_update()= advances and =lrg_rich_text_draw()= applies. Code that lays out and draws the spans itself, such as =LrgMarkdownLabel=, applies it per glyph with =lrg_text_effect_apply()=. Effects count characters from the start of their own span, so a =[typewriter]= in the second span starts at its own first character.
 
 ** Update and Draw
 :PROPERTIES:
