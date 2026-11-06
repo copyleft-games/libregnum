@@ -562,7 +562,13 @@ ensure_target (LrgViewport *self,
 	self->pending_width = width;
 	self->pending_height = height;
 	if (self->target_texture != NULL)
+	{
 		grl_texture_set_filter (self->target_texture, self->filter);
+		/* Clamp, not raylib's default repeat: with bilinear filtering the
+		 * edge texels would otherwise blend with the opposite edge, which
+		 * shows as specks along the top of a letterboxed image */
+		grl_texture_set_wrap (self->target_texture, GRL_TEXTURE_WRAP_CLAMP);
+	}
 
 	lrg_debug (LRG_LOG_DOMAIN_UI, "viewport: render texture %d x %d", width, height);
 	g_signal_emit (self, signals[SIGNAL_RESIZED], 0, width, height);
