@@ -62,7 +62,17 @@ struct _LrgPaintList
 
 	ClipRect   clip;
 	gfloat     opacity;
+
+	/* Frame inputs for animated primitives; kept across clear () */
+	gdouble    time;
+	gfloat     pointer_x;
+	gfloat     pointer_y;
+	gboolean   has_pointer;
 };
+
+/* A backdrop command merges at most this many instances, which bounds
+ * the overlap test in append_instance () */
+#define MAX_BACKDROP_BATCH (256)
 
 G_DEFINE_FINAL_TYPE (LrgPaintList, lrg_paint_list, G_TYPE_OBJECT)
 
@@ -127,39 +137,187 @@ init_instance (LrgPaintList     *self,
 	inst->params[3] = (gfloat) LRG_PAINT_GRADIENT_NONE;
 }
 
+/* prim_of: the primitive of an instance */
+static LrgPaintPrim
+prim_of (const LrgPaintInstance *inst)
+{
+	return (LrgPaintPrim) (gint) (inst->params[2] + 0.5f);
+}
+
+/* needs_backdrop: TRUE for primitives that sample what is behind them */
+static gboolean
+needs_backdrop (const LrgPaintInstance *inst)
+{
+	LrgPaintPrim prim = prim_of (inst);
+
+	return prim == LRG_PAINT_PRIM_BLUR || prim == LRG_PAINT_PRIM_GLASS;
+}
+
+void
+_lrg_paint_instance_get_bounds (const LrgPaintInstance *inst,
+                                gfloat                 *x0,
+                                gfloat                 *y0,
+                                gfloat                 *x1,
+                                gfloat                 *y1)
+{
+	gfloat lo_x;
+	gfloat lo_y;
+	gfloat hi_x;
+	gfloat hi_y;
+	gfloat pad = 1.0f;
+
+	/* Same expansion as the vertex shader, so the box covers every
+	 * pixel the instance can touch */
+	switch (prim_of (inst))
+	{
+	case LRG_PAINT_PRIM_SHADOW:
+		pad = inst->params[1] + 1.0f;
+		break;
+	case LRG_PAINT_PRIM_LINE:
+		pad = inst->params[1] * 0.5f + 1.0f;
+		break;
+	default:
+		break;
+	}
+
+	lo_x = MIN (inst->rect[0], inst->rect[2]);
+	lo_y = MIN (inst->rect[1], inst->rect[3]);
+	hi_x = MAX (inst->rect[0], inst->rect[2]);
+	hi_y = MAX (inst->rect[1], inst->rect[3]);
+
+	if (prim_of (inst) == LRG_PAINT_PRIM_TRIANGLE)
+	{
+		lo_x = MIN (lo_x, inst->extra[0]);
+		lo_y = MIN (lo_y, inst->extra[1]);
+		hi_x = MAX (hi_x, inst->extra[0]);
+		hi_y = MAX (hi_y, inst->extra[1]);
+	}
+	else if (prim_of (inst) == LRG_PAINT_PRIM_CURVE)
+	{
+		/* A Bezier stays inside the hull of its control points */
+		lo_x = MIN (lo_x, MIN (inst->extra[0], inst->extra[2]));
+		lo_y = MIN (lo_y, MIN (inst->extra[1], inst->extra[3]));
+		hi_x = MAX (hi_x, MAX (inst->extra[0], inst->extra[2]));
+		hi_y = MAX (hi_y, MAX (inst->extra[1], inst->extra[3]));
+		pad = inst->params[1] * 0.5f + MAX (inst->data[0], 0.0f) + 1.0f;
+	}
+
+	*x0 = MAX (lo_x - pad, inst->clip[0]);
+	*y0 = MAX (lo_y - pad, inst->clip[1]);
+	*x1 = MIN (hi_x + pad, inst->clip[2]);
+	*y1 = MIN (hi_y + pad, inst->clip[3]);
+}
+
+void
+_lrg_paint_instance_get_backdrop_reach (const LrgPaintInstance *inst,
+                                        gfloat                 *x0,
+                                        gfloat                 *y0,
+                                        gfloat                 *x1,
+                                        gfloat                 *y1)
+{
+	gfloat reach;
+
+	/* A blur or glass pixel reads the backdrop up to the blur radius
+	 * (twice, for the Kawase taps) plus the refraction offset away */
+	reach = MAX (inst->params[1], 0.0f) * 2.0f + 2.0f;
+	if (prim_of (inst) == LRG_PAINT_PRIM_GLASS)
+		reach += fabsf (inst->extra[1]) * (1.0f + inst->data[0]);
+
+	*x0 = MAX (inst->rect[0] - reach, inst->clip[0] - reach);
+	*y0 = MAX (inst->rect[1] - reach, inst->clip[1] - reach);
+	*x1 = MIN (inst->rect[2] + reach, inst->clip[2] + reach);
+	*y1 = MIN (inst->rect[3] + reach, inst->clip[3] + reach);
+}
+
+/*
+ * backdrop_can_join:
+ *
+ * A blur/glass instance may join the backdrop batch @cmd (sharing its
+ * capture of the target) only if nothing already in the batch lies
+ * where the new instance reads the backdrop: everything it can see was
+ * then drawn before the batch, and so is in the capture.
+ */
+static gboolean
+backdrop_can_join (LrgPaintList           *self,
+                   const PaintCommand     *cmd,
+                   const LrgPaintInstance *inst)
+{
+	gfloat rx0;
+	gfloat ry0;
+	gfloat rx1;
+	gfloat ry1;
+	guint  i;
+
+	if (cmd->count >= MAX_BACKDROP_BATCH)
+		return FALSE;
+
+	_lrg_paint_instance_get_backdrop_reach (inst, &rx0, &ry0, &rx1, &ry1);
+
+	for (i = cmd->first; i < cmd->first + cmd->count; i++)
+	{
+		const LrgPaintInstance *other;
+		gfloat                  x0;
+		gfloat                  y0;
+		gfloat                  x1;
+		gfloat                  y1;
+
+		other = &g_array_index (self->instances, LrgPaintInstance, i);
+		_lrg_paint_instance_get_bounds (other, &x0, &y0, &x1, &y1);
+		if (x0 < rx1 && x1 > rx0 && y0 < ry1 && y1 > ry0)
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
 /*
  * append_instance:
  *
  * Adds an instance and extends the last batch when it can: any number
  * of untextured instances may join a batch, plus instances of at most
  * one texture (the shader only samples for image instances).
+ *
+ * Blur and glass instances start a BACKDROP batch, for which the
+ * renderer first captures the target. They join an existing backdrop
+ * batch only when nothing in it overlaps what they sample (see
+ * backdrop_can_join ()); plain instances join either kind of batch.
  */
 static void
 append_instance (LrgPaintList           *self,
                  const LrgPaintInstance *inst)
 {
 	PaintCommand *last = NULL;
+	gboolean      backdrop;
+	gboolean      texture_ok;
 
-	g_array_append_val (self->instances, *inst);
+	backdrop = needs_backdrop (inst);
 
 	if (self->commands->len > 0)
 		last = &g_array_index (self->commands, PaintCommand, self->commands->len - 1);
 
-	if (last != NULL &&
-	    last->kind == LRG_PAINT_COMMAND_INSTANCES &&
-	    (inst->texture == 0 || last->texture == 0 || last->texture == inst->texture))
+	texture_ok = last != NULL &&
+	             (inst->texture == 0 || last->texture == 0 || last->texture == inst->texture);
+
+	if (last != NULL && texture_ok &&
+	    ((!backdrop && (last->kind == LRG_PAINT_COMMAND_INSTANCES ||
+	                    last->kind == LRG_PAINT_COMMAND_BACKDROP)) ||
+	     (backdrop && last->kind == LRG_PAINT_COMMAND_BACKDROP &&
+	      backdrop_can_join (self, last, inst))))
 	{
+		g_array_append_val (self->instances, *inst);
 		last->count++;
 		if (inst->texture != 0)
 			last->texture = inst->texture;
 		return;
 	}
 
+	g_array_append_val (self->instances, *inst);
+
 	{
 		PaintCommand cmd;
 
 		memset (&cmd, 0, sizeof (PaintCommand));
-		cmd.kind = LRG_PAINT_COMMAND_INSTANCES;
+		cmd.kind = backdrop ? LRG_PAINT_COMMAND_BACKDROP : LRG_PAINT_COMMAND_INSTANCES;
 		cmd.first = self->instances->len - 1;
 		cmd.count = 1;
 		cmd.texture = inst->texture;
@@ -259,6 +417,8 @@ lrg_paint_list_init (LrgPaintList *self)
 	self->clip.x1 = UNCLIPPED;
 	self->clip.y1 = UNCLIPPED;
 	self->opacity = 1.0f;
+	self->time = 0.0;
+	self->has_pointer = FALSE;
 }
 
 LrgPaintList *
@@ -863,6 +1023,300 @@ lrg_paint_measure_text (GrlFont     *font,
 }
 
 /* ==========================================================================
+ * Materials, effects and curves
+ * ========================================================================== */
+
+void
+lrg_paint_list_set_time (LrgPaintList *self,
+                         gdouble       seconds)
+{
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	self->time = seconds;
+}
+
+gdouble
+lrg_paint_list_get_time (LrgPaintList *self)
+{
+	g_return_val_if_fail (LRG_IS_PAINT_LIST (self), 0.0);
+
+	return self->time;
+}
+
+void
+lrg_paint_list_set_pointer (LrgPaintList *self,
+                            gfloat        x,
+                            gfloat        y)
+{
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	self->pointer_x = x;
+	self->pointer_y = y;
+	self->has_pointer = TRUE;
+}
+
+void
+lrg_paint_list_unset_pointer (LrgPaintList *self)
+{
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	self->has_pointer = FALSE;
+}
+
+gboolean
+lrg_paint_list_get_pointer (LrgPaintList *self,
+                            gfloat       *x,
+                            gfloat       *y)
+{
+	g_return_val_if_fail (LRG_IS_PAINT_LIST (self), FALSE);
+
+	if (x != NULL)
+		*x = self->has_pointer ? self->pointer_x : 0.0f;
+	if (y != NULL)
+		*y = self->has_pointer ? self->pointer_y : 0.0f;
+
+	return self->has_pointer;
+}
+
+/* raw_color_bytes: GrlColor -> RGBA8 without the opacity stack */
+static void
+raw_color_bytes (const GrlColor *color,
+                 guint8         *out)
+{
+	out[0] = color->r;
+	out[1] = color->g;
+	out[2] = color->b;
+	out[3] = color->a;
+}
+
+/* set_radii: clamp and store per-corner radii (NULL = square) */
+static void
+set_radii (LrgPaintInstance     *inst,
+           const LrgCornerRadii *radii,
+           gfloat                width,
+           gfloat                height)
+{
+	if (radii == NULL)
+		return;
+
+	inst->radii[0] = clamp_radius (radii->top_left, width, height);
+	inst->radii[1] = clamp_radius (radii->top_right, width, height);
+	inst->radii[2] = clamp_radius (radii->bottom_right, width, height);
+	inst->radii[3] = clamp_radius (radii->bottom_left, width, height);
+}
+
+/*
+ * record_backdrop:
+ *
+ * Shared body of blur and glass. Their parameters live in extra
+ * (frost, refraction, saturation, rim light) and data (dispersion,
+ * rim bevel width, opacity); params.y is the blur radius. The tint is
+ * stored without the opacity stack because the shader fades the whole
+ * slab by data.z instead.
+ */
+static void
+record_backdrop (LrgPaintList         *self,
+                 LrgPaintPrim          prim,
+                 gfloat                x,
+                 gfloat                y,
+                 gfloat                width,
+                 gfloat                height,
+                 const LrgCornerRadii *radii,
+                 const LrgPaintGlass  *glass)
+{
+	LrgPaintInstance inst;
+
+	if (width <= 0.0f || height <= 0.0f || self->opacity <= 0.0f)
+		return;
+	if (bounds_outside_clip (self, x, y, x + width, y + height))
+		return;
+
+	init_instance (self, &inst, prim);
+	inst.rect[0] = x;
+	inst.rect[1] = y;
+	inst.rect[2] = x + width;
+	inst.rect[3] = y + height;
+	set_radii (&inst, radii, width, height);
+
+	inst.params[1] = MAX (glass->blur_radius, 0.0f);
+	inst.extra[0] = CLAMP (glass->frost, 0.0f, 1.0f);
+	inst.extra[1] = MAX (glass->refraction, 0.0f);
+	inst.extra[2] = MAX (glass->saturation, 0.0f);
+	inst.extra[3] = CLAMP (glass->rim_light, 0.0f, 1.0f);
+	inst.data[0] = CLAMP (glass->dispersion, 0.0f, 1.0f);
+	/* The rim (where refraction bends the backdrop) is a band along
+	 * the edge, proportional to the slab but never huge */
+	inst.data[1] = CLAMP (MIN (width, height) * 0.2f, 3.0f, 24.0f);
+	inst.data[2] = self->opacity;
+	raw_color_bytes (&glass->tint, inst.color);
+
+	append_instance (self, &inst);
+}
+
+void
+lrg_paint_list_blur (LrgPaintList   *self,
+                     gfloat          x,
+                     gfloat          y,
+                     gfloat          width,
+                     gfloat          height,
+                     gfloat          radius,
+                     gfloat          blur_radius,
+                     const GrlColor *tint)
+{
+	LrgPaintGlass  glass;
+	LrgCornerRadii radii;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	/* A blur is a glass with full frost and none of the slab effects */
+	memset (&glass, 0, sizeof (LrgPaintGlass));
+	glass.frost = 1.0f;
+	glass.saturation = 1.0f;
+	glass.blur_radius = blur_radius;
+	if (tint != NULL)
+		glass.tint = *tint;
+
+	lrg_corner_radii_init_uniform (&radii, radius);
+	record_backdrop (self, LRG_PAINT_PRIM_BLUR, x, y, width, height, &radii, &glass);
+}
+
+void
+lrg_paint_list_glass (LrgPaintList          *self,
+                      gfloat                 x,
+                      gfloat                 y,
+                      gfloat                 width,
+                      gfloat                 height,
+                      const LrgCornerRadii  *radii,
+                      const LrgPaintGlass   *params)
+{
+	LrgPaintGlass defaults;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	if (params == NULL)
+	{
+		lrg_paint_glass_init_default (&defaults);
+		params = &defaults;
+	}
+
+	record_backdrop (self, LRG_PAINT_PRIM_GLASS, x, y, width, height, radii, params);
+}
+
+void
+lrg_paint_list_effect (LrgPaintList               *self,
+                       gfloat                      x,
+                       gfloat                      y,
+                       gfloat                      width,
+                       gfloat                      height,
+                       const LrgCornerRadii       *radii,
+                       gint                        effect_id,
+                       const LrgPaintEffectParams *params)
+{
+	LrgPaintEffectParams defaults;
+	LrgPaintInstance     inst;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+
+	if (width <= 0.0f || height <= 0.0f || self->opacity <= 0.0f)
+		return;
+	if (lrg_paint_effect_get_name (effect_id) == NULL)
+		return;
+	if (bounds_outside_clip (self, x, y, x + width, y + height))
+		return;
+
+	if (params == NULL)
+	{
+		lrg_paint_effect_params_init_default (&defaults);
+		params = &defaults;
+	}
+
+	/* Palette in the three colour slots, state in extra, pacing and
+	 * opacity in data (colours stay unfaded: data.z fades the result) */
+	init_instance (self, &inst, LRG_PAINT_PRIM_EFFECT);
+	inst.rect[0] = x;
+	inst.rect[1] = y;
+	inst.rect[2] = x + width;
+	inst.rect[3] = y + height;
+	set_radii (&inst, radii, width, height);
+	raw_color_bytes (&params->color1, inst.color);
+	raw_color_bytes (&params->color2, inst.color2);
+	raw_color_bytes (&params->color3, inst.border);
+	inst.extra[0] = CLAMP (params->hover, 0.0f, 1.0f);
+	inst.extra[1] = CLAMP (params->press, 0.0f, 1.0f);
+	inst.extra[2] = MAX (params->intensity, 0.0f);
+	inst.extra[3] = (gfloat) effect_id;
+	inst.data[0] = params->speed;
+	inst.data[1] = params->scale > 0.0f ? params->scale : 1.0f;
+	inst.data[2] = self->opacity;
+
+	append_instance (self, &inst);
+}
+
+void
+lrg_paint_list_curve (LrgPaintList             *self,
+                      gfloat                    x0,
+                      gfloat                    y0,
+                      gfloat                    x1,
+                      gfloat                    y1,
+                      gfloat                    x2,
+                      gfloat                    y2,
+                      gfloat                    x3,
+                      gfloat                    y3,
+                      gfloat                    thickness,
+                      const LrgPaintCurveStyle *style)
+{
+	LrgPaintInstance inst;
+	gfloat           pad;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (self));
+	g_return_if_fail (style != NULL);
+
+	if (thickness <= 0.0f || self->opacity <= 0.0f)
+		return;
+	if (style->color_start.a == 0 && style->color_end.a == 0 &&
+	    (style->glow.a == 0 || style->glow_size <= 0.0f) &&
+	    (style->pulse_count == 0 || style->pulse_color.a == 0))
+		return;
+
+	pad = thickness * 0.5f + MAX (style->glow_size, 0.0f) + 1.0f;
+	if (bounds_outside_clip (self,
+	                         MIN (MIN (x0, x1), MIN (x2, x3)) - pad,
+	                         MIN (MIN (y0, y1), MIN (y2, y3)) - pad,
+	                         MAX (MAX (x0, x1), MAX (x2, x3)) + pad,
+	                         MAX (MAX (y0, y1), MAX (y2, y3)) + pad))
+		return;
+
+	/* End points in rect, inner control points in extra, colours as a
+	 * gradient, glow in border, pulse colour (0..1) in radii */
+	init_instance (self, &inst, LRG_PAINT_PRIM_CURVE);
+	inst.rect[0] = x0;
+	inst.rect[1] = y0;
+	inst.rect[2] = x3;
+	inst.rect[3] = y3;
+	inst.extra[0] = x1;
+	inst.extra[1] = y1;
+	inst.extra[2] = x2;
+	inst.extra[3] = y2;
+	inst.params[1] = thickness;
+	color_to_bytes (self, &style->color_start, inst.color);
+	color_to_bytes (self, &style->color_end, inst.color2);
+	if (style->glow_size > 0.0f)
+	{
+		color_to_bytes (self, &style->glow, inst.border);
+		inst.data[0] = style->glow_size;
+	}
+	inst.data[1] = (gfloat) MIN (style->pulse_count, 8u);
+	inst.data[2] = style->pulse_speed;
+	inst.data[3] = style->pulse_phase;
+	inst.radii[0] = (gfloat) style->pulse_color.r / 255.0f;
+	inst.radii[1] = (gfloat) style->pulse_color.g / 255.0f;
+	inst.radii[2] = (gfloat) style->pulse_color.b / 255.0f;
+	inst.radii[3] = (gfloat) style->pulse_color.a / 255.0f * self->opacity;
+
+	append_instance (self, &inst);
+}
+
+/* ==========================================================================
  * Callbacks
  * ========================================================================== */
 
@@ -929,6 +1383,7 @@ lrg_paint_list_transform_group (LrgPaintList *self,
 	for (i = mark; i < self->instances->len; i++)
 	{
 		LrgPaintInstance *inst = &g_array_index (self->instances, LrgPaintInstance, i);
+		LrgPaintPrim      prim = prim_of (inst);
 		guint             k;
 
 		/* Both corners (or both line end points) move as points */
@@ -938,26 +1393,52 @@ lrg_paint_list_transform_group (LrgPaintList *self,
 			inst->rect[k + 1] = pivot_y + (inst->rect[k + 1] - pivot_y) * scale + translate_y;
 		}
 
-		/* A triangle keeps its third vertex in extra */
-		if ((gint) (inst->params[2] + 0.5f) == LRG_PAINT_PRIM_TRIANGLE)
+		/* A triangle keeps its third vertex in extra, a curve its two
+		 * inner control points */
+		if (prim == LRG_PAINT_PRIM_TRIANGLE || prim == LRG_PAINT_PRIM_CURVE)
 		{
-			inst->extra[0] = pivot_x + (inst->extra[0] - pivot_x) * scale + translate_x;
-			inst->extra[1] = pivot_y + (inst->extra[1] - pivot_y) * scale + translate_y;
+			for (k = 0; k < 4; k += 2)
+			{
+				if (prim == LRG_PAINT_PRIM_TRIANGLE && k > 0)
+					break;
+				inst->extra[k] = pivot_x + (inst->extra[k] - pivot_x) * scale + translate_x;
+				inst->extra[k + 1] = pivot_y + (inst->extra[k + 1] - pivot_y) * scale + translate_y;
+			}
 		}
 
-		/* Sizes scale with the shape */
-		for (k = 0; k < 4; k++)
-			inst->radii[k] *= scale;
+		/* Sizes scale with the shape; a curve's radii hold its pulse
+		 * colour, not sizes */
+		if (prim != LRG_PAINT_PRIM_CURVE)
+			for (k = 0; k < 4; k++)
+				inst->radii[k] *= scale;
 		inst->params[0] *= scale;
 		inst->params[1] *= scale;
-		if ((gint) (inst->params[3] + 0.5f) == LRG_PAINT_GRADIENT_RADIAL)
+		if (prim == LRG_PAINT_PRIM_RECT &&
+		    (gint) (inst->params[3] + 0.5f) == LRG_PAINT_GRADIENT_RADIAL)
 			inst->extra[2] *= scale;
+		if (prim == LRG_PAINT_PRIM_GLASS)
+		{
+			inst->extra[1] *= scale;   /* refraction */
+			inst->data[1] *= scale;    /* bevel */
+		}
+		if (prim == LRG_PAINT_PRIM_CURVE)
+			inst->data[0] *= scale;    /* glow size */
 
 		if (opacity < 1.0f)
 		{
+			/* Backdrop and effect instances carry their opacity on
+			 * its own; their colours are not faded */
+			if (prim == LRG_PAINT_PRIM_BLUR || prim == LRG_PAINT_PRIM_GLASS ||
+			    prim == LRG_PAINT_PRIM_EFFECT)
+			{
+				inst->data[2] *= opacity;
+				continue;
+			}
 			scale_alpha (inst->color, opacity);
 			scale_alpha (inst->color2, opacity);
 			scale_alpha (inst->border, opacity);
+			if (prim == LRG_PAINT_PRIM_CURVE)
+				inst->radii[3] *= opacity;
 		}
 	}
 }

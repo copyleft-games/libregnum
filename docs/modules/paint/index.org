@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum paint ui gui rendering
 #+created: 2026-11-05T00:00:00-05:00
-#+updated: 2026-11-05T00:00:00-05:00
-#+version: 1.0
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.1
 
 * Paint Module
 :PROPERTIES:
@@ -18,7 +18,7 @@ The paint module (=src/paint/=) is the 2D drawing layer underneath both of libre
 
 Pages in this module:
 
-- This page: why the pipeline exists, the instance layout, the shader maths, batching, groups, clip/opacity stacks, headless behaviour, mixing with raw raylib drawing, pitfalls and credits.
+- This page: why the pipeline exists, the instance layout, the shader maths, batching, groups, clip/opacity stacks, headless behaviour, mixing with raw raylib drawing, materials (backdrop blur and glass) and their cost model, effect shaders and the user-effect snippet contract, curves, icons, pitfalls and credits.
 - [[file:paint-list.org][LrgPaintList]]: the recording API reference with examples.
 - [[file:paint-renderer.org][LrgPaintRenderer]]: the drawing API reference with examples.
 
@@ -75,7 +75,7 @@ Recording is pure CPU work on plain arrays: no GL context is needed, so widget t
 :PROPERTIES:
 :CUSTOM_ID: paint-instance
 :END:
-Every primitive, including every glyph of text, is one =LrgPaintInstance=. It is the exact struct uploaded to the GPU (96 bytes, no padding), read by the vertex shader as nine attributes (the static unit-quad corner plus eight per-instance attributes with divisor 1).
+Every primitive, including every glyph of text, is one =LrgPaintInstance=. It is the exact struct uploaded to the GPU (112 bytes, no padding), read by the vertex shader as ten attributes (the static unit-quad corner plus nine per-instance attributes with divisor 1).
 
 #+begin_src c
 typedef struct
@@ -84,7 +84,9 @@ typedef struct
 	gfloat  radii[4];   /* top-left, top-right, bottom-right, bottom-left */
 	gfloat  clip[4];    /* x0, y0, x1, y1 of the clip rectangle          */
 	gfloat  params[4];  /* border width, aux size, LrgPaintPrim, gradient */
-	gfloat  extra[4];   /* gradient dir/centre, UVs, triangle vertex     */
+	gfloat  extra[4];   /* gradient dir/centre, UVs, triangle vertex,
+	                       glass/effect parameters, curve control points */
+	gfloat  data[4];    /* per-primitive extras (glass, effect, curve)    */
 	guint8  color[4];   /* fill or gradient start, straight RGBA8        */
 	guint8  color2[4];  /* gradient end, straight RGBA8                  */
 	guint8  border[4];  /* border colour, straight RGBA8                 */
@@ -99,10 +101,11 @@ typedef struct
 | =clip= | 32 | 16 | location 3 =i_clip= | 4 x float |
 | =params= | 48 | 16 | location 4 =i_params= | 4 x float |
 | =extra= | 64 | 16 | location 5 =i_extra= | 4 x float |
-| =color= | 80 | 4 | location 6 =i_color= | 4 x unsigned byte, normalized |
-| =color2= | 84 | 4 | location 7 =i_color2= | 4 x unsigned byte, normalized |
-| =border= | 88 | 4 | location 8 =i_border= | 4 x unsigned byte, normalized |
-| =texture= | 92 | 4 | not an attribute: selects the batch texture | uint32 |
+| =data= | 80 | 16 | location 6 =i_data= | 4 x float |
+| =color= | 96 | 4 | location 7 =i_color= | 4 x unsigned byte, normalized |
+| =color2= | 100 | 4 | location 8 =i_color2= | 4 x unsigned byte, normalized |
+| =border= | 104 | 4 | location 9 =i_border= | 4 x unsigned byte, normalized |
+| =texture= | 108 | 4 | not an attribute: selects the batch texture | uint32 |
 
 Location 0 (=a_corner=) is the static six-vertex unit quad (two triangles in raylib's winding: TL, BL, BR / TL, BR, TR).
 
@@ -119,6 +122,12 @@ Location 0 (=a_corner=) is the static six-vertex unit quad (two triangles in ray
 | =LRG_PAINT_PRIM_LINE= (2) | end points x0, y0, x1, y1 | unused | unused | thickness | unused | line colour | unused | unused | 0 |
 | =LRG_PAINT_PRIM_IMAGE= (3) | destination box | uniform radius (rounded images, avatars) | unused | unused | UVs u0, v0, u1, v1 | tint | unused | unused | GL id of the texture or font atlas |
 | =LRG_PAINT_PRIM_TRIANGLE= (4) | vertices 0 and 1 | unused | unused | unused | =extra[0..1]= = vertex 2 | fill | unused | unused | 0 |
+| =LRG_PAINT_PRIM_BLUR= (5) | box corners | per-corner radii | unused | blur radius | frost 1, refraction 0, saturation 1, rim 0 | tint (opacity *not* applied) | unused | unused | 0 |
+| =LRG_PAINT_PRIM_GLASS= (6) | box corners | per-corner radii | unused | blur radius | frost, refraction, saturation, rim light | tint (opacity *not* applied) | unused | unused | 0 |
+| =LRG_PAINT_PRIM_EFFECT= (7) | box corners | per-corner radii | unused | unused | hover, press, intensity, effect id | palette colour 1 | palette colour 2 | palette colour 3 | 0 |
+| =LRG_PAINT_PRIM_CURVE= (8) | end points P0 and P3 | pulse colour as straight RGBA floats 0..1 | unused | thickness | inner control points P1 (=extra[0..1]=) and P2 (=extra[2..3]=) | colour at the start | colour at the end | glow colour | 0 |
+
+=data= per primitive: blur and glass hold (dispersion, rim bevel width, opacity, 0); effects hold (speed, scale, opacity, 0); curves hold (glow size, pulse count, pulse speed, pulse phase). It is zero for the older primitives. Blur, glass and effect instances carry the list opacity in =data[2]= instead of in their colours, because the shader fades their whole result (a faded glass slab must let the frame through, not just lose its tint).
 
 Colours are stored as straight (non-premultiplied) RGBA8 with the list's current opacity already multiplied into the alpha byte at record time. The shader premultiplies.
 
@@ -365,11 +374,181 @@ Doing it the other way round draws nothing (or draws with raylib's default shade
 
 Also note that rendering a paint list leaves raylib in =RL_BLEND_ALPHA=: if you render inside =BeginBlendMode (BLEND_ADDITIVE)=, re-enter your blend mode afterwards.
 
+** Materials: backdrop blur and glass
+:PROPERTIES:
+:CUSTOM_ID: paint-materials
+:END:
+=LRG_PAINT_PRIM_BLUR= and =LRG_PAINT_PRIM_GLASS= read *what was drawn behind them*. A single pass cannot do that (a fragment shader cannot read the pixels of the target it writes), so the renderer takes a snapshot of the target first. Record them with =lrg_paint_list_blur()= and =lrg_paint_list_glass()= ([[file:paint-list.org::#paint-list-materials][API]]), or let a widget draw them through the =material= look field ([[file:../ui/styling.org::#styling-materials][styling]]).
+
+*** Backdrop batches
+:PROPERTIES:
+:CUSTOM_ID: paint-backdrop-batches
+:END:
+A blur or glass instance opens a command of kind =LRG_PAINT_COMMAND_BACKDROP=. Plain instances recorded after it (the panel's border, its label) join that same command, so a glass card with its content is still one draw call. A later blur/glass instance joins the existing backdrop command only when *nothing already in the command lies where it samples* (its rectangle grown by twice its blur radius plus its refraction reach): then everything it can see was drawn before the command and is in the snapshot. Otherwise it starts a new backdrop command, which costs a new snapshot. In practice:
+
+- Several disjoint glass panels (a toolbar and a sidebar) share one snapshot.
+- A glass panel stacked on top of another glass panel's content (a popup over a frosted window) needs its own snapshot, because it must see that content.
+- A glass panel's own drop shadow, recorded before it, sits in the previous command, so it is in the snapshot as it should be.
+
+*** What the renderer does for a backdrop command
+:PROPERTIES:
+:CUSTOM_ID: paint-backdrop-steps
+:END:
+1. Ends the instance pipeline and works out the *reach* of the command: the union of the sampled rectangles of its blur/glass instances, transformed by the current raylib transform/model-view/projection into target pixels, grown by the reach of the blur taps and snapped to a multiple of 16 pixels.
+2. Finds the current target: =rlGetActiveFramebuffer()= (the window's framebuffer 0, or the FBO of a =BeginTextureMode()= render texture) and its size from =GetRenderWidth()= / =GetRenderHeight()= (which follow =BeginTextureMode()=).
+3. Makes sure its offscreen chain exists: level 0 is an RGBA8 texture the size of the target rounded up to a multiple of 16, levels 1..4 are exact halves. They are created on the first backdrop command and only re-created when the target size changes; frames without backdrop commands never create or touch them.
+4. *Copies* the reach region of the target into level 0 with =glBlitFramebuffer= (=rlBlitFramebuffer()=).
+5. *Blurs* with the dual-filter ("dual Kawase") scheme: down passes halve the image into levels 1..N reading the centre and four diagonal bilinear taps, then up passes enlarge it back to level 1 reading a ring of eight taps. Blending is off and every pass is scissored to the reach region at its level. The number of levels N and the tap spread come from the largest blur radius in the command (in target pixels): up to 4 px 1 level, up to 10 px 2, up to 24 px 3, beyond that 4; the spread is the radius divided by 2^N, clamped to 0.75..3.
+6. Restores the target framebuffer and its viewport, re-binds the instance pipeline, binds level 0 (sharp) to texture slot 1 and level 1 (blurred) to slot 2, and draws the command's instances in one instanced call.
+
+The glass shader turns =gl_FragCoord= into texture coordinates of the snapshot, so it samples exactly what lies behind each pixel whether the target is the window or a render texture, and whatever transform the canvas is drawn with.
+
+*** The glass look
+:PROPERTIES:
+:CUSTOM_ID: paint-glass-model
+:END:
+Glass is a rounded slab (the same rounded-box SDF as rectangles). Per pixel, with =d= the signed distance to the edge and =n= the outward normal of the rounded box:
+
+- *Rim and refraction.* The rim is a band of width =bevel= (20% of the shorter side, 3..24 units). Its bend =t^2=, with =t = clamp (1 + d / bevel)=, is 1 on the edge and 0 where the flat middle begins. The backdrop is read at =p - n * bend * refraction=, so content near the rim appears pulled in from further inside, as a lens edge does. The offset is computed in canvas units and converted to target pixels with the inverse of the screen-space Jacobian of the canvas position (=dFdx=/=dFdy=), so it stays right under scaling.
+- *Dispersion.* When enabled, the red channel is read slightly less bent and the blue channel slightly more (three taps on each of the sharp and blurred copies): a thin rainbow where the backdrop changes under the rim.
+- *Frost.* The sharp and the blurred copies are mixed by =frost=.
+- *Saturation.* The colour is pushed away from (above 1) or towards (below 1) its luma.
+- *Tint.* The tint colour is laid over it with its alpha (premultiplied "over").
+- *Rim light.* A specular line of about 1.5 pixels along the edge, lit from the top-left: brightest where the normal faces the light, with a faint echo on the opposite side, plus a soft sheen on the bent band and a slightly brighter top than bottom. All scaled by =rim_light=.
+- *Opacity.* The result, already composited over the snapshot, is output with coverage times opacity, so fading a glass panel out reveals the live frame, not black.
+
+Blur (=LRG_PAINT_PRIM_BLUR=) is the same shading with full frost and no refraction, dispersion or rim.
+
+*** Cost model
+:PROPERTIES:
+:CUSTOM_ID: paint-backdrop-cost
+:END:
+- *No blur or glass in the list: nothing extra.* No offscreen texture is created, no copy or pass runs, the draw-call count is unchanged. The shader gained branches for the new primitives, which uniform-per-instance branching makes free for the old ones. =lrg_paint_renderer_get_backdrop_passes()= reports 0.
+- *Per backdrop command:* one blit of the reach region, then 2N - 1 full-screen-quad passes (N down, N - 1 up) each scissored to the reach region at its level (each level a quarter of the pixels of the one above, so the total pass area is under 1.4x the region at level 1, a third of the region itself), plus one extra draw call (the command's instances) and a few state changes. For a 400x300 panel at 16 px blur that is a 0.5 MB copy and about 60 000 shaded pixels of blur: well under a tenth of a millisecond on any desktop GPU.
+- *Per glass pixel:* two texture taps (eight with dispersion) plus the SDF; a blur pixel two taps.
+- *Memory:* the snapshot chain is about 1.33 times a full-target RGBA8 texture (for 1920x1080, about 11 MB), allocated on the first backdrop command and kept.
+- Count snapshots with =lrg_paint_renderer_get_backdrop_passes()= after a render; keep them low by drawing glass panels that do not overlap each other's content consecutively (they then share one snapshot).
+
+*** Limitations
+:PROPERTIES:
+:CUSTOM_ID: paint-backdrop-limits
+:END:
+- The viewport is restored to =(0, 0, GetRenderWidth(), GetRenderHeight())= after the passes; raylib's letterboxed fullscreen viewport offset (=renderOffset=, only used by =SetWindowSize= scaling modes) is not restored.
+- The scissor test is left disabled after a backdrop command; a caller that wrapped the whole render in =BeginScissorMode()= must re-apply it (paint lists clip per instance, so the canvas itself never needs this).
+- On a multisampled window framebuffer the copy is a resolve blit; it works because source and destination rectangles are identical.
+- If a group transform (=lrg_paint_list_transform_group()=) moves glass after it was recorded, the snapshot sharing decided at record time is not recomputed; the reach region is (it is computed at render time from the moved instances).
+- The effective blur is a smooth approximation of the requested radius, not an exact Gaussian; "blur radius 16" spreads an edge over roughly 25 to 30 pixels on each side.
+
+** Effects
+:PROPERTIES:
+:CUSTOM_ID: paint-effects
+:END:
+=LRG_PAINT_PRIM_EFFECT= fills a rounded rectangle with an animated pattern computed in the fragment shader. Effects are part of the one paint shader (a switch on the effect id), so they *batch with every other instance*: a list with an effect background, text and shapes is still one draw call. They never need the backdrop.
+
+Record with =lrg_paint_list_effect (list, x, y, w, h, radii, effect_id, params)=; get ids with =lrg_paint_effect_lookup ("aurora")=. Widgets use them through the =effect= look field.
+
+*** Inputs
+:PROPERTIES:
+:CUSTOM_ID: paint-effect-inputs
+:END:
+| Input | Source | Notes |
+|-------+--------+-------|
+| time | =lrg_paint_list_set_time()=, times =params.speed= | Paint never reads a clock: the code recording the frame (the canvas) sets it. Same time, same pixels. |
+| pointer | =lrg_paint_list_set_pointer()= / =_unset_pointer()= | Canvas units; effects receive it relative to the rectangle's top-left. Unset = far away. |
+| hover, press | =params.hover=, =params.press= (0..1) | =lrg_widget_paint_box()= fills them from the widget's springs |
+| palette | =params.color1=, =color2=, =color3= | straight RGBA |
+| intensity | =params.intensity= | 0..1 (some effects accept more) |
+| scale | =params.scale= | pattern size multiplier |
+
+*** Built-in effects
+:PROPERTIES:
+:CUSTOM_ID: paint-effect-builtins
+:END:
+| Name | Id | Look | Uses |
+|------+----+------+------|
+| =shimmer= | 1 | colour 1 to colour 2 sweep with a diagonal highlight band of colour 3 crossing it every 2.5 s | time, hover (brighter band) |
+| =aurora= | 2 | drifting curtains of colours 2/3 (fractal noise) over colour 1, strongest at the top | time, hover |
+| =neon= | 3 | colour 1 fill with a glowing tube along the rim whose colour runs between colours 2 and 3 around the shape and breathes | time, hover and press widen the glow |
+| =spotlight= | 4 | colour 1 with a soft light of colour 2 under the pointer | pointer, hover (off when not hovered), press tints with colour 3 |
+| =ripple= | 5 | rings of colour 2 travelling out from the pointer over colour 1 | pointer, time, faint on hover and strong on press |
+| =grain= | 6 | vertical colour 1 to colour 2 gradient with animated film grain (24 fps) | time |
+| =plasma= | 7 | summed sine fields through the colour 1/2/3 palette | time |
+| =mesh-gradient= | 8 | three soft colour points drifting slowly, blended by distance | time |
+
+*** User effects: the snippet contract
+:PROPERTIES:
+:CUSTOM_ID: paint-effect-snippets
+:END:
+=lrg_paint_effect_register (name, glsl_snippet, &error)= adds an effect and returns its id (64 and up; at most =LRG_PAINT_EFFECT_MAX_USER= = 32). The snippet is GLSL 330 that defines exactly one entry point:
+
+#+begin_src glsl
+vec4 lrg_effect (LrgEffect fx)
+{
+    /* straight-alpha colour of this pixel, 0..1 */
+    return mix (fx.color1, fx.color2, fx.uv.x);
+}
+#+end_src
+
+The paint shader calls it for every pixel of the rectangle. The rounded corners, the anti-aliased edge, the clip and the opacity are applied to what it returns: the effect only says what colour the pixel is. It receives:
+
+#+begin_src glsl
+struct LrgEffect {
+    vec2  uv;        /* 0,0 top-left .. 1,1 bottom-right of the rectangle */
+    vec2  pixel;     /* the same in canvas units from the top-left        */
+    vec2  size;      /* rectangle size in canvas units                    */
+    float edge;      /* signed distance to the rounded edge: < 0 inside   */
+    float time;      /* list time times params.speed, in seconds          */
+    vec2  pointer;   /* pointer relative to the top-left (far when unset) */
+    float hover;     /* 0..1                                              */
+    float press;     /* 0..1                                              */
+    vec4  color1;    /* palette, straight alpha                           */
+    vec4  color2;
+    vec4  color3;
+    float intensity;
+    float scale;     /* params.scale (never 0)                            */
+};
+#+end_src
+
+Helpers available to snippets: =lrg_hash (vec2)= (0..1, stable per point), =lrg_noise (vec2)= (smooth value noise), =lrg_fbm (vec2)= (four octaves), =lrg_palette (vec3 a, vec3 b, vec3 c, float t)= and the constants =LRG_PI=, =LRG_TAU=. Snippets may declare their own helper functions; prefix them to avoid clashes. They must not contain =#version= or =main=, nor declare uniforms or inputs.
+
+How it is built: each snippet is wrapped as =#define lrg_effect lrg_user_effect_N= / snippet / =#undef lrg_effect=, and a dispatcher =vec4 lrg_user_effect (int id, LrgEffect fx)= switches on the id. The renderer compiles this *variant* of the paint shader the next time it draws after a registration (it keeps the built-in program for when the variant fails). A GLSL error is logged by raylib and reported once with a warning; user effects then draw as their first colour. Registration is process-wide and permanent. Register user effects *before* loading themes that name them: the theme loader rejects unknown effect names.
+
+#+begin_src c
+static const gchar *stripes =
+	"vec4 lrg_effect (LrgEffect fx)\n"
+	"{\n"
+	"    float s = step (0.5, fract ((fx.pixel.x + fx.pixel.y) / 16.0 - fx.time));\n"
+	"    return mix (fx.color1, fx.color2, s * fx.intensity);\n"
+	"}\n";
+
+g_autoptr(GError) error = NULL;
+gint id = lrg_paint_effect_register ("stripes", stripes, &error);
+
+if (id < 0)
+	g_warning ("stripes: %s", error->message);
+#+end_src
+
+** Curves
+:PROPERTIES:
+:CUSTOM_ID: paint-curves
+:END:
+=LRG_PAINT_PRIM_CURVE= strokes a cubic Bezier: node-graph wires, connectors, decorative swooshes. The quad covers the hull of the four control points plus the stroke and glow. The fragment shader flattens the curve into 24 segments, keeps the closest one, and derives from it both the distance (stroke coverage and glow falloff) and the arc length at the closest point (gradient position and pulse placement). Cost is 24 segment distances per covered pixel: fine for wires, not meant for thousands of long curves.
+
+The style (=LrgPaintCurveStyle=) gives the colour at each end (the stroke fades between them along the arc length), an optional glow (colour and width beyond the stroke edge, quadratic falloff) and up to 8 pulses: bright spots of =pulse_color=, about four stroke widths long, evenly spaced and travelling at =pulse_speed= curve lengths per second from =pulse_phase=, driven by the list time.
+
+** Icons
+:PROPERTIES:
+:CUSTOM_ID: paint-icons
+:END:
+=lrg_paint_list_icon (list, LrgIcon, x, y, size, thickness, colour)= draws one of the 36 built-in vector icons (=LrgIcon=: check, cross, chevrons, plus, minus, search, menu, gear, star/star-half/star-outline, heart, play, pause, stop, info, warning, close, arrows, folder, file, eye, lock, home, trash, edit, refresh, download, upload, calendar, clock, user). They are designed on a unit square and built from the ordinary primitives (round-capped lines for strokes, triangles, circles, rounded rectangles, curves for the eye), so they are sharp at any size, need no texture and batch with everything. Adjacent fill triangles are grown by half a unit so their anti-aliased edges overlap instead of leaving seams. =lrg_paint_icon_from_name()= maps the =LrgIcon= nick ("chevron-down") to the value, for themes and markup.
+
+SVG icons (=LrgSvgIcon=) are parsed with graylib's SVG loader (=grl_svg_load_from_file/memory()=) into vector shapes, fitted into a square by the bounds of their paths, rasterized on the CPU with anti-aliasing (=grl_image_draw_svg_shapes()=) and uploaded as one texture per pixel size, cached in the icon. =lrg_paint_list_svg_icon()= draws the cached texture as an image instance (so it batches with other uses of the same icon and size). Rasterizing needs no window; textures (and so drawing) do. Under a scaling camera the icon is rasterized at its canvas size, not the on-screen size.
+
 ** Performance notes
 :PROPERTIES:
 :CUSTOM_ID: paint-performance
 :END:
-- Recording an instance is a =memset= of 96 bytes, a few float stores and an array append (amortised O(1)); the arrays keep their capacity across =lrg_paint_list_clear()=, so a steady-state frame allocates nothing.
+- Recording an instance is a =memset= of 112 bytes, a few float stores and an array append (amortised O(1)); the arrays keep their capacity across =lrg_paint_list_clear()=, so a steady-state frame allocates nothing.
 - Fragment cost is proportional to covered pixels plus the AA/blur margin. Large blurs on large shapes (full-screen modal shadows) are the most expensive thing you can draw; even so it is one instance and one smoothstep per pixel, far cheaper than any multi-pass blur.
 - Clipped-away shapes are culled at record time (bounds test) and, when partially visible, the quad itself is clamped to the clip, so hidden pixels are never shaded.
 - Text costs one instance per visible glyph (spaces and tabs emit none). The UI font is rasterised at 64 px with mipmaps and trilinear filtering, so small text stays clean without per-size atlases.
@@ -395,6 +574,8 @@ Also note that rendering a paint list leaves raylib in =RL_BLEND_ALPHA=: if you 
 :END:
 - The rounded-box, segment and triangle signed distance functions are the standard constructions documented by *Inigo Quilez* in his 2D distance function articles (https://iquilezles.org/articles/distfunctions2d/); they are re-derived and written for this shader.
 - The overall design, *one GPU instance per UI shape evaluated by a single SDF shader*, with glyphs batched alongside shapes and per-instance clip rectangles, was inspired by the *Raven* UI library (https://github.com/oscar-soirey/Raven), licensed Apache-2.0. libregnum reimplements the concepts from scratch on top of rlgl in gnu89 C; *no Raven code was copied*. The same inspiration applies to the theme/part-look styling model described in [[file:../ui/styling.org][UI styling]].
+
+- The *materials and effects* follow concepts from Raven as well: the backdrop capture plus dual-filter blur chain, the glass model (frost mix of sharp and blurred copies, refraction along the SDF normal in a rim band, chromatic dispersion, a top-left rim light), the set of built-in effects (shimmer, aurora, neon, spotlight, ripple, grain, plasma, mesh gradient) and the effect snippet contract (one function receiving a struct of uv, pixel, size, edge distance, time, pointer, hover, press, colours). All of it is reimplemented for GLSL 330 and rlgl with libregnum's own formulas; no Raven shader code was copied. The dual-filter blur itself is the technique Marius Bjorge presented at SIGGRAPH 2015 ("Bandwidth-Efficient Rendering").
 
 *NOTICE.* libregnum is licensed AGPL-3.0-or-later. Raven is licensed under the Apache License, Version 2.0; because no Raven source code is included in libregnum, no Apache-2.0 notice file is required, and this acknowledgement is given as attribution of the design inspiration.
 

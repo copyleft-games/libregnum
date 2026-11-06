@@ -201,13 +201,19 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgPaintGradient, lrg_paint_gradient_free)
 /**
  * LrgPaintInstance:
  * @rect: x0, y0, x1, y1 of the shape; for lines the two end points
- * @radii: corner radii, top-left, top-right, bottom-right, bottom-left
+ * @radii: corner radii, top-left, top-right, bottom-right, bottom-left;
+ *   for curves the pulse colour (straight RGBA, 0..1)
  * @clip: x0, y0, x1, y1 of the clip rectangle; pixels outside are discarded
  * @params: border width, auxiliary size (shadow blur or line
  *   thickness), #LrgPaintPrim, #LrgPaintGradientKind
  * @extra: gradient direction (linear: cos, sin), gradient centre and
- *   radius (radial: x, y in 0..1, radius), or texture coordinates
- *   (images: u0, v0, u1, v1)
+ *   radius (radial: x, y in 0..1, radius), texture coordinates
+ *   (images: u0, v0, u1, v1), glass parameters (frost, refraction,
+ *   saturation, rim light), effect state (hover, press, intensity,
+ *   effect id) or the two inner control points of a curve
+ * @data: per-primitive extras: glass (dispersion, bevel, opacity, 0),
+ *   effect (speed, scale, opacity, 0), curve (glow size, pulse count,
+ *   pulse speed, pulse phase)
  * @color: fill colour, or gradient start, straight-alpha RGBA8
  * @color2: gradient end colour, straight-alpha RGBA8
  * @border: border colour, straight-alpha RGBA8
@@ -226,6 +232,7 @@ typedef struct
 	gfloat  clip[4];
 	gfloat  params[4];
 	gfloat  extra[4];
+	gfloat  data[4];
 	guint8  color[4];
 	guint8  color2[4];
 	guint8  border[4];

@@ -1443,7 +1443,12 @@ static const gchar * const top_level_keys[] = {
 static const gchar * const style_keys[] = {
 	"widget", "class", "part", "state", "background", "foreground", "border",
 	"border-width", "radius", "shadow", "shadow-blur", "shadow-offset", "gradient",
-	"opacity", "size", "glow", "glow-size", NULL
+	"opacity", "size", "glow", "glow-size", "material", "glass", "effect",
+	"effect-colors", "effect-intensity", NULL
+};
+
+static const gchar * const glass_keys[] = {
+	"frost", "refraction", "saturation", "tint", "rim", "dispersion", "blur", NULL
 };
 
 static const gchar * const gradient_keys[] = {
@@ -1640,6 +1645,97 @@ parse_gradient (YamlNode          *node,
 	return TRUE;
 }
 
+/*
+ * parse_glass:
+ *
+ * The `glass:` mapping of a style rule. Unspecified keys keep the
+ * defaults of lrg_paint_glass_init_default(); ranges are checked so a
+ * typo like `frost: 30` fails loudly instead of rendering oddly.
+ */
+static gboolean
+parse_glass (YamlNode       *node,
+             LrgPaintGlass  *out,
+             GError        **error)
+{
+	YamlMapping *m;
+
+	if (node == NULL || yaml_node_get_node_type (node) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+		                     "styles.glass: expected a mapping");
+		return FALSE;
+	}
+	m = yaml_node_get_mapping (node);
+	if (!check_keys (m, glass_keys, "styles.glass", error))
+		return FALSE;
+
+	lrg_paint_glass_init_default (out);
+
+#define GLASS_NUMBER(key, field, lo, hi) \
+	if (yaml_mapping_has_member (m, key)) \
+	{ \
+		if (!parse_number_node (yaml_mapping_get_member (m, key), &out->field, \
+		                        "styles.glass." key, error)) \
+			return FALSE; \
+		if (out->field < (lo) || out->field > (hi)) \
+		{ \
+			g_set_error (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID, \
+			             "styles.glass." key ": %g is outside %g..%g", \
+			             (gdouble) out->field, (gdouble) (lo), (gdouble) (hi)); \
+			return FALSE; \
+		} \
+	}
+
+	GLASS_NUMBER ("frost", frost, 0.0f, 1.0f)
+	GLASS_NUMBER ("refraction", refraction, 0.0f, 256.0f)
+	GLASS_NUMBER ("saturation", saturation, 0.0f, 4.0f)
+	GLASS_NUMBER ("rim", rim_light, 0.0f, 1.0f)
+	GLASS_NUMBER ("dispersion", dispersion, 0.0f, 1.0f)
+	GLASS_NUMBER ("blur", blur_radius, 0.0f, 256.0f)
+
+#undef GLASS_NUMBER
+
+	if (yaml_mapping_has_member (m, "tint") &&
+	    !parse_color_node (yaml_mapping_get_member (m, "tint"), &out->tint,
+	                       "styles.glass.tint", error))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* parse_effect_colors: one colour or a list of one to three */
+static gboolean
+parse_effect_colors (YamlNode     *node,
+                     LrgPartLook  *look,
+                     GError      **error)
+{
+	GrlColor c[3];
+	guint    n = 1;
+	guint    i;
+
+	if (yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
+	{
+		YamlSequence *seq = yaml_node_get_sequence (node);
+
+		n = yaml_sequence_get_length (seq);
+		if (n < 1 || n > 3)
+		{
+			g_set_error_literal (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+			                     "styles.effect-colors: give one to three colours");
+			return FALSE;
+		}
+		for (i = 0; i < n; i++)
+			if (!parse_color_node (yaml_sequence_get_element (seq, i), &c[i],
+			                       "styles.effect-colors", error))
+				return FALSE;
+	}
+	else if (!parse_color_node (node, &c[0], "styles.effect-colors", error))
+		return FALSE;
+
+	lrg_part_look_set_effect_colors (look, &c[0], n > 1 ? &c[1] : NULL, n > 2 ? &c[2] : NULL);
+	return TRUE;
+}
+
 /* parse_radius: one number for all corners or a list of four */
 static gboolean
 parse_radius (YamlNode        *node,
@@ -1756,6 +1852,57 @@ parse_style (YamlNode  *node,
 		if (!parse_gradient (yaml_mapping_get_member (m, "gradient"), &g, error))
 			return NULL;
 		lrg_part_look_set_gradient (look, &g);
+	}
+	if (yaml_mapping_has_member (m, "material"))
+	{
+		gint material = LRG_PAINT_MATERIAL_NONE;
+
+		if (!parse_enum_node (yaml_mapping_get_member (m, "material"), LRG_TYPE_PAINT_MATERIAL,
+		                      &material, "styles.material", error))
+			return NULL;
+		lrg_part_look_set_material (look, (LrgPaintMaterial) material);
+	}
+	if (yaml_mapping_has_member (m, "glass"))
+	{
+		LrgPaintGlass g;
+
+		if (!parse_glass (yaml_mapping_get_member (m, "glass"), &g, error))
+			return NULL;
+		lrg_part_look_set_glass (look, &g);
+	}
+	if (yaml_mapping_has_member (m, "effect"))
+	{
+		const gchar *name = scalar_of (yaml_mapping_get_member (m, "effect"));
+
+		/* "none" clears an inherited effect; anything else must be a
+		 * built-in or already registered effect */
+		if (g_strcmp0 (name, "none") == 0)
+			lrg_part_look_set_effect (look, NULL);
+		else if (name == NULL || lrg_paint_effect_lookup (name) < 0)
+		{
+			g_set_error (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+			             "styles.effect: unknown effect '%s' (register user effects "
+			             "before loading the theme)", name != NULL ? name : "?");
+			return NULL;
+		}
+		else
+			lrg_part_look_set_effect (look, name);
+	}
+	if (yaml_mapping_has_member (m, "effect-colors") &&
+	    !parse_effect_colors (yaml_mapping_get_member (m, "effect-colors"), look, error))
+		return NULL;
+	if (yaml_mapping_has_member (m, "effect-intensity"))
+	{
+		if (!parse_number_node (yaml_mapping_get_member (m, "effect-intensity"), &f,
+		                        "styles.effect-intensity", error))
+			return NULL;
+		if (f < 0.0f || f > 4.0f)
+		{
+			g_set_error (error, LRG_THEME_ERROR, LRG_THEME_ERROR_INVALID,
+			             "styles.effect-intensity: %g is outside 0..4", (gdouble) f);
+			return NULL;
+		}
+		lrg_part_look_set_effect_intensity (look, f);
 	}
 
 	return g_steal_pointer (&rule);
@@ -2213,6 +2360,39 @@ rule_to_mapping (LrgStyleRule *rule)
 		set_color_member (m, "glow", &look->glow);
 	if (look->set & LRG_PART_LOOK_GLOW_SIZE)
 		yaml_mapping_set_double_member (m, "glow-size", look->glow_size);
+	if (look->set & LRG_PART_LOOK_MATERIAL)
+		yaml_mapping_set_string_member (m, "material",
+		                                enum_nick (LRG_TYPE_PAINT_MATERIAL, look->material));
+	if (look->set & LRG_PART_LOOK_GLASS)
+	{
+		g_autoptr(YamlMapping) g = yaml_mapping_new ();
+
+		yaml_mapping_set_double_member (g, "frost", look->glass.frost);
+		yaml_mapping_set_double_member (g, "refraction", look->glass.refraction);
+		yaml_mapping_set_double_member (g, "saturation", look->glass.saturation);
+		set_color_member (g, "tint", &look->glass.tint);
+		yaml_mapping_set_double_member (g, "rim", look->glass.rim_light);
+		yaml_mapping_set_double_member (g, "dispersion", look->glass.dispersion);
+		yaml_mapping_set_double_member (g, "blur", look->glass.blur_radius);
+		yaml_mapping_set_mapping_member (m, "glass", g);
+	}
+	if (look->set & LRG_PART_LOOK_EFFECT)
+		yaml_mapping_set_string_member (m, "effect",
+		                                look->effect != 0 ? g_quark_to_string (look->effect) : "none");
+	if (look->set & LRG_PART_LOOK_EFFECT_COLORS)
+	{
+		g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+		g_autofree gchar       *c1 = lrg_color_to_string (&look->effect_params.color1);
+		g_autofree gchar       *c2 = lrg_color_to_string (&look->effect_params.color2);
+		g_autofree gchar       *c3 = lrg_color_to_string (&look->effect_params.color3);
+
+		yaml_sequence_add_string_element (seq, c1);
+		yaml_sequence_add_string_element (seq, c2);
+		yaml_sequence_add_string_element (seq, c3);
+		yaml_mapping_set_sequence_member (m, "effect-colors", seq);
+	}
+	if (look->set & LRG_PART_LOOK_EFFECT_INTENSITY)
+		yaml_mapping_set_double_member (m, "effect-intensity", look->effect_params.intensity);
 
 	return m;
 }

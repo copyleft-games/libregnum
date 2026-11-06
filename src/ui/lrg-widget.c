@@ -105,6 +105,12 @@ typedef struct
 	gboolean        appear_pending;
 	LrgSpring       appear_spring;
 
+	/* Layout animation: the painted position chases the laid-out one */
+	gboolean        animate_layout;
+	gboolean        placed;        /* allocated at least once */
+	LrgSpring       glide_x;       /* painted x (parent-relative) */
+	LrgSpring       glide_y;
+
 	/* Style and interaction */
 	GArray         *classes;     /* GQuark */
 	LrgWidgetState  state;
@@ -611,6 +617,8 @@ lrg_widget_init (LrgWidget *self)
 	lrg_spring_init (&priv->hover, 0.0f, LRG_MOTION_SMOOTH);
 	lrg_spring_init (&priv->press, 0.0f, LRG_MOTION_SNAPPY);
 	lrg_spring_init (&priv->appear_spring, 1.0f, LRG_MOTION_SMOOTH);
+	lrg_spring_init (&priv->glide_x, 0.0f, LRG_MOTION_SMOOTH);
+	lrg_spring_init (&priv->glide_y, 0.0f, LRG_MOTION_SMOOTH);
 }
 
 /* ==========================================================================
@@ -727,6 +735,23 @@ lrg_widget_allocate (LrgWidget *self,
 
 	g_return_if_fail (LRG_IS_WIDGET (self));
 	priv = lrg_widget_get_instance_private (self);
+
+	/* Glide from the old painted position to the new one */
+	if (priv->animate_layout && priv->placed && (x != priv->x || y != priv->y))
+	{
+		if (lrg_spring_is_settled (&priv->glide_x) && priv->glide_x.value != priv->x)
+			lrg_spring_snap (&priv->glide_x, priv->x);
+		if (lrg_spring_is_settled (&priv->glide_y) && priv->glide_y.value != priv->y)
+			lrg_spring_snap (&priv->glide_y, priv->y);
+		lrg_spring_set_target (&priv->glide_x, x);
+		lrg_spring_set_target (&priv->glide_y, y);
+	}
+	else if (!priv->animate_layout || !priv->placed)
+	{
+		lrg_spring_snap (&priv->glide_x, x);
+		lrg_spring_snap (&priv->glide_y, y);
+	}
+	priv->placed = TRUE;
 
 	_lrg_widget_set_rect_quiet (self, x, y, width, height);
 	LRG_WIDGET_GET_CLASS (self)->arrange (self);
@@ -1339,6 +1364,33 @@ lrg_widget_play_appear (LrgWidget *self)
 		priv->appear_pending = TRUE;
 }
 
+gboolean
+lrg_widget_get_animate_layout (LrgWidget *self)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_WIDGET (self), FALSE);
+	priv = lrg_widget_get_instance_private (self);
+	return priv->animate_layout;
+}
+
+void
+lrg_widget_set_animate_layout (LrgWidget *self,
+                               gboolean   animate)
+{
+	LrgWidgetPrivate *priv;
+
+	g_return_if_fail (LRG_IS_WIDGET (self));
+	priv = lrg_widget_get_instance_private (self);
+
+	priv->animate_layout = !!animate;
+	if (!priv->animate_layout)
+	{
+		lrg_spring_snap (&priv->glide_x, priv->x);
+		lrg_spring_snap (&priv->glide_y, priv->y);
+	}
+}
+
 gfloat
 lrg_widget_get_appear_progress (LrgWidget *self)
 {
@@ -1628,6 +1680,15 @@ lrg_widget_step (LrgWidget *self,
 	busy |= lrg_spring_step (&priv->hover, delta_time);
 	busy |= lrg_spring_step (&priv->press, delta_time);
 
+	/* Layout glide */
+	if (priv->animate_layout)
+	{
+		lrg_spring_set_motion (&priv->glide_x, motion);
+		lrg_spring_set_motion (&priv->glide_y, motion);
+		busy |= lrg_spring_step (&priv->glide_x, delta_time);
+		busy |= lrg_spring_step (&priv->glide_y, delta_time);
+	}
+
 	/* The widget's own animations */
 	if (LRG_WIDGET_GET_CLASS (self)->step != NULL)
 		busy |= LRG_WIDGET_GET_CLASS (self)->step (self, delta_time);
@@ -1861,10 +1922,78 @@ lrg_widget_paint_box (LrgWidget         *self,
 		lrg_paint_list_shadow (list, x, y, width, height, look->radii.top_left,
 		                       look->shadow_blur, 0.0f, 0.0f, look->shadow_offset_y, &look->shadow);
 
-	lrg_paint_list_rect_ex (list, x, y, width, height, &look->radii,
-	                        &look->background,
-	                        look->gradient.kind != LRG_PAINT_GRADIENT_NONE ? &look->gradient : NULL,
-	                        look->border_width, &look->border);
+	/* Materials and effects: material, then the solid fill cross-faded
+	 * over it, then the effect, then the border on top. Without either
+	 * the fill and border stay one instance, as before. */
+	if ((look->material != LRG_PAINT_MATERIAL_NONE && look->material_opacity > 0.0f) ||
+	    look->effect != 0)
+	{
+		const LrgPaintGradient *gradient;
+		gint                    effect_id = -1;
+
+		gradient = look->gradient.kind != LRG_PAINT_GRADIENT_NONE ? &look->gradient : NULL;
+		if (look->effect != 0)
+			effect_id = lrg_paint_effect_lookup (g_quark_to_string (look->effect));
+
+		if (look->material != LRG_PAINT_MATERIAL_NONE && look->material_opacity > 0.0f)
+		{
+			LrgPaintGlass glass;
+
+			lrg_part_look_get_glass (look, &glass);
+			lrg_paint_list_push_opacity (list, look->material_opacity);
+			if (look->material == LRG_PAINT_MATERIAL_BLUR)
+				lrg_paint_list_blur (list, x, y, width, height, look->radii.top_left,
+				                     glass.blur_radius, &glass.tint);
+			else
+				lrg_paint_list_glass (list, x, y, width, height, &look->radii, &glass);
+			lrg_paint_list_pop_opacity (list);
+
+			/* Fading between a material and a plain fill */
+			if (look->material_opacity < 1.0f && effect_id < 0)
+			{
+				lrg_paint_list_push_opacity (list, 1.0f - look->material_opacity);
+				lrg_paint_list_rect_ex (list, x, y, width, height, &look->radii,
+				                        &look->background, gradient, 0.0f, NULL);
+				lrg_paint_list_pop_opacity (list);
+			}
+		}
+		else if (effect_id < 0)
+		{
+			/* Unknown effect name: the plain fill */
+			lrg_paint_list_rect_ex (list, x, y, width, height, &look->radii,
+			                        &look->background, gradient, 0.0f, NULL);
+		}
+
+		if (effect_id >= 0)
+		{
+			LrgPaintEffectParams params = look->effect_params;
+
+			/* Default palette: the part's background, the theme
+			 * accent and the part's foreground */
+			if (!(look->set & LRG_PART_LOOK_EFFECT_COLORS))
+			{
+				LrgTheme *theme = lrg_widget_get_theme (self);
+
+				params.color1 = look->background;
+				if (theme != NULL)
+					params.color2 = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+				params.color3 = look->foreground;
+			}
+			params.hover = lrg_widget_get_hover_progress (self);
+			params.press = lrg_widget_get_press_progress (self);
+			lrg_paint_list_effect (list, x, y, width, height, &look->radii, effect_id, &params);
+		}
+
+		lrg_paint_list_rect_ex (list, x, y, width, height, &look->radii, NULL, NULL,
+		                        look->border_width, &look->border);
+	}
+	else
+	{
+		lrg_paint_list_rect_ex (list, x, y, width, height, &look->radii,
+		                        &look->background,
+		                        look->gradient.kind != LRG_PAINT_GRADIENT_NONE ? &look->gradient : NULL,
+		                        look->border_width, &look->border);
+	}
 
 	if (faded)
 		lrg_paint_list_pop_opacity (list);
@@ -2014,6 +2143,13 @@ lrg_widget_paint (LrgWidget    *self,
 		lrg_paint_list_rect_ex (list, x - g, y - g, priv->width + g * 2.0f, priv->height + g * 2.0f,
 		                        &ring.radii, NULL, NULL, ring.border_width, &ring.border);
 	}
+
+	/* Layout glide: paint at the spring position until it settles */
+	if (priv->animate_layout &&
+	    (priv->glide_x.value != priv->x || priv->glide_y.value != priv->y))
+		lrg_paint_list_transform_group (list, mark, 1.0f, 0.0f, 0.0f,
+		                                priv->glide_x.value - priv->x,
+		                                priv->glide_y.value - priv->y, 1.0f);
 
 	/* Appear animation: transform everything just recorded */
 	animating = priv->appear != LRG_APPEAR_NONE &&

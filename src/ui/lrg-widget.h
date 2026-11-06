@@ -725,6 +725,30 @@ void lrg_widget_set_opacity (LrgWidget *self,
                              gfloat     opacity);
 
 /**
+ * lrg_widget_get_animate_layout:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if position changes from layout glide on a spring
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_animate_layout (LrgWidget *self);
+
+/**
+ * lrg_widget_set_animate_layout:
+ * @self: an #LrgWidget
+ * @animate: glide to new positions instead of jumping
+ *
+ * With layout animation on, when a re-layout moves the widget (a list
+ * reorders, a panel is inserted above it, the window resizes) it is
+ * painted gliding from its old position to the new one with the
+ * widget's motion spring. Hit-testing uses the new position straight
+ * away, like appear animations. The first placement never animates.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_animate_layout (LrgWidget *self,
+                                    gboolean   animate);
+
+/**
  * lrg_widget_get_appear:
  * @self: an #LrgWidget
  *

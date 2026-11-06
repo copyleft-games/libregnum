@@ -39,4 +39,55 @@ void _lrg_paint_list_text_font (LrgPaintList   *self,
                                 gfloat          spacing,
                                 const GrlColor *color);
 
+/*
+ * _lrg_paint_instance_get_bounds:
+ * @inst: an instance
+ * @x0: (out): left
+ * @y0: (out): top
+ * @x1: (out): right
+ * @y1: (out): bottom
+ *
+ * Box of every pixel @inst can touch (shape, anti-aliasing margin,
+ * shadow blur, curve glow), cut to its clip.
+ */
+void _lrg_paint_instance_get_bounds (const LrgPaintInstance *inst,
+                                     gfloat                 *x0,
+                                     gfloat                 *y0,
+                                     gfloat                 *x1,
+                                     gfloat                 *y1);
+
+/*
+ * _lrg_paint_instance_get_backdrop_reach:
+ * @inst: a blur or glass instance
+ * @x0: (out): left
+ * @y0: (out): top
+ * @x1: (out): right
+ * @y1: (out): bottom
+ *
+ * Box of the backdrop @inst reads: its shape grown by the blur and
+ * refraction reach.
+ */
+void _lrg_paint_instance_get_backdrop_reach (const LrgPaintInstance *inst,
+                                             gfloat                 *x0,
+                                             gfloat                 *y0,
+                                             gfloat                 *x1,
+                                             gfloat                 *y1);
+
+/*
+ * _lrg_paint_effect_get_serial:
+ *
+ * Returns: a counter bumped by every lrg_paint_effect_register(); the
+ *   renderer rebuilds its user-effect shader variant when it changes
+ */
+guint _lrg_paint_effect_get_serial (void);
+
+/*
+ * _lrg_paint_effect_build_user_source:
+ *
+ * Returns: (transfer full) (nullable): GLSL defining every user effect
+ *   and `vec4 lrg_user_effect (int id, LrgEffect fx)`, or %NULL when no
+ *   user effect is registered
+ */
+gchar * _lrg_paint_effect_build_user_source (void);
+
 G_END_DECLS

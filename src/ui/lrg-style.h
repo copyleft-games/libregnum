@@ -25,6 +25,7 @@
 #include "../lrg-version.h"
 #include "../lrg-enums.h"
 #include "../paint/lrg-paint-types.h"
+#include "../paint/lrg-paint-fx.h"
 
 G_BEGIN_DECLS
 
@@ -48,6 +49,13 @@ G_BEGIN_DECLS
  * @LRG_PART_LOOK_SIZE: @size is set
  * @LRG_PART_LOOK_GLOW: @glow is set
  * @LRG_PART_LOOK_GLOW_SIZE: @glow_size is set
+ * @LRG_PART_LOOK_MATERIAL: @material and @material_opacity are set
+ * @LRG_PART_LOOK_GLASS: @glass is set
+ * @LRG_PART_LOOK_EFFECT: @effect is set
+ * @LRG_PART_LOOK_EFFECT_COLORS: the three colours of @effect_params
+ *   are set
+ * @LRG_PART_LOOK_EFFECT_INTENSITY: the intensity of @effect_params is
+ *   set
  * @LRG_PART_LOOK_ALL: every field
  *
  * Which fields of an #LrgPartLook carry a value. Merging copies only
@@ -70,7 +78,12 @@ typedef enum /*< flags >*/
 	LRG_PART_LOOK_SIZE          = 1 << 10,
 	LRG_PART_LOOK_GLOW          = 1 << 11,
 	LRG_PART_LOOK_GLOW_SIZE     = 1 << 12,
-	LRG_PART_LOOK_ALL           = (1 << 13) - 1
+	LRG_PART_LOOK_MATERIAL      = 1 << 13,
+	LRG_PART_LOOK_GLASS         = 1 << 14,
+	LRG_PART_LOOK_EFFECT        = 1 << 15,
+	LRG_PART_LOOK_EFFECT_COLORS = 1 << 16,
+	LRG_PART_LOOK_EFFECT_INTENSITY = 1 << 17,
+	LRG_PART_LOOK_ALL           = (1 << 18) - 1
 } LrgPartLookFields;
 
 LRG_AVAILABLE_IN_ALL
@@ -97,6 +110,18 @@ GType lrg_part_look_fields_get_type (void) G_GNUC_CONST;
  *   thickness ...)
  * @glow: colour of a soft outer glow (a shadow with no offset)
  * @glow_size: glow radius
+ * @material: surface material; anything but %LRG_PAINT_MATERIAL_NONE
+ *   draws the part as glass or blur over what is behind it instead of
+ *   the solid fill
+ * @material_opacity: how strongly the material shows, 0..1; below 1
+ *   the solid fill is cross-faded over it (this is how a look fades
+ *   between a material and a plain fill)
+ * @glass: glass parameters for the material; when not set the
+ *   material's defaults apply (see lrg_part_look_get_glass())
+ * @effect: quark of the effect name drawn over the fill (see
+ *   lrg_paint_effect_lookup()), 0 for none
+ * @effect_params: effect palette and intensity (hover, press, speed
+ *   and scale are filled in when painting)
  *
  * The visual description of one widget part. A plain value struct.
  */
@@ -116,6 +141,11 @@ typedef struct
 	gfloat            size;
 	GrlColor          glow;
 	gfloat            glow_size;
+	LrgPaintMaterial  material;
+	gfloat            material_opacity;
+	LrgPaintGlass     glass;
+	GQuark            effect;
+	LrgPaintEffectParams effect_params;
 } LrgPartLook;
 
 LRG_AVAILABLE_IN_ALL
@@ -291,6 +321,93 @@ LRG_AVAILABLE_IN_ALL
 void lrg_part_look_set_glow (LrgPartLook    *self,
                              const GrlColor *color,
                              gfloat          size);
+
+/**
+ * lrg_part_look_set_material:
+ * @self: an #LrgPartLook
+ * @material: the surface material
+ *
+ * Sets @material (with @material_opacity 1) and marks it set.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_part_look_set_material (LrgPartLook      *self,
+                                 LrgPaintMaterial  material);
+
+/**
+ * lrg_part_look_set_glass:
+ * @self: an #LrgPartLook
+ * @glass: glass parameters
+ *
+ * Sets @glass and marks it set.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_part_look_set_glass (LrgPartLook         *self,
+                              const LrgPaintGlass *glass);
+
+/**
+ * lrg_part_look_get_glass:
+ * @self: an #LrgPartLook
+ * @out: (out caller-allocates): the glass the material draws with
+ *
+ * The glass parameters @self's material paints with: @glass when set,
+ * else lrg_paint_glass_init_default(), adjusted by the material. BLUR
+ * keeps only the blur (full frost, no refraction, rim or dispersion,
+ * no tint unless @glass is set), FROSTED forces full frost, TINTED
+ * forces full frost and uses @background as the tint.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_part_look_get_glass (const LrgPartLook *self,
+                              LrgPaintGlass     *out);
+
+/**
+ * lrg_part_look_set_effect:
+ * @self: an #LrgPartLook
+ * @name: (nullable): effect name ("aurora", a registered user effect
+ *   ...), %NULL for none
+ *
+ * Sets @effect and marks it set. The name is resolved when painting,
+ * so an effect registered later still works.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_part_look_set_effect (LrgPartLook *self,
+                               const gchar *name);
+
+/**
+ * lrg_part_look_get_effect_name:
+ * @self: an #LrgPartLook
+ *
+ * Returns: (nullable): the effect name, or %NULL for none
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_part_look_get_effect_name (const LrgPartLook *self);
+
+/**
+ * lrg_part_look_set_effect_colors:
+ * @self: an #LrgPartLook
+ * @color1: first palette colour
+ * @color2: (nullable): second colour, %NULL to repeat @color1
+ * @color3: (nullable): third colour, %NULL to repeat @color2
+ *
+ * Sets the effect palette and marks it set. Without it the effect
+ * paints with the part's background, the theme accent and the part's
+ * foreground.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_part_look_set_effect_colors (LrgPartLook    *self,
+                                      const GrlColor *color1,
+                                      const GrlColor *color2,
+                                      const GrlColor *color3);
+
+/**
+ * lrg_part_look_set_effect_intensity:
+ * @self: an #LrgPartLook
+ * @intensity: effect strength, 0..1 (1 when unset)
+ *
+ * Sets the effect intensity and marks it set.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_part_look_set_effect_intensity (LrgPartLook *self,
+                                         gfloat       intensity);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgPartLook, lrg_part_look_free)
 

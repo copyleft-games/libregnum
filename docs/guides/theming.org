@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum ui theme guide
 #+created: 2026-11-05T00:00:00-05:00
-#+updated: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
 #+version: 1.0
 
 * Theming Guide
@@ -369,6 +369,146 @@ Without a window no font is loaded and the UI font is =NULL= (text measures with
 - *Saving*: =lrg_theme_to_data()= / =lrg_theme_save_to_file()= write every colour, metric, the motion, dark flag, name, font path and all style rules as YAML that loads back unchanged. A theme editor can save the player's customisations this way. The output contains the full palette, not the =preset=/=accent= shorthand.
 - *Hot reload* during development: watch the file (=GFileMonitor=) and on change create a new theme from it and =lrg_theme_set_default()= it (plus =queue_layout= on your canvas).
 
+** Glass and effects recipes
+:PROPERTIES:
+:CUSTOM_ID: theming-glass-effects
+:END:
+Style rules can give any box-like part a *material* (glass or blur over what is behind it) and an animated *effect*. The full field reference is in [[file:../modules/ui/styling.org::#styling-materials][UI styling: materials and effects]]; how they render and what they cost is in [[file:../modules/paint/index.org::#paint-materials][the paint module]]. Glass only looks like glass when something is behind it: a game scene, an image, an effect, a gradient window background.
+
+*** Frosted panels over the game
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-frosted
+:END:
+#+begin_src yaml
+styles:
+  - widget: LrgPanel
+    part: box
+    material: frosted
+    glass: {blur: 20, saturation: 1.3, tint: "#10121c80", rim: 0.5}
+    border: "#ffffff22"
+    border-width: 1
+    shadow: "#00000060"
+    shadow-blur: 24
+    shadow-offset: 8
+#+end_src
+
+The tint alpha (=80= = 50%) decides how much the scene shows through; the hairline border and the rim light keep the panel edge readable over busy backgrounds.
+
+*** Clear glass buttons that frost on hover
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-glass-hover
+:END:
+#+begin_src yaml
+styles:
+  - widget: LrgButton
+    part: box
+    material: glass
+    glass: {frost: 0.15, refraction: 10, dispersion: 0.4, rim: 0.9, tint: "#ffffff10"}
+  - widget: LrgButton
+    part: box
+    state: hovered
+    material: glass
+    glass: {frost: 0.8, refraction: 6, rim: 1, tint: "#ffffff28"}
+#+end_src
+
+The hovered look cross-fades with the button's hover spring: frost, refraction and tint all blend, so the glass visibly frosts over as the pointer arrives.
+
+*** A tinted accent sheet
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-tinted
+:END:
+#+begin_src yaml
+styles:
+  - class: sheet
+    part: box
+    material: tinted
+    background: "#7c6cff40"   # the tint: accent at 25%
+#+end_src
+
+*** Blur only (no slab optics)
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-blur
+:END:
+#+begin_src yaml
+styles:
+  - class: backdrop
+    part: box
+    material: blur
+    glass: {blur: 32, tint: "#00000055"}
+#+end_src
+
+=blur= ignores refraction, rim and dispersion even when =glass= sets them.
+
+*** Animated surfaces
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-effects
+:END:
+#+begin_src yaml
+styles:
+  # a title banner with drifting northern lights
+  - class: hero
+    part: box
+    effect: aurora
+    effect-colors: ["#0b0d1c", "#7c6cff", "#40dcff"]
+    effect-intensity: 0.9
+  # call-to-action buttons: a light that follows the pointer, rings on click
+  - class: cta
+    part: box
+    effect: spotlight
+    effect-colors: ["#1e1b3a", "#7c6cff"]
+  - class: cta
+    part: box
+    state: pressed
+    effect: ripple
+  # a neon frame for the selected card
+  - class: card
+    part: box
+    state: selected
+    effect: neon
+    effect-colors: ["#14141c", "#ff4fd8", "#40dcff"]
+#+end_src
+
+Without =effect-colors= an effect uses the part's background, the theme accent and the part's foreground, so it follows preset switches. Effects need a moving clock: =LrgCanvas= passes its animation time and the pointer to the paint list every frame, so keep calling =lrg_canvas_update()= / =lrg_canvas_render()= each frame. =effect: none= in a more specific rule removes an effect a broader rule added.
+
+*** Custom effects
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-custom-effect
+:END:
+Register a GLSL snippet before loading the theme that names it (the loader rejects unknown effect names):
+
+#+begin_src c
+static const gchar *scanlines =
+	"vec4 lrg_effect (LrgEffect fx)\n"
+	"{\n"
+	"    float line = 0.5 + 0.5 * sin (fx.pixel.y * 1.6 - fx.time * 6.0);\n"
+	"    return mix (fx.color1, fx.color2, line * 0.25 * fx.intensity);\n"
+	"}\n";
+
+g_autoptr(GError) error = NULL;
+
+if (lrg_paint_effect_register ("scanlines", scanlines, &error) < 0)
+	g_warning ("%s", error->message);
+lrg_theme_load_from_file (theme, "data/themes/retro.yaml", &error);
+#+end_src
+
+#+begin_src yaml
+styles:
+  - class: terminal
+    part: box
+    effect: scanlines
+    effect-colors: ["#001400", "#00ff66"]
+#+end_src
+
+The snippet contract (inputs, helpers, rules) is in [[file:../modules/paint/index.org::#paint-effect-snippets][paint effects]].
+
+*** Keeping it fast
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-cost
+:END:
+- Effects cost nothing extra in draw calls; they batch with everything.
+- Each glass or blur surface drawn over content that was drawn after the previous glass surface costs one backdrop snapshot (a copy and a small blur chain of its area). Panels side by side share one; glass stacked on glass content does not. Watch =lrg_paint_renderer_get_backdrop_passes()= while tuning a theme.
+- A UI without any material costs exactly what it did before materials existed.
+
 ** Loading errors
 :PROPERTIES:
 :CUSTOM_ID: theming-errors
@@ -396,6 +536,7 @@ Messages name the offending key (=colors.text-muted: expected a hex colour ...=,
 - =dark= only changes accent derivation, not other colours; a light theme needs light colours (start from =daylight= or =catppuccin-latte=).
 - Size metrics need a =queue_layout= after a runtime switch.
 - Do not modify a style rule's look after adding it to a theme (stale caches); reload or re-add.
+- Glass shows what is behind it: over the plain window colour it is just a lighter panel. Register custom effects before loading a theme that uses them.
 - The default corner radius is 8 (it was 4 before the paint pipeline); set =corner-radius: 4= for the old look.
 
 ** See also

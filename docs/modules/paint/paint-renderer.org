@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum paint rendering
 #+created: 2026-11-05T00:00:00-05:00
-#+updated: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
 #+version: 1.0
 
 * LrgPaintRenderer
@@ -68,7 +68,7 @@ Call =render()= between =BeginDrawing()= and =EndDrawing()= (or inside =BeginTex
 3. Compiles the shader and builds the VAO on first use (once per renderer; a failure disables the renderer for the process and logs a warning).
 4. Flushes raylib's batch (=rlDrawRenderBatchActive()=).
 5. Grows the instance buffer if needed (capacity starts at 1024 instances and doubles) and uploads the whole instance array once.
-6. Walks the commands. For an instance batch it binds the pipeline if not bound yet (blend state first, then program, uniforms and VAO: see [[file:index.org::#paint-blend-flush][the blend-mode-flush pitfall]]), binds the batch texture (raylib's white default texture when untextured), re-points the instance attributes at the batch's first instance and issues one instanced draw of six vertices. For a callback it unbinds the pipeline, applies the recorded clip as =BeginScissorMode()= when there was one, runs the callback, and flushes.
+6. Walks the commands. For a =LRG_PAINT_COMMAND_BACKDROP= batch it first captures and blurs the part of the target the batch samples, then draws the batch with the snapshot bound (see [[file:index.org::#paint-backdrop-steps][the backdrop steps]]). For an instance batch it binds the pipeline if not bound yet (blend state first, then program, uniforms and VAO: see [[file:index.org::#paint-blend-flush][the blend-mode-flush pitfall]]), binds the batch texture (raylib's white default texture when untextured), re-points the instance attributes at the batch's first instance and issues one instanced draw of six vertices. For a callback it unbinds the pipeline, applies the recorded clip as =BeginScissorMode()= when there was one, runs the callback, and flushes.
 7. Unbinds everything and restores =RL_BLEND_ALPHA=.
 
 ** Profiling
@@ -86,6 +86,8 @@ g_debug ("UI: %u instances, %u commands, %u draw calls",
          lrg_paint_list_get_n_commands (list),
          lrg_paint_renderer_get_draw_calls (renderer));
 #+end_src
+
+=lrg_paint_renderer_get_backdrop_passes (renderer)= returns how many backdrop snapshots (copy plus blur chain) the last render made: 0 for frames without blur or glass, which then cost exactly what they did before materials existed; one per =LRG_PAINT_COMMAND_BACKDROP= command otherwise. Each adds one draw call to =get_draw_calls()=. See [[file:index.org::#paint-backdrop-cost][the cost model]].
 
 Typical numbers: a full game menu with one font and no images is 1 draw call; each image texture or second font interleaved in paint order adds one batch per switch; each legacy widget still drawn through =draw()= adds a callback plus one batch after it. If the count is high, look for interleaved textures and unported legacy widgets.
 

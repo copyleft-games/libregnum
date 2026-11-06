@@ -76,6 +76,20 @@ LRG_AVAILABLE_IN_ALL
 guint lrg_paint_renderer_get_draw_calls (LrgPaintRenderer *self);
 
 /**
+ * lrg_paint_renderer_get_backdrop_passes:
+ * @self: an #LrgPaintRenderer
+ *
+ * Number of backdrop captures the last render made: one per
+ * %LRG_PAINT_COMMAND_BACKDROP batch, each a copy of part of the target
+ * plus its blur chain. Zero for frames without blur or glass, which
+ * then cost exactly what they did before materials existed.
+ *
+ * Returns: backdrop captures issued by the last render
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_paint_renderer_get_backdrop_passes (LrgPaintRenderer *self);
+
+/**
  * lrg_paint_renderer_is_available:
  *
  * Returns: %TRUE when a window (and so a GL context) is open

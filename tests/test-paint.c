@@ -34,9 +34,9 @@ static const GrlColor C_BLACK = { 0, 0, 0, 255 };
 static void
 test_instance_layout (void)
 {
-	/* The GPU layout is part of the shader contract: five vec4s, three
+	/* The GPU layout is part of the shader contract: six vec4s, three
 	 * RGBA8 colours and a texture id */
-	g_assert_cmpuint (sizeof (LrgPaintInstance), ==, 96);
+	g_assert_cmpuint (sizeof (LrgPaintInstance), ==, 112);
 }
 
 static void

@@ -52,6 +52,11 @@ lrg_part_look_fields_get_type (void)
 			{ LRG_PART_LOOK_SIZE, "LRG_PART_LOOK_SIZE", "size" },
 			{ LRG_PART_LOOK_GLOW, "LRG_PART_LOOK_GLOW", "glow" },
 			{ LRG_PART_LOOK_GLOW_SIZE, "LRG_PART_LOOK_GLOW_SIZE", "glow-size" },
+			{ LRG_PART_LOOK_MATERIAL, "LRG_PART_LOOK_MATERIAL", "material" },
+			{ LRG_PART_LOOK_GLASS, "LRG_PART_LOOK_GLASS", "glass" },
+			{ LRG_PART_LOOK_EFFECT, "LRG_PART_LOOK_EFFECT", "effect" },
+			{ LRG_PART_LOOK_EFFECT_COLORS, "LRG_PART_LOOK_EFFECT_COLORS", "effect-colors" },
+			{ LRG_PART_LOOK_EFFECT_INTENSITY, "LRG_PART_LOOK_EFFECT_INTENSITY", "effect-intensity" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_flags_register_static (g_intern_static_string ("LrgPartLookFields"), values);
@@ -100,6 +105,11 @@ lrg_part_look_init (LrgPartLook *self)
 	self->set = LRG_PART_LOOK_NONE;
 	self->opacity = 1.0f;
 	self->gradient.kind = LRG_PAINT_GRADIENT_NONE;
+	self->material = LRG_PAINT_MATERIAL_NONE;
+	self->material_opacity = 1.0f;
+	lrg_paint_glass_init_default (&self->glass);
+	self->effect = 0;
+	lrg_paint_effect_params_init_default (&self->effect_params);
 }
 
 void
@@ -139,6 +149,23 @@ lrg_part_look_merge (LrgPartLook       *self,
 		self->glow = overlay->glow;
 	if (f & LRG_PART_LOOK_GLOW_SIZE)
 		self->glow_size = overlay->glow_size;
+	if (f & LRG_PART_LOOK_MATERIAL)
+	{
+		self->material = overlay->material;
+		self->material_opacity = overlay->material_opacity;
+	}
+	if (f & LRG_PART_LOOK_GLASS)
+		self->glass = overlay->glass;
+	if (f & LRG_PART_LOOK_EFFECT)
+		self->effect = overlay->effect;
+	if (f & LRG_PART_LOOK_EFFECT_COLORS)
+	{
+		self->effect_params.color1 = overlay->effect_params.color1;
+		self->effect_params.color2 = overlay->effect_params.color2;
+		self->effect_params.color3 = overlay->effect_params.color3;
+	}
+	if (f & LRG_PART_LOOK_EFFECT_INTENSITY)
+		self->effect_params.intensity = overlay->effect_params.intensity;
 
 	self->set |= f;
 }
@@ -237,6 +264,45 @@ lrg_part_look_lerp (const LrgPartLook *a,
 		result.gradient.center_x = lerpf (ga.center_x, gb.center_x, t);
 		result.gradient.center_y = lerpf (ga.center_y, gb.center_y, t);
 		result.gradient.radius = lerpf (ga.radius, gb.radius, t);
+	}
+
+	/* Materials fade through their strength: a side without one counts
+	 * as strength 0, so NONE -> GLASS fades the glass in over the fill.
+	 * Between two materials the glass parameters blend and the target
+	 * material is used. */
+	if (a->material != LRG_PAINT_MATERIAL_NONE || b->material != LRG_PAINT_MATERIAL_NONE)
+	{
+		LrgPaintGlass ga;
+		LrgPaintGlass gb;
+		gfloat        sa;
+		gfloat        sb;
+
+		lrg_part_look_get_glass (a->material != LRG_PAINT_MATERIAL_NONE ? a : b, &ga);
+		lrg_part_look_get_glass (b->material != LRG_PAINT_MATERIAL_NONE ? b : a, &gb);
+		sa = a->material != LRG_PAINT_MATERIAL_NONE ? a->material_opacity : 0.0f;
+		sb = b->material != LRG_PAINT_MATERIAL_NONE ? b->material_opacity : 0.0f;
+
+		result.material = b->material != LRG_PAINT_MATERIAL_NONE ? b->material : a->material;
+		result.material_opacity = lerpf (sa, sb, t);
+		lrg_paint_glass_lerp (&ga, &gb, t, &result.glass);
+		result.set |= LRG_PART_LOOK_MATERIAL | LRG_PART_LOOK_GLASS;
+	}
+
+	/* Effects fade through their intensity the same way */
+	if (a->effect != 0 || b->effect != 0)
+	{
+		gfloat ia = a->effect != 0 ? a->effect_params.intensity : 0.0f;
+		gfloat ib = b->effect != 0 ? b->effect_params.intensity : 0.0f;
+		const LrgPaintEffectParams *pa = a->effect != 0 ? &a->effect_params : &b->effect_params;
+		const LrgPaintEffectParams *pb = b->effect != 0 ? &b->effect_params : &a->effect_params;
+
+		result.effect = b->effect != 0 ? b->effect : a->effect;
+		result.effect_params = *pb;
+		lrg_paint_color_mix (&pa->color1, &pb->color1, t, &result.effect_params.color1);
+		lrg_paint_color_mix (&pa->color2, &pb->color2, t, &result.effect_params.color2);
+		lrg_paint_color_mix (&pa->color3, &pb->color3, t, &result.effect_params.color3);
+		result.effect_params.intensity = lerpf (ia, ib, t);
+		result.set |= LRG_PART_LOOK_EFFECT | LRG_PART_LOOK_EFFECT_INTENSITY;
 	}
 
 	*out = result;
@@ -344,6 +410,119 @@ lrg_part_look_set_glow (LrgPartLook    *self,
 	self->glow = *color;
 	self->glow_size = size;
 	self->set |= LRG_PART_LOOK_GLOW | LRG_PART_LOOK_GLOW_SIZE;
+}
+
+void
+lrg_part_look_set_material (LrgPartLook      *self,
+                            LrgPaintMaterial  material)
+{
+	g_return_if_fail (self != NULL);
+
+	self->material = material;
+	self->material_opacity = 1.0f;
+	self->set |= LRG_PART_LOOK_MATERIAL;
+}
+
+void
+lrg_part_look_set_glass (LrgPartLook         *self,
+                         const LrgPaintGlass *glass)
+{
+	g_return_if_fail (self != NULL);
+	g_return_if_fail (glass != NULL);
+
+	self->glass = *glass;
+	self->set |= LRG_PART_LOOK_GLASS;
+}
+
+void
+lrg_part_look_get_glass (const LrgPartLook *self,
+                         LrgPaintGlass     *out)
+{
+	gboolean explicit_glass;
+
+	g_return_if_fail (self != NULL);
+	g_return_if_fail (out != NULL);
+
+	explicit_glass = (self->set & LRG_PART_LOOK_GLASS) != 0;
+	if (explicit_glass)
+		*out = self->glass;
+	else
+		lrg_paint_glass_init_default (out);
+
+	switch (self->material)
+	{
+	case LRG_PAINT_MATERIAL_BLUR:
+		/* Only the blur: none of the slab's optics */
+		out->frost = 1.0f;
+		out->refraction = 0.0f;
+		out->rim_light = 0.0f;
+		out->dispersion = 0.0f;
+		if (!explicit_glass)
+		{
+			out->saturation = 1.0f;
+			out->tint.a = 0;
+		}
+		break;
+	case LRG_PAINT_MATERIAL_FROSTED:
+		out->frost = 1.0f;
+		break;
+	case LRG_PAINT_MATERIAL_TINTED:
+		out->frost = 1.0f;
+		out->tint = self->background;
+		break;
+	case LRG_PAINT_MATERIAL_GLASS:
+	case LRG_PAINT_MATERIAL_NONE:
+	default:
+		break;
+	}
+}
+
+void
+lrg_part_look_set_effect (LrgPartLook *self,
+                          const gchar *name)
+{
+	g_return_if_fail (self != NULL);
+
+	self->effect = (name != NULL && name[0] != '\0') ? g_quark_from_string (name) : 0;
+	self->set |= LRG_PART_LOOK_EFFECT;
+}
+
+const gchar *
+lrg_part_look_get_effect_name (const LrgPartLook *self)
+{
+	g_return_val_if_fail (self != NULL, NULL);
+
+	return self->effect != 0 ? g_quark_to_string (self->effect) : NULL;
+}
+
+void
+lrg_part_look_set_effect_colors (LrgPartLook    *self,
+                                 const GrlColor *color1,
+                                 const GrlColor *color2,
+                                 const GrlColor *color3)
+{
+	g_return_if_fail (self != NULL);
+	g_return_if_fail (color1 != NULL);
+
+	if (color2 == NULL)
+		color2 = color1;
+	if (color3 == NULL)
+		color3 = color2;
+
+	self->effect_params.color1 = *color1;
+	self->effect_params.color2 = *color2;
+	self->effect_params.color3 = *color3;
+	self->set |= LRG_PART_LOOK_EFFECT_COLORS;
+}
+
+void
+lrg_part_look_set_effect_intensity (LrgPartLook *self,
+                                    gfloat       intensity)
+{
+	g_return_if_fail (self != NULL);
+
+	self->effect_params.intensity = MAX (intensity, 0.0f);
+	self->set |= LRG_PART_LOOK_EFFECT_INTENSITY;
 }
 
 /* ==========================================================================

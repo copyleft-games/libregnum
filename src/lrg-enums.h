@@ -725,6 +725,9 @@ GType lrg_text_alignment_get_type (void) G_GNUC_CONST;
  * @LRG_UI_EVENT_POINTER_LEAVE: Pointer left the widget (does not bubble)
  * @LRG_UI_EVENT_ACTIVATE: Keyboard / gamepad activation of the focused widget
  * @LRG_UI_EVENT_CANCEL: Back / cancel request (Escape, gamepad B)
+ * @LRG_UI_EVENT_PAN: Touch drag on a widget that pans (delta in canvas units)
+ * @LRG_UI_EVENT_PAN_END: Touch drag released (velocity for flicks)
+ * @LRG_UI_EVENT_ZOOM: Two-finger pinch (scale factor since the last event)
  *
  * Type of UI event.
  */
@@ -743,7 +746,10 @@ typedef enum
     LRG_UI_EVENT_POINTER_ENTER     = 10,
     LRG_UI_EVENT_POINTER_LEAVE     = 11,
     LRG_UI_EVENT_ACTIVATE          = 12,
-    LRG_UI_EVENT_CANCEL            = 13
+    LRG_UI_EVENT_CANCEL            = 13,
+    LRG_UI_EVENT_PAN               = 14,
+    LRG_UI_EVENT_PAN_END           = 15,
+    LRG_UI_EVENT_ZOOM              = 16
 } LrgUIEventType;
 
 LRG_AVAILABLE_IN_ALL
@@ -6700,6 +6706,11 @@ GType lrg_selection_mode_get_type (void) G_GNUC_CONST;
  * @LRG_PAINT_PRIM_LINE: line segment with round caps
  * @LRG_PAINT_PRIM_IMAGE: textured rounded rectangle (images and glyphs)
  * @LRG_PAINT_PRIM_TRIANGLE: filled triangle (arrows, chevrons, carets)
+ * @LRG_PAINT_PRIM_BLUR: rounded rectangle showing the blurred backdrop
+ * @LRG_PAINT_PRIM_GLASS: rounded glass slab over the backdrop (frost,
+ *   refraction, rim light)
+ * @LRG_PAINT_PRIM_EFFECT: rounded rectangle filled by an animated effect
+ * @LRG_PAINT_PRIM_CURVE: cubic Bezier stroke with gradient, glow and pulses
  *
  * Shape drawn by one #LrgPaintInstance.
  */
@@ -6709,7 +6720,11 @@ typedef enum
     LRG_PAINT_PRIM_SHADOW,
     LRG_PAINT_PRIM_LINE,
     LRG_PAINT_PRIM_IMAGE,
-    LRG_PAINT_PRIM_TRIANGLE
+    LRG_PAINT_PRIM_TRIANGLE,
+    LRG_PAINT_PRIM_BLUR,
+    LRG_PAINT_PRIM_GLASS,
+    LRG_PAINT_PRIM_EFFECT,
+    LRG_PAINT_PRIM_CURVE
 } LrgPaintPrim;
 
 LRG_AVAILABLE_IN_ALL
@@ -6720,18 +6735,137 @@ GType lrg_paint_prim_get_type (void) G_GNUC_CONST;
  * LrgPaintCommandKind:
  * @LRG_PAINT_COMMAND_INSTANCES: a batch of instances drawn in one call
  * @LRG_PAINT_COMMAND_CALLBACK: a user callback drawing with raw graylib
+ * @LRG_PAINT_COMMAND_BACKDROP: a batch of instances that starts with
+ *   blur or glass instances; the renderer captures and blurs what was
+ *   drawn so far before issuing it
  *
  * Kind of entry in an #LrgPaintList command stream.
  */
 typedef enum
 {
     LRG_PAINT_COMMAND_INSTANCES,
-    LRG_PAINT_COMMAND_CALLBACK
+    LRG_PAINT_COMMAND_CALLBACK,
+    LRG_PAINT_COMMAND_BACKDROP
 } LrgPaintCommandKind;
 
 LRG_AVAILABLE_IN_ALL
 GType lrg_paint_command_kind_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_PAINT_COMMAND_KIND (lrg_paint_command_kind_get_type ())
+
+/**
+ * LrgPaintMaterial:
+ * @LRG_PAINT_MATERIAL_NONE: plain fill (background or gradient)
+ * @LRG_PAINT_MATERIAL_BLUR: the backdrop, blurred, under the glass tint
+ * @LRG_PAINT_MATERIAL_GLASS: clear glass: light frost, refraction at the
+ *   rim and a specular rim light
+ * @LRG_PAINT_MATERIAL_FROSTED: glass with full frost
+ * @LRG_PAINT_MATERIAL_TINTED: frosted glass tinted by the look's
+ *   background colour
+ *
+ * Surface material of a widget part (#LrgPartLook). Every material but
+ * %LRG_PAINT_MATERIAL_NONE samples what was drawn behind the part.
+ */
+typedef enum
+{
+    LRG_PAINT_MATERIAL_NONE,
+    LRG_PAINT_MATERIAL_BLUR,
+    LRG_PAINT_MATERIAL_GLASS,
+    LRG_PAINT_MATERIAL_FROSTED,
+    LRG_PAINT_MATERIAL_TINTED
+} LrgPaintMaterial;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_paint_material_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PAINT_MATERIAL (lrg_paint_material_get_type ())
+
+/**
+ * LrgIcon:
+ * @LRG_ICON_NONE: no icon (draws nothing)
+ * @LRG_ICON_CHECK: check mark
+ * @LRG_ICON_CROSS: diagonal cross
+ * @LRG_ICON_CHEVRON_UP: chevron pointing up
+ * @LRG_ICON_CHEVRON_DOWN: chevron pointing down
+ * @LRG_ICON_CHEVRON_LEFT: chevron pointing left
+ * @LRG_ICON_CHEVRON_RIGHT: chevron pointing right
+ * @LRG_ICON_PLUS: plus sign
+ * @LRG_ICON_MINUS: minus sign
+ * @LRG_ICON_SEARCH: magnifying glass
+ * @LRG_ICON_MENU: three horizontal bars (hamburger)
+ * @LRG_ICON_GEAR: cog wheel
+ * @LRG_ICON_STAR: filled star
+ * @LRG_ICON_STAR_HALF: star, left half filled
+ * @LRG_ICON_STAR_OUTLINE: star outline
+ * @LRG_ICON_HEART: filled heart
+ * @LRG_ICON_PLAY: play triangle
+ * @LRG_ICON_PAUSE: two pause bars
+ * @LRG_ICON_STOP: stop square
+ * @LRG_ICON_INFO: "i" in a circle
+ * @LRG_ICON_WARNING: "!" in a triangle
+ * @LRG_ICON_CLOSE: cross in a circle
+ * @LRG_ICON_ARROW_LEFT: arrow pointing left
+ * @LRG_ICON_ARROW_RIGHT: arrow pointing right
+ * @LRG_ICON_FOLDER: folder
+ * @LRG_ICON_FILE: document with a folded corner
+ * @LRG_ICON_EYE: eye
+ * @LRG_ICON_LOCK: padlock
+ * @LRG_ICON_HOME: house
+ * @LRG_ICON_TRASH: bin
+ * @LRG_ICON_EDIT: pencil
+ * @LRG_ICON_REFRESH: circular arrow
+ * @LRG_ICON_DOWNLOAD: arrow down onto a tray
+ * @LRG_ICON_UPLOAD: arrow up from a tray
+ * @LRG_ICON_CALENDAR: calendar page
+ * @LRG_ICON_CLOCK: clock face
+ * @LRG_ICON_USER: head and shoulders
+ *
+ * Built-in vector icons drawn by lrg_paint_list_icon() from SDF shapes
+ * (no textures). The nick of each value ("check", "chevron-up" ...) is
+ * its name for lrg_paint_icon_from_name().
+ */
+typedef enum
+{
+    LRG_ICON_NONE,
+    LRG_ICON_CHECK,
+    LRG_ICON_CROSS,
+    LRG_ICON_CHEVRON_UP,
+    LRG_ICON_CHEVRON_DOWN,
+    LRG_ICON_CHEVRON_LEFT,
+    LRG_ICON_CHEVRON_RIGHT,
+    LRG_ICON_PLUS,
+    LRG_ICON_MINUS,
+    LRG_ICON_SEARCH,
+    LRG_ICON_MENU,
+    LRG_ICON_GEAR,
+    LRG_ICON_STAR,
+    LRG_ICON_STAR_HALF,
+    LRG_ICON_STAR_OUTLINE,
+    LRG_ICON_HEART,
+    LRG_ICON_PLAY,
+    LRG_ICON_PAUSE,
+    LRG_ICON_STOP,
+    LRG_ICON_INFO,
+    LRG_ICON_WARNING,
+    LRG_ICON_CLOSE,
+    LRG_ICON_ARROW_LEFT,
+    LRG_ICON_ARROW_RIGHT,
+    LRG_ICON_FOLDER,
+    LRG_ICON_FILE,
+    LRG_ICON_EYE,
+    LRG_ICON_LOCK,
+    LRG_ICON_HOME,
+    LRG_ICON_TRASH,
+    LRG_ICON_EDIT,
+    LRG_ICON_REFRESH,
+    LRG_ICON_DOWNLOAD,
+    LRG_ICON_UPLOAD,
+    LRG_ICON_CALENDAR,
+    LRG_ICON_CLOCK,
+    LRG_ICON_USER
+} LrgIcon;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_icon_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ICON (lrg_icon_get_type ())
 
 G_END_DECLS
 

@@ -26,6 +26,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "lrg-paint-types.h"
+#include "lrg-paint-fx.h"
 
 G_BEGIN_DECLS
 
@@ -391,6 +392,178 @@ void lrg_paint_measure_text (GrlFont     *font,
                              gfloat       spacing,
                              gfloat      *width,
                              gfloat      *height);
+
+/* ==========================================================================
+ * Materials, effects and curves
+ * ========================================================================== */
+
+/**
+ * lrg_paint_list_set_time:
+ * @self: an #LrgPaintList
+ * @seconds: animation time in seconds
+ *
+ * Sets the clock that animated primitives (effects, curve pulses) read
+ * when the list is drawn. Paint never reads a clock itself: whoever
+ * records the frame sets the time, so painting stays deterministic.
+ * The value survives lrg_paint_list_clear().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_set_time (LrgPaintList *self,
+                              gdouble       seconds);
+
+/**
+ * lrg_paint_list_get_time:
+ * @self: an #LrgPaintList
+ *
+ * Returns: the time set with lrg_paint_list_set_time(), 0 by default
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_paint_list_get_time (LrgPaintList *self);
+
+/**
+ * lrg_paint_list_set_pointer:
+ * @self: an #LrgPaintList
+ * @x: pointer x in canvas units
+ * @y: pointer y in canvas units
+ *
+ * Sets the pointer position pointer-following effects (spotlight,
+ * ripple, user effects) read when the list is drawn. #LrgCanvas sets it
+ * each frame. Survives lrg_paint_list_clear().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_set_pointer (LrgPaintList *self,
+                                 gfloat        x,
+                                 gfloat        y);
+
+/**
+ * lrg_paint_list_unset_pointer:
+ * @self: an #LrgPaintList
+ *
+ * Marks the pointer as absent (outside the window): pointer-following
+ * effects then show no pointer response.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_unset_pointer (LrgPaintList *self);
+
+/**
+ * lrg_paint_list_get_pointer:
+ * @self: an #LrgPaintList
+ * @x: (out) (optional): pointer x
+ * @y: (out) (optional): pointer y
+ *
+ * Returns: %TRUE when a pointer position is set
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_paint_list_get_pointer (LrgPaintList *self,
+                                     gfloat       *x,
+                                     gfloat       *y);
+
+/**
+ * lrg_paint_list_blur:
+ * @self: an #LrgPaintList
+ * @x: left edge
+ * @y: top edge
+ * @width: width
+ * @height: height
+ * @radius: corner radius
+ * @blur_radius: blur radius in canvas units
+ * @tint: (nullable): colour laid over the blur; alpha is its strength
+ *
+ * Records a rounded rectangle that shows what was drawn before it,
+ * blurred (a backdrop blur, as behind frosted sidebars and sheets).
+ * The renderer captures the target before drawing it; see the paint
+ * module docs for the cost model.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_blur (LrgPaintList   *self,
+                          gfloat          x,
+                          gfloat          y,
+                          gfloat          width,
+                          gfloat          height,
+                          gfloat          radius,
+                          gfloat          blur_radius,
+                          const GrlColor *tint);
+
+/**
+ * lrg_paint_list_glass:
+ * @self: an #LrgPaintList
+ * @x: left edge
+ * @y: top edge
+ * @width: width
+ * @height: height
+ * @radii: (nullable): corner radii, %NULL for square corners
+ * @params: (nullable): the glass look, %NULL for
+ *   lrg_paint_glass_init_default()
+ *
+ * Records a glass slab: the backdrop seen through it is frosted,
+ * saturated, tinted, bent along the rim (refraction, with optional
+ * chromatic dispersion) and lit by a specular rim from the top-left.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_glass (LrgPaintList          *self,
+                           gfloat                 x,
+                           gfloat                 y,
+                           gfloat                 width,
+                           gfloat                 height,
+                           const LrgCornerRadii  *radii,
+                           const LrgPaintGlass   *params);
+
+/**
+ * lrg_paint_list_effect:
+ * @self: an #LrgPaintList
+ * @x: left edge
+ * @y: top edge
+ * @width: width
+ * @height: height
+ * @radii: (nullable): corner radii, %NULL for square corners
+ * @effect_id: an id from lrg_paint_effect_lookup()
+ * @params: (nullable): effect inputs, %NULL for
+ *   lrg_paint_effect_params_init_default()
+ *
+ * Records a rounded rectangle filled by an animated effect. Effects
+ * batch with every other instance (one shader, a switch on the id).
+ * Unknown ids draw nothing.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_effect (LrgPaintList               *self,
+                            gfloat                      x,
+                            gfloat                      y,
+                            gfloat                      width,
+                            gfloat                      height,
+                            const LrgCornerRadii       *radii,
+                            gint                        effect_id,
+                            const LrgPaintEffectParams *params);
+
+/**
+ * lrg_paint_list_curve:
+ * @self: an #LrgPaintList
+ * @x0: start point x
+ * @y0: start point y
+ * @x1: first control point x
+ * @y1: first control point y
+ * @x2: second control point x
+ * @y2: second control point y
+ * @x3: end point x
+ * @y3: end point y
+ * @thickness: stroke width
+ * @style: the stroke look
+ *
+ * Records a cubic Bezier stroke (a node-graph wire): a colour gradient
+ * from start to end, an optional glow halo and optional pulses that
+ * travel along it with the list time.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_paint_list_curve (LrgPaintList             *self,
+                           gfloat                    x0,
+                           gfloat                    y0,
+                           gfloat                    x1,
+                           gfloat                    y1,
+                           gfloat                    x2,
+                           gfloat                    y2,
+                           gfloat                    x3,
+                           gfloat                    y3,
+                           gfloat                    thickness,
+                           const LrgPaintCurveStyle *style);
 
 /* ==========================================================================
  * Escape hatch

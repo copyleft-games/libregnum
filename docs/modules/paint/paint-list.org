@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum paint ui
 #+created: 2026-11-05T00:00:00-05:00
-#+updated: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
 #+version: 1.0
 
 * LrgPaintList
@@ -182,6 +182,118 @@ lrg_paint_list_transform_group (list, mark, 1.0f - 0.04f * p, cx, cy,
                                 0.0f, 0.0f, 1.0f);
 #+end_src
 
+** Materials, effects and curves
+:PROPERTIES:
+:CUSTOM_ID: paint-list-materials
+:END:
+How these are drawn, what they cost and the snippet contract for user effects are explained in the module page: [[file:index.org::#paint-materials][materials]], [[file:index.org::#paint-effects][effects]], [[file:index.org::#paint-curves][curves]].
+
+| Function | Purpose | Nullable / notes |
+|----------+---------+------------------|
+| =lrg_paint_list_set_time (self, seconds)= | Clock read by effects and curve pulses when the list is drawn | Survives =lrg_paint_list_clear()=; paint never reads a clock |
+| =lrg_paint_list_get_time (self)= | The time set above | 0 by default |
+| =lrg_paint_list_set_pointer (self, x, y)= | Pointer position in canvas units for spotlight, ripple and user effects | Survives =clear()=; =LrgCanvas= sets it each frame |
+| =lrg_paint_list_unset_pointer (self)= | Pointer outside the window | Pointer effects then show no response |
+| =lrg_paint_list_get_pointer (self, &x, &y)= | Returns =TRUE= and the position when set | both out arguments (optional) |
+| =lrg_paint_list_blur (self, x, y, width, height, radius, blur_radius, tint)= | Rounded rectangle showing the blurred backdrop | =tint= (nullable): laid over with its alpha; starts or joins a =LRG_PAINT_COMMAND_BACKDROP= |
+| =lrg_paint_list_glass (self, x, y, width, height, radii, params)= | Glass slab: frost, saturation, tint, rim refraction, dispersion, rim light | =radii= =NULL= = square; =params= =NULL= = =lrg_paint_glass_init_default()= |
+| =lrg_paint_list_effect (self, x, y, width, height, radii, effect_id, params)= | Rounded rectangle filled by a named effect | =params= =NULL= = =lrg_paint_effect_params_init_default()=; unknown ids record nothing; batches with everything |
+| =lrg_paint_list_curve (self, x0, y0, x1, y1, x2, y2, x3, y3, thickness, style)= | Cubic Bezier stroke from P0 to P3 with control points P1, P2 | =style= required; nothing recorded for thickness <= 0 or an invisible style |
+
+Opacity: blur, glass and effect instances carry the current opacity separately (=data[2]=) and keep their colours as given; group fades multiply that value. Curves fade their colours like other shapes.
+
+*** Example: a frosted sidebar over a game scene
+:PROPERTIES:
+:CUSTOM_ID: paint-list-example-glass
+:END:
+#+begin_src c
+LrgPaintGlass  glass;
+LrgCornerRadii radii;
+
+/* the scene (or anything else) was drawn into the target before */
+lrg_paint_glass_init_default (&glass);
+glass.frost = 0.9f;           /* mostly blurred */
+glass.blur_radius = 20.0f;
+glass.tint = (GrlColor){ 20, 20, 30, 90 };
+lrg_corner_radii_init_uniform (&radii, 16.0f);
+
+lrg_paint_list_shadow (list, 16.0f, 16.0f, 260.0f, 560.0f, 16.0f, 24.0f, 0.0f, 0.0f, 8.0f,
+                       &(GrlColor){ 0, 0, 0, 90 });
+lrg_paint_list_glass (list, 16.0f, 16.0f, 260.0f, 560.0f, &radii, &glass);
+lrg_paint_list_text (list, font, "Inventory", 36.0f, 36.0f, 22.0f, 0.0f, &white);
+#+end_src
+
+*** Example: an animated hero banner and a node wire
+:PROPERTIES:
+:CUSTOM_ID: paint-list-example-effect
+:END:
+#+begin_src c
+LrgPaintEffectParams fx;
+LrgPaintCurveStyle   wire;
+
+lrg_paint_list_set_time (list, seconds_since_start);
+lrg_paint_list_set_pointer (list, mouse_x, mouse_y);
+
+lrg_paint_effect_params_init_default (&fx);
+fx.intensity = 0.8f;
+lrg_paint_list_effect (list, 0.0f, 0.0f, 800.0f, 180.0f, NULL,
+                       lrg_paint_effect_lookup ("aurora"), &fx);
+
+lrg_paint_curve_style_init (&wire, &(GrlColor){ 124, 108, 255, 255 });
+wire.color_end = (GrlColor){ 64, 220, 255, 255 };
+wire.glow = (GrlColor){ 124, 108, 255, 90 };
+wire.glow_size = 6.0f;
+wire.pulse_count = 2;
+wire.pulse_speed = 0.4f;
+lrg_paint_list_curve (list, 100.0f, 300.0f, 220.0f, 300.0f, 280.0f, 420.0f, 400.0f, 420.0f,
+                      3.0f, &wire);
+#+end_src
+
+*** Effect registry
+:PROPERTIES:
+:CUSTOM_ID: paint-list-effect-registry
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_paint_effect_lookup (name)= | Id of a built-in ("shimmer" 1, "aurora" 2, "neon" 3, "spotlight" 4, "ripple" 5, "grain" 6, "plasma" 7, "mesh-gradient" 8) or registered effect; -1 when unknown |
+| =lrg_paint_effect_get_name (effect_id)= | The name, or =NULL= for =LRG_PAINT_EFFECT_NONE= (0) and unknown ids |
+| =lrg_paint_effect_list_names ()= | (transfer full) =NULL=-terminated array of every name, built-ins first |
+| =lrg_paint_effect_register (name, glsl_snippet, &error)= | Adds a user effect, returns its id (>= =LRG_PAINT_EFFECT_FIRST_USER=, 64) or -1 with =G_IO_ERROR_INVALID_ARGUMENT= (bad name: lower-case letters, digits and '-', at most 48; snippet without =lrg_effect= or with =#version= / =main=), =G_IO_ERROR_EXISTS= (taken, including built-in names) or =G_IO_ERROR_NO_SPACE= (more than =LRG_PAINT_EFFECT_MAX_USER=, 32) |
+
+The registry is process-wide and thread-safe. The snippet contract is documented in [[file:index.org::#paint-effect-snippets][the module page]].
+
+** Icons
+:PROPERTIES:
+:CUSTOM_ID: paint-list-icons
+:END:
+Declared in =lrg-paint-icons.h= (included by =libregnum.h=).
+
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_list_icon (self, icon, x, y, size, thickness, color)= | Records a built-in =LrgIcon= in the =size= square at =x, y= | =thickness= 0 = 9% of =size=; filled icons ignore it; =LRG_ICON_NONE= or a transparent colour record nothing |
+| =lrg_paint_icon_from_name (name)= | Icon from its nick ("check", "chevron-left", "star-half" ...) | =LRG_ICON_NONE= when unknown |
+| =lrg_paint_icon_get_name (icon)= | The nick of an icon | =NULL= for an invalid value |
+| =lrg_svg_icon_new_from_file (path, &error)= | Parses an SVG file into an =LrgSvgIcon= | (transfer full) (nullable); errors from graylib's SVG loader, or =G_IO_ERROR_INVALID_DATA= when it has no geometry |
+| =lrg_svg_icon_new_from_data (data, length, &error)= | The same from memory | =length= -1 for nul-terminated |
+| =lrg_svg_icon_get_n_shapes (self)= | Number of vector shapes | |
+| =lrg_svg_icon_rasterize (self, pixel_size)= | CPU raster into a new transparent RGBA =GrlImage= | (transfer full); works headless; size clamped to 1..1024 |
+| =lrg_svg_icon_get_texture (self, pixel_size)= | Cached texture for that size, created on first use | (transfer none) (nullable): =NULL= without a window |
+| =lrg_svg_icon_clear_cache (self)= | Drops every cached texture | after a UI scale change |
+| =lrg_paint_list_svg_icon (self, icon, x, y, size, tint)= | Records the icon as one image instance at pixel size round(=size=) | =tint= =NULL= = the icon's own colours; nothing headless |
+
+=LrgSvgIcon= is a final =GObject= (=LRG_TYPE_SVG_ICON=, =lrg_svg_icon_get_type()=). The drawing is fitted by the union of its path bounds (stroke widths included), centred, aspect kept; the SVG =viewBox= padding is not preserved.
+
+#+begin_src c
+g_autoptr(GError)     error = NULL;
+g_autoptr(LrgSvgIcon) logo = lrg_svg_icon_new_from_file ("data/logo.svg", &error);
+
+lrg_paint_list_icon (list, LRG_ICON_SEARCH, x, y, 20.0f, 2.0f, &text_colour);
+lrg_paint_list_icon (list, lrg_paint_icon_from_name ("chevron-down"), x + 200.0f, y, 16.0f, 0.0f,
+                     &muted);
+if (logo != NULL)
+	lrg_paint_list_svg_icon (list, logo, 16.0f, 16.0f, 48.0f, NULL);
+#+end_src
+
 ** Escape hatch: callbacks
 :PROPERTIES:
 :CUSTOM_ID: paint-list-callbacks
@@ -327,7 +439,7 @@ lrg_paint_list_rect_ex (list, x, y, w, h, &radii, NULL, &glow, 0.0f, NULL);
 | Function | Signature | Notes |
 |----------+-----------+-------|
 | =lrg_paint_instance_get_type= | =GType lrg_paint_instance_get_type (void) G_GNUC_CONST;= | The boxed =GType=, also =LRG_TYPE_PAINT_INSTANCE= |
-| =lrg_paint_instance_copy= | =LrgPaintInstance * lrg_paint_instance_copy (const LrgPaintInstance *self);= | (transfer full) copy of the 96-byte GPU record |
+| =lrg_paint_instance_copy= | =LrgPaintInstance * lrg_paint_instance_copy (const LrgPaintInstance *self);= | (transfer full) copy of the 112-byte GPU record |
 | =lrg_paint_instance_free= | =void lrg_paint_instance_free (LrgPaintInstance *self);= | =self= is (nullable) |
 | =lrg_paint_instance_get_prim= | =LrgPaintPrim lrg_paint_instance_get_prim (const LrgPaintInstance *self);= | Decodes =params[2]= into an =LrgPaintPrim= |
 
@@ -341,6 +453,46 @@ lrg_paint_list_clear (list);
 g_assert_cmpint (lrg_paint_instance_get_prim (first), ==, LRG_PAINT_PRIM_RECT);
 #+end_src
 
+**** LrgPaintGlass
+:PROPERTIES:
+:CUSTOM_ID: paint-list-glass-type
+:END:
+Fields: =frost= (0 sharp .. 1 fully blurred), =refraction= (rim bend in canvas units), =saturation= (1 = unchanged), =tint= (=GrlColor=, alpha = strength), =rim_light= (0..1), =dispersion= (0..1), =blur_radius= (canvas units).
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_paint_glass_get_type= | =GType lrg_paint_glass_get_type (void) G_GNUC_CONST;= | =LRG_TYPE_PAINT_GLASS= |
+| =lrg_paint_glass_copy= | =LrgPaintGlass * lrg_paint_glass_copy (const LrgPaintGlass *self);= | (transfer full) |
+| =lrg_paint_glass_free= | =void lrg_paint_glass_free (LrgPaintGlass *self);= | (nullable) |
+| =lrg_paint_glass_init_default= | =void lrg_paint_glass_init_default (LrgPaintGlass *self);= | frost 0.35, refraction 8, saturation 1.2, white tint alpha 18, rim 0.6, dispersion 0.25, blur 12 |
+| =lrg_paint_glass_lerp= | =void lrg_paint_glass_lerp (const LrgPaintGlass *a, const LrgPaintGlass *b, gfloat t, LrgPaintGlass *out);= | blends every field (used by look cross-fades) |
+
+**** LrgPaintEffectParams
+:PROPERTIES:
+:CUSTOM_ID: paint-list-effect-params-type
+:END:
+Fields: =color1=, =color2=, =color3= (palette), =intensity=, =hover= and =press= (0..1), =speed= (time multiplier), =scale= (pattern size multiplier).
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_paint_effect_params_get_type= | =GType lrg_paint_effect_params_get_type (void) G_GNUC_CONST;= | =LRG_TYPE_PAINT_EFFECT_PARAMS= |
+| =lrg_paint_effect_params_copy= | =LrgPaintEffectParams * lrg_paint_effect_params_copy (const LrgPaintEffectParams *self);= | (transfer full) |
+| =lrg_paint_effect_params_free= | =void lrg_paint_effect_params_free (LrgPaintEffectParams *self);= | (nullable) |
+| =lrg_paint_effect_params_init_default= | =void lrg_paint_effect_params_init_default (LrgPaintEffectParams *self);= | dark blue, violet, cyan; intensity, speed and scale 1; no hover or press |
+
+**** LrgPaintCurveStyle
+:PROPERTIES:
+:CUSTOM_ID: paint-list-curve-style-type
+:END:
+Fields: =color_start=, =color_end=, =glow=, =glow_size=, =pulse_color=, =pulse_count= (0..8), =pulse_speed= (curve lengths per second), =pulse_phase= (0..1).
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_paint_curve_style_get_type= | =GType lrg_paint_curve_style_get_type (void) G_GNUC_CONST;= | =LRG_TYPE_PAINT_CURVE_STYLE= |
+| =lrg_paint_curve_style_copy= | =LrgPaintCurveStyle * lrg_paint_curve_style_copy (const LrgPaintCurveStyle *self);= | (transfer full) |
+| =lrg_paint_curve_style_free= | =void lrg_paint_curve_style_free (LrgPaintCurveStyle *self);= | (nullable) |
+| =lrg_paint_curve_style_init= | =void lrg_paint_curve_style_init (LrgPaintCurveStyle *self, const GrlColor *color);= | one colour, no glow, no pulses (pulse colour white, speed 0.5 ready for =pulse_count=) |
+
 ** Pitfalls
 :PROPERTIES:
 :CUSTOM_ID: paint-list-pitfalls
@@ -349,5 +501,7 @@ g_assert_cmpint (lrg_paint_instance_get_prim (first), ==, LRG_PAINT_PRIM_RECT);
 - Measure and draw with the same font, size and spacing, or alignment drifts.
 - =lrg_paint_list_text()= with a =NULL= font records nothing headless; tests that count glyph instances need a real font.
 - Do not keep instance pointers across further recording.
+- Effects and curve pulses only move when someone calls =lrg_paint_list_set_time()= before rendering and keeps redrawing; a list recorded once stays still.
+- Glass sees only what was drawn *into the same target before it*; a UI rendered into its own transparent render texture shows nothing behind its glass. Draw the UI over the scene, or the scene into the UI's target first.
 - A callback's =user_data= must outlive the list or be ref-counted with a =destroy= notify; it runs at render time, possibly after the recording widget changed.
 - See also the [[file:index.org::#paint-pitfalls][module-level pitfalls]].

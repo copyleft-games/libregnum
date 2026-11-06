@@ -379,6 +379,14 @@ test_yaml_errors (void)
 		{ "styles: nope\n", "expected a list" },
 		{ "- a\n- b\n", "must be a mapping" },
 		{ "dark: maybe\n", "true or false" },
+		{ "styles:\n  - material: stone\n", "unknown value 'stone'" },
+		{ "styles:\n  - effect: lava\n", "unknown effect 'lava'" },
+		{ "styles:\n  - glass: {frost: 0.5, blurr: 3}\n", "unknown key 'blurr'" },
+		{ "styles:\n  - glass: {frost: 30}\n", "outside 0..1" },
+		{ "styles:\n  - glass: 3\n", "expected a mapping" },
+		{ "styles:\n  - glass: {tint: red}\n", "expected a hex colour" },
+		{ "styles:\n  - effect-colors: [\"#fff\", \"#000\", \"#111\", \"#222\"]\n", "one to three" },
+		{ "styles:\n  - effect-intensity: -1\n", "outside 0..4" },
 		{ "[unclosed\n", "not valid YAML" }
 	};
 	guint i;
@@ -600,6 +608,195 @@ test_rule_cache_invalidation (void)
 	g_assert_cmpuint (resolve_red (theme, NULL, 0, 0), ==, 0);
 }
 
+
+/* ==========================================================================
+ * Materials and effects
+ * ========================================================================== */
+
+static const gchar *materials_yaml =
+	"styles:\n"
+	"  - widget: LrgPanel\n"
+	"    part: box\n"
+	"    material: glass\n"
+	"    glass: {frost: 0.6, refraction: 10, saturation: 1.4, tint: \"#ffffff20\", rim: 0.8, dispersion: 0.3, blur: 18}\n"
+	"  - class: hero\n"
+	"    part: box\n"
+	"    effect: aurora\n"
+	"    effect-colors: [\"#101030\", \"#7c6cff\"]\n"
+	"    effect-intensity: 0.7\n"
+	"  - class: plain\n"
+	"    part: box\n"
+	"    material: tinted\n"
+	"    effect: none\n";
+
+static void
+check_material_rules (LrgTheme *theme)
+{
+	GPtrArray         *rules = lrg_theme_get_style_rules (theme);
+	const LrgPartLook *glass;
+	const LrgPartLook *hero;
+	const LrgPartLook *plain;
+	GrlColor           c;
+
+	g_assert_cmpuint (rules->len, ==, 3);
+	glass = lrg_style_rule_get_look (g_ptr_array_index (rules, 0));
+	hero = lrg_style_rule_get_look (g_ptr_array_index (rules, 1));
+	plain = lrg_style_rule_get_look (g_ptr_array_index (rules, 2));
+
+	g_assert_true (glass->set & LRG_PART_LOOK_MATERIAL);
+	g_assert_true (glass->set & LRG_PART_LOOK_GLASS);
+	g_assert_false (glass->set & LRG_PART_LOOK_EFFECT);
+	g_assert_cmpint (glass->material, ==, LRG_PAINT_MATERIAL_GLASS);
+	g_assert_cmpfloat_with_epsilon (glass->glass.frost, 0.6f, 1e-5f);
+	g_assert_cmpfloat_with_epsilon (glass->glass.refraction, 10.0f, 1e-5f);
+	g_assert_cmpfloat_with_epsilon (glass->glass.saturation, 1.4f, 1e-5f);
+	g_assert_cmpfloat_with_epsilon (glass->glass.rim_light, 0.8f, 1e-5f);
+	g_assert_cmpfloat_with_epsilon (glass->glass.dispersion, 0.3f, 1e-5f);
+	g_assert_cmpfloat_with_epsilon (glass->glass.blur_radius, 18.0f, 1e-5f);
+	g_assert_cmpuint (glass->glass.tint.a, ==, 0x20);
+
+	g_assert_cmpstr (lrg_part_look_get_effect_name (hero), ==, "aurora");
+	g_assert_true (hero->set & LRG_PART_LOOK_EFFECT_COLORS);
+	g_assert_true (hero->set & LRG_PART_LOOK_EFFECT_INTENSITY);
+	g_assert_cmpfloat_with_epsilon (hero->effect_params.intensity, 0.7f, 1e-5f);
+	g_assert_true (lrg_color_parse ("#7c6cff", &c));
+	g_assert_true (color_eq (&hero->effect_params.color2, &c));
+	/* a missing third colour repeats the second */
+	g_assert_true (color_eq (&hero->effect_params.color3, &c));
+
+	g_assert_cmpint (plain->material, ==, LRG_PAINT_MATERIAL_TINTED);
+	g_assert_true (plain->set & LRG_PART_LOOK_EFFECT);
+	g_assert_null (lrg_part_look_get_effect_name (plain));
+}
+
+static void
+test_yaml_materials (void)
+{
+	g_autoptr(GError)   error = NULL;
+	g_autoptr(LrgTheme) theme = lrg_theme_new ();
+	g_autoptr(LrgTheme) again = lrg_theme_new ();
+	g_autofree gchar   *data = NULL;
+
+	g_assert_true (lrg_theme_load_from_data (theme, materials_yaml, -1, &error));
+	g_assert_no_error (error);
+	check_material_rules (theme);
+
+	/* Round trip through lrg_theme_to_data () */
+	data = lrg_theme_to_data (theme, NULL, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (strstr (data, "material"));
+	g_assert_true (lrg_theme_load_from_data (again, data, -1, &error));
+	g_assert_no_error (error);
+	check_material_rules (again);
+}
+
+static void
+test_part_look_materials (void)
+{
+	LrgPartLook   plain;
+	LrgPartLook   glassy;
+	LrgPartLook   out;
+	LrgPartLook   rule;
+	LrgPaintGlass g;
+	GrlColor      bg = { 10, 20, 30, 200 };
+
+	/* get_glass: defaults, adjusted per material */
+	lrg_part_look_init (&glassy);
+	lrg_part_look_set_background (&glassy, &bg);
+	lrg_part_look_set_material (&glassy, LRG_PAINT_MATERIAL_FROSTED);
+	lrg_part_look_get_glass (&glassy, &g);
+	g_assert_cmpfloat (g.frost, ==, 1.0f);
+	g_assert_cmpfloat (g.refraction, >, 0.0f);
+	lrg_part_look_set_material (&glassy, LRG_PAINT_MATERIAL_BLUR);
+	lrg_part_look_get_glass (&glassy, &g);
+	g_assert_cmpfloat (g.refraction, ==, 0.0f);
+	g_assert_cmpfloat (g.rim_light, ==, 0.0f);
+	g_assert_cmpuint (g.tint.a, ==, 0);
+	lrg_part_look_set_material (&glassy, LRG_PAINT_MATERIAL_TINTED);
+	lrg_part_look_get_glass (&glassy, &g);
+	g_assert_true (color_eq (&g.tint, &bg));
+
+	/* merge copies only what is set */
+	lrg_part_look_init (&rule);
+	lrg_part_look_set_effect (&rule, "neon");
+	lrg_part_look_set_effect_intensity (&rule, 0.5f);
+	lrg_part_look_merge (&glassy, &rule);
+	g_assert_cmpstr (lrg_part_look_get_effect_name (&glassy), ==, "neon");
+	g_assert_cmpfloat (glassy.effect_params.intensity, ==, 0.5f);
+	g_assert_cmpint (glassy.material, ==, LRG_PAINT_MATERIAL_TINTED);
+
+	/* lerp: a plain fill fades into glass through material_opacity, and
+	 * the effect fades in through its intensity */
+	lrg_part_look_init (&plain);
+	lrg_part_look_set_background (&plain, &bg);
+	lrg_part_look_set_material (&glassy, LRG_PAINT_MATERIAL_GLASS);
+	lrg_part_look_lerp (&plain, &glassy, 0.25f, &out);
+	g_assert_cmpint (out.material, ==, LRG_PAINT_MATERIAL_GLASS);
+	g_assert_cmpfloat_with_epsilon (out.material_opacity, 0.25f, 1e-5f);
+	g_assert_cmpstr (lrg_part_look_get_effect_name (&out), ==, "neon");
+	g_assert_cmpfloat_with_epsilon (out.effect_params.intensity, 0.125f, 1e-5f);
+
+	lrg_part_look_lerp (&glassy, &plain, 0.25f, &out);
+	g_assert_cmpfloat_with_epsilon (out.material_opacity, 0.75f, 1e-5f);
+}
+
+static void
+test_paint_box_materials (void)
+{
+	g_autoptr(LrgPaintList) list = lrg_paint_list_new ();
+	g_autoptr(LrgPanel)     panel = g_object_ref_sink (lrg_panel_new ());
+	LrgPartLook             look;
+	GrlColor                bg = { 30, 30, 40, 255 };
+	GrlColor                border = { 255, 255, 255, 60 };
+	guint                   n;
+
+	/* No material, no effect: one instance for fill and border */
+	lrg_part_look_init (&look);
+	lrg_part_look_set_background (&look, &bg);
+	lrg_part_look_set_border (&look, &border, 1.0f);
+	lrg_widget_paint_box (LRG_WIDGET (panel), list, &look, 0.0f, 0.0f, 100.0f, 50.0f);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, 1);
+
+	/* Glass: the slab, then the border on top */
+	lrg_paint_list_clear (list);
+	lrg_part_look_set_material (&look, LRG_PAINT_MATERIAL_GLASS);
+	lrg_widget_paint_box (LRG_WIDGET (panel), list, &look, 0.0f, 0.0f, 100.0f, 50.0f);
+	n = lrg_paint_list_get_n_instances (list);
+	g_assert_cmpuint (n, ==, 2);
+	g_assert_cmpint (lrg_paint_instance_get_prim (lrg_paint_list_get_instance (list, 0)), ==,
+	                 LRG_PAINT_PRIM_GLASS);
+	g_assert_cmpfloat (lrg_paint_list_get_instance (list, 1)->params[0], ==, 1.0f);
+
+	/* Half-faded material: the fill cross-fades over it */
+	lrg_paint_list_clear (list);
+	look.material_opacity = 0.5f;
+	lrg_widget_paint_box (LRG_WIDGET (panel), list, &look, 0.0f, 0.0f, 100.0f, 50.0f);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, 3);
+	g_assert_cmpfloat (lrg_paint_list_get_instance (list, 0)->data[2], ==, 0.5f);
+	g_assert_cmpuint (lrg_paint_list_get_instance (list, 1)->color[3], ==, 128);
+
+	/* Blur material uses the blur primitive; an effect goes on top */
+	lrg_paint_list_clear (list);
+	lrg_part_look_set_material (&look, LRG_PAINT_MATERIAL_BLUR);
+	lrg_part_look_set_effect (&look, "shimmer");
+	lrg_widget_paint_box (LRG_WIDGET (panel), list, &look, 0.0f, 0.0f, 100.0f, 50.0f);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, 3);
+	g_assert_cmpint (lrg_paint_instance_get_prim (lrg_paint_list_get_instance (list, 0)), ==,
+	                 LRG_PAINT_PRIM_BLUR);
+	g_assert_cmpint (lrg_paint_instance_get_prim (lrg_paint_list_get_instance (list, 1)), ==,
+	                 LRG_PAINT_PRIM_EFFECT);
+	/* default palette: the background first */
+	g_assert_cmpuint (lrg_paint_list_get_instance (list, 1)->color[0], ==, 30);
+
+	/* Effect without material replaces the fill */
+	lrg_paint_list_clear (list);
+	lrg_part_look_set_material (&look, LRG_PAINT_MATERIAL_NONE);
+	lrg_widget_paint_box (LRG_WIDGET (panel), list, &look, 0.0f, 0.0f, 100.0f, 50.0f);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, 2);
+	g_assert_cmpint (lrg_paint_instance_get_prim (lrg_paint_list_get_instance (list, 0)), ==,
+	                 LRG_PAINT_PRIM_EFFECT);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -624,6 +821,9 @@ main (int   argc,
 	g_test_add_func ("/ui/style/rule-matching", test_rule_matching);
 	g_test_add_func ("/ui/style/resolution-order", test_rule_resolution_order);
 	g_test_add_func ("/ui/style/cache-invalidation", test_rule_cache_invalidation);
+	g_test_add_func ("/ui/theme/yaml/materials", test_yaml_materials);
+	g_test_add_func ("/ui/style/look-materials", test_part_look_materials);
+	g_test_add_func ("/ui/style/paint-box-materials", test_paint_box_materials);
 
 	return g_test_run ();
 }

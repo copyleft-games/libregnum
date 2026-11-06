@@ -696,6 +696,9 @@ lrg_ui_event_type_get_type (void)
             { LRG_UI_EVENT_POINTER_LEAVE, "LRG_UI_EVENT_POINTER_LEAVE", "pointer-leave" },
             { LRG_UI_EVENT_ACTIVATE, "LRG_UI_EVENT_ACTIVATE", "activate" },
             { LRG_UI_EVENT_CANCEL, "LRG_UI_EVENT_CANCEL", "cancel" },
+            { LRG_UI_EVENT_PAN, "LRG_UI_EVENT_PAN", "pan" },
+            { LRG_UI_EVENT_PAN_END, "LRG_UI_EVENT_PAN_END", "pan-end" },
+            { LRG_UI_EVENT_ZOOM, "LRG_UI_EVENT_ZOOM", "zoom" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -6214,6 +6217,10 @@ lrg_paint_prim_get_type (void)
             { LRG_PAINT_PRIM_LINE, "LRG_PAINT_PRIM_LINE", "line" },
             { LRG_PAINT_PRIM_IMAGE, "LRG_PAINT_PRIM_IMAGE", "image" },
             { LRG_PAINT_PRIM_TRIANGLE, "LRG_PAINT_PRIM_TRIANGLE", "triangle" },
+            { LRG_PAINT_PRIM_BLUR, "LRG_PAINT_PRIM_BLUR", "blur" },
+            { LRG_PAINT_PRIM_GLASS, "LRG_PAINT_PRIM_GLASS", "glass" },
+            { LRG_PAINT_PRIM_EFFECT, "LRG_PAINT_PRIM_EFFECT", "effect" },
+            { LRG_PAINT_PRIM_CURVE, "LRG_PAINT_PRIM_CURVE", "curve" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -6234,10 +6241,89 @@ lrg_paint_command_kind_get_type (void)
         static const GEnumValue values[] = {
             { LRG_PAINT_COMMAND_INSTANCES, "LRG_PAINT_COMMAND_INSTANCES", "instances" },
             { LRG_PAINT_COMMAND_CALLBACK, "LRG_PAINT_COMMAND_CALLBACK", "callback" },
+            { LRG_PAINT_COMMAND_BACKDROP, "LRG_PAINT_COMMAND_BACKDROP", "backdrop" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgPaintCommandKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_paint_material_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_MATERIAL_NONE, "LRG_PAINT_MATERIAL_NONE", "none" },
+            { LRG_PAINT_MATERIAL_BLUR, "LRG_PAINT_MATERIAL_BLUR", "blur" },
+            { LRG_PAINT_MATERIAL_GLASS, "LRG_PAINT_MATERIAL_GLASS", "glass" },
+            { LRG_PAINT_MATERIAL_FROSTED, "LRG_PAINT_MATERIAL_FROSTED", "frosted" },
+            { LRG_PAINT_MATERIAL_TINTED, "LRG_PAINT_MATERIAL_TINTED", "tinted" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintMaterial"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_icon_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ICON_NONE, "LRG_ICON_NONE", "none" },
+            { LRG_ICON_CHECK, "LRG_ICON_CHECK", "check" },
+            { LRG_ICON_CROSS, "LRG_ICON_CROSS", "cross" },
+            { LRG_ICON_CHEVRON_UP, "LRG_ICON_CHEVRON_UP", "chevron-up" },
+            { LRG_ICON_CHEVRON_DOWN, "LRG_ICON_CHEVRON_DOWN", "chevron-down" },
+            { LRG_ICON_CHEVRON_LEFT, "LRG_ICON_CHEVRON_LEFT", "chevron-left" },
+            { LRG_ICON_CHEVRON_RIGHT, "LRG_ICON_CHEVRON_RIGHT", "chevron-right" },
+            { LRG_ICON_PLUS, "LRG_ICON_PLUS", "plus" },
+            { LRG_ICON_MINUS, "LRG_ICON_MINUS", "minus" },
+            { LRG_ICON_SEARCH, "LRG_ICON_SEARCH", "search" },
+            { LRG_ICON_MENU, "LRG_ICON_MENU", "menu" },
+            { LRG_ICON_GEAR, "LRG_ICON_GEAR", "gear" },
+            { LRG_ICON_STAR, "LRG_ICON_STAR", "star" },
+            { LRG_ICON_STAR_HALF, "LRG_ICON_STAR_HALF", "star-half" },
+            { LRG_ICON_STAR_OUTLINE, "LRG_ICON_STAR_OUTLINE", "star-outline" },
+            { LRG_ICON_HEART, "LRG_ICON_HEART", "heart" },
+            { LRG_ICON_PLAY, "LRG_ICON_PLAY", "play" },
+            { LRG_ICON_PAUSE, "LRG_ICON_PAUSE", "pause" },
+            { LRG_ICON_STOP, "LRG_ICON_STOP", "stop" },
+            { LRG_ICON_INFO, "LRG_ICON_INFO", "info" },
+            { LRG_ICON_WARNING, "LRG_ICON_WARNING", "warning" },
+            { LRG_ICON_CLOSE, "LRG_ICON_CLOSE", "close" },
+            { LRG_ICON_ARROW_LEFT, "LRG_ICON_ARROW_LEFT", "arrow-left" },
+            { LRG_ICON_ARROW_RIGHT, "LRG_ICON_ARROW_RIGHT", "arrow-right" },
+            { LRG_ICON_FOLDER, "LRG_ICON_FOLDER", "folder" },
+            { LRG_ICON_FILE, "LRG_ICON_FILE", "file" },
+            { LRG_ICON_EYE, "LRG_ICON_EYE", "eye" },
+            { LRG_ICON_LOCK, "LRG_ICON_LOCK", "lock" },
+            { LRG_ICON_HOME, "LRG_ICON_HOME", "home" },
+            { LRG_ICON_TRASH, "LRG_ICON_TRASH", "trash" },
+            { LRG_ICON_EDIT, "LRG_ICON_EDIT", "edit" },
+            { LRG_ICON_REFRESH, "LRG_ICON_REFRESH", "refresh" },
+            { LRG_ICON_DOWNLOAD, "LRG_ICON_DOWNLOAD", "download" },
+            { LRG_ICON_UPLOAD, "LRG_ICON_UPLOAD", "upload" },
+            { LRG_ICON_CALENDAR, "LRG_ICON_CALENDAR", "calendar" },
+            { LRG_ICON_CLOCK, "LRG_ICON_CLOCK", "clock" },
+            { LRG_ICON_USER, "LRG_ICON_USER", "user" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgIcon"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 
