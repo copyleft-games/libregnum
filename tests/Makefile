@@ -251,6 +251,7 @@ TEST_SOURCES := \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
 	test-ui-dnd.c \
+	test-ui-property-grid.c \
 	test-editor-actions.c \
 	test-editor-view-state.c \
 	test-editor-play-session.c \

@@ -194,6 +194,11 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-pagination.h \
 	src/ui/lrg-drag.h \
 	src/ui/lrg-drop-target.h \
+	src/ui/lrg-property-source.h \
+	src/ui/lrg-property-grid.h \
+	src/ui/lrg-vector-edit.h \
+	src/ui/lrg-curve-edit.h \
+	src/ui/lrg-gradient-edit.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
@@ -896,6 +901,11 @@ SOURCES := \
 	src/ui/lrg-pagination.c \
 	src/ui/lrg-drag.c \
 	src/ui/lrg-drop-target.c \
+	src/ui/lrg-property-source.c \
+	src/ui/lrg-property-grid.c \
+	src/ui/lrg-vector-edit.c \
+	src/ui/lrg-curve-edit.c \
+	src/ui/lrg-gradient-edit.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \

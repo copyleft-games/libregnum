@@ -235,6 +235,11 @@
 #include "ui/lrg-pagination.h"
 #include "ui/lrg-drag.h"
 #include "ui/lrg-drop-target.h"
+#include "ui/lrg-property-source.h"
+#include "ui/lrg-property-grid.h"
+#include "ui/lrg-vector-edit.h"
+#include "ui/lrg-curve-edit.h"
+#include "ui/lrg-gradient-edit.h"
 #include "ui/lrg-header-bar.h"
 #include "ui/lrg-notification.h"
 

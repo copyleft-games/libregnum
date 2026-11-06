@@ -1,0 +1,120 @@
+* Gradient edit
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit
+:END:
+=LrgGradientEdit= edits a multi-stop colour gradient, an =LrgGradientStops= value: a bar showing the gradient over a checker pattern (so alpha reads) with a handle under it per stop. Drag handles to move stops, click the bar to add one, click the selected handle to recolour it in an =LrgColorPicker= popup. It is the property grid's editor for =LrgGradientStops= properties (particle colour over life, sky gradients, UI glows).
+
+** LrgGradientStops
+:PROPERTIES:
+:CUSTOM_ID: gradient-stops
+:END:
+=LrgGradientStops= is a boxed value type (=LRG_TYPE_GRADIENT_STOPS=): an opaque list of stops, each an offset in 0..1 and a =GrlColor=, always sorted by offset. Use it as a property type with =g_param_spec_boxed()=.
+| Function                                  | Purpose                                                                 |
+|-------------------------------------------+-------------------------------------------------------------------------|
+| =lrg_gradient_stops_new()=                | Empty list (evaluates to transparent black)                             |
+| =lrg_gradient_stops_new_two()=            | Two stops: a colour at 0 and one at 1                                   |
+| =lrg_gradient_stops_new_from_string()=    | Parse "0 #ff0000ff; 0.5 #00ff00; 1 #0000ff" (=NULL= when malformed)      |
+| =lrg_gradient_stops_to_string()=          | The same format back                                                    |
+| =lrg_gradient_stops_copy()= / =lrg_gradient_stops_free()= | Boxed copy and free (=g_autoptr= works)                  |
+| =lrg_gradient_stops_equal()=              | Same stops (offsets within 1e-6, exact colours)                         |
+| =lrg_gradient_stops_get_n_stops()=        | Stop count                                                              |
+| =lrg_gradient_stops_get_stop()=           | Offset and colour of a stop                                             |
+| =lrg_gradient_stops_add()=                | Insert, keeping the order (after stops at the same offset: a hard edge) |
+| =lrg_gradient_stops_set_stop()=           | Move and/or recolour; returns the stop's new index                      |
+| =lrg_gradient_stops_remove()=             | Remove a stop                                                           |
+| =lrg_gradient_stops_evaluate()=           | Colour at t: end colours outside, a linear blend of all four channels between neighbours |
+#+begin_src C
+GrlColor                    fire = { 255, 200, 60, 255 };
+GrlColor                    smoke = { 60, 60, 60, 0 };
+g_autoptr(LrgGradientStops) life = lrg_gradient_stops_new_two (&fire, &smoke);
+GrlColor                    c;
+
+lrg_gradient_stops_add (life, 0.3f, &(GrlColor) { 255, 90, 20, 255 });
+lrg_gradient_stops_evaluate (life, particle_age / particle_lifetime, &c);
+#+end_src
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-creation
+:END:
+#+begin_src C
+LrgGradientEdit *edit = lrg_gradient_edit_new ();
+
+lrg_gradient_edit_set_stops (edit, emitter->color_over_life);   /* copied */
+g_signal_connect (edit, "stops-changed", G_CALLBACK (on_stops_changed), emitter);
+#+end_src
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-behaviour
+:END:
+| Input                                   | Action                                                                  |
+|-----------------------------------------+-------------------------------------------------------------------------|
+| Press a handle                          | Select its stop                                                         |
+| Drag a handle sideways                  | Move the stop (the list re-sorts as it passes others)                  |
+| Drag a handle well below the bar        | Drawn faded; released there it is removed (while more than two remain)  |
+| Click the selected handle again, Enter  | Open the colour picker popup for the stop                               |
+| Click the bar                           | Add a stop with the colour found there                                  |
+| Delete / Backspace                      | Remove the selected stop (while more than two remain)                   |
+| Left / Right                            | Nudge the selected stop by 0.01                                         |
+| Escape (CANCEL) while dragging          | Put the stops back; the gesture ends with =commit= =FALSE=              |
+
+*** Gestures
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-gestures
+:END:
+Every change is between =edit-begin= and =edit-end=: a drag (begin on the first movement, =stops-changed= every frame), and one-shot gestures for adding, removing and nudging. The colour picker popup (=lrg_gradient_edit_open_color_picker()=, =lrg_gradient_edit_get_color_picker()=) is one gesture from its first change until it closes, so a property grid records one undo step per drag and per picker session.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-api
+:END:
+| Function                                           | Purpose                                     |
+|----------------------------------------------------+---------------------------------------------|
+| =lrg_gradient_edit_new()=                          | Create (black to white)                     |
+| =lrg_gradient_edit_get_stops()= / =lrg_gradient_edit_set_stops()= | The stops (setting copies, no signal) |
+| =lrg_gradient_edit_get_selected()= / =lrg_gradient_edit_set_selected()= | Selected stop, -1 for none     |
+| =lrg_gradient_edit_open_color_picker()=            | Open the picker for the selected stop       |
+| =lrg_gradient_edit_get_color_picker()=             | The open picker, or =NULL=                  |
+| =lrg_gradient_edit_get_bar_rect()=                 | World rectangle of the bar (offset 0 at its left) |
+| =lrg_gradient_edit_get_handle_rect()=              | World rectangle of a stop's handle          |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-properties
+:END:
+| Property   | Type               | Default        | Meaning                |
+|------------+--------------------+----------------+------------------------|
+| =stops=    | =LrgGradientStops= | black to white | The edited stops       |
+| =selected= | =gint=             | -1             | Selected stop          |
+
+| Signal          | Arguments         | Emitted                                  |
+|-----------------+-------------------+------------------------------------------|
+| =edit-begin=    |                   | A gesture starts                         |
+| =stops-changed= |                   | Stops changed (inside begin / end)       |
+| =edit-end=      | =gboolean commit= | The gesture ended; =FALSE= after cancel  |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-parts
+:END:
+| Part     | State                   | Built-in look                                                     |
+|----------+-------------------------+-------------------------------------------------------------------|
+| =box=    | resting                 | Bar frame: =BORDER= border, half the corner radius                |
+| =box=    | =hovered= / =focused=   | =ACCENT= frame                                                    |
+| =box=    | =disabled=              | 45 % opacity                                                      |
+| =handle= | resting                 | Stop tabs filled with their colour, =TEXT_MUTED= outline           |
+| =handle= | selected                | =ACCENT= outline (2 units) and pointer triangle                   |
+The checker squares behind the bar are fixed light and mid grey in every theme.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-yaml
+:END:
+=selected= is a plain property and =stops= a boxed one, so the loader can create it as =LrgGradientEdit=; set the stops from code (or parse them with =lrg_gradient_stops_new_from_string()=).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: gradient-edit-see-also
+:END:
+[[file:../property-grid.org][Property grid]], [[file:color-picker.org][LrgColorPicker]], [[file:curve-edit.org][LrgCurveEdit]]
