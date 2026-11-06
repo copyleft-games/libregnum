@@ -226,6 +226,7 @@
 #include "ui/lrg-text-editor.h"
 #include "ui/lrg-syntax.h"
 #include "ui/lrg-node-graph.h"
+#include "ui/lrg-timeline-view.h"
 #include "ui/lrg-ui-actions.h"
 
 /* Tilemap module */

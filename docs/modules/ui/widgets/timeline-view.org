@@ -1,0 +1,285 @@
+* Timeline View Widget
+:PROPERTIES:
+:CUSTOM_ID: timeline-view-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgTimelineView= is a multi-track sequencer for cutscenes, animation and audio. It shows a column of track headers, a time ruler and the track area, and lets the user scrub, zoom, scroll and edit clips and keyframes. It is a paint-pipeline widget (=paint()= + =style_defaults()=): everything is recorded as SDF shapes, follows the theme, and moves on springs.
+
+(Not to be confused with the editor's =LrgTimeline= in =src/editor/=, which is the cutscene data model. =LrgTimelineView= is a pure UI widget; the application maps its model onto it.)
+
+What it shows:
+
+- *Tracks* (=LrgTimelineViewTrack= objects): a name, a colour, a height, collapsed / muted / locked flags, optional nesting (a track added with a parent is drawn indented under its group; collapsing the group hides its tracks), and an optional *curve lane* under the clip lane that plots the keyframe values.
+- *Clips* on tracks: start, duration, label, optional colour. Clips on one track cannot overlap unless the track allows it.
+- *Keyframes* on tracks: time, value and the interpolation of the segment that starts at them (=step=, =linear=, =ease=, =bezier= with tangents). Drawn as diamonds across the clip lane and as points on the value curve (drawn with =lrg_paint_list_curve()=, glowing in the track colour). =lrg_timeline_view_evaluate()= samples the same curve that is drawn.
+- *Markers*: a flag on the ruler and a line across the tracks.
+- *Playhead*: an accent line with a glowing handle on the ruler; the glow grows while the handle is hovered or scrubbed.
+- *Loop range*: tinted on the ruler and over the tracks while =loop= is on.
+- *Ruler*: adaptive ticks. The major step is the smallest "nice" step (1 / 2 / 5 / 10 frames with an fps, then 1-2-5 seconds, then minute multiples) that keeps labels about 80 units apart; minor ticks subdivide it and are halved while closer than 5 units. Labels use the =time-format= (seconds, timecode, frames).
+- *Corner*: a play / pause button (built-in playback) and the current time.
+- *Scrollbars*: the shared overlay scrollbars (=lrg-scrollbar-private.h=) on the right and bottom of the track area, fading in on activity.
+
+Ids: every clip, keyframe and marker has a unique =guint= id (never 0, =LRG_TIMELINE_VIEW_INVALID_ID=); all per-item API takes ids, all signals pass ids.
+
+Scale: clips and keyframes are kept per track in arrays sorted by time, so painting and hit testing find what is on screen with binary searches. Only visible rows are painted; clips narrower than 4 units (far zoomed out) are merged into one bar per run. 100 tracks x 1000 clips record in a few thousand instances at any zoom (tested).
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: creation
+:END:
+#+begin_src C
+LrgTimelineView      *tl = lrg_timeline_view_new ();
+LrgTimelineViewTrack *cam;
+LrgTimelineViewTrack *fade;
+guint                 shot;
+
+lrg_timeline_view_set_duration (tl, 30.0);
+lrg_timeline_view_set_fps (tl, 30.0);
+
+cam = lrg_timeline_view_add_track (tl, "Camera", NULL);
+shot = lrg_timeline_view_add_clip (tl, cam, 0.0, 2.5, "Wide shot");
+
+fade = lrg_timeline_view_add_track (tl, "Fade", NULL);
+lrg_timeline_view_track_set_curve_lane (fade, TRUE);
+lrg_timeline_view_add_keyframe (tl, fade, 0.0, 0.0, LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
+lrg_timeline_view_add_keyframe (tl, fade, 1.0, 1.0, LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR);
+
+lrg_timeline_view_add_marker (tl, 2.5, "Cut");
+g_signal_connect (tl, "playhead-moved", G_CALLBACK (on_seek), game);
+lrg_container_add_child (LRG_CONTAINER (editor), LRG_WIDGET (tl));
+
+/* every frame, if the game drives time itself: */
+lrg_timeline_view_set_time (tl, cutscene_time);
+/* ... and sample a curve: */
+alpha = lrg_timeline_view_evaluate (tl, fade, cutscene_time);
+#+end_src
+
+Or let the widget play: =lrg_timeline_view_set_playing (tl, TRUE)= advances the playhead every canvas frame by the frame time times =rate=, wrapping around the loop range when =loop= is set.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: behaviour
+:END:
+| Input                                         | Where                     | Effect                                                                                           |
+|-----------------------------------------------+---------------------------+--------------------------------------------------------------------------------------------------|
+| Press / drag                                  | ruler                     | Scrub: the playhead follows the pointer (snapped to markers, clip edges, grid)                   |
+| Click                                         | marker flag               | Playhead jumps to the marker, =marker-activated=                                                 |
+| Click                                         | play button (corner)      | Toggle =playing=                                                                                 |
+| Click                                         | chevron / speaker / lock  | Toggle the track's =collapsed= / =muted= / =locked=                                              |
+| Double click                                  | track name                | Toggle =collapsed=                                                                               |
+| Click                                         | clip / keyframe           | Select only it (Ctrl / Shift toggles it); =clip-selected= for clips                              |
+| Drag                                          | clip body                 | Move the selected clips (one clip may change track); they lift with a deeper shadow              |
+| Drag                                          | clip edge (6 units)       | Resize that end; a grip shows on the hovered edge                                                |
+| Drag                                          | keyframe diamond          | Move the selected keyframes in time                                                              |
+| Drag                                          | curve point               | Move that keyframe in time and value                                                             |
+| Double click                                  | curve lane                | Add a linear keyframe there (=keyframe-added=)                                                   |
+| Drag                                          | empty lane                | Rubber band selection (Ctrl / Shift adds to the selection)                                       |
+| Alt held during a drag                        | any drag                  | No snapping                                                                                      |
+| Esc during a drag                             |                           | Put everything back                                                                              |
+| Wheel / Shift + wheel / horizontal wheel      | anywhere                  | Scroll tracks vertically / horizontally (plain wheel scrolls time when the tracks fit)           |
+| Ctrl + wheel, pinch                           | anywhere                  | Zoom about the pointer (the time under it stays put while the zoom spring glides)                |
+| Touch pan                                     | anywhere                  | Scroll both axes, flick on release                                                               |
+| Delete / Backspace                            | focused                   | Remove the selected clips and keyframes (not on locked tracks)                                   |
+| Ctrl+C / Ctrl+V / Ctrl+A                      | focused                   | Copy selected clips / paste them at the playhead / select everything                             |
+| Left / Right (Shift: x10)                     | focused                   | Step the playhead a frame (0.1 s without an fps)                                                 |
+| Home / End                                    | focused                   | Playhead to the start / end                                                                      |
+| Enter / Space / gamepad A (ACTIVATE)          | focused                   | Toggle =playing=                                                                                 |
+
+Snapping (=snap= flags): a dragged clip snaps either edge (whichever is closer) onto the playhead, markers, the sequence ends and the edges of other clips and keyframes within =snap-distance= units, showing a glowing guide line; otherwise the start is quantized to the grid (frames with an fps, else the ruler's minor ticks). Overlaps: a move that would overlap a resting clip (on a track that forbids it) is refused for that frame, so the clip stops at its last valid place; resizing clamps at the neighbours and keeps at least one frame (10 ms without an fps).
+
+Follow playhead: with =follow-playhead= (default on) the view pages so a playhead that leaves the view (playback, =set_time=, keys) sits 10 % in from the left edge. Scrubbing never scrolls.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Timeline and tracks
+| Function                                                                    | Purpose                                                       |
+|-----------------------------------------------------------------------------+---------------------------------------------------------------|
+| =lrg_timeline_view_new ()=                                                  | New empty timeline (10 s, 100 u/s, all snapping)              |
+| =lrg_timeline_view_add_track (self, name, parent)=                          | Create and append a track (nested in =parent=)                |
+| =lrg_timeline_view_append_track (self, track, parent)=                      | Append an existing track                                      |
+| =lrg_timeline_view_remove_track (self, track)=                              | Remove a track, its nested tracks and their content           |
+| =lrg_timeline_view_get_n_tracks= / =lrg_timeline_view_get_track (index)=    | Tracks in display order                                       |
+| =lrg_timeline_view_find_track (self, name)=                                 | First track with that name                                    |
+| =lrg_timeline_view_get_track_row (self, track, &y, &h)=                     | Laid-out row (world y); FALSE inside a collapsed group        |
+| =lrg_timeline_view_track_new (name)=                                        | Free-standing track                                           |
+| =lrg_timeline_view_track_get_name= / =lrg_timeline_view_track_set_name=     | Header name                                                   |
+| =lrg_timeline_view_track_get_color= / =lrg_timeline_view_track_set_color=   | Stripe, clip and curve colour (=NULL= = palette)              |
+| =lrg_timeline_view_track_get_height= / =lrg_timeline_view_track_set_height= | Clip lane height (0 = =track-height=)                         |
+| =lrg_timeline_view_track_get_collapsed= / =lrg_timeline_view_track_set_collapsed= | Thin row, nested tracks hidden                          |
+| =lrg_timeline_view_track_get_muted= / =lrg_timeline_view_track_set_muted=   | Muted (dimmed)                                                |
+| =lrg_timeline_view_track_get_locked= / =lrg_timeline_view_track_set_locked= | Refuse pointer edits                                          |
+| =lrg_timeline_view_track_get_allow_overlap= / =lrg_timeline_view_track_set_allow_overlap= | Clips may overlap                               |
+| =lrg_timeline_view_track_get_curve_lane= / =lrg_timeline_view_track_set_curve_lane= | Show the value curve lane                             |
+| =lrg_timeline_view_track_get_curve_height= / =lrg_timeline_view_track_set_curve_height= | Curve lane height                                 |
+| =lrg_timeline_view_track_get_value_range= / =lrg_timeline_view_track_set_value_range= | Values at the bottom / top of the curve lane        |
+| =lrg_timeline_view_track_get_default_value= / =lrg_timeline_view_track_set_default_value= | Value without keyframes                         |
+| =lrg_timeline_view_track_get_parent=                                        | Group the track is nested in                                  |
+
+*** Clips
+| Function                                                         | Purpose                                                  |
+|------------------------------------------------------------------+----------------------------------------------------------|
+| =lrg_timeline_view_add_clip (self, track, start, duration, label)= | Add; returns the id or =LRG_TIMELINE_VIEW_INVALID_ID= on overlap |
+| =lrg_timeline_view_remove_clip (self, clip)=                     | Remove                                                   |
+| =lrg_timeline_view_move_clip (self, clip, track, start)=         | Move (=NULL= track keeps it); FALSE on overlap           |
+| =lrg_timeline_view_resize_clip (self, clip, start, duration)=    | Set both ends, clamped (minimum length, 0, neighbours)   |
+| =lrg_timeline_view_get_clip_start= / =lrg_timeline_view_get_clip_duration= / =lrg_timeline_view_get_clip_track= | Read a clip |
+| =lrg_timeline_view_get_clip_label= / =lrg_timeline_view_set_clip_label= | Label                                             |
+| =lrg_timeline_view_set_clip_color (self, clip, color)=           | Per-clip colour (=NULL= = track colour)                  |
+| =lrg_timeline_view_get_n_clips (self, track)=                    | Count (=NULL= = all tracks)                              |
+| =lrg_timeline_view_get_clip_at (self, track, time)=              | Clip covering a time                                     |
+
+*** Keyframes
+| Function                                                                 | Purpose                                         |
+|--------------------------------------------------------------------------+-------------------------------------------------|
+| =lrg_timeline_view_add_keyframe (self, track, time, value, interpolation)= | Add; returns the id                           |
+| =lrg_timeline_view_remove_keyframe= / =lrg_timeline_view_move_keyframe (self, id, time, value)= | Remove / move    |
+| =lrg_timeline_view_get_keyframe_time= / =lrg_timeline_view_get_keyframe_value= / =lrg_timeline_view_get_keyframe_track= | Read |
+| =lrg_timeline_view_get_keyframe_interpolation= / =lrg_timeline_view_set_keyframe_interpolation= | Segment interpolation |
+| =lrg_timeline_view_set_keyframe_tangents (self, id, in_slope, out_slope)= | Bezier (Hermite) slopes, value per second     |
+| =lrg_timeline_view_get_n_keyframes (self, track)= / =lrg_timeline_view_get_keyframe (self, track, index)= | Enumerate in time order |
+| =lrg_timeline_view_evaluate (self, track, time)=                         | Sample the curve (held before the first / after the last key) |
+
+Interpolation of the segment from key a to key b, with u = (t - a.time) / (b.time - a.time) and d = b.time - a.time: step = a; linear = a + (b - a) u; ease = a + (b - a) (3u^2 - 2u^3); bezier = Hermite h00 a + h10 d a.out + h01 b + h11 d b.in.
+
+*** Markers, selection, editing
+| Function                                                       | Purpose                                     |
+|----------------------------------------------------------------+---------------------------------------------|
+| =lrg_timeline_view_add_marker (self, time, label)=             | Add a marker; returns the id                |
+| =lrg_timeline_view_remove_marker= / =lrg_timeline_view_move_marker= | Remove / move                          |
+| =lrg_timeline_view_get_marker_time= / =lrg_timeline_view_get_marker_label= / =lrg_timeline_view_get_n_markers= | Read |
+| =lrg_timeline_view_select_clip (self, clip, extend)= / =lrg_timeline_view_select_keyframe= | Select           |
+| =lrg_timeline_view_unselect_all=                               | Clear the selection                         |
+| =lrg_timeline_view_is_clip_selected= / =lrg_timeline_view_is_keyframe_selected= | Query                        |
+| =lrg_timeline_view_get_selected_clips= / =lrg_timeline_view_get_selected_keyframes= | Sorted =GArray= of ids   |
+| =lrg_timeline_view_delete_selection=                           | Delete key                                  |
+| =lrg_timeline_view_copy_selection= / =lrg_timeline_view_paste (self, time)= | Internal clipboard              |
+
+*** Playhead, view and settings
+| Function                                                                 | Purpose                                         |
+|--------------------------------------------------------------------------+-------------------------------------------------|
+| =lrg_timeline_view_get_time= / =lrg_timeline_view_set_time=              | Playhead                                        |
+| =lrg_timeline_view_get_duration= / =lrg_timeline_view_set_duration=      | Sequence length                                 |
+| =lrg_timeline_view_get_playing= / =lrg_timeline_view_set_playing=        | Built-in playback                               |
+| =lrg_timeline_view_get_rate= / =lrg_timeline_view_set_rate=              | Playback speed                                  |
+| =lrg_timeline_view_get_loop= / =lrg_timeline_view_set_loop=              | Loop playback                                   |
+| =lrg_timeline_view_get_loop_range= / =lrg_timeline_view_set_loop_range=  | Loop range (empty = whole sequence)             |
+| =lrg_timeline_view_get_zoom= / =lrg_timeline_view_set_zoom=              | Units per second (left edge kept)               |
+| =lrg_timeline_view_zoom_to (self, zoom, anchor_x, animate)=              | Zoom about a point                              |
+| =lrg_timeline_view_get_scroll_time= / =lrg_timeline_view_set_scroll_time= | Horizontal scroll                              |
+| =lrg_timeline_view_get_scroll_y= / =lrg_timeline_view_set_scroll_y=      | Vertical scroll                                 |
+| =lrg_timeline_view_time_to_x= / =lrg_timeline_view_x_to_time=            | Mapping (world x)                               |
+| =lrg_timeline_view_get_visible_range=                                    | Times at the track area edges                   |
+| =lrg_timeline_view_get_tick_step (self, &major, &minor)=                 | Ruler step for the current zoom                 |
+| =lrg_timeline_view_format_time (self, time)=                             | Time text in the current format                 |
+| =lrg_timeline_view_get_fps= / =lrg_timeline_view_set_fps=                | Frames per second (0 = continuous)              |
+| =lrg_timeline_view_get_time_format= / =lrg_timeline_view_set_time_format= | Label format                                   |
+| =lrg_timeline_view_get_snap= / =lrg_timeline_view_set_snap=              | Snap targets                                    |
+| =lrg_timeline_view_get_snap_distance= / =lrg_timeline_view_set_snap_distance= | Magnet reach                               |
+| =lrg_timeline_view_get_follow_playhead= / =lrg_timeline_view_set_follow_playhead= | Page after the playhead                |
+| =lrg_timeline_view_get_header_width= / =lrg_timeline_view_set_header_width= | Header column width                          |
+| =lrg_timeline_view_get_ruler_height= / =lrg_timeline_view_set_ruler_height= | Ruler height                                 |
+| =lrg_timeline_view_get_track_height= / =lrg_timeline_view_set_track_height= | Default clip lane height                     |
+| =lrg_timeline_view_get_show_play_button= / =lrg_timeline_view_set_show_play_button= | Corner play button                   |
+
+Types: =lrg_timeline_view_get_type=, =lrg_timeline_view_track_get_type=, and the enums =LrgTimelineViewInterpolation= (=lrg_timeline_view_interpolation_get_type=), =LrgTimelineViewTimeFormat= (=lrg_timeline_view_time_format_get_type=) and the flags =LrgTimelineViewSnap= (=lrg_timeline_view_snap_get_type=: =PLAYHEAD=, =MARKERS=, =CLIPS=, =GRID=, =ALL=).
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property           | Type                       | Default    | Notes                                                    |
+|--------------------+----------------------------+------------+----------------------------------------------------------|
+| =time=             | double                     | 0          | Playhead, clamped to [0, duration]                       |
+| =duration=         | double                     | 10         | Sequence length; the scroll extent also fits the last clip |
+| =zoom=             | double                     | 100        | Units per second (0.5 .. 50000), the spring's target     |
+| =fps=              | double                     | 0          | Frame rate; 0 is continuous time                         |
+| =time-format=      | =LrgTimelineViewTimeFormat= | seconds   |                                                          |
+| =playing=          | boolean                    | FALSE      | Built-in playback                                        |
+| =rate=             | double                     | 1          | Negative plays backwards                                 |
+| =loop=             | boolean                    | FALSE      |                                                          |
+| =loop-start= / =loop-end= | double              | 0 / 0      | End <= start loops the whole sequence                    |
+| =follow-playhead=  | boolean                    | TRUE       |                                                          |
+| =snap=             | =LrgTimelineViewSnap=      | all        |                                                          |
+| =snap-distance=    | float                      | 8          | Canvas units                                             |
+| =header-width=     | float                      | 180        |                                                          |
+| =ruler-height=     | float                      | 30         |                                                          |
+| =track-height=     | float                      | 0          | 0 = 1.4 x theme =ROW_HEIGHT= (at least 28)               |
+| =show-play-button= | boolean                    | TRUE       |                                                          |
+
+=LrgTimelineViewTrack= properties: =name=, =color= (=GrlColor=), =height=, =collapsed=, =muted=, =locked=, =allow-overlap=, =curve-lane=, =curve-height= (72), =value-min= (0), =value-max= (1), =default-value= (0), =parent= (read-only).
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal              | Arguments                         | Emitted when                                                     |
+|---------------------+-----------------------------------+------------------------------------------------------------------|
+| =clip-added=        | =guint clip=                      | API add or paste                                                 |
+| =clip-removed=      | =guint clip=                      | API remove or Delete                                             |
+| =clip-moved=        | =guint clip=                      | Once per clip at the end of a drag, or =move_clip()=             |
+| =clip-resized=      | =guint clip=                      | End of an edge drag, or =resize_clip()=                          |
+| =clip-selected=     | =guint clip=                      | A click selected a clip                                          |
+| =keyframe-added=    | =LrgTimelineViewTrack *track, guint keyframe= | API add or double click on a curve lane              |
+| =keyframe-removed=  | =LrgTimelineViewTrack *track, guint keyframe= | API remove or Delete                                 |
+| =keyframe-moved=    | =LrgTimelineViewTrack *track, guint keyframe= | End of a drag, or =move_keyframe()=                  |
+| =playhead-moved=    | =gdouble time=                    | Any playhead change (scrub, playback, keys, markers, API)        |
+| =marker-activated=  | =guint marker=                    | A marker flag was clicked                                        |
+| =selection-changed= | none                              | Clips or keyframes selected / unselected                         |
+
+Drags emit their signals once at release so an undo stack sees one entry per gesture; the model is updated live during the drag (read it from =notify= / paint if you need live feedback).
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+| Part           | What it is                 | Default look                                                                  |
+|----------------+----------------------------+-------------------------------------------------------------------------------|
+| =BOX=          | Whole widget               | =PANEL= fill, =BORDER= (=ACCENT= when focused), corner radius                 |
+| =HEADER=       | Ruler band, header column  | =SURFACE= fill, =BORDER= separators                                           |
+| =TRACK=        | Lane band                  | =TRACK= at 14 % alpha; =SELECTED= variant (30 %) on alternate rows            |
+| =ITEM=         | Clip                       | Track / clip colour, radius 0.75 x corner, soft shadow, faint rim; =HOVERED= blended by spring; =SELECTED= =ACCENT= rim + glow |
+| =MARK=         | Keyframe diamond / point   | =TEXT= fill, =PANEL= outline; =SELECTED= =ACCENT= + glow                      |
+| =INDICATOR=    | Playhead line and handle   | =ACCENT= with an accent glow, pill handle                                     |
+| =TAB=          | Marker flag                | =WARNING= fill, contrasting text                                              |
+| =FILL=         | Loop range tint            | =ACCENT= at 14 % (half that over the tracks)                                  |
+| =VEIL=         | Rubber band                | =SELECTION= fill, =ACCENT= hairline                                           |
+| =HANDLE=       | Snap guide                 | =WARNING= line with a glow                                                    |
+| =KNOB=         | Play / pause button        | =ACCENT= circle (=_HOVER= / =_PRESSED=), glow while hovered or playing (=CHECKED=) |
+| =LABEL=        | Track names                | =TEXT= foreground (ruler labels use =TEXT_MUTED=)                             |
+| =SCROLLBAR=, =SCROLL_THUMB= | Overlay scrollbars | Shared scrollbar looks                                                      |
+| =FOCUS=        | Focus ring                 | From =LrgWidget=                                                              |
+
+Clips get a white sheen on their top half and lift while dragged (shadow blur +14, offset +6, raised 2 units on the =lift= spring). Muted tracks draw their clips at 40 % opacity. Every preset in =lrg_theme_list_presets()= is covered by the =/ui/timeline/presets= and =/ui/gpu/timeline= tests.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: yaml
+:END:
+Supported by =LrgUILoader= as =LrgTimelineView= (the integration pass fills in the details). Every setting is a property; tracks are =LrgTimelineViewTrack= objects with properties too, added with =lrg_timeline_view_append_track()=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Ids are only valid while the item exists; a removed id is never reused.
+- =add_clip()= silently returns =LRG_TIMELINE_VIEW_INVALID_ID= on an overlap; check it, or set =allow-overlap= on the track.
+- =playhead-moved= fires for =set_time()= too. If the app drives the playhead every frame and also seeks on =playhead-moved=, ignore the signal while the app itself is setting the time.
+- Locked tracks only refuse pointer edits; the API still edits them.
+- The muted flag is only visual; the application decides what muting does.
+- With =follow-playhead= on, every =set_time()= outside the view scrolls it; turn it off while the user browses during playback if that is not wanted.
+- Keyframe interpolation belongs to the segment that *starts* at the keyframe; the last keyframe's interpolation is unused.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:scroll-box.org][Scroll box]] (shared scrolling and overlay scrollbars)
+- [[file:list-view.org][List view]] (virtualized rows)
+- [[file:../styling.org][UI styling]]
+- =tests/test-ui-timeline.c=
