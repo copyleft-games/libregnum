@@ -721,6 +721,10 @@ GType lrg_text_alignment_get_type (void) G_GNUC_CONST;
  * @LRG_UI_EVENT_FOCUS_IN: Widget gained focus
  * @LRG_UI_EVENT_FOCUS_OUT: Widget lost focus
  * @LRG_UI_EVENT_TEXT_INPUT: Text character input
+ * @LRG_UI_EVENT_POINTER_ENTER: Pointer entered the widget (does not bubble)
+ * @LRG_UI_EVENT_POINTER_LEAVE: Pointer left the widget (does not bubble)
+ * @LRG_UI_EVENT_ACTIVATE: Keyboard / gamepad activation of the focused widget
+ * @LRG_UI_EVENT_CANCEL: Back / cancel request (Escape, gamepad B)
  *
  * Type of UI event.
  */
@@ -735,7 +739,11 @@ typedef enum
     LRG_UI_EVENT_SCROLL            = 6,
     LRG_UI_EVENT_FOCUS_IN          = 7,
     LRG_UI_EVENT_FOCUS_OUT         = 8,
-    LRG_UI_EVENT_TEXT_INPUT        = 9
+    LRG_UI_EVENT_TEXT_INPUT        = 9,
+    LRG_UI_EVENT_POINTER_ENTER     = 10,
+    LRG_UI_EVENT_POINTER_LEAVE     = 11,
+    LRG_UI_EVENT_ACTIVATE          = 12,
+    LRG_UI_EVENT_CANCEL            = 13
 } LrgUIEventType;
 
 LRG_AVAILABLE_IN_ALL
@@ -6259,6 +6267,431 @@ typedef enum
 LRG_AVAILABLE_IN_ALL
 GType lrg_procgen_direction_get_type (void) G_GNUC_CONST;
 #define LRG_TYPE_PROCGEN_DIRECTION (lrg_procgen_direction_get_type ())
+
+
+/* ==========================================================================
+ * UI framework (paint, motion, theme, layout)
+ * ========================================================================== */
+
+/**
+ * LrgNavDirection:
+ * @LRG_NAV_DIRECTION_NONE: no navigation
+ * @LRG_NAV_DIRECTION_UP: move focus up
+ * @LRG_NAV_DIRECTION_DOWN: move focus down
+ * @LRG_NAV_DIRECTION_LEFT: move focus left
+ * @LRG_NAV_DIRECTION_RIGHT: move focus right
+ * @LRG_NAV_DIRECTION_NEXT: next widget in tab order
+ * @LRG_NAV_DIRECTION_PREVIOUS: previous widget in tab order
+ *
+ * A focus-navigation request, from a gamepad, arrow keys or Tab.
+ */
+typedef enum
+{
+    LRG_NAV_DIRECTION_NONE,
+    LRG_NAV_DIRECTION_UP,
+    LRG_NAV_DIRECTION_DOWN,
+    LRG_NAV_DIRECTION_LEFT,
+    LRG_NAV_DIRECTION_RIGHT,
+    LRG_NAV_DIRECTION_NEXT,
+    LRG_NAV_DIRECTION_PREVIOUS
+} LrgNavDirection;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_nav_direction_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_NAV_DIRECTION (lrg_nav_direction_get_type ())
+
+/**
+ * LrgMotion:
+ * @LRG_MOTION_NONE: no animation, values jump to their target
+ * @LRG_MOTION_SNAPPY: quick and nearly critically damped (0.16 s, 0.90)
+ * @LRG_MOTION_SMOOTH: critically damped, no overshoot (0.30 s, 1.0)
+ * @LRG_MOTION_BOUNCY: visible overshoot (0.38 s, 0.52)
+ * @LRG_MOTION_WOBBLY: playful, several oscillations (0.50 s, 0.32)
+ *
+ * A spring preset: how motion feels. Each preset is a (response time, damping ratio) pair; see #LrgSpring.
+ */
+typedef enum
+{
+    LRG_MOTION_NONE,
+    LRG_MOTION_SNAPPY,
+    LRG_MOTION_SMOOTH,
+    LRG_MOTION_BOUNCY,
+    LRG_MOTION_WOBBLY
+} LrgMotion;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_motion_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_MOTION (lrg_motion_get_type ())
+
+/**
+ * LrgAlign:
+ * @LRG_ALIGN_FILL: stretch to fill the slot
+ * @LRG_ALIGN_START: left / top edge
+ * @LRG_ALIGN_CENTER: centered
+ * @LRG_ALIGN_END: right / bottom edge
+ *
+ * How a widget is placed inside the slot its parent gives it.
+ */
+typedef enum
+{
+    LRG_ALIGN_FILL,
+    LRG_ALIGN_START,
+    LRG_ALIGN_CENTER,
+    LRG_ALIGN_END
+} LrgAlign;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_align_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_ALIGN (lrg_align_get_type ())
+
+/**
+ * LrgAppear:
+ * @LRG_APPEAR_NONE: no entrance animation
+ * @LRG_APPEAR_FADE: fade in
+ * @LRG_APPEAR_POP: fade in while scaling up from 85% with the widget's motion
+ * @LRG_APPEAR_ZOOM: scale up from 50%
+ * @LRG_APPEAR_FLY_UP: rise into place from below
+ * @LRG_APPEAR_FLY_DOWN: drop into place from above
+ * @LRG_APPEAR_FLY_LEFT: slide in from the right
+ * @LRG_APPEAR_FLY_RIGHT: slide in from the left
+ * @LRG_APPEAR_DROP: fall from above and settle with a bounce
+ *
+ * Entrance animation played when a widget is first painted or becomes visible. Applied after layout, so hit-testing sees the final position immediately.
+ */
+typedef enum
+{
+    LRG_APPEAR_NONE,
+    LRG_APPEAR_FADE,
+    LRG_APPEAR_POP,
+    LRG_APPEAR_ZOOM,
+    LRG_APPEAR_FLY_UP,
+    LRG_APPEAR_FLY_DOWN,
+    LRG_APPEAR_FLY_LEFT,
+    LRG_APPEAR_FLY_RIGHT,
+    LRG_APPEAR_DROP
+} LrgAppear;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_appear_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_APPEAR (lrg_appear_get_type ())
+
+/**
+ * LrgWidgetState:
+ * @LRG_WIDGET_STATE_NONE: no state
+ * @LRG_WIDGET_STATE_HOVERED: the pointer is over the widget or one of its children
+ * @LRG_WIDGET_STATE_PRESSED: a pointer button or activate key is held on the widget
+ * @LRG_WIDGET_STATE_FOCUSED: the widget has keyboard / gamepad focus
+ * @LRG_WIDGET_STATE_FOCUS_VISIBLE: focus was reached by keyboard or gamepad, so a focus ring should be drawn
+ * @LRG_WIDGET_STATE_DISABLED: the widget is insensitive
+ * @LRG_WIDGET_STATE_CHECKED: toggled on (check box, switch, radio, tab)
+ * @LRG_WIDGET_STATE_SELECTED: selected (list rows, tabs)
+ * @LRG_WIDGET_STATE_OPEN: a popup owned by the widget is open
+ *
+ * Interaction state of a widget. Style rules match against these flags.
+ */
+typedef enum /*< flags >*/
+{
+    LRG_WIDGET_STATE_NONE = 0,
+    LRG_WIDGET_STATE_HOVERED = 1 << 0,
+    LRG_WIDGET_STATE_PRESSED = 1 << 1,
+    LRG_WIDGET_STATE_FOCUSED = 1 << 2,
+    LRG_WIDGET_STATE_FOCUS_VISIBLE = 1 << 3,
+    LRG_WIDGET_STATE_DISABLED = 1 << 4,
+    LRG_WIDGET_STATE_CHECKED = 1 << 5,
+    LRG_WIDGET_STATE_SELECTED = 1 << 6,
+    LRG_WIDGET_STATE_OPEN = 1 << 7
+} LrgWidgetState;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_widget_state_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_WIDGET_STATE (lrg_widget_state_get_type ())
+
+/**
+ * LrgUIPart:
+ * @LRG_UI_PART_BOX: the widget's main body
+ * @LRG_UI_PART_LABEL: text drawn by the widget
+ * @LRG_UI_PART_TRACK: slider / progress / switch track
+ * @LRG_UI_PART_FILL: filled portion of a track
+ * @LRG_UI_PART_THUMB: draggable thumb
+ * @LRG_UI_PART_KNOB: switch knob
+ * @LRG_UI_PART_MARK: check mark or radio dot
+ * @LRG_UI_PART_ARROW: disclosure / combo arrow
+ * @LRG_UI_PART_POPUP: popup surface
+ * @LRG_UI_PART_ITEM: row or entry inside a list or popup
+ * @LRG_UI_PART_HEADER: header strip
+ * @LRG_UI_PART_TAB: tab button
+ * @LRG_UI_PART_INDICATOR: active-tab / selection indicator
+ * @LRG_UI_PART_SCROLLBAR: scrollbar track
+ * @LRG_UI_PART_SCROLL_THUMB: scrollbar thumb
+ * @LRG_UI_PART_TOOLTIP: tooltip surface
+ * @LRG_UI_PART_FOCUS: focus ring
+ * @LRG_UI_PART_VEIL: modal backdrop
+ *
+ * A named, separately styled piece of a widget. Style rules can target a part, e.g. the knob of a slider.
+ */
+typedef enum
+{
+    LRG_UI_PART_BOX,
+    LRG_UI_PART_LABEL,
+    LRG_UI_PART_TRACK,
+    LRG_UI_PART_FILL,
+    LRG_UI_PART_THUMB,
+    LRG_UI_PART_KNOB,
+    LRG_UI_PART_MARK,
+    LRG_UI_PART_ARROW,
+    LRG_UI_PART_POPUP,
+    LRG_UI_PART_ITEM,
+    LRG_UI_PART_HEADER,
+    LRG_UI_PART_TAB,
+    LRG_UI_PART_INDICATOR,
+    LRG_UI_PART_SCROLLBAR,
+    LRG_UI_PART_SCROLL_THUMB,
+    LRG_UI_PART_TOOLTIP,
+    LRG_UI_PART_FOCUS,
+    LRG_UI_PART_VEIL
+} LrgUIPart;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_ui_part_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_UI_PART (lrg_ui_part_get_type ())
+
+/**
+ * LRG_UI_PART_COUNT:
+ *
+ * Number of #LrgUIPart values.
+ */
+#define LRG_UI_PART_COUNT (LRG_UI_PART_VEIL + 1)
+
+/**
+ * LrgThemeColor:
+ * @LRG_THEME_COLOR_WINDOW: app / game background behind all UI
+ * @LRG_THEME_COLOR_PANEL: panels and cards
+ * @LRG_THEME_COLOR_SURFACE: raised surfaces inside panels
+ * @LRG_THEME_COLOR_BORDER: hairline borders and separators
+ * @LRG_THEME_COLOR_TEXT: primary text
+ * @LRG_THEME_COLOR_TEXT_MUTED: secondary text, placeholders
+ * @LRG_THEME_COLOR_TEXT_ON_ACCENT: text drawn on top of the accent colour
+ * @LRG_THEME_COLOR_ACCENT: brand / primary action colour
+ * @LRG_THEME_COLOR_ACCENT_HOVER: accent under the pointer
+ * @LRG_THEME_COLOR_ACCENT_PRESSED: accent while pressed
+ * @LRG_THEME_COLOR_CONTROL: button and control body
+ * @LRG_THEME_COLOR_CONTROL_HOVER: control body under the pointer
+ * @LRG_THEME_COLOR_CONTROL_PRESSED: control body while pressed
+ * @LRG_THEME_COLOR_INPUT: text-entry background
+ * @LRG_THEME_COLOR_FOCUS: focus ring
+ * @LRG_THEME_COLOR_SELECTION: selected rows and text selection
+ * @LRG_THEME_COLOR_TRACK: slider / progress track
+ * @LRG_THEME_COLOR_HANDLE: slider thumb, switch knob
+ * @LRG_THEME_COLOR_POPUP: popup and menu surface
+ * @LRG_THEME_COLOR_TOOLTIP: tooltip surface
+ * @LRG_THEME_COLOR_SHADOW: drop-shadow colour (alpha sets strength)
+ * @LRG_THEME_COLOR_VEIL: modal backdrop dimming
+ * @LRG_THEME_COLOR_SUCCESS: positive status
+ * @LRG_THEME_COLOR_WARNING: warning status
+ * @LRG_THEME_COLOR_DANGER: destructive / error status
+ * @LRG_THEME_COLOR_LINK: hyperlinks
+ * @LRG_THEME_COLOR_DISABLED: disabled foreground
+ *
+ * A colour role in an #LrgTheme. Widgets ask for roles instead of hard-coding colours.
+ */
+typedef enum
+{
+    LRG_THEME_COLOR_WINDOW,
+    LRG_THEME_COLOR_PANEL,
+    LRG_THEME_COLOR_SURFACE,
+    LRG_THEME_COLOR_BORDER,
+    LRG_THEME_COLOR_TEXT,
+    LRG_THEME_COLOR_TEXT_MUTED,
+    LRG_THEME_COLOR_TEXT_ON_ACCENT,
+    LRG_THEME_COLOR_ACCENT,
+    LRG_THEME_COLOR_ACCENT_HOVER,
+    LRG_THEME_COLOR_ACCENT_PRESSED,
+    LRG_THEME_COLOR_CONTROL,
+    LRG_THEME_COLOR_CONTROL_HOVER,
+    LRG_THEME_COLOR_CONTROL_PRESSED,
+    LRG_THEME_COLOR_INPUT,
+    LRG_THEME_COLOR_FOCUS,
+    LRG_THEME_COLOR_SELECTION,
+    LRG_THEME_COLOR_TRACK,
+    LRG_THEME_COLOR_HANDLE,
+    LRG_THEME_COLOR_POPUP,
+    LRG_THEME_COLOR_TOOLTIP,
+    LRG_THEME_COLOR_SHADOW,
+    LRG_THEME_COLOR_VEIL,
+    LRG_THEME_COLOR_SUCCESS,
+    LRG_THEME_COLOR_WARNING,
+    LRG_THEME_COLOR_DANGER,
+    LRG_THEME_COLOR_LINK,
+    LRG_THEME_COLOR_DISABLED
+} LrgThemeColor;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_theme_color_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_THEME_COLOR (lrg_theme_color_get_type ())
+
+/**
+ * LRG_THEME_COLOR_COUNT:
+ *
+ * Number of #LrgThemeColor values.
+ */
+#define LRG_THEME_COLOR_COUNT (LRG_THEME_COLOR_DISABLED + 1)
+
+/**
+ * LrgThemeMetric:
+ * @LRG_THEME_METRIC_FONT_SIZE: body text size
+ * @LRG_THEME_METRIC_FONT_SIZE_SMALL: captions
+ * @LRG_THEME_METRIC_FONT_SIZE_LARGE: headings
+ * @LRG_THEME_METRIC_FONT_SIZE_TITLE: titles
+ * @LRG_THEME_METRIC_CORNER_RADIUS: control corner radius
+ * @LRG_THEME_METRIC_BORDER_WIDTH: border thickness
+ * @LRG_THEME_METRIC_CONTROL_HEIGHT: default height of buttons, entries, combos
+ * @LRG_THEME_METRIC_PADDING_X: horizontal padding inside controls
+ * @LRG_THEME_METRIC_PADDING_Y: vertical padding inside controls
+ * @LRG_THEME_METRIC_SPACING: gap between siblings
+ * @LRG_THEME_METRIC_ROW_HEIGHT: list row height
+ * @LRG_THEME_METRIC_POPUP_RADIUS: corner radius of popups, dialogs, toasts
+ * @LRG_THEME_METRIC_SHADOW_BLUR: default elevation blur
+ * @LRG_THEME_METRIC_SHADOW_OFFSET_Y: default elevation vertical offset
+ * @LRG_THEME_METRIC_FOCUS_RING_WIDTH: focus ring thickness
+ * @LRG_THEME_METRIC_SCROLLBAR_SIZE: scrollbar thickness
+ * @LRG_THEME_METRIC_CHECK_SIZE: check box / radio size
+ * @LRG_THEME_METRIC_HANDLE_SIZE: slider thumb diameter
+ *
+ * A size in an #LrgTheme, in canvas units.
+ */
+typedef enum
+{
+    LRG_THEME_METRIC_FONT_SIZE,
+    LRG_THEME_METRIC_FONT_SIZE_SMALL,
+    LRG_THEME_METRIC_FONT_SIZE_LARGE,
+    LRG_THEME_METRIC_FONT_SIZE_TITLE,
+    LRG_THEME_METRIC_CORNER_RADIUS,
+    LRG_THEME_METRIC_BORDER_WIDTH,
+    LRG_THEME_METRIC_CONTROL_HEIGHT,
+    LRG_THEME_METRIC_PADDING_X,
+    LRG_THEME_METRIC_PADDING_Y,
+    LRG_THEME_METRIC_SPACING,
+    LRG_THEME_METRIC_ROW_HEIGHT,
+    LRG_THEME_METRIC_POPUP_RADIUS,
+    LRG_THEME_METRIC_SHADOW_BLUR,
+    LRG_THEME_METRIC_SHADOW_OFFSET_Y,
+    LRG_THEME_METRIC_FOCUS_RING_WIDTH,
+    LRG_THEME_METRIC_SCROLLBAR_SIZE,
+    LRG_THEME_METRIC_CHECK_SIZE,
+    LRG_THEME_METRIC_HANDLE_SIZE
+} LrgThemeMetric;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_theme_metric_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_THEME_METRIC (lrg_theme_metric_get_type ())
+
+/**
+ * LRG_THEME_METRIC_COUNT:
+ *
+ * Number of #LrgThemeMetric values.
+ */
+#define LRG_THEME_METRIC_COUNT (LRG_THEME_METRIC_HANDLE_SIZE + 1)
+
+/**
+ * LrgPaintGradientKind:
+ * @LRG_PAINT_GRADIENT_NONE: solid colour
+ * @LRG_PAINT_GRADIENT_LINEAR: linear gradient along an angle
+ * @LRG_PAINT_GRADIENT_RADIAL: radial gradient from a centre point
+ *
+ * Gradient type for an #LrgPaintGradient.
+ */
+typedef enum
+{
+    LRG_PAINT_GRADIENT_NONE,
+    LRG_PAINT_GRADIENT_LINEAR,
+    LRG_PAINT_GRADIENT_RADIAL
+} LrgPaintGradientKind;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_paint_gradient_kind_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PAINT_GRADIENT_KIND (lrg_paint_gradient_kind_get_type ())
+
+/**
+ * LrgPopupPlacement:
+ * @LRG_POPUP_PLACEMENT_BELOW: under the anchor, left edges aligned
+ * @LRG_POPUP_PLACEMENT_ABOVE: over the anchor
+ * @LRG_POPUP_PLACEMENT_RIGHT: to the right of the anchor
+ * @LRG_POPUP_PLACEMENT_LEFT: to the left of the anchor
+ * @LRG_POPUP_PLACEMENT_CENTER: centred on the canvas (dialogs)
+ * @LRG_POPUP_PLACEMENT_AT_POINTER: at the pointer position (context menus)
+ *
+ * Where a popup opens relative to its anchor. Placements flip to the opposite side when they would leave the canvas.
+ */
+typedef enum
+{
+    LRG_POPUP_PLACEMENT_BELOW,
+    LRG_POPUP_PLACEMENT_ABOVE,
+    LRG_POPUP_PLACEMENT_RIGHT,
+    LRG_POPUP_PLACEMENT_LEFT,
+    LRG_POPUP_PLACEMENT_CENTER,
+    LRG_POPUP_PLACEMENT_AT_POINTER
+} LrgPopupPlacement;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_popup_placement_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_POPUP_PLACEMENT (lrg_popup_placement_get_type ())
+
+/**
+ * LrgToastMode:
+ * @LRG_TOAST_MODE_REPLACE: a new toast replaces the visible one
+ * @LRG_TOAST_MODE_SEQUENCE: toasts are shown one after another
+ * @LRG_TOAST_MODE_STACK: toasts stack up to a maximum count
+ *
+ * How an #LrgToastQueue shows several messages.
+ */
+typedef enum
+{
+    LRG_TOAST_MODE_REPLACE,
+    LRG_TOAST_MODE_SEQUENCE,
+    LRG_TOAST_MODE_STACK
+} LrgToastMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_toast_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_TOAST_MODE (lrg_toast_mode_get_type ())
+
+/**
+ * LrgCheckboxStyle:
+ * @LRG_CHECKBOX_STYLE_CHECK: square box with a check mark
+ * @LRG_CHECKBOX_STYLE_RADIO: round box with a dot
+ * @LRG_CHECKBOX_STYLE_SWITCH: sliding switch with a knob
+ *
+ * Visual style of an #LrgCheckbox.
+ */
+typedef enum
+{
+    LRG_CHECKBOX_STYLE_CHECK,
+    LRG_CHECKBOX_STYLE_RADIO,
+    LRG_CHECKBOX_STYLE_SWITCH
+} LrgCheckboxStyle;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_checkbox_style_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_CHECKBOX_STYLE (lrg_checkbox_style_get_type ())
+
+/**
+ * LrgSelectionMode:
+ * @LRG_SELECTION_MODE_NONE: no selection
+ * @LRG_SELECTION_MODE_SINGLE: at most one item
+ * @LRG_SELECTION_MODE_MULTIPLE: any number of items (Ctrl / Shift click)
+ *
+ * How many items of an #LrgListView can be selected.
+ */
+typedef enum
+{
+    LRG_SELECTION_MODE_NONE,
+    LRG_SELECTION_MODE_SINGLE,
+    LRG_SELECTION_MODE_MULTIPLE
+} LrgSelectionMode;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_selection_mode_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_SELECTION_MODE (lrg_selection_mode_get_type ())
 
 G_END_DECLS
 
