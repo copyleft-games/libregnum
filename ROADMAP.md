@@ -1,10 +1,10 @@
 # Libregnum Roadmap
 
-Last updated: 2026-10-29
+Last updated: 2026-11-06
 
 ## Recently Shipped
 
-### Unreleased: UI framework overhaul (`src/paint/`, `src/ui/`, `src/gui/`)
+### v0.8.0: UI framework overhaul (`src/paint/`, `src/ui/`, `src/gui/`)
 
 Concepts from the Raven UI library (Apache-2.0; reimplemented, no code
 copied) brought to both UI stacks:
