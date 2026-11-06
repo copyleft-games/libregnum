@@ -36,9 +36,6 @@
 /* Indeterminate segment length as a fraction of the track */
 #define SWEEP_SEGMENT (0.35f)
 
-/* Longest frame step used for the bar's own animation */
-#define MAX_FRAME_STEP (0.1f)
-
 struct _LrgProgressBar
 {
     LrgWidget       parent_instance;
@@ -59,12 +56,12 @@ struct _LrgProgressBar
     gboolean        text_set;
     gboolean        radius_set;
 
-    /* Drawn fraction, eased towards the real one in paint() */
+    /* Drawn fraction, eased towards the real one in step() */
     LrgSpring       shown;
     /* Indeterminate sweep position, 0..1 per period */
     gfloat          sweep;
-    /* Monotonic time of the previous paint, 0 before the first */
-    gint64          last_us;
+    /* FALSE until the first step(): the bar shows its value directly */
+    gboolean        stepped;
 };
 
 G_DEFINE_TYPE (LrgProgressBar, lrg_progress_bar, LRG_TYPE_WIDGET)
@@ -103,41 +100,45 @@ bar_radius (LrgProgressBar *self)
 }
 
 /*
- * advance:
+ * lrg_progress_bar_step:
  *
  * Steps the bar's own animation (eased fraction and indeterminate
- * sweep) by the real time since the previous paint, clamped so a
- * stalled frame does not jump. The very first paint snaps the fill to
- * the value so a new bar does not animate in.
+ * sweep) by the canvas frame time. The very first step snaps the fill
+ * to the value so a new bar does not animate in.
+ *
+ * Returns: %TRUE while the fill is easing, and for as long as an
+ *          indeterminate bar sweeps (unless motion is reduced)
  */
-static void
-advance (LrgProgressBar *self)
+static gboolean
+lrg_progress_bar_step (LrgWidget *widget,
+                       gfloat     delta_time)
 {
-    gint64 now = g_get_monotonic_time ();
-    gfloat dt;
+    LrgProgressBar *self = LRG_PROGRESS_BAR (widget);
+    gboolean        busy;
 
-    lrg_spring_set_motion (&self->shown, lrg_widget_get_motion (LRG_WIDGET (self)));
+    lrg_spring_set_motion (&self->shown, lrg_widget_get_motion (widget));
     lrg_spring_set_target (&self->shown, (gfloat) lrg_progress_bar_get_fraction (self));
 
-    if (self->last_us == 0)
+    if (!self->stepped)
     {
         lrg_spring_snap (&self->shown, (gfloat) lrg_progress_bar_get_fraction (self));
-        self->last_us = now;
-        return;
+        self->stepped = TRUE;
+        return self->indeterminate && !lrg_motion_get_reduced ();
     }
 
-    dt = CLAMP ((gfloat) (now - self->last_us) / (gfloat) G_USEC_PER_SEC, 0.0f, MAX_FRAME_STEP);
-    self->last_us = now;
+    busy = lrg_spring_step (&self->shown, delta_time);
 
-    lrg_spring_step (&self->shown, dt);
-
-    /* The sweep keeps moving even with reduced motion turned off for
-     * springs, but stops entirely when motion is reduced */
+    /* The sweep is a continuous animation: it keeps the canvas busy for
+     * as long as the bar is indeterminate, and stops entirely when
+     * motion is reduced */
     if (self->indeterminate && !lrg_motion_get_reduced ())
     {
-        self->sweep += dt * lrg_motion_get_speed () / SWEEP_PERIOD;
+        self->sweep += MAX (delta_time, 0.0f) * lrg_motion_get_speed () / SWEEP_PERIOD;
         self->sweep -= floorf (self->sweep);
+        busy = TRUE;
     }
+
+    return busy;
 }
 
 /* ==========================================================================
@@ -276,8 +277,6 @@ lrg_progress_bar_paint (LrgWidget    *widget,
     gfloat          h = lrg_widget_get_height (widget);
     gfloat          f;
 
-    advance (self);
-
     lrg_widget_resolve_look (widget, LRG_UI_PART_TRACK, &track);
     lrg_widget_resolve_look (widget, LRG_UI_PART_FILL, &fill);
 
@@ -291,7 +290,7 @@ lrg_progress_bar_paint (LrgWidget    *widget,
     }
     else
     {
-        f = CLAMP (self->shown.value, 0.0f, 1.0f);
+        f = CLAMP ((gfloat) lrg_progress_bar_get_display_fraction (self), 0.0f, 1.0f);
         if (f > 0.0f)
         {
             if (self->orientation == LRG_ORIENTATION_HORIZONTAL)
@@ -466,6 +465,7 @@ lrg_progress_bar_class_init (LrgProgressBarClass *klass)
     object_class->set_property = lrg_progress_bar_set_property;
 
     widget_class->paint = lrg_progress_bar_paint;
+    widget_class->step = lrg_progress_bar_step;
     widget_class->style_defaults = lrg_progress_bar_style_defaults;
     widget_class->measure = lrg_progress_bar_measure;
     widget_class->handle_event = lrg_progress_bar_handle_event;
@@ -694,8 +694,8 @@ lrg_progress_bar_get_display_fraction (LrgProgressBar *self)
 {
     g_return_val_if_fail (LRG_IS_PROGRESS_BAR (self), 0.0);
 
-    /* Before the first paint the bar would snap, so report the value */
-    if (self->last_us == 0)
+    /* Before the first step the bar shows the value itself */
+    if (!self->stepped)
         return lrg_progress_bar_get_fraction (self);
     return (gdouble) self->shown.value;
 }

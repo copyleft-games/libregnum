@@ -15,9 +15,13 @@
  *    recomputed whenever the set of slots changes, so the stack re-flows
  *    smoothly when a toast arrives or leaves.
  *
- * Time comes from lrg_toast_queue_advance(): paint() calls it with the
- * real frame delta (unless auto-advance is off), tests call it directly
- * for deterministic timing.
+ * Time comes from lrg_toast_queue_advance(). With auto-advance on (the
+ * default) the queue's step() calls it with the canvas frame time, so
+ * toasts follow lrg_canvas_update() and the canvas reports itself busy
+ * while a toast is entering, counting down, leaving or waiting. Explicit
+ * lrg_toast_queue_advance() calls add to that (skip ahead); turn
+ * auto-advance off to drive time only by hand. paint() never advances
+ * anything, so drawing twice in a frame cannot double the clock.
  */
 
 #include "config.h"
@@ -35,9 +39,6 @@
 
 /* Below this the leaving card is gone */
 #define TOAST_GONE (0.01f)
-
-/* Largest frame step taken from the real clock */
-#define TOAST_MAX_DT (0.1)
 
 typedef struct
 {
@@ -60,7 +61,6 @@ struct _LrgToastQueue
 
 	GPtrArray    *slots;      /* ToastSlot *, oldest first */
 	GQueue        pending;    /* LrgToast *, owned */
-	gint64        last_us;
 	gboolean      auto_fill;  /* sized from the parent */
 };
 
@@ -426,17 +426,55 @@ lrg_toast_queue_measure (LrgWidget *widget,
 	*height = lrg_widget_get_height (widget);
 }
 
-/* frame_delta: seconds since the last paint, 0 the first time */
-static gdouble
-frame_delta (gint64 *last_us)
+/*
+ * is_busy:
+ *
+ * Whether the queue still needs frames: a spring moving, a visible
+ * toast whose timer is counting down (a toast without a duration only
+ * waits for a click), a card fading out, or toasts waiting their turn.
+ */
+static gboolean
+is_busy (LrgToastQueue *self)
 {
-	gint64  now = g_get_monotonic_time ();
-	gdouble dt = 0.0;
+	guint i;
 
-	if (*last_us != 0)
-		dt = (gdouble) (now - *last_us) / (gdouble) G_USEC_PER_SEC;
-	*last_us = now;
-	return CLAMP (dt, 0.0, TOAST_MAX_DT);
+	if (!g_queue_is_empty (&self->pending))
+		return TRUE;
+
+	for (i = 0; i < self->slots->len; i++)
+	{
+		ToastSlot *slot = g_ptr_array_index (self->slots, i);
+
+		if (slot->leaving || !lrg_spring_is_settled (&slot->enter) ||
+		    !lrg_spring_is_settled (&slot->place))
+			return TRUE;
+		if (lrg_toast_get_duration (slot->toast) > 0.0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/*
+ * lrg_toast_queue_step:
+ *
+ * Auto-advance: runs the toast clocks and springs by the canvas frame
+ * time. With auto-advance off nothing moves here (time only passes
+ * through lrg_toast_queue_advance()), so the queue never reports
+ * itself busy.
+ *
+ * Returns: %TRUE while a toast animates, counts down or waits
+ */
+static gboolean
+lrg_toast_queue_step (LrgWidget *widget,
+                      gfloat     delta_time)
+{
+	LrgToastQueue *self = LRG_TOAST_QUEUE (widget);
+
+	if (!self->auto_advance)
+		return FALSE;
+
+	lrg_toast_queue_advance (self, (gdouble) delta_time);
+	return is_busy (self);
 }
 
 static void
@@ -448,8 +486,6 @@ lrg_toast_queue_paint (LrgWidget    *widget,
 	guint          i;
 
 	ensure_fill (self);
-	if (self->auto_advance)
-		lrg_toast_queue_advance (self, frame_delta (&self->last_us));
 
 	/* Entering cards rise towards their edge: up from below for bottom
 	 * stacks, down from above for top stacks */
@@ -585,6 +621,7 @@ lrg_toast_queue_class_init (LrgToastQueueClass *klass)
 
 	widget_class->measure = lrg_toast_queue_measure;
 	widget_class->paint = lrg_toast_queue_paint;
+	widget_class->step = lrg_toast_queue_step;
 
 	container_class->layout_children = lrg_toast_queue_layout_children;
 
@@ -628,7 +665,9 @@ lrg_toast_queue_class_init (LrgToastQueueClass *klass)
 	/**
 	 * LrgToastQueue:auto-advance:
 	 *
-	 * Whether painting advances time with the real frame delta.
+	 * Whether the canvas frame clock (lrg_canvas_update(), through the
+	 * widget's step) advances the toasts. When %FALSE, time only
+	 * passes through lrg_toast_queue_advance().
 	 */
 	properties[PROP_AUTO_ADVANCE] =
 		g_param_spec_boolean ("auto-advance", NULL, NULL, TRUE,
@@ -784,7 +823,6 @@ lrg_toast_queue_set_auto_advance (LrgToastQueue *self,
 	if (self->auto_advance == auto_advance)
 		return;
 	self->auto_advance = auto_advance;
-	self->last_us = 0;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_AUTO_ADVANCE]);
 }
 

@@ -173,6 +173,26 @@ settle (LrgCanvas *canvas,
 		lrg_canvas_update (canvas, 1.0f / 60.0f);
 }
 
+/*
+ * run_until_rest:
+ *
+ * Steps 60 Hz frames until lrg_canvas_update() reports nothing is
+ * animating any more (at most @max_frames).
+ *
+ * Returns: the number of frames that still reported motion
+ */
+static guint
+run_until_rest (LrgCanvas *canvas,
+                guint      max_frames)
+{
+	guint n = 0;
+
+	while (n < max_frames && lrg_canvas_update (canvas, 1.0f / 60.0f))
+		n++;
+	g_assert_cmpuint (n, <, max_frames);
+	return n;
+}
+
 /* ==========================================================================
  * Paint-list inspection helpers
  * ========================================================================== */
@@ -810,16 +830,23 @@ test_checkbox_switch (Fixture       *fixture,
 	x_off = instance (list, find_knob (fixture, list))->rect[0];
 	g_assert_cmpint (find_rect (list, LRG_PAINT_PRIM_RECT, 10.0f, 10.0f, s * 1.75f, s), >=, 0);
 
-	/* Toggle: a moment later the knob is on its way */
+	/* The switch's first frame: nothing to animate yet */
+	run_until_rest (fixture->canvas, 240);
+
+	/* Toggle: a few frames later the knob is on its way, and the
+	 * canvas reports the animation */
 	lrg_checkbox_set_checked (sw, TRUE);
-	lrg_canvas_record (fixture->canvas);
-	g_usleep (60000);
+	g_assert_true (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
+	g_assert_true (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
 	list = lrg_canvas_record (fixture->canvas);
 	x_mid = instance (list, find_knob (fixture, list))->rect[0];
 	g_assert_cmpfloat (x_mid, >, x_off);
+	g_assert_cmpfloat (lrg_checkbox_get_check_progress (sw), <, 1.0f);
 
-	/* Settled: one track length minus the knob along, track is ACCENT */
-	lrg_motion_set_reduced (TRUE);
+	/* Settled (update returns FALSE): one track length minus the knob
+	 * along, track is ACCENT */
+	g_assert_cmpuint (run_until_rest (fixture->canvas, 240), >, 0);
+	g_assert_false (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
 	list = lrg_canvas_record (fixture->canvas);
 	x_on = instance (list, find_knob (fixture, list))->rect[0];
 	g_assert_cmpfloat_with_epsilon (x_on - x_off, s * 0.75f, 0.5);
@@ -1098,20 +1125,32 @@ test_progress_bar_eases (Fixture       *fixture,
 	bar = add_at (fixture, lrg_progress_bar_new (), 10.0f, 10.0f, 200.0f, 12.0f);
 	lrg_progress_bar_set_value (bar, 20.0);
 
-	/* First paint snaps */
+	/* Before and at the first frame it shows the value, no animation */
 	lrg_canvas_record (fixture->canvas);
 	g_assert_cmpfloat_with_epsilon (lrg_progress_bar_get_display_fraction (bar), 0.2, 0.0001);
+	g_assert_false (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
+	g_assert_cmpfloat_with_epsilon (lrg_progress_bar_get_display_fraction (bar), 0.2, 0.0001);
 
-	/* Right after a jump the drawn fill has barely moved */
+	/* Right after a jump the drawn fill has barely moved, and the canvas
+	 * is busy */
 	lrg_progress_bar_set_value (bar, 100.0);
-	g_usleep (20000);
+	g_assert_true (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
 	lrg_canvas_record (fixture->canvas);
 	g_assert_cmpfloat (lrg_progress_bar_get_display_fraction (bar), >, 0.2);
 	g_assert_cmpfloat (lrg_progress_bar_get_display_fraction (bar), <, 0.95);
 	g_assert_cmpfloat_with_epsilon (lrg_progress_bar_get_fraction (bar), 1.0, 0.0001);
 
-	/* With reduced motion it lands immediately */
+	/* It comes to rest, then the canvas is idle */
+	g_assert_cmpuint (run_until_rest (fixture->canvas, 240), >, 0);
+	g_assert_cmpfloat_with_epsilon (lrg_progress_bar_get_display_fraction (bar), 1.0, 0.0001);
+
+	/* With reduced motion a change lands on the next frame */
+	lrg_progress_bar_set_value (bar, 50.0);
 	lrg_motion_set_reduced (TRUE);
+	g_assert_false (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
+	g_assert_cmpfloat_with_epsilon (lrg_progress_bar_get_display_fraction (bar), 0.5, 0.0001);
+	lrg_progress_bar_set_value (bar, 100.0);
+	g_assert_false (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
 	list = lrg_canvas_record (fixture->canvas);
 	g_assert_cmpfloat_with_epsilon (lrg_progress_bar_get_display_fraction (bar), 1.0, 0.0001);
 	idx = find_color (list, LRG_PAINT_PRIM_RECT,
@@ -1137,7 +1176,9 @@ test_progress_bar_indeterminate (Fixture       *fixture,
 	list = lrg_canvas_record (fixture->canvas);
 	g_assert_cmpint (find_rect (list, LRG_PAINT_PRIM_RECT, 10.0f, 10.0f, 100.0f, 12.0f), ==, -1);
 
-	g_usleep (300000);
+	/* The sweep runs on the canvas clock and keeps the canvas busy */
+	for (idx = 0; idx < 18; idx++)
+		g_assert_true (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
 	list = lrg_canvas_record (fixture->canvas);
 	idx = find_color (list, LRG_PAINT_PRIM_RECT,
 	                  lrg_theme_get_color (fixture->theme, LRG_THEME_COLOR_ACCENT));
@@ -1149,6 +1190,7 @@ test_progress_bar_indeterminate (Fixture       *fixture,
 	/* Back to determinate: the value fill returns */
 	lrg_progress_bar_set_indeterminate (bar, FALSE);
 	lrg_motion_set_reduced (TRUE);
+	g_assert_false (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
 	list = lrg_canvas_record (fixture->canvas);
 	g_assert_cmpint (find_rect (list, LRG_PAINT_PRIM_RECT, 10.0f, 10.0f, 100.0f, 12.0f), >=, 0);
 }
@@ -1319,8 +1361,9 @@ test_tab_view_indicator (Fixture       *fixture,
 	list = lrg_canvas_record (fixture->canvas);
 	g_assert_cmpint (find_rect (list, LRG_PAINT_PRIM_RECT, x2, y, w, h), ==, -1);
 
-	/* ... and there once motion is instant */
-	lrg_motion_set_reduced (TRUE);
+	/* ... the canvas reports it moving, and it arrives */
+	g_assert_true (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
+	g_assert_cmpuint (run_until_rest (fixture->canvas, 240), >, 0);
 	list = lrg_canvas_record (fixture->canvas);
 	g_assert_cmpint (find_rect (list, LRG_PAINT_PRIM_RECT, x2, y, w, h), >=, 0);
 
@@ -1623,6 +1666,46 @@ test_text_input_mouse_select (Fixture       *fixture,
 	g_assert_cmpint (s1, ==, 11);
 }
 
+/*
+ * The focus cross-fade runs on the canvas clock: lrg_canvas_update()
+ * reports it until it settles, and the caret blink alone never keeps
+ * the canvas busy. Double clicks are timed on the same clock.
+ */
+static void
+test_text_input_frame_clock (Fixture       *fixture,
+                             gconstpointer  user_data)
+{
+	LrgTextInput *entry;
+	gfloat        pad = lrg_theme_get_metric (fixture->theme, LRG_THEME_METRIC_PADDING_X);
+	gint          s0;
+	gint          s1;
+
+	entry = add_at (fixture, lrg_text_input_new (), 100.0f, 100.0f, 300.0f, 36.0f);
+	lrg_text_input_set_text (entry, "hello world");
+	run_until_rest (fixture->canvas, 240);
+
+	/* Focusing starts the fade; it settles and the canvas goes idle
+	 * although the caret keeps blinking */
+	lrg_text_input_set_focused (entry, TRUE);
+	g_assert_true (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
+	g_assert_cmpuint (run_until_rest (fixture->canvas, 240), >, 0);
+	settle (fixture->canvas, 2.0f);
+	g_assert_false (lrg_canvas_update (fixture->canvas, 1.0f / 60.0f));
+
+	/* Two clicks half a second apart (canvas time) are two single
+	 * clicks: no word gets selected */
+	click_at (fixture->canvas, 100.0f + pad + 2.0f, 118.0f);
+	settle (fixture->canvas, 0.5f);
+	click_at (fixture->canvas, 100.0f + pad + 2.0f, 118.0f);
+	g_assert_false (lrg_text_input_get_selection (entry, &s0, &s1));
+
+	/* ... while two clicks in consecutive frames are a double click */
+	click_at (fixture->canvas, 100.0f + pad + 2.0f, 118.0f);
+	g_assert_true (lrg_text_input_get_selection (entry, &s0, &s1));
+	g_assert_cmpint (s0, ==, 0);
+	g_assert_cmpint (s1, ==, 5);
+}
+
 /* Long text scrolls so the caret stays inside the clipped box */
 static void
 test_text_input_scrolls (Fixture       *fixture,
@@ -1802,6 +1885,7 @@ main (int   argc,
 	ADD ("/ui/widgets/text-input/keys-consumed", test_text_input_keys_consumed);
 	ADD ("/ui/widgets/text-input/mouse-select", test_text_input_mouse_select);
 	ADD ("/ui/widgets/text-input/scrolls", test_text_input_scrolls);
+	ADD ("/ui/widgets/text-input/frame-clock", test_text_input_frame_clock);
 	ADD ("/ui/widgets/text-input/explicit-and-password", test_text_input_explicit_and_password);
 	ADD ("/ui/widgets/image/empty", test_image_empty);
 

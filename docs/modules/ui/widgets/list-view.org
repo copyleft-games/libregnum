@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: list-view
 :END:
-=LrgListView= shows the items of a =GListModel= as a scrollable list of equal-height rows, with single or multiple selection, keyboard navigation and activation. It is virtualized: only the rows inside the viewport, plus one buffer row above and below, exist as widgets. Scrolling rebinds those widgets to the items coming into view, so a model of 10,000 or 1,000,000 items costs a dozen widgets. Scrolling is spring-smoothed with a rubber band and an overlay scrollbar, exactly like [[file:scroll-box.org][LrgScrollBox]].
+=LrgListView= shows the items of a =GListModel= as a scrollable list of equal-height rows, with single or multiple selection, keyboard navigation and activation. It is virtualized: only the rows inside the viewport, plus one buffer row above and below, exist as widgets. Scrolling rebinds those widgets to the items coming into view, so a model of 10,000 or 1,000,000 items costs a dozen widgets. Scrolling is spring-smoothed with a rubber band and an overlay scrollbar, exactly like [[file:scroll-box.org][LrgScrollBox]]: the spring and the bar fade are stepped by the widget's =step()= on the canvas clock, and =lrg_canvas_update()= returns =TRUE= while the list glides, bounces or the bar is shown / fading.
 
 ** Creation
 :PROPERTIES:
@@ -87,7 +87,7 @@ Inherited: =padding= (default 4, around the rows).
 | Signal              | Arguments        | Emitted                                    |
 |---------------------+------------------+--------------------------------------------|
 | =selection-changed= | none             | Rows were selected or unselected            |
-| =row-activated=     | =guint position= | Double click, or Enter / Space / gamepad A on the cursor row |
+| =row-activated=     | =guint position= | Double click (two presses on the row within 0.4 s of canvas time), or Enter / Space / gamepad A on the cursor row |
 
 ** Parts and states
 :PROPERTIES:

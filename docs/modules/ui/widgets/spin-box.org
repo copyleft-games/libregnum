@@ -25,7 +25,7 @@ lrg_spin_box_set_value (scale, 1.0);
 - The value is always clamped to [min, max]; changing the range re-clamps it. It is not snapped to the step grid, so =set_value()= keeps arbitrary values; stepping adds or subtracts whole steps (floating-point dust such as 0.30000000000000004 is removed).
 - =digits= only affects display (=lrg_spin_box_get_text()= returns the displayed string).
 - A button whose direction is at its limit is dimmed.
-- Holding a button repeats after 0.4 s at 12 steps per second while the pointer stays on it.
+- Holding a button repeats after 0.4 s at 12 steps per second while the pointer stays on it. The hold time is canvas time, summed from the frames' delta times in =step()= (the frame of the press itself does not count), so repeats are deterministic; =lrg_canvas_update()= returns =TRUE= while a button is held.
 - Scrubbing: press on the number and drag horizontally, one step per 6 units of travel; the number turns accent coloured while scrubbing. The pointer is captured, so the drag keeps working outside the widget.
 - Preferred size: wide enough for the formatted min and max values plus both buttons and padding; =CONTROL_HEIGHT= tall.
 
@@ -60,7 +60,7 @@ lrg_spin_box_set_value (scale, 1.0);
 | =arrow= | =hovered=+=pressed= | =CONTROL_PRESSED=; the button also squashes to 90 %    |
 | =label= | any               | =TEXT= (=DISABLED= when disabled), =size= = =FONT_SIZE= |
 | =focus= | focus visible     | Core focus ring                                         |
-Each button has its own hover and press springs, so only the button under the pointer lights up. The change flash blends the box border towards =ACCENT= and back over about half a second.
+Each button has its own hover and press springs, so only the button under the pointer lights up. The change flash blends the box border towards =ACCENT= and back over about half a second. All of these springs are stepped by the widget's =step()= with the canvas frame time, never while painting; =lrg_canvas_update()= returns =TRUE= until they rest. The first frame snaps them, so a box built with a value does not flash in.
 
 ** Keyboard and gamepad
 :PROPERTIES:

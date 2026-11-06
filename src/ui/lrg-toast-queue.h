@@ -119,7 +119,7 @@ void lrg_toast_queue_set_toast_valign (LrgToastQueue *self,
  * lrg_toast_queue_get_auto_advance:
  * @self: an #LrgToastQueue
  *
- * Returns: whether painting advances the toast clocks
+ * Returns: whether the canvas frame clock advances the toasts
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_toast_queue_get_auto_advance (LrgToastQueue *self);
@@ -127,9 +127,10 @@ gboolean lrg_toast_queue_get_auto_advance (LrgToastQueue *self);
 /**
  * lrg_toast_queue_set_auto_advance:
  * @self: an #LrgToastQueue
- * @auto_advance: %TRUE (default) to run time from the frame clock
- *   while painting; %FALSE to drive it only with
- *   lrg_toast_queue_advance() (tests, paused games)
+ * @auto_advance: %TRUE (default) to run time from the canvas frame
+ *   clock (each lrg_canvas_update() advances the queue by its delta
+ *   time); %FALSE to drive it only with lrg_toast_queue_advance()
+ *   (paused games, manual control)
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_toast_queue_set_auto_advance (LrgToastQueue *self,
@@ -154,8 +155,11 @@ void lrg_toast_queue_show (LrgToastQueue *self,
  *
  * Runs the clocks of the visible toasts and the enter / leave / re-flow
  * springs, removes toasts that finished fading out and brings in
- * waiting ones. Painting calls this with the real frame time when
- * #LrgToastQueue:auto-advance is on.
+ * waiting ones. When #LrgToastQueue:auto-advance is on, the canvas
+ * calls this every frame with its delta time (lrg_canvas_update()), so
+ * an explicit call adds to the frame clock (skips ahead) rather than
+ * replacing it; painting never advances time. Turn auto-advance off to
+ * drive time only through this function.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_toast_queue_advance (LrgToastQueue *self,

@@ -54,9 +54,6 @@
 /* Opacity of a disabled entry */
 #define INPUT_DISABLED_OPACITY (0.45f)
 
-/* Longest frame step used for the focus animation */
-#define MAX_FRAME_STEP (0.1f)
-
 struct _LrgTextInput
 {
     LrgWidget  parent_instance;
@@ -90,14 +87,18 @@ struct _LrgTextInput
 
     /* Mouse selection */
     gboolean   dragging;
-    gint64     last_click_us;
+    gboolean   click_armed;     /* a first click may become a double click */
+    gdouble    last_click_time; /* clock at that first click */
     gint       last_click_index;
     gfloat     last_click_x;
 
-    /* Animation: focus cross-fade spring, caret phase */
+    /* Animation: focus cross-fade spring, caret phase. clock is the
+     * sum of the step() frame times (seconds), so the caret phase and
+     * double-click timing follow the canvas clock. */
     LrgSpring  focus_anim;
-    gint64     last_paint_us;
-    gint64     activity_us;
+    gboolean   stepped;
+    gdouble    clock;
+    gdouble    activity_time;
 };
 
 G_DEFINE_TYPE (LrgTextInput, lrg_text_input, LRG_TYPE_WIDGET)
@@ -236,7 +237,7 @@ offset_x (LrgTextInput *self,
 static void
 touch (LrgTextInput *self)
 {
-    self->activity_us = g_get_monotonic_time ();
+    self->activity_time = self->clock;
 }
 
 /*
@@ -594,10 +595,9 @@ lrg_text_input_style_defaults (LrgWidget      *widget,
  * Solid right after activity, then a smooth cosine fade in and out.
  */
 static gfloat
-caret_alpha (LrgTextInput *self,
-             gint64        now)
+caret_alpha (LrgTextInput *self)
 {
-    gdouble t = (gdouble) (now - self->activity_us) / (gdouble) G_USEC_PER_SEC;
+    gdouble t = self->clock - self->activity_time;
     gdouble phase;
 
     if (t < CARET_SOLID_TIME || lrg_motion_get_reduced ())
@@ -606,11 +606,54 @@ caret_alpha (LrgTextInput *self,
     return (gfloat) (0.5 + 0.5 * cos (2.0 * G_PI * phase));
 }
 
+/* is_focused: keyboard focus through the canvas, or legacy focus */
+static gboolean
+is_focused (LrgTextInput *self)
+{
+    return self->focused ||
+           (lrg_widget_get_state_flags (LRG_WIDGET (self)) & LRG_WIDGET_STATE_FOCUSED) != 0;
+}
+
+/*
+ * lrg_text_input_step:
+ *
+ * Advances the input's clock (caret phase, double-click timing) and
+ * the focus cross-fade spring by the canvas frame time. The first step
+ * snaps the spring, so an entry that starts focused does not fade in.
+ *
+ * The caret blink is a pure function of the clock and deliberately
+ * does not report itself as animating: a focused entry must not keep
+ * the canvas busy forever. Hosts that only redraw while
+ * lrg_canvas_update() returns %TRUE simply show a steady caret.
+ *
+ * Returns: %TRUE while the focus cross-fade is running
+ */
+static gboolean
+lrg_text_input_step (LrgWidget *widget,
+                     gfloat     delta_time)
+{
+    LrgTextInput *self = LRG_TEXT_INPUT (widget);
+
+    if (delta_time > 0.0f)
+        self->clock += (gdouble) delta_time;
+
+    lrg_spring_set_motion (&self->focus_anim, lrg_widget_get_motion (widget));
+    lrg_spring_set_target (&self->focus_anim, is_focused (self) ? 1.0f : 0.0f);
+    if (!self->stepped)
+    {
+        lrg_spring_snap (&self->focus_anim, self->focus_anim.target);
+        self->stepped = TRUE;
+        return FALSE;
+    }
+
+    return lrg_spring_step (&self->focus_anim, delta_time);
+}
+
 /*
  * lrg_text_input_paint:
  *
- * 1. Step the focus spring from the frame time and cross-fade the BOX
- *    look between its unfocused and focused variants.
+ * 1. Cross-fade the BOX look between its unfocused and focused
+ *    variants by the focus spring (stepped in step()).
  * 2. Clip to the inner box, scroll so the caret shows.
  * 3. Selection highlight, text / placeholder, then the caret.
  */
@@ -620,7 +663,7 @@ lrg_text_input_paint (LrgWidget    *widget,
 {
     LrgTextInput     *self = LRG_TEXT_INPUT (widget);
     LrgWidgetState    state = lrg_widget_get_state_flags (widget);
-    gboolean          focused = self->focused || (state & LRG_WIDGET_STATE_FOCUSED);
+    gboolean          focused = is_focused (self);
     gfloat            x = lrg_widget_get_world_x (widget);
     gfloat            y = lrg_widget_get_world_y (widget);
     gfloat            w = lrg_widget_get_width (widget);
@@ -629,8 +672,6 @@ lrg_text_input_paint (LrgWidget    *widget,
     gfloat            size = eff_font_size (self);
     GrlFont          *font = input_font (self);
     g_autofree gchar *display = get_display_text (self);
-    gint64            now = g_get_monotonic_time ();
-    gfloat            dt;
     LrgPartLook       box;
     LrgPartLook       other;
     LrgPartLook       label;
@@ -639,15 +680,11 @@ lrg_text_input_paint (LrgWidget    *widget,
     gint              s0;
     gint              s1;
 
-    /* 1. Focus cross-fade */
-    dt = self->last_paint_us != 0 ? (gfloat) (now - self->last_paint_us) / (gfloat) G_USEC_PER_SEC : 0.0f;
-    self->last_paint_us = now;
-    lrg_spring_set_motion (&self->focus_anim, lrg_widget_get_motion (widget));
-    lrg_spring_set_target (&self->focus_anim, focused ? 1.0f : 0.0f);
-    lrg_spring_step (&self->focus_anim, CLAMP (dt, 0.0f, MAX_FRAME_STEP));
-
+    /* 1. Focus cross-fade. A spring that has not caught up with a focus
+     * change yet (no step since) shows the current look unblended. */
     lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
-    if (!lrg_spring_is_settled (&self->focus_anim))
+    if (!lrg_spring_is_settled (&self->focus_anim) &&
+        self->focus_anim.target == (focused ? 1.0f : 0.0f))
     {
         gfloat f = CLAMP (self->focus_anim.value, 0.0f, 1.0f);
         LrgWidgetState rest = state & ~(LRG_WIDGET_STATE_PRESSED);
@@ -715,7 +752,7 @@ lrg_text_input_paint (LrgWidget    *widget,
         lrg_widget_resolve_look (widget, LRG_UI_PART_MARK, &caret);
         cw = caret.size > 0.0f ? caret.size : CARET_WIDTH;
         lrg_paint_color_with_alpha (&caret.foreground,
-                                    ((gfloat) caret.foreground.a / 255.0f) * caret_alpha (self, now), &c);
+                                    ((gfloat) caret.foreground.a / 255.0f) * caret_alpha (self), &c);
         lrg_paint_list_rect (list, cx - cw * 0.5f, ty - 1.0f, cw, size + 2.0f, cw * 0.5f, &c);
     }
 
@@ -873,10 +910,12 @@ handle_press (LrgTextInput      *self,
               gfloat             x,
               LrgInputModifiers  mods)
 {
-    gint   index = index_at_x (self, x);
-    gint64 now = g_get_monotonic_time ();
+    gint index = index_at_x (self, x);
 
-    if (now - self->last_click_us < (gint64) (DOUBLE_CLICK_TIME * G_USEC_PER_SEC) &&
+    /* Double click: a second press soon after the first (by the canvas
+     * clock accumulated in step()), close to it */
+    if (self->click_armed &&
+        self->clock - self->last_click_time < DOUBLE_CLICK_TIME &&
         ABS (index - self->last_click_index) <= 1 &&
         fabsf (x - self->last_click_x) <= DOUBLE_CLICK_SLOP)
     {
@@ -884,12 +923,13 @@ handle_press (LrgTextInput      *self,
         gint end = word_boundary (self, start, 1);
 
         lrg_text_input_set_selection (self, start, end);
-        self->last_click_us = 0;
+        self->click_armed = FALSE;
         self->dragging = FALSE;
         return;
     }
 
-    self->last_click_us = now;
+    self->click_armed = TRUE;
+    self->last_click_time = self->clock;
     self->last_click_index = index;
     self->last_click_x = x;
     move_to (self, index, (mods & LRG_INPUT_MODIFIER_SHIFT) != 0);
@@ -1144,6 +1184,7 @@ lrg_text_input_class_init (LrgTextInputClass *klass)
     object_class->set_property = lrg_text_input_set_property;
 
     widget_class->paint = lrg_text_input_paint;
+    widget_class->step = lrg_text_input_step;
     widget_class->style_defaults = lrg_text_input_style_defaults;
     widget_class->measure = lrg_text_input_measure;
     widget_class->handle_event = lrg_text_input_handle_event;

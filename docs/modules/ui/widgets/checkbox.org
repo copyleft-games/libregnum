@@ -13,7 +13,7 @@
 - =LRG_CHECKBOX_STYLE_RADIO=: a circle; a dot grows from the centre when checked. (Grouping radios into exclusive sets is up to the caller: uncheck the others in =toggled=.)
 - =LRG_CHECKBOX_STYLE_SWITCH=: a pill-shaped track (=TRACK= off, =ACCENT= on) with a round =HANDLE= knob that slides across on a spring.
 
-A "check" spring follows the checked state and drives every transition: the tick length, the dot radius, the knob position (with the theme's overshoot for bouncy motion) and the cross-fade between the unchecked and checked colours. Hover and press blend on the widget's own springs. A checkbox that has never been painted jumps straight to its state, so freshly built screens do not animate in. =LRG_WIDGET_STATE_CHECKED= mirrors =checked=, so theme rules can target it.
+A "check" spring follows the checked state and drives every transition: the tick length, the dot radius, the knob position (with the theme's overshoot for bouncy motion) and the cross-fade between the unchecked and checked colours. Hover and press blend on the widget's own springs. The spring is stepped by the widget's =step()= with the canvas frame time (=lrg_canvas_update()=), never while painting, and =lrg_canvas_update()= returns =TRUE= until it settles. Before its first frame a checkbox shows its state directly, and that first step snaps the spring, so freshly built screens do not animate in; changes after that animate. =LRG_WIDGET_STATE_CHECKED= mirrors =checked=, so theme rules can target it.
 
 ** Creation
 :PROPERTIES:

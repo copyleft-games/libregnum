@@ -76,7 +76,7 @@ The legacy appearance properties keep their old default values in their getters,
 | =MARK=  | Caret                 | =ACCENT= foreground, size 2     | same                          | drawn only while focused, fading          |               |
 | =FOCUS= | Focus ring            | from =LrgWidget=                |                               | shown after keyboard / gamepad navigation |               |
 
-The focused border and glow cross-fade with a spring that uses the widget's motion preset (instant with reduced motion).
+The focused border and glow cross-fade with a spring that uses the widget's motion preset (instant with reduced motion). The spring, the caret phase and double-click timing all run on the canvas clock: the widget's =step()= sums the frame delta times passed to =lrg_canvas_update()=, and painting never reads a clock. =lrg_canvas_update()= returns =TRUE= while the focus cross-fade runs; the caret blink deliberately does not keep the canvas busy, so a host that only redraws while =lrg_canvas_update()= returns =TRUE= shows a steady caret. Two presses within 0.4 s of canvas time (and a few units apart) are a double click. An entry focused before its first frame does not fade in.
 
 ** Style classes
 :PROPERTIES:

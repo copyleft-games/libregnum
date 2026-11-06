@@ -9,7 +9,8 @@
  * Layout: an INPUT-coloured box (BOX part) with the formatted value
  * (LABEL part) centred and two small rounded buttons (ARROW part) at
  * the ends, minus on the left and plus on the right. Each button has
- * its own hover and press springs, stepped while painting, so its
+ * its own hover and press springs, stepped by step() with the canvas
+ * frame time, so its
  * look glides between the resting, hovered and pressed variants and it
  * squashes slightly when pressed. Holding a button repeats after
  * 0.4 s at 12 Hz; dragging sideways on the value scrubs one step per
@@ -30,7 +31,7 @@
 #define SCRUB_UNITS (6.0f)
 
 /* Auto-repeat: delay before the first repeat, then the rate */
-#define REPEAT_DELAY_US (400000)
+#define REPEAT_DELAY (0.4)
 #define REPEAT_HZ       (12.0)
 
 /* Space between the box edge and the buttons */
@@ -60,16 +61,18 @@ struct _LrgSpinBox
 	gboolean   scrubbing;
 	gfloat     scrub_x;
 	gdouble    scrub_value;
-	gint64     press_us;
+	gdouble    held;        /* seconds a step button has been held */
+	gboolean   hold_timing; /* held counts from the frame after the press */
 	guint      repeats;
 
-	/* Own springs, stepped in paint() */
+	/* Own springs, stepped in step(); until the first step the flash
+	 * is ignored so a new box does not flash in */
 	LrgSpring  hover_minus;
 	LrgSpring  hover_plus;
 	LrgSpring  press_minus;
 	LrgSpring  press_plus;
 	LrgSpring  flash;
-	gint64     last_us;
+	gboolean   stepped;
 };
 
 G_DEFINE_FINAL_TYPE (LrgSpinBox, lrg_spin_box, LRG_TYPE_WIDGET)
@@ -261,23 +264,33 @@ lrg_spin_box_style_defaults (LrgWidget      *widget,
  * Painting
  * ========================================================================== */
 
-/*
- * step_springs:
- *
- * Advances the per-button springs and the flash from the monotonic
- * clock, and runs the press-and-hold auto-repeat.
- */
-static void
-step_springs (LrgSpinBox *self)
+/* holding_button: a step button is pressed */
+static gboolean
+holding_button (LrgSpinBox *self)
 {
-	gint64   now = g_get_monotonic_time ();
-	gfloat   dt = 0.0f;
-	LrgMotion motion = lrg_widget_get_motion (LRG_WIDGET (self));
+	return self->press_part == SPIN_PART_MINUS || self->press_part == SPIN_PART_PLUS;
+}
 
-	if (self->last_us != 0)
-		dt = CLAMP ((gfloat) (now - self->last_us) / (gfloat) G_USEC_PER_SEC, 0.0f, 0.1f);
-	self->last_us = now;
+/*
+ * lrg_spin_box_step:
+ *
+ * Advances the per-button springs and the flash by the canvas frame
+ * time, and runs the press-and-hold auto-repeat from the time the
+ * button has been held (also on the canvas clock, so repeats are
+ * deterministic). The first step snaps everything to rest.
+ *
+ * Returns: %TRUE while a spring moves or a step button is held (the
+ *   repeat needs frames)
+ */
+static gboolean
+lrg_spin_box_step (LrgWidget *widget,
+                   gfloat     delta_time)
+{
+	LrgSpinBox *self = LRG_SPIN_BOX (widget);
+	LrgMotion   motion = lrg_widget_get_motion (widget);
+	gboolean    busy = FALSE;
 
+	/* 1. Springs follow the pointer state */
 	lrg_spring_set_motion (&self->hover_minus, motion);
 	lrg_spring_set_motion (&self->hover_plus, motion);
 	lrg_spring_set_target (&self->hover_minus, self->hover_part == SPIN_PART_MINUS ? 1.0f : 0.0f);
@@ -288,18 +301,34 @@ step_springs (LrgSpinBox *self)
 	lrg_spring_set_target (&self->press_plus,
 	                       self->press_part == SPIN_PART_PLUS && self->hover_part == SPIN_PART_PLUS
 	                       ? 1.0f : 0.0f);
-	lrg_spring_step (&self->hover_minus, dt);
-	lrg_spring_step (&self->hover_plus, dt);
-	lrg_spring_step (&self->press_minus, dt);
-	lrg_spring_step (&self->press_plus, dt);
-	lrg_spring_step (&self->flash, dt);
-
-	/* Hold to repeat, while the pointer stays on the held button */
-	if ((self->press_part == SPIN_PART_MINUS || self->press_part == SPIN_PART_PLUS) &&
-	    self->hover_part == self->press_part && now - self->press_us > REPEAT_DELAY_US)
+	if (!self->stepped)
 	{
-		guint want = (guint) ((gdouble) (now - self->press_us - REPEAT_DELAY_US) /
-		                      (gdouble) G_USEC_PER_SEC * REPEAT_HZ) + 1;
+		lrg_spring_snap (&self->hover_minus, self->hover_minus.target);
+		lrg_spring_snap (&self->hover_plus, self->hover_plus.target);
+		lrg_spring_snap (&self->press_minus, self->press_minus.target);
+		lrg_spring_snap (&self->press_plus, self->press_plus.target);
+		lrg_spring_snap (&self->flash, 0.0f);
+		self->stepped = TRUE;
+	}
+	busy |= lrg_spring_step (&self->hover_minus, delta_time);
+	busy |= lrg_spring_step (&self->hover_plus, delta_time);
+	busy |= lrg_spring_step (&self->press_minus, delta_time);
+	busy |= lrg_spring_step (&self->press_plus, delta_time);
+	busy |= lrg_spring_step (&self->flash, delta_time);
+
+	/* 2. Hold to repeat, while the pointer stays on the held button.
+	 *    The frame of the press itself does not count: its delta time
+	 *    mostly passed before the press. */
+	if (!holding_button (self))
+		return busy;
+
+	if (self->hold_timing)
+		self->held += (gdouble) MAX (delta_time, 0.0f);
+	self->hold_timing = TRUE;
+
+	if (self->hover_part == self->press_part && self->held > REPEAT_DELAY)
+	{
+		guint want = (guint) ((self->held - REPEAT_DELAY) * REPEAT_HZ) + 1;
 
 		while (self->repeats < want)
 		{
@@ -307,6 +336,7 @@ step_springs (LrgSpinBox *self)
 			self->repeats++;
 		}
 	}
+	return TRUE;
 }
 
 /*
@@ -389,11 +419,9 @@ lrg_spin_box_paint (LrgWidget    *widget,
 	gfloat            flash;
 	gboolean          faded;
 
-	step_springs (self);
-
 	/* Body, with the border flashing towards the accent on change */
 	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
-	flash = CLAMP (self->flash.value, 0.0f, 1.0f);
+	flash = self->stepped ? CLAMP (self->flash.value, 0.0f, 1.0f) : 0.0f;
 	if (flash > 0.001f)
 	{
 		lrg_paint_color_mix (&box.border, lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT), flash,
@@ -473,7 +501,8 @@ lrg_spin_box_handle_event (LrgWidget        *widget,
 		self->hover_part = part_at (self, px, py);
 		end_press (self);
 		self->press_part = self->hover_part;
-		self->press_us = g_get_monotonic_time ();
+		self->held = 0.0;
+		self->hold_timing = FALSE;
 
 		if (self->press_part == SPIN_PART_MINUS)
 			lrg_spin_box_spin (self, -1);
@@ -612,6 +641,7 @@ lrg_spin_box_class_init (LrgSpinBoxClass *klass)
 
 	widget_class->measure = lrg_spin_box_measure;
 	widget_class->paint = lrg_spin_box_paint;
+	widget_class->step = lrg_spin_box_step;
 	widget_class->style_defaults = lrg_spin_box_style_defaults;
 	widget_class->handle_event = lrg_spin_box_handle_event;
 

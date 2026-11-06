@@ -8,7 +8,9 @@
  *
  * The content child is laid out once at its preferred size and then
  * only moved while scrolling (no relayout per frame). Offsets are
- * springs stepped while painting: the wheel moves a target and the
+ * springs stepped by step() with the canvas frame time (so
+ * lrg_canvas_update() reports TRUE while a scroll glides or the bars
+ * fade): the wheel moves a target and the
  * displayed offset glides after it, overshooting a little at the ends
  * (rubber band). Overlay scrollbars fade in on activity; their hit
  * zones are two invisible child widgets kept on top of the content so
@@ -310,28 +312,32 @@ lrg_scroll_box_style_defaults (LrgWidget      *widget,
 	LRG_WIDGET_CLASS (lrg_scroll_box_parent_class)->style_defaults (widget, part, state, look);
 }
 
-static void
-lrg_scroll_box_paint (LrgWidget    *widget,
-                      LrgPaintList *list)
+/*
+ * lrg_scroll_box_step:
+ *
+ * Advances time by the canvas frame: scroll newly focused content
+ * into view, step the offset springs (keeping the bars shown while
+ * they move), move the content, and fade the bars.
+ *
+ * Returns: %TRUE while an offset glides / bounces or the bars fade
+ *   (or wait to fade out)
+ */
+static gboolean
+lrg_scroll_box_step (LrgWidget *widget,
+                     gfloat     delta_time)
 {
 	LrgScrollBox *self = LRG_SCROLL_BOX (widget);
-	LrgPartLook   box;
-	gfloat        dt;
-	gfloat        wx = lrg_widget_get_world_x (widget);
-	gfloat        wy = lrg_widget_get_world_y (widget);
-	gfloat        pad;
-	gfloat        vw;
-	gfloat        vh;
 	gboolean      moving = FALSE;
 	gboolean      keep;
 
-	/* 1. Advance time: focus follow, offset springs, bar fade */
-	dt = lrg_scroll_fx_tick (&self->fx);
+	if (self->ax.bar == NULL)
+		return FALSE;
+
 	follow_focus (self);
 	if (self->hscroll)
-		moving |= lrg_scroll_axis_step (&self->ax, dt);
+		moving |= lrg_scroll_axis_step (&self->ax, delta_time);
 	if (self->vscroll)
-		moving |= lrg_scroll_axis_step (&self->ay, dt);
+		moving |= lrg_scroll_axis_step (&self->ay, delta_time);
 	if (moving)
 		lrg_scroll_fx_poke (&self->fx);
 	apply_offsets (self);
@@ -339,7 +345,25 @@ lrg_scroll_box_paint (LrgWidget    *widget,
 	keep = self->ax.dragging || self->ay.dragging ||
 	       (lrg_widget_get_state_flags (self->ay.bar) & LRG_WIDGET_STATE_HOVERED) ||
 	       (lrg_widget_get_state_flags (self->ax.bar) & LRG_WIDGET_STATE_HOVERED);
-	lrg_scroll_fx_update (&self->fx, keep, dt);
+
+	return lrg_scroll_fx_update (&self->fx, keep, delta_time) || moving;
+}
+
+static void
+lrg_scroll_box_paint (LrgWidget    *widget,
+                      LrgPaintList *list)
+{
+	LrgScrollBox *self = LRG_SCROLL_BOX (widget);
+	LrgPartLook   box;
+	gfloat        wx = lrg_widget_get_world_x (widget);
+	gfloat        wy = lrg_widget_get_world_y (widget);
+	gfloat        pad;
+	gfloat        vw;
+	gfloat        vh;
+
+	/* 1. Content follows the displayed offsets. Springs move only in
+	 *    step(); this just syncs jumps made since (idempotent). */
+	apply_offsets (self);
 
 	/* 2. Optional body (transparent unless a theme rule styles it) */
 	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
@@ -627,6 +651,7 @@ lrg_scroll_box_class_init (LrgScrollBoxClass *klass)
 
 	widget_class->measure = lrg_scroll_box_measure;
 	widget_class->paint = lrg_scroll_box_paint;
+	widget_class->step = lrg_scroll_box_step;
 	widget_class->style_defaults = lrg_scroll_box_style_defaults;
 	widget_class->handle_event = lrg_scroll_box_handle_event;
 

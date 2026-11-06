@@ -56,7 +56,7 @@ The toast keeps its own clock. =lrg_toast_advance (toast, seconds)= runs it; the
 | =max-visible= | =guint= (default 3) | read/write | Cards on screen at once in stack mode |
 | =toast-halign= | =LrgAlign= (default =END=) | read/write | =START= left, =CENTER=, =END= right, =FILL= full width |
 | =toast-valign= | =LrgAlign= (default =END=) | read/write | =START= top (stack grows down), =END= / =FILL= bottom (grows up), =CENTER= |
-| =auto-advance= | boolean (default =TRUE=) | read/write | Advance time from the frame clock while painting |
+| =auto-advance= | boolean (default =TRUE=) | read/write | Advance time from the canvas frame clock (=lrg_canvas_update()=) |
 | =spacing= | =gfloat= (default 10) | read/write | Gap between cards (inherited from =LrgContainer=) |
 | =padding= | =gfloat= (default 16) | read/write | Distance from the canvas edges (inherited) |
 | =n-visible= | =guint= | read | Cards showing that are not on their way out |
@@ -76,7 +76,7 @@ The toast keeps its own clock. =lrg_toast_advance (toast, seconds)= runs it; the
 :PROPERTIES:
 :CUSTOM_ID: toast-time
 :END:
-=lrg_toast_queue_advance (queue, seconds)= runs the visible toasts' clocks and the enter, leave and re-flow springs. It removes cards that have faded out and brings in waiting toasts. With =auto-advance= on (the default), painting calls it with the real time since the last paint, clamped to 0.1 s. Turn it off to drive time yourself: deterministic tests, or toasts that should freeze while the game is paused. =lrg_toast_queue_clear()= dismisses everything, showing or waiting. =lrg_toast_queue_get_visible_toast (queue, i)= returns the i-th live card, oldest first.
+=lrg_toast_queue_advance (queue, seconds)= runs the visible toasts' clocks and the enter, leave and re-flow springs. It removes cards that have faded out and brings in waiting toasts. With =auto-advance= on (the default), the queue's =step()= calls it every frame with the canvas delta time (=lrg_canvas_update (canvas, delta_time)=, called by =lrg_canvas_process_input()=); painting never advances time, so drawing twice cannot double the clock. =lrg_canvas_update()= returns =TRUE= while a card enters, leaves or re-flows, while a visible toast with a duration counts down, and while toasts wait; a toast without a duration that has finished entering does not keep the canvas busy. An explicit =lrg_toast_queue_advance()= call made while =auto-advance= is on adds to the frame clock (it skips ahead), it does not replace it. Turn =auto-advance= off to drive time only yourself: toasts that should freeze while the game is paused, or manual control; then frames do not move the toasts and the queue never reports itself busy. =lrg_toast_queue_clear()= dismisses everything, showing or waiting. =lrg_toast_queue_get_visible_toast (queue, i)= returns the i-th live card, oldest first.
 
 ** Parts and states
 :PROPERTIES:

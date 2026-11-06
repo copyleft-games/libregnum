@@ -11,10 +11,10 @@
 The bar records itself through =paint()=:
 
 - *TRACK* - a pill in the theme's =TRACK= colour.
-- *FILL* - a linear gradient from =ACCENT= to =ACCENT_HOVER= along the bar, with a faint accent glow. The drawn fill eases towards the value on a spring (the widget's motion preset), so jumps in progress glide instead of snapping. The first paint snaps, so a new bar never animates in.
+- *FILL* - a linear gradient from =ACCENT= to =ACCENT_HOVER= along the bar, with a faint accent glow. The drawn fill eases towards the value on a spring (the widget's motion preset), so jumps in progress glide instead of snapping. The spring is stepped by the widget's =step()= with the canvas frame time (=lrg_canvas_update()=); painting only draws it. Until the bar's first frame it shows the value directly, and that first step snaps the spring, so a new bar never animates in. =lrg_canvas_update()= returns =TRUE= while the fill is still easing.
 - *LABEL* - the optional percentage, centred, in the small UI font.
 
-With =indeterminate= set, the fill is replaced by a segment a third of the track long that sweeps from one end to the other (smooth-stepped, every 1.6 s) with a highlight running along it. The sweep stops when reduced motion is on.
+With =indeterminate= set, the fill is replaced by a segment a third of the track long that sweeps from one end to the other (smooth-stepped, every 1.6 s) with a highlight running along it. The sweep advances on the canvas clock and, being a continuous animation, keeps =lrg_canvas_update()= returning =TRUE= for as long as the bar is indeterminate. The sweep stops (and stops keeping the canvas busy) when reduced motion is on.
 
 ** Creation
 :PROPERTIES:

@@ -25,9 +25,6 @@
 #include "../lrg-log.h"
 #include <graylib.h>
 
-/* Longest frame step used for the view's own springs */
-#define MAX_FRAME_STEP (0.1f)
-
 /* Default indicator thickness (the INDICATOR look's size overrides) */
 #define INDICATOR_THICKNESS (3.0f)
 
@@ -70,8 +67,7 @@ struct _LrgTabView
     /* Indicator position / width relative to the view's left edge */
     LrgSpring       indicator_x;
     LrgSpring       indicator_w;
-    gboolean        painted;        /* springs snap until the first paint */
-    gint64          last_us;        /* monotonic time of the last paint */
+    gboolean        stepped;        /* springs snap until the first laid-out step */
 };
 
 G_DEFINE_TYPE (LrgTabView, lrg_tab_view, LRG_TYPE_CONTAINER)
@@ -192,46 +188,73 @@ retarget (LrgTabView *self)
 }
 
 /*
- * advance:
+ * lrg_tab_view_step:
  *
- * Steps the view's own springs (indicator, per-tab hover) by the real
- * time since the last paint, clamped to %MAX_FRAME_STEP. Before the
- * first paint everything snaps, so a new view does not animate in.
+ * Steps the view's own springs (indicator, per-tab hover) by the
+ * canvas frame time. Until the view has been stepped with a real size
+ * (the indicator target depends on the tab width) the indicator snaps,
+ * so a new view does not animate in.
+ *
+ * Returns: %TRUE while the indicator or a tab hover is still moving
  */
-static void
-advance (LrgTabView *self)
+static gboolean
+lrg_tab_view_step (LrgWidget *widget,
+                   gfloat     delta_time)
 {
-    LrgMotion motion = lrg_widget_get_motion (LRG_WIDGET (self));
-    gint64    now = g_get_monotonic_time ();
-    gfloat    dt;
-    guint     i;
+    LrgTabView *self = LRG_TAB_VIEW (widget);
+    LrgMotion   motion = lrg_widget_get_motion (widget);
+    gboolean    busy = FALSE;
+    guint       i;
 
     retarget (self);
-    dt = self->painted ? CLAMP ((gfloat) (now - self->last_us) / (gfloat) G_USEC_PER_SEC,
-                                0.0f, MAX_FRAME_STEP)
-                       : 0.0f;
-    self->last_us = now;
-
     lrg_spring_set_motion (&self->indicator_x, motion);
     lrg_spring_set_motion (&self->indicator_w, motion);
-    if (!self->painted)
+
+    /* 1. Indicator: snap until laid out, then follow the active tab */
+    if (!self->stepped)
     {
         lrg_spring_snap (&self->indicator_x, self->indicator_x.target);
         lrg_spring_snap (&self->indicator_w, self->indicator_w.target);
+        if (lrg_widget_get_width (widget) > 0.0f)
+            self->stepped = TRUE;
     }
-    lrg_spring_step (&self->indicator_x, dt);
-    lrg_spring_step (&self->indicator_w, dt);
+    else
+    {
+        busy |= lrg_spring_step (&self->indicator_x, delta_time);
+        busy |= lrg_spring_step (&self->indicator_w, delta_time);
+    }
 
+    /* 2. Per-tab hover highlight */
     for (i = 0; i < self->tabs->len; i++)
     {
         LrgTabEntry *entry = g_ptr_array_index (self->tabs, i);
 
         lrg_spring_set_motion (&entry->hover, motion);
         lrg_spring_set_target (&entry->hover, (gint) i == self->hovered_tab ? 1.0f : 0.0f);
-        lrg_spring_step (&entry->hover, dt);
+        busy |= lrg_spring_step (&entry->hover, delta_time);
     }
 
-    self->painted = TRUE;
+    return busy;
+}
+
+/*
+ * indicator_shown:
+ *
+ * The indicator rectangle paint() draws (relative to the view's left
+ * edge): the springs once stepped, the target before that.
+ */
+static void
+indicator_shown (LrgTabView *self,
+                 gfloat     *x,
+                 gfloat     *w)
+{
+    if (!self->stepped)
+    {
+        indicator_target (self, x, w);
+        return;
+    }
+    *x = self->indicator_x.value;
+    *w = self->indicator_w.value;
 }
 
 /* set_hovered_tab: which header is under the pointer (-1 for none) */
@@ -368,8 +391,6 @@ lrg_tab_view_paint (LrgWidget    *widget,
     LrgPartLook  look;
     guint        i;
 
-    advance (self);
-
     /* 1. Content surface */
     content_y = self->tab_position == LRG_TAB_POSITION_TOP ? y + self->tab_height : y;
     lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &look);
@@ -407,12 +428,14 @@ lrg_tab_view_paint (LrgWidget    *widget,
     {
         gfloat thick;
         gfloat iy;
+        gfloat ix;
+        gfloat iw;
 
+        indicator_shown (self, &ix, &iw);
         lrg_widget_resolve_look (widget, LRG_UI_PART_INDICATOR, &look);
         thick = look.size > 0.0f ? look.size : INDICATOR_THICKNESS;
         iy = self->tab_position == LRG_TAB_POSITION_TOP ? top + self->tab_height - thick : top;
-        lrg_widget_paint_box (widget, list, &look, x + self->indicator_x.value, iy,
-                              MAX (self->indicator_w.value, 0.0f), thick);
+        lrg_widget_paint_box (widget, list, &look, x + ix, iy, MAX (iw, 0.0f), thick);
     }
 
     /* 4. Active content (the others are hidden), clipped to its area */
@@ -652,6 +675,7 @@ lrg_tab_view_class_init (LrgTabViewClass *klass)
     object_class->set_property = lrg_tab_view_set_property;
 
     widget_class->paint = lrg_tab_view_paint;
+    widget_class->step = lrg_tab_view_step;
     widget_class->style_defaults = lrg_tab_view_style_defaults;
     widget_class->measure = lrg_tab_view_measure;
     widget_class->handle_event = lrg_tab_view_handle_event;

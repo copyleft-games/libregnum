@@ -9,8 +9,10 @@
  * Everything is driven through lrg_canvas_process_input() /
  * lrg_canvas_update() / lrg_canvas_record() the way a real frame loop
  * does, so focus, capture, bubbling and popup dismissal are exercised
- * end to end. Toast timing uses lrg_toast_queue_advance() with
- * auto-advance off, so it is deterministic. One GPU test (skipped
+ * end to end. Toast timing mostly uses lrg_toast_queue_advance() with
+ * auto-advance off; the frame-clock cases drive auto-advance through
+ * lrg_canvas_update() with fixed frame times. Both are deterministic.
+ * One GPU test (skipped
  * without a display) checks the modal veil in pixels.
  */
 
@@ -183,6 +185,34 @@ popup_row (LrgCanvas *canvas,
 	g_assert_nonnull (popup);
 	g_assert_true (LRG_IS_CONTAINER (popup));
 	return lrg_container_get_child (LRG_CONTAINER (popup), i);
+}
+
+/*
+ * The chevron flips on the canvas clock: with only the OPEN state
+ * changing (no popup), lrg_canvas_update() reports TRUE while it turns
+ * and FALSE once it rests, in both directions.
+ */
+static void
+test_combo_chevron_frame_clock (ComboFixture  *f,
+                                gconstpointer  data)
+{
+	guint frames = 0;
+
+	/* First frame: a fresh box does not animate */
+	g_assert_false (lrg_canvas_update (f->canvas, DT));
+
+	lrg_widget_set_state_flags (LRG_WIDGET (f->combo), LRG_WIDGET_STATE_OPEN);
+	g_assert_true (lrg_canvas_update (f->canvas, DT));
+	while (lrg_canvas_update (f->canvas, DT))
+		g_assert_cmpuint (++frames, <, 240);
+	g_assert_false (lrg_canvas_update (f->canvas, DT));
+
+	lrg_widget_unset_state_flags (LRG_WIDGET (f->combo), LRG_WIDGET_STATE_OPEN);
+	g_assert_true (lrg_canvas_update (f->canvas, DT));
+	frames = 0;
+	while (lrg_canvas_update (f->canvas, DT))
+		g_assert_cmpuint (++frames, <, 240);
+	lrg_canvas_record (f->canvas);
 }
 
 static void
@@ -964,6 +994,55 @@ test_toast_reflow (ToastFixture  *f,
 	g_assert_cmpfloat (lrg_widget_get_y (LRG_WIDGET (older)), ==, bottom);
 }
 
+/*
+ * Auto-advance runs on the canvas clock: lrg_canvas_update() advances
+ * the toast and reports TRUE while it enters, counts down and leaves,
+ * then FALSE once it is gone. An explicit advance adds to the clock.
+ */
+static void
+test_toast_frame_clock (ToastFixture  *f,
+                        gconstpointer  data)
+{
+	g_autoptr(LrgToast) toast = NULL;
+	LrgToast           *sticky;
+	guint               i;
+	guint               frames = 0;
+
+	/* Auto-advance off: frames do not move time and nothing is busy.
+	 * Keep our own reference: the queue drops the toast once gone. */
+	toast = g_object_ref (show_new (f->queue, "Timed", 1.0));
+	for (i = 0; i < 30; i++)
+		g_assert_false (lrg_canvas_update (f->canvas, DT));
+	g_assert_cmpfloat (lrg_toast_get_elapsed (toast), ==, 0.0);
+
+	/* On: half a second of frames is half a second on the toast */
+	lrg_toast_queue_set_auto_advance (f->queue, TRUE);
+	for (i = 0; i < 30; i++)
+		g_assert_true (lrg_canvas_update (f->canvas, DT));
+	g_assert_cmpfloat_with_epsilon (lrg_toast_get_elapsed (toast), 0.5, 1e-4);
+
+	/* An explicit advance skips ahead on top of the frame clock */
+	lrg_toast_queue_advance (f->queue, 0.25);
+	g_assert_cmpfloat_with_epsilon (lrg_toast_get_elapsed (toast), 0.75, 1e-4);
+
+	/* It expires, fades out and leaves; then the canvas is idle */
+	while (lrg_canvas_update (f->canvas, DT))
+		g_assert_cmpuint (++frames, <, 600);
+	g_assert_true (lrg_toast_get_dismissed (toast));
+	g_assert_cmpuint (lrg_toast_queue_get_n_visible (f->queue), ==, 0);
+	g_assert_cmpuint (lrg_container_get_child_count (LRG_CONTAINER (f->queue)), ==, 0);
+
+	/* A toast without a duration is busy only while it enters */
+	sticky = show_new (f->queue, "Sticky", 0.0);
+	g_assert_true (lrg_canvas_update (f->canvas, DT));
+	frames = 0;
+	while (lrg_canvas_update (f->canvas, DT))
+		g_assert_cmpuint (++frames, <, 600);
+	g_assert_false (lrg_canvas_update (f->canvas, DT));
+	g_assert_false (lrg_toast_get_dismissed (sticky));
+	g_assert_cmpuint (lrg_toast_queue_get_n_visible (f->queue), ==, 1);
+}
+
 static void
 test_toast_top_left_and_clear (ToastFixture  *f,
                                gconstpointer  data)
@@ -1125,6 +1204,7 @@ main (int   argc,
 	COMBO_TEST ("arrows-closed", test_combo_arrows_closed);
 	COMBO_TEST ("long-list-scrolls", test_combo_long_list_scrolls);
 	COMBO_TEST ("paints", test_combo_paints);
+	COMBO_TEST ("chevron-frame-clock", test_combo_chevron_frame_clock);
 	g_test_add_func ("/ui/popups/combo/presets", test_combo_presets);
 
 	DIALOG_TEST ("layout", test_dialog_layout);
@@ -1143,6 +1223,7 @@ main (int   argc,
 	TOAST_TEST ("click-dismiss", test_toast_click_dismiss);
 	TOAST_TEST ("reflow", test_toast_reflow);
 	TOAST_TEST ("top-left-and-clear", test_toast_top_left_and_clear);
+	TOAST_TEST ("frame-clock", test_toast_frame_clock);
 	TOAST_TEST ("paints", test_toast_paints);
 
 	graphics_available = init_graphics_context ();

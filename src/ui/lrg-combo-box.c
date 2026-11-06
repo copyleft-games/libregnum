@@ -35,9 +35,6 @@
 /* Width reserved for the scroll indicator when the list scrolls */
 #define COMBO_SCROLL_GUTTER (6.0f)
 
-/* Largest frame step used for the widget's own springs */
-#define COMBO_MAX_DT (0.1f)
-
 /* ==========================================================================
  * Private types: the popup list and its rows
  * ========================================================================== */
@@ -63,7 +60,7 @@ struct _LrgComboBox
 
 	/* Chevron flip, 0 = closed (pointing down), 1 = open (up) */
 	LrgSpring      arrow;
-	gint64         last_us;
+	gboolean       stepped;        /* FALSE: show the state, no flip */
 
 	/* A press that closed the list must not reopen it */
 	gboolean       swallow_press;
@@ -115,24 +112,6 @@ static void combo_select_from_row (LrgComboBox *self,
 /* ==========================================================================
  * Helpers
  * ========================================================================== */
-
-/*
- * frame_delta:
- *
- * Seconds since the previous call for the same @last_us, clamped so a
- * stall never makes a spring jump. The first call returns 0.
- */
-static gfloat
-frame_delta (gint64 *last_us)
-{
-	gint64 now = g_get_monotonic_time ();
-	gfloat dt = 0.0f;
-
-	if (*last_us != 0)
-		dt = (gfloat) ((gdouble) (now - *last_us) / (gdouble) G_USEC_PER_SEC);
-	*last_us = now;
-	return CLAMP (dt, 0.0f, COMBO_MAX_DT);
-}
 
 /* find_canvas: the canvas @widget lives in, or NULL */
 static LrgCanvas *
@@ -958,6 +937,39 @@ lrg_combo_box_measure (LrgWidget *widget,
 	*height = lrg_theme_get_metric (theme, LRG_THEME_METRIC_CONTROL_HEIGHT);
 }
 
+/* arrow_target: 1 while the list is open (chevron up), else 0 */
+static gfloat
+arrow_target (LrgComboBox *self)
+{
+	return (lrg_widget_get_state_flags (LRG_WIDGET (self)) & LRG_WIDGET_STATE_OPEN) ? 1.0f : 0.0f;
+}
+
+/*
+ * lrg_combo_box_step:
+ *
+ * Advances the chevron flip towards the OPEN state by the canvas frame
+ * time. The first step snaps it, so a box never animates in.
+ *
+ * Returns: %TRUE while the chevron is still turning
+ */
+static gboolean
+lrg_combo_box_step (LrgWidget *widget,
+                    gfloat     delta_time)
+{
+	LrgComboBox *self = LRG_COMBO_BOX (widget);
+
+	lrg_spring_set_motion (&self->arrow, lrg_widget_get_motion (widget));
+	lrg_spring_set_target (&self->arrow, arrow_target (self));
+	if (!self->stepped || lrg_widget_get_motion (widget) == LRG_MOTION_NONE)
+	{
+		lrg_spring_snap (&self->arrow, self->arrow.target);
+		self->stepped = TRUE;
+		return FALSE;
+	}
+
+	return lrg_spring_step (&self->arrow, delta_time);
+}
+
 static void
 lrg_combo_box_paint (LrgWidget    *widget,
                      LrgPaintList *list)
@@ -975,18 +987,11 @@ lrg_combo_box_paint (LrgWidget    *widget,
 	gfloat       pad = lrg_theme_get_metric (theme, LRG_THEME_METRIC_PADDING_X);
 	gfloat       spacing = lrg_theme_get_metric (theme, LRG_THEME_METRIC_SPACING);
 	gfloat       cy = y + h * 0.5f;
-	gfloat       dt;
+	gfloat       flip;
 	const gchar *text;
 
-	/* Advance the chevron flip towards the OPEN state */
-	dt = frame_delta (&self->last_us);
-	lrg_spring_set_motion (&self->arrow, lrg_widget_get_motion (widget));
-	lrg_spring_set_target (&self->arrow,
-	                       (lrg_widget_get_state_flags (widget) & LRG_WIDGET_STATE_OPEN) ? 1.0f : 0.0f);
-	if (lrg_widget_get_motion (widget) == LRG_MOTION_NONE)
-		lrg_spring_snap (&self->arrow, self->arrow.target);
-	else
-		lrg_spring_step (&self->arrow, dt);
+	/* Chevron flip: the spring once stepped, the state before that */
+	flip = self->stepped ? self->arrow.value : arrow_target (self);
 
 	/* Body */
 	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
@@ -1011,7 +1016,7 @@ lrg_combo_box_paint (LrgWidget    *widget,
 	{
 		gfloat s = arrow.size > 0.0f ? arrow.size : size * 0.5f;
 		gfloat ax = x + w - pad - size * 0.5f;
-		gfloat angle = self->arrow.value * (gfloat) G_PI;
+		gfloat angle = flip * (gfloat) G_PI;
 		gfloat ca = cosf (angle);
 		gfloat sa = sinf (angle);
 		gfloat px[3] = { -s * 0.5f, 0.0f, s * 0.5f };
@@ -1194,6 +1199,7 @@ lrg_combo_box_class_init (LrgComboBoxClass *klass)
 	widget_class->style_defaults = lrg_combo_box_style_defaults;
 	widget_class->measure = lrg_combo_box_measure;
 	widget_class->paint = lrg_combo_box_paint;
+	widget_class->step = lrg_combo_box_step;
 	widget_class->handle_event = lrg_combo_box_handle_event;
 
 	/**

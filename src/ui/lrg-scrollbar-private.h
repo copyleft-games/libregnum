@@ -32,9 +32,6 @@ G_BEGIN_DECLS
 /* Seconds without activity before the overlay scrollbar fades out */
 #define LRG_SCROLL_IDLE_HIDE (0.8f)
 
-/* Longest time step taken in one frame (after a stall) */
-#define LRG_SCROLL_MAX_DT (0.1f)
-
 /* Shortest a scrollbar thumb gets */
 #define LRG_SCROLL_MIN_THUMB (24.0f)
 
@@ -67,14 +64,15 @@ typedef struct
 /*
  * LrgScrollFx:
  *
- * Per-widget scrollbar fade and frame clock. Scrolling widgets step
- * their own springs while painting, timed with the monotonic clock.
+ * Per-widget scrollbar fade. Scrolling widgets step it from their
+ * step() vfunc with the canvas frame time: @idle counts the seconds
+ * since the last activity, so the bars hide on the canvas clock.
  */
 typedef struct
 {
-	LrgSpring fade;         /* 0 hidden .. 1 shown */
-	gint64    last_us;      /* time of the previous paint, 0 = never */
-	gint64    activity_us;  /* last scroll / pointer activity */
+	LrgSpring fade;     /* 0 hidden .. 1 shown */
+	gboolean  active;   /* there was activity at some point */
+	gfloat    idle;     /* seconds since the last scroll / pointer activity */
 } LrgScrollFx;
 
 /* ==========================================================================
@@ -295,7 +293,7 @@ lrg_scroll_axis_offset_for_thumb (const LrgScrollAxis *axis,
 }
 
 /* ==========================================================================
- * Frame clock and fading
+ * Fading
  * ========================================================================== */
 
 static inline void
@@ -305,49 +303,43 @@ lrg_scroll_fx_init (LrgScrollFx *fx)
 	lrg_spring_init (&fx->fade, 0.0f, LRG_MOTION_SMOOTH);
 }
 
-/*
- * lrg_scroll_fx_tick:
- *
- * Seconds since the previous call (0 the first time), capped at
- * LRG_SCROLL_MAX_DT so a stall does not teleport anything.
- */
-static inline gfloat
-lrg_scroll_fx_tick (LrgScrollFx *fx)
-{
-	gint64 now = g_get_monotonic_time ();
-	gfloat dt = 0.0f;
-
-	if (fx->last_us != 0)
-		dt = (gfloat) (now - fx->last_us) / (gfloat) G_USEC_PER_SEC;
-	fx->last_us = now;
-	return CLAMP (dt, 0.0f, LRG_SCROLL_MAX_DT);
-}
-
 /* lrg_scroll_fx_poke: something happened; keep the scrollbars shown */
 static inline void
 lrg_scroll_fx_poke (LrgScrollFx *fx)
 {
-	fx->activity_us = g_get_monotonic_time ();
+	fx->active = TRUE;
+	fx->idle = 0.0f;
 }
 
 /*
  * lrg_scroll_fx_update:
  * @keep: force the bars visible (hovered, dragging)
+ * @delta_time: canvas frame time (seconds)
  *
- * Aims the fade at 1 while there was activity in the last
- * LRG_SCROLL_IDLE_HIDE seconds (or @keep), else at 0, and steps it.
+ * Counts the idle time, aims the fade at 1 while there was activity in
+ * the last LRG_SCROLL_IDLE_HIDE seconds (or @keep), else at 0, and
+ * steps it.
+ *
+ * Returns: %TRUE while the fade moves, or while the idle countdown runs
+ *   (the bars must start fading out when it expires, which takes a
+ *   frame); %FALSE once the bars rest, shown (kept) or hidden
  */
-static inline void
+static inline gboolean
 lrg_scroll_fx_update (LrgScrollFx *fx,
                       gboolean     keep,
                       gfloat       delta_time)
 {
-	gboolean recent = fx->activity_us != 0 &&
-	                  (g_get_monotonic_time () - fx->activity_us) <
-	                  (gint64) (LRG_SCROLL_IDLE_HIDE * G_USEC_PER_SEC);
+	gboolean recent;
+	gboolean moving;
+
+	/* Idle time saturates past the threshold; nothing changes after */
+	if (fx->active && delta_time > 0.0f)
+		fx->idle = MIN (fx->idle + delta_time, LRG_SCROLL_IDLE_HIDE * 2.0f);
+	recent = fx->active && fx->idle < LRG_SCROLL_IDLE_HIDE;
 
 	lrg_spring_set_target (&fx->fade, (keep || recent) ? 1.0f : 0.0f);
-	lrg_spring_step (&fx->fade, delta_time);
+	moving = lrg_spring_step (&fx->fade, delta_time);
+	return moving || (recent && !keep);
 }
 
 /* ==========================================================================

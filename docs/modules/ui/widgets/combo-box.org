@@ -2,7 +2,7 @@
 :PROPERTIES:
 :CUSTOM_ID: combo-box-widget
 :END:
-=LrgComboBox= lets the player pick one of several text items. Closed, it looks like a button: the selected item (or a muted placeholder) on the left and a chevron on the right. Clicking it, or activating it with Enter / Space / gamepad A, opens a list on the canvas popup layer directly below it (or above it when there is no room). The chevron flips half a turn on a spring while the list is open.
+=LrgComboBox= lets the player pick one of several text items. Closed, it looks like a button: the selected item (or a muted placeholder) on the left and a chevron on the right. Clicking it, or activating it with Enter / Space / gamepad A, opens a list on the canvas popup layer directly below it (or above it when there is no room). The chevron flips half a turn on a spring while the list is open. The spring is stepped by the widget's =step()= on the canvas clock (=lrg_canvas_update()= returns =TRUE= while it turns); a box's first frame snaps it to its state.
 
 The list is an internal popup widget that holds one focusable row per item, so everything the canvas does for focus works inside it: Tab, arrow keys, the gamepad D-pad and stick. Long lists show about eight rows and scroll with the wheel or the keyboard.
 

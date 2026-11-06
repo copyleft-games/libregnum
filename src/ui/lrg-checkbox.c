@@ -36,9 +36,6 @@
 /* Opacity of a disabled checkbox */
 #define CHECKBOX_DISABLED_OPACITY (0.45f)
 
-/* Longest frame step for our own spring (seconds) */
-#define MAX_FRAME_STEP (0.1f)
-
 struct _LrgCheckbox
 {
     LrgWidget         parent_instance;
@@ -62,10 +59,11 @@ struct _LrgCheckbox
     gboolean          check_color_set;
     gboolean          text_color_set;
 
-    /* Check animation: 0 = unchecked, 1 = checked */
+    /* Check animation: 0 = unchecked, 1 = checked. Until the first
+     * step() the spring is ignored and the checked state is shown
+     * directly, so freshly built UIs do not animate in. */
     LrgSpring         check;
-    gint64            last_us;
-    gboolean          painted;
+    gboolean          stepped;
 };
 
 G_DEFINE_TYPE (LrgCheckbox, lrg_checkbox, LRG_TYPE_WIDGET)
@@ -357,30 +355,43 @@ look_color (const LrgPartLook *look,
  * ========================================================================== */
 
 /*
- * step_check:
+ * check_value:
  *
- * Advances the check spring by the wall-clock time since the last
- * paint (clamped). A checkbox that was never painted jumps straight to
- * its state so freshly built UIs do not animate in.
+ * The check progress paint() shows: the spring once the widget has
+ * been stepped, the checked state itself before that.
  */
-static void
-step_check (LrgCheckbox *self)
+static gfloat
+check_value (LrgCheckbox *self)
 {
-    gint64 now = g_get_monotonic_time ();
-    gfloat dt;
+    if (!self->stepped)
+        return self->checked ? 1.0f : 0.0f;
+    return self->check.value;
+}
 
-    lrg_spring_set_motion (&self->check, lrg_widget_get_motion (LRG_WIDGET (self)));
-    if (!self->painted)
+/*
+ * lrg_checkbox_step:
+ *
+ * Advances the check spring by the canvas frame time. The first step
+ * snaps the spring to the current state (a checkbox appearing for the
+ * first time shows its state rather than animating to it).
+ *
+ * Returns: %TRUE while the check spring is still moving
+ */
+static gboolean
+lrg_checkbox_step (LrgWidget *widget,
+                   gfloat     delta_time)
+{
+    LrgCheckbox *self = LRG_CHECKBOX (widget);
+
+    lrg_spring_set_motion (&self->check, lrg_widget_get_motion (widget));
+    if (!self->stepped)
     {
         lrg_spring_snap (&self->check, self->checked ? 1.0f : 0.0f);
-        self->painted = TRUE;
-        self->last_us = now;
-        return;
+        self->stepped = TRUE;
+        return FALSE;
     }
 
-    dt = (gfloat) (now - self->last_us) / (gfloat) G_USEC_PER_SEC;
-    self->last_us = now;
-    lrg_spring_step (&self->check, CLAMP (dt, 0.0f, MAX_FRAME_STEP));
+    return lrg_spring_step (&self->check, delta_time);
 }
 
 /*
@@ -435,8 +446,7 @@ lrg_checkbox_paint (LrgWidget    *widget,
     gfloat       iy;
     gfloat       t;
 
-    step_check (self);
-    t = self->check.value;
+    t = check_value (self);
 
     indicator_size (self, &iw, &ih);
     iy = y + (h - ih) * 0.5f;
@@ -685,6 +695,7 @@ lrg_checkbox_class_init (LrgCheckboxClass *klass)
     object_class->set_property = lrg_checkbox_set_property;
 
     widget_class->paint = lrg_checkbox_paint;
+    widget_class->step = lrg_checkbox_step;
     widget_class->style_defaults = lrg_checkbox_style_defaults;
     widget_class->measure = lrg_checkbox_measure;
     widget_class->handle_event = lrg_checkbox_handle_event;
@@ -942,7 +953,7 @@ gfloat
 lrg_checkbox_get_check_progress (LrgCheckbox *self)
 {
     g_return_val_if_fail (LRG_IS_CHECKBOX (self), 0.0f);
-    return self->check.value;
+    return check_value (self);
 }
 
 const gchar *

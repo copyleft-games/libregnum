@@ -31,8 +31,9 @@
 /* Rows kept beyond each end of the visible range */
 #define ROW_BUFFER (1)
 
-/* Two presses on one row within this time are a double click */
-#define DOUBLE_CLICK_US (400000)
+/* Two presses on one row within this time (seconds of canvas clock)
+ * are a double click */
+#define DOUBLE_CLICK_TIME (0.4)
 
 /* Inset of the row background inside the viewport */
 #define ROW_INSET (2.0f)
@@ -73,7 +74,9 @@ struct _LrgListView
 	LrgScrollAxis          ay;          /* ay.bar owned */
 	LrgScrollFx            fx;
 
-	gint64                 last_click_us;
+	gdouble                clock;           /* sum of step() frame times */
+	gboolean               click_armed;     /* a first click may double */
+	gdouble                last_click_time; /* clock at that click */
 	guint                  last_click_pos;
 	gboolean               in_layout;
 };
@@ -719,6 +722,38 @@ paint_row_background (LrgListView  *self,
 	}
 }
 
+/*
+ * lrg_list_view_step:
+ *
+ * Advances the canvas clock (double-click timing), the scroll spring
+ * (keeping the bar shown while it moves) and the bar fade, then binds
+ * rows for the new offset so they are stepped and painted this frame.
+ *
+ * Returns: %TRUE while the offset glides / bounces or the bar fades
+ *   (or waits to fade out)
+ */
+static gboolean
+lrg_list_view_step (LrgWidget *widget,
+                    gfloat     delta_time)
+{
+	LrgListView *self = LRG_LIST_VIEW (widget);
+	gboolean     moving;
+	gboolean     keep;
+
+	if (delta_time > 0.0f)
+		self->clock += (gdouble) delta_time;
+	if (self->ay.bar == NULL)
+		return FALSE;
+
+	moving = lrg_scroll_axis_step (&self->ay, delta_time);
+	if (moving)
+		lrg_scroll_fx_poke (&self->fx);
+	sync_rows (self);
+
+	keep = self->ay.dragging || (lrg_widget_get_state_flags (self->ay.bar) & LRG_WIDGET_STATE_HOVERED);
+	return lrg_scroll_fx_update (&self->fx, keep, delta_time) || moving;
+}
+
 static void
 lrg_list_view_paint (LrgWidget    *widget,
                      LrgPaintList *list)
@@ -732,18 +767,11 @@ lrg_list_view_paint (LrgWidget    *widget,
 	gfloat       vw;
 	gfloat       vh;
 	gfloat       off;
-	gfloat       dt;
-	gboolean     keep;
 	guint        i;
 
-	/* 1. Time: scroll spring, then follow it with the rows */
-	dt = lrg_scroll_fx_tick (&self->fx);
-	if (lrg_scroll_axis_step (&self->ay, dt))
-		lrg_scroll_fx_poke (&self->fx);
+	/* 1. Rows follow the displayed offset. The spring moves only in
+	 *    step(); this just binds rows for jumps made since. */
 	sync_rows (self);
-
-	keep = self->ay.dragging || (lrg_widget_get_state_flags (self->ay.bar) & LRG_WIDGET_STATE_HOVERED);
-	lrg_scroll_fx_update (&self->fx, keep, dt);
 
 	/* 2. Body */
 	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
@@ -804,15 +832,13 @@ position_at (LrgListView *self,
  *
  * Plain click selects only the row; Ctrl toggles it and Shift selects
  * the range from the anchor (multiple mode). A second click on the
- * same row within DOUBLE_CLICK_US activates it.
+ * same row within DOUBLE_CLICK_TIME (canvas clock) activates it.
  */
 static void
 click_row (LrgListView       *self,
            guint              p,
            LrgInputModifiers  mods)
 {
-	gint64 now = g_get_monotonic_time ();
-
 	if (self->mode == LRG_SELECTION_MODE_MULTIPLE && (mods & LRG_INPUT_MODIFIER_SHIFT) &&
 	    self->anchor != LRG_LIST_VIEW_INVALID_POSITION)
 	{
@@ -832,13 +858,15 @@ click_row (LrgListView       *self,
 	}
 	set_cursor (self, p, FALSE);
 
-	if (self->last_click_pos == p && self->last_click_us != 0 && now - self->last_click_us <= DOUBLE_CLICK_US)
+	if (self->click_armed && self->last_click_pos == p &&
+	    self->clock - self->last_click_time <= DOUBLE_CLICK_TIME)
 	{
-		self->last_click_us = 0;
+		self->click_armed = FALSE;
 		g_signal_emit (self, signals[SIGNAL_ROW_ACTIVATED], 0, p);
 		return;
 	}
-	self->last_click_us = now;
+	self->click_armed = TRUE;
+	self->last_click_time = self->clock;
 	self->last_click_pos = p;
 }
 
@@ -1082,6 +1110,7 @@ lrg_list_view_class_init (LrgListViewClass *klass)
 
 	widget_class->measure = lrg_list_view_measure;
 	widget_class->paint = lrg_list_view_paint;
+	widget_class->step = lrg_list_view_step;
 	widget_class->style_defaults = lrg_list_view_style_defaults;
 	widget_class->handle_event = lrg_list_view_handle_event;
 

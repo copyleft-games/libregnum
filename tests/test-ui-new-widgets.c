@@ -8,9 +8,9 @@
  *
  * Most cases are headless: they drive input through
  * lrg_canvas_process_input() like the real loop and inspect layout
- * and the recorded paint list. Scrolling widgets step their springs
- * while painting (monotonic clock), so animation tests record frames
- * with short sleeps and a fast global motion speed. GPU cases render
+ * and the recorded paint list. Widgets step their springs from
+ * lrg_canvas_update() (the canvas clock), so animation tests drive time
+ * deterministically with fixed 1/60 s frames. GPU cases render
  * through a hidden window and skip without a display (run them under
  * the Xvfb wrapper).
  */
@@ -185,13 +185,23 @@ key (LrgCanvas *canvas,
 	key_mod (canvas, k, LRG_INPUT_MODIFIER_NONE);
 }
 
-/* frame: one update + record, a few milliseconds apart */
+/* frame: one 1/60 s update + record */
 static void
 frame (LrgCanvas *canvas)
 {
 	lrg_canvas_update (canvas, 1.0f / 60.0f);
 	lrg_canvas_record (canvas);
-	g_usleep (4000);
+}
+
+/* settle_seconds: @seconds of 60 Hz canvas updates */
+static void
+settle_seconds (LrgCanvas *canvas,
+                gfloat     seconds)
+{
+	gint i;
+
+	for (i = 0; i < (gint) (seconds * 60.0f); i++)
+		lrg_canvas_update (canvas, 1.0f / 60.0f);
 }
 
 /* settle: enough frames for every scroll spring to come to rest */
@@ -202,6 +212,26 @@ settle (LrgCanvas *canvas)
 
 	for (i = 0; i < 120; i++)
 		frame (canvas);
+}
+
+/*
+ * run_until_rest:
+ *
+ * Steps 60 Hz frames until lrg_canvas_update() reports that nothing
+ * animates any more (fails after @max_frames).
+ *
+ * Returns: the number of frames that still reported motion
+ */
+static guint
+run_until_rest (LrgCanvas *canvas,
+                guint      max_frames)
+{
+	guint n = 0;
+
+	while (n < max_frames && lrg_canvas_update (canvas, 1.0f / 60.0f))
+		n++;
+	g_assert_cmpuint (n, <, max_frames);
+	return n;
 }
 
 static LrgCanvas *
@@ -321,10 +351,13 @@ test_scroll_box_wheel_spring (void)
 	LrgScrollBox        *sb = scroll_fixture (canvas, NULL);
 	gfloat               first;
 
-	/* One notch down: the target moves 48, the display glides there */
+	/* One notch down: the target moves 48, the display glides there
+	 * and the canvas reports the glide */
 	wheel_at (canvas, 50.0f, 50.0f, -1.0f);
-	frame (canvas);
+	g_assert_true (lrg_canvas_update (canvas, 1.0f / 60.0f));
+	lrg_canvas_record (canvas);
 	first = lrg_scroll_box_get_scroll_y (sb);
+	g_assert_cmpfloat (first, >, 0.0f);
 	g_assert_cmpfloat (first, <, 48.0f);
 
 	settle (canvas);
@@ -504,6 +537,8 @@ test_scroll_box_scrollbar_paint (void)
 	LrgPaintList        *list;
 	guint                before;
 	guint                after;
+	guint                i;
+	guint                n;
 
 	scroll_fixture (canvas, NULL);
 	list = lrg_canvas_record (canvas);
@@ -511,10 +546,19 @@ test_scroll_box_scrollbar_paint (void)
 
 	/* Activity fades the bar in: more shapes are recorded */
 	wheel_at (canvas, 50.0f, 50.0f, -1.0f);
-	settle (canvas);
+	for (i = 0; i < 10; i++)
+		g_assert_true (lrg_canvas_update (canvas, 1.0f / 60.0f));
 	list = lrg_canvas_record (canvas);
 	after = lrg_paint_list_get_n_instances (list);
 	g_assert_cmpuint (after, >, before);
+
+	/* The canvas stays busy through the idle wait (0.8 s of canvas
+	 * time) and the fade out; then the bar is gone and it is idle */
+	n = run_until_rest (canvas, 600);
+	g_assert_cmpuint (n, >=, 30);
+	g_assert_false (lrg_canvas_update (canvas, 1.0f / 60.0f));
+	list = lrg_canvas_record (canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), ==, before);
 }
 
 /* ==========================================================================
@@ -640,6 +684,60 @@ test_spin_box_pointer (void)
 	release_at (canvas, cx - 12.0f, cy);
 	move_to (canvas, cx + 60.0f, cy);
 	g_assert_cmpfloat (lrg_spin_box_get_value (spin), ==, 17.0);
+}
+
+/*
+ * Spin box on the canvas clock: the change flash keeps the canvas busy
+ * until it fades, and press-and-hold repeats after 0.4 s of canvas
+ * time at 12 Hz, deterministically.
+ */
+static void
+test_spin_box_frame_clock (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgSpinBox          *spin = spin_fixture (canvas);
+	LrgCanvasInput       input;
+	guint                i;
+
+	lrg_spin_box_set_value (spin, 20.0);
+
+	/* First frame: no flash for the value it was built with */
+	run_until_rest (canvas, 240);
+
+	/* A change flashes: busy, then idle */
+	lrg_spin_box_set_value (spin, 21.0);
+	g_assert_true (lrg_canvas_update (canvas, 1.0f / 60.0f));
+	g_assert_cmpuint (run_until_rest (canvas, 240), >, 0);
+
+	/* Hold plus: one step on the press, none before 0.4 s ... */
+	move_to (canvas, 248.0f, 118.0f);
+	press_at (canvas, 248.0f, 118.0f, LRG_INPUT_MODIFIER_NONE);
+	g_assert_cmpfloat (lrg_spin_box_get_value (spin), ==, 22.0);
+	for (i = 0; i < 18; i++)
+	{
+		frame_at (&input, 248.0f, 118.0f);
+		input.buttons_down = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+		lrg_canvas_process_input (canvas, &input);
+	}
+	g_assert_cmpfloat (lrg_spin_box_get_value (spin), ==, 22.0);
+
+	/* ... then 12 Hz: at 0.5 s held, 0.1 s into the repeat = 2 steps.
+	 * Holding keeps the canvas busy. */
+	for (i = 0; i < 12; i++)
+	{
+		frame_at (&input, 248.0f, 118.0f);
+		input.buttons_down = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+		lrg_canvas_process_input (canvas, &input);
+		g_assert_true (lrg_canvas_update (canvas, 0.0f));
+	}
+	g_assert_cmpfloat (lrg_spin_box_get_value (spin), ==, 24.0);
+
+	/* Released: everything settles and the canvas goes idle */
+	release_at (canvas, 248.0f, 118.0f);
+	move_to (canvas, 400.0f, 300.0f);
+	run_until_rest (canvas, 240);
+	g_assert_false (lrg_canvas_update (canvas, 1.0f / 60.0f));
+	g_assert_cmpfloat (lrg_spin_box_get_value (spin), ==, 24.0);
 }
 
 static void
@@ -972,6 +1070,38 @@ test_list_view_activate (void)
 	key (canvas, GRL_KEY_DOWN);
 	key (canvas, GRL_KEY_ENTER);
 	g_assert_cmpuint (activated, ==, 6);
+
+	/* Double clicks are timed on the canvas clock: two clicks on one
+	 * row half a second of frames apart are two single clicks */
+	activated = G_MAXUINT;
+	click (canvas, 100.0f, row_y (2));
+	settle_seconds (canvas, 0.5f);
+	click (canvas, 100.0f, row_y (2));
+	g_assert_cmpuint (activated, ==, G_MAXUINT);
+}
+
+/*
+ * The list's scroll spring and scrollbar fade run on the canvas clock:
+ * lrg_canvas_update() is TRUE while the offset glides and the bar is
+ * shown / fading, FALSE once all of it rests.
+ */
+static void
+test_list_view_frame_clock (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgListView         *lv = list_fixture (canvas, 100, NULL);
+	guint                n;
+
+	(void) lv;
+	run_until_rest (canvas, 600);
+	g_assert_false (lrg_canvas_update (canvas, 1.0f / 60.0f));
+
+	wheel_at (canvas, 100.0f, 100.0f, -2.0f);
+	g_assert_true (lrg_canvas_update (canvas, 1.0f / 60.0f));
+	n = run_until_rest (canvas, 600);
+	g_assert_cmpuint (n, >=, 30);
+	g_assert_false (lrg_canvas_update (canvas, 1.0f / 60.0f));
+	g_assert_cmpfloat (lrg_list_view_get_scroll_offset (lv), >, 0.0f);
 }
 
 static void
@@ -1120,9 +1250,6 @@ main (int   argc,
 
 	g_test_init (&argc, &argv, NULL);
 
-	/* Scroll springs run on the wall clock; speed them up */
-	lrg_motion_set_speed (10.0f);
-
 	g_test_add_func ("/ui/overlay/alignment", test_overlay_alignment);
 
 	g_test_add_func ("/ui/scroll-box/clamp", test_scroll_box_clamp);
@@ -1138,12 +1265,14 @@ main (int   argc,
 	g_test_add_func ("/ui/spin-box/keyboard", test_spin_box_keyboard);
 	g_test_add_func ("/ui/spin-box/pointer", test_spin_box_pointer);
 	g_test_add_func ("/ui/spin-box/clamp-digits", test_spin_box_clamp_digits);
+	g_test_add_func ("/ui/spin-box/frame-clock", test_spin_box_frame_clock);
 
 	g_test_add_func ("/ui/list-view/virtualized", test_list_view_virtualized);
 	g_test_add_func ("/ui/list-view/factory", test_list_view_factory);
 	g_test_add_func ("/ui/list-view/selection", test_list_view_selection);
 	g_test_add_func ("/ui/list-view/keyboard", test_list_view_keyboard);
 	g_test_add_func ("/ui/list-view/activate", test_list_view_activate);
+	g_test_add_func ("/ui/list-view/frame-clock", test_list_view_frame_clock);
 	g_test_add_func ("/ui/list-view/items-changed", test_list_view_items_changed);
 	g_test_add_func ("/ui/list-view/themes", test_list_view_themes);
 
