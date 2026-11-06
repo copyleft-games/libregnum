@@ -57,7 +57,7 @@ The class has five reserved pointers for future vfuncs.
 | Function | Purpose | Notes |
 |----------+---------+-------|
 | =lrg_widget_get_x= / =lrg_widget_set_x=, =lrg_widget_get_y= / =lrg_widget_set_y= | Position relative to the parent | Setting notifies =x= / =y= only when the value changes; layouts overwrite it on the next allocation, so set positions only on absolutely placed children |
-| =lrg_widget_get_width= / =set_width=, =get_height= / =set_height= | Size | Negative values clamp to 0; a container whose size changes queues layout |
+| =lrg_widget_get_width= / =lrg_widget_set_width=, =lrg_widget_get_height= / =lrg_widget_set_height= | Size | Negative values clamp to 0; a container whose size changes queues layout |
 | =lrg_widget_set_position (self, x, y)= / =set_size (self, w, h)= | Both at once | One batched notify |
 | =lrg_widget_allocate (self, x, y, w, h)= | Assign the rectangle and =arrange()= | What layouts call (usually via =place_in_slot()=) |
 | =lrg_widget_get_world_x= / =get_world_y= | Absolute position (all parent offsets added) | Use for painting and hit tests |
