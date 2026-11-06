@@ -2,86 +2,174 @@
 :PROPERTIES:
 :CUSTOM_ID: button-widget
 :END:
-A clickable button with visual feedback for three states: normal, hover, and pressed.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgButton= is a clickable push button. It records itself through the paint pipeline (=paint()= + =style_defaults()=), so it follows the theme, is batched with the rest of the UI and glides between states on the widget's hover and press springs.
+
+What it does:
+
+- A rounded surface (=BOX= part) in the theme's =CONTROL= colour with a hairline =BORDER= and a soft drop shadow. On hover the surface lightens and the shadow lifts (bigger blur, larger offset); while pressed it darkens, the shadow settles almost flat and the whole button squashes to 96 % about its centre.
+- Centred text (=LABEL= part) in the theme's UI font at =FONT_SIZE=.
+- Style classes =primary= (accent colours with a soft accent glow on hover), =flat= (no surface until hovered) and =danger= (destructive actions).
+- Click (press and release inside), Enter, Space and gamepad A emit =clicked=.
+- Preferred size: the text plus =PADDING_X= / =PADDING_Y= on each side, never shorter than =CONTROL_HEIGHT=.
 
 ** Creation
 :PROPERTIES:
 :CUSTOM_ID: creation
 :END:
 #+begin_src C
-g_autoptr(LrgButton) btn = lrg_button_new("Click Me");
-lrg_widget_set_size(LRG_WIDGET(btn), 100, 40);
-lrg_container_add_child(container, LRG_WIDGET(btn));
+LrgButton *play = lrg_button_new ("Play");
+
+lrg_widget_add_class (LRG_WIDGET (play), "primary");
+g_signal_connect (play, "clicked", G_CALLBACK (on_play), game);
+lrg_container_add_child (LRG_CONTAINER (menu), LRG_WIDGET (play));
 #+end_src
 
-** Text
+A button inside a box container is sized from its preferred size; set an explicit size with =lrg_widget_set_size()= only for absolutely positioned buttons.
+
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: text
+:CUSTOM_ID: properties
 :END:
-#+begin_src C
-lrg_button_set_text(btn, "New Text");
-const gchar *text = lrg_button_get_text(btn);
+| Property        | Type       | Default       | Notes                                                                       |
+|-----------------+------------+---------------+-----------------------------------------------------------------------------|
+| =text=          | string     | =NULL=        | The label; changing it queues a layout                                      |
+| =normal-color=  | =GrlColor= | legacy grey   | Theme colour until set; once set it is the resting background               |
+| =hover-color=   | =GrlColor= | legacy grey   | Theme hover colour until set (a lighter =normal-color= if only that is set) |
+| =pressed-color= | =GrlColor= | legacy grey   | Theme pressed colour until set (a darker =normal-color= if only that is set) |
+| =text-color=    | =GrlColor= | legacy white  | Theme =TEXT= / =TEXT_ON_ACCENT= until set                                   |
+| =corner-radius= | float      | 4 (reported)  | Theme =CORNER_RADIUS= until set                                             |
+| =is-hovered=    | boolean    | =FALSE=       | Read-only mirror of =LRG_WIDGET_STATE_HOVERED=                              |
+| =is-pressed=    | boolean    | =FALSE=       | Read-only mirror of =LRG_WIDGET_STATE_PRESSED=                              |
+
+The legacy appearance properties keep their old default values in their getters, but the button draws with the theme until a value is set explicitly. An explicitly set colour or radius beats both the theme default and any theme style rule that targets =LrgButton= ("the theme applies unless you say otherwise"); it only replaces the fields it concerns, so a rule's shadow or border still applies. With only =normal-color= set, the hover and pressed backgrounds are derived from it (lighter / darker), and the neutral hairline border is dropped. An explicit radius also shapes the focus ring. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal    | Arguments              | Emitted when                                                           |
+|-----------+------------------------+------------------------------------------------------------------------|
+| =clicked= | none                   | Released inside after a press on it, or activated (Enter, Space, A)   |
+| =hovered= | =gboolean is_hovered=  | The pointer entered or left the button                                 |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+| Part    | What it is          | Resting                                   | Hovered                                  | Pressed                                   | Disabled     |
+|---------+---------------------+-------------------------------------------+------------------------------------------+-------------------------------------------+--------------|
+| =BOX=   | Surface             | =CONTROL= fill, =BORDER= border, shadow   | =CONTROL_HOVER=, shadow lifted           | =CONTROL_PRESSED=, shadow flat, squashed  | opacity 0.45 |
+| =LABEL= | Text                | =TEXT=                                    | same                                     | same (squashes with the box)              | opacity 0.45 |
+| =FOCUS= | Focus ring          | from =LrgWidget=, follows the button radius | shown after keyboard / gamepad navigation |                                         |              |
+
+Shadow strength is derived from the theme: blur = =SHADOW_BLUR= × 0.35 / 0.65 / 0.15 and offset = =SHADOW_OFFSET_Y= × the same factors for resting / hovered / pressed, with the =SHADOW= colour's alpha scaled by 0.5 / 0.75 / 0.35.
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+| Class     | Effect                                                                                                 |
+|-----------+--------------------------------------------------------------------------------------------------------|
+| =primary= | =ACCENT= / =ACCENT_HOVER= / =ACCENT_PRESSED= fill, =TEXT_ON_ACCENT= text, accent glow while hovered    |
+| =flat=    | Transparent with no border or shadow at rest; =CONTROL_HOVER= / =CONTROL_PRESSED= surface fades in     |
+| =danger=  | =DANGER= fill (lighter on hover, darker pressed), white or near-black text for contrast, glow on hover |
+
+Classes combine with your own classes; theme rules can target any of them.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+#+begin_src yaml
+styles:
+  # Pill-shaped primary buttons with a stronger glow
+  - widget: LrgButton
+    class: primary
+    part: box
+    radius: 999
+  - widget: LrgButton
+    class: primary
+    part: box
+    state: [hovered]
+    glow: "#7c6cff80"
+    glow-size: 18
+
+  # A "success" class of your own
+  - widget: LrgButton
+    class: success
+    part: box
+    background: "#16a34a"
+  - widget: LrgButton
+    class: success
+    part: label
+    foreground: "#ffffff"
 #+end_src
 
-** Colors
-:PROPERTIES:
-:CUSTOM_ID: colors
-:END:
-#+begin_src C
-GrlColor normal = GRL_COLOR(100, 100, 100, 255);
-GrlColor hover = GRL_COLOR(120, 120, 120, 255);
-GrlColor pressed = GRL_COLOR(80, 80, 80, 255);
-GrlColor text = GRL_COLOR(255, 255, 255, 255);
+From C:
 
-lrg_button_set_normal_color(btn, &normal);
-lrg_button_set_hover_color(btn, &hover);
-lrg_button_set_pressed_color(btn, &pressed);
-lrg_button_set_text_color(btn, &text);
+#+begin_src C
+g_autoptr(LrgStyleRule) rule = lrg_style_rule_new ("LrgButton", "success", LRG_UI_PART_BOX,
+                                                    LRG_WIDGET_STATE_NONE);
+GrlColor green = { 22, 163, 74, 255 };
+
+lrg_part_look_set_background (lrg_style_rule_get_look (rule), &green);
+lrg_theme_add_style_rule (theme, rule);
+lrg_widget_add_class (LRG_WIDGET (save), "success");
 #+end_src
 
-** Appearance
+** Keyboard, mouse and gamepad
 :PROPERTIES:
-:CUSTOM_ID: appearance
+:CUSTOM_ID: keyboard-mouse-gamepad
+:END:
+- The button is focusable: Tab, arrow keys and the gamepad D-pad reach it, and clicking focuses it (without a focus ring).
+- Enter, keypad Enter, Space and gamepad A on the focused button emit =clicked=; the canvas flashes the pressed look for one frame.
+- A left press captures the pointer: dragging off the button releases the pressed look, dragging back restores it, and only a release inside clicks. Right and middle clicks are ignored.
+- Without a canvas (events delivered directly with =lrg_widget_handle_event()=) the button tracks hover and press itself from the mouse events, as before.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
 :END:
 #+begin_src C
-lrg_button_set_corner_radius(btn, 5.0f);
-gfloat radius = lrg_button_get_corner_radius(btn);
-#+end_src
+static void
+build_dialog_buttons (LrgContainer *row)
+{
+    LrgButton *cancel = lrg_button_new ("Cancel");
+    LrgButton *remove = lrg_button_new ("Delete save");
 
-** State
-:PROPERTIES:
-:CUSTOM_ID: state
-:END:
-#+begin_src C
-if (lrg_button_get_is_hovered(btn))
-    g_message("Button is hovered");
+    lrg_widget_add_class (LRG_WIDGET (cancel), "flat");
+    lrg_widget_add_class (LRG_WIDGET (remove), "danger");
 
-if (lrg_button_get_is_pressed(btn))
-    g_message("Button is pressed");
+    g_signal_connect (cancel, "clicked", G_CALLBACK (on_cancel), NULL);
+    g_signal_connect (remove, "clicked", G_CALLBACK (on_delete), NULL);
+
+    lrg_container_add_child (row, LRG_WIDGET (cancel));
+    lrg_container_add_child (row, LRG_WIDGET (remove));
+}
 #+end_src
 
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference
 :END:
-- =lrg_button_new(const gchar *text)=
-- =lrg_button_get_text(LrgButton *self)=
-- =lrg_button_set_text(LrgButton *self, const gchar *text)=
-- =lrg_button_get_normal_color(LrgButton *self)=
-- =lrg_button_set_normal_color(LrgButton *self, const GrlColor *color)=
-- =lrg_button_get_hover_color(LrgButton *self)=
-- =lrg_button_set_hover_color(LrgButton *self, const GrlColor *color)=
-- =lrg_button_get_pressed_color(LrgButton *self)=
-- =lrg_button_set_pressed_color(LrgButton *self, const GrlColor *color)=
-- =lrg_button_get_text_color(LrgButton *self)=
-- =lrg_button_set_text_color(LrgButton *self, const GrlColor *color)=
-- =lrg_button_get_corner_radius(LrgButton *self)=
-- =lrg_button_set_corner_radius(LrgButton *self, gfloat radius)=
-- =lrg_button_get_is_hovered(LrgButton *self)=
-- =lrg_button_get_is_pressed(LrgButton *self)=
+- =lrg_button_new (const gchar *text)=
+- =lrg_button_get_text= / =lrg_button_set_text=
+- =lrg_button_get_normal_color= / =lrg_button_set_normal_color=
+- =lrg_button_get_hover_color= / =lrg_button_set_hover_color=
+- =lrg_button_get_pressed_color= / =lrg_button_set_pressed_color=
+- =lrg_button_get_text_color= / =lrg_button_set_text_color=
+- =lrg_button_get_corner_radius= / =lrg_button_set_corner_radius=
+- =lrg_button_get_is_hovered=, =lrg_button_get_is_pressed=
 
 ** Related
 :PROPERTIES:
 :CUSTOM_ID: related
 :END:
-- [[../index.md][UI Widgets Overview]]
+- [[file:../widget.org][LrgWidget]] (parts, states, springs)
+- [[file:../theme.org][Theme]] (colour roles, metrics, style rules)
+- [[file:label.org][Label]], [[file:checkbox.org][Checkbox]]

@@ -1,0 +1,90 @@
+* Overlay
+:PROPERTIES:
+:CUSTOM_ID: overlay
+:END:
+=LrgOverlay= is a z-stack container: every child is laid out in the same rectangle (the overlay's size minus its padding) and drawn on top of the children added before it. Where a child ends up inside that rectangle is decided by its own layout hints (=halign=, =valign=, =margin=, min/max size), so the same container builds badges, corner buttons, captions over images, HUD layers over a game view and loading spinners over content.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: overlay-creation
+:END:
+#+begin_src C
+LrgOverlay *overlay = lrg_overlay_new ();
+lrg_container_add_child (LRG_CONTAINER (overlay), LRG_WIDGET (image));   /* bottom layer, fills */
+lrg_container_add_child (LRG_CONTAINER (overlay), LRG_WIDGET (badge));   /* drawn on top */
+#+end_src
+
+** Layout
+:PROPERTIES:
+:CUSTOM_ID: overlay-layout
+:END:
+- Slot :: each visible child receives the full content rectangle and is placed with =lrg_widget_place_in_slot()=. A =FILL= child covers everything; a =START= / =CENTER= / =END= child keeps its preferred size on that axis and is pushed to that edge, inside its margin.
+- Preferred size :: the largest child's preferred size plus its margin, plus the overlay's padding on both sides.
+- Order :: children added later paint later and are hit-tested first, so the top layer receives clicks. Clicks on the empty area of a non-filling layer fall through to the layers below (only the child's own rectangle is hit).
+- Pass-through :: an overlay used as a full-screen HUD layer can be made click-through with =lrg_widget_set_pointer_transparent (overlay, TRUE)=: its children still receive input, empty areas reach whatever is under the overlay.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: overlay-properties
+:END:
+The overlay adds none. It uses the inherited =LrgContainer:padding=; =spacing= is ignored.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: overlay-parts
+:END:
+The overlay draws nothing itself and is not focusable. Its children draw with their own parts.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: overlay-keyboard
+:END:
+None of its own; focus navigation reaches the focusable children of every layer.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: overlay-theming
+:END:
+There is nothing to theme on the overlay; style its children. Example: a pill-shaped notification badge (a styled label with the =badge= class):
+#+begin_src yaml
+styles:
+  - widget: LrgLabel
+    class: badge
+    part: box
+    background: "#f87171"
+    radius: 9
+#+end_src
+
+** Example: a badge on an icon button
+:PROPERTIES:
+:CUSTOM_ID: overlay-example
+:END:
+#+begin_src C
+g_autoptr(LrgOverlay) overlay = lrg_overlay_new ();
+LrgButton *button = lrg_button_new ("Inbox");
+LrgLabel  *badge = lrg_label_new ("3");
+
+/* The badge hugs the top-right corner, nudged inwards */
+lrg_widget_set_halign (LRG_WIDGET (badge), LRG_ALIGN_END);
+lrg_widget_set_valign (LRG_WIDGET (badge), LRG_ALIGN_START);
+lrg_widget_set_margin_all (LRG_WIDGET (badge), 2.0f);
+lrg_widget_add_class (LRG_WIDGET (badge), "badge");
+
+lrg_container_add_child (LRG_CONTAINER (overlay), LRG_WIDGET (button));
+lrg_container_add_child (LRG_CONTAINER (overlay), LRG_WIDGET (badge));
+g_object_unref (button);
+g_object_unref (badge);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: overlay-api
+:END:
+- =lrg_overlay_new (void)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: overlay-related
+:END:
+- [[file:scroll-box.org][Scroll box]]
+- [[file:vbox.org][VBox]]

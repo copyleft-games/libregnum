@@ -133,6 +133,24 @@ const LrgTextSpan * lrg_rich_text_get_span              (LrgRichText *text,
                                                          guint        index);
 
 /**
+ * lrg_rich_text_get_span_effect:
+ * @text: A #LrgRichText
+ * @index: Span index
+ *
+ * Gets the animated effect of a span: the object lrg_rich_text_update()
+ * advances and lrg_rich_text_draw() applies. Widgets that lay out and
+ * draw the spans themselves (such as #LrgMarkdownLabel) use it to
+ * apply the same animation per glyph. Effects index characters from
+ * the start of their own span.
+ *
+ * Returns: (transfer none) (nullable): the span's effect, or %NULL when
+ *   the span has no effect or @index is out of range
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTextEffect *     lrg_rich_text_get_span_effect       (LrgRichText *text,
+                                                         guint        index);
+
+/**
  * lrg_rich_text_get_font_size:
  * @text: A #LrgRichText
  *

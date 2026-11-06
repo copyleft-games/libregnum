@@ -1,13 +1,18 @@
 /* lrg-widget.h
  *
- * Copyright 2025 Zach Podbielniak
+ * Copyright 2025-2026 Zach Podbielniak
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Abstract base class for UI widgets.
  *
- * Widgets are the building blocks of the UI system. They can be
- * positioned, sized, drawn, and respond to user input events.
+ * A widget has a rectangle relative to its parent, layout hints the
+ * parent reads (margin, alignment, fill weight, min/max size),
+ * interaction state flags, style classes, and two springs (hover and
+ * press) that cross-fade its looks between states. Widgets record
+ * their appearance into an #LrgPaintList through the paint() virtual
+ * method; the older draw() method, which draws immediately with
+ * graylib, keeps working for existing subclasses.
  */
 
 #pragma once
@@ -17,11 +22,79 @@
 #endif
 
 #include <glib-object.h>
+#include <gio/gio.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lrg-enums.h"
+#include "../paint/lrg-paint-list.h"
 #include "lrg-ui-event.h"
+#include "lrg-style.h"
+#include "lrg-theme.h"
 
 G_BEGIN_DECLS
+
+/* ==========================================================================
+ * LrgInsets
+ * ========================================================================== */
+
+#define LRG_TYPE_INSETS (lrg_insets_get_type ())
+
+/**
+ * LrgInsets:
+ * @left: space on the left
+ * @top: space on top
+ * @right: space on the right
+ * @bottom: space at the bottom
+ *
+ * Space around a widget, in canvas units.
+ */
+typedef struct
+{
+	gfloat left;
+	gfloat top;
+	gfloat right;
+	gfloat bottom;
+} LrgInsets;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_insets_get_type (void) G_GNUC_CONST;
+
+/**
+ * lrg_insets_new:
+ * @left: left
+ * @top: top
+ * @right: right
+ * @bottom: bottom
+ *
+ * Returns: (transfer full): a new #LrgInsets
+ */
+LRG_AVAILABLE_IN_ALL
+LrgInsets * lrg_insets_new (gfloat left,
+                            gfloat top,
+                            gfloat right,
+                            gfloat bottom);
+
+/**
+ * lrg_insets_copy:
+ * @self: an #LrgInsets
+ *
+ * Returns: (transfer full): a copy
+ */
+LRG_AVAILABLE_IN_ALL
+LrgInsets * lrg_insets_copy (const LrgInsets *self);
+
+/**
+ * lrg_insets_free:
+ * @self: (nullable): an #LrgInsets
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_insets_free (LrgInsets *self);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgInsets, lrg_insets_free)
+
+/* ==========================================================================
+ * LrgWidget
+ * ========================================================================== */
 
 #define LRG_TYPE_WIDGET (lrg_widget_get_type ())
 
@@ -31,64 +104,134 @@ G_DECLARE_DERIVABLE_TYPE (LrgWidget, lrg_widget, LRG, WIDGET, GObject)
 /**
  * LrgWidgetClass:
  * @parent_class: The parent class
- * @draw: Virtual method to draw the widget
- * @measure: Virtual method to calculate preferred size
- * @handle_event: Virtual method to handle input events
+ * @draw: Legacy immediate drawing with graylib
+ * @measure: Calculates the preferred size
+ * @handle_event: Handles an input event
+ * @paint: Records the widget into a paint list
+ * @style_defaults: Built-in look of a part in a state
+ * @arrange: Called after the widget's rectangle was assigned
+ * @step: Advances the widget's own animations
+ * @style_overrides: Explicit per-widget values that beat theme rules
  *
  * The class structure for #LrgWidget.
  *
- * Subclasses must override @draw to render themselves.
- * The @measure method should return the preferred size.
- * The @handle_event method should process input and return
- * %TRUE if the event was consumed.
+ * New widgets override @paint (and usually @style_defaults); widgets
+ * that only override @draw keep working and are drawn through a paint
+ * callback. @measure returns the preferred size without margins.
  */
 struct _LrgWidgetClass
 {
-    GObjectClass parent_class;
+	GObjectClass parent_class;
 
-    /* Virtual methods */
+	/**
+	 * LrgWidgetClass::draw:
+	 * @self: the widget
+	 *
+	 * Draws the widget immediately at its world position with graylib.
+	 * Superseded by @paint; the default implementation renders @paint
+	 * output on the spot so lrg_widget_draw() works for every widget.
+	 */
+	void     (*draw)           (LrgWidget *self);
 
-    /**
-     * LrgWidgetClass::draw:
-     * @self: the widget
-     *
-     * Draws the widget. Subclasses must override this method
-     * to render their visual content using graylib drawing functions.
-     *
-     * The widget should draw at its world position (use
-     * lrg_widget_get_world_x() and lrg_widget_get_world_y()).
-     */
-    void     (*draw)         (LrgWidget *self);
+	/**
+	 * LrgWidgetClass::measure:
+	 * @self: the widget
+	 * @preferred_width: (out): preferred width
+	 * @preferred_height: (out): preferred height
+	 *
+	 * Calculates the widget's preferred size, excluding its margin.
+	 */
+	void     (*measure)        (LrgWidget *self,
+	                            gfloat    *preferred_width,
+	                            gfloat    *preferred_height);
 
-    /**
-     * LrgWidgetClass::measure:
-     * @self: the widget
-     * @preferred_width: (out): location to store preferred width
-     * @preferred_height: (out): location to store preferred height
-     *
-     * Calculates the widget's preferred size. Containers use this
-     * during layout to determine how much space children need.
-     */
-    void     (*measure)      (LrgWidget *self,
-                              gfloat    *preferred_width,
-                              gfloat    *preferred_height);
+	/**
+	 * LrgWidgetClass::handle_event:
+	 * @self: the widget
+	 * @event: the UI event
+	 *
+	 * Handles an event. Return %TRUE to stop it bubbling to the parent.
+	 *
+	 * Returns: %TRUE if the event was consumed
+	 */
+	gboolean (*handle_event)   (LrgWidget        *self,
+	                            const LrgUIEvent *event);
 
-    /**
-     * LrgWidgetClass::handle_event:
-     * @self: the widget
-     * @event: the UI event to handle
-     *
-     * Handles a UI event. The widget should process the event
-     * and return %TRUE if it was consumed, %FALSE to let it
-     * propagate to the parent.
-     *
-     * Returns: %TRUE if the event was consumed
-     */
-    gboolean (*handle_event) (LrgWidget        *self,
-                              const LrgUIEvent *event);
+	/**
+	 * LrgWidgetClass::paint:
+	 * @self: the widget
+	 * @list: the paint list to record into
+	 *
+	 * Records the widget at its world position. Opacity, appear
+	 * animations and the focus ring are applied around this call by
+	 * lrg_widget_paint(); containers paint their children here.
+	 */
+	void     (*paint)          (LrgWidget    *self,
+	                            LrgPaintList *list);
 
-    /*< private >*/
-    gpointer _reserved[8];
+	/**
+	 * LrgWidgetClass::style_defaults:
+	 * @self: the widget
+	 * @part: the part being drawn
+	 * @state: the state to describe
+	 * @look: (inout): look to fill
+	 *
+	 * Fills the widget's built-in look of @part in @state from its
+	 * theme. Theme style rules are merged on top afterwards. Called by
+	 * lrg_widget_resolve_look() for the resting, hovered and pressed
+	 * variants of the current state.
+	 */
+	void     (*style_defaults) (LrgWidget      *self,
+	                            LrgUIPart       part,
+	                            LrgWidgetState  state,
+	                            LrgPartLook    *look);
+
+	/**
+	 * LrgWidgetClass::arrange:
+	 * @self: the widget
+	 *
+	 * Called when the widget's rectangle was assigned by its parent
+	 * (lrg_widget_allocate()) or it was marked for layout. Containers
+	 * position their children here; the default for #LrgContainer
+	 * runs its layout_children() method.
+	 */
+	void     (*arrange)        (LrgWidget *self);
+
+	/**
+	 * LrgWidgetClass::step:
+	 * @self: the widget
+	 * @delta_time: seconds since the last frame
+	 *
+	 * Advances springs and timers the widget owns itself (knobs,
+	 * indicators, scroll offsets, toast timers). Called by
+	 * lrg_widget_step() every frame, before painting, so animations
+	 * follow the canvas clock (deterministic in tests and replays) and
+	 * lrg_canvas_update() knows when anything is still moving.
+	 *
+	 * Returns: %TRUE while something is still animating
+	 */
+	gboolean (*step)           (LrgWidget *self,
+	                            gfloat     delta_time);
+
+	/**
+	 * LrgWidgetClass::style_overrides:
+	 * @self: the widget
+	 * @part: the part being drawn
+	 * @state: the state to describe
+	 * @look: (inout): look after defaults and theme rules
+	 *
+	 * Applies values the application set explicitly on this widget
+	 * (e.g. lrg_button_set_normal_color()). Runs after the theme's
+	 * style rules, so an explicit value always wins: the theme applies
+	 * unless the widget was told otherwise.
+	 */
+	void     (*style_overrides) (LrgWidget      *self,
+	                             LrgUIPart       part,
+	                             LrgWidgetState  state,
+	                             LrgPartLook    *look);
+
+	/*< private >*/
+	gpointer _reserved[3];
 };
 
 /* ==========================================================================
@@ -99,9 +242,7 @@ struct _LrgWidgetClass
  * lrg_widget_get_x:
  * @self: an #LrgWidget
  *
- * Gets the widget's X position relative to its parent.
- *
- * Returns: The X position
+ * Returns: The X position relative to the parent
  */
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_widget_get_x (LrgWidget *self);
@@ -109,9 +250,7 @@ gfloat lrg_widget_get_x (LrgWidget *self);
 /**
  * lrg_widget_set_x:
  * @self: an #LrgWidget
- * @x: the X position
- *
- * Sets the widget's X position relative to its parent.
+ * @x: the X position relative to the parent
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_set_x (LrgWidget *self,
@@ -121,9 +260,7 @@ void lrg_widget_set_x (LrgWidget *self,
  * lrg_widget_get_y:
  * @self: an #LrgWidget
  *
- * Gets the widget's Y position relative to its parent.
- *
- * Returns: The Y position
+ * Returns: The Y position relative to the parent
  */
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_widget_get_y (LrgWidget *self);
@@ -131,9 +268,7 @@ gfloat lrg_widget_get_y (LrgWidget *self);
 /**
  * lrg_widget_set_y:
  * @self: an #LrgWidget
- * @y: the Y position
- *
- * Sets the widget's Y position relative to its parent.
+ * @y: the Y position relative to the parent
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_set_y (LrgWidget *self,
@@ -142,8 +277,6 @@ void lrg_widget_set_y (LrgWidget *self,
 /**
  * lrg_widget_get_width:
  * @self: an #LrgWidget
- *
- * Gets the widget's width.
  *
  * Returns: The width
  */
@@ -155,7 +288,7 @@ gfloat lrg_widget_get_width (LrgWidget *self);
  * @self: an #LrgWidget
  * @width: the width
  *
- * Sets the widget's width.
+ * Sets the width. A container whose size changes is marked for layout.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_set_width (LrgWidget *self,
@@ -164,8 +297,6 @@ void lrg_widget_set_width (LrgWidget *self,
 /**
  * lrg_widget_get_height:
  * @self: an #LrgWidget
- *
- * Gets the widget's height.
  *
  * Returns: The height
  */
@@ -177,7 +308,7 @@ gfloat lrg_widget_get_height (LrgWidget *self);
  * @self: an #LrgWidget
  * @height: the height
  *
- * Sets the widget's height.
+ * Sets the height. A container whose size changes is marked for layout.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_set_height (LrgWidget *self,
@@ -209,6 +340,25 @@ void lrg_widget_set_size (LrgWidget *self,
                           gfloat     width,
                           gfloat     height);
 
+/**
+ * lrg_widget_allocate:
+ * @self: an #LrgWidget
+ * @x: X relative to the parent
+ * @y: Y relative to the parent
+ * @width: width
+ * @height: height
+ *
+ * Assigns the widget's rectangle and lays it out (containers position
+ * their children). Parents call this from their layout; it does the
+ * work of set_position() + set_size() + arrange() in one step.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_allocate (LrgWidget *self,
+                          gfloat     x,
+                          gfloat     y,
+                          gfloat     width,
+                          gfloat     height);
+
 /* ==========================================================================
  * World Coordinates
  * ========================================================================== */
@@ -217,10 +367,7 @@ void lrg_widget_set_size (LrgWidget *self,
  * lrg_widget_get_world_x:
  * @self: an #LrgWidget
  *
- * Gets the widget's absolute X position in world coordinates.
- * This accounts for all parent positions up the hierarchy.
- *
- * Returns: The absolute X position
+ * Returns: The absolute X position (all parent offsets added)
  */
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_widget_get_world_x (LrgWidget *self);
@@ -229,24 +376,18 @@ gfloat lrg_widget_get_world_x (LrgWidget *self);
  * lrg_widget_get_world_y:
  * @self: an #LrgWidget
  *
- * Gets the widget's absolute Y position in world coordinates.
- * This accounts for all parent positions up the hierarchy.
- *
- * Returns: The absolute Y position
+ * Returns: The absolute Y position (all parent offsets added)
  */
 LRG_AVAILABLE_IN_ALL
 gfloat lrg_widget_get_world_y (LrgWidget *self);
 
 /* ==========================================================================
- * State
+ * Visibility and sensitivity
  * ========================================================================== */
 
 /**
  * lrg_widget_get_visible:
  * @self: an #LrgWidget
- *
- * Gets whether the widget is visible.
- * Invisible widgets are not drawn.
  *
  * Returns: %TRUE if visible
  */
@@ -258,7 +399,8 @@ gboolean lrg_widget_get_visible (LrgWidget *self);
  * @self: an #LrgWidget
  * @visible: whether to show the widget
  *
- * Sets whether the widget is visible.
+ * Shows or hides the widget. Showing a widget with an appear
+ * animation plays it again.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_set_visible (LrgWidget *self,
@@ -268,10 +410,7 @@ void lrg_widget_set_visible (LrgWidget *self,
  * lrg_widget_get_enabled:
  * @self: an #LrgWidget
  *
- * Gets whether the widget is enabled.
- * Disabled widgets do not respond to input events.
- *
- * Returns: %TRUE if enabled
+ * Returns: %TRUE if the widget responds to input
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_widget_get_enabled (LrgWidget *self);
@@ -281,7 +420,8 @@ gboolean lrg_widget_get_enabled (LrgWidget *self);
  * @self: an #LrgWidget
  * @enabled: whether to enable the widget
  *
- * Sets whether the widget is enabled.
+ * Disabled widgets ignore input, cannot take focus and carry
+ * %LRG_WIDGET_STATE_DISABLED.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_set_enabled (LrgWidget *self,
@@ -295,12 +435,31 @@ void lrg_widget_set_enabled (LrgWidget *self,
  * lrg_widget_get_parent:
  * @self: an #LrgWidget
  *
- * Gets the parent container of this widget.
- *
  * Returns: (transfer none) (nullable): The parent #LrgContainer, or %NULL
  */
 LRG_AVAILABLE_IN_ALL
 LrgContainer * lrg_widget_get_parent (LrgWidget *self);
+
+/**
+ * lrg_widget_get_root:
+ * @self: an #LrgWidget
+ *
+ * Returns: (transfer none): the top-most ancestor (usually an #LrgCanvas),
+ *   or @self when it has no parent
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidget * lrg_widget_get_root (LrgWidget *self);
+
+/**
+ * lrg_widget_is_ancestor:
+ * @self: an #LrgWidget
+ * @ancestor: a possible ancestor
+ *
+ * Returns: %TRUE if @ancestor contains @self at any depth
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_is_ancestor (LrgWidget *self,
+                                 LrgWidget *ancestor);
 
 /* ==========================================================================
  * Hit Testing
@@ -312,14 +471,910 @@ LrgContainer * lrg_widget_get_parent (LrgWidget *self);
  * @x: the X coordinate in world space
  * @y: the Y coordinate in world space
  *
- * Checks if the given point is within the widget's bounds.
- *
  * Returns: %TRUE if the point is inside the widget
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_widget_contains_point (LrgWidget *self,
                                     gfloat     x,
                                     gfloat     y);
+
+/* ==========================================================================
+ * Layout hints
+ * ========================================================================== */
+
+/**
+ * lrg_widget_get_name:
+ * @self: an #LrgWidget
+ *
+ * Returns: (nullable): the widget's name
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_widget_get_name (LrgWidget *self);
+
+/**
+ * lrg_widget_set_name:
+ * @self: an #LrgWidget
+ * @name: (nullable): a name, used by lrg_widget_find() and the inspector
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_name (LrgWidget   *self,
+                          const gchar *name);
+
+/**
+ * lrg_widget_find:
+ * @self: an #LrgWidget
+ * @name: name to look for
+ *
+ * Searches @self and its descendants depth-first.
+ *
+ * Returns: (transfer none) (nullable): the first widget called @name
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidget * lrg_widget_find (LrgWidget   *self,
+                             const gchar *name);
+
+/**
+ * lrg_widget_get_margin:
+ * @self: an #LrgWidget
+ * @margin: (out caller-allocates): the margin
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_get_margin (LrgWidget *self,
+                            LrgInsets *margin);
+
+/**
+ * lrg_widget_set_margin:
+ * @self: an #LrgWidget
+ * @margin: space the parent leaves around the widget
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_margin (LrgWidget       *self,
+                            const LrgInsets *margin);
+
+/**
+ * lrg_widget_set_margin_all:
+ * @self: an #LrgWidget
+ * @margin: the same margin on every side
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_margin_all (LrgWidget *self,
+                                gfloat     margin);
+
+/**
+ * lrg_widget_get_halign:
+ * @self: an #LrgWidget
+ *
+ * Returns: horizontal alignment inside the parent's slot
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAlign lrg_widget_get_halign (LrgWidget *self);
+
+/**
+ * lrg_widget_set_halign:
+ * @self: an #LrgWidget
+ * @align: horizontal alignment (default %LRG_ALIGN_FILL)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_halign (LrgWidget *self,
+                            LrgAlign   align);
+
+/**
+ * lrg_widget_get_valign:
+ * @self: an #LrgWidget
+ *
+ * Returns: vertical alignment inside the parent's slot
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAlign lrg_widget_get_valign (LrgWidget *self);
+
+/**
+ * lrg_widget_set_valign:
+ * @self: an #LrgWidget
+ * @align: vertical alignment (default %LRG_ALIGN_FILL)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_valign (LrgWidget *self,
+                            LrgAlign   align);
+
+/**
+ * lrg_widget_get_fill_weight:
+ * @self: an #LrgWidget
+ *
+ * Returns: share of the parent box's spare space this widget takes
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_get_fill_weight (LrgWidget *self);
+
+/**
+ * lrg_widget_set_fill_weight:
+ * @self: an #LrgWidget
+ * @weight: 0 (default) keeps the preferred size along the box's axis;
+ *   positive weights split the leftover space in proportion
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_fill_weight (LrgWidget *self,
+                                 gfloat     weight);
+
+/**
+ * lrg_widget_set_min_size:
+ * @self: an #LrgWidget
+ * @width: minimum width, 0 for none
+ * @height: minimum height, 0 for none
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_min_size (LrgWidget *self,
+                              gfloat     width,
+                              gfloat     height);
+
+/**
+ * lrg_widget_set_max_size:
+ * @self: an #LrgWidget
+ * @width: maximum width, 0 for none
+ * @height: maximum height, 0 for none
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_max_size (LrgWidget *self,
+                              gfloat     width,
+                              gfloat     height);
+
+/**
+ * lrg_widget_get_min_size:
+ * @self: an #LrgWidget
+ * @width: (out) (optional): minimum width
+ * @height: (out) (optional): minimum height
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_get_min_size (LrgWidget *self,
+                              gfloat    *width,
+                              gfloat    *height);
+
+/**
+ * lrg_widget_get_max_size:
+ * @self: an #LrgWidget
+ * @width: (out) (optional): maximum width (0 = none)
+ * @height: (out) (optional): maximum height (0 = none)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_get_max_size (LrgWidget *self,
+                              gfloat    *width,
+                              gfloat    *height);
+
+/**
+ * lrg_widget_get_preferred_size:
+ * @self: an #LrgWidget
+ * @width: (out) (optional): preferred width clamped to min/max
+ * @height: (out) (optional): preferred height clamped to min/max
+ *
+ * The size layouts should give the widget: measure() clamped to the
+ * min and max size. The margin is not included.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_get_preferred_size (LrgWidget *self,
+                                    gfloat    *width,
+                                    gfloat    *height);
+
+/**
+ * lrg_widget_place_in_slot:
+ * @self: an #LrgWidget
+ * @x: slot left, relative to the parent
+ * @y: slot top
+ * @width: slot width
+ * @height: slot height
+ *
+ * Allocates the widget inside a slot its parent computed, honouring
+ * the widget's margin, alignment and min/max size. Container layouts
+ * call this for each child.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_place_in_slot (LrgWidget *self,
+                               gfloat     x,
+                               gfloat     y,
+                               gfloat     width,
+                               gfloat     height);
+
+/**
+ * lrg_widget_queue_layout:
+ * @self: an #LrgWidget
+ *
+ * Marks the widget and its ancestors as needing layout; the canvas
+ * lays them out before the next paint. Propagation stops at the first
+ * ancestor already marked. Call it when something that affects the
+ * preferred size changes (text, font, children).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_queue_layout (LrgWidget *self);
+
+/**
+ * lrg_widget_get_needs_layout:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if the widget is waiting for layout
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_needs_layout (LrgWidget *self);
+
+/**
+ * lrg_widget_layout:
+ * @self: an #LrgWidget
+ *
+ * Lays out @self and any marked descendants now, skipping subtrees
+ * that are clean. The canvas calls this every frame.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_layout (LrgWidget *self);
+
+/* ==========================================================================
+ * Opacity, appearance, theme
+ * ========================================================================== */
+
+/**
+ * lrg_widget_get_opacity:
+ * @self: an #LrgWidget
+ *
+ * Returns: the widget's opacity (0..1)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_get_opacity (LrgWidget *self);
+
+/**
+ * lrg_widget_set_opacity:
+ * @self: an #LrgWidget
+ * @opacity: 0..1, applied to the widget and its children
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_opacity (LrgWidget *self,
+                             gfloat     opacity);
+
+/**
+ * lrg_widget_get_animate_layout:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if position changes from layout glide on a spring
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_animate_layout (LrgWidget *self);
+
+/**
+ * lrg_widget_set_animate_layout:
+ * @self: an #LrgWidget
+ * @animate: glide to new positions instead of jumping
+ *
+ * With layout animation on, when a re-layout moves the widget (a list
+ * reorders, a panel is inserted above it, the window resizes) it is
+ * painted gliding from its old position to the new one with the
+ * widget's motion spring. Hit-testing uses the new position straight
+ * away, like appear animations. The first placement never animates.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_animate_layout (LrgWidget *self,
+                                    gboolean   animate);
+
+/**
+ * lrg_widget_get_appear:
+ * @self: an #LrgWidget
+ *
+ * Returns: the entrance animation
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAppear lrg_widget_get_appear (LrgWidget *self);
+
+/**
+ * lrg_widget_set_appear:
+ * @self: an #LrgWidget
+ * @appear: entrance animation played the first time the widget is
+ *   painted and whenever it is shown again
+ * @delay: seconds to wait before starting; stagger siblings for a
+ *   cascade
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_appear (LrgWidget *self,
+                            LrgAppear  appear,
+                            gfloat     delay);
+
+/**
+ * lrg_widget_play_appear:
+ * @self: an #LrgWidget
+ *
+ * Restarts the entrance animation now.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_play_appear (LrgWidget *self);
+
+/**
+ * lrg_widget_get_appear_progress:
+ * @self: an #LrgWidget
+ *
+ * Returns: 0 before the entrance animation starts, 1 once it has
+ *   finished (can overshoot 1 briefly with bouncy motion)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_get_appear_progress (LrgWidget *self);
+
+/**
+ * lrg_widget_get_theme:
+ * @self: an #LrgWidget
+ *
+ * The theme the widget draws with: its own (see lrg_widget_set_theme()),
+ * else the nearest ancestor's, else the default theme.
+ *
+ * Returns: (transfer none): the effective theme
+ */
+LRG_AVAILABLE_IN_ALL
+LrgTheme * lrg_widget_get_theme (LrgWidget *self);
+
+/**
+ * lrg_widget_set_theme:
+ * @self: an #LrgWidget
+ * @theme: (nullable): a theme for this widget and its subtree, or
+ *   %NULL to inherit
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_theme (LrgWidget *self,
+                           LrgTheme  *theme);
+
+/**
+ * lrg_widget_get_motion:
+ * @self: an #LrgWidget
+ *
+ * Returns: the spring preset for this widget's transitions: its own
+ *   override, else the theme's
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMotion lrg_widget_get_motion (LrgWidget *self);
+
+/**
+ * lrg_widget_set_motion:
+ * @self: an #LrgWidget
+ * @motion: a preset, or -1 to follow the theme
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_motion (LrgWidget *self,
+                            gint       motion);
+
+/* ==========================================================================
+ * Style classes and state
+ * ========================================================================== */
+
+/**
+ * lrg_widget_add_class:
+ * @self: an #LrgWidget
+ * @style_class: a class name such as "primary" or "flat"
+ *
+ * Adds a style class; theme rules can target it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_add_class (LrgWidget   *self,
+                           const gchar *style_class);
+
+/**
+ * lrg_widget_remove_class:
+ * @self: an #LrgWidget
+ * @style_class: a class name
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_remove_class (LrgWidget   *self,
+                              const gchar *style_class);
+
+/**
+ * lrg_widget_has_class:
+ * @self: an #LrgWidget
+ * @style_class: a class name
+ *
+ * Returns: %TRUE if the widget carries @style_class
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_has_class (LrgWidget   *self,
+                               const gchar *style_class);
+
+/**
+ * lrg_widget_get_classes:
+ * @self: an #LrgWidget
+ * @n_classes: (out): number of classes
+ *
+ * Returns: (array length=n_classes) (element-type GQuark): the classes as
+ *   quarks, owned by the widget
+ */
+LRG_AVAILABLE_IN_ALL
+const GQuark * lrg_widget_get_classes (LrgWidget *self,
+                                       guint     *n_classes);
+
+/**
+ * lrg_widget_get_state_flags:
+ * @self: an #LrgWidget
+ *
+ * Returns: the current state flags
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidgetState lrg_widget_get_state_flags (LrgWidget *self);
+
+/**
+ * lrg_widget_set_state_flags:
+ * @self: an #LrgWidget
+ * @flags: flags to turn on
+ *
+ * Turns on state flags; emits #LrgWidget::state-changed when that
+ * changes anything. The canvas manages HOVERED, PRESSED, FOCUSED and
+ * FOCUS_VISIBLE; widgets manage CHECKED, SELECTED and OPEN.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_state_flags (LrgWidget      *self,
+                                 LrgWidgetState  flags);
+
+/**
+ * lrg_widget_unset_state_flags:
+ * @self: an #LrgWidget
+ * @flags: flags to turn off
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_unset_state_flags (LrgWidget      *self,
+                                   LrgWidgetState  flags);
+
+/**
+ * lrg_widget_get_focusable:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if the widget can take keyboard / gamepad focus
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_focusable (LrgWidget *self);
+
+/**
+ * lrg_widget_set_focusable:
+ * @self: an #LrgWidget
+ * @focusable: whether Tab, gamepad navigation and clicks can focus it
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_focusable (LrgWidget *self,
+                               gboolean   focusable);
+
+/**
+ * lrg_widget_get_pointer_transparent:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if pointer hit-testing passes through the widget
+ *   itself (its children can still be hit)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_pointer_transparent (LrgWidget *self);
+
+/**
+ * lrg_widget_set_pointer_transparent:
+ * @self: an #LrgWidget
+ * @transparent: let clicks on empty areas of the widget reach what is
+ *   underneath; used by full-screen layers such as toast queues and
+ *   overlays
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_pointer_transparent (LrgWidget *self,
+                                         gboolean   transparent);
+
+/**
+ * lrg_widget_get_hover_progress:
+ * @self: an #LrgWidget
+ *
+ * Returns: the hover spring, 0 (resting) to 1 (hovered)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_get_hover_progress (LrgWidget *self);
+
+/**
+ * lrg_widget_get_press_progress:
+ * @self: an #LrgWidget
+ *
+ * Returns: the press spring, 0 (released) to 1 (pressed)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_get_press_progress (LrgWidget *self);
+
+/**
+ * lrg_widget_step:
+ * @self: an #LrgWidget
+ * @delta_time: seconds since the last frame
+ *
+ * Advances the widget's springs and appear animation, and those of
+ * its descendants. The canvas calls this every frame.
+ *
+ * Returns: %TRUE if anything is still animating
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_step (LrgWidget *self,
+                          gfloat     delta_time);
+
+/* ==========================================================================
+ * Looks
+ * ========================================================================== */
+
+/**
+ * lrg_widget_resolve_look:
+ * @self: an #LrgWidget
+ * @part: the part to draw
+ * @look: (out caller-allocates): the look to draw it with
+ *
+ * The look of @part right now: built-in defaults and theme rules for
+ * the resting, hovered and pressed variants of the widget's state,
+ * blended by its hover and press springs. This is what makes colours,
+ * shadows and sizes glide between states.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_resolve_look (LrgWidget   *self,
+                              LrgUIPart    part,
+                              LrgPartLook *look);
+
+/**
+ * lrg_widget_resolve_look_for_state:
+ * @self: an #LrgWidget
+ * @part: the part to draw
+ * @state: the state to describe
+ * @look: (out caller-allocates): defaults plus matching theme rules
+ *
+ * The look of @part in one exact state, without spring blending.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_resolve_look_for_state (LrgWidget      *self,
+                                        LrgUIPart       part,
+                                        LrgWidgetState  state,
+                                        LrgPartLook    *look);
+
+/**
+ * lrg_widget_set_part_look:
+ * @self: an #LrgWidget
+ * @part: the part to override
+ * @state: states that must all be active for the override to apply;
+ *   %LRG_WIDGET_STATE_NONE applies in every state
+ * @look: (nullable): the fields to force (only the fields marked in
+ *   its set mask are used), or %NULL to remove this override
+ *
+ * Overrides the look of one part of this widget instance. Overrides
+ * are applied last, after the widget's defaults, the theme's style
+ * rules and the widget's own explicit setters, so they always win.
+ * Several overrides for one part merge from the least to the most
+ * specific state, like style rules. Hover and press still blend
+ * between the resolved looks.
+ *
+ * |[<!-- language="C" -->
+ * LrgPartLook look;
+ *
+ * lrg_part_look_init (&look);
+ * lrg_part_look_set_background (&look, &gold);
+ * lrg_widget_set_part_look (button, LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+ * ]|
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_part_look (LrgWidget         *self,
+                               LrgUIPart          part,
+                               LrgWidgetState     state,
+                               const LrgPartLook *look);
+
+/**
+ * lrg_widget_get_part_look:
+ * @self: an #LrgWidget
+ * @part: a part
+ * @state: the exact state the override was set for
+ *
+ * Returns: (transfer none) (nullable): the override set with
+ *   lrg_widget_set_part_look() for exactly (@part, @state), or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+const LrgPartLook * lrg_widget_get_part_look (LrgWidget      *self,
+                                              LrgUIPart       part,
+                                              LrgWidgetState  state);
+
+/**
+ * lrg_widget_clear_part_looks:
+ * @self: an #LrgWidget
+ *
+ * Removes every override set with lrg_widget_set_part_look().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_clear_part_looks (LrgWidget *self);
+
+/**
+ * lrg_widget_paint_box:
+ * @self: an #LrgWidget
+ * @list: a paint list
+ * @look: a resolved look
+ * @x: left edge
+ * @y: top edge
+ * @width: width
+ * @height: height
+ *
+ * Draws the standard surface for a look: glow, drop shadow, fill or
+ * gradient and border, honouring the look's opacity.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_paint_box (LrgWidget         *self,
+                           LrgPaintList      *list,
+                           const LrgPartLook *look,
+                           gfloat             x,
+                           gfloat             y,
+                           gfloat             width,
+                           gfloat             height);
+
+/* ==========================================================================
+ * Actions
+ * ========================================================================== */
+
+/**
+ * lrg_widget_insert_action_group:
+ * @self: an #LrgWidget
+ * @prefix: the prefix the group's actions are addressed with, e.g.
+ *   "game" for "game.pause"
+ * @group: (nullable): the actions, or %NULL to remove the group
+ *   installed under @prefix
+ *
+ * Makes @group's actions reachable from @self and its descendants as
+ * "@prefix.name" (lrg_widget_activate_action()). A group on a widget
+ * shadows a group with the same prefix on an ancestor; the canvas is
+ * the root of the scope and carries the built-in "app" and "ui"
+ * groups. The widget keeps a reference to @group.
+ *
+ * |[<!-- language="C" -->
+ * g_autoptr(GSimpleActionGroup) game = g_simple_action_group_new ();
+ *
+ * g_action_map_add_action_entries (G_ACTION_MAP (game), entries,
+ *                                  G_N_ELEMENTS (entries), state);
+ * lrg_widget_insert_action_group (LRG_WIDGET (canvas), "game",
+ *                                 G_ACTION_GROUP (game));
+ * ]|
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_insert_action_group (LrgWidget    *self,
+                                     const gchar  *prefix,
+                                     GActionGroup *group);
+
+/**
+ * lrg_widget_get_action_group:
+ * @self: an #LrgWidget
+ * @prefix: a prefix
+ *
+ * Returns: (transfer none) (nullable): the group inserted on @self
+ *   itself under @prefix (ancestors are not searched)
+ */
+LRG_AVAILABLE_IN_ALL
+GActionGroup * lrg_widget_get_action_group (LrgWidget   *self,
+                                            const gchar *prefix);
+
+/**
+ * lrg_widget_find_action_group:
+ * @self: an #LrgWidget
+ * @prefix: a prefix
+ *
+ * Resolves @prefix the way lrg_widget_activate_action() does: @self,
+ * then each ancestor up to the canvas. Popups and overlays shown on a
+ * canvas resolve through the canvas.
+ *
+ * Returns: (transfer none) (nullable): the nearest group for @prefix
+ */
+LRG_AVAILABLE_IN_ALL
+GActionGroup * lrg_widget_find_action_group (LrgWidget   *self,
+                                             const gchar *prefix);
+
+/**
+ * lrg_widget_list_action_prefixes:
+ * @self: an #LrgWidget
+ *
+ * Every prefix reachable from @self (its own groups and its
+ * ancestors'), nearest first and without duplicates.
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the prefixes;
+ *   free with g_strfreev()
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_widget_list_action_prefixes (LrgWidget *self);
+
+/**
+ * lrg_widget_lookup_action:
+ * @self: an #LrgWidget
+ * @name: an action name, "prefix.action"
+ *
+ * Finds the action @name resolves to from @self. Only groups that are
+ * also a #GActionMap (such as #GSimpleActionGroup) can hand out the
+ * #GAction; use lrg_widget_find_action_group() for other groups.
+ * Menus use it to read an action's enabled flag and state (a boolean
+ * state is a check mark, a string state a radio choice).
+ *
+ * Returns: (transfer none) (nullable): the action, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+GAction * lrg_widget_lookup_action (LrgWidget   *self,
+                                    const gchar *name);
+
+/**
+ * lrg_widget_activate_action:
+ * @self: an #LrgWidget
+ * @name: "prefix.action"
+ * @parameter: (nullable): the parameter; must match the action's
+ *   parameter type (a floating reference is consumed)
+ *
+ * Activates the action @name resolves to from @self (see
+ * lrg_widget_insert_action_group()). Nothing happens, and %FALSE is
+ * returned, when no group provides the action, the action is
+ * disabled or @parameter does not match its parameter type.
+ *
+ * Returns: %TRUE if an action was activated
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_activate_action (LrgWidget   *self,
+                                     const gchar *name,
+                                     GVariant    *parameter);
+
+/* ==========================================================================
+ * Layout direction
+ * ========================================================================== */
+
+/**
+ * lrg_widget_get_direction:
+ * @self: an #LrgWidget
+ *
+ * Returns: the direction set on @self itself (may be
+ *   %LRG_WIDGET_DIRECTION_INHERIT)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidgetDirection lrg_widget_get_direction (LrgWidget *self);
+
+/**
+ * lrg_widget_set_direction:
+ * @self: an #LrgWidget
+ * @direction: %LRG_WIDGET_DIRECTION_LTR, %LRG_WIDGET_DIRECTION_RTL, or
+ *   %LRG_WIDGET_DIRECTION_INHERIT (the default) to follow the parent
+ *
+ * Sets the layout direction of @self and every descendant that
+ * inherits. In right-to-left, containers mirror the positions of their
+ * children horizontally (so the first child of an #LrgHBox is on the
+ * right and %LRG_ALIGN_START means the right edge) and labels align
+ * their text to the right. The subtree is laid out again.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_direction (LrgWidget          *self,
+                               LrgWidgetDirection  direction);
+
+/**
+ * lrg_widget_get_effective_direction:
+ * @self: an #LrgWidget
+ *
+ * The direction @self lays out with: its own, else the nearest
+ * ancestor's, else the canvas default
+ * (lrg_canvas_set_default_direction()), else left-to-right.
+ *
+ * Returns: %LRG_WIDGET_DIRECTION_LTR or %LRG_WIDGET_DIRECTION_RTL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidgetDirection lrg_widget_get_effective_direction (LrgWidget *self);
+
+/**
+ * lrg_widget_is_rtl:
+ * @self: an #LrgWidget
+ *
+ * Shorthand for comparing lrg_widget_get_effective_direction() with
+ * %LRG_WIDGET_DIRECTION_RTL.
+ *
+ * Returns: %TRUE if @self lays out right to left
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_is_rtl (LrgWidget *self);
+
+/**
+ * lrg_widget_class_set_handles_direction:
+ * @klass: a widget class
+ * @handles_direction: %TRUE if the class mirrors its own children in
+ *   right-to-left
+ *
+ * By default, when a container's effective direction is
+ * right-to-left, lrg_widget_allocate() mirrors each child's rectangle
+ * inside the container (x becomes width - x - child width), so every
+ * layout written left-to-right comes out mirrored. Classes that place
+ * children at positions with a meaning of their own (scroll offsets,
+ * graph or timeline coordinates, popups) or that mirror themselves call
+ * this from class_init to opt out. Subclasses inherit the setting.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_class_set_handles_direction (LrgWidgetClass *klass,
+                                             gboolean        handles_direction);
+
+/**
+ * lrg_widget_class_get_handles_direction:
+ * @klass: a widget class
+ *
+ * Returns: %TRUE if @klass (or a parent class) opted out of automatic
+ *   mirroring
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_class_get_handles_direction (LrgWidgetClass *klass);
+
+/**
+ * lrg_widget_class_set_accepts_tab:
+ * @klass: a widget class
+ * @accepts_tab: %TRUE if instances want Tab / Shift+Tab by default
+ *
+ * Sets the class default of #LrgWidget:accepts-tab. Text editors and
+ * other widgets that insert tabs or indent call this from class_init;
+ * subclasses inherit the setting. A widget that accepts Tab still lets
+ * focus move by returning %FALSE for it (e.g. when read-only), and
+ * Ctrl+Tab always moves focus.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_class_set_accepts_tab (LrgWidgetClass *klass,
+                                       gboolean        accepts_tab);
+
+/**
+ * lrg_widget_class_get_accepts_tab:
+ * @klass: a widget class
+ *
+ * Returns: the class default of #LrgWidget:accepts-tab
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_class_get_accepts_tab (LrgWidgetClass *klass);
+
+/**
+ * lrg_widget_get_accepts_tab:
+ * @self: an #LrgWidget
+ *
+ * Returns: %TRUE if Tab and Shift+Tab are offered to @self as
+ *   %LRG_UI_EVENT_KEY_DOWN before they move focus (the instance value
+ *   if set, else the class default)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_widget_get_accepts_tab (LrgWidget *self);
+
+/**
+ * lrg_widget_set_accepts_tab:
+ * @self: an #LrgWidget
+ * @accepts_tab: offer Tab / Shift+Tab to @self while it has focus
+ *
+ * Overrides the class default for this instance. While @self has
+ * focus, Tab and Shift+Tab reach it as %LRG_UI_EVENT_KEY_DOWN
+ * (%GRL_KEY_TAB, Shift in the modifiers); focus moves only when it
+ * returns %FALSE. Ctrl+Tab always moves focus.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_accepts_tab (LrgWidget *self,
+                                 gboolean   accepts_tab);
+
+/**
+ * lrg_widget_get_context_menu:
+ * @self: an #LrgWidget
+ *
+ * Returns: (transfer none) (nullable): the context menu model
+ */
+LRG_AVAILABLE_IN_ALL
+GMenuModel * lrg_widget_get_context_menu (LrgWidget *self);
+
+/**
+ * lrg_widget_set_context_menu:
+ * @self: an #LrgWidget
+ * @model: (nullable): a #GMenuModel, or %NULL for none
+ *
+ * Gives @self a context menu, GTK style. When a right click on @self
+ * or one of its descendants is not handled by any widget on the way
+ * up, or Shift+F10 / the Menu key is pressed while @self or a
+ * descendant has focus and nothing handles it, the canvas opens an
+ * #LrgMenu built from @model: at the pointer for a click, below the
+ * focused widget for the keyboard (first row highlighted). Actions in
+ * the model are looked up from @self, so groups inserted on @self or
+ * its ancestors apply. The nearest ancestor with a context menu wins.
+ * Press-drag-release works without any code in the widget: the
+ * captured pointer follows the menu while it is over it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_set_context_menu (LrgWidget  *self,
+                                  GMenuModel *model);
+
+/**
+ * lrg_widget_mirror_x:
+ * @self: an #LrgWidget
+ * @x: a world X coordinate inside @self
+ * @width: the width of the span starting at @x
+ *
+ * Helper for widgets that paint direction-dependent content
+ * themselves: in right-to-left, returns the left edge of the span
+ * mirrored inside @self's rectangle; in left-to-right, returns @x.
+ *
+ * Returns: the left edge to paint the span at
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_widget_mirror_x (LrgWidget *self,
+                            gfloat     x,
+                            gfloat     width);
 
 /* ==========================================================================
  * Virtual Method Wrappers
@@ -329,11 +1384,24 @@ gboolean lrg_widget_contains_point (LrgWidget *self,
  * lrg_widget_draw:
  * @self: an #LrgWidget
  *
- * Draws the widget by calling the virtual draw() method.
- * Only draws if the widget is visible.
+ * Draws the widget immediately (legacy path). Only draws if visible.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_draw (LrgWidget *self);
+
+/**
+ * lrg_widget_paint:
+ * @self: an #LrgWidget
+ * @list: the paint list
+ *
+ * Records the widget: applies opacity and the appear animation, calls
+ * the paint() virtual method (or the legacy draw() through a
+ * callback), and adds the focus ring when focus is visible. Does
+ * nothing for invisible widgets.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_widget_paint (LrgWidget    *self,
+                       LrgPaintList *list);
 
 /**
  * lrg_widget_measure:
@@ -341,8 +1409,7 @@ void lrg_widget_draw (LrgWidget *self);
  * @preferred_width: (out): location to store preferred width
  * @preferred_height: (out): location to store preferred height
  *
- * Calculates the widget's preferred size by calling the
- * virtual measure() method.
+ * Calls the measure() virtual method.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_widget_measure (LrgWidget *self,
@@ -354,8 +1421,7 @@ void lrg_widget_measure (LrgWidget *self,
  * @self: an #LrgWidget
  * @event: the UI event to handle
  *
- * Handles a UI event by calling the virtual handle_event() method.
- * Only processes events if the widget is visible and enabled.
+ * Calls handle_event() if the widget is visible and enabled.
  *
  * Returns: %TRUE if the event was consumed
  */

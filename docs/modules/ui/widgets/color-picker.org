@@ -1,0 +1,204 @@
+* Color Picker Widget
+:PROPERTIES:
+:CUSTOM_ID: color-picker-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: color-picker-overview
+:END:
+=LrgColorPicker= edits a =GrlColor= (alpha included). The full picker is a card holding, top to bottom:
+
+- A saturation / value square: saturation grows left to right, value (brightness) top to bottom. It is drawn as two SDF gradient rectangles: white to the pure hue (left to right), then transparent to black (top to bottom).
+- A hue strip: six gradient segments through red, yellow, green, cyan, blue, magenta and back to red.
+- An alpha strip (=show-alpha=, on by default): a checkerboard under a transparent-to-colour gradient.
+- A preview swatch next to a hex text field (an internal =LrgTextInput=).
+- Swatch rows: a configurable palette (12 colours by default) and, below it, up to =LRG_COLOR_PICKER_MAX_RECENT= (8) recent colours.
+
+Each of the square and the strips is an internal focusable child (=LrgColorArea=) with a white ring knob. The knobs follow the colour on springs (snappy motion), so keyboard nudges, hex edits and swatch clicks glide; the knob grows under the pointer and while dragged. The colour is kept as HSV plus alpha internally, so the hue survives greys and the square never jumps to red when the value reaches black.
+
+With =popup-mode= set the picker becomes a compact button showing the colour and a chevron; clicking it (or Enter / Space / gamepad A) opens a full picker in a canvas popup below it. Changes in the popup are mirrored into the button as they happen; when the popup closes the final colour is added to the recent row.
+
+The picker is an =LrgContainer= (its children are internal). It must live on an =LrgCanvas= for popup mode.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: color-picker-creation
+:END:
+#+begin_src C
+LrgColorPicker *picker = lrg_color_picker_new ();
+GrlColor        tint = { 230, 90, 40, 255 };
+
+lrg_color_picker_set_color (picker, &tint);
+g_signal_connect (picker, "color-changed", G_CALLBACK (on_tint_changed), sprite);
+lrg_container_add_child (LRG_CONTAINER (panel), LRG_WIDGET (picker));
+
+/* Compact: a swatch button that opens the picker in a popup */
+LrgColorPicker *button = lrg_color_picker_new ();
+
+lrg_color_picker_set_popup_mode (button, TRUE);
+lrg_color_picker_set_show_alpha (button, FALSE);
+#+end_src
+
+Preferred size: =CONTROL_HEIGHT= × 7.5 wide; the height follows the rows (the square is two thirds as tall as it is wide). In popup mode it is =CONTROL_HEIGHT= tall and about 1.6 × =CONTROL_HEIGHT= wide. Widen the picker and the square widens with it; it grows taller only as far as the allocated height allows (layout measures the picker at its preferred width, so in a box that stretches it sideways the square stays at the measured height rather than spilling over what lies below, never shorter than 40 units).
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: color-picker-properties
+:END:
+| Property     | Type       | Default | Notes                                                                                     |
+|--------------+------------+---------+-------------------------------------------------------------------------------------------|
+| =color=      | =GrlColor= | white   | The current colour; greys keep the previous hue                                           |
+| =show-alpha= | boolean    | =TRUE=  | Shows the alpha strip; the hex field reads and accepts 8 digits (6 when off)              |
+| =popup-mode= | boolean    | =FALSE= | Compact swatch button that opens the full picker in a popup                               |
+| =popup-open= | boolean    | =FALSE= | Read-only: the popup picker is showing                                                    |
+
+Other state is set through functions: =lrg_color_picker_set_hsv()= / =get_hsv()=, =set_alpha()= / =get_alpha()=, =set_hex()= / =get_hex()=, =set_palette()= / =get_palette()=, =add_recent()= / =get_recent()= / =clear_recent()=.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: color-picker-signals
+:END:
+| Signal          | Arguments | Emitted when                                                                                  |
+|-----------------+-----------+-----------------------------------------------------------------------------------------------|
+| =color-changed= | none      | The 8-bit colour changed: while dragging, on keys, hex typing, swatch clicks, or from code    |
+
+Moving the hue while the colour is grey (saturation 0) changes the square but not the colour, so no signal is emitted until the colour itself changes. =notify::color= is emitted together with the signal.
+
+** Colour helpers
+:PROPERTIES:
+:CUSTOM_ID: color-picker-helpers
+:END:
+- =lrg_color_picker_rgb_to_hsv (color, &h, &s, &v)= converts 8-bit RGB to hue 0..360 (0 for greys), saturation and value 0..1.
+- =lrg_color_picker_hsv_to_rgb (h, s, v, alpha, &color)= converts back, wrapping the hue and rounding to 8 bits. Converting any 8-bit colour there and back gives the same colour.
+- =lrg_color_picker_get_hex()= returns =#RRGGBB= or =#RRGGBBAA= (with =show-alpha=); =lrg_color_picker_set_hex()= accepts =#RGB=, =#RGBA=, =#RRGGBB= and =#RRGGBBAA= (the =#= is optional) and keeps the current alpha for the forms without one.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: color-picker-parts
+:END:
+| Widget           | Part     | Default look                                                                          | State changes                                                                 |
+|------------------+----------+---------------------------------------------------------------------------------------+-------------------------------------------------------------------------------|
+| =LrgColorPicker= | =box=    | Full: =SURFACE= card, =BORDER= hairline, =POPUP_RADIUS=, half-strength shadow         | =disabled= → opacity 0.45                                                     |
+| =LrgColorPicker= | =box=    | Popup mode: =CONTROL= button, =BORDER= hairline, =CORNER_RADIUS=                      | =hovered= / =open= → =CONTROL_HOVER=; =pressed= → =CONTROL_PRESSED=; =open= → =ACCENT= border |
+| =LrgColorPicker= | =popup=  | The picker inside the popup: =POPUP= fill, =BORDER=, =POPUP_RADIUS=, full =SHADOW=    |                                                                               |
+| =LrgColorPicker= | =item=   | Swatch ring: none (a faint =BORDER= hairline always outlines swatches)                | =hovered= → =TEXT_MUTED= ring; =selected= (the current colour) → =ACCENT= 2 px ring |
+| =LrgColorPicker= | =arrow=  | Popup-mode chevron, =TEXT_MUTED=                                                      | =hovered= → =TEXT=; =open= → =ACCENT=, flipped                                |
+| =LrgColorArea=   | =track=  | Frame of the square / strips: =BORDER= hairline (80 % alpha); square =CORNER_RADIUS=, strips pills | =disabled= → opacity 0.45                                                     |
+| =LrgColorArea=   | =thumb=  | Knob: white 2.5 px ring (=border=), radius in =size= (square: 0.42 × =HANDLE_SIZE=; strips: half the strip + 2), =SHADOW= blur 6 | =hovered= → +1.5 px; =pressed= → +2.5 px, 3 px ring, blur 10                 |
+| =LrgColorArea=   | =focus=  | The standard focus ring around the focused square or strip                            | after keyboard / gamepad navigation                                           |
+
+The knob's fill is always the colour under it (the colour, the pure hue, or the colour with its alpha over a checkerboard).
+
+** Keyboard, mouse and gamepad
+:PROPERTIES:
+:CUSTOM_ID: color-picker-keyboard
+:END:
+| Where             | Input                                  | Effect                                                                  |
+|-------------------+----------------------------------------+-------------------------------------------------------------------------|
+| Square            | press / drag                           | Saturation and value under the pointer (clamped past the edges)         |
+| Square, focused   | Left / Right                           | Saturation −/+ 0.01 (Shift: 0.1)                                        |
+| Square, focused   | Up / Down                              | Value +/− 0.01 (Shift: 0.1)                                             |
+| Hue strip         | press / drag                           | Hue under the pointer (the ends are inset by half the strip height)     |
+| Hue strip, focused | Left / Right, Home / End              | Hue −/+ 1° (Shift: 10°), clamped to 0..360; 0° / 360°                    |
+| Alpha strip       | press / drag                           | Alpha under the pointer                                                 |
+| Alpha strip, focused | Left / Right, Home / End            | Alpha −/+ 0.01 (Shift: 0.1); 0 / 1                                      |
+| Hex field         | typing                                 | Complete 6 (or 8) digit values apply live                               |
+| Hex field         | Enter                                  | Any valid form applies; the field is rewritten in canonical form        |
+| Swatch            | click                                  | Picks it (a palette swatch also goes to the recent row)                 |
+| Popup mode        | click, Enter / Space / gamepad A       | Open (focus on the square, with a ring from the keyboard) / close       |
+| Popup open        | Escape / gamepad B, click outside      | Close; focus returns to the button                                      |
+
+Tab and the gamepad move between the square, the strips and the hex field. The square uses all four arrows; the strips use only Left / Right, so Up / Down move focus away from them. Ending a drag, entering a hex value with Enter and clicking a palette swatch add the colour to the recent row.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: color-picker-theming
+:END:
+#+begin_src yaml
+styles:
+  # Square corners on the gradient areas, a chunkier knob
+  - widget: LrgColorArea
+    part: track
+    radius: 0
+  - widget: LrgColorArea
+    part: thumb
+    size: 10
+    border: "#ffffff"
+    border-width: 3
+  # Round swatches with an accent ring on hover
+  - widget: LrgColorPicker
+    part: item
+    radius: 999
+  - widget: LrgColorPicker
+    part: item
+    state: hovered
+    border: "#7c6cff"
+#+end_src
+
+The popup picker copies the button's style classes, so rules written for a class apply in both.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: color-picker-example
+:END:
+#+begin_src C
+static void
+on_paint_changed (LrgColorPicker *picker,
+                  gpointer        user_data)
+{
+	Brush    *brush = user_data;
+	GrlColor   c;
+
+	lrg_color_picker_get_color (picker, &c);
+	brush_set_tint (brush, &c);
+}
+
+static LrgWidget *
+build_brush_color (Brush *brush)
+{
+	static const GrlColor team[] = {
+		{ 220, 38, 38, 255 }, { 37, 99, 235, 255 }, { 22, 163, 74, 255 }, { 234, 179, 8, 255 }
+	};
+	LrgColorPicker *picker = lrg_color_picker_new ();
+
+	lrg_color_picker_set_palette (picker, team, G_N_ELEMENTS (team));
+	lrg_color_picker_set_popup_mode (picker, TRUE);
+	g_signal_connect (picker, "color-changed", G_CALLBACK (on_paint_changed), brush);
+	return LRG_WIDGET (picker);
+}
+#+end_src
+
+** Testing helpers
+:PROPERTIES:
+:CUSTOM_ID: color-picker-testing
+:END:
+- =lrg_color_picker_get_area_bounds (picker, area, &rect)= gives an =LrgColorPickerArea= (=SV=, =HUE=, =ALPHA=, =HEX=, =PREVIEW=, =SWATCHES=) in canvas coordinates; =lrg_color_picker_area_get_type()= registers the enum.
+- =lrg_color_picker_get_swatch_bounds (picker, index, &rect)= gives one swatch (palette first, then recent).
+- =lrg_color_picker_get_popup_picker (button)= returns the full picker inside an open popup.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: color-picker-api
+:END:
+- =lrg_color_picker_new (void)=
+- =lrg_color_picker_get_color= / =lrg_color_picker_set_color=
+- =lrg_color_picker_get_hsv= / =lrg_color_picker_set_hsv=
+- =lrg_color_picker_get_alpha= / =lrg_color_picker_set_alpha=
+- =lrg_color_picker_get_hex= / =lrg_color_picker_set_hex=
+- =lrg_color_picker_get_show_alpha= / =lrg_color_picker_set_show_alpha=
+- =lrg_color_picker_get_popup_mode= / =lrg_color_picker_set_popup_mode=
+- =lrg_color_picker_popup=, =lrg_color_picker_popdown=, =lrg_color_picker_get_popup_open=, =lrg_color_picker_get_popup_picker=
+- =lrg_color_picker_set_palette= / =lrg_color_picker_get_palette=
+- =lrg_color_picker_add_recent=, =lrg_color_picker_get_recent=, =lrg_color_picker_clear_recent=
+- =lrg_color_picker_get_area_bounds=, =lrg_color_picker_get_swatch_bounds=
+- =lrg_color_picker_rgb_to_hsv=, =lrg_color_picker_hsv_to_rgb=
+- =lrg_color_picker_area_get_type=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: color-picker-related
+:END:
+- [[file:../widget.org][LrgWidget]] (parts, states, springs)
+- [[file:../theme.org][Theme]] (colour roles, metrics, style rules)
+- [[file:text-input.org][Text input]], [[file:combo-box.org][Combo box]] (the same popup pattern)

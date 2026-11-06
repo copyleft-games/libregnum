@@ -1,0 +1,214 @@
+* Custom widget
+:PROPERTIES:
+:CUSTOM_ID: custom-widget
+:END:
+=LrgCustomWidget= is a widget whose measuring, painting, animation and input handling come from the application, without subclassing =LrgWidget=. Use it for one-off visuals (a waveform, a meter, a minimap drawn with paint primitives, a colour swatch with special input) that do not deserve a GObject type of their own.
+
+Two ways to plug in, usable together:
+- *Signals* (=measure=, =paint=, =step=, =event=): for bindings, YAML-loaded UIs and loosely coupled code.
+- *A C function table* (=lrg_custom_widget_set_funcs()= with an =LrgCustomWidgetFuncs=, user data and a =GDestroyNotify=): no signal marshalling, for widgets painted every frame in large numbers.
+
+For each hook the table function runs first, then the signal.
+
+Unlike =LrgViewport= (which renders into its own texture before the UI paint pass), a custom widget records into the canvas paint list like every built-in widget, so it gets SDF shapes, clipping, opacity, appear animations, the focus ring and theme looks for free.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-creation
+:END:
+#+begin_src C
+static void
+on_paint (LrgCustomWidget *widget,
+          LrgPaintList    *list,
+          gfloat           x,
+          gfloat           y,
+          gfloat           width,
+          gfloat           height,
+          gpointer         user_data)
+{
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	gfloat    level = *(gfloat *) user_data;
+
+	lrg_paint_list_rect (list, x, y, width, height, 4.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK));
+	lrg_paint_list_rect (list, x, y + height * (1.0f - level), width, height * level, 4.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT));
+}
+
+static gfloat level = 0.6f;
+LrgCustomWidget *meter = lrg_custom_widget_new ();
+
+lrg_custom_widget_set_preferred_width (meter, 12.0f);
+lrg_custom_widget_set_preferred_height (meter, 80.0f);
+g_signal_connect (meter, "paint", G_CALLBACK (on_paint), &level);
+#+end_src
+
+** Hooks
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-hooks
+:END:
+| Hook      | Signal / table signature                                                  | Contract                                                                                                     |
+|-----------+---------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------|
+| measure   | =measure (gfloat avail_w, gfloat avail_h, LrgCustomWidgetSize *size)=     | =size= arrives filled with =preferred-width= / =preferred-height=; overwrite what you know. =avail_*= is the current allocation (0 before the first layout), a hint for height-for-width content. Call =lrg_widget_queue_layout()= when the answer changes. |
+| paint     | =paint (LrgPaintList *list, gfloat x, gfloat y, gfloat w, gfloat h)=      | Record at the world rectangle =x, y, w, h=. Must be a pure function of state (no clocks).                    |
+| step      | =step (gfloat dt)= -> =gboolean=                                          | Advance your own springs and timers on the canvas clock; return =TRUE= while moving. Table and every handler run; results are OR-ed. |
+| event     | =event (LrgUIEvent *event)= -> =gboolean=                                 | Return =TRUE= to consume. A consuming table function stops the signal; the first handler returning =TRUE= stops the rest. Unconsumed events bubble to the parent. |
+
+=LrgCustomWidgetSize= is a boxed struct (=width=, =height=) passed by reference (static scope) so handlers in any language can modify it.
+
+** Function table
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-funcs
+:END:
+#+begin_src C
+typedef struct
+{
+	LrgSpring pulse;
+	gboolean  lit;
+} Lamp;
+
+static void
+lamp_measure (LrgCustomWidget     *widget,
+              gfloat               avail_width,
+              gfloat               avail_height,
+              LrgCustomWidgetSize *size,
+              gpointer             user_data)
+{
+	size->width = size->height = 24.0f;
+}
+
+static void
+lamp_paint (LrgCustomWidget *widget,
+            LrgPaintList    *list,
+            gfloat           x,
+            gfloat           y,
+            gfloat           width,
+            gfloat           height,
+            gpointer         user_data)
+{
+	Lamp     *lamp = user_data;
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlColor  c;
+
+	lrg_paint_color_mix (lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK),
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_SUCCESS),
+	                     lamp->pulse.value, &c);
+	lrg_paint_list_circle (list, x + width * 0.5f, y + height * 0.5f, width * 0.4f, &c);
+}
+
+static gboolean
+lamp_step (LrgCustomWidget *widget,
+           gfloat           delta_time,
+           gpointer         user_data)
+{
+	return lrg_spring_step (&((Lamp *) user_data)->pulse, delta_time);
+}
+
+static gboolean
+lamp_event (LrgCustomWidget  *widget,
+            const LrgUIEvent *event,
+            gpointer          user_data)
+{
+	Lamp *lamp = user_data;
+
+	if (lrg_ui_event_get_event_type (event) != LRG_UI_EVENT_ACTIVATE &&
+	    lrg_ui_event_get_event_type (event) != LRG_UI_EVENT_MOUSE_BUTTON_UP)
+		return FALSE;
+	lamp->lit = !lamp->lit;
+	lrg_spring_set_target (&lamp->pulse, lamp->lit ? 1.0f : 0.0f);
+	return TRUE;
+}
+
+static const LrgCustomWidgetFuncs lamp_funcs = {
+	lamp_measure, lamp_paint, lamp_step, lamp_event, { NULL }
+};
+
+Lamp            *lamp = g_new0 (Lamp, 1);
+LrgCustomWidget *widget = lrg_custom_widget_new ();
+
+lrg_spring_init (&lamp->pulse, 0.0f, LRG_MOTION_SMOOTH);
+lrg_custom_widget_set_funcs (widget, &lamp_funcs, lamp, g_free);
+lrg_widget_set_focusable (LRG_WIDGET (widget), TRUE);
+#+end_src
+The table is copied, so a =static const= table can be shared by many widgets; =user_data= is freed with =destroy= when the table is replaced (=lrg_custom_widget_set_funcs (widget, NULL, NULL, NULL)= removes it) or the widget is disposed.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-properties
+:END:
+| Property           | Type       | Default | Meaning                                                       |
+|--------------------+------------+---------+---------------------------------------------------------------|
+| =preferred-width=  | =gfloat=   | 0       | Base preferred width handed to measure                        |
+| =preferred-height= | =gfloat=   | 0       | Base preferred height                                         |
+| =paint-box=        | =gboolean= | =FALSE= | Paint the themed BOX surface before the paint hooks           |
+| =focusable=        | =gboolean= | =FALSE= | (inherited from =LrgWidget=) take keyboard focus; receive keys, =ACTIVATE= and the focus ring |
+
+| Signal    | Arguments                                         | Returns    |
+|-----------+---------------------------------------------------+------------|
+| =measure= | =gfloat avail_w, gfloat avail_h, LrgCustomWidgetSize *size= | none |
+| =paint=   | =LrgPaintList *list, gfloat x, y, w, h=           | none       |
+| =step=    | =gfloat dt=                                       | =gboolean= (OR-ed) |
+| =event=   | =LrgUIEvent *event=                               | =gboolean= (stop on =TRUE=) |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-parts
+:END:
+| Part    | State         | Built-in look (only painted with =paint-box=)                    |
+|---------+---------------+------------------------------------------------------------------|
+| =box=   | resting       | =SURFACE= fill, =BORDER= hairline, =CORNER_RADIUS= corners       |
+| =box=   | =hovered=     | =CONTROL_HOVER= fill                                             |
+| =box=   | =pressed=     | =CONTROL_PRESSED= fill                                           |
+| =box=   | =disabled=    | 45 % opacity                                                     |
+| =focus= | focus visible | Core focus ring (when focusable)                                 |
+Inside a paint hook, =lrg_widget_resolve_look()= + =lrg_widget_paint_box()= draw any part with theme rules and per-instance looks applied, and =lrg_widget_get_hover_progress()= / =lrg_widget_get_press_progress()= give the spring values for state-driven motion. Style classes (=lrg_widget_add_class()=) let theme rules target one custom widget.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-yaml
+:END:
+Supported by =LrgUILoader= as =LrgCustomWidget= (=type: custom-widget=) with =preferred-width=, =preferred-height= and =paint-box=. Its hooks are signals, so =on:= can connect handlers registered with =lrg_ui_loader_add_handler()=; =lrg_custom_widget_set_funcs()= is called from code on the widget looked up by id:
+
+#+begin_src yaml
+type: custom-widget
+id: gauge
+preferred-width: 96
+preferred-height: 96
+paint-box: true
+on: {paint: paint_gauge, event: gauge_event}
+#+end_src
+
+#+begin_src C
+lrg_ui_loader_add_handler (loader, "paint_gauge", G_CALLBACK (paint_gauge), game);
+root = lrg_ui_loader_watch_file (loader, "data/ui/hud.yaml", LRG_CONTAINER (canvas), &error);
+/* or, with the vtable: */
+lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (lrg_ui_loader_get_widget (loader, "gauge")), &funcs, game, NULL);
+#+end_src
+
+See [[file:../declarative-ui.org::#viewport-custom-keys][Declarative UI]].
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-pitfalls
+:END:
+- =paint= must not draw with immediate-mode raylib calls; record into the list. For raw GL work use =lrg_paint_list_callback()= from the paint hook, or an =LrgViewport= for full scenes.
+- Do not read clocks in =paint=: keep time in =step=, which follows the canvas clock (deterministic in tests and replays).
+- =measure= runs during layout; do not change the widget tree from it.
+- Events carry canvas coordinates; subtract =lrg_widget_get_world_x/y()= for widget-relative positions.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-see-also
+:END:
+- [[file:viewport.org][Viewport]] for engine-rendered content (3D scenes) inside the UI.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: custom-widget-api
+:END:
+- =lrg_custom_widget_new (void)=
+- =LrgCustomWidgetFuncs=, =lrg_custom_widget_set_funcs (self, funcs, user_data, destroy)=
+- =LrgCustomWidgetSize= (=lrg_custom_widget_size_get_type=, =lrg_custom_widget_size_copy=, =lrg_custom_widget_size_free=)
+- =lrg_custom_widget_get_preferred_width= / =lrg_custom_widget_set_preferred_width=
+- =lrg_custom_widget_get_preferred_height= / =lrg_custom_widget_set_preferred_height=
+- =lrg_custom_widget_get_paint_box= / =lrg_custom_widget_set_paint_box=

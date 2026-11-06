@@ -1,0 +1,405 @@
+#+title: Paint Text
+#+description: SDF font atlases (LrgPaintFont), the glyph shader, fallback font chains, bidirectional text and Arabic shaping, theme font settings
+#+authors: Zach Podbielniak
+#+categories: libregnum paint ui gui text fonts
+#+created: 2026-11-06T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* Paint Text
+:PROPERTIES:
+:CUSTOM_ID: paint-text
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Paint]]* > Text
+#+end_quote
+
+UI text in the paint pipeline is drawn from *signed distance field (SDF) font atlases*. An =LrgPaintFont= opens a TrueType/OpenType face, generates a distance field per glyph on demand, packs it into an atlas shared by every font, and records one =LRG_PAINT_PRIM_GLYPH= instance per glyph. The paint shader turns the sampled distance into coverage with an anti-aliasing ramp one screen pixel wide, so text is crisp at 1x, under a zoomed canvas, inside group transforms (appear animations) and at any size, and it batches with every other UI shape. The same distance gives outlines, glows and soft drop shadows for free.
+
+On top of that sit *fallback chains* (each codepoint drawn by the first font that has it: symbols, emoji, Arabic, Hebrew, CJK) and *bidirectional text* (fribidi reorders right-to-left runs and shapes Arabic).
+
+Existing widgets need no change: the theme binds its SDF font to its UI =GrlFont=, and =lrg_paint_list_text()= / =lrg_paint_measure_text()= follow the binding.
+
+[[file:index.org::#paint-instance-fields][Instance layout]] · [[file:paint-list.org::#paint-list-text][LrgPaintList text API]]
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: text-overview
+:END:
+#+begin_src C
+g_autoptr(GError)       error = NULL;
+g_autoptr(LrgPaintFont) font = NULL;
+LrgPaintTextStyle       style;
+
+/* a file, a family, or the shared system UI font */
+font = lrg_paint_font_new_for_family ("Noto Sans", &error);
+lrg_paint_font_add_system_fallbacks (font);   /* symbols, emoji, Arabic, Hebrew, CJK */
+
+lrg_paint_text_style_init (&style, &white);
+style.outline_width = 2.0f;
+style.outline_color = black;
+lrg_paint_font_draw_text (font, list, "Level up! \xe2\x98\x85", -1, x, y, 32.0f, &style);
+#+end_src
+
+| Piece | Where | What it does |
+|-------+-------+--------------|
+| =LrgPaintFont= | =src/paint/lrg-paint-font.{h,c}= | Face tables, metrics, kerning, fallback chain, glyph cache, layout, drawing |
+| Shared glyph atlas | =lrg-paint-font.c= (static) | Shelf-packed single-channel pages, grown on demand, uploaded lazily |
+| =LRG_PAINT_PRIM_GLYPH= | =lrg-paint-renderer.c= (=shade_glyph=) | Distance → coverage, outline, glow, softness |
+| =LrgPaintTextStyle= | =lrg-paint-types.h= | Colour, spacing, outline, glow, shadow, base direction |
+| Bidi | =lrg-paint-font.c= (=to_visual=) | fribidi: UAX #9 reordering, mirroring, Arabic joining and shaping |
+| Binding | =lrg_paint_font_bind()= | Routes =lrg_paint_list_text()= for a given =GrlFont= to an SDF font |
+| Theme settings | =lrg-theme.{h,c}= | =font=, =font-family=, =font-fallbacks=, =font-size=, =sdf-text= |
+
+** The pipeline
+:PROPERTIES:
+:CUSTOM_ID: text-pipeline
+:END:
+Per =lrg_paint_font_draw_text()= call:
+
+1. *Lines.* The text is split at ='\n'=. Each line is one bidi paragraph.
+2. *Visual order.* Each line goes through =to_visual()=: pure left-to-right lines (no right-to-left character and no forced RTL base) are passed through untouched; others run through fribidi (see [[#text-bidi][Bidirectional text]]).
+3. *Layout* (=layout_line()=). Each visual codepoint is resolved through the fallback chain, gets its unrounded advance from the face's =hmtx= table scaled to the primary font's em, plus pair kerning against its left neighbour when both come from the same face, plus the style's spacing. Invisible format characters (ZWSP/ZWJ/ZWNJ, bidi controls, variation selectors, BOM, soft hyphen) take no room; a tab is four spaces; a codepoint no font has gets 0.6 em and is drawn as an empty box.
+4. *Rasterise missing glyphs* (=rasterise()=), all of them before any texture id is taken, so an atlas page that grows does so before this call references it.
+5. *Upload* each atlas page at most once (=atlas_page_texture()=): created on first use, otherwise only the dirty rows are sent.
+6. *Record instances*: all drop-shadow instances first (so no shadow covers a neighbouring glyph), then the glyphs.
+
+Steps 1-3 need only the font's tables, so =lrg_paint_font_measure_text()= runs exactly the same code without rasterising anything and without a window: measurement and drawing cannot disagree.
+
+*** Sizes and metrics
+:PROPERTIES:
+:CUSTOM_ID: text-metrics
+:END:
+A font size means what it means for raylib fonts: the pixel height of *ascent + descent* (=stbtt_ScaleForPixelHeight=), so switching a widget from its bitmap font to the SDF font keeps text the same height. For a size =s= and primary face =P= (design units from =hhea= and =head=):
+
+#+begin_example
+em(s)          = s * P.unitsPerEm / (P.ascent - P.descent)     canvas units per em
+unit_scale(F)  = em(s) / F.unitsPerEm                          for the primary or any fallback F
+baseline       = line_top + P.ascent * s / (P.ascent - P.descent)
+advance(cp)    = F.hmtx[glyph(cp)] * unit_scale(F)
+#+end_example
+
+Fallback faces are scaled to the *primary's em*, not to their own ascent + descent, so an emoji or CJK face with tall line metrics is not shrunk next to Latin text, and every face shares the primary's baseline.
+
+Lines advance by =1.2 * size=, the factor every paint text path (bitmap and SDF) shares, so widget layout code that assumes it keeps working. =lrg_paint_font_get_line_height()= reports the face's natural ascent + descent + line gap for callers that want it.
+
+*** Kerning
+:PROPERTIES:
+:CUSTOM_ID: text-kerning
+:END:
+raylib does not expose kerning, so the face's tables are read directly:
+
+- *GPOS* (all modern fonts, Noto included): every lookup referenced by a =kern= feature of any script; type 2 (pair adjustment) subtables, also when wrapped in type 9 extension lookups; format 1 (explicit pairs, binary search over the pair set) and format 2 (class pairs: two =ClassDef= tables index a value matrix). Within one lookup the first subtable that covers the first glyph wins; separate lookups add up. Only the first glyph's =XAdvance= is used.
+- *Legacy =kern=* (version 0, format 0, horizontal, not minimum or cross-stream) when the face has no GPOS kerning.
+
+Results are cached per face in a hash keyed on the glyph pair, so steady-state cost is one hash lookup per glyph. Kerning applies only between neighbours drawn by the same face.
+
+** Generating the distance fields
+:PROPERTIES:
+:CUSTOM_ID: text-sdf-generation
+:END:
+Each glyph is rasterised once, the first time it is drawn (or ahead of time with =lrg_paint_font_prepare()=):
+
+1. raylib's =LoadFontData (data, size, base_size, &codepoint, 1, FONT_SDF, &count)= renders the glyph with stb_truetype's exact distance field (=stbtt_GetCodepointSDF=) at the font's base size (=LRG_PAINT_FONT_DEFAULT_BASE_SIZE=, 48 px). Its encoding is =value = 128 + 64 * d= with =d= in pixels (positive inside), clamped to 0..255 and padded by 4 px: the field is exact but only *±2 px* wide.
+2. That is enough to anti-alias, not to outline or glow. =widen_field()= grows the image by =EXTRA_PAD= (6 px) per side and extends the field with *dead reckoning*: every pixel strictly inside the exact band (=0 < value < 255=) is a seed carrying its exact distance; two raster passes (forward with the four already-visited neighbours, backward with the other four, run twice) propagate to every other pixel the seed that minimises =|p - seed| + d(seed)=. Inside/outside comes from the original value (=>= 128=).
+3. The result is re-encoded so 0..255 spans =±LRG_PAINT_FONT_SDF_SPREAD= (10 base px): =value = 128 + d * 127 / spread=.
+4. The cell is shelf-packed into the atlas (see below); its pixel rectangle and raylib's glyph offsets (minus the extra padding) are cached with the glyph.
+
+Glyphs with no ink (spaces, empty glyphs) are flagged and never take atlas space. =GenImageFontAtlas()= is not used: it can only build a whole atlas from scratch, and its row packer assumes glyph heights of at most =size + 2 * padding=, which SDF glyphs exceed. The atlas is packed incrementally instead.
+
+** The shared atlas
+:PROPERTIES:
+:CUSTOM_ID: text-atlas
+:END:
+Every =LrgPaintFont= (fallback faces included) writes into one process-wide atlas, so a label mixing Latin, an emoji from Noto Emoji and Arabic from Noto Sans Arabic is still *one texture and one batch*.
+
+- *Pages* are single-channel (=PIXELFORMAT_UNCOMPRESSED_GRAYSCALE=, one byte per pixel; rlgl swizzles it to =(r, r, r, 1)=), bilinear, clamped.
+- *Lazy growth.* A page starts at 512×512. When nothing fits, the last page *doubles* (1024, then 2048); glyphs keep their pixel positions. Only when a 2048×2048 page is full is a new page (a second texture) added. Codepoints are only ever added when first drawn, so a CJK or emoji font costs atlas space only for the characters actually shown.
+- *Shelf packing.* Glyphs go left to right into horizontal shelves; a glyph takes the tightest existing shelf at most 1.5× its height, else opens a new shelf under the others. One pixel of gutter separates cells.
+- *Pixel-space addressing.* Glyph instances store their cell in atlas *pixels*; the shader divides by =textureSize (u_tex, 0)= of the bound texture. A page that grows gets a new texture, while instances recorded earlier in the same frame still reference the old texture, whose size and contents (a prefix of the new page) still match. Replaced textures are kept (at most two per page) rather than deleted mid-frame.
+- *Uploads* happen while recording (the paint list needs the texture id): whole page on creation, otherwise only the rows touched since the last upload (full width, so the rows are contiguous). Headless there is no texture; instances carry texture 0 and everything else (layout, instance stream, atlas packing) works.
+- *GL contexts.* Textures are tagged with the current GLFW context. If the window is closed and another opened, stale ids are forgotten (not deleted: their context is gone) and pages re-uploaded.
+
+=lrg_paint_font_atlas_get_n_pages()=, =lrg_paint_font_atlas_get_page_size()=, =lrg_paint_font_atlas_get_n_glyphs()= and =lrg_paint_font_get_n_glyphs()= expose the state for tests and tooling.
+
+** The glyph shader
+:PROPERTIES:
+:CUSTOM_ID: text-shader
+:END:
+=LRG_PAINT_PRIM_GLYPH= (9) instances:
+
+| Field | Meaning |
+|-------+---------|
+| =rect= | glyph quad in canvas units, including the field's padding |
+| =extra= | the cell in atlas pixels (x0, y0, x1, y1) |
+| =params[0]= / =params[1]= | outline width / glow radius, canvas units |
+| =data[0]= | distance scale: canvas units at the field's full range (=spread * k=, =k= = canvas units per base pixel) |
+| =data[1]= | softness: extra edge blur in canvas units (drop shadows) |
+| =data[2]= | dilation in canvas units (the shadow of an outlined glyph grows by the outline) |
+| =color= / =border= / =color2= | fill / outline / glow colours |
+| =texture= | atlas page |
+
+=shade_glyph()= in the fragment shader:
+
+#+begin_src glsl
+vec2  f  = (v_pos - rect.xy) / (rect.zw - rect.xy);           /* 0..1 inside the quad */
+vec2  px = clamp (mix (extra.xy, extra.zw, f), extra.xy + 0.5, extra.zw - 0.5);
+float s  = texture (u_tex, px / vec2 (textureSize (u_tex, 0))).r;
+float d  = (s * 255.0 - 128.0) / 127.0 * data.x + data.z;       /* signed distance, canvas units */
+float w  = 0.5 * (length (dFdx (v_pos)) + length (dFdy (v_pos))); /* one screen pixel, canvas units */
+float aa = 0.5 * w + data.y;                                    /* ramp half-width (+ softness) */
+vec4  c  = premul (fill) * smoothstep (-aa, aa, d);
+c += premul (outline) * smoothstep (-aa, aa, d + outline_w) * (1.0 - c.a);
+float g  = 1.0 - smoothstep (0.0, glow_r, -(d + outline_w));    /* 1 at the outer edge, 0 at glow_r */
+c += premul (glow) * g * g * (1.0 - c.a);
+#+end_src
+
+- *Why it is crisp at any scale.* =d= is in canvas units and =w= is how many canvas units one screen pixel spans, taken from the derivatives of the interpolated canvas position. A 3x zoom (camera, =rlScalef=, a group transform, a high-DPI canvas) makes =w= three times smaller, so the anti-aliasing ramp stays about one *screen* pixel wide instead of being magnified with the texture. The GPU test =/paint/text/gpu/crisp-at-scales= checks that the edge ramp of an "l" is at most 2 px at both 1x and 3x.
+- *Clamping.* Sampling is clamped half a texel inside the cell so bilinear taps never read a neighbouring glyph; fragments outside the quad (the vertex shader pads every quad by one canvas unit) read "far outside".
+- *Reach.* The field ends at the spread, so the shader caps the ramp, the outline-plus-glow and the softness at 90 % of =data.x=: effects fade out before the field is clamped instead of showing the cell's square edge. =lrg_paint_font_get_max_effect (font, size)= returns the reach in canvas units (=spread * size / base_size=, 5 units at 24 px).
+- *Composition* is premultiplied: fill over outline over glow, each "under" the previous with =(1 - a)=.
+- *Group transforms* (=lrg_paint_list_transform_group()=) scale =data[0..2]= along with the quad and the generic =params[0..1]=, so an appearing label scales its outline and glow with it.
+
+Bitmap fonts keep the =LRG_PAINT_PRIM_IMAGE= path ([[file:index.org::#paint-image][Image and glyph sampling]]); it is the fallback whenever no =LrgPaintFont= applies.
+
+** Styles: outline, glow, shadow
+:PROPERTIES:
+:CUSTOM_ID: text-styles
+:END:
+=LrgPaintTextStyle= (boxed, =LRG_TYPE_PAINT_TEXT_STYLE=):
+
+| Field | Default (=lrg_paint_text_style_init()=) | Effect |
+|-------+----------------------------------------+--------|
+| =color= | the given colour, white for =NULL= | glyph fill |
+| =spacing= | 0 | extra advance after each glyph (not after the last when measuring) |
+| =outline_width=, =outline_color= | 0 | a rim of that width around each glyph, under the fill |
+| =glow_radius=, =glow_color= | 0 | soft halo outside the glyph (and its outline), quadratic falloff |
+| =shadow_offset_x=, =shadow_offset_y=, =shadow_softness=, =shadow_color= | 0, transparent | a second instance per glyph, offset, blurred by the softness, dilated by the outline; alpha 0 disables it |
+| =direction= | =LRG_TEXT_DIRECTION_AUTO= | base direction of each line |
+
+#+begin_src C
+LrgPaintTextStyle style;
+
+lrg_paint_text_style_init (&style, &gold);
+style.outline_width = 1.5f;
+style.outline_color = (GrlColor) { 40, 20, 0, 255 };
+style.glow_radius = 4.0f;
+style.glow_color = (GrlColor) { 255, 200, 80, 160 };
+style.shadow_color = (GrlColor) { 0, 0, 0, 150 };
+style.shadow_offset_y = 2.0f;
+style.shadow_softness = 1.5f;
+
+/* with the theme's UI font: works whenever the theme has SDF text */
+lrg_paint_list_text_styled (list, lrg_theme_get_ui_font (theme), "VICTORY",
+                            x, y, 40.0f, &style);
+#+end_src
+
+=lrg_paint_list_text_styled()= falls back to =lrg_paint_list_text()= (colour and spacing only) when the =GrlFont= has no SDF font bound.
+
+** Fallback chains
+:PROPERTIES:
+:CUSTOM_ID: text-fallback
+:END:
+An =LrgPaintFont= has an ordered list of fallback fonts. For each codepoint, =lrg_paint_font_resolve()= returns the primary face when its =cmap= maps the codepoint, else the *first* fallback that does, else =NULL= (drawn as an empty box, "tofu", 0.6 em wide; whitespace a font lacks takes a space's width instead). Results are cached per primary font and the cache is dropped whenever the chain changes.
+
+- =lrg_paint_font_add_fallback()= appends (ignoring the font itself and duplicates); =lrg_paint_font_clear_fallbacks()= empties; =lrg_paint_font_get_fallbacks()= returns the chain. Fallbacks of a fallback are not consulted.
+- =lrg_paint_font_has_glyph()= asks the face alone; it reads the =cmap= subtable stb_truetype itself would pick (the last Unicode one: platform 0, or platform 3 encoding 1 or 10; formats 0, 4, 6, 12, 13), so "has" always agrees with what raylib can rasterise.
+- =lrg_paint_font_add_system_fallbacks()= appends whichever of these are installed, in this order: DejaVu Sans (broad symbol coverage plus Hebrew and Arabic presentation forms), Noto Sans Symbols 2, Noto Sans Symbols, Noto Sans Arabic, Noto Sans Hebrew, *Noto Emoji* (monochrome), Noto Sans CJK, Droid Sans Fallback, Symbola. These faces are shared process-wide (=shared_font()=) and opened *lazily*: the 20-30 MB CJK file is only mapped when a CJK character first needs it.
+- Colour emoji (Noto Color Emoji, COLR/CBDT/sbix/SVG fonts) are out of scope: they have no usable outlines for a distance field. =lrg_paint_font_find_file()= never returns them; if a bare emoji has no monochrome font it is drawn as tofu.
+
+#+begin_src C
+g_autoptr(LrgPaintFont) ui = lrg_paint_font_new_for_family ("Inter", NULL);
+g_autoptr(LrgPaintFont) icons = lrg_paint_font_new_from_file ("data/fonts/GameIcons.ttf", NULL);
+
+lrg_paint_font_add_fallback (ui, icons);          /* game icon codepoints first */
+lrg_paint_font_add_system_fallbacks (ui);         /* then the system set */
+#+end_src
+
+*** Finding system fonts
+:PROPERTIES:
+:CUSTOM_ID: text-system-fonts
+:END:
+=lrg_paint_font_find_file (family, &face_index)=:
+
+1. *fontconfig*, when =libfontconfig.so.1= can be opened at run time (=GModule=; no build dependency). The pattern is substituted and matched like =fc-match=. fontconfig always answers with *some* font, so for a named family the answer is only accepted when its family starts with the requested name; generic names (=sans-serif=, =sans=, =serif=, =monospace=, =system-ui=) accept any answer. The =index= is honoured for collections (its high 16 bits, a variable font's named instance, are dropped).
+2. *Known paths* for Fedora, Debian and Arch (=known_fonts[]= in =lrg-paint-font.c=). Generic names try Noto Sans, DejaVu Sans, Adwaita Sans, Cantarell, Liberation Sans in that order.
+
+Either way the file must have =glyf= or =CFF= outlines and no colour tables. =lrg_paint_font_new_for_family()= wraps the lookup; =lrg_paint_font_get_system_default()= is the shared "sans-serif" face with the system fallbacks, built once per process (=NULL= when nothing is installed).
+
+** Bidirectional text
+:PROPERTIES:
+:CUSTOM_ID: text-bidi
+:END:
+When libregnum is built with fribidi (=LRG_HAS_FRIBIDI=; =config.mk= detects it with pkg-config, =FRIBIDI=0= turns it off; =lrg_paint_text_has_bidi()= reports it at run time), each line that contains a right-to-left character, or whose base direction is forced to RTL, goes through:
+
+1. =fribidi_get_bidi_types()= and =fribidi_get_bracket_types()=.
+2. =fribidi_get_par_embedding_levels_ex()= with the base direction: =LRG_TEXT_DIRECTION_LTR= / =RTL= force it, =AUTO= (=FRIBIDI_PAR_ON=) takes the first strong character, left-to-right when there is none.
+3. =fribidi_get_joining_types()=, =fribidi_join_arabic()= and =fribidi_shape()= with =FRIBIDI_FLAGS_DEFAULT | FRIBIDI_FLAGS_ARABIC=: mirroring of brackets in RTL runs, Arabic contextual forms (isolated/initial/medial/final *presentation forms*, U+FB50-FDFF, U+FE70-FEFF) and mandatory lam-alef ligatures (the alef's slot becomes U+FEFF, which layout skips).
+4. =fribidi_reorder_line()= into visual order.
+
+Layout then simply places the visual sequence left to right. =lrg_paint_text_reorder()= returns that visual string (and the resolved direction) for tests and for callers that align text: a resolved RTL line is usually right-aligned by the widget.
+
+Without fribidi the text is drawn in logical order, unshaped; the direction is still resolved (first strong character) so alignment decisions work. Shaping depends on the fallback chain having presentation forms: DejaVu Sans and Noto Sans Arabic do.
+
+#+begin_src C
+LrgTextDirection dir;
+g_autofree gchar *visual = lrg_paint_text_reorder (line, -1, LRG_TEXT_DIRECTION_AUTO, &dir);
+gfloat            w;
+
+lrg_paint_font_measure_text (font, line, -1, size, 0.0f, LRG_TEXT_DIRECTION_AUTO, &w, NULL);
+if (dir == LRG_TEXT_DIRECTION_RTL)
+	x = box_right - w;               /* right-align RTL paragraphs */
+lrg_paint_font_draw_text (font, list, line, -1, x, y, size, &style);   /* pass the logical text */
+#+end_src
+
+Always pass *logical* text to the draw and measure functions; they reorder themselves. Passing an already reordered string reorders it again.
+
+** Integration with widgets and the GUI
+:PROPERTIES:
+:CUSTOM_ID: text-integration
+:END:
+- *Binding.* =lrg_paint_font_bind (sdf, grl_font)= stores the SDF font on the =GrlFont= (object data, holding a reference). =lrg_paint_list_text()=, =lrg_paint_list_text_styled()= and =lrg_paint_measure_text()= look the binding up with =lrg_paint_font_lookup()= and, when present, draw and measure through it. =lrg_paint_font_bind (NULL, grl_font)= removes it.
+- *Default font.* For a =NULL= =GrlFont= the same functions use =lrg_paint_font_get_default()=, which is =NULL= (raylib's bitmap font) until =lrg_paint_font_set_default()= is called. It is never set implicitly, so headless tests that rely on the bitmap estimate keep their numbers.
+- *The theme* builds its SDF font (=lrg_theme_get_paint_font()=) and binds it in =lrg_theme_get_ui_font()= when the UI font is loaded, which happens on first use with a window. Every widget that draws with =lrg_theme_get_ui_font()= and measures with =lrg_paint_measure_text()= gets SDF text, fallbacks and bidi automatically, and its layout agrees with what is drawn.
+- *Headless*, =lrg_theme_get_ui_font()= stays =NULL= as before (no window), so widget layout uses the bitmap estimate exactly as it did. =lrg_theme_get_paint_font()= itself works headless.
+- *The immediate-mode GUI* (=src/gui/lrg-gui-raylib.c=, the editor) holds raw raylib =Font= structs and measures with =grl_text_measure_ex()=, so it still draws bitmap text. Moving it over takes, in that file: create an =LrgPaintFont= next to each =Font= in =lrg_gui_raylib_load_fonts()= (same paths, with =lrg_paint_font_add_system_fallbacks()=), call =lrg_paint_font_measure_text()= in =measure()= and =lrg_paint_font_draw_text()= instead of =_lrg_paint_list_text_font()= for text commands.
+
+** Theme font settings
+:PROPERTIES:
+:CUSTOM_ID: text-theme
+:END:
+| YAML key | Accessors | Meaning |
+|----------+-----------+---------|
+| =font: path.ttf= | =lrg_theme_get_font_path()=, =lrg_theme_load_ui_font()= | A font file (relative paths resolve against the theme file); used for both the bitmap UI font and the SDF font |
+| =font-family: Noto Sans= | =lrg_theme_get_font_family()=, =lrg_theme_set_font_family()= | A family found with =lrg_paint_font_find_file()= when no =font:= file is set |
+| =font-fallbacks: [ ... ]= | =lrg_theme_get_font_fallbacks()=, =lrg_theme_set_font_fallbacks()= | Family names or files (an entry with a =/= or a =.ttf= / =.otf= / =.ttc= suffix is a file, relative to the theme file), tried in order before the system fallbacks; missing ones are skipped |
+| =font-size: 15= | =lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE)= | Shorthand for =metrics: { font-size: 15 }=; an explicit =metrics.font-size= wins |
+| =sdf-text: false= | =lrg_theme_get_sdf_text()=, =lrg_theme_set_sdf_text()= | Turns SDF text off (bitmap text only); default =true= |
+
+#+begin_src yaml
+name: arcade
+preset: neon
+font: fonts/PressStart.ttf
+font-fallbacks:
+  - Noto Sans Symbols 2
+  - fonts/GameIcons.ttf
+  - Noto Emoji
+font-size: 18
+#+end_src
+
+How the theme's SDF font is chosen (=build_paint_font()=):
+
+1. =font:= file, else =font-family:=, else the system "sans-serif" face;
+2. then each =font-fallbacks:= entry, then =lrg_paint_font_add_system_fallbacks()=.
+3. A theme with none of =font=, =font-family=, =font-fallbacks= uses one *shared* font of the same face the bitmap UI font picks (Adwaita Sans, Inter, Cantarell, Noto Sans, Open Sans, DejaVu Sans; first installed) with the system fallbacks, so every such theme shares one set of atlas glyphs.
+
+=lrg_theme_set_paint_font()= replaces the SDF font outright (and rebinds a loaded UI font); passing =NULL= rebuilds it from the settings. Changing any setting reloads both UI fonts on next use. =lrg_theme_copy()= shares the SDF font; saving (=lrg_theme_to_data()=) writes =font-family=, =font-fallbacks= and, when off, =sdf-text=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: text-api
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_font_new_from_file (path, error)= | Open a TTF/OTF/TTC (first face) | File is memory-mapped; tables parsed now, glyphs on demand; works headless |
+| =lrg_paint_font_new_from_file_index (path, face_index, base_size, error)= | Choose the collection face and SDF base size | =base_size= 0 = 48; larger keeps corners sharper when drawn very large, at atlas cost |
+| =lrg_paint_font_new_from_bytes (data, error)= | Open a font held in memory | =data= referenced, not copied |
+| =lrg_paint_font_new_for_family (family, error)= | Open an installed family | =G_IO_ERROR_NOT_FOUND= when nothing matches |
+| =lrg_paint_font_find_file (family, face_index)= | Locate an installed font file | fontconfig, then known paths; never colour fonts |
+| =lrg_paint_font_get_system_default ()= | Shared sans-serif face with system fallbacks | (transfer none), nullable; do not modify its chain |
+| =lrg_paint_font_get_path (self)= / =lrg_paint_font_get_base_size (self)= / =lrg_paint_font_get_units_per_em (self)= | Properties | =path= is =NULL= for byte fonts |
+| =lrg_paint_font_has_glyph (self, codepoint)= | Does this face map the codepoint | Fallbacks not consulted |
+| =lrg_paint_font_add_fallback (self, fallback)= / =lrg_paint_font_clear_fallbacks (self)= / =lrg_paint_font_get_fallbacks (self)= | Edit the chain | Duplicates and self ignored |
+| =lrg_paint_font_add_system_fallbacks (self)= | Append the installed system set | Returns how many were added |
+| =lrg_paint_font_resolve (self, codepoint)= | Font that draws the codepoint | =NULL= = tofu |
+| =lrg_paint_font_get_ascent (self, size)= / =lrg_paint_font_get_descent (self, size)= / =lrg_paint_font_get_line_height (self, size)= | Vertical metrics | ascent + descent = size |
+| =lrg_paint_font_get_advance (self, codepoint, size)= | Unrounded advance through the chain | |
+| =lrg_paint_font_get_kerning (self, left, right, size)= | Pair adjustment (GPOS or kern) | 0 across faces |
+| =lrg_paint_font_get_max_effect (self, size)= | Reach of outline + glow / softness | =spread * size / base_size= |
+| =lrg_paint_font_measure_text (self, text, length, size, spacing, direction, width, height)= | Measure exactly as drawn | No window, nothing rasterised |
+| =lrg_paint_font_draw_text (self, list, text, length, x, y, size, style)= | Record glyph instances | =style= =NULL= = white |
+| =lrg_paint_font_prepare (self, text)= | Rasterise ahead of time | Returns glyphs newly rasterised |
+| =lrg_paint_font_get_n_glyphs (self)= | Glyphs of this face in the atlas | |
+| =lrg_paint_font_atlas_get_n_pages ()= / =lrg_paint_font_atlas_get_page_size (page, width, height)= / =lrg_paint_font_atlas_get_n_glyphs ()= | Shared atlas state | |
+| =lrg_paint_font_get_default ()= / =lrg_paint_font_set_default (font)= | Font for =NULL=-font paint text | Default =NULL= (bitmap) |
+| =lrg_paint_font_bind (self, font)= / =lrg_paint_font_lookup (font)= | Route a =GrlFont= to an SDF font | =NULL= self unbinds |
+| =lrg_paint_text_has_bidi ()= | Built with fribidi? | |
+| =lrg_paint_text_reorder (text, length, direction, resolved)= | Logical → visual (shaped) text | Identity without fribidi |
+| =lrg_paint_text_style_init (self, color)= / =lrg_paint_text_style_copy (self)= / =lrg_paint_text_style_free (self)= / =lrg_paint_text_style_get_type ()= | =LrgPaintTextStyle= boxed type | |
+| =lrg_paint_list_text_styled (self, font, text, x, y, size, style)= | Styled text through a =GrlFont= binding | See [[file:paint-list.org::#paint-list-text][LrgPaintList text]] |
+| =lrg_theme_get_paint_font (theme)= / =lrg_theme_set_paint_font (theme, font)= | The theme's SDF font | Built lazily, works headless |
+| =lrg_theme_get_font_family= / =lrg_theme_set_font_family=, =lrg_theme_get_font_fallbacks= / =lrg_theme_set_font_fallbacks=, =lrg_theme_get_sdf_text= / =lrg_theme_set_sdf_text= | Theme font settings | See [[#text-theme][Theme font settings]] |
+
+Properties: =LrgPaintFont:path= and =LrgPaintFont:base-size= (read-only).
+
+** Fedora packages
+:PROPERTIES:
+:CUSTOM_ID: text-packages
+:END:
+| Package | Needed for |
+|---------+------------|
+| =fribidi-devel= (build), =fribidi= (run) | Bidi reordering and Arabic shaping (optional; without it text is drawn in logical order) |
+| =fontconfig= | Run-time font discovery through =libfontconfig.so.1= (optional; known paths otherwise) |
+| =google-noto-sans-vf-fonts= or =google-noto-sans-fonts= | Noto Sans, the default sans-serif face |
+| =adwaita-sans-fonts= | Adwaita Sans, the theme's first-choice UI face |
+| =dejavu-sans-fonts= | DejaVu Sans: wide symbol, Hebrew and Arabic presentation-form coverage |
+| =google-noto-sans-symbols-2-fonts=, =google-noto-sans-symbols-vf-fonts= | Arrows, dingbats, technical symbols |
+| =google-noto-sans-arabic-vf-fonts=, =google-noto-sans-hebrew-vf-fonts= | Arabic and Hebrew |
+| =google-noto-emoji-fonts= | *Monochrome* Noto Emoji (=NotoEmoji-Regular.ttf=); =google-noto-color-emoji-fonts= is not usable |
+| =google-noto-sans-cjk-fonts= | CJK (static CFF collection). The =google-noto-sans-cjk-vf-fonts= variant is CFF2, which stb_truetype cannot draw |
+| =google-droid-sans-fonts= | Droid Sans Fallback: a glyf-outline CJK fallback |
+| =gdouros-symbola-fonts= | Symbola: last-resort symbols |
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: text-performance
+:END:
+- *Steady state*: per glyph per frame, one hash lookup (fallback cache), one hash lookup (glyph metrics), one cached kerning lookup and one 112-byte instance. No allocation besides the layout array and, for RTL lines only, fribidi's buffers.
+- *Draw calls*: shapes, text in any number of fonts, outlines, glows and shadows are one batch as long as the glyphs live on one atlas page (a full 2048×2048 page holds well over a thousand Latin glyphs at the default base size). =/paint/text/gpu/batches-with-shapes= checks one draw call for rect + text + rect.
+- *First use of a glyph*: stb_truetype's exact SDF plus widening costs about 1-2 ms per glyph at base size 48 (it scales with the square of the base size). The first frame showing a new screen of text can therefore spend tens of milliseconds; call =lrg_paint_font_prepare()= during a loading screen with the strings (or the character set) you will show.
+- *Atlas memory*: one byte per pixel; 0.25 MB at 512², 4 MB at 2048². Pages never shrink and glyphs are never evicted.
+- *Uploads*: only the dirty rows since the last upload, once per text call per page.
+- *Fallback faces* are memory-mapped and parsed only when a codepoint first needs them; collections (TTC) are copied once into a standalone face.
+- *Pure LTR text* never touches fribidi.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: text-pitfalls
+:END:
+- *Font size semantics.* Sizes are ascent + descent (raylib's convention), not the em size CSS uses; 16 px text has a smaller em than 16 px in a browser.
+- *Effect reach.* Outline + glow and shadow softness cannot exceed =lrg_paint_font_get_max_effect()= (10 base pixels scaled to the size: 3.3 units at 16 px). Larger requests are clamped in the shader; for big glows draw a blurred shadow shape behind the text instead, or create the font with a smaller =base_size= (more reach per pixel, softer corners).
+- *Very small text.* Below about 9 px a distance field rendered from a 48 px master looks slightly lighter than hinted bitmap text. For pixel-art UIs set =sdf-text: false=.
+- *Colour emoji* are not drawn; install =google-noto-emoji-fonts= for monochrome emoji or they become empty boxes.
+- *CFF2 fonts* (variable OpenType CJK, some newer =-vf= packages) are rejected at load with =G_IO_ERROR_NOT_SUPPORTED=. Variable TrueType (=[wght].ttf=) fonts work, drawn at their default instance.
+- *Logical text only.* Pass text in typing order to draw and measure; =lrg_paint_text_reorder()= output is for inspection.
+- *No complex shaping.* There is no HarfBuzz: combining marks are placed by their own advance (usually 0) without GPOS mark positioning, Indic and other complex scripts are drawn unshaped, and ligatures other than Arabic lam-alef are not formed.
+- *Shared atlas, main thread.* The atlas and caches are not thread-safe; rasterise and draw on the thread that owns the GL context.
+- *Window recreated.* Glyph textures follow the GLFW context automatically, but a =LrgPaintList= recorded before the window closed must be re-recorded.
+- *raylib log noise.* raylib warns "Requested codepoints glyphs found" only for its own font loading (the bitmap UI font); SDF glyph loading asks only for codepoints the =cmap= already confirmed.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: text-tests
+:END:
+=tests/test-paint-text.c= (run headless, and under an isolated Xvfb for the GPU half):
+
+| Test | Checks |
+|------+--------|
+| =/paint/text/style-boxed= | Style defaults, copy, boxed type |
+| =/paint/text/font/load-errors= | Missing, empty, non-font data and unknown family errors |
+| =/paint/text/font/load-and-metrics= | Glyph presence, ascent + descent = size, linear unrounded advances, effect reach, bytes vs file |
+| =/paint/text/font/measure= | Sum of advances + kerning, spacing, lines, byte length, invisible controls |
+| =/paint/text/font/measure-matches-paint-list= | =lrg_paint_measure_text()= equals the font's measurement through the default font |
+| =/paint/text/font/kerning= | Negative GPOS kerning for common pairs, included in the width |
+| =/paint/text/fallback/selection= | First font with the glyph wins, order matters, tofu for missing |
+| =/paint/text/fallback/system= | Shared system default, idempotent system fallbacks, no colour emoji |
+| =/paint/text/bidi/*= | LTR untouched, logical order without fribidi, UAX #9 reordering, mirroring, Arabic presentation forms |
+| =/paint/text/record/headless=, =/paint/text/record/tofu= | Instance stream: one glyph per inked character, shadows first, outline/glow fields, group transform scaling, clipping |
+| =/paint/text/atlas/growth= | Lazy rasterisation, page doubling |
+| =/paint/text/theme/settings= | Theme accessors, copy, YAML load/save, errors, SDF font from settings |
+| =/paint/text/gpu/crisp-at-scales= | Edge ramp ≤ 2 px at 1x and 3x |
+| =/paint/text/gpu/outline-and-glow= | Glow, then outline, then fill along a row; glow fades |
+| =/paint/text/gpu/fallback-glyph= | An emoji drawn from the fallback font |
+| =/paint/text/gpu/rtl-order= | Hebrew pair draws in visual order |
+| =/paint/text/gpu/batches-with-shapes= | One draw call for shapes + text |
+| =/paint/text/gpu/bind-and-theme= | =GrlFont= binding, theme binds its UI font, =sdf-text= off unbinds |

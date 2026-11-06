@@ -1,0 +1,554 @@
+* Block editor
+:PROPERTIES:
+:CUSTOM_ID: block-editor
+:END:
+=LrgBlockEditor= is a Scratch-style visual programming editor: programs are /scripts/ of blocks that snap together like puzzle pieces. A palette of block kinds sits on one side (grouped by category, with a strip of category dots to jump between groups); the workspace on the other side pans, zooms and holds the scripts. Users drag blocks out of the palette, snap them under other blocks, into the mouths of =repeat= / =if= blocks and into the input slots of other blocks, type numbers and text into slots, pick dropdown values from a menu, and drag blocks back onto the palette to delete them. Every edit is undoable.
+
+It is meant for game visual scripting and modding: the game defines the palette (its own verbs: =move=, =say=, =spawn=, =play sound= ...), the player or modder builds programs, the game saves them as YAML and runs them by walking the block tree (see [[#block-editor-executing][Executing programs]]). The editor never runs anything itself; it can highlight the block a game's interpreter is executing.
+
+#+begin_example
++------+-------------------+-----------------------------------------------+
+|  ()  | events            |  .   .   .   .   .   .   .   .   .   .   .    |
+|events| (when flag clicked)   .  ( when flag clicked )                    |
+|      |                   |      [ repeat (10)        ]                   |
+|  ()  | motion            |      |  [ move (10) steps ]  <- mouth          |
+|motion| [ move (10) steps ]      |  [ say [Hello]     ]                   |
+|      | ( x position )    |      [__________________ ]                    |
+|  ()  | looks             |      [ stop [all v] ]        .   .   .        |
+|looks | [ say [Hello] ]   |  .   .   .   .   .   .   .   .   .   .   .    |
++------+-------------------+-----------------------------------------------+
+ strip   palette             workspace (pan, zoom, dot grid)
+#+end_example
+
+The model is two small GObjects: =LrgBlockKind= (what a block is) and =LrgBlock= (one block in a program). The editor owns its scripts (their top blocks); every block owns what hangs under it.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: block-editor-creation
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+LrgBlockEditor   *editor = lrg_block_editor_new ();
+
+/* The palette: categories are created on first use, in order */
+lrg_block_editor_define_kind (editor, "when-flag", LRG_BLOCK_SHAPE_HAT, "events",
+                              "when flag clicked", &error);
+lrg_block_editor_define_kind (editor, "move", LRG_BLOCK_SHAPE_STATEMENT, "motion",
+                              "move {steps:number=10} steps", &error);
+lrg_block_editor_define_kind (editor, "repeat", LRG_BLOCK_SHAPE_C, "control",
+                              "repeat {times:number=10}", &error);
+lrg_block_editor_define_kind (editor, "if-else", LRG_BLOCK_SHAPE_E, "control",
+                              "if {cond:boolean} then|else", &error);
+lrg_block_editor_define_kind (editor, "stop", LRG_BLOCK_SHAPE_CAP, "control",
+                              "stop {what:dropdown=all|this script}", &error);
+lrg_block_editor_define_kind (editor, "x-pos", LRG_BLOCK_SHAPE_REPORTER, "motion",
+                              "x position", &error);
+lrg_block_editor_define_kind (editor, "touching", LRG_BLOCK_SHAPE_BOOLEAN, "sensing",
+                              "touching {what:dropdown=edge|mouse} ?", &error);
+
+/* An optional starting program */
+{
+	LrgBlock *hat = lrg_block_editor_create_block (editor, "when-flag", 40, 40);
+	LrgBlock *move = lrg_block_editor_create_block (editor, "move", 0, 0);
+
+	lrg_block_editor_attach (editor, move, hat, LRG_BLOCK_PLACE_NEXT, 0);
+	lrg_block_set_value_by_name (move, "steps", "25");
+	lrg_block_editor_clear_history (editor);   /* not an undo step for the user */
+}
+
+g_signal_connect (editor, "block-activated", G_CALLBACK (on_run_script), game);
+g_signal_connect (editor, "changed", G_CALLBACK (on_program_changed), game);
+lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (editor));
+#+end_src
+The editor is a plain =LrgWidget= with no natural size: give it room (a panel, a dock tab, a fill weight). Both kinds and the palette can also come from a YAML document (see [[#block-editor-yaml-schema][YAML documents]]).
+
+** The model
+:PROPERTIES:
+:CUSTOM_ID: block-editor-model
+:END:
+*** Shapes
+:PROPERTIES:
+:CUSTOM_ID: block-editor-shapes
+:END:
+=LrgBlockShape= decides how a block looks and where it can connect:
+
+| Shape       | Looks like                                     | Top        | Below          | Typical use                     |
+|-------------+------------------------------------------------+------------+----------------+---------------------------------|
+| =HAT=       | Rounded dome over a row                        | nothing    | tab            | Starts a script: "when flag clicked", "when key pressed" |
+| =STATEMENT= | Rounded rectangle                              | notch      | tab            | A command: "move", "say"        |
+| =C=         | A row, a mouth holding a stack, a bottom arm   | notch      | tab            | "repeat", "forever", "if"       |
+| =E=         | Two rows and two mouths                        | notch      | tab            | "if ... then ... else"          |
+| =CAP=       | Rounded rectangle                              | notch      | nothing        | Ends a stack: "stop", "delete this clone" |
+| =REPORTER=  | A pill                                         | -          | -              | A value: "x position", "a + b"  |
+| =BOOLEAN=   | A hexagon                                      | -          | -              | A condition: "touching edge?"   |
+
+The connection rules (=lrg_block_editor_can_attach()=):
+- statement-like blocks (statement, C, E, cap) go below hats, statements, C and E blocks, or into a mouth;
+- a hat only ever starts a script (it can be dropped /above/ a script);
+- reporters and booleans go into number and text slots; only booleans go into boolean slots; nothing goes into a dropdown;
+- a stack that ends with a cap cannot be inserted above other blocks (they would have nowhere to go);
+- a lone C or E block (nothing below it, first mouth empty) inserted into a stack /wraps/ the blocks that were below the insertion point, like Scratch.
+
+*** Label templates
+:PROPERTIES:
+:CUSTOM_ID: block-editor-labels
+:END:
+A kind's label is words with typed slots in braces:
+
+| Slot syntax                       | Type       | Default            | Takes blocks         | Edited by                |
+|-----------------------------------+------------+--------------------+----------------------+--------------------------|
+| ={steps:number}= / ={steps:number=10}= | =NUMBER=   | ="0"= / ="10"=     | reporters, booleans  | typing (digits, =.=, =-=, =+=, =e=) |
+| ={msg:text}= / ={msg:text=Hello}= | =TEXT=     | =""= / ="Hello"=   | reporters, booleans  | typing                   |
+| ={cond:boolean}=                  | =BOOLEAN=  | =""=               | booleans             | not editable (a hole)    |
+| ={key:dropdown=CHOICES}=          | =DROPDOWN= | the first choice   | nothing              | a menu of the choices    |
+
+- Dropdown =CHOICES= are separated by bars: ={key:dropdown=space|left|right}=.
+- Slot names are letters, digits, =-= and =_=, unique within the label; programs and interpreters refer to slots by name.
+- In an =E= label a =|= outside braces starts the second row: ="if {c:boolean} then|else"=. Anywhere else a bare =|= is an error.
+- =\= escapes the next character: ="set \{x\} to {v:number}"= shows literal braces.
+- =lrg_block_kind_new()= reports a malformed template as =LRG_BLOCK_EDITOR_ERROR_LABEL= (unterminated or nested brace, unknown type, duplicate or empty name, a dropdown without choices, a stray =|=, a dangling backslash).
+- Dropdown choices can be replaced later (=lrg_block_kind_set_slot_choices()=), e.g. with the sprite names of the current level; existing values are kept even when no longer a choice.
+
+Kinds are immutable apart from their category, colour and dropdown choices: to change a label, define a new kind.
+
+*** Blocks
+:PROPERTIES:
+:CUSTOM_ID: block-editor-blocks
+:END:
+An =LrgBlock= has:
+- a kind (=lrg_block_get_kind()=, =lrg_block_get_kind_id()=);
+- one text value per slot (=lrg_block_get_value()=, =lrg_block_get_value_by_name()=, =lrg_block_get_number()=, =lrg_block_get_value_variant()=), kept even while a block sits in the slot;
+- one optional nested block per slot (=lrg_block_get_input()=, =lrg_block_get_input_by_name()=): when present it /replaces/ the slot's value;
+- the first block of each mouth (=lrg_block_get_mouth()=, 0 and for E blocks 1);
+- the block below it (=lrg_block_get_next()=);
+- where it is attached (=lrg_block_get_parent()=, =lrg_block_get_place()= returning an =LrgBlockPlace= and the mouth/slot index), and for a script's top block its workspace position (=lrg_block_get_position()=). =lrg_block_get_top()= finds the script a block is in.
+
+Free blocks (=lrg_block_new()=) belong to no editor; =lrg_block_editor_add_script()= adopts one (with whatever hangs under it). =lrg_block_editor_create_block()= does both. Structure changes go through the editor (=attach=, =detach=, =remove_block=) so they are undoable; values can be set on the block (=lrg_block_set_value()=), which inside an editor is an undoable edit too.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: block-editor-behaviour
+:END:
+| Input                                      | Effect                                                                                          |
+|--------------------------------------------+-------------------------------------------------------------------------------------------------|
+| Left drag from a palette block             | A new block of that kind follows the pointer; dropped on the workspace it joins the program     |
+| Left drag on a workspace block             | Carries it with every block below it (a value block alone); live insertion preview while near a valid connection; drop to connect, or anywhere to make a script of its own |
+| Drop over the palette or strip             | Deletes the carried stack (the palette tints red and shows a trash icon while hovering)          |
+| Escape / gamepad B while carrying          | Puts everything back as it was                                                                  |
+| Left click on a number or text slot        | Starts typing (the text is selected, so typing replaces it)                                     |
+| Left click on a dropdown slot              | Opens an =LrgMenu= of its choices below the slot                                                |
+| Typing (=TEXT_INPUT=)                      | Inserts at the caret; number slots accept only digits, =.=, =-=, =+=, =e=                       |
+| Backspace / Delete / Left / Right / Home / End | Edit the text being typed (Ctrl+A selects it all)                                          |
+| Enter, or a click elsewhere, or focus loss | Keeps the text (an invalid number reverts, an empty one becomes =0=)                            |
+| Escape                                     | Cancels typing / clears the selection                                                           |
+| Tab                                        | From a selected block: type into its first slot; while typing: the next slot of the block        |
+| Left drag on empty workspace               | Pans                                                                                            |
+| Middle drag, right drag, Space + left drag | Pans (right drag only when the editor has no context menu)                                      |
+| Wheel / Shift + wheel                      | Scrolls vertically / horizontally (over the palette: scrolls the palette)                       |
+| Ctrl + wheel, pinch (=ZOOM=)               | Zooms about the pointer, within =min-zoom= .. =max-zoom=                                         |
+| Touch pan (=PAN=)                          | On empty workspace pans, on the palette scrolls it; on a block it falls through to the mouse replay and carries the block |
+| Click on a category in the strip           | Glides the palette to that category                                                             |
+| Click on a block                           | Selects it (accent outline)                                                                     |
+| Double click on a script                   | Emits =block-activated= with the script's top block ("run it")                                   |
+| Enter / =ACTIVATE= with a block selected   | Emits =block-activated= with its script's top block                                             |
+| Up / Down                                  | Selects the previous / next block of the script in reading order (block, inputs, mouths, below) |
+| Left / Right                               | Selects the previous / next script's top block                                                  |
+| Delete / Backspace                         | Removes the selected block; the blocks below close the gap                                      |
+| Ctrl+D                                     | Duplicates the selected block and the blocks below it beside the original                       |
+| Ctrl+C / Ctrl+X / Ctrl+V                   | Copy / cut / paste (at the pointer) within the editor                                           |
+| Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y              | Undo, redo                                                                                      |
+
+Snapping: while a stack is carried, the nearest valid connection within 40 workspace units of the stack's top-left corner (for values: of the left middle against an empty slot's left middle) is the target. Blocks below the insertion point slide down to open a gap, a translucent ghost shows where the stack will land, and a slot that would take a value gets a white outline. On release the stack springs into place; displaced blocks (a value pushed out of a slot, blocks under a cap) spring to their new positions beside the target. The target is computed on a layout without the gap, so opening the gap never moves the target.
+
+The editor carries a =blocks= action group (=lrg_widget_insert_action_group()=): =blocks.undo=, =blocks.redo=, =blocks.delete=, =blocks.duplicate=, =blocks.copy=, =blocks.cut=, =blocks.paste=, =blocks.clean-up= (and =blocks.choose(s)=, used by dropdown menus). Build a context menu or a toolbar on them; =blocks.undo= / =blocks.redo= are disabled when there is nothing to do. With a context menu set (=lrg_widget_set_context_menu()=), a right click opens it instead of panning.
+
+** Undo
+:PROPERTIES:
+:CUSTOM_ID: block-editor-undo
+:END:
+Every edit is one undo step: API calls (=create_block=, =add_script=, =attach=, =detach=, =remove_block=, =clear_program=, =clean_up=, =set_value=, duplicate, paste), every drag (one step per gesture, from press to drop), each committed slot edit and each dropdown pick. Steps are whole-program snapshots that reference the blocks themselves, so undo and redo bring back /the same objects/: a pointer the game holds to a block stays valid and meaningful (its =lrg_block_get_editor()= is =NULL= while it is removed). =undo-limit= (default 200) bounds the history; =lrg_block_editor_load_yaml()= and =lrg_block_editor_clear_palette()= clear it.
+
+** Executing programs
+:PROPERTIES:
+:CUSTOM_ID: block-editor-executing
+:END:
+The editor is a program /editor/: running a program is the game's job, done by walking the tree. A script is its top block followed by =lrg_block_get_next()=; a C/E block's bodies start at =lrg_block_get_mouth()=; a slot's value is either a nested block to evaluate (=lrg_block_get_input()=) or the slot's text. =changed= tells the game the program changed (re-read it, or re-save it).
+
+A small, complete tree-walking interpreter for the palette in [[#block-editor-creation][Creation]] (a real game would add a time budget per frame and resume, see below):
+#+begin_src C
+typedef struct
+{
+	gdouble x;          /* the sprite this program drives */
+	gboolean stopped;
+} Sprite;
+
+static gdouble eval_number (Sprite *sp, LrgBlock *block, const gchar *slot);
+static gboolean eval_bool  (Sprite *sp, LrgBlock *block, const gchar *slot);
+
+/* eval_value: a reporter or boolean block's value */
+static gdouble
+eval_value (Sprite   *sp,
+            LrgBlock *value)
+{
+	const gchar *id = lrg_block_get_kind_id (value);
+
+	if (g_strcmp0 (id, "x-pos") == 0)
+		return sp->x;
+	if (g_strcmp0 (id, "touching") == 0)
+		return (g_strcmp0 (lrg_block_get_value_by_name (value, "what"), "edge") == 0 &&
+		        (sp->x < 0 || sp->x > 480)) ? 1.0 : 0.0;
+	return 0.0;
+}
+
+/* eval_number: a slot is its nested block when there is one, else its text */
+static gdouble
+eval_number (Sprite      *sp,
+             LrgBlock    *block,
+             const gchar *slot)
+{
+	LrgBlock *input = lrg_block_get_input_by_name (block, slot);
+
+	return input != NULL ? eval_value (sp, input) : lrg_block_get_number (block, slot);
+}
+
+static gboolean
+eval_bool (Sprite      *sp,
+           LrgBlock    *block,
+           const gchar *slot)
+{
+	LrgBlock *input = lrg_block_get_input_by_name (block, slot);
+
+	return input != NULL && eval_value (sp, input) != 0.0;   /* an empty hole is false */
+}
+
+/* run_stack: runs a block and the blocks below it */
+static void
+run_stack (Sprite   *sp,
+           LrgBlock *block)
+{
+	for (; block != NULL && !sp->stopped; block = lrg_block_get_next (block))
+	{
+		const gchar *id = lrg_block_get_kind_id (block);
+
+		if (g_strcmp0 (id, "move") == 0)
+			sp->x += eval_number (sp, block, "steps");
+		else if (g_strcmp0 (id, "repeat") == 0)
+		{
+			gint n = (gint) eval_number (sp, block, "times");
+			gint i;
+
+			for (i = 0; i < n && !sp->stopped; i++)
+				run_stack (sp, lrg_block_get_mouth (block, 0));
+		}
+		else if (g_strcmp0 (id, "if-else") == 0)
+			run_stack (sp, lrg_block_get_mouth (block, eval_bool (sp, block, "cond") ? 0 : 1));
+		else if (g_strcmp0 (id, "stop") == 0)
+			sp->stopped = TRUE;
+		/* "when-flag" and unknown kinds do nothing and fall through */
+	}
+}
+
+/* Run every "when flag clicked" script */
+static void
+on_green_flag (LrgBlockEditor *editor,
+               Sprite         *sp)
+{
+	guint i;
+
+	for (i = 0; i < lrg_block_editor_get_n_scripts (editor); i++)
+	{
+		LrgBlock *top = lrg_block_editor_get_nth_script (editor, i);
+
+		if (g_strcmp0 (lrg_block_get_kind_id (top), "when-flag") == 0)
+			run_stack (sp, top);
+	}
+}
+
+/* Double click / Enter on a script: run just that one */
+static void
+on_run_script (LrgBlockEditor *editor,
+               LrgBlock       *top,
+               Sprite         *sp)
+{
+	sp->stopped = FALSE;
+	run_stack (sp, top);
+}
+#+end_src
+
+Notes for real interpreters:
+- *Showing execution.* =lrg_block_set_running (block, TRUE)= glows a block (fading in and out with springs); on a script's top block the glow surrounds the whole script. Turn the current step on, the previous one off, and call =lrg_block_editor_clear_running()= when the program ends. Running state is not an edit: it is neither undone nor saved.
+- *Not freezing the game.* A recursive walker like the one above runs a script to the end in one call. For "wait" blocks or long loops, compile the tree to your own instruction list (a stack of =(block, iteration)= frames works) and run a few steps per frame; the =LrgBlock= pointers make good program counters to highlight.
+- *Values.* =lrg_block_get_value_variant()= returns typed values: =d= for number slots (0 when not a number), =b= for boolean slots (="true"=), =s= otherwise. Number slots only ever hold valid numbers when edited by the user, but documents written by hand may not.
+- *Compiling once.* Connect =changed= and rebuild your compiled form there; the program never changes behind your back.
+- *Modding.* Save programs with =LRG_BLOCK_YAML_PROGRAM= and ship the palette separately (=LRG_BLOCK_YAML_PALETTE=); a mod loads both. Unknown kinds in a program are a load error (=LRG_BLOCK_EDITOR_ERROR_UNKNOWN_KIND=), so the program cannot reference verbs the game does not implement.
+
+** YAML documents
+:PROPERTIES:
+:CUSTOM_ID: block-editor-yaml-schema
+:END:
+=lrg_block_editor_save_yaml()= writes the sections chosen by =LrgBlockYamlParts=; =lrg_block_editor_load_yaml()= loads whichever sections the document has:
+- =categories= and/or =kinds= replace the palette. Without =scripts=, the current program is kept if every block still fits the new kinds (same ids, slot names and shapes), else the load fails.
+- =scripts= replace the program; =view= sets the scroll and zoom.
+- Everything is validated before anything changes (a bad document leaves the editor untouched), and the undo history is cleared.
+- Saving, loading and saving again gives the same text. Numbers are written with 9 significant digits (exact for =gfloat=); every slot value is written as text, double-quoted when a YAML reader would take it for null (="", =~=, =null=).
+
+| Key                       | Where              | Meaning                                                                  |
+|---------------------------+--------------------+--------------------------------------------------------------------------|
+| =version=                 | root               | 1 (optional when reading)                                                |
+| =categories=              | root               | Sequence of ={name, color?}=, in palette order                           |
+| =kinds=                   | root               | Sequence of ={id, shape, category?, label, color?, choices?}=; =shape= is a nick: =hat=, =statement=, =c=, =e=, =cap=, =reporter=, =boolean= (default =statement=); =choices= maps dropdown slot names to replaced choice lists |
+| =view=                    | root               | ={x, y, zoom}=: scroll and zoom                                          |
+| =scripts=                 | root               | Sequence of ={x, y, blocks}=; =blocks= is the stack, top first           |
+| =kind=                    | block              | The kind id                                                              |
+| =values=                  | block              | Slot name -> text (missing slots keep their defaults)                    |
+| =inputs=                  | block              | Slot name -> a nested block mapping                                      |
+| =mouths=                  | C / E block        | Sequence of stacks (each a sequence of blocks, possibly =[]=)            |
+
+Colours are =#rrggbb= or =#rrggbbaa=.
+
+A palette document:
+#+begin_src yaml
+version: 1
+categories:
+- name: events
+- name: motion
+  color: '#4c97ffff'
+- name: control
+kinds:
+- id: when-flag
+  shape: hat
+  category: events
+  label: when flag clicked
+- id: move
+  shape: statement
+  category: motion
+  label: move {steps:number=10} steps
+- id: repeat
+  shape: c
+  category: control
+  label: repeat {times:number=10}
+- id: if-else
+  shape: e
+  category: control
+  label: if {cond:boolean} then|else
+- id: go-to
+  shape: statement
+  category: motion
+  label: go to {target:dropdown=mouse}
+  choices:
+    target: [mouse, player, exit door]
+- id: x-pos
+  shape: reporter
+  category: motion
+  label: x position
+- id: touching
+  shape: boolean
+  category: control
+  label: touching {what:dropdown=edge|mouse} ?
+#+end_src
+
+A program document (=LRG_BLOCK_YAML_PROGRAM=):
+#+begin_src yaml
+version: 1
+view:
+  x: -10
+  y: -10
+  zoom: 1
+scripts:
+- x: 40
+  y: 40
+  blocks:
+  - kind: when-flag
+  - kind: repeat
+    values:
+      times: 10
+    mouths:
+    - - kind: if-else
+        values:
+          cond: ""
+        inputs:
+          cond:
+            kind: touching
+            values:
+              what: edge
+        mouths:
+        - - kind: move
+            values:
+              steps: -10
+        - - kind: move
+            values:
+              steps: 10
+            inputs:
+              steps:
+                kind: x-pos
+- x: 400
+  y: 40
+  blocks:
+  - kind: x-pos
+#+end_src
+A script of a single reporter is allowed (a loose value lying on the workspace, as in Scratch). Hand-written documents may leave out =version=, =values= (defaults) and positions (0).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: block-editor-api
+:END:
+| Kind function                                       | Purpose                                                            |
+|-----------------------------------------------------+--------------------------------------------------------------------|
+| =lrg_block_kind_new()=                              | A kind from an id, shape, category and label template (=GError= on a bad template) |
+| =lrg_block_kind_get_id()=                           | The id                                                             |
+| =lrg_block_kind_get_shape()=                        | The =LrgBlockShape=                                                |
+| =lrg_block_kind_get_label()=                        | The template as given                                              |
+| =lrg_block_kind_get_category()= / =lrg_block_kind_set_category()= | Palette category                                     |
+| =lrg_block_kind_get_color()= / =lrg_block_kind_set_color()= | Own colour (else the category's)                           |
+| =lrg_block_kind_get_n_slots()=                      | Number of slots                                                    |
+| =lrg_block_kind_get_n_mouths()=                     | 1 for C, 2 for E, else 0                                           |
+| =lrg_block_kind_find_slot()=                        | Slot index by name, or -1                                          |
+| =lrg_block_kind_get_slot_name()=, =lrg_block_kind_get_slot_type()=, =lrg_block_kind_get_slot_default()= | Slot details                    |
+| =lrg_block_kind_get_slot_choices()= / =lrg_block_kind_set_slot_choices()= | Dropdown choices                             |
+
+| Block function                                      | Purpose                                                            |
+|-----------------------------------------------------+--------------------------------------------------------------------|
+| =lrg_block_new()=                                   | A free block with the kind's defaults                              |
+| =lrg_block_get_kind()=, =lrg_block_get_kind_id()=   | Its kind                                                           |
+| =lrg_block_get_editor()=                            | The editor holding it, =NULL= when free or removed                 |
+| =lrg_block_get_parent()=, =lrg_block_get_place()=, =lrg_block_get_top()= | Where it is attached                          |
+| =lrg_block_get_next()=, =lrg_block_get_mouth()=     | The block below, the first block of a mouth                        |
+| =lrg_block_get_input()=, =lrg_block_get_input_by_name()= | The block in a slot                                           |
+| =lrg_block_get_value()=, =lrg_block_get_value_by_name()= | A slot's text                                                 |
+| =lrg_block_get_number()=                            | A slot's text as a number (0 when not one)                         |
+| =lrg_block_get_value_variant()=                     | A slot's value typed by its slot (=d=, =b=, =s=)                   |
+| =lrg_block_set_value()=, =lrg_block_set_value_by_name()= | Set a slot's text (undoable inside an editor)                 |
+| =lrg_block_get_position()=                          | Workspace position of a script's top block                         |
+| =lrg_block_get_running()= / =lrg_block_set_running()= | The execution glow                                               |
+| =lrg_block_get_selected()=                          | Whether it is the editor's selected block                          |
+
+| Editor function                                     | Purpose                                                            |
+|-----------------------------------------------------+--------------------------------------------------------------------|
+| =lrg_block_editor_new()=                            | An empty editor                                                    |
+| =lrg_block_editor_add_kind()=, =lrg_block_editor_define_kind()= | Add a kind to the palette                              |
+| =lrg_block_editor_remove_kind()=                    | Remove an unused kind                                              |
+| =lrg_block_editor_get_kind()=, =lrg_block_editor_get_kinds()=, =lrg_block_editor_get_n_kinds()= | Look kinds up (palette order) |
+| =lrg_block_editor_clear_palette()=                  | Remove the program, every kind and category                        |
+| =lrg_block_editor_add_category()=, =lrg_block_editor_get_categories()= | Categories in palette order                     |
+| =lrg_block_editor_get_category_color()= / =lrg_block_editor_set_category_color()= | Category colours (theme-aware defaults) |
+| =lrg_block_editor_create_block()=, =lrg_block_editor_add_script()= | New scripts                                         |
+| =lrg_block_editor_can_attach()=, =lrg_block_editor_attach()= | Connect blocks (the rules in [[#block-editor-shapes][Shapes]]) |
+| =lrg_block_editor_detach()=                         | Make a block (and the blocks below) a script of its own            |
+| =lrg_block_editor_remove_block()=                   | Remove a block, optionally with the blocks below                   |
+| =lrg_block_editor_clear_program()=                  | Remove every script                                                |
+| =lrg_block_editor_get_n_scripts()=, =lrg_block_editor_get_nth_script()=, =lrg_block_editor_get_scripts()= | The scripts (drawing order) |
+| =lrg_block_editor_get_n_blocks()=                   | Blocks in the program                                              |
+| =lrg_block_editor_clear_running()=                  | Turn every execution glow off                                      |
+| =lrg_block_editor_clean_up()=                       | Arrange the scripts in a column (undoable, animated)               |
+| =lrg_block_editor_get_selected()=, =lrg_block_editor_select_block()= | The selected block                                |
+| =lrg_block_editor_delete_selection()=, =lrg_block_editor_duplicate_selection()= | Delete, Ctrl+D                         |
+| =lrg_block_editor_copy_selection()=, =lrg_block_editor_paste()= | Ctrl+C, Ctrl+V (the clipboard is the editor's own)      |
+| =lrg_block_editor_undo()=, =lrg_block_editor_redo()=, =lrg_block_editor_can_undo()=, =lrg_block_editor_can_redo()=, =lrg_block_editor_clear_history()= | History |
+| =lrg_block_editor_get_undo_limit()= / =lrg_block_editor_set_undo_limit()= | =undo-limit=                                 |
+| =lrg_block_editor_begin_slot_edit()=, =lrg_block_editor_commit_slot_edit()=, =lrg_block_editor_cancel_slot_edit()= | Typing into slots (a dropdown opens its menu) |
+| =lrg_block_editor_get_edit_slot()=, =lrg_block_editor_get_edit_text()= | The slot being typed into and its text          |
+| =lrg_block_editor_get_zoom()= / =lrg_block_editor_set_zoom()=, =lrg_block_editor_zoom_at()= | Zoom                       |
+| =lrg_block_editor_get_scroll()= / =lrg_block_editor_set_scroll()=, =lrg_block_editor_pan_by()= | Scroll                  |
+| =lrg_block_editor_set_zoom_range()=, =lrg_block_editor_get_min_zoom()=, =lrg_block_editor_get_max_zoom()= | Zoom range   |
+| =lrg_block_editor_workspace_to_screen()=, =lrg_block_editor_screen_to_workspace()= | Coordinate mapping (screen = world) |
+| =lrg_block_editor_get_workspace_bounds()=, =lrg_block_editor_get_palette_bounds()= | The two areas                       |
+| =lrg_block_editor_get_block_bounds()=, =lrg_block_editor_get_slot_bounds()=, =lrg_block_editor_get_palette_block_bounds()= | Where things are shown (tooltips, tests, tutorials) |
+| =lrg_block_editor_block_at()=                       | Hit test: the innermost block (and empty slot) under a point       |
+| =lrg_block_editor_scroll_palette_to()=              | Glide the palette to a category                                    |
+| =lrg_block_editor_get_grid_size()= / =lrg_block_editor_set_grid_size()= | =grid-size=                                    |
+| =lrg_block_editor_get_show_grid()= / =lrg_block_editor_set_show_grid()= | =show-grid=                                    |
+| =lrg_block_editor_get_show_palette()= / =lrg_block_editor_set_show_palette()= | =show-palette=                           |
+| =lrg_block_editor_get_palette_width()= / =lrg_block_editor_set_palette_width()= | =palette-width=                        |
+| =lrg_block_editor_save_yaml()=, =lrg_block_editor_save_yaml_to_file()= | Write the palette and/or the program            |
+| =lrg_block_editor_load_yaml()=, =lrg_block_editor_load_yaml_from_file()= | Load them (validated first)                   |
+| =lrg_block_editor_error_quark()=                    | The =LRG_BLOCK_EDITOR_ERROR= domain (=LrgBlockEditorError=: =LABEL=, =PARSE=, =UNKNOWN_KIND=, =INVALID=, =IO=) |
+| =lrg_block_editor_get_type()=, =lrg_block_kind_get_type()=, =lrg_block_get_type()= | =GType=s                         |
+| =lrg_block_shape_get_type()=, =lrg_block_slot_type_get_type()=, =lrg_block_place_get_type()=, =lrg_block_yaml_parts_get_type()=, =lrg_block_editor_error_get_type()= | Enum and flags =GType=s (nicks as in the YAML) |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: block-editor-properties
+:END:
+| =LrgBlockEditor= property | Type       | Default | Meaning                                                          |
+|---------------------------+------------+---------+------------------------------------------------------------------|
+| =zoom=                    | =gfloat=   | 1       | Screen units per workspace unit (setting keeps the top-left)     |
+| =scroll-x=, =scroll-y=    | =gfloat=   | 0       | Workspace point shown at the workspace's top-left corner          |
+| =min-zoom=, =max-zoom=    | =gfloat=   | 0.3, 3  | Zoom range                                                       |
+| =grid-size=               | =gfloat=   | 24      | Dot spacing in workspace units                                    |
+| =show-grid=               | =gboolean= | =TRUE=  | Draw the dot grid                                                |
+| =show-palette=            | =gboolean= | =TRUE=  | Show the palette and its category strip                          |
+| =palette-width=           | =gfloat=   | 220     | Width of the block list (the strip adds 64)                       |
+| =undo-limit=              | =guint=    | 200     | Most undo steps kept                                             |
+| =can-undo=, =can-redo=    | =gboolean= | =FALSE= | Read-only; history state (notified on change)                     |
+
+| Kind / block property     | Type            | Meaning                                         |
+|---------------------------+-----------------+-------------------------------------------------|
+| =LrgBlockKind:id=         | =gchararray=    | Construct-only id                               |
+| =LrgBlockKind:shape=      | =LrgBlockShape= | Construct-only shape                            |
+| =LrgBlockKind:label=      | =gchararray=    | Construct-only template                         |
+| =LrgBlockKind:category=   | =gchararray=    | Palette category                                |
+| =LrgBlock:kind=           | =LrgBlockKind=  | Construct-only kind                             |
+| =LrgBlock:running=        | =gboolean=      | The execution glow                              |
+
+| Signal              | Arguments | Emitted                                                                                   |
+|---------------------+-----------+-------------------------------------------------------------------------------------------|
+| =changed=           | none      | Once per edit, undo, redo or load, after that edit's =block-added= / =block-removed=       |
+| =block-added=       | =block=   | Each block that joined the program (palette drags, pastes, loads, undo bringing it back)  |
+| =block-removed=     | =block=   | Each block that left it (still valid; may come back with undo)                           |
+| =block-activated=   | =top=     | Double click on a script, Enter / =ACTIVATE= with a block selected: run this script       |
+| =selection-changed= | none      | The selected block changed                                                               |
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: block-editor-styling
+:END:
+Block colours come from the kind (=lrg_block_kind_set_color()=), else its category (=lrg_block_editor_set_category_color()=), else a default: the familiar Scratch colours for =motion=, =looks=, =sound=, =events=, =control=, =sensing=, =operators=, =variables=, =lists=, =custom= and =pen=, a colour picked by name for others, toned down 10 % on dark themes. Each block is drawn with a border 30 % darker than its colour and a subtle top-to-bottom gradient; its text is white or near-black, whichever reads better.
+
+| Part        | State      | Built-in look                                                                     |
+|-------------+------------+-----------------------------------------------------------------------------------|
+| =box=       | resting    | Workspace: =WINDOW= mixed 35 % towards =PANEL=, =BORDER=                          |
+| =header=    | resting    | Palette: =PANEL=, category names in =TEXT_MUTED=, =BORDER=                         |
+| =tab=       | resting    | Category strip: =SURFACE=, names in =TEXT_MUTED=, radius 8                        |
+| =tab=       | =selected= | The category at the top of the palette: accent wash (16 %), =TEXT=                |
+| =track=     | resting    | Grid dots: =BORDER= at 70 % (foreground)                                          |
+| =item=      | resting    | Blocks: radius 5 (scaled by the zoom), border width 1, =SHADOW= drop shadow       |
+| =label=     | resting    | Number and text fields: =INPUT= mixed 85 % to white, dark text, faint border      |
+| =mark=      | resting    | Selection outline: =ACCENT=, 2 wide                                               |
+| =fill=      | resting    | Execution glow: warm yellow, glow size 14                                         |
+| =indicator= | resting    | Insertion ghost: =TEXT_MUTED= at 35 %                                             |
+| any         | =disabled= | 45 % opacity                                                                      |
+
+The slot being typed into is outlined in =ACCENT= with a caret (its text is highlighted in =SELECTION= while all of it is selected). Override any part with style rules for =LrgBlockEditor= or =lrg_widget_set_part_look()=.
+
+** Right-to-left
+:PROPERTIES:
+:CUSTOM_ID: block-editor-rtl
+:END:
+With an effective direction of =RTL= the palette and its strip move to the right edge and the workspace to the left. Blocks themselves are not mirrored (their labels are code-like and read left to right), and workspace coordinates are absolute, so a program looks the same in both directions.
+
+** YAML (UI loader)
+:PROPERTIES:
+:CUSTOM_ID: block-editor-yaml
+:END:
+Supported by =LrgUILoader= as =LrgBlockEditor= (the integration pass adds the keys). Every setting is a property; a palette and a program are best given as a block editor document (inline or a file path) loaded with =lrg_block_editor_load_yaml()=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: block-editor-pitfalls
+:END:
+- Kinds are immutable: =lrg_block_kind_new()= parses the template once. To "edit" a block's label, define a new kind (a palette reload keeps a program only if every block still fits).
+- =lrg_block_editor_remove_kind()= refuses kinds in use; clear or edit the program first.
+- A slot's text is kept while a block sits in it: always check =lrg_block_get_input()= first when evaluating.
+- Positions returned by =lrg_block_editor_get_block_bounds()= are where blocks are /shown/: after an edit they glide for a few frames. Step the canvas (=lrg_canvas_update()=) until it settles before relying on them.
+- Edits by the API finish a gesture in progress (a carried stack is dropped where it is) and commit a slot being typed into, so they never interleave with the user's.
+- Undo snapshots hold references to every block of the program; a huge program with a large =undo-limit= keeps that many references per step.
+- Printable shortcuts of the canvas do not fire while a slot is being typed into (the editor takes the keys); Ctrl shortcuts of the editor (Z, Y, D, C, X, V) shadow canvas shortcuts with the same accelerators while it has focus.
+- With a context menu set on the editor, right drag no longer pans: use the middle button, Space + drag or a left drag on empty workspace.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: block-editor-see-also
+:END:
+- [[file:node-graph.org][Node graph]] - the dataflow-style visual scripting editor
+- [[file:menu.org][Menu]] - the dropdown menus and context menus
+- [[file:../actions.org][Actions]] - the =blocks= action group and shortcuts

@@ -1,0 +1,167 @@
+#+title: LrgPagination
+#+description: A page picker with boundary pages, ellipsis gaps, arrows and a sliding accent pill
+#+authors: Zach Podbielniak
+#+categories: libregnum ui widgets
+
+* Pagination
+:PROPERTIES:
+:CUSTOM_ID: pagination
+:END:
+=LrgPagination= picks one page out of many, the way result lists and galleries do: =< 1 ... 4 5 6 ... 20 >=. It shows a few pages at each end (the /boundary/), a window of pages around the current one (the /siblings/), ellipsis gaps for what is left out, and optional previous / next arrows. Pages are 0-based in the API and shown 1-based.
+
+The row is built for motion and stability:
+
+- every button has the same width (wide enough for the largest page number), and the number of buttons is fixed once the pages no longer all fit, so the row never changes width or jitters while the current page moves;
+- a gap only ever replaces two or more pages; a single hidden page is shown as a number instead of "...";
+- an accent *pill* sits under the current page and glides there on two springs (position and width); the label under it cross-fades to the on-accent colour as the pill arrives;
+- each button has its own *hover* and *press* springs, and squashes slightly while pressed.
+
+When the window around the current page shifts (moving from page 9 to 10 of 20), the numbers move under a pill that stays put; near the ends, where the window is clamped, the pill slides between buttons.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: pagination-creation
+:END:
+#+begin_src C
+LrgPagination *pager = lrg_pagination_new (20);
+
+lrg_pagination_set_siblings (pager, 1);   /* default */
+lrg_pagination_set_boundary (pager, 1);   /* default */
+g_signal_connect (pager, "page-changed", G_CALLBACK (on_page_changed), view);
+lrg_widget_set_halign (LRG_WIDGET (pager), LRG_ALIGN_CENTER);
+lrg_container_add_child (LRG_CONTAINER (footer), LRG_WIDGET (pager));
+#+end_src
+
+#+begin_src C
+static void
+on_page_changed (LrgPagination *pager,
+                 guint          page,
+                 gpointer       user_data)
+{
+	show_results_page (user_data, page);   /* page is 0-based */
+}
+#+end_src
+
+When allocated wider than it needs, the row is centred in the widget.
+
+** Which items are shown
+:PROPERTIES:
+:CUSTOM_ID: pagination-items
+:END:
+=lrg_pagination_compute_items()= is the pure function behind the widget. Apps can call it to build their own pager (or a text one, or a gamepad HUD) and tests can check it without a canvas. It writes page numbers in display order, with =LRG_PAGINATION_GAP= (-1) for each "...":
+
+#+begin_src C
+gint  items[16];
+guint n = lrg_pagination_compute_items (20, 9, 1, 1, items, G_N_ELEMENTS (items));
+/* n = 7: 0, GAP, 8, 9, 10, GAP, 19   ->   1 ... 9 10 11 ... 20 */
+#+end_src
+
+The rules, for =n= pages, current page =p=, =s= siblings and =b= boundary pages:
+
+1. When =n <= 2b + 2s + 3= every page is listed.
+2. Otherwise exactly =2b + 2s + 3= items are listed: =b= pages at the start, one slot, a window of =2s + 1= pages, one slot, =b= pages at the end.
+3. The window is centred on =p= and clamped so that each slot covers at least one page. A slot that covers exactly one page shows that page; a slot that covers more is a gap.
+
+| n | page | siblings | boundary | items (1-based) |
+|---+------+----------+----------+-----------------|
+| 5 | 2 | 1 | 1 | 1 2 3 4 5 |
+| 20 | 0 | 1 | 1 | 1 2 3 4 5 ... 20 |
+| 20 | 3 | 1 | 1 | 1 2 3 4 5 ... 20 |
+| 20 | 4 | 1 | 1 | 1 ... 4 5 6 ... 20 |
+| 20 | 9 | 1 | 1 | 1 ... 9 10 11 ... 20 |
+| 20 | 19 | 1 | 1 | 1 ... 16 17 18 19 20 |
+| 20 | 10 | 2 | 0 | ... 9 10 11 12 13 ... |
+| 100 | 50 | 1 | 2 | 1 2 ... 50 51 52 ... 99 100 |
+
+Pass =NULL= for the array to only count. The return value is always the full count, even when =max_items= is smaller.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: pagination-behaviour
+:END:
+| Input | Effect |
+|-------+--------|
+| Click a page | selects it |
+| Click the previous / next arrow | one page back / forward; the arrow at the first / last page is drawn faded and inert |
+| Click a gap (with =jump-on-gap=) | jumps =siblings * 2 + 1= pages towards it (back for a gap before the current page, forward after it), clamped |
+| Press on one button, release on another | nothing (a click lands only where it started) |
+| Left / Right (focused) | one page back / forward; mirrored in right-to-left; always consumed, so focus does not wander off at the ends |
+| Home / End | first / last page |
+| Page Up / Page Down | =siblings * 2 + 1= pages back / forward |
+| Up / Down | not handled: spatial navigation moves focus away |
+
+The widget is focusable; the core draws the focus ring around the whole row.
+
+*** Right-to-left
+In right-to-left (=lrg_widget_set_direction()= or =lrg_canvas_set_default_direction()=) the row is mirrored: page 1 is at the right, the previous arrow at the right edge pointing right, next at the left pointing left, and the Left key moves to the /next/ page.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: pagination-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_pagination_new()= | Creates a pagination of =n_pages= showing page 0 |
+| =lrg_pagination_get_n_pages()= / =lrg_pagination_set_n_pages()= | Number of pages; the page is clamped into the new range (emitting =::page-changed= if it moves) |
+| =lrg_pagination_get_page()= / =lrg_pagination_set_page()= | Current page, 0-based; set clamps to the last page |
+| =lrg_pagination_get_siblings()= / =lrg_pagination_set_siblings()= | Pages each side of the current one (default 1) |
+| =lrg_pagination_get_boundary()= / =lrg_pagination_set_boundary()= | Pages always shown at each end (default 1) |
+| =lrg_pagination_get_show_prev_next()= / =lrg_pagination_set_show_prev_next()= | Arrow buttons (default =TRUE=) |
+| =lrg_pagination_get_jump_on_gap()= / =lrg_pagination_set_jump_on_gap()= | Whether gaps are clickable (default =TRUE=) |
+| =lrg_pagination_next()= / =lrg_pagination_previous()= | Step one page; return =TRUE= if the page changed |
+| =lrg_pagination_get_item_at()= | Hit test: the =LrgPaginationItem= kind under a world point, and the page it shows or leads to (-1 for an inert arrow or gap) |
+| =lrg_pagination_get_page_rect()= | World rectangle of a page's button, after mirroring; =FALSE= when the page is hidden behind a gap |
+| =lrg_pagination_get_indicator_x()= | World X of the pill's left edge right now (follows the spring) |
+| =lrg_pagination_compute_items()= | The pure item computation described above |
+| =lrg_pagination_item_get_type()= | GType of =LrgPaginationItem= |
+
+=LrgPaginationItem= values: =LRG_PAGINATION_ITEM_NONE=, =LRG_PAGINATION_ITEM_PAGE=, =LRG_PAGINATION_ITEM_GAP=, =LRG_PAGINATION_ITEM_PREVIOUS=, =LRG_PAGINATION_ITEM_NEXT= (nicks =none=, =page=, =gap=, =previous=, =next=). =LRG_PAGINATION_GAP= is the -1 written for gaps.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: pagination-properties
+:END:
+| Name | Type | Notes |
+|------+------+-------|
+| =n-pages= | =guint= | default 1 |
+| =page= | =guint= | 0-based, notifies on change |
+| =siblings= | =guint= | 0..64, default 1 |
+| =boundary= | =guint= | 0..64, default 1 |
+| =show-prev-next= | =gboolean= | default =TRUE= |
+| =jump-on-gap= | =gboolean= | default =TRUE= |
+| =::page-changed (guint page)= | signal | the page changed, from input or code |
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: pagination-styling
+:END:
+| Part | States | Default look |
+|------+--------+--------------|
+| =ITEM= | rest, =HOVERED=, =PRESSED=, =DISABLED= | page / arrow / gap button: transparent at rest (the hover colour at zero alpha, so the fade does not pass through grey), =CONTROL_HOVER= / =CONTROL_PRESSED=, text =TEXT=, theme corner radius; disabled opacity 0.35 |
+| =INDICATOR= | rest, =HOVERED=, =DISABLED= | the pill: =ACCENT= (=ACCENT_HOVER= while the pointer is over the widget), on-accent text, accent-tinted soft shadow |
+| =ARROW= | rest, =HOVERED=, =DISABLED= | chevrons and gap dots: =TEXT_MUTED=, =TEXT= when hovered |
+| =FOCUS= | | the core focus ring |
+
+Hover and press are blended per button with the widget's own springs, not the widget-wide hover spring, so theme rules for =LrgPagination= =ITEM= with =HOVERED= apply to the button under the pointer only. The pill and buttons go through =lrg_widget_paint_box()=, so gradients, glows and materials from rules work.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: pagination-yaml
+:END:
+Supported by =LrgUILoader= as =LrgPagination= (the integration pass fills in the details); every setting is a property, e.g. =n-pages: 20=, =page: 4=, =siblings: 2=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pagination-pitfalls
+:END:
+- Pages are 0-based everywhere in the API, including =::page-changed=; only the labels are 1-based.
+- With =siblings= and =boundary= both 0 the row is three buttons wide; that is legal but rarely useful.
+- The text width is measured with the theme's UI font; headless (no font) it is estimated, so tests should use =lrg_pagination_get_page_rect()= rather than hard-coded positions.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: pagination-see-also
+:END:
+- [[file:tile-view.org][LrgTileView]] and [[file:list-view.org][LrgListView]] for what is usually paged
+- [[file:../animation.org][Animation]]
+- [[file:../styling.org][Styling]]

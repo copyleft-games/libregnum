@@ -1,0 +1,535 @@
+#+TITLE: UI Inspector
+#+AUTHOR: Zach Podbielniak
+#+OPTIONS: toc:2
+
+* UI Inspector
+:PROPERTIES:
+:CUSTOM_ID: ui-inspector
+:END:
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Inspector
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgUIInspector= (=src/ui/lrg-ui-inspector.h=) is a Raven-style inspector for the retained UI stack (=LrgCanvas= / =LrgWidget=). It answers the questions you have while building a menu or HUD: what is under the pointer, why is this button where it is, which look did it resolve to, what does the layout cost per frame, and what happens if I change this property right now.
+
+What it gives you:
+
+- *Tree snapshots* as JSON text (for tools and agents) or a flat =GVariant= node list (for C): type, name, style classes, state flags, world rectangle, margin, alignment, fill weight, visibility, focusability, the resolved look of the main part (=LRG_UI_PART_BOX=) and child counts, for the canvas tree, every open popup and the overlay layer.
+- *Stable paths* such as ="LrgVBox#main/LrgButton#ok"= with a lookup that round-trips, so a widget can be named from outside the process.
+- *Picking*: the widget at a point, using the canvas's own hit-test (overlays first, then popups newest first, modal veils, pointer-transparent widgets skipped).
+- *Pick mode*: hovering highlights, clicking selects; the click never reaches the application.
+- *A highlight overlay*: the selected widget's bounds, margin and a =Type#name w×h= label, plus a lighter outline on the hovered widget, recorded as ordinary paint-list instances.
+- *Timings*: per-frame step, layout and record durations plus instance, command and draw-call counts.
+- *Live tweaking*: get and set any GObject property by name, from typed =GValue= s or from text.
+- *MCP tools* (=lrg_ui_tree=, =lrg_ui_pick=, =lrg_ui_get_widget=, =lrg_ui_set_property=, =lrg_ui_highlight=, =lrg_ui_timings=) in the debug tool group, so an AI agent or script can inspect and tweak a running game's UI.
+
+The inspector stays out of the widget hot path. It holds the canvas through a weak reference, walks the tree only when asked, and the only per-frame work it adds is two =g_get_monotonic_time()= reads per canvas phase (taken only while an inspector is attached) and the highlight's own handful of instances.
+
+** Attaching to a canvas
+:PROPERTIES:
+:CUSTOM_ID: attaching
+:END:
+There is one process-wide inspector, returned by =lrg_ui_inspector_get_default()=. This is the one the MCP tools use, so an application makes its UI inspectable by registering its main canvas once:
+
+#+begin_src C
+canvas = lrg_canvas_new ();
+lrg_widget_set_size (LRG_WIDGET (canvas), 1280.0f, 720.0f);
+/* ... build the UI ... */
+
+lrg_ui_inspector_register_canvas (canvas);   /* MCP tools can now see it */
+#+end_src
+
+=lrg_ui_inspector_register_canvas()= is =lrg_ui_inspector_set_canvas()= on the default inspector. Pass =NULL= to detach. Separate inspectors made with =lrg_ui_inspector_new()= work the same way for tools that inspect several canvases.
+
+Attaching:
+
+1. takes a weak reference on the canvas (the inspector detaches itself when the canvas is finalized; the selection and hover are weak too);
+2. adds one private, pointer-transparent, childless widget to the canvas overlay layer (=lrg_canvas_add_overlay()=). It draws the highlight at the end of =lrg_canvas_record()=, never wins a hit-test, and is left out of snapshots, paths and overlay indices;
+3. switches on the canvas phase timers.
+
+Detaching (=set_canvas (NULL)=, attaching elsewhere, or disposing the inspector) undoes all three and clears the selection. =lrg_canvas_get_n_overlays()= counts the inspector's widget while it is attached.
+
+** Paths
+:PROPERTIES:
+:CUSTOM_ID: paths
+:END:
+A path names a widget by the route from the canvas, one segment per level, separated by =/=:
+
+| Segment          | Meaning                                                                                   |
+|------------------+-------------------------------------------------------------------------------------------|
+| =Type[n]=        | the n-th child of exactly this type (counting named and unnamed siblings), e.g. =LrgButton[2]= |
+| =Type#name=      | the first child of this type with this =lrg_widget_set_name()= name                         |
+| =Type#name[k]=   | the k-th child of this type and name (only generated when names repeat)                     |
+| =#name=          | lookup only: the first child with this name, any type                                       |
+| =:popup[i]=      | first segment only: the i-th open popup, oldest first                                       |
+| =:overlay[i]=    | first segment only: the i-th overlay-layer widget, bottom first (the inspector's own is skipped) |
+
+The canvas itself is the empty path =""= (=/= is accepted too). Examples:
+
+#+begin_example
+LrgVBox#main/LrgButton#ok          a named button in a named box
+LrgVBox[0]/LrgHBox[1]/LrgLabel[0]  positional
+#main/#ok                           short form (lookup only)
+:popup[0]/LrgListView[0]            a list inside the first open popup
+:overlay[0]                         the toast queue in the overlay layer
+#+end_example
+
+Paths are stable as long as the tree's shape is: naming the widgets you care about makes them survive insertions elsewhere. Type names are exact (=G_OBJECT_TYPE_NAME=), not base classes. Widgets that a composite widget keeps outside its child list (internal parts) have no path; =lrg_ui_inspector_get_path()= returns =NULL= for them and =lrg_ui_pick= reports the nearest addressable ancestor. Names containing =/=, =#= or =[= cannot be addressed by name; use the positional form.
+
+** Snapshots
+:PROPERTIES:
+:CUSTOM_ID: snapshots
+:END:
+*** JSON
+:PROPERTIES:
+:CUSTOM_ID: snapshot-json
+:END:
+=lrg_ui_inspector_snapshot_json()= returns one object:
+
+#+begin_src json
+{
+  "canvas": { "width": 800, "height": 600 },
+  "root": { "path": "", "type": "LrgCanvas", "...": "...", "children": [ ... ] },
+  "popups": [ { "path": ":popup[0]", "...": "..." } ],
+  "overlays": [ ],
+  "selected": "LrgVBox#main/LrgButton#ok",
+  "hovered": null
+}
+#+end_src
+
+Every node has these members:
+
+#+begin_src json
+{
+  "path": "LrgVBox#main/LrgButton#ok",
+  "type": "LrgButton",
+  "name": "ok",
+  "classes": ["primary"],
+  "state": ["hovered"],
+  "rect": { "x": 24, "y": 24, "width": 292, "height": 36 },
+  "margin": { "left": 4, "top": 4, "right": 4, "bottom": 4 },
+  "halign": "fill",
+  "valign": "fill",
+  "fill_weight": 0,
+  "visible": true,
+  "enabled": true,
+  "focusable": true,
+  "pointer_transparent": false,
+  "opacity": 1,
+  "look": {
+    "part": "box",
+    "set": ["background", "border", "border-width", "radii", "shadow"],
+    "background": "#89b4faff",
+    "foreground": "#1e1e2eff",
+    "border": "#00000000",
+    "border_width": 0,
+    "radii": [6, 6, 6, 6],
+    "shadow": "#00000040",
+    "shadow_blur": 6,
+    "shadow_offset_y": 2,
+    "opacity": 1,
+    "size": 0,
+    "glow": "#00000000",
+    "glow_size": 0
+  },
+  "n_children": 0,
+  "children": []
+}
+#+end_src
+
+- =rect= is in world (canvas) coordinates, the same space as =lrg_canvas_widget_at_point()=.
+- =state= lists =LrgWidgetState= nicks (=hovered=, =pressed=, =focused=, =focus-visible=, =disabled=, =checked=, =selected=, =open=).
+- =look= is =lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, ...)=: the look being painted right now, with defaults, theme rules, explicit setters and per-instance overrides merged and hover/press springs blended. =set= lists which fields carry a value. Colours are =#rrggbbaa=.
+- When the inspector is detached the result is ={"error": "not attached to a canvas"}=.
+
+*** GVariant
+:PROPERTIES:
+:CUSTOM_ID: snapshot-variant
+:END:
+=lrg_ui_inspector_snapshot()= returns the same data as a flat, depth-first =aa{sv}= list: the canvas, its subtree, then each popup and overlay subtree. Every dictionary has =path= (s), =parent= (s, empty for layer roots), =depth= (u), =layer= (s: =canvas=, =popup=, =overlay=), =type= (s), =name= (s, empty when unnamed), =classes= (as), =state= (u, raw =LrgWidgetState= bits), =x=, =y=, =width=, =height= (d), =margin= (=(dddd)= left, top, right, bottom), =halign=, =valign= (s), =fill-weight= (d), =visible=, =enabled=, =focusable=, =pointer-transparent= (b), =opacity= (d), =n-children= (u) and =look= (=a{sv}= with =background=, =foreground=, =border= as =(yyyy)= RGBA, =border-width=, =opacity=, =shadow-blur=, =size= (d) and =radii= =(dddd)=).
+
+#+begin_src C
+g_autoptr(GVariant) nodes = lrg_ui_inspector_snapshot (inspector);
+GVariantIter        iter;
+GVariant           *node;
+
+g_variant_iter_init (&iter, nodes);
+while ((node = g_variant_iter_next_value (&iter)) != NULL)
+{
+	const gchar *path;
+	gdouble      w;
+
+	g_variant_lookup (node, "path", "&s", &path);
+	g_variant_lookup (node, "width", "d", &w);
+	g_print ("%s %.0f\n", path, w);
+	g_variant_unref (node);
+}
+#+end_src
+
+*** One widget
+:PROPERTIES:
+:CUSTOM_ID: describe-widget
+:END:
+=lrg_ui_inspector_describe_widget()= returns one node with =children= as an array of child paths (not nested nodes) and an extra =properties= object holding every readable GObject property: scalars as themselves, enums as nicks, flags as arrays of nicks, =GrlColor= as =#rrggbbaa=, objects as their type name (or =null=), anything else as =g_strdup_value_contents()= text.
+
+** Picking and pick mode
+:PROPERTIES:
+:CUSTOM_ID: picking
+:END:
+=lrg_ui_inspector_pick (inspector, x, y)= is the canvas hit-test (=lrg_canvas_widget_at_point()=): the overlay layer newest first, then popups newest first (a modal popup's veil stops the search, so nothing below it is returned), then the tree, children in reverse paint order. Hidden, disabled and pointer-transparent widgets are skipped exactly as for a click.
+
+*Pick mode* (=lrg_ui_inspector_set_pick_mode()=) makes the pointer an inspection tool. It works on input frames, before they reach the canvas, which is the canvas's public input seam:
+
+#+begin_src C
+/* Instead of lrg_canvas_handle_input (canvas): */
+lrg_ui_inspector_handle_input (inspector);
+
+/* Or, with your own input layer: */
+LrgCanvasInput input;
+
+fill_input_from_my_devices (&input);
+lrg_ui_inspector_filter_input (inspector, &input);
+lrg_canvas_process_input (canvas, &input);
+#+end_src
+
+In pick mode =lrg_ui_inspector_filter_input()=:
+
+1. updates =hovered= to the widget under the pointer (or the first finger);
+2. on a left press or a new touch, selects that widget and emits =picked=;
+3. removes presses, wheel movement and touches from the frame, and releases of buttons the application never saw go down; a button the app was already holding when pick mode started still gets its release, so a capture cannot get stuck;
+4. consumes Escape (and clears =cancel=) and leaves pick mode.
+
+Because the press never reaches =lrg_canvas_process_input()=, the canvas does not focus, capture, press, dismiss non-modal popups or dispatch anything. The pointer position is passed through, so the app's hover looks and tooltips keep working while you inspect. Outside pick mode the filter only tracks which buttons the app holds and returns =FALSE=.
+
+** Highlight overlay
+:PROPERTIES:
+:CUSTOM_ID: highlight
+:END:
+While attached, the inspector's overlay widget records the highlight at the end of every =lrg_canvas_record()= (the overlay layer is painted last), so it always matches the frame's layout and is drawn by the same =lrg_canvas_render()= / =lrg_paint_renderer_render()= call as the UI:
+
+- *hovered* widget (pick mode): a translucent teal fill and a 1.5 unit outline;
+- *selected* widget: the margin as four translucent peach strips (box-model style), a translucent blue fill with a 1.5 unit outline, and a dark label =Type#name  w×h= above the widget (below it when there is no room), in the theme's UI font.
+
+The colours are fixed (Catppuccin-like) so the highlight reads the same over all theme presets. =lrg_ui_inspector_set_highlight_visible (FALSE)= hides it while keeping the selection. Select with =lrg_ui_inspector_set_selected()= or by path with =lrg_ui_inspector_highlight()=.
+
+Apps that record into a paint list of their own can call =lrg_ui_inspector_paint_highlight (inspector, list)= after the canvas has recorded; that is the same function the overlay widget calls.
+
+** Timings
+:PROPERTIES:
+:CUSTOM_ID: timings
+:END:
+=lrg_ui_inspector_get_timings()= fills an =LrgUIInspectorTimings=:
+
+| Field         | Source                                                                                                    |
+|---------------+-----------------------------------------------------------------------------------------------------------|
+| =step_us=     | duration of the last =lrg_canvas_update()= (springs, appear animations, popup ghosts); =process_input= calls it |
+| =layout_us=   | layout part of the last =lrg_canvas_record()= (tree, popups, overlays)                                    |
+| =record_us=   | paint recording part of the last =lrg_canvas_record()=, layout excluded                                   |
+| =n_instances= | instances in the canvas paint list, minus the instances the highlight added                              |
+| =n_commands=  | commands (instance batches and callbacks) in the list, highlight included                                |
+| =draw_calls=  | =lrg_paint_renderer_get_draw_calls()= of the default renderer (0 headless or if you render elsewhere)    |
+| =frames=      | records seen since the inspector attached                                                                 |
+
+The durations are measured with =g_get_monotonic_time()= (microsecond resolution) by a private hook in =lrg-canvas.c= that is only active while an inspector is attached. If two inspectors are attached to the same canvas, detaching one switches the timers off for both.
+
+** Properties by name
+:PROPERTIES:
+:CUSTOM_ID: properties-by-name
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+GValue            value = G_VALUE_INIT;
+
+lrg_ui_inspector_set_property_from_string (inspector, "#main/#ok", "text", "Apply", &error);
+lrg_ui_inspector_set_property_from_string (inspector, "#main/#ok", "halign", "center", &error);
+lrg_ui_inspector_set_property_from_string (inspector, "#main/#ok", "normal-color", "#f38ba8ff", &error);
+
+lrg_ui_inspector_get_property (inspector, "#main/#ok", "opacity", &value, &error);
+g_print ("opacity %g\n", g_value_get_float (&value));
+g_value_unset (&value);
+#+end_src
+
+- =set_property= converts the =GValue= to the property type with =g_value_transform()= (an =int= sets a =float= property, and so on).
+- =set_property_from_string= parses booleans (=true=/=false=/=1=/=0=/=yes=/=no=), integers, floats, enums (nick, name or number), flags (=a|b= with nicks or names), strings and =GrlColor= (=#rrggbb= or =#rrggbbaa=).
+- Values outside a property's range are rejected with =LRG_UI_INSPECTOR_ERROR_INVALID_VALUE= instead of being clamped. Read-only and construct-only properties fail with =LRG_UI_INSPECTOR_ERROR_INVALID_PROPERTY=.
+
+** MCP tools
+:PROPERTIES:
+:CUSTOM_ID: mcp-tools
+:END:
+The tools live in the debug tool group (=LrgMcpDebugTools=, =src/mcp/tools/lrg-mcp-debug-tools.c=), which =lrg_mcp_server_register_default_providers()= registers, so any MCP-enabled build (=make MCP=1=) exposes them. They all use =lrg_ui_inspector_get_default()=; until the app calls =lrg_ui_inspector_register_canvas()= every tool fails with "No UI canvas registered". Results are JSON objects as single text content.
+
+*** lrg_ui_tree
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-tree
+:END:
+The whole snapshot ([[#snapshot-json][JSON schema]]). No arguments.
+
+#+begin_src json
+{"name": "lrg_ui_tree", "arguments": {}}
+#+end_src
+
+*** lrg_ui_pick
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-pick
+:END:
+| Parameter | Type    | Required | Description                                  |
+|-----------+---------+----------+----------------------------------------------|
+| x         | number  | Yes      | X in canvas coordinates                      |
+| y         | number  | Yes      | Y in canvas coordinates                      |
+| select    | boolean | No       | Also select (and highlight) the picked widget |
+
+Returns the [[#describe-widget][widget description]] of the topmost widget (or its nearest addressable ancestor), or ={"path": null}= for empty space.
+
+#+begin_src json
+{"name": "lrg_ui_pick", "arguments": {"x": 560, "y": 420, "select": true}}
+#+end_src
+
+#+begin_src json
+{"path": "LrgButton[0]", "type": "LrgButton", "name": null, "rect": {"x": 500, "y": 400, "width": 120, "height": 40},
+ "...": "...", "children": [], "properties": {"text": "Corner", "visible": true, "opacity": 1, "halign": "fill", "...": "..."}}
+#+end_src
+
+*** lrg_ui_get_widget
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-get-widget
+:END:
+| Parameter | Type   | Required | Description                            |
+|-----------+--------+----------+----------------------------------------|
+| path      | string | Yes      | Widget path (="" is the canvas)       |
+
+#+begin_src json
+{"name": "lrg_ui_get_widget", "arguments": {"path": "#main/#ok"}}
+#+end_src
+
+Returns the widget description with all properties; an unknown path is a =NOT_FOUND= error.
+
+*** lrg_ui_set_property
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-set-property
+:END:
+| Parameter | Type   | Required | Description                                                                     |
+|-----------+--------+----------+---------------------------------------------------------------------------------|
+| path      | string | Yes      | Widget path                                                                     |
+| property  | string | Yes      | GObject property name                                                           |
+| value     | any    | Yes      | Number, boolean, null, or text (enum nick, flags joined by a bar, =#rrggbbaa=) |
+
+Strings go through =lrg_ui_inspector_set_property_from_string()=; numbers and booleans are converted to the property type. Returns the widget description after the change.
+
+#+begin_src json
+{"name": "lrg_ui_set_property", "arguments": {"path": "#main/#ok", "property": "opacity", "value": 0.5}}
+{"name": "lrg_ui_set_property", "arguments": {"path": "#main/#ok", "property": "halign", "value": "center"}}
+#+end_src
+
+*** lrg_ui_highlight
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-highlight
+:END:
+| Parameter | Type    | Required | Description                                                  |
+|-----------+---------+----------+--------------------------------------------------------------|
+| path      | string  | No       | Widget to select and highlight; omitted clears the selection |
+| pick_mode | boolean | No       | Turn interactive pick mode on or off                         |
+
+#+begin_src json
+{"name": "lrg_ui_highlight", "arguments": {"path": "LrgVBox#main/LrgButton#ok", "pick_mode": true}}
+#+end_src
+
+#+begin_src json
+{"selected": "LrgVBox#main/LrgButton#ok", "pick_mode": true}
+#+end_src
+
+Pick mode only affects input if the app routes its input through =lrg_ui_inspector_handle_input()= or =lrg_ui_inspector_filter_input()=.
+
+*** lrg_ui_timings
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-timings
+:END:
+No arguments.
+
+#+begin_src json
+{"step_us": 41, "layout_us": 12, "record_us": 88, "n_instances": 412, "n_commands": 3, "draw_calls": 2, "frames": 1260}
+#+end_src
+
+** Complete example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+A frame loop with an inspector toggle on F12 and a status line:
+
+#+begin_src C
+#include <libregnum.h>
+
+static void
+on_picked (LrgUIInspector *inspector,
+           LrgWidget      *widget,
+           gpointer        user_data)
+{
+	g_autofree gchar *path = widget != NULL ? lrg_ui_inspector_get_path (inspector, widget) : NULL;
+	g_autofree gchar *json = widget != NULL ? lrg_ui_inspector_describe_widget (inspector, widget, TRUE) : NULL;
+
+	g_message ("picked %s\n%s", path != NULL ? path : "(nothing)", json != NULL ? json : "");
+}
+
+static void
+run (LrgCanvas *canvas)
+{
+	LrgUIInspector *inspector = lrg_ui_inspector_get_default ();
+
+	lrg_ui_inspector_register_canvas (canvas);
+	g_signal_connect (inspector, "picked", G_CALLBACK (on_picked), NULL);
+
+	while (!WindowShouldClose ())
+	{
+		LrgUIInspectorTimings t;
+
+		if (IsKeyPressed (KEY_F12))
+			lrg_ui_inspector_set_pick_mode (inspector, !lrg_ui_inspector_get_pick_mode (inspector));
+
+		lrg_ui_inspector_handle_input (inspector);   /* replaces lrg_canvas_handle_input () */
+
+		BeginDrawing ();
+		ClearBackground (BLACK);
+		lrg_canvas_render (canvas);                  /* the highlight is part of the canvas */
+		EndDrawing ();
+
+		lrg_ui_inspector_get_timings (inspector, &t);
+		if (t.frames % 120 == 0)
+			g_message ("ui: step %ld us, layout %ld us, record %ld us, %u instances, %u draws",
+			           (long) t.step_us, (long) t.layout_us, (long) t.record_us,
+			           t.n_instances, t.draw_calls);
+	}
+
+	lrg_ui_inspector_register_canvas (NULL);
+}
+#+end_src
+
+** Editor integration
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+=lrgeditor= does not use the retained UI stack: its interface is the immediate-mode [[file:../gui/index.org][GUI module]] (=LrgGui=), and play-in-editor (F5) instantiates the level into an =LrgWorld= without creating any =LrgCanvas=. Run Game (Ctrl+F5) starts the game as a separate process, whose canvas lives in that process. There is therefore no canvas in the editor process for an IPC method to inspect, and the inspector is exposed over MCP only: a game that registers its canvas and runs an MCP server (=make MCP=1=, =lrg_mcp_server_register_default_providers()=) is inspectable by any MCP client, including an agent driving the editor through =lrgeditorctl mcp= alongside it.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Types
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Symbol                              | Kind          | Description                                                                 |
+|-------------------------------------+---------------+-----------------------------------------------------------------------------|
+| =LrgUIInspector=                    | final GObject | The inspector                                                               |
+| =LrgUIInspectorTimings=             | boxed struct  | One frame of statistics (see [[#timings][Timings]])                           |
+| =LrgUIInspectorError=               | enum          | =NO_CANVAS=, =NOT_FOUND=, =INVALID_PROPERTY=, =INVALID_VALUE=              |
+| =LRG_UI_INSPECTOR_ERROR=            | macro         | The error domain (=lrg_ui_inspector_error_quark()=)                        |
+| =LRG_TYPE_UI_INSPECTOR=             | macro         | =lrg_ui_inspector_get_type()=                                              |
+| =LRG_TYPE_UI_INSPECTOR_TIMINGS=     | macro         | =lrg_ui_inspector_timings_get_type()=                                      |
+| =LRG_TYPE_UI_INSPECTOR_ERROR=       | macro         | =lrg_ui_inspector_error_get_type()=                                        |
+
+*** Construction and attaching
+:PROPERTIES:
+:CUSTOM_ID: api-attaching
+:END:
+- =LrgUIInspector *lrg_ui_inspector_new (void)= - a detached inspector (transfer full).
+- =LrgUIInspector *lrg_ui_inspector_get_default (void)= - the process-wide inspector used by the MCP tools (transfer none; created on first use, never freed).
+- =void lrg_ui_inspector_register_canvas (LrgCanvas *canvas)= - attach =canvas= (nullable) to the default inspector.
+- =LrgCanvas *lrg_ui_inspector_get_canvas (LrgUIInspector *self)= - the inspected canvas or =NULL= (transfer none).
+- =void lrg_ui_inspector_set_canvas (LrgUIInspector *self, LrgCanvas *canvas)= - attach (weakly) or detach with =NULL=; see [[#attaching][Attaching]].
+
+*** Paths and snapshots
+:PROPERTIES:
+:CUSTOM_ID: api-paths
+:END:
+- =gchar *lrg_ui_inspector_get_path (LrgUIInspector *self, LrgWidget *widget)= - the widget's path, or =NULL= if it is not addressable in the inspected canvas (transfer full).
+- =LrgWidget *lrg_ui_inspector_lookup (LrgUIInspector *self, const gchar *path)= - resolve a path (transfer none, nullable).
+- =gchar *lrg_ui_inspector_snapshot_json (LrgUIInspector *self, gboolean pretty)= - the whole tree as JSON (transfer full).
+- =GVariant *lrg_ui_inspector_snapshot (LrgUIInspector *self)= - the whole tree as a flat =aa{sv}= list (transfer full, not floating).
+- =gchar *lrg_ui_inspector_describe_widget (LrgUIInspector *self, LrgWidget *widget, gboolean pretty)= - one node plus all readable properties as JSON, or =NULL= if not addressable (transfer full).
+
+*** Picking and selection
+:PROPERTIES:
+:CUSTOM_ID: api-picking
+:END:
+- =LrgWidget *lrg_ui_inspector_pick (LrgUIInspector *self, gfloat x, gfloat y)= - topmost widget at a canvas point, as clicks hit-test (transfer none, nullable).
+- =gboolean lrg_ui_inspector_get_pick_mode (LrgUIInspector *self)= / =void lrg_ui_inspector_set_pick_mode (LrgUIInspector *self, gboolean pick_mode)= - interactive picking.
+- =gboolean lrg_ui_inspector_filter_input (LrgUIInspector *self, LrgCanvasInput *input)= - the pick-mode input hook; returns =TRUE= when it consumed pointer input.
+- =void lrg_ui_inspector_handle_input (LrgUIInspector *self)= - poll graylib, filter, and process the frame on the inspected canvas (replaces =lrg_canvas_handle_input()=).
+- =LrgWidget *lrg_ui_inspector_get_selected (LrgUIInspector *self)= / =void lrg_ui_inspector_set_selected (LrgUIInspector *self, LrgWidget *widget)= - the selection (weak).
+- =LrgWidget *lrg_ui_inspector_get_hovered (LrgUIInspector *self)= - the widget under the pointer in pick mode.
+- =gboolean lrg_ui_inspector_highlight (LrgUIInspector *self, const gchar *path, GError **error)= - select by path; =NULL= clears.
+- =gboolean lrg_ui_inspector_get_highlight_visible (LrgUIInspector *self)= / =void lrg_ui_inspector_set_highlight_visible (LrgUIInspector *self, gboolean visible)= - draw the highlight or not.
+- =void lrg_ui_inspector_paint_highlight (LrgUIInspector *self, LrgPaintList *list)= - record the highlight into a paint list.
+
+*** Timings
+:PROPERTIES:
+:CUSTOM_ID: api-timings
+:END:
+- =void lrg_ui_inspector_get_timings (LrgUIInspector *self, LrgUIInspectorTimings *timings)= - fill the last frame's statistics (all zero when detached).
+- =GType lrg_ui_inspector_timings_get_type (void)= - boxed type.
+- =LrgUIInspectorTimings *lrg_ui_inspector_timings_copy (const LrgUIInspectorTimings *self)= - heap copy (transfer full).
+- =void lrg_ui_inspector_timings_free (LrgUIInspectorTimings *self)= - free a copy; =g_autoptr (LrgUIInspectorTimings)= works.
+
+*** Properties by name
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+- =gboolean lrg_ui_inspector_get_property (LrgUIInspector *self, const gchar *path, const gchar *name, GValue *value, GError **error)= - read; =value= must be uninitialised and is initialised to the property type.
+- =gboolean lrg_ui_inspector_set_property (LrgUIInspector *self, const gchar *path, const gchar *name, const GValue *value, GError **error)= - write with type conversion and range checking.
+- =gboolean lrg_ui_inspector_set_property_from_string (LrgUIInspector *self, const gchar *path, const gchar *name, const gchar *text, GError **error)= - parse and write.
+
+*** Errors and types
+:PROPERTIES:
+:CUSTOM_ID: api-errors
+:END:
+- =GQuark lrg_ui_inspector_error_quark (void)= - the =LRG_UI_INSPECTOR_ERROR= domain.
+- =GType lrg_ui_inspector_error_get_type (void)= - the enum type of =LrgUIInspectorError= (nicks =no-canvas=, =not-found=, =invalid-property=, =invalid-value=).
+- =GType lrg_ui_inspector_get_type (void)= - the object type.
+
+*** GObject properties
+:PROPERTIES:
+:CUSTOM_ID: api-gobject-properties
+:END:
+| Property            | Type        | Access     | Description                                  |
+|---------------------+-------------+------------+----------------------------------------------|
+| =canvas=            | =LrgCanvas= | read/write | The inspected canvas (weak)                  |
+| =pick-mode=         | boolean     | read/write | Hover highlights, click selects              |
+| =selected=          | =LrgWidget= | read/write | The selected widget (weak)                   |
+| =hovered=           | =LrgWidget= | read       | The widget under the pointer in pick mode    |
+| =highlight-visible= | boolean     | read/write | Draw the highlight overlay (default =TRUE=) |
+
+All notify explicitly, only on change.
+
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: api-signals
+:END:
+| Signal   | Arguments                       | Emitted when                                               |
+|----------+---------------------------------+------------------------------------------------------------|
+| =picked= | =LrgWidget *widget= (nullable)  | A click or touch in pick mode selected =widget= (=NULL= for empty space) |
+
+** Implementation notes
+:PROPERTIES:
+:CUSTOM_ID: implementation
+:END:
+- Canvas hooks are private (=src/ui/lrg-canvas-private.h=): =_lrg_canvas_set_timing_enabled()=, =_lrg_canvas_get_timings()= and =_lrg_canvas_get_layers()= (open popups and overlay widgets, borrowed). No public canvas API was added.
+- The overlay widget is a private =LrgWidget= subclass (=LrgUIInspectorOverlay=) with a zero preferred size; it paints at other widgets' world positions.
+- Snapshots allocate (JSON objects, strings, the variant); call them on demand, not every frame.
+- Closing popups (the fading ghosts) are not part of the popup layer and do not appear in snapshots.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-ui-inspector.c= (headless) covers the JSON and =GVariant= snapshot structure, path round trips for every node and the short forms, picking through pointer-transparent overlays, opaque overlays, popups and modal veils, pick mode swallowing clicks (no =clicked=, no focus, no pressed state, Escape exits, pre-existing captures still release), highlight instances in the canvas list and a private list, timings after a frame, property get/set by name with conversions and errors, weak-reference safety when the canvas or the inspector is freed, the default inspector, and (with =MCP=1=) all six MCP tools.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:canvas-api.org][LrgCanvas API]]: hit-testing, input frames, popups and the overlay layer.
+- [[file:input-and-focus.org][Input, focus and popups]]: dispatch, capture and the popup layer the picker mirrors.
+- [[file:styling.org][Styling]]: what the =look= of a node means.
+- [[file:../mcp/tools.org][MCP tools]]: the other debug tools.

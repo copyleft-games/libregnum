@@ -1,0 +1,113 @@
+* Wrap Box
+:PROPERTIES:
+:CUSTOM_ID: wrap-box
+:END:
+=LrgWrapBox= flows its children into lines: left to right, starting a new line below when the next child does not fit the width (=LRG_ORIENTATION_HORIZONTAL=, the default), or top to bottom wrapping into new columns at the height (=LRG_ORIENTATION_VERTICAL=). Children keep their preferred size along the flow. Each line can be justified (start, center, end, space-between) and items are aligned across their line (start, center, end, or stretched with fill). Typical uses: tag chips, toolbars that wrap, inventory or emoji pickers of moderate size (for thousands of items use the virtualized [[file:tile-view.org][LrgTileView]]).
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-creation
+:END:
+#+begin_src C
+LrgWrapBox *tags = lrg_wrap_box_new ();
+guint       i;
+
+lrg_container_set_spacing (LRG_CONTAINER (tags), 6.0f);   /* between items */
+lrg_wrap_box_set_line_spacing (tags, 6.0f);                /* between lines */
+for (i = 0; i < G_N_ELEMENTS (names); i++)
+  {
+    LrgButton *chip = lrg_button_new (names[i]);
+
+    lrg_container_add_child (LRG_CONTAINER (tags), LRG_WIDGET (chip));
+    g_object_unref (chip);
+  }
+#+end_src
+
+** Layout rules
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-layout
+:END:
+- Line breaking is greedy: an item starts a new line when it would push a non-empty line past the room inside the padding. An item longer than the room gets a line of its own.
+- The gap between items of a line is the container's =spacing= (default 8); between lines it is =line-spacing= (default 8). Invisible children are skipped.
+- Justify (=LrgWrapJustify=, registered as =lrg_wrap_justify_get_type()= / =LRG_TYPE_WRAP_JUSTIFY=):
+| Value                            | Line placement                                              |
+|----------------------------------+-------------------------------------------------------------|
+| =LRG_WRAP_JUSTIFY_START=         | Packed at the start                                         |
+| =LRG_WRAP_JUSTIFY_CENTER=        | Centred                                                     |
+| =LRG_WRAP_JUSTIFY_END=           | Packed at the end                                           |
+| =LRG_WRAP_JUSTIFY_SPACE_BETWEEN= | Free space shared between items; a single item stays at the start |
+- Item alignment (=LrgAlign=) across a line as tall as its tallest item: =start=, =center=, =end=, or =fill= (stretched to the line).
+- =lrg_wrap_box_get_n_lines()= reports the line count of the last layout.
+
+** Measuring: the width problem
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-measure
+:END:
+The height of a horizontal wrap box depends on its width, but =measure()= receives no width. The box therefore:
+1. reports its natural *single-line* length along the flow as its preferred width (height for vertical);
+2. reports the cross size of the lines it needs at the width it was *last allocated* (a single line before the first allocation);
+3. when an allocation produces a different line count than the last measure assumed, its next =step()= queues a layout, and the parent measures it again with the width it now has.
+
+So after a width change the height is corrected one frame later (one =lrg_canvas_update()= + =lrg_canvas_record()=). Give the wrap box a fill alignment or fill weight along the flow, otherwise a parent that honours the natural single-line width keeps it on one line.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-properties
+:END:
+| Property       | Type             | Default      | Meaning                         |
+|----------------+------------------+--------------+---------------------------------|
+| =orientation=  | =LrgOrientation= | =horizontal= | Flow direction                  |
+| =line-spacing= | =gfloat=         | 8            | Gap between lines               |
+| =justify=      | =LrgWrapJustify= | =start=      | Free space of each line         |
+| =item-align=   | =LrgAlign=       | =start=      | Alignment across a line         |
+Inherited: =spacing= (8, between items), =padding= (0). Accessors: =lrg_wrap_box_get_orientation()= / =lrg_wrap_box_set_orientation()=, =lrg_wrap_box_get_line_spacing()= / =lrg_wrap_box_set_line_spacing()=, =lrg_wrap_box_get_justify()= / =lrg_wrap_box_set_justify()=, =lrg_wrap_box_get_item_align()= / =lrg_wrap_box_set_item_align()=. Changes emit =notify= and re-lay out the box. The wrap box has no signals of its own.
+
+** Parts, keyboard and theming
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-parts
+:END:
+The wrap box draws nothing itself (no parts beyond the inherited =focus=, and it is not focusable); its children are painted in order. Spatial focus navigation moves between its children as laid out. Style it through its children, or with a class on the box:
+
+#+begin_src yaml
+styles:
+  - class: tag
+    part: box
+    radius: 999
+    background: "#7c6cff33"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-example
+:END:
+#+begin_src C
+LrgVBox    *panel = lrg_vbox_new ();
+LrgWrapBox *chips = lrg_wrap_box_new ();
+
+lrg_wrap_box_set_justify (chips, LRG_WRAP_JUSTIFY_CENTER);
+lrg_wrap_box_set_item_align (chips, LRG_ALIGN_CENTER);
+lrg_container_set_padding (LRG_CONTAINER (chips), 8.0f);
+lrg_container_add_child (LRG_CONTAINER (panel), LRG_WIDGET (chips));
+/* ... add children ... */
+
+g_message ("%u lines", lrg_wrap_box_get_n_lines (chips));
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-api
+:END:
+- =lrg_wrap_box_new (void)=
+- =lrg_wrap_box_get_orientation= / =lrg_wrap_box_set_orientation=
+- =lrg_wrap_box_get_line_spacing= / =lrg_wrap_box_set_line_spacing=
+- =lrg_wrap_box_get_justify= / =lrg_wrap_box_set_justify=
+- =lrg_wrap_box_get_item_align= / =lrg_wrap_box_set_item_align=
+- =lrg_wrap_box_get_n_lines=
+- =lrg_wrap_justify_get_type=, =LrgWrapJustify=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: wrap-box-related
+:END:
+- [[file:hbox.org][HBox]], [[file:vbox.org][VBox]]
+- [[file:tile-view.org][Tile view]]

@@ -9,6 +9,9 @@
  * LrgTabView presents multiple content widgets in a tabbed interface,
  * with a tab bar that allows switching between pages. Only one tab's
  * content is visible at a time.
+ *
+ * The header of each tab is the TAB part (hover and SELECTED looks)
+ * and an accent INDICATOR slides under the active tab on springs.
  */
 
 #pragma once
@@ -233,5 +236,27 @@ LRG_AVAILABLE_IN_ALL
 void lrg_tab_view_set_tab_label (LrgTabView  *self,
                                  guint        index,
                                  const gchar *label);
+
+/**
+ * lrg_tab_view_get_indicator_rect:
+ * @self: an #LrgTabView
+ * @x: (out) (optional): left edge, in world coordinates
+ * @y: (out) (optional): top edge, in world coordinates
+ * @width: (out) (optional): width
+ * @height: (out) (optional): height (the indicator thickness)
+ *
+ * Gets where the active-tab indicator is heading: the strip under
+ * (or, with the tab bar at the bottom, over) the active tab's header.
+ * The drawn indicator slides and resizes towards this rectangle on
+ * springs whenever the active tab changes.
+ *
+ * Returns: %FALSE (and zeros) when the view has no tabs
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_tab_view_get_indicator_rect (LrgTabView *self,
+                                          gfloat     *x,
+                                          gfloat     *y,
+                                          gfloat     *width,
+                                          gfloat     *height);
 
 G_END_DECLS

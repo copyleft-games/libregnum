@@ -1,0 +1,188 @@
+* Tile View
+:PROPERTIES:
+:CUSTOM_ID: tile-view
+:END:
+=LrgTileView= lays the items of a =GListModel= out as a grid of equal-sized cards (icons, thumbnails, level previews): as many per row as fit the width, centred, rows scrolling vertically. It is virtualized by rows of tiles: only the rows in the viewport plus one buffer row above and below exist as widgets, recycled with a create / bind factory like [[file:list-view.org][LrgListView]]. Hovering a card lifts it: it rises 3 units, grows 2.5 % and its shadow deepens, all on a per-tile spring.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: tile-view-creation
+:END:
+#+begin_src C
+LrgTileView *tiles = lrg_tile_view_new ();
+
+lrg_tile_view_set_tile_size (tiles, 128.0f, 96.0f);
+lrg_tile_view_set_tile_spacing (tiles, 12.0f);
+lrg_tile_view_set_model (tiles, G_LIST_MODEL (levels));
+#+end_src
+
+** Tiles: the factory
+:PROPERTIES:
+:CUSTOM_ID: tile-view-factory
+:END:
+The default factory is a label (centred, at the bottom of the card) with the item's =string=, =text=, =name=, =label= or =title= property. A custom factory builds richer tiles; the tile widget is placed inside the card with a 6-unit inset and honours its own alignment and margin.
+
+#+begin_src C
+static LrgWidget *
+create_tile (LrgTileView *tiles,
+             gpointer     user_data)
+{
+	LrgVBox  *tile = lrg_vbox_new ();
+	LrgImage *thumb = lrg_image_new ();
+	LrgLabel *name = lrg_label_new ("");
+
+	lrg_widget_set_name (LRG_WIDGET (thumb), "thumb");
+	lrg_widget_set_name (LRG_WIDGET (name), "name");
+	lrg_widget_set_fill_weight (LRG_WIDGET (thumb), 1.0f);
+	lrg_container_add_child (LRG_CONTAINER (tile), LRG_WIDGET (thumb));
+	lrg_container_add_child (LRG_CONTAINER (tile), LRG_WIDGET (name));
+	g_object_unref (thumb);
+	g_object_unref (name);
+	return LRG_WIDGET (tile);
+}
+
+static void
+bind_tile (LrgTileView *tiles,
+           LrgWidget   *tile,
+           GObject     *item,
+           guint        position,
+           gpointer     user_data)
+{
+	lrg_image_set_texture (LRG_IMAGE (lrg_widget_find (tile, "thumb")), my_level_get_preview (MY_LEVEL (item)));
+	lrg_label_set_text (LRG_LABEL (lrg_widget_find (tile, "name")), my_level_get_title (MY_LEVEL (item)));
+}
+
+lrg_tile_view_set_factory (tiles, create_tile, bind_tile, NULL, NULL);
+#+end_src
+
+** Selection and activation
+:PROPERTIES:
+:CUSTOM_ID: tile-view-selection
+:END:
+=none=, =single= (default) or =multiple= (Ctrl + click toggles). =lrg_tile_view_select()=, =lrg_tile_view_unselect_all()=, =lrg_tile_view_get_selected()=, =lrg_tile_view_is_selected()=, =lrg_tile_view_get_n_selected()=, =lrg_tile_view_get_cursor()=; =LRG_TILE_VIEW_INVALID_POSITION= means none. Clicks in the gaps between cards hit nothing. A second click on the same tile within 0.4 s of canvas time, or Enter / Space / gamepad A on the cursor tile, emits =tile-activated=.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: tile-view-properties
+:END:
+| Property         | Type               | Default  | Meaning                         |
+|------------------+--------------------+----------+---------------------------------|
+| =model=          | =GListModel=       | NULL     | Items to show                   |
+| =tile-width=     | =gfloat=           | 96       | Card width (at least 8)         |
+| =tile-height=    | =gfloat=           | 96       | Card height (at least 8)        |
+| =tile-spacing=   | =gfloat=           | 8        | Gap between cards, both ways    |
+| =selection-mode= | =LrgSelectionMode= | =single= | none / single / multiple        |
+Inherited: =padding= (default 2). The grid keeps 6 units of room around it for the lift and shadow. =lrg_tile_view_set_tile_size()= / =lrg_tile_view_get_tile_size()= and =lrg_tile_view_set_tile_spacing()= / =lrg_tile_view_get_tile_spacing()= set them; =lrg_tile_view_get_columns()= reports tiles per row for the current width.
+
+| Signal              | Arguments        | Emitted                                      |
+|---------------------+------------------+----------------------------------------------|
+| =selection-changed= | none             | Tiles were selected or unselected            |
+| =tile-activated=    | =guint position= | Double click, or Enter / Space / gamepad A   |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: tile-view-parts
+:END:
+| Part        | State        | Built-in look                                                         |
+|-------------+--------------+-----------------------------------------------------------------------|
+| =box=       | resting / =focused= / =disabled= | =PANEL= background, =BORDER= / =ACCENT= border, 45 % opacity |
+| =item=      | resting      | Card: =SURFACE=, =BORDER= border, =CORNER_RADIUS=, =SHADOW= at 0.3 x =SHADOW_BLUR=, offset 1.5 |
+| =item=      | =hovered=    | =CONTROL_HOVER=, shadow 0.75 x blur, offset 5 (blended by the lift spring) |
+| =item=      | =pressed=    | =CONTROL_PRESSED=, lift mostly released                               |
+| =item=      | =selected=   | =ACCENT= border (at least 2) and a soft accent glow                    |
+| =indicator= | resting      | Cursor ring in =FOCUS= around the card (focus visible)                |
+| =scrollbar=, =scroll-thumb= | as in [[file:scroll-box.org][LrgScrollBox]] |                           |
+| =focus=     | focus visible | Core focus ring                                                      |
+The most lifted card paints last so its shadow falls over its neighbours. Tile widgets get the =selected= state flag while their item is selected.
+
+** Keyboard, gamepad and touch
+:PROPERTIES:
+:CUSTOM_ID: tile-view-keyboard
+:END:
+| Input                  | Action                                                       |
+|------------------------+--------------------------------------------------------------|
+| Left / Right           | Previous / next tile (wrapping across rows)                  |
+| Up / Down              | Same column one row up / down; Down into a short last row lands on its last tile |
+| Page Up / Page Down    | By a page of rows                                            |
+| Home / End             | First / last tile                                            |
+| Enter / Space / gamepad A | =tile-activated= for the cursor tile                      |
+| Wheel, touch drag      | Scroll; flick on release                                     |
+Arrows are consumed at the edges so focus stays in the grid; the gamepad d-pad arrives as arrows first.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: tile-view-theming
+:END:
+#+begin_src yaml
+styles:
+  # Rounder, glowing cards
+  - widget: LrgTileView
+    part: item
+    radius: 16
+  - widget: LrgTileView
+    part: item
+    state: [hovered]
+    glow: "#7c6cff55"
+    glow-size: 10
+  - widget: LrgTileView
+    part: item
+    state: [selected]
+    border: "#fbbf24"
+    border-width: 3
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: tile-view-example
+:END:
+#+begin_src C
+static void
+on_tile (LrgTileView *tiles,
+         guint        position,
+         gpointer     user_data)
+{
+	g_autoptr(GObject) level = g_list_model_get_item (lrg_tile_view_get_model (tiles), position);
+
+	start_level (MY_LEVEL (level));
+}
+
+LrgTileView *tiles = lrg_tile_view_new ();
+
+lrg_tile_view_set_factory (tiles, create_tile, bind_tile, NULL, NULL);
+lrg_tile_view_set_tile_size (tiles, 160.0f, 120.0f);
+lrg_tile_view_set_model (tiles, G_LIST_MODEL (levels));
+lrg_tile_view_set_selection_mode (tiles, LRG_SELECTION_MODE_SINGLE);
+g_signal_connect (tiles, "tile-activated", G_CALLBACK (on_tile), NULL);
+lrg_tile_view_select (tiles, 0);
+lrg_tile_view_scroll_to (tiles, 0, FALSE);
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: tile-view-notes
+:END:
+- Realized tiles: =columns x (visible rows + 3)= at most (=lrg_tile_view_get_n_tiles()=); =lrg_tile_view_get_tile_widget()= returns a realized tile or =NULL=.
+- =lrg_tile_view_scroll_to (tiles, position, animate)= reveals a tile's row; =lrg_tile_view_get_scroll_offset()= reads the offset.
+- Hover is tracked from the pointer position, so the card padding around the tile widget counts as the tile.
+- The preferred size is up to 4 columns by 3 rows of tiles.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: tile-view-api
+:END:
+- =lrg_tile_view_new (void)=
+- =lrg_tile_view_set_model= / =lrg_tile_view_get_model=
+- =lrg_tile_view_set_factory (self, LrgTileViewCreateFunc create, LrgTileViewBindFunc bind, user_data, destroy)=
+- =lrg_tile_view_set_tile_size= / =lrg_tile_view_get_tile_size=, =lrg_tile_view_set_tile_spacing= / =lrg_tile_view_get_tile_spacing=, =lrg_tile_view_get_columns=
+- =lrg_tile_view_get_selection_mode= / =lrg_tile_view_set_selection_mode=
+- =lrg_tile_view_select=, =lrg_tile_view_unselect_all=, =lrg_tile_view_get_selected=, =lrg_tile_view_is_selected=, =lrg_tile_view_get_n_selected=, =lrg_tile_view_get_cursor=
+- =lrg_tile_view_scroll_to=, =lrg_tile_view_get_scroll_offset=
+- =lrg_tile_view_get_tile_widget=, =lrg_tile_view_get_n_tiles=
+- =LRG_TILE_VIEW_INVALID_POSITION=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: tile-view-related
+:END:
+- [[file:list-view.org][List view]]
+- [[file:wrap-box.org][Wrap box]] (non-virtualized flow of arbitrary widgets)

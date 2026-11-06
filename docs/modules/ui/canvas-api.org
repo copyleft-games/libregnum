@@ -1,0 +1,197 @@
+#+title: LrgCanvas API
+#+description: Function-by-function reference for LrgCanvas and LrgCanvasInput: rendering, recording, input frames, focus, navigation, popups and the boxed input type
+#+authors: Zach Podbielniak
+#+categories: libregnum ui canvas
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* LrgCanvas API
+:PROPERTIES:
+:CUSTOM_ID: canvas-api
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > LrgCanvas API
+#+end_quote
+
+=LrgCanvas= (=src/ui/lrg-canvas.h=, final type deriving from =LrgContainer=) is the root of a widget tree. Once per frame it turns an input frame into UI events, advances every widget's springs, lays out what changed, records the tree (plus the popup layer) into its own =LrgPaintList= and renders it with the shared paint renderer. =LrgCanvasInput= (=src/ui/lrg-canvas-input.h=) is the plain value struct that describes one frame of input.
+
+This page lists every public function with its exact signature, ownership and behaviour. For the concepts behind them see:
+
+- [[file:widgets/canvas.org][Canvas widget page]]: creating a canvas, adding widgets, the frame loop.
+- [[file:input-and-focus.org][Input, focus and popups]]: dispatch order, bubbling, capture, spatial navigation, modality, testing with hand-built frames.
+- [[file:../paint/paint-list.org][LrgPaintList]]: what =lrg_canvas_record()= produces.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-properties
+:END:
+| Property | Type | Access | Default | Notes |
+|----------+------+--------+---------+-------|
+| =focused-widget= | =LrgWidget= | read | =NULL= | Mirrors =lrg_canvas_get_focused_widget()= |
+| =hovered-widget= | =LrgWidget= | read | =NULL= | Mirrors =lrg_canvas_get_hovered_widget()= |
+| =navigation-enabled= | boolean | read / write | =TRUE= | Explicit notify; see [[#canvas-api-focus][focus and navigation]] |
+| =paint-background= | boolean | read / write | =FALSE= | Explicit notify; see [[#canvas-api-rendering][rendering]] |
+
+| Signal | Arguments | Emitted when |
+|--------+-----------+--------------|
+| =cancel= | none | Escape / gamepad B was pressed, no widget handled =LRG_UI_EVENT_CANCEL= and no popup was open to close. Games use it for "back" or pause |
+| =popup-dismissed= | =LrgWidget *popup= | A popup was dismissed (explicitly, by light dismiss or by cancel) |
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-construction
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_new= | =LrgCanvas * lrg_canvas_new (void);= | (transfer full). Size the canvas to the window or render target with =lrg_widget_set_size()= |
+
+** Rendering and recording
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-rendering
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_render= | =void lrg_canvas_render (LrgCanvas *self);= | Record + draw. Call once per frame in the draw phase, inside =BeginDrawing()= (and inside =BeginMode2D()= / a render texture if the UI should follow it) |
+| =lrg_canvas_record= | =LrgPaintList * lrg_canvas_record (LrgCanvas *self);= | Lays out the tree and records it without drawing. (transfer none): the canvas's own list, valid until the next record. Works headless, which is what tests use |
+| =lrg_canvas_get_paint_list= | =LrgPaintList * lrg_canvas_get_paint_list (LrgCanvas *self);= | (transfer none): the list recorded by the last render or record, for inspection and profiling |
+| =lrg_canvas_update= | =gboolean lrg_canvas_update (LrgCanvas *self, gfloat delta_time);= | Advances every widget's springs and appear animations by =delta_time= seconds. =lrg_canvas_process_input()= already calls it with the frame's =delta_time=; call it yourself only when you skip input processing. Returns =TRUE= while something is still animating (useful to stop redrawing an idle tool UI) |
+| =lrg_canvas_get_paint_background= | =gboolean lrg_canvas_get_paint_background (LrgCanvas *self);= | =TRUE= when the canvas fills its own rectangle with the theme's =LRG_THEME_COLOR_WINDOW= before painting the tree |
+| =lrg_canvas_set_paint_background= | =void lrg_canvas_set_paint_background (LrgCanvas *self, gboolean paint_background);= | Off by default so a game scene drawn first shows through the UI. Turn it on for full-screen menus and tool windows so the theme's window colour is the backdrop (it is the first instance of the list, so it costs no extra draw call) |
+
+#+begin_src c
+/* A settings screen that owns the whole window: let the theme paint the backdrop */
+lrg_canvas_set_paint_background (canvas, TRUE);
+g_assert_true (lrg_canvas_get_paint_background (canvas));
+#+end_src
+
+** Input
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-input
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_handle_input= | =void lrg_canvas_handle_input (LrgCanvas *self);= | Polls graylib (=lrg_canvas_input_poll()= with =GetFrameTime()=) and calls =lrg_canvas_process_input()=. Needs an open window. Call once per frame before rendering |
+| =lrg_canvas_process_input= | =void lrg_canvas_process_input (LrgCanvas *self, const LrgCanvasInput *input);= | Turns one frame into UI events and dispatches them, then updates springs. =input->pointer_x= / =pointer_y= must already be in canvas coordinates: no pointer transform is applied here. Drive it from your own input layer, a replay or a test |
+| =lrg_canvas_set_default_pointer_transform= | =void lrg_canvas_set_default_pointer_transform (LrgCanvasPointerTransform transform, gpointer user_data);= | Process-wide: =transform= (nullable, scope notified) maps window pointer coordinates into canvas coordinates for every canvas in =lrg_canvas_handle_input()= / =lrg_canvas_input_poll()=. =NULL= restores raw coordinates. Installed by whatever presents a scaled render target, e.g. the 2D game template's virtual resolution |
+| =lrg_canvas_widget_at_point= | =LrgWidget * lrg_canvas_widget_at_point (LrgCanvas *self, gfloat x, gfloat y);= | (transfer none) (nullable): the deepest visible, enabled widget containing the point (depth-first, last child on top). Open popups are searched first, newest first; below a modal popup the result is =NULL= (its veil swallows the point). Pointer-transparent widgets with no hit child are skipped, and the canvas itself is never returned |
+| =lrg_canvas_get_hovered_widget= | =LrgWidget * lrg_canvas_get_hovered_widget (LrgCanvas *self);= | (transfer none) (nullable): the widget under the pointer after the last processed frame |
+
+=LrgCanvasPointerTransform= is =void (*) (gfloat *x, gfloat *y, gpointer user_data)=: both coordinates are (inout).
+
+** Focus and navigation
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-focus
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_get_focused_widget= | =LrgWidget * lrg_canvas_get_focused_widget (LrgCanvas *self);= | (transfer none) (nullable) |
+| =lrg_canvas_set_focused_widget= | =void lrg_canvas_set_focused_widget (LrgCanvas *self, LrgWidget *widget);= | =widget= (nullable) clears focus. The old focus gets =FOCUS_OUT=, the new one =FOCUS_IN= |
+| =lrg_canvas_move_focus= | =gboolean lrg_canvas_move_focus (LrgCanvas *self, LrgNavDirection direction);= | =NEXT= / =PREVIOUS= walk the tab order (depth-first, wrapping); =UP= / =DOWN= / =LEFT= / =RIGHT= pick the nearest focusable widget that way, preferring ones in line with the current focus. Stays inside an open modal popup. The new focus shows its focus ring. Returns =TRUE= if focus moved. Works even with navigation disabled |
+| =lrg_canvas_activate_focus= | =gboolean lrg_canvas_activate_focus (LrgCanvas *self);= | Sends =LRG_UI_EVENT_ACTIVATE= to the focused widget with a short press animation (what Enter, Space and gamepad A do). Returns =TRUE= if a widget handled it |
+| =lrg_canvas_get_navigation_enabled= | =gboolean lrg_canvas_get_navigation_enabled (LrgCanvas *self);= | =TRUE= (the default) when unhandled arrow keys, Tab / Shift+Tab and the gamepad's =nav= move focus |
+| =lrg_canvas_set_navigation_enabled= | =void lrg_canvas_set_navigation_enabled (LrgCanvas *self, gboolean enabled);= | Turn off when the game uses arrows for gameplay or drives focus itself. Activate and cancel keep working, and =lrg_canvas_move_focus()= can still be called directly |
+
+#+begin_src c
+/* Arrows steer the ship while the HUD is up; restore menu navigation on pause */
+static void
+on_pause_changed (Game *game, gboolean paused)
+{
+	if (lrg_canvas_get_navigation_enabled (game->hud) != paused)
+		lrg_canvas_set_navigation_enabled (game->hud, paused);
+}
+#+end_src
+
+** Popups
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-popups
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_show_popup= | =void lrg_canvas_show_popup (LrgCanvas *self, LrgWidget *popup, LrgWidget *anchor, LrgPopupPlacement placement, gboolean modal);= | The canvas takes a reference to =popup= until it is dismissed. =anchor= (nullable) is the widget to place it next to and gets =LRG_WIDGET_STATE_OPEN= while open. A zero-size popup is given its preferred size. Modal popups dim the canvas, trap focus and swallow outside input; non-modal ones close on an outside click |
+| =lrg_canvas_dismiss_popup= | =void lrg_canvas_dismiss_popup (LrgCanvas *self, LrgWidget *popup);= | Closes =popup= and every popup opened after it; it shrinks towards its anchor while fading, then is released. Emits =popup-dismissed= |
+| =lrg_canvas_get_top_popup= | =LrgWidget * lrg_canvas_get_top_popup (LrgCanvas *self);= | (transfer none) (nullable): the most recently opened popup still open |
+| =lrg_canvas_get_popup_count= | =guint lrg_canvas_get_popup_count (LrgCanvas *self);= | Open popups, closing ones excluded |
+| =lrg_canvas_place_popup= | =LrgPopupPlacement lrg_canvas_place_popup (gfloat canvas_width, gfloat canvas_height, gfloat anchor_x, gfloat anchor_y, gfloat anchor_width, gfloat anchor_height, gfloat popup_width, gfloat popup_height, LrgPopupPlacement placement, gfloat *x, gfloat *y);= | The pure placement maths =lrg_canvas_show_popup()= uses: next to the anchor with a small gap, flipped when it does not fit, then clamped inside the canvas. =x= / =y= are (out). Returns the placement actually used. An anchor of size 0 is a point (context menus) |
+
+See [[file:input-and-focus.org::#input-popups][the popup layer]] for modality, light dismiss and placement diagrams.
+
+* LrgCanvasInput
+:PROPERTIES:
+:CUSTOM_ID: canvas-input-api
+:END:
+=LrgCanvasInput= is a value struct; its fields (pointer, button masks, wheel, up to =LRG_CANVAS_INPUT_MAX_KEYS= (16) keys and characters, modifiers, =nav=, =activate=, =cancel=, =delta_time=) are described in [[file:input-and-focus.org::#input-frames][input frames]]. C code keeps it on the stack and resets it with =lrg_canvas_input_init()= every frame.
+
+** Overlay layer
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-overlay
+:END:
+The overlay layer sits above the widget tree, every popup and the veil of a modal popup: it is painted last and hit-tested first. Put notifications (an =LrgToastQueue=), HUD layers or custom cursors there so they stay visible and bright while a dialog is open. Overlay widgets are parented to the canvas (coordinates, theme) but are not children: focus navigation never visits them, so keep them non-interactive or pointer-transparent layers with clickable pieces (like toast cards).
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_add_overlay= | =void lrg_canvas_add_overlay (LrgCanvas *self, LrgWidget *widget);= | =widget= must have no parent; the canvas takes a reference. Laid out, stepped, painted (above popups) and hit-tested (before popups) every frame. |
+| =lrg_canvas_remove_overlay= | =void lrg_canvas_remove_overlay (LrgCanvas *self, LrgWidget *widget);= | Releases the widget and unparents it; drops any pointer capture inside it. No-op for widgets not in the layer. |
+| =lrg_canvas_get_n_overlays= | =guint lrg_canvas_get_n_overlays (LrgCanvas *self);= | Number of overlay widgets. |
+
+#+begin_src c
+LrgToastQueue *toasts = lrg_toast_queue_new ();
+
+/* Toasts stay above dialogs and their veil */
+lrg_canvas_add_overlay (canvas, LRG_WIDGET (toasts));
+g_object_unref (toasts);
+#+end_src
+
+** Functions
+:PROPERTIES:
+:CUSTOM_ID: canvas-input-api-functions
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_input_init= | =void lrg_canvas_input_init (LrgCanvasInput *self);= | (out caller-allocates): "nothing happened": pointer at 0,0, no buttons, keys, characters or navigation, =delta_time= 0. Always init before filling by hand |
+| =lrg_canvas_input_add_key= | =void lrg_canvas_input_add_key (LrgCanvasInput *self, GrlKey key);= | Appends a key press; silently ignored once 16 keys are queued |
+| =lrg_canvas_input_add_char= | =void lrg_canvas_input_add_char (LrgCanvasInput *self, gunichar codepoint);= | Appends a composed character; ignored once full |
+| =lrg_canvas_input_add_text= | =void lrg_canvas_input_add_text (LrgCanvasInput *self, const gchar *utf8);= | Appends every character of a UTF-8 string (tests, on-screen keyboards) |
+| =lrg_canvas_input_poll= | =void lrg_canvas_input_poll (LrgCanvasInput *self, gfloat delta_time);= | (out caller-allocates): fills the frame from graylib's mouse, wheel, key and character queues, modifiers and gamepad 0, applying the default pointer transform. Requires an open window |
+
+** Boxed type
+:PROPERTIES:
+:CUSTOM_ID: canvas-input-api-boxed
+:END:
+=LrgCanvasInput= is registered as a =GBoxed= type so bindings and =GValue= can carry a frame (for example a replay recorder that stores frames in a =GPtrArray=). The struct holds no pointers, so copies are flat and independent.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_canvas_input_get_type= | =GType lrg_canvas_input_get_type (void) G_GNUC_CONST;= | The boxed =GType=, also =LRG_TYPE_CANVAS_INPUT= |
+| =lrg_canvas_input_new= | =LrgCanvasInput * lrg_canvas_input_new (void);= | (transfer full): a heap frame already reset with =lrg_canvas_input_init()= |
+| =lrg_canvas_input_copy= | =LrgCanvasInput * lrg_canvas_input_copy (const LrgCanvasInput *self);= | (transfer full): =g_memdup2()= of the whole struct, key and character arrays included. =self= must not be =NULL= |
+| =lrg_canvas_input_free= | =void lrg_canvas_input_free (LrgCanvasInput *self);= | Frees a heap frame; =self= is (nullable). =g_autoptr (LrgCanvasInput)= is supported |
+
+#+begin_src c
+/* Record frames while playing, replay them later in a test */
+static void
+recorder_capture (GPtrArray *frames, const LrgCanvasInput *frame)
+{
+	g_ptr_array_add (frames, lrg_canvas_input_copy (frame));
+}
+
+static void
+recorder_replay (GPtrArray *frames, LrgCanvas *canvas)
+{
+	guint i;
+
+	for (i = 0; i < frames->len; i++)
+		lrg_canvas_process_input (canvas, (const LrgCanvasInput *) g_ptr_array_index (frames, i));
+}
+
+/* frames = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_canvas_input_free); */
+#+end_src
+
+* See also
+:PROPERTIES:
+:CUSTOM_ID: canvas-api-see-also
+:END:
+- [[file:widgets/canvas.org][Canvas widget page]]
+- [[file:input-and-focus.org][Input, focus and popups]]
+- [[file:widget-api-reference.org][Widget API reference]]
+- [[file:index.org][UI module]]

@@ -566,6 +566,22 @@ else
     endif
 endif
 
+# fribidi for right-to-left text in the UI (optional; Fedora: fribidi-devel)
+FRIBIDI ?= 1
+ifeq ($(FRIBIDI),1)
+    FRIBIDI_CFLAGS := $(shell $(PKG_CONFIG) --cflags fribidi 2>/dev/null)
+    FRIBIDI_LIBS := $(shell $(PKG_CONFIG) --libs fribidi 2>/dev/null)
+    ifneq ($(FRIBIDI_LIBS),)
+        HAS_FRIBIDI := 1
+    else
+        HAS_FRIBIDI := 0
+    endif
+else
+    FRIBIDI_CFLAGS :=
+    FRIBIDI_LIBS :=
+    HAS_FRIBIDI := 0
+endif
+
 # Python 3 for scripting (optional, not for cross-compile)
 ifeq ($(TARGET_PLATFORM),windows)
     PYTHON_CFLAGS :=
@@ -676,8 +692,8 @@ OPENSSL_LIBS := $(shell $(PKG_CONFIG) --libs openssl)
 SQLITE_CFLAGS := $(shell $(PKG_CONFIG) --cflags sqlite3)
 SQLITE_LIBS := $(shell $(PKG_CONFIG) --libs sqlite3)
 
-DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib libpq) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
-DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib libpq) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
+DEP_CFLAGS := $(shell $(PKG_CONFIG) --cflags zlib libpq) $(OPENSSL_CFLAGS) $(SQLITE_CFLAGS) $(GLIB_CFLAGS) $(DEX_CFLAGS) $(JSON_CFLAGS) $(YAML_CFLAGS) $(SOUP_CFLAGS) $(FRIBIDI_CFLAGS) $(LUAJIT_CFLAGS) $(PYTHON_CFLAGS) $(GI_RUNTIME_CFLAGS) $(GJS_CFLAGS) $(CRISPY_CFLAGS)
+DEP_LIBS := $(shell $(PKG_CONFIG) --libs zlib libpq) $(OPENSSL_LIBS) $(SQLITE_LIBS) $(GLIB_LIBS) $(DEX_LIBS) $(JSON_LIBS) $(YAML_LIBS) $(SOUP_LIBS) $(FRIBIDI_LIBS) $(LUAJIT_LIBS) $(PYTHON_LIBS) $(GI_RUNTIME_LIBS) $(GJS_LIBS) $(CRISPY_LIBS)
 
 # Graylib and yaml-glib (built from submodules)
 # Also include raylib headers for rlgl.h etc.
@@ -736,6 +752,9 @@ ifeq ($(HAS_LIBDEX),1)
 endif
 ifeq ($(HAS_LUAJIT),1)
     OPT_CFLAGS += -DLRG_HAS_LUAJIT=1
+endif
+ifeq ($(HAS_FRIBIDI),1)
+    OPT_CFLAGS += -DLRG_HAS_FRIBIDI=1
 endif
 ifeq ($(HAS_PYTHON),1)
     OPT_CFLAGS += -DLRG_HAS_PYTHON=1

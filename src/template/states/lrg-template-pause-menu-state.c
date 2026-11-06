@@ -145,15 +145,9 @@ update_button_selection (LrgTemplatePauseMenuState *self)
         LrgButton *btn = g_ptr_array_index (priv->visible_buttons, i);
 
         if ((gint)i == priv->selected_index)
-        {
-            g_autoptr(GrlColor) hover_color = grl_color_new (100, 150, 255, 255);
-            lrg_button_set_normal_color (btn, hover_color);
-        }
+            lrg_widget_add_class (LRG_WIDGET (btn), "primary");
         else
-        {
-            g_autoptr(GrlColor) normal_color = grl_color_new (80, 80, 80, 230);
-            lrg_button_set_normal_color (btn, normal_color);
-        }
+            lrg_widget_remove_class (LRG_WIDGET (btn), "primary");
     }
 }
 
@@ -283,25 +277,14 @@ create_menu_button (const gchar *text,
                     gfloat       height)
 {
     LrgButton *btn;
-    g_autoptr(GrlColor) normal_color = NULL;
-    g_autoptr(GrlColor) hover_color = NULL;
-    g_autoptr(GrlColor) pressed_color = NULL;
-    g_autoptr(GrlColor) text_color = NULL;
 
     btn = lrg_button_new (text);
 
     lrg_widget_set_width (LRG_WIDGET (btn), width);
     lrg_widget_set_height (LRG_WIDGET (btn), height);
 
-    normal_color = grl_color_new (80, 80, 80, 230);
-    hover_color = grl_color_new (100, 150, 255, 255);
-    pressed_color = grl_color_new (60, 100, 200, 255);
-    text_color = grl_color_new (255, 255, 255, 255);
-
-    lrg_button_set_normal_color (btn, normal_color);
-    lrg_button_set_hover_color (btn, hover_color);
-    lrg_button_set_pressed_color (btn, pressed_color);
-    lrg_button_set_text_color (btn, text_color);
+    /* Colours come from the theme; the selection uses the primary class */
+    lrg_widget_set_appear (LRG_WIDGET (btn), LRG_APPEAR_FLY_UP, 0.0f);
 
     return btn;
 }
@@ -582,6 +565,8 @@ lrg_template_pause_menu_state_enter (LrgGameState *state)
 
     /* Create UI */
     priv->canvas = lrg_canvas_new ();
+    /* The state drives selection with keys/gamepad itself */
+    lrg_canvas_set_navigation_enabled (priv->canvas, FALSE);
     priv->menu_container = lrg_vbox_new ();
 
     /* Title */

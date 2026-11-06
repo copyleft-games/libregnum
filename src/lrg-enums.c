@@ -346,6 +346,7 @@ lrg_input_modifiers_get_type (void)
             { LRG_INPUT_MODIFIER_SHIFT, "LRG_INPUT_MODIFIER_SHIFT", "shift" },
             { LRG_INPUT_MODIFIER_CTRL, "LRG_INPUT_MODIFIER_CTRL", "ctrl" },
             { LRG_INPUT_MODIFIER_ALT, "LRG_INPUT_MODIFIER_ALT", "alt" },
+            { LRG_INPUT_MODIFIER_SUPER, "LRG_INPUT_MODIFIER_SUPER", "super" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -692,6 +693,13 @@ lrg_ui_event_type_get_type (void)
             { LRG_UI_EVENT_FOCUS_IN, "LRG_UI_EVENT_FOCUS_IN", "focus-in" },
             { LRG_UI_EVENT_FOCUS_OUT, "LRG_UI_EVENT_FOCUS_OUT", "focus-out" },
             { LRG_UI_EVENT_TEXT_INPUT, "LRG_UI_EVENT_TEXT_INPUT", "text-input" },
+            { LRG_UI_EVENT_POINTER_ENTER, "LRG_UI_EVENT_POINTER_ENTER", "pointer-enter" },
+            { LRG_UI_EVENT_POINTER_LEAVE, "LRG_UI_EVENT_POINTER_LEAVE", "pointer-leave" },
+            { LRG_UI_EVENT_ACTIVATE, "LRG_UI_EVENT_ACTIVATE", "activate" },
+            { LRG_UI_EVENT_CANCEL, "LRG_UI_EVENT_CANCEL", "cancel" },
+            { LRG_UI_EVENT_PAN, "LRG_UI_EVENT_PAN", "pan" },
+            { LRG_UI_EVENT_PAN_END, "LRG_UI_EVENT_PAN_END", "pan-end" },
+            { LRG_UI_EVENT_ZOOM, "LRG_UI_EVENT_ZOOM", "zoom" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =
@@ -5838,6 +5846,508 @@ lrg_procgen_direction_get_type (void)
         };
         GType g_define_type_id =
             g_enum_register_static (g_intern_static_string ("LrgProcgenDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+/* ==========================================================================
+ * UI framework (paint, motion, theme, layout)
+ * ========================================================================== */
+
+GType
+lrg_nav_direction_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_NAV_DIRECTION_NONE, "LRG_NAV_DIRECTION_NONE", "none" },
+            { LRG_NAV_DIRECTION_UP, "LRG_NAV_DIRECTION_UP", "up" },
+            { LRG_NAV_DIRECTION_DOWN, "LRG_NAV_DIRECTION_DOWN", "down" },
+            { LRG_NAV_DIRECTION_LEFT, "LRG_NAV_DIRECTION_LEFT", "left" },
+            { LRG_NAV_DIRECTION_RIGHT, "LRG_NAV_DIRECTION_RIGHT", "right" },
+            { LRG_NAV_DIRECTION_NEXT, "LRG_NAV_DIRECTION_NEXT", "next" },
+            { LRG_NAV_DIRECTION_PREVIOUS, "LRG_NAV_DIRECTION_PREVIOUS", "previous" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgNavDirection"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_motion_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_MOTION_NONE, "LRG_MOTION_NONE", "none" },
+            { LRG_MOTION_SNAPPY, "LRG_MOTION_SNAPPY", "snappy" },
+            { LRG_MOTION_SMOOTH, "LRG_MOTION_SMOOTH", "smooth" },
+            { LRG_MOTION_BOUNCY, "LRG_MOTION_BOUNCY", "bouncy" },
+            { LRG_MOTION_WOBBLY, "LRG_MOTION_WOBBLY", "wobbly" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgMotion"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_align_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ALIGN_FILL, "LRG_ALIGN_FILL", "fill" },
+            { LRG_ALIGN_START, "LRG_ALIGN_START", "start" },
+            { LRG_ALIGN_CENTER, "LRG_ALIGN_CENTER", "center" },
+            { LRG_ALIGN_END, "LRG_ALIGN_END", "end" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAlign"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_appear_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_APPEAR_NONE, "LRG_APPEAR_NONE", "none" },
+            { LRG_APPEAR_FADE, "LRG_APPEAR_FADE", "fade" },
+            { LRG_APPEAR_POP, "LRG_APPEAR_POP", "pop" },
+            { LRG_APPEAR_ZOOM, "LRG_APPEAR_ZOOM", "zoom" },
+            { LRG_APPEAR_FLY_UP, "LRG_APPEAR_FLY_UP", "fly-up" },
+            { LRG_APPEAR_FLY_DOWN, "LRG_APPEAR_FLY_DOWN", "fly-down" },
+            { LRG_APPEAR_FLY_LEFT, "LRG_APPEAR_FLY_LEFT", "fly-left" },
+            { LRG_APPEAR_FLY_RIGHT, "LRG_APPEAR_FLY_RIGHT", "fly-right" },
+            { LRG_APPEAR_DROP, "LRG_APPEAR_DROP", "drop" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgAppear"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_widget_state_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GFlagsValue values[] = {
+            { LRG_WIDGET_STATE_NONE, "LRG_WIDGET_STATE_NONE", "none" },
+            { LRG_WIDGET_STATE_HOVERED, "LRG_WIDGET_STATE_HOVERED", "hovered" },
+            { LRG_WIDGET_STATE_PRESSED, "LRG_WIDGET_STATE_PRESSED", "pressed" },
+            { LRG_WIDGET_STATE_FOCUSED, "LRG_WIDGET_STATE_FOCUSED", "focused" },
+            { LRG_WIDGET_STATE_FOCUS_VISIBLE, "LRG_WIDGET_STATE_FOCUS_VISIBLE", "focus-visible" },
+            { LRG_WIDGET_STATE_DISABLED, "LRG_WIDGET_STATE_DISABLED", "disabled" },
+            { LRG_WIDGET_STATE_CHECKED, "LRG_WIDGET_STATE_CHECKED", "checked" },
+            { LRG_WIDGET_STATE_SELECTED, "LRG_WIDGET_STATE_SELECTED", "selected" },
+            { LRG_WIDGET_STATE_OPEN, "LRG_WIDGET_STATE_OPEN", "open" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_flags_register_static (g_intern_static_string ("LrgWidgetState"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_ui_part_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_UI_PART_BOX, "LRG_UI_PART_BOX", "box" },
+            { LRG_UI_PART_LABEL, "LRG_UI_PART_LABEL", "label" },
+            { LRG_UI_PART_TRACK, "LRG_UI_PART_TRACK", "track" },
+            { LRG_UI_PART_FILL, "LRG_UI_PART_FILL", "fill" },
+            { LRG_UI_PART_THUMB, "LRG_UI_PART_THUMB", "thumb" },
+            { LRG_UI_PART_KNOB, "LRG_UI_PART_KNOB", "knob" },
+            { LRG_UI_PART_MARK, "LRG_UI_PART_MARK", "mark" },
+            { LRG_UI_PART_ARROW, "LRG_UI_PART_ARROW", "arrow" },
+            { LRG_UI_PART_POPUP, "LRG_UI_PART_POPUP", "popup" },
+            { LRG_UI_PART_ITEM, "LRG_UI_PART_ITEM", "item" },
+            { LRG_UI_PART_HEADER, "LRG_UI_PART_HEADER", "header" },
+            { LRG_UI_PART_TAB, "LRG_UI_PART_TAB", "tab" },
+            { LRG_UI_PART_INDICATOR, "LRG_UI_PART_INDICATOR", "indicator" },
+            { LRG_UI_PART_SCROLLBAR, "LRG_UI_PART_SCROLLBAR", "scrollbar" },
+            { LRG_UI_PART_SCROLL_THUMB, "LRG_UI_PART_SCROLL_THUMB", "scroll-thumb" },
+            { LRG_UI_PART_TOOLTIP, "LRG_UI_PART_TOOLTIP", "tooltip" },
+            { LRG_UI_PART_FOCUS, "LRG_UI_PART_FOCUS", "focus" },
+            { LRG_UI_PART_VEIL, "LRG_UI_PART_VEIL", "veil" },
+            { LRG_UI_PART_HANDLE, "LRG_UI_PART_HANDLE", "handle" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgUIPart"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_theme_color_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_THEME_COLOR_WINDOW, "LRG_THEME_COLOR_WINDOW", "window" },
+            { LRG_THEME_COLOR_PANEL, "LRG_THEME_COLOR_PANEL", "panel" },
+            { LRG_THEME_COLOR_SURFACE, "LRG_THEME_COLOR_SURFACE", "surface" },
+            { LRG_THEME_COLOR_BORDER, "LRG_THEME_COLOR_BORDER", "border" },
+            { LRG_THEME_COLOR_TEXT, "LRG_THEME_COLOR_TEXT", "text" },
+            { LRG_THEME_COLOR_TEXT_MUTED, "LRG_THEME_COLOR_TEXT_MUTED", "text-muted" },
+            { LRG_THEME_COLOR_TEXT_ON_ACCENT, "LRG_THEME_COLOR_TEXT_ON_ACCENT", "text-on-accent" },
+            { LRG_THEME_COLOR_ACCENT, "LRG_THEME_COLOR_ACCENT", "accent" },
+            { LRG_THEME_COLOR_ACCENT_HOVER, "LRG_THEME_COLOR_ACCENT_HOVER", "accent-hover" },
+            { LRG_THEME_COLOR_ACCENT_PRESSED, "LRG_THEME_COLOR_ACCENT_PRESSED", "accent-pressed" },
+            { LRG_THEME_COLOR_CONTROL, "LRG_THEME_COLOR_CONTROL", "control" },
+            { LRG_THEME_COLOR_CONTROL_HOVER, "LRG_THEME_COLOR_CONTROL_HOVER", "control-hover" },
+            { LRG_THEME_COLOR_CONTROL_PRESSED, "LRG_THEME_COLOR_CONTROL_PRESSED", "control-pressed" },
+            { LRG_THEME_COLOR_INPUT, "LRG_THEME_COLOR_INPUT", "input" },
+            { LRG_THEME_COLOR_FOCUS, "LRG_THEME_COLOR_FOCUS", "focus" },
+            { LRG_THEME_COLOR_SELECTION, "LRG_THEME_COLOR_SELECTION", "selection" },
+            { LRG_THEME_COLOR_TRACK, "LRG_THEME_COLOR_TRACK", "track" },
+            { LRG_THEME_COLOR_HANDLE, "LRG_THEME_COLOR_HANDLE", "handle" },
+            { LRG_THEME_COLOR_POPUP, "LRG_THEME_COLOR_POPUP", "popup" },
+            { LRG_THEME_COLOR_TOOLTIP, "LRG_THEME_COLOR_TOOLTIP", "tooltip" },
+            { LRG_THEME_COLOR_SHADOW, "LRG_THEME_COLOR_SHADOW", "shadow" },
+            { LRG_THEME_COLOR_VEIL, "LRG_THEME_COLOR_VEIL", "veil" },
+            { LRG_THEME_COLOR_SUCCESS, "LRG_THEME_COLOR_SUCCESS", "success" },
+            { LRG_THEME_COLOR_WARNING, "LRG_THEME_COLOR_WARNING", "warning" },
+            { LRG_THEME_COLOR_DANGER, "LRG_THEME_COLOR_DANGER", "danger" },
+            { LRG_THEME_COLOR_LINK, "LRG_THEME_COLOR_LINK", "link" },
+            { LRG_THEME_COLOR_DISABLED, "LRG_THEME_COLOR_DISABLED", "disabled" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgThemeColor"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_theme_metric_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_THEME_METRIC_FONT_SIZE, "LRG_THEME_METRIC_FONT_SIZE", "font-size" },
+            { LRG_THEME_METRIC_FONT_SIZE_SMALL, "LRG_THEME_METRIC_FONT_SIZE_SMALL", "font-size-small" },
+            { LRG_THEME_METRIC_FONT_SIZE_LARGE, "LRG_THEME_METRIC_FONT_SIZE_LARGE", "font-size-large" },
+            { LRG_THEME_METRIC_FONT_SIZE_TITLE, "LRG_THEME_METRIC_FONT_SIZE_TITLE", "font-size-title" },
+            { LRG_THEME_METRIC_CORNER_RADIUS, "LRG_THEME_METRIC_CORNER_RADIUS", "corner-radius" },
+            { LRG_THEME_METRIC_BORDER_WIDTH, "LRG_THEME_METRIC_BORDER_WIDTH", "border-width" },
+            { LRG_THEME_METRIC_CONTROL_HEIGHT, "LRG_THEME_METRIC_CONTROL_HEIGHT", "control-height" },
+            { LRG_THEME_METRIC_PADDING_X, "LRG_THEME_METRIC_PADDING_X", "padding-x" },
+            { LRG_THEME_METRIC_PADDING_Y, "LRG_THEME_METRIC_PADDING_Y", "padding-y" },
+            { LRG_THEME_METRIC_SPACING, "LRG_THEME_METRIC_SPACING", "spacing" },
+            { LRG_THEME_METRIC_ROW_HEIGHT, "LRG_THEME_METRIC_ROW_HEIGHT", "row-height" },
+            { LRG_THEME_METRIC_POPUP_RADIUS, "LRG_THEME_METRIC_POPUP_RADIUS", "popup-radius" },
+            { LRG_THEME_METRIC_SHADOW_BLUR, "LRG_THEME_METRIC_SHADOW_BLUR", "shadow-blur" },
+            { LRG_THEME_METRIC_SHADOW_OFFSET_Y, "LRG_THEME_METRIC_SHADOW_OFFSET_Y", "shadow-offset-y" },
+            { LRG_THEME_METRIC_FOCUS_RING_WIDTH, "LRG_THEME_METRIC_FOCUS_RING_WIDTH", "focus-ring-width" },
+            { LRG_THEME_METRIC_SCROLLBAR_SIZE, "LRG_THEME_METRIC_SCROLLBAR_SIZE", "scrollbar-size" },
+            { LRG_THEME_METRIC_CHECK_SIZE, "LRG_THEME_METRIC_CHECK_SIZE", "check-size" },
+            { LRG_THEME_METRIC_HANDLE_SIZE, "LRG_THEME_METRIC_HANDLE_SIZE", "handle-size" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgThemeMetric"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_paint_gradient_kind_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_GRADIENT_NONE, "LRG_PAINT_GRADIENT_NONE", "none" },
+            { LRG_PAINT_GRADIENT_LINEAR, "LRG_PAINT_GRADIENT_LINEAR", "linear" },
+            { LRG_PAINT_GRADIENT_RADIAL, "LRG_PAINT_GRADIENT_RADIAL", "radial" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintGradientKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_popup_placement_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_POPUP_PLACEMENT_BELOW, "LRG_POPUP_PLACEMENT_BELOW", "below" },
+            { LRG_POPUP_PLACEMENT_ABOVE, "LRG_POPUP_PLACEMENT_ABOVE", "above" },
+            { LRG_POPUP_PLACEMENT_RIGHT, "LRG_POPUP_PLACEMENT_RIGHT", "right" },
+            { LRG_POPUP_PLACEMENT_LEFT, "LRG_POPUP_PLACEMENT_LEFT", "left" },
+            { LRG_POPUP_PLACEMENT_CENTER, "LRG_POPUP_PLACEMENT_CENTER", "center" },
+            { LRG_POPUP_PLACEMENT_AT_POINTER, "LRG_POPUP_PLACEMENT_AT_POINTER", "at-pointer" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPopupPlacement"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_toast_mode_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_TOAST_MODE_REPLACE, "LRG_TOAST_MODE_REPLACE", "replace" },
+            { LRG_TOAST_MODE_SEQUENCE, "LRG_TOAST_MODE_SEQUENCE", "sequence" },
+            { LRG_TOAST_MODE_STACK, "LRG_TOAST_MODE_STACK", "stack" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgToastMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_checkbox_style_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_CHECKBOX_STYLE_CHECK, "LRG_CHECKBOX_STYLE_CHECK", "check" },
+            { LRG_CHECKBOX_STYLE_RADIO, "LRG_CHECKBOX_STYLE_RADIO", "radio" },
+            { LRG_CHECKBOX_STYLE_SWITCH, "LRG_CHECKBOX_STYLE_SWITCH", "switch" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgCheckboxStyle"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_selection_mode_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_SELECTION_MODE_NONE, "LRG_SELECTION_MODE_NONE", "none" },
+            { LRG_SELECTION_MODE_SINGLE, "LRG_SELECTION_MODE_SINGLE", "single" },
+            { LRG_SELECTION_MODE_MULTIPLE, "LRG_SELECTION_MODE_MULTIPLE", "multiple" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgSelectionMode"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_paint_prim_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_PRIM_RECT, "LRG_PAINT_PRIM_RECT", "rect" },
+            { LRG_PAINT_PRIM_SHADOW, "LRG_PAINT_PRIM_SHADOW", "shadow" },
+            { LRG_PAINT_PRIM_LINE, "LRG_PAINT_PRIM_LINE", "line" },
+            { LRG_PAINT_PRIM_IMAGE, "LRG_PAINT_PRIM_IMAGE", "image" },
+            { LRG_PAINT_PRIM_TRIANGLE, "LRG_PAINT_PRIM_TRIANGLE", "triangle" },
+            { LRG_PAINT_PRIM_BLUR, "LRG_PAINT_PRIM_BLUR", "blur" },
+            { LRG_PAINT_PRIM_GLASS, "LRG_PAINT_PRIM_GLASS", "glass" },
+            { LRG_PAINT_PRIM_EFFECT, "LRG_PAINT_PRIM_EFFECT", "effect" },
+            { LRG_PAINT_PRIM_CURVE, "LRG_PAINT_PRIM_CURVE", "curve" },
+            { LRG_PAINT_PRIM_GLYPH, "LRG_PAINT_PRIM_GLYPH", "glyph" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintPrim"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_paint_command_kind_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_COMMAND_INSTANCES, "LRG_PAINT_COMMAND_INSTANCES", "instances" },
+            { LRG_PAINT_COMMAND_CALLBACK, "LRG_PAINT_COMMAND_CALLBACK", "callback" },
+            { LRG_PAINT_COMMAND_BACKDROP, "LRG_PAINT_COMMAND_BACKDROP", "backdrop" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintCommandKind"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_paint_material_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_PAINT_MATERIAL_NONE, "LRG_PAINT_MATERIAL_NONE", "none" },
+            { LRG_PAINT_MATERIAL_BLUR, "LRG_PAINT_MATERIAL_BLUR", "blur" },
+            { LRG_PAINT_MATERIAL_GLASS, "LRG_PAINT_MATERIAL_GLASS", "glass" },
+            { LRG_PAINT_MATERIAL_FROSTED, "LRG_PAINT_MATERIAL_FROSTED", "frosted" },
+            { LRG_PAINT_MATERIAL_TINTED, "LRG_PAINT_MATERIAL_TINTED", "tinted" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgPaintMaterial"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_icon_get_type (void)
+{
+    static gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_ICON_NONE, "LRG_ICON_NONE", "none" },
+            { LRG_ICON_CHECK, "LRG_ICON_CHECK", "check" },
+            { LRG_ICON_CROSS, "LRG_ICON_CROSS", "cross" },
+            { LRG_ICON_CHEVRON_UP, "LRG_ICON_CHEVRON_UP", "chevron-up" },
+            { LRG_ICON_CHEVRON_DOWN, "LRG_ICON_CHEVRON_DOWN", "chevron-down" },
+            { LRG_ICON_CHEVRON_LEFT, "LRG_ICON_CHEVRON_LEFT", "chevron-left" },
+            { LRG_ICON_CHEVRON_RIGHT, "LRG_ICON_CHEVRON_RIGHT", "chevron-right" },
+            { LRG_ICON_PLUS, "LRG_ICON_PLUS", "plus" },
+            { LRG_ICON_MINUS, "LRG_ICON_MINUS", "minus" },
+            { LRG_ICON_SEARCH, "LRG_ICON_SEARCH", "search" },
+            { LRG_ICON_MENU, "LRG_ICON_MENU", "menu" },
+            { LRG_ICON_GEAR, "LRG_ICON_GEAR", "gear" },
+            { LRG_ICON_STAR, "LRG_ICON_STAR", "star" },
+            { LRG_ICON_STAR_HALF, "LRG_ICON_STAR_HALF", "star-half" },
+            { LRG_ICON_STAR_OUTLINE, "LRG_ICON_STAR_OUTLINE", "star-outline" },
+            { LRG_ICON_HEART, "LRG_ICON_HEART", "heart" },
+            { LRG_ICON_PLAY, "LRG_ICON_PLAY", "play" },
+            { LRG_ICON_PAUSE, "LRG_ICON_PAUSE", "pause" },
+            { LRG_ICON_STOP, "LRG_ICON_STOP", "stop" },
+            { LRG_ICON_INFO, "LRG_ICON_INFO", "info" },
+            { LRG_ICON_WARNING, "LRG_ICON_WARNING", "warning" },
+            { LRG_ICON_CLOSE, "LRG_ICON_CLOSE", "close" },
+            { LRG_ICON_ARROW_LEFT, "LRG_ICON_ARROW_LEFT", "arrow-left" },
+            { LRG_ICON_ARROW_RIGHT, "LRG_ICON_ARROW_RIGHT", "arrow-right" },
+            { LRG_ICON_FOLDER, "LRG_ICON_FOLDER", "folder" },
+            { LRG_ICON_FILE, "LRG_ICON_FILE", "file" },
+            { LRG_ICON_EYE, "LRG_ICON_EYE", "eye" },
+            { LRG_ICON_LOCK, "LRG_ICON_LOCK", "lock" },
+            { LRG_ICON_HOME, "LRG_ICON_HOME", "home" },
+            { LRG_ICON_TRASH, "LRG_ICON_TRASH", "trash" },
+            { LRG_ICON_EDIT, "LRG_ICON_EDIT", "edit" },
+            { LRG_ICON_REFRESH, "LRG_ICON_REFRESH", "refresh" },
+            { LRG_ICON_DOWNLOAD, "LRG_ICON_DOWNLOAD", "download" },
+            { LRG_ICON_UPLOAD, "LRG_ICON_UPLOAD", "upload" },
+            { LRG_ICON_CALENDAR, "LRG_ICON_CALENDAR", "calendar" },
+            { LRG_ICON_CLOCK, "LRG_ICON_CLOCK", "clock" },
+            { LRG_ICON_USER, "LRG_ICON_USER", "user" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgIcon"), values);
+        g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
+    }
+
+    return g_define_type_id__volatile;
+}
+
+GType
+lrg_widget_direction_get_type (void)
+{
+    static volatile gsize g_define_type_id__volatile = 0;
+
+    if (g_once_init_enter (&g_define_type_id__volatile))
+    {
+        static const GEnumValue values[] = {
+            { LRG_WIDGET_DIRECTION_INHERIT, "LRG_WIDGET_DIRECTION_INHERIT", "inherit" },
+            { LRG_WIDGET_DIRECTION_LTR, "LRG_WIDGET_DIRECTION_LTR", "ltr" },
+            { LRG_WIDGET_DIRECTION_RTL, "LRG_WIDGET_DIRECTION_RTL", "rtl" },
+            { 0, NULL, NULL }
+        };
+        GType g_define_type_id =
+            g_enum_register_static (g_intern_static_string ("LrgWidgetDirection"), values);
         g_once_init_leave (&g_define_type_id__volatile, g_define_type_id);
     }
 

@@ -1,0 +1,197 @@
+* Syntax highlighting
+:PROPERTIES:
+:CUSTOM_ID: syntax
+:END:
+=LrgSyntax= is the small, fast, incremental highlighter behind =LrgTextEditor=. A language is a table-driven description (word lists, comment markers, string quotes and a few flags) on top of one of four lexers, the =LrgSyntaxBase=: =code=, =markdown=, =yaml= and =ini=. Everything works one line at a time: =lrg_syntax_tokenize_line()= takes the state the previous line ended in and returns the state for the next line, so constructs that span lines (block comments, triple-quoted strings, Lua long strings, shell quotes, Markdown fences, YAML block scalars) are carried in a single =guint=.
+
+That is what makes editing cheap: an editor keeps each line's entry and exit state, re-tokenizes a changed line, then the following lines only while the state entering them differs from last time. As soon as a line starts in the same state as before, every line below is known to be unchanged (the highlighting has /converged/). State 0 means "nothing open".
+
+** Built-in languages
+:PROPERTIES:
+:CUSTOM_ID: syntax-builtins
+:END:
+| Name       | Aliases                  | Files                                           | Highlights                                                                 |
+|------------+--------------------------+-------------------------------------------------+----------------------------------------------------------------------------|
+| =c=        | =h=, =gnu89=, =c99=      | =*.c= =*.h= =*.inc=                              | C keywords, C and GLib types (=gboolean=, =GObject= ...), =#= directives with =<header>=, ALL_CAPS constants, calls |
+| =glsl=     | =shader=, =vert=, =frag= | =*.glsl= =*.vert= =*.frag= =*.vs= =*.fs= ...    | qualifiers, vector / matrix / sampler types, built-in functions, =gl_*= variables |
+| =lua=      |                          | =*.lua=                                         | =--= and =--[[ ]]= comments, =[[ ]]= strings, =nil= / =true=, standard library |
+| =python=   | =py=, =python3=          | =*.py= =*.pyw= =*.pyi=                          | keywords, ="""= / ='''= strings, =r""= / =f''= prefixes, decorators, =self= |
+| =bash=     | =sh=, =shell=, =zsh=     | =*.sh= =*.bash= =.bashrc= ...                   | keywords, builtins, =$var= / =${...}=, raw single quotes, quotes span lines |
+| =yaml=     | =yml=                    | =*.yaml= =*.yml= =*.ryaml= =*.rlevel= =*.rprefab= | keys, plain / quoted scalars, anchors, tags, block scalars, tab errors     |
+| =json=     |                          | =*.json= =*.geojson=                            | keys, strings, numbers, =true= / =false= / =null=, anything else is an error |
+| =markdown= | =md=                     | =*.md= =*.markdown= =README=                    | headings, emphasis, code spans, fenced code, links, list and quote markers |
+| =ini=      | =toml=, =conf=, =desktop= | =*.ini= =*.cfg= =*.conf= =*.toml= =*.desktop= ... | =[sections]=, keys, values lexed as code, =;= / =#= comments             |
+
+=lrg_syntax_list_languages()= lists every known name; =lrg_syntax_get_for_name()= (case-insensitive, aliases too) and =lrg_syntax_get_for_filename()= (glob on the base name, via =lrg_syntax_matches_filename()=) look languages up. Languages registered with =lrg_syntax_register()= are searched newest first, so an application can replace a built-in.
+
+** Token kinds and colours
+:PROPERTIES:
+:CUSTOM_ID: syntax-tokens
+:END:
+Spans (=LrgSyntaxSpan=: =start=, =end= byte offsets and a =token=) are emitted in order and never overlap; uncovered bytes are =LRG_SYNTAX_TOKEN_TEXT=. =LRG_SYNTAX_N_TOKENS= counts the kinds. Colours come from the theme roles so every preset works:
+
+| Token (=LRG_SYNTAX_TOKEN_*=) | Default colour                       |
+|------------------------------+--------------------------------------|
+| =TEXT=                       | =TEXT=                               |
+| =KEYWORD=                    | =ACCENT= (12 % towards =TEXT=)       |
+| =TYPE=                       | =SUCCESS= + =LINK= (teal)            |
+| =FUNCTION=                   | =LINK= (25 % towards =TEXT=)         |
+| =STRING=                     | =SUCCESS=                            |
+| =NUMBER=                     | =WARNING=                            |
+| =COMMENT=                    | =TEXT_MUTED=                         |
+| =PREPROCESSOR=               | =DANGER= + =ACCENT= (rose)           |
+| =OPERATOR=                   | =TEXT= + =ACCENT=                    |
+| =PUNCTUATION=                | =TEXT= + =TEXT_MUTED=                |
+| =CONSTANT=                   | =WARNING= + =DANGER= (orange)        |
+| =ATTRIBUTE=                  | =LINK= + =DANGER=                    |
+| =ESCAPE=                     | =WARNING= + =SUCCESS=                |
+| =VARIABLE=                   | =DANGER= + =WARNING=                 |
+| =HEADING=                    | =ACCENT=                             |
+| =EMPHASIS=                   | =WARNING= + =TEXT=                   |
+| =LINK=                       | =LINK=                               |
+| =ERROR=                      | =DANGER=                             |
+Every derived colour is then pulled towards =TEXT= until it reaches a 3.2:1 contrast against the =INPUT= background, which keeps dark accents legible on dark presets and pale ones on light presets (the tests check all five presets).
+
+=lrg_syntax_get_token_color (syntax, theme, token, &out)= resolves a colour (=syntax= may be =NULL= for the plain theme recipe). =lrg_syntax_set_token_color()= overrides one kind for every editor using that language (=NULL= restores the default). Built-in languages are shared, so per-editor colours belong in =lrg_text_editor_set_token_color()=.
+
+** YAML language definitions
+:PROPERTIES:
+:CUSTOM_ID: syntax-yaml
+:END:
+=lrg_syntax_new_from_yaml (data, length, &error)= and =lrg_syntax_new_from_file (path, &error)= build a language from YAML; register it to make it findable. Errors are =LRG_SYNTAX_ERROR= / =LRG_SYNTAX_ERROR_INVALID= (or the YAML parser's error for malformed YAML); =lrg_syntax_error_quark()= is the domain.
+
+| Key                    | Type                         | Default     | Meaning                                                    |
+|------------------------+------------------------------+-------------+------------------------------------------------------------|
+| =name=                 | string (required)            |             | Language name                                              |
+| =base=                 | =code= / =markdown= / =yaml= / =ini= | =code= | The lexer                                                |
+| =extensions=           | string or list               |             | File globs (="*.toml"=, ="Makefile"=)                       |
+| =aliases=              | string or list               |             | Other names for lookup                                     |
+| =line-comment=         | string or list               |             | Markers that comment to the end of the line                |
+| =comment-needs-space=  | bool                         | false       | A line comment starts only at the line start or after a space |
+| =block-comment=        | =[start, end]=               |             | Block comment delimiters                                   |
+| =nested-comments=      | bool                         | false       | Block comments nest                                        |
+| =strings=              | string                       | ="\"'"=     | Quote characters                                           |
+| =escape=               | one character                | =\=         | Escape character inside strings                            |
+| =raw-strings=          | string                       |             | Quotes without escapes (shell ='=)                         |
+| =strings-span-lines=   | bool                         | false       | An unclosed string continues on the next line              |
+| =multiline-strings=    | list of strings or =[start, end]= pairs |  | ='"""'=, =["[[", "]]"]=                                    |
+| =preprocessor=         | string                       |             | Directive prefix at the start of a line (="#"=)            |
+| =variable-prefix=      | string                       |             | Sigils for variables (="$"=)                               |
+| =attribute-prefix=     | string                       |             | Sigils for decorators (="@"=)                              |
+| =word-chars=           | string                       |             | Extra identifier characters (="-"=)                        |
+| =number-pattern=       | regex                        | built-in    | Anchored =GRegex= tried where a number may start           |
+| =case-sensitive=       | bool                         | true        | Word table case                                            |
+| =function-calls=       | bool                         | true        | =name(= is a =FUNCTION=                                    |
+| =caps-constants=       | bool                         | false       | =ALL_CAPS= identifiers are =CONSTANT=                       |
+| =keys=                 | bool                         | false       | A string or word followed by =:= is an =ATTRIBUTE= (JSON)  |
+| =strict=               | bool                         | false       | Identifiers missing from the word table are =ERROR=        |
+| =keywords= / =types= / =constants= / =functions= / =builtins= / =variables= / =attributes= / =operators= | list | | Word table entries of that kind |
+| =colors=               | map token nick -> colour     |             | Colour overrides (=keyword: "#ff79c6"=)                    |
+
+Example: a TOML-like language, loaded and registered at start-up.
+#+begin_src yaml
+name: toml-lite
+base: ini
+extensions: ["*.tomlite"]
+aliases: [tl]
+line-comment: "#"
+comment-needs-space: true
+strings: "\"'"
+multiline-strings:
+  - '"""'
+case-sensitive: false
+constants: [true, false, inf, nan]
+number-pattern: "[+-]?[0-9][0-9_]*(\\.[0-9]+)?"
+colors:
+  heading: "#ff00ff"
+#+end_src
+#+begin_src C
+g_autoptr(GError)    error = NULL;
+g_autoptr(LrgSyntax) toml = lrg_syntax_new_from_file ("data/langs/toml-lite.yaml", &error);
+
+if (toml == NULL)
+	g_warning ("language: %s", error->message);
+else
+	lrg_syntax_register (toml);   /* now "toml-lite", "tl" and *.tomlite resolve */
+#+end_src
+
+*** In UI documents
+:PROPERTIES:
+:CUSTOM_ID: syntax-ui-loader
+:END:
+=LrgUILoader= registers languages for the editors it builds: a document's top-level =languages:= takes definitions in this schema inline (expressions allowed), file names or ={file: name}=, and =language-file:= on an =LrgTextEditor= loads one file for that editor. Both register with =lrg_syntax_register()= once the document expanded without errors; an unchanged definition is reused across hot reloads instead of being registered again. See [[file:../declarative-ui.org::#text-editor-keys][Declarative UI]].
+
+#+begin_src yaml
+languages:
+  - {name: toml-lite, base: ini, extensions: ["*.tomlite"], line-comment: "#"}
+  - langs/studio-script.yaml
+type: text-editor
+language: toml-lite
+#+end_src
+
+** Building a language in code
+:PROPERTIES:
+:CUSTOM_ID: syntax-code
+:END:
+Every YAML key has a setter:
+#+begin_src C
+static const gchar * const kw[] = { "fn", "let", "if", "else", "return", NULL };
+LrgSyntax *lang = lrg_syntax_new ("mini", LRG_SYNTAX_BASE_CODE);
+
+lrg_syntax_add_words (lang, LRG_SYNTAX_TOKEN_KEYWORD, kw);
+lrg_syntax_add_line_comment (lang, "//");
+lrg_syntax_set_block_comment (lang, "/*", "*/", TRUE);
+lrg_syntax_set_string_quotes (lang, "\"", '\\', FALSE);
+lrg_syntax_set_raw_quotes (lang, NULL);
+lrg_syntax_add_multiline_string (lang, "r#\"", "\"#");
+lrg_syntax_set_preprocessor (lang, NULL);
+lrg_syntax_set_prefixes (lang, "$", "#");
+lrg_syntax_set_word_chars (lang, NULL);
+lrg_syntax_set_number_pattern (lang, NULL, NULL);
+lrg_syntax_set_options (lang, TRUE, TRUE, TRUE, FALSE);
+lrg_syntax_set_strict (lang, FALSE);
+lrg_syntax_set_comment_needs_space (lang, FALSE);
+lrg_syntax_add_pattern (lang, "*.mini");
+lrg_syntax_add_alias (lang, "mn");
+lrg_syntax_register (lang);
+g_object_unref (lang);
+#+end_src
+=lrg_syntax_lookup_word()= reads the word table, =lrg_syntax_get_name()= / =lrg_syntax_get_base()= the identity.
+
+** Tokenizing directly
+:PROPERTIES:
+:CUSTOM_ID: syntax-tokenize
+:END:
+#+begin_src C
+LrgSyntax        *c = lrg_syntax_get_for_name ("c");
+g_autoptr(GArray) spans = g_array_new (FALSE, FALSE, sizeof (LrgSyntaxSpan));
+guint             state = 0;
+guint             i;
+
+for (i = 0; lines[i] != NULL; i++)
+{
+	g_array_set_size (spans, 0);
+	state = lrg_syntax_tokenize_line (c, lines[i], -1, state, spans);
+	/* ... use spans ... */
+}
+
+/* only the state, no spans (cheap pass over lines above the view) */
+state = lrg_syntax_tokenize_line (c, line, -1, state, NULL);
+#+end_src
+=LrgSyntaxSpan= is a boxed type (=lrg_syntax_span_copy()=, =lrg_syntax_span_free()=); =lrg_syntax_token_get_type()=, =lrg_syntax_base_get_type()= and =lrg_syntax_span_get_type()= register the types.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: syntax-pitfalls
+:END:
+- Highlighting is lexical, not a parser: a C =if= used as a struct member is still a keyword, and bracket matching in the editor does not skip strings.
+- The state argument holds at most 65535 nesting levels / multi-line string kinds; that is never a practical limit.
+- Case-insensitive languages fold ASCII only.
+- Built-in languages are process-wide singletons: colour overrides on them affect every editor.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: syntax-see-also
+:END:
+- [[file:text-editor.org][Text editor]]
+- [[file:../theme.org][Theme]] for the colour roles

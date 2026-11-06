@@ -38,3 +38,164 @@ Headers: =src/ui/lrg-tooltip.h=, =src/ui/lrg-tooltip-layout.h=.
 * Tests
 
 =tests/test-tooltip.c=: line kinds, ids, find, replace, insert and remove, deep copies, colour parsing and its failures, sizes and pair alignment, flavour wrapping without widening, long words, newlines, the maximum width, recorded drawing with and without callbacks, layout failures and the placement flips and clamps.
+
+* API reference
+:PROPERTIES:
+:CUSTOM_ID: tooltip-api
+:END:
+Every function below is copied from =src/ui/lrg-tooltip.h= and =src/ui/lrg-tooltip-layout.h=. Colours are always =guint32= 0xRRGGBBAA. None of these functions need a window.
+
+** LrgTooltipLineKind
+:PROPERTIES:
+:CUSTOM_ID: tooltip-api-line-kind
+:END:
+| Value | Shows |
+|-------+-------|
+| =LRG_TOOLTIP_LINE_TEXT= | One left-aligned text |
+| =LRG_TOOLTIP_LINE_DOUBLE= | A left-aligned and a right-aligned text on one row |
+| =LRG_TOOLTIP_LINE_ICON= | An icon followed by left-aligned text |
+| =LRG_TOOLTIP_LINE_SEPARATOR= | A thin horizontal rule |
+| =LRG_TOOLTIP_LINE_SPACER= | An empty gap of a few pixels |
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_tooltip_line_kind_get_type= | =GType lrg_tooltip_line_kind_get_type (void) G_GNUC_CONST;= | The =GEnum= type (=LRG_TYPE_TOOLTIP_LINE_KIND=), registered by hand in =lrg-tooltip.c=; use it with =g_enum_get_value()= to print or parse a kind (save files, inspectors) |
+
+** LrgTooltipLine
+:PROPERTIES:
+:CUSTOM_ID: tooltip-api-line
+:END:
+=LrgTooltipLine= is an opaque boxed type (=LRG_TYPE_TOOLTIP_LINE=). Lines appended with the =lrg_tooltip_add_*()= functions are *owned by the tooltip* and returned (transfer none) so they can be adjusted at once; a free-standing line from =lrg_tooltip_line_new()= is owned by the caller and is *copied* when passed to =lrg_tooltip_insert_line()= or =lrg_tooltip_replace_line()=. String getters return (transfer none) pointers into the line, valid until the matching setter is called; setters copy their string.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_tooltip_line_get_type= | =GType lrg_tooltip_line_get_type (void) G_GNUC_CONST;= | Boxed =GType=, copy = =lrg_tooltip_line_copy()=, free = =lrg_tooltip_line_free()= |
+| =lrg_tooltip_line_new= | =LrgTooltipLine *lrg_tooltip_line_new (LrgTooltipLineKind kind);= | (transfer full): no text, both colours white (=0xFFFFFFFF=), no id, not wrapped |
+| =lrg_tooltip_line_copy= | =LrgTooltipLine *lrg_tooltip_line_copy (const LrgTooltipLine *self);= | (transfer full) deep copy: texts, icon and id are duplicated |
+| =lrg_tooltip_line_free= | =void lrg_tooltip_line_free (LrgTooltipLine *self);= | =self= is (nullable); =g_autoptr (LrgTooltipLine)= supported. Never free a line returned by the tooltip |
+| =lrg_tooltip_line_get_kind= | =LrgTooltipLineKind lrg_tooltip_line_get_kind (const LrgTooltipLine *self);= | |
+| =lrg_tooltip_line_set_kind= | =void lrg_tooltip_line_set_kind (LrgTooltipLine *self, LrgTooltipLineKind kind);= | Texts, colours and id stay, so a text line given a right text and =LRG_TOOLTIP_LINE_DOUBLE= becomes a pair |
+| =lrg_tooltip_line_get_left= | =const gchar *lrg_tooltip_line_get_left (const LrgTooltipLine *self);= | (transfer none) (nullable) the left (or only) text |
+| =lrg_tooltip_line_set_left= | =void lrg_tooltip_line_set_left (LrgTooltipLine *self, const gchar *text);= | =text= (nullable), copied |
+| =lrg_tooltip_line_get_right= | =const gchar *lrg_tooltip_line_get_right (const LrgTooltipLine *self);= | (transfer none) (nullable) the right-aligned text of a double line |
+| =lrg_tooltip_line_set_right= | =void lrg_tooltip_line_set_right (LrgTooltipLine *self, const gchar *text);= | =text= (nullable), copied |
+| =lrg_tooltip_line_get_left_color= | =guint32 lrg_tooltip_line_get_left_color (const LrgTooltipLine *self);= | 0xRRGGBBAA |
+| =lrg_tooltip_line_get_right_color= | =guint32 lrg_tooltip_line_get_right_color (const LrgTooltipLine *self);= | 0xRRGGBBAA |
+| =lrg_tooltip_line_set_colors= | =void lrg_tooltip_line_set_colors (LrgTooltipLine *self, guint32 left, guint32 right);= | Sets both colours at once (pass the same value twice for a single text) |
+| =lrg_tooltip_line_get_wrap= | =gboolean lrg_tooltip_line_get_wrap (const LrgTooltipLine *self);= | =TRUE= for flavour text that wraps at the tooltip's width without widening it |
+| =lrg_tooltip_line_set_wrap= | =void lrg_tooltip_line_set_wrap (LrgTooltipLine *self, gboolean wrap);= | |
+| =lrg_tooltip_line_get_id= | =const gchar *lrg_tooltip_line_get_id (const LrgTooltipLine *self);= | (transfer none) (nullable): =NULL= or =""= means no id |
+| =lrg_tooltip_line_set_id= | =void lrg_tooltip_line_set_id (LrgTooltipLine *self, const gchar *id);= | =id= (nullable), copied; several lines may share one |
+| =lrg_tooltip_line_get_icon= | =const gchar *lrg_tooltip_line_get_icon (const LrgTooltipLine *self);= | (transfer none) (nullable) icon name of an icon line |
+| =lrg_tooltip_line_set_icon= | =void lrg_tooltip_line_set_icon (LrgTooltipLine *self, const gchar *icon);= | =icon= (nullable): any name the =draw_icon= callback understands |
+| =lrg_tooltip_color_parse= | =gboolean lrg_tooltip_color_parse (const gchar *spec, guint32 *out_color);= | ="#RRGGBB"=, ="#RRGGBBAA"= or ="RRGGBB"= (either case); alpha =0xFF= when omitted; on failure =out_color= is untouched and =FALSE= is returned |
+
+** LrgTooltip
+:PROPERTIES:
+:CUSTOM_ID: tooltip-api-tooltip
+:END:
+=LrgTooltip= is a final =GObject= (=LRG_TYPE_TOOLTIP=) holding the ordered lines.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_tooltip_new= | =LrgTooltip *lrg_tooltip_new (void);= | (transfer full) an empty tooltip; =g_autoptr (LrgTooltip)= works |
+| =lrg_tooltip_copy= | =LrgTooltip *lrg_tooltip_copy (LrgTooltip *self);= | (transfer full) a new tooltip with a deep copy of every line |
+| =lrg_tooltip_get_n_lines= | =guint lrg_tooltip_get_n_lines (LrgTooltip *self);= | |
+| =lrg_tooltip_get_line= | =LrgTooltipLine *lrg_tooltip_get_line (LrgTooltip *self, guint index);= | (transfer none) (nullable): =NULL= out of range; owned by the tooltip, edits show at once (in the next layout) |
+| =lrg_tooltip_add_line= | =LrgTooltipLine *lrg_tooltip_add_line (LrgTooltip *self, const gchar *text, guint32 color);= | =GameTooltip:AddLine=; (transfer none) |
+| =lrg_tooltip_add_double_line= | =LrgTooltipLine *lrg_tooltip_add_double_line (LrgTooltip *self, const gchar *left, const gchar *right, guint32 left_color, guint32 right_color);= | =GameTooltip:AddDoubleLine=; (transfer none) |
+| =lrg_tooltip_add_wrapped_line= | =LrgTooltipLine *lrg_tooltip_add_wrapped_line (LrgTooltip *self, const gchar *text, guint32 color);= | Flavour text (wrap flag set); (transfer none) |
+| =lrg_tooltip_add_icon_line= | =LrgTooltipLine *lrg_tooltip_add_icon_line (LrgTooltip *self, const gchar *icon, const gchar *text, guint32 color);= | (transfer none) |
+| =lrg_tooltip_add_separator= | =LrgTooltipLine *lrg_tooltip_add_separator (LrgTooltip *self);= | Horizontal rule; (transfer none) |
+| =lrg_tooltip_add_spacer= | =LrgTooltipLine *lrg_tooltip_add_spacer (LrgTooltip *self);= | Small empty gap; (transfer none) |
+| =lrg_tooltip_insert_line= | =LrgTooltipLine *lrg_tooltip_insert_line (LrgTooltip *self, guint index, const LrgTooltipLine *line);= | Inserts a *copy* of =line= before =index= (past the end appends); returns the stored copy (transfer none) |
+| =lrg_tooltip_remove_line= | =gboolean lrg_tooltip_remove_line (LrgTooltip *self, guint index);= | Frees the line; =FALSE= when =index= is out of range. Pointers to that line become invalid |
+| =lrg_tooltip_find_line= | =gint lrg_tooltip_find_line (LrgTooltip *self, const gchar *id);= | Index of the first line with =id=, or -1 |
+| =lrg_tooltip_remove_by_id= | =guint lrg_tooltip_remove_by_id (LrgTooltip *self, const gchar *id);= | Removes every line with =id=; returns how many |
+| =lrg_tooltip_replace_line= | =gboolean lrg_tooltip_replace_line (LrgTooltip *self, guint index, const LrgTooltipLine *line);= | Replaces with a copy of =line=; =FALSE= when out of range |
+| =lrg_tooltip_clear= | =void lrg_tooltip_clear (LrgTooltip *self);= | Removes (and frees) every line; the tooltip can be refilled for the next hovered item |
+| =lrg_tooltip_to_string= | =gchar *lrg_tooltip_to_string (LrgTooltip *self);= | (transfer full) one row per line: a pair as ="left \| right"=, a separator as =---=, a spacer as an empty row, an icon line as =[icon] text= |
+
+#+begin_src c
+g_autoptr(LrgTooltip) tip = lrg_tooltip_new ();
+g_autoptr(LrgTooltipLine) cd = lrg_tooltip_line_new (LRG_TOOLTIP_LINE_DOUBLE);
+LrgTooltipLine *dmg;
+
+lrg_tooltip_add_line (tip, "Thunderfury", 0xFF8000FFu);
+dmg = lrg_tooltip_add_double_line (tip, "Two-Hand", "Sword", 0xFFFFFFFFu, 0xFFFFFFFFu);
+lrg_tooltip_line_set_id (dmg, "slot");
+lrg_tooltip_add_wrapped_line (tip, "\"Blessed Blade of the Windseeker\"", 0xFFD100FFu);
+
+/* a cooldown row built separately, inserted under the title (copied) */
+lrg_tooltip_line_set_left (cd, "Cooldown");
+lrg_tooltip_line_set_right (cd, "3 sec");
+lrg_tooltip_insert_line (tip, 1, cd);
+
+g_assert_cmpuint (lrg_tooltip_get_n_lines (tip), ==, 4);
+g_assert_cmpstr (lrg_tooltip_line_get_right (lrg_tooltip_get_line (tip, 1)), ==, "3 sec");
+
+/* the item was unequipped: drop the slot row, start over on the next hover */
+lrg_tooltip_remove_line (tip, (guint) lrg_tooltip_find_line (tip, "slot"));
+lrg_tooltip_clear (tip);
+#+end_src
+
+** LrgTooltipStyle
+:PROPERTIES:
+:CUSTOM_ID: tooltip-api-style
+:END:
+A plain value struct (fields =padding=, =line_spacing=, =separator_height=, =spacer_height=, =column_gap=, =icon_size=, =min_width=, =max_width=, =border=, =background=, =border_color=, =separator_color=). Keep it on the stack, fill it with the defaults and change what you need.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_tooltip_style_get_type= | =GType lrg_tooltip_style_get_type (void) G_GNUC_CONST;= | Boxed =GType= (=LRG_TYPE_TOOLTIP_STYLE=) |
+| =lrg_tooltip_style_init_default= | =void lrg_tooltip_style_init_default (LrgTooltipStyle *style);= | (out caller-allocates): a dark, thin-bordered Warcraft-like frame: padding 4, line spacing 1, separator 5, spacer 4, column gap 12, icon 12, width 60 to 220, border 1, near-black background |
+| =lrg_tooltip_style_copy= | =LrgTooltipStyle *lrg_tooltip_style_copy (const LrgTooltipStyle *self);= | (transfer full) flat copy |
+| =lrg_tooltip_style_free= | =void lrg_tooltip_style_free (LrgTooltipStyle *self);= | Frees a style from =lrg_tooltip_style_copy()=; (nullable); =g_autoptr= supported |
+
+** LrgTooltipLayout
+:PROPERTIES:
+:CUSTOM_ID: tooltip-api-layout
+:END:
+An immutable, reference-counted boxed snapshot (=LRG_TYPE_TOOLTIP_LAYOUT=): later edits to the tooltip do not change it. Row strings are owned by the layout and live as long as it does.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_tooltip_layout_get_type= | =GType lrg_tooltip_layout_get_type (void) G_GNUC_CONST;= | Boxed =GType=; copy = =lrg_tooltip_layout_ref()=, free = =lrg_tooltip_layout_unref()=, so a =GValue= shares the snapshot |
+| =lrg_tooltip_layout_new= | =LrgTooltipLayout *lrg_tooltip_layout_new (LrgTooltip *tooltip, const LrgTooltipStyle *style, LrgTooltipMeasureFunc measure, gpointer user_data, GError **error);= | (transfer full) (nullable). =style= (nullable) = default style; =measure= is (scope call). =G_IO_ERROR_INVALID_ARGUMENT= for a =NULL= measure, an empty tooltip or an unusable style |
+| =lrg_tooltip_layout_ref= | =LrgTooltipLayout *lrg_tooltip_layout_ref (LrgTooltipLayout *self);= | (transfer full) one more reference |
+| =lrg_tooltip_layout_unref= | =void lrg_tooltip_layout_unref (LrgTooltipLayout *self);= | (nullable); frees at zero; =g_autoptr (LrgTooltipLayout)= calls it |
+| =lrg_tooltip_layout_get_width= | =gfloat lrg_tooltip_layout_get_width (const LrgTooltipLayout *self);= | Width including padding and border |
+| =lrg_tooltip_layout_get_height= | =gfloat lrg_tooltip_layout_get_height (const LrgTooltipLayout *self);= | Height including padding and border |
+| =lrg_tooltip_layout_get_n_rows= | =guint lrg_tooltip_layout_get_n_rows (const LrgTooltipLayout *self);= | Drawn rows: a wrapped line counts once per row |
+| =lrg_tooltip_layout_get_row= | =gboolean lrg_tooltip_layout_get_row (const LrgTooltipLayout *self, guint index, LrgTooltipRow *out_row);= | =out_row= (out caller-allocates); its string pointers are (transfer none), owned by the layout. =FALSE= when out of range |
+| =lrg_tooltip_layout_draw= | =void lrg_tooltip_layout_draw (const LrgTooltipLayout *self, gfloat x, gfloat y, const LrgTooltipDrawFuncs *funcs, gpointer user_data);= | Border, background, then every row through =funcs= (a =NULL= callback skips that part) |
+| =lrg_tooltip_place= | =void lrg_tooltip_place (gfloat width, gfloat height, gfloat anchor_x, gfloat anchor_y, gfloat offset, gfloat screen_width, gfloat screen_height, gfloat *out_x, gfloat *out_y);= | See [[*Placement][placement]] |
+| =lrg_tooltip_place_pair= | =gboolean lrg_tooltip_place_pair (gfloat width, gfloat height, gfloat other_width, gfloat other_height, gfloat anchor_x, gfloat anchor_y, gfloat offset, gfloat screen_width, gfloat screen_height, gfloat *out_x, gfloat *out_y, gfloat *out_other_x, gfloat *out_other_y);= | =TRUE= side by side, =FALSE= stacked |
+
+=LrgTooltipMeasureFunc= is =void (*) (const gchar *text, gfloat *width, gfloat *height, gpointer user_data)=; it must measure with the same font the draw callback uses.
+
+#+begin_src c
+static void
+measure_text (const gchar *text, gfloat *w, gfloat *h, gpointer user_data)
+{
+	lrg_paint_measure_text ((GrlFont *) user_data, text, 14.0f, 1.0f, w, h);
+}
+
+LrgTooltipStyle        style;
+LrgTooltipRow          row;
+g_autoptr(GError)      error = NULL;
+g_autoptr(LrgTooltipLayout) layout = NULL;
+guint                  i;
+
+lrg_tooltip_style_init_default (&style);
+style.max_width = 260.0f;
+
+layout = lrg_tooltip_layout_new (tip, &style, measure_text, font, &error);
+if (layout == NULL)
+	g_error ("tooltip layout: %s", error->message);
+
+g_print ("%.0f x %.0f\n", lrg_tooltip_layout_get_width (layout), lrg_tooltip_layout_get_height (layout));
+for (i = 0; i < lrg_tooltip_layout_get_n_rows (layout); i++)
+	if (lrg_tooltip_layout_get_row (layout, i, &row))
+		g_print ("row %u (line %u) at y=%.0f: %s\n", i, row.line_index, row.y, row.left != NULL ? row.left : "");
+#+end_src

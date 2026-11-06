@@ -2,68 +2,171 @@
 :PROPERTIES:
 :CUSTOM_ID: checkbox-widget
 :END:
-Toggle checkbox with optional label and customizable appearance.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgCheckbox= is a two-state toggle with an optional label to the right of its indicator. The =style= property picks the indicator:
+
+- =LRG_CHECKBOX_STYLE_CHECK= (default): a rounded box. When checked it fills with =ACCENT= and a tick of two thick strokes draws itself in.
+- =LRG_CHECKBOX_STYLE_RADIO=: a circle; a dot grows from the centre when checked. (Grouping radios into exclusive sets is up to the caller: uncheck the others in =toggled=.)
+- =LRG_CHECKBOX_STYLE_SWITCH=: a pill-shaped track (=TRACK= off, =ACCENT= on) with a round =HANDLE= knob that slides across on a spring.
+
+A "check" spring follows the checked state and drives every transition: the tick length, the dot radius, the knob position (with the theme's overshoot for bouncy motion) and the cross-fade between the unchecked and checked colours. Hover and press blend on the widget's own springs. The spring is stepped by the widget's =step()= with the canvas frame time (=lrg_canvas_update()=), never while painting, and =lrg_canvas_update()= returns =TRUE= until it settles. Before its first frame a checkbox shows its state directly, and that first step snaps the spring, so freshly built screens do not animate in; changes after that animate. =LRG_WIDGET_STATE_CHECKED= mirrors =checked=, so theme rules can target it.
 
 ** Creation
 :PROPERTIES:
 :CUSTOM_ID: creation
 :END:
 #+begin_src C
-g_autoptr(LrgCheckbox) chk = lrg_checkbox_new("Enable Sound");
-lrg_container_add_child(container, LRG_WIDGET(chk));
+LrgCheckbox *subtitles = lrg_checkbox_new ("Subtitles");
+LrgCheckbox *vsync = lrg_checkbox_new_with_style ("V-Sync", LRG_CHECKBOX_STYLE_SWITCH);
+
+lrg_checkbox_set_checked (vsync, TRUE);
+g_signal_connect (vsync, "toggled", G_CALLBACK (on_vsync_toggled), NULL);
 #+end_src
 
-** State
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: state
+:CUSTOM_ID: properties
 :END:
-#+begin_src C
-lrg_checkbox_set_checked(chk, TRUE);
-gboolean checked = lrg_checkbox_get_checked(chk);
+| Property      | Type               | Default        | Notes                                                       |
+|---------------+--------------------+----------------+-------------------------------------------------------------|
+| =checked=     | boolean            | =FALSE=        | Mirrored by =LRG_WIDGET_STATE_CHECKED=                      |
+| =label=       | string             | =NULL=         | Text to the right; changing it queues a layout              |
+| =style=       | =LrgCheckboxStyle= | =CHECK=        | =CHECK=, =RADIO= or =SWITCH=                                |
+| =box-size=    | float              | 20 (reported)  | Indicator height; theme =CHECK_SIZE= until set (switch is 1.75× wide) |
+| =spacing=     | float              | 8 (reported)   | Gap to the label; theme =SPACING= until set                 |
+| =font-size=   | float              | 20 (reported)  | Theme =FONT_SIZE= until set                                 |
+| =box-color=   | =GrlColor=         | legacy grey    | Unchecked fill; theme =CONTROL= (=TRACK= for switches) until set |
+| =check-color= | =GrlColor=         | legacy green   | Checked fill; theme =ACCENT= until set                      |
+| =text-color=  | =GrlColor=         | legacy white   | Label colour; theme =TEXT= until set                        |
 
-lrg_checkbox_toggle(chk);  /* Toggle state */
+The legacy properties keep their old default values in their getters, but the checkbox draws with the theme until a value is set explicitly. An explicitly set value then wins over the theme default and over theme style rules (hover and pressed shades are derived from it; an explicit check colour also outlines and tints the glow of the checked indicator, and an explicit text colour applies in every state but the disabled one). Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
+
+=lrg_checkbox_get_check_progress()= reports the check spring (0 unchecked, 1 checked) for custom drawing or tests.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal    | Arguments          | Emitted when                                                      |
+|-----------+--------------------+-------------------------------------------------------------------|
+| =toggled= | =gboolean checked= | The state changed, by the user or =lrg_checkbox_set_checked()=    |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+| Part    | Used by       | Unchecked                                   | Checked                                 | Hovered / pressed                      | Disabled      |
+|---------+---------------+---------------------------------------------+-----------------------------------------+----------------------------------------+---------------|
+| =BOX=   | check, radio  | =CONTROL= fill, =BORDER= border (1.5)       | =ACCENT= fill and border                | =CONTROL_HOVER= / =ACCENT_HOVER=, border =TEXT_MUTED=; accent glow when checked | opacity 0.45 |
+| =TRACK= | switch        | =TRACK= fill, pill                          | =ACCENT= fill                           | lighter / darker shades, glow when on  | opacity 0.45  |
+| =KNOB=  | switch        | =HANDLE=, circle, small shadow; =size= = box − 6 | same                              | grows by 2 while pressed               | opacity 0.45  |
+| =MARK=  | check, radio  | =TEXT_ON_ACCENT= foreground; =size= = stroke width | drawn in by the spring            |                                        | opacity 0.45  |
+| =LABEL= | all           | =TEXT=                                      | same                                    | same                                   | =DISABLED=    |
+| =FOCUS= | all           | from =LrgWidget=                            |                                         | shown after keyboard / gamepad navigation |            |
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+No built-in classes: the indicator kind is the =style= property. Add your own classes and target them with rules.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+#+begin_src yaml
+metrics:
+  check-size: 22
+
+styles:
+  # Green switches
+  - widget: LrgCheckbox
+    part: track
+    state: [checked]
+    background: "#16a34a"
+
+  # Square check boxes with a thicker tick
+  - widget: LrgCheckbox
+    part: box
+    radius: 0
+  - widget: LrgCheckbox
+    part: mark
+    size: 3
 #+end_src
 
-** Label
+** Keyboard, mouse and gamepad
 :PROPERTIES:
-:CUSTOM_ID: label
+:CUSTOM_ID: keyboard-mouse-gamepad
+:END:
+- Focusable: Tab, arrows and the D-pad reach it; a click focuses it.
+- A left click anywhere on the widget (indicator or label) toggles it on release.
+- Enter, Space and gamepad A toggle the focused checkbox.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
 :END:
 #+begin_src C
-lrg_checkbox_set_label(chk, "Enable feature");
-const gchar *label = lrg_checkbox_get_label(chk);
-#+end_src
+static void
+on_mode_toggled (LrgCheckbox *radio,
+                 gboolean     checked,
+                 gpointer     user_data)
+{
+    GPtrArray *group = user_data;
+    guint      i;
 
-** Appearance
-:PROPERTIES:
-:CUSTOM_ID: appearance
-:END:
-#+begin_src C
-lrg_checkbox_set_box_size(chk, 16.0f);
-lrg_checkbox_set_spacing(chk, 5.0f);  /* Between box and label */
+    /* Exclusive radio group: turning one on turns the others off */
+    if (!checked)
+        return;
+    for (i = 0; i < group->len; i++)
+        if (g_ptr_array_index (group, i) != radio)
+            lrg_checkbox_set_checked (g_ptr_array_index (group, i), FALSE);
+}
 
-lrg_checkbox_set_box_color(chk, &box_color);
-lrg_checkbox_set_check_color(chk, &check_color);
-lrg_checkbox_set_text_color(chk, &text_color);
-lrg_checkbox_set_font_size(chk, 14.0f);
+static void
+build_modes (LrgContainer *box,
+             GPtrArray    *group)
+{
+    const gchar *names[] = { "Windowed", "Borderless", "Fullscreen" };
+    guint        i;
+
+    for (i = 0; i < G_N_ELEMENTS (names); i++)
+    {
+        LrgCheckbox *radio = lrg_checkbox_new_with_style (names[i], LRG_CHECKBOX_STYLE_RADIO);
+
+        g_ptr_array_add (group, radio);
+        g_signal_connect (radio, "toggled", G_CALLBACK (on_mode_toggled), group);
+        lrg_container_add_child (box, LRG_WIDGET (radio));
+    }
+    lrg_checkbox_set_checked (g_ptr_array_index (group, 0), TRUE);
+}
 #+end_src
 
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference
 :END:
-- =lrg_checkbox_new(const gchar *label)=
-- =lrg_checkbox_get_checked(LrgCheckbox *self)=
-- =lrg_checkbox_set_checked(LrgCheckbox *self, gboolean checked)=
-- =lrg_checkbox_toggle(LrgCheckbox *self)=
-- =lrg_checkbox_get_label(LrgCheckbox *self)=
-- =lrg_checkbox_set_label(LrgCheckbox *self, const gchar *label)=
-- =lrg_checkbox_get_box_size(LrgCheckbox *self)=
-- =lrg_checkbox_set_box_size(LrgCheckbox *self, gfloat size)=
-- =lrg_checkbox_get_spacing(LrgCheckbox *self)=
-- =lrg_checkbox_set_spacing(LrgCheckbox *self, gfloat spacing)=
+- =lrg_checkbox_new (const gchar *label)=
+- =lrg_checkbox_new_with_style (const gchar *label, LrgCheckboxStyle style)=
+- =lrg_checkbox_get_checked= / =lrg_checkbox_set_checked= / =lrg_checkbox_toggle=
+- =lrg_checkbox_get_check_progress=
+- =lrg_checkbox_get_style= / =lrg_checkbox_set_style=
+- =lrg_checkbox_get_label= / =lrg_checkbox_set_label=
+- =lrg_checkbox_get_box_size= / =lrg_checkbox_set_box_size=
+- =lrg_checkbox_get_spacing= / =lrg_checkbox_set_spacing=
+- =lrg_checkbox_get_box_color= / =lrg_checkbox_set_box_color=
+- =lrg_checkbox_get_check_color= / =lrg_checkbox_set_check_color=
+- =lrg_checkbox_get_text_color= / =lrg_checkbox_set_text_color=
+- =lrg_checkbox_get_font_size= / =lrg_checkbox_set_font_size=
 
 ** Related
 :PROPERTIES:
 :CUSTOM_ID: related
 :END:
-- [[../index.md][UI Widgets Overview]]
+- [[file:../widget.org][LrgWidget]] (parts, states, springs)
+- [[file:../theme.org][Theme]]
+- [[file:button.org][Button]], [[file:slider.org][Slider]]

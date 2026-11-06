@@ -183,22 +183,11 @@ update_button_selection (LrgTemplateMainMenuState *self)
     {
         LrgButton *btn = g_ptr_array_index (priv->visible_buttons, i);
 
+        /* The selected entry takes the theme's primary (accent) look */
         if ((gint)i == priv->selected_index)
-        {
-            /* Highlight selected: bright bg + white text */
-            g_autoptr(GrlColor) sel_bg = grl_color_new (60, 120, 220, 255);
-            g_autoptr(GrlColor) sel_text = grl_color_new (255, 255, 255, 255);
-            lrg_button_set_normal_color (btn, sel_bg);
-            lrg_button_set_text_color (btn, sel_text);
-        }
+            lrg_widget_add_class (LRG_WIDGET (btn), "primary");
         else
-        {
-            /* Dim unselected: transparent bg + muted text */
-            g_autoptr(GrlColor) dim_bg = grl_color_new (40, 40, 45, 180);
-            g_autoptr(GrlColor) dim_text = grl_color_new (140, 140, 140, 255);
-            lrg_button_set_normal_color (btn, dim_bg);
-            lrg_button_set_text_color (btn, dim_text);
-        }
+            lrg_widget_remove_class (LRG_WIDGET (btn), "primary");
     }
 }
 
@@ -377,10 +366,6 @@ create_menu_button (LrgTemplateMainMenuState *self,
 {
     LrgTemplateMainMenuStatePrivate *priv;
     LrgButton *btn;
-    g_autoptr(GrlColor) normal_color = NULL;
-    g_autoptr(GrlColor) hover_color = NULL;
-    g_autoptr(GrlColor) pressed_color = NULL;
-    g_autoptr(GrlColor) text_color = NULL;
 
     priv = lrg_template_main_menu_state_get_instance_private (self);
 
@@ -390,16 +375,9 @@ create_menu_button (LrgTemplateMainMenuState *self,
     lrg_widget_set_width (LRG_WIDGET (btn), priv->button_width);
     lrg_widget_set_height (LRG_WIDGET (btn), priv->button_height);
 
-    /* Set button colors */
-    normal_color = grl_color_new (80, 80, 80, 255);
-    hover_color = grl_color_new (100, 150, 255, 255);
-    pressed_color = grl_color_new (60, 100, 200, 255);
-    text_color = grl_color_new (255, 255, 255, 255);
-
-    lrg_button_set_normal_color (btn, normal_color);
-    lrg_button_set_hover_color (btn, hover_color);
-    lrg_button_set_pressed_color (btn, pressed_color);
-    lrg_button_set_text_color (btn, text_color);
+    /* Colours come from the theme; menu entries rise in one after
+     * another (the stagger is set when the menu is rebuilt) */
+    lrg_widget_set_appear (LRG_WIDGET (btn), LRG_APPEAR_FLY_UP, 0.0f);
 
     return btn;
 }
@@ -448,6 +426,15 @@ rebuild_visible_buttons (LrgTemplateMainMenuState *self)
     else
     {
         priv->selected_index = 0;
+    }
+
+    /* Stagger the entrance: each entry rises 50 ms after the previous */
+    {
+        guint i;
+
+        for (i = 0; i < priv->visible_buttons->len; i++)
+            lrg_widget_set_appear (g_ptr_array_index (priv->visible_buttons, i),
+                                   LRG_APPEAR_FLY_UP, 0.05f * (gfloat) i);
     }
 
     update_button_selection (self);
@@ -549,6 +536,8 @@ lrg_template_main_menu_state_enter (LrgGameState *state)
 
     /* Create canvas and containers */
     priv->canvas = lrg_canvas_new ();
+    /* The state drives selection with keys/gamepad itself */
+    lrg_canvas_set_navigation_enabled (priv->canvas, FALSE);
     priv->menu_container = lrg_vbox_new ();
 
     /* Create title label */

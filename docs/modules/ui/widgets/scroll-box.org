@@ -1,0 +1,160 @@
+* Scroll Box
+:PROPERTIES:
+:CUSTOM_ID: scroll-box
+:END:
+=LrgScrollBox= shows one content widget through a clipped viewport and scrolls it. Scrolling is spring-smoothed: the wheel, keys and track clicks move a /target/ offset and the displayed offset glides after it, overshooting a little past either end (rubber band) before springing back. Overlay scrollbars float over the content, thin at rest, growing to full size when hovered, and fade out after about 0.8 s without activity.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-creation
+:END:
+#+begin_src C
+LrgScrollBox *scroll = lrg_scroll_box_new ();          /* vertical only */
+lrg_scroll_box_set_child (scroll, LRG_WIDGET (long_vbox));
+lrg_widget_set_fill_weight (LRG_WIDGET (scroll), 1.0f); /* take the spare height of its box */
+#+end_src
+Always use =lrg_scroll_box_set_child()=; a child added with =lrg_container_add_child()= is adopted as the content, but only the first one.
+
+** How it works
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-how
+:END:
+*** Layout
+The viewport is the box minus its padding. The child is laid out once at its preferred size (plus margin); on an axis that does not scroll it is exactly as long as the viewport, and on a scrolling axis it is at least as long. The scroll range is content size minus viewport size. While scrolling, the child is only moved (no relayout), at whole-unit offsets so text stays crisp.
+
+The box's own preferred size is the child's, capped at 240 units along scrolling axes; size it with a fill weight, =lrg_widget_set_size()= or =lrg_widget_set_max_size()=.
+
+*** Smooth scrolling and rubber band
+One wheel notch is 48 units. Pushing past an end parks the target at half the excess (at most 40 units) beyond the end; when the displayed offset arrives it springs back. The thumb squashes against the end while overshooting. Set =kinetic= to =FALSE= (or use a theme whose motion is =none=, e.g. =high-contrast=) to jump instantly and stop hard at the ends; reduced motion (=lrg_motion_set_reduced()=) also makes scrolling instant.
+
+The springs and the scrollbar fade are advanced by the widget's =step()= with the canvas frame time (=lrg_canvas_update (canvas, delta_time)=, which =lrg_canvas_process_input()= calls with the frame's =delta_time=); painting never moves them. Animation therefore follows the canvas clock: it is deterministic in tests and replays, slows down with =lrg_motion_set_speed()=, and freezes if the caller stops updating. =lrg_canvas_update()= returns =TRUE= while an offset glides or bounces, while the bars are still shown after activity (they wait 0.8 s of canvas time, then fade out) and while they fade; it returns =FALSE= once everything rests, so a host that only redraws on demand can stop.
+
+*** Clipping and hit-testing
+Content is painted inside a clip rectangle equal to the viewport. Parts of the child outside the viewport are neither drawn nor clickable: the canvas only looks inside a widget's children when the point is inside the widget. The scrollbar hit zones are invisible children kept above the content, so presses on a bar never reach the content beneath it.
+
+*** Following focus
+When keyboard or gamepad focus moves (with a visible focus ring) to a widget inside the content, the box scrolls the minimum amount needed to show it, exactly as =lrg_scroll_box_scroll_to_widget()=.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-properties
+:END:
+| Property   | Type        | Default | Meaning                                                    |
+|------------+-------------+---------+------------------------------------------------------------|
+| =child=    | =LrgWidget= | NULL    | The content                                                |
+| =scroll-x= | =gfloat=    | 0       | Displayed horizontal offset; setting it jumps               |
+| =scroll-y= | =gfloat=    | 0       | Displayed vertical offset; setting it jumps (leaves the range briefly during a rubber band) |
+| =hscroll=  | =gboolean=  | FALSE   | Scroll horizontally; when off the child is as wide as the viewport |
+| =vscroll=  | =gboolean=  | TRUE    | Scroll vertically; when off the child is as tall as the viewport |
+| =kinetic=  | =gboolean=  | TRUE    | Spring-smoothed scrolling with rubber band; FALSE jumps      |
+Inherited: =padding= (around the viewport). The box is focusable so the paging keys work even when the content has nothing focusable. No signals: watch =notify::scroll-y=.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-parts
+:END:
+| Part           | State                 | Built-in look                                                |
+|----------------+-----------------------+--------------------------------------------------------------|
+| =box=          | any                   | Transparent (style it to give the box a body)                 |
+| =scrollbar=    | any                   | Track groove: =TRACK= at 45 % alpha, pill radius, =size= = =SCROLLBAR_SIZE=; shown only while the bar is hovered |
+| =scroll-thumb= | resting               | =TEXT_MUTED= at 55 % alpha, pill; drawn at half =size= |
+| =scroll-thumb= | =hovered=             | =TEXT_MUTED= at 85 %; grows to full =size=                     |
+| =scroll-thumb= | =hovered= + =pressed= | =ACCENT= (while dragging)                                     |
+| =focus=        | focus visible         | Core focus ring                                               |
+The thumb deliberately uses muted text rather than =CONTROL_HOVER= so it is visible on every preset (=TRACK= and =CONTROL_HOVER= are nearly identical in =midnight=).
+
+** Mouse
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-mouse
+:END:
+- Wheel: vertical scrolling; Shift+wheel (or a horizontal-only box) scrolls horizontally. Nested boxes: the innermost box that can scroll takes the wheel.
+- Hovering or moving the pointer over the box shows the bars.
+- Drag the thumb (the pointer is captured until release); click the track to page by 90 % of the viewport towards the pointer.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-keyboard
+:END:
+| Key                  | When                                        | Action                    |
+|----------------------+---------------------------------------------+---------------------------|
+| Page Up / Page Down  | box or a descendant focused (bubbles up)    | Scroll 90 % of the viewport |
+| Home / End           | box or a descendant focused                 | Scroll to start / end      |
+| Up / Down            | the box itself focused                      | Scroll 48 units            |
+| Left / Right         | the box itself focused, =hscroll= on        | Scroll 48 units            |
+| Tab / d-pad          | any                                         | Focus moves; the box scrolls the newly focused widget into view |
+Arrow keys pressed on a focused descendant are left to focus navigation. Keys a focused descendant handles itself (a text input's Home/End) never reach the box.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-theming
+:END:
+#+begin_src yaml
+styles:
+  # Accent thumb at rest, brighter while hovered
+  - widget: LrgScrollBox
+    part: scroll-thumb
+    background: "#7c6cff99"
+  - widget: LrgScrollBox
+    part: scroll-thumb
+    state: [hovered]
+    background: "#7c6cff"
+  # Wider bars
+  - widget: LrgScrollBox
+    part: scroll-thumb
+    size: 12
+  # A framed scroll area
+  - widget: LrgScrollBox
+    class: framed
+    part: box
+    background: "#1f1f24"
+    border: "#34343c"
+    border-width: 1
+    radius: 8
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-example
+:END:
+#+begin_src C
+LrgScrollBox *scroll = lrg_scroll_box_new ();
+LrgVBox      *rows = lrg_vbox_new ();
+guint         i;
+
+for (i = 0; i < 100; i++)
+  {
+    g_autofree gchar *text = g_strdup_printf ("Entry %u", i);
+    LrgButton        *b = lrg_button_new (text);
+
+    lrg_container_add_child (LRG_CONTAINER (rows), LRG_WIDGET (b));
+    g_object_unref (b);
+  }
+
+lrg_scroll_box_set_child (scroll, LRG_WIDGET (rows));
+g_object_unref (rows);
+lrg_widget_set_size (LRG_WIDGET (scroll), 320.0f, 240.0f);
+
+/* Later: jump to the end, or glide to a widget */
+lrg_scroll_box_scroll_to (scroll, 0.0f, G_MAXFLOAT, TRUE);
+lrg_scroll_box_scroll_to_widget (scroll, some_button);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-api
+:END:
+- =lrg_scroll_box_new (void)=
+- =lrg_scroll_box_set_child (LrgScrollBox *self, LrgWidget *child)= / =lrg_scroll_box_get_child=
+- =lrg_scroll_box_get_scroll_x= / =set_scroll_x=, =get_scroll_y= / =set_scroll_y=
+- =lrg_scroll_box_get_hscroll= / =set_hscroll=, =get_vscroll= / =set_vscroll=
+- =lrg_scroll_box_get_kinetic= / =set_kinetic=
+- =lrg_scroll_box_scroll_to (LrgScrollBox *self, gfloat x, gfloat y, gboolean animate)=
+- =lrg_scroll_box_get_max_scroll (LrgScrollBox *self, gfloat *x, gfloat *y)=
+- =lrg_scroll_box_scroll_to_widget (LrgScrollBox *self, LrgWidget *descendant)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: scroll-box-related
+:END:
+- [[file:list-view.org][List view]] (virtualized scrolling for long lists)
+- [[file:overlay.org][Overlay]]

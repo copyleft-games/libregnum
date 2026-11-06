@@ -1,0 +1,63 @@
+# studio-blocks.yaml - the block palette and sample program of ui-studio
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Loaded into the "blocks" LrgBlockEditor of studio.yaml with
+# `blocks-file: studio-blocks.yaml` (and by the C fallback with
+# lrg_block_editor_load_yaml_from_file()). The palette is the studio's
+# own verbs; examples/ui-studio.c holds the tiny interpreter that runs a
+# script one block per tick and drives the 3D scene:
+#
+#   when play pressed   hat      starts a script (Space / app.play, or
+#                                double-click any script to run it)
+#   spin                motion   turns the cube by DEG degrees
+#   bounce              motion   throws the cube up, HEIGHT units
+#   orbit camera        motion   swings the camera by DEG degrees
+#   repeat              control  runs its mouth TIMES times
+#   wait                control  pauses the script for S seconds
+#   set color           looks    tints the cube (red/green/blue/purple/gold)
+#   say                 looks    prints MSG to the console
+#   stop                control  ends the script (a cap)
+
+version: 1
+categories:
+  - name: events
+  - name: motion
+  - name: control
+  - name: looks
+kinds:
+  - {id: when-play, shape: hat, category: events, label: when play pressed}
+  - {id: spin, shape: statement, category: motion, label: "spin {deg:number=90} degrees"}
+  - {id: bounce, shape: statement, category: motion, label: "bounce {height:number=1}"}
+  - {id: orbit, shape: statement, category: motion, label: "orbit camera {deg:number=45}"}
+  - {id: repeat, shape: c, category: control, label: "repeat {times:number=4}"}
+  - {id: wait, shape: statement, category: control, label: "wait {s:number=1} s"}
+  - {id: stop, shape: cap, category: control, label: stop}
+  - {id: set-color, shape: statement, category: looks, label: "set color {c:dropdown=red|green|blue|purple|gold}"}
+  - {id: say, shape: statement, category: looks, label: "say {msg:text=Hello}"}
+view: {x: -16, y: -16, zoom: 1}
+scripts:
+  - x: 24
+    y: 24
+    blocks:
+      - kind: when-play
+      - kind: set-color
+        values: {c: blue}
+      - kind: say
+        values: {msg: "Spinning up"}
+      - kind: repeat
+        values: {times: 4}
+        mouths:
+          - - kind: spin
+              values: {deg: 90}
+            - kind: wait
+              values: {s: 0.4}
+      - kind: set-color
+        values: {c: gold}
+      - kind: bounce
+        values: {height: 1}
+      - kind: orbit
+        values: {deg: 60}
+      - kind: say
+        values: {msg: "Done!"}

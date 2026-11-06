@@ -111,6 +111,7 @@ ifeq ($(STATIC),1)
     EXAMPLE_LIBS += $(STATIC_GLIB_LIBS) $(STATIC_JSON_LIBS) $(STATIC_YAML_LIBS) $(STATIC_SOUP_LIBS) $(STATIC_DEX_LIBS)
     EXAMPLE_LIBS += $(shell $(PKG_CONFIG) --static --libs sqlite3 openssl zlib libpq)
     EXAMPLE_LIBS += $(STATIC_LUAJIT_LIBS) $(STATIC_PYTHON_LIBS) $(STATIC_GJS_LIBS) $(STATIC_GI_LIBS)
+    EXAMPLE_LIBS += $(FRIBIDI_LIBS)
     EXAMPLE_LIBS += -lm
     EXAMPLE_LIBS += $(PLATFORM_LIBS)
 else
@@ -144,6 +145,7 @@ endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
+EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio
 
 # Editor standalone (only built when BUILD_EDITOR_UI=1)
 ifeq ($(BUILD_EDITOR_UI),1)
@@ -244,6 +246,22 @@ $(EXAMPLES_BUILDDIR)/render-yaml-santa$(EXE_EXT): render-yaml-santa.c | $(EXAMPL
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/render-yaml-taco-truck$(EXE_EXT): render-yaml-taco-truck.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/ui-showcase$(EXE_EXT): ui-showcase.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/ui-studio$(EXE_EXT): ui-studio.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/game-ui-menu$(EXE_EXT): game-ui-menu.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/ui-theme-editor$(EXE_EXT): ui-theme-editor.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

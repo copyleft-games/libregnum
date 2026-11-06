@@ -1,0 +1,112 @@
+* Size Box
+:PROPERTIES:
+:CUSTOM_ID: size-box
+:END:
+=LrgSizeBox= constrains a single child: a fixed width and / or height (overrides), minimum and maximum sizes, and a fixed aspect ratio. It is modelled on Slate's =SBox= / =USizeBox=; the aspect ratio is what a game viewport, a video or a portrait needs: the child gets the largest rectangle of that ratio that fits, and the rest of the box becomes letterbox or pillarbox bars.
+
+Every size setting uses a negative value for "unset" (getters return -1); the aspect ratio uses 0. With nothing set, the box behaves like a plain bin.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: size-box-creation
+:END:
+#+begin_src C
+LrgSizeBox *frame = lrg_size_box_new ();
+
+lrg_size_box_set_child (frame, LRG_WIDGET (viewport));
+lrg_size_box_set_aspect_ratio (frame, 16.0f / 9.0f);
+
+/* A sidebar that never gets narrower than 200 or wider than 360 */
+LrgSizeBox *side = lrg_size_box_new ();
+
+lrg_size_box_set_child (side, LRG_WIDGET (inspector));
+lrg_size_box_set_min_width (side, 200.0f);
+lrg_size_box_set_max_width (side, 360.0f);
+#+end_src
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: size-box-behaviour
+:END:
+*Preferred size* (what the box asks its parent for):
+1. Start from the child's preferred size.
+2. Overrides replace it per axis.
+3. With an aspect ratio, the axis without an override is derived from the other (with neither, the width leads unless the child reports no width).
+4. Min / max clamp each axis.
+5. The child's margin and the box's =padding= are added.
+
+*Layout* (what the child gets):
+1. The area is the box minus =padding= and the child's margin.
+2. Overrides replace the area's size per axis; min / max clamp it (an override larger than the box overflows it).
+3. With an aspect ratio, the largest rectangle of that ratio inside it: width-limited if that fits, height-limited otherwise. The child is allocated exactly that rectangle.
+4. Without one, the constrained rectangle is the child's slot, so its own alignment still applies inside it.
+5. The rectangle is placed in the area by the child's halign / valign: =START= / =END= at the edges, =CENTER= and =FILL= centred. Right to left, the core mirrors it (=START= on the right).
+
+| Example (box 800x600)           | Child rectangle      |
+|---------------------------------+----------------------|
+| ratio 2                         | 800x400 at (0, 100)  |
+| ratio 2, box 800x200            | 400x200 at (200, 0)  |
+| ratio 1, box 400x600, valign END | 400x400 at (0, 200) |
+| max-width 300, FILL child       | 300x600 at (250, 0)  |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: size-box-properties
+:END:
+| Property          | Type     | Default | Meaning                                         |
+|-------------------+----------+---------+-------------------------------------------------|
+| =width-override=  | =gfloat= | -1      | Fixed child width (excluding its margin)        |
+| =height-override= | =gfloat= | -1      | Fixed child height                              |
+| =min-width=       | =gfloat= | -1      | Smallest child width                            |
+| =min-height=      | =gfloat= | -1      | Smallest child height                           |
+| =max-width=       | =gfloat= | -1      | Largest child width                             |
+| =max-height=      | =gfloat= | -1      | Largest child height                            |
+| =aspect-ratio=    | =gfloat= | 0       | Width / height the child is kept at, 0 for none |
+All notify explicitly, only on change. No signals.
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: size-box-styling
+:END:
+Paints nothing itself: the bars are transparent (and pointer-transparent, so clicks on them reach what lies beneath). Put the box in a panel to colour the bars.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: size-box-yaml
+:END:
+Supported by =LrgUILoader= as =LrgSizeBox= (=type: size-box=); every setting is a plain property. =aspect-ratio= also accepts ="16:9"= or ="4/3"= (width / height; quote it, YAML would otherwise read =16:9= as a sexagesimal number in some parsers):
+
+#+begin_src yaml
+type: size-box
+aspect-ratio: "16:9"
+width-override: 320
+max-height: 240
+children:
+  - {type: viewport, id: preview, fit: contain}
+#+end_src
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: size-box-pitfalls
+:END:
+- Only the first child is laid out; use =lrg_size_box_set_child()=, which replaces any existing child.
+- The widget's own min / max size (=lrg_widget_set_min_size()=) constrains the box itself; the size box's properties constrain the child.
+- With an aspect ratio the child's own min / max size is not consulted: the ratio wins.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: size-box-see-also
+:END:
+- [[file:anchor-layout.org][Anchor layout]]
+- [[file:hbox.org][HBox]]
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: size-box-api
+:END:
+- =lrg_size_box_new (void)=
+- =lrg_size_box_get_child= / =lrg_size_box_set_child=
+- =lrg_size_box_get_width_override= / =lrg_size_box_set_width_override=, =lrg_size_box_get_height_override= / =lrg_size_box_set_height_override=
+- =lrg_size_box_get_min_width= / =lrg_size_box_set_min_width=, =lrg_size_box_get_min_height= / =lrg_size_box_set_min_height=
+- =lrg_size_box_get_max_width= / =lrg_size_box_set_max_width=, =lrg_size_box_get_max_height= / =lrg_size_box_set_max_height=
+- =lrg_size_box_get_aspect_ratio= / =lrg_size_box_set_aspect_ratio=

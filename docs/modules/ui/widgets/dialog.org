@@ -1,0 +1,196 @@
+* Dialog Widget
+:PROPERTIES:
+:CUSTOM_ID: dialog-widget
+:END:
+=LrgDialog= is a modal sheet: a title, body text, an optional content widget and a right-aligned row of response buttons. =lrg_dialog_present()= shows it centred on a canvas as a modal popup. A veil fades in over everything behind it, the sheet rises into place (=LRG_APPEAR_FLY_UP=), input outside it is blocked, and focus moves to the primary button. When the user answers, the dialog emits =response= with the button's id and closes. While it closes, the sheet shrinks and fades out and the veil lifts.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: dialog-creation
+:END:
+#+begin_src c
+g_autoptr(LrgDialog) dialog = lrg_dialog_new ("Save changes?",
+                                              "Your level has unsaved edits.");
+
+lrg_dialog_add_button (dialog, "Discard", RESPONSE_DISCARD, FALSE);
+lrg_dialog_add_button (dialog, "Cancel", LRG_DIALOG_RESPONSE_CANCEL, FALSE);
+lrg_dialog_add_button (dialog, "Save", RESPONSE_SAVE, TRUE);
+g_signal_connect (dialog, "response", G_CALLBACK (on_response), app);
+
+lrg_dialog_present (dialog, canvas);
+#+end_src
+
+The canvas keeps its own reference while the dialog is open, so the caller's reference can be dropped right after presenting it.
+
+** Response ids
+:PROPERTIES:
+:CUSTOM_ID: dialog-responses
+:END:
+| Define | Value | Meaning |
+|--------+-------+---------|
+| =LRG_DIALOG_RESPONSE_NONE= | 0 | No particular answer |
+| =LRG_DIALOG_RESPONSE_CANCEL= | -1 | Escape / gamepad B, or a "Cancel" button |
+| =LRG_DIALOG_RESPONSE_CLOSE= | -2 | A plain "OK" / "Close" acknowledgement |
+
+Use positive ids for application answers.
+
+** Layout
+:PROPERTIES:
+:CUSTOM_ID: dialog-layout
+:END:
+From top to bottom, inside =PADDING_X × 2= of padding:
+1. Title, in =FONT_SIZE_LARGE=.
+2. Body text, in =FONT_SIZE= and =TEXT_MUTED=. Explicit =\n= breaks are kept, and lines are word-wrapped at about 420 units.
+3. The content widget (=lrg_dialog_set_content()=), given the inner width and its own preferred height.
+4. The buttons, right-aligned in the order they were added, each at least 88 units wide and =CONTROL_HEIGHT= tall.
+
+The inner width is the widest of the text column (capped at 420), the content, the button row and a 260-unit minimum. Changing the title, body, content or buttons while the dialog is open resizes it and keeps it centred.
+
+** Buttons
+:PROPERTIES:
+:CUSTOM_ID: dialog-buttons
+:END:
+=lrg_dialog_add_button (self, label, response_id, primary)= creates an =LrgButton= and returns it (transfer none), so it can be styled further. A primary button gets the =primary= style class (accent fill). It also gets the initial focus, and it is pressed by Enter / gamepad A on the dialog background or on a content widget that does not use activation itself. Only one button is primary: adding another primary button demotes the previous one. =lrg_dialog_get_primary_button()= returns it.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: dialog-properties
+:END:
+| Property | Type | Access | Meaning |
+|----------+------+--------+---------|
+| =title= | string | read/write | Heading text |
+| =body= | string | read/write | Message text |
+| =content= | =LrgWidget= | read/write | Extra widget between body and buttons |
+| =presented= | boolean | read | Whether the dialog is open on a canvas |
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: dialog-signals
+:END:
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =response= | =gint response_id= | A button was clicked or activated, or the dialog was cancelled. The dialog closes right after the handlers return. |
+
+=lrg_dialog_respond (self, id)= does the same from code, and =lrg_dialog_close (self)= closes the dialog without a response. On close, focus returns to the widget that had it before the dialog was presented, with its focus ring if it had one.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: dialog-parts
+:END:
+| Part | Default look |
+|------+--------------|
+| =popup= | =POPUP= fill, =BORDER= hairline, =POPUP_RADIUS= corners, =SHADOW= with twice =SHADOW_BLUR= and twice =SHADOW_OFFSET_Y= |
+| =label= | Title colour, =TEXT= |
+| =item= | Body text colour, =TEXT_MUTED= |
+
+The buttons are ordinary =LrgButton= widgets (=box= / =label= parts, =primary= class). The veil is drawn by the canvas with the theme's =VEIL= colour.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: dialog-keyboard
+:END:
+| Input | Effect |
+|-------+--------|
+| Tab / Shift+Tab, D-pad, arrows | Move focus between the dialog's widgets only (modal focus scope) |
+| Enter / Space / gamepad A on a button | That button's response |
+| Enter / gamepad A with focus on the background or a content widget that ignores it | The primary button's response |
+| Escape / gamepad B | =LRG_DIALOG_RESPONSE_CANCEL= |
+| Click outside the sheet | Nothing (the veil swallows it) |
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: dialog-theming
+:END:
+#+begin_src yaml
+metrics:
+  popup-radius: 14
+colors:
+  veil: "#05030dcc"
+styles:
+  # A flatter sheet with an accent edge
+  - widget: LrgDialog
+    part: popup
+    border: "#7c6cff"
+    border-width: 2
+    shadow-blur: 48
+  - widget: LrgDialog
+    part: label
+    foreground: "#ffffff"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: dialog-example
+:END:
+#+begin_src c
+enum { RESPONSE_SAVE = 1, RESPONSE_DISCARD = 2 };
+
+static void
+on_quit_response (LrgDialog *dialog,
+                  gint       response_id,
+                  gpointer   user_data)
+{
+	MyGame *game = user_data;
+
+	switch (response_id)
+	{
+	case RESPONSE_SAVE:
+		my_game_save (game);
+		my_game_quit (game);
+		break;
+	case RESPONSE_DISCARD:
+		my_game_quit (game);
+		break;
+	case LRG_DIALOG_RESPONSE_CANCEL:
+	default:
+		break;   /* keep playing */
+	}
+}
+
+static void
+confirm_quit (MyGame    *game,
+              LrgCanvas *canvas)
+{
+	g_autoptr(LrgDialog)   dialog = lrg_dialog_new ("Quit to desktop?",
+	                                                "Unsaved progress since the last checkpoint will be lost.");
+	g_autoptr(LrgCheckbox) remember = lrg_checkbox_new ("Don't ask again");
+
+	lrg_dialog_set_content (dialog, LRG_WIDGET (remember));
+	lrg_dialog_add_button (dialog, "Cancel", LRG_DIALOG_RESPONSE_CANCEL, FALSE);
+	lrg_dialog_add_button (dialog, "Quit", RESPONSE_DISCARD, FALSE);
+	lrg_dialog_add_button (dialog, "Save and quit", RESPONSE_SAVE, TRUE);
+	g_signal_connect (dialog, "response", G_CALLBACK (on_quit_response), game);
+
+	lrg_dialog_present (dialog, canvas);
+}
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: dialog-notes
+:END:
+- A dialog that was just closed keeps fading out for a moment; presenting it again during the fade cancels the fade and shows it immediately. A dialog cannot be presented while it sits inside another container (dialogs are top-level popups).
+- The dialog must not be added to a container; it lives on the popup layer only.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: dialog-api
+:END:
+- =lrg_dialog_new (const gchar *title, const gchar *body)=
+- =lrg_dialog_get_title= / =lrg_dialog_set_title=
+- =lrg_dialog_get_body= / =lrg_dialog_set_body=
+- =lrg_dialog_get_content= / =lrg_dialog_set_content (LrgDialog *self, LrgWidget *content)=
+- =lrg_dialog_add_button (LrgDialog *self, const gchar *label, gint response_id, gboolean primary)=
+- =lrg_dialog_get_primary_button (LrgDialog *self)=
+- =lrg_dialog_present (LrgDialog *self, LrgCanvas *canvas)=
+- =lrg_dialog_close (LrgDialog *self)=
+- =lrg_dialog_respond (LrgDialog *self, gint response_id)=
+- =lrg_dialog_get_presented (LrgDialog *self)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: dialog-related
+:END:
+- [[file:canvas.org][Canvas]] (popup layer, modal veil, focus scope)
+- [[file:button.org][Button]]
+- [[file:toast.org][Toast]]

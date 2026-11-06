@@ -1,0 +1,651 @@
+#+title: UI Styling: Parts, Looks and Style Rules
+#+description: LrgPartLook, LrgStyleRule, specificity, the per-theme rule cache and how widgets resolve and paint their looks
+#+authors: Zach Podbielniak
+#+categories: libregnum ui theme style
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* UI Styling
+:PROPERTIES:
+:CUSTOM_ID: styling
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Styling
+#+end_quote
+
+Every widget is drawn from *looks*: plain structs that describe one named *part* of the widget (its body, its label, a slider's thumb, a check box's mark) in one *state* (resting, hovered, pressed, checked, disabled ...). A widget supplies the built-in look of each part from its theme (=style_defaults()=), the theme can override any field of any look with *style rules* matched by widget type, style class, part and state, and the widget blends the resting, hovered and pressed looks continuously with its springs. The result: colours, shadows, radii and sizes glide between states, and a theme file can restyle any part of any widget without code.
+
+This page covers the data types (=src/ui/lrg-style.h=), rule matching and the resolution pipeline. Writing whole themes (presets, colours, metrics, YAML files) is in [[file:../../guides/theming.org][the theming guide]] and the API in [[file:theme.org][LrgTheme]]; motion is in [[file:animation.org][UI animation]].
+
+** The pipeline at a glance
+:PROPERTIES:
+:CUSTOM_ID: styling-pipeline
+:END:
+#+begin_example
+ lrg_widget_resolve_look (widget, part, &look)          called from paint()
+ │
+ │  base = state flags without HOVERED and PRESSED     (e.g. CHECKED|FOCUSED)
+ │
+ ├─ resting = resolve_for_state (base)
+ │    ├─ lrg_part_look_init (&look)                    all transparent, opacity 1
+ │    ├─ klass->style_defaults (widget, part, base, &look)    built-in look from theme roles
+ │    ├─ lrg_theme_resolve_look (theme, type, classes, part, base, &look)
+ │    │    matching rules merged least specific first (cached per theme)
+ │    ├─ klass->style_overrides (widget, part, base, &look)   explicit setters
+ │    └─ per-instance lrg_widget_set_part_look () overrides, least specific first
+ │
+ ├─ if hover spring h > 0.001:
+ │    hovered = resolve_for_state (base | HOVERED)
+ │    look = lerp (look, hovered, h)
+ │
+ └─ if press spring p > 0.001:
+      pressed = resolve_for_state (base | HOVERED | PRESSED)
+      look = lerp (look, pressed, p)
+
+ lrg_widget_paint_box (widget, list, &look, x, y, w, h)
+      glow -> drop shadow -> fill / gradient + inner border, all at look.opacity
+#+end_example
+
+** Precedence: the theme applies unless you say otherwise
+:PROPERTIES:
+:CUSTOM_ID: styling-precedence
+:END:
+Four layers decide a part's look, each overriding only the fields it sets (see [[#styling-merge][the set mask]]):
+
+| Order | Layer | Who sets it | Typical use |
+|-------+-------+-------------+-------------|
+| 1 | =style_defaults()= | the widget class, from theme roles and metrics | how every button looks out of the box |
+| 2 | theme style rules | the theme ([[#styling-rules][style rules]], YAML =styles:=) | restyle all primary buttons, all panels with class =card= |
+| 3 | =style_overrides()= | the widget's explicit setters, e.g. =lrg_button_set_normal_color()=, =lrg_panel_set_corner_radius()= | "this button is red" |
+| 4 | =lrg_widget_set_part_look()= | the application, on one instance, for any part and state | force any field of any part, even ones without a setter |
+
+Later layers win, so a value set on a widget always beats the theme: the theme decides everything you did not decide yourself. Hover and press still blend between the resolved resting, hovered and pressed looks, so overridden colours animate like themed ones.
+
+*** Per-instance overrides
+:PROPERTIES:
+:CUSTOM_ID: styling-part-look-overrides
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_widget_set_part_look= | =void lrg_widget_set_part_look (LrgWidget *self, LrgUIPart part, LrgWidgetState state, const LrgPartLook *look);= | Copies =look=; only its set fields apply. =state= lists states that must all be active (=LRG_WIDGET_STATE_NONE= = always). Several overrides for one part merge from the fewest to the most required states. =NULL= removes the override for exactly (=part=, =state=). Queues layout (a size field may change the preferred size). |
+| =lrg_widget_get_part_look= | =const LrgPartLook * lrg_widget_get_part_look (LrgWidget *self, LrgUIPart part, LrgWidgetState state);= | The override stored for exactly (=part=, =state=), or =NULL=. Owned by the widget. |
+| =lrg_widget_clear_part_looks= | =void lrg_widget_clear_part_looks (LrgWidget *self);= | Removes every override; the theme takes over again. |
+
+#+begin_src c
+/* A gold "buy" button whatever the theme says, glowing on hover */
+LrgPartLook look;
+GrlColor    gold = { 0xf5, 0xb7, 0x00, 0xff };
+GrlColor    glow = { 0xf5, 0xb7, 0x00, 0x90 };
+
+lrg_part_look_init (&look);
+lrg_part_look_set_background (&look, &gold);
+lrg_widget_set_part_look (LRG_WIDGET (buy), LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, &look);
+
+lrg_part_look_init (&look);
+lrg_part_look_set_glow (&look, &glow, 24.0f);
+lrg_widget_set_part_look (LRG_WIDGET (buy), LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED, &look);
+#+end_src
+
+*** Writing style_overrides() in a widget
+:PROPERTIES:
+:CUSTOM_ID: styling-style-overrides
+:END:
+A widget with explicit setters keeps =style_defaults()= purely theme-driven and applies the explicit values in =style_overrides()=, chaining up to the parent class. Set only the fields the explicit value concerns:
+
+#+begin_src c
+static void
+my_widget_style_overrides (LrgWidget      *widget,
+                           LrgUIPart       part,
+                           LrgWidgetState  state,
+                           LrgPartLook    *look)
+{
+	MyWidget *self = MY_WIDGET (widget);
+
+	if (LRG_WIDGET_CLASS (my_widget_parent_class)->style_overrides != NULL)
+		LRG_WIDGET_CLASS (my_widget_parent_class)->style_overrides (widget, part, state, look);
+
+	if (part == LRG_UI_PART_BOX && self->fill_set)
+		lrg_part_look_set_background (look, &self->fill);
+}
+#+end_src
+
+** Parts
+:PROPERTIES:
+:CUSTOM_ID: styling-parts
+:END:
+=LrgUIPart= names the separately styled pieces of widgets. A widget uses whichever parts make sense for it; every widget has =FOCUS= (its focus ring, provided by =LrgWidget=).
+
+| Part | Nick | Meaning | Typical owners |
+|------+------+---------+----------------|
+| =LRG_UI_PART_BOX= | =box= | The widget's main body | buttons, panels, entries, combo boxes, check boxes |
+| =LRG_UI_PART_LABEL= | =label= | Text drawn by the widget (=foreground= is the text colour) | labels, buttons, check boxes |
+| =LRG_UI_PART_TRACK= | =track= | Slider / progress / switch track | slider, progress bar, switch |
+| =LRG_UI_PART_FILL= | =fill= | Filled portion of a track | slider, progress bar |
+| =LRG_UI_PART_THUMB= | =thumb= | Draggable thumb | slider |
+| =LRG_UI_PART_KNOB= | =knob= | Switch knob | check box in switch style |
+| =LRG_UI_PART_MARK= | =mark= | Check mark or radio dot | check box |
+| =LRG_UI_PART_ARROW= | =arrow= | Disclosure / combo / spin arrow | combo box, spin box |
+| =LRG_UI_PART_POPUP= | =popup= | Popup surface | combo box list, dialogs, menus |
+| =LRG_UI_PART_ITEM= | =item= | Row or entry inside a list or popup | list view, combo box |
+| =LRG_UI_PART_HEADER= | =header= | Header strip | dialog, panel title |
+| =LRG_UI_PART_TAB= | =tab= | Tab button | tab view |
+| =LRG_UI_PART_INDICATOR= | =indicator= | Active-tab / selection indicator | tab view |
+| =LRG_UI_PART_SCROLLBAR= | =scrollbar= | Scrollbar track | scroll box, list view |
+| =LRG_UI_PART_SCROLL_THUMB= | =scroll-thumb= | Scrollbar thumb | scroll box, list view |
+| =LRG_UI_PART_TOOLTIP= | =tooltip= | Tooltip surface | tooltip |
+| =LRG_UI_PART_FOCUS= | =focus= | Focus ring | every widget |
+| =LRG_UI_PART_VEIL= | =veil= | Modal backdrop | dialogs |
+| =LRG_UI_PART_HANDLE= | =handle= | Draggable divider between panes | splitter |
+
+=LRG_UI_PART_COUNT= is the number of parts. Which parts a specific widget draws is listed on its page under [[file:index.org::#ui-widget-pages][widget pages]].
+
+** LrgPartLook
+:PROPERTIES:
+:CUSTOM_ID: styling-part-look
+:END:
+=LrgPartLook= is a plain value struct (boxed for bindings) describing one part:
+
+| Field | Type | Set bit (=LrgPartLookFields=) | YAML key | Meaning |
+|-------+------+-------------------------------+----------+---------|
+| =background= | =GrlColor= | =LRG_PART_LOOK_BACKGROUND= | =background= | Fill colour |
+| =foreground= | =GrlColor= | =LRG_PART_LOOK_FOREGROUND= | =foreground= | Text / icon / mark colour |
+| =border= | =GrlColor= | =LRG_PART_LOOK_BORDER= | =border= | Border colour |
+| =border_width= | =gfloat= | =LRG_PART_LOOK_BORDER_WIDTH= | =border-width= | Border thickness, drawn *inside* the part |
+| =radii= | =LrgCornerRadii= | =LRG_PART_LOOK_RADII= | =radius= | Corner radii |
+| =shadow= | =GrlColor= | =LRG_PART_LOOK_SHADOW= | =shadow= | Drop-shadow colour; alpha is the strength |
+| =shadow_blur= | =gfloat= | =LRG_PART_LOOK_SHADOW_BLUR= | =shadow-blur= | Drop-shadow softness |
+| =shadow_offset_y= | =gfloat= | =LRG_PART_LOOK_SHADOW_OFFSET= | =shadow-offset= | Drop-shadow vertical offset (positive is down) |
+| =gradient= | =LrgPaintGradient= | =LRG_PART_LOOK_GRADIENT= | =gradient= | Gradient fill used instead of =background= when its kind is not =NONE= |
+| =opacity= | =gfloat= | =LRG_PART_LOOK_OPACITY= | =opacity= | Opacity of the whole part, 0..1 |
+| =size= | =gfloat= | =LRG_PART_LOOK_SIZE= | =size= | Part-specific size: thumb diameter, check size, indicator thickness ... |
+| =glow= | =GrlColor= | =LRG_PART_LOOK_GLOW= | =glow= | Colour of a soft outer glow (an un-offset shadow) |
+| =glow_size= | =gfloat= | =LRG_PART_LOOK_GLOW_SIZE= | =glow-size= | Glow radius |
+| =material= | =LrgPaintMaterial= | =LRG_PART_LOOK_MATERIAL= | =material= | Surface material: =none=, =blur=, =glass=, =frosted=, =tinted= (see [[#styling-materials][materials]]) |
+| =material_opacity= | =gfloat= | =LRG_PART_LOOK_MATERIAL= | - | How strongly the material shows, 0..1 (1 from the setter and from YAML; lerp produces the values between) |
+| =glass= | =LrgPaintGlass= | =LRG_PART_LOOK_GLASS= | =glass= | Glass parameters; unset = the material's defaults |
+| =effect= | =GQuark= | =LRG_PART_LOOK_EFFECT= | =effect= | Quark of an effect name drawn over the fill, 0 for none |
+| =effect_params= | =LrgPaintEffectParams= | =LRG_PART_LOOK_EFFECT_COLORS= (the three colours), =LRG_PART_LOOK_EFFECT_INTENSITY= | =effect-colors=, =effect-intensity= | Effect palette and intensity; hover, press, speed and scale are filled in at paint time |
+| =set= | =LrgPartLookFields= | - | - | Which fields carry a value |
+
+=LRG_PART_LOOK_ALL= has every bit; =LRG_PART_LOOK_NONE= none.
+
+*** The set mask and merging
+:PROPERTIES:
+:CUSTOM_ID: styling-merge
+:END:
+=set= is what makes partial overrides possible. =lrg_part_look_merge (self, overlay)= copies *only the fields set in =overlay=* into =self= and marks them set there. A style rule that only sets =background= changes the fill and leaves the border, radius and shadow the widget's defaults gave. The setters (=lrg_part_look_set_background()= and friends) assign a field and set its bit in one call; if you assign fields directly, set the bit yourself (=look->set |= LRG_PART_LOOK_BORDER;=).
+
+=lrg_part_look_init()= resets a look: every colour transparent, every size 0, =opacity= 1, gradient kind =NONE=, =set= empty. =lrg_widget_resolve_look_for_state()= starts from this.
+
+*** Blending looks: lrg_part_look_lerp
+:PROPERTIES:
+:CUSTOM_ID: styling-lerp
+:END:
+=lrg_part_look_lerp (a, b, t, out)= blends two complete looks field by field (=t= clamped to 0..1; =t <= 0= copies =a=, =t >= 1= copies =b=):
+
+- colours (=background=, =foreground=, =border=, =shadow=, =glow=) mix linearly, alpha included;
+- =border_width=, all four radii, =shadow_blur=, =shadow_offset_y=, =opacity=, =size= and =glow_size= interpolate;
+- materials: a side without a material counts as strength 0, so =NONE= to =GLASS= keeps =material= = =GLASS= and lerps =material_opacity= from 0 to 1 (the glass fades in while the solid fill fades out over it); between two materials the effective glass parameters (=lrg_part_look_get_glass()=) blend and the target side's material is used;
+- effects: a side without an effect counts as intensity 0, so an effect fades in through its intensity; the palette colours mix;
+- gradients: when either side has one, both are treated as gradients of the same shape (the side without one contributes a flat gradient of its =background=), and stops, angle, centre and radius interpolate, so a gradient fades in from a solid fill;
+- the result's =set= is the union of both.
+
+Lerp blends *all* fields, set or not, and unset colours are transparent: a shadow that only exists in the hovered look fades in from transparent, which is usually exactly what you want. The flip side is the main rule for =style_defaults()= implementations: *fill the complete look for every state*, otherwise a field missing from one state's look blends towards transparent or zero.
+
+*** Setters
+:PROPERTIES:
+:CUSTOM_ID: styling-look-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_part_look_new ()= / =lrg_part_look_copy ()= / =lrg_part_look_free ()= | Boxed allocation (=g_autoptr (LrgPartLook)=), see [[#styling-boxed-types][boxed types]] |
+| =lrg_part_look_init (self)= | Reset (see above) |
+| =lrg_part_look_merge (self, overlay)= | Copy the fields set in =overlay= |
+| =lrg_part_look_lerp (a, b, t, out)= | Blend two looks |
+| =lrg_part_look_set_background (self, color)= | Fill colour |
+| =lrg_part_look_set_foreground (self, color)= | Text / mark colour |
+| =lrg_part_look_set_border (self, color, width)= | Border colour and width |
+| =lrg_part_look_set_radius (self, radius)= | Uniform radius (assign =radii= + =LRG_PART_LOOK_RADII= for per-corner) |
+| =lrg_part_look_set_shadow (self, color, blur, offset_y)= | Drop shadow (three bits) |
+| =lrg_part_look_set_gradient (self, gradient)= | Gradient fill |
+| =lrg_part_look_set_opacity (self, opacity)= | Part opacity |
+| =lrg_part_look_set_size (self, size)= | Part-specific size |
+| =lrg_part_look_set_glow (self, color, size)= | Outer glow (two bits) |
+| =lrg_part_look_set_material (self, material)= | Surface material (=material_opacity= 1) |
+| =lrg_part_look_set_glass (self, glass)= | Explicit glass parameters (=LrgPaintGlass=) |
+| =lrg_part_look_get_glass (self, out)= | The glass the material paints with: =glass= when set, else =lrg_paint_glass_init_default()=, adjusted by the material |
+| =lrg_part_look_set_effect (self, name)= | Effect by name, =NULL= for none (resolved at paint time) |
+| =lrg_part_look_get_effect_name (self)= | The effect name or =NULL= |
+| =lrg_part_look_set_effect_colors (self, c1, c2, c3)= | Effect palette; =c2= / =c3= nullable (repeat the previous one) |
+| =lrg_part_look_set_effect_intensity (self, intensity)= | Effect intensity |
+
+*** Boxed types and GTypes
+:PROPERTIES:
+:CUSTOM_ID: styling-boxed-types
+:END:
+=LrgPartLook= is a plain value struct; C code keeps it on the stack and resets it with =lrg_part_look_init()=. The boxed and flags types exist for =GValue=, properties, signals and introspection bindings. A look holds no pointers, so copies are flat and independent.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_part_look_get_type= | =GType lrg_part_look_get_type (void) G_GNUC_CONST;= | The boxed =GType= (=LRG_TYPE_PART_LOOK=), copied with =lrg_part_look_copy()=, freed with =lrg_part_look_free()= |
+| =lrg_part_look_new= | =LrgPartLook * lrg_part_look_new (void);= | (transfer full) an empty look (as after =lrg_part_look_init()=) |
+| =lrg_part_look_copy= | =LrgPartLook * lrg_part_look_copy (const LrgPartLook *self);= | (transfer full) flat copy, =set= mask included |
+| =lrg_part_look_free= | =void lrg_part_look_free (LrgPartLook *self);= | =self= is (nullable); =g_autoptr (LrgPartLook)= is supported |
+| =lrg_part_look_fields_get_type= | =GType lrg_part_look_fields_get_type (void) G_GNUC_CONST;= | The =GFlags= type (=LRG_TYPE_PART_LOOK_FIELDS=) of the =set= mask: =LRG_PART_LOOK_BACKGROUND=, =FOREGROUND=, =BORDER=, =BORDER_WIDTH=, =RADII=, =SHADOW=, =SHADOW_BLUR=, =SHADOW_OFFSET=, =GRADIENT=, =OPACITY=, =SIZE=, =GLOW=, =GLOW_SIZE=, and =LRG_PART_LOOK_ALL=. Registered by hand in =lrg-style.c= (nicks are the lower-case suffixes), so YAML loaders and inspectors can print or parse a mask |
+
+#+begin_src c
+/* Print which fields a resolved look carries, e.g. "LRG_PART_LOOK_BACKGROUND | LRG_PART_LOOK_RADII" */
+g_autofree gchar *mask = g_flags_to_string (LRG_TYPE_PART_LOOK_FIELDS, look.set);
+
+g_debug ("box look sets: %s", mask);
+#+end_src
+
+** Built-in looks: style_defaults()
+:PROPERTIES:
+:CUSTOM_ID: styling-defaults
+:END:
+=LrgWidgetClass.style_defaults (self, part, state, look)= fills the widget's own look for =part= in exactly =state=, from its theme's colour roles and metrics. It is called up to three times per part per paint (resting, hovered, pressed variants), so it should only read the theme and fill fields: no allocation, no side effects.
+
+=LrgWidget='s implementation handles =LRG_UI_PART_FOCUS= (a border of =LRG_THEME_COLOR_FOCUS=, =FOCUS_RING_WIDTH= wide, radius =CORNER_RADIUS + 2 + ring width=) and leaves every other part invisible. Subclasses handle their parts and *chain up* for the rest, so the focus ring keeps working:
+
+#+begin_src c
+static void
+game_badge_style_defaults (LrgWidget      *widget,
+                           LrgUIPart       part,
+                           LrgWidgetState  state,
+                           LrgPartLook    *look)
+{
+	LrgTheme *theme = lrg_widget_get_theme (widget);
+	gfloat    radius = lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS);
+
+	switch (part)
+	{
+	case LRG_UI_PART_BOX:
+		/* test PRESSED first: the pressed variant also carries HOVERED */
+		if (state & LRG_WIDGET_STATE_PRESSED)
+			lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT_PRESSED));
+		else if (state & LRG_WIDGET_STATE_HOVERED)
+			lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT_HOVER));
+		else
+			lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT));
+		lrg_part_look_set_radius (look, radius);
+		/* the same shadow in every state, only stronger on hover */
+		lrg_part_look_set_shadow (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_SHADOW),
+		                          (state & LRG_WIDGET_STATE_HOVERED) ? 14.0f : 8.0f,
+		                          (state & LRG_WIDGET_STATE_HOVERED) ? 5.0f : 3.0f);
+		if (state & LRG_WIDGET_STATE_DISABLED)
+			lrg_part_look_set_opacity (look, 0.45f);
+		break;
+
+	case LRG_UI_PART_LABEL:
+		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_ON_ACCENT));
+		break;
+
+	default:
+		/* FOCUS (and anything else) from the parent class */
+		LRG_WIDGET_CLASS (game_badge_parent_class)->style_defaults (widget, part, state, look);
+		break;
+	}
+}
+#+end_src
+
+Conventions the built-in widgets follow (so themes behave consistently):
+
+- controls: =CONTROL= / =CONTROL_HOVER= / =CONTROL_PRESSED= backgrounds, =TEXT= foreground, =BORDER= hairline of =BORDER_WIDTH=, =CORNER_RADIUS=;
+- primary / accent controls (and =CHECKED= states): =ACCENT= family with =TEXT_ON_ACCENT= text;
+- floating surfaces (popups, dialogs, toasts, tooltips): =POPUP= / =TOOLTIP= background, =POPUP_RADIUS=, a shadow of =SHADOW= with =SHADOW_BLUR= / =SHADOW_OFFSET_Y=;
+- =DISABLED=: =opacity= 0.45 on the box (and =DISABLED= foreground where text matters);
+- =SELECTED= rows: =SELECTION= background.
+
+** Style rules
+:PROPERTIES:
+:CUSTOM_ID: styling-rules
+:END:
+An =LrgStyleRule= (ref-counted boxed type) says: "for widgets of /this type/ carrying /this class/, when drawing /this part/ in /these states/, apply /this look/ on top". Rules live in a theme (=lrg_theme_add_style_rule()=, or the =styles:= list of a theme file) and apply to every widget that draws with that theme.
+
+#+begin_src c
+/* every LrgButton with the "danger" class: red body, white text */
+g_autoptr(LrgStyleRule) body = lrg_style_rule_new ("LrgButton", "danger",
+                                                   LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE);
+g_autoptr(LrgStyleRule) text = lrg_style_rule_new ("LrgButton", "danger",
+                                                   LRG_UI_PART_LABEL, LRG_WIDGET_STATE_NONE);
+g_autoptr(LrgStyleRule) hot  = lrg_style_rule_new ("LrgButton", "danger",
+                                                   LRG_UI_PART_BOX, LRG_WIDGET_STATE_HOVERED);
+static const GrlColor white = { 255, 255, 255, 255 };
+static const GrlColor red_glow = { 248, 113, 113, 140 };
+
+lrg_part_look_set_background (lrg_style_rule_get_look (body),
+                              lrg_theme_get_color (theme, LRG_THEME_COLOR_DANGER));
+lrg_part_look_set_foreground (lrg_style_rule_get_look (text), &white);
+lrg_part_look_set_glow (lrg_style_rule_get_look (hot), &red_glow, 12.0f);
+
+lrg_theme_add_style_rule (theme, body);   /* the theme takes a reference */
+lrg_theme_add_style_rule (theme, text);
+lrg_theme_add_style_rule (theme, hot);
+
+lrg_widget_add_class (LRG_WIDGET (delete_button), "danger");
+#+end_src
+
+*** LrgStyleRule functions
+:PROPERTIES:
+:CUSTOM_ID: styling-rule-api
+:END:
+A rule is reference counted (atomically) and immutable except for its look; the selector (type name, class, part, state) is fixed at creation.
+
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_style_rule_get_type= | =GType lrg_style_rule_get_type (void) G_GNUC_CONST;= | The boxed =GType= (=LRG_TYPE_STYLE_RULE=); its copy function is =lrg_style_rule_ref()= and its free function =lrg_style_rule_unref()=, so a =GValue= shares the rule instead of duplicating it |
+| =lrg_style_rule_new= | =LrgStyleRule * lrg_style_rule_new (const gchar *widget_type, const gchar *style_class, LrgUIPart part, LrgWidgetState state);= | (transfer full) with an empty look. =widget_type= (nullable) is a type name such as ="LrgButton"= (subclasses match too); =style_class= (nullable); =state= flags must all be active, =LRG_WIDGET_STATE_NONE= matches every state |
+| =lrg_style_rule_ref= | =LrgStyleRule * lrg_style_rule_ref (LrgStyleRule *self);= | (transfer full) returns =self= with one more reference |
+| =lrg_style_rule_unref= | =void lrg_style_rule_unref (LrgStyleRule *self);= | (transfer full) drops a reference, freeing the rule at zero; =g_autoptr (LrgStyleRule)= calls it |
+| =lrg_style_rule_get_look= | =LrgPartLook * lrg_style_rule_get_look (LrgStyleRule *self);= | (transfer none) the look the rule applies; edit it in place before adding the rule to a theme, or call =lrg_theme_style_rules_changed()= after editing a rule the theme already holds (the theme caches resolved looks) |
+| =lrg_style_rule_get_widget_type= | =const gchar * lrg_style_rule_get_widget_type (LrgStyleRule *self);= | (nullable) (transfer none) the type *name*, =NULL= for any widget |
+| =lrg_style_rule_get_style_class= | =const gchar * lrg_style_rule_get_style_class (LrgStyleRule *self);= | (nullable) (transfer none) the class, =NULL= for any |
+| =lrg_style_rule_get_part= | =LrgUIPart lrg_style_rule_get_part (LrgStyleRule *self);= | The single part the rule styles |
+| =lrg_style_rule_get_state= | =LrgWidgetState lrg_style_rule_get_state (LrgStyleRule *self);= | The states the rule requires |
+| =lrg_style_rule_get_specificity= | =guint lrg_style_rule_get_specificity (LrgStyleRule *self);= | See [[#styling-specificity][specificity]] |
+| =lrg_style_rule_matches= | =gboolean lrg_style_rule_matches (LrgStyleRule *self, GType widget_type, const GQuark *classes, guint n_classes, LrgUIPart part, LrgWidgetState state);= | =classes= is (array length=n_classes) (nullable); see [[#styling-matching][matching]] |
+
+The getters let tools list a theme's rules, for example an inspector that dumps every rule touching a widget:
+
+#+begin_src c
+static void
+dump_rule (LrgStyleRule *rule)
+{
+	g_autofree gchar *state = g_flags_to_string (LRG_TYPE_WIDGET_STATE, lrg_style_rule_get_state (rule));
+
+	g_print ("%s.%s part=%d state=%s specificity=%u\n",
+	         lrg_style_rule_get_widget_type (rule) != NULL ? lrg_style_rule_get_widget_type (rule) : "*",
+	         lrg_style_rule_get_style_class (rule) != NULL ? lrg_style_rule_get_style_class (rule) : "*",
+	         (gint) lrg_style_rule_get_part (rule), state,
+	         lrg_style_rule_get_specificity (rule));
+}
+#+end_src
+
+*** Matching
+:PROPERTIES:
+:CUSTOM_ID: styling-matching
+:END:
+=lrg_style_rule_matches()= returns =TRUE= when all of these hold:
+
+1. *Part*: the rule's part equals the part being drawn (a rule styles exactly one part).
+2. *State*: every state flag the rule requires is active (=(state & rule_state) == rule_state=). =LRG_WIDGET_STATE_NONE= requires nothing and matches every state. A rule requiring =[hovered, checked]= applies only when both are on.
+3. *Class*: if the rule names a style class, the widget carries it (=lrg_widget_add_class()=).
+4. *Type*: if the rule names a widget type, the widget's type *is* that type or a subclass of it (=g_type_is_a()=). The type is stored *by name* and resolved lazily on first match (=g_type_from_name()=), so rules can be created or loaded before the widget types are registered; a name that never resolves simply never matches. =NULL= matches every widget; ="LrgWidget"= does too.
+
+Because the pressed variant of a look is resolved with =HOVERED | PRESSED=, a rule requiring =hovered= also applies while pressed (until a =pressed= rule overrides it).
+
+*** Specificity and order
+:PROPERTIES:
+:CUSTOM_ID: styling-specificity
+:END:
+All matching rules apply, least specific first, so more specific rules win on the fields they set. =lrg_style_rule_get_specificity()=:
+
+| Selector part | Points |
+|---------------+--------|
+| widget type | 1 |
+| style class | 2 |
+| each required state flag | 2 |
+
+Ties go to the rule *added later* (file order for YAML; later documents loaded on top win). Examples:
+
+| Rule | Specificity |
+|------+-------------|
+| part only (=part: box=) | 0 |
+| =widget: LrgButton= | 1 |
+| =class: primary= | 2 |
+| =widget: LrgButton=, =class: primary= | 3 |
+| =widget: LrgButton=, =state: hovered= | 3 |
+| =class: primary=, =state: [hovered, focus-visible]= | 6 |
+| =widget: LrgCheckbox=, =class: big=, =state: [checked, hovered]= | 7 |
+
+Like CSS pseudo-classes, a state is worth as much as a class, and a type is worth less than either: =class: primary= beats =widget: LrgButton=.
+
+*** The cache and invalidation
+:PROPERTIES:
+:CUSTOM_ID: styling-cache
+:END:
+=lrg_theme_resolve_look()= runs for every part of every widget up to three times per frame, so its result is cached. The cache key is (widget GType, part, state flags, class quarks in order); the value is the merged overlay of all matching rules in specificity order. A cache hit is one hash lookup and one =lrg_part_look_merge()=; with no rules at all the call returns immediately.
+
+The cache is dropped (and =LrgTheme:generation= bumped, =::changed= emitted) by every theme mutation: adding or clearing rules, setting a colour, metric, accent, motion, font, applying a preset or loading YAML. Two consequences:
+
+- Do not mutate a rule's look (=lrg_style_rule_get_look()=) *after* adding the rule to a theme: the cached overlays still hold the old values. Build the look first, then add it; to change it later, clear and re-add the rules (or load a document).
+- The order of classes on a widget is part of the key; widgets with the same classes in a different order get separate (identical) cache entries, which is harmless.
+
+** How a widget paints a look
+:PROPERTIES:
+:CUSTOM_ID: styling-paint-box
+:END:
+=lrg_widget_paint_box (self, list, look, x, y, w, h)= draws the standard surface for a resolved look:
+
+1. push =look->opacity= if below 1;
+2. glow (=glow= alpha > 0 and =glow_size= > 0): a shadow with blur =glow_size=, spread =glow_size / 4=, no offset;
+3. drop shadow (=shadow= alpha > 0 and =shadow_blur= > 0): blur =shadow_blur=, offset =(0, shadow_offset_y)=;
+4. the body: without a material or effect, one =lrg_paint_list_rect_ex()= with the radii, =background= (or =gradient= when its kind is not =NONE=) and the inner border. With a material or effect, in order:
+   1. the material (=material= not =NONE= and =material_opacity= > 0): =lrg_paint_list_blur()= for =blur=, =lrg_paint_list_glass()= otherwise, with =lrg_part_look_get_glass()=, at =material_opacity=;
+   2. when =material_opacity= < 1 (a look cross-fading between a material and a plain fill) and no effect: the solid fill at =1 - material_opacity= on top;
+   3. the effect, if its name resolves (=lrg_paint_effect_lookup()=): =lrg_paint_list_effect()= with the look's palette (or, when =effect-colors= is not set, the part's =background=, the theme =accent= and the part's =foreground=), its intensity, and the widget's hover and press progress; an effect with no material replaces the fill, and an unknown effect name falls back to the fill;
+   4. the border alone (=rect_ex= with no fill);
+5. pop the opacity.
+
+Shadow and glow use the top-left radius for all corners. Parts that are not boxes (a label's text, a check mark, an arrow) read the look's fields directly, e.g. =look.foreground= for text, =look.size= for a thumb diameter.
+
+#+begin_src c
+static void
+game_badge_paint (LrgWidget    *widget,
+                  LrgPaintList *list)
+{
+	LrgPartLook box;
+	LrgPartLook label;
+	gfloat      x = lrg_widget_get_world_x (widget);
+	gfloat      y = lrg_widget_get_world_y (widget);
+	gfloat      w = lrg_widget_get_width (widget);
+	gfloat      h = lrg_widget_get_height (widget);
+
+	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_LABEL, &label);
+
+	lrg_widget_paint_box (widget, list, &box, x, y, w, h);
+	paint_centred_text (widget, list, GAME_BADGE (widget)->text, &label.foreground,
+	                    x, y, w, h);
+}
+#+end_src
+
+=lrg_widget_resolve_look_for_state (self, part, state, look)= returns one exact state without spring blending (defaults + rules), for previews, inspectors and tests.
+
+** Materials and effects
+:PROPERTIES:
+:CUSTOM_ID: styling-materials
+:END:
+A part's surface can be a *material* instead of a flat fill. Every material samples what was drawn behind the part (the paint renderer snapshots and blurs the target: see [[file:../paint/index.org::#paint-materials][paint materials]] for how and what it costs).
+
+| Material | What =lrg_part_look_get_glass()= gives | Looks like |
+|----------+----------------------------------------+------------|
+| =none= | - | the plain =background= / =gradient= fill |
+| =blur= | full frost; no refraction, rim or dispersion; no tint unless =glass= is set | a backdrop blur (sheets, sidebars) |
+| =glass= | =glass= as set, else the default clear glass | clear glass with a bent, lit rim |
+| =frosted= | =glass= with frost forced to 1 | frosted glass |
+| =tinted= | =glass= with frost 1 and the part's =background= as the tint | coloured frosted glass; the background's alpha is the tint strength |
+
+An *effect* is an animated fill (=shimmer=, =aurora=, =neon=, =spotlight=, =ripple=, =grain=, =plasma=, =mesh-gradient= or a registered user effect: [[file:../paint/index.org::#paint-effects][paint effects]]). It is drawn over the material (or instead of the fill) and below the border. Effects react to the widget's hover and press springs; =spotlight= and =ripple= also need the pointer position, which =LrgCanvas= passes to its paint list each frame along with the animation time.
+
+Both are look fields, so they take part in the usual precedence (defaults < theme rules < =style_overrides()= < per-instance overrides) and in the state cross-fade: a rule that sets =material: glass= only for =hovered= fades the glass in as the hover spring moves.
+
+#+begin_src c
+/* A frosted card for this one panel, whatever the theme says */
+LrgPartLook look;
+LrgPaintGlass glass;
+
+lrg_part_look_init (&look);
+lrg_part_look_set_material (&look, LRG_PAINT_MATERIAL_FROSTED);
+lrg_paint_glass_init_default (&glass);
+glass.blur_radius = 24.0f;
+glass.tint = (GrlColor){ 255, 255, 255, 30 };
+lrg_part_look_set_glass (&look, &glass);
+lrg_widget_set_part_look (LRG_WIDGET (panel), LRG_UI_PART_BOX, LRG_WIDGET_STATE_NONE, &look);
+
+/* An aurora hero button with a custom palette */
+lrg_part_look_init (&look);
+lrg_part_look_set_effect (&look, "aurora");
+lrg_part_look_set_effect_colors (&look, &dark, &violet, &cyan);
+lrg_part_look_set_effect_intensity (&look, 0.8f);
+#+end_src
+
+** YAML schema for styles
+:PROPERTIES:
+:CUSTOM_ID: styling-yaml
+:END:
+Style rules in a theme file are a list under =styles:=. Each entry is a mapping; unknown keys are an error (=LRG_THEME_ERROR_INVALID=, and the whole document is rejected, see [[file:../../guides/theming.org::#theming-errors][loading errors]]).
+
+| Key | Value | Default | Notes |
+|-----+-------+---------+-------|
+| =widget= | type name, e.g. =LrgButton= | any widget | Subtypes match |
+| =class= | style class name | any | |
+| =part= | part nick (=box=, =label=, =thumb=, =scroll-thumb= ...) | =box= | |
+| =state= | one state nick or a list of nicks | none (all states) | =hovered=, =pressed=, =focused=, =focus-visible=, =disabled=, =checked=, =selected=, =open=; all must be active |
+| =background= | colour | | |
+| =foreground= | colour | | |
+| =border= | colour | | |
+| =border-width= | number | | |
+| =radius= | number, or a list of four numbers | | List order: top-left, top-right, bottom-right, bottom-left |
+| =shadow= | colour | | Alpha sets strength |
+| =shadow-blur= | number | | |
+| =shadow-offset= | number | | Vertical offset |
+| =gradient= | mapping (below) | | Replaces =background= |
+| =opacity= | number 0..1 | | |
+| =size= | number | | Part-specific |
+| =glow= | colour | | |
+| =glow-size= | number | | |
+| =material= | =none=, =blur=, =glass=, =frosted= or =tinted= | | See [[#styling-materials][materials]] |
+| =glass= | mapping (below) | material defaults | Unspecified keys keep =lrg_paint_glass_init_default()= values |
+| =effect= | effect name, or =none= to clear an inherited one | | Must be built-in or already registered when the theme loads |
+| =effect-colors= | one colour or a list of one to three | background, accent, foreground | Missing colours repeat the previous one |
+| =effect-intensity= | number 0..4 | 1 | |
+
+=glass= mapping (values outside the range are an error):
+
+| Key | Value | Default |
+|-----+-------+---------|
+| =frost= | 0..1 | 0.35 |
+| =refraction= | 0..256 canvas units | 8 |
+| =saturation= | 0..4 | 1.2 |
+| =tint= | colour | ="#ffffff12"= |
+| =rim= | rim light 0..1 | 0.6 |
+| =dispersion= | 0..1 | 0.25 |
+| =blur= | blur radius 0..256 canvas units | 12 |
+
+=lrg_theme_to_data()= writes the =glass= mapping with every key and =effect-colors= as a list of three, so a saved theme loads back identically.
+
+=gradient= mapping:
+
+| Key | Value | Default |
+|-----+-------+---------|
+| =kind= | =linear=, =radial= or =none= | =linear= |
+| =start= | colour (required) | |
+| =end= | colour (required) | |
+| =angle= | degrees (linear; 0 = left to right, 90 = top to bottom) | 0 |
+| =center-x= | 0..1 (radial) | 0.5 |
+| =center-y= | 0..1 (radial) | 0.5 |
+| =radius= | canvas units (radial; 0 = half the diagonal) | 0 |
+
+Colours are hex strings =#rgb=, =#rgba=, =#rrggbb= or =#rrggbbaa= (the =#= is optional for =lrg_color_parse()=). *Quote them*: in YAML an unquoted =#= starts a comment, so =background: #7c6cff= is an empty value and fails with "expected a hex colour".
+
+*** Colour strings
+:PROPERTIES:
+:CUSTOM_ID: styling-color-strings
+:END:
+| Function | Signature | Notes |
+|----------+-----------+-------|
+| =lrg_color_parse= | =gboolean lrg_color_parse (const gchar *text, GrlColor *out);= | Parses =#rgb=, =#rgba=, =#rrggbb= or =#rrggbbaa= (=#= optional) into =out= (out caller-allocates). Returns =FALSE= on anything else |
+| =lrg_color_to_string= | =gchar * lrg_color_to_string (const GrlColor *color);= | (transfer full) lower-case =#rrggbb=, or =#rrggbbaa= when alpha is not 255; free with =g_free()=. The inverse of =lrg_color_parse()=, used when saving themes |
+
+#+begin_src c
+GrlColor          c;
+g_autofree gchar *hex = NULL;
+
+if (lrg_color_parse ("7C6CFF80", &c))
+	hex = lrg_color_to_string (&c);   /* "#7c6cff80" */
+#+end_src
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: styling-yaml-example
+:END:
+#+begin_src yaml
+styles:
+  # Every button: pill shape (radius larger than half the height).
+  - widget: LrgButton
+    radius: 999
+
+  # Buttons with the "primary" class use a vertical accent gradient
+  # and a soft coloured glow. Specificity 3 (type 1 + class 2).
+  - widget: LrgButton
+    class: primary
+    gradient:
+      kind: linear
+      angle: 90
+      start: '#8f7dff'
+      end: '#5b4cf0'
+    glow: '#7c6cff66'
+    glow-size: 10
+
+  # ... and lift on hover: specificity 5 (type 1 + class 2 + one state 2).
+  - widget: LrgButton
+    class: primary
+    state: hovered
+    shadow: '#000000a0'
+    shadow-blur: 22
+    shadow-offset: 8
+
+  # The label part of primary buttons.
+  - widget: LrgButton
+    class: primary
+    part: label
+    foreground: '#ffffff'
+
+  # Checked switches: accent knob track (part "track" of LrgCheckbox,
+  # only while both checked and hovered).
+  - widget: LrgCheckbox
+    part: track
+    state: [checked, hovered]
+    background: '#a78bfa'
+
+  # Any widget carrying the "card" class: square bottom corners.
+  - class: card
+    radius: [14, 14, 0, 0]
+    border: '#ffffff14'
+    border-width: 1
+
+  # Focus rings everywhere: thicker and cyan.
+  - part: focus
+    border: '#00e5ff'
+    border-width: 3
+#+end_src
+
+Rules can also be read back: =lrg_theme_to_data()= writes every rule with exactly the fields that are set (=radius= always as a four-element list, =state= always as a list).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: styling-pitfalls
+:END:
+- A material samples *what was drawn before the widget into the same target*. Glass over a flat window colour just looks like a lighter panel; put something behind it (a scene, an image, an effect, a gradient).
+- Each glass surface that overlaps content drawn after the previous glass costs one backdrop snapshot per frame; dozens of overlapping glass widgets are expensive (check =lrg_paint_renderer_get_backdrop_passes()=).
+- An effect named in a theme must exist when the theme loads; register user effects first.
+- Fill the *complete* look in =style_defaults()= for every state; missing fields blend towards transparent / zero while springs move.
+- Test =PRESSED= before =HOVERED= in =style_defaults()=: the pressed variant is resolved with both flags.
+- Chain up for parts you do not handle, or the focus ring disappears.
+- Do not edit a rule's look after adding it to a theme (stale cache).
+- Unquoted hex colours in YAML are comments.
+- A rule for a widget type that is never registered silently never matches; check type names (=G_OBJECT_TYPE_NAME (widget)=).
+- Style rules cannot change layout metrics of a widget (padding, control height); those come from theme metrics. A rule's =size= is honoured only by widgets that read =look.size= for that part.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: styling-see-also
+:END:
+- [[file:theme.org][LrgTheme]] and [[file:../../guides/theming.org][the theming guide]]
+- [[file:widget.org][LrgWidget]] (=style_defaults()=, =resolve_look()=, state flags)
+- [[file:animation.org][UI animation]] (the springs that blend looks)
+- [[file:../paint/index.org][Paint module]] (how looks become pixels)
+- [[file:../../guides/extending-ui.org][Extending the UI]] (a complete custom widget)

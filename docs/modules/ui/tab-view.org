@@ -13,7 +13,8 @@ The tab view provides:
 - *Tab Bar* - Horizontal row of clickable tab headers
 - *Content Area* - Displays the active tab's content widget
 - *Tab Position* - Headers can be at top or bottom
-- *Hover/Active States* - Visual feedback for interaction
+- *Hover/Active States* - Headers glide between looks; an accent indicator slides and resizes to the active tab on springs
+- *Keyboard* - Left / Right switch tabs while the view is focused
 
 ** Architecture
 :PROPERTIES:
@@ -186,23 +187,21 @@ lrg_tab_view_add_tab (tabs, "Audio", LRG_WIDGET (settings_page));
 :PROPERTIES:
 :CUSTOM_ID: input-handling
 :END:
-The tab view handles mouse interaction automatically:
+On a canvas the tab view behaves like any focusable widget:
 
-1. *Hover* - Tab headers highlight on mouse hover
-2. *Click* - Clicking a tab header switches to that tab
-3. *Content Events* - Events within the content area are forwarded to the active tab's content widget
+1. *Hover* - the header under the pointer cross-fades to its hovered look on its own spring.
+2. *Click* - a left press on a header activates that tab (and focuses the view).
+3. *Content* - the content widgets are real children, so the canvas hit-tests and routes events to them directly; anything they do not consume bubbles up to the view.
 
-#+begin_src C
-/* Events are handled automatically, but you can also
-   process them manually if needed */
-g_autoptr(LrgUIEvent) event = lrg_ui_event_new_mouse_button (
-    LRG_UI_EVENT_MOUSE_BUTTON_DOWN,
-    0,  /* left button */
-    mouse_x, mouse_y
-);
+When events are delivered straight to the view with =lrg_widget_handle_event()= (no canvas), they are first offered to the active content, as before.
 
-lrg_widget_handle_event (LRG_WIDGET (tabs), event);
-#+end_src
+** Keyboard and Gamepad
+:PROPERTIES:
+:CUSTOM_ID: keyboard-and-gamepad
+:END:
+- With focus on the view itself, Left and Right switch to the previous / next tab (clamped at the ends) and are consumed, so focus stays on the view. The indicator slides to the new tab.
+- When a widget inside a tab has focus, arrows belong to that content: unconsumed arrows move focus between widgets and never switch tabs.
+- Gamepad D-pad navigation reaches the view like any other focusable widget; Tab / Shift+Tab move into and out of its content.
 
 ** Properties
 :PROPERTIES:
@@ -237,21 +236,55 @@ g_object_set (tabs,
 |---------------+-----------------+---------------------------------|
 | =tab-changed= | =(guint index)= | Emitted when active tab changes |
 
-** Styling
+** Parts and States
 :PROPERTIES:
-:CUSTOM_ID: styling
+:CUSTOM_ID: parts-and-states
 :END:
-The tab view uses built-in colors that can be customized:
+The view records itself with =paint()=; each part's built-in look comes from the theme.
 
-| Element            | Default Color              |
-|--------------------+----------------------------|
-| Normal tab         | Gray (80, 80, 80)          |
-| Hovered tab        | Light gray (100, 100, 100) |
-| Active tab         | Blue (60, 120, 200)        |
-| Tab text           | White (255, 255, 255)      |
-| Content background | Dark (40, 40, 40)          |
+| Part        | Resting                                     | Hovered (per header)        | Selected (active tab)            | Disabled     |
+|-------------+---------------------------------------------+-----------------------------+----------------------------------+--------------|
+| =box=       | =PANEL= surface behind the content, =BORDER= hairline, =CORNER_RADIUS= |              |                                  | opacity 0.45 |
+| =tab=       | transparent, =TEXT_MUTED= label, rounded    | =CONTROL_HOVER=, =TEXT=     | faint =ACCENT= wash, =TEXT=      | opacity 0.45 |
+| =indicator= | =ACCENT= pill, =size= 3 (thickness), accent glow |                        |                                  | opacity 0.45 |
+| =focus=     | ring around the whole view                  |                             |                                  |              |
 
-For custom styling, subclass =LrgTabView= and override the =draw= virtual method.
+Headers share the view's width equally. Each header's look is resolved with the view's state minus its own hover/press, plus =SELECTED= for the active tab, and blended to the =HOVERED= variant by that header's hover spring. The indicator sits on the content side of the header strip, inset 12% from the header's sides, and its position and width follow springs (the widget's motion preset) whenever the active tab changes; =lrg_tab_view_get_indicator_rect()= returns where it is heading. The active content is painted last, clipped to the content area.
+
+** Style Classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+No built-in classes. Add your own with =lrg_widget_add_class()= and target them from theme rules.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+#+begin_src yaml
+styles:
+  # A thicker indicator for every tab view
+  - widget: LrgTabView
+    part: indicator
+    size: 4
+  # "pills" tab bars: the active header gets a solid accent pill
+  - widget: LrgTabView
+    class: pills
+    part: tab
+    state: [selected]
+    background: "#7c6cff"
+    foreground: "#ffffff"
+    radius: 999
+  - widget: LrgTabView
+    class: pills
+    part: indicator
+    opacity: 0
+  # No surface behind the content
+  - widget: LrgTabView
+    part: box
+    background: "#00000000"
+    border-width: 0
+#+end_src
 
 ** Complete Example
 :PROPERTIES:
@@ -379,6 +412,7 @@ main (void)
 | =lrg_tab_view_get_tab_content(self, index)=      | Get content widget   |
 | =lrg_tab_view_get_tab_label(self, index)=        | Get tab label string |
 | =lrg_tab_view_set_tab_label(self, index, label)= | Update tab label     |
+- =lrg_tab_view_get_indicator_rect(self, &x, &y, &width, &height)= - target rectangle of the active-tab indicator (world coordinates); =FALSE= without tabs
 
 ** Enumerations
 :PROPERTIES:

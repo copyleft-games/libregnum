@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum gui
 #+created: 2026-10-24T22:15:00-04:00
-#+updated: 2026-10-24T22:15:00-04:00
-#+version: 1.0
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.1
 
 * GUI Module Reference
 :PROPERTIES:
@@ -850,12 +850,16 @@ typedef struct
 	gfloat      rounding;
 	gfloat      scrollbar_size;
 	gfloat      label_ratio;
+	gfloat      shadow_size;
 } LrgGuiStyle;
 
-void         lrg_gui_style_init        (LrgGuiStyle   *style,
-                                        const gchar   *theme,
-                                        gfloat         scale);
-LrgGuiStyle *lrg_gui_context_get_style (LrgGuiContext *self);
+void         lrg_gui_style_init            (LrgGuiStyle   *style,
+                                            const gchar   *theme,
+                                            gfloat         scale);
+void         lrg_gui_style_init_from_theme (LrgGuiStyle   *style,
+                                            LrgTheme      *theme,
+                                            gfloat         scale);
+LrgGuiStyle *lrg_gui_context_get_style     (LrgGuiContext *self);
 #+end_src
 
 =lrg_gui_context_get_style()= returns the live style (transfer none); modify it between frames. =lrg_gui_style_init()= fills a style from one of the four Catppuccin flavours, ="mocha"= (the default, also used for =NULL= or an unknown name), ="macchiato"=, ="frappe"= and ="latte"= (the light theme), matched case-insensitively, and multiplies every metric by =scale= (=<= 0 = 1.0). A new context starts with the default style.
@@ -874,6 +878,7 @@ Metrics at scale 1.0 (each rounded after scaling):
 | =rounding= | 3 | Frame corner radius |
 | =scrollbar_size= | 10 | Scrollbar width |
 | =label_ratio= | 0.38 | Share of the width used by =lrg_gui_property_label()= labels (not scaled) |
+| =shadow_size= | 14 | Blur of the soft drop shadow under popups, menus, modals and tooltips; 0 disables shadows |
 
 The editor scales by its UI-scale and font-size settings together: =lrg_gui_style_init (style, theme, ui_scale * font_size / 15.0f)=, then reloads the backend fonts at =style->font_size=.
 
@@ -919,8 +924,59 @@ The editor scales by its UI-scale and font-size settings together: =lrg_gui_styl
 | =LRG_GUI_COL_AXIS_X= | X axis | red |
 | =LRG_GUI_COL_AXIS_Y= | Y axis | green |
 | =LRG_GUI_COL_AXIS_Z= | Z axis | blue |
+| =LRG_GUI_COL_SHADOW= | Drop shadow under popups, menus, modals and tooltips (alpha sets strength) | translucent black |
 
-=LRG_GUI_COL_COUNT= (34) is the array size.
+=LRG_GUI_COL_COUNT= (35) is the array size.
+
+*** Shadows
+:PROPERTIES:
+:CUSTOM_ID: gui-shadows
+:END:
+Floating surfaces cast soft drop shadows: popups and menus (blur =shadow_size=, offset =0.35 * shadow_size=), and tooltips (blur =0.6 * shadow_size=, offset =0.2 * shadow_size=), each in =LRG_GUI_COL_SHADOW= with the style's =rounding=. They are recorded as =LRG_GUI_CMD_SHADOW= commands before the surface (=lrg_gui_draw_list_shadow()=) and drawn by the paint renderer as analytic SDF shadows, one instance each. Set =shadow_size= to 0 for a flat look.
+
+*** Sharing a theme: lrg_gui_style_init_from_theme
+:PROPERTIES:
+:CUSTOM_ID: style-from-theme
+:END:
+=lrg_gui_style_init_from_theme (style, theme, scale)= builds a GUI style from a retained-mode =LrgTheme= (see [[file:../ui/theme.org][LrgTheme]] and [[file:../../guides/theming.org][the theming guide]]), so the editor, debug panels and a game's menus share one palette. It starts from =lrg_gui_style_init (style, NULL, scale)= (compact editor metrics), then recolours from theme roles and derives two metrics:
+
+| GUI slot | Theme role |
+|----------+------------|
+| =TEXT= | =TEXT= |
+| =TEXT_DISABLED= | =DISABLED= |
+| =WINDOW_BG= | =WINDOW= |
+| =PANEL_BG= | =PANEL= |
+| =POPUP_BG= | =POPUP= |
+| =BORDER=, =SEPARATOR= | =BORDER= |
+| =FRAME_BG= | =INPUT= |
+| =FRAME_BG_HOVERED=, =BUTTON_HOVERED=, =HEADER_HOVERED=, =SCROLLBAR_GRAB= | =CONTROL_HOVER= |
+| =FRAME_BG_ACTIVE=, =BUTTON_ACTIVE= | =CONTROL_PRESSED= |
+| =BUTTON=, =TAB_HOVERED= | =CONTROL= |
+| =HEADER=, =TEXT_SELECTION= | =SELECTION= |
+| =HEADER_ACTIVE= | =ACCENT= at alpha 0x80 |
+| =CHECK_MARK=, =SLIDER_GRAB=, =ACCENT= | =ACCENT= |
+| =SCROLLBAR_BG= | =SURFACE= |
+| =TAB=, =MENUBAR_BG= | =WINDOW= |
+| =TAB_ACTIVE= | =PANEL= |
+| =DROP_TARGET=, =WARNING= | =WARNING= |
+| =MODAL_DIM= | =VEIL= |
+| =ERROR=, =AXIS_X= | =DANGER= |
+| =SUCCESS=, =AXIS_Y= | =SUCCESS= |
+| =AXIS_Z= | =LINK= |
+| =SHADOW= | =SHADOW= |
+
+| Metric | Value |
+|--------+-------|
+| =rounding= | =round (CORNER_RADIUS * 0.5 * scale)= |
+| =shadow_size= | =round (SHADOW_BLUR * 0.8 * scale)= |
+
+#+begin_src c
+/* the editor GUI follows the game's theme */
+lrg_gui_style_init_from_theme (lrg_gui_context_get_style (gui),
+                               lrg_theme_get_default (), ui_scale);
+#+end_src
+
+Call it again after switching or editing the theme; the GUI style is a copy, not a live view.
 
 ** Draw lists
 :PROPERTIES:
@@ -963,6 +1019,7 @@ typedef struct
 | =LRG_GUI_CMD_CLIP_POP= | Restore the previous clip |
 | =LRG_GUI_CMD_IMAGE= | =texture= (a =GrlTexture=, ref held by the list) stretched into =rect=, tinted by =color= |
 | =LRG_GUI_CMD_CALLBACK= | =callback (&rect, user_data)= run in draw order |
+| =LRG_GUI_CMD_SHADOW= | Soft drop shadow under =rect=: blur in =thickness=, corner radius in =rounding=, vertical offset in =points[1]=, =color= (alpha = strength) |
 
 *** API
 :PROPERTIES:
@@ -1029,6 +1086,12 @@ void                 lrg_gui_draw_list_callback     (LrgGuiDrawList     *self,
                                                      const LrgGuiRect   *rect,
                                                      LrgGuiDrawCallback  callback,
                                                      gpointer            user_data);
+guint                lrg_gui_draw_list_shadow       (LrgGuiDrawList     *self,
+                                                     const LrgGuiRect   *rect,
+                                                     LrgGuiColor         color,
+                                                     gfloat              blur,
+                                                     gfloat              offset_y,
+                                                     gfloat              rounding);
 void                 lrg_gui_draw_list_set_rect     (LrgGuiDrawList     *self,
                                                      guint               index,
                                                      const LrgGuiRect   *rect);
@@ -1039,6 +1102,7 @@ const LrgGuiCommand *lrg_gui_draw_list_find_text    (LrgGuiDrawList     *self,
 #+end_src
 
 - =lrg_gui_draw_list_clear()= removes every command but keeps the allocation, including the list's text arena.
+- =lrg_gui_draw_list_shadow()= records a soft shadow (draw it before the surface that casts it); backends without shadow support ignore the command.
 - The rectangle functions return the command index; =lrg_gui_draw_list_set_rect()= patches that rectangle later, which is how a popup background is recorded before its content is measured.
 - =lrg_gui_draw_list_text()= copies =length= bytes (=-1= = NUL-terminated) into a per-list text arena: blocks of 16 KiB kept across clears, so recording text is a copy rather than an allocation. A command's =text= stays valid until the list is cleared or finalized; never free it.
 - =lrg_gui_draw_list_append()= copies =other='s commands onto the end.
@@ -1053,7 +1117,7 @@ typedef void (*LrgGuiDrawCallback) (const LrgGuiRect *rect,
                                     gpointer          user_data);
 #+end_src
 
-A callback command lets arbitrary rendering happen at a precise point in the UI's paint order, so UI drawn later in the same layer (overlay toolbars, the gizmo, hints) composites on top of it and popups still cover it. The raylib backend ends its scissor mode before calling the hook (the hook manages its own GPU state) and restores the GUI clip afterwards. =user_data= must outlive the replay.
+A callback command lets arbitrary rendering happen at a precise point in the UI's paint order, so UI drawn later in the same layer (overlay toolbars, the gizmo, hints) composites on top of it and popups still cover it. The raylib backend records the hook as a paint callback: the SDF batch before it is drawn, the hook runs scissored to the GUI clip active at that point (the hook manages its own GPU state), and raylib's batch is flushed before the next instances. =user_data= must outlive the replay.
 
 The editor viewport renders the 3D scene into a render texture before the UI pass, then inside its dock panel records a callback that blits that texture into the panel rectangle, and finally covers the panel with an invisible button for input:
 
@@ -1291,6 +1355,8 @@ void          lrg_gui_raylib_apply_cursor     (LrgGuiRaylib   *self,
 :END:
 =lrg_gui_raylib_load_fonts()= (re)loads a proportional UI font and a monospace font rasterized at =size= pixels (pass =style->font_size=; reload when the scale changes). An explicit path wins; a =NULL= or empty path calls =lrg_gui_raylib_find_system_font()=, which probes a fixed list of common TrueType locations across distributions: DejaVu Sans, Noto Sans, Liberation Sans, Adwaita Sans and Open Sans for the UI font, and DejaVu Sans Mono, Noto Sans Mono, Liberation Mono and Source Code Pro for monospace (=/usr/share/fonts/...= paths as laid out by Fedora, Debian and Arch packages). It does not run =fc-match=; fontconfig-based fallback lookup lives in =LrgFontAtlas= ([[file:../text/font-atlas.org][Rich Text: LrgFontAtlas]]). The glyph set covers ASCII, Latin-1, Latin Extended-A and the symbols the editor draws (arrows, bullets, check marks, triangles, gear, warning sign, x, degree). A file that is missing or fails to load falls back to raylib's built-in font (for monospace, to the UI font first). =lrg_gui_raylib_get_font_path()= returns the UI font file actually in use, or =NULL= when the built-in font is used.
 
+Each face that loads also gets an SDF twin ([[file:../paint/text.org][Paint: SDF text]]): an =LrgPaintFont= for the same file with =lrg_paint_font_add_system_fallbacks()= applied. Editor text is then drawn as SDF glyph instances in the same batch as the shapes and measured with =lrg_paint_font_measure_text()=, so it stays crisp at any UI scale and falls back to symbol, emoji, CJK, Arabic and Hebrew fonts for characters the face lacks, with right-to-left runs reordered when libregnum is built with fribidi. The bitmap fonts above remain the path when the SDF font cannot be created and when no window is open (headless measurement is unchanged).
+
 On Fedora, =dejavu-sans-fonts= and =dejavu-sans-mono-fonts= satisfy the first candidates.
 
 *** Attach: measurement and clipboard
@@ -1333,8 +1399,8 @@ gchar *lrg_gui_context_get_clipboard       (LrgGuiContext          *self);
 - Fast input is never lost: =lrg_gui_raylib_attach()= chains GLFW mouse-button and key callbacks in front of raylib's (raylib only samples state once per frame). A press released before the next poll is still reported as "down" for one frame, so it produces a click, and every key press carries the modifiers GLFW reported with it, so a chord typed faster than a frame (Ctrl down, A, Ctrl up) keeps its Ctrl. Without a GLFW window the backend falls back to raylib's queue and sampled modifiers.
 - While the window is unfocused, held buttons, keys and modifiers read as released (GLFW delivers no releases then), so a drag cannot stay stuck after Alt+Tab.
 - raylib calls returning =bool= must see raylib's one-byte =_Bool=: libregnum builds with =-include stdbool.h= and =<libregnum.h>= includes =<stdbool.h>= before raylib (see AGENTS.md).
-- =lrg_gui_draw_list_circle_outline()= records a circle outline with a stroke width, centred on the radius like the list's other strokes (the width rides in the command's =rounding= field, which circles do not otherwise use; =lrg_gui_draw_list_circle()= with =filled= %FALSE leaves it 0, the one-pixel outline). The raylib backend draws strokes wider than 1 with raylib 6.2's =DrawCircleLinesEx()=, pushing its outer edge out by half the width because that call grows inward.
-- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. Clip push/pop become nested scissor rectangles (a change to the scissor rectangle already in effect is skipped, since ending and restarting scissor mode flushes raylib's batch); images draw a =GrlTexture='s raylib handle; callbacks run with scissoring suspended and the clip restored afterwards. While replaying, the backend points raylib's shapes texture (=SetShapesTexture()=) at the 3x3 white block raylib paints into every generated font atlas, using the UI font's atlas, so rectangles, circles and UI text use one texture and batch into far fewer draw calls; the previous shapes texture is restored around callbacks and when the replay ends. Without a loaded UI font nothing changes.
+- =lrg_gui_draw_list_circle_outline()= records a circle outline with a stroke width, centred on the radius like the list's other strokes (the width rides in the command's =rounding= field, which circles do not otherwise use; =lrg_gui_draw_list_circle()= with =filled= %FALSE leaves it 0, the one-pixel outline). The raylib backend draws it as an SDF ring: a circle of radius =radius + width / 2= with an inner border of =width= (at least 1 px) and no fill.
+- =lrg_gui_raylib_render()= replays a draw list; call it between =BeginDrawing()= and =EndDrawing()=. It translates every command into an =LrgPaintList= (see [[file:../paint/index.org][the paint module]]) and draws it with the shared =lrg_paint_renderer_get_default()=, so the whole editor frame is usually one or two instanced draw calls: filled and outlined rectangles become SDF rounded rectangles (true per-pixel anti-aliased corners and inner borders, outlines at least 1 px), =LRG_GUI_CMD_SHADOW= becomes an analytic soft shadow, lines become round-capped SDF segments (at least 1 px), triangles exact SDF triangles, filled circles SDF discs, images textured paint instances, and text one glyph instance per character from the loaded UI or monospace font atlas (raylib's built-in font gets the usual =font_size / 10= spacing), batched together with the shapes. Clip push/pop become per-instance clip rectangles tested in the shader, so clipping never splits a batch or changes the scissor state; unbalanced pushes are popped at the end. Callbacks become paint callbacks: the renderer ends its batch, applies the clip active at that point as a scissor rectangle, runs the callback and flushes raylib's batch before continuing.
 - =lrg_gui_raylib_apply_cursor()= maps =LrgGuiCursor= to raylib mouse cursors and only calls =SetMouseCursor()= when the shape changes.
 
 *** Complete host loop

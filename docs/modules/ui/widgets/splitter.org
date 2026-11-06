@@ -1,0 +1,156 @@
+* Splitter
+:PROPERTIES:
+:CUSTOM_ID: splitter
+:END:
+=LrgSplitter= shows two panes side by side (=LRG_ORIENTATION_HORIZONTAL=) or stacked (=LRG_ORIENTATION_VERTICAL=) with a draggable handle between them. The start pane gets =position= units along the orientation, the handle =handle-size= units, the end pane the rest.
+
+The position has two modes:
+- *Proportional* (the default, =lrg_splitter_set_fraction()=): the start pane keeps its share when the splitter is resized.
+- *Absolute* (=lrg_splitter_set_position()=): the start pane keeps its size in units.
+Either way it is clamped so both panes keep their minimum sizes; when both minimums do not fit, the start pane's wins. Dragging stores the new position in the current mode.
+
+The laid-out position is a spring: =set_position= / =set_fraction= with =animate = TRUE= (and keyboard moves) glide there, while drags and plain changes snap. The canvas clock drives it, so =lrg_canvas_update()= returns =TRUE= while the divider moves.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: splitter-creation
+:END:
+#+begin_src C
+LrgSplitter *split = lrg_splitter_new (LRG_ORIENTATION_HORIZONTAL);
+
+lrg_splitter_set_start_child (split, LRG_WIDGET (outliner));
+lrg_splitter_set_end_child (split, LRG_WIDGET (viewport));
+lrg_splitter_set_min_sizes (split, 160.0f, 320.0f);
+lrg_splitter_set_fraction (split, 0.25f, FALSE);
+lrg_splitter_set_default_fraction (split, 0.25f);
+#+end_src
+
+** The handle
+:PROPERTIES:
+:CUSTOM_ID: splitter-handle
+:END:
+The handle is a private focusable child widget (=lrg_splitter_get_handle()=). Keyboard and gamepad focus land on it, never on the splitter itself, so clicking inside a pane does not give the splitter the arrow keys. The splitter paints it as the =handle= part: a hairline with a grip pill in the middle that thickens and turns accent under the pointer, solid =ACCENT= with a glow while dragged. The core focus ring surrounds it after keyboard navigation.
+
+- Press and drag: the handle follows the pointer (the grab offset is kept; the pointer is captured, so the drag continues outside the splitter). =drag-begin= / =drag-end= bracket it; =lrg_splitter_get_dragging()= reports it.
+- Double click (two presses within 0.4 s of canvas time): back to the default fraction, animated.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: splitter-properties
+:END:
+| Property           | Type             | Default      | Meaning                                       |
+|--------------------+------------------+--------------+-----------------------------------------------|
+| =orientation=      | =LrgOrientation= | =horizontal= | Panes side by side or stacked                 |
+| =position=         | =gfloat=         | (computed)   | Start pane size (clamped target); setting it switches to absolute mode |
+| =fraction=         | =gfloat=         | 0.5          | Start pane share; setting it switches to proportional mode |
+| =default-fraction= | =gfloat=         | 0.5          | Restored by double click, Enter, =lrg_splitter_reset()= |
+| =min-start-size=   | =gfloat=         | 0            | Smallest start pane                           |
+| =min-end-size=     | =gfloat=         | 0            | Smallest end pane                             |
+| =handle-size=      | =gfloat=         | 8            | Thickness of the handle (grab zone)           |
+=lrg_splitter_get_position()= is the target; =lrg_splitter_get_displayed_position()= is the spring value currently laid out. =notify::position= and =notify::fraction= fire when the target changes.
+
+| Signal       | Arguments | Emitted                          |
+|--------------+-----------+----------------------------------|
+| =drag-begin= | none      | The handle was grabbed           |
+| =drag-end=   | none      | The handle was released          |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: splitter-parts
+:END:
+| Part    | State       | Built-in look                                                         |
+|---------+-------------+-----------------------------------------------------------------------|
+| =handle= | resting     | Line in =BORDER=, =BORDER_WIDTH= thick; grip pill in =TEXT_MUTED=      |
+| =handle= | =hovered=   | =ACCENT= at 70 %, 4 thick; grip in =ACCENT=                           |
+| =handle= | =pressed=   | Solid =ACCENT=, 4 thick, accent glow (while dragging)                  |
+| =handle= | =disabled=  | 45 % opacity                                                          |
+| =focus= | focus visible | Core focus ring around the handle                                   |
+The look blends with the handle widget's hover and press springs. =size= is the line thickness, =foreground= the grip colour.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: splitter-keyboard
+:END:
+With the handle focused:
+| Input                                    | Action                                 |
+|------------------------------------------+----------------------------------------|
+| Left / Right (horizontal), Up / Down (vertical) | Move by 10 units, animated      |
+| Home                                     | Collapse the start pane to its minimum |
+| End                                      | Collapse the end pane to its minimum   |
+| Enter / Space / gamepad A                | Back to the default fraction           |
+Arrows across the orientation are not consumed, so focus navigation still works.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: splitter-theming
+:END:
+#+begin_src yaml
+styles:
+  # A visible bar instead of a hairline
+  - widget: LrgSplitter
+    part: handle
+    background: "#34343c"
+    size: 3
+  - widget: LrgSplitter
+    part: handle
+    state: [pressed]
+    background: "#34d399"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: splitter-example
+:END:
+#+begin_src C
+static void
+on_drag_end (LrgSplitter *split,
+             gpointer     user_data)
+{
+	save_layout_fraction (lrg_splitter_get_fraction (split));
+}
+
+LrgSplitter *outer = lrg_splitter_new (LRG_ORIENTATION_HORIZONTAL);
+LrgSplitter *inner = lrg_splitter_new (LRG_ORIENTATION_VERTICAL);
+
+lrg_splitter_set_start_child (inner, LRG_WIDGET (scene_view));
+lrg_splitter_set_end_child (inner, LRG_WIDGET (console));
+lrg_splitter_set_position (inner, 480.0f, FALSE);
+lrg_splitter_set_handle_size (inner, 6.0f);
+
+lrg_splitter_set_start_child (outer, LRG_WIDGET (tree));
+lrg_splitter_set_end_child (outer, LRG_WIDGET (inner));
+g_signal_connect (outer, "drag-end", G_CALLBACK (on_drag_end), NULL);
+
+/* Slide the side panel shut, then back */
+lrg_splitter_set_position (outer, 0.0f, TRUE);
+lrg_splitter_reset (outer, TRUE);
+#+end_src
+
+** Notes
+:PROPERTIES:
+:CUSTOM_ID: splitter-notes
+:END:
+- Panes are placed with =lrg_widget_place_in_slot()= (alignment and margins apply) and clipped to their slot when painted.
+- The preferred size is both panes at least their minimum plus the handle.
+- Use =lrg_splitter_set_start_child()= / =lrg_splitter_set_end_child()= (=NULL= removes); removing a pane with =lrg_container_remove_child()= directly is not supported.
+- =lrg_splitter_get_min_sizes()= reads both minimums; =lrg_splitter_get_orientation()= / =lrg_splitter_set_orientation()=, =lrg_splitter_get_start_child()=, =lrg_splitter_get_end_child()=, =lrg_splitter_get_default_fraction()= and =lrg_splitter_get_handle_size()= are the remaining accessors.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: splitter-api
+:END:
+- =lrg_splitter_new (LrgOrientation orientation)=
+- =lrg_splitter_get_orientation= / =lrg_splitter_set_orientation=
+- =lrg_splitter_set_start_child= / =lrg_splitter_get_start_child=, =lrg_splitter_set_end_child= / =lrg_splitter_get_end_child=
+- =lrg_splitter_get_position= / =lrg_splitter_set_position (self, position, animate)=, =lrg_splitter_get_displayed_position=
+- =lrg_splitter_get_fraction= / =lrg_splitter_set_fraction (self, fraction, animate)=
+- =lrg_splitter_get_default_fraction= / =lrg_splitter_set_default_fraction=, =lrg_splitter_reset (self, animate)=
+- =lrg_splitter_set_min_sizes= / =lrg_splitter_get_min_sizes=
+- =lrg_splitter_get_handle_size= / =lrg_splitter_set_handle_size=, =lrg_splitter_get_handle=, =lrg_splitter_get_dragging=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: splitter-related
+:END:
+- [[file:hbox.org][HBox]], [[file:vbox.org][VBox]]
+- [[file:expander.org][Expander]]

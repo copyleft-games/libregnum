@@ -122,6 +122,12 @@ PUBLIC_HEADERS := \
 	src/shapes/lrg-circle3d.h \
 	src/shapes/lrg-torus3d.h \
 	src/shapes/lrg-icosphere3d.h \
+	src/paint/lrg-paint-types.h \
+	src/paint/lrg-paint-list.h \
+	src/paint/lrg-paint-renderer.h \
+	src/paint/lrg-paint-fx.h \
+	src/paint/lrg-paint-icons.h \
+	src/paint/lrg-paint-font.h \
 	src/ui/lrg-ui-event.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
@@ -134,13 +140,58 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-hbox.h \
 	src/ui/lrg-grid.h \
 	src/ui/lrg-tab-view.h \
+	src/ui/lrg-canvas-input.h \
 	src/ui/lrg-canvas.h \
 	src/ui/lrg-checkbox.h \
 	src/ui/lrg-progress-bar.h \
 	src/ui/lrg-image.h \
 	src/ui/lrg-slider.h \
 	src/ui/lrg-text-input.h \
+	src/ui/lrg-style.h \
 	src/ui/lrg-theme.h \
+	src/ui/lrg-overlay.h \
+	src/ui/lrg-scroll-box.h \
+	src/ui/lrg-separator.h \
+	src/ui/lrg-spin-box.h \
+	src/ui/lrg-combo-box.h \
+	src/ui/lrg-dialog.h \
+	src/ui/lrg-toast.h \
+	src/ui/lrg-toast-queue.h \
+	src/ui/lrg-list-view.h \
+	src/ui/lrg-table.h \
+	src/ui/lrg-tree-view.h \
+	src/ui/lrg-tile-view.h \
+	src/ui/lrg-splitter.h \
+	src/ui/lrg-expander.h \
+	src/ui/lrg-wrap-box.h \
+	src/ui/lrg-color-picker.h \
+	src/ui/lrg-rating.h \
+	src/ui/lrg-date-picker.h \
+	src/ui/lrg-time-picker.h \
+	src/ui/lrg-breadcrumb.h \
+	src/ui/lrg-markdown-label.h \
+	src/ui/lrg-island.h \
+	src/ui/lrg-ui-loader.h \
+	src/ui/lrg-ui-inspector.h \
+	src/ui/lrg-menu.h \
+	src/ui/lrg-menu-bar.h \
+	src/ui/lrg-viewport.h \
+	src/ui/lrg-custom-widget.h \
+	src/ui/lrg-anchor-layout.h \
+	src/ui/lrg-switcher.h \
+	src/ui/lrg-size-box.h \
+	src/ui/lrg-text-editor.h \
+	src/ui/lrg-syntax.h \
+	src/ui/lrg-node-graph.h \
+	src/ui/lrg-timeline-view.h \
+	src/ui/lrg-dock-area.h \
+	src/ui/lrg-ui-actions.h \
+	src/ui/lrg-file-browser.h \
+	src/ui/lrg-file-dialog.h \
+	src/ui/lrg-block-editor.h \
+	src/ui/lrg-notification.h \
+	src/ui/lrg-header-bar.h \
+	src/ui/lrg-pagination.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
@@ -446,6 +497,7 @@ PUBLIC_HEADERS := \
 	src/tween/lrg-tween-parallel.h \
 	src/tween/lrg-tween-manager.h \
 	src/tween/lrg-keyframe-curve.h \
+	src/tween/lrg-spring.h \
 	src/transition/lrg-transition.h \
 	src/transition/lrg-fade-transition.h \
 	src/transition/lrg-wipe-transition.h \
@@ -770,6 +822,12 @@ SOURCES := \
 	src/shapes/lrg-torus3d.c \
 	src/shapes/lrg-icosphere3d.c \
 	src/shapes/lrg-shape3d-mesh.c \
+	src/paint/lrg-paint-types.c \
+	src/paint/lrg-paint-list.c \
+	src/paint/lrg-paint-renderer.c \
+	src/paint/lrg-paint-fx.c \
+	src/paint/lrg-paint-icons.c \
+	src/paint/lrg-paint-font.c \
 	src/ui/lrg-ui-event.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
@@ -782,13 +840,58 @@ SOURCES := \
 	src/ui/lrg-hbox.c \
 	src/ui/lrg-grid.c \
 	src/ui/lrg-tab-view.c \
+	src/ui/lrg-canvas-input.c \
 	src/ui/lrg-canvas.c \
 	src/ui/lrg-checkbox.c \
 	src/ui/lrg-progress-bar.c \
 	src/ui/lrg-image.c \
 	src/ui/lrg-slider.c \
 	src/ui/lrg-text-input.c \
+	src/ui/lrg-style.c \
 	src/ui/lrg-theme.c \
+	src/ui/lrg-overlay.c \
+	src/ui/lrg-scroll-box.c \
+	src/ui/lrg-separator.c \
+	src/ui/lrg-spin-box.c \
+	src/ui/lrg-combo-box.c \
+	src/ui/lrg-dialog.c \
+	src/ui/lrg-toast.c \
+	src/ui/lrg-toast-queue.c \
+	src/ui/lrg-list-view.c \
+	src/ui/lrg-table.c \
+	src/ui/lrg-tree-view.c \
+	src/ui/lrg-tile-view.c \
+	src/ui/lrg-splitter.c \
+	src/ui/lrg-expander.c \
+	src/ui/lrg-wrap-box.c \
+	src/ui/lrg-color-picker.c \
+	src/ui/lrg-rating.c \
+	src/ui/lrg-date-picker.c \
+	src/ui/lrg-time-picker.c \
+	src/ui/lrg-breadcrumb.c \
+	src/ui/lrg-markdown-label.c \
+	src/ui/lrg-island.c \
+	src/ui/lrg-ui-loader.c \
+	src/ui/lrg-ui-inspector.c \
+	src/ui/lrg-menu.c \
+	src/ui/lrg-menu-bar.c \
+	src/ui/lrg-viewport.c \
+	src/ui/lrg-custom-widget.c \
+	src/ui/lrg-anchor-layout.c \
+	src/ui/lrg-switcher.c \
+	src/ui/lrg-size-box.c \
+	src/ui/lrg-text-editor.c \
+	src/ui/lrg-syntax.c \
+	src/ui/lrg-node-graph.c \
+	src/ui/lrg-timeline-view.c \
+	src/ui/lrg-dock-area.c \
+	src/ui/lrg-ui-actions.c \
+	src/ui/lrg-file-browser.c \
+	src/ui/lrg-file-dialog.c \
+	src/ui/lrg-block-editor.c \
+	src/ui/lrg-notification.c \
+	src/ui/lrg-header-bar.c \
+	src/ui/lrg-pagination.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \
@@ -1099,6 +1202,7 @@ SOURCES := \
 	src/tween/lrg-tween-parallel.c \
 	src/tween/lrg-tween-manager.c \
 	src/tween/lrg-keyframe-curve.c \
+	src/tween/lrg-spring.c \
 	src/transition/lrg-transition.c \
 	src/transition/lrg-fade-transition.c \
 	src/transition/lrg-wipe-transition.c \
@@ -1805,6 +1909,7 @@ $(BUILDDIR)/$(PC_FILE): libregnum.pc.in config.mk | $(BUILDDIR)
 	        -e 's|@INCLUDEDIR@|$(INCLUDEDIR)|g' \
 	        -e 's|@VERSION@|$(VERSION)|g' \
 	        -e 's|@API_VERSION@|$(API_VERSION)|g' \
+	        -e 's|@FRIBIDI_PC@|$(if $(filter 1,$(HAS_FRIBIDI)),fribidi,)|g' \
 	        $< > $@
 
 # =============================================================================
@@ -2158,6 +2263,13 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 # =============================================================================
 # Documentation
 # =============================================================================
+
+# Every public symbol of the paint, spring and retained UI modules must
+# be mentioned somewhere under docs/ (org pages)
+DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h
+
+docs-check:
+	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)
 
 docs:
 ifeq ($(BUILD_DOCS),1)
@@ -2639,7 +2751,7 @@ $(OBJDIR)/src/ui/lrg-ui-event.o: src/ui/lrg-ui-event.c src/ui/lrg-ui-event.h
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/src/ui/lrg-widget.o: src/ui/lrg-widget.c src/ui/lrg-widget.h src/ui/lrg-widget-private.h
+$(OBJDIR)/src/ui/lrg-widget.o: src/ui/lrg-widget.c src/ui/lrg-widget.h src/ui/lrg-widget-private.h src/ui/lrg-container.h src/ui/lrg-theme.h src/ui/lrg-style.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
@@ -2684,7 +2796,7 @@ $(OBJDIR)/src/ui/lrg-tab-view.o: src/ui/lrg-tab-view.c src/ui/lrg-tab-view.h src
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/src/ui/lrg-canvas.o: src/ui/lrg-canvas.c src/ui/lrg-canvas.h src/ui/lrg-container.h
+$(OBJDIR)/src/ui/lrg-canvas.o: src/ui/lrg-canvas.c src/ui/lrg-canvas.h src/ui/lrg-canvas-input.h src/ui/lrg-canvas-private.h src/ui/lrg-container.h src/ui/lrg-ui-event.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
@@ -2988,7 +3100,7 @@ $(OBJDIR)/src/steam/lrg-workshop-manager.o: src/steam/lrg-workshop-manager.c src
 # Phony Targets
 # =============================================================================
 
-.PHONY: all lib lib-static lib-shared gir test tests check examples docs
+.PHONY: all lib lib-static lib-shared gir test tests check examples docs docs-check
 .PHONY: install uninstall clean distclean debug-build generate
 .PHONY: deps deps-graylib deps-yamlglib deps-crispy deps-clean check-deps
 

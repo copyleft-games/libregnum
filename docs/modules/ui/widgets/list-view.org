@@ -1,0 +1,216 @@
+* List View
+:PROPERTIES:
+:CUSTOM_ID: list-view
+:END:
+=LrgListView= shows the items of a =GListModel= as a scrollable list of equal-height rows, with single or multiple selection, keyboard navigation and activation. It is virtualized: only the rows inside the viewport, plus one buffer row above and below, exist as widgets. Scrolling rebinds those widgets to the items coming into view, so a model of 10,000 or 1,000,000 items costs a dozen widgets. Scrolling is spring-smoothed with a rubber band and an overlay scrollbar, exactly like [[file:scroll-box.org][LrgScrollBox]]: the spring and the bar fade are stepped by the widget's =step()= on the canvas clock, and =lrg_canvas_update()= returns =TRUE= while the list glides, bounces or the bar is shown / fading.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: list-view-creation
+:END:
+#+begin_src C
+g_autoptr(GListStore) store = g_list_store_new (MY_TYPE_SAVE_SLOT);
+LrgListView          *list = lrg_list_view_new ();
+
+lrg_list_view_set_model (list, G_LIST_MODEL (store));
+lrg_widget_set_fill_weight (LRG_WIDGET (list), 1.0f);
+#+end_src
+
+** Rows: the factory
+:PROPERTIES:
+:CUSTOM_ID: list-view-factory
+:END:
+Rows are made by a factory of two callbacks: =create= returns a new, empty row widget; =bind= fills a row for one item and position. Rows are recycled, so =bind= must set everything that differs between items.
+
+The default factory creates an =LrgLabel= (vertically centred) and shows the item's first readable string property among =string=, =text=, =name=, =label= and =title=, else the item's type name.
+
+#+begin_src C
+static LrgWidget *
+create_row (LrgListView *list,
+            gpointer     user_data)
+{
+	LrgHBox *row = lrg_hbox_new ();
+	LrgLabel *name = lrg_label_new ("");
+	LrgLabel *date = lrg_label_new ("");
+
+	lrg_widget_set_name (LRG_WIDGET (name), "name");
+	lrg_widget_set_name (LRG_WIDGET (date), "date");
+	lrg_widget_set_fill_weight (LRG_WIDGET (name), 1.0f);
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (name));
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (date));
+	g_object_unref (name);
+	g_object_unref (date);
+	return LRG_WIDGET (row);
+}
+
+static void
+bind_row (LrgListView *list,
+          LrgWidget   *row,
+          GObject     *item,
+          guint        position,
+          gpointer     user_data)
+{
+	MySaveSlot *slot = MY_SAVE_SLOT (item);
+
+	lrg_label_set_text (LRG_LABEL (lrg_widget_find (row, "name")), my_save_slot_get_title (slot));
+	lrg_label_set_text (LRG_LABEL (lrg_widget_find (row, "date")), my_save_slot_get_date (slot));
+}
+
+lrg_list_view_set_factory (list, create_row, bind_row, NULL, NULL);
+#+end_src
+Each row is placed in a slot as wide as the viewport (minus a small inset) and one row tall, honouring the row's alignment and margin. Rows get the =SELECTED= state flag while their item is selected, so row widgets can style themselves from it.
+
+** Selection and activation
+:PROPERTIES:
+:CUSTOM_ID: list-view-selection
+:END:
+| Mode       | Click          | Ctrl+click          | Shift+click                     |
+|------------+----------------+---------------------+---------------------------------|
+| =none=     | moves cursor   | moves cursor        | moves cursor                    |
+| =single=   | selects only it | same as click      | same as click                   |
+| =multiple= | selects only it | toggles it         | selects the range from the anchor |
+- A second click on the same row within 400 ms emits =row-activated=.
+- The /cursor/ is the keyboard row; =get_selected()= prefers it when it is selected, else the lowest selected position.
+- Model changes keep the selection on its items: inserting before a selected item shifts it, removing a selected item unselects it (=selection-changed= is emitted).
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: list-view-properties
+:END:
+| Property         | Type               | Default  | Meaning                         |
+|------------------+--------------------+----------+---------------------------------|
+| =model=          | =GListModel=       | NULL     | Items to show                    |
+| =row-height=     | =gfloat=           | 0        | Height of every row; 0 = theme =ROW_HEIGHT= |
+| =selection-mode= | =LrgSelectionMode= | =single= | none / single / multiple         |
+Inherited: =padding= (default 4, around the rows).
+
+| Signal              | Arguments        | Emitted                                    |
+|---------------------+------------------+--------------------------------------------|
+| =selection-changed= | none             | Rows were selected or unselected            |
+| =row-activated=     | =guint position= | Double click (two presses on the row within 0.4 s of canvas time), or Enter / Space / gamepad A on the cursor row |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: list-view-parts
+:END:
+| Part           | State                   | Built-in look                                         |
+|----------------+-------------------------+-------------------------------------------------------|
+| =box=          | resting                 | =INPUT= background, =BORDER= border, =CORNER_RADIUS=   |
+| =box=          | =focused=               | =ACCENT= border                                       |
+| =box=          | =disabled=              | 45 % opacity                                          |
+| =item=         | resting                 | Transparent rounded row (radius =CORNER_RADIUS= - 2)  |
+| =item=         | =hovered=               | =CONTROL_HOVER=                                       |
+| =item=         | =pressed=               | =CONTROL_PRESSED=                                     |
+| =item=         | =selected=              | =SELECTION= (translucent accent)                       |
+| =item=         | =selected= + =hovered=  | =SELECTION=, a little more opaque                      |
+| =indicator=    | focus visible           | Cursor-row outline in =FOCUS=, 0.75 x =FOCUS_RING_WIDTH= |
+| =scrollbar=, =scroll-thumb= | as in [[file:scroll-box.org][LrgScrollBox]] |                                         |
+| =focus=        | focus visible           | Core focus ring around the list                       |
+Row backgrounds blend with each row widget's own hover and press springs, so highlights glide as the pointer moves.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: list-view-keyboard
+:END:
+| Key                   | Action                                                      |
+|-----------------------+-------------------------------------------------------------|
+| Up / Down             | Cursor up / down one row; selection follows; scrolls into view |
+| Shift + Up / Down     | Extend the selection from the anchor (multiple mode)        |
+| Page Up / Page Down   | Cursor up / down by the number of whole visible rows        |
+| Home / End            | First / last row                                            |
+| Enter / Space / gamepad A | =row-activated= for the cursor row                     |
+| Wheel                 | Scroll 48 units per notch                                   |
+Up and Down are consumed even at the ends, so focus stays in the list; Tab leaves it. A gamepad d-pad currently moves focus between widgets instead of moving the cursor, because the canvas sends gamepad directions straight to focus navigation.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: list-view-theming
+:END:
+#+begin_src yaml
+styles:
+  # Solid accent selection with a glow
+  - widget: LrgListView
+    part: item
+    state: [selected]
+    background: "#7c6cff"
+    glow: "#7c6cff66"
+    glow-size: 8
+  # Pill-shaped rows
+  - widget: LrgListView
+    part: item
+    radius: 16
+  # Borderless list on a panel
+  - widget: LrgListView
+    class: flat
+    part: box
+    background: "#00000000"
+    border-width: 0
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: list-view-example
+:END:
+#+begin_src C
+static void
+on_activated (LrgListView *list,
+              guint        position,
+              gpointer     user_data)
+{
+	g_autoptr(GObject) item = g_list_model_get_item (lrg_list_view_get_model (list), position);
+
+	load_level (item);
+}
+
+g_autoptr(GListStore) levels = g_list_store_new (G_TYPE_SIMPLE_ACTION);
+LrgListView          *list = lrg_list_view_new ();
+guint                 i;
+
+/* The default factory shows each action's "name" */
+for (i = 0; i < 10000; i++)
+  {
+    g_autofree gchar *name = g_strdup_printf ("level-%04u", i);
+    g_autoptr(GSimpleAction) a = g_simple_action_new (name, NULL);
+
+    g_list_store_append (levels, a);
+  }
+
+lrg_list_view_set_model (list, G_LIST_MODEL (levels));
+lrg_list_view_set_selection_mode (list, LRG_SELECTION_MODE_SINGLE);
+g_signal_connect (list, "row-activated", G_CALLBACK (on_activated), NULL);
+lrg_widget_set_size (LRG_WIDGET (list), 320.0f, 400.0f);
+
+lrg_list_view_select (list, 42);
+lrg_list_view_scroll_to (list, 42, TRUE);
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: list-view-performance
+:END:
+- Rows alive: about =viewport / row_height + 2=, independent of the model size (=lrg_list_view_get_n_rows()=).
+- Plain scrolling only moves rows; a row is re-measured and re-placed only after it is rebound or the list is resized.
+- The preferred size does not depend on the items (220 wide, up to 8 rows tall): give the list a fill weight or a size.
+- Selection is a set of positions; Shift-selecting a huge range stores every position in it.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: list-view-api
+:END:
+- =lrg_list_view_new (void)=
+- =lrg_list_view_set_model= / =get_model=
+- =lrg_list_view_set_factory (self, LrgListViewCreateFunc create, LrgListViewBindFunc bind, gpointer user_data, GDestroyNotify destroy)=
+- =lrg_list_view_get_row_height= / =set_row_height=
+- =lrg_list_view_get_selection_mode= / =set_selection_mode=
+- =lrg_list_view_get_selected=, =get_n_selected=, =is_selected (pos)=, =select (pos)=, =unselect (pos)=, =unselect_all=
+- =lrg_list_view_get_cursor=
+- =lrg_list_view_scroll_to (self, guint position, gboolean animate)=, =get_scroll_offset=
+- =lrg_list_view_get_row_widget (self, guint position)=, =get_n_rows=
+- =LRG_LIST_VIEW_INVALID_POSITION=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: list-view-related
+:END:
+- [[file:scroll-box.org][Scroll box]]
+- [[file:label.org][Label]]

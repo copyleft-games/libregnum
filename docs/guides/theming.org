@@ -1,0 +1,615 @@
+#+title: Theming Guide
+#+description: Writing LrgTheme YAML files, deriving palettes from an accent, presets, scoped and runtime themes, sharing with the editor GUI, contrast checks and shipping themes
+#+authors: Zach Podbielniak
+#+categories: libregnum ui theme guide
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* Theming Guide
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > Theming
+#+end_quote
+
+A theme (=LrgTheme=) is everything a widget needs to look like it belongs: 27 colour *roles*, 18 *metrics* (sizes in canvas units), a *motion* preset, a UI font, and a list of *style rules* that restyle individual parts of individual widgets. Widgets never hard-code colours; they ask their theme for roles (=LRG_THEME_COLOR_ACCENT=, =LRG_THEME_COLOR_PANEL= ...), so one theme file reskins every widget in a game, and swapping the default theme reskins a running UI on the next frame.
+
+This guide walks through writing and using themes. The API reference is [[file:../modules/ui/theme.org][LrgTheme]]; part looks and rule matching are explained in [[file:../modules/ui/styling.org][UI styling]].
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: theming-quick-start
+:END:
+#+begin_src c
+g_autoptr(GError)   error = NULL;
+g_autoptr(LrgTheme) theme = NULL;
+
+/* 1. a built-in preset ... */
+theme = lrg_theme_new_preset ("catppuccin-mocha");
+
+/* 2. ... or your own file (which may itself start from a preset) */
+g_clear_object (&theme);
+theme = lrg_theme_new_from_file ("data/ui/theme.yaml", &error);
+if (theme == NULL)
+{
+	g_warning ("theme: %s", error->message);
+	theme = lrg_theme_new ();               /* fall back to the default look */
+}
+
+/* 3. make it the theme every widget uses */
+lrg_theme_set_default (theme);
+#+end_src
+
+=lrg_theme_new()= (and the default theme you get without doing anything) is the =midnight= preset.
+
+** Anatomy of a theme file
+:PROPERTIES:
+:CUSTOM_ID: theming-file
+:END:
+A theme file is one YAML mapping. Every key is optional; an empty document changes nothing.
+
+| Key | Value | Meaning |
+|-----+-------+---------|
+| =preset= | preset name | Start from a built-in preset: colours, metrics, motion, dark flag and name |
+| =name= | string | Theme name (=lrg_theme_get_name()=) |
+| =dark= | =true= / =false= (or =yes= / =no=) | Dark theme flag; only affects how =accent= derives shades |
+| =motion= | =none=, =snappy=, =smooth=, =bouncy=, =wobbly= | Spring preset for every widget transition |
+| =accent= | colour | Brand colour; derives the whole accent family (below) |
+| =font= | path to a TTF/OTF | UI font; relative paths are resolved against the theme file's directory |
+| =colors= | mapping of role nick to colour | Individual colour roles |
+| =metrics= | mapping of metric nick to number | Individual metrics |
+| =styles= | list of style rules | Part looks matched by widget, class, part and state ([[file:../modules/ui/styling.org::#styling-yaml][schema]]) |
+
+Keys are applied in this order regardless of their order in the file: =preset=, then =name=, =dark= and =motion=, then =accent=, then =colors= and =metrics=, then =styles= are *appended* to the theme's existing rules, then =font=. So =colors= can override a colour =accent= derived, and =accent= is derived with the file's =dark= value.
+
+Colours are hex strings: =#rgb=, =#rgba=, =#rrggbb= or =#rrggbbaa=. *Always quote them*: in YAML an unquoted =#= starts a comment, so =accent: #7c6cff= is an empty value and the load fails with "expected a hex colour like "#7c6cff" (quote it: '#' starts a YAML comment)".
+
+*** A complete example
+:PROPERTIES:
+:CUSTOM_ID: theming-example
+:END:
+#+begin_src yaml
+# data/ui/ember.yaml: a warm dark theme for a fantasy game
+preset: midnight            # start from the dark default
+name: ember
+dark: true
+motion: bouncy              # playful transitions
+accent: '#ff7a3d'           # derives hover/pressed/focus/selection/link/text-on-accent
+font: fonts/Alegreya-Regular.ttf   # next to this file
+
+colors:
+  window: '#120d0b'
+  panel: '#1d1512'
+  surface: '#2a1f1a'
+  border: '#3d2e26'
+  text: '#f3e6dc'
+  text-muted: '#b39a8a'
+  control: '#2e221c'
+  control-hover: '#3a2b23'
+  control-pressed: '#47352b'
+  popup: '#231a16'
+  shadow: '#000000b8'
+  veil: '#0a0605a0'
+
+metrics:
+  font-size: 18
+  corner-radius: 10
+  popup-radius: 16
+  control-height: 40
+  shadow-blur: 24
+  shadow-offset-y: 8
+
+styles:
+  # every primary button gets a fiery gradient and a glow
+  - widget: LrgButton
+    class: primary
+    gradient:
+      kind: linear
+      angle: 90
+      start: '#ff9a5c'
+      end: '#e0521f'
+    glow: '#ff7a3d55'
+    glow-size: 12
+  - widget: LrgButton
+    class: primary
+    part: label
+    foreground: '#1a0f0a'
+#+end_src
+
+** Colour roles
+:PROPERTIES:
+:CUSTOM_ID: theming-roles
+:END:
+| Role | Nick | Used for |
+|------+------+----------|
+| =WINDOW= | =window= | App / game background behind all UI (=LrgCanvas:paint-background=) |
+| =PANEL= | =panel= | Panels and cards |
+| =SURFACE= | =surface= | Raised surfaces inside panels |
+| =BORDER= | =border= | Hairline borders and separators |
+| =TEXT= | =text= | Primary text |
+| =TEXT_MUTED= | =text-muted= | Secondary text, placeholders |
+| =TEXT_ON_ACCENT= | =text-on-accent= | Text on top of the accent colour (derived) |
+| =ACCENT= | =accent= | Brand / primary action colour |
+| =ACCENT_HOVER= | =accent-hover= | Accent under the pointer (derived) |
+| =ACCENT_PRESSED= | =accent-pressed= | Accent while pressed (derived) |
+| =CONTROL= | =control= | Button and control body |
+| =CONTROL_HOVER= | =control-hover= | Control body under the pointer |
+| =CONTROL_PRESSED= | =control-pressed= | Control body while pressed |
+| =INPUT= | =input= | Text-entry background |
+| =FOCUS= | =focus= | Focus ring (derived) |
+| =SELECTION= | =selection= | Selected rows, text selection (derived) |
+| =TRACK= | =track= | Slider / progress track |
+| =HANDLE= | =handle= | Slider thumb, switch knob |
+| =POPUP= | =popup= | Popup and menu surface |
+| =TOOLTIP= | =tooltip= | Tooltip surface |
+| =SHADOW= | =shadow= | Drop-shadow colour; its alpha is the strength |
+| =VEIL= | =veil= | Modal backdrop dimming |
+| =SUCCESS= | =success= | Positive status |
+| =WARNING= | =warning= | Warning status |
+| =DANGER= | =danger= | Destructive / error status |
+| =LINK= | =link= | Hyperlinks (derived) |
+| =DISABLED= | =disabled= | Disabled foreground |
+
+In C: =lrg_theme_get_color (theme, LRG_THEME_COLOR_PANEL)= (transfer none), =lrg_theme_set_color()=.
+
+** Metrics
+:PROPERTIES:
+:CUSTOM_ID: theming-metrics
+:END:
+| Metric | Nick | Default | Meaning |
+|--------+------+---------+---------|
+| =FONT_SIZE= | =font-size= | 16 | Body text |
+| =FONT_SIZE_SMALL= | =font-size-small= | 12 | Captions |
+| =FONT_SIZE_LARGE= | =font-size-large= | 24 | Headings |
+| =FONT_SIZE_TITLE= | =font-size-title= | 32 | Titles |
+| =CORNER_RADIUS= | =corner-radius= | 8 | Control corner radius |
+| =BORDER_WIDTH= | =border-width= | 1 | Border thickness |
+| =CONTROL_HEIGHT= | =control-height= | 36 | Default height of buttons, entries, combos |
+| =PADDING_X= | =padding-x= | 14 | Horizontal padding inside controls |
+| =PADDING_Y= | =padding-y= | 8 | Vertical padding inside controls |
+| =SPACING= | =spacing= | 8 | Gap between siblings |
+| =ROW_HEIGHT= | =row-height= | 32 | List row height |
+| =POPUP_RADIUS= | =popup-radius= | 12 | Corner radius of popups, dialogs, toasts |
+| =SHADOW_BLUR= | =shadow-blur= | 18 | Default elevation blur |
+| =SHADOW_OFFSET_Y= | =shadow-offset-y= | 6 | Default elevation offset |
+| =FOCUS_RING_WIDTH= | =focus-ring-width= | 2 | Focus ring thickness |
+| =SCROLLBAR_SIZE= | =scrollbar-size= | 8 | Scrollbar thickness |
+| =CHECK_SIZE= | =check-size= | 20 | Check box / radio size |
+| =HANDLE_SIZE= | =handle-size= | 18 | Slider thumb diameter |
+
+In C: =lrg_theme_get_metric (theme, LRG_THEME_METRIC_SPACING)=, =lrg_theme_set_metric()=.
+
+** Deriving a palette from an accent
+:PROPERTIES:
+:CUSTOM_ID: theming-accent
+:END:
+=accent:= in a file, or =lrg_theme_set_accent (theme, &color)= in C, sets =ACCENT= and derives the family in one step, so a single brand colour recolours every widget consistently:
+
+| Role | Dark theme | Light theme |
+|------+------------+-------------|
+| =ACCENT_HOVER= | accent lightened 16 % | accent darkened 8 % |
+| =ACCENT_PRESSED= | accent darkened 14 % | accent darkened 20 % |
+| =LINK= | accent lightened 30 % | accent darkened 10 % |
+| =FOCUS= | the accent | the accent |
+| =SELECTION= | the accent at 32 % alpha | the accent at 32 % alpha |
+| =TEXT_ON_ACCENT= | near-black =#111116= or white, whichever has the higher WCAG contrast with the accent | same |
+
+"Lightened / darkened n %" is =lrg_paint_color_shade()= towards white or black. The =dark= flag picks the column, so set =dark= before (or in the same file as) the accent. =lrg_theme_set_color (theme, LRG_THEME_COLOR_ACCENT, ...)= sets only the accent itself, without deriving.
+
+#+begin_src c
+/* let the player pick a team colour at runtime */
+static void
+on_team_colour_chosen (const GrlColor *colour)
+{
+	lrg_theme_set_accent (lrg_theme_get_default (), colour);
+}
+#+end_src
+
+** Built-in presets
+:PROPERTIES:
+:CUSTOM_ID: theming-presets
+:END:
+=lrg_theme_list_presets()= returns the names; =lrg_theme_new_preset (name)= creates one (=NULL= for unknown names); =lrg_theme_apply_preset (theme, name)= overwrites colours, metrics, motion, dark flag and name of an existing theme, *keeping its style rules and fonts*; =preset:= does the same from a file.
+
+| Preset | Dark | Motion | Accent | Metric overrides |
+|--------+------+--------+--------+------------------|
+| =midnight= (default) | yes | smooth | =#7c6cff= | none |
+| =daylight= | no | smooth | =#5b4cf0= | =shadow-blur= 22 |
+| =catppuccin-mocha= | yes | bouncy | =#cba6f7= (mauve) | =corner-radius= 10, =popup-radius= 14 |
+| =catppuccin-latte= | no | bouncy | =#8839ef= (mauve) | =corner-radius= 10, =popup-radius= 14 |
+| =high-contrast= | yes | none | =#ffd400= | =border-width= 2, =focus-ring-width= 3, =corner-radius= 4, =shadow-blur= 0 |
+
+Explicit preset colours (roles not listed are derived from the accent):
+
+| Role | midnight | daylight | catppuccin-mocha | catppuccin-latte | high-contrast |
+|------+----------+----------+------------------+------------------+---------------|
+| window | =#141417= | =#f1f1f4= | =#11111b= | =#dce0e8= | =#000000= |
+| panel | =#1f1f24= | =#ffffff= | =#1e1e2e= | =#eff1f5= | =#000000= |
+| surface | =#28282e= | =#f6f6f9= | =#313244= | =#e6e9ef= | =#0a0a0a= |
+| border | =#34343c= | =#dcdce3= | =#45475a= | =#bcc0cc= | =#ffffff= |
+| text | =#ececf1= | =#1c1c22= | =#cdd6f4= | =#4c4f69= | =#ffffff= |
+| text-muted | =#9a9aa6= | =#666675= | =#a6adc8= | =#6c6f85= | =#e6e6e6= |
+| control | =#2b2b32= | =#ebebf0= | =#313244= | =#ccd0da= | =#000000= |
+| control-hover | =#36363e= | =#e1e1e8= | =#45475a= | =#bcc0cc= | =#1f1f1f= |
+| control-pressed | =#41414a= | =#d4d4dd= | =#585b70= | =#acb0be= | =#383838= |
+| input | =#111114= | =#ffffff= | =#181825= | =#eff1f5= | =#000000= |
+| track | =#34343c= | =#d9d9e1= | =#45475a= | =#bcc0cc= | =#9e9e9e= |
+| handle | =#f4f4f6= | =#ffffff= | =#cdd6f4= | =#eff1f5= | =#ffffff= |
+| popup | =#24242a= | =#ffffff= | =#1e1e2e= | =#eff1f5= | =#000000= |
+| tooltip | =#0c0c0f= | =#26262e= | =#181825= | =#4c4f69= | =#000000= |
+| shadow | =#000000a8= | =#1a1a3a38= | =#000000b0= | =#4c4f6944= | =#00000000= |
+| veil | =#05050899= | =#12121a55= | =#11111bb0= | =#4c4f6955= | =#000000d0= |
+| success | =#34d399= | =#16a34a= | =#a6e3a1= | =#40a02b= | =#00ff6a= |
+| warning | =#fbbf24= | =#d97706= | =#f9e2af= | =#df8e1d= | =#ffd400= |
+| danger | =#f87171= | =#dc2626= | =#f38ba8= | =#d20f39= | =#ff5c5c= |
+| link | derived | derived | =#89b4fa= | =#1e66f5= | =#00e5ff= |
+| focus | derived | derived | derived | derived | =#00e5ff= |
+| disabled | =#5f5f6a= | =#a6a6b2= | =#6c7086= | =#9ca0b0= | =#9e9e9e= |
+
+Building on a preset is the easiest way to a complete theme: =preset: daylight= plus an =accent:= is already a polished light theme in your brand colour.
+
+** Scoping a theme to a subtree
+:PROPERTIES:
+:CUSTOM_ID: theming-scoped
+:END:
+=lrg_widget_set_theme (widget, theme)= gives a widget and its whole subtree a theme; =lrg_widget_get_theme()= returns the widget's own theme, else the nearest ancestor's, else the default. Popups inherit through the canvas. Typical uses: a light "paper" dialog inside a dark game UI, a red "danger zone" panel, an in-world terminal with its own font.
+
+#+begin_src c
+/* a dark-on-light inventory card inside the dark default UI */
+g_autoptr(LrgTheme) paper = lrg_theme_copy (lrg_theme_get_default ());
+
+lrg_theme_apply_preset (paper, "daylight");      /* colours + metrics, rules and fonts kept */
+lrg_theme_set_motion (paper, LRG_MOTION_SNAPPY);
+lrg_widget_set_theme (LRG_WIDGET (inventory_card), paper);   /* the widget refs it */
+#+end_src
+
+=lrg_theme_copy()= deep-copies colours, metrics, motion, name, fonts and style rules (rules are shared by reference), which is the convenient way to derive a variant. =lrg_widget_set_theme (widget, NULL)= goes back to inheriting.
+
+** Switching at runtime
+:PROPERTIES:
+:CUSTOM_ID: theming-runtime
+:END:
+=lrg_theme_set_default (theme)= replaces the process-wide default (the old one is unreffed; =NULL= goes back to a fresh built-in theme on next use). Widgets read their theme every frame, so colours and looks switch on the next frame with no other call. The legacy default font the engine installed on the old default is carried over when the new theme has none.
+
+Mutating a theme in place (=set_color=, =set_metric=, =set_accent=, =apply_preset=, =load_from_*=) bumps =lrg_theme_get_generation()= and emits =LrgTheme::changed= (once per load), which invalidates style-rule caches.
+
+*Metrics that affect size* (font sizes, control height, padding) need a re-layout to take effect, which a theme switch does not trigger on its own. Queue one:
+
+#+begin_src c
+/* queue_layout_tree: mark every widget of a subtree. The canvas (and
+ * other absolute-positioning containers) do not re-place their
+ * children, so marking only the root is not enough: lrg_widget_layout()
+ * descends only into children that are marked themselves. */
+static void
+queue_layout_tree (LrgWidget *widget)
+{
+	GList *l;
+
+	lrg_widget_queue_layout (widget);
+	if (LRG_IS_CONTAINER (widget))
+		for (l = lrg_container_get_children (LRG_CONTAINER (widget)); l != NULL; l = l->next)
+			queue_layout_tree (LRG_WIDGET (l->data));
+}
+
+static void
+apply_theme (LrgCanvas   *canvas,
+             const gchar *preset)
+{
+	g_autoptr(LrgTheme) theme = lrg_theme_new_preset (preset);
+
+	if (theme == NULL)
+		return;
+	lrg_theme_set_default (theme);
+	queue_layout_tree (LRG_WIDGET (canvas));   /* laid out on the next record */
+}
+#+end_src
+
+Boxes and grids re-measure their children when they are re-arranged. Widgets with hand-set sizes keep them; re-apply them after a metric change.
+
+** Sharing a theme with the editor GUI
+:PROPERTIES:
+:CUSTOM_ID: theming-gui
+:END:
+The immediate-mode GUI used by the editor and debug tools has its own compact =LrgGuiStyle=. =lrg_gui_style_init_from_theme (style, theme, scale)= builds one from an =LrgTheme=, so in-game debug panels and the game's menus share one palette:
+
+#+begin_src c
+LrgGuiStyle *style = lrg_gui_context_get_style (gui);
+
+lrg_gui_style_init_from_theme (style, lrg_theme_get_default (), ui_scale);
+#+end_src
+
+Colours map from roles (window, panel, popup, input, the control family, selection, accent, status colours, veil, shadow); the GUI's compact metrics are kept, with rounding = half the theme's corner radius and shadow size = 0.8 x its shadow blur, both multiplied by =scale=. Call it again after switching themes. The full mapping is in [[file:../modules/gui/index.org::#style-from-theme][the GUI module]].
+
+** Checking contrast
+:PROPERTIES:
+:CUSTOM_ID: theming-contrast
+:END:
+=lrg_theme_get_contrast (theme, fg, bg)= returns the WCAG 2.x contrast ratio (1..21) between two roles. Targets: *4.5 or more for body text*, 3 or more for large text and UI shapes (borders, focus rings, icons). Check custom themes in a test so a palette tweak cannot silently make text unreadable:
+
+#+begin_src c
+static void
+test_ember_theme_is_readable (void)
+{
+	g_autoptr(GError)   error = NULL;
+	g_autoptr(LrgTheme) theme = lrg_theme_new_from_file ("data/ui/ember.yaml", &error);
+
+	g_assert_no_error (error);
+	g_assert_cmpfloat (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_TEXT,
+	                                           LRG_THEME_COLOR_PANEL), >=, 4.5f);
+	g_assert_cmpfloat (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_TEXT,
+	                                           LRG_THEME_COLOR_CONTROL), >=, 4.5f);
+	g_assert_cmpfloat (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_TEXT_ON_ACCENT,
+	                                           LRG_THEME_COLOR_ACCENT), >=, 4.5f);
+	g_assert_cmpfloat (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_TEXT_MUTED,
+	                                           LRG_THEME_COLOR_PANEL), >=, 3.0f);
+	g_assert_cmpfloat (lrg_theme_get_contrast (theme, LRG_THEME_COLOR_FOCUS,
+	                                           LRG_THEME_COLOR_WINDOW), >=, 3.0f);
+}
+#+end_src
+
+For individual colours use =lrg_color_contrast_ratio()= (or =lrg_paint_color_contrast()= and =lrg_paint_color_luminance()=). The ratio assumes opaque colours; for translucent ones, compare the colour as it composites over its background. =high-contrast= is designed for players who need it; offer it in your settings (and pair it with reduced motion).
+
+The theme also knows which role pairs carry text in the built-in widgets (=lrg_theme_get_contrast_pair()=, 12 pairs), so a test can check them all at once and a tool can repair them:
+
+#+begin_src c
+g_assert_cmpuint (lrg_theme_count_contrast_failures (theme, 4.5f), ==, 0);
+
+/* or repair: moves text towards white/black by the smallest step */
+lrg_theme_fix_contrast (theme, 4.5f);
+#+end_src
+
+See [[file:../modules/ui/theme.org::#theme-palette-fix][fixing contrast]] for the algorithm.
+
+** Designing with the theme editor
+:PROPERTIES:
+:CUSTOM_ID: theming-editor
+:END:
+=examples/ui-theme-editor.c= is a live editor for theme files: change a value on the left and real widgets on the right restyle on the same frame, while a contrast panel grades every text/background pair. It writes YAML that =lrg_theme_new_from_file()= loads back unchanged, so the file it saves is the file you ship. The program itself is documented in [[file:../examples/ui-theme-editor.org][the theme editor example]]; this section is the design workflow.
+
+#+begin_src sh
+make -j"$(nproc)" lib && make -C examples
+./examples/build/release/examples/ui-theme-editor --accent '#22d3ee' --output data/ui/cyan.yaml
+#+end_src
+
+*** 1. Start from an accent or a preset
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-start
+:END:
+Two starting points, chosen on the command line or in the *Palette* section:
+
+- *An accent* (=--accent HEX=, or the accent swatch): with /Generate neutrals from accent/ on, the editor calls =lrg_theme_generate_palette()= and every colour role is rebuilt from the accent, the tint and depth sliders and the dark switch. This is the fastest way to a coherent brand palette.
+- *A preset* (=--preset NAME=, or the /Preset/ combo): the preset's own colours, metrics and motion are loaded and generation switches off, so the accent swatch only re-derives the accent family (=lrg_theme_set_accent()=). Use this to make a variant of =catppuccin-mocha= with your brand colour.
+- *An existing file* (=--theme FILE=, or the /Load/ button): edit a theme you already ship.
+
+*** 2. Shape the neutrals with tint and depth
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-shape
+:END:
+- *Tint* decides how much of the accent's hue bleeds into the surfaces and text. Around 0.2 to 0.3 gives a UI that feels "of a piece" with the accent without looking coloured; 0 is neutral grey (a good choice when the game's art is very colourful); 0.6 and above reads as a coloured UI (navy, plum, forest).
+- *Depth* decides how dark (or light) the surfaces sit and how far window, panel, surface and popup step apart. Low depth gives a soft, flat look where cards barely lift off the window; high depth gives strong layering, which helps over a busy game scene.
+- *Dark* flips the polarity. Generated light palettes step *down* from a white panel (the window and controls are darker than the panel), matching =daylight=.
+
+Moving either slider turns generation back on, so after picking a preset you can still dial in a generated palette.
+
+*** 3. Fine-tune individual roles and metrics
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-roles
+:END:
+Every one of the 27 roles has a swatch in one of five expanders (Surfaces, Text, Accent family, Controls, Status & effects); clicking it opens a full colour picker. Hand-editing a role switches generation off, so the next accent change does not overwrite your edit. The /Metrics/ expander has a spin box per metric (font sizes, corner radius, border width, control height, padding, spacing, row height, popup radius, shadow blur and offset, focus ring, scrollbar, check and handle size); the preview re-lays itself out as sizes change. The /Motion/ combo sets the spring preset; hover and press the preview buttons to feel it.
+
+*** 4. Check contrast, then auto-fix
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-contrast
+:END:
+The contrast panel lists the 12 pairs from =lrg_theme_get_contrast_pair()=. Each row shows an "Aa" chip drawn in the pair's own colours, the ratio, and a badge: *AAA* (7:1 or more), *AA* (4.5:1 or more) or *FAIL*. The summary line counts the failures. /Auto-fix AA/ and /Auto-fix AAA/ call =lrg_theme_fix_contrast()= with 4.5 and 7 and report how many roles moved in a toast. Typical fixes are tiny: muted text a few percent lighter, the pressed accent a shade lighter so its label still reads. If a fix moves a colour you care about (the accent itself), adjust that colour by hand instead and run the fix again.
+
+*** 5. Save and ship
+:PROPERTIES:
+:CUSTOM_ID: theming-editor-save
+:END:
+The header's path field defaults to =--output= (or =theme.yaml=); /Save YAML/ writes =lrg_theme_to_data()= there and confirms with a toast. The file holds every colour, metric, the motion, name and dark flag (plus any style rules the theme had), so it loads back identical. Load it in the game with =lrg_theme_new_from_file()= as in [[#theming-quick-start][the quick start]]. For scripted pipelines, =--save= writes the file without opening a window:
+
+#+begin_src sh
+# generate, enforce AA, and write a theme in CI
+ui-theme-editor --accent '#ff7a45' --light --tint 0.3 --fix-contrast --save --output data/ui/ember-light.yaml
+#+end_src
+
+** Fonts
+:PROPERTIES:
+:CUSTOM_ID: theming-fonts
+:END:
+Paint-based widgets draw text with =lrg_theme_get_ui_font (theme)=. On first use with a window open it loads, in order: the theme's =font:= (or a font set with =lrg_theme_load_ui_font()=), then the first available of Adwaita Sans, Inter, Cantarell, Noto Sans, Open Sans and DejaVu Sans from the usual =/usr/share/fonts= locations, and finally falls back to the legacy default font (=lrg_theme_get_default_font()=) or raylib's built-in font. Fonts are rasterised at 64 px with mipmaps and trilinear filtering for Latin, Latin-1, Latin Extended-A and common punctuation, arrows, check and cross marks, so one atlas serves every size.
+
+Without a window no font is loaded and the UI font is =NULL= (text measures with an estimate and records nothing; see [[file:../modules/paint/index.org::#paint-headless][headless]]). =lrg_theme_set_ui_font (theme, font)= installs a =GrlFont= you loaded yourself; passing =NULL= makes the theme pick automatically again. On Fedora, the =adwaita-sans-fonts=, =rsms-inter-fonts= or =dejavu-sans-fonts= packages satisfy the search.
+
+** Shipping themes with a game
+:PROPERTIES:
+:CUSTOM_ID: theming-shipping
+:END:
+- Keep theme files with your data (e.g. =data/ui/*.yaml=) and the font next to them; =font:= paths are relative to the theme file, so the directory can move as a unit. Load with =lrg_theme_new_from_file()= (or =lrg_theme_load_from_file()= to layer a file over an existing theme).
+- For mods or VFS-packed data, read the bytes yourself and call =lrg_theme_new_from_data (data, length, &error)=; relative font paths are then not resolved (no base directory), so use =lrg_theme_load_ui_font()= with a real path or set the font in code.
+- *Layering*: =lrg_theme_load_from_data()= applies a document on top of a theme. Ship a base theme and small "skin" files that only set an accent or a few rules; load them in sequence. Remember =styles:= are appended: reloading the same file twice duplicates its rules (harmless but wasteful); start from a fresh theme or =lrg_theme_clear_style_rules()= when reloading.
+- *Saving*: =lrg_theme_to_data()= / =lrg_theme_save_to_file()= write every colour, metric, the motion, dark flag, name, font path and all style rules as YAML that loads back unchanged. A theme editor can save the player's customisations this way. The output contains the full palette, not the =preset=/=accent= shorthand.
+- *Hot reload* during development: watch the file (=GFileMonitor=) and on change create a new theme from it and =lrg_theme_set_default()= it (plus =queue_layout= on your canvas).
+
+** Glass and effects recipes
+:PROPERTIES:
+:CUSTOM_ID: theming-glass-effects
+:END:
+Style rules can give any box-like part a *material* (glass or blur over what is behind it) and an animated *effect*. The full field reference is in [[file:../modules/ui/styling.org::#styling-materials][UI styling: materials and effects]]; how they render and what they cost is in [[file:../modules/paint/index.org::#paint-materials][the paint module]]. Glass only looks like glass when something is behind it: a game scene, an image, an effect, a gradient window background.
+
+*** Frosted panels over the game
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-frosted
+:END:
+#+begin_src yaml
+styles:
+  - widget: LrgPanel
+    part: box
+    material: frosted
+    glass: {blur: 20, saturation: 1.3, tint: "#10121c80", rim: 0.5}
+    border: "#ffffff22"
+    border-width: 1
+    shadow: "#00000060"
+    shadow-blur: 24
+    shadow-offset: 8
+#+end_src
+
+The tint alpha (=80= = 50%) decides how much the scene shows through; the hairline border and the rim light keep the panel edge readable over busy backgrounds.
+
+*** Clear glass buttons that frost on hover
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-glass-hover
+:END:
+#+begin_src yaml
+styles:
+  - widget: LrgButton
+    part: box
+    material: glass
+    glass: {frost: 0.15, refraction: 10, dispersion: 0.4, rim: 0.9, tint: "#ffffff10"}
+  - widget: LrgButton
+    part: box
+    state: hovered
+    material: glass
+    glass: {frost: 0.8, refraction: 6, rim: 1, tint: "#ffffff28"}
+#+end_src
+
+The hovered look cross-fades with the button's hover spring: frost, refraction and tint all blend, so the glass visibly frosts over as the pointer arrives.
+
+*** A tinted accent sheet
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-tinted
+:END:
+#+begin_src yaml
+styles:
+  - class: sheet
+    part: box
+    material: tinted
+    background: "#7c6cff40"   # the tint: accent at 25%
+#+end_src
+
+*** Blur only (no slab optics)
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-blur
+:END:
+#+begin_src yaml
+styles:
+  - class: backdrop
+    part: box
+    material: blur
+    glass: {blur: 32, tint: "#00000055"}
+#+end_src
+
+=blur= ignores refraction, rim and dispersion even when =glass= sets them.
+
+*** Animated surfaces
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-effects
+:END:
+#+begin_src yaml
+styles:
+  # a title banner with drifting northern lights
+  - class: hero
+    part: box
+    effect: aurora
+    effect-colors: ["#0b0d1c", "#7c6cff", "#40dcff"]
+    effect-intensity: 0.9
+  # call-to-action buttons: a light that follows the pointer, rings on click
+  - class: cta
+    part: box
+    effect: spotlight
+    effect-colors: ["#1e1b3a", "#7c6cff"]
+  - class: cta
+    part: box
+    state: pressed
+    effect: ripple
+  # a neon frame for the selected card
+  - class: card
+    part: box
+    state: selected
+    effect: neon
+    effect-colors: ["#14141c", "#ff4fd8", "#40dcff"]
+#+end_src
+
+Without =effect-colors= an effect uses the part's background, the theme accent and the part's foreground, so it follows preset switches. Effects need a moving clock: =LrgCanvas= passes its animation time and the pointer to the paint list every frame, so keep calling =lrg_canvas_update()= / =lrg_canvas_render()= each frame. =effect: none= in a more specific rule removes an effect a broader rule added.
+
+*** Custom effects
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-custom-effect
+:END:
+Register a GLSL snippet before loading the theme that names it (the loader rejects unknown effect names):
+
+#+begin_src c
+static const gchar *scanlines =
+	"vec4 lrg_effect (LrgEffect fx)\n"
+	"{\n"
+	"    float line = 0.5 + 0.5 * sin (fx.pixel.y * 1.6 - fx.time * 6.0);\n"
+	"    return mix (fx.color1, fx.color2, line * 0.25 * fx.intensity);\n"
+	"}\n";
+
+g_autoptr(GError) error = NULL;
+
+if (lrg_paint_effect_register ("scanlines", scanlines, &error) < 0)
+	g_warning ("%s", error->message);
+lrg_theme_load_from_file (theme, "data/themes/retro.yaml", &error);
+#+end_src
+
+#+begin_src yaml
+styles:
+  - class: terminal
+    part: box
+    effect: scanlines
+    effect-colors: ["#001400", "#00ff66"]
+#+end_src
+
+The snippet contract (inputs, helpers, rules) is in [[file:../modules/paint/index.org::#paint-effect-snippets][paint effects]].
+
+*** Keeping it fast
+:PROPERTIES:
+:CUSTOM_ID: theming-recipe-cost
+:END:
+- Effects cost nothing extra in draw calls; they batch with everything.
+- Each glass or blur surface drawn over content that was drawn after the previous glass surface costs one backdrop snapshot (a copy and a small blur chain of its area). Panels side by side share one; glass stacked on glass content does not. Watch =lrg_paint_renderer_get_backdrop_passes()= while tuning a theme.
+- A UI without any material costs exactly what it did before materials existed.
+
+** Loading errors
+:PROPERTIES:
+:CUSTOM_ID: theming-errors
+:END:
+Theme loading is *strict and atomic*:
+
+- The whole document is parsed and validated before anything is applied. *A failed load changes nothing* in the theme, and =::changed= is not emitted.
+- Unknown keys are errors at every level (top level, =styles= entries, =gradient=), as are unknown role, metric, part, state, motion, gradient-kind and preset names. Typos never silently do nothing.
+- Errors are in the =LRG_THEME_ERROR= domain:
+
+| Code | When |
+|------+------|
+| =LRG_THEME_ERROR_PARSE= | Not valid YAML, or the document is not a mapping |
+| =LRG_THEME_ERROR_INVALID= | Unknown key or name, or a value of the wrong kind (unquoted colour, non-number metric, =radius= list without four entries, gradient without =start= / =end=) |
+| =LRG_THEME_ERROR_FONT= | =lrg_theme_load_ui_font()= could not load a font (also when no window is open) |
+
+Messages name the offending key (=colors.text-muted: expected a hex colour ...=, =styles: unknown key 'colour'=); =lrg_theme_load_from_file()= prefixes the file path. A =font:= that cannot be loaded later is not a load error: it is logged as a warning when the UI font is first used, and the system font search continues.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: theming-pitfalls
+:END:
+- Quote every colour in YAML.
+- =accent= derives several roles; put explicit overrides of those roles under =colors:= (they apply after the accent).
+- =dark= only changes accent derivation, not other colours; a light theme needs light colours (start from =daylight= or =catppuccin-latte=).
+- Size metrics need a =queue_layout= after a runtime switch.
+- Do not modify a style rule's look after adding it to a theme (stale caches); reload or re-add.
+- Glass shows what is behind it: over the plain window colour it is just a lighter panel. Register custom effects before loading a theme that uses them.
+- The default corner radius is 8 (it was 4 before the paint pipeline); set =corner-radius: 4= for the old look.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: theming-see-also
+:END:
+- [[file:../modules/ui/theme.org][LrgTheme reference]]
+- [[file:../modules/ui/styling.org][UI styling]] (style rules in depth)
+- [[file:../modules/ui/animation.org][UI animation]] (motion presets)
+- [[file:extending-ui.org][Extending the UI]] (using roles and metrics in your own widgets)
+- [[file:../examples/ui-theme-editor.org][Theme editor example]] (design themes live)

@@ -248,7 +248,7 @@ update_button_selection (LrgTemplateErrorState *self)
 
     priv = lrg_template_error_state_get_instance_private (self);
 
-    /* Update all buttons to show selection state using colors */
+    /* Update all buttons: the selected one takes the primary look */
     for (i = 0; i < priv->visible_button_count; i++)
     {
         button = get_button_at_index (self, i);
@@ -256,13 +256,11 @@ update_button_selection (LrgTemplateErrorState *self)
         {
             if (i == priv->selected_index)
             {
-                g_autoptr(GrlColor) selected_color = grl_color_new (100, 150, 220, 255);
-                lrg_button_set_normal_color (button, selected_color);
+                lrg_widget_add_class (LRG_WIDGET (button), "primary");
             }
             else
             {
-                g_autoptr(GrlColor) normal_color = grl_color_new (80, 80, 90, 255);
-                lrg_button_set_normal_color (button, normal_color);
+                lrg_widget_remove_class (LRG_WIDGET (button), "primary");
             }
         }
     }
@@ -360,6 +358,8 @@ create_ui (LrgTemplateErrorState *self)
 
     /* Create canvas */
     priv->canvas = lrg_canvas_new ();
+    /* The state drives selection with keys/gamepad itself */
+    lrg_canvas_set_navigation_enabled (priv->canvas, FALSE);
     lrg_widget_set_size (LRG_WIDGET (priv->canvas),
                          (gfloat) screen_width,
                          (gfloat) screen_height);

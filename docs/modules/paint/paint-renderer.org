@@ -1,0 +1,109 @@
+#+title: LrgPaintRenderer
+#+description: API reference for LrgPaintRenderer: drawing paint lists with the instanced SDF shader
+#+authors: Zach Podbielniak
+#+categories: libregnum paint rendering
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* LrgPaintRenderer
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Paint]]* > LrgPaintRenderer
+#+end_quote
+
+=LrgPaintRenderer= (=src/paint/lrg-paint-renderer.h=, final =GObject=) draws an =LrgPaintList= with one instanced signed-distance-field shader through rlgl. It owns the compiled shader, a vertex array, a static unit-quad buffer and a growable per-instance buffer. The shader maths, batching and state handling are described in the [[file:index.org][module overview]].
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer-api
+:END:
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_paint_renderer_new (void)= | Creates a renderer | (transfer full); GPU resources are created lazily on the first render with a GL context current, so it may be created before the window opens |
+| =lrg_paint_renderer_get_default (void)= | The process-wide renderer shared by =LrgCanvas= and the GUI raylib backend | (transfer none); sharing shares the shader and buffers |
+| =lrg_paint_renderer_render (self, list)= | Draws =list= in order on top of the current target with the current raylib camera/transform | Returns =FALSE= (and does nothing) without a window, or if the shader failed to compile; =TRUE= otherwise (also for an empty list) |
+| =lrg_paint_renderer_get_draw_calls (self)= | Instanced draw calls issued by the last render | Callbacks are not counted; reset to 0 at the start of every render |
+| =lrg_paint_renderer_is_available (void)= | =TRUE= when a window (and so a GL context) is open | |
+
+** Using it
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer-usage
+:END:
+Most code never touches the renderer: =lrg_canvas_render()= records the canvas and renders it with the default renderer, and =lrg_gui_raylib_render()= does the same for the editor GUI. Use it directly when you record your own list:
+
+#+begin_src c
+static LrgPaintList *overlay = NULL;
+
+static void
+draw_frame (GameState *state)
+{
+	if (overlay == NULL)
+		overlay = lrg_paint_list_new ();
+
+	BeginDrawing ();
+	ClearBackground (BLACK);
+
+	game_draw_world (state);                     /* raylib scene */
+
+	lrg_paint_list_clear (overlay);
+	game_record_hud (state, overlay);            /* SDF shapes and text */
+	lrg_paint_renderer_render (lrg_paint_renderer_get_default (), overlay);
+
+	DrawFPS (10, 10);                            /* raylib on top again */
+	EndDrawing ();
+}
+#+end_src
+
+Call =render()= between =BeginDrawing()= and =EndDrawing()= (or inside =BeginTextureMode()= for a render target). It flushes raylib's pending batch first, so drawing order with immediate raylib calls is preserved in both directions.
+
+** What a render does
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer-steps
+:END:
+1. Resets the draw-call counter; returns =FALSE= without a window.
+2. Returns =TRUE= immediately for a list with no commands.
+3. Compiles the shader and builds the VAO on first use (once per renderer; a failure disables the renderer for the process and logs a warning).
+4. Flushes raylib's batch (=rlDrawRenderBatchActive()=).
+5. Grows the instance buffer if needed (capacity starts at 1024 instances and doubles) and uploads the whole instance array once.
+6. Walks the commands. For a =LRG_PAINT_COMMAND_BACKDROP= batch it first captures and blurs the part of the target the batch samples, then draws the batch with the snapshot bound (see [[file:index.org::#paint-backdrop-steps][the backdrop steps]]). For an instance batch it binds the pipeline if not bound yet (blend state first, then program, uniforms and VAO: see [[file:index.org::#paint-blend-flush][the blend-mode-flush pitfall]]), binds the batch texture (raylib's white default texture when untextured), re-points the instance attributes at the batch's first instance and issues one instanced draw of six vertices. For a callback it unbinds the pipeline, applies the recorded clip as =BeginScissorMode()= when there was one, runs the callback, and flushes.
+7. Unbinds everything and restores =RL_BLEND_ALPHA=.
+
+** Profiling
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer-profiling
+:END:
+#+begin_src c
+LrgPaintRenderer *renderer = lrg_paint_renderer_get_default ();
+LrgPaintList     *list;
+
+lrg_canvas_render (canvas);
+list = lrg_canvas_get_paint_list (canvas);
+g_debug ("UI: %u instances, %u commands, %u draw calls",
+         lrg_paint_list_get_n_instances (list),
+         lrg_paint_list_get_n_commands (list),
+         lrg_paint_renderer_get_draw_calls (renderer));
+#+end_src
+
+=lrg_paint_renderer_get_backdrop_passes (renderer)= returns how many backdrop snapshots (copy plus blur chain) the last render made: 0 for frames without blur or glass, which then cost exactly what they did before materials existed; one per =LRG_PAINT_COMMAND_BACKDROP= command otherwise. Each adds one draw call to =get_draw_calls()=. See [[file:index.org::#paint-backdrop-cost][the cost model]].
+
+Typical numbers: a full game menu with one font and no images is 1 draw call; each image texture or second font interleaved in paint order adds one batch per switch; each legacy widget still drawn through =draw()= adds a callback plus one batch after it. If the count is high, look for interleaved textures and unported legacy widgets.
+
+** Multiple renderers
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer-multiple
+:END:
+One renderer can draw any number of lists per frame (each render uploads its list into the same buffer). A separate renderer is only needed when a render could be nested inside another one's callback: the legacy =lrg_widget_draw()= bridge uses its own private renderer for exactly that reason, so a paint-only widget drawn from inside a paint callback never overwrites the main renderer's instance buffer mid-frame.
+
+Renderers release their GL objects on finalize when a window is still open. The default renderer lives for the process.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: paint-renderer-pitfalls
+:END:
+- Rendering without a window silently does nothing: check the return value or =lrg_paint_renderer_is_available()= when debugging "nothing shows".
+- The renderer leaves raylib in =RL_BLEND_ALPHA= and texture slot 0 unbound; re-enter custom blend modes afterwards.
+- Do not call raylib drawing or blend functions while the pipeline is bound (only possible if you modify the renderer); see [[file:index.org::#paint-blend-flush][the blend-mode-flush pitfall]].
+- Callback scissor rectangles are applied in canvas units as screen coordinates; they do not follow a camera transform.

@@ -1,0 +1,92 @@
+#+title: LrgIsland
+#+description: A pill that morphs between a compact and an expanded child on springs
+#+authors: Zach Podbielniak
+#+categories: libregnum ui widgets
+
+* Island
+:PROPERTIES:
+:CUSTOM_ID: island
+:END:
+=LrgIsland= is a rounded "island" (think of a status pill at the top of a phone screen) that holds two children: a small /compact/ child (an icon and a timer, a track title) and a larger /expanded/ child (playback controls, a notification with actions). Clicking it, or activating it with the keyboard or gamepad, morphs one into the other:
+
+- its *width and height* follow springs from the compact child's preferred size to the expanded child's (plus padding), so the parent re-lays out smoothly every frame;
+- its *corner radius* goes from a full pill (half the height) to the theme's popup radius x 1.6;
+- the children *cross-fade in sequence*: the compact child fades out over the first half of the morph and the expanded child fades in over the second, so the two never overlap at full strength;
+- on light themes the island is drawn with a *dark twin* of the theme (the =midnight= preset with the outer theme's accent), because islands read best as dark glass over light content.
+
+=lrg_canvas_update()= returns =TRUE= while it morphs. Before the first frame, and with =LRG_MOTION_NONE= or reduced motion, changes snap.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: island-creation
+:END:
+#+begin_src C
+LrgIsland *island = lrg_island_new ();
+LrgLabel  *compact = lrg_label_new ("3:42");
+LrgHBox   *controls = build_player_controls ();
+
+lrg_island_set_compact_child (island, LRG_WIDGET (compact));
+lrg_island_set_expanded_child (island, LRG_WIDGET (controls));
+lrg_widget_set_halign (LRG_WIDGET (island), LRG_ALIGN_CENTER);
+lrg_container_add_child (LRG_CONTAINER (top_bar), LRG_WIDGET (island));
+#+end_src
+
+The island adds both children as its own; setting a new one replaces (and removes) the old one. Either may be =NULL=.
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: island-behaviour
+:END:
+| Input | Effect |
+|-------+--------|
+| Left click on the island background | =lrg_island_toggle()=, unless =toggle-on-click= is =FALSE= |
+| =ACTIVATE= (Enter, Space, gamepad A) while focused | toggle, unless =toggle-on-click= is =FALSE= |
+| =CANCEL= (Escape, gamepad B) while expanded | collapse; returns =TRUE= so the cancel is consumed |
+
+Clicks that a child handles (a button inside the expanded controls) do not toggle: the island only sees clicks that bubble up unhandled. Turn =toggle-on-click= off (it gates both clicks and =ACTIVATE=) to drive the island purely from code (e.g. expand it for a few seconds when a notification arrives).
+
+The minimum height is 36 units; children are padded by 10 units on each side.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: island-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_island_new()= | Creates an empty, collapsed island |
+| =lrg_island_set_compact_child()= / =lrg_island_get_compact_child()= | The child shown when collapsed |
+| =lrg_island_set_expanded_child()= / =lrg_island_get_expanded_child()= | The child shown when expanded |
+| =lrg_island_get_expanded()= / =lrg_island_set_expanded()= | Target state; setting starts the morph and emits =::toggled= when it changes |
+| =lrg_island_toggle()= | Flips the target state |
+| =lrg_island_get_toggle_on_click()= / =lrg_island_set_toggle_on_click()= | Whether clicks toggle (default =TRUE=) |
+| =lrg_island_get_progress()= | Morph progress, 0 = compact, 1 = expanded; follows the spring (may overshoot with bouncy motion) |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: island-properties
+:END:
+| Name | Type | Notes |
+|------+------+-------|
+| =expanded= | =gboolean= | read/write, notifies |
+| =toggle-on-click= | =gboolean= | read/write, default =TRUE= |
+| =::toggled (gboolean expanded)= | signal | emitted when the target state changes |
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: island-styling
+:END:
+The island paints its =BOX= part with =lrg_widget_paint_box()=, so style rules, materials (glass works well) and effects apply. The radius from the look is ignored in favour of the morphing radius. Because it uses the dark twin on light themes, rules targeting =LrgIsland= should be written for a dark background.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: island-pitfalls
+:END:
+- Give the island an alignment other than =FILL= (usually =CENTER=); a filled island cannot change width.
+- Bouncy and wobbly motion overshoot the size; children are laid out at the target size and clipped, so they never squash.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: island-see-also
+:END:
+- [[file:../animation.org::#animation-island][Animation]]
+- [[file:../styling.org][Styling]]

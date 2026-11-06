@@ -1,0 +1,150 @@
+* Rating Widget
+:PROPERTIES:
+:CUSTOM_ID: rating-widget
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: rating-overview
+:END:
+=LrgRating= shows and edits a 0..N score as a row of symbols: stars (default), hearts or dots. Every symbol is drawn twice, once in the empty colour (=TRACK= part) and once in the fill colour (=MARK= part) clipped to the filled fraction, so half symbols are exact.
+
+Motion:
+
+- The fill follows a snappy spring towards the value, or towards the hover preview while the pointer is over the row: stars fill up as the pointer moves along them and settle back when it leaves.
+- Each symbol has its own bouncy scale spring. The symbol under the pointer lifts to 112 %; the symbol that was just set "pops" to 145 % and bounces back.
+
+Shapes are SDF primitives from the paint list: a star is a fan of ten triangles (pushed out by half a pixel so the fan seams overlap), a heart two circles over a triangle, a dot one circle.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: rating-creation
+:END:
+#+begin_src C
+LrgRating *stars = lrg_rating_new ();
+
+lrg_rating_set_allow_half (stars, TRUE);
+lrg_rating_set_value (stars, 3.5);
+g_signal_connect (stars, "value-changed", G_CALLBACK (on_review_score), review);
+#+end_src
+
+Preferred size: =max= symbols of =symbol-size= (default =CONTROL_HEIGHT= × 0.75) with gaps of 22 % of a symbol, and 1.25 symbols tall (room for the pop).
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: rating-properties
+:END:
+| Property      | Type             | Default | Notes                                                                         |
+|---------------+------------------+---------+-------------------------------------------------------------------------------|
+| =value=       | double           | 0       | Clamped to 0..=max=, rounded to whole symbols or halves (=allow-half=)        |
+| =max=         | uint             | 5       | Number of symbols (1..100); the value is re-clamped                           |
+| =allow-half=  | boolean          | =FALSE= | Left half of a symbol picks n − 0.5; keys step by 0.5                         |
+| =read-only=   | boolean          | =FALSE= | Display only: not focusable, no preview, clicks and keys ignored              |
+| =shape=       | =LrgRatingShape= | =STAR=  | =LRG_RATING_SHAPE_STAR=, =LRG_RATING_SHAPE_HEART= or =LRG_RATING_SHAPE_CIRCLE= |
+| =symbol-size= | float            | 0       | Edge length of one symbol; 0 follows the theme                                |
+| =fill-color=  | =GrlColor=       | =NULL=  | Explicit fill colour; =NULL= uses the theme colour for the shape              |
+
+=lrg_rating_get_hover_value()= returns the value being previewed under the pointer, or −1.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: rating-signals
+:END:
+| Signal          | Arguments | Emitted when                                                         |
+|-----------------+-----------+----------------------------------------------------------------------|
+| =value-changed= | none      | =value= changed: by a click, a drag, a key, or =lrg_rating_set_value()= |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: rating-parts
+:END:
+| Part    | What it is            | Resting                                                          | Hovered                         | Disabled     |
+|---------+-----------------------+------------------------------------------------------------------+---------------------------------+--------------|
+| =mark=  | Filled symbols        | =foreground=: =WARNING= (star), =DANGER= (heart), =ACCENT= (dot) | 12 % lighter (not when read-only) | opacity 0.45 |
+| =track= | Empty symbols         | =foreground=: =TRACK=                                            | 6 % lighter (not when read-only)  | opacity 0.45 |
+| =focus= | Focus ring            | from =LrgWidget=, around the whole row                           | after keyboard / gamepad nav    |              |
+
+=fill-color= is applied in =style_overrides()=, so it beats theme style rules; =lrg_widget_set_part_look()= still beats it.
+
+** Keyboard, mouse and gamepad
+:PROPERTIES:
+:CUSTOM_ID: rating-keyboard
+:END:
+| Input                       | Effect                                                                 |
+|-----------------------------+------------------------------------------------------------------------|
+| pointer over the row        | Preview: the fill follows the symbol (or half) under the pointer       |
+| click                       | Set the value under the pointer (at least one step); the symbol pops   |
+| drag with the button held   | Set the value continuously                                             |
+| Left / Right (D-pad)        | −/+ one step (1, or 0.5 with =allow-half=), clamped; consumed at the ends |
+| Home / End                  | 0 / =max=                                                              |
+
+Up and Down are not used, so they move focus away (spatial navigation).
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: rating-theming
+:END:
+#+begin_src yaml
+styles:
+  # Gold stars on a darker track, brighter while previewing
+  - widget: LrgRating
+    part: mark
+    foreground: "#f5b301"
+  - widget: LrgRating
+    part: mark
+    state: hovered
+    foreground: "#ffd34d"
+  - widget: LrgRating
+    part: track
+    foreground: "#3a3a46"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: rating-example
+:END:
+#+begin_src C
+static void
+on_difficulty (LrgRating *rating,
+               gpointer   user_data)
+{
+	GameSettings *settings = user_data;
+
+	settings->difficulty = (gint) lrg_rating_get_value (rating);
+}
+
+static LrgWidget *
+build_difficulty (GameSettings *settings)
+{
+	LrgRating *skulls = lrg_rating_new ();
+	GrlColor   bone = { 230, 226, 210, 255 };
+
+	lrg_rating_set_shape (skulls, LRG_RATING_SHAPE_CIRCLE);
+	lrg_rating_set_max (skulls, 4);
+	lrg_rating_set_fill_color (skulls, &bone);
+	lrg_rating_set_value (skulls, settings->difficulty);
+	g_signal_connect (skulls, "value-changed", G_CALLBACK (on_difficulty), settings);
+	return LRG_WIDGET (skulls);
+}
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: rating-api
+:END:
+- =lrg_rating_new (void)=
+- =lrg_rating_get_value= / =lrg_rating_set_value=
+- =lrg_rating_get_max= / =lrg_rating_set_max=
+- =lrg_rating_get_allow_half= / =lrg_rating_set_allow_half=
+- =lrg_rating_get_read_only= / =lrg_rating_set_read_only=
+- =lrg_rating_get_shape= / =lrg_rating_set_shape=, =lrg_rating_shape_get_type=
+- =lrg_rating_get_symbol_size= / =lrg_rating_set_symbol_size=
+- =lrg_rating_get_fill_color= / =lrg_rating_set_fill_color=
+- =lrg_rating_get_hover_value=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: rating-related
+:END:
+- [[file:../widget.org][LrgWidget]] (parts, states, springs)
+- [[file:slider.org][Slider]]

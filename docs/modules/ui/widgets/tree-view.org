@@ -1,0 +1,217 @@
+* Tree View
+:PROPERTIES:
+:CUSTOM_ID: tree-view
+:END:
+=LrgTreeView= shows a hierarchy as indented rows with disclosure arrows. The hierarchy is a root =GListModel= plus a children callback (=LrgTreeViewChildrenFunc=) that returns a =GListModel= of children for an item, or =NULL= for a leaf. The view flattens the visible part of the tree (root items, then the children of expanded items, depth first) into a row list and virtualizes it exactly like [[file:list-view.org][LrgListView]]: only the rows in the viewport plus a buffer exist as widgets.
+
+- The children callback runs once per item, the first time the item is shown or expanded; the result is cached and followed through its =items-changed= signal.
+- Expansion is remembered per item: collapsing a branch and opening it again restores its open sub-branches.
+- Rows are matched to items, not positions: when a branch opens above a row, the row keeps its item and the spring of its arrow; it only moves.
+- The selection and the cursor are items, so they survive expanding and collapsing.
+- Each item must appear only once in the tree.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: tree-view-creation
+:END:
+#+begin_src C
+static GListModel *
+folder_children (LrgTreeView *tree,
+                 GObject     *item,
+                 gpointer     user_data)
+{
+	MyNode *node = MY_NODE (item);
+
+	/* transfer full; NULL for leaves */
+	return my_node_is_folder (node) ? G_LIST_MODEL (g_object_ref (my_node_get_children (node))) : NULL;
+}
+
+LrgTreeView *tree = lrg_tree_view_new ();
+
+lrg_tree_view_set_children_func (tree, folder_children, NULL, NULL);
+lrg_tree_view_set_model (tree, G_LIST_MODEL (roots));
+#+end_src
+
+** Rows and icons
+:PROPERTIES:
+:CUSTOM_ID: tree-view-rows
+:END:
+The view draws the indentation (=indent= units per level, 18 by default) and the disclosure arrow (one more indent wide); the row widget fills the rest. The default factory is a label showing the item's =string=, =text=, =name=, =label= or =title= property. Icons come from a custom factory: =create= makes the row, =bind= fills it for an item at a depth.
+
+#+begin_src C
+static LrgWidget *
+create_row (LrgTreeView *tree,
+            gpointer     user_data)
+{
+	LrgHBox  *row = lrg_hbox_new ();
+	LrgImage *icon = lrg_image_new ();
+	LrgLabel *name = lrg_label_new ("");
+
+	lrg_widget_set_name (LRG_WIDGET (icon), "icon");
+	lrg_widget_set_name (LRG_WIDGET (name), "name");
+	lrg_widget_set_size (LRG_WIDGET (icon), 16.0f, 16.0f);
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (icon));
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (name));
+	g_object_unref (icon);
+	g_object_unref (name);
+	return LRG_WIDGET (row);
+}
+
+static void
+bind_row (LrgTreeView *tree,
+          LrgWidget   *row,
+          GObject     *item,
+          guint        depth,
+          gpointer     user_data)
+{
+	lrg_image_set_texture (LRG_IMAGE (lrg_widget_find (row, "icon")), my_node_get_icon (MY_NODE (item)));
+	lrg_label_set_text (LRG_LABEL (lrg_widget_find (row, "name")), my_node_get_name (MY_NODE (item)));
+}
+
+lrg_tree_view_set_factory (tree, create_row, bind_row, NULL, NULL);
+#+end_src
+
+** Expanding and the flattened rows
+:PROPERTIES:
+:CUSTOM_ID: tree-view-expand
+:END:
+- =lrg_tree_view_expand (tree, item)= / =lrg_tree_view_collapse (tree, item)= / =lrg_tree_view_is_expanded()=; =lrg_tree_view_collapse_all()= closes everything. Leaves never expand. =row-expanded= / =row-collapsed= follow every change.
+- Collapsing a branch that contains the cursor moves the cursor to the collapsed item.
+- Rows: =lrg_tree_view_get_n_visible()= (flattened count), =lrg_tree_view_get_item (tree, position)=, =lrg_tree_view_get_depth (tree, position)=, =lrg_tree_view_get_position (tree, item)= (=LRG_TREE_VIEW_INVALID_POSITION= when hidden).
+- Realized widgets: =lrg_tree_view_get_row_widget (tree, position)=, =lrg_tree_view_get_n_rows()=.
+
+** Selection and activation
+:PROPERTIES:
+:CUSTOM_ID: tree-view-selection
+:END:
+=none=, =single= (default) or =multiple= (Ctrl + click toggles). =lrg_tree_view_select_item()=, =lrg_tree_view_unselect_all()=, =lrg_tree_view_get_selected_item()=, =lrg_tree_view_is_item_selected()=, =lrg_tree_view_get_n_selected()=, =lrg_tree_view_get_cursor_item()=. A click on the arrow column toggles the item (without selecting); a click elsewhere selects; a second click on the same item within 0.4 s of canvas time, or Enter / Space / gamepad A, emits =row-activated= with the item.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: tree-view-properties
+:END:
+| Property         | Type               | Default  | Meaning                                 |
+|------------------+--------------------+----------+-----------------------------------------|
+| =model=          | =GListModel=       | NULL     | Root items                              |
+| =row-height=     | =gfloat=           | 0        | Row height; 0 = theme =ROW_HEIGHT=      |
+| =indent=         | =gfloat=           | 18       | Indentation per level (the theme has no metric for it) |
+| =selection-mode= | =LrgSelectionMode= | =single= | none / single / multiple                |
+Inherited: =padding= (default 4).
+
+| Signal              | Arguments        | Emitted                                  |
+|---------------------+------------------+------------------------------------------|
+| =selection-changed= | none             | Items were selected or unselected        |
+| =row-activated=     | =GObject *item=  | Double click, or Enter / Space / gamepad A |
+| =row-expanded=      | =GObject *item=  | After an item opened                     |
+| =row-collapsed=     | =GObject *item=  | After an item closed                     |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: tree-view-parts
+:END:
+| Part        | State                 | Built-in look                                        |
+|-------------+-----------------------+------------------------------------------------------|
+| =box=       | resting / =focused= / =disabled= | =INPUT= well, =BORDER= / =ACCENT= border, 45 % opacity |
+| =item=      | resting               | Transparent rounded row                              |
+| =item=      | =hovered= / =pressed= | =CONTROL_HOVER= / =CONTROL_PRESSED=                  |
+| =item=      | =selected=            | =SELECTION=, more opaque when hovered                |
+| =arrow=     | resting               | Chevron in =TEXT_MUTED=, 0.45 x font size, pointing right |
+| =arrow=     | =hovered=             | =TEXT=                                               |
+| =arrow=     | =open=                | =ACCENT=; turned 90 degrees (down) by a spring       |
+| =indicator= | resting               | Cursor outline in =FOCUS= (focus visible)            |
+| =scrollbar=, =scroll-thumb= | as in [[file:scroll-box.org][LrgScrollBox]] |                       |
+| =focus=     | focus visible         | Core focus ring                                      |
+
+** Keyboard, gamepad and touch
+:PROPERTIES:
+:CUSTOM_ID: tree-view-keyboard
+:END:
+| Input                  | Action                                                    |
+|------------------------+-----------------------------------------------------------|
+| Up / Down              | Previous / next visible row                               |
+| Page Up / Page Down    | By a page of rows                                         |
+| Home / End             | First / last visible row                                  |
+| Right                  | Expand a collapsed parent; on an expanded one, go to its first child |
+| Left                   | Collapse an expanded item; otherwise go to the parent     |
+| Enter / Space / gamepad A | =row-activated= for the cursor item                    |
+| Wheel, touch drag      | Scroll; flick on release                                  |
+All four arrows are consumed (focus stays in the tree); Tab leaves it. Gamepad directions arrive as arrow keys first.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: tree-view-theming
+:END:
+#+begin_src yaml
+styles:
+  - widget: LrgTreeView
+    part: arrow
+    foreground: "#9a9aa6"
+  - widget: LrgTreeView
+    part: arrow
+    state: [open]
+    foreground: "#34d399"
+  - widget: LrgTreeView
+    part: item
+    state: [selected]
+    background: "#34d39933"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: tree-view-example
+:END:
+#+begin_src C
+static void
+on_open (LrgTreeView *tree,
+         GObject     *item,
+         gpointer     user_data)
+{
+	if (!my_node_is_folder (MY_NODE (item)))
+		open_asset (MY_NODE (item));
+}
+
+LrgTreeView *tree = lrg_tree_view_new ();
+
+lrg_tree_view_set_children_func (tree, folder_children, NULL, NULL);
+lrg_tree_view_set_factory (tree, create_row, bind_row, NULL, NULL);
+lrg_tree_view_set_model (tree, G_LIST_MODEL (roots));
+lrg_tree_view_set_indent (tree, 16.0f);
+g_signal_connect (tree, "row-activated", G_CALLBACK (on_open), NULL);
+lrg_tree_view_expand (tree, lrg_tree_view_get_item (tree, 0));
+lrg_tree_view_scroll_to (tree, 0, FALSE);
+g_message ("offset %.0f", lrg_tree_view_get_scroll_offset (tree));
+#+end_src
+
+** Notes and limitations
+:PROPERTIES:
+:CUSTOM_ID: tree-view-notes
+:END:
+- Expanding or collapsing re-flattens the visible rows: O(visible items), cheap for tens of thousands.
+- An empty child model that is not a =GListStore= is treated as a leaf; a =GListStore= child model shows its arrow once it gets items.
+- Changing the root model or the children function resets expansion, selection and caches.
+- Hierarchies deeper than 256 levels are cut off (cycle guard).
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: tree-view-api
+:END:
+- =lrg_tree_view_new (void)=
+- =lrg_tree_view_set_model= / =lrg_tree_view_get_model=
+- =lrg_tree_view_set_children_func (self, LrgTreeViewChildrenFunc func, user_data, destroy)=
+- =lrg_tree_view_set_factory (self, LrgTreeViewCreateFunc create, LrgTreeViewBindFunc bind, user_data, destroy)=
+- =lrg_tree_view_get_row_height= / =lrg_tree_view_set_row_height=, =lrg_tree_view_get_indent= / =lrg_tree_view_set_indent=
+- =lrg_tree_view_get_selection_mode= / =lrg_tree_view_set_selection_mode=
+- =lrg_tree_view_expand=, =lrg_tree_view_collapse=, =lrg_tree_view_is_expanded=, =lrg_tree_view_collapse_all=
+- =lrg_tree_view_get_n_visible=, =lrg_tree_view_get_item=, =lrg_tree_view_get_depth=, =lrg_tree_view_get_position=
+- =lrg_tree_view_select_item=, =lrg_tree_view_unselect_all=, =lrg_tree_view_get_selected_item=, =lrg_tree_view_is_item_selected=, =lrg_tree_view_get_n_selected=, =lrg_tree_view_get_cursor_item=
+- =lrg_tree_view_scroll_to=, =lrg_tree_view_get_scroll_offset=
+- =lrg_tree_view_get_row_widget=, =lrg_tree_view_get_n_rows=
+- =LRG_TREE_VIEW_INVALID_POSITION=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: tree-view-related
+:END:
+- [[file:list-view.org][List view]]
+- [[file:table.org][Table]]
+- [[file:expander.org][Expander]]

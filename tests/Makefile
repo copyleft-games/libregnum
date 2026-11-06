@@ -76,6 +76,33 @@ TEST_SOURCES := \
 	test-ecs.c \
 	test-input.c \
 	test-ui.c \
+	test-ui-input.c \
+	test-paint.c \
+	test-spring.c \
+	test-ui-theme.c \
+	test-ui-widgets.c \
+	test-ui-new-widgets.c \
+	test-ui-layout.c \
+	test-ui-popups.c \
+	test-paint-fx.c \
+	test-paint-text.c \
+	test-ui-data-widgets.c \
+	test-ui-pickers.c \
+	test-ui-loader.c \
+	test-ui-inspector.c \
+	test-ui-motion.c \
+	test-ui-dock.c \
+	test-ui-timeline.c \
+	test-ui-node-graph.c \
+	test-ui-text-editor.c \
+	test-ui-actions.c \
+	test-ui-layout-helpers.c \
+	test-ui-viewport.c \
+	test-ui-file-browser.c \
+	test-ui-block-editor.c \
+	test-ui-chrome.c \
+	test-ui-graph-looks.c \
+	test-ui-menus.c \
 	test-tooltip.c \
 	test-tilemap.c \
 	test-save.c \
@@ -419,10 +446,15 @@ GENERATED_HEADERS := ../src/lrg-version.h ../src/config.h
 $(GENERATED_HEADERS):
 	@$(MAKE) -C .. generate
 
-# Pattern rule for test compilation
+# Pattern rule for test compilation. -MMD -MP writes a .d file next to
+# each binary listing the headers it includes, so changing a public
+# struct (e.g. LrgCanvasInput) rebuilds the tests that embed it instead
+# of leaving stale binaries that crash on the new layout.
 $(TEST_BUILDDIR)/test-%: test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
 	$(call print_compile,$<)
-	@$(CC) $(TEST_CFLAGS) -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+	@$(CC) $(TEST_CFLAGS) -MMD -MP -MF $@.d -o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
+-include $(wildcard $(TEST_BUILDDIR)/*.d)
 
 # The replay tests share the deterministic scenario
 $(TEST_BUILDDIR)/test-replay $(TEST_BUILDDIR)/test-rollback: replay-scenario.h

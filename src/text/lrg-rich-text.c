@@ -33,7 +33,8 @@
  * - `[shake]text[/shake]` - Shake effect
  * - `[wave]text[/wave]` - Wave effect
  * - `[rainbow]text[/rainbow]` - Rainbow effect
- * - `[typewriter speed=50]text[/typewriter]` - Typewriter reveal
+ * - `[typewriter speed=50]text[/typewriter]` or `[typewriter=50]` - Typewriter reveal
+ * - `[[` - a literal `[`
  */
 
 typedef struct
@@ -231,6 +232,14 @@ lrg_rich_text_real_parse (LrgRichText *text,
 
     while (*p != '\0')
     {
+        if (*p == '[' && p[1] == '[')
+        {
+            /* "[[" is a literal '[' */
+            g_string_append_c (buffer, '[');
+            p += 2;
+            continue;
+        }
+
         if (*p == '[')
         {
             const gchar *tag_start = p + 1;
@@ -277,11 +286,16 @@ lrg_rich_text_real_parse (LrgRichText *text,
                 gchar *tag_value = NULL;
                 ParseState *saved;
 
-                eq_pos = strchr (tag, '=');
+                /*
+                 * The name ends at the first '=' or space: "[size=20]"
+                 * has the value "20", "[typewriter speed=50]" the value
+                 * "speed=50" (attribute form).
+                 */
+                eq_pos = strpbrk (tag, "= ");
                 if (eq_pos != NULL)
                 {
                     tag_name = g_strndup (tag, (gsize) (eq_pos - tag));
-                    tag_value = g_strdup (eq_pos + 1);
+                    tag_value = g_strstrip (g_strdup (eq_pos + 1));
                 }
                 else
                 {
@@ -425,7 +439,7 @@ lrg_rich_text_real_draw (LrgRichText *text,
     GrlFont *font;
     gfloat cursor_x, cursor_y;
     guint i;
-    guint global_char_index;
+    guint span_char_index;
 
     priv = lrg_rich_text_get_instance_private (text);
     font_mgr = lrg_font_manager_get_default ();
@@ -435,8 +449,6 @@ lrg_rich_text_real_draw (LrgRichText *text,
 
     cursor_x = x;
     cursor_y = y;
-    global_char_index = 0;
-
     for (i = 0; i < priv->spans->len; i++)
     {
         const LrgTextSpan *span;
@@ -452,6 +464,13 @@ lrg_rich_text_real_draw (LrgRichText *text,
         span_font_size = lrg_text_span_get_font_size (span) * priv->font_size;
         lrg_text_span_get_color (span, &r, &g, &b, &a);
 
+        /*
+         * Effects are created per span with that span's character
+         * count, so they are indexed from the start of their span
+         * (a typewriter in the second span starts at its own first
+         * character).
+         */
+        span_char_index = 0;
         for (ch = span_text; *ch != '\0'; ch = g_utf8_next_char (ch))
         {
             gunichar uc;
@@ -468,7 +487,7 @@ lrg_rich_text_real_draw (LrgRichText *text,
             {
                 cursor_x = x;
                 cursor_y += span_font_size * priv->line_spacing;
-                global_char_index++;
+                span_char_index++;
                 continue;
             }
 
@@ -485,7 +504,7 @@ lrg_rich_text_real_draw (LrgRichText *text,
 
             if (effect != NULL)
             {
-                lrg_text_effect_apply (effect, global_char_index,
+                lrg_text_effect_apply (effect, span_char_index,
                                        &offset_x, &offset_y,
                                        &chr, &chg, &chb, &cha);
             }
@@ -533,7 +552,7 @@ lrg_rich_text_real_draw (LrgRichText *text,
                 cursor_y += span_font_size * priv->line_spacing;
             }
 
-            global_char_index++;
+            span_char_index++;
         }
     }
 }
@@ -738,6 +757,22 @@ lrg_rich_text_get_span (LrgRichText *text,
         return NULL;
 
     return g_ptr_array_index (priv->spans, index);
+}
+
+LrgTextEffect *
+lrg_rich_text_get_span_effect (LrgRichText *text,
+                               guint        index)
+{
+    LrgRichTextPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_RICH_TEXT (text), NULL);
+
+    priv = lrg_rich_text_get_instance_private (text);
+
+    if (index >= priv->effects->len)
+        return NULL;
+
+    return g_ptr_array_index (priv->effects, index);
 }
 
 gfloat

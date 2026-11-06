@@ -4,6 +4,98 @@ Last updated: 2026-10-29
 
 ## Recently Shipped
 
+### Unreleased: UI framework overhaul (`src/paint/`, `src/ui/`, `src/gui/`)
+
+Concepts from the Raven UI library (Apache-2.0; reimplemented, no code
+copied) brought to both UI stacks:
+
+- **SDF paint core** (`src/paint/`): `LrgPaintList` records rounded
+  rectangles with per-corner radii, borders, linear/radial gradients, soft
+  shadows, lines, triangles, images and text glyphs as GPU instances;
+  `LrgPaintRenderer` draws them with one instanced signed-distance-field
+  shader (analytic anti-aliasing), usually one draw call per frame.
+- **Springs** (`LrgSpring`, `LrgMotion`): closed-form, frame-rate independent
+  motion with snappy/smooth/bouncy/wobbly presets, global speed and reduced
+  motion tied to accessibility settings.
+- **Themes**: 27 colour roles, 18 metrics, accent derivation, five presets
+  (midnight, daylight, catppuccin-mocha/latte, high-contrast), strict YAML
+  load/save, runtime switching, and `LrgStyleRule` part x state x class
+  rules with CSS-like specificity.
+- **Retained UI** (`src/ui/`): layout hints (margin, alignment, fill weight,
+  min/max), dirty-flag layout, state flags with spring-blended looks, appear
+  transitions, event bubbling, pointer capture, enter/leave, Tab and
+  gamepad spatial navigation, a popup layer (placement with flipping, modal
+  veil, ghost close), and new widgets: overlay, scroll box, separator, spin
+  box, combo box, dialog, toast queue, virtualized list view.
+- **Immediate-mode GUI / editor**: drawn through the SDF renderer, with
+  shadows under popups and tooltips and `lrg_gui_style_init_from_theme()`.
+- Fixed: canvas clicks passed (x, y, button) as (button, x, y); text input
+  produced uppercase-only ASCII.
+- **Glass and effects**: backdrop blur and clear/frosted/tinted glass
+  materials (dual-Kawase, refraction rim, dispersion), eight effect shaders
+  (shimmer, aurora, neon, spotlight, ripple, grain, plasma, mesh-gradient)
+  plus user GLSL snippets, gradient Bezier wires with glow and travelling
+  pulses, 36 vector icons and SVG icons; all reachable from theme style rules
+  and YAML looks.
+- **Text**: SDF glyphs from a shared, incrementally packed atlas (outline,
+  glow, shadow, crisp at any scale), font fallback chains (symbols,
+  monochrome emoji, CJK, Arabic, Hebrew), kerning, optional fribidi bidi
+  reordering and Arabic shaping; used by `src/ui` widgets and the editor GUI.
+- **Declarative UI**: `LrgUILoader` builds widget trees from YAML with
+  components, expressions, includes, signal handlers, looks and hot-reload
+  diffing.
+- **Motion**: layout glide (`animate-layout`), `LrgIsland` morphing panel,
+  touch gestures (tap, long press, pan with flick scrolling, pinch zoom).
+- **Widgets**: table, tree view, tile view, splitter, expander, wrap box,
+  colour picker, rating, date and time pickers, breadcrumb, and a markdown
+  label built on `LrgRichText` (rich-text effect tags pass through).
+- **Tools**: `LrgUIInspector` (tree snapshots, paths, pick mode, highlight,
+  timings, live property edits) with six `lrg_ui_*` MCP tools;
+  `examples/ui-theme-editor` (palette from an accent, WCAG contrast check and
+  auto-fix, YAML export); `examples/ui-showcase` covers every feature.
+- Fixed: `LrgRichText` `[[` escape, `[typewriter speed=N]` and per-span
+  effect indexing.
+- **Actions and shortcuts**: GTK-style widget-scoped GIO action groups
+  (`lrg_widget_insert_action_group()`, `lrg_widget_activate_action()`), the
+  canvas's built-in `app` / `ui` actions (quit, show/hide/toggle, page,
+  theme, motion, direction, focus, toast), `lrg_canvas_add_shortcut()` with
+  accelerator parsing and labels, YAML `shortcuts:` and action handlers, and
+  right-to-left layout (`LrgWidgetDirection`, mirrored containers).
+- **Menus**: `LrgMenu` (popup and context menus from a `GMenuModel`, check
+  and radio marks from action state, submenus with a safe triangle, gliding
+  highlight, type-ahead), `LrgMenuBar`, and `lrg_widget_set_context_menu()`.
+- **Layout and embedding**: `LrgAnchorLayout` (HUD anchors and offsets),
+  `LrgSwitcher` (pages with crossfade, slide and zoom transitions),
+  `LrgSizeBox` (overrides, min/max, aspect ratio), `LrgViewport` (render
+  textures and 3D scenes inside the layout, pointer mapping, fit modes) and
+  `LrgCustomWidget` (paint/step/event callbacks without subclassing).
+- **Tool widgets**: `LrgTextEditor` with incremental `LrgSyntax` highlighting
+  (C, GLSL, Lua, Python, Bash, YAML, JSON, Markdown, INI and YAML-defined
+  languages), `LrgNodeGraph` (typed ports, gradient wires, minimap, body
+  widgets, YAML), `LrgTimelineView` (tracks, clips, keyframe curves,
+  markers, playback, `lrg_timeline_view_evaluate()`) and `LrgDockArea`
+  (tabbed, splittable, floatable panels with YAML layout persistence).
+- **Examples**: `examples/ui-showcase` gains a menu bar wired to actions and
+  shortcuts, card context menus, `--rtl`, and Layout, Viewport, Editor,
+  Graph, Timeline and Dock pages; the new `examples/ui-studio` is a docked
+  tool app loaded from `examples/data/ui/studio.yaml` (C fallback) whose
+  timeline keyframes animate a live 3D scene, with a console, global
+  shortcuts, theme switching and a dock layout saved as YAML.
+- **Files, scripting and window chrome**: `LrgFileBrowser` (async GIO
+  listing, places, filters, type-ahead, live refresh) and `LrgFileDialog`
+  (GtkFileDialog-style async open/save/select-folder, in-app or through the
+  XDG desktop portal), `LrgBlockEditor` (Scratch-style snapping blocks with
+  a palette, undo, YAML and a walkable program API for game scripting),
+  `LrgPagination`, `LrgHeaderBar` (self-drawn title bar with window buttons
+  and drag-to-move), `LrgNotification` (freedesktop notifications over GDBus
+  with buttons routed to widget actions, falling back to toasts), and toast
+  buttons with dismiss reasons.
+- **Canvas looks**: Modern, Blueprint, Blender and Neon presets for the
+  node graph and timeline (link, pin, key and header styles, glow, dot and
+  cross grids) with per-item overrides.
+- Not planned: platform look emulation, native accessibility bridges, a
+  Vulkan backend, colour emoji and complex-script shaping beyond Arabic.
+
 ### v0.6.0
 
 - Stub gaps closed: scene serializer default file I/O; lightmap image
@@ -241,6 +333,15 @@ been validated. Headless tests skip cases requiring a display or hardware.
 
 ## Future Directions
 
+- UI P3 (visual): backdrop blur and frosted-glass material (dual-Kawase on a
+  render texture, integrated with `src/postprocess/`), pointer-reactive
+  effect shaders (shimmer, aurora, neon, spotlight), SDF/MSDF text through a
+  graylib wrapper for crisp scaling, declarative YAML UI with components and
+  hot-reload diffing through `LrgRegistry`/`LrgDataLoader`, and a UI
+  inspector exposed in the editor and over MCP.
+- UI P4 (widgets): table, tree view, menu/menu bar, colour picker,
+  date/time pickers, breadcrumb, expander, splitter, markdown view (on
+  `LrgRichText`), a morphing island panel, and `@key` i18n strings.
 - Named reel registry and nested composition opacity.
 - Extend definition reload workflows to application-specific dependency graphs
   and live instance migration. Current hot reload replaces cached definitions;

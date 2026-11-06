@@ -2,66 +2,127 @@
 :PROPERTIES:
 :CUSTOM_ID: progress-bar-widget
 :END:
-Visual progress indicator for displaying completion status.
+=LrgProgressBar= shows how far a task has come, or, when the length of the work is unknown, a shimmering segment sliding across the track.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: progress-bar-overview
+:END:
+The bar records itself through =paint()=:
+
+- *TRACK* - a pill in the theme's =TRACK= colour.
+- *FILL* - a linear gradient from =ACCENT= to =ACCENT_HOVER= along the bar, with a faint accent glow. The drawn fill eases towards the value on a spring (the widget's motion preset), so jumps in progress glide instead of snapping. The spring is stepped by the widget's =step()= with the canvas frame time (=lrg_canvas_update()=); painting only draws it. Until the bar's first frame it shows the value directly, and that first step snaps the spring, so a new bar never animates in. =lrg_canvas_update()= returns =TRUE= while the fill is still easing.
+- *LABEL* - the optional percentage, centred, in the small UI font.
+
+With =indeterminate= set, the fill is replaced by a segment a third of the track long that sweeps from one end to the other (smooth-stepped, every 1.6 s) with a highlight running along it. The sweep advances on the canvas clock and, being a continuous animation, keeps =lrg_canvas_update()= returning =TRUE= for as long as the bar is indeterminate. The sweep stops (and stops keeping the canvas busy) when reduced motion is on.
 
 ** Creation
 :PROPERTIES:
-:CUSTOM_ID: creation
+:CUSTOM_ID: progress-bar-creation
 :END:
 #+begin_src C
-g_autoptr(LrgProgressBar) pbar = lrg_progress_bar_new();
-lrg_widget_set_size(LRG_WIDGET(pbar), 200, 20);
-lrg_container_add_child(container, LRG_WIDGET(pbar));
+g_autoptr(LrgProgressBar) bar = lrg_progress_bar_new ();
+
+lrg_progress_bar_set_max (bar, 250.0);
+lrg_progress_bar_set_value (bar, 125.0);   /* 50 % */
+lrg_progress_bar_set_show_text (bar, TRUE);
 #+end_src
 
-** Value
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: value
+:CUSTOM_ID: progress-bar-properties
 :END:
-#+begin_src C
-lrg_progress_bar_set_value(pbar, 50.0);
-lrg_progress_bar_set_max(pbar, 100.0);
+| Property           | Type             | Default    | Notes                                                             |
+|--------------------+------------------+------------+-------------------------------------------------------------------|
+| =value=            | double           | 0          | Clamped to =0..max=                                               |
+| =max=              | double           | 100        | Must be positive                                                  |
+| =show-text=        | boolean          | FALSE      | Draws "NN%"; makes the preferred height fit the small font        |
+| =indeterminate=    | boolean          | FALSE      | New: shimmering sweep instead of the value fill                   |
+| =orientation=      | =LrgOrientation= | horizontal | Vertical bars fill bottom to top                                  |
+| =background-color= | =GrlColor=       | grey       | Theme =TRACK= until set; once set it wins                         |
+| =fill-color=       | =GrlColor=       | green      | Theme accent gradient until set; then a gradient from this colour |
+| =text-color=       | =GrlColor=       | white      | Theme =TEXT= until set                                            |
+| =corner-radius=    | float            | 4          | Reported only; the bar is a pill until a radius is set            |
 
-gdouble value = lrg_progress_bar_get_value(pbar);
-gdouble max = lrg_progress_bar_get_max(pbar);
-gdouble fraction = lrg_progress_bar_get_fraction(pbar);  /* 0.0-1.0 */
+=lrg_progress_bar_get_fraction()= is the real fraction; =lrg_progress_bar_get_display_fraction()= is what is currently drawn.
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: progress-bar-signals
+:END:
+The progress bar has no signals of its own; watch =notify::value= if needed.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: progress-bar-parts
+:END:
+| Part    | Look                                                     | Disabled     |
+|---------+----------------------------------------------------------+--------------|
+| =track= | =TRACK= background, pill (or the explicit radius)        | opacity 0.45 |
+| =fill=  | gradient =ACCENT= -> =ACCENT_HOVER=, accent glow, pill   | opacity 0.45 |
+| =label= | =TEXT= foreground                                        | opacity 0.45 |
+
+The bar is display-only, so hover and press do not change its looks.
+
+Explicitly set =background-color=, =fill-color= (a gradient from it to a lighter shade, glow included), =text-color= and =corner-radius= (track and fill) beat both the theme defaults above and theme style rules that target =LrgProgressBar=. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: progress-bar-style-classes
+:END:
+No built-in classes. Use your own, for example "success" or "danger", from theme rules.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: progress-bar-theming
+:END:
+#+begin_src yaml
+styles:
+  # Health bars: red to orange, square ends
+  - widget: LrgProgressBar
+    class: health
+    part: fill
+    gradient:
+      start: "#dc2626"
+      end: "#f97316"
+      angle: 0
+    radius: 2
+  - widget: LrgProgressBar
+    class: health
+    part: track
+    radius: 2
+    background: "#1f1f24"
 #+end_src
 
-** Display
+** Keyboard and gamepad
 :PROPERTIES:
-:CUSTOM_ID: display
+:CUSTOM_ID: progress-bar-keyboard
+:END:
+The progress bar is not focusable and ignores input.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: progress-bar-example
 :END:
 #+begin_src C
-lrg_progress_bar_set_show_text(pbar, TRUE);  /* Show percentage */
-gboolean show = lrg_progress_bar_get_show_text(pbar);
+/* Unknown length while connecting, then real progress */
+LrgProgressBar *bar = lrg_progress_bar_new ();
 
-lrg_progress_bar_set_orientation(pbar, LRG_ORIENTATION_VERTICAL);
-#+end_src
-
-** Appearance
-:PROPERTIES:
-:CUSTOM_ID: appearance
-:END:
-#+begin_src C
-lrg_progress_bar_set_background_color(pbar, &bg_color);
-lrg_progress_bar_set_fill_color(pbar, &fill_color);
-lrg_progress_bar_set_text_color(pbar, &text_color);
-lrg_progress_bar_set_corner_radius(pbar, 4.0f);
+lrg_progress_bar_set_indeterminate (bar, TRUE);
+/* ... once the size of the download is known ... */
+lrg_progress_bar_set_indeterminate (bar, FALSE);
+lrg_progress_bar_set_max (bar, (gdouble) total_bytes);
+lrg_progress_bar_set_value (bar, (gdouble) received_bytes);
 #+end_src
 
 ** API Reference
 :PROPERTIES:
-:CUSTOM_ID: api-reference
+:CUSTOM_ID: progress-bar-api
 :END:
 - =lrg_progress_bar_new()=
-- =lrg_progress_bar_get_value/set_value=
-- =lrg_progress_bar_get_max/set_max=
-- =lrg_progress_bar_get_fraction=
-- =lrg_progress_bar_get_show_text/set_show_text=
-- =lrg_progress_bar_get_orientation/set_orientation=
-
-** Related
-:PROPERTIES:
-:CUSTOM_ID: related
-:END:
-- [[../index.md][UI Widgets Overview]]
+- =lrg_progress_bar_get/set_value()=, =lrg_progress_bar_get/set_max()=, =lrg_progress_bar_get_fraction()=
+- =lrg_progress_bar_get_display_fraction()= (new)
+- =lrg_progress_bar_get/set_indeterminate()= (new)
+- =lrg_progress_bar_get/set_show_text()=, =lrg_progress_bar_get/set_orientation()=
+- =lrg_progress_bar_get/set_background_color()=, =lrg_progress_bar_get/set_fill_color()=, =lrg_progress_bar_get/set_text_color()=
+- =lrg_progress_bar_get/set_corner_radius()=

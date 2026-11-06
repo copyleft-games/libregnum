@@ -1,0 +1,75 @@
+# pages.yaml - screens in an LrgSwitcher
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Each child of the switcher has a `page-name:`; `visible-child-name:`
+# picks the page shown (applied after the pages are added) and
+# `transition:` is an LrgSwitcherTransition nick (none, crossfade,
+# slide-left, slide-right, slide-up, slide-down, slide, zoom). The
+# buttons switch pages through the "ui.page" action (string target),
+# which the game provides; a hot reload keeps the page the user is on
+# unless `visible-child-name:` itself changes in the file.
+#
+# Stable widget ids:
+#
+#   pages-root   LrgVBox       the root
+#   nav          LrgHBox       the page buttons (nav-title, nav-options, nav-credits)
+#   pages        LrgSwitcher   the pages
+#   title        LrgVBox       page "title"
+#   options      LrgVBox       page "options"
+#   credits      LrgVBox       page "credits"
+#   preview      LrgSizeBox    16:9 box on the options page
+
+root:
+  type: vbox
+  id: pages-root
+  spacing: 12
+  padding: 16
+  children:
+    - type: hbox
+      id: nav
+      spacing: 8
+      children:
+        - for-each: [title, options, credits]
+          var: page
+          body:
+            type: button
+            id: "nav-${page}"
+            text: "${upper(page)}"
+            on-clicked: {action: ui.page, target: "${page}"}
+
+    - type: switcher
+      id: pages
+      transition: slide-left
+      interpolate-size: true
+      visible-child-name: title
+      fill-weight: 1
+      children:
+        - type: vbox
+          id: title
+          page-name: title
+          spacing: 8
+          children:
+            - {type: label, text: Libregnum, font-size: 40}
+            - {type: button, text: Play, class: primary}
+
+        - type: vbox
+          id: options
+          page-name: options
+          spacing: 8
+          children:
+            - {type: label, text: Options, font-size: 28}
+            - {type: checkbox, label: Fullscreen}
+            - type: size-box
+              id: preview
+              aspect-ratio: "16:9"
+              width-override: 320
+              children:
+                - {type: panel, fill-children: true, children: [{type: label, text: Preview}]}
+
+        - type: vbox
+          id: credits
+          page-name: credits
+          children:
+            - {type: label, text: "Made with libregnum"}

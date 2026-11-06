@@ -39,7 +39,7 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 :END:
 - *ECS* - Entity-Component-System architecture for flexible gameplay
 - *Input* - Keyboard, mouse, and gamepad input handling
-- *UI* - Complete widget system with theming support
+- *[[file:modules/ui/index.org][UI]]* - Retained-mode widget toolkit: themes and style rules, spring animation, keyboard/gamepad focus, popups, drawn by the [[file:modules/paint/index.org][SDF paint renderer]]
 - *Tilemap* - 2D tilemap rendering and collision
 - *Dialog* - Branching dialogue trees with conditions
 - *Inventory* - Item management and equipment systems
@@ -139,6 +139,11 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/omnomagon.org][3D Omnomagon]]* - A complete playable 3D Omnomagon game demonstrating data-driven design, type registration, YAML loading, 3D rendering, collision detection, and simple AI
 - *[[file:examples/dlc-store.org][DLC Store Demo]]* - DLC ownership verification, content gating, trial support, and store integration
 - *[[file:examples/native-dlc.org][Native DLC Example]]* - Loading native GModule shared libraries as DLC content
+- *[[file:examples/ui-basics.org][UI Basics]]* - A minimal retained-UI program: canvas, theme preset, button, switch and slider
+- *[[file:examples/ui-showcase.org][UI Showcase]]* - App-style tour of every widget, theme presets and accents, motion, gradient cards, toasts, a modal dialog and a 10,000-row list, a menu bar with actions and shortcuts, context menus, right-to-left layout, an anchor-layout HUD, a live 3D viewport, a code editor and console, a node graph, a timeline and a dock area
+- *[[file:examples/ui-studio.org][UI Studio]]* - A docked tool application loaded from YAML: menu bar, 3D viewport, node graph, a timeline whose curves animate the scene, script editor, console, global shortcuts, theme switching and a dock layout saved as YAML
+- *[[file:examples/ui-theme-editor.org][UI Theme Editor]]* - Live theme designer: palette generation from an accent with tint and depth, all 27 colour roles and metrics, a live widget preview, WCAG contrast badges with auto-fix, YAML export
+- *[[file:examples/ui-game-menu.org][Game UI Menu]]* - Game menus over a live scene: YAML theme, virtual resolution with a pointer transform, gamepad navigation, pause modal and achievement toasts
 
 ** Core Concepts Overview
 :PROPERTIES:
@@ -208,9 +213,39 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 :END:
 - [[file:guides/custom-components.org][Custom Components]] - Creating custom ECS components
 - [[file:guides/creating-mods.org][Creating Mods]] - Building game modifications
-- [[file:guides/extending-ui.org][Extending UI]] - Custom UI widgets
+- [[file:guides/extending-ui.org][Extending UI]] - Custom paint-based UI widgets (complete rotary knob walkthrough)
+- [[file:guides/theming.org][Theming]] - Theme YAML files, presets, accents, scoped and runtime themes, contrast
+- [[file:guides/ui-migration.org][UI Migration]] - Porting pre-paint-rework UI code and custom widgets
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
+
+*** UI Framework
+:PROPERTIES:
+:CUSTOM_ID: ui-framework
+:END:
+- [[file:modules/ui/index.org][UI Module]] - Overview, quick start and widget index
+- [[file:modules/ui/widget.org][LrgWidget]] and [[file:modules/ui/container.org][LrgContainer]] - Base classes and their virtual methods
+- [[file:modules/ui/layout.org][Layout]] - Measure, slots, box and grid layout, custom containers
+- [[file:modules/ui/styling.org][Styling]] - Parts, looks, style rules and specificity
+- [[file:modules/ui/declarative-ui.org][Declarative UI]] - Widget trees from YAML: components, expressions, includes, hot reload
+- [[file:modules/ui/theme.org][LrgTheme]] - Colour roles, metrics, presets, YAML
+- [[file:modules/ui/animation.org][Animation]] - Hover/press springs, appear transitions, popup motion, reduced motion
+- [[file:modules/ui/input-and-focus.org][Input, Focus and Popups]] - Input frames, bubbling, capture, focus navigation, popups
+- [[file:modules/ui/ui-event.org][LrgUIEvent]] - Event types and accessors
+- [[file:modules/ui/canvas-api.org][LrgCanvas API]] - Every LrgCanvas and LrgCanvasInput function: rendering, input frames, focus, popups
+- [[file:modules/ui/widget-api-reference.org][Widget API reference]] - Every public function of every widget class, one section per widget
+- [[file:modules/ui/inspector.org][UI Inspector]] - Tree snapshots, paths, pick mode, highlight overlay, timings and the =lrg_ui_*= MCP tools
+- [[file:modules/ui/actions.org][Actions and Shortcuts]] - Widget-scoped GIO actions, the built-in =app= / =ui= groups, keyboard shortcuts, accelerators, right-to-left layout
+- Menus: [[file:modules/ui/widgets/menu.org][LrgMenu]] (popup and context menus from a =GMenuModel=), [[file:modules/ui/widgets/menu-bar.org][LrgMenuBar]]
+- Layout helpers: [[file:modules/ui/widgets/anchor-layout.org][LrgAnchorLayout]] (HUD anchoring), [[file:modules/ui/widgets/switcher.org][LrgSwitcher]] (pages with transitions), [[file:modules/ui/widgets/size-box.org][LrgSizeBox]] (size and aspect constraints)
+- Embedding: [[file:modules/ui/widgets/viewport.org][LrgViewport]] (render textures and 3D scenes in the layout), [[file:modules/ui/widgets/custom-widget.org][LrgCustomWidget]] (paint / step / event callbacks without subclassing)
+- Editing: [[file:modules/ui/widgets/text-editor.org][LrgTextEditor]], [[file:modules/ui/widgets/syntax.org][LrgSyntax]] (highlighting languages)
+- Tools: [[file:modules/ui/widgets/node-graph.org][LrgNodeGraph]] and [[file:modules/ui/widgets/timeline-view.org][LrgTimelineView]] (with Blueprint, Blender and Neon looks), [[file:modules/ui/widgets/dock-area.org][LrgDockArea]], [[file:modules/ui/widgets/block-editor.org][LrgBlockEditor]] (visual programming)
+- Files: [[file:modules/ui/widgets/file-browser.org][LrgFileBrowser]], [[file:modules/ui/widgets/file-dialog.org][LrgFileDialog]]
+- Window and feedback: [[file:modules/ui/widgets/header-bar.org][LrgHeaderBar]], [[file:modules/ui/widgets/pagination.org][LrgPagination]], [[file:modules/ui/widgets/notification.org][LrgNotification]], [[file:modules/ui/widgets/toast.org::#toast-buttons][toast buttons]]
+- [[file:modules/paint/index.org][Paint Module]] - The instanced SDF pipeline ([[file:modules/paint/paint-list.org][LrgPaintList]], [[file:modules/paint/paint-renderer.org][LrgPaintRenderer]], [[file:modules/paint/text.org][SDF text, fallback fonts and bidi]])
+- [[file:modules/tween/spring.org][Springs and Motion]] - =LrgSpring=, motion presets, reduced motion
+- [[file:modules/gui/index.org][GUI Module]] - The immediate-mode editor GUI (shares the paint renderer and themes)
 
 *** For Developers
 :PROPERTIES:

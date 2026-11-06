@@ -1,0 +1,202 @@
+#+title: LrgNotification
+#+description: Desktop notifications over org.freedesktop.Notifications with actions and an in-app toast fallback
+#+authors: Zach Podbielniak
+#+categories: libregnum ui widgets
+
+* Notification
+:PROPERTIES:
+:CUSTOM_ID: notification
+:END:
+=LrgNotification= sends a desktop notification ("Download finished", "New message from ...") with a title, body, icon, urgency, timeout, a default action (clicking the notification) and buttons. Actions are GIO /detailed action names/ ("app.show-inbox", "win.open::42"), and they are activated on a widget of your UI with =lrg_widget_activate_action()=, so the same action groups that menus and shortcuts use answer notification clicks.
+
+It is a plain =GObject=, not a widget. libregnum apps are not =GApplication= s, so it does not use =GNotification=; it speaks the freedesktop protocol directly over GDBus on the session bus:
+
+| D-Bus | Use |
+|-------+-----|
+| =Notify (s app_name, u replaces_id, s app_icon, s summary, s body, as actions, a{sv} hints, i expire_timeout) -> u id= | show / update |
+| =CloseNotification (u id)= | =lrg_notification_withdraw()= |
+| signal =ActionInvoked (u id, s action_key)= | default action or a button |
+| signal =NotificationClosed (u id, u reason)= | =::closed= |
+
+When there is no session bus or no notification server (a bare X session, a kiosk, a container), or when the app asks for it, the notification is shown *in-app* as an =LrgToast= in a toast queue you provide.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: notification-creation
+:END:
+#+begin_src C
+g_autoptr(LrgNotification) n = lrg_notification_new ("New mail");
+g_autoptr(GError)          error = NULL;
+
+lrg_notification_set_body (n, "3 unread messages");
+lrg_notification_set_icon_name (n, "mail-unread");
+lrg_notification_set_desktop_entry (n, "org.example.Mail");
+lrg_notification_set_default_action (n, "app.show-inbox");
+lrg_notification_add_button (n, "Archive", "app.archive::latest");
+lrg_notification_add_button (n, "Reply", "win.reply('latest')");
+
+/* The canvas's toast queue for the in-app fallback (held weakly) */
+lrg_notification_set_default_toast_queue (toast_queue);
+
+if (!lrg_notification_show (n, LRG_WIDGET (canvas), &error))
+	g_warning ("%s", error->message);
+/* n may be dropped now: it keeps itself alive while it is shown */
+#+end_src
+
+The =anchor= passed to show is where actions resolve: groups inserted on it, its ancestors and the canvas (including the built-in "app" and "ui" groups). With a =NULL= anchor the toast queue is used, which also lives in the canvas tree.
+
+** Showing, updating, withdrawing
+:PROPERTIES:
+:CUSTOM_ID: notification-showing
+:END:
+Showing never blocks a frame. =lrg_notification_show_async()= follows the GIO pattern (=_finish()= returns whether it is up, =lrg_notification_get_backend()= says where); =lrg_notification_show()= is the fire-and-forget form that logs a warning if it finally fails. Both complete in the main loop, so the app must iterate the default =GMainContext= (any GLib main loop, or =g_main_context_iteration (NULL, FALSE)= once per frame).
+
+#+begin_example
+in-app forced? --- yes ---> toast (synchronously)
+     | no
+g_bus_get (session) --- error ---> toast, or LRG_NOTIFICATION_ERROR_NO_BACKEND
+     |
+Notify (replaces_id = current id) --- error (no server) ---> toast, or NO_BACKEND
+     |
+id stored, ActionInvoked / NotificationClosed routed to this object
+#+end_example
+
+- *Updates*: change any property and show again. While shown by a server, =Notify= is sent with =replaces_id= so the server updates the existing bubble; a toast changes its text, kind and duration in place. Content changes are not sent until you show again.
+- *Ordering*: only one =Notify= is in flight per notification; further show calls queue behind it, so rapid updates never create duplicates.
+- *Keep-alive*: while shown (server or toast) the notification holds a reference on itself, released when it closes. A fire-and-forget notification therefore still routes its button clicks.
+- *Withdraw*: =lrg_notification_withdraw()= sends =CloseNotification= (or dismisses the toast) and emits =::closed= with =LRG_NOTIFICATION_CLOSE_REASON_CLOSED= right away; the server's own =NotificationClosed= for that id is ignored. Withdrawing while the first =Notify= is still in flight closes it as soon as the id arrives.
+
+** Actions
+:PROPERTIES:
+:CUSTOM_ID: notification-actions
+:END:
+The actions array always contains ="default"= (the freedesktop key for a click on the notification body) followed by ="lrg-button-N"= / label pairs for the buttons, in the order they were added. When the server reports =ActionInvoked=:
+
+1. the detailed action is parsed with =g_action_parse_detailed_name()= and activated on the anchor with =lrg_widget_activate_action()= (a missing anchor, an unknown or disabled action is logged at debug level, not an error);
+2. =::action-invoked= is emitted with the detailed name;
+3. for the default action, =::activated= is emitted (also when no default action is set, so apps can just connect the signal).
+
+Signals for other ids, and unknown keys, are ignored. Notification servers usually show up to three buttons; there is no limit on the client side.
+
+** In-app fallback
+:PROPERTIES:
+:CUSTOM_ID: notification-in-app
+:END:
+The toast queue is the notification's own =toast-queue= property, else the process-wide default from =lrg_notification_set_default_toast_queue()= (held weakly, so a destroyed canvas simply disables the fallback).
+
+In-app display is used when:
+- =lrg_notification_set_force_in_app (TRUE)= is on (a fullscreen game, a user setting),
+- the notification's =in-app= property is set,
+- the session bus cannot be reached or =Notify= fails (no server, =ServiceUnknown=),
+- the notification is already showing as a toast (updates stay in the toast).
+
+Mapping to =LrgToast=:
+
+| Notification | Toast |
+|--------------+-------|
+| title / body | title / message |
+| urgency =CRITICAL= | kind =DANGER= (others =INFO=) |
+| timeout -1 | =LRG_TOAST_DEFAULT_DURATION=, or until dismissed for critical |
+| timeout 0 | until dismissed |
+| timeout n ms | n / 1000 seconds (the toast clock pauses while hovered) |
+| click on the toast | default action, =::activated=, then =::closed= (=DISMISSED=) |
+| click on a toast button | that button's action, =::action-invoked=, then =::closed= (=DISMISSED=) |
+| timer runs out | =::closed= (=EXPIRED=) |
+| =lrg_toast_queue_clear()= | =::closed= (=UNDEFINED=) |
+
+The notification's buttons appear as toast buttons ([[file:toast.org::#toast-buttons][Toast buttons]]), with the same labels in the same order. Their actions run once, on the notification's anchor (or the queue when there is none), exactly as a server's =ActionInvoked= would. The close reason comes from =lrg_toast_get_dismiss_reason()=.
+
+** Close reasons
+:PROPERTIES:
+:CUSTOM_ID: notification-close-reasons
+:END:
+| =LrgNotificationCloseReason= | Value | Meaning |
+|------------------------------+-------+---------|
+| =LRG_NOTIFICATION_CLOSE_REASON_EXPIRED= | 1 | the timeout ran out |
+| =LRG_NOTIFICATION_CLOSE_REASON_DISMISSED= | 2 | the user dismissed it (or clicked the toast) |
+| =LRG_NOTIFICATION_CLOSE_REASON_CLOSED= | 3 | =lrg_notification_withdraw()= |
+| =LRG_NOTIFICATION_CLOSE_REASON_UNDEFINED= | 4 | anything else; also used for out-of-range server values |
+
+The values match the D-Bus =NotificationClosed= reasons.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: notification-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_notification_new()= | Creates a notification with a title |
+| =lrg_notification_get_title()= / =lrg_notification_set_title()= | Summary line |
+| =lrg_notification_get_body()= / =lrg_notification_set_body()= | Detail text |
+| =lrg_notification_get_icon_name()= / =lrg_notification_set_icon_name()= | Icon name or =file://= URI (=app_icon=) |
+| =lrg_notification_get_urgency()= / =lrg_notification_set_urgency()= | =LrgNotificationUrgency=, sent as the =urgency= hint |
+| =lrg_notification_get_timeout()= / =lrg_notification_set_timeout()= | Milliseconds; -1 server default, 0 never |
+| =lrg_notification_get_default_action()= / =lrg_notification_set_default_action()= | Detailed action for a click on the notification |
+| =lrg_notification_add_button()= | Adds a button with a label and a detailed action |
+| =lrg_notification_get_n_buttons()= / =lrg_notification_get_button()= / =lrg_notification_clear_buttons()= | Inspect / remove buttons |
+| =lrg_notification_get_app_name()= / =lrg_notification_set_app_name()= | =app_name= (default =g_get_application_name()=) |
+| =lrg_notification_get_desktop_entry()= / =lrg_notification_set_desktop_entry()= | =desktop-entry= hint (default =g_get_prgname()=) |
+| =lrg_notification_get_in_app()= / =lrg_notification_set_in_app()= | Always use a toast for this notification |
+| =lrg_notification_get_toast_queue()= / =lrg_notification_set_toast_queue()= | Its own queue for the fallback |
+| =lrg_notification_get_id()= | Server id while shown by a server, else 0 |
+| =lrg_notification_get_backend()= | =LrgNotificationBackend=: none, D-Bus or toast |
+| =lrg_notification_get_toast()= | The toast while showing in-app |
+| =lrg_notification_show_async()= / =lrg_notification_show_finish()= | Show or update, GIO async pattern |
+| =lrg_notification_show()= | Fire-and-forget show |
+| =lrg_notification_withdraw()= | Take it down |
+| =lrg_notification_set_default_toast_queue()= / =lrg_notification_get_default_toast_queue()= | Process-wide fallback queue (weak) |
+| =lrg_notification_set_force_in_app()= / =lrg_notification_get_force_in_app()= | Process-wide in-app switch |
+| =lrg_notification_error_quark()= | The =LRG_NOTIFICATION_ERROR= domain |
+| =lrg_notification_urgency_get_type()=, =lrg_notification_close_reason_get_type()=, =lrg_notification_backend_get_type()= | Enum GTypes |
+
+Enums: =LrgNotificationUrgency= (=LRG_NOTIFICATION_URGENCY_LOW=, =LRG_NOTIFICATION_URGENCY_NORMAL=, =LRG_NOTIFICATION_URGENCY_CRITICAL=; nicks =low=, =normal=, =critical=), =LrgNotificationBackend= (=LRG_NOTIFICATION_BACKEND_NONE=, =LRG_NOTIFICATION_BACKEND_DBUS=, =LRG_NOTIFICATION_BACKEND_TOAST=), =LrgNotificationCloseReason= (above). Errors (=LrgNotificationError=): =LRG_NOTIFICATION_ERROR_NO_BACKEND= (no server and no toast queue), =LRG_NOTIFICATION_ERROR_FAILED=.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: notification-properties
+:END:
+| Name | Type | Notes |
+|------+------+-------|
+| =title= | =gchar*= | |
+| =body= | =gchar*= | |
+| =icon-name= | =gchar*= | |
+| =urgency= | =LrgNotificationUrgency= | default =normal= |
+| =timeout= | =gint= | ms, -1..G_MAXINT, default -1 |
+| =default-action= | =gchar*= | detailed action name |
+| =app-name= | =gchar*= | |
+| =desktop-entry= | =gchar*= | |
+| =in-app= | =gboolean= | default =FALSE= |
+| =toast-queue= | =LrgToastQueue= | |
+| =id= | =guint= | read-only |
+| =backend= | =LrgNotificationBackend= | read-only |
+| =::activated= | signal | the notification itself was clicked |
+| =::action-invoked (gchar *action)= | signal | after an action was activated (default or button) |
+| =::closed (LrgNotificationCloseReason reason)= | signal | once per showing |
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: notification-yaml
+:END:
+Not a widget, so it does not appear in UI trees. The integration pass may add a =notifications:= section (templates with title, body, urgency, actions and buttons) that apps show by name.
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: notification-testing
+:END:
+=tests/test-ui-chrome.c= runs a private bus with =GTestDBus= and implements a fake =org.freedesktop.Notifications= in the test (own connection, =RequestName=, an exported object). Tests wait by iterating the main context until a flag flips, never by sleeping. Never point tests at the user's session bus.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: notification-pitfalls
+:END:
+- Nothing happens until the main context is iterated: a game loop that never runs GLib sources must call =g_main_context_iteration (NULL, FALSE)= each frame.
+- A notification kept in the server's history (GNOME keeps resident ones) stays alive in-process until it is closed or withdrawn; withdraw notifications that no longer matter.
+- Without an anchor or toast queue, actions cannot be activated; only the signals fire.
+- =desktop-entry= should match an installed =.desktop= file or some servers ignore the notification's app identity.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: notification-see-also
+:END:
+- [[file:toast.org][LrgToast and LrgToastQueue]]
+- [[file:../actions.org][Actions]]

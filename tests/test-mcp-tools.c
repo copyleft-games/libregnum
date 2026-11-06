@@ -704,7 +704,7 @@ test_mcp_tool_schema_lifecycle (void)
     g_autoptr(LrgMcpSaveTools) save = lrg_mcp_save_tools_new ();
     LrgMcpToolProvider *providers[] = { LRG_MCP_TOOL_PROVIDER (ecs), LRG_MCP_TOOL_PROVIDER (save),
                                         LRG_MCP_TOOL_PROVIDER (debug) };
-    guint expected[] = { 9, 7, 11 };
+    guint expected[] = { 9, 7, 17 };
     guint i;
 
     /* Every advertised ECS/save operation has a strict object schema.

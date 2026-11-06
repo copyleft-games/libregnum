@@ -40,6 +40,20 @@ G_DECLARE_FINAL_TYPE (LrgCheckbox, lrg_checkbox, LRG, CHECKBOX, LrgWidget)
 LRG_AVAILABLE_IN_ALL
 LrgCheckbox * lrg_checkbox_new (const gchar *label);
 
+/**
+ * lrg_checkbox_new_with_style:
+ * @label: (nullable): optional label text
+ * @style: how the indicator is drawn
+ *
+ * Creates a new checkbox drawn as a check box, a radio button or a
+ * sliding switch.
+ *
+ * Returns: (transfer full): A new #LrgCheckbox
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCheckbox * lrg_checkbox_new_with_style (const gchar      *label,
+                                           LrgCheckboxStyle  style);
+
 /* ==========================================================================
  * State
  * ========================================================================== */
@@ -74,6 +88,45 @@ void lrg_checkbox_set_checked (LrgCheckbox *self,
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_checkbox_toggle (LrgCheckbox *self);
+
+/**
+ * lrg_checkbox_get_check_progress:
+ * @self: an #LrgCheckbox
+ *
+ * The check animation: 0 when fully unchecked, 1 when fully checked,
+ * in between (and briefly beyond, with bouncy motion) while the mark
+ * draws in or the switch knob slides.
+ *
+ * Returns: the animation progress
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_checkbox_get_check_progress (LrgCheckbox *self);
+
+/* ==========================================================================
+ * Style
+ * ========================================================================== */
+
+/**
+ * lrg_checkbox_get_style:
+ * @self: an #LrgCheckbox
+ *
+ * Returns: how the indicator is drawn
+ */
+LRG_AVAILABLE_IN_ALL
+LrgCheckboxStyle lrg_checkbox_get_style (LrgCheckbox *self);
+
+/**
+ * lrg_checkbox_set_style:
+ * @self: an #LrgCheckbox
+ * @style: %LRG_CHECKBOX_STYLE_CHECK, %LRG_CHECKBOX_STYLE_RADIO or
+ *   %LRG_CHECKBOX_STYLE_SWITCH
+ *
+ * Changes how the indicator is drawn. A switch is wider than a box,
+ * so this queues a layout.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_checkbox_set_style (LrgCheckbox      *self,
+                             LrgCheckboxStyle  style);
 
 /* ==========================================================================
  * Label

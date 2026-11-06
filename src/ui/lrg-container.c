@@ -24,6 +24,8 @@ typedef struct
     GList  *children;  /* List of LrgWidget* (owned references) */
     gfloat  spacing;
     gfloat  padding;
+    gboolean disposing;
+    gboolean overflow_hit_test;
 } LrgContainerPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgContainer, lrg_container, LRG_TYPE_WIDGET)
@@ -33,6 +35,7 @@ enum
     PROP_0,
     PROP_SPACING,
     PROP_PADDING,
+    PROP_OVERFLOW_HIT_TEST,
     N_PROPS
 };
 
@@ -48,8 +51,8 @@ lrg_container_real_layout_children (LrgContainer *self)
     /* Default implementation does nothing - subclasses must override */
 }
 
-static void
-lrg_container_real_draw (LrgWidget *widget)
+void
+_lrg_container_default_draw (LrgWidget *widget)
 {
     LrgContainer        *self = LRG_CONTAINER (widget);
     LrgContainerPrivate *priv = lrg_container_get_instance_private (self);
@@ -61,6 +64,33 @@ lrg_container_real_draw (LrgWidget *widget)
         LrgWidget *child = LRG_WIDGET (l->data);
         lrg_widget_draw (child);
     }
+}
+
+/*
+ * _lrg_container_default_paint:
+ *
+ * Paints the children in order (later children on top).
+ */
+void
+_lrg_container_default_paint (LrgWidget    *widget,
+                              LrgPaintList *list)
+{
+    LrgContainerPrivate *priv = lrg_container_get_instance_private (LRG_CONTAINER (widget));
+    GList               *l;
+
+    for (l = priv->children; l != NULL; l = l->next)
+        lrg_widget_paint (LRG_WIDGET (l->data), list);
+}
+
+/*
+ * lrg_container_real_arrange:
+ *
+ * A container's arrange step is its layout_children() method.
+ */
+static void
+lrg_container_real_arrange (LrgWidget *widget)
+{
+    lrg_container_layout_children (LRG_CONTAINER (widget));
 }
 
 static void
@@ -125,6 +155,11 @@ lrg_container_real_handle_event (LrgWidget        *widget,
     LrgContainerPrivate *priv = lrg_container_get_instance_private (self);
     GList               *l;
 
+    /* Bubbling events come up from a child that already saw them;
+     * forwarding them back down would deliver them twice */
+    if (lrg_ui_event_get_bubbling (event))
+        return FALSE;
+
     /*
      * Dispatch event to children in reverse order (front to back).
      * Stop if a child consumes the event.
@@ -152,6 +187,9 @@ lrg_container_dispose (GObject *object)
     LrgContainer *self = LRG_CONTAINER (object);
 
     /* Remove all children (releases references) */
+    LrgContainerPrivate *priv = lrg_container_get_instance_private (self);
+
+    priv->disposing = TRUE;
     lrg_container_remove_all (self);
 
     G_OBJECT_CLASS (lrg_container_parent_class)->dispose (object);
@@ -174,6 +212,9 @@ lrg_container_get_property (GObject    *object,
     case PROP_PADDING:
         g_value_set_float (value, priv->padding);
         break;
+    case PROP_OVERFLOW_HIT_TEST:
+        g_value_set_boolean (value, priv->overflow_hit_test);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -195,6 +236,9 @@ lrg_container_set_property (GObject      *object,
     case PROP_PADDING:
         lrg_container_set_padding (self, g_value_get_float (value));
         break;
+    case PROP_OVERFLOW_HIT_TEST:
+        lrg_container_set_overflow_hit_test (self, g_value_get_boolean (value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -211,7 +255,9 @@ lrg_container_class_init (LrgContainerClass *klass)
     object_class->set_property = lrg_container_set_property;
 
     /* Override widget virtual methods */
-    widget_class->draw = lrg_container_real_draw;
+    widget_class->draw = _lrg_container_default_draw;
+    widget_class->paint = _lrg_container_default_paint;
+    widget_class->arrange = lrg_container_real_arrange;
     widget_class->measure = lrg_container_real_measure;
     widget_class->handle_event = lrg_container_real_handle_event;
 
@@ -245,6 +291,18 @@ lrg_container_class_init (LrgContainerClass *klass)
                             G_PARAM_READWRITE |
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgContainer:overflow-hit-test:
+     *
+     * Whether pointer hit-testing reaches children placed outside the
+     * container's rectangle (see lrg_container_set_overflow_hit_test()).
+     */
+    properties[PROP_OVERFLOW_HIT_TEST] =
+        g_param_spec_boolean ("overflow-hit-test", NULL, NULL, FALSE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -288,8 +346,85 @@ lrg_container_add_child (LrgContainer *self,
     /* Set the child's parent */
     _lrg_widget_set_parent (child, self);
 
-    /* Re-layout */
+    /* Re-layout now (legacy callers expect it) and mark for the canvas */
     lrg_container_layout_children (self);
+    lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+void
+lrg_container_insert_child_at (LrgContainer *self,
+                               LrgWidget    *child,
+                               guint         index)
+{
+    LrgContainerPrivate *priv;
+
+    g_return_if_fail (LRG_IS_CONTAINER (self));
+    g_return_if_fail (LRG_IS_WIDGET (child));
+    g_return_if_fail (lrg_widget_get_parent (child) == NULL);
+
+    priv = lrg_container_get_instance_private (self);
+
+    /* g_list_insert appends for positions past the end */
+    priv->children = g_list_insert (priv->children, g_object_ref (child),
+                                    index > (guint) G_MAXINT ? -1 : (gint) index);
+    _lrg_widget_set_parent (child, self);
+
+    lrg_container_layout_children (self);
+    lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+void
+lrg_container_reorder_child (LrgContainer *self,
+                             LrgWidget    *child,
+                             guint         index)
+{
+    LrgContainerPrivate *priv;
+    GList               *link;
+
+    g_return_if_fail (LRG_IS_CONTAINER (self));
+    g_return_if_fail (LRG_IS_WIDGET (child));
+
+    priv = lrg_container_get_instance_private (self);
+    link = g_list_find (priv->children, child);
+    g_return_if_fail (link != NULL);
+
+    /* Unlink and reinsert the same reference: the child never loses
+     * its parent, so focus, capture and state survive the move */
+    if ((guint) g_list_position (priv->children, link) == index)
+        return;
+    priv->children = g_list_remove_link (priv->children, link);
+    g_list_free_1 (link);
+    priv->children = g_list_insert (priv->children, child,
+                                    index > (guint) G_MAXINT ? -1 : (gint) index);
+
+    lrg_container_layout_children (self);
+    lrg_widget_queue_layout (LRG_WIDGET (self));
+}
+
+gboolean
+lrg_container_get_overflow_hit_test (LrgContainer *self)
+{
+    LrgContainerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_CONTAINER (self), FALSE);
+    priv = lrg_container_get_instance_private (self);
+    return priv->overflow_hit_test;
+}
+
+void
+lrg_container_set_overflow_hit_test (LrgContainer *self,
+                                     gboolean      overflow)
+{
+    LrgContainerPrivate *priv;
+
+    g_return_if_fail (LRG_IS_CONTAINER (self));
+    priv = lrg_container_get_instance_private (self);
+
+    overflow = !!overflow;
+    if (priv->overflow_hit_test == overflow)
+        return;
+    priv->overflow_hit_test = overflow;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OVERFLOW_HIT_TEST]);
 }
 
 /*
@@ -325,8 +460,9 @@ lrg_container_remove_child (LrgContainer *self,
     priv->children = g_list_delete_link (priv->children, link);
     g_object_unref (child);
 
-    /* Re-layout */
+    /* Re-layout now (legacy callers expect it) and mark for the canvas */
     lrg_container_layout_children (self);
+    lrg_widget_queue_layout (LRG_WIDGET (self));
 }
 
 /*
@@ -355,6 +491,14 @@ lrg_container_remove_all (LrgContainer *self)
 
     g_list_free (priv->children);
     priv->children = NULL;
+
+    /* Same contract as add/remove: lay out now and mark for the canvas
+     * (not while disposing: the container is going away) */
+    if (!priv->disposing)
+    {
+        lrg_container_layout_children (self);
+        lrg_widget_queue_layout (LRG_WIDGET (self));
+    }
 }
 
 /*
@@ -462,6 +606,7 @@ lrg_container_set_spacing (LrgContainer *self,
         priv->spacing = spacing;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SPACING]);
         lrg_container_layout_children (self);
+        lrg_widget_queue_layout (LRG_WIDGET (self));
     }
 }
 
@@ -507,6 +652,7 @@ lrg_container_set_padding (LrgContainer *self,
         priv->padding = padding;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PADDING]);
         lrg_container_layout_children (self);
+        lrg_widget_queue_layout (LRG_WIDGET (self));
     }
 }
 
@@ -531,5 +677,128 @@ lrg_container_layout_children (LrgContainer *self)
     if (klass->layout_children != NULL)
     {
         klass->layout_children (self);
+    }
+}
+
+/* ==========================================================================
+ * Shared box layout (VBox / HBox)
+ * ========================================================================== */
+
+void
+_lrg_box_measure (LrgContainer *self,
+                  gboolean      vertical,
+                  gboolean      homogeneous,
+                  gfloat       *width,
+                  gfloat       *height)
+{
+    gfloat padding = lrg_container_get_padding (self);
+    gfloat spacing = lrg_container_get_spacing (self);
+    gfloat main_sum = 0.0f;
+    gfloat main_max = 0.0f;
+    gfloat cross = 0.0f;
+    guint  n = 0;
+    GList *l;
+
+    for (l = lrg_container_get_children (self); l != NULL; l = l->next)
+    {
+        LrgWidget *child = LRG_WIDGET (l->data);
+        gfloat     w;
+        gfloat     h;
+
+        if (!lrg_widget_get_visible (child))
+            continue;
+
+        _lrg_widget_outer_size (child, &w, &h);
+        main_sum += vertical ? h : w;
+        main_max = MAX (main_max, vertical ? h : w);
+        cross = MAX (cross, vertical ? w : h);
+        n++;
+    }
+
+    /* A homogeneous box needs every slot as big as the biggest */
+    if (homogeneous)
+        main_sum = main_max * (gfloat) n;
+    if (n > 1)
+        main_sum += spacing * (gfloat) (n - 1);
+
+    if (width != NULL)
+        *width = (vertical ? cross : main_sum) + padding * 2.0f;
+    if (height != NULL)
+        *height = (vertical ? main_sum : cross) + padding * 2.0f;
+}
+
+void
+_lrg_box_layout (LrgContainer *self,
+                 gboolean      vertical,
+                 gboolean      homogeneous)
+{
+    LrgWidget *widget = LRG_WIDGET (self);
+    gfloat     padding = lrg_container_get_padding (self);
+    gfloat     spacing = lrg_container_get_spacing (self);
+    gfloat     content_w;
+    gfloat     content_h;
+    gfloat     main_space;
+    gfloat     used = 0.0f;
+    gfloat     weights = 0.0f;
+    gfloat     extra;
+    gfloat     pos;
+    guint      n = 0;
+    GList     *l;
+
+    content_w = MAX (0.0f, lrg_widget_get_width (widget) - padding * 2.0f);
+    content_h = MAX (0.0f, lrg_widget_get_height (widget) - padding * 2.0f);
+    main_space = vertical ? content_h : content_w;
+
+    /* Pass 1: preferred lengths along the main axis and weights */
+    for (l = lrg_container_get_children (self); l != NULL; l = l->next)
+    {
+        LrgWidget *child = LRG_WIDGET (l->data);
+        gfloat     w;
+        gfloat     h;
+
+        if (!lrg_widget_get_visible (child))
+            continue;
+        _lrg_widget_outer_size (child, &w, &h);
+        used += vertical ? h : w;
+        weights += lrg_widget_get_fill_weight (child);
+        n++;
+    }
+    if (n == 0)
+        return;
+
+    used += spacing * (gfloat) (n - 1);
+    extra = main_space - used;
+
+    /* Pass 2: hand out slots and place each child in its slot */
+    pos = padding;
+    for (l = lrg_container_get_children (self); l != NULL; l = l->next)
+    {
+        LrgWidget *child = LRG_WIDGET (l->data);
+        gfloat     w;
+        gfloat     h;
+        gfloat     len;
+
+        if (!lrg_widget_get_visible (child))
+            continue;
+
+        if (homogeneous)
+        {
+            len = (main_space - spacing * (gfloat) (n - 1)) / (gfloat) n;
+        }
+        else
+        {
+            _lrg_widget_outer_size (child, &w, &h);
+            len = vertical ? h : w;
+            if (extra > 0.0f && weights > 0.0f)
+                len += extra * lrg_widget_get_fill_weight (child) / weights;
+        }
+        len = MAX (len, 0.0f);
+
+        if (vertical)
+            lrg_widget_place_in_slot (child, padding, pos, content_w, len);
+        else
+            lrg_widget_place_in_slot (child, pos, padding, len, content_h);
+
+        pos += len + spacing;
     }
 }

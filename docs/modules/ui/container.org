@@ -1,416 +1,149 @@
-* Container Base Class
+#+title: LrgContainer
+#+description: API reference for LrgContainer: child management, spacing and padding, the layout_children vfunc, painting and event forwarding
+#+authors: Zach Podbielniak
+#+categories: libregnum ui container layout
+#+created: 2025-12-01T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 2.0
+
+* LrgContainer
 :PROPERTIES:
-:CUSTOM_ID: container-base-class
+:CUSTOM_ID: container
 :END:
-=LrgContainer= is the abstract base class for widgets that hold child widgets. It manages layout, child management, and spacing/padding properties.
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > LrgContainer
+#+end_quote
+
+=LrgContainer= (=src/ui/lrg-container.h=, derivable, subclass of =LrgWidget=) is the base of every widget that owns children: the canvas, panels, boxes, grids, scroll boxes, list views, tab views, dialogs and overlays. It owns the child list, spacing and padding, and the =layout_children()= virtual method. Everything else children need (painting, stepping springs, hit-testing, focus traversal, layout recursion) works on any container automatically.
 
 ** Overview
 :PROPERTIES:
-:CUSTOM_ID: overview
+:CUSTOM_ID: container-overview
 :END:
-A container provides:
+What =LrgContainer= provides on top of =LrgWidget=:
 
-- *Child Management* - Add, remove, query children
-- *Layout* - Virtual =layout_children()= method for positioning
-- *Spacing and Padding* - Properties for widget arrangement
+| Widget vfunc | Container implementation |
+|--------------+--------------------------|
+| =paint= | Paints every child with =lrg_widget_paint()= in list order (later children on top) |
+| =arrange= | Calls =layout_children()= |
+| =measure= | Bounding box of the visible children's measured sizes at their current positions, plus padding on both sides (absolute layout); layout containers override it |
+| =handle_event= | Returns =FALSE= for bubbling events; non-bubbling events delivered directly to the container are offered to the children front to back (legacy path) |
+| =draw= (legacy) | Draws the children with =lrg_widget_draw()= |
 
-** Child Management
+The default =layout_children()= does nothing: children keep the positions and sizes you gave them (absolute layout, as in =LrgCanvas= and =LrgPanel=). Layout containers (=LrgVBox=, =LrgHBox=, =LrgGrid= ...) override it.
+
+** Child management
 :PROPERTIES:
-:CUSTOM_ID: child-management
+:CUSTOM_ID: container-children
 :END:
-*** Adding Children
-:PROPERTIES:
-:CUSTOM_ID: adding-children
-:END:
-#+begin_src C
-LrgContainer *panel = LRG_CONTAINER(lrg_panel_new());
-LrgWidget *button = LRG_WIDGET(lrg_button_new("Click"));
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_container_add_child (self, child)= | Append a child | The container takes a reference (drop yours, or use =g_autoptr=); =child= must have no parent; lays out immediately and queues layout |
+| =lrg_container_insert_child_at (self, child, index)= | Insert at a position | Like =add_child=; an index past the end (=G_MAXUINT=) appends. Order is layout order and stacking order (later on top) |
+| =lrg_container_reorder_child (self, child, index)= | Move an existing child | The child is never unparented, so focus, pointer capture and state survive; past the end moves it last (on top); lays out immediately and queues layout |
+| =lrg_container_remove_child (self, child)= | Remove a child | Releases the reference; warns if not a child; lays out immediately and queues layout |
+| =lrg_container_remove_all (self)= | Remove every child | Releases references; does *not* queue layout (call =lrg_widget_queue_layout()= yourself) |
+| =lrg_container_get_child_count (self)= | Number of children | O(n) |
+| =lrg_container_get_child (self, index)= | Child by index | (transfer none) (nullable) |
+| =lrg_container_get_children (self)= | The child list | (transfer none) (element-type LrgWidget); do not modify |
 
-lrg_container_add_child(panel, button);
+Children are disposed with the container (=dispose= removes them all).
+
+#+begin_src c
+g_autoptr(LrgVBox)  list = lrg_vbox_new ();
+g_autoptr(LrgLabel) title = lrg_label_new ("Settings");
+
+lrg_container_add_child (LRG_CONTAINER (list), LRG_WIDGET (title));
+/* title is now owned twice: by g_autoptr and by the box; the
+ * g_autoptr ref is dropped at scope end, the box keeps its own */
 #+end_src
 
-The container takes a reference to the child.
-
-*** Removing Children
+** Spacing and padding
 :PROPERTIES:
-:CUSTOM_ID: removing-children
+:CUSTOM_ID: container-spacing
 :END:
-#+begin_src C
-/* Remove specific child */
-lrg_container_remove_child(panel, button);
+| Function | Purpose | Notes |
+|----------+---------+-------|
+| =lrg_container_get_spacing= / =set_spacing= | Gap between children (box and flow layouts) | >= 0; re-lays out and queues layout on change |
+| =lrg_container_get_padding= / =set_padding= | Space inside the container's edges | >= 0; uniform on all sides |
 
-/* Remove all children */
-lrg_container_remove_all(panel);
-#+end_src
+Theme-aware containers read =LRG_THEME_METRIC_SPACING= and =PADDING_X= / =PADDING_Y= in their own code; these properties are explicit values in canvas units.
 
-*** Querying Children
+** Layout
 :PROPERTIES:
-:CUSTOM_ID: querying-children
+:CUSTOM_ID: container-layout
 :END:
-#+begin_src C
-/* Get total count */
-guint count = lrg_container_get_child_count(panel);
-g_message("Panel has %u children", count);
+| Function / vfunc | Purpose |
+|------------------+---------|
+| =LrgContainerClass.layout_children (self)= | Place every visible child, normally with =lrg_widget_place_in_slot()= in the container's coordinates |
+| =lrg_container_layout_children (self)= | Run it now |
 
-/* Get specific child by index */
-LrgWidget *first = lrg_container_get_child(panel, 0);
-LrgWidget *second = lrg_container_get_child(panel, 1);
+Layout is driven by the canvas: =lrg_widget_queue_layout()= marks dirty widgets, and before each paint =lrg_widget_layout()= arranges marked containers (which calls =layout_children()=) and recurses into marked children. Writing a =layout_children()=:
 
-/* Get all children as a list */
-GList *children = lrg_container_get_children(panel);
-for (GList *iter = children; iter; iter = iter->next)
+#+begin_src c
+static void
+game_two_columns_layout_children (LrgContainer *container)
 {
-    LrgWidget *child = LRG_WIDGET(iter->data);
-    /* Process child */
+	gfloat pad = lrg_container_get_padding (container);
+	gfloat gap = lrg_container_get_spacing (container);
+	gfloat w = lrg_widget_get_width (LRG_WIDGET (container)) - pad * 2.0f;
+	gfloat h = lrg_widget_get_height (LRG_WIDGET (container)) - pad * 2.0f;
+	gfloat col = (w - gap) * 0.5f;
+	LrgWidget *left = lrg_container_get_child (container, 0);
+	LrgWidget *right = lrg_container_get_child (container, 1);
+
+	/* slots in the container's coordinates; margins, alignment and
+	 * min/max of each child are applied by place_in_slot */
+	if (left != NULL)
+		lrg_widget_place_in_slot (left, pad, pad, col, h);
+	if (right != NULL)
+		lrg_widget_place_in_slot (right, pad + col + gap, pad, col, h);
 }
-/* Don't free the list data, just the list itself */
-g_list_free(children);
 #+end_src
 
-** Layout Properties
-:PROPERTIES:
-:CUSTOM_ID: layout-properties
-:END:
-*** Spacing
-:PROPERTIES:
-:CUSTOM_ID: spacing
-:END:
-Space between children:
+Measurement, slots, box and grid algorithms, dirty propagation and a full custom-container example (a wrapping flow box) are in [[file:layout.org][UI layout]].
 
-#+begin_src C
-/* Set spacing between widgets */
-lrg_container_set_spacing(container, 10);
-
-/* Query spacing */
-gfloat spacing = lrg_container_get_spacing(container);
-#+end_src
-
-*** Padding
-:PROPERTIES:
-:CUSTOM_ID: padding
-:END:
-Space around the container's content:
-
-#+begin_src C
-/* Set padding inside container */
-lrg_container_set_padding(container, 15);
-
-/* Query padding */
-gfloat padding = lrg_container_get_padding(container);
-#+end_src
-
-** Layout Algorithm
-:PROPERTIES:
-:CUSTOM_ID: layout-algorithm
-:END:
-Each container subclass implements its own layout:
-
-*** Manual Layout Triggering
-:PROPERTIES:
-:CUSTOM_ID: manual-layout-triggering
-:END:
-#+begin_src C
-/* Trigger layout after changing spacing/padding */
-lrg_container_layout_children(container);
-#+end_src
-
-Automatically called when:
-
-- Children are added/removed
-- Container size changes
-- Container position changes
-
-** Container Types
+** Container types
 :PROPERTIES:
 :CUSTOM_ID: container-types
 :END:
-*** VBox - Vertical Layout
+| Container | Layout | Page |
+|-----------+--------+------|
+| =LrgCanvas= | Absolute; root of the tree, input, popups, rendering | [[file:widgets/canvas.org][canvas]], [[file:input-and-focus.org][input and focus]] |
+| =LrgPanel= | Absolute, with a themed surface | [[file:widgets/panel.org][panel]] |
+| =LrgVBox= / =LrgHBox= | Box with fill weights, optional homogeneous | [[file:widgets/vbox.org][vbox]], [[file:widgets/hbox.org][hbox]], [[file:layout.org::#layout-box][box layout]] |
+| =LrgGrid= | Equal cells, fixed column count | [[file:layout.org::#layout-grid][grid layout]] |
+| =LrgScrollBox= | Scrolling viewport | [[file:widgets/scroll-box.org][scroll box]] |
+| =LrgListView= | Rows with selection | [[file:widgets/list-view.org][list view]] |
+| =LrgOverlay= | Stacked full-size layers | [[file:widgets/overlay.org][overlay]] |
+| =LrgDialog= | Modal popup content | [[file:widgets/dialog.org][dialog]] |
+| =LrgTabView= | Tabbed pages | [[file:tab-view.org][tab view]] |
+
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: vbox---vertical-layout
+:CUSTOM_ID: container-properties
 :END:
-#+begin_src C
-g_autoptr(LrgVBox) vbox = lrg_vbox_new();
+| Property | Type | Access | Default |
+|----------+------+--------+---------|
+| =spacing= | float >= 0 | read/write | 0 |
+| =padding= | float >= 0 | read/write | 0 |
+| =overflow-hit-test= | boolean | read/write | =FALSE= |
 
-/* Add children - they stack vertically */
-g_autoptr(LrgLabel) title = lrg_label_new("Settings");
-g_autoptr(LrgSlider) volume = lrg_slider_new();
-g_autoptr(LrgSlider) brightness = lrg_slider_new();
-
-lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(title));
-lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(volume));
-lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(brightness));
-
-/* Optional: equal height for all children */
-lrg_vbox_set_homogeneous(vbox, TRUE);
-
-/* Set spacing between items */
-lrg_container_set_spacing(LRG_CONTAINER(vbox), 10);
-#+end_src
-
-*** HBox - Horizontal Layout
-:PROPERTIES:
-:CUSTOM_ID: hbox---horizontal-layout
-:END:
-#+begin_src C
-g_autoptr(LrgHBox) hbox = lrg_hbox_new();
-
-/* Add children - they stack horizontally */
-g_autoptr(LrgButton) ok = lrg_button_new("OK");
-g_autoptr(LrgButton) cancel = lrg_button_new("Cancel");
-
-lrg_container_add_child(LRG_CONTAINER(hbox), LRG_WIDGET(ok));
-lrg_container_add_child(LRG_CONTAINER(hbox), LRG_WIDGET(cancel));
-
-/* Optional: equal width for all children */
-lrg_hbox_set_homogeneous(hbox, FALSE);
-#+end_src
-
-*** Grid - Grid Layout
-:PROPERTIES:
-:CUSTOM_ID: grid---grid-layout
-:END:
-#+begin_src C
-g_autoptr(LrgGrid) grid = lrg_grid_new(3);  /* 3 columns */
-
-/* Children arrange left-to-right, top-to-bottom */
-for (guint i = 0; i < 9; i++)
-{
-    g_autoptr(LrgButton) btn = lrg_button_new(g_strdup_printf("%u", i));
-    lrg_container_add_child(LRG_CONTAINER(grid), LRG_WIDGET(btn));
-}
-
-/* Set spacing */
-lrg_grid_set_column_spacing(grid, 5);
-lrg_grid_set_row_spacing(grid, 5);
-#+end_src
-
-*** Panel - Styled Container
-:PROPERTIES:
-:CUSTOM_ID: panel---styled-container
-:END:
-#+begin_src C
-g_autoptr(LrgPanel) panel = lrg_panel_new();
-
-/* Set appearance */
-GrlColor bg = GRL_COLOR(50, 50, 50, 255);
-lrg_panel_set_background_color(panel, &bg);
-
-GrlColor border = GRL_COLOR(100, 100, 100, 255);
-lrg_panel_set_border_color(panel, &border);
-lrg_panel_set_border_width(panel, 2);
-lrg_panel_set_corner_radius(panel, 5);
-
-/* Add children */
-g_autoptr(LrgVBox) contents = lrg_vbox_new();
-lrg_container_add_child(LRG_CONTAINER(panel), LRG_WIDGET(contents));
-#+end_src
-
-*** Canvas - Root Container
-:PROPERTIES:
-:CUSTOM_ID: canvas---root-container
-:END:
-#+begin_src C
-g_autoptr(LrgCanvas) canvas = lrg_canvas_new();
-
-/* Top-level widgets */
-g_autoptr(LrgPanel) main_panel = lrg_panel_new();
-lrg_container_add_child(LRG_CONTAINER(canvas), LRG_WIDGET(main_panel));
-
-/* Handle input and rendering */
-lrg_canvas_handle_input(canvas);
-lrg_canvas_render(canvas);
-
-/* Focus management */
-lrg_canvas_set_focused_widget(canvas, LRG_WIDGET(text_input));
-#+end_src
-
-** Common Patterns
-:PROPERTIES:
-:CUSTOM_ID: common-patterns
-:END:
-*** Nested Layout
-:PROPERTIES:
-:CUSTOM_ID: nested-layout
-:END:
-#+begin_src C
-g_autoptr(LrgCanvas) canvas = lrg_canvas_new();
-
-/* Main panel */
-g_autoptr(LrgPanel) main = lrg_panel_new();
-lrg_widget_set_size(LRG_WIDGET(main), 600, 400);
-lrg_container_add_child(LRG_CONTAINER(canvas), LRG_WIDGET(main));
-
-/* Vertical layout inside panel */
-g_autoptr(LrgVBox) vbox = lrg_vbox_new();
-lrg_container_set_padding(LRG_CONTAINER(vbox), 10);
-lrg_container_set_spacing(LRG_CONTAINER(vbox), 10);
-lrg_container_add_child(LRG_CONTAINER(main), LRG_WIDGET(vbox));
-
-/* Title and horizontal button row */
-g_autoptr(LrgLabel) title = lrg_label_new("Dialog");
-lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(title));
-
-g_autoptr(LrgHBox) buttons = lrg_hbox_new();
-lrg_container_set_spacing(LRG_CONTAINER(buttons), 10);
-
-g_autoptr(LrgButton) ok = lrg_button_new("OK");
-g_autoptr(LrgButton) cancel = lrg_button_new("Cancel");
-
-lrg_container_add_child(LRG_CONTAINER(buttons), LRG_WIDGET(ok));
-lrg_container_add_child(LRG_CONTAINER(buttons), LRG_WIDGET(cancel));
-
-lrg_container_add_child(LRG_CONTAINER(vbox), LRG_WIDGET(buttons));
-#+end_src
-
-*** Dynamic Content
-:PROPERTIES:
-:CUSTOM_ID: dynamic-content
-:END:
-#+begin_src C
-void populate_list(LrgContainer *list_container, const gchar **items, guint count)
-{
-    /* Clear existing items */
-    lrg_container_remove_all(list_container);
-
-    /* Add new items */
-    for (guint i = 0; i < count; i++)
-    {
-        g_autoptr(LrgLabel) item = lrg_label_new(items[i]);
-        lrg_container_add_child(list_container, LRG_WIDGET(item));
-    }
-
-    /* Trigger layout */
-    lrg_container_layout_children(list_container);
-}
-#+end_src
-
-*** Form Layout
-:PROPERTIES:
-:CUSTOM_ID: form-layout
-:END:
-#+begin_src C
-g_autoptr(LrgGrid) form = lrg_grid_new(2);  /* 2 columns: label, input */
-lrg_grid_set_column_spacing(form, 10);
-lrg_grid_set_row_spacing(form, 10);
-
-/* Row 1: Name field */
-g_autoptr(LrgLabel) name_label = lrg_label_new("Name:");
-g_autoptr(LrgTextInput) name_input = lrg_text_input_new();
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(name_label));
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(name_input));
-
-/* Row 2: Email field */
-g_autoptr(LrgLabel) email_label = lrg_label_new("Email:");
-g_autoptr(LrgTextInput) email_input = lrg_text_input_new();
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(email_label));
-lrg_container_add_child(LRG_CONTAINER(form), LRG_WIDGET(email_input));
-#+end_src
-
-*** Scrollable Container
-:PROPERTIES:
-:CUSTOM_ID: scrollable-container
-:END:
-#+begin_src C
-/* Create a container that will be scrolled */
-g_autoptr(LrgVBox) content = lrg_vbox_new();
-
-/* Add many children */
-for (guint i = 0; i < 100; i++)
-{
-    g_autoptr(LrgLabel) item = lrg_label_new(
-        g_strdup_printf("Item %u", i)
-    );
-    lrg_container_add_child(LRG_CONTAINER(content), LRG_WIDGET(item));
-}
-
-/* In a real scrollable container, you'd implement clipping
-   and respond to scroll events */
-#+end_src
-
-** Layout Strategy
-:PROPERTIES:
-:CUSTOM_ID: layout-strategy
-:END:
-When implementing layout for a custom container:
-
-1. Get all children with =lrg_container_get_children()=
-2. Measure each child with =lrg_widget_measure()=
-3. Calculate positions based on layout algorithm
-4. Set position and size on each child with =lrg_widget_set_position()= and =lrg_widget_set_size()=
-
-Example (simplified VBox):
-
-#+begin_src C
-void my_container_layout_children(LrgContainer *self)
-{
-    GList *children = lrg_container_get_children(self);
-    if (children == NULL)
-        return;
-
-    gfloat spacing = lrg_container_get_spacing(self);
-    gfloat padding = lrg_container_get_padding(self);
-    gfloat y = padding;
-
-    for (GList *iter = children; iter; iter = iter->next)
-    {
-        LrgWidget *child = LRG_WIDGET(iter->data);
-
-        /* Measure child */
-        gfloat child_w = 0, child_h = 0;
-        lrg_widget_measure(child, &child_w, &child_h);
-
-        /* Position child */
-        lrg_widget_set_position(child, padding, y);
-        lrg_widget_set_size(child, child_w, child_h);
-
-        y += child_h + spacing;
-    }
-}
-#+end_src
-
-** API Reference
-:PROPERTIES:
-:CUSTOM_ID: api-reference
-:END:
-*** Child Management
-:PROPERTIES:
-:CUSTOM_ID: child-management-1
-:END:
-- =lrg_container_add_child(LrgContainer *self, LrgWidget *child)=
-- =lrg_container_remove_child(LrgContainer *self, LrgWidget *child)=
-- =lrg_container_remove_all(LrgContainer *self)=
-- =lrg_container_get_child_count(LrgContainer *self)=
-- =lrg_container_get_child(LrgContainer *self, guint index)=
-- =lrg_container_get_children(LrgContainer *self)=
-
-*** Layout Properties
-:PROPERTIES:
-:CUSTOM_ID: layout-properties-1
-:END:
-- =lrg_container_get_spacing(LrgContainer *self)=
-- =lrg_container_set_spacing(LrgContainer *self, gfloat spacing)=
-- =lrg_container_get_padding(LrgContainer *self)=
-- =lrg_container_set_padding(LrgContainer *self, gfloat padding)=
-
-*** Layout
-:PROPERTIES:
-:CUSTOM_ID: layout
-:END:
-- =lrg_container_layout_children(LrgContainer *self)=
+=lrg_container_set_overflow_hit_test (self, TRUE)= / =lrg_container_get_overflow_hit_test()=: pointer hit-testing searches the children even when the pointer is outside the container's rectangle, for layouts that place children beyond their own bounds (anchor layouts, callouts, badges). The container itself is still only hit inside its rectangle; see [[file:input-and-focus.org::#input-hit-testing][hit testing]].
 
 ** Notes
 :PROPERTIES:
-:CUSTOM_ID: notes
+:CUSTOM_ID: container-notes
 :END:
-- Containers are reference-counted GObjects
-- Children are referenced when added
-- Layout is automatic when size/position changes
-- =get_children()= returns a list that must be freed
-- Spacing is between children, padding is around content
+- A custom =handle_event= on a container must ignore bubbling events for its children (check =lrg_ui_event_get_bubbling()=, or chain up first): the canvas already delivered the event to the child before it bubbled to you. Forwarding it down again delivers it twice.
+- =add_child= and =remove_child= still run =layout_children()= immediately for code that reads child positions right after adding them; the canvas lays out again before painting anyway.
+- Overriding =paint= in a container replaces child painting; call =lrg_widget_paint()= on each child yourself (or chain up) after drawing your own background.
+- Children of an invisible container are neither painted, stepped nor hit-tested.
+- In right-to-left (see [[file:layout.org::#layout-direction][layout direction]]) =lrg_widget_allocate()= mirrors every child rectangle inside the container unless the class opted out with =lrg_widget_class_set_handles_direction()=; write =layout_children= left-to-right.
 
 ** Related
 :PROPERTIES:
-:CUSTOM_ID: related
+:CUSTOM_ID: container-related
 :END:
-- [[file:widget.org][Widget]] - Base widget class
-- [[file:index.org][UI Module Overview]] - Complete UI documentation
+- [[file:widget.org][LrgWidget]], [[file:layout.org][UI layout]]
+- [[file:../../guides/extending-ui.org][Extending the UI]]

@@ -1,0 +1,335 @@
+* Viewport
+:PROPERTIES:
+:CUSTOM_ID: viewport
+:END:
+=LrgViewport= is an area of the UI layout that shows content rendered by the application: a 3D scene in an editor panel, a 2D game inside a frame, a minimap, a video frame. It lays out like any widget (give it a fill weight or put it in a splitter), draws a themed frame around the content, and maps pointer, wheel, touch and key input into the content's own pixel space, so a scene can be driven from inside the UI.
+
+Two modes:
+- *Render* (=LRG_VIEWPORT_MODE_RENDER=, the default): the viewport owns a =GrlRenderTexture= sized to its content area times =resolution-scale= (or a fixed pixel resolution) and asks the application to draw into it every frame through the =render= signal or a C render function.
+- *Texture* (=LRG_VIEWPORT_MODE_TEXTURE=): the viewport shows a texture the application supplies (=lrg_viewport_set_texture()=), or the colour buffer of a render texture the application draws itself (=lrg_viewport_set_source_render_texture()=, flipped upright).
+
+The texture is scaled into the content area by a fit rule (stretch, contain with letterbox bars, cover, integer scale for pixel art). Its corners are rounded to follow the frame.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: viewport-creation
+:END:
+#+begin_src C
+static void
+on_render (LrgViewport      *viewport,
+           GrlRenderTexture *target,
+           gfloat            width,
+           gfloat            height,
+           gpointer          user_data)
+{
+	/* Texture mode is active on @target: draw the scene in its pixels */
+	DrawCircle ((gint) (width * 0.5f), (gint) (height * 0.5f), height * 0.3f, ORANGE);
+}
+
+LrgViewport *view = lrg_viewport_new ();
+
+lrg_widget_set_fill_weight (LRG_WIDGET (view), 1.0f);
+lrg_viewport_set_clear_color (view, &(GrlColor){ 18, 18, 24, 255 });
+g_signal_connect (view, "render", G_CALLBACK (on_render), NULL);
+lrg_container_add_child (LRG_CONTAINER (main_box), LRG_WIDGET (view));
+#+end_src
+
+From C the render function avoids signal marshalling:
+#+begin_src C
+lrg_viewport_set_render_func (view, draw_scene, scene, NULL);
+#+end_src
+
+** Frame order
+:PROPERTIES:
+:CUSTOM_ID: viewport-frame-order
+:END:
+Rendering into the viewport's texture happens in the widget's =step=, which =lrg_canvas_update()= runs (and =lrg_canvas_process_input()= / =lrg_canvas_handle_input()= call that at the end). It never happens inside the UI paint pass, so the application may use =BeginMode3D()=, shaders and its own render textures freely; the paint pass only records an image instance sampling the finished texture.
+
+#+begin_example
+lrg_canvas_handle_input (canvas)          input, then lrg_canvas_update ()
+  -> LrgViewport step                     resize bookkeeping
+     -> BeginTextureMode (viewport target)
+        clear (auto-clear) -> render func -> "render" signal
+     -> EndTextureMode
+BeginDrawing ()
+  lrg_canvas_render (canvas)              layout -> record -> draw
+    -> LrgViewport paint                  frame (BOX) + texture image
+EndDrawing ()
+#+end_example
+
+- Call =lrg_canvas_update()= (or the input functions) *outside* any =BeginTextureMode()=: raylib texture modes do not nest. If the viewport finds another framebuffer bound it skips the render, logs one warning and tries again on the next step.
+- Layout runs in =lrg_canvas_record()=, after the step, so a size change is seen by the renderer one frame later.
+- Without a canvas clock (a viewport drawn by hand) call =lrg_viewport_render()= yourself before drawing.
+
+** Resolution and resizing
+:PROPERTIES:
+:CUSTOM_ID: viewport-resolution
+:END:
+- The texture follows the content area (the allocation minus the BOX border) times =resolution-scale=: 0.5 renders a quarter of the pixels and upscales, 2.0 supersamples.
+- =lrg_viewport_set_fixed_resolution (view, 320, 180)= renders at exactly that size whatever the allocation. It also becomes the viewport's preferred size. 0 x 0 follows the allocation again.
+- While the allocation keeps changing (dragging a splitter, resizing the window) the old texture is stretched over the new area; the texture is recreated only once the size has held for =resize-delay= seconds of canvas time (default 0.1). The first texture is created at once. Every new texture emits =resized= before its first =render=: update camera aspect ratios there.
+- =lrg_viewport_get_render_texture()= returns the current owned texture (replaced on resize, so do not keep it). =lrg_viewport_get_content_size()= is the content's pixel size: the shown texture's, or the size it will have (headless, before the first frame).
+- =continuous= (default =TRUE=) renders every frame and keeps =lrg_canvas_update()= reporting busy while the viewport is visible. Turn it off for static content and call =lrg_viewport_queue_render()= when the scene changes; a resize also renders.
+
+** Fit modes
+:PROPERTIES:
+:CUSTOM_ID: viewport-fit
+:END:
+| =LrgViewportFit=                 | Behaviour                                                              |
+|----------------------------------+------------------------------------------------------------------------|
+| =LRG_VIEWPORT_FIT_STRETCH=       | Fill the content area, ignoring the aspect ratio (default)             |
+| =LRG_VIEWPORT_FIT_CONTAIN=       | Largest size that fits, aspect kept; bars show the BOX background      |
+| =LRG_VIEWPORT_FIT_COVER=         | Smallest size that covers, aspect kept; overflow cropped evenly        |
+| =LRG_VIEWPORT_FIT_INTEGER_SCALE= | Largest whole scale that fits (at least 1), origin snapped to whole units; an oversized texture is cropped around its centre |
+
+=lrg_viewport_compute_fit (fit, tex_w, tex_h, &area, &dest, &source)= is the pure function behind painting and pointer mapping: =dest= is where the visible part is drawn (always inside =area=), =source= the visible region of the texture in pixels. =lrg_viewport_get_content_rect()= and =lrg_viewport_get_display_rect()= give the widget-relative content area and drawn rectangle.
+
+=filter= sets the owned render texture's sampling: =GRL_TEXTURE_FILTER_POINT= for pixel art, =GRL_TEXTURE_FILTER_BILINEAR= (default) for smooth scaling. Application textures keep their own filter.
+
+Pixel-art setup:
+#+begin_src C
+lrg_viewport_set_fixed_resolution (view, 320, 180);
+lrg_viewport_set_fit (view, LRG_VIEWPORT_FIT_INTEGER_SCALE);
+lrg_viewport_set_filter (view, GRL_TEXTURE_FILTER_POINT);
+#+end_src
+
+** Input
+:PROPERTIES:
+:CUSTOM_ID: viewport-input
+:END:
+Positions are reported in *content pixels* (0, 0 at the top-left of the texture as drawn), through the fit geometry. =lrg_viewport_widget_to_texture (view, x, y, &u, &v)= does the same mapping for widget-relative positions and returns =FALSE= over letterbox bars, the border or outside; =lrg_viewport_texture_to_widget()= is the inverse (place UI labels over projected 3D points).
+
+| Input                              | Result                                                                 |
+|------------------------------------+------------------------------------------------------------------------|
+| Pointer moves over the content     | =pointer-move (u, v, dx, dy)=                                          |
+| Button press on the content        | =pointer-press (button, u, v, modifiers)=; starts a drag (=dragging=)  |
+| Pointer moves during a drag        | =pointer-move= anywhere, coordinates extrapolated past the edges       |
+| Button release                     | =pointer-release (button, u, v, modifiers)=; ends the drag             |
+| Wheel over the content             | =pointer-scroll (u, v, scroll_x, scroll_y)=                            |
+| Click / Tab onto the viewport      | Keyboard focus (the border turns =ACCENT=)                             |
+| Key press while focused            | =key (key, modifiers)=; return =TRUE= to consume                       |
+| One-finger touch drag              | =pan (u, v, dx, dy)= then =pan-end (vx, vy)=, only with a =pan= handler |
+| Two-finger pinch over the content  | =zoom (u, v, scale)=, only with a =zoom= handler                       |
+| Anything over a letterbox bar      | Ignored: bubbles to the parent                                         |
+
+- Unhandled keys keep their usual meaning (arrows move focus, Escape cancels, shortcuts), so return =TRUE= from =key= for the keys the scene uses. Held-key movement (WASD) is usually polled with =IsKeyDown()= in the game update while the viewport has focus (=lrg_widget_get_state_flags (view) & LRG_WIDGET_STATE_FOCUSED=).
+- =lock-cursor= hides and locks the OS cursor while a button pressed on the content is held (orbit or FPS-style cameras): the pointer can then move without bound and =pointer-move= keeps delivering deltas. The cursor is put back where the drag began on release.
+- Without a =pan= handler touch drags arrive as pointer press / move / release, so mouse-only scenes work with touch.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: viewport-properties
+:END:
+| Property           | Type               | Default    | Meaning                                                    |
+|--------------------+--------------------+------------+------------------------------------------------------------|
+| =mode=             | =LrgViewportMode=  | =render=   | Owned render texture or application texture                |
+| =fit=              | =LrgViewportFit=   | =stretch=  | How the texture is scaled into the content area            |
+| =filter=           | =GrlTextureFilter= | =bilinear= | Sampling of the owned render texture                       |
+| =resolution-scale= | =gfloat=           | 1.0        | Texture pixels per canvas unit (0.1 .. 8)                  |
+| =fixed-width=      | =gint=             | 0          | Fixed texture width (with =fixed-height=; 0 follows)       |
+| =fixed-height=     | =gint=             | 0          | Fixed texture height                                       |
+| =resize-delay=     | =gfloat=           | 0.1        | Seconds a new size must hold before the texture is recreated |
+| =continuous=       | =gboolean=         | =TRUE=     | Render every frame, or only when queued                    |
+| =auto-clear=       | =gboolean=         | =TRUE=     | Clear to =clear-color= before each render                  |
+| =clear-color=      | =GrlColor=         | opaque black | Clear colour                                            |
+| =texture=          | =GrlTexture=       | =NULL=     | Application texture (setting it switches to texture mode)  |
+| =flip-y=           | =gboolean=         | =FALSE=    | Show the application texture upside down                   |
+| =lock-cursor=      | =gboolean=         | =FALSE=    | Lock the OS cursor during drags                            |
+| =dragging=         | =gboolean=         | =FALSE=    | Read-only: a button pressed on the content is held         |
+The widget's own =focusable= property is =TRUE= by default.
+
+| Signal            | Arguments                                   | Emitted                                       |
+|-------------------+---------------------------------------------+-----------------------------------------------|
+| =render=          | =GrlRenderTexture *target, gfloat w, gfloat h= | In texture mode on the target, from the step |
+| =resized=         | =gint w, gint h=                            | A render texture was (re)created              |
+| =pointer-move=    | =gfloat u, v, dx, dy=                       | Pointer over the content or dragging          |
+| =pointer-press=   | =gint button, gfloat u, v, LrgInputModifiers= | Button pressed on the content               |
+| =pointer-release= | =gint button, gfloat u, v, LrgInputModifiers= | Button released                             |
+| =pointer-scroll=  | =gfloat u, v, scroll_x, scroll_y=           | Wheel over the content                        |
+| =key=             | =GrlKey key, LrgInputModifiers= -> =gboolean= | Key pressed while focused                   |
+| =pan=             | =gfloat u, v, dx, dy=                       | Touch drag (content pixels)                   |
+| =pan-end=         | =gfloat vx, vy=                             | Touch drag released (pixels per second)       |
+| =zoom=            | =gfloat u, v, scale=                        | Pinch over the content                        |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: viewport-parts
+:END:
+| Part    | State      | Built-in look                                                             |
+|---------+------------+---------------------------------------------------------------------------|
+| =box=   | resting    | =WINDOW= fill (visible as letterbox bars), =BORDER= hairline of =BORDER_WIDTH=, =CORNER_RADIUS= corners, half-strength theme shadow |
+| =box=   | =focused=  | Border in =ACCENT= while the scene has keyboard focus                     |
+| =box=   | =disabled= | 45 % opacity (content included)                                           |
+| =focus= | focus visible | Core focus ring after keyboard navigation                              |
+The content sits inside the border; its corner radius is the box's top-left radius minus the border width, reduced as letterbox bars move the image away from the corners (square once a bar is as wide as the radius).
+
+#+begin_src yaml
+styles:
+  # Borderless, square viewport with a dark letterbox
+  - widget: LrgViewport
+    part: box
+    background: "#000000"
+    border-width: 0
+    radius: 0
+#+end_src
+
+** 3D scene in a UI panel
+:PROPERTIES:
+:CUSTOM_ID: viewport-3d-scene
+:END:
+An orbit camera driven by right-drag and the wheel, rendered with =GrlCamera3D=:
+#+begin_src C
+typedef struct
+{
+	GrlCamera3D *camera;
+	gfloat       yaw;
+	gfloat       pitch;
+	gfloat       distance;
+} Orbit;
+
+static void
+orbit_apply (Orbit *orbit)
+{
+	gfloat cp = cosf (orbit->pitch);
+
+	grl_camera3d_set_position_xyz (orbit->camera,
+	                               orbit->distance * cp * sinf (orbit->yaw),
+	                               orbit->distance * sinf (orbit->pitch),
+	                               orbit->distance * cp * cosf (orbit->yaw));
+}
+
+static void
+draw_scene (LrgViewport      *viewport,
+            GrlRenderTexture *target,
+            gfloat            width,
+            gfloat            height,
+            gpointer          user_data)
+{
+	Orbit                *orbit = user_data;
+	g_autoptr(GrlVector3) origin = grl_vector3_new (0.0f, 0.5f, 0.0f);
+	g_autoptr(GrlColor)   red = grl_color_new (230, 41, 55, 255);
+
+	/* BeginMode3D takes the aspect ratio from the active target */
+	grl_camera3d_begin (orbit->camera);
+	grl_draw_grid (10, 1.0f);
+	grl_draw_cube (origin, 1.0f, 1.0f, 1.0f, red);
+	grl_camera3d_end (orbit->camera);
+}
+
+static void
+on_pointer_move (LrgViewport *viewport,
+                 gfloat       u,
+                 gfloat       v,
+                 gfloat       dx,
+                 gfloat       dy,
+                 Orbit       *orbit)
+{
+	if (!lrg_viewport_get_dragging (viewport))
+		return;
+	orbit->yaw -= dx * 0.01f;
+	orbit->pitch = CLAMP (orbit->pitch + dy * 0.01f, -1.4f, 1.4f);
+	orbit_apply (orbit);
+}
+
+static void
+on_pointer_scroll (LrgViewport *viewport,
+                   gfloat       u,
+                   gfloat       v,
+                   gfloat       scroll_x,
+                   gfloat       scroll_y,
+                   Orbit       *orbit)
+{
+	orbit->distance = CLAMP (orbit->distance * (1.0f - scroll_y * 0.1f), 2.0f, 50.0f);
+	orbit_apply (orbit);
+}
+
+static Orbit orbit = { NULL, 0.6f, 0.5f, 8.0f };
+LrgViewport *view = lrg_viewport_new ();
+
+orbit.camera = grl_camera3d_new ();
+grl_camera3d_set_target_xyz (orbit.camera, 0.0f, 0.5f, 0.0f);
+grl_camera3d_set_fovy (orbit.camera, 45.0f);
+orbit_apply (&orbit);
+
+lrg_viewport_set_clear_color (view, &(GrlColor){ 24, 24, 30, 255 });
+lrg_viewport_set_resolution_scale (view, 1.0f);
+lrg_viewport_set_lock_cursor (view, TRUE);
+lrg_viewport_set_render_func (view, draw_scene, &orbit, NULL);
+g_signal_connect (view, "pointer-move", G_CALLBACK (on_pointer_move), &orbit);
+g_signal_connect (view, "pointer-scroll", G_CALLBACK (on_pointer_scroll), &orbit);
+
+/* Scene on the right of an inspector */
+lrg_splitter_set_start_child (split, LRG_WIDGET (inspector));
+lrg_splitter_set_end_child (split, LRG_WIDGET (view));
+
+/* Main loop */
+while (!WindowShouldClose ())
+{
+	lrg_canvas_handle_input (canvas);   /* renders the scene into the viewport */
+	BeginDrawing ();
+	ClearBackground (BLACK);
+	lrg_canvas_render (canvas);          /* UI with the scene inside */
+	EndDrawing ();
+}
+#+end_src
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: viewport-yaml
+:END:
+Supported by =LrgUILoader= as =LrgViewport= (=type: viewport=); every setting is a property (=mode=, =fit=, =filter=, =resolution-scale=, =fixed-width=, =fixed-height=, =resize-delay=, =continuous=, =auto-clear=, =clear-color=, =flip-y=, =lock-cursor=), enums by nick.
+
+#+begin_src yaml
+type: viewport
+id: scene
+fit: integer-scale
+filter: point
+fixed-width: 320
+fixed-height: 180
+continuous: true
+clear-color: "#11111b"
+on: {render: draw_scene, pointer-press: scene_click}   # handlers registered with lrg_ui_loader_add_handler()
+#+end_src
+
+Signals connect through =on:= like any widget's. A render function with its own state (=lrg_viewport_set_render_func()=) or a texture (=lrg_viewport_set_texture()=) is set from code: look the viewport up by id after loading, and again in =LrgUILoader::reloaded= in case it was rebuilt (only when its type or a construct-only value changed). See [[file:../declarative-ui.org::#viewport-custom-keys][Declarative UI]].
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: viewport-pitfalls
+:END:
+- Do not call =lrg_canvas_update()= / =lrg_canvas_handle_input()= between =BeginTextureMode()= and =EndTextureMode()= (rendering the canvas into a texture is fine; updating it there defers every viewport render).
+- Do not keep the =target= of =render= or the result of =lrg_viewport_get_render_texture()= across frames: it is replaced on resize.
+- Headless (no window): no texture is created, =render= is never emitted and =lrg_viewport_render()= returns =FALSE=; layout, painting of the frame and all input signals still work, with coordinates in the size the texture would have.
+- Only the left mouse button is captured by the canvas: a right- or middle-button drag that leaves the viewport stops delivering moves until it re-enters (and its release may land on another widget). Use the left button for drags that must survive leaving the panel, or =lock-cursor=.
+- Per-corner radii: the image uses the BOX look's top-left radius for all four corners.
+- In texture mode the application owns the texture's contents and filter; set =flip-y= for bottom-up data (=lrg_viewport_set_source_render_texture()= does it for you).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: viewport-see-also
+:END:
+- [[file:custom-widget.org][Custom widget]] for application-painted widgets inside the UI paint list.
+- [[file:splitter.org][Splitter]] for editor-style panel layouts.
+- [[file:image.org][Image]] for static textures without input mapping.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: viewport-api
+:END:
+- =lrg_viewport_new (void)=
+- =LrgViewportMode= (=lrg_viewport_mode_get_type=), =LrgViewportFit= (=lrg_viewport_fit_get_type=), =LrgViewportRenderFunc=
+- =lrg_viewport_get_mode= / =lrg_viewport_set_mode=
+- =lrg_viewport_get_texture= / =lrg_viewport_set_texture=, =lrg_viewport_set_source_render_texture=
+- =lrg_viewport_get_flip_y= / =lrg_viewport_set_flip_y=
+- =lrg_viewport_get_render_texture=
+- =lrg_viewport_set_render_func (self, func, user_data, destroy)=, =lrg_viewport_render=, =lrg_viewport_queue_render=
+- =lrg_viewport_get_continuous= / =lrg_viewport_set_continuous=
+- =lrg_viewport_get_auto_clear= / =lrg_viewport_set_auto_clear=, =lrg_viewport_get_clear_color= / =lrg_viewport_set_clear_color=
+- =lrg_viewport_get_resolution_scale= / =lrg_viewport_set_resolution_scale=
+- =lrg_viewport_get_fixed_resolution= / =lrg_viewport_set_fixed_resolution=
+- =lrg_viewport_get_resize_delay= / =lrg_viewport_set_resize_delay=
+- =lrg_viewport_get_content_size=, =lrg_viewport_get_content_rect=, =lrg_viewport_get_display_rect=
+- =lrg_viewport_get_fit= / =lrg_viewport_set_fit=, =lrg_viewport_get_filter= / =lrg_viewport_set_filter=
+- =lrg_viewport_compute_fit (fit, texture_width, texture_height, area, dest, source)=
+- =lrg_viewport_widget_to_texture (self, x, y, u, v)=, =lrg_viewport_texture_to_widget (self, u, v, x, y)=
+- =lrg_viewport_get_lock_cursor= / =lrg_viewport_set_lock_cursor=, =lrg_viewport_get_dragging=

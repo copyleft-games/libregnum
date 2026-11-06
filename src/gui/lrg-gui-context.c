@@ -182,6 +182,7 @@ lrg_gui_style_init (LrgGuiStyle *style,
 	c[LRG_GUI_COL_AXIS_X]           = LRG_GUI_HEX (p->red);
 	c[LRG_GUI_COL_AXIS_Y]           = LRG_GUI_HEX (p->green);
 	c[LRG_GUI_COL_AXIS_Z]           = LRG_GUI_HEX (p->blue);
+	c[LRG_GUI_COL_SHADOW]           = p->light ? 0x1a1a3a40u : 0x00000099u;
 
 	style->font_size       = roundf (15.0f * scale);
 	style->frame_padding_x = roundf (6.0f * scale);
@@ -193,6 +194,81 @@ lrg_gui_style_init (LrgGuiStyle *style,
 	style->rounding        = roundf (3.0f * scale);
 	style->scrollbar_size  = roundf (10.0f * scale);
 	style->label_ratio     = 0.38f;
+	style->shadow_size     = roundf (14.0f * scale);
+}
+
+/* pack: GrlColor -> 0xRRGGBBAA */
+static LrgGuiColor
+pack (const GrlColor *c)
+{
+	return LRG_GUI_RGBA (c->r, c->g, c->b, c->a);
+}
+
+/* pack_alpha: a theme colour with its alpha replaced */
+static LrgGuiColor
+pack_alpha (const GrlColor *c,
+            guint8          alpha)
+{
+	return LRG_GUI_RGBA (c->r, c->g, c->b, alpha);
+}
+
+void
+lrg_gui_style_init_from_theme (LrgGuiStyle *style,
+                               LrgTheme    *theme,
+                               gfloat       scale)
+{
+	LrgGuiColor *c;
+
+	g_return_if_fail (style != NULL);
+	g_return_if_fail (LRG_IS_THEME (theme));
+
+	if (scale <= 0.0f)
+		scale = 1.0f;
+
+	/* Start from the compact editor metrics, then recolour */
+	lrg_gui_style_init (style, NULL, scale);
+
+#define R(role) lrg_theme_get_color (theme, LRG_THEME_COLOR_##role)
+	c = style->colors;
+	c[LRG_GUI_COL_TEXT]             = pack (R (TEXT));
+	c[LRG_GUI_COL_TEXT_DISABLED]    = pack (R (DISABLED));
+	c[LRG_GUI_COL_WINDOW_BG]        = pack (R (WINDOW));
+	c[LRG_GUI_COL_PANEL_BG]         = pack (R (PANEL));
+	c[LRG_GUI_COL_POPUP_BG]         = pack (R (POPUP));
+	c[LRG_GUI_COL_BORDER]           = pack (R (BORDER));
+	c[LRG_GUI_COL_FRAME_BG]         = pack (R (INPUT));
+	c[LRG_GUI_COL_FRAME_BG_HOVERED] = pack (R (CONTROL_HOVER));
+	c[LRG_GUI_COL_FRAME_BG_ACTIVE]  = pack (R (CONTROL_PRESSED));
+	c[LRG_GUI_COL_BUTTON]           = pack (R (CONTROL));
+	c[LRG_GUI_COL_BUTTON_HOVERED]   = pack (R (CONTROL_HOVER));
+	c[LRG_GUI_COL_BUTTON_ACTIVE]    = pack (R (CONTROL_PRESSED));
+	c[LRG_GUI_COL_HEADER]           = pack (R (SELECTION));
+	c[LRG_GUI_COL_HEADER_HOVERED]   = pack (R (CONTROL_HOVER));
+	c[LRG_GUI_COL_HEADER_ACTIVE]    = pack_alpha (R (ACCENT), 0x80);
+	c[LRG_GUI_COL_CHECK_MARK]       = pack (R (ACCENT));
+	c[LRG_GUI_COL_SLIDER_GRAB]      = pack (R (ACCENT));
+	c[LRG_GUI_COL_SEPARATOR]        = pack (R (BORDER));
+	c[LRG_GUI_COL_SCROLLBAR_BG]     = pack (R (SURFACE));
+	c[LRG_GUI_COL_SCROLLBAR_GRAB]   = pack (R (CONTROL_HOVER));
+	c[LRG_GUI_COL_TAB]              = pack (R (WINDOW));
+	c[LRG_GUI_COL_TAB_HOVERED]      = pack (R (CONTROL));
+	c[LRG_GUI_COL_TAB_ACTIVE]       = pack (R (PANEL));
+	c[LRG_GUI_COL_MENUBAR_BG]       = pack (R (WINDOW));
+	c[LRG_GUI_COL_TEXT_SELECTION]   = pack (R (SELECTION));
+	c[LRG_GUI_COL_DROP_TARGET]      = pack (R (WARNING));
+	c[LRG_GUI_COL_MODAL_DIM]        = pack (R (VEIL));
+	c[LRG_GUI_COL_ACCENT]           = pack (R (ACCENT));
+	c[LRG_GUI_COL_ERROR]            = pack (R (DANGER));
+	c[LRG_GUI_COL_WARNING]          = pack (R (WARNING));
+	c[LRG_GUI_COL_SUCCESS]          = pack (R (SUCCESS));
+	c[LRG_GUI_COL_AXIS_X]           = pack (R (DANGER));
+	c[LRG_GUI_COL_AXIS_Y]           = pack (R (SUCCESS));
+	c[LRG_GUI_COL_AXIS_Z]           = pack (R (LINK));
+	c[LRG_GUI_COL_SHADOW]           = pack (R (SHADOW));
+#undef R
+
+	style->rounding = roundf (lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS) * 0.5f * scale);
+	style->shadow_size = roundf (lrg_theme_get_metric (theme, LRG_THEME_METRIC_SHADOW_BLUR) * 0.8f * scale);
 }
 
 /* ==========================================================================
@@ -816,6 +892,10 @@ emit_overlay (LrgGuiContext *self)
 		if (r.y + r.h > self->height)
 			r.y = MAX (0.0f, self->input.mouse_y - r.h - 4.0f);
 
+		if (self->style.shadow_size > 0.0f)
+			lrg_gui_draw_list_shadow (dl, &r, gui_col (self, LRG_GUI_COL_SHADOW),
+			                          self->style.shadow_size * 0.6f,
+			                          self->style.shadow_size * 0.2f, self->style.rounding);
 		lrg_gui_draw_list_rect_filled (dl, &r, gui_col (self, LRG_GUI_COL_POPUP_BG), self->style.rounding);
 		lrg_gui_draw_list_rect_outline (dl, &r, gui_col (self, LRG_GUI_COL_BORDER), 1.0f, self->style.rounding);
 		for (i = 0; i < n; i++)
@@ -2496,6 +2576,7 @@ gui_begin_popup_ex (LrgGuiContext *self,
 	gint       level = self->popup_level;
 	gfloat     w, h;
 	guint      bg;
+	guint      shadow = 0;
 
 	if (level >= (gint) self->popups->len ||
 	    g_array_index (self->popups, GuiPopup, level).id != id)
@@ -2541,7 +2622,14 @@ gui_begin_popup_ex (LrgGuiContext *self,
 	if (rect.h > self->height)
 		rect.h = self->height;
 
-	/* Background now, patched to the measured size at end_popup. */
+	/* Shadow and background now, both patched to the measured size at
+	 * end_popup. */
+	if (self->style.shadow_size > 0.0f)
+		shadow = lrg_gui_draw_list_shadow (self->layers[GUI_LAYER_POPUP], &rect,
+		                                   gui_col (self, LRG_GUI_COL_SHADOW),
+		                                   self->style.shadow_size,
+		                                   self->style.shadow_size * 0.35f,
+		                                   self->style.rounding);
 	bg = lrg_gui_draw_list_rect_filled (self->layers[GUI_LAYER_POPUP], &rect,
 	                                    gui_col (self, LRG_GUI_COL_POPUP_BG), self->style.rounding);
 
@@ -2551,6 +2639,8 @@ gui_begin_popup_ex (LrgGuiContext *self,
 	                       TRUE, level, GUI_LAYER_POPUP);
 	gui_region (self)->bg_cmd = bg;
 	gui_region (self)->has_bg_cmd = TRUE;
+	gui_region (self)->shadow_cmd = shadow;
+	gui_region (self)->has_shadow_cmd = self->style.shadow_size > 0.0f;
 	return TRUE;
 }
 
@@ -2682,6 +2772,8 @@ lrg_gui_end_popup (LrgGuiContext *self)
 
 		if (r->has_bg_cmd)
 			lrg_gui_draw_list_set_rect (self->layers[GUI_LAYER_POPUP], r->bg_cmd, &final);
+		if (r->has_shadow_cmd)
+			lrg_gui_draw_list_set_rect (self->layers[GUI_LAYER_POPUP], r->shadow_cmd, &final);
 		lrg_gui_draw_list_rect_outline (self->layers[GUI_LAYER_POPUP], &final,
 		                                gui_col (self, LRG_GUI_COL_BORDER), 1.0f,
 		                                self->style.rounding);

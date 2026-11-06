@@ -1,0 +1,138 @@
+* Spin Box
+:PROPERTIES:
+:CUSTOM_ID: spin-box
+:END:
+=LrgSpinBox= edits a number within a range. It looks like an entry with the value centred and two small rounded buttons at the ends (minus on the left, plus on the right). The value changes by clicking or holding the buttons, dragging sideways on the number (scrubbing), the mouse wheel, or the keyboard. Every change briefly flashes the border in the accent colour.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: spin-box-creation
+:END:
+#+begin_src C
+LrgSpinBox *volume = lrg_spin_box_new_with_range (0.0, 100.0, 5.0);   /* starts at min */
+LrgSpinBox *scale = lrg_spin_box_new ();                             /* 0..100, step 1 */
+
+lrg_spin_box_set_range (scale, 0.1, 4.0);
+lrg_spin_box_set_step (scale, 0.1);
+lrg_spin_box_set_digits (scale, 1);
+lrg_spin_box_set_value (scale, 1.0);
+#+end_src
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: spin-box-behaviour
+:END:
+- The value is always clamped to [min, max]; changing the range re-clamps it. It is not snapped to the step grid, so =set_value()= keeps arbitrary values; stepping adds or subtracts whole steps (floating-point dust such as 0.30000000000000004 is removed).
+- =digits= only affects display (=lrg_spin_box_get_text()= returns the displayed string).
+- A button whose direction is at its limit is dimmed.
+- Holding a button repeats after 0.4 s at 12 steps per second while the pointer stays on it. The hold time is canvas time, summed from the frames' delta times in =step()= (the frame of the press itself does not count), so repeats are deterministic; =lrg_canvas_update()= returns =TRUE= while a button is held.
+- Scrubbing: press on the number and drag horizontally, one step per 6 units of travel; the number turns accent coloured while scrubbing. The pointer is captured, so the drag keeps working outside the widget.
+- Preferred size: wide enough for the formatted min and max values plus both buttons and padding; =CONTROL_HEIGHT= tall.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: spin-box-properties
+:END:
+| Property | Type      | Default | Meaning                         |
+|----------+-----------+---------+---------------------------------|
+| =value=  | =gdouble= | 0       | Current value, within [min, max] |
+| =min=    | =gdouble= | 0       | Smallest value                   |
+| =max=    | =gdouble= | 100     | Largest value                    |
+| =step=   | =gdouble= | 1       | Change per click, key, notch or 6 units of scrub |
+| =digits= | =guint=   | 0       | Decimals shown (0..10)           |
+
+| Signal          | Arguments | Emitted                                        |
+|-----------------+-----------+------------------------------------------------|
+| =value-changed= | none      | Whenever the value changes (user or program)    |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: spin-box-parts
+:END:
+| Part    | State             | Built-in look                                          |
+|---------+-------------------+--------------------------------------------------------|
+| =box=   | resting           | =INPUT= background, =BORDER= border (=BORDER_WIDTH=), =CORNER_RADIUS= |
+| =box=   | =hovered=         | Border halfway to =TEXT_MUTED=                          |
+| =box=   | =focused=         | =ACCENT= border                                         |
+| =box=   | =disabled=        | Whole widget at 45 % opacity                            |
+| =arrow= | resting           | =CONTROL= background, =TEXT_MUTED= glyph, glyph stroke =size= 2 |
+| =arrow= | =hovered=         | =CONTROL_HOVER=, =TEXT= glyph                            |
+| =arrow= | =hovered=+=pressed= | =CONTROL_PRESSED=; the button also squashes to 90 %    |
+| =label= | any               | =TEXT= (=DISABLED= when disabled), =size= = =FONT_SIZE= |
+| =focus= | focus visible     | Core focus ring                                         |
+Each button has its own hover and press springs, so only the button under the pointer lights up. The change flash blends the box border towards =ACCENT= and back over about half a second. All of these springs are stepped by the widget's =step()= with the canvas frame time, never while painting; =lrg_canvas_update()= returns =TRUE= until they rest. The first frame snaps them, so a box built with a value does not flash in.
+
+** Keyboard and gamepad
+:PROPERTIES:
+:CUSTOM_ID: spin-box-keyboard
+:END:
+| Key                 | Action          |
+|---------------------+-----------------|
+| Up / Down           | +1 / -1 step    |
+| Page Up / Page Down | +10 / -10 steps |
+| Home / End          | min / max       |
+| Wheel up / down     | +1 / -1 step (no focus needed) |
+Up and Down are consumed so they do not move focus; Left and Right still navigate. A gamepad's d-pad currently moves focus rather than stepping (the canvas routes gamepad directions straight to focus navigation).
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: spin-box-theming
+:END:
+#+begin_src yaml
+styles:
+  # Accent-coloured step buttons
+  - widget: LrgSpinBox
+    part: arrow
+    state: [hovered]
+    background: "#7c6cff"
+    foreground: "#ffffff"
+  # Rounder box with a soft shadow
+  - widget: LrgSpinBox
+    part: box
+    radius: 18
+    shadow: "#00000060"
+    shadow-blur: 12
+    shadow-offset: 3
+  # Larger number
+  - widget: LrgSpinBox
+    part: label
+    size: 20
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: spin-box-example
+:END:
+#+begin_src C
+static void
+on_fov_changed (LrgSpinBox *spin,
+                gpointer    user_data)
+{
+	camera_set_fov (user_data, (gfloat) lrg_spin_box_get_value (spin));
+}
+
+LrgSpinBox *fov = lrg_spin_box_new_with_range (60.0, 120.0, 1.0);
+
+lrg_spin_box_set_value (fov, 90.0);
+g_signal_connect (fov, "value-changed", G_CALLBACK (on_fov_changed), camera);
+lrg_container_add_child (LRG_CONTAINER (settings_box), LRG_WIDGET (fov));
+g_object_unref (fov);
+#+end_src
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: spin-box-api
+:END:
+- =lrg_spin_box_new (void)=, =lrg_spin_box_new_with_range (gdouble min, gdouble max, gdouble step)=
+- =lrg_spin_box_get_value= / =set_value=
+- =lrg_spin_box_get_min= / =set_min=, =get_max= / =set_max=, =lrg_spin_box_set_range (self, min, max)=
+- =lrg_spin_box_get_step= / =set_step=, =get_digits= / =set_digits=
+- =lrg_spin_box_get_text (LrgSpinBox *self)= (transfer full)
+- =lrg_spin_box_spin (LrgSpinBox *self, gint steps)=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: spin-box-related
+:END:
+- [[file:slider.org][Slider]]
+- [[file:text-input.org][Text input]]

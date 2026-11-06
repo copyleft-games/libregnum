@@ -1,0 +1,450 @@
+#+title: UI Layout
+#+description: Measure, arrange and place: layout hints, slots, box and grid layout, dirty propagation and writing custom containers
+#+authors: Zach Podbielniak
+#+categories: libregnum ui layout
+#+created: 2026-11-05T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 1.0
+
+* UI Layout
+:PROPERTIES:
+:CUSTOM_ID: layout
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Layout
+#+end_quote
+
+Layout in the widget tree is a two-pass, top-down protocol: children report how big they would like to be (*measure*), parents hand each child a rectangle (*allocate*), and containers place their children inside it (*arrange* / *layout_children*). Widgets describe how they want to sit in the space they are given with *layout hints* (margin, alignment, fill weight, min/max size), and a dirty flag keeps the per-frame cost proportional to what changed.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: layout-overview
+:END:
+#+begin_example
+ frame N                                     lrg_canvas_record ()
+                                             └─ lrg_widget_layout (canvas)
+ lrg_label_set_text (label, "Longer")              needs_layout? no  -> skip subtree
+   └─ lrg_widget_queue_layout (label)              needs_layout? yes -> arrange ()
+        label.needs_layout   = TRUE                     │
+        vbox.needs_layout    = TRUE                     └─ VBox layout_children ()
+        panel.needs_layout   = TRUE                          for each visible child:
+        canvas.needs_layout  = TRUE                            lrg_widget_get_preferred_size ()
+        (stops at the first ancestor                             └─ measure () clamped to min/max
+         already marked)                                        slot = main-axis share + spacing
+                                                               lrg_widget_place_in_slot (child, slot)
+                                                                 └─ margin, halign/valign, min/max
+                                                                    └─ lrg_widget_allocate (child, rect)
+                                                                         └─ child arrange ()  (recursive)
+#+end_example
+
+** The three steps
+:PROPERTIES:
+:CUSTOM_ID: layout-steps
+:END:
+*** measure
+:PROPERTIES:
+:CUSTOM_ID: layout-measure
+:END:
+=LrgWidgetClass.measure (self, &w, &h)= returns the widget's *preferred size, without its margin*. It must be cheap and side-effect free: it can be called several times per layout (a box measures each child twice, alignment measures again). Leaf widgets compute it from their content (text size via =lrg_paint_measure_text()=, theme metrics such as =CONTROL_HEIGHT= and =PADDING_X=); containers from their children (preferred sizes plus margins, spacing and padding). The default =LrgWidget= implementation returns the current size, so a widget that was given an explicit =lrg_widget_set_size()= and does not override =measure= prefers exactly that.
+
+=lrg_widget_measure()= calls the vfunc. =lrg_widget_get_preferred_size()= is what layouts should use: =measure()= clamped to the widget's min and max size.
+
+*** allocate
+:PROPERTIES:
+:CUSTOM_ID: layout-allocate
+:END:
+=lrg_widget_allocate (self, x, y, width, height)= assigns the widget's rectangle (position relative to the parent, size clamped to >= 0), runs its =arrange()= vfunc, and clears its =needs_layout= flag, in one step. It notifies =x=, =y=, =width=, =height= as needed but does not queue another layout. Parents call it (normally through =lrg_widget_place_in_slot()=) for each child.
+
+Compare with =lrg_widget_set_position()= / =lrg_widget_set_size()=: these only store values (a container whose size changes is marked for layout) and are meant for manual, absolute positioning of top-level widgets.
+
+*** arrange and layout_children
+:PROPERTIES:
+:CUSTOM_ID: layout-arrange
+:END:
+=LrgWidgetClass.arrange (self)= runs after the widget's rectangle was assigned or when it was marked for layout. Leaf widgets usually ignore it (the default does nothing); a widget can use it to cache geometry derived from its size. =LrgContainer= implements it by calling its =layout_children()= vfunc, which is where containers place their children. =lrg_container_layout_children()= runs it on demand.
+
+** Layout hints
+:PROPERTIES:
+:CUSTOM_ID: layout-hints
+:END:
+| Hint | API | Default | Effect |
+|------+-----+---------+--------|
+| margin | =lrg_widget_set_margin (self, &insets)=, =lrg_widget_set_margin_all (self, m)=, =lrg_widget_get_margin= | 0 on all sides | Space the parent leaves around the widget inside its slot; layouts add it to the preferred size |
+| horizontal alignment | =lrg_widget_set_halign (self, LrgAlign)= | =LRG_ALIGN_FILL= | How the widget sits horizontally in its slot |
+| vertical alignment | =lrg_widget_set_valign (self, LrgAlign)= | =LRG_ALIGN_FILL= | Same, vertically |
+| fill weight | =lrg_widget_set_fill_weight (self, w)= | 0 | Share of a box's spare space along its axis; 0 keeps the preferred size |
+| minimum size | =lrg_widget_set_min_size (self, w, h)= | 0 (none) | Lower bound on preferred and placed size |
+| maximum size | =lrg_widget_set_max_size (self, w, h)= | 0 (none) | Upper bound on preferred and placed size; 0 means unbounded |
+| name | =lrg_widget_set_name (self, name)= | =NULL= | Lookup with =lrg_widget_find()= (not a layout input, but set in the same place) |
+
+=LrgAlign=: =FILL= (stretch to the slot), =START= (left / top), =CENTER=, =END= (right / bottom).
+
+** Placing a child: lrg_widget_place_in_slot
+:PROPERTIES:
+:CUSTOM_ID: layout-place-in-slot
+:END:
+=lrg_widget_place_in_slot (child, x, y, width, height)= is the one call containers make per child. The slot is in the *parent's* coordinates. Per axis it:
+
+1. subtracts the margin from the slot (=sx = x + margin.left=, =sw = max (0, width - left - right)=);
+2. picks a size: the whole slot for =FILL=, otherwise =min (preferred, slot)= (the widget is measured only when an axis is not =FILL=);
+3. clamps the size to the min/max hints (min wins over max; a min larger than the slot overflows the slot);
+4. offsets it: =START= / =FILL= at the slot start, =CENTER= at =(slot - size) / 2=, =END= at =slot - size=;
+5. rounds position and size to whole units and calls =lrg_widget_allocate()=.
+
+#+begin_example
+ slot (from the parent) ┌──────────────────────────────────────┐
+                        │ margin.top                           │
+                        │   ┌──────────────────────────────┐   │
+             margin.left│   │ inner slot                   │   │margin.right
+                        │   │      ┌──────────┐            │   │
+                        │   │      │  widget  │ halign=CENTER   │
+                        │   │      └──────────┘ valign=START│   │
+                        │   └──────────────────────────────┘   │
+                        │ margin.bottom                        │
+                        └──────────────────────────────────────┘
+#+end_example
+
+Because of step 2, alignment other than =FILL= is how a widget keeps its natural size in a stretched slot (a button that should not span the whole row: =lrg_widget_set_halign (button, LRG_ALIGN_CENTER)=).
+
+** Box layout: LrgVBox and LrgHBox
+:PROPERTIES:
+:CUSTOM_ID: layout-box
+:END:
+=LrgVBox= (top to bottom) and =LrgHBox= (left to right) share one implementation. Along the *main axis*:
+
+1. For each visible child, the outer size = preferred size + margins. =used= = sum of outer sizes + =spacing * (n - 1)=.
+2. =extra = content length - used=, where the content is the box minus its padding on both sides.
+3. Non-homogeneous: each child's slot length is its outer length, plus =extra * weight / total_weight= when =extra > 0= and some child has a positive fill weight. With no weights, the spare space is left at the end.
+4. Homogeneous (=lrg_vbox_set_homogeneous()=, =lrg_hbox_set_homogeneous()=): every slot is =(content - spacing * (n - 1)) / n= regardless of preferred sizes.
+5. Each child is placed with =lrg_widget_place_in_slot()= at the running position; the *cross axis* slot is the full content width (VBox) or height (HBox), so cross-axis alignment works through =halign= (VBox) or =valign= (HBox).
+
+Measuring a box: main axis = sum of outer sizes (or the largest times =n= when homogeneous) + spacing; cross axis = largest outer size; plus padding on both sides.
+
+When the children do not fit (=extra < 0=) they keep their preferred lengths and overflow the end of the box; wrap the box in an =LrgScrollBox= (see [[file:widgets/scroll-box.org][scroll box]]) or give it more room.
+
+#+begin_src c
+/* A toolbar: label on the left, a stretchy gap, two buttons on the right */
+g_autoptr(LrgHBox)   bar = lrg_hbox_new ();
+g_autoptr(LrgLabel)  title = lrg_label_new ("Inventory");
+g_autoptr(LrgWidget) gap = g_object_new (LRG_TYPE_WIDGET, NULL);
+g_autoptr(LrgButton) sort = lrg_button_new ("Sort");
+g_autoptr(LrgButton) close = lrg_button_new ("Close");
+
+lrg_container_set_spacing (LRG_CONTAINER (bar), 8.0f);
+lrg_container_set_padding (LRG_CONTAINER (bar), 8.0f);
+
+lrg_widget_set_valign (LRG_WIDGET (title), LRG_ALIGN_CENTER);
+lrg_widget_set_fill_weight (gap, 1.0f);           /* takes all spare width */
+
+lrg_container_add_child (LRG_CONTAINER (bar), LRG_WIDGET (title));
+lrg_container_add_child (LRG_CONTAINER (bar), gap);
+lrg_container_add_child (LRG_CONTAINER (bar), LRG_WIDGET (sort));
+lrg_container_add_child (LRG_CONTAINER (bar), LRG_WIDGET (close));
+#+end_src
+
+Fill weights split proportionally: two children with weights 1 and 2 receive one third and two thirds of the spare space, on top of their preferred lengths.
+
+** Grid layout: LrgGrid
+:PROPERTIES:
+:CUSTOM_ID: layout-grid
+:END:
+=LrgGrid= (=lrg_grid_new (columns)=) fills cells left to right, top to bottom, with visible children only. All cells have the same size:
+
+#+begin_example
+cell_w = (width  - 2 * padding - column_spacing * (columns - 1)) / columns
+cell_h = (height - 2 * padding - row_spacing    * (rows - 1))    / rows
+rows   = ceil (visible_children / columns)
+#+end_example
+
+Each cell is the child's slot, so margins, alignment and min/max apply inside cells (=lrg_widget_set_halign (child, LRG_ALIGN_START)= left-aligns a label in its cell). The grid's preferred size is the largest child outer size times the column and row counts, plus spacing and padding. Configure with =lrg_grid_set_columns()=, =lrg_grid_set_column_spacing()= and =lrg_grid_set_row_spacing()=.
+
+** Dirty propagation: queue_layout and layout
+:PROPERTIES:
+:CUSTOM_ID: layout-dirty
+:END:
+- =lrg_widget_queue_layout (self)= sets =needs_layout= on the widget and on each ancestor up to the root, *stopping at the first ancestor already marked* (everything above it is marked already, so repeated calls in one frame are O(1) amortised). Call it whenever something that affects the preferred size changes: text, font, an image's texture, child visibility, any widget-specific size property.
+- =lrg_widget_layout (self)= lays out =self= and every marked descendant now. A clean widget returns immediately, skipping its entire subtree. A marked widget runs =arrange()= (containers re-place their children with =allocate()=, which re-arranges each child and clears its flag), clears its own flag and then recurses into children that are still marked (children the arrange did not re-allocate, such as freely positioned ones).
+- =lrg_widget_get_needs_layout (self)= reports the flag.
+- =LrgCanvas= calls =lrg_widget_layout()= on itself and each open popup at the start of =lrg_canvas_record()= (and therefore of =lrg_canvas_render()=). You never need to call it yourself in a canvas-driven UI.
+
+What queues layout automatically:
+
+| Change | Queues |
+|--------+--------|
+| =lrg_container_add_child()= / =lrg_container_remove_child()= | the container (and it is laid out immediately too, for legacy callers) |
+| =lrg_container_set_spacing()= / =lrg_container_set_padding()= | the container (and immediate layout) |
+| =lrg_widget_set_visible()= | the parent |
+| =lrg_widget_set_width()= / =set_height()= on a container | the container |
+| =lrg_widget_set_theme()= | the widget |
+| widget content setters (text, font, value range ...) | the widget, by each widget's implementation |
+
+** Writing a custom container
+:PROPERTIES:
+:CUSTOM_ID: layout-custom-container
+:END:
+A container needs two things: a =measure= that reports the preferred size of its content, and a =layout_children= that places each visible child with =lrg_widget_place_in_slot()=. Painting the children, stepping their springs, hit-testing and focus traversal are inherited from =LrgContainer= / =LrgWidget=.
+
+Worked example: a *flow box* that lays children out left to right and wraps to a new row when a row is full (inventory slots, tag lists).
+
+#+begin_src c
+/* game-flow-box.h */
+#pragma once
+
+#include <libregnum.h>
+
+G_BEGIN_DECLS
+
+#define GAME_TYPE_FLOW_BOX (game_flow_box_get_type ())
+G_DECLARE_FINAL_TYPE (GameFlowBox, game_flow_box, GAME, FLOW_BOX, LrgContainer)
+
+/**
+ * game_flow_box_new:
+ *
+ * Creates a container that places children in rows, wrapping when a
+ * row is full.
+ *
+ * Returns: (transfer full): a new #GameFlowBox
+ */
+GameFlowBox * game_flow_box_new (void);
+
+G_END_DECLS
+#+end_src
+
+#+begin_src c
+/* game-flow-box.c */
+#include "game-flow-box.h"
+
+struct _GameFlowBox
+{
+	LrgContainer parent_instance;
+};
+
+G_DEFINE_FINAL_TYPE (GameFlowBox, game_flow_box, LRG_TYPE_CONTAINER)
+
+/*
+ * outer_size:
+ *
+ * A child's preferred size plus its margin: the room it needs in a row.
+ */
+static void
+outer_size (LrgWidget *child,
+            gfloat    *w,
+            gfloat    *h)
+{
+	LrgInsets m;
+
+	lrg_widget_get_preferred_size (child, w, h);
+	lrg_widget_get_margin (child, &m);
+	*w += m.left + m.right;
+	*h += m.top + m.bottom;
+}
+
+/*
+ * flow:
+ * @self: the flow box
+ * @avail: width available for rows (content width)
+ * @place: TRUE to allocate children, FALSE to only measure
+ * @out_w: (out): widest row
+ * @out_h: (out): total height of all rows
+ *
+ * Shared by measure and layout so both agree exactly.
+ */
+static void
+flow (GameFlowBox *self,
+      gfloat       avail,
+      gboolean     place,
+      gfloat      *out_w,
+      gfloat      *out_h)
+{
+	LrgContainer *c = LRG_CONTAINER (self);
+	gfloat        pad = lrg_container_get_padding (c);
+	gfloat        gap = lrg_container_get_spacing (c);
+	gfloat        x = 0.0f;
+	gfloat        y = 0.0f;
+	gfloat        row_h = 0.0f;
+	gfloat        widest = 0.0f;
+	GList        *l;
+
+	for (l = lrg_container_get_children (c); l != NULL; l = l->next)
+	{
+		LrgWidget *child = LRG_WIDGET (l->data);
+		gfloat     w;
+		gfloat     h;
+
+		if (!lrg_widget_get_visible (child))
+			continue;
+		outer_size (child, &w, &h);
+
+		/* wrap when this child would overflow a non-empty row */
+		if (x > 0.0f && x + w > avail)
+		{
+			y += row_h + gap;
+			x = 0.0f;
+			row_h = 0.0f;
+		}
+
+		/* the slot is exactly the child's outer size; place_in_slot
+		 * applies its margin, alignment and min/max */
+		if (place)
+			lrg_widget_place_in_slot (child, pad + x, pad + y, w, h);
+
+		x += w + gap;
+		row_h = MAX (row_h, h);
+		widest = MAX (widest, x - gap);
+	}
+
+	*out_w = widest;
+	*out_h = y + row_h;
+}
+
+static void
+game_flow_box_measure (LrgWidget *widget,
+                       gfloat    *preferred_width,
+                       gfloat    *preferred_height)
+{
+	GameFlowBox *self = GAME_FLOW_BOX (widget);
+	gfloat       pad = lrg_container_get_padding (LRG_CONTAINER (widget));
+	gfloat       avail;
+	gfloat       w;
+	gfloat       h;
+
+	/* wrap at the current width when we have one, else one long row */
+	avail = lrg_widget_get_width (widget) > 0.0f
+	        ? lrg_widget_get_width (widget) - pad * 2.0f
+	        : G_MAXFLOAT;
+	flow (self, avail, FALSE, &w, &h);
+
+	*preferred_width = w + pad * 2.0f;
+	*preferred_height = h + pad * 2.0f;
+}
+
+static void
+game_flow_box_layout_children (LrgContainer *container)
+{
+	GameFlowBox *self = GAME_FLOW_BOX (container);
+	gfloat       pad = lrg_container_get_padding (container);
+	gfloat       w;
+	gfloat       h;
+
+	flow (self, lrg_widget_get_width (LRG_WIDGET (container)) - pad * 2.0f,
+	      TRUE, &w, &h);
+}
+
+static void
+game_flow_box_class_init (GameFlowBoxClass *klass)
+{
+	LrgWidgetClass    *widget_class = LRG_WIDGET_CLASS (klass);
+	LrgContainerClass *container_class = LRG_CONTAINER_CLASS (klass);
+
+	widget_class->measure = game_flow_box_measure;
+	container_class->layout_children = game_flow_box_layout_children;
+}
+
+static void
+game_flow_box_init (GameFlowBox *self)
+{
+	lrg_container_set_spacing (LRG_CONTAINER (self), 8.0f);
+}
+
+GameFlowBox *
+game_flow_box_new (void)
+{
+	return g_object_new (GAME_TYPE_FLOW_BOX, NULL);
+}
+#+end_src
+
+Notes on the example:
+
+- *One function for measure and layout* guarantees they agree; disagreement is the most common source of clipped or overlapping children.
+- Slots are in the container's own coordinates (padding included); =place_in_slot()= handles margins and alignment, and =allocate()= recursively lays out nested containers.
+- Hidden children are skipped in both passes.
+- If a property of your container affects layout (e.g. a "max columns" setting), call =lrg_widget_queue_layout (self)= in its setter.
+- Do not override =arrange= in a container unless you also call =lrg_container_layout_children()=; the default =arrange= is what connects the two.
+
+** Layout direction (right-to-left)
+:PROPERTIES:
+:CUSTOM_ID: layout-direction
+:END:
+Every widget has a direction: =lrg_widget_set_direction (w, LRG_WIDGET_DIRECTION_RTL)= (property =direction=, YAML =direction: rtl=). =LRG_WIDGET_DIRECTION_INHERIT= (the default) follows the parent; the root falls back to the canvas default, =lrg_canvas_set_default_direction (canvas, ...)= (=LTR= unless set, e.g. from the user's locale), and a detached widget is LTR. A popup inherits from its anchor. =lrg_widget_get_effective_direction()= / =lrg_widget_is_rtl()= answer the resolved value. (=LrgTextDirection= is unrelated: it is about shaping text runs.)
+
+*How mirroring works.* Containers keep laying their children out left-to-right. When a container's effective direction is RTL, =lrg_widget_allocate()= mirrors each child's rectangle inside it: =x' = container width - x - child width=. Because =lrg_widget_place_in_slot()= ends in =allocate()=, the whole placement is mirrored, so:
+
+- the first child of an =LrgHBox= is rightmost; grid columns and wrap-box items run from the right;
+- =LRG_ALIGN_START= means the right (leading) edge and =END= the left; the *left* margin and padding are on the right (read =left= as "leading");
+- children's world coordinates, hit-testing and layout animation follow automatically;
+- vertical layout is unchanged.
+
+#+begin_example
+ LTR  | [A][B][C]          |      halign START: [x]           |
+ RTL  |          [C][B][A] |      halign START:           [x] |
+#+end_example
+
+Changing a direction (a widget's or the canvas default) marks the affected subtree for layout; the next =lrg_canvas_record()= re-places it.
+
+| Widget | RTL behaviour |
+|--------+---------------|
+| =LrgHBox=, =LrgVBox=, =LrgGrid=, =LrgWrapBox=, =LrgOverlay=, =LrgPanel= (fill), =LrgExpander=, =LrgDialog= (button row), =LrgIsland= | Mirrored automatically |
+| =LrgSplitter= | Mirrored; the start pane is on the right, dragging and the arrow keys follow the visual direction, pane clips mirror |
+| =LrgTabView= | Tab strip runs from the right, indicator and hit-testing follow, Left/Right keys swap |
+| =LrgBreadcrumb= | The trail reads from the right, chevrons point left, Left/Right keys swap |
+| =LrgLabel= | =LEFT= alignment hugs the right edge and =RIGHT= the left one (=CENTER= unchanged) |
+| =LrgScrollBox=, =LrgListView=, =LrgTileView=, =LrgTreeView=, =LrgTable= (and its rows), =LrgColorPicker=, =LrgCanvas= | Opted out: they place children at scroll offsets, columns or anchors. Their *content* still inherits the direction, so a box inside a scroll box mirrors |
+
+*Opting out and doing it yourself.* A class that places children at positions with a meaning of their own (graph or timeline coordinates, scroll offsets) calls =lrg_widget_class_set_handles_direction (widget_class, TRUE)= in =class_init= (inherited by subclasses; =lrg_widget_class_get_handles_direction()= reads it) and consults =lrg_widget_is_rtl()= itself. Widgets that *paint* direction-dependent things (arrows, tabs, carets) check =lrg_widget_is_rtl()= in =paint()= and in hit-testing; =lrg_widget_mirror_x (self, x, width)= mirrors a world-space span inside the widget. Menus: submenus open to the left and arrows flip; menu bars start from the right.
+
+** Absolute positioning
+:PROPERTIES:
+:CUSTOM_ID: layout-absolute
+:END:
+Plain =LrgContainer=, =LrgPanel= (see [[file:widgets/panel.org][panel]]) and =LrgCanvas= do not position children: children keep whatever =lrg_widget_set_position()= / =lrg_widget_set_size()= gave them, and =lrg_widget_layout()= still recurses into the ones that are marked, so nested boxes whose content changed lay themselves out. This is how top-level windows, HUD elements and game-positioned widgets work. Mix freely: absolutely positioned panels containing laid-out boxes.
+
+The canvas's own size is set by you (usually the render target size): =lrg_widget_set_size (LRG_WIDGET (canvas), width, height)=; popups are placed relative to it.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: layout-pitfalls
+:END:
+- *Forgetting =queue_layout=* after changing content: the widget keeps its old size until something else triggers layout.
+- *Measuring with side effects*: measure is called repeatedly; never allocate or queue layout from it.
+- *Measure and layout disagreeing*: share the code (see the flow box).
+- *Using =set_size()= inside =layout_children=*: use =place_in_slot()= (or =allocate()=); =set_size()= on a container queues another layout every frame.
+- *Margins counted twice*: =get_preferred_size()= excludes the margin, =place_in_slot()= subtracts it from the slot; add it when computing slot sizes, never when computing the inner size.
+- *Min/max of 0* means "none", not zero size.
+- *Overflowing boxes* do not shrink children below their preferred size; use a scroll box or fill weights with smaller preferred sizes.
+- *Theme metric changes* (e.g. a larger =font-size= after =lrg_theme_set_default()=) do not queue layout by themselves. Marking only the canvas is not enough (the canvas does not re-place its children and =lrg_widget_layout()= only descends into marked children); mark the whole tree after switching themes, see [[file:../../guides/theming.org::#theming-runtime][switching at runtime]].
+- =lrg_container_remove_all()= does not queue layout; call =lrg_widget_queue_layout()= on the container afterwards.
+
+** API summary
+:PROPERTIES:
+:CUSTOM_ID: layout-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_widget_measure (self, &w, &h)= | Calls =measure()= (preferred size without margin) |
+| =lrg_widget_get_preferred_size (self, &w, &h)= | =measure()= clamped to min/max; out params optional |
+| =lrg_widget_allocate (self, x, y, w, h)= | Assign rectangle + =arrange()= + clear the dirty flag |
+| =lrg_widget_place_in_slot (self, x, y, w, h)= | Allocate inside a slot honouring margin, alignment, min/max |
+| =lrg_widget_queue_layout (self)= | Mark self and ancestors dirty |
+| =lrg_widget_get_needs_layout (self)= | Dirty flag |
+| =lrg_widget_layout (self)= | Lay out marked subtrees now |
+| =lrg_widget_set_margin / _margin_all / get_margin= | Margin hint (=LrgInsets=: =left=, =top=, =right=, =bottom=) |
+| =lrg_widget_set_halign / set_valign / get_*= | Alignment hints |
+| =lrg_widget_set_fill_weight / get_fill_weight= | Box fill weight |
+| =lrg_widget_set_min_size / set_max_size / get_*= | Size bounds (0 = none) |
+| =lrg_container_layout_children (self)= | Run =layout_children()= now |
+| =lrg_vbox_set_homogeneous= / =lrg_hbox_set_homogeneous= | Equal slots |
+| =lrg_grid_set_columns / _column_spacing / _row_spacing= | Grid configuration |
+| =lrg_widget_set_direction / get_direction= | Layout direction of a subtree (=INHERIT=, =LTR=, =RTL=) |
+| =lrg_widget_get_effective_direction= / =lrg_widget_is_rtl= | Resolved direction |
+| =lrg_canvas_set_default_direction / get_default_direction= | Root default |
+| =lrg_widget_class_set_handles_direction / get_handles_direction= | Opt out of automatic RTL mirroring |
+| =lrg_widget_mirror_x= | Mirror a painted span in RTL |
+| =lrg_container_insert_child_at= / =lrg_container_reorder_child= | Child order (layout and stacking order) |
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: layout-see-also
+:END:
+- [[file:widget.org][LrgWidget]] and [[file:container.org][LrgContainer]]
+- [[file:widgets/vbox.org][LrgVBox]], [[file:widgets/hbox.org][LrgHBox]], [[file:widgets/scroll-box.org][LrgScrollBox]]
+- [[file:../../guides/ui-migration.org][Migration guide]] (porting legacy =layout_children= code)

@@ -1,0 +1,313 @@
+* Dock area
+:PROPERTIES:
+:CUSTOM_ID: dock-area
+:END:
+=LrgDockArea= is an editor-style dock: titled panels (=LrgDockPanel=) arranged in a tree of resizable splits and tab stacks, rearranged by dragging tabs onto a drop compass, torn off into floating frames, and saved / restored as YAML. It is the retained-mode counterpart of the immediate-mode =LrgGuiDock= used by the editor (same binary tree, same collapse rules), painted with the SDF paint list and animated with springs.
+
+Both types are containers. Every docked panel is a container child of the area (so the canvas hit-tests, steps and focuses its content), but only the active tab of each stack is visible. The tab strips, dividers and drag feedback are not widgets: the area paints and hit-tests them itself.
+
+** The tree
+:PROPERTIES:
+:CUSTOM_ID: dock-area-tree
+:END:
+The arrangement is a binary tree. A /split/ divides its rectangle between two children by a ratio (the first child's share of the space left after the divider); a /stack/ is a leaf holding tabs. =lrg_dock_area_describe()= prints it compactly: =H(ratio,a,b)= side by side, =V(ratio,a,b)= stacked, =[x,y*]= a stack with its active tab starred, =+float[id]= for floating panels.
+
+#+begin_example
+H(0.25,[files*,outline],V(0.70,[scene*],[console*,log]))
+
++-----------+------------------------------+
+| files|out |  scene                       |
+|-----------|                              |
+|           |                              |
+|  (files)  |------------------------------|  <- divider of the V split
+|           |  console|log                 |
+|           |  (console)                   |
++-----------+------------------------------+
+            ^ divider of the H split (ratio 0.25)
+
+          H(0.25)
+         /       \
+ [files*,outline]  V(0.70)
+                  /      \
+             [scene*]  [console*,log]
+#+end_example
+
+Removing the last tab of a stack /collapses/ it: its parent split is replaced by the other side, so the tree never holds an empty stack (an empty area is just =()=, painted as a muted "No panels" hint). Dragging the last tab out of a stack collapses it the same way.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: dock-area-creation
+:END:
+#+begin_src C
+LrgDockArea  *dock = lrg_dock_area_new ();
+LrgDockPanel *files = lrg_dock_panel_new ("files", "Files");
+LrgDockPanel *scene = lrg_dock_panel_new ("scene", "Scene");
+LrgDockPanel *console = lrg_dock_panel_new ("console", "Console");
+
+lrg_dock_panel_set_icon (files, "folder");
+lrg_dock_panel_set_closable (scene, FALSE);
+lrg_dock_panel_set_child (files, LRG_WIDGET (file_tree));
+lrg_dock_panel_set_child (scene, LRG_WIDGET (viewport));
+lrg_dock_panel_set_child (console, LRG_WIDGET (log_view));
+
+/* The first panel fills the area */
+lrg_dock_area_add_panel (dock, scene, NULL, LRG_DOCK_POSITION_CENTER);
+/* Against the whole area: a quarter on the left */
+lrg_dock_area_add_panel (dock, files, NULL, LRG_DOCK_POSITION_LEFT);
+/* Against a panel: half of its stack */
+lrg_dock_area_add_panel (dock, console, scene, LRG_DOCK_POSITION_BOTTOM);
+lrg_dock_area_set_panel_share (dock, console, 0.3f);
+
+g_signal_connect (dock, "close-request", G_CALLBACK (ask_to_save), NULL);
+g_signal_connect (dock, "layout-changed", G_CALLBACK (save_layout), NULL);
+#+end_src
+The area and panels take references (=transfer none=), like =lrg_container_add_child()=; unref your own afterwards.
+
+** Placing panels
+:PROPERTIES:
+:CUSTOM_ID: dock-area-placing
+:END:
+=LrgDockPosition= says where =lrg_dock_area_add_panel()= and =lrg_dock_area_move_panel()= put a panel:
+
+| Position | With a reference panel                         | Without (=NULL=)                                       |
+|----------+------------------------------------------------+--------------------------------------------------------|
+| =LEFT=   | Splits the reference's stack, new stack left (half) | Wraps the whole tree, new stack on the left (a quarter) |
+| =RIGHT=  | ... right                                      | ... right                                              |
+| =TOP=    | ... above                                      | ... above                                              |
+| =BOTTOM= | ... below                                      | ... below                                              |
+| =CENTER= | A new tab of the reference's stack             | A tab of the active panel's stack (else the first stack); fills an empty area |
+
+The new panel becomes the active tab of its stack; the area's /active panel/ (=lrg_dock_area_get_active_panel()=) only changes when there was none. Positions are physical: =LEFT= is the left side in right-to-left layouts too. A panel added with plain =lrg_container_add_child()= (e.g. by a UI loader) is adopted as a =CENTER= tab on the next layout.
+
+=lrg_dock_area_move_panel()= detaches a panel (docked or floating) and places it exactly as the matching drop would. Moves that change nothing (a lone panel beside itself, a panel onto its own stack) are ignored.
+
+** Tabs
+:PROPERTIES:
+:CUSTOM_ID: dock-area-tabs
+:END:
+Each stack has a tab strip (=tab-height=, by default the theme's control height). Tabs take their natural width (padding, optional icon, title, close button), clamped to 56..220 units, shrinking in proportion when the strip is too narrow. A spring-driven accent indicator slides and stretches under the active tab (bouncy); tab hover fades on a spring; the close button (a cross drawn with =LRG_ICON_CROSS=) shows on the active and the hovered tab, with a hover disc.
+
+In right-to-left layouts (=lrg_widget_is_rtl()=) tab strips start from the right, close buttons move to the leading edge, insertion points mirror and Left / Right swap. The split tree stays physical (the area opts out of automatic mirroring with =lrg_widget_class_set_handles_direction()=).
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: dock-area-behaviour
+:END:
+| Input                                     | Action                                                                                  |
+|-------------------------------------------+-----------------------------------------------------------------------------------------|
+| Click a tab                               | Make it the visible tab and the active panel (=panel-activated=, =layout-changed=)      |
+| Click a close button (release over it)    | =close-request=, then close (=panel-closed=)                                            |
+| Middle click a closable tab               | Same as the close button                                                                |
+| Press and drag a divider                  | Live resize, clamped to minimum sizes; =layout-changed= on release                     |
+| Double click a divider                    | Reset that split to equal halves                                                        |
+| Drag a tab past 6 units                   | Lift it: ghost, drop targets, preview (see below)                                       |
+| Release while dragging                    | Drop on the target; no target: tear off into a floating frame                           |
+| Escape / gamepad B while dragging         | Cancel; nothing changes                                                                 |
+| Left / Right with the area focused        | Previous / next tab of the active panel's stack                                         |
+
+Clicks on the strips and dividers focus the area itself, so Escape reaches it during a drag. Events from panel content are left to the content (they only bubble through).
+
+** Drag and drop docking
+:PROPERTIES:
+:CUSTOM_ID: dock-area-drag
+:END:
+Dragging a tab past the threshold lifts it: the tab in the strip fades to 35 %, a ghost chip (=popup= look, soft shadow, icon and title) trails the pointer on bouncy springs and scales up as it lifts. A private, pointer-transparent widget in the canvas overlay layer paints the feedback, so it is drawn above floating frames; it leaves the overlay once the feedback has faded.
+
+Drop targets, checked in this order:
+1. *Empty area*: anywhere; the panel fills it.
+2. *Area edges*: four buttons along the edges (the top one below the strips). The panel docks against the whole tree, taking a quarter.
+3. *A tab strip*: an insertion point between tabs (on its own stack this reorders tabs).
+4. *The compass* over the hovered stack: five buttons around the centre of its content.
+
+#+begin_example
+        area edge target (TOP)
+                 [^]
+  +------------------------------------+
+  | tab | tab |            strip       |
+  |------------------------------------|
+  |                [T]                 |
+  |                                    |
+[<]           [L] [C] [R]             [>]  area edge targets
+  |                                    |
+  |                [B]                 |
+  |                                    |
+  +------------------------------------+
+                 [v]
+
+  [L]/[R]/[T]/[B]: split this stack, the panel takes that half
+  [C]:             a new tab in this stack
+#+end_example
+
+Only buttons that would change something are shown (no =CENTER= on the dragged tab's own stack, no sides when it is alone there). The target button under the pointer turns accent with a glow. A translucent, accent-tinted glass rectangle (the =fill= part, =LRG_PAINT_MATERIAL_GLASS=) previews the region the panel would take: it appears at 60 % and grows into place, then springs (centre and size apart, bouncy) from target to target, and fades out when the pointer leaves the targets.
+
+Dropping anywhere that is not a target floats the panel (centred under the pointer by its title bar, at least 320 x 240) when =allow-floating= is set; otherwise the drop is cancelled.
+
+** Floating panels
+:PROPERTIES:
+:CUSTOM_ID: dock-area-floating
+:END:
+A floating panel lives in a private frame widget (type name =LrgDockFrame=, so theme rules can target it) in the canvas overlay layer, above popups. The frame has:
+- a title bar (=header= part) with icon, title and close button: drag it to move the frame; while moving, the same drop targets appear over the area and dropping on one docks the panel back; Escape returns the frame to where it was;
+- a double click on the title to dock it back (as a tab of the active panel's stack);
+- the right and bottom edges and the dotted corner grip to resize it (at least 140 x 90; Escape cancels a resize);
+- a raise to the front of the overlay layer when released.
+=lrg_dock_area_float_panel()= floats a panel programmatically (or moves / resizes a floating one); it needs the area to be on an =LrgCanvas= and =allow-floating=. =lrg_dock_area_is_panel_floating()= tells them apart; =lrg_dock_area_get_panels()= lists floating panels after the docked ones.
+
+** Layout persistence
+:PROPERTIES:
+:CUSTOM_ID: dock-area-persistence
+:END:
+=lrg_dock_area_save_layout()= writes the arrangement as YAML (yaml-glib), naming panels by =id=:
+#+begin_src yaml
+version: 1
+root:
+  split: horizontal
+  ratio: 0.3
+  first:
+    tabs: [a]
+    active: a
+  second:
+    split: vertical
+    ratio: 0.6
+    first: { tabs: [b, d], active: d }
+    second: { tabs: [c], active: c }
+active: d
+floating:
+  - { id: e, x: 50, y: 60, width: 250, height: 180 }
+#+end_src
+=lrg_dock_area_load_layout()= rearranges the area's /existing/ panels: ids it does not have are skipped (a stack left empty collapses, and so does its split), panels the layout does not mention are appended as tabs of the first stack (keeping that stack's active tab), floating entries become frames (or tabs when the area is not on a canvas). =root: null= puts every panel in one stack. A malformed document (not a mapping, a split that is neither horizontal nor vertical, a node with neither =split= nor =tabs=, nesting deeper than 64) fails with =G_IO_ERROR_INVALID_DATA= and changes nothing. Save from =layout-changed= to persist as the user works.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: dock-area-api
+:END:
+| Function                                   | Purpose                                                           |
+|--------------------------------------------+-------------------------------------------------------------------|
+| =lrg_dock_area_new()=                      | An empty area                                                     |
+| =lrg_dock_area_add_panel()=                | Dock a new panel (see [[#dock-area-placing][Placing panels]])            |
+| =lrg_dock_area_remove_panel()=             | Remove without asking (no =close-request= / =panel-closed=)       |
+| =lrg_dock_area_close_panel()=              | Close like the close button; returns =FALSE= if vetoed            |
+| =lrg_dock_area_move_panel()=               | Move a docked or floating panel                                   |
+| =lrg_dock_area_float_panel()=              | Float (or move / resize a floating) panel                         |
+| =lrg_dock_area_is_panel_floating()=        | Whether a panel floats                                            |
+| =lrg_dock_area_present_panel()=            | Bring a panel forward (visible tab / raised frame, active panel)  |
+| =lrg_dock_area_get_active_panel()=         | The most recently activated panel                                 |
+| =lrg_dock_area_get_panels()=               | All panels: docked in tree order, then floating                   |
+| =lrg_dock_area_get_panel()=                | Look a panel up by id                                             |
+| =lrg_dock_area_get_stack_panels()=         | The panels sharing a panel's stack                                |
+| =lrg_dock_area_get_stack_rect()=           | World rectangle of a panel's stack (strip included)               |
+| =lrg_dock_area_get_tab_rect()=             | World rectangle of a panel's tab                                  |
+| =lrg_dock_area_get_panel_share()=          | Share of its parent split a panel's stack takes                   |
+| =lrg_dock_area_set_panel_share()=          | Move the divider directly above a panel's stack                   |
+| =lrg_dock_area_describe()=                 | Compact text form of the tree (tests, debugging)                  |
+| =lrg_dock_area_get_dragging()=             | Whether a tab or frame is being dragged                           |
+| =lrg_dock_area_save_layout()=              | Layout as YAML                                                    |
+| =lrg_dock_area_load_layout()=              | Rearrange from YAML                                               |
+| =lrg_dock_area_get_divider_size()= / =lrg_dock_area_set_divider_size()= | =divider-size=          |
+| =lrg_dock_area_get_tab_height()= / =lrg_dock_area_set_tab_height()= | =tab-height=                    |
+| =lrg_dock_area_get_min_panel_size()= / =lrg_dock_area_set_min_panel_size()= | =min-panel-size=        |
+| =lrg_dock_area_get_allow_floating()= / =lrg_dock_area_set_allow_floating()= | =allow-floating=        |
+| =lrg_dock_area_get_type()=, =lrg_dock_panel_get_type()=, =lrg_dock_position_get_type()= | =GType=s; =LrgDockPosition= (nicks =left=, =right=, =top=, =bottom=, =center=) |
+
+| Panel function                                | Purpose                                         |
+|-----------------------------------------------+-------------------------------------------------|
+| =lrg_dock_panel_new()=                        | A closable panel with an id and a title         |
+| =lrg_dock_panel_get_id()= / =lrg_dock_panel_set_id()= | Identifier used by layouts              |
+| =lrg_dock_panel_get_title()= / =lrg_dock_panel_set_title()= | Tab and title bar text            |
+| =lrg_dock_panel_get_icon()= / =lrg_dock_panel_set_icon()= | Vector icon nick (=lrg_paint_icon_from_name()=) |
+| =lrg_dock_panel_get_closable()= / =lrg_dock_panel_set_closable()= | Close button and middle click |
+| =lrg_dock_panel_get_child()= / =lrg_dock_panel_set_child()= | The content widget (fills the panel)  |
+| =lrg_dock_panel_get_dock_area()=              | The owning area, docked or floating             |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: dock-area-properties
+:END:
+| =LrgDockArea= property | Type           | Default | Meaning                                                      |
+|------------------------+----------------+---------+--------------------------------------------------------------|
+| =divider-size=         | =gfloat=       | 6       | Gap between stacks, also the divider's grab zone             |
+| =tab-height=           | =gfloat=       | 0       | Tab strip / title bar height; 0 = theme control height       |
+| =min-panel-size=       | =gfloat=       | 48      | Smallest stack width and content height (a panel's own =lrg_widget_set_min_size()= raises it) |
+| =allow-floating=       | =gboolean=     | =TRUE=  | Off-target drops float the panel (else they cancel)          |
+| =active-panel=         | =LrgDockPanel= | =NULL=  | Read-only; the most recently activated panel                 |
+
+| =LrgDockPanel= property | Type        | Default | Meaning                         |
+|-------------------------+-------------+---------+---------------------------------|
+| =id=                    | =gchararray= | =NULL=  | Stable identifier               |
+| =title=                 | =gchararray= | =NULL=  | Tab text                        |
+| =icon=                  | =gchararray= | =NULL=  | Vector icon nick                |
+| =closable=              | =gboolean=  | =TRUE=  | User may close the panel        |
+| =child=                 | =LrgWidget= | =NULL=  | Content widget                  |
+
+| Signal            | Arguments              | Emitted                                                                         |
+|-------------------+------------------------+---------------------------------------------------------------------------------|
+| =close-request=   | =panel= -> =gboolean=  | Before a user / API close; return =TRUE= to keep the panel open                 |
+| =panel-closed=    | =panel=                | After a close that was not vetoed (the panel is already removed)                |
+| =panel-activated= | =panel=                | The active panel or a stack's visible tab changed by the user or the API        |
+| =layout-changed=  | none                   | Panels added / removed / moved, divider released or reset, tab switched, layout loaded |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: dock-area-parts
+:END:
+| Part        | State        | Built-in look                                                                 |
+|-------------+--------------+-------------------------------------------------------------------------------|
+| =box=       | resting      | Each stack: =PANEL=, =BORDER= at =BORDER_WIDTH=, =CORNER_RADIUS=              |
+| =header=    | resting      | Tab strip: =SURFACE=, top corners rounded, hairline in =BORDER= below         |
+| =tab=       | resting      | Transparent, =TEXT_MUTED= text                                                |
+| =tab=       | =hovered=    | =CONTROL_HOVER=, =TEXT= (cross-faded by a per-tab spring)                     |
+| =tab=       | =selected=   | Accent wash (12 %), =TEXT= (the active tab)                                   |
+| =indicator= | resting      | =ACCENT= pill, 3 thick (=size=), accent glow                                  |
+| =handle=    | resting      | Invisible line (the gap is the divider), grip pill in =TEXT_MUTED=            |
+| =handle=    | =hovered=    | =ACCENT= at 70 %, 4 thick, grip in =ACCENT=                                   |
+| =handle=    | =pressed=    | Solid =ACCENT=, glow (while dragged)                                          |
+| =fill=      | resting      | Drop preview: accent-tinted =GLASS= material, accent border 2, glow           |
+| =mark=      | resting      | Compass / edge button: =POPUP=, =BORDER=, shadow, glyph in =TEXT_MUTED=       |
+| =mark=      | =selected=   | The current target: =ACCENT= border and glyph, accent glow                    |
+| =popup=     | resting      | Dragged tab ghost: =POPUP=, accent border, deep shadow                        |
+| =item=      | resting      | Close button hover disc: =CONTROL_PRESSED= circle                             |
+| any         | =disabled=   | 45 % opacity                                                                  |
+
+The private =LrgDockFrame= (floating frames) uses =popup= for its surface (=PANEL=, =POPUP_RADIUS=, deep shadow), =header= for its title bar and =item= for its close button.
+
+** YAML (UI loader)
+:PROPERTIES:
+:CUSTOM_ID: dock-area-yaml
+:END:
+Supported by =LrgUILoader= as =LrgDockArea= (=type: dock-area=) and =LrgDockPanel= (=type: dock-panel=). The area's children must be panels; each is docked in order with =lrg_dock_area_add_panel()= at its =position:= (=left=, =right=, =top=, =bottom=, =center=, default =center=) relative to the panel named by =relative-to:= (listed earlier), or to the whole area. A panel's =id= is also its =LrgDockPanel:id=; its content is =child:=. =layout:= (a =lrg_dock_area_save_layout()= document, as a mapping or text) is applied after the panels. See [[file:../declarative-ui.org::#dock-area-keys][Declarative UI]].
+
+#+begin_src yaml
+type: dock-area
+id: dock
+divider-size: 6
+children:
+  - {type: dock-panel, id: scene-panel, title: Scene, icon: eye, closable: false,
+     child: {type: viewport, id: scene}}
+  - {type: dock-panel, id: graph-panel, title: Graph, position: right, relative-to: scene-panel,
+     child: {type: node-graph, id: graph}}
+  - {type: dock-panel, id: script-panel, title: Script, relative-to: graph-panel,      # a tab beside Graph
+     child: {type: text-editor, id: script}}
+  - {type: dock-panel, id: timeline-panel, title: Timeline, position: bottom,          # bottom of the area
+     child: {type: timeline-view, id: timeline}}
+#+end_src
+
+A hot reload leaves reused panels where the user dragged them (=position= only matters when a panel is first docked), docks new panels, removes panels that left the document, and applies =layout:= again only when it changed. =examples/data/ui/studio.yaml= is a full editor workspace.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: dock-area-pitfalls
+:END:
+- Give every panel a unique =id= if you persist layouts: panels without one are not saved and land in the first stack on load.
+- Floating needs the area on an =LrgCanvas= (the frames live in its overlay layer); off-canvas, =lrg_dock_area_float_panel()= returns =FALSE=.
+- Frames are raised on release, not on press (re-adding an overlay mid-press would drop the pointer capture).
+- The frame's right and bottom 5 units are its resize zones; the panel content does not cover them.
+- =lrg_dock_area_remove_panel()= drops the area's reference: keep your own if you want to dock the panel again later.
+- Hidden tabs are invisible widgets: their content is laid out but not painted or hit-tested.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: dock-area-see-also
+:END:
+- [[file:splitter.org][Splitter]] (a single divider, the same =handle= look)
+- [[file:../../ui/widgets/canvas.org][Canvas]] (overlay layer, pointer capture)
+- The immediate-mode =LrgGuiDock= (=src/gui/lrg-gui-dock.c=) used by the editor

@@ -188,28 +188,25 @@ static void
 update_button_selection (LrgTemplateConfirmationState *self)
 {
     LrgTemplateConfirmationStatePrivate *priv;
-    g_autoptr(GrlColor) selected_color = NULL;
-    g_autoptr(GrlColor) normal_color = NULL;
 
     priv = lrg_template_confirmation_state_get_instance_private (self);
 
-    selected_color = grl_color_new (100, 150, 220, 255);
-    normal_color = grl_color_new (80, 80, 90, 255);
+    /* The selected button takes the theme's primary (accent) look */
 
     if (priv->confirm_button != NULL)
     {
         if (priv->selected_button == 0)
-            lrg_button_set_normal_color (priv->confirm_button, selected_color);
+            lrg_widget_add_class (LRG_WIDGET (priv->confirm_button), "primary");
         else
-            lrg_button_set_normal_color (priv->confirm_button, normal_color);
+            lrg_widget_remove_class (LRG_WIDGET (priv->confirm_button), "primary");
     }
 
     if (priv->cancel_button != NULL)
     {
         if (priv->selected_button == 1)
-            lrg_button_set_normal_color (priv->cancel_button, selected_color);
+            lrg_widget_add_class (LRG_WIDGET (priv->cancel_button), "primary");
         else
-            lrg_button_set_normal_color (priv->cancel_button, normal_color);
+            lrg_widget_remove_class (LRG_WIDGET (priv->cancel_button), "primary");
     }
 }
 
@@ -285,6 +282,8 @@ create_ui (LrgTemplateConfirmationState *self)
 
     /* Create canvas */
     priv->canvas = lrg_canvas_new ();
+    /* The state drives selection with keys/gamepad itself */
+    lrg_canvas_set_navigation_enabled (priv->canvas, FALSE);
     lrg_widget_set_size (LRG_WIDGET (priv->canvas),
                          (gfloat) screen_width,
                          (gfloat) screen_height);

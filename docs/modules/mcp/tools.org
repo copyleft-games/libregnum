@@ -845,3 +845,18 @@ Point the default inspector at a world and optionally select a game object, then
 
 =selected= is =null= when no object is selected.
 
+
+** UI Inspector Tools (=LrgMcpDebugTools=)
+:PROPERTIES:
+:CUSTOM_ID: mcp-ui-inspector-tools
+:END:
+Six debug tools inspect and tweak the retained-mode UI through the default =LrgUIInspector=. The app makes its canvas visible to them with =lrg_ui_inspector_register_canvas (canvas)=; without a registered canvas every tool fails with a clear error. The tools exist only in builds made with =MCP=1=. Parameters, return shapes and examples are documented in [[file:../ui/inspector.org::#mcp-tools][the inspector page]].
+
+| Tool | Purpose |
+|------+---------|
+| [[file:../ui/inspector.org::#mcp-ui-tree][=lrg_ui_tree=]] | Snapshot the widget tree as JSON: paths, geometry, state, classes and the resolved look |
+| [[file:../ui/inspector.org::#mcp-ui-pick][=lrg_ui_pick=]] | Topmost widget at a canvas point, hit-tested the way clicks are (popups and overlays first) |
+| [[file:../ui/inspector.org::#mcp-ui-get-widget][=lrg_ui_get_widget=]] | One widget by path with every readable property |
+| [[file:../ui/inspector.org::#mcp-ui-set-property][=lrg_ui_set_property=]] | Set a widget property by name for live tweaking (strings convert to bools, numbers, enum nicks, flags and colours) |
+| [[file:../ui/inspector.org::#mcp-ui-highlight][=lrg_ui_highlight=]] | Select and highlight a widget by path, or toggle pick mode |
+| [[file:../ui/inspector.org::#mcp-ui-timings][=lrg_ui_timings=]] | Frame timings (step, layout, record) and paint instance, command and draw-call counts |

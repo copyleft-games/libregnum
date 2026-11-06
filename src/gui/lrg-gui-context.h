@@ -42,6 +42,7 @@
 #include "../lrg-version.h"
 #include "lrg-gui-types.h"
 #include "lrg-gui-draw-list.h"
+#include "../ui/lrg-theme.h"
 
 G_BEGIN_DECLS
 
@@ -192,6 +193,7 @@ void lrg_gui_input_add_text (LrgGuiInput *input,
  * @LRG_GUI_COL_AXIS_X: X axis (red)
  * @LRG_GUI_COL_AXIS_Y: Y axis (green)
  * @LRG_GUI_COL_AXIS_Z: Z axis (blue)
+ * @LRG_GUI_COL_SHADOW: drop shadow under popups, menus and tooltips
  * @LRG_GUI_COL_COUNT: number of colours
  *
  * Indices into #LrgGuiStyle.colors.
@@ -232,12 +234,13 @@ typedef enum
 	LRG_GUI_COL_AXIS_X,
 	LRG_GUI_COL_AXIS_Y,
 	LRG_GUI_COL_AXIS_Z,
+	LRG_GUI_COL_SHADOW,
 	LRG_GUI_COL_COUNT
 } LrgGuiStyleColor;
 
 /**
  * LrgGuiStyle:
- * @colors: (array fixed-size=34): palette, indexed by #LrgGuiStyleColor
+ * @colors: (array fixed-size=35): palette, indexed by #LrgGuiStyleColor
  * @font_size: text size in pixels
  * @frame_padding_x: horizontal padding inside buttons and fields
  * @frame_padding_y: vertical padding inside buttons and fields
@@ -248,6 +251,7 @@ typedef enum
  * @rounding: frame corner radius
  * @scrollbar_size: scrollbar width
  * @label_ratio: share of the width used by property_label() labels
+ * @shadow_size: blur of the drop shadow under floating surfaces, 0 for none
  *
  * Visual parameters. Modify the struct returned by
  * lrg_gui_context_get_style() between frames.
@@ -265,6 +269,7 @@ typedef struct
 	gfloat      rounding;
 	gfloat      scrollbar_size;
 	gfloat      label_ratio;
+	gfloat      shadow_size;
 } LrgGuiStyle;
 
 /**
@@ -278,6 +283,24 @@ LRG_AVAILABLE_IN_ALL
 void lrg_gui_style_init (LrgGuiStyle *style,
                          const gchar *theme,
                          gfloat       scale);
+
+/**
+ * lrg_gui_style_init_from_theme:
+ * @style: (out caller-allocates): a style
+ * @theme: an #LrgTheme
+ * @scale: UI scale factor applied to every metric
+ *
+ * Builds a GUI style from a retained-UI theme so the editor and a
+ * game's menus share one palette. Colours map from theme roles
+ * (window, panel, popup, control family, accent, selection, status
+ * colours, shadow); the compact metrics of lrg_gui_style_init() are
+ * kept, with the corner rounding taken from half the theme's corner
+ * radius.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_gui_style_init_from_theme (LrgGuiStyle *style,
+                                    LrgTheme    *theme,
+                                    gfloat       scale);
 
 /* ==========================================================================
  * Context

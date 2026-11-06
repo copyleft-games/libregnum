@@ -1,0 +1,258 @@
+* Table
+:PROPERTIES:
+:CUSTOM_ID: table
+:END:
+=LrgTable= shows the items of a =GListModel= as rows of a table with a header strip, application-defined columns, resizable and sortable columns, striped rows, single or multiple selection, keyboard navigation and activation. Like [[file:list-view.org][LrgListView]] it is virtualized: only the rows inside the viewport plus one buffer row above and below exist, recycled as the table scrolls, so 10,000 or 1,000,000 rows cost a dozen row objects. Both axes scroll with the shared spring, rubber band and overlay scrollbars of [[file:scroll-box.org][LrgScrollBox]]; touch drags pan either axis and flick on release.
+
+Cells come in two kinds:
+- *Text cells* (the default): the column's cell function returns a string, and the table draws it itself, clipped to the cell. No widget is created per cell, which keeps very wide tables cheap.
+- *Widget cells*: give the column a widget factory with =lrg_table_set_column_widget_factory()=; every realized row then owns one widget for that column, and the cell function binds it (and returns =NULL=).
+
+Cell functions run only when a row is bound to a different item (scrolling it into view, model changes), never per frame.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: table-creation
+:END:
+#+begin_src C
+g_autoptr(GListStore) store = g_list_store_new (MY_TYPE_SCORE);
+LrgTable             *table = lrg_table_new ();
+
+/* Text column from a property, resizable and sortable */
+lrg_table_add_property_column (table, "Player", "name", 160.0f,
+                               LRG_TABLE_COLUMN_RESIZABLE | LRG_TABLE_COLUMN_SORTABLE);
+lrg_table_add_property_column (table, "Score", "score", 80.0f, LRG_TABLE_COLUMN_SORTABLE);
+lrg_table_set_model (table, G_LIST_MODEL (store));
+lrg_widget_set_fill_weight (LRG_WIDGET (table), 1.0f);
+#+end_src
+
+** Columns
+:PROPERTIES:
+:CUSTOM_ID: table-columns
+:END:
+=lrg_table_add_column()= appends a column with a title, a =LrgTableCellFunc=, its user data and destroy notify, a width and =LrgTableColumnFlags=; it returns the column index. =lrg_table_add_property_column()= is the shortcut for a text column showing one item property (any type that transforms to a string); when it is sortable it also installs a default sort function (numeric for number properties, =g_utf8_collate()= for text).
+
+#+begin_src C
+static gchar *
+time_cell (LrgTable  *table,
+           LrgWidget *cell,
+           GObject   *item,
+           guint      position,
+           gpointer   user_data)
+{
+	guint secs = my_score_get_seconds (MY_SCORE (item));
+
+	return g_strdup_printf ("%u:%02u", secs / 60, secs % 60);
+}
+
+lrg_table_add_column (table, "Time", time_cell, NULL, NULL, 70.0f, LRG_TABLE_COLUMN_RESIZABLE);
+#+end_src
+
+Widget column: a factory makes empty cells, the cell function binds them.
+
+#+begin_src C
+static LrgWidget *
+make_progress (LrgTable *table,
+               guint     column,
+               gpointer  user_data)
+{
+	return LRG_WIDGET (lrg_progress_bar_new ());
+}
+
+static gchar *
+bind_progress (LrgTable  *table,
+               LrgWidget *cell,
+               GObject   *item,
+               guint      position,
+               gpointer   user_data)
+{
+	lrg_progress_bar_set_value (LRG_PROGRESS_BAR (cell), my_score_get_completion (MY_SCORE (item)));
+	return NULL;
+}
+
+guint col = lrg_table_add_column (table, "Done", bind_progress, NULL, NULL, 120.0f, LRG_TABLE_COLUMN_EXPAND);
+lrg_table_set_column_widget_factory (table, col, make_progress, NULL, NULL);
+#+end_src
+
+| Flag                         | Meaning                                                              |
+|------------------------------+----------------------------------------------------------------------|
+| =LRG_TABLE_COLUMN_NONE=      | Fixed width, not sortable                                            |
+| =LRG_TABLE_COLUMN_RESIZABLE= | Drag the right border of the header cell (5 units either side) to resize; minimum 24 |
+| =LRG_TABLE_COLUMN_SORTABLE=  | Clicking the header cell sorts by it                                 |
+| =LRG_TABLE_COLUMN_EXPAND=    | Shares the width left over when all columns fit                       |
+Column accessors: =lrg_table_get_n_columns()=, =lrg_table_get_column_title()= / =lrg_table_set_column_title()=, =lrg_table_get_column_width()= / =lrg_table_set_column_width()= (the requested width, before any expand share), =lrg_table_get_column_flags()=. The flags type is registered as =LrgTableColumnFlags= (=lrg_table_column_flags_get_type()=, =LRG_TYPE_TABLE_COLUMN_FLAGS=). Adding a column or a widget factory rebuilds the row pool.
+
+** Sorting
+:PROPERTIES:
+:CUSTOM_ID: table-sorting
+:END:
+A click (press and release on the same cell) on a sortable header cell sets the sort column ascending; clicking it again flips the direction. =lrg_table_set_sort (table, column, ascending)= does the same from code (-1 = unsorted), and =lrg_table_get_sort_column()= / =lrg_table_get_sort_ascending()= read it back. Every change emits =sort-changed (column, ascending)=.
+
+Sorting the data is the application's job (for example through a sorted model), with one convenience: =lrg_table_set_sort_func (table, column, compare, user_data, destroy)= gives a column an ascending =GCompareDataFunc=. When the model is a =GListStore= and that column becomes the sort column (or flips), the table sorts the store in place (reversed for descending) before emitting the signal; the selected rows and the cursor follow their items to their new positions.
+
+#+begin_src C
+static gint
+by_score (gconstpointer a,
+          gconstpointer b,
+          gpointer      user_data)
+{
+	return (gint) my_score_get_points (MY_SCORE (a)) - (gint) my_score_get_points (MY_SCORE (b));
+}
+
+lrg_table_set_sort_func (table, 1, by_score, NULL, NULL);
+lrg_table_set_sort (table, 1, FALSE);   /* highest first */
+#+end_src
+
+** Selection and activation
+:PROPERTIES:
+:CUSTOM_ID: table-selection
+:END:
+Same model as the list view: =none=, =single= (default) or =multiple= (Ctrl toggles, Shift selects the range from the anchor). =lrg_table_select()=, =lrg_table_unselect_all()=, =lrg_table_is_selected()=, =lrg_table_get_selected()= (the cursor row if selected, else the lowest selected row), =lrg_table_get_n_selected()=, =lrg_table_get_cursor()=. =LRG_TABLE_INVALID_POSITION= means "no row". A second click on a row within 0.4 s of canvas time, or Enter / Space / gamepad A on the cursor row, emits =row-activated=. Model edits keep the selection on its items.
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: table-properties
+:END:
+| Property         | Type               | Default  | Meaning                                      |
+|------------------+--------------------+----------+----------------------------------------------|
+| =model=          | =GListModel=       | NULL     | The rows                                     |
+| =row-height=     | =gfloat=           | 0        | Row height; 0 = theme =ROW_HEIGHT=; the header is 4 taller |
+| =striped=        | =gboolean=         | TRUE     | Tint odd rows                                |
+| =selection-mode= | =LrgSelectionMode= | =single= | none / single / multiple                     |
+| =sort-column=    | =gint=             | -1       | Column with the sort indicator               |
+| =sort-ascending= | =gboolean=         | TRUE     | Sort direction                               |
+Inherited: =padding= (default 1, inside the border).
+
+| Signal              | Arguments                         | Emitted                                    |
+|---------------------+-----------------------------------+--------------------------------------------|
+| =selection-changed= | none                              | Rows were selected or unselected            |
+| =row-activated=     | =guint position=                  | Double click, or Enter / Space / gamepad A  |
+| =sort-changed=      | =gint column=, =gboolean ascending= | Sort column or direction changed (after a store was sorted) |
+| =column-resized=    | =guint column=, =gfloat width=    | A border drag ended                         |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: table-parts
+:END:
+| Part           | State                  | Built-in look                                              |
+|----------------+------------------------+------------------------------------------------------------|
+| =box=          | resting                | =INPUT= background, =BORDER= border, =CORNER_RADIUS=        |
+| =box=          | =focused=              | =ACCENT= border                                            |
+| =box=          | =disabled=             | 45 % opacity                                               |
+| =header=       | resting                | =CONTROL= strip, =TEXT_MUTED= titles, =BORDER= bottom line  |
+| =header=       | =hovered= (sortable cell) | =CONTROL_HOVER= cell, =TEXT= title                      |
+| =header=       | =pressed=              | =CONTROL_PRESSED= cell                                     |
+| =header=       | =selected= (sorted column) | =TEXT= title                                           |
+| =arrow=        | resting                | Sort chevron in =ACCENT=, half the font size; flips with a spring |
+| =item=         | resting (even rows)    | Transparent                                                |
+| =item=         | =checked= (odd rows)   | =SURFACE= at 60 % (the stripe)                             |
+| =item=         | =hovered= / =pressed=  | =CONTROL_HOVER= / =CONTROL_PRESSED=                        |
+| =item=         | =selected=             | =SELECTION=, more opaque when hovered                      |
+| =label=        | resting                | Cell text in =TEXT=                                        |
+| =indicator=    | resting                | Cursor outline in =FOCUS= (focus visible); its background (=ACCENT=) marks a hovered or dragged column border |
+| =scrollbar=, =scroll-thumb= | as in [[file:scroll-box.org][LrgScrollBox]] |                                     |
+| =focus=        | focus visible          | Core focus ring                                            |
+The stripe uses the =checked= state of the =item= part, so a theme rule with =state: [checked]= restyles odd rows. Row backgrounds blend with each row's own hover and press springs.
+
+** Keyboard, gamepad and touch
+:PROPERTIES:
+:CUSTOM_ID: table-keyboard
+:END:
+| Input                 | Action                                                        |
+|-----------------------+---------------------------------------------------------------|
+| Up / Down             | Cursor up / down; selection follows; scrolls into view         |
+| Shift + Up / Down     | Extend the selection (multiple mode)                          |
+| Page Up / Page Down   | By the number of whole visible rows                            |
+| Home / End            | First / last row                                              |
+| Left / Right          | Scroll sideways 48 units when the columns are wider than the view; otherwise not consumed (focus moves) |
+| Enter / Space / gamepad A | =row-activated= for the cursor row                        |
+| Wheel / Shift + wheel | Scroll vertically / sideways                                   |
+| Touch drag            | Pans along its main axis (both when diagonal); flicks on release |
+Gamepad directions arrive as arrow keys first, so the d-pad moves the cursor.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: table-theming
+:END:
+#+begin_src yaml
+styles:
+  # Accent header with light titles
+  - widget: LrgTable
+    part: header
+    background: "#2a2250"
+    foreground: "#c8c0ff"
+  # Stronger stripes
+  - widget: LrgTable
+    part: item
+    state: [checked]
+    background: "#ffffff10"
+  # Solid selection
+  - widget: LrgTable
+    part: item
+    state: [selected]
+    background: "#7c6cff"
+#+end_src
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: table-example
+:END:
+#+begin_src C
+static void
+on_sort (LrgTable *table,
+         gint      column,
+         gboolean  ascending,
+         gpointer  user_data)
+{
+	g_message ("sorted by %s %s", lrg_table_get_column_title (table, (guint) column),
+	           ascending ? "ascending" : "descending");
+}
+
+LrgTable *table = lrg_table_new ();
+guint     name = lrg_table_add_property_column (table, "Name", "name", 180.0f,
+                                                LRG_TABLE_COLUMN_RESIZABLE | LRG_TABLE_COLUMN_SORTABLE);
+
+lrg_table_add_property_column (table, "Level", "level", 60.0f, LRG_TABLE_COLUMN_SORTABLE);
+lrg_table_add_column (table, "Time", time_cell, NULL, NULL, 70.0f, LRG_TABLE_COLUMN_EXPAND);
+lrg_table_set_model (table, G_LIST_MODEL (store));
+lrg_table_set_selection_mode (table, LRG_SELECTION_MODE_MULTIPLE);
+g_signal_connect (table, "sort-changed", G_CALLBACK (on_sort), NULL);
+lrg_table_set_sort (table, (gint) name, TRUE);
+#+end_src
+
+** Notes and limitations
+:PROPERTIES:
+:CUSTOM_ID: table-notes
+:END:
+- Realized rows: about =body height / row height + 2= (=lrg_table_get_n_rows()=); =lrg_table_get_cell_text()= and =lrg_table_get_cell_widget()= read realized cells only.
+- The preferred size is the sum of the column widths and up to 8 rows: give the table a fill weight or a size.
+- Scroll offsets: =lrg_table_get_scroll_offset (table, &x, &y)=; =lrg_table_scroll_to (table, position, animate)= reveals a row vertically.
+- Row height and header height are uniform; text is a single line clipped at the cell edge.
+- Row widgets of the buffer row may peek under the header strip; the header has its own hit zone on top, so clicks there always reach the header.
+
+** API Reference
+:PROPERTIES:
+:CUSTOM_ID: table-api
+:END:
+- =lrg_table_new (void)=
+- =lrg_table_set_model= / =lrg_table_get_model=
+- =lrg_table_add_column (self, title, LrgTableCellFunc cell_func, user_data, destroy, width, LrgTableColumnFlags flags)=
+- =lrg_table_add_property_column (self, title, property, width, flags)=
+- =lrg_table_set_column_widget_factory (self, column, LrgTableCellCreateFunc create, user_data, destroy)=
+- =lrg_table_get_n_columns=, =lrg_table_get_column_title= / =lrg_table_set_column_title=, =lrg_table_get_column_width= / =lrg_table_set_column_width=, =lrg_table_get_column_flags=
+- =lrg_table_set_sort_func (self, column, GCompareDataFunc func, user_data, destroy)=
+- =lrg_table_set_sort (self, column, ascending)=, =lrg_table_get_sort_column=, =lrg_table_get_sort_ascending=
+- =lrg_table_get_row_height= / =lrg_table_set_row_height=, =lrg_table_get_striped= / =lrg_table_set_striped=
+- =lrg_table_get_selection_mode= / =lrg_table_set_selection_mode=
+- =lrg_table_get_selected=, =lrg_table_get_n_selected=, =lrg_table_is_selected=, =lrg_table_select=, =lrg_table_unselect_all=, =lrg_table_get_cursor=
+- =lrg_table_scroll_to=, =lrg_table_get_scroll_offset=
+- =lrg_table_get_n_rows=, =lrg_table_get_cell_text=, =lrg_table_get_cell_widget=
+- =lrg_table_column_flags_get_type=, =LRG_TABLE_INVALID_POSITION=
+
+** Related
+:PROPERTIES:
+:CUSTOM_ID: table-related
+:END:
+- [[file:list-view.org][List view]]
+- [[file:tree-view.org][Tree view]]
+- [[file:scroll-box.org][Scroll box]]

@@ -1,0 +1,218 @@
+#+title: UI Actions and Shortcuts
+#+description: Widget-scoped GIO actions, the built-in app and ui groups, keyboard shortcuts, accelerator syntax, YAML wiring and right-to-left layout
+#+authors: Zach Podbielniak
+#+categories: libregnum ui actions
+#+created: 2026-11-06T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* UI Actions and Shortcuts
+:PROPERTIES:
+:CUSTOM_ID: actions
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Actions and shortcuts
+#+end_quote
+
+Buttons, menu items, keyboard shortcuts and YAML documents all need to say "do this" without each of them holding a C callback. libregnum uses GIO actions for that, scoped by the widget tree the way GTK does it: an action group is inserted on a widget under a *prefix*, and any widget at or below it can activate =prefix.action=. The canvas is the root of every scope and carries two built-in groups, =app= and =ui=, so a document can show a panel, switch a page, change the theme or quit without any C code.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: actions-overview
+:END:
+#+begin_src C
+static void
+on_pause (GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+	game_toggle_pause (user_data);
+}
+
+static const GActionEntry game_entries[] = {
+	{ "pause", on_pause, NULL, NULL, NULL, { 0 } },
+};
+
+g_autoptr(GSimpleActionGroup) game = g_simple_action_group_new ();
+
+g_action_map_add_action_entries (G_ACTION_MAP (game), game_entries,
+                                 G_N_ELEMENTS (game_entries), state);
+lrg_widget_insert_action_group (LRG_WIDGET (canvas), "game", G_ACTION_GROUP (game));
+
+/* Anything can now say "game.pause" */
+lrg_canvas_add_shortcut (canvas, "<Ctrl>p", "game.pause", NULL);
+lrg_canvas_add_shortcut (canvas, "F1", "ui.toggle", g_variant_new_string ("help"));
+g_signal_connect (canvas, "quit-requested", G_CALLBACK (on_quit), window);
+lrg_canvas_add_shortcut (canvas, "<Ctrl>q", "app.quit", NULL);
+#+end_src
+
+#+begin_src yaml
+shortcuts:
+  - {accel: "<Ctrl>q", action: app.quit}
+  - {accel: F1, action: ui.toggle, target: help}
+root:
+  type: vbox
+  children:
+    - {type: button, text: Pause, on-clicked: game.pause}
+    - {type: button, text: Help, on-clicked: {action: ui.show, target: help}}
+    - {type: label, id: help, text: "Press F1 to close", visible: false}
+#+end_src
+
+** Scoping
+:PROPERTIES:
+:CUSTOM_ID: actions-scoping
+:END:
+=lrg_widget_insert_action_group (widget, prefix, group)= stores =group= (any =GActionGroup=; a =GSimpleActionGroup= is the usual choice) on =widget= under =prefix= and keeps a reference. Passing =NULL= removes it. Resolution of =prefix.name= starts at the widget that activates and walks up:
+
+#+begin_example
+ LrgCanvas            app.*  ui.*  game.*      <- root of every scope
+   └─ LrgVBox         game.*                   <- shadows the canvas's "game" group
+        └─ LrgButton  activates "game.pause": found on the VBox,
+                      the canvas's game.pause is NOT consulted
+#+end_example
+
+- A group shadows every group with the *same prefix* above it, completely: the nearest =game= group answers or nothing does (no fall-through by action name).
+- Popups and overlays are parented to the canvas. A popup shown with an anchor resolves from its *anchor* upwards, so a context menu sees the groups of the widget that opened it.
+- Effective layout direction follows the same path (see [[#actions-rtl][right-to-left]]).
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_widget_insert_action_group (self, prefix, group)= | Insert, replace (same prefix) or remove (=NULL=) a group |
+| =lrg_widget_get_action_group (self, prefix)= | The group on =self= itself |
+| =lrg_widget_find_action_group (self, prefix)= | The nearest group for =prefix= from =self= up |
+| =lrg_widget_list_action_prefixes (self)= | Every reachable prefix, nearest first, no duplicates (=g_strfreev=) |
+| =lrg_widget_lookup_action (self, "p.name")= | The =GAction= (only for groups that are a =GActionMap=); menus read its enabled flag and state |
+| =lrg_widget_activate_action (self, "p.name", parameter)= | Activate; returns =FALSE= when nothing ran |
+
+=lrg_widget_activate_action()= consumes a floating =parameter= and refuses (returns =FALSE=, logs at debug level) when: the name is not =prefix.action=, no group provides the prefix, the group has no such action, the action is disabled, or the parameter does not match the action's parameter type (a parameterless action wants =NULL=). It never emits a critical for these, so data-driven callers (YAML, shortcuts) can probe safely.
+
+*Menus.* A boolean action state is a check mark, a string state a radio choice: read it with =g_action_get_state (lrg_widget_lookup_action (item, name))=. Show the shortcut next to an item with =lrg_canvas_get_accel_for_action()= + =lrg_accel_to_label()=.
+
+** Built-in actions
+:PROPERTIES:
+:CUSTOM_ID: actions-builtins
+:END:
+Every =LrgCanvas= installs these at construction. They hold only a weak reference to the canvas. Name targets are widget names (=lrg_widget_set_name()=, the YAML =id:=) searched in the canvas tree, then open popups (newest first), then the overlay layer. Unknown names and values do nothing (debug log).
+
+| Action | Parameter | Effect |
+|--------+-----------+--------|
+| =app.quit= | none | Emits =LrgCanvas::quit-requested=. The canvas does not own the window: connect the signal and close it (=grl_window_close()=) or leave your loop |
+| =ui.show= | =s= widget name | =lrg_widget_set_visible (w, TRUE)= |
+| =ui.hide= | =s= widget name | =lrg_widget_set_visible (w, FALSE)= |
+| =ui.toggle= | =s= widget name | Flip visibility |
+| =ui.page= | =s= ="widget:page"= | Widgets with a writable string property =visible-child-name= (switchers, stacks) get it set; an =LrgTabView= selects the tab whose label is =page=, else the tab whose index =page= spells |
+| =ui.theme= | =s= preset | =lrg_widget_set_theme (canvas, lrg_theme_new_preset (name))= (see =lrg_theme_list_presets()=) |
+| =ui.motion= | =s= =LrgMotion= nick | Copies the canvas's current theme with another motion (=none=, =snappy=, =smooth=, =bouncy=, =wobbly=) and sets it on the canvas; the shared default theme is never modified |
+| =ui.direction= | =s= =ltr= / =rtl= | =lrg_canvas_set_default_direction()= |
+| =ui.focus= | =s= widget name | Keyboard focus to a focusable, enabled widget, focus ring visible |
+| =ui.popup-close= | none | Dismisses the newest popup |
+| =ui.toast= | =s= message | Shows an info =LrgToast= on the first =LrgToastQueue= found in the overlay layer, else in the tree; nothing when there is none |
+
+=LrgCanvas::quit-requested= takes no arguments and returns nothing.
+
+** Keyboard shortcuts
+:PROPERTIES:
+:CUSTOM_ID: actions-shortcuts
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_canvas_add_shortcut (canvas, accel, action, target)= | Bind; returns =FALSE= (warning) for an accelerator that does not parse; rebinding the same keys replaces |
+| =lrg_canvas_remove_shortcut (canvas, accel)= | Unbind (any spelling of the same keys) |
+| =lrg_canvas_remove_all_shortcuts (canvas)= | Unbind everything |
+| =lrg_canvas_get_n_shortcuts (canvas)= | Count |
+| =lrg_canvas_get_accel_for_action (canvas, action, target)= | The accelerator bound to =action= with exactly =target= (both =NULL= or =g_variant_equal=), as it was added |
+
+*The dispatch rule.* For every key press in a frame (see [[file:input-and-focus.org::#input-shortcuts][input and focus]]):
+
+1. The focused widget (or the top popup) gets =KEY_DOWN= first, bubbling. If any handler returns =TRUE=, the key is consumed: no shortcut, no navigation.
+2. Otherwise a shortcut whose key and modifiers match *exactly* (Shift, Ctrl, Alt, Super all compared) activates its action, resolved from the focused widget (so groups scoped to the focused subtree apply) and then from the canvas. If the action ran, the key is done.
+3. Otherwise the defaults run: arrows navigate, Enter / Space activate, Escape cancels. A shortcut whose action is missing or disabled falls through to them.
+
+*Printable shortcuts* (letters, digits, punctuation, Space, keypad digits without Ctrl, Alt or Super: ="q"=, ="<Shift>a"=, ="space"=) are held back until the frame's typed characters were delivered and fire only if no widget accepted a =TEXT_INPUT=; typing "q" into a text field never quits. Ctrl / Alt / Super shortcuts fire unless the focused widget consumes the key: =LrgTextInput= keeps Ctrl+A / C / X / V and its editing keys, and lets every other Ctrl, Alt or Super combination through. Widgets that edit text should follow the same rule: return =TRUE= for printable keys only when no Ctrl / Alt / Super is held (AltGr arrives as Ctrl+Alt and is text).
+
+** Accelerator syntax
+:PROPERTIES:
+:CUSTOM_ID: actions-accels
+:END:
+An accelerator is zero or more modifiers in angle brackets followed by one key name: ="<Ctrl>s"=, ="<Ctrl><Shift>z"=, ="F5"=, ="<Alt>Return"=. Whitespace around the key is ignored; a modifier may appear once.
+
+| Modifiers (case-insensitive) | Flag |
+|------------------------------+------|
+| =<Ctrl>=, =<Control>=, =<Primary>= | =LRG_INPUT_MODIFIER_CTRL= |
+| =<Shift>= | =LRG_INPUT_MODIFIER_SHIFT= |
+| =<Alt>= | =LRG_INPUT_MODIFIER_ALT= |
+| =<Super>=, =<Meta>= | =LRG_INPUT_MODIFIER_SUPER= |
+
+| Keys | Names |
+|------+-------|
+| Letters | =a= ... =z= (case does not matter: ="S"= is the S key; add =<Shift>= for a shifted letter) |
+| Digits | =0= ... =9= |
+| Function keys | =F1= ... =F12= |
+| Editing / motion | =Escape= (=Esc=), =Return= (=Enter=), =Tab=, =BackSpace=, =Delete= (=Del=), =Insert=, =Home=, =End=, =Page_Up= (=PageUp=), =Page_Down= (=PageDown=), =Up=, =Down=, =Left=, =Right=, =space= |
+| Punctuation | =plus= (the =/+ key), =minus=, =equal=, =comma=, =period=, =slash=, =backslash=, =semicolon=, =apostrophe=, =grave=, =bracketleft=, =bracketright=, or the character itself (=+ - = , . / \ ; ' ` [ ]=) |
+| Keypad | =KP_0= ... =KP_9=, =KP_Add=, =KP_Subtract=, =KP_Multiply=, =KP_Divide=, =KP_Decimal=, =KP_Enter=, =KP_Equal= |
+| Other | =Pause=, =Print=, =Menu= |
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_accel_parse (accel, &key, &mods)= | Parse; outputs optional and untouched on failure |
+| =lrg_accel_name (key, mods)= | Canonical accelerator (=<Ctrl><Alt><Shift><Super>= order, lower-case letters), the inverse of parse; =NULL= for unnamed keys |
+| =lrg_accel_to_label (accel)= | Display text: ="<Ctrl><Shift>s"= -> =Ctrl+Shift+S=, ="<Alt>Page_Up"= -> =Alt+PgUp=, ="Escape"= -> =Esc=, ="<Ctrl>plus"= -> =Ctrl++= |
+
+Tab combinations can be shortcuts (for example ="<Ctrl>Tab"= for "next document"): they fire when a focused widget with =accepts-tab= did not take the key, before focus would move; a plain Tab shortcut replaces Tab navigation. =lrg_canvas_input_poll()= reports Super as =LRG_INPUT_MODIFIER_SUPER=.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: actions-yaml
+:END:
+See [[file:declarative-ui.org::#handlers][Declarative UI: handlers]] for the full rules.
+
+#+begin_src yaml
+shortcuts:                                  # top level, beside root / components / variables
+  - {accel: "<Ctrl>s", action: doc.save}
+  - {accel: "<Ctrl>1", action: ui.page, target: "pages:home"}
+  - {accel: "<Ctrl>+", action: view.zoom, target: "1.25", target-type: d}
+root:
+  type: hbox
+  direction: rtl                            # any widget: inherit / ltr / rtl
+  children:
+    - {type: button, text: Save, on-clicked: doc.save}
+    - {type: button, text: Details, on-clicked: {action: ui.toggle, target: details}}
+    - {type: slider, on: {value-changed: {action: audio.volume-changed, after: true}}}
+#+end_src
+
+- A handler value with a dot is an action (C handler names never contain one). The mapping form takes =action=, =target= (a scalar; a string unless =target-type= says otherwise), =target-type= (a =GVariant= type string such as =b=, =i=, =d=, =(si)=; non-string targets are parsed in GVariant text format) and =after=.
+- =on-<signal>: value= is shorthand for one =on:= entry and merges with =on:=.
+- The action is activated on the widget that emitted the signal, whatever the signal's arguments. Signals with a boolean return value get =TRUE= when the action ran.
+- =shortcuts:= are bound on the canvas the document's root is in: at once, or as soon as the root is added to a canvas tree. A reload replaces the document's shortcuts; destroying the root unbinds them.
+
+** Right-to-left layout
+:PROPERTIES:
+:CUSTOM_ID: actions-rtl
+:END:
+Every widget has a layout direction (=LrgWidget:direction=, =LrgWidgetDirection=: =INHERIT= by default, =LTR=, =RTL=). The effective direction is the widget's own, else its nearest ancestor's (a popup's anchor's), else the canvas default (=lrg_canvas_set_default_direction()=, =LrgCanvas:default-direction=), else LTR. In RTL containers mirror their children, START/END alignment swap sides and labels hug the right edge. Details, the container list and how to write direction-aware widgets: [[file:layout.org::#layout-direction][Layout: direction]].
+
+| Function | Purpose |
+|----------+---------|
+| =lrg_widget_set_direction= / =lrg_widget_get_direction= | Own direction |
+| =lrg_widget_get_effective_direction= / =lrg_widget_is_rtl= | Resolved direction |
+| =lrg_canvas_set_default_direction= / =lrg_canvas_get_default_direction= | Root default |
+| =lrg_widget_class_set_handles_direction= / =lrg_widget_class_get_handles_direction= | Opt a class out of automatic mirroring |
+| =lrg_widget_mirror_x (self, x, width)= | Mirror a painted span inside =self= in RTL |
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: actions-pitfalls
+:END:
+- *Shadowing is by prefix.* Inserting a =game= group on a panel hides the canvas's =game= group for everything inside the panel, including actions the panel's group lacks. Use distinct prefixes for local groups.
+- *Parameters must match.* =ui.show= needs a string; =lrg_widget_activate_action (w, "ui.show", NULL)= returns =FALSE=.
+- *=app.quit= does nothing by itself*: connect =quit-requested=.
+- *Plain-letter shortcuts* are suppressed while text is being typed into a focused widget, by design. Prefer Ctrl/Alt combinations for global commands.
+- *Removing a shortcut by accelerator* removes whatever is bound to those keys, even if another document bound it later.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: actions-see-also
+:END:
+- [[file:input-and-focus.org][Input, focus and popups]]
+- [[file:layout.org][Layout]]
+- [[file:declarative-ui.org][Declarative UI]]
+- [[file:canvas-api.org][Canvas API]]

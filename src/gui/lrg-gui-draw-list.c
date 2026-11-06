@@ -199,6 +199,28 @@ lrg_gui_draw_list_rect_filled (LrgGuiDrawList   *self,
 }
 
 guint
+lrg_gui_draw_list_shadow (LrgGuiDrawList   *self,
+                          const LrgGuiRect *rect,
+                          LrgGuiColor       color,
+                          gfloat            blur,
+                          gfloat            offset_y,
+                          gfloat            rounding)
+{
+	LrgGuiCommand *cmd;
+
+	g_return_val_if_fail (LRG_IS_GUI_DRAW_LIST (self), 0);
+	g_return_val_if_fail (rect != NULL, 0);
+
+	cmd = push (self, LRG_GUI_CMD_SHADOW);
+	cmd->rect = *rect;
+	cmd->color = color;
+	cmd->thickness = blur;
+	cmd->rounding = rounding;
+	cmd->points[1] = offset_y;
+	return self->commands->len - 1;
+}
+
+guint
 lrg_gui_draw_list_rect_outline (LrgGuiDrawList   *self,
                                 const LrgGuiRect *rect,
                                 LrgGuiColor       color,

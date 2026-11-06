@@ -440,6 +440,62 @@ test_rich_text_reset_effects (RichTextFixture *fixture,
 }
 
 static void
+test_rich_text_escape_bracket (RichTextFixture *fixture,
+                               gconstpointer    user_data)
+{
+    (void) user_data;
+
+    /* "[[" is a literal bracket and never opens a tag */
+    lrg_rich_text_set_markup (fixture->text, "a[[3] and [[b]bold?");
+    g_assert_cmpstr (lrg_rich_text_get_plain_text (fixture->text), ==, "a[3] and [b]bold?");
+    g_assert_cmpuint (lrg_rich_text_get_span_count (fixture->text), ==, 1);
+}
+
+static void
+test_rich_text_typewriter_attribute (RichTextFixture *fixture,
+                                     gconstpointer    user_data)
+{
+    const LrgTextSpan *span;
+    LrgTextEffect     *attr_effect;
+    gfloat             attr_speed;
+
+    (void) user_data;
+
+    /* The documented attribute form and the short form agree */
+    lrg_rich_text_set_markup (fixture->text, "[typewriter speed=100]Hi[/typewriter]");
+    span = lrg_rich_text_get_span (fixture->text, 0);
+    g_assert_nonnull (span);
+    g_assert_cmpint (lrg_text_span_get_effect_type (span), ==, LRG_TEXT_EFFECT_TYPEWRITER);
+    attr_effect = lrg_rich_text_get_span_effect (fixture->text, 0);
+    g_assert_nonnull (attr_effect);
+    attr_speed = lrg_text_effect_get_speed (attr_effect);
+    g_assert_cmpfloat_with_epsilon (attr_speed, 2.0f, 0.0001f);
+
+    lrg_rich_text_set_markup (fixture->text, "[typewriter=100]Hi[/typewriter]");
+    g_assert_cmpfloat_with_epsilon (lrg_text_effect_get_speed (lrg_rich_text_get_span_effect (fixture->text, 0)),
+                                    attr_speed, 0.0001f);
+}
+
+static void
+test_rich_text_span_effect (RichTextFixture *fixture,
+                            gconstpointer    user_data)
+{
+    LrgTextEffect *effect;
+
+    (void) user_data;
+
+    lrg_rich_text_set_markup (fixture->text, "plain [wave]wavy[/wave]");
+    g_assert_cmpuint (lrg_rich_text_get_span_count (fixture->text), ==, 2);
+
+    /* Plain spans have no effect; effect spans expose theirs */
+    g_assert_null (lrg_rich_text_get_span_effect (fixture->text, 0));
+    effect = lrg_rich_text_get_span_effect (fixture->text, 1);
+    g_assert_nonnull (effect);
+    g_assert_cmpint (lrg_text_effect_get_effect_type (effect), ==, LRG_TEXT_EFFECT_WAVE);
+    g_assert_null (lrg_rich_text_get_span_effect (fixture->text, 2));
+}
+
+static void
 test_rich_text_new_from_markup (void)
 {
     g_autoptr(LrgRichText) text = lrg_rich_text_new_from_markup ("[b]Bold[/b] and [i]italic[/i]");
@@ -507,6 +563,13 @@ main (int   argc,
                 rich_text_fixture_set_up, test_rich_text_update, rich_text_fixture_tear_down);
     g_test_add ("/text/rich-text/reset-effects", RichTextFixture, NULL,
                 rich_text_fixture_set_up, test_rich_text_reset_effects, rich_text_fixture_tear_down);
+
+    g_test_add ("/text/rich-text/escape-bracket", RichTextFixture, NULL,
+                rich_text_fixture_set_up, test_rich_text_escape_bracket, rich_text_fixture_tear_down);
+    g_test_add ("/text/rich-text/typewriter-attribute", RichTextFixture, NULL,
+                rich_text_fixture_set_up, test_rich_text_typewriter_attribute, rich_text_fixture_tear_down);
+    g_test_add ("/text/rich-text/span-effect", RichTextFixture, NULL,
+                rich_text_fixture_set_up, test_rich_text_span_effect, rich_text_fixture_tear_down);
 
     return g_test_run ();
 }

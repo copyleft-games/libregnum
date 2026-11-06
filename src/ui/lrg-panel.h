@@ -139,4 +139,57 @@ LRG_AVAILABLE_IN_ALL
 void lrg_panel_set_corner_radius (LrgPanel *self,
                                   gfloat    radius);
 
+/* ==========================================================================
+ * Elevation
+ * ========================================================================== */
+
+/**
+ * lrg_panel_get_elevation:
+ * @self: an #LrgPanel
+ *
+ * Gets how far the panel floats above what is behind it.
+ *
+ * Returns: the elevation, 0 (flat) to 3
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_panel_get_elevation (LrgPanel *self);
+
+/**
+ * lrg_panel_set_elevation:
+ * @self: an #LrgPanel
+ * @elevation: 0 (flat, no shadow) to 3 (floating); larger values are
+ *   clamped to 3
+ *
+ * Sets the panel's elevation. Each step casts a larger, softer drop
+ * shadow derived from the theme's SHADOW_BLUR and SHADOW_OFFSET_Y
+ * metrics. The default is 1.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_panel_set_elevation (LrgPanel *self,
+                              guint     elevation);
+
+/**
+ * lrg_panel_get_fill_children:
+ * @self: an #LrgPanel
+ *
+ * Returns: %TRUE if children are laid out in the padded content box
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_panel_get_fill_children (LrgPanel *self);
+
+/**
+ * lrg_panel_set_fill_children:
+ * @self: an #LrgPanel
+ * @fill_children: lay children out inside the padded content box
+ *   (honouring their margin, alignment and min/max size) instead of
+ *   leaving them where they were positioned; the panel then measures
+ *   as its largest child plus padding
+ *
+ * Off by default, so existing code that positions panel children by
+ * hand keeps working. Turn it on to frame a box, grid or card.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_panel_set_fill_children (LrgPanel *self,
+                                  gboolean  fill_children);
+
 G_END_DECLS

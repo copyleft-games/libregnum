@@ -2,67 +2,211 @@
 :PROPERTIES:
 :CUSTOM_ID: text-input-widget
 :END:
-Single-line text input field with placeholder text, max length, and password mode support.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgTextInput= is a single-line text entry. It records itself through the paint pipeline (=paint()= + =style_defaults()=), so it follows the theme, cross-fades between states with springs and is clipped and batched like every other paint-based widget.
+
+What it does:
+
+- An =INPUT=-coloured rounded box with a hairline =BORDER= border that glides to the theme's =ACCENT= (with a faint accent halo) while the entry has focus.
+- Placeholder text in =TEXT_MUTED= while the entry is empty.
+- A caret in the accent colour that stays solid while you type or move and then fades smoothly in and out instead of blinking hard.
+- Selection with Shift+arrows, Shift+Home/End, Ctrl+A, mouse click / drag (the canvas captures the pointer, so dragging past the box keeps selecting) and double-click (selects a word). The selection is drawn with the theme's =SELECTION= colour.
+- Clipboard: Ctrl+C, Ctrl+X, Ctrl+V. Typing or pasting replaces the selection.
+- Horizontal scrolling that keeps the caret in view; text, selection and caret are clipped to the inside of the box.
+- Max length and password masking (one =*= per character; password entries never copy or cut).
+
+Typed characters arrive as =LRG_UI_EVENT_TEXT_INPUT= events carrying the composed codepoint (keyboard layout, Shift and dead keys applied), so non-ASCII input works. The raw key presses that accompany them are swallowed.
 
 ** Creation
 :PROPERTIES:
 :CUSTOM_ID: creation
 :END:
 #+begin_src C
-g_autoptr(LrgTextInput) input = lrg_text_input_new();
-g_autoptr(LrgTextInput) input_with_placeholder = lrg_text_input_new_with_placeholder("Enter name");
-lrg_widget_set_size(LRG_WIDGET(input), 200, 30);
-lrg_container_add_child(container, LRG_WIDGET(input));
+LrgTextInput *input = lrg_text_input_new_with_placeholder ("Player name");
+
+/* Height defaults to the theme's CONTROL_HEIGHT, width to 200 */
+lrg_widget_set_fill_weight (LRG_WIDGET (input), 1.0f);
+lrg_container_add_child (LRG_CONTAINER (form), LRG_WIDGET (input));
 #+end_src
 
-** Text Management
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: text-management
+:CUSTOM_ID: properties
 :END:
-#+begin_src C
-lrg_text_input_set_text(input, "Hello");
-const gchar *text = lrg_text_input_get_text(input);
+| Property            | Type       | Default        | Notes                                                                          |
+|---------------------+------------+----------------+--------------------------------------------------------------------------------|
+| =text=              | string     | =NULL=         | The current text                                                               |
+| =placeholder=       | string     | =NULL=         | Shown in =TEXT_MUTED= while empty                                              |
+| =max-length=        | uint       | 0              | Characters allowed (0 = unlimited); typing and pasting stop there              |
+| =password-mode=     | boolean    | =FALSE=        | Mask with =*=; never copies to the clipboard                                   |
+| =cursor-position=   | int        | 0              | Caret position in characters; setting it clears the selection                  |
+| =focused=           | boolean    | =FALSE=        | Follows the canvas focus; setting it moves the canvas focus                    |
+| =font-size=         | float      | 20 (reported)  | Theme =FONT_SIZE= until set                                                    |
+| =text-color=        | =GrlColor= | legacy white   | Theme =TEXT= until set                                                         |
+| =background-color=  | =GrlColor= | legacy grey    | Theme =INPUT= until set                                                        |
+| =border-color=      | =GrlColor= | legacy grey    | Theme =BORDER= until set; applies while unfocused (focus always shows =ACCENT=) |
+| =placeholder-color= | =GrlColor= | legacy grey    | Theme =TEXT_MUTED= until set                                                   |
+| =corner-radius=     | float      | 4 (reported)   | Theme =CORNER_RADIUS= until set                                                |
+| =padding=           | float      | 8 (reported)   | Theme =PADDING_X= / =PADDING_Y= until set                                      |
 
-lrg_text_input_set_placeholder(input, "Enter text");
-const gchar *placeholder = lrg_text_input_get_placeholder(input);
+The legacy appearance properties keep their old default values in their getters, but the entry draws with the theme until a value is set explicitly. Once set, an explicit value beats both the theme default and theme style rules that target =LrgTextInput=. The explicit border colour applies only while unfocused (focus always shows the accent border); the placeholder colour applies while the entry is empty and the text colour once it has text; an explicit radius also shapes the focus ring. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
+
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+| Signal         | Arguments | Emitted when                                                                   |
+|----------------+-----------+--------------------------------------------------------------------------------|
+| =text-changed= | none      | The text changed: typing, deleting, cut, paste or =lrg_text_input_set_text()=  |
+| =submitted=    | none      | Enter (or keypad Enter) is pressed while focused                               |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+| Part    | What it is            | Resting                         | Hovered                       | Focused                                   | Disabled      |
+|---------+-----------------------+---------------------------------+-------------------------------+-------------------------------------------+---------------|
+| =BOX=   | Background and border | =INPUT= fill, =BORDER= border   | Border mixed toward =TEXT_MUTED= | =ACCENT= border, soft accent glow       | opacity 0.45  |
+| =LABEL= | Text / placeholder    | =TEXT= (=TEXT_MUTED= when empty) | same                          | same                                      | opacity 0.45  |
+| =FILL=  | Selection highlight   | =SELECTION=, radius 3           | same                          | drawn only while focused                  |               |
+| =MARK=  | Caret                 | =ACCENT= foreground, size 2     | same                          | drawn only while focused, fading          |               |
+| =FOCUS= | Focus ring            | from =LrgWidget=                |                               | shown after keyboard / gamepad navigation |               |
+
+The focused border and glow cross-fade with a spring that uses the widget's motion preset (instant with reduced motion). The spring, the caret phase and double-click timing all run on the canvas clock: the widget's =step()= sums the frame delta times passed to =lrg_canvas_update()=, and painting never reads a clock. =lrg_canvas_update()= returns =TRUE= while the focus cross-fade runs; the caret blink deliberately does not keep the canvas busy, so a host that only redraws while =lrg_canvas_update()= returns =TRUE= shows a steady caret. Two presses within 0.4 s of canvas time (and a few units apart) are a double click. An entry focused before its first frame does not fade in.
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+The entry has no built-in style classes. Add your own and target them with theme rules (see below).
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+Every part can be restyled by theme rules. A few examples:
+
+#+begin_src yaml
+styles:
+  # Pill-shaped search fields
+  - widget: LrgTextInput
+    class: search
+    part: box
+    radius: 999
+
+  # Thicker, warmer focus border
+  - widget: LrgTextInput
+    part: box
+    state: [focused]
+    border: "#ff9f1c"
+    border-width: 2
+    glow: "#ff9f1c40"
+    glow-size: 8
+
+  # Caret and selection colours
+  - widget: LrgTextInput
+    part: mark
+    foreground: "#ffffff"
+  - widget: LrgTextInput
+    part: fill
+    background: "#ff9f1c55"
 #+end_src
 
-** Input Constraints
-:PROPERTIES:
-:CUSTOM_ID: input-constraints
-:END:
-#+begin_src C
-lrg_text_input_set_max_length(input, 20);
-guint max = lrg_text_input_get_max_length(input);
+From C:
 
-lrg_text_input_set_password_mode(input, TRUE);
-gboolean is_password = lrg_text_input_get_password_mode(input);
+#+begin_src C
+g_autoptr(LrgStyleRule) rule = lrg_style_rule_new ("LrgTextInput", "search", LRG_UI_PART_BOX,
+                                                    LRG_WIDGET_STATE_NONE);
+lrg_part_look_set_radius (lrg_style_rule_get_look (rule), G_MAXFLOAT);
+lrg_theme_add_style_rule (theme, rule);
+lrg_widget_add_class (LRG_WIDGET (input), "search");
 #+end_src
 
-** Cursor and Focus
+** Keyboard, mouse and gamepad
 :PROPERTIES:
-:CUSTOM_ID: cursor-and-focus
+:CUSTOM_ID: keyboard-mouse-gamepad
+:END:
+| Input                       | Action                                                      |
+|-----------------------------+-------------------------------------------------------------|
+| Typing                      | Inserts at the caret, replacing the selection               |
+| Left / Right                | Move the caret (collapse the selection to its edge)         |
+| Ctrl+Left / Ctrl+Right      | Jump by word                                                |
+| Home / End                  | Start / end of the text                                     |
+| Shift + any movement        | Extend the selection                                        |
+| Backspace / Delete          | Delete the selection, or one character (Ctrl: one word)     |
+| Ctrl+A                      | Select all                                                  |
+| Ctrl+C / Ctrl+X / Ctrl+V    | Copy / cut / paste                                          |
+| Enter                       | Emit =submitted=                                            |
+| Space                       | Typed as a space (it never activates the widget)            |
+| Up / Down, Tab, gamepad     | Left to the canvas: move focus to the next widget           |
+| Click                       | Focus and place the caret (Shift+click extends)             |
+| Drag                        | Select (keeps selecting outside the box)                    |
+| Double-click                | Select the word under the pointer                           |
+| Gamepad A (=ACTIVATE=)      | Consumed; the entry keeps focus                             |
+
+All editing keys return =TRUE= from the event handler, so the canvas neither navigates focus (arrows) nor activates (Enter, Space) while the entry is focused.
+
+** Clipboard
+:PROPERTIES:
+:CUSTOM_ID: clipboard
+:END:
+With a window open the entry uses raylib's =GetClipboardText()= / =SetClipboardText()=. Without one (headless tools, tests) it uses a process-wide fallback clipboard, so copy, cut and paste behave the same everywhere. Pasted text has control characters (newlines, tabs) removed and is cut to =max-length=.
+
+** Selection and editing API
+:PROPERTIES:
+:CUSTOM_ID: selection-api
 :END:
 #+begin_src C
-lrg_text_input_set_cursor_position(input, 5);
-gint pos = lrg_text_input_get_cursor_position(input);
+gint start, end;
 
-lrg_text_input_set_focused(input, TRUE);
-gboolean focused = lrg_text_input_get_focused(input);
+lrg_text_input_set_text (input, "hello world");
+lrg_text_input_set_selection (input, 6, 11);           /* anchor, cursor */
+if (lrg_text_input_get_selection (input, &start, &end))
+  {
+    g_autofree gchar *sel = lrg_text_input_get_selected_text (input);
+    g_message ("selected %d..%d: %s", start, end, sel);   /* "world" */
+  }
+
+lrg_text_input_insert_text (input, "there");           /* "hello there" */
+lrg_text_input_select_all (input);
+lrg_text_input_copy_clipboard (input);
+lrg_text_input_delete_selection (input);               /* "" */
+lrg_text_input_paste_clipboard (input);                /* "hello there" */
 #+end_src
 
-** Appearance
+** Example
 :PROPERTIES:
-:CUSTOM_ID: appearance
+:CUSTOM_ID: example
 :END:
 #+begin_src C
-lrg_text_input_set_font_size(input, 16.0f);
-lrg_text_input_set_text_color(input, &text_color);
-lrg_text_input_set_background_color(input, &bg_color);
-lrg_text_input_set_border_color(input, &border_color);
-lrg_text_input_set_placeholder_color(input, &placeholder_color);
-lrg_text_input_set_corner_radius(input, 4.0f);
-lrg_text_input_set_padding(input, 5.0f);
+static void
+on_submitted (LrgTextInput *input,
+              gpointer      user_data)
+{
+    g_message ("Hello, %s!", lrg_text_input_get_text (input));
+}
+
+static LrgWidget *
+build_name_row (void)
+{
+    LrgHBox      *row = lrg_hbox_new ();
+    LrgTextInput *input = lrg_text_input_new_with_placeholder ("Player name");
+    LrgButton    *ok = lrg_button_new ("Start");
+
+    lrg_text_input_set_max_length (input, 16);
+    lrg_widget_set_fill_weight (LRG_WIDGET (input), 1.0f);
+    lrg_widget_add_class (LRG_WIDGET (ok), "primary");
+
+    g_signal_connect (input, "submitted", G_CALLBACK (on_submitted), NULL);
+
+    lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (input));
+    lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (ok));
+    return LRG_WIDGET (row);
+}
 #+end_src
 
 ** API Reference
@@ -71,21 +215,31 @@ lrg_text_input_set_padding(input, 5.0f);
 :END:
 - =lrg_text_input_new()=
 - =lrg_text_input_new_with_placeholder(const gchar *placeholder)=
-- =lrg_text_input_get_text(LrgTextInput *self)=
-- =lrg_text_input_set_text(LrgTextInput *self, const gchar *text)=
-- =lrg_text_input_get_placeholder(LrgTextInput *self)=
-- =lrg_text_input_set_placeholder(LrgTextInput *self, const gchar *placeholder)=
-- =lrg_text_input_get_max_length(LrgTextInput *self)=
-- =lrg_text_input_set_max_length(LrgTextInput *self, guint max_length)=
-- =lrg_text_input_get_password_mode(LrgTextInput *self)=
-- =lrg_text_input_set_password_mode(LrgTextInput *self, gboolean password_mode)=
-- =lrg_text_input_get_cursor_position(LrgTextInput *self)=
-- =lrg_text_input_set_cursor_position(LrgTextInput *self, gint position)=
-- =lrg_text_input_get_focused(LrgTextInput *self)=
-- =lrg_text_input_set_focused(LrgTextInput *self, gboolean focused)=
+- =lrg_text_input_get_text= / =lrg_text_input_set_text=
+- =lrg_text_input_get_placeholder= / =lrg_text_input_set_placeholder=
+- =lrg_text_input_get_max_length= / =lrg_text_input_set_max_length=
+- =lrg_text_input_get_password_mode= / =lrg_text_input_set_password_mode=
+- =lrg_text_input_get_cursor_position= / =lrg_text_input_set_cursor_position=
+- =lrg_text_input_get_selection(self, &start, &end)=
+- =lrg_text_input_set_selection(self, anchor, cursor)=
+- =lrg_text_input_select_all(self)=
+- =lrg_text_input_get_selected_text(self)=
+- =lrg_text_input_delete_selection(self)=
+- =lrg_text_input_insert_text(self, text)=
+- =lrg_text_input_copy_clipboard= / =lrg_text_input_cut_clipboard= / =lrg_text_input_paste_clipboard=
+- =lrg_text_input_get_focused= / =lrg_text_input_set_focused=
+- =lrg_text_input_get_font_size= / =lrg_text_input_set_font_size=
+- =lrg_text_input_get_text_color= / =lrg_text_input_set_text_color=
+- =lrg_text_input_get_background_color= / =lrg_text_input_set_background_color=
+- =lrg_text_input_get_border_color= / =lrg_text_input_set_border_color=
+- =lrg_text_input_get_placeholder_color= / =lrg_text_input_set_placeholder_color=
+- =lrg_text_input_get_corner_radius= / =lrg_text_input_set_corner_radius=
+- =lrg_text_input_get_padding= / =lrg_text_input_set_padding=
 
 ** Related
 :PROPERTIES:
 :CUSTOM_ID: related
 :END:
-- [[../index.md][UI Widgets Overview]]
+- [[file:../widget.org][LrgWidget]] (parts, states, springs)
+- [[file:../theme.org][Theme]] (colour roles, metrics, style rules)
+- [[file:button.org][Button]]

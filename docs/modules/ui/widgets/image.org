@@ -2,83 +2,116 @@
 :PROPERTIES:
 :CUSTOM_ID: image-widget
 :END:
-Display textures with multiple scaling modes and tinting support.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgImage= displays a texture (or a region of a sprite sheet) scaled into its rectangle. It records image instances into the paint list, so images batch with the rest of the UI and get anti-aliased rounded corners from =corner-radius=: set it to half the shorter side for a circular avatar.
+
+Scale modes:
+
+- =LRG_IMAGE_SCALE_MODE_FIT= (default): keep the aspect ratio, fit inside, centre (may letterbox).
+- =LRG_IMAGE_SCALE_MODE_FILL=: keep the aspect ratio, cover the whole rectangle, crop the centre.
+- =LRG_IMAGE_SCALE_MODE_STRETCH=: fill the rectangle exactly.
+- =LRG_IMAGE_SCALE_MODE_TILE=: repeat at native size, clipped to the rectangle (tiles are not rounded).
+
+The preferred size is the texture's (or source rectangle's) size, 100 × 100 without a texture. Changing the texture or source rectangle queues a layout. Disabled images fade to 45 %.
 
 ** Creation
 :PROPERTIES:
 :CUSTOM_ID: creation
 :END:
 #+begin_src C
-g_autoptr(LrgImage) img = lrg_image_new();
-g_autoptr(LrgImage) img_with_texture = lrg_image_new_with_texture(my_texture);
-lrg_widget_set_size(LRG_WIDGET(img), 200, 150);
-lrg_container_add_child(container, LRG_WIDGET(img));
+g_autoptr(GrlTexture) tex = grl_texture_new_from_file ("portrait.png");
+LrgImage *avatar = lrg_image_new_with_texture (tex);
+
+lrg_widget_set_size (LRG_WIDGET (avatar), 64, 64);
+lrg_image_set_scale_mode (avatar, LRG_IMAGE_SCALE_MODE_FILL);
+lrg_image_set_corner_radius (avatar, 32);   /* circle */
 #+end_src
 
-** Texture
+** Properties
 :PROPERTIES:
-:CUSTOM_ID: texture
+:CUSTOM_ID: properties
 :END:
-#+begin_src C
-GrlTexture *texture = grl_texture_load("assets/images/hero.png");
-lrg_image_set_texture(img, texture);
+| Property        | Type                | Default  | Notes                                                    |
+|-----------------+---------------------+----------+----------------------------------------------------------|
+| =texture=       | =GrlTexture=        | =NULL=   | The texture to draw                                      |
+| =scale-mode=    | =LrgImageScaleMode= | =FIT=    | See above                                                |
+| =tint=          | =GrlColor=          | white    | Multiplied with the texture                              |
+| =source-rect=   | =GrlRectangle=      | =NULL=   | Sprite-sheet region; =NULL= for the whole texture        |
+| =corner-radius= | float               | 0        | Rounded corners (not applied to =TILE=)                  |
 
-GrlTexture *current = lrg_image_get_texture(img);
+** Signals
+:PROPERTIES:
+:CUSTOM_ID: signals
+:END:
+No image-specific signals.
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: parts-and-states
+:END:
+The image has no themed parts: its colours are the texture's, multiplied by =tint=. While =LRG_WIDGET_STATE_DISABLED= is set the tint's alpha is scaled to 45 %. Put it inside an =LrgPanel= for a frame.
+
+** Style classes
+:PROPERTIES:
+:CUSTOM_ID: style-classes
+:END:
+None.
+
+** Theming
+:PROPERTIES:
+:CUSTOM_ID: theming
+:END:
+Images are not styled by theme rules. For a themed frame, wrap the image in a panel and style that:
+
+#+begin_src yaml
+styles:
+  - widget: LrgPanel
+    class: avatar-frame
+    part: box
+    radius: 999
+    border: "#cba6f7"
+    border-width: 2
 #+end_src
 
-** Scale Mode
+** Keyboard, mouse and gamepad
 :PROPERTIES:
-:CUSTOM_ID: scale-mode
+:CUSTOM_ID: keyboard-mouse-gamepad
+:END:
+Display-only: the image never takes focus and does not consume events.
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
 :END:
 #+begin_src C
-/* LRG_IMAGE_SCALE_MODE_FIT - maintain aspect ratio */
-/* LRG_IMAGE_SCALE_MODE_FILL - fill, may crop */
-/* LRG_IMAGE_SCALE_MODE_STRETCH - stretch to fit */
-/* LRG_IMAGE_SCALE_MODE_TILE - repeat pattern */
+/* Frame 3 of a 32x32 sprite sheet, scaled up crisply */
+GrlRectangle frame = { 96, 0, 32, 32 };
+LrgImage    *icon = lrg_image_new_with_texture (sheet);
 
-lrg_image_set_scale_mode(img, LRG_IMAGE_SCALE_MODE_FIT);
-#+end_src
-
-** Tinting
-:PROPERTIES:
-:CUSTOM_ID: tinting
-:END:
-#+begin_src C
-GrlColor tint = GRL_COLOR(255, 100, 100, 255);  /* Red tint */
-lrg_image_set_tint(img, &tint);
-
-GrlColor white = GRL_COLOR(255, 255, 255, 255);  /* No tint */
-lrg_image_set_tint(img, &white);
-#+end_src
-
-** Sprite Sheets
-:PROPERTIES:
-:CUSTOM_ID: sprite-sheets
-:END:
-#+begin_src C
-GrlRectangle src_rect = {
-    .x = 0.0f, .y = 0.0f,
-    .width = 64.0f, .height = 64.0f
-};
-lrg_image_set_source_rect(img, &src_rect);
-
-lrg_image_clear_source_rect(img);  /* Draw whole texture */
+lrg_image_set_source_rect (icon, &frame);
+lrg_image_set_scale_mode (icon, LRG_IMAGE_SCALE_MODE_STRETCH);
+lrg_widget_set_size (LRG_WIDGET (icon), 64, 64);
+lrg_image_set_corner_radius (icon, 8);
 #+end_src
 
 ** API Reference
 :PROPERTIES:
 :CUSTOM_ID: api-reference
 :END:
-- =lrg_image_new()=
-- =lrg_image_new_with_texture(GrlTexture *texture)=
-- =lrg_image_get_texture/set_texture=
-- =lrg_image_get_scale_mode/set_scale_mode=
-- =lrg_image_get_tint/set_tint=
-- =lrg_image_get_source_rect/set_source_rect=
-- =lrg_image_clear_source_rect()=
+- =lrg_image_new (void)=, =lrg_image_new_with_texture (GrlTexture *texture)=
+- =lrg_image_get_texture= / =lrg_image_set_texture=
+- =lrg_image_get_scale_mode= / =lrg_image_set_scale_mode=
+- =lrg_image_get_tint= / =lrg_image_set_tint=
+- =lrg_image_get_source_rect= / =lrg_image_set_source_rect= / =lrg_image_clear_source_rect=
+- =lrg_image_get_corner_radius= / =lrg_image_set_corner_radius=
 
 ** Related
 :PROPERTIES:
 :CUSTOM_ID: related
 :END:
-- [[../index.md][UI Widgets Overview]]
+- [[file:panel.org][Panel]]
+- [[file:../widget.org][LrgWidget]]

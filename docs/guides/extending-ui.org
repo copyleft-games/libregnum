@@ -1,486 +1,847 @@
-* How to Create Custom Widgets
-:PROPERTIES:
-:CUSTOM_ID: how-to-create-custom-widgets
-:END:
-This guide explains how to extend the UI system by creating custom widgets for game interfaces.
+#+title: Extending the UI: Custom Widgets
+#+description: Writing paint-based libregnum widgets: paint(), style_defaults(), part looks and style rules, input, focus and layout, with a complete rotary knob walkthrough
+#+authors: Zach Podbielniak
+#+categories: libregnum ui guide widgets
+#+created: 2025-12-01T00:00:00-05:00
+#+updated: 2026-11-05T00:00:00-05:00
+#+version: 2.0
 
-** Widget Basics
+* Extending the UI: Custom Widgets
 :PROPERTIES:
-:CUSTOM_ID: widget-basics
+:CUSTOM_ID: extending-ui
 :END:
-A widget:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > Extending the UI
+#+end_quote
 
-- Derives from =LrgWidget= or =LrgContainer=
-- Manages rendering via draw() virtual function
-- Handles input via handle_event() virtual function
-- Integrates with layout and theme systems
-- Can contain child widgets (if container)
+A libregnum widget is a GObject subclass of =LrgWidget= (or =LrgContainer= when it has children) that implements a handful of virtual methods. The framework does the rest: input routing, focus, hover and press state, springs, theme lookups, style rules, appear animations, focus rings, layout scheduling and batched SDF rendering. This guide explains the anatomy of a modern widget and then builds a complete one, a rotary *knob*, in the house style (gnu89, GObject, GIR comments).
 
-** Simple Custom Widget
+If you are porting a widget written before the paint rework, read [[file:ui-migration.org][the migration guide]] first.
+
+** Anatomy of a widget
 :PROPERTIES:
-:CUSTOM_ID: simple-custom-widget
+:CUSTOM_ID: extending-anatomy
 :END:
-*** Step 1: Define the Widget
+| Piece | What you write | What the framework does with it |
+|-------+----------------+---------------------------------|
+| =paint (self, list)= | Record your shapes into the paint list at world coordinates | Wraps it in opacity, appear transforms and the focus ring; batches it with the rest of the UI |
+| =style_defaults (self, part, state, look)= | Fill the built-in look of each part in each state from the theme | Merges theme style rules on top, blends resting / hovered / pressed by springs (=lrg_widget_resolve_look()=) |
+| =measure (self, &w, &h)= | Preferred size without margin | Layouts use it with your margin, alignment and min/max hints |
+| =handle_event (self, event)= | React to pointer, keys, text, ACTIVATE, CANCEL; return =TRUE= to consume | Routing, bubbling, capture, focus, hover flags |
+| =arrange (self)= | Optional: cache geometry after a resize | Called after allocation |
+| =init= | =lrg_widget_set_focusable (self, TRUE)= for interactive widgets | Enables click / Tab / gamepad focus |
+| setters | =lrg_widget_queue_layout (self)= when the preferred size changes | Re-layout before the next paint |
+
+Rules of thumb:
+
+1. *Never hard-code colours or sizes.* Read roles (=lrg_theme_get_color()=) and metrics (=lrg_theme_get_metric()=) from =lrg_widget_get_theme (self)= in =style_defaults()= and =measure()=. Your widget then fits every preset and every user theme.
+2. *Describe states, do not animate them.* =style_defaults()= says what the hovered or pressed look is; the springs animate between them.
+3. *Name your parts* (=LrgUIPart=) so theme authors can target them: =widget: GameKnob, part: fill=.
+4. *Be usable without a mouse*: focusable, =ACTIVATE=, arrow keys (return =TRUE= for the ones you use).
+5. *Paint, don't draw*: no raylib calls in =paint()= (use =lrg_paint_list_callback()= only for things the paint list cannot express).
+
+** Walkthrough: a rotary knob
 :PROPERTIES:
-:CUSTOM_ID: step-1-define-the-widget
+:CUSTOM_ID: extending-knob
 :END:
-#+begin_src C
-/* my-progress-bar.h */
+=GameKnob= is a volume-style knob: a round body with a soft shadow, a 270 degree track arc, an accent arc showing the value, an indicator dot, and the value as text in the middle. Dragging vertically turns it, the wheel and the arrow keys step it, Home/End jump to the ends, and Enter / gamepad A resets it to its default value. The displayed value glides with a spring when it changes.
+
+Parts it draws:
+
+| Part | Used for | Look fields read |
+|------+----------+------------------|
+| =LRG_UI_PART_KNOB= | Round body | full box look (=lrg_widget_paint_box()=) |
+| =LRG_UI_PART_TRACK= | Background arc | =foreground= (colour), =size= (thickness) |
+| =LRG_UI_PART_FILL= | Value arc | =foreground=, =size= |
+| =LRG_UI_PART_THUMB= | Indicator dot | =background=, =size= (diameter) |
+| =LRG_UI_PART_LABEL= | Value text | =foreground= |
+| =LRG_UI_PART_FOCUS= | Focus ring | from =LrgWidget=, made circular |
+
+*** The header
+:PROPERTIES:
+:CUSTOM_ID: extending-knob-header
+:END:
+#+begin_src c
+/* game-knob.h
+ *
+ * Copyright 2026 Your Name
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * A rotary knob widget for values between 0 and 1.
+ */
+
 #pragma once
 
 #include <libregnum.h>
 
 G_BEGIN_DECLS
 
-#define MY_TYPE_PROGRESS_BAR (my_progress_bar_get_type())
+#define GAME_TYPE_KNOB (game_knob_get_type ())
 
-G_DECLARE_FINAL_TYPE(MyProgressBar,
-                     my_progress_bar,
-                     MY,
-                     PROGRESS_BAR,
-                     LrgWidget)
+G_DECLARE_FINAL_TYPE (GameKnob, game_knob, GAME, KNOB, LrgWidget)
 
-/* Construction */
-MyProgressBar *
-my_progress_bar_new(void);
+/**
+ * game_knob_new:
+ *
+ * Creates a knob at 0.5 with a step of 0.05.
+ *
+ * Returns: (transfer full): a new #GameKnob
+ */
+GameKnob * game_knob_new (void);
 
-/* Properties */
-gfloat
-my_progress_bar_get_progress(MyProgressBar *self);
+/**
+ * game_knob_get_value:
+ * @self: a #GameKnob
+ *
+ * Returns: the value, between 0 and 1
+ */
+gdouble game_knob_get_value (GameKnob *self);
 
-void
-my_progress_bar_set_progress(MyProgressBar *self,
-                             gfloat         progress);
+/**
+ * game_knob_set_value:
+ * @self: a #GameKnob
+ * @value: the new value; clamped to 0..1
+ *
+ * Sets the value. Emits #GameKnob::value-changed and notifies
+ * #GameKnob:value when it changes. The display glides to the new
+ * value with the widget's motion.
+ */
+void game_knob_set_value (GameKnob *self,
+                          gdouble   value);
 
-const gchar *
-my_progress_bar_get_color_bg(MyProgressBar *self);
+/**
+ * game_knob_get_step:
+ * @self: a #GameKnob
+ *
+ * Returns: the amount one arrow key or wheel notch changes the value
+ */
+gdouble game_knob_get_step (GameKnob *self);
 
-void
-my_progress_bar_set_color_bg(MyProgressBar *self,
-                             const gchar   *color);
+/**
+ * game_knob_set_step:
+ * @self: a #GameKnob
+ * @step: the keyboard / wheel increment, greater than 0
+ */
+void game_knob_set_step (GameKnob *self,
+                         gdouble   step);
 
-const gchar *
-my_progress_bar_get_color_fg(MyProgressBar *self);
-
-void
-my_progress_bar_set_color_fg(MyProgressBar *self,
-                             const gchar   *color);
+/**
+ * game_knob_set_default_value:
+ * @self: a #GameKnob
+ * @value: the value ACTIVATE (Enter, gamepad A) resets to
+ */
+void game_knob_set_default_value (GameKnob *self,
+                                  gdouble   value);
 
 G_END_DECLS
 #+end_src
 
-*** Step 2: Implement the Widget
+*** The source
 :PROPERTIES:
-:CUSTOM_ID: step-2-implement-the-widget
+:CUSTOM_ID: extending-knob-source
 :END:
-#+begin_src C
-/* my-progress-bar.c */
-#include "my-progress-bar.h"
+#+begin_src c
+/* game-knob.c
+ *
+ * Copyright 2026 Your Name
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * A rotary knob: round body, 270 degree track and value arcs, an
+ * indicator dot and the value as text. Drag vertically, scroll, use
+ * the arrow keys or Home/End; ACTIVATE resets to the default value.
+ */
 
-struct _MyProgressBar
+#include <math.h>
+#include "game-knob.h"
+
+/* The arc starts bottom-left (135 degrees, y down) and sweeps 270
+ * degrees clockwise through the top to bottom-right */
+#define KNOB_START_DEG (135.0)
+#define KNOB_SWEEP_DEG (270.0)
+
+/* Line segments used to approximate a full sweep of the arcs */
+#define KNOB_ARC_SEGMENTS (40)
+
+/* Pixels of vertical drag for the whole 0..1 range */
+#define KNOB_DRAG_RANGE (200.0)
+
+struct _GameKnob
 {
-    LrgWidget parent_instance;
-    gfloat    progress;           /* 0.0 to 1.0 */
-    gchar    *color_bg;           /* Background color */
-    gchar    *color_fg;           /* Foreground color */
-    gint      bar_height;         /* Height of bar */
+	LrgWidget  parent_instance;
+
+	gdouble    value;
+	gdouble    step;
+	gdouble    default_value;
+
+	/* Dragging: where it started */
+	gboolean   dragging;
+	gfloat     drag_start_y;
+	gdouble    drag_start_value;
+
+	/* Displayed value: a spring chasing value */
+	LrgSpring  display;
+	gint64     last_paint_us;
 };
 
-G_DEFINE_TYPE(MyProgressBar,
-              my_progress_bar,
-              LRG_TYPE_WIDGET)
+G_DEFINE_FINAL_TYPE (GameKnob, game_knob, LRG_TYPE_WIDGET)
 
-/* Draw the widget */
-
-static void
-my_progress_bar_draw(LrgWidget    *widget,
-                     LrgRenderCtx *ctx)
+enum
 {
-    MyProgressBar *self = MY_PROGRESS_BAR(widget);
-    GdkRectangle bounds;
+	PROP_0,
+	PROP_VALUE,
+	PROP_STEP,
+	N_PROPS
+};
 
-    /* Get widget bounds */
-    lrg_widget_get_bounds(widget, &bounds);
+enum
+{
+	SIGNAL_VALUE_CHANGED,
+	N_SIGNALS
+};
 
-    /* Draw background */
-    lrg_render_ctx_set_color(ctx, self->color_bg);
-    lrg_render_ctx_fill_rect(ctx,
-                             bounds.x, bounds.y,
-                             bounds.width, self->bar_height);
+static GParamSpec *properties[N_PROPS];
+static guint       signals[N_SIGNALS];
 
-    /* Draw foreground (progress) */
-    gint progress_width = (bounds.width * self->progress);
+/* ==========================================================================
+ * Looks
+ * ========================================================================== */
 
-    lrg_render_ctx_set_color(ctx, self->color_fg);
-    lrg_render_ctx_fill_rect(ctx,
-                             bounds.x, bounds.y,
-                             progress_width, self->bar_height);
+/*
+ * game_knob_style_defaults:
+ *
+ * Built-in looks from the theme. Every state gets a complete look so
+ * the hover / press springs blend between full descriptions. PRESSED
+ * is tested before HOVERED because the pressed variant carries both.
+ */
+static void
+game_knob_style_defaults (LrgWidget      *widget,
+                          LrgUIPart       part,
+                          LrgWidgetState  state,
+                          LrgPartLook    *look)
+{
+	LrgTheme *theme = lrg_widget_get_theme (widget);
+	gboolean  pressed = (state & LRG_WIDGET_STATE_PRESSED) != 0;
+	gboolean  hovered = (state & LRG_WIDGET_STATE_HOVERED) != 0;
+	gboolean  disabled = (state & LRG_WIDGET_STATE_DISABLED) != 0;
+	gfloat    blur = lrg_theme_get_metric (theme, LRG_THEME_METRIC_SHADOW_BLUR);
 
-    /* Draw border */
-    lrg_render_ctx_set_color(ctx, "#ffffff");
-    lrg_render_ctx_draw_rect(ctx,
-                             bounds.x, bounds.y,
-                             bounds.width, self->bar_height);
+	switch (part)
+	{
+	case LRG_UI_PART_KNOB:
+		/* body: a control-coloured disc that lifts on hover */
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme,
+			pressed ? LRG_THEME_COLOR_CONTROL_PRESSED
+			        : hovered ? LRG_THEME_COLOR_CONTROL_HOVER
+			                  : LRG_THEME_COLOR_CONTROL));
+		lrg_part_look_set_border (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER),
+		                          lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH));
+		lrg_part_look_set_radius (look, G_MAXFLOAT);
+		lrg_part_look_set_shadow (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_SHADOW),
+		                          hovered && !pressed ? blur * 0.6f : blur * 0.35f,
+		                          hovered && !pressed ? 4.0f : 2.0f);
+		lrg_part_look_set_opacity (look, disabled ? 0.45f : 1.0f);
+		break;
 
-    /* Call parent to draw children if any */
-    LRG_WIDGET_CLASS(my_progress_bar_parent_class)->draw(widget, ctx);
+	case LRG_UI_PART_TRACK:
+		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK));
+		lrg_part_look_set_size (look, 4.0f);
+		break;
+
+	case LRG_UI_PART_FILL:
+		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme,
+			disabled ? LRG_THEME_COLOR_DISABLED
+			         : hovered ? LRG_THEME_COLOR_ACCENT_HOVER : LRG_THEME_COLOR_ACCENT));
+		lrg_part_look_set_size (look, hovered ? 5.0f : 4.0f);
+		break;
+
+	case LRG_UI_PART_THUMB:
+		lrg_part_look_set_background (look, lrg_theme_get_color (theme, LRG_THEME_COLOR_HANDLE));
+		lrg_part_look_set_size (look, pressed ? 9.0f : hovered ? 8.0f : 6.0f);
+		break;
+
+	case LRG_UI_PART_LABEL:
+		lrg_part_look_set_foreground (look, lrg_theme_get_color (theme,
+			disabled ? LRG_THEME_COLOR_DISABLED : LRG_THEME_COLOR_TEXT));
+		break;
+
+	case LRG_UI_PART_FOCUS:
+		/* the parent's ring, made round like the knob */
+		LRG_WIDGET_CLASS (game_knob_parent_class)->style_defaults (widget, part, state, look);
+		lrg_part_look_set_radius (look, G_MAXFLOAT);
+		break;
+
+	default:
+		LRG_WIDGET_CLASS (game_knob_parent_class)->style_defaults (widget, part, state, look);
+		break;
+	}
 }
 
-/* Handle input events */
+/* ==========================================================================
+ * Painting
+ * ========================================================================== */
+
+/*
+ * paint_arc:
+ *
+ * Approximates an arc with round-capped line segments (the caps make
+ * the joins seamless). @from and @to are 0..1 along the sweep.
+ */
+static void
+paint_arc (LrgPaintList   *list,
+           gfloat          cx,
+           gfloat          cy,
+           gfloat          radius,
+           gdouble         from,
+           gdouble         to,
+           gfloat          thickness,
+           const GrlColor *color)
+{
+	gint    n;
+	gint    i;
+	gdouble a0;
+	gdouble a1;
+
+	if (to <= from || thickness <= 0.0f)
+		return;
+
+	n = MAX (1, (gint) ceil ((to - from) * KNOB_ARC_SEGMENTS));
+	for (i = 0; i < n; i++)
+	{
+		a0 = (KNOB_START_DEG + KNOB_SWEEP_DEG * (from + (to - from) * i / n)) * G_PI / 180.0;
+		a1 = (KNOB_START_DEG + KNOB_SWEEP_DEG * (from + (to - from) * (i + 1) / n)) * G_PI / 180.0;
+		lrg_paint_list_line (list,
+		                     cx + radius * (gfloat) cos (a0), cy + radius * (gfloat) sin (a0),
+		                     cx + radius * (gfloat) cos (a1), cy + radius * (gfloat) sin (a1),
+		                     thickness, color);
+	}
+}
+
+/*
+ * step_display:
+ *
+ * The display spring is our own, so the canvas does not step it:
+ * advance it from wall-clock time between paints.
+ */
+static void
+step_display (GameKnob *self)
+{
+	gint64 now = g_get_monotonic_time ();
+	gfloat dt;
+
+	dt = self->last_paint_us == 0 ? 0.0f : (gfloat) (now - self->last_paint_us) / 1.0e6f;
+	self->last_paint_us = now;
+
+	lrg_spring_set_motion (&self->display, lrg_widget_get_motion (LRG_WIDGET (self)));
+	lrg_spring_step (&self->display, MIN (dt, 0.1f));
+}
+
+static void
+game_knob_paint (LrgWidget    *widget,
+                 LrgPaintList *list)
+{
+	GameKnob        *self = GAME_KNOB (widget);
+	LrgTheme        *theme = lrg_widget_get_theme (widget);
+	GrlFont         *font = lrg_theme_get_ui_font (theme);
+	gfloat           font_size = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	gfloat           x = lrg_widget_get_world_x (widget);
+	gfloat           y = lrg_widget_get_world_y (widget);
+	gfloat           w = lrg_widget_get_width (widget);
+	gfloat           h = lrg_widget_get_height (widget);
+	gfloat           d = MIN (w, h);
+	gfloat           cx = x + w * 0.5f;
+	gfloat           cy = y + h * 0.5f;
+	gfloat           ring;
+	gfloat           body;
+	gdouble          v;
+	gdouble          angle;
+	gfloat           tw;
+	gfloat           th;
+	g_autofree gchar *text = NULL;
+	LrgPartLook      knob;
+	LrgPartLook      track;
+	LrgPartLook      fill;
+	LrgPartLook      thumb;
+	LrgPartLook      label;
+
+	step_display (self);
+	v = CLAMP (self->display.value, 0.0, 1.0);
+
+	/* Resolved looks: defaults + theme rules, blended by hover/press */
+	lrg_widget_resolve_look (widget, LRG_UI_PART_KNOB, &knob);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_TRACK, &track);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_FILL, &fill);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_THUMB, &thumb);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_LABEL, &label);
+
+	/* Arcs on the outer ring, the body inside them */
+	ring = d * 0.5f - MAX (track.size, fill.size) * 0.5f - 1.0f;
+	body = ring - MAX (track.size, fill.size) - 4.0f;
+
+	paint_arc (list, cx, cy, ring, 0.0, 1.0, track.size, &track.foreground);
+	paint_arc (list, cx, cy, ring, 0.0, v, fill.size, &fill.foreground);
+
+	lrg_widget_paint_box (widget, list, &knob, cx - body, cy - body, body * 2.0f, body * 2.0f);
+
+	/* Indicator dot near the body's edge at the value's angle */
+	angle = (KNOB_START_DEG + KNOB_SWEEP_DEG * v) * G_PI / 180.0;
+	lrg_paint_list_circle (list,
+	                       cx + (body - thumb.size) * (gfloat) cos (angle),
+	                       cy + (body - thumb.size) * (gfloat) sin (angle),
+	                       thumb.size * 0.5f, &thumb.background);
+
+	/* Value text, centred */
+	text = g_strdup_printf ("%d", (gint) floor (self->value * 100.0 + 0.5));
+	lrg_paint_measure_text (font, text, font_size, 0.0f, &tw, &th);
+	lrg_paint_list_text (list, font, text, cx - tw * 0.5f, cy - th * 0.5f,
+	                     font_size, 0.0f, &label.foreground);
+}
+
+/* ==========================================================================
+ * Size
+ * ========================================================================== */
+
+static void
+game_knob_measure (LrgWidget *widget,
+                   gfloat    *preferred_width,
+                   gfloat    *preferred_height)
+{
+	LrgTheme *theme = lrg_widget_get_theme (widget);
+	gfloat    d = roundf (lrg_theme_get_metric (theme, LRG_THEME_METRIC_CONTROL_HEIGHT) * 1.75f);
+
+	*preferred_width = d;
+	*preferred_height = d;
+}
+
+/* ==========================================================================
+ * Input
+ * ========================================================================== */
 
 static gboolean
-my_progress_bar_handle_event(LrgWidget     *widget,
-                             LrgInputEvent *event)
+game_knob_handle_event (LrgWidget        *widget,
+                        const LrgUIEvent *event)
 {
-    MyProgressBar *self = MY_PROGRESS_BAR(widget);
+	GameKnob *self = GAME_KNOB (widget);
 
-    switch (event->type) {
-    case LRG_INPUT_EVENT_MOUSE_CLICK:
-        /* Allow setting progress by clicking */
-        {
-            GdkRectangle bounds;
-            lrg_widget_get_bounds(widget, &bounds);
+	switch (lrg_ui_event_get_event_type (event))
+	{
+	case LRG_UI_EVENT_MOUSE_BUTTON_DOWN:
+		if (lrg_ui_event_get_button (event) != GRL_MOUSE_BUTTON_LEFT)
+			return FALSE;
+		/* the canvas already focused us and captured the pointer */
+		self->dragging = TRUE;
+		self->drag_start_y = lrg_ui_event_get_y (event);
+		self->drag_start_value = self->value;
+		return TRUE;
 
-            gfloat relative_x = event->x - bounds.x;
-            gfloat click_progress = relative_x / bounds.width;
+	case LRG_UI_EVENT_MOUSE_MOVE:
+		if (!self->dragging)
+			return FALSE;
+		/* up increases; moves keep arriving outside our bounds while
+		 * the button is held (pointer capture) */
+		game_knob_set_value (self, self->drag_start_value +
+		                     (self->drag_start_y - lrg_ui_event_get_y (event)) / KNOB_DRAG_RANGE);
+		return TRUE;
 
-            my_progress_bar_set_progress(self,
-                                        CLAMP(click_progress, 0.0f, 1.0f));
-            return TRUE;  /* Event handled */
-        }
+	case LRG_UI_EVENT_MOUSE_BUTTON_UP:
+		if (lrg_ui_event_get_button (event) != GRL_MOUSE_BUTTON_LEFT)
+			return FALSE;
+		self->dragging = FALSE;
+		return TRUE;
 
-    default:
-        break;
-    }
+	case LRG_UI_EVENT_SCROLL:
+		game_knob_set_value (self, self->value + lrg_ui_event_get_scroll_y (event) * self->step);
+		return TRUE;
 
-    /* Call parent handler */
-    return LRG_WIDGET_CLASS(my_progress_bar_parent_class)->handle_event(widget,
-                                                                       event);
+	case LRG_UI_EVENT_KEY_DOWN:
+		/* Return TRUE for every key we use: unhandled arrows would
+		 * also move focus away */
+		switch (lrg_ui_event_get_key (event))
+		{
+		case GRL_KEY_UP:
+		case GRL_KEY_RIGHT:
+			game_knob_set_value (self, self->value + self->step);
+			return TRUE;
+		case GRL_KEY_DOWN:
+		case GRL_KEY_LEFT:
+			game_knob_set_value (self, self->value - self->step);
+			return TRUE;
+		case GRL_KEY_PAGE_UP:
+			game_knob_set_value (self, self->value + self->step * 10.0);
+			return TRUE;
+		case GRL_KEY_PAGE_DOWN:
+			game_knob_set_value (self, self->value - self->step * 10.0);
+			return TRUE;
+		case GRL_KEY_HOME:
+			game_knob_set_value (self, 0.0);
+			return TRUE;
+		case GRL_KEY_END:
+			game_knob_set_value (self, 1.0);
+			return TRUE;
+		default:
+			return FALSE;
+		}
+
+	case LRG_UI_EVENT_ACTIVATE:
+		/* Enter / Space / gamepad A */
+		game_knob_set_value (self, self->default_value);
+		return TRUE;
+
+	case LRG_UI_EVENT_FOCUS_OUT:
+		self->dragging = FALSE;
+		return FALSE;
+
+	default:
+		return FALSE;
+	}
 }
 
-/* Class initialization */
+/* ==========================================================================
+ * GObject
+ * ========================================================================== */
 
 static void
-my_progress_bar_class_init(MyProgressBarClass *klass)
+game_knob_get_property (GObject    *object,
+                        guint       prop_id,
+                        GValue     *value,
+                        GParamSpec *pspec)
 {
-    GObjectClass *object_class = G_OBJECT_CLASS(klass);
-    LrgWidgetClass *widget_class = LRG_WIDGET_CLASS(klass);
+	GameKnob *self = GAME_KNOB (object);
 
-    /* Default size */
-    widget_class->default_width = 200;
-    widget_class->default_height = 20;
-
-    /* Virtual functions */
-    widget_class->draw = my_progress_bar_draw;
-    widget_class->handle_event = my_progress_bar_handle_event;
+	switch (prop_id)
+	{
+	case PROP_VALUE:
+		g_value_set_double (value, self->value);
+		break;
+	case PROP_STEP:
+		g_value_set_double (value, self->step);
+		break;
+	default:
+		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
 }
-
-/* Instance initialization */
 
 static void
-my_progress_bar_init(MyProgressBar *self)
+game_knob_set_property (GObject      *object,
+                        guint         prop_id,
+                        const GValue *value,
+                        GParamSpec   *pspec)
 {
-    self->progress = 0.5f;
-    self->color_bg = g_strdup("#333333");
-    self->color_fg = g_strdup("#00ff00");
-    self->bar_height = 20;
+	GameKnob *self = GAME_KNOB (object);
+
+	switch (prop_id)
+	{
+	case PROP_VALUE:
+		game_knob_set_value (self, g_value_get_double (value));
+		break;
+	case PROP_STEP:
+		game_knob_set_step (self, g_value_get_double (value));
+		break;
+	default:
+		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
 }
 
-/* Public API */
-
-MyProgressBar *
-my_progress_bar_new(void)
+static void
+game_knob_class_init (GameKnobClass *klass)
 {
-    return g_object_new(MY_TYPE_PROGRESS_BAR, NULL);
+	GObjectClass   *object_class = G_OBJECT_CLASS (klass);
+	LrgWidgetClass *widget_class = LRG_WIDGET_CLASS (klass);
+
+	object_class->get_property = game_knob_get_property;
+	object_class->set_property = game_knob_set_property;
+
+	widget_class->paint = game_knob_paint;
+	widget_class->style_defaults = game_knob_style_defaults;
+	widget_class->measure = game_knob_measure;
+	widget_class->handle_event = game_knob_handle_event;
+
+	/**
+	 * GameKnob:value:
+	 *
+	 * The knob's value, between 0 and 1.
+	 */
+	properties[PROP_VALUE] =
+		g_param_spec_double ("value", NULL, NULL, 0.0, 1.0, 0.5,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * GameKnob:step:
+	 *
+	 * How much one arrow key or wheel notch changes the value.
+	 */
+	properties[PROP_STEP] =
+		g_param_spec_double ("step", NULL, NULL, 0.001, 1.0, 0.05,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
+
+	g_object_class_install_properties (object_class, N_PROPS, properties);
+
+	/**
+	 * GameKnob::value-changed:
+	 * @knob: the knob
+	 *
+	 * Emitted whenever the value changes, by the user or in code.
+	 */
+	signals[SIGNAL_VALUE_CHANGED] =
+		g_signal_new ("value-changed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
 
-gfloat
-my_progress_bar_get_progress(MyProgressBar *self)
+static void
+game_knob_init (GameKnob *self)
 {
-    g_return_val_if_fail(MY_IS_PROGRESS_BAR(self), 0.0f);
-    return self->progress;
+	self->value = 0.5;
+	self->default_value = 0.5;
+	self->step = 0.05;
+	self->last_paint_us = 0;
+	lrg_spring_init (&self->display, 0.5f, LRG_MOTION_SMOOTH);
+
+	/* Interactive: clicks, Tab and the gamepad can focus it */
+	lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
+}
+
+/* ==========================================================================
+ * Public API
+ * ========================================================================== */
+
+GameKnob *
+game_knob_new (void)
+{
+	return g_object_new (GAME_TYPE_KNOB, NULL);
+}
+
+gdouble
+game_knob_get_value (GameKnob *self)
+{
+	g_return_val_if_fail (GAME_IS_KNOB (self), 0.0);
+
+	return self->value;
 }
 
 void
-my_progress_bar_set_progress(MyProgressBar *self,
-                             gfloat         progress)
+game_knob_set_value (GameKnob *self,
+                     gdouble   value)
 {
-    g_return_if_fail(MY_IS_PROGRESS_BAR(self));
+	g_return_if_fail (GAME_IS_KNOB (self));
 
-    self->progress = CLAMP(progress, 0.0f, 1.0f);
+	value = CLAMP (value, 0.0, 1.0);
+	if (value == self->value)
+		return;
 
-    /* Request redraw */
-    lrg_widget_queue_draw(LRG_WIDGET(self));
+	self->value = value;
+	/* the display glides there; retargeting keeps its velocity */
+	lrg_spring_set_target (&self->display, (gfloat) value);
 
-    /* Emit signal */
-    g_signal_emit_by_name(self, "progress-changed", self->progress);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VALUE]);
+	g_signal_emit (self, signals[SIGNAL_VALUE_CHANGED], 0);
 }
 
-const gchar *
-my_progress_bar_get_color_bg(MyProgressBar *self)
+gdouble
+game_knob_get_step (GameKnob *self)
 {
-    g_return_val_if_fail(MY_IS_PROGRESS_BAR(self), NULL);
-    return self->color_bg;
-}
+	g_return_val_if_fail (GAME_IS_KNOB (self), 0.0);
 
-void
-my_progress_bar_set_color_bg(MyProgressBar *self,
-                             const gchar   *color)
-{
-    g_return_if_fail(MY_IS_PROGRESS_BAR(self));
-
-    g_free(self->color_bg);
-    self->color_bg = g_strdup(color);
-
-    lrg_widget_queue_draw(LRG_WIDGET(self));
-}
-
-const gchar *
-my_progress_bar_get_color_fg(MyProgressBar *self)
-{
-    g_return_val_if_fail(MY_IS_PROGRESS_BAR(self), NULL);
-    return self->color_fg;
+	return self->step;
 }
 
 void
-my_progress_bar_set_color_fg(MyProgressBar *self,
-                             const gchar   *color)
+game_knob_set_step (GameKnob *self,
+                    gdouble   step)
 {
-    g_return_if_fail(MY_IS_PROGRESS_BAR(self));
+	g_return_if_fail (GAME_IS_KNOB (self));
+	g_return_if_fail (step > 0.0);
 
-    g_free(self->color_fg);
-    self->color_fg = g_strdup(color);
-
-    lrg_widget_queue_draw(LRG_WIDGET(self));
-}
-#+end_src
-
-** Custom Container Widget
-:PROPERTIES:
-:CUSTOM_ID: custom-container-widget
-:END:
-For widgets that contain other widgets:
-
-#+begin_src C
-/* my-dialog-box.h */
-#pragma once
-
-#include <libregnum.h>
-
-G_BEGIN_DECLS
-
-#define MY_TYPE_DIALOG_BOX (my_dialog_box_get_type())
-
-G_DECLARE_FINAL_TYPE(MyDialogBox,
-                     my_dialog_box,
-                     MY,
-                     DIALOG_BOX,
-                     LrgContainer)
-
-MyDialogBox *
-my_dialog_box_new(const gchar *title);
-
-const gchar *
-my_dialog_box_get_title(MyDialogBox *self);
-
-void
-my_dialog_box_set_title(MyDialogBox *self,
-                        const gchar *title);
-
-G_END_DECLS
-#+end_src
-
-#+begin_src C
-/* my-dialog-box.c */
-#include "my-dialog-box.h"
-
-struct _MyDialogBox
-{
-    LrgContainer parent_instance;
-    gchar       *title;
-    gint         padding;
-    gint         title_height;
-};
-
-G_DEFINE_TYPE(MyDialogBox,
-              my_dialog_box,
-              LRG_TYPE_CONTAINER)
-
-static void
-my_dialog_box_draw(LrgWidget    *widget,
-                   LrgRenderCtx *ctx)
-{
-    MyDialogBox *self = MY_DIALOG_BOX(widget);
-    GdkRectangle bounds;
-
-    lrg_widget_get_bounds(widget, &bounds);
-
-    /* Draw background (semi-transparent) */
-    lrg_render_ctx_set_color(ctx, "#000000");
-    lrg_render_ctx_set_alpha(ctx, 0.8f);
-    lrg_render_ctx_fill_rect(ctx,
-                             bounds.x, bounds.y,
-                             bounds.width, bounds.height);
-
-    /* Draw border */
-    lrg_render_ctx_set_alpha(ctx, 1.0f);
-    lrg_render_ctx_set_color(ctx, "#ffffff");
-    lrg_render_ctx_draw_rect(ctx,
-                             bounds.x, bounds.y,
-                             bounds.width, bounds.height);
-
-    /* Draw title bar */
-    lrg_render_ctx_set_color(ctx, "#333366");
-    lrg_render_ctx_fill_rect(ctx,
-                             bounds.x, bounds.y,
-                             bounds.width, self->title_height);
-
-    /* Draw title text */
-    lrg_render_ctx_set_color(ctx, "#ffffff");
-    lrg_render_ctx_draw_text(ctx,
-                             self->title,
-                             bounds.x + self->padding,
-                             bounds.y + 4);
-
-    /* Draw children */
-    LRG_WIDGET_CLASS(my_dialog_box_parent_class)->draw(widget, ctx);
-}
-
-static void
-my_dialog_box_layout(LrgContainer *container)
-{
-    MyDialogBox *self = MY_DIALOG_BOX(container);
-    GdkRectangle bounds;
-    GList *children;
-
-    lrg_widget_get_bounds(LRG_WIDGET(container), &bounds);
-
-    /* Get children and layout */
-    children = lrg_container_get_children(container);
-
-    gint child_y = bounds.y + self->title_height + self->padding;
-    gint child_x = bounds.x + self->padding;
-    gint child_width = bounds.width - 2 * self->padding;
-
-    for (GList *l = children; l; l = l->next) {
-        LrgWidget *child = LRG_WIDGET(l->data);
-        GdkRectangle child_bounds = {
-            child_x, child_y,
-            child_width, 30
-        };
-
-        lrg_widget_set_bounds(child, &child_bounds);
-        child_y += 30 + self->padding;
-    }
-
-    g_list_free(children);
-
-    /* Call parent */
-    LRG_CONTAINER_CLASS(my_dialog_box_parent_class)->layout(container);
-}
-
-static void
-my_dialog_box_class_init(MyDialogBoxClass *klass)
-{
-    LrgWidgetClass *widget_class = LRG_WIDGET_CLASS(klass);
-    LrgContainerClass *container_class = LRG_CONTAINER_CLASS(klass);
-
-    widget_class->draw = my_dialog_box_draw;
-    container_class->layout = my_dialog_box_layout;
-
-    widget_class->default_width = 400;
-    widget_class->default_height = 300;
-}
-
-static void
-my_dialog_box_init(MyDialogBox *self)
-{
-    self->title = g_strdup("Dialog");
-    self->padding = 10;
-    self->title_height = 30;
-}
-
-MyDialogBox *
-my_dialog_box_new(const gchar *title)
-{
-    MyDialogBox *self = g_object_new(MY_TYPE_DIALOG_BOX, NULL);
-    self->title = g_strdup(title);
-    return self;
-}
-
-const gchar *
-my_dialog_box_get_title(MyDialogBox *self)
-{
-    g_return_val_if_fail(MY_IS_DIALOG_BOX(self), NULL);
-    return self->title;
+	if (step == self->step)
+		return;
+	self->step = step;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STEP]);
 }
 
 void
-my_dialog_box_set_title(MyDialogBox *self,
-                        const gchar *title)
+game_knob_set_default_value (GameKnob *self,
+                             gdouble   value)
 {
-    g_return_if_fail(MY_IS_DIALOG_BOX(self));
+	g_return_if_fail (GAME_IS_KNOB (self));
 
-    g_free(self->title);
-    self->title = g_strdup(title);
-
-    lrg_widget_queue_draw(LRG_WIDGET(self));
+	self->default_value = CLAMP (value, 0.0, 1.0);
 }
 #+end_src
 
-** Using Custom Widgets
+*** What the framework added for free
 :PROPERTIES:
-:CUSTOM_ID: using-custom-widgets
+:CUSTOM_ID: extending-knob-free
 :END:
-#+begin_src C
-/* Create and add to UI */
-g_autoptr(MyProgressBar) bar = my_progress_bar_new();
-my_progress_bar_set_progress(bar, 0.75f);
-my_progress_bar_set_color_fg(bar, "#ff0000");
+Nothing in the code above deals with any of these, yet the knob has them:
 
-GdkRectangle bounds = { 100, 100, 200, 20 };
-lrg_widget_set_bounds(LRG_WIDGET(bar), &bounds);
+- *Hover and press animation*: the body lightens and lifts, the value arc thickens and the dot grows, all blended by springs with the theme's motion (bouncy in the Catppuccin presets, instant in high-contrast).
+- *Focus*: clicking focuses it; Tab and the gamepad D-pad reach it; a round focus ring appears only for keyboard / gamepad focus.
+- *Pointer capture*: the drag keeps working when the pointer leaves the knob.
+- *Theming*: every colour and size comes from the theme, so all five presets and any user theme work, and theme files can restyle each part.
+- *Disabled state*: =lrg_widget_set_enabled (knob, FALSE)= fades it to 45 %, greys the arc, and blocks input and focus.
+- *Appear animations, opacity, clipping and batching*: =lrg_widget_set_appear (knob, LRG_APPEAR_POP, 0.1f)= just works; the whole knob is a few dozen instances in the same draw call as the rest of the UI.
 
-/* Add to a container */
-lrg_container_add_child(container, LRG_WIDGET(bar));
-
-/* Listen for changes */
-g_signal_connect(bar, "progress-changed",
-                G_CALLBACK(on_progress_changed), user_data);
-#+end_src
-
-** Theme Integration
+*** Using it
 :PROPERTIES:
-:CUSTOM_ID: theme-integration
+:CUSTOM_ID: extending-knob-usage
 :END:
-Widgets can use the theme system for colors:
-
-#+begin_src C
-const gchar *
-my_progress_bar_get_color_from_theme(MyProgressBar *self,
-                                     const gchar   *theme_key)
+#+begin_src c
+static void
+on_volume_changed (GameKnob *knob,
+                   gpointer  user_data)
 {
-    LrgTheme *theme = lrg_widget_get_theme(LRG_WIDGET(self));
-    return lrg_theme_get_color(theme, theme_key);
+	game_audio_set_master_volume ((gfloat) game_knob_get_value (knob));
+}
+
+static void
+add_volume_row (LrgContainer *settings)
+{
+	LrgHBox  *row = lrg_hbox_new ();
+	LrgLabel *caption = lrg_label_new ("Master volume");
+	GameKnob *knob = game_knob_new ();
+
+	lrg_container_set_spacing (LRG_CONTAINER (row), 12.0f);
+	lrg_widget_set_valign (LRG_WIDGET (caption), LRG_ALIGN_CENTER);
+	lrg_widget_set_fill_weight (LRG_WIDGET (caption), 1.0f);
+
+	game_knob_set_value (knob, 0.8);
+	game_knob_set_default_value (knob, 0.8);
+	lrg_widget_add_class (LRG_WIDGET (knob), "volume");
+	g_signal_connect (knob, "value-changed", G_CALLBACK (on_volume_changed), NULL);
+
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (caption));
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (knob));
+	lrg_container_add_child (settings, LRG_WIDGET (row));
+	g_object_unref (caption);
+	g_object_unref (knob);
+	g_object_unref (row);
 }
 #+end_src
 
-** Best Practices
+*** Styling it from YAML
 :PROPERTIES:
-:CUSTOM_ID: best-practices
+:CUSTOM_ID: extending-knob-yaml
 :END:
-1. *Use inherited properties*: Leverage LrgWidget's built-in properties
-2. *Queue redraws*: Use =lrg_widget_queue_draw()= to schedule updates
-3. *Handle layout*: Properly layout children in containers
-4. *Emit signals*: Allow external code to react to user interactions
-5. *Use themes*: Integrate with the theme system for consistent look
-6. *Document behavior*: Explain how widget responds to input
-7. *Test rendering*: Verify appearance on different screen sizes
+Because the knob names its parts, a theme file can restyle it without touching code. Type names match by name, so these rules can live in the theme before =GAME_TYPE_KNOB= is registered:
 
-** See Also
+#+begin_src yaml
+styles:
+  # every knob: thicker arcs
+  - widget: GameKnob
+    part: track
+    size: 6
+  - widget: GameKnob
+    part: fill
+    size: 6
+
+  # the volume knob: gradient body and a glowing green value arc
+  - widget: GameKnob
+    class: volume
+    part: knob
+    gradient:
+      kind: radial
+      center-x: 0.35
+      center-y: 0.3
+      start: '#3a3a44'
+      end: '#18181d'
+  - widget: GameKnob
+    class: volume
+    part: fill
+    foreground: '#34d399'
+
+  # while dragging (pressed), glow the body
+  - widget: GameKnob
+    class: volume
+    part: knob
+    state: pressed
+    glow: '#34d39966'
+    glow-size: 14
+#+end_src
+
+Specificity resolves the overlaps: the class rules (3, or 5 with the state) beat the type-only rules (1).
+
+*** Testing it headless
 :PROPERTIES:
-:CUSTOM_ID: see-also
+:CUSTOM_ID: extending-knob-test
 :END:
-- [[../modules/ui/index.md][UI Module Documentation]]
-- [[file:implementing-saveable.org][Implementing Saveable]]
-- [[../modules/ui/theming.md][Theme System]]
+#+begin_src c
+static void
+test_knob_keyboard (void)
+{
+	g_autoptr(LrgCanvas) canvas = lrg_canvas_new ();
+	GameKnob            *knob = game_knob_new ();
+	LrgCanvasInput       input;
+
+	lrg_widget_set_size (LRG_WIDGET (canvas), 400.0f, 300.0f);
+	lrg_widget_set_size (LRG_WIDGET (knob), 64.0f, 64.0f);
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (knob));
+	g_object_unref (knob);
+
+	/* Tab to focus it, then Right twice */
+	lrg_canvas_input_init (&input);
+	input.nav = LRG_NAV_DIRECTION_NEXT;
+	lrg_canvas_process_input (canvas, &input);
+
+	lrg_canvas_input_init (&input);
+	lrg_canvas_input_add_key (&input, GRL_KEY_RIGHT);
+	lrg_canvas_input_add_key (&input, GRL_KEY_RIGHT);
+	lrg_canvas_process_input (canvas, &input);
+
+	g_assert_cmpfloat_with_epsilon (game_knob_get_value (knob), 0.6, 1e-9);
+	/* the arrows were consumed: focus did not move */
+	g_assert_true (lrg_canvas_get_focused_widget (canvas) == LRG_WIDGET (knob));
+
+	/* it records without a window */
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (lrg_canvas_record (canvas)), >, 0);
+}
+#+end_src
+
+** Custom containers
+:PROPERTIES:
+:CUSTOM_ID: extending-containers
+:END:
+Derive from =LrgContainer=, implement =measure= and =layout_children= (placing children with =lrg_widget_place_in_slot()=), and optionally =paint= a background before chaining up to paint the children. A complete wrapping flow box is in [[file:../modules/ui/layout.org::#layout-custom-container][layout: writing a custom container]]. If you override =handle_event=, ignore bubbling events for children (see [[file:ui-migration.org::#migration-no-rebroadcast][the migration guide]]).
+
+#+begin_src c
+static void
+game_card_paint (LrgWidget    *widget,
+                 LrgPaintList *list)
+{
+	LrgPartLook box;
+
+	/* our own surface first ... */
+	lrg_widget_resolve_look (widget, LRG_UI_PART_BOX, &box);
+	lrg_widget_paint_box (widget, list, &box,
+	                      lrg_widget_get_world_x (widget), lrg_widget_get_world_y (widget),
+	                      lrg_widget_get_width (widget), lrg_widget_get_height (widget));
+
+	/* ... then the children, clipped to the card */
+	lrg_paint_list_push_clip (list, lrg_widget_get_world_x (widget), lrg_widget_get_world_y (widget),
+	                          lrg_widget_get_width (widget), lrg_widget_get_height (widget));
+	LRG_WIDGET_CLASS (game_card_parent_class)->paint (widget, list);
+	lrg_paint_list_pop_clip (list);
+}
+#+end_src
+
+** Best practices
+:PROPERTIES:
+:CUSTOM_ID: extending-best-practices
+:END:
+- Fill *complete* looks for every state in =style_defaults()=; test =PRESSED= before =HOVERED=; chain up for =FOCUS= and unknown parts.
+- Keep =style_defaults()= and =measure()= pure and cheap: they run several times per frame.
+- Measure and paint text with the same font, size and spacing.
+- Use =size= in a part look for part-specific dimensions so themes can change them.
+- Use =CHECKED=, =SELECTED= and =OPEN= state flags for toggled visuals (=lrg_widget_set_state_flags()=), so rules can target them.
+- Step springs you own exactly once per frame (from =paint()= with monotonic time, as above).
+- Check your widget in all presets (=lrg_theme_list_presets()=) and with =lrg_motion_set_reduced (TRUE)=.
+- Prefer =paint= over =lrg_paint_list_callback()=; callbacks break batches and are not animated.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: extending-see-also
+:END:
+- [[file:../modules/ui/widget.org][LrgWidget]], [[file:../modules/ui/styling.org][styling]], [[file:../modules/ui/layout.org][layout]], [[file:../modules/ui/input-and-focus.org][input and focus]], [[file:../modules/ui/animation.org][animation]]
+- [[file:../modules/paint/paint-list.org][LrgPaintList]]
+- [[file:theming.org][Theming guide]], [[file:ui-migration.org][migration guide]]
