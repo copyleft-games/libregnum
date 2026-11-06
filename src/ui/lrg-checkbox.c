@@ -12,6 +12,13 @@
  * the switch knob slides (with the theme's overshoot). Colours cross-
  * fade between the unchecked and checked looks by the same spring, and
  * between resting / hovered / pressed by the widget's own springs.
+ *
+ * The "inconsistent" (indeterminate) state shows a horizontal dash in
+ * the filled indicator instead of the tick (a centred knob for the
+ * switch): a "mixed" value, e.g. a flag that differs between several
+ * edited objects. A second spring cross-fades the tick and the dash.
+ * A click or ACTIVATE on an inconsistent checkbox clears the state and
+ * checks it.
  */
 
 #include "config.h"
@@ -64,6 +71,10 @@ struct _LrgCheckbox
      * directly, so freshly built UIs do not animate in. */
     LrgSpring         check;
     gboolean          stepped;
+
+    /* Indeterminate state and its dash spring (0 = tick, 1 = dash) */
+    gboolean          inconsistent;
+    LrgSpring         dash;
 };
 
 G_DEFINE_TYPE (LrgCheckbox, lrg_checkbox, LRG_TYPE_WIDGET)
@@ -80,6 +91,7 @@ enum
     PROP_CHECK_COLOR,
     PROP_TEXT_COLOR,
     PROP_STYLE,
+    PROP_INCONSISTENT,
     N_PROPS
 };
 
@@ -426,6 +438,15 @@ check_value (LrgCheckbox *self)
     return self->check.value;
 }
 
+/* dash_value: the dash progress (inconsistent state), like check_value */
+static gfloat
+dash_value (LrgCheckbox *self)
+{
+    if (!self->stepped)
+        return self->inconsistent ? 1.0f : 0.0f;
+    return CLAMP (self->dash.value, 0.0f, 1.0f);
+}
+
 /*
  * lrg_checkbox_step:
  *
@@ -441,15 +462,21 @@ lrg_checkbox_step (LrgWidget *widget,
 {
     LrgCheckbox *self = LRG_CHECKBOX (widget);
 
+    gboolean     busy;
+
     lrg_spring_set_motion (&self->check, lrg_widget_get_motion (widget));
+    lrg_spring_set_motion (&self->dash, lrg_widget_get_motion (widget));
     if (!self->stepped)
     {
         lrg_spring_snap (&self->check, self->checked ? 1.0f : 0.0f);
+        lrg_spring_snap (&self->dash, self->inconsistent ? 1.0f : 0.0f);
         self->stepped = TRUE;
         return FALSE;
     }
 
-    return lrg_spring_step (&self->check, delta_time);
+    busy = lrg_spring_step (&self->check, delta_time);
+    busy |= lrg_spring_step (&self->dash, delta_time);
+    return busy;
 }
 
 /*
@@ -488,6 +515,31 @@ paint_check_mark (LrgPaintList   *list,
     }
 }
 
+/*
+ * paint_dash:
+ *
+ * The inconsistent mark: a horizontal bar through the centre of the
+ * indicator, growing from the middle as @t goes from 0 to 1.
+ */
+static void
+paint_dash (LrgPaintList   *list,
+            gfloat          x,
+            gfloat          y,
+            gfloat          w,
+            gfloat          h,
+            gfloat          t,
+            gfloat          stroke,
+            const GrlColor *color)
+{
+    gfloat cx = x + w * 0.5f;
+    gfloat cy = y + h * 0.5f;
+    gfloat half = MIN (w, h) * 0.24f * CLAMP (t, 0.0f, 1.0f);
+
+    if (half <= 0.1f)
+        return;
+    lrg_paint_list_line (list, cx - half, cy, cx + half, cy, stroke, color);
+}
+
 static void
 lrg_checkbox_paint (LrgWidget    *widget,
                     LrgPaintList *list)
@@ -503,8 +555,12 @@ lrg_checkbox_paint (LrgWidget    *widget,
     gfloat       ih;
     gfloat       iy;
     gfloat       t;
+    gfloat       d;
 
-    t = check_value (self);
+    /* The indicator fills for checked and for inconsistent alike; the
+     * tick fades out as the dash comes in */
+    d = dash_value (self);
+    t = MAX (check_value (self), d);
 
     indicator_size (self, &iw, &ih);
     iy = y + (h - ih) * 0.5f;
@@ -526,7 +582,8 @@ lrg_checkbox_paint (LrgWidget    *widget,
             lrg_widget_resolve_look (widget, LRG_UI_PART_KNOB, &knob);
             ks = knob.size > 0.0f ? knob.size : ih - SWITCH_INSET * 2.0f;
             travel = iw - ih;
-            kx = x + SWITCH_INSET + travel * t + ((ih - SWITCH_INSET * 2.0f) - ks) * 0.5f;
+            kx = x + SWITCH_INSET + travel * (check_value (self) * (1.0f - d) + 0.5f * d) +
+                 ((ih - SWITCH_INSET * 2.0f) - ks) * 0.5f;
             lrg_widget_paint_box (widget, list, &knob, kx, iy + (ih - ks) * 0.5f, ks, ks);
         }
         break;
@@ -538,9 +595,10 @@ lrg_checkbox_paint (LrgWidget    *widget,
         /* The dot grows from the centre */
         resolve_checked (self, LRG_UI_PART_MARK, 1.0f, &mark);
         look_color (&mark, &mark.foreground, &c);
-        if (t > 0.01f)
+        if (t * (1.0f - d) > 0.01f)
             lrg_paint_list_circle (list, x + iw * 0.5f, iy + ih * 0.5f,
-                                   MAX (ih * 0.2f * t, 0.0f), &c);
+                                   MAX (ih * 0.2f * t * (1.0f - d), 0.0f), &c);
+        paint_dash (list, x, iy, iw, ih, d, MAX (mark.size, 2.0f), &c);
         break;
 
     case LRG_CHECKBOX_STYLE_CHECK:
@@ -550,7 +608,8 @@ lrg_checkbox_paint (LrgWidget    *widget,
 
         resolve_checked (self, LRG_UI_PART_MARK, 1.0f, &mark);
         look_color (&mark, &mark.foreground, &c);
-        paint_check_mark (list, x, iy, ih, t, mark.size, &c);
+        paint_check_mark (list, x, iy, ih, check_value (self) * (1.0f - d), mark.size, &c);
+        paint_dash (list, x, iy, iw, ih, d, mark.size, &c);
         break;
     }
 
@@ -692,6 +751,9 @@ lrg_checkbox_get_property (GObject    *object,
     case PROP_STYLE:
         g_value_set_enum (value, self->style);
         break;
+    case PROP_INCONSISTENT:
+        g_value_set_boolean (value, self->inconsistent);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -736,6 +798,9 @@ lrg_checkbox_set_property (GObject      *object,
         break;
     case PROP_STYLE:
         lrg_checkbox_set_style (self, g_value_get_enum (value));
+        break;
+    case PROP_INCONSISTENT:
+        lrg_checkbox_set_inconsistent (self, g_value_get_boolean (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -893,6 +958,24 @@ lrg_checkbox_class_init (LrgCheckboxClass *klass)
                            G_PARAM_STATIC_STRINGS |
                            G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgCheckbox:inconsistent:
+     *
+     * The indeterminate state: the indicator shows a dash instead of
+     * the tick, for a value that is neither on nor off (a flag that
+     * differs between several edited objects). It is independent of
+     * #LrgCheckbox:checked; a user toggle (click, ACTIVATE) clears it
+     * and checks the box.
+     */
+    properties[PROP_INCONSISTENT] =
+        g_param_spec_boolean ("inconsistent",
+                              "Inconsistent",
+                              "Show the indeterminate (mixed) state",
+                              FALSE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 
     /**
@@ -927,6 +1010,7 @@ lrg_checkbox_init (LrgCheckbox *self)
     self->check_color = DEFAULT_CHECK;
     self->text_color = DEFAULT_TEXT;
     lrg_spring_init (&self->check, 0.0f, LRG_MOTION_SMOOTH);
+    lrg_spring_init (&self->dash, 0.0f, LRG_MOTION_SMOOTH);
 }
 
 /* ==========================================================================
@@ -985,7 +1069,42 @@ void
 lrg_checkbox_toggle (LrgCheckbox *self)
 {
     g_return_if_fail (LRG_IS_CHECKBOX (self));
+
+    /* Inconsistent: a toggle settles on checked; "toggled" is emitted
+     * even when the box already was checked underneath, since what the
+     * user sees changed from mixed to on */
+    if (self->inconsistent)
+    {
+        gboolean was = self->checked;
+
+        lrg_checkbox_set_inconsistent (self, FALSE);
+        lrg_checkbox_set_checked (self, TRUE);
+        if (was)
+            g_signal_emit (self, signals[SIGNAL_TOGGLED], 0, TRUE);
+        return;
+    }
     lrg_checkbox_set_checked (self, !self->checked);
+}
+
+gboolean
+lrg_checkbox_get_inconsistent (LrgCheckbox *self)
+{
+    g_return_val_if_fail (LRG_IS_CHECKBOX (self), FALSE);
+    return self->inconsistent;
+}
+
+void
+lrg_checkbox_set_inconsistent (LrgCheckbox *self,
+                               gboolean     inconsistent)
+{
+    g_return_if_fail (LRG_IS_CHECKBOX (self));
+
+    inconsistent = !!inconsistent;
+    if (self->inconsistent == inconsistent)
+        return;
+    self->inconsistent = inconsistent;
+    lrg_spring_set_target (&self->dash, inconsistent ? 1.0f : 0.0f);
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_INCONSISTENT]);
 }
 
 LrgCheckboxStyle

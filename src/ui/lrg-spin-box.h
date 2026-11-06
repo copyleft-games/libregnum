@@ -172,4 +172,26 @@ LRG_AVAILABLE_IN_ALL
 void lrg_spin_box_spin (LrgSpinBox *self,
                         gint        steps);
 
+/**
+ * lrg_spin_box_get_scrubbing:
+ * @self: an #LrgSpinBox
+ *
+ * Returns: %TRUE between #LrgSpinBox::scrub-begin and
+ *   #LrgSpinBox::scrub-end (a press on the value or a step button)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_spin_box_get_scrubbing (LrgSpinBox *self);
+
+/**
+ * lrg_spin_box_cancel_scrub:
+ * @self: an #LrgSpinBox
+ *
+ * Cancels the press gesture in progress, as Escape does: the value goes
+ * back to what it was at #LrgSpinBox::scrub-begin, the rest of the drag
+ * is ignored and #LrgSpinBox::scrub-end is emitted with @commit %FALSE.
+ * Does nothing outside a gesture.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_spin_box_cancel_scrub (LrgSpinBox *self);
+
 G_END_DECLS

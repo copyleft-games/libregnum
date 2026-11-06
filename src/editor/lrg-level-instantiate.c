@@ -24,6 +24,7 @@
 #include "../core/lrg-engine.h"
 #include "../core/lrg-registry.h"
 #include "../lrg-enums.h"
+#include "../ui/lrg-property-source.h"
 #include <graylib.h>
 
 /* ==========================================================================
@@ -154,10 +155,36 @@ apply_component_props (GObject          *obj,
 			continue;
 
 		g_value_init (&dst, pspec->value_type);
-		if (g_value_transform (src, &dst))
-			g_object_set_property (obj, name, &dst);
-		else if (G_VALUE_TYPE (src) == pspec->value_type)
+		if (G_VALUE_TYPE (src) == pspec->value_type)
 			g_object_set_property (obj, name, src);
+		else if ((G_TYPE_IS_ENUM (pspec->value_type) || G_TYPE_IS_FLAGS (pspec->value_type)) &&
+		         G_VALUE_HOLDS_STRING (src))
+		{
+			/* Enum and flags values are saved as nicks ("melee",
+			 * "fire|ice"); a YAML load keeps them as strings */
+			if (lrg_property_value_from_string (&dst, g_value_get_string (src)))
+				g_object_set_property (obj, name, &dst);
+			else
+				g_warning ("Component property '%s': '%s' is not a value of %s", name,
+				           g_value_get_string (src), g_type_name (pspec->value_type));
+		}
+		else if ((G_TYPE_IS_ENUM (pspec->value_type) || G_TYPE_IS_FLAGS (pspec->value_type)) &&
+		         (G_VALUE_HOLDS_INT64 (src) || G_VALUE_HOLDS_INT (src) || G_VALUE_HOLDS_UINT (src)))
+		{
+			/* A plain number (hand-written YAML, older files): the
+			 * numeric value of the enum or the flags mask */
+			gint64 n = G_VALUE_HOLDS_INT64 (src) ? g_value_get_int64 (src)
+			         : G_VALUE_HOLDS_INT (src) ? (gint64) g_value_get_int (src)
+			         : (gint64) g_value_get_uint (src);
+
+			if (G_TYPE_IS_ENUM (pspec->value_type))
+				g_value_set_enum (&dst, (gint) n);
+			else
+				g_value_set_flags (&dst, (guint) n);
+			g_object_set_property (obj, name, &dst);
+		}
+		else if (g_value_transform (src, &dst))
+			g_object_set_property (obj, name, &dst);
 		g_value_unset (&dst);
 	}
 

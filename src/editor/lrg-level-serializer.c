@@ -18,6 +18,7 @@
 #include "lrg-prefab.h"
 #include "../scene/lrg-material3d.h"
 #include "../lrg-enums.h"
+#include "../ui/lrg-property-source.h"
 #include <graylib.h>
 #include <yaml-glib.h>
 
@@ -102,6 +103,18 @@ set_value_member (YamlMapping  *map,
 		yaml_mapping_set_double_member (map, key, g_value_get_double (value));
 		break;
 	default:
+		if (G_TYPE_IS_ENUM (vtype) || G_TYPE_IS_FLAGS (vtype))
+		{
+			/* Enums and flags as their nicks ("melee", "fire|ice"):
+			 * readable, stable across renumbering, and parsed back
+			 * by lrg_property_value_from_string() when the level is
+			 * instantiated (GLib's own transform writes the C value
+			 * name, which nothing reads back). */
+			g_autofree gchar *nick = lrg_property_value_to_string (value);
+
+			yaml_mapping_set_string_member (map, key, nick);
+			break;
+		}
 		{
 			/* Fall back to a transformed string representation. */
 			GValue strv = G_VALUE_INIT;
