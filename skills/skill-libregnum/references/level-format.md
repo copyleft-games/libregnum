@@ -133,3 +133,6 @@ Runtime: lrg_environment_load_sources(env, asset_manager, level_dir, &err); lrg_
 ## lighting: (0.9.0, optional)
 - `lightmap: path|guid:`, `probes: [path|guid:]`, `settings: {texels_per_unit, samples, bounces, max_lightmap_size, denoise, probe_spacing}` (numbers; booleans accepted). Instantiate loads them onto the world; missing files are a warning.
 - Node params: `static_lighting` and `lightmap_scale` on primitive/mesh-asset nodes; `bake_mode: realtime|mixed|baked` on lights.
+
+### 2D skeleton component (0.9.0)
+- component `skeleton2d` (LrgSkeleton2DComponent): params `skeleton_path`, `clip`, `speed`, `scale`, `flip_x`, `flip_y`, `default_mix`, `show_bones`.

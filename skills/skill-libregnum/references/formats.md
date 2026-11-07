@@ -67,3 +67,9 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 ## Baked lighting files (0.9.0)
 - `.rlightmap`: version, intensity, directional: false, pages: [*.hdr relative], entries: {guid: {page, scale_offset: [su,sv,ou,ov]}}, settings: {...}; atlas_uv = uv2*so.xy + so.zw.
 - `.rprobes`: version, bounds {min,max}, resolution [nx,ny,nz], intensity, encoding: base64-f32le, sh: base64 (27 floats per probe, probe order x + nx(y + ny z)), valid: base64 (one byte per probe).
+
+## 2D skeletons (.rskel2d, 0.9.0): LrgSkeleton2D
+- Load `lrg_skeleton2d_new_from_file` / `_from_data`; save `lrg_skeleton2d_save_to_file` / `_data` (byte stable, defaults omitted). Our own format (Spine/DragonBones not supported).
+- Root: `rskel2d: 1` (required), name, bones [{name, parent, x, y, rotation, scale: [sx,sy], length}] parents first, slots [{name, bone, attachment, color: [r,g,b,a]}] = setup draw order back to front, skins [{name, attachments: [{slot, name, image, region: [x,y,w,h], vertices: [[x,y,u,v]], weights: [[bone, w, ...]] one row per vertex (max 4 pairs, [] = follows slot bone), triangles: [[a,b,c]]}]}], animations [{name, duration, loop, bones: [{bone, translate: [{time,x,y}], rotate: [{time,angle}], scale: [{time,x,y}]}], slots: [{slot, attachment: [{time,name|null}], color: [{time,color}]}], draw_order: [{time, order: [all slots]|null}], events: [{time,name}]}].
+- Keys: optional `curve: stepped | linear | [x1,y1,x2,y2]`. Bone values are offsets from setup (scale multiplies), colour absolute. y down, degrees clockwise, meshes in setup space.
+- Strict errors LRG_SKELETON2D_ERROR_{PARSE,INVALID,VERSION,IO}, message `source: /path: msg`. Images resolve against the file's dir via lrg_skeleton2d_load_textures (needs a window).

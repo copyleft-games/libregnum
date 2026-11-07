@@ -192,3 +192,4 @@ g_list_free (enemies);
 - [[file:world.org][LrgWorld]] - Scene manager documentation
 - [[file:components/][Component Types]] - Built-in component documentation
 - [[../examples/ecs-basics.md][ECS Examples]] - Comprehensive usage examples
+- [[file:components/skeleton2d-component.org][LrgSkeleton2DComponent]] - 2D skeletal animation on a game object (.rskel2d)

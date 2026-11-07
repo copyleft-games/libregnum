@@ -16,6 +16,7 @@
 #include "lrg-component.h"
 #include "lrg-component-private.h"
 #include "components/lrg-sprite-component.h"
+#include "components/lrg-skeleton2d-component.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -94,6 +95,7 @@ lrg_game_object_draw (GrlEntity *entity)
     LrgGameObjectPrivate *priv = lrg_game_object_get_instance_private (self);
     GrlEntityClass       *parent_class;
     GType                 sprite_type;
+    GType                 skeleton_type;
     GList                *l;
 
     /* Chain up when the parent has a draw vfunc. GrlEntity leaves it
@@ -103,20 +105,23 @@ lrg_game_object_draw (GrlEntity *entity)
     if (parent_class->draw != NULL)
         parent_class->draw (entity);
 
-    /* Draw the object's enabled sprite components, in component order.
-     * LrgSpriteComponent is final, so an exact type compare is the same
-     * test as LRG_IS_SPRITE_COMPONENT() without the type-system call it
-     * makes for every other component type. */
+    /* Draw the object's enabled sprite and 2D skeleton components, in
+     * component order.  Both types are final, so an exact type compare is
+     * the same test as the LRG_IS_*() macros without the type-system call
+     * they make for every other component type. */
     sprite_type = LRG_TYPE_SPRITE_COMPONENT;
+    skeleton_type = LRG_TYPE_SKELETON2D_COMPONENT;
     for (l = priv->components; l != NULL; l = l->next)
     {
         LrgComponent *component = l->data;
+        GType         type = G_TYPE_FROM_INSTANCE (component);
 
-        if (G_TYPE_FROM_INSTANCE (component) == sprite_type &&
-            _lrg_component_get_enabled_unchecked (component))
-        {
+        if (!_lrg_component_get_enabled_unchecked (component))
+            continue;
+        if (type == sprite_type)
             lrg_sprite_component_draw (LRG_SPRITE_COMPONENT (component));
-        }
+        else if (type == skeleton_type)
+            lrg_skeleton2d_component_draw (LRG_SKELETON2D_COMPONENT (component));
     }
 }
 
