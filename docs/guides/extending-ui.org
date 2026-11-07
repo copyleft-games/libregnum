@@ -825,6 +825,8 @@ game_card_paint (LrgWidget    *widget,
 }
 #+end_src
 
+*A widget outside the clip is not painted.*  =lrg_widget_paint()= skips any widget lying wholly outside the current clip by more than 64 px, so a scroll box records only what can reach its viewport.  Keep ink within that distance of your bounds: a widget that draws far outside its own allocation (a callout, a connector line to a distant point) should be sized to cover what it draws, or it disappears when its bounds scroll out of view.  Widgets still gliding or appearing are never culled.
+
 ** Best practices
 :PROPERTIES:
 :CUSTOM_ID: extending-best-practices

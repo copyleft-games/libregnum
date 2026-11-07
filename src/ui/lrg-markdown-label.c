@@ -180,6 +180,8 @@ struct _LrgMarkdownLabel
 	gfloat     laid_width;
 	gfloat     laid_size;
 	guint      laid_faces;
+	LrgTheme  *laid_theme;      /* compared, never dereferenced */
+	guint      laid_generation;
 	gfloat     content_height;
 	gfloat     content_width;
 	guint      n_lines;
@@ -1416,6 +1418,8 @@ relayout (LrgMarkdownLabel *self,
 	self->laid_width = width;
 	self->laid_size = size;
 	self->laid_faces = faces_key ();
+	self->laid_theme = lrg_widget_get_theme (LRG_WIDGET (self));
+	self->laid_generation = lrg_theme_get_generation (self->laid_theme);
 	self->n_lines = 0;
 	self->content_width = 0.0f;
 
@@ -1569,8 +1573,13 @@ ensure_layout (LrgMarkdownLabel *self)
 {
 	gfloat w = layout_width (self);
 
-	/* Faces turning up (a window opened) change every measurement */
-	if (w != self->laid_width || body_size (self) != self->laid_size || faces_key () != self->laid_faces)
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (self));
+
+	/* Faces turning up (a window opened) change every measurement, and
+	 * so does a re-themed window: a new face or metric with the same
+	 * body size */
+	if (w != self->laid_width || body_size (self) != self->laid_size || faces_key () != self->laid_faces ||
+	    theme != self->laid_theme || lrg_theme_get_generation (theme) != self->laid_generation)
 		relayout (self, w);
 }
 
@@ -1716,8 +1725,13 @@ lrg_markdown_label_measure (LrgWidget *widget,
 	LrgMarkdownLabel *self = LRG_MARKDOWN_LABEL (widget);
 	gfloat            w = layout_width (self);
 
-	/* Wrap at the current width; the height follows */
-	relayout (self, w);
+	/*
+	 * Wrap at the current width; the height follows.  Through the same
+	 * cache as paint: a box measures every child each time one is added,
+	 * so an unconditional relayout made loading a 300-message transcript
+	 * quadratic in shaped text -- seconds in one frame.
+	 */
+	ensure_layout (self);
 	*width = w;
 	*height = self->content_height;
 }

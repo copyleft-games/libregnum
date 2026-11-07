@@ -35,6 +35,13 @@
 /* Distance (canvas units) fly-in appear animations travel */
 #define APPEAR_FLY_DISTANCE (24.0f)
 
+/*
+ * How far outside its own bounds a widget may still put ink: a soft
+ * shadow, a focus ring, a glow.  A widget further than this outside the
+ * current clip cannot reach it, so it is not recorded at all.
+ */
+#define PAINT_CULL_MARGIN (64.0f)
+
 /* ==========================================================================
  * LrgInsets
  * ========================================================================== */
@@ -2178,6 +2185,47 @@ start_appear (LrgWidget *self)
 		lrg_spring_snap (&priv->appear_spring, 1.0f);
 }
 
+/*
+ * paint_is_culled:
+ *
+ * Whether @self lies wholly outside @list's clip, by more than any ink a
+ * widget draws beyond its bounds.  A widget whose painted position is
+ * still moving (layout glide, appear) is never culled.
+ */
+static gboolean
+paint_is_culled (LrgWidget        *self,
+                 LrgWidgetPrivate *priv,
+                 LrgPaintList     *list)
+{
+	gfloat cx;
+	gfloat cy;
+	gfloat cw;
+	gfloat ch;
+	gfloat x;
+	gfloat y;
+
+	if (priv->appear_pending || priv->appear != LRG_APPEAR_NONE)
+	{
+		if (priv->appear_pending || priv->appear_wait > 0.0f ||
+		    !lrg_spring_is_settled (&priv->appear_spring) ||
+		    priv->appear_spring.value < 1.0f)
+			return FALSE;
+	}
+
+	if (priv->animate_layout &&
+	    (priv->glide_x.value != priv->x || priv->glide_y.value != priv->y))
+		return FALSE;
+
+	lrg_paint_list_get_clip (list, &cx, &cy, &cw, &ch);
+	x = lrg_widget_get_world_x (self);
+	y = lrg_widget_get_world_y (self);
+
+	return x + priv->width + PAINT_CULL_MARGIN < cx ||
+	       y + priv->height + PAINT_CULL_MARGIN < cy ||
+	       x - PAINT_CULL_MARGIN > cx + cw ||
+	       y - PAINT_CULL_MARGIN > cy + ch;
+}
+
 void
 lrg_widget_paint (LrgWidget    *self,
                   LrgPaintList *list)
@@ -2194,6 +2242,19 @@ lrg_widget_paint (LrgWidget    *self,
 	klass = LRG_WIDGET_GET_CLASS (self);
 
 	if (!priv->visible)
+		return;
+
+	/*
+	 * A widget wholly outside the clip is not recorded.  Every shape is
+	 * cut to the clip anyway, so this changes nothing on screen -- but a
+	 * scrolled transcript of three hundred messages otherwise lays out
+	 * and records every one of them, every frame, to draw the ten that
+	 * fit: a chat client measured at 8 ms a frame and seconds per
+	 * spike.  Only clipped regions are affected; the default clip is
+	 * unbounded.  A widget still gliding or appearing is painted away
+	 * from its bounds, so it is never culled.
+	 */
+	if (paint_is_culled (self, priv, list))
 		return;
 
 	if (priv->appear_pending)

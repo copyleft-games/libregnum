@@ -37,6 +37,10 @@ struct _TestBlock
 
 G_DEFINE_FINAL_TYPE (TestBlock, test_block, LRG_TYPE_WIDGET)
 
+/* Paint calls on any TestBlock: what culling saves is the call, not the
+ * instance (the paint list already drops shapes outside the clip) */
+static guint block_paints = 0;
+
 static void
 test_block_measure (LrgWidget *widget,
                     gfloat    *w,
@@ -50,6 +54,7 @@ static void
 test_block_paint (LrgWidget    *widget,
                   LrgPaintList *list)
 {
+	block_paints++;
 	lrg_paint_list_rect (list, lrg_widget_get_world_x (widget), lrg_widget_get_world_y (widget),
 	                     lrg_widget_get_width (widget), lrg_widget_get_height (widget), 0.0f,
 	                     &TEST_BLOCK (widget)->color);
@@ -494,6 +499,51 @@ test_scroll_box_clip (void)
 	g_assert_cmpfloat (inst->clip[1], ==, 40.0f);
 	g_assert_cmpfloat (inst->clip[2], ==, 130.0f);
 	g_assert_cmpfloat (inst->clip[3], ==, 140.0f);
+}
+
+/*
+ * Rows of a long list scrolled out of the viewport are not painted.  The
+ * paint list already drops shapes outside the clip, so counting instances
+ * cannot see this; what culling saves is the paint call itself (a label's
+ * text shaping), so the test counts those.
+ */
+static void
+test_scroll_box_culls (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgScrollBox        *sb = lrg_scroll_box_new ();
+	LrgVBox             *rows = lrg_vbox_new ();
+	LrgWidget           *last = NULL;
+	guint                i;
+
+	for (i = 0; i < 200; i++)
+	{
+		LrgWidget *row = block_new (100.0f, 50.0f);
+
+		lrg_container_add_child (LRG_CONTAINER (rows), row);
+		last = row;
+		g_object_unref (row);
+	}
+	lrg_scroll_box_set_child (sb, LRG_WIDGET (rows));
+	g_object_unref (rows);
+	lrg_scroll_box_set_kinetic (sb, FALSE);
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (sb));
+	g_object_unref (sb);
+	lrg_widget_allocate (LRG_WIDGET (sb), 0.0f, 0.0f, 100.0f, 100.0f);
+
+	/* Two rows fit; the cull margin admits a few more, never two hundred */
+	block_paints = 0;
+	lrg_canvas_record (canvas);
+	g_assert_cmpuint (block_paints, >=, 2);
+	g_assert_cmpuint (block_paints, <=, 8);
+
+	/* Scrolled to the end, the last rows are the ones painted */
+	lrg_scroll_box_scroll_to (sb, 0.0f, 200.0f * 50.0f, FALSE);
+	block_paints = 0;
+	lrg_canvas_record (canvas);
+	g_assert_cmpuint (block_paints, >=, 2);
+	g_assert_cmpuint (block_paints, <=, 8);
+	g_assert_cmpfloat (lrg_widget_get_world_y (last), <, 100.0f);
 }
 
 static void
@@ -1257,6 +1307,7 @@ main (int   argc,
 	g_test_add_func ("/ui/scroll-box/rubber-band", test_scroll_box_rubber_band);
 	g_test_add_func ("/ui/scroll-box/scroll-to-widget", test_scroll_box_scroll_to_widget);
 	g_test_add_func ("/ui/scroll-box/clip", test_scroll_box_clip);
+	g_test_add_func ("/ui/scroll-box/culls", test_scroll_box_culls);
 	g_test_add_func ("/ui/scroll-box/hit-test", test_scroll_box_hit_test);
 	g_test_add_func ("/ui/scroll-box/scrollbar-paint", test_scroll_box_scrollbar_paint);
 

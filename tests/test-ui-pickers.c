@@ -1279,6 +1279,41 @@ test_markdown_blocks (void)
 	g_assert_cmpuint (lrg_markdown_label_get_n_blocks (md), ==, 0);
 }
 
+/*
+ * A measure goes through the same layout cache as paint, so it must
+ * still re-wrap when the text or the theme's font size changes and the
+ * width does not.  The cache is also keyed on the theme and its
+ * generation, for a re-theme that swaps the face at the same size; that
+ * case needs loaded faces, which need a window, and is not covered here.
+ */
+static void
+test_markdown_measure_cache (Fixture       *fixture,
+                             gconstpointer  user_data)
+{
+	LrgMarkdownLabel    *md = lrg_markdown_label_new ("one short line");
+	g_autoptr(LrgTheme)  big = lrg_theme_copy (lrg_theme_get_default ());
+	gfloat               w;
+	gfloat               h_one;
+	gfloat               h_again;
+	gfloat               h_more;
+	gfloat               h_big;
+
+	add (fixture, md, 10.0f, 10.0f, 400.0f, 40.0f);
+	lrg_widget_measure (LRG_WIDGET (md), &w, &h_one);
+	lrg_widget_measure (LRG_WIDGET (md), &w, &h_again);
+	g_assert_cmpfloat (h_again, ==, h_one);
+
+	lrg_markdown_label_set_markdown (md, "one short line\n\nand a second paragraph");
+	lrg_widget_measure (LRG_WIDGET (md), &w, &h_more);
+	g_assert_cmpfloat (h_more, >, h_one);
+
+	lrg_theme_set_metric (big, LRG_THEME_METRIC_FONT_SIZE,
+	                      lrg_theme_get_metric (big, LRG_THEME_METRIC_FONT_SIZE) * 2.0f);
+	lrg_widget_set_theme (LRG_WIDGET (md), big);
+	lrg_widget_measure (LRG_WIDGET (md), &w, &h_big);
+	g_assert_cmpfloat (h_big, >, h_more);
+}
+
 static void
 test_markdown_wrapping (Fixture       *fixture,
                         gconstpointer  user_data)
@@ -1687,6 +1722,7 @@ main (int   argc,
 
 	g_test_add_func ("/ui/pickers/markdown/blocks", test_markdown_blocks);
 	ADD ("/ui/pickers/markdown/wrapping", test_markdown_wrapping);
+	ADD ("/ui/pickers/markdown/measure-cache", test_markdown_measure_cache);
 	ADD ("/ui/pickers/markdown/links", test_markdown_links);
 	g_test_add_func ("/ui/pickers/markdown/rich-text", test_markdown_rich_text);
 	ADD ("/ui/pickers/markdown/effects", test_markdown_effects);
