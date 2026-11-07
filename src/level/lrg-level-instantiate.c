@@ -297,6 +297,7 @@ instantiate_node (LrgNode     *node,
 		sc = lrg_script_component_new
 		         (lrg_script_binding_get_language (binding),
 		          lrg_script_binding_get_script (binding));
+		lrg_script_component_set_run_in_editor (sc, lrg_script_binding_get_run_in_editor (binding));
 		lrg_game_object_add_component (object, LRG_COMPONENT (sc));
 		g_object_unref (sc);
 	}
@@ -428,6 +429,7 @@ create_script_components (LrgNode     *node,
 			continue;
 		sc = lrg_script_component_new (lrg_script_binding_get_language (binding),
 		                               lrg_script_binding_get_script (binding));
+		lrg_script_component_set_run_in_editor (sc, lrg_script_binding_get_run_in_editor (binding));
 		lrg_entity3d_add_component (entity, LRG_COMPONENT (sc));
 	}
 }

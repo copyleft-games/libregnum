@@ -62,6 +62,12 @@
         `((id . ,id) (result . ((level . "/game/levels/main.rlevel") (dirty . :json-false) (nodes . 2)
                                 (tool . "select") (selection . ((nodes . ["g2"]))) (clients . 1)))))
        ("broken" `((id . ,id) (error . ((code . "failed") (message . "it broke")))))
+       ("debug.toggle_breakpoint" `((id . ,id) (result . ((set . t) (breakpoint . ((line . 2)))))))
+       ("debug.dap_start" `((id . ,id) (result . ((port . 4711)))))
+       ((or "debug.state" "debug.step_over")
+        `((id . ,id) (result . ((state . "paused") (reason . "step") (path . "/game/a.lua") (line . 3)))))
+       ("script.run" `((id . ,id) (result . ((result . 3) (output . "hi\n") (language . "lua")))))
+       ("profiler.capture" `((id . ,id) (result . ((frames . 4) (events . 9) (path . "/tmp/c.rprof")))))
        (_ `((id . ,id) (result . t)))))))
 
 (defun libregnum-tests--filter (process output)
@@ -209,6 +215,37 @@
     (should (derived-mode-p 'libregnum-rlevel-mode))
     (should (equal comment-start "# "))))
 
+(ert-deftest libregnum-test-debug-and-script-requests ()
+  (libregnum-tests--with-fake-editor
+    (let ((file (make-temp-file "lrg-script" nil ".lua" "local a = 1\nreturn a + 2\n")))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect file)
+            (goto-char (point-min))
+            (forward-line 1)
+            (should (alist-get 'set (libregnum-debug-toggle-breakpoint)))
+            (let ((req (car libregnum-tests--requests)))
+              (should (equal (alist-get 'method req) "debug.toggle_breakpoint"))
+              (should (equal (alist-get 'path (alist-get 'params req)) file))
+              (should (equal (alist-get 'line (alist-get 'params req)) 2)))
+            (should (equal (alist-get 'state (libregnum-debug-step-over)) "paused"))
+            (should (= (libregnum-debug-dap-start 0) 4711))
+            (should (equal (alist-get 'port (alist-get 'params (car libregnum-tests--requests))) 0))
+            (should (= (alist-get 'result (libregnum-eval-tool-script (point-min) (point-max))) 3))
+            (let ((params (alist-get 'params (car libregnum-tests--requests))))
+              (should (equal (alist-get 'language params) "lua"))
+              (should (string-match-p "return a" (alist-get 'code params))))
+            (libregnum-run-tool-script file)
+            (should (equal (alist-get 'path (alist-get 'params (car libregnum-tests--requests))) file))
+            (should (= (alist-get 'frames (libregnum-profiler-capture 4 "/tmp/c.rprof")) 4))
+            (should (equal (alist-get 'method (car libregnum-tests--requests)) "profiler.capture"))
+            (set-buffer-modified-p nil)
+            (kill-buffer))
+        (delete-file file)))))
+
+(ert-deftest libregnum-test-debug-keys ()
+  (should (eq (lookup-key libregnum-command-map "db") #'libregnum-debug-toggle-breakpoint))
+  (should (eq (lookup-key libregnum-command-map "!") #'libregnum-run-tool-script)))
+
 ;;; End to end -----------------------------------------------------------------
 
 (ert-deftest libregnum-test-format-tilemap ()
@@ -265,6 +302,27 @@
             (with-temp-buffer
               (insert-file-contents (expand-file-name "levels/main.rlevel" project))
               (should (string-match-p "FromEmacs" (buffer-string))))
+            ;; 0.9.0 M8: script debugger breakpoints and tool scripts, when
+            ;; this editor build registers them.
+            (let ((methods (libregnum-request "methods"))
+                  (script (expand-file-name "scripts/e2e.lua" project)))
+              (when (seq-contains-p methods "debug.toggle_breakpoint")
+                (make-directory (file-name-directory script) t)
+                (write-region "local a = 1\nreturn a\n" nil script)
+                (with-current-buffer (find-file-noselect script)
+                  (goto-char (point-min))
+                  (should (alist-get 'set (libregnum-debug-toggle-breakpoint)))
+                  (should-not (alist-get 'set (libregnum-debug-toggle-breakpoint)))
+                  (should (equal (alist-get 'state (libregnum-request "debug.state")) "idle"))
+                  (libregnum-request "debug.clear_breakpoints")
+                  (kill-buffer)))
+              (when (and (seq-contains-p methods "script.run")
+                         (seq-some (lambda (l) (and (equal (alist-get 'id l) "lua") (alist-get 'available l)))
+                                   (libregnum-request "script.languages")))
+                (with-temp-buffer
+                  (insert "return 20 + 22")
+                  (should (equal (alist-get 'result (libregnum-eval-tool-script (point-min) (point-max) "lua"))
+                                 42)))))
             (libregnum-request "editor.quit"))
         (libregnum-disconnect)
         (when (and proc (process-live-p proc))

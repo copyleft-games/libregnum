@@ -1,9 +1,23 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-mmo-protocol.h"
 #include "lrg-mmo-service-private.h"
+#include "../net/lrg-net-buffer-private.h"
 #include <zlib.h>
 #define FRAME_LIMIT (1024u * 1024u)
 #define HEADER_SIZE 24u
+
+/* Counts one frame for the default LrgNetStats as type "mmo:<opcode>"
+ * (the codec does not know the peer). */
+static void
+stats_frame (guint opcode, gsize bytes, gboolean sent)
+{
+    gchar type[16];
+
+    if (!_lrg_net_stats_hooks_active ())
+        return;
+    g_snprintf (type, sizeof type, "mmo:%u", opcode);
+    _lrg_net_stats_hook_frame (NULL, type, bytes, sent);
+}
 
 GBytes *
 lrg_mmo_protocol_encode (guint opcode, guint64 sequence, GBytes *payload, gboolean compress, GError **error)
@@ -55,6 +69,7 @@ lrg_mmo_protocol_encode (guint opcode, guint64 sequence, GBytes *payload, gboole
     memcpy (wire + 20, &length, 4);
     if (stored > 0)
         memcpy (wire + HEADER_SIZE, data, stored);
+    stats_frame (opcode, HEADER_SIZE + stored, TRUE);
     return g_bytes_new_take (wire, HEADER_SIZE + stored);
 }
 
@@ -89,6 +104,7 @@ lrg_mmo_protocol_decode (GBytes *frame, guint *opcode, guint64 *sequence, GError
             goto invalid;
         *opcode = operation;
         *sequence = number;
+        stats_frame (operation, size, FALSE);
         return g_bytes_new_from_bytes (frame, HEADER_SIZE, stored);
     }
     else
@@ -105,6 +121,7 @@ lrg_mmo_protocol_decode (GBytes *frame, guint *opcode, guint64 *sequence, GError
     }
     *opcode = operation;
     *sequence = number;
+    stats_frame (operation, size, FALSE);
     return g_bytes_new_take (g_steal_pointer (&output), length);
 invalid:
     _lrg_mmo_fail (error, G_IO_ERROR_INVALID_DATA, "Invalid, unsupported or oversized protocol frame");

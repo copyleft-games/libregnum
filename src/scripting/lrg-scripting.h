@@ -211,8 +211,29 @@ struct _LrgScriptingClass
     gboolean (*has_function) (LrgScripting *self,
                               const gchar  *func_name);
 
+    /**
+     * LrgScriptingClass::reload_file:
+     * @self: an #LrgScripting
+     * @path: a script file this context loaded
+     * @error: (nullable): return location for error
+     *
+     * Re-execute @path in the live context (hot reload).  Implementations
+     * call the #LRG_SCRIPT_HOOK_BEFORE_RELOAD hook, run the new code, then
+     * #LRG_SCRIPT_HOOK_RELOAD with the saved state, and keep the old code
+     * when the new code fails to compile or run.  The default
+     * implementation does this through call_function() and load_file()
+     * with the state as a #GValue (no rollback of a half-run file).
+     *
+     * Returns: %TRUE on success
+     *
+     * Since: 0.9
+     */
+    gboolean (*reload_file) (LrgScripting  *self,
+                             const gchar   *path,
+                             GError       **error);
+
     /*< private >*/
-    gpointer _reserved[6];
+    gpointer _reserved[5];
 };
 
 /* ==========================================================================
@@ -375,5 +396,133 @@ void lrg_scripting_add_search_path (LrgScripting *self,
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_scripting_has_function (LrgScripting *self,
                                      const gchar  *func_name);
+
+/**
+ * lrg_scripting_reload_file:
+ * @self: an #LrgScripting
+ * @path: (type filename): a script file
+ * @error: (nullable): return location for error
+ *
+ * Hot-reloads @path in this live context: calls the script's
+ * `on_before_reload()` hook (if any), re-executes the file, then calls
+ * `on_reload(old_state)` (if any).  When the new code fails to compile (or,
+ * for Lua and Python, to run its top level) the old definitions are kept
+ * and the error carries the failing file and line (see
+ * lrg_scripting_get_error_location()).  Most callers use
+ * #LrgScriptReloader instead.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scripting_reload_file (LrgScripting  *self,
+                                    const gchar   *path,
+                                    GError       **error);
+
+/**
+ * lrg_scripting_get_loaded_files:
+ * @self: an #LrgScripting
+ *
+ * Lists the files lrg_scripting_load_file() executed in this context
+ * since the last reset, as canonical absolute paths in load order.
+ *
+ * Returns: (transfer full) (array zero-terminated=1) (element-type filename):
+ *   the loaded files
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_scripting_get_loaded_files (LrgScripting *self);
+
+/**
+ * lrg_scripting_has_loaded_file:
+ * @self: an #LrgScripting
+ * @path: (type filename): a path (canonicalized before comparing)
+ *
+ * Returns: whether this context loaded @path since the last reset
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scripting_has_loaded_file (LrgScripting *self,
+                                        const gchar  *path);
+
+/**
+ * lrg_scripting_get_search_paths:
+ * @self: an #LrgScripting
+ *
+ * Lists the directories added with lrg_scripting_add_search_path(), as
+ * canonical absolute paths.
+ *
+ * Returns: (transfer full) (array zero-terminated=1) (element-type filename):
+ *   the search paths
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_scripting_get_search_paths (LrgScripting *self);
+
+/**
+ * lrg_scripting_get_error_location:
+ * @self: an #LrgScripting
+ * @file: (out) (optional) (transfer full) (type filename): the file of the
+ *   last load or reload error
+ * @line: (out) (optional): its 1-based line (0 when unknown)
+ *
+ * Returns where the most recent load, reload or call error of this context
+ * happened, when the backend could tell.
+ *
+ * Returns: %TRUE when a location is known
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scripting_get_error_location (LrgScripting  *self,
+                                           gchar        **file,
+                                           gint          *line);
+
+/**
+ * lrg_scripting_list_instances:
+ *
+ * Lists every live #LrgScripting in the process (any thread), oldest
+ * first.  The debugger's auto-attach and the reloader's watch-all use it.
+ *
+ * Returns: (transfer full) (element-type LrgScripting): the contexts
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_scripting_list_instances (void);
+
+/* ==========================================================================
+ * Library-internal helpers (backends, debugger, reloader).  Only visible to
+ * files that define LRG_SCRIPTING_PRIVATE before including this header; the
+ * GIR scanner and applications never do.
+ * ========================================================================== */
+
+#ifdef LRG_SCRIPTING_PRIVATE
+
+/* called (with the new context) after every LrgScripting is constructed */
+typedef void (*LrgScriptingInstanceHook) (LrgScripting *scripting,
+                                          gpointer      user_data);
+
+G_GNUC_INTERNAL void           lrg_scripting_priv_add_instance_hook    (LrgScriptingInstanceHook  hook,
+                                                                        gpointer                  user_data);
+G_GNUC_INTERNAL void           lrg_scripting_priv_remove_instance_hook (LrgScriptingInstanceHook  hook,
+                                                                        gpointer                  user_data);
+/* the context executing on this thread (innermost), or NULL; no ref */
+G_GNUC_INTERNAL LrgScripting * lrg_scripting_priv_get_current          (void);
+G_GNUC_INTERNAL void           lrg_scripting_priv_push_current         (LrgScripting             *self);
+G_GNUC_INTERNAL void           lrg_scripting_priv_pop_current          (LrgScripting             *self);
+/* records where the last error happened (file may be NULL to clear) */
+G_GNUC_INTERNAL void           lrg_scripting_priv_set_error_location   (LrgScripting             *self,
+                                                                        const gchar              *file,
+                                                                        gint                      line);
+/* adds @path to the loaded-files list (canonicalized) */
+G_GNUC_INTERNAL void           lrg_scripting_priv_note_loaded          (LrgScripting             *self,
+                                                                        const gchar              *path);
+
+#endif /* LRG_SCRIPTING_PRIVATE */
 
 G_END_DECLS

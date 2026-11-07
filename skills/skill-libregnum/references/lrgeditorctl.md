@@ -159,7 +159,7 @@ Examples: lrgeditorctl bake set samples 256 && lrgeditorctl bake start --wait; l
 - `physasset open|get|stabilize|save PATH | create PATH [model= total_mass= radius_ratio=] | model PATH MODEL | add-part PATH BONE [K=V..] | set-part PATH PART K=V.. | remove-part|select PATH PART | generate PATH [total_mass= radius_ratio=] | exclude|unexclude PATH A B | set PATH [name= exclude_adjacent=] | simulate PATH [advance=S run=false reset=true]`
 Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --node Door; lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140
 
-## 0.9.0 navigation, AI, effects, terrain, audio and 2D verbs
+## 0.9.0 navigation, AI, effects, terrain, audio, 2D, scripting, debugging and profiling verbs
 
 <!-- m67e-generated: begin -->
 - `nav get | set | new PATH | bake | cancel | save | clear | area-add NAME | area-remove AREA | area-set AREA | area-box-add AREA | area-box-remove AREA BOX | area-box-set AREA BOX | link-add | link-remove INDEX | link-set INDEX | select | overlay | agents | debug-agent | show` [key=value..]
@@ -175,4 +175,9 @@ Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --
 - `tiles state | grid | brush | autopaint | refresh | cell-at | tile-info TILE` [key=value..]
 - `tileset create PATH | open PATH | get | set | select | tile TILE | collision TILE OP | rule-tile OP NAME | rule RULE_TILE OP | preview RULE_TILE | save` [key=value..]
 - `sprite create PATH | open PATH | get | slice MODE | frame OP | clip OP NAME | clip-frame CLIP OP | event CLIP OP FRAME | play | save` [key=value..]
+- `debug state | show | breakpoints | set-breakpoint PATH LINE | remove-breakpoint PATH LINE | toggle-breakpoint LINE | clear-breakpoints | continue | pause | step-over | step-in | step-out | stop | stack | scopes | variables REFERENCE | evaluate EXPRESSION | watches | add-watch EXPRESSION | remove-watch EXPRESSION | dap-start | dap-stop` [key=value..]
+- `lsp servers | status | diagnostics | complete | hover | definition | references | rename NEW_NAME | format | restart` [key=value..]
+- `profiler set | capture | save PATH | load PATH | frames | frame | compare | view` [key=value..]
+- `frame capture | status | calls | call INDEX | scrub INDEX | texture PATH | save PATH | load PATH | show` [key=value..]
+- `script run CODE | languages | tools | run-tool ID | reload | run-in-editor NODE | editor-running` [key=value..]
 <!-- m67e-generated: end -->

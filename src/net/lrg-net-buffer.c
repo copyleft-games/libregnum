@@ -11,6 +11,7 @@ _lrg_net_buffer_init (LrgNetBuffer *buffer)
 {
     buffer->input = g_byte_array_new ();
     buffer->output = g_byte_array_new ();
+    buffer->stats_peer = NULL;
 }
 
 void
@@ -18,6 +19,16 @@ _lrg_net_buffer_clear (LrgNetBuffer *buffer)
 {
     g_clear_pointer (&buffer->input, g_byte_array_unref);
     g_clear_pointer (&buffer->output, g_byte_array_unref);
+    g_clear_pointer (&buffer->stats_peer, g_free);
+}
+
+/* Names the LrgNetStats peer this buffer's traffic is counted under. */
+void
+_lrg_net_buffer_set_stats_peer (LrgNetBuffer *buffer,
+                                const gchar  *peer)
+{
+    g_free (buffer->stats_peer);
+    buffer->stats_peer = g_strdup (peer);
 }
 
 gboolean
@@ -46,6 +57,8 @@ _lrg_net_buffer_send (LrgNetBuffer  *buffer,
         return FALSE;
     }
     g_byte_array_append (buffer->output, data, size);
+    /* Counted when queued: that is when the frame's size is known */
+    _lrg_net_stats_hook_message (buffer->stats_peer, message, size, TRUE);
     return TRUE;
 }
 
@@ -109,6 +122,8 @@ _lrg_net_buffer_receive (LrgNetBuffer *buffer,
                 bytes = g_bytes_new (buffer->input->data, target);
                 message = lrg_net_message_deserialize (bytes, error);
                 g_byte_array_set_size (buffer->input, 0);
+                if (message != NULL)
+                    _lrg_net_stats_hook_message (buffer->stats_peer, message, target, FALSE);
                 return message;
             }
         }

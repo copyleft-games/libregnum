@@ -63,6 +63,7 @@ typedef struct
 	gchar             *accel;    /* as given, for get_accel_for_action */
 	gchar             *action;   /* "prefix.action" */
 	GVariant          *target;   /* owned, nullable */
+	gint               priority; /* higher is tried first */
 } Shortcut;
 
 typedef struct
@@ -2136,17 +2137,24 @@ recognise_touch (LrgCanvas      *self,
  * Shortcuts
  * ========================================================================== */
 
-/* find_shortcut: index of the binding for exactly @key + @mods, or -1 */
+/*
+ * find_shortcut_from:
+ *
+ * Index of the next binding for exactly @key + @mods at or after
+ * @from, or -1. The array is kept in dispatch order (priority, then
+ * registration), so the first match is the one tried first.
+ */
 static gint
-find_shortcut (LrgCanvas         *self,
-               GrlKey             key,
-               LrgInputModifiers  mods)
+find_shortcut_from (LrgCanvas         *self,
+                    GrlKey             key,
+                    LrgInputModifiers  mods,
+                    guint              from)
 {
 	const LrgInputModifiers relevant = LRG_INPUT_MODIFIER_SHIFT | LRG_INPUT_MODIFIER_CTRL |
 	                                   LRG_INPUT_MODIFIER_ALT | LRG_INPUT_MODIFIER_SUPER;
 	guint i;
 
-	for (i = 0; i < self->shortcuts->len; i++)
+	for (i = from; i < self->shortcuts->len; i++)
 	{
 		Shortcut *sc = &g_array_index (self->shortcuts, Shortcut, i);
 
@@ -2154,6 +2162,15 @@ find_shortcut (LrgCanvas         *self,
 			return (gint) i;
 	}
 	return -1;
+}
+
+/* find_shortcut: index of the first binding for exactly @key + @mods, or -1 */
+static gint
+find_shortcut (LrgCanvas         *self,
+               GrlKey             key,
+               LrgInputModifiers  mods)
+{
+	return find_shortcut_from (self, key, mods, 0);
 }
 
 /*
@@ -2195,6 +2212,98 @@ fire_shortcut (LrgCanvas *self,
 	return FALSE;
 }
 
+/*
+ * fire_shortcuts:
+ *
+ * Tries every binding of @key + @mods in dispatch order (priority,
+ * then registration) and stops at the first whose action resolves and
+ * is enabled (lrg_widget_activate_action() refuses disabled ones), so
+ * several actions can share a key and the one that applies right now
+ * fires. An action may rebind shortcuts while it runs; the walk only
+ * goes on while the array still holds what it saw.
+ *
+ * Returns: %TRUE if one fired
+ */
+static gboolean
+fire_shortcuts (LrgCanvas         *self,
+                GrlKey             key,
+                LrgInputModifiers  mods)
+{
+	gint sc = find_shortcut (self, key, mods);
+
+	while (sc >= 0)
+	{
+		guint len = self->shortcuts->len;
+
+		if (fire_shortcut (self, sc))
+			return TRUE;
+		if (self->shortcuts->len != len)
+			return FALSE;
+		sc = find_shortcut_from (self, key, mods, (guint) sc + 1);
+	}
+	return FALSE;
+}
+
+/* remove_chord: drop every binding of @key + @mods; TRUE if any */
+static gboolean
+remove_chord (LrgCanvas         *self,
+              GrlKey             key,
+              LrgInputModifiers  mods)
+{
+	gboolean removed = FALSE;
+	gint     i;
+
+	while ((i = find_shortcut (self, key, mods)) >= 0)
+	{
+		g_array_remove_index (self->shortcuts, (guint) i);
+		removed = TRUE;
+	}
+	return removed;
+}
+
+/* same_target: both NULL, or equal values */
+static gboolean
+same_target (GVariant *a,
+             GVariant *b)
+{
+	if (a == NULL || b == NULL)
+		return a == b;
+	return g_variant_equal (a, b);
+}
+
+/*
+ * insert_shortcut:
+ *
+ * Adds a binding (taking @accel's parsed chord, copies of the strings
+ * and @target) after every binding of the same or a higher priority,
+ * so the array stays in dispatch order.
+ */
+static void
+insert_shortcut (LrgCanvas         *self,
+                 GrlKey             key,
+                 LrgInputModifiers  mods,
+                 const gchar       *accel,
+                 const gchar       *action,
+                 GVariant          *target,
+                 gint               priority)
+{
+	Shortcut sc;
+	guint    at;
+
+	memset (&sc, 0, sizeof (Shortcut));
+	sc.key = key;
+	sc.mods = mods;
+	sc.accel = g_strdup (accel);
+	sc.action = g_strdup (action);
+	sc.target = target != NULL ? g_variant_ref (target) : NULL;
+	sc.priority = priority;
+
+	for (at = 0; at < self->shortcuts->len; at++)
+		if (g_array_index (self->shortcuts, Shortcut, at).priority < priority)
+			break;
+	g_array_insert_val (self->shortcuts, at, sc);
+}
+
 gboolean
 lrg_canvas_add_shortcut (LrgCanvas   *self,
                          const gchar *accel,
@@ -2202,10 +2311,8 @@ lrg_canvas_add_shortcut (LrgCanvas   *self,
                          GVariant    *target)
 {
 	g_autoptr(GVariant) owned = NULL;
-	Shortcut            sc;
 	GrlKey              key;
 	LrgInputModifiers   mods;
-	gint                old;
 
 	/* Own the parameter before any early return */
 	if (target != NULL)
@@ -2221,19 +2328,106 @@ lrg_canvas_add_shortcut (LrgCanvas   *self,
 		return FALSE;
 	}
 
-	/* One binding per key combination: the newest wins */
-	old = find_shortcut (self, key, mods);
-	if (old >= 0)
-		g_array_remove_index (self->shortcuts, (guint) old);
-
-	memset (&sc, 0, sizeof (Shortcut));
-	sc.key = key;
-	sc.mods = mods;
-	sc.accel = g_strdup (accel);
-	sc.action = g_strdup (action);
-	sc.target = g_steal_pointer (&owned);
-	g_array_append_val (self->shortcuts, sc);
+	/* This binding is the chord's only one: the newest wins */
+	remove_chord (self, key, mods);
+	insert_shortcut (self, key, mods, accel, action, owned, 0);
 	return TRUE;
+}
+
+gboolean
+lrg_canvas_add_shortcut_full (LrgCanvas   *self,
+                              const gchar *accel,
+                              const gchar *action,
+                              GVariant    *target,
+                              gint         priority)
+{
+	g_autoptr(GVariant) owned = NULL;
+	GrlKey              key;
+	LrgInputModifiers   mods;
+	gint                i;
+
+	if (target != NULL)
+		owned = g_variant_ref_sink (target);
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
+	g_return_val_if_fail (accel != NULL, FALSE);
+	g_return_val_if_fail (action != NULL, FALSE);
+
+	if (!lrg_accel_parse (accel, &key, &mods))
+	{
+		lrg_warning (LRG_LOG_DOMAIN, "lrg_canvas_add_shortcut_full: cannot parse accelerator \"%s\"", accel);
+		return FALSE;
+	}
+
+	/* Re-adding the same action and target on the chord moves it to
+	 * its (possibly new) priority instead of binding it twice */
+	for (i = find_shortcut (self, key, mods); i >= 0; i = find_shortcut_from (self, key, mods, (guint) i + 1))
+	{
+		Shortcut *sc = &g_array_index (self->shortcuts, Shortcut, i);
+
+		if (g_strcmp0 (sc->action, action) == 0 && same_target (sc->target, owned))
+		{
+			g_array_remove_index (self->shortcuts, (guint) i);
+			break;
+		}
+	}
+	insert_shortcut (self, key, mods, accel, action, owned, priority);
+	return TRUE;
+}
+
+gboolean
+lrg_canvas_remove_shortcut_for_action (LrgCanvas   *self,
+                                       const gchar *accel,
+                                       const gchar *action,
+                                       GVariant    *target)
+{
+	g_autoptr(GVariant) owned = NULL;
+	GrlKey              key;
+	LrgInputModifiers   mods;
+	gint                i;
+
+	if (target != NULL)
+		owned = g_variant_ref_sink (target);
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
+	g_return_val_if_fail (accel != NULL, FALSE);
+	g_return_val_if_fail (action != NULL, FALSE);
+
+	if (!lrg_accel_parse (accel, &key, &mods))
+		return FALSE;
+	for (i = find_shortcut (self, key, mods); i >= 0; i = find_shortcut_from (self, key, mods, (guint) i + 1))
+	{
+		Shortcut *sc = &g_array_index (self->shortcuts, Shortcut, i);
+
+		if (g_strcmp0 (sc->action, action) == 0 && same_target (sc->target, owned))
+		{
+			g_array_remove_index (self->shortcuts, (guint) i);
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+gchar **
+lrg_canvas_list_shortcut_actions (LrgCanvas   *self,
+                                  const gchar *accel)
+{
+	GPtrArray         *out;
+	GrlKey             key;
+	LrgInputModifiers  mods;
+	gint               i;
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
+	g_return_val_if_fail (accel != NULL, NULL);
+
+	out = g_ptr_array_new ();
+	if (lrg_accel_parse (accel, &key, &mods))
+	{
+		for (i = find_shortcut (self, key, mods); i >= 0; i = find_shortcut_from (self, key, mods, (guint) i + 1))
+			g_ptr_array_add (out, g_strdup (g_array_index (self->shortcuts, Shortcut, i).action));
+	}
+	g_ptr_array_add (out, NULL);
+	return (gchar **) g_ptr_array_free (out, FALSE);
 }
 
 gboolean
@@ -2242,18 +2436,13 @@ lrg_canvas_remove_shortcut (LrgCanvas   *self,
 {
 	GrlKey            key;
 	LrgInputModifiers mods;
-	gint              i;
 
 	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
 	g_return_val_if_fail (accel != NULL, FALSE);
 
 	if (!lrg_accel_parse (accel, &key, &mods))
 		return FALSE;
-	i = find_shortcut (self, key, mods);
-	if (i < 0)
-		return FALSE;
-	g_array_remove_index (self->shortcuts, (guint) i);
-	return TRUE;
+	return remove_chord (self, key, mods);
 }
 
 void
@@ -2355,7 +2544,6 @@ handle_tab (LrgCanvas         *self,
             gboolean           repeat)
 {
 	LrgWidget *focused = self->focused_widget;
-	gint       sc;
 
 	if (focused != NULL && !(mods & LRG_INPUT_MODIFIER_CTRL) && lrg_widget_get_accepts_tab (focused))
 	{
@@ -2367,8 +2555,7 @@ handle_tab (LrgCanvas         *self,
 			return;
 	}
 
-	sc = find_shortcut (self, GRL_KEY_TAB, mods);
-	if (sc >= 0 && fire_shortcut (self, sc))
+	if (fire_shortcuts (self, GRL_KEY_TAB, mods))
 		return;
 
 	if (self->navigation_enabled)
@@ -2782,7 +2969,7 @@ lrg_canvas_process_input (LrgCanvas            *self,
 					deferred[n_deferred++] = key;
 				goto next_key;
 			}
-			if (sc >= 0 && fire_shortcut (self, sc))
+			if (sc >= 0 && fire_shortcuts (self, key, input->modifiers))
 				goto next_key;
 
 			if (run_key_hooks (self, key, input->modifiers))
@@ -2836,10 +3023,7 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	/* Printable shortcuts fire only when nothing took typed text */
 	for (i = 0; i < n_deferred && !typed; i++)
 	{
-		gint sc = find_shortcut (self, deferred[i], input->modifiers);
-
-		if (sc >= 0)
-			fire_shortcut (self, sc);
+		fire_shortcuts (self, deferred[i], input->modifiers);
 	}
 
 	/* Gamepad / Tab navigation. Directions are offered to the focused

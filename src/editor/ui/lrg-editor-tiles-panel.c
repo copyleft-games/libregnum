@@ -3274,9 +3274,11 @@ lrg_editor_tiles_panel_new (LrgEditorApp *app)
 	                        has_grid, NULL, self);
 	lrg_editor_actions_add (actions, "tilemap.flip-x", "Flip Tile Horizontally", "Tilemap", "X", a_flip_x, painting,
 	                        NULL, self);
-	/* Y alone is tool.toggle-snap's; the canvas keeps one shortcut per
-	 * chord (the last registered wins), so vertical flip is Shift+X */
-	lrg_editor_actions_add (actions, "tilemap.flip-y", "Flip Tile Vertically", "Tilemap", "Shift+X", a_flip_y,
+	/* Y is shared with tool.toggle-snap: the canvas tries the bindings
+	 * of a key in order and fires the first ENABLED one, and this one is
+	 * only enabled while painting tiles, so Y flips the brush then and
+	 * toggles snapping everywhere else. Shift+X stays as an alternative */
+	lrg_editor_actions_add (actions, "tilemap.flip-y", "Flip Tile Vertically", "Tilemap", "Y|Shift+X", a_flip_y,
 	                        painting, NULL, self);
 	lrg_editor_actions_add (actions, "tilemap.rotate", "Rotate Tile Clockwise", "Tilemap", "Z", a_rotate, painting,
 	                        NULL, self);

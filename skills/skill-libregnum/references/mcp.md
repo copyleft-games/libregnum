@@ -114,7 +114,7 @@ anim_preview takes {path, model?, restart?, play?, advance?, scrub?}.
 ## Physics tools (0.9.0)
 Node physics: physics_get, physics_state (ro), physics_add_body, physics_remove_body (destructive), physics_set_body, physics_add_shape, physics_remove_shape (destructive), physics_set_shape, physics_move_shape, physics_add_joint, physics_remove_joint (destructive), physics_set_joint, physics_fit, physics_overlay, physics_show. Project layers: physics_layers_get (ro), physics_layers_set_name, physics_layers_set_collides, physics_layers_settings, physics_layers_reset (destructive), physics_layers_open. Ragdolls: physasset_get (ro), physasset_open, physasset_create, physasset_set_model, physasset_add_part, physasset_remove_part (destructive), physasset_set_part, physasset_generate (destructive), physasset_stabilize, physasset_exclude, physasset_set, physasset_select, physasset_simulate, physasset_save. Arguments pass through; field maps go in a `values` object.
 
-## 0.9.0 navigation, AI, effects, terrain, audio and 2D tools
+## 0.9.0 navigation, AI, effects, terrain, audio, 2D, scripting, debugging and profiling tools
 
 <!-- m67e-generated: begin -->
 Navigation: nav_get (ro), nav_set, nav_new, nav_bake, nav_cancel, nav_save, nav_clear (destructive), nav_area_add, nav_area_remove (destructive), nav_area_set, nav_area_box_add, nav_area_box_remove (destructive), nav_area_box_set, nav_link_add, nav_link_remove (destructive), nav_link_set, nav_select, nav_overlay, nav_agents (ro), nav_debug_agent, nav_show.
@@ -131,4 +131,9 @@ Tile painting: tiles_get (ro), tiles_grid, tiles_brush, tiles_paint, tiles_refre
 Tileset: tileset_create, tileset_open, tileset_get (ro), tileset_set, tileset_select, tileset_tile, tileset_collision, tileset_rule_tile, tileset_rule, tileset_preview (ro), tileset_save.
 Sprite sheet: sprite_create, sprite_open, sprite_get (ro), sprite_slice, sprite_frame, sprite_clip, sprite_clip_frame, sprite_event, sprite_play, sprite_save.
 Asset creation: asset_new.
+Script debugger: debug_state (ro), debug_show, debug_breakpoints (ro), debug_set_breakpoint, debug_remove_breakpoint (destructive), debug_toggle_breakpoint, debug_clear_breakpoints (destructive), debug_continue, debug_pause, debug_step_over, debug_step_in, debug_step_out, debug_stop (destructive), debug_stack (ro), debug_scopes (ro), debug_variables (ro), debug_evaluate, debug_watches (ro), debug_add_watch, debug_remove_watch, debug_dap_start, debug_dap_stop.
+Language server: lsp_servers (ro), lsp_status (ro), lsp_diagnostics (ro), lsp_complete (ro), lsp_hover (ro), lsp_definition, lsp_references (ro), lsp_rename, lsp_format, lsp_restart.
+Profiler capture: profiler_set, profiler_capture, profiler_save, profiler_load, profiler_frames (ro), profiler_frame (ro), profiler_compare (ro), profiler_view.
+Frame debugger: frame_capture, frame_status (ro), frame_calls (ro), frame_call (ro), frame_scrub, frame_texture, frame_save, frame_load, frame_show.
+Tool script: script_run, script_languages (ro), script_tools (ro), script_run_tool, script_reload, script_run_in_editor, script_editor_running (ro).
 <!-- m67e-generated: end -->

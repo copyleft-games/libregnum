@@ -945,6 +945,11 @@ build_script_mapping (LrgScriptBinding *binding)
 	yaml_mapping_set_boolean_member (map, "enabled",
 	                                 lrg_script_binding_get_enabled (binding));
 
+	/* Written only when set, so levels without editor-time scripts keep
+	 * their bytes (0.9.0) */
+	if (lrg_script_binding_get_run_in_editor (binding))
+		yaml_mapping_set_boolean_member (map, "run_in_editor", TRUE);
+
 	return map;
 }
 
@@ -1994,6 +1999,9 @@ parse_script (YamlMapping *map)
 	if (yaml_mapping_has_member (map, "enabled"))
 		lrg_script_binding_set_enabled (binding,
 		                                yaml_mapping_get_boolean_member (map, "enabled"));
+	if (yaml_mapping_has_member (map, "run_in_editor"))
+		lrg_script_binding_set_run_in_editor (binding,
+		                                      yaml_mapping_get_boolean_member (map, "run_in_editor"));
 
 	return binding;
 }

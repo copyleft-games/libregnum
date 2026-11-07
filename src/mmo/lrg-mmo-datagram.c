@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 #include "lrg-mmo-datagram.h"
 #include "lrg-mmo-service-private.h"
+#include "../net/lrg-net-buffer-private.h"
 #include <string.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -19,6 +20,7 @@ struct _LrgMmoDatagram
     guint64 pending_sequence;
     guint64 highest;
     guint64 seen;
+    gchar *stats_peer; /* LrgNetStats peer key "address:port" */
 };
 G_DEFINE_TYPE (LrgMmoDatagram, lrg_mmo_datagram, G_TYPE_OBJECT)
 
@@ -27,6 +29,8 @@ lrg_mmo_datagram_finalize (GObject *object)
 {
     LrgMmoDatagram *self = LRG_MMO_DATAGRAM (object);
     g_clear_pointer (&self->pending, g_bytes_unref);
+    _lrg_net_stats_hook_peer (self->stats_peer, FALSE);
+    g_clear_pointer (&self->stats_peer, g_free);
     SSL_free (self->ssl);
     SSL_CTX_free (self->context);
     g_clear_object (&self->socket);
@@ -84,6 +88,19 @@ lrg_mmo_datagram_new (GSocket *socket, gboolean server, const gchar *identity,
     SSL_set_options (self->ssl, SSL_OP_NO_QUERY_MTU);
     SSL_set_mode (self->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
     SSL_set_mtu (self->ssl, 1200);
+    /* Name the peer for LrgNetStats from the connected address */
+    {
+        g_autoptr(GSocketAddress) remote = g_socket_get_remote_address (socket, NULL);
+
+        if (G_IS_INET_SOCKET_ADDRESS (remote))
+        {
+            g_autofree gchar *host =
+                g_inet_address_to_string (g_inet_socket_address_get_address (G_INET_SOCKET_ADDRESS (remote)));
+
+            self->stats_peer = g_strdup_printf ("%s:%u", host,
+                                                g_inet_socket_address_get_port (G_INET_SOCKET_ADDRESS (remote)));
+        }
+    }
     if (server)
         SSL_set_accept_state (self->ssl);
     else
@@ -150,6 +167,7 @@ lrg_mmo_datagram_handshake (LrgMmoDatagram *self, GError **error)
     if (result != 1)
         return ssl_result (self, result, error);
     self->ready = TRUE;
+    _lrg_net_stats_hook_peer (self->stats_peer, TRUE);
     return TRUE;
 }
 
@@ -183,6 +201,7 @@ lrg_mmo_datagram_send (LrgMmoDatagram *self, guint64 sequence, GBytes *payload, 
     if (result <= 0)
         return ssl_result (self, result, error);
     g_clear_pointer (&self->pending, g_bytes_unref);
+    _lrg_net_stats_hook_frame (self->stats_peer, "dtls", size + 12, TRUE);
     return TRUE;
 }
 
@@ -217,6 +236,9 @@ lrg_mmo_datagram_receive (LrgMmoDatagram *self, guint64 *sequence, GError **erro
     if (number > self->highest)
     {
         distance = number - self->highest;
+        /* LrgNetStats: the sequence numbers skipped count as lost */
+        if (self->highest > 0 && distance > 1)
+            _lrg_net_stats_hook_lost (self->stats_peer, (gint) MIN (distance - 1, (guint64) G_MAXINT));
         self->seen = distance >= 64 ? 1 : (self->seen << distance) | 1;
         self->highest = number;
     }
@@ -226,7 +248,10 @@ lrg_mmo_datagram_receive (LrgMmoDatagram *self, guint64 *sequence, GError **erro
         if (distance >= 64 || (self->seen & (((guint64) 1) << distance)))
             goto invalid;
         self->seen |= ((guint64) 1) << distance;
+        /* A late arrival was counted as lost when the gap opened */
+        _lrg_net_stats_hook_lost (self->stats_peer, -1);
     }
+    _lrg_net_stats_hook_frame (self->stats_peer, "dtls", (gsize) count, FALSE);
     *sequence = number;
     return g_bytes_new (buffer + 12, count - 12);
 invalid:

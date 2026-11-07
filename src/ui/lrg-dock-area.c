@@ -82,6 +82,28 @@
 #define ICON_GAP (6.0f)
 #define INDICATOR_THICKNESS (3.0f)
 
+/* Tab strip overflow: tabs shrink no further than this (titles end in
+ * an ellipsis); past it the strip scrolls and gets three buttons
+ * (scroll back, scroll forward, tab list) of this width each */
+#define TAB_READABLE_W (96.0f)
+#define STRIP_BUTTON_W (22.0f)
+#define STRIP_BUTTON_ICON (12.0f)
+#define N_STRIP_BUTTONS (3)
+
+/* Units one wheel notch scrolls an overflowing strip */
+#define WHEEL_STEP (48.0f)
+
+/* While a tab is dragged near the end of an overflowing strip's
+ * visible region (or over its buttons) the strip scrolls this fast */
+#define AUTOSCROLL_ZONE (28.0f)
+#define AUTOSCROLL_SPEED (480.0f)
+
+/* U+2026 HORIZONTAL ELLIPSIS, ending titles cut short */
+#define ELLIPSIS "\xe2\x80\xa6"
+
+/* Prefix of the area's private action group (the tab list menu) */
+#define ACTION_PREFIX "lrg-dock"
+
 /* Length of the grip pill in the middle of a divider */
 #define GRIP_LENGTH (28.0f)
 
@@ -122,6 +144,26 @@ lrg_dock_position_get_type (void)
 	return (GType) type_id;
 }
 
+GType
+lrg_dock_strip_button_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_DOCK_STRIP_BUTTON_SCROLL_BACK, "LRG_DOCK_STRIP_BUTTON_SCROLL_BACK", "scroll-back" },
+			{ LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD, "LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD", "scroll-forward" },
+			{ LRG_DOCK_STRIP_BUTTON_LIST, "LRG_DOCK_STRIP_BUTTON_LIST", "list" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgDockStripButton"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
 /* ==========================================================================
  * Private types
  * ========================================================================== */
@@ -156,9 +198,14 @@ struct _DockNode
 	/* Stack */
 	GPtrArray      *panels;         /* LrgDockPanel*, not owned */
 	guint           active;
-	LrgSpring       ind_x;          /* indicator, relative to x */
+	LrgSpring       ind_x;          /* indicator, relative to x, unscrolled */
 	LrgSpring       ind_w;
 	gboolean        ind_ready;
+	LrgSpring       scroll;         /* strip scroll offset (logical units) */
+	LrgSpring       button_hover[N_STRIP_BUTTONS];
+	guint           reveal_active;  /* what the last reveal saw: active tab, */
+	guint           reveal_len;     /* tab count and width; a change */
+	gfloat          reveal_w;       /* scrolls the active tab into view */
 
 	gfloat          x;
 	gfloat          y;
@@ -230,6 +277,14 @@ struct _LrgDockArea
 	LrgDockPanel  *hot_panel;
 	gboolean       hot_close;
 	DockNode      *hot_split;
+	DockNode      *hot_button_stack; /* stack whose strip button is hovered */
+	gint           hot_button;       /* LrgDockStripButton, -1 for none */
+
+	/* Tab list menu (lrg_dock_area_popup_tab_list) */
+	LrgMenu            *tab_menu;      /* owned, created on first use */
+	GPtrArray          *menu_panels;   /* LrgDockPanel*, owned refs */
+	GSimpleActionGroup *actions;       /* ACTION_PREFIX group */
+	gboolean            swallow_list_press;
 
 	/* Divider drag */
 	DockNode      *drag_split;
@@ -624,6 +679,11 @@ stack_new (LrgDockPanel *panel)
 		g_ptr_array_add (n->panels, panel);
 	lrg_spring_init (&n->ind_x, 0.0f, LRG_MOTION_BOUNCY);
 	lrg_spring_init (&n->ind_w, 0.0f, LRG_MOTION_BOUNCY);
+	lrg_spring_init (&n->scroll, 0.0f, LRG_MOTION_SMOOTH);
+	lrg_spring_init (&n->button_hover[0], 0.0f, LRG_MOTION_SMOOTH);
+	lrg_spring_init (&n->button_hover[1], 0.0f, LRG_MOTION_SMOOTH);
+	lrg_spring_init (&n->button_hover[2], 0.0f, LRG_MOTION_SMOOTH);
+	n->reveal_active = G_MAXUINT;
 	return n;
 }
 
@@ -960,54 +1020,317 @@ tab_natural_width (LrgDockArea  *self,
 	return roundf (CLAMP (total, TAB_MIN_W, TAB_MAX_W));
 }
 
+static DockNode *stack_at (DockNode *n, gfloat px, gfloat py);
+
 /*
- * stack_tabs:
+ * StripInfo:
+ *
+ * How a stack's tab strip is laid out (stack_tabs_info()): the visible
+ * tab region (physical, relative to the area), the logical length of
+ * the tab row and how far it can scroll, and, when it overflows, the
+ * left edges of the three strip buttons (indexed by LrgDockStripButton).
+ */
+typedef struct
+{
+	gboolean overflow;
+	gfloat   view_x;
+	gfloat   view_w;
+	gfloat   content_w;
+	gfloat   max_scroll;
+	gfloat   scroll;
+	gfloat   button_x[N_STRIP_BUTTONS];
+} StripInfo;
+
+/*
+ * stack_tabs_info:
  * @xs: (out): left edges, relative to the area
  * @ws: (out): widths
+ * @info: (out) (optional): the strip geometry
  *
- * Lays the tabs of @s out along its strip: natural widths, shrunk in
- * proportion when they do not fit, from the left (from the right in
- * RTL).
+ * Lays the tabs of @s out along its strip, from the left (from the
+ * right in RTL), in three regimes:
+ *
+ * 1. Everything fits at natural width: natural widths.
+ * 2. It fits once tabs shrink to their readable minimum
+ *    (MIN (natural, TAB_READABLE_W)): every tab gives up the same
+ *    fraction of what it has above that minimum, so short titles keep
+ *    their width and long ones end in an ellipsis.
+ * 3. Otherwise the strip overflows: tabs keep the readable minimum,
+ *    the three strip buttons take the trailing end, and the tab row
+ *    scrolls inside the remaining region by the stack's scroll spring
+ *    (clamped, so a bouncy overshoot never shows a gap).
  *
  * Returns: the number of tabs
  */
+static guint
+stack_tabs_info (LrgDockArea *self,
+                 DockNode    *s,
+                 gfloat      *xs,
+                 gfloat      *ws,
+                 StripInfo   *info)
+{
+	StripInfo local;
+	guint     n = s->panels->len;
+	gboolean  rtl = is_rtl (self);
+	gfloat    gaps = TAB_GAP * (gfloat) (n > 0 ? n - 1 : 0);
+	gfloat    avail = MAX (0.0f, s->w - STRIP_PAD * 2.0f);
+	gfloat    total = 0.0f;
+	gfloat    total_min = 0.0f;
+	gfloat    cursor = 0.0f;
+	guint     i;
+
+	if (info == NULL)
+		info = &local;
+	memset (info, 0, sizeof (StripInfo));
+	info->view_x = s->x + STRIP_PAD;
+	info->view_w = avail;
+
+	/* Natural widths and their readable minimums */
+	for (i = 0; i < n; i++)
+	{
+		ws[i] = tab_natural_width (self, g_ptr_array_index (s->panels, i));
+		total += ws[i];
+		total_min += MIN (ws[i], TAB_READABLE_W);
+	}
+
+	if (total + gaps > avail && total > 0.0f)
+	{
+		if (total_min + gaps <= avail)
+		{
+			/* 2. Shrink towards the readable minimum, in proportion
+			 * to what each tab has above it */
+			gfloat extra = total - total_min;
+			gfloat f = extra > 0.0f ? (avail - gaps - total_min) / extra : 0.0f;
+
+			for (i = 0; i < n; i++)
+			{
+				gfloat mn = MIN (ws[i], TAB_READABLE_W);
+
+				ws[i] = floorf (mn + (ws[i] - mn) * f);
+			}
+		}
+		else
+		{
+			/* 3. Overflow: buttons at the trailing end, tabs scroll */
+			gfloat reserve = STRIP_BUTTON_W * (gfloat) N_STRIP_BUTTONS + STRIP_PAD;
+
+			info->overflow = TRUE;
+			info->view_w = MAX (0.0f, avail - reserve);
+			if (rtl)
+				info->view_x = s->x + STRIP_PAD + reserve;
+			for (i = 0; i < N_STRIP_BUTTONS; i++)
+			{
+				if (rtl)
+					info->button_x[i] = s->x + STRIP_PAD + STRIP_BUTTON_W * (gfloat) (N_STRIP_BUTTONS - 1 - i);
+				else
+					info->button_x[i] = s->x + s->w - STRIP_PAD - STRIP_BUTTON_W * (gfloat) (N_STRIP_BUTTONS - i);
+			}
+			for (i = 0; i < n; i++)
+				ws[i] = MIN (ws[i], TAB_READABLE_W);
+		}
+	}
+
+	/* Row length, scroll range and the offset drawn */
+	for (i = 0; i < n; i++)
+		info->content_w += ws[i];
+	info->content_w += gaps;
+	if (info->overflow)
+	{
+		info->max_scroll = MAX (0.0f, info->content_w - info->view_w);
+		info->scroll = CLAMP (s->scroll.value, 0.0f, info->max_scroll);
+	}
+
+	for (i = 0; i < n; i++)
+	{
+		if (rtl)
+			xs[i] = info->view_x + info->view_w - cursor - ws[i] + info->scroll;
+		else
+			xs[i] = info->view_x + cursor - info->scroll;
+		cursor += ws[i] + TAB_GAP;
+	}
+	return n;
+}
+
+/* stack_tabs: stack_tabs_info() without the strip geometry */
 static guint
 stack_tabs (LrgDockArea *self,
             DockNode    *s,
             gfloat      *xs,
             gfloat      *ws)
 {
-	guint    n = s->panels->len;
-	gboolean rtl = is_rtl (self);
-	gfloat   total = 0.0f;
-	gfloat   avail;
-	gfloat   cursor = 0.0f;
-	guint    i;
+	return stack_tabs_info (self, s, xs, ws, NULL);
+}
 
+/*
+ * tab_logical_left:
+ *
+ * Where tab @index starts along the row, from the row's start (the
+ * left in LTR, the right in RTL), ignoring the scroll offset.
+ */
+static gfloat
+tab_logical_left (const gfloat *ws,
+                  guint         index)
+{
+	gfloat x = 0.0f;
+	guint  i;
+
+	for (i = 0; i < index; i++)
+		x += ws[i] + TAB_GAP;
+	return x;
+}
+
+/* strip_info: the strip geometry of @s alone */
+static void
+strip_info (LrgDockArea *self,
+            DockNode    *s,
+            StripInfo   *info)
+{
+	g_autofree gfloat *xs = g_new (gfloat, MAX (1u, s->panels->len));
+	g_autofree gfloat *ws = g_new (gfloat, MAX (1u, s->panels->len));
+
+	stack_tabs_info (self, s, xs, ws, info);
+}
+
+/*
+ * stack_scroll_to:
+ * @snap: jump there instead of gliding
+ *
+ * Sets the strip's scroll target to @offset, clamped to its range (0
+ * when the strip does not overflow).
+ */
+static void
+stack_scroll_to (LrgDockArea *self,
+                 DockNode    *s,
+                 gfloat       offset,
+                 gboolean     snap)
+{
+	StripInfo info;
+
+	strip_info (self, s, &info);
+	offset = info.overflow ? CLAMP (offset, 0.0f, info.max_scroll) : 0.0f;
+	if (snap || lrg_widget_get_motion (LRG_WIDGET (self)) == LRG_MOTION_NONE)
+		lrg_spring_snap (&s->scroll, offset);
+	else
+	{
+		/* Start from the drawn (clamped) offset, not an overshoot */
+		if (s->scroll.value < 0.0f || s->scroll.value > info.max_scroll)
+			lrg_spring_snap (&s->scroll, CLAMP (s->scroll.value, 0.0f, info.max_scroll));
+		lrg_spring_set_target (&s->scroll, offset);
+	}
+}
+
+/*
+ * stack_reveal:
+ *
+ * Scrolls the strip the least distance that shows tab @index in full
+ * (the start of the tab wins when the region is narrower than it).
+ */
+static void
+stack_reveal (LrgDockArea *self,
+              DockNode    *s,
+              guint        index,
+              gboolean     snap)
+{
+	g_autofree gfloat *xs = NULL;
+	g_autofree gfloat *ws = NULL;
+	StripInfo          info;
+	gfloat             target;
+	gfloat             left;
+	gfloat             right;
+
+	if (index >= s->panels->len)
+		return;
+	xs = g_new (gfloat, s->panels->len);
+	ws = g_new (gfloat, s->panels->len);
+	stack_tabs_info (self, s, xs, ws, &info);
+	if (!info.overflow)
+	{
+		stack_scroll_to (self, s, 0.0f, TRUE);
+		return;
+	}
+
+	target = s->scroll.target;
+	left = tab_logical_left (ws, index);
+	right = left + ws[index];
+	if (right > target + info.view_w)
+		target = right - info.view_w;
+	if (left < target)
+		target = left;
+	stack_scroll_to (self, s, target, snap);
+}
+
+/*
+ * strip_button_at:
+ * @stack: (out): the stack whose strip has the button
+ *
+ * Returns: the LrgDockStripButton under the point, or -1
+ */
+static gint
+strip_button_at (LrgDockArea  *self,
+                 gfloat        px,
+                 gfloat        py,
+                 DockNode    **stack)
+{
+	DockNode  *s = stack_at (self->root, px, py);
+	StripInfo  info;
+	gint       i;
+
+	*stack = NULL;
+	if (s == NULL || py >= s->y + strip_height (self) || s->panels->len == 0)
+		return -1;
+	strip_info (self, s, &info);
+	if (!info.overflow)
+		return -1;
+	for (i = 0; i < N_STRIP_BUTTONS; i++)
+	{
+		if (px >= info.button_x[i] && px < info.button_x[i] + STRIP_BUTTON_W)
+		{
+			*stack = s;
+			return i;
+		}
+	}
+	return -1;
+}
+
+/*
+ * stack_step_scroll:
+ * @forward: towards the last tab
+ *
+ * What the scroll arrows do: line the next tab boundary up with the
+ * edge of the visible region (one tab per click).
+ */
+static void
+stack_step_scroll (LrgDockArea *self,
+                   DockNode    *s,
+                   gboolean     forward)
+{
+	g_autofree gfloat *xs = g_new (gfloat, MAX (1u, s->panels->len));
+	g_autofree gfloat *ws = g_new (gfloat, MAX (1u, s->panels->len));
+	StripInfo          info;
+	gfloat             current;
+	gfloat             target;
+	guint              n;
+	guint              i;
+
+	n = stack_tabs_info (self, s, xs, ws, &info);
+	if (!info.overflow)
+		return;
+	current = CLAMP (s->scroll.target, 0.0f, info.max_scroll);
+	target = forward ? info.max_scroll : 0.0f;
 	for (i = 0; i < n; i++)
 	{
-		ws[i] = tab_natural_width (self, g_ptr_array_index (s->panels, i));
-		total += ws[i];
-	}
+		gfloat left = tab_logical_left (ws, i);
+		gfloat right = left + ws[i];
 
-	avail = MAX (0.0f, s->w - STRIP_PAD * 2.0f - TAB_GAP * (gfloat) (n > 0 ? n - 1 : 0));
-	if (total > avail && total > 0.0f)
-	{
-		gfloat f = avail / total;
-
-		for (i = 0; i < n; i++)
-			ws[i] = MAX (8.0f, floorf (ws[i] * f));
+		if (forward && right > current + info.view_w + 0.5f)
+		{
+			target = right - info.view_w;
+			break;
+		}
+		if (!forward && left < current - 0.5f)
+			target = left;
 	}
-
-	for (i = 0; i < n; i++)
-	{
-		if (rtl)
-			xs[i] = s->x + s->w - STRIP_PAD - cursor - ws[i];
-		else
-			xs[i] = s->x + STRIP_PAD + cursor;
-		cursor += ws[i] + TAB_GAP;
-	}
-	return n;
+	stack_scroll_to (self, s, target, FALSE);
 }
 
 /* close_rect: the close button of a tab (relative to the area) */
@@ -1245,6 +1568,7 @@ tab_at (LrgDockArea *self,
 	gfloat            strip = strip_height (self);
 	g_autofree gfloat *xs = NULL;
 	g_autofree gfloat *ws = NULL;
+	StripInfo         info;
 	guint             n;
 	guint             i;
 
@@ -1254,7 +1578,12 @@ tab_at (LrgDockArea *self,
 
 	xs = g_new (gfloat, s->panels->len);
 	ws = g_new (gfloat, s->panels->len);
-	n = stack_tabs (self, s, xs, ws);
+	n = stack_tabs_info (self, s, xs, ws, &info);
+
+	/* Tabs scrolled out of an overflowing strip, and its buttons, are
+	 * not hit */
+	if (info.overflow && (px < info.view_x || px >= info.view_x + info.view_w))
+		return NULL;
 	for (i = 0; i < n; i++)
 	{
 		LrgDockPanel *p = g_ptr_array_index (s->panels, i);
@@ -1326,6 +1655,8 @@ static void
 tree_changed (LrgDockArea *self)
 {
 	self->hot_split = NULL;
+	self->hot_button_stack = NULL;
+	self->hot_button = -1;
 	self->drag_split = NULL;
 	self->click_split = NULL;
 	self->hover_stack = NULL;
@@ -2623,11 +2954,54 @@ lrg_dock_area_style_defaults (LrgWidget      *widget,
  * ========================================================================== */
 
 /*
+ * ellipsize:
+ *
+ * The longest prefix of @text that, followed by an ellipsis, measures
+ * at most @avail (a binary search over the character count), or the
+ * ellipsis alone.
+ *
+ * Returns: (transfer full): the shortened text
+ */
+static gchar *
+ellipsize (GrlFont     *font,
+           const gchar *text,
+           gfloat       size,
+           gfloat       avail)
+{
+	glong lo = 0;
+	glong hi = g_utf8_strlen (text, -1);
+
+	/* Invariant: a prefix of lo characters fits */
+	while (lo < hi)
+	{
+		glong             mid = (lo + hi + 1) / 2;
+		g_autofree gchar *prefix = g_utf8_substring (text, 0, mid);
+		g_autofree gchar *candidate = g_strconcat (g_strchomp (prefix), ELLIPSIS, NULL);
+		gfloat            tw = 0.0f;
+		gfloat            th = 0.0f;
+
+		lrg_paint_measure_text (font, candidate, size, 1.0f, &tw, &th);
+		if (tw <= avail)
+			lo = mid;
+		else
+			hi = mid - 1;
+	}
+	if (lo == 0)
+		return g_strdup (ELLIPSIS);
+	{
+		g_autofree gchar *prefix = g_utf8_substring (text, 0, lo);
+
+		return g_strconcat (g_strchomp (prefix), ELLIPSIS, NULL);
+	}
+}
+
+/*
  * paint_title:
  * @reserve: units kept free at the trailing end (close button)
  *
  * Icon and title of @panel, vertically centred in the box, clipped.
- * In RTL the content is right-aligned and the reserve is on the left.
+ * A title too long for the box ends in an ellipsis. In RTL the content
+ * is right-aligned and the reserve is on the left.
  */
 static void
 paint_title (LrgWidget      *widget,
@@ -2649,9 +3023,23 @@ paint_title (LrgWidget      *widget,
 	gfloat    th = 0.0f;
 	gfloat    content;
 	gfloat    cx;
+	gfloat    room;
+	g_autofree gchar *shortened = NULL;
+	const gchar *title = panel->title;
 
-	if (panel->title != NULL)
-		lrg_paint_measure_text (lrg_theme_get_ui_font (theme), panel->title, size, 1.0f, &tw, &th);
+	if (title != NULL)
+		lrg_paint_measure_text (lrg_theme_get_ui_font (theme), title, size, 1.0f, &tw, &th);
+
+	/* Too long for the box: end it in an ellipsis */
+	room = w - reserve - pad * (reserve > 0.0f ? 1.5f : 2.0f) - (icon != LRG_ICON_NONE ? ICON_SIZE + ICON_GAP : 0.0f);
+	if (title != NULL && title[0] != '\0' && tw > room + 0.5f)
+	{
+		gfloat sh = 0.0f;
+
+		shortened = ellipsize (lrg_theme_get_ui_font (theme), title, size, MAX (0.0f, room));
+		title = shortened;
+		lrg_paint_measure_text (lrg_theme_get_ui_font (theme), title, size, 1.0f, &tw, &sh);
+	}
 	content = tw + (icon != LRG_ICON_NONE ? ICON_SIZE + ICON_GAP : 0.0f);
 	cx = rtl ? x + w - pad - content : x + pad;
 
@@ -2661,8 +3049,8 @@ paint_title (LrgWidget      *widget,
 		lrg_paint_list_icon (list, icon, roundf (cx), roundf (y + (h - ICON_SIZE) * 0.5f), ICON_SIZE, 0.0f, fg);
 		cx += ICON_SIZE + ICON_GAP;
 	}
-	if (panel->title != NULL && panel->title[0] != '\0')
-		lrg_paint_list_text (list, lrg_theme_get_ui_font (theme), panel->title, roundf (cx),
+	if (title != NULL && title[0] != '\0')
+		lrg_paint_list_text (list, lrg_theme_get_ui_font (theme), title, roundf (cx),
 		                     roundf (y + (h - th) * 0.5f), size, 1.0f, fg);
 	lrg_paint_list_pop_clip (list);
 }
@@ -2699,6 +3087,80 @@ tab_look (LrgDockArea  *self,
 	}
 }
 
+/*
+ * paint_strip_buttons:
+ *
+ * The three buttons of an overflowing strip: a hairline separating
+ * them from the tab region, then for each an ITEM box faded in by its
+ * hover spring and a chevron glyph. An arrow that cannot scroll any
+ * further is dimmed.
+ */
+static void
+paint_strip_buttons (LrgDockArea     *self,
+                     DockNode        *s,
+                     const StripInfo *info,
+                     LrgPaintList    *list)
+{
+	LrgWidget   *widget = LRG_WIDGET (self);
+	LrgTheme    *theme = theme_of (self);
+	gfloat       ox = lrg_widget_get_world_x (widget);
+	gfloat       oy = lrg_widget_get_world_y (widget);
+	gfloat       strip = strip_height (self);
+	gfloat       bh = strip - TAB_INSET * 2.0f;
+	gboolean     rtl = is_rtl (self);
+	LrgPartLook  tab;
+	LrgPartLook  item;
+	gfloat       sep_x;
+	guint        i;
+
+	/* Glyphs take the plain (muted) tab foreground */
+	lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_TAB,
+	                                   lrg_widget_get_state_flags (widget) &
+	                                   ~(LRG_WIDGET_STATE_HOVERED | LRG_WIDGET_STATE_PRESSED |
+	                                     LRG_WIDGET_STATE_SELECTED),
+	                                   &tab);
+	lrg_widget_resolve_look (widget, LRG_UI_PART_ITEM, &item);
+
+	/* Hairline between the tab region and the buttons */
+	sep_x = rtl ? info->view_x - STRIP_PAD * 0.5f : info->view_x + info->view_w + STRIP_PAD * 0.5f;
+	lrg_paint_list_rect (list, roundf (ox + sep_x), oy + s->y + TAB_INSET + 3.0f, 1.0f, MAX (0.0f, bh - 6.0f), 0.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+
+	for (i = 0; i < N_STRIP_BUTTONS; i++)
+	{
+		gfloat   bx = ox + info->button_x[i];
+		gfloat   by = oy + s->y + TAB_INSET;
+		gfloat   hv = CLAMP (s->button_hover[i].value, 0.0f, 1.0f);
+		gboolean usable = TRUE;
+		LrgIcon  icon;
+		GrlColor fg;
+
+		if (i == LRG_DOCK_STRIP_BUTTON_SCROLL_BACK)
+		{
+			icon = rtl ? LRG_ICON_CHEVRON_RIGHT : LRG_ICON_CHEVRON_LEFT;
+			usable = info->scroll > 0.5f;
+		}
+		else if (i == LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD)
+		{
+			icon = rtl ? LRG_ICON_CHEVRON_LEFT : LRG_ICON_CHEVRON_RIGHT;
+			usable = info->scroll < info->max_scroll - 0.5f;
+		}
+		else
+			icon = LRG_ICON_CHEVRON_DOWN;
+
+		if (hv > 0.01f && usable)
+		{
+			lrg_paint_list_push_opacity (list, hv);
+			lrg_widget_paint_box (widget, list, &item, bx, by, STRIP_BUTTON_W, bh);
+			lrg_paint_list_pop_opacity (list);
+		}
+		lrg_paint_color_with_alpha (&tab.foreground,
+		                            ((gfloat) tab.foreground.a / 255.0f) * (usable ? 0.75f + 0.25f * hv : 0.3f), &fg);
+		lrg_paint_list_icon (list, icon, roundf (bx + (STRIP_BUTTON_W - STRIP_BUTTON_ICON) * 0.5f),
+		                     roundf (by + (bh - STRIP_BUTTON_ICON) * 0.5f), STRIP_BUTTON_ICON, 1.5f, &fg);
+	}
+}
+
 /* paint_stack: surface, tab strip, tabs, indicator, active panel */
 static void
 paint_stack (LrgDockArea  *self,
@@ -2718,6 +3180,7 @@ paint_stack (LrgDockArea  *self,
 	LrgPartLook        look;
 	LrgPartLook        header;
 	LrgDockPanel      *active = stack_active_panel (s);
+	StripInfo          info;
 	guint              n;
 	guint              i;
 
@@ -2736,9 +3199,12 @@ paint_stack (LrgDockArea  *self,
 	lrg_paint_list_rect (list, x + bw, y + strip - 1.0f, MAX (0.0f, s->w - bw * 2.0f), 1.0f, 0.0f,
 	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
 
-	/* 2. Tabs */
-	n = stack_tabs (self, s, xs, ws);
-	lrg_paint_list_push_clip (list, x + bw, y, MAX (0.0f, s->w - bw * 2.0f), strip);
+	/* 2. Tabs, clipped to the visible tab region when they overflow */
+	n = stack_tabs_info (self, s, xs, ws, &info);
+	if (info.overflow)
+		lrg_paint_list_push_clip (list, ox + info.view_x, y, info.view_w, strip);
+	else
+		lrg_paint_list_push_clip (list, x + bw, y, MAX (0.0f, s->w - bw * 2.0f), strip);
 	for (i = 0; i < n; i++)
 	{
 		LrgDockPanel *p = g_ptr_array_index (s->panels, i);
@@ -2802,10 +3268,15 @@ paint_stack (LrgDockArea  *self,
 		lrg_widget_resolve_look (widget, LRG_UI_PART_INDICATOR, &look);
 		thick = look.size > 0.0f ? look.size : INDICATOR_THICKNESS;
 		if (s->ind_w.value > 1.0f)
-			lrg_widget_paint_box (widget, list, &look, x + s->ind_x.value, y + strip - thick - 1.0f,
-			                      s->ind_w.value, thick);
+			lrg_widget_paint_box (widget, list, &look,
+			                      x + s->ind_x.value + (is_rtl (self) ? info.scroll : -info.scroll),
+			                      y + strip - thick - 1.0f, s->ind_w.value, thick);
 	}
 	lrg_paint_list_pop_clip (list);
+
+	/* 3b. Overflow: scroll arrows and the tab list button */
+	if (info.overflow)
+		paint_strip_buttons (self, s, &info, list);
 
 	/* 4. The active panel, clipped to the content area */
 	if (active != NULL)
@@ -3117,13 +3588,18 @@ step_node (LrgDockArea *self,
 		g_autofree gfloat *xs = g_new (gfloat, n->panels->len);
 		g_autofree gfloat *ws = g_new (gfloat, n->panels->len);
 		guint              a = MIN (n->active, n->panels->len - 1);
+		StripInfo          info;
 		gfloat             inset;
 		gfloat             tx;
 		gfloat             tw;
 
-		stack_tabs (self, n, xs, ws);
+		/* The strip scrolls on its own spring first; the indicator is
+		 * kept unscrolled, so it rides along with the tabs rigidly */
+		busy |= spring_go (&n->scroll, n->scroll.target,
+		                   motion == LRG_MOTION_NONE ? motion : LRG_MOTION_SMOOTH, dt);
+		stack_tabs_info (self, n, xs, ws, &info);
 		inset = MIN (ws[a] * 0.15f, 10.0f);
-		tx = xs[a] - n->x + inset;
+		tx = xs[a] - n->x + (is_rtl (self) ? -info.scroll : info.scroll) + inset;
 		tw = MAX (0.0f, ws[a] - inset * 2.0f);
 		if (!n->ind_ready || motion == LRG_MOTION_NONE)
 		{
@@ -3138,6 +3614,12 @@ step_node (LrgDockArea *self,
 		}
 	}
 
+	/* Overflow buttons: hover highlight */
+	for (i = 0; i < N_STRIP_BUTTONS; i++)
+		busy |= spring_go (&n->button_hover[i],
+		                   (!self->dragging && self->hot_button_stack == n && self->hot_button == (gint) i) ? 1.0f : 0.0f,
+		                   motion, dt);
+
 	for (i = 0; i < n->panels->len; i++)
 	{
 		LrgDockPanel *p = g_ptr_array_index (n->panels, i);
@@ -3148,6 +3630,51 @@ step_node (LrgDockArea *self,
 		                   motion == LRG_MOTION_NONE ? motion : LRG_MOTION_SNAPPY, dt);
 	}
 	return busy;
+}
+
+/*
+ * drag_autoscroll:
+ *
+ * While a tab is dragged with the pointer near either end of an
+ * overflowing strip's visible region (or over its buttons), the strip
+ * scrolls that way, so a tab can be dropped between tabs that were
+ * out of view; the drop target is recomputed as the row moves.
+ *
+ * Returns: %TRUE while it scrolls
+ */
+static gboolean
+drag_autoscroll (LrgDockArea *self,
+                 gfloat       dt)
+{
+	gfloat    px = self->pointer_x - lrg_widget_get_world_x (LRG_WIDGET (self));
+	gfloat    py = self->pointer_y - lrg_widget_get_world_y (LRG_WIDGET (self));
+	DockNode *s = stack_at (self->root, px, py);
+	StripInfo info;
+	gfloat    dir = 0.0f;
+	gfloat    target;
+
+	if (s == NULL || py >= s->y + strip_height (self) || s->panels->len == 0 || dt <= 0.0f)
+		return FALSE;
+	strip_info (self, s, &info);
+	if (!info.overflow)
+		return FALSE;
+
+	/* Near the physical left / right end of the region */
+	if (px < info.view_x + AUTOSCROLL_ZONE)
+		dir = -1.0f;
+	else if (px > info.view_x + info.view_w - AUTOSCROLL_ZONE)
+		dir = 1.0f;
+	if (is_rtl (self))
+		dir = -dir;
+	if (dir == 0.0f)
+		return FALSE;
+
+	target = CLAMP (s->scroll.target + dir * AUTOSCROLL_SPEED * dt, 0.0f, info.max_scroll);
+	if (target == s->scroll.target)
+		return FALSE;
+	lrg_spring_snap (&s->scroll, target);
+	compute_drop (self, self->pointer_x, self->pointer_y);
+	return TRUE;
 }
 
 /*
@@ -3205,6 +3732,8 @@ lrg_dock_area_step (LrgWidget *widget,
 	busy |= spring_go (&self->lift, self->dragging ? 1.0f : 0.0f,
 	                   self->dragging ? lively : (motion == LRG_MOTION_NONE ? motion : LRG_MOTION_SNAPPY),
 	                   delta_time);
+	if (self->dragging && self->drag_frame == NULL)
+		busy |= drag_autoscroll (self, delta_time);
 	if (self->dragging)
 	{
 		busy |= spring_go (&self->ghost_x, self->pointer_x, lively, delta_time);
@@ -3253,6 +3782,49 @@ adopt_strays (LrgDockArea *self)
 	}
 }
 
+/*
+ * reveal_pass:
+ *
+ * Keeps every strip's active tab in view: whenever a stack's active
+ * tab, tab count or width changed since the last layout, its strip
+ * scrolls the active tab into view (snapping on a stack's first
+ * layout, gliding afterwards). Otherwise the scroll target is only
+ * clamped to the current range, so wheel scrolling is left alone.
+ */
+static void
+reveal_pass (LrgDockArea *self,
+             DockNode    *n)
+{
+	if (n == NULL)
+		return;
+	if (n->is_split)
+	{
+		reveal_pass (self, n->a);
+		reveal_pass (self, n->b);
+		return;
+	}
+	if (n->panels->len == 0 || n->w <= 0.0f)
+		return;
+
+	if (n->active != n->reveal_active || n->panels->len != n->reveal_len || n->w != n->reveal_w)
+	{
+		gboolean first = n->reveal_w <= 0.0f;
+
+		n->reveal_active = n->active;
+		n->reveal_len = n->panels->len;
+		n->reveal_w = n->w;
+		stack_reveal (self, n, MIN (n->active, n->panels->len - 1), first);
+	}
+	else
+	{
+		StripInfo info;
+
+		strip_info (self, n, &info);
+		if (n->scroll.target > info.max_scroll || n->scroll.target < 0.0f)
+			stack_scroll_to (self, n, n->scroll.target, FALSE);
+	}
+}
+
 static void
 lrg_dock_area_layout_children (LrgContainer *container)
 {
@@ -3268,6 +3840,7 @@ lrg_dock_area_layout_children (LrgContainer *container)
 	{
 		layout_node (self, self->root, 0.0f, 0.0f, lrg_widget_get_width (w), lrg_widget_get_height (w));
 		place_panels (self, self->root);
+		reveal_pass (self, self->root);
 	}
 
 	self->in_layout = FALSE;
@@ -3303,6 +3876,19 @@ update_hot (LrgDockArea *self,
 	self->hot_panel = self->hot_split == NULL ? tab_at (self, px, py, &self->hot_close) : NULL;
 	if (self->hot_panel == NULL)
 		self->hot_close = FALSE;
+	self->hot_button = self->hot_split == NULL ? strip_button_at (self, px, py, &self->hot_button_stack) : -1;
+	if (self->hot_button < 0)
+		self->hot_button_stack = NULL;
+}
+
+/* clear_hot: nothing of the area is hovered */
+static void
+clear_hot (LrgDockArea *self)
+{
+	self->hot_panel = NULL;
+	self->hot_split = NULL;
+	self->hot_button = -1;
+	self->hot_button_stack = NULL;
 }
 
 /* drag_split_to: live resize while a divider is dragged */
@@ -3411,6 +3997,28 @@ lrg_dock_area_handle_event (LrgWidget        *widget,
 			return TRUE;
 		}
 
+		/* Overflow buttons: scroll one tab, or the tab list */
+		{
+			DockNode *bs = NULL;
+			gint      b = strip_button_at (self, px, py, &bs);
+
+			if (b == LRG_DOCK_STRIP_BUTTON_LIST)
+			{
+				/* The press that just closed the list (the canvas
+				 * closes popups first) must not reopen it */
+				if (self->swallow_list_press)
+					self->swallow_list_press = FALSE;
+				else
+					lrg_dock_area_popup_tab_list (self, stack_active_panel (bs));
+				return TRUE;
+			}
+			if (b >= 0)
+			{
+				stack_step_scroll (self, bs, b == LRG_DOCK_STRIP_BUTTON_SCROLL_FORWARD);
+				return TRUE;
+			}
+		}
+
 		/* Tab: close button or activation (and a possible drag) */
 		p = tab_at (self, px, py, &on_close);
 		if (p == NULL)
@@ -3440,22 +4048,41 @@ lrg_dock_area_handle_event (LrgWidget        *widget,
 			drag_update (self, wx, wy);
 			return TRUE;
 		}
+		self->swallow_list_press = FALSE;
 		if (own)
 			update_hot (self, wx, wy);
 		else
-		{
-			self->hot_panel = NULL;
-			self->hot_split = NULL;
-		}
+			clear_hot (self);
 		return FALSE;
 
 	case LRG_UI_EVENT_POINTER_LEAVE:
 		if (own)
-		{
-			self->hot_panel = NULL;
-			self->hot_split = NULL;
-		}
+			clear_hot (self);
 		return FALSE;
+
+	case LRG_UI_EVENT_SCROLL:
+		/* The wheel over an overflowing strip scrolls its tabs */
+		if (!own)
+			return FALSE;
+		{
+			DockNode  *s = stack_at (self->root, px, py);
+			StripInfo  info;
+			gfloat     sx = lrg_ui_event_get_scroll_x (event);
+			gfloat     sy = lrg_ui_event_get_scroll_y (event);
+			gfloat     delta;
+
+			if (s == NULL || py >= s->y + strip_height (self) || s->panels->len == 0)
+				return FALSE;
+			strip_info (self, s, &info);
+			if (!info.overflow)
+				return FALSE;
+
+			/* Wheel down / right goes towards the last tab */
+			delta = (-sy + (is_rtl (self) ? -sx : sx)) * WHEEL_STEP;
+			if (delta != 0.0f)
+				stack_scroll_to (self, s, s->scroll.target + delta, FALSE);
+			return TRUE;
+		}
 
 	case LRG_UI_EVENT_MOUSE_BUTTON_UP:
 		if (lrg_ui_event_get_button (event) == GRL_MOUSE_BUTTON_MIDDLE)
@@ -3533,6 +4160,55 @@ lrg_dock_area_handle_event (LrgWidget        *widget,
  * GObject
  * ========================================================================== */
 
+/*
+ * on_present_activate:
+ *
+ * A row of the tab list was picked: present the panel it listed (if
+ * it is still docked here) and scroll its tab into view.
+ */
+static void
+on_present_activate (GSimpleAction *action,
+                     GVariant      *parameter,
+                     gpointer       user_data)
+{
+	LrgDockArea  *self = LRG_DOCK_AREA (user_data);
+	guint         index = g_variant_get_uint32 (parameter);
+	LrgDockPanel *panel;
+	DockNode     *s;
+	guint         i;
+
+	if (index >= self->menu_panels->len)
+		return;
+	panel = g_ptr_array_index (self->menu_panels, index);
+	if (panel->area != self)
+		return;
+	lrg_dock_area_present_panel (self, panel);
+	s = find_stack (self->root, panel, &i);
+	if (s != NULL)
+		stack_reveal (self, s, i, FALSE);
+}
+
+/*
+ * on_area_state_changed:
+ *
+ * The canvas closes popups on a press outside them before delivering
+ * that press. When the tab list closes (OPEN cleared on its owner, the
+ * area) while the pointer is on a list button, that press must not
+ * reopen it: remember to swallow it.
+ */
+static void
+on_area_state_changed (LrgWidget      *widget,
+                       LrgWidgetState  previous,
+                       gpointer        user_data)
+{
+	LrgDockArea    *self = LRG_DOCK_AREA (widget);
+	LrgWidgetState  now = lrg_widget_get_state_flags (widget);
+
+	if ((previous & LRG_WIDGET_STATE_OPEN) && !(now & LRG_WIDGET_STATE_OPEN) &&
+	    self->hot_button == LRG_DOCK_STRIP_BUTTON_LIST)
+		self->swallow_list_press = TRUE;
+}
+
 static void
 lrg_dock_area_dispose (GObject *object)
 {
@@ -3561,6 +4237,15 @@ lrg_dock_area_dispose (GObject *object)
 	tree_free (self->root);
 	self->root = NULL;
 	self->active_panel = NULL;
+	self->hot_button_stack = NULL;
+
+	/* Tab list menu and its action group */
+	if (self->tab_menu != NULL && lrg_menu_get_open (self->tab_menu))
+		lrg_menu_close (self->tab_menu);
+	g_clear_object (&self->tab_menu);
+	if (self->menu_panels != NULL)
+		g_ptr_array_set_size (self->menu_panels, 0);
+	g_clear_object (&self->actions);
 
 	G_OBJECT_CLASS (lrg_dock_area_parent_class)->dispose (object);
 }
@@ -3571,6 +4256,7 @@ lrg_dock_area_finalize (GObject *object)
 	LrgDockArea *self = LRG_DOCK_AREA (object);
 
 	g_clear_pointer (&self->frames, g_ptr_array_unref);
+	g_clear_pointer (&self->menu_panels, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_dock_area_parent_class)->finalize (object);
 }
@@ -3781,7 +4467,20 @@ lrg_dock_area_init (LrgDockArea *self)
 	self->divider_size = 6.0f;
 	self->min_panel_size = 48.0f;
 	self->allow_floating = TRUE;
+	self->hot_button = -1;
 	lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
+
+	/* The tab list menu runs "lrg-dock.present" with a row index */
+	{
+		g_autoptr(GSimpleAction) present = g_simple_action_new ("present", G_VARIANT_TYPE_UINT32);
+
+		self->menu_panels = g_ptr_array_new_with_free_func (g_object_unref);
+		self->actions = g_simple_action_group_new ();
+		g_signal_connect_object (present, "activate", G_CALLBACK (on_present_activate), self, 0);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (present));
+		lrg_widget_insert_action_group (LRG_WIDGET (self), ACTION_PREFIX, G_ACTION_GROUP (self->actions));
+		g_signal_connect (self, "state-changed", G_CALLBACK (on_area_state_changed), NULL);
+	}
 
 	lrg_spring_init (&self->preview_cx, 0.0f, LRG_MOTION_BOUNCY);
 	lrg_spring_init (&self->preview_cy, 0.0f, LRG_MOTION_BOUNCY);
@@ -4143,6 +4842,220 @@ lrg_dock_area_get_tab_rect (LrgDockArea  *self,
 	if (height != NULL)
 		*height = strip_height (self) - TAB_INSET * 2.0f;
 	return TRUE;
+}
+
+/* ==========================================================================
+ * Public API: tab strip overflow
+ * ========================================================================== */
+
+/* panel_stack: the stack holding @panel, laid out (NULL if floating) */
+static DockNode *
+panel_stack (LrgDockArea  *self,
+             LrgDockPanel *panel,
+             guint        *index)
+{
+	return find_stack (self->root, panel, index);
+}
+
+gboolean
+lrg_dock_area_get_tabs_overflow (LrgDockArea  *self,
+                                 LrgDockPanel *panel)
+{
+	DockNode  *s;
+	StripInfo  info;
+
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), FALSE);
+	g_return_val_if_fail (LRG_IS_DOCK_PANEL (panel), FALSE);
+
+	s = panel_stack (self, panel, NULL);
+	if (s == NULL)
+		return FALSE;
+	strip_info (self, s, &info);
+	return info.overflow;
+}
+
+gfloat
+lrg_dock_area_get_tab_scroll (LrgDockArea  *self,
+                              LrgDockPanel *panel)
+{
+	DockNode  *s;
+	StripInfo  info;
+
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), 0.0f);
+	g_return_val_if_fail (LRG_IS_DOCK_PANEL (panel), 0.0f);
+
+	s = panel_stack (self, panel, NULL);
+	if (s == NULL)
+		return 0.0f;
+	strip_info (self, s, &info);
+	return info.scroll;
+}
+
+gfloat
+lrg_dock_area_get_tab_scroll_max (LrgDockArea  *self,
+                                  LrgDockPanel *panel)
+{
+	DockNode  *s;
+	StripInfo  info;
+
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), 0.0f);
+	g_return_val_if_fail (LRG_IS_DOCK_PANEL (panel), 0.0f);
+
+	s = panel_stack (self, panel, NULL);
+	if (s == NULL)
+		return 0.0f;
+	strip_info (self, s, &info);
+	return info.max_scroll;
+}
+
+void
+lrg_dock_area_set_tab_scroll (LrgDockArea  *self,
+                              LrgDockPanel *panel,
+                              gfloat        offset)
+{
+	DockNode *s;
+
+	g_return_if_fail (LRG_IS_DOCK_AREA (self));
+	g_return_if_fail (LRG_IS_DOCK_PANEL (panel));
+
+	s = panel_stack (self, panel, NULL);
+	if (s != NULL)
+		stack_scroll_to (self, s, offset, TRUE);
+}
+
+void
+lrg_dock_area_scroll_tabs (LrgDockArea  *self,
+                           LrgDockPanel *panel,
+                           gfloat        delta)
+{
+	DockNode *s;
+
+	g_return_if_fail (LRG_IS_DOCK_AREA (self));
+	g_return_if_fail (LRG_IS_DOCK_PANEL (panel));
+
+	s = panel_stack (self, panel, NULL);
+	if (s != NULL)
+		stack_scroll_to (self, s, s->scroll.target + delta, FALSE);
+}
+
+gboolean
+lrg_dock_area_get_tab_visible (LrgDockArea  *self,
+                               LrgDockPanel *panel)
+{
+	g_autofree gfloat *xs = NULL;
+	g_autofree gfloat *ws = NULL;
+	DockNode          *s;
+	StripInfo          info;
+	guint              i;
+
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), FALSE);
+	g_return_val_if_fail (LRG_IS_DOCK_PANEL (panel), FALSE);
+
+	s = panel_stack (self, panel, &i);
+	if (s == NULL)
+		return FALSE;
+	xs = g_new (gfloat, s->panels->len);
+	ws = g_new (gfloat, s->panels->len);
+	stack_tabs_info (self, s, xs, ws, &info);
+	if (!info.overflow)
+		return TRUE;
+	return xs[i] >= info.view_x - 0.5f && xs[i] + ws[i] <= info.view_x + info.view_w + 0.5f;
+}
+
+gboolean
+lrg_dock_area_get_strip_button_rect (LrgDockArea        *self,
+                                     LrgDockPanel       *panel,
+                                     LrgDockStripButton  button,
+                                     gfloat             *x,
+                                     gfloat             *y,
+                                     gfloat             *width,
+                                     gfloat             *height)
+{
+	DockNode  *s;
+	StripInfo  info;
+
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), FALSE);
+	g_return_val_if_fail (LRG_IS_DOCK_PANEL (panel), FALSE);
+	g_return_val_if_fail ((guint) button < N_STRIP_BUTTONS, FALSE);
+
+	s = panel_stack (self, panel, NULL);
+	if (s == NULL)
+		return FALSE;
+	strip_info (self, s, &info);
+	if (!info.overflow)
+		return FALSE;
+	if (x != NULL)
+		*x = lrg_widget_get_world_x (LRG_WIDGET (self)) + info.button_x[button];
+	if (y != NULL)
+		*y = lrg_widget_get_world_y (LRG_WIDGET (self)) + s->y + TAB_INSET;
+	if (width != NULL)
+		*width = STRIP_BUTTON_W;
+	if (height != NULL)
+		*height = strip_height (self) - TAB_INSET * 2.0f;
+	return TRUE;
+}
+
+gboolean
+lrg_dock_area_popup_tab_list (LrgDockArea  *self,
+                              LrgDockPanel *panel)
+{
+	g_autoptr(GMenu) model = NULL;
+	DockNode        *s;
+	StripInfo        info;
+	gfloat           ax;
+	gfloat           ay;
+	gfloat           aw;
+	gfloat           ah;
+	guint            i;
+
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), FALSE);
+	g_return_val_if_fail (LRG_IS_DOCK_PANEL (panel), FALSE);
+
+	s = panel_stack (self, panel, NULL);
+	if (s == NULL || canvas_of (self) == NULL)
+		return FALSE;
+
+	/* One row per tab: icon and full title, running present(i) */
+	model = g_menu_new ();
+	g_ptr_array_set_size (self->menu_panels, 0);
+	for (i = 0; i < s->panels->len; i++)
+	{
+		LrgDockPanel        *p = g_ptr_array_index (s->panels, i);
+		g_autoptr(GMenuItem) item = g_menu_item_new (p->title != NULL && p->title[0] != '\0' ? p->title
+		                                             : (p->id != NULL ? p->id : "?"), NULL);
+
+		g_menu_item_set_action_and_target_value (item, ACTION_PREFIX ".present", g_variant_new_uint32 (i));
+		if (panel_icon (p) != LRG_ICON_NONE)
+			g_menu_item_set_attribute (item, G_MENU_ATTRIBUTE_ICON, "s", p->icon);
+		g_menu_append_item (model, item);
+		g_ptr_array_add (self->menu_panels, g_object_ref (p));
+	}
+
+	if (self->tab_menu == NULL)
+		self->tab_menu = lrg_menu_new ();
+	lrg_menu_set_model (self->tab_menu, G_MENU_MODEL (model));
+
+	/* Under the list button, else under the strip's trailing end */
+	strip_info (self, s, &info);
+	aw = STRIP_BUTTON_W;
+	ah = strip_height (self) - TAB_INSET * 2.0f;
+	if (info.overflow)
+		ax = info.button_x[LRG_DOCK_STRIP_BUTTON_LIST];
+	else
+		ax = is_rtl (self) ? s->x + STRIP_PAD : s->x + s->w - STRIP_PAD - aw;
+	ay = s->y + TAB_INSET;
+	lrg_menu_popup_at_rect (self->tab_menu, LRG_WIDGET (self), lrg_widget_get_world_x (LRG_WIDGET (self)) + ax,
+	                        lrg_widget_get_world_y (LRG_WIDGET (self)) + ay, aw, ah, LRG_POPUP_PLACEMENT_BELOW);
+	lrg_menu_set_highlighted (self->tab_menu, (gint) MIN (s->active, s->panels->len - 1));
+	return lrg_menu_get_open (self->tab_menu);
+}
+
+LrgMenu *
+lrg_dock_area_get_tab_list_menu (LrgDockArea *self)
+{
+	g_return_val_if_fail (LRG_IS_DOCK_AREA (self), NULL);
+
+	return self->tab_menu;
 }
 
 gfloat

@@ -92,4 +92,45 @@ void lrg_script_component_set_script (LrgScriptComponent *self,
 LRG_AVAILABLE_IN_ALL
 LrgScripting * lrg_script_component_get_context (LrgScriptComponent *self);
 
+/**
+ * lrg_script_component_get_run_in_editor:
+ * @self: an #LrgScriptComponent
+ *
+ * Returns: whether the script also runs while authoring (see
+ *   #LrgScriptComponent:run-in-editor)
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_script_component_get_run_in_editor (LrgScriptComponent *self);
+
+/**
+ * lrg_script_component_set_run_in_editor:
+ * @self: an #LrgScriptComponent
+ * @run_in_editor: whether the script also runs while authoring
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_script_component_set_run_in_editor (LrgScriptComponent *self,
+                                             gboolean            run_in_editor);
+
+/**
+ * lrg_script_component_should_update:
+ * @self: an #LrgScriptComponent
+ * @authoring: %TRUE when the host steps the world while the level is
+ *   being edited rather than played
+ *
+ * Tells a host that steps a world in an editor whether to update this
+ * component: always while playing, only run-in-editor components while
+ * authoring.
+ *
+ * Returns: %TRUE to update the component this frame
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_script_component_should_update (LrgScriptComponent *self,
+                                             gboolean            authoring);
+
 G_END_DECLS

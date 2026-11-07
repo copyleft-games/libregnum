@@ -198,6 +198,18 @@ static const gchar *description =
 	"                                   tileset (tileset editor)\n"
 	"  sprite create|open|get|slice|frame|clip|clip-frame|event|play|save ... [key=value...]\n"
 	"                                   sprite sheet (sprite editor)\n"
+	"  debug state|show|breakpoints|set-breakpoint|remove-breakpoint|toggle-breakpoint|clear-breakpoints|\n"
+	"        continue|pause|step-over|step-in|step-out|stop|stack|scopes|variables|evaluate|watches|\n"
+	"        add-watch|remove-watch|dap-start|dap-stop ... [key=value...]\n"
+	"                                   script debugger (Debug panel)\n"
+	"  lsp servers|status|diagnostics|complete|hover|definition|references|rename|format|restart ... [key=value...]\n"
+	"                                   language server (code panel)\n"
+	"  profiler sample|set|capture|save|load|frames|frame|compare|view ... [key=value...]\n"
+	"                                   profiler capture (profiler panel)\n"
+	"  frame capture|status|calls|call|scrub|texture|save|load|show ... [key=value...]\n"
+	"                                   frame debugger (Frame Debugger panel)\n"
+	"  script run|languages|tools|run-tool|reload|run-in-editor|editor-running ... [key=value...]\n"
+	"                                   tool script (console panel)\n"
 	/* m67e-usage: end */
 	"  asset new KIND [path=P] [name=N] [image=I]  a new asset file (bt fsm particles weather mixer tileset\n"
 	"                                   sprite water nav-settings terrain ...)\n"
@@ -1579,8 +1591,8 @@ simple_method (const gchar  *method,
  * Without an action, prints the grid (layer name and rows of tile ids).
  */
 /* the M6/M7 tiles.* verbs (defined with the other M6/M7 families) */
-static gboolean m67_is_tiles_verb (const gchar *verb);
-static gboolean m67_run_tiles (gchar **args, GError **error);
+static gboolean m67_has_verb (const gchar *family, const gchar *verb);
+static gboolean m67_run_named (const gchar *family, gchar **args, GError **error);
 
 static gboolean
 cmd_tiles (gchar  **args,
@@ -1598,8 +1610,8 @@ cmd_tiles (gchar  **args,
 	if (args[0] == NULL)
 		return usage_error (error, "tiles NODE [paint|rect|fill|pick|configure key=value...]");
 	/* the 0.9.0 rule-tile and grid verbs: tiles state|grid|brush|autopaint|... */
-	if (m67_is_tiles_verb (args[0]))
-		return m67_run_tiles (args, error);
+	if (m67_has_verb ("tiles", args[0]))
+		return m67_run_named ("tiles", args, error);
 	p = node_param (args[0]);
 	if (args[1] != NULL)
 	{
@@ -2122,7 +2134,10 @@ cmd_source (gchar  **args,
 	return TRUE;
 }
 
-/* profiler [frames=N] [enable=true|false]: section timings */
+/*
+ * profiler [sample] [frames=N] [enable=true|false]: section timings;
+ * profiler VERB ...: the generated profiler.* verbs (set, capture, ...)
+ */
 static gboolean
 cmd_profiler (gchar  **args,
               GError **error)
@@ -2135,6 +2150,11 @@ cmd_profiler (gchar  **args,
 	g_autoptr(JsonNode)   r = NULL;
 	JsonObject           *o;
 
+	/* profiler set|capture|save|load|frames|frame|compare|view: the 0.9.0 verbs */
+	if (m67_has_verb ("profiler", args[0]))
+		return m67_run_named ("profiler", args, error);
+	if (g_strcmp0 (args[0], "sample") == 0)
+		args++;
 	if (!lrg_ctl_parse_assignments (args, p, error))
 		return FALSE;
 	r = call ("profiler.sample", p, error);
@@ -3540,7 +3560,83 @@ static const M67Verb m67_sprite_verbs[] = {
 	{ "save", "sprite.save", { NULL }, NULL, { NULL }, FALSE },
 };
 
-/* the M6/M7 families: lrgeditorctl FAMILY VERB ... */
+/* debug state|show|breakpoints|set-breakpoint|remove-breakpoint|toggle-breakpoint|clear-breakpoints|continue|pause|step-over|step-in|step-out|stop|stack|scopes|variables|evaluate|watches|add-watch|remove-watch|dap-start|dap-stop */
+static const M67Verb m67_debug_verbs[] = {
+	{ "state", "debug.state", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "debug.show", { NULL }, NULL, { NULL }, FALSE },
+	{ "breakpoints", "debug.breakpoints", { NULL }, NULL, { NULL }, FALSE },
+	{ "set-breakpoint", "debug.set_breakpoint", { "@path", "~line", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-breakpoint", "debug.remove_breakpoint", { "@path", "~line", NULL }, NULL, { NULL }, FALSE },
+	{ "toggle-breakpoint", "debug.toggle_breakpoint", { "~line", NULL }, NULL, { NULL }, FALSE },
+	{ "clear-breakpoints", "debug.clear_breakpoints", { NULL }, NULL, { NULL }, FALSE },
+	{ "continue", "debug.continue", { NULL }, NULL, { NULL }, FALSE },
+	{ "pause", "debug.pause", { NULL }, NULL, { NULL }, FALSE },
+	{ "step-over", "debug.step_over", { NULL }, NULL, { NULL }, FALSE },
+	{ "step-in", "debug.step_in", { NULL }, NULL, { NULL }, FALSE },
+	{ "step-out", "debug.step_out", { NULL }, NULL, { NULL }, FALSE },
+	{ "stop", "debug.stop", { NULL }, NULL, { NULL }, FALSE },
+	{ "stack", "debug.stack", { NULL }, NULL, { NULL }, FALSE },
+	{ "scopes", "debug.scopes", { NULL }, NULL, { NULL }, FALSE },
+	{ "variables", "debug.variables", { "~reference", NULL }, NULL, { NULL }, FALSE },
+	{ "evaluate", "debug.evaluate", { "expression", NULL }, NULL, { NULL }, FALSE },
+	{ "watches", "debug.watches", { NULL }, NULL, { NULL }, FALSE },
+	{ "add-watch", "debug.add_watch", { "expression", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-watch", "debug.remove_watch", { "expression", NULL }, NULL, { NULL }, FALSE },
+	{ "dap-start", "debug.dap_start", { NULL }, NULL, { NULL }, FALSE },
+	{ "dap-stop", "debug.dap_stop", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* lsp servers|status|diagnostics|complete|hover|definition|references|rename|format|restart */
+static const M67Verb m67_lsp_verbs[] = {
+	{ "servers", "lsp.servers", { NULL }, NULL, { NULL }, FALSE },
+	{ "status", "lsp.status", { NULL }, NULL, { NULL }, FALSE },
+	{ "diagnostics", "lsp.diagnostics", { NULL }, NULL, { NULL }, FALSE },
+	{ "complete", "lsp.complete", { NULL }, NULL, { NULL }, FALSE },
+	{ "hover", "lsp.hover", { NULL }, NULL, { NULL }, FALSE },
+	{ "definition", "lsp.definition", { NULL }, NULL, { NULL }, FALSE },
+	{ "references", "lsp.references", { NULL }, NULL, { NULL }, FALSE },
+	{ "rename", "lsp.rename", { "new_name", NULL }, NULL, { NULL }, FALSE },
+	{ "format", "lsp.format", { NULL }, NULL, { NULL }, FALSE },
+	{ "restart", "lsp.restart", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* profiler set|capture|save|load|frames|frame|compare|view */
+static const M67Verb m67_profiler_verbs[] = {
+	{ "set", "profiler.set", { NULL }, NULL, { NULL }, FALSE },
+	{ "capture", "profiler.capture", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "profiler.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "load", "profiler.load", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "frames", "profiler.frames", { NULL }, NULL, { NULL }, FALSE },
+	{ "frame", "profiler.frame", { NULL }, NULL, { NULL }, FALSE },
+	{ "compare", "profiler.compare", { NULL }, NULL, { NULL }, FALSE },
+	{ "view", "profiler.view", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* frame capture|status|calls|call|scrub|texture|save|load|show */
+static const M67Verb m67_frame_verbs[] = {
+	{ "capture", "frame.capture", { NULL }, NULL, { NULL }, FALSE },
+	{ "status", "frame.status", { NULL }, NULL, { NULL }, FALSE },
+	{ "calls", "frame.calls", { NULL }, NULL, { NULL }, FALSE },
+	{ "call", "frame.call", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "scrub", "frame.scrub", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "texture", "frame.texture", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "frame.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "load", "frame.load", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "show", "frame.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* script run|languages|tools|run-tool|reload|run-in-editor|editor-running */
+static const M67Verb m67_script_verbs[] = {
+	{ "run", "script.run", { "code", NULL }, NULL, { NULL }, FALSE },
+	{ "languages", "script.languages", { NULL }, NULL, { NULL }, FALSE },
+	{ "tools", "script.tools", { NULL }, NULL, { NULL }, FALSE },
+	{ "run-tool", "script.run_tool", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "reload", "script.reload", { NULL }, NULL, { NULL }, FALSE },
+	{ "run-in-editor", "script.run_in_editor", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "editor-running", "script.editor_running", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* the M6/M7/M8 families: lrgeditorctl FAMILY VERB ... */
 static const struct
 {
 	const gchar   *family;
@@ -3560,6 +3656,11 @@ static const struct
 	{ "tiles", m67_tiles_verbs, G_N_ELEMENTS (m67_tiles_verbs) },
 	{ "tileset", m67_tileset_verbs, G_N_ELEMENTS (m67_tileset_verbs) },
 	{ "sprite", m67_sprite_verbs, G_N_ELEMENTS (m67_sprite_verbs) },
+	{ "debug", m67_debug_verbs, G_N_ELEMENTS (m67_debug_verbs) },
+	{ "lsp", m67_lsp_verbs, G_N_ELEMENTS (m67_lsp_verbs) },
+	{ "profiler", m67_profiler_verbs, G_N_ELEMENTS (m67_profiler_verbs) },
+	{ "frame", m67_frame_verbs, G_N_ELEMENTS (m67_frame_verbs) },
+	{ "script", m67_script_verbs, G_N_ELEMENTS (m67_script_verbs) },
 };
 /* m67e-generated: end */
 
@@ -3721,15 +3822,25 @@ m67_lookup (const gchar    *family,
 	return FALSE;
 }
 
-/* Whether @verb is one of the M6/M7 tiles.* verbs (not a tilemap node). */
+/*
+ * m67_has_verb:
+ * @family: a generated family ("tiles", "code", "profiler", ...)
+ * @verb: (nullable): the first argument after the family
+ *
+ * Whether @verb is one of @family's generated verbs. The hand-written
+ * commands that share a family with a generated table (tiles NODE ...,
+ * code open|list|save, profiler [key=value]) ask this first and hand the
+ * generated verbs over to m67_run_named().
+ */
 static gboolean
-m67_is_tiles_verb (const gchar *verb)
+m67_has_verb (const gchar *family,
+              const gchar *verb)
 {
 	const M67Verb *table = NULL;
 	gsize          n = 0;
 	gsize          i;
 
-	if (verb == NULL || !m67_lookup ("tiles", &table, &n))
+	if (verb == NULL || !m67_lookup (family, &table, &n))
 		return FALSE;
 	for (i = 0; i < n; i++)
 	{
@@ -3739,16 +3850,18 @@ m67_is_tiles_verb (const gchar *verb)
 	return FALSE;
 }
 
-/* tiles VERB ...: the tiles.* family (cmd_tiles() keeps tiles NODE ...) */
+/* FAMILY VERB ...: runs a verb of a generated family by its name */
 static gboolean
-m67_run_tiles (gchar  **args,
-               GError **error)
+m67_run_named (const gchar  *family,
+               gchar       **args,
+               GError      **error)
 {
 	const M67Verb *table = NULL;
 	gsize          n = 0;
 
-	m67_lookup ("tiles", &table, &n);
-	return m67_run ("tiles", table, n, args, error);
+	if (!m67_lookup (family, &table, &n))
+		return usage_error (error, "%s: unknown command family", family);
+	return m67_run (family, table, n, args, error);
 }
 
 /*
@@ -3853,7 +3966,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite debug lsp frame script' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -3910,6 +4023,11 @@ static const gchar *completion_script =
 	"\t\ttiles) mapfile -t COMPREPLY < <(compgen -W 'state grid brush autopaint refresh cell-at tile-info' -- \"${cur}\") ;;\n"
 	"\t\ttileset) mapfile -t COMPREPLY < <(compgen -W 'create open get set select tile collision rule-tile rule preview save' -- \"${cur}\") ;;\n"
 	"\t\tsprite) mapfile -t COMPREPLY < <(compgen -W 'create open get slice frame clip clip-frame event play save' -- \"${cur}\") ;;\n"
+	"\t\tdebug) mapfile -t COMPREPLY < <(compgen -W 'state show breakpoints set-breakpoint remove-breakpoint toggle-breakpoint clear-breakpoints continue pause step-over step-in step-out stop stack scopes variables evaluate watches add-watch remove-watch dap-start dap-stop' -- \"${cur}\") ;;\n"
+	"\t\tlsp) mapfile -t COMPREPLY < <(compgen -W 'servers status diagnostics complete hover definition references rename format restart' -- \"${cur}\") ;;\n"
+	"\t\tprofiler) mapfile -t COMPREPLY < <(compgen -W 'sample set capture save load frames frame compare view' -- \"${cur}\") ;;\n"
+	"\t\tframe) mapfile -t COMPREPLY < <(compgen -W 'capture status calls call scrub texture save load show' -- \"${cur}\") ;;\n"
+	"\t\tscript) mapfile -t COMPREPLY < <(compgen -W 'run languages tools run-tool reload run-in-editor editor-running' -- \"${cur}\") ;;\n"
 	/* m67e-completion: end */
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"

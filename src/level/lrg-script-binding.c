@@ -22,6 +22,7 @@ struct _LrgScriptBinding
 	LrgScriptLanguage language;
 	gchar            *script;
 	gboolean          enabled;
+	gboolean          run_in_editor;
 };
 
 G_DEFINE_FINAL_TYPE (LrgScriptBinding, lrg_script_binding, G_TYPE_OBJECT)
@@ -32,6 +33,7 @@ enum
 	PROP_LANGUAGE,
 	PROP_SCRIPT,
 	PROP_ENABLED,
+	PROP_RUN_IN_EDITOR,
 	N_PROPS
 };
 
@@ -70,6 +72,9 @@ lrg_script_binding_get_property (GObject    *object,
 	case PROP_ENABLED:
 		g_value_set_boolean (value, self->enabled);
 		break;
+	case PROP_RUN_IN_EDITOR:
+		g_value_set_boolean (value, self->run_in_editor);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -95,6 +100,9 @@ lrg_script_binding_set_property (GObject      *object,
 		break;
 	case PROP_ENABLED:
 		self->enabled = g_value_get_boolean (value);
+		break;
+	case PROP_RUN_IN_EDITOR:
+		lrg_script_binding_set_run_in_editor (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -154,6 +162,26 @@ lrg_script_binding_class_init (LrgScriptBindingClass *klass)
 		                      G_PARAM_CONSTRUCT |
 		                      G_PARAM_STATIC_STRINGS);
 
+	/**
+	 * LrgScriptBinding:run-in-editor:
+	 *
+	 * Whether the script also runs while the level is being authored
+	 * (the editor's equivalent of Godot's `@tool`): the editor starts it
+	 * with `editor` and `node` globals and calls its update hook every
+	 * frame while not playing. Saved as `run_in_editor: true` only when
+	 * set, so levels without it stay byte-identical.
+	 *
+	 * Since: 0.9
+	 */
+	properties[PROP_RUN_IN_EDITOR] =
+		g_param_spec_boolean ("run-in-editor",
+		                      "Run in Editor",
+		                      "Whether the script also runs while authoring",
+		                      FALSE,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -163,6 +191,7 @@ lrg_script_binding_init (LrgScriptBinding *self)
 	self->language = LRG_SCRIPT_LANGUAGE_NONE;
 	self->script   = NULL;
 	self->enabled  = TRUE;
+	self->run_in_editor = FALSE;
 }
 
 /* ==========================================================================
@@ -292,6 +321,27 @@ lrg_script_binding_set_enabled (LrgScriptBinding *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENABLED]);
 }
 
+gboolean
+lrg_script_binding_get_run_in_editor (LrgScriptBinding *self)
+{
+	g_return_val_if_fail (LRG_IS_SCRIPT_BINDING (self), FALSE);
+
+	return self->run_in_editor;
+}
+
+void
+lrg_script_binding_set_run_in_editor (LrgScriptBinding *self,
+                                      gboolean          run_in_editor)
+{
+	g_return_if_fail (LRG_IS_SCRIPT_BINDING (self));
+
+	run_in_editor = !!run_in_editor;
+	if (self->run_in_editor == run_in_editor)
+		return;
+	self->run_in_editor = run_in_editor;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_RUN_IN_EDITOR]);
+}
+
 /* ==========================================================================
  * Copy / compare
  * ========================================================================== */
@@ -305,6 +355,7 @@ lrg_script_binding_copy (LrgScriptBinding *self)
 
 	copy = lrg_script_binding_new (self->language, self->script);
 	copy->enabled = self->enabled;
+	copy->run_in_editor = self->run_in_editor;
 
 	return copy;
 }
@@ -320,5 +371,6 @@ lrg_script_binding_equal (LrgScriptBinding *a,
 
 	return a->language == b->language &&
 	       g_strcmp0 (a->script, b->script) == 0 &&
-	       (!!a->enabled) == (!!b->enabled);
+	       (!!a->enabled) == (!!b->enabled) &&
+	       a->run_in_editor == b->run_in_editor;
 }

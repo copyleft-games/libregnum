@@ -20,6 +20,7 @@ struct _LrgScriptComponent
 	gchar             *script;
 	LrgScripting      *context;   /* live context, or NULL if inert */
 	gboolean           started;
+	gboolean           run_in_editor;
 };
 
 G_DEFINE_FINAL_TYPE (LrgScriptComponent, lrg_script_component, LRG_TYPE_COMPONENT)
@@ -29,6 +30,7 @@ enum
 	PROP_0,
 	PROP_LANGUAGE,
 	PROP_SCRIPT,
+	PROP_RUN_IN_EDITOR,
 	N_PROPS
 };
 
@@ -152,6 +154,9 @@ lrg_script_component_get_property (GObject    *object,
 	case PROP_SCRIPT:
 		g_value_set_string (value, self->script);
 		break;
+	case PROP_RUN_IN_EDITOR:
+		g_value_set_boolean (value, self->run_in_editor);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -174,6 +179,9 @@ lrg_script_component_set_property (GObject      *object,
 	case PROP_SCRIPT:
 		g_clear_pointer (&self->script, g_free);
 		self->script = g_value_dup_string (value);
+		break;
+	case PROP_RUN_IN_EDITOR:
+		lrg_script_component_set_run_in_editor (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -223,6 +231,26 @@ lrg_script_component_class_init (LrgScriptComponentClass *klass)
 		                     G_PARAM_READWRITE |
 		                     G_PARAM_CONSTRUCT |
 		                     G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgScriptComponent:run-in-editor:
+	 *
+	 * Copied from #LrgScriptBinding:run-in-editor when a level is
+	 * instantiated. The component itself ticks the same way either way;
+	 * the flag tells a host that steps a world while authoring (an
+	 * editor preview world) which script components to update while the
+	 * game is not playing: see lrg_script_component_should_update().
+	 *
+	 * Since: 0.9
+	 */
+	properties[PROP_RUN_IN_EDITOR] =
+		g_param_spec_boolean ("run-in-editor",
+		                      "Run in Editor",
+		                      "Whether the script also runs while authoring",
+		                      FALSE,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -293,4 +321,36 @@ lrg_script_component_get_context (LrgScriptComponent *self)
 	g_return_val_if_fail (LRG_IS_SCRIPT_COMPONENT (self), NULL);
 
 	return self->context;
+}
+
+gboolean
+lrg_script_component_get_run_in_editor (LrgScriptComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SCRIPT_COMPONENT (self), FALSE);
+
+	return self->run_in_editor;
+}
+
+void
+lrg_script_component_set_run_in_editor (LrgScriptComponent *self,
+                                        gboolean            run_in_editor)
+{
+	g_return_if_fail (LRG_IS_SCRIPT_COMPONENT (self));
+
+	run_in_editor = !!run_in_editor;
+	if (self->run_in_editor == run_in_editor)
+		return;
+	self->run_in_editor = run_in_editor;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_RUN_IN_EDITOR]);
+}
+
+gboolean
+lrg_script_component_should_update (LrgScriptComponent *self,
+                                    gboolean            authoring)
+{
+	g_return_val_if_fail (LRG_IS_SCRIPT_COMPONENT (self), FALSE);
+
+	/* While playing every script runs; while authoring only the
+	 * run-in-editor ones */
+	return !authoring || self->run_in_editor;
 }

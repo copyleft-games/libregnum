@@ -41,6 +41,11 @@
 ;;    game, any editor action by name (`libregnum-action'), validate the
 ;;    level into a `compilation-mode' buffer;
 ;;  - streams the editor log into *libregnum-log*;
+;;  - debugs scripts (breakpoints, stepping, evaluate: `libregnum-debug-map'
+;;    under the prefix's d; DAP attach via libregnum-dape.el), runs editor
+;;    tool scripts (`libregnum-run-tool-script', `libregnum-eval-tool-script',
+;;    `libregnum-run-tool') and saves profiler captures
+;;    (`libregnum-profiler-capture');
 ;;  - provides `libregnum-rlevel-mode' for .rlevel/.rprefab/.ryaml files.
 ;;
 ;; Quick start:
@@ -980,6 +985,173 @@ read one CHANNEL and its VALUE."
     thumb))
 
 ;;; ==========================================================================
+;;; Scripting, debugging and profiling (0.9.0)
+;;; ==========================================================================
+
+(defun libregnum--script-position ()
+  "Return the current buffer's file and line as (PATH . LINE)."
+  (unless buffer-file-name
+    (user-error "This buffer is not visiting a file"))
+  (cons (expand-file-name buffer-file-name) (line-number-at-pos)))
+
+(defun libregnum--debug-report (state)
+  "Echo the debugger STATE (a debug.state result) and return it."
+  (message "libregnum debug: %s%s%s"
+           (alist-get 'state state)
+           (if (alist-get 'reason state) (format " (%s)" (alist-get 'reason state)) "")
+           (if (alist-get 'path state)
+               (format " at %s:%s" (alist-get 'path state) (alist-get 'line state))
+             ""))
+  state)
+
+(defun libregnum-debug-toggle-breakpoint ()
+  "Toggle an editor script breakpoint on the current line of this file."
+  (interactive)
+  (let* ((pos (libregnum--script-position))
+         (result (libregnum-request "debug.toggle_breakpoint"
+                                    `((path . ,(car pos)) (line . ,(cdr pos))))))
+    (message "libregnum: breakpoint %s at line %d"
+             (if (alist-get 'set result) "set" "removed") (cdr pos))
+    result))
+
+(defun libregnum-debug-set-breakpoint (condition)
+  "Set a breakpoint on the current line that stops when CONDITION holds.
+An empty CONDITION stops every time."
+  (interactive "sCondition (empty = always): ")
+  (let ((pos (libregnum--script-position)))
+    (libregnum-request "debug.set_breakpoint"
+                       `((path . ,(car pos)) (line . ,(cdr pos))
+                         ,@(unless (string-empty-p condition) `((condition . ,condition)))))))
+
+(defun libregnum-debug-state ()
+  "Show the editor's script debugger state."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.state")))
+
+(defun libregnum-debug-continue ()
+  "Resume the paused script."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.continue")))
+
+(defun libregnum-debug-pause ()
+  "Pause the running script."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.pause")))
+
+(defun libregnum-debug-step-over ()
+  "Step to the next line of the paused script."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.step_over")))
+
+(defun libregnum-debug-step-in ()
+  "Step into the call on the paused line."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.step_in")))
+
+(defun libregnum-debug-step-out ()
+  "Run until the paused frame returns."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.step_out")))
+
+(defun libregnum-debug-stop ()
+  "End the debug session (play keeps running)."
+  (interactive)
+  (libregnum--debug-report (libregnum-request "debug.stop")))
+
+(defun libregnum-debug-evaluate (expression)
+  "Evaluate EXPRESSION in the paused script's top frame."
+  (interactive "sEvaluate: ")
+  (let ((result (libregnum-request "debug.evaluate" `((expression . ,expression)))))
+    (message "%s = %s (%s)" expression (alist-get 'result result) (alist-get 'type result))
+    result))
+
+(defun libregnum-debug-dap-start (&optional port)
+  "Start the editor's DAP server on PORT and return the port.
+PORT nil uses the editor's debug.dap-port setting, 0 picks a free one.
+Attach with `libregnum-dape' (libregnum-dape.el) or any DAP client."
+  (interactive (list (when current-prefix-arg (read-number "Port (0 = any): " 0))))
+  (let ((port (alist-get 'port (libregnum-request "debug.dap_start" (when port `((port . ,port)))))))
+    (message "libregnum: DAP server on 127.0.0.1:%s" port)
+    port))
+
+(defun libregnum--script-language (file)
+  "The tool script language of FILE from its extension, or nil."
+  (pcase (file-name-extension file)
+    ("lua" "lua")
+    ("py" "python")
+    ("js" "gjs")
+    (_ nil)))
+
+(defun libregnum--script-report (result)
+  "Echo a script.run RESULT (output and value) and return it."
+  (let ((output (string-trim-right (or (alist-get 'output result) ""))))
+    (message "%s%s" (if (string-empty-p output) "" (concat output "\n"))
+             (format "=> %S" (alist-get 'result result))))
+  result)
+
+(defun libregnum-run-tool-script (file)
+  "Run the tool script FILE in the editor (one undo step).
+The script sees the editor through its global `editor' object."
+  (interactive (list (read-file-name "Tool script: " nil buffer-file-name t)))
+  (let ((language (libregnum--script-language file)))
+    (libregnum--script-report
+     (libregnum-request "script.run" `((path . ,(expand-file-name file))
+                                       ,@(when language `((language . ,language))))))))
+
+(defun libregnum-eval-tool-script (start end &optional language)
+  "Run the region from START to END in the editor's LANGUAGE console.
+LANGUAGE defaults to the buffer file's language, else lua."
+  (interactive "r")
+  (let ((language (or language
+                      (and buffer-file-name (libregnum--script-language buffer-file-name))
+                      "lua")))
+    (libregnum--script-report
+     (libregnum-request "script.run" `((code . ,(buffer-substring-no-properties start end))
+                                       (language . ,language))))))
+
+(defun libregnum-run-tool (id)
+  "Run the editor tool ID registered by a project editor_scripts/ file."
+  (interactive
+   (progn
+     (libregnum--ensure-connected)
+     (let ((candidates (mapcar (lambda (tool)
+                                 (cons (format "%s (%s)" (alist-get 'label tool) (alist-get 'menu tool))
+                                       (alist-get 'id tool)))
+                               (libregnum-request "script.tools"))))
+       (unless candidates
+         (user-error "No tool scripts registered (put them in <project>/editor_scripts/)"))
+       (list (cdr (assoc (completing-read "Tool: " candidates nil t) candidates))))))
+  (libregnum-request "script.run_tool" `((id . ,id))))
+
+(defun libregnum-profiler-capture (frames file)
+  "Capture the last FRAMES profiler frames and save them to FILE (.rprof).
+Returns the capture summary."
+  (interactive (list (read-number "Frames: " 120)
+                     (read-file-name "Save capture to: " nil nil nil "capture.rprof")))
+  (let ((result (libregnum-request "profiler.capture"
+                                   `((frames . ,frames) (path . ,(expand-file-name file))))))
+    (message "libregnum: %s frames, %s events -> %s"
+             (alist-get 'frames result) (alist-get 'events result) (alist-get 'path result))
+    result))
+
+(defvar libregnum-debug-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "b" #'libregnum-debug-toggle-breakpoint)
+    (define-key map "B" #'libregnum-debug-set-breakpoint)
+    (define-key map "c" #'libregnum-debug-continue)
+    (define-key map "p" #'libregnum-debug-pause)
+    (define-key map "n" #'libregnum-debug-step-over)
+    (define-key map "i" #'libregnum-debug-step-in)
+    (define-key map "o" #'libregnum-debug-step-out)
+    (define-key map "q" #'libregnum-debug-stop)
+    (define-key map "s" #'libregnum-debug-state)
+    (define-key map "e" #'libregnum-debug-evaluate)
+    (define-key map "D" #'libregnum-debug-dap-start)
+    map)
+  "Script debugger commands, under `libregnum-keymap-prefix' d.")
+(fset 'libregnum-debug-map libregnum-debug-map)
+
+;;; ==========================================================================
 ;;; Global mode and keys
 ;;; ==========================================================================
 
@@ -1011,6 +1183,10 @@ read one CHANNEL and its VALUE."
     (define-key map "a" #'libregnum-timeline-play)
     (define-key map "A" #'libregnum-timeline-stop)
     (define-key map "h" #'libregnum-thumbnail)
+    (define-key map "d" 'libregnum-debug-map)
+    (define-key map "!" #'libregnum-run-tool-script)
+    (define-key map "T" #'libregnum-run-tool)
+    (define-key map "R" #'libregnum-profiler-capture)
     map)
   "Libregnum commands, under `libregnum-keymap-prefix'.")
 (fset 'libregnum-command-map libregnum-command-map)

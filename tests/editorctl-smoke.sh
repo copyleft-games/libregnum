@@ -25,7 +25,9 @@
 # 0.9.0 M3/M4 verbs (bake, seq, skel2d, anim, bonemap; likewise skipped),
 # the 0.9.0 M5 physics verbs (physasset, physics layers, physics),
 # the 0.9.0 M6/M7 verbs (asset new, nav, bt, fsm, ai, particles, weather,
-# terrain, water, mixer, audio, tileset, sprite, tiles; likewise skipped)
+# terrain, water, mixer, audio, tileset, sprite, tiles; likewise skipped),
+# the 0.9.0 M8 verbs (debug, lsp, profiler, frame, script, ...; likewise
+# skipped)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -597,6 +599,83 @@ else
 	skip 'tiles (rule tiles)'
 fi
 
+# 0.9.0 M8 verbs: script debugger (debug), language servers (lsp),
+# profiler captures (profiler), frame debugger (frame), tool scripts
+# (script), ...;
+# each skipped until the editor registers the area's methods.
+if has_method debug.state
+then
+	smoke_lua="${work}/game/scripts/smoke.lua"
+	check 'debug state (idle)' "$(ctl debug -o json)" '"state" : "idle"'
+	check 'debug set-breakpoint' "$(ctl debug set-breakpoint "${smoke_lua}" 2 condition='1 == 1' -o json)" '"line" : 2'
+	check 'debug breakpoints' "$(ctl debug breakpoints -o json)" 'smoke.lua'
+	check 'debug toggle-breakpoint (off)' "$(ctl debug toggle-breakpoint 2 path="${smoke_lua}" -o json)" '"set" : false'
+	check 'debug toggle-breakpoint (on)' "$(ctl debug toggle-breakpoint 1 path="${smoke_lua}" -o json)" '"set" : true'
+	check 'debug add-watch' "$(ctl debug add-watch '1 + 1' -o json)" '"expression" : "1 + 1"'
+	check 'debug remove-watch' "$(ctl debug remove-watch '1 + 1' -o json)" '[]'
+	check 'debug clear-breakpoints' "$(ctl debug clear-breakpoints -o json)" '"removed" : 1'
+	"${ctl}" debug stack >/dev/null 2>&1 && status=0 || status=$?
+	check 'debug stack while idle exits 1' "status=${status}" 'status=1'
+	check 'debug dap-start' "$(ctl debug dap-start port=0 -o json)" '"port"'
+	check 'debug state shows the DAP port' "$(ctl debug state -o json)" '"listening" : true'
+	check 'debug dap-stop' "$(ctl debug dap-stop -o json)" '{'
+else
+	skip 'debug'
+fi
+if has_method lsp.servers
+then
+	check 'lsp servers' "$(ctl lsp servers -o json)" '"language"'
+	check 'lsp status' "$(ctl lsp status path="${work}/game/scripts/smoke.lua" -o json)" '"language"'
+	check 'lsp diagnostics' "$(ctl lsp diagnostics path="${work}/game/scripts/smoke.lua" -o json)" '['
+else
+	skip 'lsp'
+fi
+if has_method profiler.set
+then
+	mkdir -p "${work}/game/captures"
+	check 'profiler (bare = sample)' "$(ctl profiler frames=10 -o json)" '"sections"'
+	check 'profiler sample' "$(ctl profiler sample -o json)" '"gpu"'
+	check 'profiler set' "$(ctl profiler set enable=true ring=64 -o json)" '"ring" : 64'
+	sleep 0.3
+	check 'profiler capture' "$(ctl profiler capture frames=4 path="${work}/game/captures/smoke.rprof" -o json)" '"threads"'
+	check 'profiler capture file' "$(test -s "${work}/game/captures/smoke.rprof" && echo written)" 'written'
+	check 'profiler load' "$(ctl profiler load captures/smoke.rprof -o json)" '"frames"'
+	check 'profiler frames' "$(ctl profiler frames count=2 -o json)" '"duration_ms"'
+	check 'profiler frame' "$(ctl profiler frame -o json)" '"events"'
+	check 'profiler view' "$(ctl profiler view mode=flame -o json)" '"mode" : "flame"'
+	"${ctl}" profiler compare a=1 >/dev/null 2>&1 && status=0 || status=$?
+	check 'profiler compare without b exits 1' "status=${status}" 'status=1'
+	ctl profiler set enable=false >/dev/null
+else
+	skip 'profiler capture'
+fi
+if has_method frame.status
+then
+	check 'frame status' "$(ctl frame status -o json)" '"armed"'
+	check 'frame capture arms' "$(ctl frame capture -o json)" '"armed" : true'
+	"${ctl}" frame call 99999 >/dev/null 2>&1 && status=0 || status=$?
+	check 'frame call out of range exits 1' "status=${status}" 'status=1'
+else
+	skip 'frame'
+fi
+if has_method script.run
+then
+	check 'script languages' "$(ctl script languages -o json)" '"id" : "lua"'
+	if [[ "$(ctl script languages -o json)" == *'"lua"'*'"available" : true'* ]]
+	then
+		check 'script run (lua)' "$(ctl script run 'return 1 + 2' -o json)" '3'
+		printf 'return 40 + 2\n' >"${work}/game/scripts/tool.lua"
+		check 'script run path' "$(ctl script run path=scripts/tool.lua -o json)" '42'
+		"${ctl}" script run 'this is not lua' >/dev/null 2>&1 && status=0 || status=$?
+		check 'script error exits 1' "status=${status}" 'status=1'
+	fi
+	check 'script tools' "$(ctl script tools -o json)" '['
+	check 'script reload' "$(ctl script reload -o json)" '"loaded"'
+	check 'script editor-running' "$(ctl script editor-running -o json)" '['
+else
+	skip 'script'
+fi
+
 # 0.8.3: asset sources (none registered without a game module).
 check 'source list empty' "$(ctl source list -o json)" '[]'
 "${ctl}" source ls nope >/dev/null 2>&1 && status=0 || status=$?
@@ -680,6 +759,14 @@ else
 	check 'mcp tileset tools' "${out}" '"name":"tileset_rule_tile"'
 	check 'mcp sprite tools' "${out}" '"name":"sprite_clip_frame"'
 	check 'mcp asset_new' "${out}" '"name":"asset_new"'
+	check 'mcp debugger tools' "${out}" '"name":"debug_set_breakpoint"'
+	check 'mcp language server tools' "${out}" '"name":"lsp_definition"'
+	check 'mcp profiler tools' "${out}" '"name":"profiler_compare"'
+	check 'mcp frame debugger tools' "${out}" '"name":"frame_scrub"'
+	check 'mcp tool script tools' "${out}" '"name":"script_run_tool"'
+	check 'mcp debug_state is read-only and takes no params' \
+		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"debug_state"[^]]*' | head -n 1)" \
+		'"properties":{}},"annotations":{"readOnlyHint":true'
 	check 'mcp nav_get is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"nav_get"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'

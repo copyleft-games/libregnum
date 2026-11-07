@@ -118,6 +118,34 @@ void lrg_script_binding_set_enabled (LrgScriptBinding *self,
                                      gboolean          enabled);
 
 /**
+ * lrg_script_binding_get_run_in_editor:
+ * @self: an #LrgScriptBinding
+ *
+ * Gets whether the script also runs while the level is authored in the
+ * editor (see #LrgScriptBinding:run-in-editor).
+ *
+ * Returns: %TRUE if the script runs in the editor
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_script_binding_get_run_in_editor (LrgScriptBinding *self);
+
+/**
+ * lrg_script_binding_set_run_in_editor:
+ * @self: an #LrgScriptBinding
+ * @run_in_editor: whether the script runs while authoring
+ *
+ * Sets whether the script also runs while the level is authored in the
+ * editor. Notifies #LrgScriptBinding:run-in-editor only on a change.
+ *
+ * Since: 0.9
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_script_binding_set_run_in_editor (LrgScriptBinding *self,
+                                           gboolean          run_in_editor);
+
+/**
  * lrg_script_binding_copy:
  * @self: an #LrgScriptBinding
  *

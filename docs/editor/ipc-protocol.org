@@ -569,6 +569,62 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =sprite.play= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
 | =sprite.save= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
 | =asset.new= | 0.9.0 | assets panel | [[#asset-file-methods][Asset file]] |
+| =debug.state= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.show= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.breakpoints= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.set_breakpoint= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.remove_breakpoint= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.toggle_breakpoint= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.clear_breakpoints= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.continue= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.pause= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.step_over= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.step_in= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.step_out= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.stop= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.stack= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.scopes= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.variables= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.evaluate= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.watches= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.add_watch= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.remove_watch= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.dap_start= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =debug.dap_stop= | 0.9.0 | Debug panel | [[#ipc-debug][Script debugger methods]] |
+| =lsp.servers= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.status= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.diagnostics= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.complete= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.hover= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.definition= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.references= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.rename= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.format= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =lsp.restart= | 0.9.0 | code panel | [[#ipc-lsp][Language server methods]] |
+| =profiler.set= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.capture= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.save= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.load= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.frames= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.frame= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.compare= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =profiler.view= | 0.9.0 | profiler panel | [[#ipc-profiler][Profiler capture methods]] |
+| =frame.capture= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.status= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.calls= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.call= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.scrub= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.texture= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.save= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.load= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =frame.show= | 0.9.0 | Frame Debugger panel | [[#ipc-frame][Frame debugger methods]] |
+| =script.run= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =script.languages= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =script.tools= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =script.run_tool= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =script.reload= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =script.run_in_editor= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =script.editor_running= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
 | =terrain.layers.add= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
 | =terrain.layers.remove= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
 | =terrain.layers.set= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
@@ -1318,6 +1374,107 @@ Registered by the sprite editor (=src/editor/ui/data/lrg-editor-sprite-editor.c=
 | =sprite.play= | =path?=, =clip?=, =playing?=, =time?= | ={clip, playing, time, frame, position}=; not an edit |
 | =sprite.save= | =path?= | ={path}= |
 
+** Script debugger methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-debug
+:END:
+Registered by the docked Debug panel (=src/editor/ui/lrg-editor-debug-panel.c=) on top of =LrgScriptDebugger=. =line= and =column= are 1-based; =path= is a script file, absolute or project relative (default the code panel's active tab). Stack, scopes, variables and evaluate need a paused session. A DAP client (Emacs dape, VS Code) can attach to the port =debug.dap_start= opens. Errors: missing or bad parameters =invalid-params=; an unknown breakpoint, frame, variable reference or file =not-found=; no debug session, a paused-only call while running or an engine error =failed=. Details: [[file:debugging.org::#editor-debug-ipc][Debugging]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =debug.state= |  | ={state, reason, path, line, language, message, dap: {listening, port, clients}}=; =state= idle, running or paused; =reason= breakpoint, step, pause, exception, entry or null |
+| =debug.show= |  | ={}= |
+| =debug.breakpoints= | =path?= | =[{id, path, line, condition, hit_condition, log_message, enabled, verified, hits}]= |
+| =debug.set_breakpoint= | =path=, =line=, =condition?=, =hit_condition?=, =log_message?=, =enabled?= | the breakpoint; replaces one at the same =path:line= |
+| =debug.remove_breakpoint= | =path=, =line= | ={removed}= |
+| =debug.toggle_breakpoint= | =path?=, =line= | ={set, breakpoint}= (=breakpoint= null when removed) |
+| =debug.clear_breakpoints= | =path?= | ={removed}= (a count) |
+| =debug.continue= |  | as =debug.state= |
+| =debug.pause= |  | as =debug.state= |
+| =debug.step_over= |  | as =debug.state= |
+| =debug.step_in= |  | as =debug.state= |
+| =debug.step_out= |  | as =debug.state= |
+| =debug.stop= |  | as =debug.state= |
+| =debug.stack= |  | =[{id, name, path, line, column, language}]= (paused only) |
+| =debug.scopes= | =frame?= | =[{name, reference, expensive}]= |
+| =debug.variables= | =reference= | =[{name, value, type, reference}]= (=reference= 0 for a leaf) |
+| =debug.evaluate= | =expression=, =frame?= | ={result, type, reference}= |
+| =debug.watches= |  | =[{expression, value, type, error}]= |
+| =debug.add_watch= | =expression= | as =debug.watches= |
+| =debug.remove_watch= | =expression= | as =debug.watches= |
+| =debug.dap_start= | =port?=, =host?= | ={port}= |
+| =debug.dap_stop= |  | ={}= |
+
+** Language server methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-lsp
+:END:
+Registered by the code panel (=src/editor/ui/lrg-editor-code-panel.c=): the editor's LSP client (=LrgLspClient=) with one server per language from the editor settings (clangd for crispy C, lua-language-server, pylsp or pyright, typescript-language-server for GJS); a language without an installed server answers with empty results. =line= and =column= are 1-based; =path= is a script file, absolute or project relative (default the code panel's active tab). Position methods default to the caret. Errors as for =debug.*= (a crashed server or a timed-out request is =failed=). Details: [[file:code-intelligence.org::#editor-lsp-ipc][Code intelligence]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =lsp.servers= |  | =[{language, command, available, running, initialized, binary}]= |
+| =lsp.status= | =path?= | ={path, language, server, running, initialized, version, diagnostics}= |
+| =lsp.diagnostics= | =path?= | =[{line, column, end_line, end_column, severity, message, source, code}]= |
+| =lsp.complete= | =path?=, =line?=, =column?= | =[{label, kind, detail, insert_text}]= |
+| =lsp.hover= | =path?=, =line?=, =column?= | ={contents}= |
+| =lsp.definition= | =path?=, =line?=, =column?=, =jump?= | =[{path, line, column}]= |
+| =lsp.references= | =path?=, =line?=, =column?= | =[{path, line, column}]= |
+| =lsp.rename= | =path?=, =line?=, =column?=, =new_name= | ={files, edits}= |
+| =lsp.format= | =path?= | ={edits}= |
+| =lsp.restart= | =language?= | as =lsp.servers= |
+
+** Profiler capture methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-profiler
+:END:
+Registered by the profiler panel (=src/editor/ui/lrg-editor-profiler-panel.c=) next to =profiler.sample= (see [[#profiler-methods][Profiler]]). A frame =index= is the profiler's monotonic frame number (not a ring slot). Times: =*_us= integer microseconds from the frame start, =*_ms= doubles. =source= is =live= (the profiler's ring) or =capture= (the panel's capture: the last =profiler.capture= or =profiler.load=); default =capture= when one is held, else =live=. =path= is absolute or project relative; captures are =.rprof= files. Errors: missing or bad parameters =invalid-params=; no such frame or no capture yet =not-found=; I/O or parse errors =failed=. Details: [[file:profiling.org::#editor-profiling-ipc][Profiling]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =profiler.set= | =enable?=, =gpu?=, =paused?=, =ring?= | ={enabled, pinned, paused, gpu, gpu_supported, ring}= |
+| =profiler.capture= | =frames?=, =path?= | ={frames, first, last, events, threads, path}= |
+| =profiler.save= | =path= | ={path, frames, events}= |
+| =profiler.load= | =path= | ={path, frames, first, last, events, threads}= |
+| =profiler.frames= | =source?=, =count?= | =[{index, start_us, duration_ms, gpu_ms, events, counters}]= (newest last) |
+| =profiler.frame= | =source?=, =index?= | ={index, start_us, duration_ms, gpu_ms, threads: [{id, name}], events: [{name, thread, depth, parent, start_us, duration_us}], gpu: [{name, depth, start_us, duration_us}], counters: [{name, value}]}= |
+| =profiler.compare= | =source?=, =a=, =b= | ={a: {index, duration_ms}, b: {index, duration_ms}, sections: [{name, a_ms, b_ms, delta_ms, a_calls, b_calls}]}= |
+| =profiler.view= | =mode?=, =frame?=, =compare?=, =show?= | ={mode, frame, compare, source}= |
+
+** Frame debugger methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-frame
+:END:
+Registered by the docked Frame Debugger panel (=src/editor/ui/lrg-editor-frame-debugger.c=) on =LrgFrameCapture=. =frame.capture= arms a capture on the viewport's =LrgWorld3DRenderer=; the next viewport render is recorded (poll =frame.status=). Calls are numbered from 0 in draw order; =pass= is a render pass nick. Scrubbing and the replay image need the live renderer (a loaded =.rframe= is browse-only). Errors: missing or bad parameters =invalid-params=; no capture, call or texture =not-found=; no GPU or a failed read-back =failed=. Details: [[file:profiling.org::#editor-profiling-frame][Frame debugger]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =frame.capture= |  | ={armed}= |
+| =frame.status= |  | ={armed, captured, calls, width, height, scrub, passes: [{pass, calls}]}= (=scrub= -1 = the full frame) |
+| =frame.calls= | =pass?=, =offset?=, =limit?= | ={total, calls: [{index, pass, kind, entity, guid, mesh, material, shader, vertices, triangles}]}= |
+| =frame.call= | =index= | ={index, pass, kind, entity, guid, mesh, material, shader, shader_id, texture_id, vertices, triangles, instances, color, transform, state: {blend, blend_mode, depth_test, depth_write, cull, wireframe, framebuffer}}= |
+| =frame.scrub= | =index= | ={scrub, calls}= |
+| =frame.texture= | =path=, =id?=, =target?= | ={path, width, height}= |
+| =frame.save= | =path= | ={path, calls}= |
+| =frame.load= | =path= | as =frame.status= |
+| =frame.show= |  | ={}= |
+
+** Tool script methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-script
+:END:
+Registered by the console panel (=src/editor/ui/lrg-editor-console-panel.c=): editor-time tool scripts run against the global =editor= object (=LrgEditorScriptApi=). =language= is =lua=, =python=, =pygobject= or =gjs= (only the ones built in; others are =invalid-params=). Every run is one undo step. =script.run= with =code= runs in that language's persistent console context (REPL state is kept); with =path= in a fresh context. Tools are the menu items scripts in =<project>/editor_scripts/= register on project open. (The node script bindings =script.add=, =script.remove=, =script.open= are [[#document-methods][document methods]].) Errors: missing or bad parameters =invalid-params=; a missing file, tool, node or binding =not-found=; a script error =failed= with =file:line: message=. Details: [[file:tool-scripts.org][Tool scripts]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =script.run= | =code?=, =path?=, =language?=, =label?= | ={result, output, language}= |
+| =script.languages= |  | =[{id, name, available}]= |
+| =script.tools= |  | =[{id, label, menu, script, language, function, shortcut}]= |
+| =script.run_tool= | =id= | =true= |
+| =script.reload= |  | ={dir, loaded, failed: [{path, message}]}= |
+| =script.run_in_editor= | =node=, =index?=, =enabled= | =true=; one undo step |
+| =script.editor_running= |  | =[{node, script, language, error}]= |
+
 # m67e-generated: end
 
 ** Data editor methods
@@ -1350,9 +1507,9 @@ Registered by the profiler panel.
 
 | Method            | Params                                                       | Result |
 |-------------------+--------------------------------------------------------------+--------|
-| =profiler.sample= | =frames= (recent frame times, default 60), =enable= (=true= pins the profiler on, =false= unpins it) | ={enabled, pinned, paused, frame_ms, frames, sections: [{name, last_ms, avg_ms, min_ms, max_ms, count}]}= |
+| =profiler.sample= | =frames= (recent frame times, default 60), =enable= (=true= pins the profiler on, =false= unpins it) | ={enabled, pinned, paused, gpu, frame_ms, frames, sections: [{name, last_ms, avg_ms, min_ms, max_ms, count}]}= (=gpu= since 0.9.0: the GPU timer lane is on) |
 
-No method-specific errors. Details: [[file:editor-app.org::#editor-panel-profiler][Profiler panel]].
+No method-specific errors. Details: [[file:editor-app.org::#editor-panel-profiler][Profiler panel]]. The 0.9.0 capture, frame and compare methods are in [[#ipc-profiler][Profiler capture methods]].
 
 ** Sequence methods
 :PROPERTIES:
