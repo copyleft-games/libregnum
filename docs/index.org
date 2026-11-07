@@ -233,6 +233,7 @@ User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][Lr
 - [[file:guides/materials-and-pbr.org][Materials and PBR]] - The lit shader, GGX metallic-roughness, materials, point/spot lights, shadows, IBL, user shaders
 - [[file:guides/rendering-pipeline.org][The rendering pipeline]] - One LrgWorld3DRenderer frame pass by pass (shadows, prepass/SSAO, environment, decals, probes, volumetric, post), debug views and measured costs
 - [[file:guides/lighting-bake.org][Lighting bake]] - Baked lightmaps and SH probe grids: light modes, the level =lighting:= block, the runtime path and the baker
+- [[file:guides/animation-pipeline.org][Animation pipeline]] - glTF skins/clips/morphs, retargeting, .ranim graphs with IK and root motion, the 3D animator, .rseq sequences and 2D skeletons
 - [[file:guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]] - The runtime level module (=src/level/=), include paths, shared 3D math
 - [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support

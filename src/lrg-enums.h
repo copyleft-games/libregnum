@@ -5161,6 +5161,7 @@ GType lrg_level_error_get_type (void) G_GNUC_CONST;
  * @LRG_NODE_VISUAL_CAD_PART: A parametric CAD part (cad-glib document)
  * @LRG_NODE_VISUAL_DECAL: A projected decal box (0.9.0; becomes an #LrgDecalComponent)
  * @LRG_NODE_VISUAL_REFLECTION_PROBE: A box-projected reflection probe (0.9.0)
+ * @LRG_NODE_VISUAL_PROBE_VOLUME: A box of baked SH light probes (0.9.0; an #LrgProbeGrid volume for the lightmap baker)
  *   referenced by source path; parameters live in the visual's param
  *   bag under "cad:"-prefixed keys
  *
@@ -5183,7 +5184,8 @@ typedef enum
     LRG_NODE_VISUAL_PREFAB_INSTANCE,
     LRG_NODE_VISUAL_CAD_PART,
     LRG_NODE_VISUAL_DECAL,
-    LRG_NODE_VISUAL_REFLECTION_PROBE
+    LRG_NODE_VISUAL_REFLECTION_PROBE,
+    LRG_NODE_VISUAL_PROBE_VOLUME
 } LrgNodeVisualKind;
 
 LRG_AVAILABLE_IN_ALL

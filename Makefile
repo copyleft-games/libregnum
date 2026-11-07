@@ -1785,6 +1785,11 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-code-panel.h \
 	src/editor/ui/lrg-editor-shader-graph-editor.h \
 	src/editor/ui/lrg-editor-environment-panel.h \
+	src/editor/ui/lrg-editor-bake-panel.h \
+	src/editor/ui/lrg-editor-sequencer-panel.h \
+	src/editor/ui/data/lrg-editor-anim-graph-editor.h \
+	src/editor/ui/data/lrg-editor-bone-map-editor.h \
+	src/editor/ui/data/lrg-editor-skeleton2d-editor.h \
 	src/editor/ui/data/lrg-editor-material-editor.h \
 	src/editor/ui/data/lrg-editor-post-stack-editor.h \
 	src/editor/ui/lrg-editor-palette.h \
@@ -1817,6 +1822,11 @@ SOURCES += \
 	src/editor/ui/lrg-editor-code-panel.c \
 	src/editor/ui/lrg-editor-shader-graph-editor.c \
 	src/editor/ui/lrg-editor-environment-panel.c \
+	src/editor/ui/lrg-editor-bake-panel.c \
+	src/editor/ui/lrg-editor-sequencer-panel.c \
+	src/editor/ui/data/lrg-editor-anim-graph-editor.c \
+	src/editor/ui/data/lrg-editor-bone-map-editor.c \
+	src/editor/ui/data/lrg-editor-skeleton2d-editor.c \
 	src/editor/ui/data/lrg-editor-material-editor.c \
 	src/editor/ui/data/lrg-editor-post-stack-editor.c \
 	src/editor/ui/lrg-editor-palette.c \
