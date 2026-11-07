@@ -25,6 +25,7 @@
 #include "lrg-depth-prepass.h"
 #include "lrg-camera.h"
 #include "../core/lrg-math3d.h"
+#include "lrg-lod-group.h"
 
 /* raylib's PIXELFORMAT_DEPTH_COMPONENT_24BIT (not in rlgl's enum names
  * we use elsewhere); only stored in the Texture struct for bookkeeping */
@@ -111,6 +112,26 @@ static const gchar prepass_fs[] =
 	"    if (!gl_FrontFacing) n = -n;\n"
 	"    finalColor = vec4(n * 0.5 + 0.5, 1.0);\n"
 	"}\n";
+
+
+/*
+ * The fragment source @fs with the LOD cross-fade spliced in: the
+ * lrg_lod_get_glsl() snippet (the lodFade uniform and
+ * lrg_lod_fade_discard()) before main() and the discard as main()'s
+ * first statement, so items fading between LOD levels dither out here
+ * exactly like in the other passes (lrg_lod_bind_fade() sets lodFade;
+ * 0, the default, keeps every fragment).
+ */
+static gchar *
+prepass_fs_with_lod (const gchar *fs)
+{
+	const gchar *main_start = strstr (fs, "void main() {\n");
+
+	if (main_start == NULL)
+		return g_strdup (fs);
+	return g_strdup_printf ("%.*s%svoid main() {\n    lrg_lod_fade_discard ();\n%s", (gint) (main_start - fs), fs,
+	                        lrg_lod_get_glsl (), main_start + strlen ("void main() {\n"));
+}
 
 /* ==========================================================================
  * GPU objects
@@ -474,7 +495,11 @@ lrg_depth_prepass_get_shader (LrgDepthPrepass *self)
 	self->shader_tried = TRUE;
 
 	/* On a compile failure raylib hands back its default shader. */
-	self->shader = grl_shader_new_from_memory (prepass_vs, prepass_fs, &error);
+	{
+		g_autofree gchar *fs = prepass_fs_with_lod (prepass_fs);
+
+		self->shader = grl_shader_new_from_memory (prepass_vs, fs, &error);
+	}
 	if (self->shader == NULL)
 	{
 		g_warning ("LrgDepthPrepass: shader: %s", error != NULL ? error->message : "failed");

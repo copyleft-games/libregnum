@@ -48,6 +48,10 @@
 #include "../lrg-asset-meta.h"
 #include "../../scene/lrg-material3d.h"
 #include "../../world3d/lrg-world3d.h"
+#include "../../graphics/lrg-decal.h"
+#include "../../graphics/lrg-material.h"
+#include "../../lighting/lrg-reflection-probe.h"
+#include "../../postprocess/lrg-post-stack.h"
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
@@ -135,6 +139,23 @@ struct _LrgEditorSceneRenderer
 
 	/* Per-viewport preview post-processing (plus the camera preview). */
 	LrgPostProcessor     *post[N_POST_SLOTS];
+	guint32               cull_mask[N_POST_SLOTS];   /* render layers per viewport */
+
+	/* LOD groups of mesh-asset nodes: asset string -> LrgLodGroup, or
+	 * NULL when the asset has fewer than two levels (cached either way) */
+	GHashTable           *lod_groups;
+
+	/* The authoring look: decal nodes become runtime decals (a pool reused
+	 * by index), reflection-probe nodes runtime probes (by node, captured
+	 * when they move or on request), the level's post stack (by path) */
+	GPtrArray            *decal_pool;      /* LrgDecal */
+	guint                 decals_used;
+	GHashTable           *node_probes;     /* LrgNode* -> LrgReflectionProbe */
+	GHashTable           *probe_seen;      /* nodes with a probe this frame */
+	GPtrArray            *frame_probes;    /* probes on the environment this frame */
+	LrgEnvironment       *probe_env;       /* the environment they are on (ref) */
+	GHashTable           *post_stacks;     /* abs .rpost path -> LrgPostStack, NULL = failed */
+	gboolean              recapture;       /* recapture every probe next frame */
 
 	gboolean              draw_overlays;
 	guint                 generation;
@@ -215,6 +236,36 @@ ensure_thumb_shader (LrgEditorSceneRenderer *self)
 	return TRUE;
 }
 
+/* Cache value destructor: values may be NULL (a failed or empty entry). */
+static void
+object_unref_nullable (gpointer data)
+{
+	if (data != NULL)
+		g_object_unref (data);
+}
+
+/*
+ * Drops the cached LOD groups.  Their generated level models own GPU
+ * buffers: without a context (@gl FALSE) they are leaked on purpose, as
+ * the driver already reclaimed them with the context.
+ */
+static void
+clear_lod_groups (LrgEditorSceneRenderer *self,
+                  gboolean                gl)
+{
+	GHashTableIter iter;
+
+	if (self->lod_groups == NULL)
+		return;
+	if (!gl)
+	{
+		g_hash_table_iter_init (&iter, self->lod_groups);
+		while (g_hash_table_iter_next (&iter, NULL, NULL))
+			g_hash_table_iter_steal (&iter);
+	}
+	g_hash_table_remove_all (self->lod_groups);
+}
+
 /*
  * Frees the GPU resources: the runtime renderer's, the thumbnail shader,
  * and the post processors (replaced by fresh ones: LrgColorGrade owns a
@@ -228,12 +279,29 @@ release_resources (LrgEditorSceneRenderer *self,
 
 	if (self->runtime != NULL)
 		lrg_world3d_renderer_release (self->runtime);
-	if (self->has_thumb_lit && gl)
+	clear_lod_groups (self, gl);
+	/* Probe cubemaps belong to the context: release and recapture */
+	if (self->node_probes != NULL)
+	{
+		GHashTableIter iter;
+		gpointer       probe;
+
+		g_hash_table_iter_init (&iter, self->node_probes);
+		while (g_hash_table_iter_next (&iter, NULL, &probe))
+		{
+			if (gl)
+				lrg_reflection_probe_release_gpu (LRG_REFLECTION_PROBE (probe));
+			g_object_set_data (G_OBJECT (probe), "lrg-editor-capture", GINT_TO_POINTER (1));
+		}
+	}
 		UnloadShader (self->thumb_lit);
 	memset (&self->thumb_lit, 0, sizeof self->thumb_lit);
 	self->has_thumb_lit = FALSE;
 	for (i = 0; i < N_POST_SLOTS; i++)
 	{
+		/* Its ping-pong targets belong to the old context */
+		if (gl && self->post[i] != NULL)
+			lrg_post_processor_release (self->post[i]);
 		g_clear_object (&self->post[i]);
 		self->post[i] = lrg_world3d_renderer_new_preview_post_processor ();
 	}
@@ -299,10 +367,26 @@ param_string (LrgNodeVisual *visual,
 	return (v != NULL && G_VALUE_HOLDS_STRING (v)) ? g_value_get_string (v) : NULL;
 }
 
+/* A boolean visual param (booleans, or numbers != 0), or @fallback. */
+static gboolean
+param_bool (LrgNodeVisual *visual,
+            const gchar   *name,
+            gboolean       fallback)
+{
+	const GValue *v = lrg_node_visual_get_param (visual, name);
+
+	if (v == NULL)
+		return fallback;
+	if (G_VALUE_HOLDS_BOOLEAN (v))
+		return g_value_get_boolean (v);
+	return lrg_node_visual_get_param_double (visual, name, fallback ? 1.0 : 0.0) != 0.0;
+}
+
 /*
  * The light of a LIGHT node: "light_type" directional (shining down the
  * node's local -Z, like a camera looks), spot ("spot", or a "spot_angle"
- * above 0) or point; "intensity", "range" and "spot_angle" (degrees)
+ * above 0) or point; "intensity", "range", "spot_angle" and
+ * "spot_inner_angle" (full cone angles in degrees) and "cast_shadows"
  * params; the material colour (white without one) as colour.
  */
 static void
@@ -324,6 +408,7 @@ node_light_desc (LrgNodeVisual  *visual,
 	out->color[2] = rgba[2];
 	out->intensity = (gfloat) lrg_node_visual_get_param_double (visual, "intensity", 1.0);
 	out->range = (gfloat) lrg_node_visual_get_param_double (visual, "range", 10.0);
+	out->cast_shadows = param_bool (visual, "cast_shadows", FALSE);
 	spot = (gfloat) lrg_node_visual_get_param_double (visual, "spot_angle", 0.0);
 	out->position[0] = world[12];
 	out->position[1] = world[13];
@@ -338,8 +423,11 @@ node_light_desc (LrgNodeVisual  *visual,
 		out->kind = LRG_LIGHT3D_SPOT;
 		if (spot > 0.0f)
 		{
+			gfloat inner = (gfloat) lrg_node_visual_get_param_double (visual, "spot_inner_angle", 0.0);
+
 			out->outer_angle = spot * 0.5f * (gfloat) G_PI / 180.0f;
-			out->inner_angle = out->outer_angle * 0.8f;
+			out->inner_angle = (inner > 0.0f && inner <= spot) ? inner * 0.5f * (gfloat) G_PI / 180.0f
+			                                                   : out->outer_angle * 0.8f;
 		}
 	}
 	else
@@ -355,6 +443,146 @@ typedef struct
 	LrgEditorSelection     *selection;
 	gboolean                scene_lighting;
 } NodeWalk;
+
+/* The flags an LrgMaterial adds to a node item (queue, culling, model). */
+static LrgRenderItemFlags
+material_item_flags (LrgMaterial *mat)
+{
+	guint flags = 0;
+
+	switch (lrg_material_resolve_render_queue (mat))
+	{
+	case LRG_MATERIAL_RENDER_QUEUE_TRANSPARENT:
+		flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		break;
+	case LRG_MATERIAL_RENDER_QUEUE_CUTOUT:
+		flags |= LRG_RENDER_ITEM_FLAG_CUTOUT;
+		break;
+	default:
+		break;
+	}
+	if (lrg_material_get_cull_mode (mat) == LRG_MATERIAL_CULL_NONE)
+		flags |= LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED;
+	if (lrg_material_get_shading_model (mat) == LRG_SHADING_MODEL_UNLIT)
+		flags |= LRG_RENDER_ITEM_FLAG_UNLIT;
+	return (LrgRenderItemFlags) flags;
+}
+
+/*
+ * The screen size of a LOD'd node for the viewport camera: the group's
+ * bounding sphere through the node's world matrix (largest axis scale),
+ * over the camera distance and field of view (orthographic views use
+ * the view height).
+ */
+static gfloat
+node_screen_size (LrgEditorSceneRenderer *self,
+                  LrgLodGroup            *lod,
+                  const gfloat           *world)
+{
+	const LrgEditorView *v = self->cur_view;
+	gfloat               center[3], c[3], d[3], radius, scale, dist;
+	gint                 k;
+
+	if (!lrg_lod_group_get_bounding_sphere (lod, center, &radius))
+		return 1.0f;
+	lrg_editor_math_transform_point (world, center, c);
+	scale = 0.0f;
+	for (k = 0; k < 3; k++)
+		scale = MAX (scale, sqrtf (world[k * 4] * world[k * 4] + world[k * 4 + 1] * world[k * 4 + 1] +
+		                           world[k * 4 + 2] * world[k * 4 + 2]));
+	radius *= scale;
+	if (v->orthographic)
+		return (v->ortho_height > 0.0f) ? radius * 2.0f / v->ortho_height : 1.0f;
+	for (k = 0; k < 3; k++)
+		d[k] = c[k] - v->position[k];
+	dist = sqrtf (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+	return lrg_lod_compute_screen_size (radius, dist, v->fovy);
+}
+
+/*
+ * A decal node: the next decal of the pool placed on the node's box
+ * (world matrix times size_x / size_y / size_z, like LrgDecalComponent),
+ * with its texture (the node asset), colour and the params the
+ * component maps by name.  Added to the runtime renderer's decal set.
+ */
+static void
+add_node_decal (LrgEditorSceneRenderer *self,
+                LrgNodeVisual          *visual,
+                const gfloat           *world,
+                const gfloat           *rgba)
+{
+	const gchar *asset = lrg_node_visual_get_asset (visual);
+	LrgDecal    *decal;
+	gfloat       scale[16], m[16];
+
+	if (self->decals_used >= self->decal_pool->len)
+		g_ptr_array_add (self->decal_pool, lrg_decal_new ());
+	decal = g_ptr_array_index (self->decal_pool, self->decals_used++);
+
+	lrg_editor_math_identity (scale);
+	scale[0] = (gfloat) lrg_node_visual_get_param_double (visual, "size_x", 1.0);
+	scale[5] = (gfloat) lrg_node_visual_get_param_double (visual, "size_y", 1.0);
+	scale[10] = (gfloat) lrg_node_visual_get_param_double (visual, "size_z", 1.0);
+	lrg_editor_math_multiply (world, scale, m);
+	lrg_decal_set_transform (decal, m);
+	lrg_decal_set_color (decal, rgba[0], rgba[1], rgba[2], rgba[3]);
+	lrg_decal_set_opacity (decal, (gfloat) CLAMP (lrg_node_visual_get_param_double (visual, "opacity", 1.0), 0.0, 1.0));
+	lrg_decal_set_fade_angle (decal, (gfloat) lrg_node_visual_get_param_double (visual, "fade_angle", 60.0));
+	lrg_decal_set_fade_width (decal, (gfloat) lrg_node_visual_get_param_double (visual, "fade_width", 20.0));
+	lrg_decal_set_sort_order (decal, (gint) lrg_node_visual_get_param_double (visual, "sort_order", 0.0));
+	lrg_decal_set_roughness (decal, (gfloat) lrg_node_visual_get_param_double (visual, "roughness", 0.5));
+	lrg_decal_set_metallic (decal, (gfloat) lrg_node_visual_get_param_double (visual, "metallic", 0.0));
+	lrg_decal_set_albedo_texture (decal, asset != NULL ? lrg_world3d_renderer_get_texture (self->runtime, asset) : NULL);
+	lrg_decal_set_enabled (decal, TRUE);
+	lrg_decal_set_add (lrg_world3d_renderer_get_decal_set (self->runtime), decal);
+}
+
+/*
+ * A reflection-probe node: its probe (made on first sight, kept by node)
+ * at the node's position with the extents_x/y/z, blend_distance,
+ * intensity, box_projection and resolution params.  A probe that moved
+ * or changed is captured again before the frame.
+ */
+static void
+add_node_probe (LrgEditorSceneRenderer *self,
+                LrgNode                *node,
+                LrgNodeVisual          *visual,
+                const gfloat           *world)
+{
+	LrgReflectionProbe *probe = g_hash_table_lookup (self->node_probes, node);
+	gfloat              pos[3], ext[3], old_pos[3], old_ext[3];
+	guint               res;
+	gboolean            moved;
+
+	if (probe == NULL)
+	{
+		probe = lrg_reflection_probe_new ();
+		g_hash_table_insert (self->node_probes, node, probe);
+	}
+	g_hash_table_add (self->probe_seen, node);
+
+	pos[0] = world[12];
+	pos[1] = world[13];
+	pos[2] = world[14];
+	ext[0] = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "extents_x", 5.0), 0.01);
+	ext[1] = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "extents_y", 5.0), 0.01);
+	ext[2] = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "extents_z", 5.0), 0.01);
+	res = (guint) CLAMP (lrg_node_visual_get_param_double (visual, "resolution", 128.0), 16.0, 1024.0);
+	lrg_reflection_probe_get_position (probe, old_pos);
+	lrg_reflection_probe_get_extents (probe, old_ext);
+	moved = memcmp (pos, old_pos, sizeof pos) != 0 || memcmp (ext, old_ext, sizeof ext) != 0 ||
+	        res != lrg_reflection_probe_get_resolution (probe);
+
+	lrg_reflection_probe_set_position (probe, pos[0], pos[1], pos[2]);
+	lrg_reflection_probe_set_extents (probe, ext[0], ext[1], ext[2]);
+	lrg_reflection_probe_set_resolution (probe, res);
+	lrg_reflection_probe_set_blend_distance (probe, (gfloat) lrg_node_visual_get_param_double (visual, "blend_distance", 1.0));
+	lrg_reflection_probe_set_intensity (probe, (gfloat) lrg_node_visual_get_param_double (visual, "intensity", 1.0));
+	lrg_reflection_probe_set_box_projection (probe, lrg_node_visual_get_param_double (visual, "box_projection", 1.0) != 0.0);
+	if (moved || self->recapture)
+		g_object_set_data (G_OBJECT (probe), "lrg-editor-capture", GINT_TO_POINTER (1));
+	g_ptr_array_add (self->frame_probes, probe);
+}
 
 /*
  * The render item of one node's geometry: primitives, models (from the
@@ -394,13 +622,48 @@ add_node_item (NodeWalk      *walk,
 		{
 			const gchar *asset = lrg_node_visual_get_asset (visual);
 			GrlModel    *model = (asset != NULL) ? lrg_world3d_renderer_get_model (self->runtime, asset) : NULL;
+			LrgLodGroup *lod;
 
 			if (model == NULL)
 				return;   /* the overlay draws a magenta placeholder */
 			item.kind = LRG_RENDER_ITEM_MODEL;
 			item.model = model;
+
+			/* Assets whose .meta asks for LOD levels draw the level the
+			 * viewport camera selects (or the forced preview level) */
+			lod = lrg_editor_scene_renderer_get_lod_group (self, asset);
+			if (lod != NULL && self->cur_view != NULL)
+			{
+				GPtrArray *models;
+				gint       level;
+				guint      k;
+
+				level = lrg_lod_group_select_level (lod, node_screen_size (self, lod, world), LRG_LOD_LEVEL_NONE);
+				if (level < 0)
+					return;   /* culled at this distance */
+				models = lrg_lod_group_get_level_models (lod, (guint) level);
+				if (models == NULL || models->len == 0)
+					break;
+				item.material = lrg_node_visual_get_material (visual);
+				for (k = 0; k < models->len; k++)
+				{
+					item.model = g_ptr_array_index (models, k);
+					if (item.color[3] < 1.0f)
+						item.flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+					lrg_render_list_add (walk->list, &item);
+				}
+				return;
+			}
 		}
 		break;
+
+	case LRG_NODE_VISUAL_DECAL:
+		add_node_decal (self, visual, world, rgba);
+		return;
+
+	case LRG_NODE_VISUAL_REFLECTION_PROBE:
+		add_node_probe (self, node, visual, world);
+		return;
 
 	case LRG_NODE_VISUAL_SPRITE:
 		{
@@ -449,6 +712,28 @@ add_node_item (NodeWalk      *walk,
 	default:
 		return;
 	}
+
+	/* A `material:` reference (.rmat) draws with that LrgMaterial: its
+	 * base colour and render queue, like the runtime's mesh renderer;
+	 * else the node's scalar material (roughness, metallic, emission; its
+	 * colour is already the item colour) */
+	if (item.material == NULL)
+	{
+		const gchar *ref = lrg_node_visual_get_material_ref (visual);
+		LrgMaterial *mat = (ref != NULL) ? lrg_world3d_renderer_get_material (self->runtime, ref) : NULL;
+
+		if (mat != NULL)
+		{
+			if (item.texture == NULL)
+				lrg_material_get_base_color (mat, item.color);
+			item.material = mat;
+			item.flags |= material_item_flags (mat);
+		}
+		else
+			item.material = lrg_node_visual_get_material (visual);
+	}
+	if (!param_bool (visual, "cast_shadows", TRUE))
+		item.flags &= ~LRG_RENDER_ITEM_FLAG_CAST_SHADOW;
 
 	/* Translucent materials blend after the opaque pass */
 	if (item.color[3] < 1.0f)
@@ -518,6 +803,87 @@ walk_level (NodeWalk *walk,
 	lrg_editor_node_get_world_matrix (root, root_world);
 	for (i = 0; top != NULL && i < top->len; i++)
 		walk_subtree (walk, (LrgNode *) g_ptr_array_index (top, i), root_world);
+}
+
+/*
+ * The level environment's post stack (`post_stack:` path or guid:),
+ * loaded once per resolved path (failures cached and reported once;
+ * forget_asset drops the cache so a saved .rpost reloads).
+ */
+static LrgPostStack *
+level_post_stack (LrgEditorSceneRenderer *self,
+                  LrgEnvironment         *env)
+{
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *abs = NULL;
+	const gchar      *ref = (env != NULL) ? lrg_environment_get_post_stack (env) : NULL;
+	LrgPostStack     *stack;
+
+	if (ref == NULL || *ref == '\0')
+		return NULL;
+	abs = lrg_world3d_renderer_resolve_asset (self->runtime, ref);
+	if (abs == NULL)
+		return NULL;
+	if (g_hash_table_contains (self->post_stacks, abs))
+		return (LrgPostStack *) g_hash_table_lookup (self->post_stacks, abs);
+	stack = lrg_post_stack_new_from_file (abs, &error);
+	if (stack == NULL)
+		g_message ("Level post stack %s: %s", abs, error != NULL ? error->message : "failed");
+	g_hash_table_insert (self->post_stacks, g_strdup (abs), stack);
+	return stack;
+}
+
+/* Takes this frame's probes off the environment they were put on. */
+static void
+probes_detach (LrgEditorSceneRenderer *self)
+{
+	guint i;
+
+	if (self->probe_env != NULL)
+		for (i = 0; i < self->frame_probes->len; i++)
+			lrg_environment_remove_probe (self->probe_env, g_ptr_array_index (self->frame_probes, i));
+	g_clear_object (&self->probe_env);
+	g_ptr_array_set_size (self->frame_probes, 0);
+}
+
+/*
+ * After the walk: forgets probes of nodes that are gone, captures the
+ * probes that moved (or all, after lrg_editor_scene_renderer_recapture_probes())
+ * from the authoring list, and puts this frame's probes on @env so the
+ * lit shader blends them.  Without an environment probes do nothing.
+ */
+static void
+probes_attach (LrgEditorSceneRenderer *self,
+               LrgEnvironment         *env)
+{
+	GHashTableIter iter;
+	gpointer       key;
+	guint          i;
+
+	g_hash_table_iter_init (&iter, self->node_probes);
+	while (g_hash_table_iter_next (&iter, &key, NULL))
+		if (!g_hash_table_contains (self->probe_seen, key))
+			g_hash_table_iter_remove (&iter);
+	g_hash_table_remove_all (self->probe_seen);
+	self->recapture = FALSE;
+	if (env == NULL)
+		return;
+
+	for (i = 0; i < self->frame_probes->len; i++)
+	{
+		LrgReflectionProbe *probe = g_ptr_array_index (self->frame_probes, i);
+
+		if (g_object_get_data (G_OBJECT (probe), "lrg-editor-capture") != NULL)
+		{
+			g_autoptr(GError) error = NULL;
+
+			g_object_set_data (G_OBJECT (probe), "lrg-editor-capture", NULL);
+			if (!lrg_world3d_renderer_capture_probe (self->runtime, probe, self->list, env, &error))
+				g_message ("Probe capture: %s", error->message);
+		}
+		lrg_environment_add_probe (env, probe);
+	}
+	self->probe_env = g_object_ref (env);
 }
 
 /* ==========================================================================
@@ -1147,7 +1513,19 @@ view_label (const LrgEditorViewCamera *cam,
 	case LRG_EDITOR_RENDER_MODE_WIREFRAME:     suffix = " | Wire";     break;
 	case LRG_EDITOR_RENDER_MODE_NORMALS:       suffix = " | Normals";  break;
 	case LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY: suffix = " | Lighting"; break;
-	default:                                   suffix = "";            break;
+	default:
+		/* The 0.9.0 debug views, by the runtime renderer's values (the
+		 * editor's enum matches them one to one) */
+		switch ((LrgWorld3DRenderMode) mode)
+		{
+		case LRG_WORLD3D_RENDER_MODE_OVERDRAW:         suffix = " | Overdraw";    break;
+		case LRG_WORLD3D_RENDER_MODE_UV:               suffix = " | UV";          break;
+		case LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY: suffix = " | Light count"; break;
+		case LRG_WORLD3D_RENDER_MODE_AO:               suffix = " | AO";          break;
+		case LRG_WORLD3D_RENDER_MODE_REFLECTIONS:      suffix = " | Reflections"; break;
+		default:                                       suffix = "";               break;
+		}
+		break;
 	}
 
 	if (cam->view_2d)
@@ -1361,6 +1739,13 @@ lrg_editor_scene_renderer_finalize (GObject *object)
 	for (i = 0; i < N_POST_SLOTS; i++)
 		g_clear_object (&self->post[i]);
 	g_clear_pointer (&self->overlay, g_array_unref);
+	clear_lod_groups (self, IsWindowReady ());
+	g_clear_pointer (&self->lod_groups, g_hash_table_unref);
+	g_clear_pointer (&self->frame_probes, g_ptr_array_unref);
+	g_clear_pointer (&self->probe_seen, g_hash_table_unref);
+	g_clear_pointer (&self->node_probes, g_hash_table_unref);
+	g_clear_pointer (&self->decal_pool, g_ptr_array_unref);
+	g_clear_pointer (&self->post_stacks, g_hash_table_unref);
 
 	G_OBJECT_CLASS (lrg_editor_scene_renderer_parent_class)->finalize (object);
 }
@@ -1440,11 +1825,20 @@ lrg_editor_scene_renderer_init (LrgEditorSceneRenderer *self)
 	/* The shared renderer; its hooks draw the editor-only 3D parts */
 	self->runtime = lrg_world3d_renderer_new ();
 	self->list = lrg_render_list_new ();
+	self->lod_groups = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
+	self->decal_pool = g_ptr_array_new_with_free_func (g_object_unref);
+	self->node_probes = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_object_unref);
+	self->probe_seen = g_hash_table_new (g_direct_hash, g_direct_equal);
+	self->frame_probes = g_ptr_array_new ();
+	self->post_stacks = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
 	self->overlay = g_array_new (FALSE, FALSE, sizeof (OverlayEntry));
 	self->bg_handler = g_signal_connect (self->runtime, "draw-background", G_CALLBACK (on_draw_background), self);
 	self->overlay_handler = g_signal_connect (self->runtime, "draw-overlay", G_CALLBACK (on_draw_overlay), self);
 	for (i = 0; i < N_POST_SLOTS; i++)
+	{
 		self->post[i] = lrg_world3d_renderer_new_preview_post_processor ();
+		self->cull_mask[i] = LRG_RENDER_LAYERS_MASK_ALL;
+	}
 }
 
 /* ==========================================================================
@@ -1646,7 +2040,7 @@ render_core (LrgEditorSceneRenderer    *self,
 	rv.orthographic = v.orthographic;
 	rv.near_plane = v.near_plane;
 	rv.far_plane = v.far_plane;
-	rv.cull_mask = LRG_RENDER_LAYERS_MASK_ALL;
+	rv.cull_mask = (slot < N_POST_SLOTS) ? self->cull_mask[slot] : LRG_RENDER_LAYERS_MASK_ALL;
 
 	/* --- Viewport overlays -> render settings ---------------------------- */
 	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_SHADOWS) && perspective)
@@ -1683,15 +2077,22 @@ render_core (LrgEditorSceneRenderer    *self,
 	if (world != NULL)
 	{
 		/* Playing a 3D level: the runtime world, exactly as the game
-		 * draws it (its own lights) */
+		 * draws it (its own lights and look) */
 		self->cur_nodes = FALSE;
+		lrg_world3d_renderer_set_fallback_look (self->runtime, NULL, NULL);
 		lrg_world3d_renderer_render_view (self->runtime, world, &rv);
 	}
 	else
 	{
-		/* Authoring: the nodes as a transient render list */
+		LrgEnvironment *env = (level != NULL) ? lrg_level_get_environment (level) : NULL;
+
+		/* Authoring: the nodes as a transient render list, the level's
+		 * look as the renderer's fallback layer (callers' overrides, the
+		 * environment panel and post-stack editor, stay on top) */
 		lrg_render_list_clear (self->list);
 		lrg_render_list_set_view (self->list, v.position, LRG_RENDER_LAYERS_MASK_ALL, NULL);
+		lrg_decal_set_clear (lrg_world3d_renderer_get_decal_set (self->runtime));
+		self->decals_used = 0;
 		if (level != NULL)
 		{
 			NodeWalk walk;
@@ -1705,7 +2106,23 @@ render_core (LrgEditorSceneRenderer    *self,
 		}
 		lrg_render_list_sort (self->list);
 		self->cur_nodes = TRUE;
+		/* A level sky made of images needs them read before its bake
+		 * (paths relative to the level, like the runtime resolves them) */
+		if (env != NULL && lrg_environment_needs_bake (env) &&
+		    (lrg_environment_get_sky_source (env) == LRG_ENVIRONMENT_SKY_EQUIRECT ||
+		     lrg_environment_get_sky_source (env) == LRG_ENVIRONMENT_SKY_CUBEMAP))
+		{
+			g_autoptr(GError) error = NULL;
+
+			if (!lrg_environment_load_sources (env, NULL, lrg_world3d_renderer_get_base_dir (self->runtime), &error))
+				g_message ("Level sky: %s", error->message);
+		}
+		lrg_world3d_renderer_set_fallback_look (self->runtime, env, level_post_stack (self, env));
+		if (lrg_world3d_renderer_get_environment (self->runtime) != NULL)
+			env = lrg_world3d_renderer_get_environment (self->runtime);
+		probes_attach (self, env);
 		lrg_world3d_renderer_render_list (self->runtime, self->list, &rv);
+		probes_detach (self);
 	}
 	self->drawn = lrg_world3d_renderer_get_drawn (self->runtime) + self->tile_draws;
 
@@ -1810,6 +2227,30 @@ lrg_editor_scene_renderer_get_sky_dome (LrgEditorSceneRenderer *self)
 	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
 
 	return lrg_world3d_renderer_get_sky_dome (self->runtime);
+}
+
+void
+lrg_editor_scene_renderer_set_cull_mask (LrgEditorSceneRenderer *self,
+                                         guint                   slot,
+                                         guint32                 mask)
+{
+	g_return_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self));
+
+	if (slot >= N_POST_SLOTS || self->cull_mask[slot] == mask)
+		return;
+	self->cull_mask[slot] = mask;
+	self->generation++;   /* on-demand viewports redraw */
+}
+
+guint32
+lrg_editor_scene_renderer_get_cull_mask (LrgEditorSceneRenderer *self,
+                                         guint                   slot)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), LRG_RENDER_LAYERS_MASK_ALL);
+
+	if (slot >= N_POST_SLOTS)
+		return LRG_RENDER_LAYERS_MASK_ALL;
+	return self->cull_mask[slot];
 }
 
 LrgPostProcessor *
@@ -1921,6 +2362,57 @@ lrg_editor_scene_renderer_forget_asset (LrgEditorSceneRenderer *self,
 	/* The runtime renderer bumps its generation when it had a copy */
 	if (abs_path != NULL)
 		lrg_world3d_renderer_forget_asset (self->runtime, abs_path);
+	/* LOD groups and post stacks are keyed by strings that may name the
+	 * file by guid: drop them all (rebuilt on the next draw) */
+	clear_lod_groups (self, IsWindowReady ());
+	g_hash_table_remove_all (self->post_stacks);
+}
+
+void
+lrg_editor_scene_renderer_recapture_probes (LrgEditorSceneRenderer *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self));
+
+	self->recapture = TRUE;
+	self->generation++;
+}
+
+LrgLodGroup *
+lrg_editor_scene_renderer_get_lod_group (LrgEditorSceneRenderer *self,
+                                         const gchar            *asset)
+{
+	g_autoptr(LrgAssetMeta) meta = NULL;
+	g_autoptr(GError)       error = NULL;
+	g_autofree gchar       *abs = NULL;
+	GrlModel               *model;
+	LrgLodGroup            *group = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	if (asset == NULL || *asset == '\0' || !IsWindowReady ())
+		return NULL;
+	if (g_hash_table_contains (self->lod_groups, asset))
+		return (LrgLodGroup *) g_hash_table_lookup (self->lod_groups, asset);
+
+	/* The model must be loaded first (not cached until it is) */
+	model = lrg_world3d_renderer_get_model (self->runtime, asset);
+	if (model == NULL)
+		return NULL;
+
+	/* Only assets whose sidecar asks for two or more levels get a group */
+	abs = lrg_world3d_renderer_resolve_asset (self->runtime, asset);
+	if (abs != NULL)
+		meta = lrg_asset_meta_load_for_asset (abs, NULL);
+	if (meta != NULL && lrg_asset_meta_get_model_lod_levels (meta) >= 2)
+	{
+		group = lrg_lod_group_new_from_model_with_meta (model, meta, &error);
+		if (group == NULL)
+			g_message ("LOD group for %s: %s", asset, error != NULL ? error->message : "failed");
+		else if (lrg_lod_group_get_n_levels (group) < 2)
+			g_clear_object (&group);
+	}
+	g_hash_table_insert (self->lod_groups, g_strdup (asset), group);
+	return group;
 }
 
 GrlImage *

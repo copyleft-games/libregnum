@@ -41,6 +41,7 @@
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "graphics/lrg-light-set-private.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-lod-group.h"
 
 /* how far behind the fitted sphere the light camera starts, so tall
  * casters outside the view still throw their shadow into it */
@@ -174,6 +175,26 @@ static const gchar caster_fs[] =
     "                              : gl_FragCoord.z;\n"
     "    finalColor = vec4(d, 0.0, 0.0, 1.0);\n"
     "}\n";
+
+
+/*
+ * The fragment source @fs with the LOD cross-fade spliced in: the
+ * lrg_lod_get_glsl() snippet (the lodFade uniform and
+ * lrg_lod_fade_discard()) before main() and the discard as main()'s
+ * first statement, so items fading between LOD levels dither out here
+ * exactly like in the other passes (lrg_lod_bind_fade() sets lodFade;
+ * 0, the default, keeps every fragment).
+ */
+static gchar *
+caster_fs_with_lod (const gchar *fs)
+{
+    const gchar *main_start = strstr (fs, "void main() {\n");
+
+    if (main_start == NULL)
+        return g_strdup (fs);
+    return g_strdup_printf ("%.*s%svoid main() {\n    lrg_lod_fade_discard ();\n%s", (gint) (main_start - fs), fs,
+                            lrg_lod_get_glsl (), main_start + strlen ("void main() {\n"));
+}
 
 /* ------------------------------------------------------------------------ */
 /* Matrix helpers                                                           */
@@ -1186,7 +1207,11 @@ lrg_shadow_renderer_get_caster_shader (LrgShadowRenderer *self)
         return NULL;
     self->caster_tried = TRUE;
 
-    self->caster = grl_shader_new_from_memory (caster_vs, caster_fs, &error);
+    {
+        g_autofree gchar *fs = caster_fs_with_lod (caster_fs);
+
+        self->caster = grl_shader_new_from_memory (caster_vs, fs, &error);
+    }
     if (self->caster == NULL)
         return NULL;
     handle = grl_shader_get_handle (self->caster);

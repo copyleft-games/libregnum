@@ -360,7 +360,9 @@ test_settings (void)
 	lrg_world3d_renderer_get_background (r, &out);
 	g_assert_cmpuint (out.g, ==, 20);
 
-	/* The preview processor holds the four effects the renderer reads */
+	/* The preview processor: bloom, tonemap, vignette, FXAA, grade */
+	g_assert_cmpuint (lrg_post_processor_get_effect_count (post), ==, 5);
+	g_assert_nonnull (lrg_post_processor_get_effect (post, "tonemap"));
 	g_assert_nonnull (lrg_post_processor_get_effect (post, "fxaa"));
 	g_assert_nonnull (lrg_post_processor_get_effect (post, "bloom"));
 	g_assert_nonnull (lrg_post_processor_get_effect (post, "vignette"));
@@ -372,9 +374,11 @@ test_settings (void)
 	g_assert_true (G_TYPE_IS_ENUM (LRG_TYPE_WORLD3D_RENDER_PASS));
 	g_assert_true (G_TYPE_IS_BOXED (LRG_TYPE_WORLD3D_VIEW));
 
-	/* Shader sources: the five built-ins */
+	/* Shader sources: the four built-ins (post.fs left in 0.9.0: post
+	 * effects run through lrg_post_processor_process()) */
 	g_assert_nonnull (lrg_world3d_renderer_get_shader_source ("scene.vs"));
-	g_assert_nonnull (lrg_world3d_renderer_get_shader_source ("post.fs"));
+	g_assert_nonnull (lrg_world3d_renderer_get_shader_source ("normals.fs"));
+	g_assert_null (lrg_world3d_renderer_get_shader_source ("post.fs"));
 	g_assert_null (lrg_world3d_renderer_get_shader_source ("nope.fs"));
 
 	/* Release without a window is harmless (and twice) */
@@ -755,7 +759,8 @@ test_gpu (void)
 
 		lrg_world3d_renderer_set_post_processor (r, post);
 		with_post = gpu_render (r, world, cam, LRG_WORLD3D_RENDER_FLAG_CLEAR | LRG_WORLD3D_RENDER_FLAG_POST);
-		g_assert_cmpuint (lrg_world3d_renderer_get_pass_count (r, LRG_WORLD3D_RENDER_PASS_POST), ==, 1);
+		/* one pass per enabled effect of the preview chain */
+		g_assert_cmpuint (lrg_world3d_renderer_get_pass_count (r, LRG_WORLD3D_RENDER_PASS_POST), ==, 5);
 		for (i = 0; i < GPU_W * GPU_H * 4; i++)
 			diff += (guint64) ABS ((gint) ((guint8 *) with_post.data)[i] - (gint) ((guint8 *) plain.data)[i]);
 		g_assert_cmpuint (diff, >, 500);

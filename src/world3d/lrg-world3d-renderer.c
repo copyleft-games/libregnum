@@ -47,6 +47,18 @@
 #include "components/lrg-billboard-component.h"
 #include "components/lrg-skinned-model-component.h"
 #include "components/lrg-camera-component.h"
+#include "components/lrg-decal-component.h"
+#include "components/lrg-lod-component.h"
+#include "../graphics/lrg-material.h"
+#include "../graphics/lrg-depth-prepass.h"
+#include "../graphics/lrg-lod-group.h"
+#include "../graphics/lrg-shader-asset.h"
+#include "../lighting/lrg-reflection-probe.h"
+#include "../lighting/lrg-volumetric-fog.h"
+#include "../postprocess/lrg-post-effect.h"
+#include "../postprocess/effects/lrg-tonemap.h"
+#include "../graphics/lrg-light-set-private.h"
+#include "../lighting/lrg-environment-glsl-private.h"
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
@@ -62,6 +74,10 @@
 #define DEFAULT_SUN_Z     (-0.45f)
 
 #define CUTOUT_ALPHA      (0.5f)
+
+/* raylib's MAX_MATERIAL_MAPS (its config.h is private): every Material
+ * raylib allocates has this many maps */
+#define RAYLIB_MATERIAL_MAPS (12)
 
 /* ==========================================================================
  * Enum and boxed types (hand-written: the enums live in this header)
@@ -80,6 +96,11 @@ lrg_world3d_render_mode_get_type (void)
 			{ LRG_WORLD3D_RENDER_MODE_WIREFRAME, "LRG_WORLD3D_RENDER_MODE_WIREFRAME", "wireframe" },
 			{ LRG_WORLD3D_RENDER_MODE_NORMALS, "LRG_WORLD3D_RENDER_MODE_NORMALS", "normals" },
 			{ LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY, "LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY", "lighting-only" },
+			{ LRG_WORLD3D_RENDER_MODE_OVERDRAW, "LRG_WORLD3D_RENDER_MODE_OVERDRAW", "overdraw" },
+			{ LRG_WORLD3D_RENDER_MODE_UV, "LRG_WORLD3D_RENDER_MODE_UV", "uv" },
+			{ LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY, "LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY", "light-complexity" },
+			{ LRG_WORLD3D_RENDER_MODE_AO, "LRG_WORLD3D_RENDER_MODE_AO", "ao" },
+			{ LRG_WORLD3D_RENDER_MODE_REFLECTIONS, "LRG_WORLD3D_RENDER_MODE_REFLECTIONS", "reflections" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_enum_register_static (g_intern_static_string ("LrgWorld3DRenderMode"), values);
@@ -127,6 +148,9 @@ lrg_world3d_render_pass_get_type (void)
 			{ LRG_WORLD3D_RENDER_PASS_CUTOUT, "LRG_WORLD3D_RENDER_PASS_CUTOUT", "cutout" },
 			{ LRG_WORLD3D_RENDER_PASS_TRANSPARENT, "LRG_WORLD3D_RENDER_PASS_TRANSPARENT", "transparent" },
 			{ LRG_WORLD3D_RENDER_PASS_POST, "LRG_WORLD3D_RENDER_PASS_POST", "post" },
+			{ LRG_WORLD3D_RENDER_PASS_PREPASS, "LRG_WORLD3D_RENDER_PASS_PREPASS", "prepass" },
+			{ LRG_WORLD3D_RENDER_PASS_SSAO, "LRG_WORLD3D_RENDER_PASS_SSAO", "ssao" },
+			{ LRG_WORLD3D_RENDER_PASS_VOLUMETRIC, "LRG_WORLD3D_RENDER_PASS_VOLUMETRIC", "volumetric" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_enum_register_static (g_intern_static_string ("LrgWorld3DRenderPass"), values);
@@ -142,45 +166,18 @@ G_DEFINE_BOXED_TYPE (LrgWorld3DView, lrg_world3d_view, lrg_world3d_view_copy, lr
  * Instance structure
  * ========================================================================== */
 
-/* Uniform locations of the post shader, in post_uniform_names order. */
-enum
-{
-	POST_LOC_RESOLUTION,
-	POST_LOC_FXAA_ON,
-	POST_LOC_FXAA_EDGE,
-	POST_LOC_FXAA_EDGE_MIN,
-	POST_LOC_BLOOM_ON,
-	POST_LOC_BLOOM_THRESHOLD,
-	POST_LOC_BLOOM_KNEE,
-	POST_LOC_BLOOM_INTENSITY,
-	POST_LOC_BLOOM_SIZE,
-	POST_LOC_BLOOM_TINT,
-	POST_LOC_VIGNETTE_ON,
-	POST_LOC_VIGNETTE_INTENSITY,
-	POST_LOC_VIGNETTE_RADIUS,
-	POST_LOC_VIGNETTE_SMOOTHNESS,
-	POST_LOC_VIGNETTE_COLOR,
-	N_POST_LOCS
-};
-
-static const gchar * const post_uniform_names[N_POST_LOCS] = {
-	"resolution", "fxaaOn", "fxaaEdge", "fxaaEdgeMin", "bloomOn", "bloomThreshold", "bloomKnee",
-	"bloomIntensity", "bloomSize", "bloomTint", "vignetteOn", "vignetteIntensity", "vignetteRadius",
-	"vignetteSmoothness", "vignetteColor"
-};
-
 /*
- * The images of one post processor: the scene and the image after the
- * post pass, which LrgColorGrade then draws into the outer target.  Kept
- * as qdata on the processor so every viewport's processor has its own.
+ * The scene image of one post processor: an RGBA16F render texture (RGBA8
+ * when the driver cannot render to half floats) the colour passes draw
+ * into; lrg_post_processor_process() runs the chain over it.  Kept as
+ * qdata on the processor so every viewport's processor has its own.
  */
 typedef struct
 {
 	RenderTexture2D scene;
-	RenderTexture2D out;
-	GrlTexture     *out_texture;   /* non-owning wrapper of out.texture */
 	gint            width;
 	gint            height;
+	gboolean        hdr;
 } PostTargets;
 
 struct _LrgWorld3DRenderer
@@ -206,6 +203,8 @@ struct _LrgWorld3DRenderer
 	GHashTable              *textures;          /* abs path -> GrlTexture*, NULL = failed */
 	GHashTable              *model_by_asset;    /* asset string -> borrowed GrlModel* */
 	GHashTable              *texture_by_asset;  /* asset string -> borrowed GrlTexture* */
+	GHashTable              *materials;         /* abs path -> LrgMaterial*, NULL = failed */
+	GHashTable              *material_by_asset; /* asset string -> borrowed LrgMaterial* */
 	guint                    generation;
 
 	/* GPU resources, valid while has_gl */
@@ -228,16 +227,31 @@ struct _LrgWorld3DRenderer
 	gboolean                 has_unlit;
 	Shader                   normals;
 	gboolean                 has_normals;
-	Shader                   post_shader;
-	gboolean                 has_post;
-	gint                     post_locs[N_POST_LOCS];
 	GSList                  *post_owners;   /* processors carrying PostTargets (weak) */
+
+	/* Debug view shaders (overdraw and UV on the scene vertex shader;
+	 * light complexity, AO and reflections on the lit shader library) */
+	Shader                   overdraw;
+	gboolean                 has_overdraw;
+	Shader                   uv;
+	gboolean                 has_uv;
+	GrlShader               *dbg_lit[3];    /* complexity, AO, reflections; NULL until used */
+	gboolean                 dbg_tried[3];
+	gboolean                 env_fog;       /* the last frame's environment set the fog */
+	guint                    m3d_shader;    /* program the LrgMaterial3D locations belong to */
+	gint                     m3d_loc_pbr;
+	gint                     m3d_loc_emission;
 
 	/* What the current pass draws with */
 	gboolean                 gpu;
 	Shader                   cur_shader;
 	gboolean                 white_albedo;
 	gfloat                   cur_view[16];
+	LrgMaterial             *cur_mat;       /* the drawn item's LrgMaterial (borrowed), or NULL */
+	GHashTable              *faded;         /* shader ids whose lodFade is not 0 */
+	guint32                  cur_layers;    /* draw layers last uploaded to the light set */
+	LrgEnvironment          *probe_env;     /* environment whose probes are picked per item (borrowed) */
+	gpointer                 probe_pick[3]; /* probes + program bound for the last item */
 
 	/* Engine lighting */
 	LrgLightSet             *lights;
@@ -254,6 +268,32 @@ struct _LrgWorld3DRenderer
 
 	/* The list render()/render_view() collect into */
 	LrgRenderList           *list;
+
+	/* The 0.9.0 look: environment (sky, IBL, probes, fog), post stack,
+	 * depth prepass + SSAO, decals, volumetric fog */
+	LrgEnvironment          *environment;       /* own override (ref) */
+	LrgEnvironment          *active_env;        /* what the last render used (ref) */
+	LrgWorld3D              *frame_world;       /* borrowed while a world renders */
+	LrgPostStack            *post_stack;        /* own override (ref) */
+	LrgEnvironment          *fallback_env;      /* below the world's (ref) */
+	LrgPostStack            *fallback_stack;    /* below the world's (ref) */
+	LrgPostProcessor        *stack_post;        /* the stack in effect, built */
+	gboolean                 ssao_enabled;
+	gboolean                 decals_enabled;
+	gboolean                 ibl_enabled;
+	gboolean                 volumetric_enabled;
+	LrgSsao                 *ssao;
+	LrgDepthPrepass         *prepass;
+	LrgDecalSet             *decals;
+	LrgVolumetricFog        *vfog;
+	LrgCamera               *view_camera;       /* begins a LrgWorld3DView for the prepass */
+	GHashTable              *custom_shaders;    /* abs .rshader path -> LrgShaderAsset, NULL = failed */
+	gfloat                   cur_proj[16];
+
+	/* Per-pass timing (lrg_world3d_renderer_set_timing()) */
+	gboolean                 timing;
+	LrgRenderList           *list_in_flight;    /* the list the prepass replays */
+	gdouble                  pass_time[LRG_WORLD3D_RENDER_PASS_COUNT];
 
 	/* Statistics of the last render */
 	guint                    drawn;
@@ -610,135 +650,110 @@ static const gchar shader_normals_fs[] =
 	"}\n"
 ;
 
-static const gchar shader_post_fs[] =
+/* Overdraw view: every fragment adds a dim orange (additive blending, no
+ * depth test), so the brightness counts the layers. */
+static const gchar shader_overdraw_fs[] =
 	"#version 330\n"
-	"/* lrgeditor preview post-processing, one pass over the scene image:\n"
-	" * FXAA, soft-knee bloom, a gentle highlight shoulder and a vignette.\n"
-	" * The parameters come from the viewport's LrgFxaa, LrgBloom and\n"
-	" * LrgVignette effects; colour grading runs after this pass through\n"
-	" * LrgColorGrade. Uses raylib's default vertex shader. */\n"
-	"in vec2 fragTexCoord;\n"
-	"in vec4 fragColor;\n"
-	"uniform sampler2D texture0;\n"
-	"uniform vec2 resolution;\n"
-	"uniform int fxaaOn;\n"
-	"uniform float fxaaEdge;\n"
-	"uniform float fxaaEdgeMin;\n"
-	"uniform int bloomOn;\n"
-	"uniform float bloomThreshold;\n"
-	"uniform float bloomKnee;\n"
-	"uniform float bloomIntensity;\n"
-	"uniform float bloomSize;\n"
-	"uniform vec3 bloomTint;\n"
-	"uniform int vignetteOn;\n"
-	"uniform float vignetteIntensity;\n"
-	"uniform float vignetteRadius;\n"
-	"uniform float vignetteSmoothness;\n"
-	"uniform vec3 vignetteColor;\n"
 	"out vec4 finalColor;\n"
-	"\n"
-	"float luma (vec3 c)\n"
-	"{\n"
-	"    return dot (c, vec3 (0.299, 0.587, 0.114));\n"
-	"}\n"
-	"\n"
-	"/* FXAA: blend along the local edge direction where contrast is high. */\n"
-	"vec3 fxaa (vec2 uv)\n"
-	"{\n"
-	"    vec2 px = 1.0 / resolution;\n"
-	"    vec3 rgb_nw = texture (texture0, uv + vec2 (-1.0, -1.0) * px).rgb;\n"
-	"    vec3 rgb_ne = texture (texture0, uv + vec2 (1.0, -1.0) * px).rgb;\n"
-	"    vec3 rgb_sw = texture (texture0, uv + vec2 (-1.0, 1.0) * px).rgb;\n"
-	"    vec3 rgb_se = texture (texture0, uv + vec2 (1.0, 1.0) * px).rgb;\n"
-	"    vec3 rgb_m = texture (texture0, uv).rgb;\n"
-	"    float l_nw = luma (rgb_nw);\n"
-	"    float l_ne = luma (rgb_ne);\n"
-	"    float l_sw = luma (rgb_sw);\n"
-	"    float l_se = luma (rgb_se);\n"
-	"    float l_m = luma (rgb_m);\n"
-	"    float l_min = min (l_m, min (min (l_nw, l_ne), min (l_sw, l_se)));\n"
-	"    float l_max = max (l_m, max (max (l_nw, l_ne), max (l_sw, l_se)));\n"
-	"    vec2 dir;\n"
-	"    float reduce;\n"
-	"    float rcp;\n"
-	"    vec3 a;\n"
-	"    vec3 b;\n"
-	"    float l_b;\n"
-	"\n"
-	"    if (l_max - l_min < max (fxaaEdgeMin, l_max * fxaaEdge))\n"
-	"        return rgb_m;\n"
-	"    dir.x = -((l_nw + l_ne) - (l_sw + l_se));\n"
-	"    dir.y = ((l_nw + l_sw) - (l_ne + l_se));\n"
-	"    reduce = max ((l_nw + l_ne + l_sw + l_se) * 0.03125, 1.0 / 128.0);\n"
-	"    rcp = 1.0 / (min (abs (dir.x), abs (dir.y)) + reduce);\n"
-	"    dir = clamp (dir * rcp, vec2 (-8.0), vec2 (8.0)) * px;\n"
-	"    a = 0.5 * (texture (texture0, uv + dir * (1.0 / 3.0 - 0.5)).rgb +\n"
-	"               texture (texture0, uv + dir * (2.0 / 3.0 - 0.5)).rgb);\n"
-	"    b = a * 0.5 + 0.25 * (texture (texture0, uv - dir * 0.5).rgb +\n"
-	"                          texture (texture0, uv + dir * 0.5).rgb);\n"
-	"    l_b = luma (b);\n"
-	"    return (l_b < l_min || l_b > l_max) ? a : b;\n"
-	"}\n"
-	"\n"
-	"/* The part of a colour above the bloom threshold, with a soft knee. */\n"
-	"vec3 bright (vec3 c)\n"
-	"{\n"
-	"    float l = max (c.r, max (c.g, c.b));\n"
-	"    float knee = max (bloomThreshold * bloomKnee, 0.0001);\n"
-	"    float soft = clamp (l - bloomThreshold + knee, 0.0, 2.0 * knee);\n"
-	"    float w;\n"
-	"\n"
-	"    soft = soft * soft / (4.0 * knee);\n"
-	"    w = max (soft, l - bloomThreshold) / max (l, 0.0001);\n"
-	"    return c * w;\n"
-	"}\n"
-	"\n"
-	"/* Three rings of eight taps, weighted towards the centre. */\n"
-	"vec3 bloom (vec2 uv)\n"
-	"{\n"
-	"    vec2 px = bloomSize / resolution;\n"
-	"    vec3 sum = vec3 (0.0);\n"
-	"    float total = 0.0;\n"
-	"    int ring;\n"
-	"    int i;\n"
-	"\n"
-	"    for (ring = 1; ring <= 3; ring++)\n"
-	"    {\n"
-	"        for (i = 0; i < 8; i++)\n"
-	"        {\n"
-	"            float a = 6.2831853 * (float (i) + 0.5 * float (ring)) / 8.0;\n"
-	"            float w = 1.0 / float (ring);\n"
-	"\n"
-	"            sum += bright (texture (texture0, uv + vec2 (cos (a), sin (a)) * px * float (ring)).rgb) * w;\n"
-	"            total += w;\n"
-	"        }\n"
-	"    }\n"
-	"    return sum / total;\n"
-	"}\n"
-	"\n"
 	"void main ()\n"
 	"{\n"
-	"    vec2 uv = fragTexCoord;\n"
-	"    vec3 color = (fxaaOn != 0) ? fxaa (uv) : texture (texture0, uv).rgb;\n"
-	"\n"
-	"    if (bloomOn != 0)\n"
-	"    {\n"
-	"        color += bloom (uv) * bloomIntensity * bloomTint;\n"
-	"        /* Shoulder: values above 0.8 roll off instead of clipping */\n"
-	"        color = mix (color, 0.8 + 0.2 * (1.0 - exp (-(color - 0.8) * 5.0)), step (0.8, color));\n"
+	"    finalColor = vec4 (0.10, 0.045, 0.015, 1.0);\n"
+	"}\n"
+;
+
+/* UV view: U in red, V in green (wrapped), over an 8 x 8 checker that
+ * shows texel density, stretching and seams. */
+static const gchar shader_uv_fs[] =
+	"#version 330\n"
+	"in vec2 fragTexCoord;\n"
+	"in vec3 fragNormal;\n"
+	"out vec4 finalColor;\n"
+	"void main ()\n"
+	"{\n"
+	"    vec2 f = fract (fragTexCoord);\n"
+	"    float checker = mod (floor (f.x * 8.0) + floor (f.y * 8.0), 2.0);\n"
+	"    finalColor = vec4 (vec3 (f, 0.15) * (0.7 + 0.3 * checker), 1.0);\n"
+	"}\n"
+;
+
+/* Head of the lit-library debug views: raylib's varyings as the light
+ * set's vertex shader writes them (the library follows). */
+static const gchar shader_dbg_head[] =
+	"#version 330\n"
+	"in vec3 fragPosition;\n"
+	"in vec2 fragTexCoord;\n"
+	"in vec4 fragColor;\n"
+	"in vec3 fragNormal;\n"
+	"out vec4 finalColor;\n"
+;
+
+/* Light complexity: the point and spot lights whose range reaches the
+ * fragment, walked like lrg_light_pbr_ex() does (grid cell or the active
+ * list), mapped onto a ramp: none, 1, 2-3, 4-7, 8 and more. */
+static const gchar shader_dbg_complexity_main[] =
+	"vec3 lrg_dbg_ramp(float n) {\n"
+	"    if (n < 0.5) return vec3(0.04, 0.04, 0.06);\n"
+	"    if (n < 1.5) return vec3(0.10, 0.25, 0.95);\n"
+	"    if (n < 3.5) return vec3(0.15, 0.80, 0.25);\n"
+	"    if (n < 7.5) return vec3(0.95, 0.85, 0.15);\n"
+	"    return vec3(0.95, 0.15, 0.10);\n"
+	"}\n"
+	"void main() {\n"
+	"    vec3 p = fragPosition;\n"
+	"    float n = 0.0;\n"
+	"    if (useGrid == 1) {\n"
+	"        ivec2 base;\n"
+	"        if (lrg_cluster_base(p, base)) {\n"
+	"            int per = int(gridLayers.w + 0.5) / 4;\n"
+	"            bool done = false;\n"
+	"            for (int t = 0; t < 8 && !done; t++) {\n"
+	"                if (t >= per) break;\n"
+	"                vec4 ids = texelFetch(lightGrid, base + ivec2(t, 0), 0);\n"
+	"                for (int j = 0; j < 4; j++) {\n"
+	"                    if (ids[j] < 0.0) { done = true; break; }\n"
+	"                    vec4 pr = texelFetch(lightData, ivec2(0, int(ids[j] + 0.5)), 0);\n"
+	"                    if (length(pr.xyz - p) < pr.w) n += 1.0;\n"
+	"                }\n"
+	"            }\n"
+	"        }\n"
+	"    } else {\n"
+	"        for (int i = 0; i < 16; i++) {\n"
+	"            if (i >= lightCount) break;\n"
+	"            if (length(lightPosition[i] - p) < lightRadius[i]) n += 1.0;\n"
+	"        }\n"
 	"    }\n"
-	"    if (vignetteOn != 0)\n"
-	"    {\n"
-	"        vec2 d = uv - 0.5;\n"
-	"        float dist;\n"
-	"        float v;\n"
-	"\n"
-	"        d.x *= resolution.x / max (resolution.y, 1.0);\n"
-	"        dist = length (d) * 1.41421;\n"
-	"        v = smoothstep (vignetteRadius, vignetteRadius + max (vignetteSmoothness, 0.001), dist) * vignetteIntensity;\n"
-	"        color = mix (color, vignetteColor, v);\n"
+	"    finalColor = vec4(lrg_dbg_ramp(n), 1.0);\n"
+	"}\n"
+;
+
+/* Ambient occlusion: the material's occlusion times the SSAO term. */
+static const gchar shader_dbg_ao_main[] =
+	"void main() {\n"
+	"    float nlen = length(fragNormal);\n"
+	"    vec3 ng = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
+	"    LrgSurface s = lrg_surface(fragPosition, ng, fragTexCoord, fragColor);\n"
+	"    if (s.albedo.a < alphaCutoff) discard;\n"
+	"    float ao = clamp(s.occlusion * lrg_ssao(), 0.0, 1.0);\n"
+	"    finalColor = vec4(vec3(ao), 1.0);\n"
+	"}\n"
+;
+
+/* Reflections: the indirect specular radiance the surface receives at
+ * its own roughness (environment, blended probes), without Fresnel. */
+static const gchar shader_dbg_reflections_main[] =
+	"void main() {\n"
+	"    float nlen = length(fragNormal);\n"
+	"    vec3 ng = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
+	"    LrgSurface s = lrg_surface(fragPosition, ng, fragTexCoord, fragColor);\n"
+	"    if (s.albedo.a < alphaCutoff) discard;\n"
+	"    vec3 dv = mapCamera - fragPosition;\n"
+	"    vec3 v = dot(dv, dv) > 1e-10 ? normalize(dv) : ng;\n"
+	"    vec3 c = vec3(0.0);\n"
+	"    if (lrg_env_active()) {\n"
+	"        lrg_env_set_point(fragPosition);\n"
+	"        c = lrg_env_specular(s.normal, v, s.roughness);\n"
 	"    }\n"
-	"    finalColor = vec4 (color, 1.0);\n"
+	"    finalColor = vec4(lrg_to_display(c), 1.0);\n"
 	"}\n"
 ;
 
@@ -751,7 +766,6 @@ static const struct
 	{ "lit.fs", shader_lit_fs },
 	{ "unlit.fs", shader_unlit_fs },
 	{ "normals.fs", shader_normals_fs },
-	{ "post.fs", shader_post_fs },
 };
 
 /* A shader that compiled to something other than rlgl's default one. */
@@ -867,14 +881,8 @@ ensure_gl (LrgWorld3DRenderer *self)
 	}
 	self->has_unlit = load_shader (shader_scene_vs, shader_unlit_fs, &self->unlit);
 	self->has_normals = load_shader (shader_scene_vs, shader_normals_fs, &self->normals);
-	self->has_post = load_shader (NULL, shader_post_fs, &self->post_shader);
-	if (self->has_post)
-	{
-		gint i;
-
-		for (i = 0; i < N_POST_LOCS; i++)
-			self->post_locs[i] = GetShaderLocation (self->post_shader, post_uniform_names[i]);
-	}
+	self->has_overdraw = load_shader (shader_scene_vs, shader_overdraw_fs, &self->overdraw);
+	self->has_uv = load_shader (shader_scene_vs, shader_uv_fs, &self->uv);
 
 	self->has_gl = TRUE;
 	return TRUE;
@@ -888,14 +896,8 @@ post_targets_free (gpointer data)
 
 	if (t == NULL)
 		return;
-	g_clear_object (&t->out_texture);
-	if (IsWindowReady ())
-	{
-		if (t->scene.id != 0)
-			UnloadRenderTexture (t->scene);
-		if (t->out.id != 0)
-			UnloadRenderTexture (t->out);
-	}
+	if (IsWindowReady () && t->scene.id != 0)
+		UnloadRenderTexture (t->scene);
 	g_free (t);
 }
 
@@ -947,6 +949,9 @@ clear_object_cache (GHashTable *cache,
 	g_hash_table_remove_all (cache);
 }
 
+static void release_debug_shaders (LrgWorld3DRenderer *self,
+                                   gboolean            gl);
+
 /*
  * Frees the GPU resources.  With @gl FALSE (no context any more) only the
  * CPU-side bookkeeping is dropped: GL calls without a context crash.
@@ -960,8 +965,11 @@ release_resources (LrgWorld3DRenderer *self,
 		g_hash_table_remove_all (self->model_by_asset);
 	if (self->texture_by_asset != NULL)
 		g_hash_table_remove_all (self->texture_by_asset);
+	if (self->material_by_asset != NULL)
+		g_hash_table_remove_all (self->material_by_asset);
 	clear_object_cache (self->models, gl);
 	clear_object_cache (self->textures, gl);
+	clear_object_cache (self->materials, gl);   /* they hold their textures */
 
 	/* The static batch keeps CPU data; only its buffers go */
 	if (self->batch != NULL && gl)
@@ -971,6 +979,29 @@ release_resources (LrgWorld3DRenderer *self,
 
 	if (gl)
 		release_post_targets (self);
+
+	/* The 0.9.0 passes: prepass, SSAO, decal textures, volumetric fog,
+	 * the stack's processor, the environment maps, custom and debug
+	 * programs (each recreated on the next use) */
+	release_debug_shaders (self, gl);
+	if (gl)
+	{
+		lrg_depth_prepass_release (self->prepass);
+		lrg_ssao_release (self->ssao);
+		lrg_decal_set_release (self->decals);
+		lrg_volumetric_fog_release_gpu (self->vfog);
+		if (self->stack_post != NULL)
+			lrg_post_processor_release (self->stack_post);
+		if (self->environment != NULL)
+			lrg_environment_release_gpu (self->environment);
+		if (self->active_env != NULL)
+			lrg_environment_release_gpu (self->active_env);
+	}
+	g_clear_object (&self->active_env);
+	clear_object_cache (self->custom_shaders, gl);
+	if (self->faded != NULL)
+		g_hash_table_remove_all (self->faded);
+	self->m3d_shader = 0;
 
 	/* Engine objects: the shadow atlases, and a fresh light set (its
 	 * shader belongs to the old context) */
@@ -999,8 +1030,10 @@ release_resources (LrgWorld3DRenderer *self,
 			UnloadShader (self->unlit);
 		if (self->has_normals)
 			UnloadShader (self->normals);
-		if (self->has_post)
-			UnloadShader (self->post_shader);
+		if (self->has_overdraw)
+			UnloadShader (self->overdraw);
+		if (self->has_uv)
+			UnloadShader (self->uv);
 	}
 	/* The default material's shader and texture belong to rlgl; only its
 	 * map array is ours (plain CPU memory). */
@@ -1009,7 +1042,8 @@ release_resources (LrgWorld3DRenderer *self,
 	self->has_lit = FALSE;
 	self->has_unlit = FALSE;
 	self->has_normals = FALSE;
-	self->has_post = FALSE;
+	self->has_overdraw = FALSE;
+	self->has_uv = FALSE;
 	self->has_gl = FALSE;
 }
 
@@ -1152,7 +1186,7 @@ sync_begin (LrgWorld3DRenderer *self,
 }
 
 /* Adds one light: the first directional light is the sun, points and
- * spots (previewed as points) become point lights. */
+ * spots go through lrg_light_set_add_light_desc(). */
 static void
 sync_add (LrgWorld3DRenderer   *self,
           LightSync            *ls,
@@ -1182,15 +1216,11 @@ sync_add (LrgWorld3DRenderer   *self,
 	}
 	else
 	{
-		/* Point lights, and spot lights (no 3D spots in the light set
-		 * until 0.9 M2: previewed as points) */
-		GrlColor c = light_color (light, 1.0f);
-		guint    id;
-
-		id = lrg_light_set_add_point_light (self->lights, light->position[0], light->position[1], light->position[2],
-		                                    &c, light->range > 0.0f ? light->range : 10.0f);
-		lrg_light_set_set_point_light_intensity (self->lights, id, MAX (light->intensity, 0.0f));
-		ls->count++;
+		/* Point and spot lights through the light set's description
+		 * path: cones, spot shadows, layer masks, shadow priority and
+		 * (from a light component source) the shadow bias */
+		if (lrg_light_set_add_light_desc (self->lights, light) != LRG_LIGHT_SET_INVALID_LIGHT)
+			ls->count++;
 	}
 }
 
@@ -1276,6 +1306,10 @@ mode_shader (LrgWorld3DRenderer   *self,
 		return self->has_unlit ? self->unlit : self->flat;
 	case LRG_WORLD3D_RENDER_MODE_NORMALS:
 		return self->has_normals ? self->normals : self->flat;
+	case LRG_WORLD3D_RENDER_MODE_OVERDRAW:
+		return self->has_overdraw ? self->overdraw : self->flat;
+	case LRG_WORLD3D_RENDER_MODE_UV:
+		return self->has_uv ? self->uv : self->flat;
 	case LRG_WORLD3D_RENDER_MODE_LIT:
 	case LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY:
 	default:
@@ -1289,31 +1323,21 @@ mode_shader (LrgWorld3DRenderer   *self,
  * Item drawing
  * ========================================================================== */
 
-/* The item's colour, times its LrgMaterial3D's colour when it has one. */
+/*
+ * The item's colour.  Components already fold their material's colour
+ * into it (a mesh renderer copies its LrgMaterial's base colour, or its
+ * own colour that also feeds its scalar LrgMaterial3D), so it is used as
+ * is: multiplying the material colour in again squared it.
+ */
 static Color
 item_color (const LrgRenderItem *item)
 {
-	gfloat rgba[4];
-	Color  c;
+	Color c;
 
-	rgba[0] = item->color[0];
-	rgba[1] = item->color[1];
-	rgba[2] = item->color[2];
-	rgba[3] = item->color[3];
-	if (item->material != NULL && LRG_IS_MATERIAL3D (item->material))
-	{
-		gfloat m[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-
-		lrg_material3d_get_color (LRG_MATERIAL3D (item->material), &m[0], &m[1], &m[2], &m[3]);
-		rgba[0] *= m[0];
-		rgba[1] *= m[1];
-		rgba[2] *= m[2];
-		rgba[3] *= m[3];
-	}
-	c.r = unit_to_byte (rgba[0]);
-	c.g = unit_to_byte (rgba[1]);
-	c.b = unit_to_byte (rgba[2]);
-	c.a = unit_to_byte (rgba[3]);
+	c.r = unit_to_byte (item->color[0]);
+	c.g = unit_to_byte (item->color[1]);
+	c.b = unit_to_byte (item->color[2]);
+	c.a = unit_to_byte (item->color[3]);
 	return c;
 }
 
@@ -1346,16 +1370,33 @@ draw_mesh (LrgWorld3DRenderer *self,
            Color               color,
            Texture2D          *texture)
 {
+	Material    m = self->material;
+	MaterialMap maps[RAYLIB_MATERIAL_MAPS];
+
 	/* Lighting-only mode lights a white surface */
 	if (self->white_albedo)
 	{
 		color = WHITE;
 		texture = NULL;
 	}
-	self->material.shader = self->cur_shader;
-	self->material.maps[MATERIAL_MAP_DIFFUSE].color = color;
-	self->material.maps[MATERIAL_MAP_DIFFUSE].texture = (texture != NULL) ? *texture : self->white;
-	DrawMesh (mesh, self->material, transform);
+
+	/* An LrgMaterial's maps on a copy of the default ones (DrawMesh()
+	 * binds unit i to map i, the units lrg_material_apply() pointed the
+	 * samplers at); the albedo map stays unless the item overrides it */
+	if (self->cur_mat != NULL && !self->white_albedo)
+	{
+		memcpy (maps, self->material.maps, sizeof maps);
+		maps[MATERIAL_MAP_DIFFUSE].texture = self->white;
+		lrg_material_fill_raylib_maps (self->cur_mat, maps);
+		m.maps = maps;
+		if (texture != NULL)
+			m.maps[MATERIAL_MAP_DIFFUSE].texture = *texture;
+	}
+	else
+		m.maps[MATERIAL_MAP_DIFFUSE].texture = (texture != NULL) ? *texture : self->white;
+	m.shader = self->cur_shader;
+	m.maps[MATERIAL_MAP_DIFFUSE].color = color;
+	DrawMesh (mesh, m, transform);
 	self->drawn++;
 }
 
@@ -1578,26 +1619,36 @@ draw_model (LrgWorld3DRenderer  *self,
 	m = mat_mul (model->transform, m);
 	for (i = first; i < last; i++)
 	{
-		Material  mat = model->materials[model->meshMaterial[i]];
-		Texture2D saved_tex = mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-		Color     saved_col = mat.maps[MATERIAL_MAP_DIFFUSE].color;
-		Color     c = saved_col;
+		Material    mat = model->materials[model->meshMaterial[i]];
+		MaterialMap maps[RAYLIB_MATERIAL_MAPS];
+		Color       c;
 
-		/* The maps array is shared with the cached model: the overrides
-		 * are undone right after the draw */
-		c.r = (guchar) ((guint) c.r * tint.r / 255u);
-		c.g = (guchar) ((guint) c.g * tint.g / 255u);
-		c.b = (guchar) ((guint) c.b * tint.b / 255u);
-		c.a = (guchar) ((guint) c.a * tint.a / 255u);
+		/* The maps array is shared with the cached model: draw with a
+		 * copy so nothing leaks into the next user of the model.  An
+		 * LrgMaterial's maps go over the model's own (empty slots keep
+		 * the model's textures). */
+		memcpy (maps, mat.maps, sizeof maps);
+		mat.maps = maps;
+		if (self->cur_mat != NULL && !self->white_albedo)
+		{
+			lrg_material_fill_raylib_maps (self->cur_mat, maps);
+			c = tint;   /* the item colour is the material's base colour */
+		}
+		else
+		{
+			c = maps[MATERIAL_MAP_DIFFUSE].color;
+			c.r = (guchar) ((guint) c.r * tint.r / 255u);
+			c.g = (guchar) ((guint) c.g * tint.g / 255u);
+			c.b = (guchar) ((guint) c.b * tint.b / 255u);
+			c.a = (guchar) ((guint) c.a * tint.a / 255u);
+		}
 		mat.shader = self->cur_shader;
-		mat.maps[MATERIAL_MAP_DIFFUSE].color = self->white_albedo ? WHITE : c;
+		maps[MATERIAL_MAP_DIFFUSE].color = self->white_albedo ? WHITE : c;
 		if (self->white_albedo)
-			mat.maps[MATERIAL_MAP_DIFFUSE].texture = self->white;
+			maps[MATERIAL_MAP_DIFFUSE].texture = self->white;
 		else if (override != NULL)
-			mat.maps[MATERIAL_MAP_DIFFUSE].texture = *override;
+			maps[MATERIAL_MAP_DIFFUSE].texture = *override;
 		DrawMesh (model->meshes[i], mat, m);
-		mat.maps[MATERIAL_MAP_DIFFUSE].texture = saved_tex;
-		mat.maps[MATERIAL_MAP_DIFFUSE].color = saved_col;
 		self->drawn++;
 	}
 }
@@ -1665,8 +1716,12 @@ typedef struct
 	LrgWorld3DRenderer   *self;
 	LrgWorld3DRenderPass  pass;
 	guint32               mask;          /* view cull mask (and caster mask) */
-	gboolean              casters_only;  /* shadow pass */
+	gboolean              casters_only;  /* shadow and prepass passes: solid geometry only */
 	gboolean              skip_batched;  /* static items went into the batch */
+	gboolean              materials;     /* lit_shader follows the material contract */
+	gboolean              layered;       /* lit_shader is the light set's: per-item draw layers */
+	gboolean              customs;       /* custom-shaded LrgMaterials switch to their shader asset */
+	gfloat                cutoff;        /* the pass's alphaCutoff, put back after a material */
 	Shader                lit_shader;    /* what non-UNLIT items use */
 	Shader                unlit_shader;  /* what UNLIT items use in lit modes */
 } Replay;
@@ -1681,9 +1736,176 @@ item_is_batchable (const LrgRenderItem *item)
 		return FALSE;
 	if ((item->flags & (LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED | LRG_RENDER_ITEM_FLAG_UNLIT)) != 0 || item->texture != NULL)
 		return FALSE;
+	/* An LrgMaterial binds maps and parameters per draw: not mergeable */
+	if (item->material != NULL && LRG_IS_MATERIAL (item->material))
+		return FALSE;
 	if (item->kind == LRG_RENDER_ITEM_PRIMITIVE)
 		return primitive_is_solid (item->primitive);
 	return item->kind == LRG_RENDER_ITEM_MESH && item->mesh != NULL && GRL_IS_MESH (item->mesh);
+}
+
+/*
+ * Sets lodFade on @shader_id for the next draw.  Most items draw with 0,
+ * so the uniform is only touched for fading items and for the first
+ * opaque draw on a program that still holds a non-zero fade.
+ */
+static void
+bind_lod_fade (LrgWorld3DRenderer *self,
+               guint               shader_id,
+               gfloat              fade)
+{
+	gpointer key = GUINT_TO_POINTER (shader_id);
+
+	if (shader_id == 0)
+		return;
+	if (fade != 0.0f)
+	{
+		lrg_lod_bind_fade (shader_id, fade);
+		g_hash_table_add (self->faded, key);
+	}
+	else if (g_hash_table_remove (self->faded, key))
+		lrg_lod_bind_fade (shader_id, 0.0f);
+}
+
+/* A float uniform by name (no-op when the program lacks it). */
+static void
+shader_set_float (Shader       shader,
+                  const gchar *name,
+                  gfloat       value)
+{
+	gint loc = GetShaderLocation (shader, name);
+
+	if (loc >= 0)
+		SetShaderValue (shader, loc, &value, SHADER_UNIFORM_FLOAT);
+}
+
+/*
+ * The scalar parameters of a legacy LrgMaterial3D on the lit contract:
+ * pbrParams (metallic, roughness, occlusion 1, normal scale 1) and
+ * emissionOwn (emission colour times strength).  Its colour is already
+ * in the item colour.
+ */
+static void
+apply_material3d (LrgWorld3DRenderer *self,
+                  LrgMaterial3D      *m3d,
+                  Shader              shader)
+{
+	gfloat pbr[4];
+	gfloat emission[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	gfloat strength;
+
+	if (self->m3d_shader != shader.id)
+	{
+		self->m3d_shader = shader.id;
+		self->m3d_loc_pbr = GetShaderLocation (shader, "pbrParams");
+		self->m3d_loc_emission = GetShaderLocation (shader, "emissionOwn");
+	}
+	pbr[0] = CLAMP (lrg_material3d_get_metallic (m3d), 0.0f, 1.0f);
+	pbr[1] = CLAMP (lrg_material3d_get_roughness (m3d), 0.0f, 1.0f);
+	pbr[2] = 1.0f;
+	pbr[3] = 1.0f;
+	strength = lrg_material3d_get_emission_strength (m3d);
+	if (strength > 0.0f)
+	{
+		lrg_material3d_get_emission_color (m3d, &emission[0], &emission[1], &emission[2], &emission[3]);
+		emission[0] *= strength;
+		emission[1] *= strength;
+		emission[2] *= strength;
+		emission[3] = 1.0f;
+	}
+	if (self->m3d_loc_pbr >= 0)
+		SetShaderValue (shader, self->m3d_loc_pbr, pbr, SHADER_UNIFORM_VEC4);
+	if (self->m3d_loc_emission >= 0)
+		SetShaderValue (shader, self->m3d_loc_emission, emission, SHADER_UNIFORM_VEC4);
+}
+
+/* Puts back the defaults apply_material3d() changed. */
+static void
+reset_material3d (LrgWorld3DRenderer *self,
+                  Shader              shader)
+{
+	const gfloat pbr[4] = { 0.0f, 0.5f, 1.0f, 1.0f };
+	const gfloat none[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+	if (self->m3d_shader != shader.id)
+		return;
+	if (self->m3d_loc_pbr >= 0)
+		SetShaderValue (shader, self->m3d_loc_pbr, pbr, SHADER_UNIFORM_VEC4);
+	if (self->m3d_loc_emission >= 0)
+		SetShaderValue (shader, self->m3d_loc_emission, none, SHADER_UNIFORM_VEC4);
+}
+
+/*
+ * The compiled shader asset of a custom-shaded material (cached by path,
+ * failures too, reported once), or NULL.
+ */
+static LrgShaderAsset *
+custom_shader (LrgWorld3DRenderer *self,
+               LrgMaterial        *mat)
+{
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *abs = NULL;
+	const gchar      *ref = lrg_material_get_shader (mat);
+	LrgShaderAsset   *asset;
+
+	if (ref == NULL || *ref == '\0')
+		return NULL;
+	abs = lrg_material_resolve_reference (mat, ref);
+	if (abs == NULL)
+		return NULL;
+	if (g_hash_table_contains (self->custom_shaders, abs))
+		return (LrgShaderAsset *) g_hash_table_lookup (self->custom_shaders, abs);
+
+	asset = lrg_shader_asset_new_from_file (abs, &error);
+	if (asset != NULL && !lrg_shader_asset_compile (asset, &error))
+		g_clear_object (&asset);
+	if (asset == NULL)
+		g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Custom shader %s: %s", abs,
+		       error != NULL ? error->message : "failed");
+	g_hash_table_insert (self->custom_shaders, g_strdup (abs), asset);
+	return asset;
+}
+
+/*
+ * Selects the reflection probes for @item: the environment's reference
+ * point moves to the item's centre and, when that changes which two
+ * probes win (or the program changed), the environment hook is bound
+ * again on @shader_id.  The environment is the first hook, so it takes
+ * the light set's first hook unit, as lrg_light_set_apply() binds it.
+ */
+static void
+pick_probes (LrgWorld3DRenderer  *self,
+             const LrgRenderItem *item,
+             guint                shader_id)
+{
+	LrgReflectionProbe *a = NULL, *b = NULL;
+	gfloat              c[3];
+	gint                unit;
+
+	if (item->bounds.min.x <= item->bounds.max.x && item->bounds.min.y <= item->bounds.max.y &&
+	    item->bounds.min.z <= item->bounds.max.z)
+	{
+		c[0] = (item->bounds.min.x + item->bounds.max.x) * 0.5f;
+		c[1] = (item->bounds.min.y + item->bounds.max.y) * 0.5f;
+		c[2] = (item->bounds.min.z + item->bounds.max.z) * 0.5f;
+	}
+	else
+	{
+		c[0] = item->world_matrix[12];
+		c[1] = item->world_matrix[13];
+		c[2] = item->world_matrix[14];
+	}
+	lrg_environment_select_probes (self->probe_env, c, &a, &b);
+	if (a == self->probe_pick[0] && b == self->probe_pick[1] && GUINT_TO_POINTER (shader_id) == self->probe_pick[2])
+		return;
+	self->probe_pick[0] = a;
+	self->probe_pick[1] = b;
+	self->probe_pick[2] = GUINT_TO_POINTER (shader_id);
+	lrg_environment_set_reference_point (self->probe_env, c[0], c[1], c[2]);
+	rlDrawRenderBatchActive ();
+	unit = lrg_light_set_hook_unit_first ();
+	lrg_environment_bind_private (self->probe_env, shader_id, &unit);
+	rlActiveTextureSlot (0);
 }
 
 static void
@@ -1693,7 +1915,11 @@ replay_item (const LrgRenderItem *item,
 {
 	Replay             *r = (Replay *) user_data;
 	LrgWorld3DRenderer *self = r->self;
-	gboolean            two_sided;
+	LrgMaterial        *mat = NULL;
+	LrgMaterial3D      *m3d = NULL;
+	LrgShaderAsset     *custom = NULL;
+	Shader              shader;
+	gboolean            two_sided, bound = FALSE;
 
 	if ((r->mask & LRG_RENDER_LAYERS_BIT (item->layer)) == 0)
 		return;
@@ -1701,7 +1927,7 @@ replay_item (const LrgRenderItem *item,
 		return;
 	if (r->casters_only)
 	{
-		/* Shadow passes draw solid geometry only */
+		/* Shadow and depth passes draw solid geometry only */
 		if (item->kind == LRG_RENDER_ITEM_BILLBOARD)
 			return;
 		if (item->kind == LRG_RENDER_ITEM_PRIMITIVE && !primitive_is_solid (item->primitive))
@@ -1712,9 +1938,69 @@ replay_item (const LrgRenderItem *item,
 	if (!self->gpu)
 		return;
 
-	/* UNLIT items keep their albedo in the lit modes */
-	self->cur_shader = (!r->casters_only && (item->flags & LRG_RENDER_ITEM_FLAG_UNLIT) != 0) ? r->unlit_shader
-	                                                                                        : r->lit_shader;
+	if (item->material != NULL && LRG_IS_MATERIAL (item->material))
+		mat = LRG_MATERIAL (item->material);
+	else if (item->material != NULL && LRG_IS_MATERIAL3D (item->material))
+		m3d = LRG_MATERIAL3D (item->material);
+
+	/* The program: UNLIT items keep their albedo in the lit modes (an
+	 * LrgMaterial's unlit model is handled by the lit shader itself, with
+	 * its emission); custom-shaded materials use their shader asset */
+	shader = r->lit_shader;
+	if (!r->casters_only && (item->flags & LRG_RENDER_ITEM_FLAG_UNLIT) != 0 && !(mat != NULL && r->materials))
+		shader = r->unlit_shader;
+	if (mat != NULL && r->customs && lrg_material_get_shading_model (mat) == LRG_SHADING_MODEL_CUSTOM)
+	{
+		custom = custom_shader (self, mat);
+		if (custom != NULL && lrg_shader_asset_get_shader (custom) != NULL)
+			shader = *(Shader *) grl_shader_get_handle (lrg_shader_asset_get_shader (custom));
+		else
+			custom = NULL;
+	}
+	self->cur_shader = shader;
+	self->cur_mat = mat;
+
+	/* Per item: the LOD cross-fade, and the item's layer for the lights'
+	 * layer masks (light-set shader only) */
+	bind_lod_fade (self, shader.id, lrg_lod_component_get_item_fade (item, NULL));
+	if (r->layered && shader.id == r->lit_shader.id)
+	{
+		guint32 bit = LRG_RENDER_LAYERS_BIT (item->layer);
+
+		if (bit != self->cur_layers)
+		{
+			lrg_light_set_set_draw_layers (self->lights, bit);
+			self->cur_layers = bit;
+		}
+	}
+
+	/* Reflection probes: the two around the item's centre (its bounds,
+	 * else its origin), rebound only when the pick changes */
+	if (self->probe_env != NULL && r->materials && !r->casters_only)
+		pick_probes (self, item, shader.id);
+
+	/* Material uniforms and render state (colour passes) */
+	if (r->materials && !r->casters_only)
+	{
+		if (custom != NULL)
+		{
+			if (lrg_shader_asset_get_lit (custom))
+				lrg_shader_asset_bind_lights (custom, self->lights);
+			lrg_shader_asset_apply (custom, NULL);
+		}
+		if (mat != NULL)
+		{
+			lrg_material_apply (mat, shader.id);
+			lrg_material_apply_state (mat);
+			bound = TRUE;
+		}
+		else if (m3d != NULL && shader.id == r->lit_shader.id)
+		{
+			apply_material3d (self, m3d, shader);
+			bound = TRUE;
+		}
+	}
+
 	two_sided = (item->flags & LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED) != 0 && !r->casters_only;
 	if (two_sided)
 	{
@@ -1758,6 +2044,20 @@ replay_item (const LrgRenderItem *item,
 		rlDrawRenderBatchActive ();
 		rlEnableBackfaceCulling ();
 	}
+
+	/* Back to the "no material" state for the next item (an
+	 * LrgMaterial3D only touched two uniforms: put back just those) */
+	if (bound && mat != NULL)
+	{
+		rlDrawRenderBatchActive ();
+		lrg_material_reset_uniforms (shader.id);
+		lrg_material_restore_state (mat);
+		if (r->cutoff > 0.0f)
+			shader_set_float (shader, "alphaCutoff", r->cutoff);
+	}
+	else if (bound)
+		reset_material3d (self, shader);
+	self->cur_mat = NULL;
 }
 
 /* ==========================================================================
@@ -1915,14 +2215,116 @@ draw_static_batch (LrgWorld3DRenderer *self,
 }
 
 /* ==========================================================================
- * Shadows, sky, post
+ * Frame helpers: 3D matrices, timing
+ * ========================================================================== */
+
+/* Loads @proj and @view into rlgl like BeginMode3D() would. */
+static void
+begin_3d (const gfloat *proj,
+          const gfloat *view)
+{
+	rlDrawRenderBatchActive ();
+	rlMatrixMode (RL_PROJECTION);
+	rlPushMatrix ();
+	rlLoadIdentity ();
+	rlMultMatrixf (proj);
+	rlMatrixMode (RL_MODELVIEW);
+	rlLoadIdentity ();
+	rlMultMatrixf (view);
+	rlEnableDepthTest ();
+}
+
+/* Starts timing a pass (0 when timing is off). */
+static gint64
+pass_clock (LrgWorld3DRenderer *self)
+{
+	if (!self->timing)
+		return 0;
+	return g_get_monotonic_time ();
+}
+
+/*
+ * Ends timing @pass: waits for the GPU (a one-pixel read-back of the
+ * bound framebuffer, which only returns once everything drawn into it
+ * finished) and adds the elapsed time.
+ */
+static void
+pass_clock_end (LrgWorld3DRenderer   *self,
+                LrgWorld3DRenderPass  pass,
+                gint64                start)
+{
+	if (!self->timing)
+		return;
+	if (self->gpu)
+	{
+		guchar *px;
+
+		rlDrawRenderBatchActive ();
+		px = rlReadScreenPixels (1, 1);
+		RL_FREE (px);
+	}
+	self->pass_time[pass] += (gdouble) (g_get_monotonic_time () - start) / 1000.0;
+}
+
+/* ==========================================================================
+ * The view camera: an LrgCamera that begins a view's own matrices, so the
+ * depth prepass (which records through an LrgCamera) sees exactly the
+ * matrices the colour passes use.
+ * ========================================================================== */
+
+#define LRG_TYPE_WORLD3D_VIEW_CAMERA (lrg_world3d_view_camera_get_type ())
+G_DECLARE_FINAL_TYPE (LrgWorld3DViewCamera, lrg_world3d_view_camera, LRG, WORLD3D_VIEW_CAMERA, LrgCamera)
+
+struct _LrgWorld3DViewCamera
+{
+	LrgCamera parent_instance;
+	gfloat    view[16];
+	gfloat    proj[16];
+};
+
+G_DEFINE_FINAL_TYPE (LrgWorld3DViewCamera, lrg_world3d_view_camera, LRG_TYPE_CAMERA)
+
+static void
+view_camera_begin (LrgCamera *camera)
+{
+	LrgWorld3DViewCamera *self = LRG_WORLD3D_VIEW_CAMERA (camera);
+
+	begin_3d (self->proj, self->view);
+}
+
+static void
+view_camera_end (LrgCamera *camera)
+{
+	(void) camera;
+	EndMode3D ();
+}
+
+static void
+lrg_world3d_view_camera_class_init (LrgWorld3DViewCameraClass *klass)
+{
+	LrgCameraClass *camera_class = LRG_CAMERA_CLASS (klass);
+
+	camera_class->begin = view_camera_begin;
+	camera_class->end = view_camera_end;
+}
+
+static void
+lrg_world3d_view_camera_init (LrgWorld3DViewCamera *self)
+{
+	lrg_math3d_identity (self->view);
+	lrg_math3d_identity (self->proj);
+}
+
+/* ==========================================================================
+ * Shadows, prepass, post
  * ========================================================================== */
 
 /*
  * Renders this frame's shadow passes for @v: the cascades of the
- * directional light (and cube faces of shadowed point lights) around the
- * view, each replaying the shadow-caster list.  The passes need the
- * screen bound, so the caller's target is left and re-entered afterwards.
+ * directional light (cube faces of shadowed point lights, spot maps)
+ * around the view, each replaying the shadow-caster list.  The passes
+ * need the screen bound, so the caller's target is left and re-entered
+ * afterwards.
  *
  * Returns: %TRUE when every pass rendered (the light set may sample them)
  */
@@ -1982,11 +2384,104 @@ render_shadows (LrgWorld3DRenderer   *self,
 	}
 	if (!self->gpu)
 		return TRUE;
+	bind_lod_fade (self, r.lit_shader.id, 0.0f);
 	enter_target (outer, w, h);
 	return lrg_shadow_renderer_is_ready (self->shadows);
 }
 
-/* (Re)creates a processor's post images at @w x @h. */
+/* The prepass recording: opaque and cutout items with the depth shader. */
+static void
+prepass_draw (LrgDepthPrepass *prepass,
+              GrlShader       *shader,
+              gpointer         user_data)
+{
+	Replay             *r = (Replay *) user_data;
+	LrgWorld3DRenderer *self = r->self;
+	LrgRenderList      *list = (LrgRenderList *) r->self->list_in_flight;
+
+	(void) prepass;
+	if (shader != NULL)
+	{
+		r->lit_shader = *(Shader *) grl_shader_get_handle (shader);
+		r->unlit_shader = r->lit_shader;
+	}
+	lrg_render_list_foreach (list, LRG_RENDER_CATEGORY_OPAQUE, replay_item, r);
+	lrg_render_list_foreach (list, LRG_RENDER_CATEGORY_CUTOUT, replay_item, r);
+	rlDrawRenderBatchActive ();
+	bind_lod_fade (self, r->lit_shader.id, 0.0f);
+}
+
+/*
+ * Records the depth (and view-normal) prepass of @v and, when SSAO is on,
+ * runs it.  Leaves the caller's target and re-enters @outer.  Headless
+ * only counts the prepass draws.
+ *
+ * Returns: whether the prepass holds this frame's depth
+ */
+static gboolean
+render_prepass (LrgWorld3DRenderer   *self,
+                LrgRenderList        *list,
+                const LrgWorld3DView *v,
+                const gfloat         *proj,
+                gboolean              want_ssao,
+                guint                 outer,
+                gint                  w,
+                gint                  h,
+                gboolean             *out_ssao)
+{
+	LrgWorld3DViewCamera *cam;
+	Replay                r;
+	gboolean              ok = FALSE;
+	gint64                t0;
+
+	*out_ssao = FALSE;
+	memset (&r, 0, sizeof r);
+	r.self = self;
+	r.pass = LRG_WORLD3D_RENDER_PASS_PREPASS;
+	r.mask = v->cull_mask;
+	r.casters_only = TRUE;
+	self->list_in_flight = list;
+
+	if (!self->gpu)
+	{
+		lrg_render_list_foreach (list, LRG_RENDER_CATEGORY_OPAQUE, replay_item, &r);
+		lrg_render_list_foreach (list, LRG_RENDER_CATEGORY_CUTOUT, replay_item, &r);
+		if (want_ssao)
+			self->pass_counts[LRG_WORLD3D_RENDER_PASS_SSAO] = 1;
+		self->list_in_flight = NULL;
+		return TRUE;
+	}
+
+	t0 = pass_clock (self);
+	if (self->view_camera == NULL)
+		self->view_camera = (LrgCamera *) g_object_new (LRG_TYPE_WORLD3D_VIEW_CAMERA, NULL);
+	cam = LRG_WORLD3D_VIEW_CAMERA (self->view_camera);
+	memcpy (cam->view, self->cur_view, sizeof cam->view);
+	memcpy (cam->proj, proj, sizeof cam->proj);
+	lrg_camera_set_cull_mask (self->view_camera, LRG_RENDER_LAYERS_MASK_ALL);
+
+	rlDrawRenderBatchActive ();
+	EndTextureMode ();
+	lrg_depth_prepass_resize (self->prepass, w, h);
+	lrg_depth_prepass_set_alpha_cutoff (self->prepass, CUTOUT_ALPHA);
+	self->white_albedo = FALSE;
+	ok = lrg_depth_prepass_record (self->prepass, self->view_camera, prepass_draw, &r);
+	self->list_in_flight = NULL;
+	pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_PREPASS, t0);
+
+	if (ok && want_ssao)
+	{
+		t0 = pass_clock (self);
+		*out_ssao = lrg_ssao_render (self->ssao, self->prepass);
+		if (*out_ssao)
+			self->pass_counts[LRG_WORLD3D_RENDER_PASS_SSAO] = 1;
+		pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_SSAO, t0);
+	}
+	enter_target (outer, w, h);
+	return ok;
+}
+
+/* (Re)creates a processor's scene image at @w x @h (half float first). */
 static PostTargets *
 ensure_post_targets (LrgWorld3DRenderer *self,
                      LrgPostProcessor   *processor,
@@ -2004,112 +2499,245 @@ ensure_post_targets (LrgWorld3DRenderer *self,
 	}
 	if (t->scene.id != 0 && t->width == w && t->height == h)
 		return t;
-	g_clear_object (&t->out_texture);
+
+	/* Creating a render texture binds framebuffers: flush first */
+	rlDrawRenderBatchActive ();
 	if (t->scene.id != 0)
 		UnloadRenderTexture (t->scene);
-	if (t->out.id != 0)
-		UnloadRenderTexture (t->out);
-	t->scene = LoadRenderTexture (w, h);
-	t->out = LoadRenderTexture (w, h);
+	t->scene = LoadRenderTextureEx (w, h, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+	t->hdr = TRUE;
+	if (t->scene.id == 0 || t->scene.texture.id == 0 || !rlFramebufferComplete (t->scene.id))
+	{
+		/* No half-float colour attachments: an 8-bit scene */
+		if (t->scene.id != 0 || t->scene.texture.id != 0)
+			UnloadRenderTexture (t->scene);
+		t->scene = LoadRenderTexture (w, h);
+		t->hdr = FALSE;
+	}
 	t->width = w;
 	t->height = h;
-	if (t->scene.id == 0 || t->out.id == 0)
+	if (t->scene.id == 0)
 		return NULL;
 	SetTextureFilter (t->scene.texture, TEXTURE_FILTER_BILINEAR);
 	SetTextureWrap (t->scene.texture, TEXTURE_WRAP_CLAMP);
-	t->out_texture = grl_texture_new_from_handle (&t->out.texture);
 	return t;
 }
 
-static void
-post_uniform_float (LrgWorld3DRenderer *self,
-                    gint                loc,
-                    gfloat              value)
+/*
+ * The post processor this frame runs, or NULL: the post stack in effect
+ * (the renderer's, else the world's) built into the internal processor,
+ * else #LrgWorld3DRenderer:post-processor.
+ */
+static LrgPostProcessor *
+frame_post_processor (LrgWorld3DRenderer *self)
 {
-	SetShaderValue (self->post_shader, self->post_locs[loc], &value, SHADER_UNIFORM_FLOAT);
-}
+	LrgPostStack *stack = self->post_stack;
 
-static void
-post_uniform_int (LrgWorld3DRenderer *self,
-                  gint                loc,
-                  gint                value)
-{
-	SetShaderValue (self->post_shader, self->post_locs[loc], &value, SHADER_UNIFORM_INT);
-}
+	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_POST) == 0)
+		return NULL;
+	if (stack == NULL && self->frame_world != NULL)
+		stack = lrg_world3d_get_post_stack (self->frame_world);
+	if (stack == NULL)
+		stack = self->fallback_stack;
+	if (stack != NULL)
+	{
+		g_autoptr(GError) error = NULL;
 
-static gboolean
-effect_on (LrgPostEffect *effect)
-{
-	return effect != NULL && lrg_post_effect_is_enabled (effect);
+		/* Building every frame costs only property sets when the
+		 * effects already match (volumes rely on that too) */
+		if (self->stack_post == NULL)
+			self->stack_post = lrg_post_processor_new (1, 1);
+		if (!lrg_post_stack_build (stack, self->stack_post, &error))
+		{
+			g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Post stack: %s", error->message);
+			return self->post;
+		}
+		return self->stack_post;
+	}
+	return self->post;
 }
 
 /*
- * The post chain: scene image -> post shader (FXAA, bloom, vignette, with
- * the processor's effect parameters) -> LrgColorGrade into the outer
- * target.
+ * The post chain: lrg_post_processor_process() over the scene image, the
+ * result copied into the outer target.
  */
 static void
 apply_post (LrgWorld3DRenderer *self,
+            LrgPostProcessor   *processor,
             PostTargets        *t,
             guint               outer,
             gint                w,
             gint                h)
 {
-	LrgPostEffect *fxaa = lrg_post_processor_get_effect (self->post, "fxaa");
-	LrgPostEffect *bloom = lrg_post_processor_get_effect (self->post, "bloom");
-	LrgPostEffect *vignette = lrg_post_processor_get_effect (self->post, "vignette");
-	LrgPostEffect *grade = lrg_post_processor_get_effect (self->post, "color-grade");
-	Rectangle      src = { 0.0f, 0.0f, (gfloat) w, -(gfloat) h };
-	gfloat         res[2] = { (gfloat) w, (gfloat) h };
-	gfloat         rgb[3] = { 1.0f, 1.0f, 1.0f };
+	guint result;
 
-	/* Pass 1: the post shader, scene -> out */
-	enter_target (t->out.id, w, h);
-	ClearBackground (BLACK);
-	BeginShaderMode (self->post_shader);
-	SetShaderValue (self->post_shader, self->post_locs[POST_LOC_RESOLUTION], res, SHADER_UNIFORM_VEC2);
-	post_uniform_int (self, POST_LOC_FXAA_ON, effect_on (fxaa));
-	if (fxaa != NULL && LRG_IS_FXAA (fxaa))
-	{
-		post_uniform_float (self, POST_LOC_FXAA_EDGE, lrg_fxaa_get_edge_threshold (LRG_FXAA (fxaa)));
-		post_uniform_float (self, POST_LOC_FXAA_EDGE_MIN, lrg_fxaa_get_edge_threshold_min (LRG_FXAA (fxaa)));
-	}
-	post_uniform_int (self, POST_LOC_BLOOM_ON, effect_on (bloom));
-	if (bloom != NULL && LRG_IS_BLOOM (bloom))
-	{
-		post_uniform_float (self, POST_LOC_BLOOM_THRESHOLD, lrg_bloom_get_threshold (LRG_BLOOM (bloom)));
-		post_uniform_float (self, POST_LOC_BLOOM_KNEE, lrg_bloom_get_soft_knee (LRG_BLOOM (bloom)));
-		post_uniform_float (self, POST_LOC_BLOOM_INTENSITY, lrg_bloom_get_intensity (LRG_BLOOM (bloom)));
-		post_uniform_float (self, POST_LOC_BLOOM_SIZE, lrg_bloom_get_blur_size (LRG_BLOOM (bloom)));
-		lrg_bloom_get_tint (LRG_BLOOM (bloom), &rgb[0], &rgb[1], &rgb[2]);
-		SetShaderValue (self->post_shader, self->post_locs[POST_LOC_BLOOM_TINT], rgb, SHADER_UNIFORM_VEC3);
-	}
-	post_uniform_int (self, POST_LOC_VIGNETTE_ON, effect_on (vignette));
-	if (vignette != NULL && LRG_IS_VIGNETTE (vignette))
-	{
-		post_uniform_float (self, POST_LOC_VIGNETTE_INTENSITY, lrg_vignette_get_intensity (LRG_VIGNETTE (vignette)));
-		post_uniform_float (self, POST_LOC_VIGNETTE_RADIUS, lrg_vignette_get_radius (LRG_VIGNETTE (vignette)));
-		post_uniform_float (self, POST_LOC_VIGNETTE_SMOOTHNESS,
-		                    lrg_vignette_get_smoothness (LRG_VIGNETTE (vignette)));
-		lrg_vignette_get_color (LRG_VIGNETTE (vignette), &rgb[0], &rgb[1], &rgb[2]);
-		SetShaderValue (self->post_shader, self->post_locs[POST_LOC_VIGNETTE_COLOR], rgb, SHADER_UNIFORM_VEC3);
-	}
-	DrawTextureRec (t->scene.texture, src, (Vector2) { 0.0f, 0.0f }, WHITE);
-	EndShaderMode ();
-
-	/* Pass 2: colour grade, out -> the outer target */
-	enter_target (outer, w, h);
-	if (effect_on (grade) && LRG_IS_COLOR_GRADE (grade) && t->out_texture != NULL)
-	{
-		GrlRectangle gsrc = { 0.0f, 0.0f, (gfloat) w, -(gfloat) h };
-		GrlRectangle gdst = { 0.0f, 0.0f, (gfloat) w, (gfloat) h };
-
-		lrg_color_grade_draw_texture (LRG_COLOR_GRADE (grade), t->out_texture, &gsrc, &gdst);
-	}
-	else
-		DrawTextureRec (t->out.texture, src, (Vector2) { 0.0f, 0.0f }, WHITE);
 	rlDrawRenderBatchActive ();
-	self->pass_counts[LRG_WORLD3D_RENDER_PASS_POST] = 1;
+	lrg_post_processor_resize (processor, (guint) w, (guint) h);
+	result = lrg_post_processor_process (processor, t->scene.texture.id, IsWindowReady () ? GetFrameTime () : 0.0f);
+
+	enter_target (outer, w, h);
+	rlDisableColorBlend ();
+	lrg_post_effect_draw_fullscreen (result, (guint) w, (guint) h);
+	rlDrawRenderBatchActive ();
+	rlEnableColorBlend ();
+	self->pass_counts[LRG_WORLD3D_RENDER_PASS_POST] = MAX (lrg_post_processor_get_pass_count (processor), 1u);
+}
+
+/* ==========================================================================
+ * Environment, decals, debug views
+ * ========================================================================== */
+
+/* Decal textures of components without an asset manager. */
+static GrlTexture *
+decal_texture (const gchar *path,
+               gpointer     user_data)
+{
+	return lrg_world3d_renderer_get_texture_internal (LRG_WORLD3D_RENDERER (user_data), path);
+}
+
+/*
+ * Puts the environment in effect on the light set: its ambient and fog
+ * (lrg_environment_apply_to_light_set()), its IBL maps (baked lazily
+ * here; the bake leaves the caller's target, which is re-entered) and the
+ * probe reference point.  Without one, the renderer's ambient stays and
+ * fog an earlier environment set is cleared.
+ *
+ * Returns: (nullable): the environment in effect
+ */
+static LrgEnvironment *
+setup_environment (LrgWorld3DRenderer   *self,
+                   const LrgWorld3DView *v,
+                   guint                 outer,
+                   gint                  w,
+                   gint                  h)
+{
+	LrgEnvironment *env = self->environment;
+
+	if (env == NULL && self->frame_world != NULL)
+		env = lrg_world3d_get_environment (self->frame_world);
+	if (env == NULL)
+		env = self->fallback_env;
+	g_set_object (&self->active_env, env);
+
+	if (env == NULL)
+	{
+		if (self->env_fog)
+			lrg_light_set_clear_fog (self->lights);
+		self->env_fog = FALSE;
+		lrg_light_set_set_environment (self->lights, NULL);
+		return NULL;
+	}
+
+	if (self->gpu && lrg_environment_needs_bake (env))
+	{
+		g_autoptr(GError) error = NULL;
+
+		rlDrawRenderBatchActive ();
+		if (!lrg_environment_bake (env, &error))
+			g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Environment bake failed: %s", error->message);
+		enter_target (outer, w, h);
+	}
+	lrg_environment_apply_to_light_set (env, self->lights);
+	self->env_fog = TRUE;
+	lrg_environment_set_reference_point (env, v->position[0], v->position[1], v->position[2]);
+	lrg_light_set_set_environment (self->lights,
+	                               (self->ibl_enabled && lrg_environment_get_ibl_enabled (env) &&
+	                                (!self->gpu || lrg_environment_is_baked (env))) ? env : NULL);
+	return env;
+}
+
+/*
+ * Selects this frame's decals: the world's set refilled from its decal
+ * components (world renders), else the renderer's own set; bound to the
+ * light set when decals are on and any were selected.
+ */
+static void
+setup_decals (LrgWorld3DRenderer   *self,
+              const LrgWorld3DView *v)
+{
+	LrgDecalSet *set = self->decals;
+	gdouble      origin[3];
+
+	if (self->frame_world != NULL)
+	{
+		lrg_decal_component_sync_world (self->frame_world, decal_texture, self);
+		set = lrg_decal_component_get_world_set (self->frame_world);
+	}
+	if (!self->decals_enabled || set == NULL || lrg_decal_set_get_count (set) == 0)
+	{
+		lrg_light_set_set_decals (self->lights, NULL);
+		return;
+	}
+	lrg_light_set_get_origin (self->lights, &origin[0], &origin[1], &origin[2]);
+	lrg_decal_set_set_origin (set, origin[0], origin[1], origin[2]);
+	lrg_decal_set_select (set, v->position[0], v->position[1], v->position[2]);
+	lrg_light_set_set_decals (self->lights, lrg_decal_set_get_active_count (set) > 0 ? set : NULL);
+}
+
+/*
+ * One of the lit-library debug programs (0 complexity, 1 AO, 2
+ * reflections), compiled on first use; NULL when it does not compile.
+ */
+static GrlShader *
+debug_lit_shader (LrgWorld3DRenderer *self,
+                  guint               which)
+{
+	static const gchar *const mains[3] = {
+		shader_dbg_complexity_main, shader_dbg_ao_main, shader_dbg_reflections_main
+	};
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *fs = NULL;
+	Shader           *handle;
+
+	if (self->dbg_lit[which] != NULL || self->dbg_tried[which])
+		return self->dbg_lit[which];
+	self->dbg_tried[which] = TRUE;
+
+	fs = g_strconcat (shader_dbg_head, lrg_light_set_get_glsl_library (), mains[which], NULL);
+	self->dbg_lit[which] = grl_shader_new_from_memory (lrg_light_set_get_vertex_source (), fs, &error);
+	if (self->dbg_lit[which] == NULL)
+	{
+		g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Debug view shader %u: %s", which,
+		       error != NULL ? error->message : "failed");
+		return NULL;
+	}
+	handle = (Shader *) grl_shader_get_handle (self->dbg_lit[which]);
+	if (handle == NULL || handle->id == 0 || handle->id == rlGetShaderIdDefault ())
+	{
+		g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Debug view shader %u did not compile", which);
+		g_clear_object (&self->dbg_lit[which]);
+	}
+	return self->dbg_lit[which];
+}
+
+/* Frees the debug programs (with a context) and forgets them. */
+static void
+release_debug_shaders (LrgWorld3DRenderer *self,
+                       gboolean            gl)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (self->dbg_lit); i++)
+	{
+		if (self->dbg_lit[i] != NULL)
+		{
+			if (self->lights != NULL)
+				lrg_light_set_forget_shader (self->lights, self->dbg_lit[i]);
+			if (gl)
+				g_clear_object (&self->dbg_lit[i]);
+			else
+				self->dbg_lit[i] = NULL;   /* leaked with the dead context */
+		}
+		self->dbg_tried[i] = FALSE;
+	}
+}
+
+/* Whether @mode is one of the light-set debug views. */
+static gboolean
+mode_is_lit_debug (LrgWorld3DRenderMode mode)
+{
+	return mode == LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY || mode == LRG_WORLD3D_RENDER_MODE_AO ||
+	       mode == LRG_WORLD3D_RENDER_MODE_REFLECTIONS;
 }
 
 /* ==========================================================================
@@ -2124,10 +2752,13 @@ replay_category (LrgWorld3DRenderer   *self,
                  LrgWorld3DRenderPass  pass,
                  Replay               *r)
 {
+	gint64 t0 = pass_clock (self);
+
 	r->pass = pass;
 	lrg_render_list_foreach (list, category, replay_item, r);
 	if (self->gpu)
 		rlDrawRenderBatchActive ();
+	pass_clock_end (self, pass, t0);
 }
 
 static gboolean
@@ -2135,16 +2766,23 @@ render_core (LrgWorld3DRenderer   *self,
              LrgRenderList        *list,
              const LrgWorld3DView *in_view)
 {
-	LrgWorld3DView  v;
-	GrlShader      *light_shader = NULL;
-	PostTargets    *post = NULL;
-	Replay          r;
-	gfloat          proj_m[16];
-	gboolean        wire, lit_mode, perspective, shadows_ok = FALSE, batched = FALSE;
-	guint           outer = 0;
-	gint            iw, ih;
+	LrgWorld3DView    v;
+	LrgEnvironment   *env;
+	LrgPostProcessor *processor = NULL;
+	GrlShader        *light_shader = NULL;
+	GrlShader        *debug_shader = NULL;
+	PostTargets      *post = NULL;
+	Replay            r;
+	gfloat            proj_m[16];
+	gboolean          wire, lit_mode, lights_mode, perspective, shadows_ok = FALSE, batched = FALSE;
+	gboolean          want_ssao, want_volumetric = FALSE, prepass_ok = FALSE, ssao_ok = FALSE;
+	gboolean          overdraw, debug_view;
+	guint             outer = 0, target;
+	gint              iw, ih;
+	gint64            t0;
 
 	stats_reset (self);
+	memset (self->pass_time, 0, sizeof self->pass_time);
 	self->gpu = !self->headless && ensure_gl (self);
 
 	v = *in_view;
@@ -2153,73 +2791,110 @@ render_core (LrgWorld3DRenderer   *self,
 	iw = (gint) v.width;
 	ih = (gint) v.height;
 	wire = (self->mode == LRG_WORLD3D_RENDER_MODE_WIREFRAME);
+	overdraw = (self->mode == LRG_WORLD3D_RENDER_MODE_OVERDRAW);
+	debug_view = overdraw || self->mode == LRG_WORLD3D_RENDER_MODE_UV || mode_is_lit_debug (self->mode);
+	/* lit_mode: shaded by the light set; lights_mode: any program that
+	 * reads the light set's uniforms (the lit-library debug views too) */
 	lit_mode = (self->mode == LRG_WORLD3D_RENDER_MODE_LIT || self->mode == LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY);
+	lights_mode = lit_mode || mode_is_lit_debug (self->mode);
 	perspective = !v.orthographic;
 	if (self->gpu)
 		outer = rlGetActiveFramebuffer ();
+	lrg_world3d_view_get_view_matrix (&v, self->cur_view);
+	lrg_world3d_view_get_projection_matrix (&v, proj_m);
+	memcpy (self->cur_proj, proj_m, sizeof proj_m);
 
-	/* --- Lights and shadows ---------------------------------------------- */
+	/* --- Lights, environment, decals ------------------------------------ */
 	sync_from_list (self, list);
-	if (lit_mode && self->gpu)
+	env = setup_environment (self, &v, outer, iw, ih);
+	setup_decals (self, &v);
+	/* Lighting-only shows the light on white: no decal albedo */
+	if (self->mode == LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY)
+		lrg_light_set_set_decals (self->lights, NULL);
+	if (lights_mode && self->gpu)
 		light_shader = lrg_light_set_get_shader (self->lights);
+	if (self->gpu && mode_is_lit_debug (self->mode))
+		debug_shader = debug_lit_shader (self, (guint) (self->mode - LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY));
+
+	/* --- Shadows ------------------------------------------------------------ */
+	t0 = pass_clock (self);
 	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_SHADOWS) && lit_mode && perspective &&
 	    (!self->gpu || light_shader != NULL))
 		shadows_ok = render_shadows (self, list, &v, outer, iw, ih);
 	if (self->gpu)
 		lrg_light_set_set_shadow_renderer (self->lights, shadows_ok ? self->shadows : NULL);
+	pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_SHADOW, t0);
+
+	/* --- Depth prepass, SSAO ---------------------------------------------- */
+	/* SSAO when it is on (lit modes), and always for the AO view, which
+	 * would show nothing without it */
+	want_ssao = perspective && ((self->ssao_enabled && lit_mode) || self->mode == LRG_WORLD3D_RENDER_MODE_AO);
+	if (env != NULL && self->volumetric_enabled && lit_mode && perspective)
+		want_volumetric = lrg_volumetric_fog_set_from_environment (self->vfog, env);
+	if (want_ssao || want_volumetric)
+		prepass_ok = render_prepass (self, list, &v, proj_m, want_ssao, outer, iw, ih, &ssao_ok);
+	if (self->gpu)
+	{
+		lrg_ssao_set_viewport (self->ssao, 0, 0, 0, 0);
+		lrg_light_set_set_ssao (self->lights, ssao_ok ? self->ssao : NULL);
+	}
 
 	/* --- Where the scene goes: the post image or the target itself ----- */
-	if (self->gpu && (self->flags & LRG_WORLD3D_RENDER_FLAG_POST) && self->post != NULL && self->has_post)
-	{
-		post = ensure_post_targets (self, self->post, iw, ih);
-		if (post != NULL)
-			enter_target (post->scene.id, iw, ih);
-	}
+	processor = (self->gpu && !debug_view) ? frame_post_processor (self) : NULL;
+	if (processor != NULL && lrg_post_processor_get_effect_count (processor) > 0)
+		post = ensure_post_targets (self, processor, iw, ih);
+	else if ((self->flags & LRG_WORLD3D_RENDER_FLAG_POST) && !self->gpu)
+		self->pass_counts[LRG_WORLD3D_RENDER_PASS_POST] = 0;
+	target = (post != NULL) ? post->scene.id : outer;
+	if (post != NULL)
+		enter_target (post->scene.id, iw, ih);
 
 	if (self->gpu && (self->flags & LRG_WORLD3D_RENDER_FLAG_CLEAR))
 	{
 		Color bg = { self->background.r, self->background.g, self->background.b, self->background.a };
 
+		/* Debug views clear to black so their colours read */
+		if (debug_view)
+			bg = (Color) { 0, 0, 0, 255 };
 		ClearBackground (bg);
 	}
 
 	/* --- 3D pass ----------------------------------------------------------
-	 * BeginMode3D() with our own matrices (the editor's picking uses the
-	 * same ones). */
-	lrg_world3d_view_get_view_matrix (&v, self->cur_view);
-	lrg_world3d_view_get_projection_matrix (&v, proj_m);
+	 * Our own matrices (the editor's picking uses the same ones). */
 	if (self->gpu)
-	{
-		rlDrawRenderBatchActive ();
-		rlMatrixMode (RL_PROJECTION);
-		rlPushMatrix ();
-		rlLoadIdentity ();
-		rlMultMatrixf (proj_m);
-		rlMatrixMode (RL_MODELVIEW);
-		rlLoadIdentity ();
-		rlMultMatrixf (self->cur_view);
-		rlEnableDepthTest ();
-	}
+		begin_3d (proj_m, self->cur_view);
 
-	/* The sky first, behind everything (perspective views only) */
-	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_SKY) && perspective)
+	/* The sky first, behind everything (perspective views, not the debug
+	 * views): the environment's sky, else the sky dome */
+	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_SKY) && perspective && !debug_view)
 	{
 		self->pass_counts[LRG_WORLD3D_RENDER_PASS_SKY] = 1;
 		if (self->gpu)
 		{
 			GrlVector3 eye;
-			GrlVector3 toward_sun;
 
+			t0 = pass_clock (self);
 			eye.x = v.position[0];
 			eye.y = v.position[1];
 			eye.z = v.position[2];
-			toward_sun.x = -self->sun_dir[0];
-			toward_sun.y = -self->sun_dir[1];
-			toward_sun.z = -self->sun_dir[2];
-			lrg_sky_dome_set_sun_direction (self->sky, &toward_sun);
-			lrg_sky_dome_set_radius (self->sky, CLAMP (v.far_plane * 0.5f, 1.0f, 500.0f));
-			lrg_sky_dome_draw (self->sky, &eye);
+			if (env != NULL)
+				lrg_environment_draw_sky (env, &eye);
+			else
+			{
+				GrlVector3 toward_sun;
+
+				toward_sun.x = -self->sun_dir[0];
+				toward_sun.y = -self->sun_dir[1];
+				toward_sun.z = -self->sun_dir[2];
+				lrg_sky_dome_set_sun_direction (self->sky, &toward_sun);
+				lrg_sky_dome_set_radius (self->sky, CLAMP (v.far_plane * 0.5f, 1.0f, 500.0f));
+				lrg_sky_dome_draw (self->sky, &eye);
+			}
 			rlDrawRenderBatchActive ();
+			/* The sky may leave depth testing off */
+			rlEnableDepthTest ();
+			rlEnableDepthMask ();
+			pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_SKY, t0);
 		}
 	}
 
@@ -2230,11 +2905,21 @@ render_core (LrgWorld3DRenderer   *self,
 	if (self->gpu)
 	{
 		r.lit_shader = mode_shader (self, self->mode, light_shader);
+		if (debug_shader != NULL)
+			r.lit_shader = *(Shader *) grl_shader_get_handle (debug_shader);
 		r.unlit_shader = lit_mode ? (self->has_unlit ? self->unlit : self->flat) : r.lit_shader;
+		r.materials = (light_shader != NULL && lit_mode) || debug_shader != NULL;
+		r.layered = (light_shader != NULL && lit_mode);
+		r.customs = (light_shader != NULL && self->mode == LRG_WORLD3D_RENDER_MODE_LIT);
 		self->cur_shader = r.lit_shader;
 		self->white_albedo = (self->mode == LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY);
 		if (light_shader != NULL)
+		{
 			lrg_light_set_apply (self->lights, v.position[0], v.position[1], v.position[2]);
+			self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+			if (debug_shader != NULL)
+				lrg_light_set_bind_shader (self->lights, debug_shader);
+		}
 		else if (lit_mode && self->has_lit)
 		{
 			gfloat ambient = 0.35f;
@@ -2242,9 +2927,21 @@ render_core (LrgWorld3DRenderer   *self,
 			SetShaderValue (self->lit, self->loc_light, self->sun_dir, SHADER_UNIFORM_VEC3);
 			SetShaderValue (self->lit, self->loc_ambient, &ambient, SHADER_UNIFORM_FLOAT);
 		}
+		/* Probes are picked per item when the bound environment has any */
+		self->probe_env = (light_shader != NULL &&
+		                   lrg_light_set_get_environment (self->lights) != NULL &&
+		                   lrg_environment_get_n_probes (lrg_light_set_get_environment (self->lights)) > 0)
+		                  ? lrg_light_set_get_environment (self->lights) : NULL;
+		memset (self->probe_pick, 0, sizeof self->probe_pick);
 		g_signal_emit (self, signals[SIGNAL_DRAW_BACKGROUND], 0, &v);
 		if (wire)
 			rlEnableWireMode ();
+		if (overdraw)
+		{
+			rlDrawRenderBatchActive ();
+			BeginBlendMode (BLEND_ADDITIVE);
+			rlDisableDepthTest ();
+		}
 	}
 
 	/* Opaque: the static batch first, then the rest front to back */
@@ -2258,24 +2955,80 @@ render_core (LrgWorld3DRenderer   *self,
 	/* Cutout: alpha tested at 0.5 by the light-set shader */
 	if (light_shader != NULL && lrg_render_list_get_n_items (list, LRG_RENDER_CATEGORY_CUTOUT) > 0)
 	{
-		lrg_light_set_set_alpha_cutoff (self->lights, CUTOUT_ALPHA);
-		lrg_light_set_apply (self->lights, v.position[0], v.position[1], v.position[2]);
+		r.cutoff = CUTOUT_ALPHA;
+		if (debug_shader != NULL)
+			shader_set_float (r.lit_shader, "alphaCutoff", CUTOUT_ALPHA);
+		else
+		{
+			lrg_light_set_set_alpha_cutoff (self->lights, CUTOUT_ALPHA);
+			lrg_light_set_apply (self->lights, v.position[0], v.position[1], v.position[2]);
+			self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+			memset (self->probe_pick, 0, sizeof self->probe_pick);
+		}
 		replay_category (self, list, LRG_RENDER_CATEGORY_CUTOUT, LRG_WORLD3D_RENDER_PASS_CUTOUT, &r);
-		lrg_light_set_set_alpha_cutoff (self->lights, 0.0f);
-		lrg_light_set_apply (self->lights, v.position[0], v.position[1], v.position[2]);
+		r.cutoff = 0.0f;
+		if (debug_shader != NULL)
+			shader_set_float (r.lit_shader, "alphaCutoff", 0.0f);
+		else
+		{
+			lrg_light_set_set_alpha_cutoff (self->lights, 0.0f);
+			lrg_light_set_apply (self->lights, v.position[0], v.position[1], v.position[2]);
+			self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+			memset (self->probe_pick, 0, sizeof self->probe_pick);
+		}
 	}
 	else
 		replay_category (self, list, LRG_RENDER_CATEGORY_CUTOUT, LRG_WORLD3D_RENDER_PASS_CUTOUT, &r);
 
+	/* Volumetric fog over the opaque scene, before the blended items */
+	if (want_volumetric && prepass_ok)
+	{
+		self->pass_counts[LRG_WORLD3D_RENDER_PASS_VOLUMETRIC] = 1;
+		if (self->gpu)
+		{
+			g_autoptr(GError) error = NULL;
+
+			t0 = pass_clock (self);
+			EndMode3D ();
+			if (!lrg_volumetric_fog_render (self->vfog, lrg_depth_prepass_get_depth_texture_id (self->prepass), iw, ih,
+			                                self->cur_view, proj_m, self->lights, &error))
+			{
+				g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Volumetric fog: %s", error->message);
+				self->pass_counts[LRG_WORLD3D_RENDER_PASS_VOLUMETRIC] = 0;
+			}
+			enter_target (target, iw, ih);
+			begin_3d (proj_m, self->cur_view);
+			pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_VOLUMETRIC, t0);
+		}
+	}
+
 	/* Transparent: back to front, blended, without depth writes */
-	if (self->gpu)
+	if (self->gpu && !overdraw)
 		rlDisableDepthMask ();
 	replay_category (self, list, LRG_RENDER_CATEGORY_TRANSPARENT, LRG_WORLD3D_RENDER_PASS_TRANSPARENT, &r);
-	if (self->gpu)
+	if (self->gpu && !overdraw)
 		rlEnableDepthMask ();
 
 	if (self->gpu)
 	{
+		if (overdraw)
+		{
+			rlDrawRenderBatchActive ();
+			EndBlendMode ();
+			rlEnableDepthTest ();
+		}
+		/* Lights reach every layer again, nothing fades */
+		if (r.layered && self->cur_layers != LRG_RENDER_LAYERS_MASK_ALL)
+		{
+			lrg_light_set_set_draw_layers (self->lights, LRG_RENDER_LAYERS_MASK_ALL);
+			self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+		}
+		bind_lod_fade (self, r.lit_shader.id, 0.0f);
+		if (light_shader != NULL)
+			bind_lod_fade (self, ((Shader *) grl_shader_get_handle (light_shader))->id, 0.0f);
+
+		self->probe_env = NULL;
+
 		/* Overlays still in the 3D mode (and in wire mode, as before) */
 		g_signal_emit (self, signals[SIGNAL_DRAW_OVERLAY], 0, &v);
 		rlDrawRenderBatchActive ();
@@ -2295,10 +3048,198 @@ render_core (LrgWorld3DRenderer   *self,
 			lrg_debug_draw_draw_labels (self->debug_draw);
 
 		if (post != NULL)
-			apply_post (self, post, outer, iw, ih);
+		{
+			t0 = pass_clock (self);
+			apply_post (self, processor, post, outer, iw, ih);
+			pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_POST, t0);
+		}
 		rlDrawRenderBatchActive ();
 	}
 	return self->gpu;
+}
+
+/* ==========================================================================
+ * Reflection probe capture
+ * ========================================================================== */
+
+typedef struct
+{
+	LrgWorld3DRenderer *self;
+	LrgEnvironment     *env;
+	LrgRenderList      *list;
+	Shader              shader;
+	gboolean            lit;
+} ProbeCapture;
+
+/* Draws one probe face: sky, then the lit opaque and cutout items. */
+static void
+probe_draw_face (LrgReflectionProbe *probe,
+                 guint               face,
+                 const gfloat       *view,
+                 const gfloat       *projection,
+                 gpointer            user_data)
+{
+	ProbeCapture       *pc = (ProbeCapture *) user_data;
+	LrgWorld3DRenderer *self = pc->self;
+	GrlVector3          eye;
+	gfloat              pos[3];
+	Replay              r;
+
+	(void) face;
+	(void) projection;
+	lrg_reflection_probe_get_position (probe, pos);
+	eye.x = pos[0];
+	eye.y = pos[1];
+	eye.z = pos[2];
+	memcpy (self->cur_view, view, sizeof self->cur_view);
+	lrg_environment_draw_sky (pc->env, &eye);
+	rlDrawRenderBatchActive ();
+	rlEnableDepthTest ();
+	rlEnableDepthMask ();
+
+	if (pc->lit)
+		lrg_light_set_apply (self->lights, pos[0], pos[1], pos[2]);
+	memset (&r, 0, sizeof r);
+	r.self = self;
+	r.mask = LRG_RENDER_LAYERS_MASK_ALL;
+	r.lit_shader = pc->shader;
+	r.unlit_shader = self->has_unlit ? self->unlit : self->flat;
+	r.materials = pc->lit;
+	r.pass = LRG_WORLD3D_RENDER_PASS_OPAQUE;
+	self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+	lrg_render_list_foreach (pc->list, LRG_RENDER_CATEGORY_OPAQUE, replay_item, &r);
+	r.pass = LRG_WORLD3D_RENDER_PASS_CUTOUT;
+	lrg_render_list_foreach (pc->list, LRG_RENDER_CATEGORY_CUTOUT, replay_item, &r);
+	rlDrawRenderBatchActive ();
+}
+
+/*
+ * Prepares the light set for probe faces drawn from @list lit by @env:
+ * lights as a frame would set them, the environment's ambient, fog and
+ * IBL, decals; no shadows or SSAO (they belong to the main view).
+ */
+static void
+capture_setup (LrgWorld3DRenderer *self,
+               ProbeCapture       *pc)
+{
+	GrlShader *light_shader;
+
+	self->gpu = TRUE;
+	sync_from_list (self, pc->list);
+	if (lrg_environment_needs_bake (pc->env))
+	{
+		g_autoptr(GError) error = NULL;
+
+		if (!lrg_environment_bake (pc->env, &error))
+			g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Environment bake failed: %s", error->message);
+	}
+	lrg_environment_apply_to_light_set (pc->env, self->lights);
+	self->env_fog = TRUE;
+	lrg_light_set_set_environment (self->lights, lrg_environment_is_baked (pc->env) ? pc->env : NULL);
+	lrg_light_set_set_shadow_renderer (self->lights, NULL);
+	lrg_light_set_set_ssao (self->lights, NULL);
+	light_shader = lrg_light_set_get_shader (self->lights);
+	pc->lit = (light_shader != NULL);
+	pc->shader = pc->lit ? *(Shader *) grl_shader_get_handle (light_shader) : (self->has_lit ? self->lit : self->flat);
+	self->white_albedo = FALSE;
+}
+
+/* Puts the renderer back after captures. */
+static void
+capture_done (LrgWorld3DRenderer *self)
+{
+	self->cur_shader = self->has_lit ? self->lit : self->flat;
+	self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+	stats_reset (self);
+}
+
+gboolean
+lrg_world3d_renderer_capture_probe (LrgWorld3DRenderer  *self,
+                                    LrgReflectionProbe  *probe,
+                                    LrgRenderList       *list,
+                                    LrgEnvironment      *environment,
+                                    GError             **error)
+{
+	g_autoptr(LrgEnvironment) flat = NULL;
+	ProbeCapture              pc;
+	gboolean                  ok;
+
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
+	g_return_val_if_fail (LRG_IS_REFLECTION_PROBE (probe), FALSE);
+	g_return_val_if_fail (environment == NULL || LRG_IS_ENVIRONMENT (environment), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (self->headless || !ensure_gl (self))
+	{
+		g_set_error (error, LRG_ENVIRONMENT_ERROR, LRG_ENVIRONMENT_ERROR_GPU,
+		             "Probe capture needs a window");
+		return FALSE;
+	}
+	pc.self = self;
+	pc.list = (list != NULL) ? list : self->list;
+	pc.env = environment;
+	if (pc.env == NULL)
+		pc.env = (self->environment != NULL) ? self->environment : self->active_env;
+	if (pc.env == NULL)
+	{
+		/* No environment: the probe reflects the scene over the default
+		 * environment's sky, lit by its flat ambient */
+		flat = lrg_environment_new ();
+		pc.env = flat;
+	}
+	capture_setup (self, &pc);
+	ok = lrg_reflection_probe_capture (probe, probe_draw_face, &pc, error);
+	capture_done (self);
+	return ok;
+}
+
+guint
+lrg_world3d_renderer_capture_probes (LrgWorld3DRenderer *self,
+                                     LrgWorld3D         *world)
+{
+	ProbeCapture   pc;
+	LrgWorld3DView origin_view;
+	guint          i, n, captured = 0;
+
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), 0);
+	g_return_val_if_fail (world == NULL || LRG_IS_WORLD3D (world), 0);
+
+	if (self->headless || !ensure_gl (self))
+		return 0;
+
+	/* The environment in effect and everything it should reflect */
+	pc.env = self->environment;
+	if (pc.env == NULL)
+		pc.env = (world != NULL) ? lrg_world3d_get_environment (world) : self->active_env;
+	if (pc.env == NULL)
+		pc.env = self->fallback_env;
+	if (pc.env == NULL || lrg_environment_get_n_probes (pc.env) == 0)
+		return 0;
+	if (world != NULL)
+		lrg_world3d_collect_render (world, NULL, self->list);
+	pc.self = self;
+	pc.list = self->list;
+
+	self->frame_world = world;
+	capture_setup (self, &pc);
+	lrg_world3d_view_init (&origin_view, 1.0f, 1.0f);
+	setup_decals (self, &origin_view);
+	n = lrg_environment_get_n_probes (pc.env);
+	for (i = 0; i < n; i++)
+	{
+		LrgReflectionProbe *probe = lrg_environment_get_probe (pc.env, i);
+		g_autoptr(GError)   error = NULL;
+
+		if (probe == NULL)
+			continue;
+		if (lrg_reflection_probe_capture (probe, probe_draw_face, &pc, &error))
+			captured++;
+		else
+			g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Probe capture failed: %s", error->message);
+	}
+	self->frame_world = NULL;
+	capture_done (self);
+	return captured;
 }
 
 /* ==========================================================================
@@ -2314,6 +3255,12 @@ lrg_world3d_renderer_dispose (GObject *object)
 	release_resources (self, IsWindowReady ());
 	release_post_targets (self);
 	g_clear_object (&self->post);
+	g_clear_object (&self->stack_post);
+	g_clear_object (&self->post_stack);
+	g_clear_object (&self->environment);
+	g_clear_object (&self->fallback_env);
+	g_clear_object (&self->fallback_stack);
+	g_clear_object (&self->active_env);
 	g_clear_object (&self->debug_draw);
 	g_clear_object (&self->batch);
 	g_clear_pointer (&self->list, lrg_render_list_unref);
@@ -2330,6 +3277,8 @@ lrg_world3d_renderer_finalize (GObject *object)
 	/* The by-asset maps borrow from the path maps: free them first. */
 	g_clear_pointer (&self->model_by_asset, g_hash_table_unref);
 	g_clear_pointer (&self->texture_by_asset, g_hash_table_unref);
+	g_clear_pointer (&self->material_by_asset, g_hash_table_unref);
+	g_clear_pointer (&self->materials, g_hash_table_unref);
 	g_clear_pointer (&self->models, g_hash_table_unref);
 	g_clear_pointer (&self->textures, g_hash_table_unref);
 	g_clear_pointer (&self->base_dir, g_free);
@@ -2340,6 +3289,13 @@ lrg_world3d_renderer_finalize (GObject *object)
 	g_clear_object (&self->lights);
 	g_clear_object (&self->shadows);
 	g_clear_object (&self->sky);
+	g_clear_object (&self->ssao);
+	g_clear_object (&self->prepass);
+	g_clear_object (&self->decals);
+	g_clear_object (&self->vfog);
+	g_clear_object (&self->view_camera);
+	g_clear_pointer (&self->custom_shaders, g_hash_table_unref);
+	g_clear_pointer (&self->faded, g_hash_table_unref);
 
 	G_OBJECT_CLASS (lrg_world3d_renderer_parent_class)->finalize (object);
 }
@@ -2556,6 +3512,8 @@ lrg_world3d_renderer_init (LrgWorld3DRenderer *self)
 	self->textures = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
 	self->model_by_asset = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 	self->texture_by_asset = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	self->materials = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
+	self->material_by_asset = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 	for (i = 0; i < LRG_WORLD3D_RENDER_PASS_COUNT; i++)
 		self->records[i] = g_ptr_array_new ();
 	self->list = lrg_render_list_new ();
@@ -2567,10 +3525,199 @@ lrg_world3d_renderer_init (LrgWorld3DRenderer *self)
 	lrg_shadow_renderer_set_filter (self->shadows, 1);
 	lrg_shadow_renderer_set_strength (self->shadows, 0.85f);
 	self->sky = lrg_sky_dome_new ();
+	self->ssao = lrg_ssao_new ();
+	self->prepass = lrg_depth_prepass_new (1, 1);
+	self->decals = lrg_decal_set_new ();
+	self->vfog = lrg_volumetric_fog_new ();
+	self->decals_enabled = TRUE;
+	self->ibl_enabled = TRUE;
+	self->volumetric_enabled = TRUE;
+	self->faded = g_hash_table_new (g_direct_hash, g_direct_equal);
+	self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
+	self->custom_shaders = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
 	self->sun_dir[0] = DEFAULT_SUN_X;
 	self->sun_dir[1] = DEFAULT_SUN_Y;
 	self->sun_dir[2] = DEFAULT_SUN_Z;
 	normalize3 (self->sun_dir);
+}
+
+/* ==========================================================================
+ * Public API: environment, post stack, SSAO, decals (0.9.0)
+ * ========================================================================== */
+
+void
+lrg_world3d_renderer_set_environment (LrgWorld3DRenderer *self,
+                                      LrgEnvironment     *environment)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+	g_return_if_fail (environment == NULL || LRG_IS_ENVIRONMENT (environment));
+
+	g_set_object (&self->environment, environment);
+}
+
+LrgEnvironment *
+lrg_world3d_renderer_get_environment (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+
+	return self->environment;
+}
+
+LrgEnvironment *
+lrg_world3d_renderer_get_active_environment (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+
+	return self->active_env;
+}
+
+void
+lrg_world3d_renderer_set_post_stack (LrgWorld3DRenderer *self,
+                                     LrgPostStack       *stack)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+	g_return_if_fail (stack == NULL || LRG_IS_POST_STACK (stack));
+
+	g_set_object (&self->post_stack, stack);
+}
+
+LrgPostStack *
+lrg_world3d_renderer_get_post_stack (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+
+	return self->post_stack;
+}
+
+void
+lrg_world3d_renderer_set_fallback_look (LrgWorld3DRenderer *self,
+                                        LrgEnvironment     *environment,
+                                        LrgPostStack       *stack)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+	g_return_if_fail (environment == NULL || LRG_IS_ENVIRONMENT (environment));
+	g_return_if_fail (stack == NULL || LRG_IS_POST_STACK (stack));
+
+	g_set_object (&self->fallback_env, environment);
+	g_set_object (&self->fallback_stack, stack);
+}
+
+void
+lrg_world3d_renderer_set_ssao_enabled (LrgWorld3DRenderer *self,
+                                       gboolean            enabled)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+
+	self->ssao_enabled = enabled ? TRUE : FALSE;
+}
+
+gboolean
+lrg_world3d_renderer_get_ssao_enabled (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
+
+	return self->ssao_enabled;
+}
+
+LrgSsao *
+lrg_world3d_renderer_get_ssao (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+
+	return self->ssao;
+}
+
+LrgDecalSet *
+lrg_world3d_renderer_get_decal_set (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+
+	return self->decals;
+}
+
+void
+lrg_world3d_renderer_set_decals_enabled (LrgWorld3DRenderer *self,
+                                         gboolean            enabled)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+
+	self->decals_enabled = enabled ? TRUE : FALSE;
+}
+
+gboolean
+lrg_world3d_renderer_get_decals_enabled (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
+
+	return self->decals_enabled;
+}
+
+void
+lrg_world3d_renderer_set_ibl_enabled (LrgWorld3DRenderer *self,
+                                      gboolean            enabled)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+
+	self->ibl_enabled = enabled ? TRUE : FALSE;
+}
+
+gboolean
+lrg_world3d_renderer_get_ibl_enabled (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
+
+	return self->ibl_enabled;
+}
+
+void
+lrg_world3d_renderer_set_volumetric_enabled (LrgWorld3DRenderer *self,
+                                             gboolean            enabled)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+
+	self->volumetric_enabled = enabled ? TRUE : FALSE;
+}
+
+gboolean
+lrg_world3d_renderer_get_volumetric_enabled (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
+
+	return self->volumetric_enabled;
+}
+
+gboolean
+lrg_world3d_renderer_bake_environment (LrgWorld3DRenderer  *self,
+                                       GError             **error)
+{
+	LrgEnvironment *env;
+
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	env = (self->environment != NULL) ? self->environment : self->active_env;
+	if (env == NULL || !IsWindowReady () || !lrg_environment_needs_bake (env))
+		return TRUE;
+	return lrg_environment_bake (env, error);
+}
+
+gdouble
+lrg_world3d_renderer_get_pass_time (LrgWorld3DRenderer   *self,
+                                    LrgWorld3DRenderPass  pass)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), 0.0);
+	g_return_val_if_fail ((guint) pass < LRG_WORLD3D_RENDER_PASS_COUNT, 0.0);
+
+	return self->pass_time[pass];
+}
+
+void
+lrg_world3d_renderer_set_timing (LrgWorld3DRenderer *self,
+                                 gboolean            timing)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+
+	self->timing = timing ? TRUE : FALSE;
 }
 
 /* ==========================================================================
@@ -2619,6 +3766,7 @@ lrg_world3d_renderer_render (LrgWorld3DRenderer *self,
 	lrg_world3d_collect_render (world, LRG_CAMERA (camera), self->list);
 	lrg_world3d_view_init_from_camera (&view, camera, (gfloat) w, (gfloat) h);
 
+	self->frame_world = world;
 	if (target != NULL && !self->headless && IsWindowReady ())
 	{
 		grl_render_texture_begin (target);
@@ -2627,6 +3775,7 @@ lrg_world3d_renderer_render (LrgWorld3DRenderer *self,
 	}
 	else
 		drawn = render_core (self, self->list, &view);
+	self->frame_world = NULL;
 	return drawn;
 }
 
@@ -2635,6 +3784,8 @@ lrg_world3d_renderer_render_view (LrgWorld3DRenderer   *self,
                                   LrgWorld3D           *world,
                                   const LrgWorld3DView *view)
 {
+	gboolean drawn;
+
 	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), FALSE);
 	g_return_val_if_fail (LRG_IS_WORLD3D (world), FALSE);
 	g_return_val_if_fail (view != NULL, FALSE);
@@ -2644,7 +3795,10 @@ lrg_world3d_renderer_render_view (LrgWorld3DRenderer   *self,
 	lrg_world3d_collect_render (world, NULL, self->list);
 	lrg_render_list_set_view (self->list, view->position, view->cull_mask, NULL);
 	lrg_render_list_sort (self->list);
-	return render_core (self, self->list, view);
+	self->frame_world = world;
+	drawn = render_core (self, self->list, view);
+	self->frame_world = NULL;
+	return drawn;
 }
 
 gboolean
@@ -2676,7 +3830,7 @@ lrg_world3d_renderer_set_render_mode (LrgWorld3DRenderer   *self,
                                       LrgWorld3DRenderMode  mode)
 {
 	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
-	g_return_if_fail ((guint) mode <= LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY);
+	g_return_if_fail ((guint) mode <= LRG_WORLD3D_RENDER_MODE_REFLECTIONS);
 
 	if (self->mode == mode)
 		return;
@@ -2786,22 +3940,35 @@ LrgPostProcessor *
 lrg_world3d_renderer_new_preview_post_processor (void)
 {
 	LrgPostProcessor        *proc = lrg_post_processor_new (1, 1);
-	g_autoptr(LrgFxaa)       fxaa = lrg_fxaa_new ();
 	g_autoptr(LrgBloom)      bloom = lrg_bloom_new ();
+	g_autoptr(LrgTonemap)    tonemap = lrg_tonemap_new ();
 	g_autoptr(LrgVignette)   vignette = lrg_vignette_new ();
+	g_autoptr(LrgFxaa)       fxaa = lrg_fxaa_new ();
 	g_autoptr(LrgColorGrade) grade = lrg_color_grade_new ();
 
-	/* Preview defaults: a subtle look that reads in any scene */
+	/* Preview defaults: a subtle look that reads in any scene.  Bloom
+	 * wants the HDR values, the tonemap rolls them off, the rest works on
+	 * display values. */
 	lrg_bloom_set_threshold (bloom, 0.75f);
 	lrg_bloom_set_intensity (bloom, 0.6f);
+	/* Filmic at +1 EV keeps display mid grey (0.5) where it was and
+	 * rolls values above 1 off instead of clipping them */
+	lrg_tonemap_set_operator (tonemap, LRG_TONEMAP_OPERATOR_FILMIC);
+	lrg_tonemap_set_exposure (tonemap, 1.0f);
 	lrg_vignette_set_intensity (vignette, 0.35f);
 	lrg_vignette_set_radius (vignette, 0.55f);
 	lrg_vignette_set_smoothness (vignette, 0.45f);
 	lrg_color_grade_set_contrast (grade, 1.05f);
 	lrg_color_grade_set_saturation (grade, 1.08f);
-	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (fxaa));
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (bloom), 0);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (tonemap), 10);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (vignette), 20);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 30);
+	lrg_post_effect_set_priority (LRG_POST_EFFECT (grade), 40);
 	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (bloom));
+	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (tonemap));
 	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (vignette));
+	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (fxaa));
 	lrg_post_processor_add_effect (proc, LRG_POST_EFFECT (grade));
 	return proc;
 }
@@ -2921,6 +4088,7 @@ forget_lookups (LrgWorld3DRenderer *self)
 {
 	g_hash_table_remove_all (self->model_by_asset);
 	g_hash_table_remove_all (self->texture_by_asset);
+	g_hash_table_remove_all (self->material_by_asset);
 	self->generation++;
 }
 
@@ -3002,6 +4170,51 @@ lrg_world3d_renderer_get_model (LrgWorld3DRenderer *self,
 	return model;
 }
 
+/* Loads (or finds) the .rmat at @abs; NULL on failure, cached either way. */
+static LrgMaterial *
+load_material_abs (LrgWorld3DRenderer *self,
+                   const gchar        *abs)
+{
+	g_autoptr(GError) error = NULL;
+	LrgMaterial      *material;
+
+	if (g_hash_table_contains (self->materials, abs))
+		return (LrgMaterial *) g_hash_table_lookup (self->materials, abs);
+	material = lrg_material_new_from_file (abs, NULL, &error);
+	if (material == NULL)
+		g_log (RENDER_LOG_DOMAIN, G_LOG_LEVEL_MESSAGE, "Could not load material %s: %s", abs,
+		       error != NULL ? error->message : "failed");
+	g_hash_table_insert (self->materials, g_strdup (abs), material);
+	return material;
+}
+
+LrgMaterial *
+lrg_world3d_renderer_get_material (LrgWorld3DRenderer *self,
+                                   const gchar        *asset)
+{
+	g_autofree gchar *abs = NULL;
+	gpointer          value;
+	LrgMaterial      *material;
+
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+
+	if (asset == NULL || *asset == '\0')
+		return NULL;
+	/* Like lrg_world3d_renderer_get_model(); materials load headless
+	 * (their textures load on first draw) */
+	if (self->base_dir == NULL && self->resolver == NULL && !g_path_is_absolute (asset))
+	{
+		abs = resolve_path (self, asset);
+		return load_material_abs (self, abs);
+	}
+	if (g_hash_table_lookup_extended (self->material_by_asset, asset, NULL, &value))
+		return (LrgMaterial *) value;
+	abs = resolve_path (self, asset);
+	material = load_material_abs (self, abs);
+	g_hash_table_insert (self->material_by_asset, g_strdup (asset), material);
+	return material;
+}
+
 GrlTexture *
 lrg_world3d_renderer_get_texture (LrgWorld3DRenderer *self,
                                   const gchar        *asset)
@@ -3055,7 +4268,8 @@ lrg_world3d_renderer_forget_asset (LrgWorld3DRenderer *self,
 
 	if (abs_path == NULL)
 		return FALSE;
-	if (!g_hash_table_contains (self->models, abs_path) && !g_hash_table_contains (self->textures, abs_path))
+	if (!g_hash_table_contains (self->models, abs_path) && !g_hash_table_contains (self->textures, abs_path) &&
+	    !g_hash_table_contains (self->materials, abs_path))
 		return FALSE;
 
 	/* The by-asset maps borrow from the path maps, so they are cleared
@@ -3066,11 +4280,13 @@ lrg_world3d_renderer_forget_asset (LrgWorld3DRenderer *self,
 	{
 		g_hash_table_remove (self->models, abs_path);
 		g_hash_table_remove (self->textures, abs_path);
+		g_hash_table_remove (self->materials, abs_path);
 	}
 	else
 	{
 		g_hash_table_steal (self->models, abs_path);
 		g_hash_table_steal (self->textures, abs_path);
+		g_hash_table_steal (self->materials, abs_path);
 	}
 	self->batch_signature = 0;
 	return TRUE;
@@ -3098,6 +4314,8 @@ lrg_world3d_renderer_reload_asset (LrgWorld3DRenderer *self,
 	}
 	lrg_world3d_renderer_forget_asset (self, abs_path);
 	self->generation++;
+	if (g_str_has_suffix (abs_path, ".rmat"))
+		return load_material_abs (self, abs_path) != NULL;
 	if (as_model)
 		return load_model_abs (self, abs_path) != NULL;
 	return load_texture_abs (self, abs_path) != NULL;

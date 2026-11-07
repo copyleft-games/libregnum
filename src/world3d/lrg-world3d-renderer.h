@@ -28,6 +28,12 @@
 #include "../lighting/lrg-shadow-renderer.h"
 #include "../graphics/lrg-sky-dome.h"
 #include "../postprocess/lrg-post-processor.h"
+#include "../postprocess/lrg-post-stack.h"
+#include "../lighting/lrg-environment.h"
+#include "../lighting/lrg-reflection-probe.h"
+#include "../graphics/lrg-ssao.h"
+#include "../graphics/lrg-decal.h"
+#include "../graphics/lrg-material.h"
 #include "../debug/lrg-debug-draw.h"
 
 G_BEGIN_DECLS
@@ -44,10 +50,29 @@ G_BEGIN_DECLS
  * @LRG_WORLD3D_RENDER_MODE_WIREFRAME: unlit triangles drawn as lines
  * @LRG_WORLD3D_RENDER_MODE_NORMALS: world-space normals as colours
  * @LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY: the lighting on a white surface
+ * @LRG_WORLD3D_RENDER_MODE_OVERDRAW: every surface drawn additively in a
+ *   constant dim colour without depth testing, so bright areas show where
+ *   many layers cover the same pixel (a heat map of shading cost)
+ * @LRG_WORLD3D_RENDER_MODE_UV: the texture coordinates as colours (U in
+ *   red, V in green, wrapped to 0..1) over a checker that shows their
+ *   density and seams
+ * @LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY: how many point and spot
+ *   lights reach each pixel through the clustered grid (black: none,
+ *   blue, green, yellow, red: 1, 2-3, 4-7, 8 or more)
+ * @LRG_WORLD3D_RENDER_MODE_AO: the ambient occlusion alone on white: the
+ *   material's occlusion times the SSAO term (this view runs the depth
+ *   prepass and SSAO even while lrg_world3d_renderer_set_ssao_enabled()
+ *   is off, with the parameters of lrg_world3d_renderer_get_ssao())
+ * @LRG_WORLD3D_RENDER_MODE_REFLECTIONS: the indirect specular alone: the
+ *   environment's prefiltered reflection (blended with the nearest
+ *   reflection probes) at each surface's own roughness, without Fresnel;
+ *   black without an environment
  *
  * How the colour passes shade surfaces.  The values match
  * #LrgEditorRenderMode one to one, so the editor's viewport modes map
- * straight onto the runtime renderer.
+ * straight onto the runtime renderer.  The last five are debug views:
+ * they replace the colour passes' shading, clear to black and skip the
+ * sky and the post chain, so their colours read as they are.
  */
 typedef enum
 {
@@ -55,7 +80,12 @@ typedef enum
 	LRG_WORLD3D_RENDER_MODE_UNLIT,
 	LRG_WORLD3D_RENDER_MODE_WIREFRAME,
 	LRG_WORLD3D_RENDER_MODE_NORMALS,
-	LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY
+	LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY,
+	LRG_WORLD3D_RENDER_MODE_OVERDRAW,
+	LRG_WORLD3D_RENDER_MODE_UV,
+	LRG_WORLD3D_RENDER_MODE_LIGHT_COMPLEXITY,
+	LRG_WORLD3D_RENDER_MODE_AO,
+	LRG_WORLD3D_RENDER_MODE_REFLECTIONS
 } LrgWorld3DRenderMode;
 
 LRG_AVAILABLE_IN_ALL
@@ -114,8 +144,16 @@ GType lrg_world3d_render_flags_get_type (void) G_GNUC_CONST;
  * @LRG_WORLD3D_RENDER_PASS_CUTOUT: alpha-tested items
  * @LRG_WORLD3D_RENDER_PASS_TRANSPARENT: blended items, back to front
  * @LRG_WORLD3D_RENDER_PASS_POST: the post chain
+ * @LRG_WORLD3D_RENDER_PASS_PREPASS: opaque and cutout draws into the
+ *   depth (and view-normal) prepass that SSAO and the volumetric fog read
+ * @LRG_WORLD3D_RENDER_PASS_SSAO: the screen-space ambient occlusion pass
+ *   (counts 1 when it ran)
+ * @LRG_WORLD3D_RENDER_PASS_VOLUMETRIC: the volumetric fog march and
+ *   composite (counts 1 when it ran)
  *
- * The passes a render runs, in order.  lrg_world3d_renderer_get_pass_count()
+ * The passes a render can run.  A frame runs them in this order:
+ * shadow, prepass, SSAO, sky, opaque, cutout, volumetric, transparent,
+ * post (the values are in the order they were added, not frame order).  lrg_world3d_renderer_get_pass_count()
  * reports what each pass drew in the last render.
  */
 typedef enum
@@ -125,7 +163,10 @@ typedef enum
 	LRG_WORLD3D_RENDER_PASS_OPAQUE,
 	LRG_WORLD3D_RENDER_PASS_CUTOUT,
 	LRG_WORLD3D_RENDER_PASS_TRANSPARENT,
-	LRG_WORLD3D_RENDER_PASS_POST
+	LRG_WORLD3D_RENDER_PASS_POST,
+	LRG_WORLD3D_RENDER_PASS_PREPASS,
+	LRG_WORLD3D_RENDER_PASS_SSAO,
+	LRG_WORLD3D_RENDER_PASS_VOLUMETRIC
 } LrgWorld3DRenderPass;
 
 LRG_AVAILABLE_IN_ALL
@@ -137,7 +178,7 @@ GType lrg_world3d_render_pass_get_type (void) G_GNUC_CONST;
  *
  * The number of #LrgWorld3DRenderPass values.
  */
-#define LRG_WORLD3D_RENDER_PASS_COUNT (6)
+#define LRG_WORLD3D_RENDER_PASS_COUNT (9)
 
 /* ==========================================================================
  * LrgWorld3DView
@@ -517,12 +558,16 @@ gboolean lrg_world3d_renderer_get_fallback_sun (LrgWorld3DRenderer *self);
  * @processor: (nullable): the post chain to run with
  *   %LRG_WORLD3D_RENDER_FLAG_POST, or %NULL for none
  *
- * Sets #LrgWorld3DRenderer:post-processor.  The renderer reads the
- * parameters and enable flags of the processor's effects named "fxaa"
- * (#LrgFxaa), "bloom" (#LrgBloom), "vignette" (#LrgVignette) and
- * "color-grade" (#LrgColorGrade); other effects are ignored.  The images
- * the chain needs are kept per processor, so several viewports can each
- * use their own processor.
+ * Sets #LrgWorld3DRenderer:post-processor.  With
+ * %LRG_WORLD3D_RENDER_FLAG_POST the colour passes draw into a half-float
+ * (RGBA16F, RGBA8 when the driver cannot) scene image of the view's size,
+ * lrg_post_processor_process() runs every enabled effect of the processor
+ * over it in priority order, and the result is copied into the target.
+ * Any #LrgPostEffect works (bloom, tonemap, colour grade, vignette, FXAA,
+ * custom effects).  A post stack in effect
+ * (lrg_world3d_renderer_set_post_stack(), or the world's) replaces this
+ * processor.  The scene image is kept per processor, so several
+ * viewports can each use their own processor.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_world3d_renderer_set_post_processor (LrgWorld3DRenderer *self,
@@ -540,11 +585,14 @@ LrgPostProcessor * lrg_world3d_renderer_get_post_processor (LrgWorld3DRenderer *
 /**
  * lrg_world3d_renderer_new_preview_post_processor:
  *
- * A post processor holding the four effects the renderer understands,
- * with a subtle preview look: an #LrgFxaa ("fxaa"), an #LrgBloom ("bloom",
- * threshold 0.75, intensity 0.6), an #LrgVignette ("vignette", intensity
- * 0.35, radius 0.55, smoothness 0.45) and an #LrgColorGrade
- * ("color-grade", contrast 1.05, saturation 1.08).
+ * A post processor with a subtle preview look, its effects in this order
+ * (priorities 0, 10, 20, 30, 40): an #LrgBloom ("bloom", threshold 0.75,
+ * intensity 0.6) on the HDR scene, an #LrgTonemap ("tonemap", filmic,
+ * exposure +1 EV so display mid grey stays put, white point 4) that
+ * rolls highlights above 1 off, an
+ * #LrgVignette ("vignette", intensity 0.35, radius 0.55, smoothness
+ * 0.45), an #LrgFxaa ("fxaa") and an #LrgColorGrade ("color-grade",
+ * contrast 1.05, saturation 1.08).
  *
  * Returns: (transfer full): a new #LrgPostProcessor
  */
@@ -772,6 +820,25 @@ GrlTexture * lrg_world3d_renderer_get_texture (LrgWorld3DRenderer *self,
                                                const gchar        *asset);
 
 /**
+ * lrg_world3d_renderer_get_material:
+ * @self: an #LrgWorld3DRenderer
+ * @asset: a `.rmat` material asset (resolved like a model)
+ *
+ * The material cache: loads @asset with lrg_material_new_from_file() on
+ * first use (its references resolve next to the file; its textures load
+ * on the first draw) and keeps it until lrg_world3d_renderer_forget_asset()
+ * or lrg_world3d_renderer_reload_asset() on its path.  Failures are
+ * cached and reported once.  Works without a window.  The editor
+ * viewport draws `material:` references of nodes with it.
+ *
+ * Returns: (transfer none) (nullable): the material, %NULL when it could
+ *   not be loaded
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial * lrg_world3d_renderer_get_material (LrgWorld3DRenderer *self,
+                                                 const gchar        *asset);
+
+/**
  * lrg_world3d_renderer_is_asset_missing:
  * @self: an #LrgWorld3DRenderer
  * @asset: an asset string
@@ -895,18 +962,330 @@ guint lrg_world3d_renderer_get_batched_count (LrgWorld3DRenderer *self);
 
 /**
  * lrg_world3d_renderer_get_shader_source:
- * @name: "scene.vs", "lit.fs", "unlit.fs", "normals.fs" or "post.fs"
+ * @name: "scene.vs", "lit.fs", "unlit.fs" or "normals.fs"
  *
  * The built-in GLSL 330 of the render-mode shaders: the vertex shader of
  * every mode, the fallback lit shader (one two-sided directional light
  * plus ambient, used when the light set's shader is unavailable), the
- * unlit and normals modes and the post pass.  The readable copies live in
+ * unlit and normals modes.  (The post pass of 0.8 is gone: post effects
+ * run through lrg_post_processor_process().)  The readable copies live in
  * data/editor/shaders/@name.glsl.
  *
  * Returns: (nullable): the source, or %NULL for an unknown name
  */
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_world3d_renderer_get_shader_source (const gchar *name);
+
+
+/* ==========================================================================
+ * Environment, SSAO, decals, post stack (0.9.0)
+ * ========================================================================== */
+
+/**
+ * lrg_world3d_renderer_set_environment:
+ * @self: an #LrgWorld3DRenderer
+ * @environment: (nullable): the environment to render with, or %NULL
+ *
+ * Sets the renderer's own environment (sky, image-based lighting,
+ * reflection probes, fog, volumetric fog).  It overrides the rendered
+ * world's (lrg_world3d_get_environment()) and the fallback
+ * (lrg_world3d_renderer_set_fallback_look()); with none, the renderer
+ * draws its sky dome and the flat #LrgWorld3DRenderer ambient as before
+ * 0.9.0.  lrg_world3d_renderer_render_list() has no world, so only this
+ * one applies there (the editor viewport sets the level's here).  The
+ * renderer holds a reference; a dirty environment is baked lazily before
+ * the next frame (see lrg_world3d_renderer_bake_environment()).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_environment (LrgWorld3DRenderer *self,
+                                           LrgEnvironment     *environment);
+
+/**
+ * lrg_world3d_renderer_get_environment:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: (transfer none) (nullable): the renderer's own environment
+ *   (not the world's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEnvironment * lrg_world3d_renderer_get_environment (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_get_active_environment:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * The environment the last render used: the renderer's own, else the
+ * rendered world's, else the fallback, else %NULL.
+ *
+ * Returns: (transfer none) (nullable): that environment
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEnvironment * lrg_world3d_renderer_get_active_environment (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_set_post_stack:
+ * @self: an #LrgWorld3DRenderer
+ * @stack: (nullable): a post stack, or %NULL
+ *
+ * Sets the renderer's own post stack (a `.rpost` look).  It overrides the
+ * rendered world's (lrg_world3d_get_post_stack()) and the fallback
+ * (lrg_world3d_renderer_set_fallback_look()).  While a stack is in
+ * effect and %LRG_WORLD3D_RENDER_FLAG_POST is set, the renderer builds
+ * the stack into an internal #LrgPostProcessor (rebuilt whenever the
+ * stack or its contents change) and runs that instead of
+ * #LrgWorld3DRenderer:post-processor.  The renderer holds a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_post_stack (LrgWorld3DRenderer *self,
+                                          LrgPostStack       *stack);
+
+/**
+ * lrg_world3d_renderer_get_post_stack:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: (transfer none) (nullable): the renderer's own post stack
+ *   (not the world's)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPostStack * lrg_world3d_renderer_get_post_stack (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_set_fallback_look:
+ * @self: an #LrgWorld3DRenderer
+ * @environment: (nullable): the environment to use when neither the
+ *   renderer nor the rendered world has one
+ * @stack: (nullable): the post stack to use when neither the renderer
+ *   nor the rendered world has one
+ *
+ * Sets the lowest layer of the look.  Precedence, highest first: the
+ * renderer's own (lrg_world3d_renderer_set_environment(),
+ * lrg_world3d_renderer_set_post_stack(): an override slot for callers,
+ * such as a `.rpost` editor previewing a stack), then the rendered
+ * world's (lrg_world3d_get_environment(), lrg_world3d_get_post_stack()),
+ * then this fallback.  The editor viewport feeds the edited level's
+ * `environment:` block and its `post_stack:` here every render, so the
+ * level look shows while authoring without taking the override slot.
+ * The renderer holds references; %NULL clears a layer.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_fallback_look (LrgWorld3DRenderer *self,
+                                             LrgEnvironment     *environment,
+                                             LrgPostStack       *stack);
+
+/**
+ * lrg_world3d_renderer_set_ssao_enabled:
+ * @self: an #LrgWorld3DRenderer
+ * @enabled: whether to run the depth prepass and SSAO
+ *
+ * Turns screen-space ambient occlusion on or off (default off).  When on,
+ * lit perspective renders draw the opaque and cutout items into an
+ * #LrgDepthPrepass, run lrg_ssao_render() on it and the lit shader
+ * multiplies its indirect light by the result.  Tune it through
+ * lrg_world3d_renderer_get_ssao().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_ssao_enabled (LrgWorld3DRenderer *self,
+                                            gboolean            enabled);
+
+/**
+ * lrg_world3d_renderer_get_ssao_enabled:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: whether SSAO runs
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_renderer_get_ssao_enabled (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_get_ssao:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * The SSAO pass the renderer runs (radius, bias, intensity, power,
+ * kernel size, half resolution, blur).  Always exists, also while SSAO is
+ * off.
+ *
+ * Returns: (transfer none): the SSAO object
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSsao * lrg_world3d_renderer_get_ssao (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_get_decal_set:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * The decals the lit shader projects.  Before each lit frame of
+ * lrg_world3d_renderer_render() / lrg_world3d_renderer_render_view() the
+ * set is refilled from the world's #LrgDecalComponent<!-- -->s; for
+ * lrg_world3d_renderer_render_list() (no world) add decals to it
+ * directly.  Empty sets cost nothing.
+ *
+ * Returns: (transfer none): the decal set
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDecalSet * lrg_world3d_renderer_get_decal_set (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_set_decals_enabled:
+ * @self: an #LrgWorld3DRenderer
+ * @enabled: whether the lit shader projects decals
+ *
+ * Turns decal projection on or off (default on).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_decals_enabled (LrgWorld3DRenderer *self,
+                                              gboolean            enabled);
+
+/**
+ * lrg_world3d_renderer_get_decals_enabled:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: whether decals are projected
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_renderer_get_decals_enabled (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_set_ibl_enabled:
+ * @self: an #LrgWorld3DRenderer
+ * @enabled: whether a baked environment lights the scene
+ *
+ * Image-based lighting on or off (default on).  With it on and an
+ * environment in effect whose IBL is enabled, the indirect light is the
+ * environment's irradiance and prefiltered reflection (blended with the
+ * nearest two ready reflection probes); off, it is the flat ambient
+ * colour.  The environment's sky is drawn either way.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_ibl_enabled (LrgWorld3DRenderer *self,
+                                           gboolean            enabled);
+
+/**
+ * lrg_world3d_renderer_get_ibl_enabled:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: whether image-based lighting is used
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_renderer_get_ibl_enabled (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_set_volumetric_enabled:
+ * @self: an #LrgWorld3DRenderer
+ * @enabled: whether to march the environment's volumetric fog
+ *
+ * Volumetric fog on or off (default on).  It only runs when the
+ * environment in effect enables it (a volumetric density above 0), in
+ * lit perspective renders; it needs the depth prepass, which then runs
+ * even with SSAO off.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_volumetric_enabled (LrgWorld3DRenderer *self,
+                                                  gboolean            enabled);
+
+/**
+ * lrg_world3d_renderer_get_volumetric_enabled:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: whether volumetric fog may run
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_renderer_get_volumetric_enabled (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_bake_environment:
+ * @self: an #LrgWorld3DRenderer
+ * @error: return location for a #GError
+ *
+ * Bakes the renderer's own environment (else the one the last render
+ * used) when lrg_environment_needs_bake() says so: radiance, irradiance,
+ * prefiltered specular and BRDF maps.  Renders also bake lazily before
+ * their first frame, so calling this is only needed to move the cost to
+ * a loading screen.  Needs a window; call it outside BeginDrawing().
+ * Without an environment or a window it does nothing.
+ *
+ * Returns: %TRUE when nothing needed baking or the bake succeeded, else
+ *   %FALSE with an %LRG_ENVIRONMENT_ERROR
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_renderer_bake_environment (LrgWorld3DRenderer  *self,
+                                                GError             **error);
+
+/**
+ * lrg_world3d_renderer_capture_probes:
+ * @self: an #LrgWorld3DRenderer
+ * @world: (nullable): the world to capture, or %NULL to capture the
+ *   renderer's current render list (the last list rendered)
+ *
+ * Captures every reflection probe of the environment in effect (the
+ * renderer's own, else @world's): for each probe the six faces are drawn
+ * with this renderer's lit opaque and cutout passes (no shadows,
+ * transparency, post or debug draw) around the probe's position, then
+ * prefiltered.  Probes reflect the sky behind the scene.  Needs a
+ * window; call it outside BeginDrawing().  #LrgReflectionProbeComponent
+ * puts its probe on the world's environment, so after loading a level
+ * one call captures all of them.
+ *
+ * Returns: the number of probes captured
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_world3d_renderer_capture_probes (LrgWorld3DRenderer *self,
+                                           LrgWorld3D         *world);
+
+/**
+ * lrg_world3d_renderer_capture_probe:
+ * @self: an #LrgWorld3DRenderer
+ * @probe: the probe to capture
+ * @list: (nullable): the scene to draw into the faces, or %NULL for the
+ *   renderer's own list (the world the last render collected)
+ * @environment: (nullable): the sky and image-based lighting the faces
+ *   are lit by, or %NULL for the environment in effect (without any, the
+ *   flat ambient over an empty background)
+ * @error: return location for a #GError
+ *
+ * Captures one probe like lrg_world3d_renderer_capture_probes() does
+ * (sky, then the lit opaque and cutout items of @list, six faces, then
+ * the prefilter).  The probe does not have to be on any environment: the
+ * editor captures its probe nodes this way, and a
+ * #LrgReflectionProbeDrawFunc-based capture of your own can be replaced
+ * by it.  Needs a window; call it outside BeginDrawing().
+ *
+ * Returns: %TRUE on success, else %FALSE with an %LRG_ENVIRONMENT_ERROR
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_renderer_capture_probe (LrgWorld3DRenderer  *self,
+                                             LrgReflectionProbe  *probe,
+                                             LrgRenderList       *list,
+                                             LrgEnvironment      *environment,
+                                             GError             **error);
+
+/**
+ * lrg_world3d_renderer_get_pass_time:
+ * @self: an #LrgWorld3DRenderer
+ * @pass: a pass
+ *
+ * The wall time the last render spent in @pass, in milliseconds, when
+ * timing is on (see lrg_world3d_renderer_set_timing()); 0 otherwise.
+ * With timing on each pass ends with a one-pixel read-back that waits
+ * for the GPU, so the time includes the GPU work of the pass (which also
+ * makes the frame slower: a profiling aid, not for shipping).
+ *
+ * Returns: milliseconds
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_world3d_renderer_get_pass_time (LrgWorld3DRenderer   *self,
+                                            LrgWorld3DRenderPass  pass);
+
+/**
+ * lrg_world3d_renderer_set_timing:
+ * @self: an #LrgWorld3DRenderer
+ * @timing: whether to time each pass
+ *
+ * Turns per-pass timing on or off (default off); see
+ * lrg_world3d_renderer_get_pass_time().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_timing (LrgWorld3DRenderer *self,
+                                      gboolean            timing);
 
 /**
  * lrg_world3d_renderer_release:

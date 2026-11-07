@@ -28,6 +28,7 @@
 #include "../../graphics/lrg-light-set.h"
 #include "../../lighting/lrg-shadow-renderer.h"
 #include "../../graphics/lrg-sky-dome.h"
+#include "../../graphics/lrg-lod-group.h"
 #include "../../postprocess/lrg-post-processor.h"
 #include "../../world3d/lrg-world3d-renderer.h"
 #include "../lrg-editor-play-session.h"
@@ -376,6 +377,67 @@ LrgSkyDome * lrg_editor_scene_renderer_get_sky_dome (LrgEditorSceneRenderer *sel
 LRG_AVAILABLE_IN_ALL
 LrgPostProcessor * lrg_editor_scene_renderer_get_post_processor (LrgEditorSceneRenderer *self,
                                                                  guint                   slot);
+
+/**
+ * lrg_editor_scene_renderer_set_cull_mask:
+ * @self: an #LrgEditorSceneRenderer
+ * @slot: a viewport index or %LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT
+ * @mask: the render layers the viewport shows (bit n = layer n)
+ *
+ * Sets which render layers one viewport draws (default
+ * %LRG_RENDER_LAYERS_MASK_ALL).  Items on other layers are skipped in
+ * every colour pass of that viewport; shadows and lights are unaffected.
+ * Slots out of range are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_cull_mask (LrgEditorSceneRenderer *self,
+                                              guint                   slot,
+                                              guint32                 mask);
+
+/**
+ * lrg_editor_scene_renderer_get_cull_mask:
+ * @self: an #LrgEditorSceneRenderer
+ * @slot: a viewport index or %LRG_EDITOR_SCENE_RENDERER_PREVIEW_SLOT
+ *
+ * Returns: the viewport's render-layer mask (%LRG_RENDER_LAYERS_MASK_ALL
+ *   for slots out of range)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32 lrg_editor_scene_renderer_get_cull_mask (LrgEditorSceneRenderer *self,
+                                                 guint                   slot);
+
+/**
+ * lrg_editor_scene_renderer_get_lod_group:
+ * @self: an #LrgEditorSceneRenderer
+ * @asset: a model asset (path or `guid:`, as stored on the node)
+ *
+ * The LOD group the viewport uses for mesh-asset nodes showing @asset:
+ * built from the cached model and the asset's `.meta` LOD keys
+ * (lrg_lod_group_new_from_model_with_meta()) on first use and kept until
+ * lrg_editor_scene_renderer_forget_asset().  The viewport draws the
+ * level lrg_lod_group_get_force_level() names when it is 0 or more,
+ * otherwise the level the viewport camera's screen size selects.  The
+ * inspector's LOD preview sets the forced level on it.
+ *
+ * Returns: (transfer none) (nullable): the group; %NULL without a window,
+ *   before the model loaded, or when the `.meta` gives fewer than two
+ *   levels
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLodGroup * lrg_editor_scene_renderer_get_lod_group (LrgEditorSceneRenderer *self,
+                                                       const gchar            *asset);
+
+/**
+ * lrg_editor_scene_renderer_recapture_probes:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Captures every reflection-probe node again before the next frame (the
+ * viewport recaptures a probe by itself only when the probe node moves
+ * or its extents or resolution change; call this after editing the
+ * scene around probes, as the environment panel's "Bake" does).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_recapture_probes (LrgEditorSceneRenderer *self);
 
 /**
  * lrg_editor_scene_renderer_get_generation:
