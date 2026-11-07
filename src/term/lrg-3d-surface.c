@@ -100,6 +100,17 @@ struct _Lrg3DSurface
 	GrlImage   *last_content;      /* VR: the last captured flat frame */
 	GrlColor    clear_color;       /* last clear(): repeated on the target */
 	gboolean    have_clear;
+
+	/* FALSE: skip the flat-frame read-back (every panel is texture-backed). */
+	gboolean    capture_enabled;
+
+	/* Desktop HUD drawn after the 3D pass, before the swap. */
+	Lrg3DSurfaceOverlayFunc overlay;
+	gpointer                overlay_data;
+	GDestroyNotify          overlay_destroy;
+
+	/* Camera bookmarks: name (owned) -> LrgPose (owned). */
+	GHashTable *views;
 };
 
 G_DEFINE_FINAL_TYPE (Lrg3DSurface, lrg_3d_surface, LRG_TYPE_FRAME_SURFACE)
@@ -220,6 +231,11 @@ ensure_default_panel (Lrg3DSurface *self)
 	LrgScenePanel *p;
 	guint i, dynamic = 0;
 
+	/* Without the frame capture a whole-frame panel would stay blank and catch
+	   picks meant for the scene: the host provides every panel itself. */
+	if (!self->capture_enabled && self->vr == NULL)
+		return;
+
 	/* Count live (non-static) panels: workspace panels are static and do not
 	   carry the live frame, so a scene with only workspace panels still needs the
 	   whole-frame default panel for the current content. */
@@ -260,7 +276,12 @@ render_scene (Lrg3DSurface *self)
 	lrg_spatial_camera_begin (self->camera);
 
 	if (self->environment != NULL)
+	{
+		g_autoptr (LrgPose) pose = lrg_spatial_camera_get_pose (self->camera);
+
+		lrg_panel_environment_draw_sky (self->environment, pose);
 		lrg_panel_environment_draw_ambient (self->environment);
+	}
 
 	/* Panels are single planes; without this their back face is culled and a
 	   panel rotated away (or the camera swung behind it) vanishes.  Draw them
@@ -273,6 +294,10 @@ render_scene (Lrg3DSurface *self)
 	grl_rlgl_enable_backface_culling ();
 
 	lrg_spatial_camera_end (self->camera);
+
+	/* The host's 2D HUD goes on top of the scene, in screen coordinates. */
+	if (self->overlay != NULL)
+		self->overlay (self, self->overlay_data);
 
 	grl_window_swap_buffers (win);
 }
@@ -505,6 +530,16 @@ lrg_3d_surface_end_content (LrgFrameSurface *surface)
 	if (content_window (self) == NULL)
 	{
 		content_target_unbind (self);
+		return;
+	}
+
+	/* Every panel is texture-backed: nothing to read back.  The batch still
+	   has to be flushed so the flat-frame draws do not leak into the scene. */
+	if (!self->capture_enabled && self->vr == NULL)
+	{
+		grl_draw_begin_scissor_mode (0, 0, 1, 1);
+		grl_draw_end_scissor_mode ();
+		self->content_generation++;
 		return;
 	}
 
@@ -1944,6 +1979,245 @@ lrg_3d_surface_render_vr (Lrg3DSurface *self)
 	return TRUE;
 }
 
+/* ------------------------------------------------- texture-backed panels -- */
+
+void
+lrg_3d_surface_sync_texture_panel (Lrg3DSurface *self,
+                                   guint64       key,
+                                   GrlTexture   *texture)
+{
+	LrgScenePanel *p;
+
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	g_return_if_fail (GRL_IS_TEXTURE (texture));
+
+	p = find_panel (self, key);
+	if (p == NULL)
+	{
+		p = lrg_scene_panel_new (key);
+		g_ptr_array_add (self->panels, p);
+	}
+	/* Borrow the texture (a no-op when it is the same one); this also sets the
+	   source rect to the texture's own pixel space for picking. */
+	lrg_scene_panel_set_texture (p, texture);
+	g_hash_table_add (self->seen, GSIZE_TO_POINTER ((gsize) key));
+}
+
+gboolean
+lrg_3d_surface_panel_texture_updated (Lrg3DSurface *self,
+                                      guint64       key)
+{
+	LrgScenePanel *p;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	p = find_panel (self, key);
+	if (p == NULL || !lrg_scene_panel_has_external_texture (p))
+		return FALSE;
+	lrg_scene_panel_texture_updated (p);
+	return TRUE;
+}
+
+gboolean
+lrg_3d_surface_set_panel_slot (Lrg3DSurface *self,
+                               guint64       key,
+                               guint         group,
+                               gint          ordinal)
+{
+	LrgScenePanel *p;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+
+	p = find_panel (self, key);
+	if (p == NULL)
+		return FALSE;
+	lrg_scene_panel_set_slot (p, group, ordinal);
+	return TRUE;
+}
+
+void
+lrg_3d_surface_set_capture_enabled (Lrg3DSurface *self,
+                                    gboolean      enabled)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	self->capture_enabled = enabled;
+}
+
+gboolean
+lrg_3d_surface_get_capture_enabled (Lrg3DSurface *self)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), TRUE);
+	return self->capture_enabled;
+}
+
+void
+lrg_3d_surface_set_overlay_func (Lrg3DSurface            *self,
+                                 Lrg3DSurfaceOverlayFunc  func,
+                                 gpointer                 user_data,
+                                 GDestroyNotify           destroy)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+
+	if (self->overlay_destroy != NULL)
+		self->overlay_destroy (self->overlay_data);
+	self->overlay = func;
+	self->overlay_data = user_data;
+	self->overlay_destroy = destroy;
+}
+
+gfloat
+lrg_3d_surface_get_panel_coverage (Lrg3DSurface *self,
+                                   guint64       key)
+{
+	LrgScenePanel *p;
+	g_autoptr (LrgPose) pose = NULL;
+	gfloat ex, ey, ez, tx, ty, tz, fovy;
+	gfloat cx, cy, cz, w, h;
+	gfloat fx, fy, fz, len, dx, dy, dz, depth, side, half_v, half_h, aspect;
+	gfloat fh, fw;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), 0.0f);
+
+	p = find_panel (self, key);
+	if (p == NULL || self->camera == NULL)
+		return 0.0f;
+
+	lrg_scene_panel_get_geometry (p, &cx, &cy, &cz, NULL, &w, &h);
+	pose = lrg_spatial_camera_get_pose (self->camera);
+	lrg_pose_get_position (pose, &ex, &ey, &ez);
+	lrg_pose_get_target (pose, &tx, &ty, &tz);
+	fovy = lrg_pose_get_fovy (pose);
+
+	/* Camera forward. */
+	fx = tx - ex; fy = ty - ey; fz = tz - ez;
+	len = sqrtf (fx * fx + fy * fy + fz * fz);
+	if (len < 0.0001f)
+		return 0.0f;
+	fx /= len; fy /= len; fz /= len;
+
+	/* Depth of the panel centre along forward; behind the eye = invisible.
+	   The panel's half-extent is allowed in front of the near side so a
+	   panel the camera is right up against still counts. */
+	dx = cx - ex; dy = cy - ey; dz = cz - ez;
+	depth = dx * fx + dy * fy + dz * fz;
+	if (depth <= -0.5f * MAX (w, h))
+		return 0.0f;
+	if (depth < 0.05f)
+		depth = 0.05f;
+
+	/* Horizontal offset from the view axis vs. the half field of view (plus
+	   the panel's half width, so a partly visible panel still counts). */
+	fh = (gfloat) lrg_frame_surface_get_height (LRG_FRAME_SURFACE (self));
+	fw = (gfloat) lrg_frame_surface_get_width (LRG_FRAME_SURFACE (self));
+	if (fh < 1.0f)
+		fh = 1.0f;
+	aspect = fw > 0.0f ? fw / fh : 1.6f;
+	half_v = depth * tanf (0.5f * fovy * (gfloat) (G_PI / 180.0));
+	half_h = half_v * aspect;
+	side = sqrtf (MAX (0.0f, dx * dx + dy * dy + dz * dz - depth * depth));
+	if (side > half_h + 0.5f * w)
+		return 0.0f;
+
+	return (h / (2.0f * half_v)) * fh;
+}
+
+/* ------------------------------------------------------- camera bookmarks -- */
+
+static gint
+compare_names (gconstpointer a,
+               gconstpointer b)
+{
+	return g_strcmp0 ((const gchar *) a, (const gchar *) b);
+}
+
+void
+lrg_3d_surface_save_view (Lrg3DSurface *self,
+                          const gchar  *name)
+{
+	g_return_if_fail (LRG_IS_3D_SURFACE (self));
+	g_return_if_fail (name != NULL);
+
+	if (self->camera == NULL)
+		return;
+	g_hash_table_replace (self->views, g_strdup (name),
+	                      lrg_spatial_camera_get_pose (self->camera));
+}
+
+gboolean
+lrg_3d_surface_restore_view (Lrg3DSurface *self,
+                             const gchar  *name)
+{
+	LrgPose *pose;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+
+	pose = g_hash_table_lookup (self->views, name);
+	if (pose == NULL || self->camera == NULL)
+		return FALSE;
+	lrg_spatial_camera_set_target_pose (self->camera, pose);
+	return TRUE;
+}
+
+gboolean
+lrg_3d_surface_forget_view (Lrg3DSurface *self,
+                            const gchar  *name)
+{
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+
+	return g_hash_table_remove (self->views, name);
+}
+
+gchar **
+lrg_3d_surface_list_views (Lrg3DSurface *self)
+{
+	g_autoptr (GPtrArray) names = NULL;
+	GHashTableIter it;
+	gpointer k;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), NULL);
+
+	names = g_ptr_array_new ();
+	g_hash_table_iter_init (&it, self->views);
+	while (g_hash_table_iter_next (&it, &k, NULL))
+		g_ptr_array_add (names, g_strdup ((const gchar *) k));
+	g_ptr_array_sort_values (names, compare_names);
+	g_ptr_array_add (names, NULL);
+	return (gchar **) g_ptr_array_free (g_steal_pointer (&names), FALSE);
+}
+
+gchar *
+lrg_3d_surface_get_view_string (Lrg3DSurface *self,
+                                const gchar  *name)
+{
+	LrgPose *pose;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), NULL);
+	g_return_val_if_fail (name != NULL, NULL);
+
+	pose = g_hash_table_lookup (self->views, name);
+	return pose != NULL ? lrg_pose_to_string (pose) : NULL;
+}
+
+gboolean
+lrg_3d_surface_set_view_string (Lrg3DSurface *self,
+                                const gchar  *name,
+                                const gchar  *pose)
+{
+	LrgPose *parsed;
+
+	g_return_val_if_fail (LRG_IS_3D_SURFACE (self), FALSE);
+	g_return_val_if_fail (name != NULL, FALSE);
+	g_return_val_if_fail (pose != NULL, FALSE);
+
+	parsed = lrg_pose_from_string (pose);
+	if (parsed == NULL)
+		return FALSE;
+	g_hash_table_replace (self->views, g_strdup (name), parsed);
+	return TRUE;
+}
+
 /* ------------------------------------------------------------- new / type -- */
 
 Lrg3DSurface *
@@ -1977,6 +2251,11 @@ lrg_3d_surface_dispose (GObject *object)
 	self->vr_overlay = NULL;
 	self->vr_overlay_destroy = NULL;
 	g_clear_object (&self->vr);
+	if (self->overlay_destroy != NULL)
+		self->overlay_destroy (self->overlay_data);
+	self->overlay = NULL;
+	self->overlay_destroy = NULL;
+	g_clear_pointer (&self->views, g_hash_table_unref);
 	/* GL objects go while the content surface still owns the context. */
 	content_target_free (self);
 	g_clear_object (&self->last_content);
@@ -2085,4 +2364,7 @@ lrg_3d_surface_init (Lrg3DSurface *self)
 	self->vr_mpu = LRG_VR_DEFAULT_MPU;
 	self->vr_need_recenter = TRUE;
 	self->vr_seat_theta = 0.0f;
+	self->capture_enabled = TRUE;
+	self->views = g_hash_table_new_full (g_str_hash, g_str_equal, g_free,
+	                                     (GDestroyNotify) lrg_pose_free);
 }

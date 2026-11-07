@@ -10,9 +10,14 @@
 #include "lrg-arrangement-single.h"
 #include "lrg-arrangement-per-window.h"
 #include "lrg-arrangement-free.h"
+#include "lrg-arrangement-carousel.h"
+#include "lrg-arrangement-grid.h"
+#include "lrg-arrangement-stack.h"
 #include "lrg-environment-solid.h"
 #include "lrg-environment-workshop.h"
 #include "lrg-environment-cockpit.h"
+#include "lrg-environment-sky.h"
+#include "lrg-environment-studio.h"
 
 struct _LrgModeRegistry
 {
@@ -59,12 +64,22 @@ lrg_mode_registry_get_default (void)
 												LRG_TYPE_ARRANGEMENT_PER_WINDOW);
 		lrg_mode_registry_register_arrangement (def, "free",
 												LRG_TYPE_ARRANGEMENT_FREE);
+		lrg_mode_registry_register_arrangement (def, "carousel",
+		                                        LRG_TYPE_ARRANGEMENT_CAROUSEL);
+		lrg_mode_registry_register_arrangement (def, "grid",
+		                                        LRG_TYPE_ARRANGEMENT_GRID);
+		lrg_mode_registry_register_arrangement (def, "stack",
+		                                        LRG_TYPE_ARRANGEMENT_STACK);
 		lrg_mode_registry_register_environment (def, "void",
 												LRG_TYPE_ENVIRONMENT_SOLID);
 		lrg_mode_registry_register_environment (def, "workshop",
 												LRG_TYPE_ENVIRONMENT_WORKSHOP);
 		lrg_mode_registry_register_environment (def, "cockpit",
 		                                        LRG_TYPE_ENVIRONMENT_COCKPIT);
+		lrg_mode_registry_register_environment (def, "sky",
+		                                        LRG_TYPE_ENVIRONMENT_SKY);
+		lrg_mode_registry_register_environment (def, "studio",
+		                                        LRG_TYPE_ENVIRONMENT_STUDIO);
 	}
 
 	return def;

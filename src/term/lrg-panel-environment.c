@@ -53,3 +53,17 @@ lrg_panel_environment_draw_ambient (LrgPanelEnvironment *self)
 	if (iface->draw_ambient != NULL)
 		iface->draw_ambient (self);
 }
+
+void
+lrg_panel_environment_draw_sky (LrgPanelEnvironment *self,
+                                const LrgPose       *camera)
+{
+	LrgPanelEnvironmentInterface *iface;
+
+	g_return_if_fail (LRG_IS_PANEL_ENVIRONMENT (self));
+	g_return_if_fail (camera != NULL);
+
+	iface = LRG_PANEL_ENVIRONMENT_GET_IFACE (self);
+	if (iface->draw_sky != NULL)
+		iface->draw_sky (self, camera);
+}

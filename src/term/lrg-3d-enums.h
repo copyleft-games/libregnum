@@ -33,6 +33,10 @@ G_BEGIN_DECLS
  *   "Rolodex" switcher); a transient mode that restores the prior arrangement.
  * @LRG_ARRANGEMENT_KIND_GIT_DEPTH: Past revisions of the focused buffer stacked in Z
  *   (the git "time machine"); a transient mode.
+ * @LRG_ARRANGEMENT_KIND_GRID: Panels in rows and columns on a gently curved wall,
+ *   one band per slot group.
+ * @LRG_ARRANGEMENT_KIND_STACK: A depth stack keyed by slot ordinal: the current
+ *   panel in front, the sequence around it receding to either side (history).
  *
  * Selects how panels are laid out in an #Lrg3DSurface scene. Built-in kinds; the
  * mode registry maps these to layout strategies and accepts custom ids too.
@@ -45,7 +49,9 @@ typedef enum
     LRG_ARRANGEMENT_KIND_PER_WINDOW = 1,
     LRG_ARRANGEMENT_KIND_FREE = 2,
     LRG_ARRANGEMENT_KIND_CAROUSEL = 3,
-    LRG_ARRANGEMENT_KIND_GIT_DEPTH = 4
+    LRG_ARRANGEMENT_KIND_GIT_DEPTH = 4,
+    LRG_ARRANGEMENT_KIND_GRID = 5,
+    LRG_ARRANGEMENT_KIND_STACK = 6
 } LrgArrangementKind;
 
 LRG_AVAILABLE_IN_ALL
@@ -57,7 +63,7 @@ GType lrg_arrangement_kind_get_type (void) G_GNUC_CONST;
  * @kind: a #LrgArrangementKind
  *
  * Returns the canonical id token for @kind ("single-panel", "per-window",
- * "free", "carousel", "git-depth").
+ * "free", "carousel", "git-depth", "grid", "stack").
  *
  * Returns: (transfer none): a static string; never %NULL
  *
@@ -87,6 +93,9 @@ gboolean lrg_arrangement_kind_from_string (const gchar        *str,
  *   light, panels on a workbench plane.
  * @LRG_ENVIRONMENT_KIND_COCKPIT: An "ambient cockpit": live dashboards/views (e.g.
  *   the gnuseye globe) drawn as walls around the panels.
+ * @LRG_ENVIRONMENT_KIND_SKY: Open air under a sky dome that follows the time of
+ *   day, above a faint ground grid.
+ * @LRG_ENVIRONMENT_KIND_STUDIO: A neutral grey studio with a ringed floor.
  *
  * Selects the ambient scene drawn behind/around the panels in an #Lrg3DSurface.
  *
@@ -96,7 +105,9 @@ typedef enum
 {
     LRG_ENVIRONMENT_KIND_VOID = 0,
     LRG_ENVIRONMENT_KIND_WORKSHOP = 1,
-    LRG_ENVIRONMENT_KIND_COCKPIT = 2
+    LRG_ENVIRONMENT_KIND_COCKPIT = 2,
+    LRG_ENVIRONMENT_KIND_SKY = 3,
+    LRG_ENVIRONMENT_KIND_STUDIO = 4
 } LrgEnvironmentKind;
 
 LRG_AVAILABLE_IN_ALL
@@ -107,7 +118,8 @@ GType lrg_environment_kind_get_type (void) G_GNUC_CONST;
  * lrg_environment_kind_to_string:
  * @kind: a #LrgEnvironmentKind
  *
- * Returns the canonical id token for @kind ("void", "workshop", "cockpit").
+ * Returns the canonical id token for @kind ("void", "workshop", "cockpit",
+ * "sky", "studio").
  *
  * Returns: (transfer none): a static string; never %NULL
  *

@@ -6,6 +6,7 @@
  */
 
 #include "config.h"
+#include <math.h>
 #include "lrg-pose.h"
 
 struct _LrgPose
@@ -137,4 +138,63 @@ lrg_pose_lerp (const LrgPose *a,
 		a->uy + (b->uy - a->uy) * t,
 		a->uz + (b->uz - a->uz) * t,
 		a->fovy + (b->fovy - a->fovy) * t);
+}
+
+gchar *
+lrg_pose_to_string (const LrgPose *self)
+{
+	gfloat v[10];
+	GString *out;
+	gchar buf[G_ASCII_DTOSTR_BUF_SIZE];
+	gint i;
+
+	g_return_val_if_fail (self != NULL, NULL);
+
+	v[0] = self->px; v[1] = self->py; v[2] = self->pz;
+	v[3] = self->tx; v[4] = self->ty; v[5] = self->tz;
+	v[6] = self->ux; v[7] = self->uy; v[8] = self->uz;
+	v[9] = self->fovy;
+
+	/* g_ascii_dtostr is locale-independent and round-trips exactly. */
+	out = g_string_new (NULL);
+	for (i = 0; i < 10; i++)
+	{
+		if (i > 0)
+			g_string_append_c (out, ' ');
+		g_string_append (out, g_ascii_dtostr (buf, sizeof (buf), (gdouble) v[i]));
+	}
+	return g_string_free (out, FALSE);
+}
+
+LrgPose *
+lrg_pose_from_string (const gchar *str)
+{
+	g_auto (GStrv) parts = NULL;
+	gfloat v[10];
+	guint n, i;
+
+	g_return_val_if_fail (str != NULL, NULL);
+
+	parts = g_strsplit_set (str, " \t\r\n", -1);
+	n = 0;
+	for (i = 0; parts[i] != NULL; i++)
+	{
+		gchar *end = NULL;
+		gdouble d;
+
+		/* Runs of separators yield empty tokens; skip them. */
+		if (parts[i][0] == '\0')
+			continue;
+		if (n >= 10)
+			return NULL;
+		d = g_ascii_strtod (parts[i], &end);
+		if (end == parts[i] || *end != '\0' || !isfinite (d))
+			return NULL;
+		v[n++] = (gfloat) d;
+	}
+	if (n != 10 || v[9] <= 0.0f || v[9] >= 180.0f)
+		return NULL;
+
+	return lrg_pose_new (v[0], v[1], v[2], v[3], v[4], v[5],
+	                     v[6], v[7], v[8], v[9]);
 }

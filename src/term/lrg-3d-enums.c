@@ -21,6 +21,8 @@ lrg_arrangement_kind_get_type (void)
 			{ LRG_ARRANGEMENT_KIND_FREE, "LRG_ARRANGEMENT_KIND_FREE", "free" },
 			{ LRG_ARRANGEMENT_KIND_CAROUSEL, "LRG_ARRANGEMENT_KIND_CAROUSEL", "carousel" },
 			{ LRG_ARRANGEMENT_KIND_GIT_DEPTH, "LRG_ARRANGEMENT_KIND_GIT_DEPTH", "git-depth" },
+			{ LRG_ARRANGEMENT_KIND_GRID, "LRG_ARRANGEMENT_KIND_GRID", "grid" },
+			{ LRG_ARRANGEMENT_KIND_STACK, "LRG_ARRANGEMENT_KIND_STACK", "stack" },
 			{ 0, NULL, NULL }
 		};
 		GType g_define_type_id =
@@ -45,6 +47,10 @@ lrg_arrangement_kind_to_string (LrgArrangementKind kind)
 		return "carousel";
 	case LRG_ARRANGEMENT_KIND_GIT_DEPTH:
 		return "git-depth";
+	case LRG_ARRANGEMENT_KIND_GRID:
+		return "grid";
+	case LRG_ARRANGEMENT_KIND_STACK:
+		return "stack";
 	case LRG_ARRANGEMENT_KIND_SINGLE_PANEL:
 	default:
 		return "single-panel";
@@ -73,6 +79,12 @@ lrg_arrangement_kind_from_string (const gchar        *str,
 	else if (g_ascii_strcasecmp (str, "git-depth") == 0
 			 || g_ascii_strcasecmp (str, "git") == 0)
 		kind = LRG_ARRANGEMENT_KIND_GIT_DEPTH;
+	else if (g_ascii_strcasecmp (str, "grid") == 0
+			 || g_ascii_strcasecmp (str, "wall") == 0)
+		kind = LRG_ARRANGEMENT_KIND_GRID;
+	else if (g_ascii_strcasecmp (str, "stack") == 0
+			 || g_ascii_strcasecmp (str, "depth") == 0)
+		kind = LRG_ARRANGEMENT_KIND_STACK;
 	else
 		known = FALSE;
 
@@ -93,6 +105,8 @@ lrg_environment_kind_get_type (void)
 			{ LRG_ENVIRONMENT_KIND_VOID, "LRG_ENVIRONMENT_KIND_VOID", "void" },
 			{ LRG_ENVIRONMENT_KIND_WORKSHOP, "LRG_ENVIRONMENT_KIND_WORKSHOP", "workshop" },
 			{ LRG_ENVIRONMENT_KIND_COCKPIT, "LRG_ENVIRONMENT_KIND_COCKPIT", "cockpit" },
+			{ LRG_ENVIRONMENT_KIND_SKY, "LRG_ENVIRONMENT_KIND_SKY", "sky" },
+			{ LRG_ENVIRONMENT_KIND_STUDIO, "LRG_ENVIRONMENT_KIND_STUDIO", "studio" },
 			{ 0, NULL, NULL }
 		};
 		GType g_define_type_id =
@@ -113,6 +127,10 @@ lrg_environment_kind_to_string (LrgEnvironmentKind kind)
 		return "workshop";
 	case LRG_ENVIRONMENT_KIND_COCKPIT:
 		return "cockpit";
+	case LRG_ENVIRONMENT_KIND_SKY:
+		return "sky";
+	case LRG_ENVIRONMENT_KIND_STUDIO:
+		return "studio";
 	case LRG_ENVIRONMENT_KIND_VOID:
 	default:
 		return "void";
@@ -134,6 +152,10 @@ lrg_environment_kind_from_string (const gchar        *str,
 		kind = LRG_ENVIRONMENT_KIND_WORKSHOP;
 	else if (g_ascii_strcasecmp (str, "cockpit") == 0)
 		kind = LRG_ENVIRONMENT_KIND_COCKPIT;
+	else if (g_ascii_strcasecmp (str, "sky") == 0)
+		kind = LRG_ENVIRONMENT_KIND_SKY;
+	else if (g_ascii_strcasecmp (str, "studio") == 0)
+		kind = LRG_ENVIRONMENT_KIND_STUDIO;
 	else
 		known = FALSE;
 
