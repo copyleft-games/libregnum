@@ -230,50 +230,63 @@ g_message("After: %u actions", lrg_input_map_get_action_count(map));
 :PROPERTIES:
 :CUSTOM_ID: yaml-format
 :END:
-Input maps serialize to human-readable YAML:
+Input maps serialize to human-readable YAML: an =actions= mapping of action name to a mapping with a =bindings= list. This is the format =lrg_input_map_load_from_file()= / =lrg_input_map_load_from_data()= read and =lrg_input_map_save_to_file()= / =lrg_input_map_save_to_data()= write:
 
 #+begin_src yaml
-actions:
-  - name: jump
+version: 2                  # unknown to the engine: kept, written back in place
+actions:                    # required: action name -> action, in order
+  jump:
+    label: Jump             # unknown action key: kept in place
+    bindings:               # the action's inputs, in order
+    - type: keyboard        # keyboard | mouse_button | gamepad_button | gamepad_axis
+      key: SPACE            # a key name (SPACE, A..Z, 0..9, F1..F12, LEFT_SHIFT, ...)
+      hint: primary         # unknown binding key: kept after the known ones
+    - type: gamepad_button
+      gamepad: 0            # gamepad index
+      button: RIGHT_FACE_DOWN
+  fire:
     bindings:
-      - type: keyboard
-        key: SPACE
-        modifiers: NONE
-      - type: gamepad_button
-        gamepad: 0
-        button: A
-
-  - name: attack
+    - type: mouse_button
+      button: LEFT          # LEFT | RIGHT | MIDDLE | SIDE | EXTRA | FORWARD | BACK
+      modifiers:            # optional on keyboard and mouse bindings
+      - SHIFT               # SHIFT | CTRL (or CONTROL) | ALT
+  move_right:
     bindings:
-      - type: keyboard
-        key: Z
-        modifiers: NONE
-      - type: gamepad_button
-        gamepad: 0
-        button: X
-
-  - name: move_right
-    bindings:
-      - type: keyboard
-        key: D
-        modifiers: NONE
-      - type: gamepad_axis
-        gamepad: 0
-        axis: LEFT_X
-        threshold: 0.2
-        positive: true
-
-  - name: move_left
-    bindings:
-      - type: keyboard
-        key: A
-        modifiers: NONE
-      - type: gamepad_axis
-        gamepad: 0
-        axis: LEFT_X
-        threshold: 0.2
-        positive: false
+    - type: gamepad_axis
+      gamepad: 0
+      axis: LEFT_X          # LEFT_X | LEFT_Y | RIGHT_X | RIGHT_Y | LEFT_TRIGGER | RIGHT_TRIGGER
+      threshold: 0.2        # > 0; 0.5 when absent or not positive
+      positive: true        # which direction of the axis
+editor-note: keep me        # unknown root key: kept in place
 #+end_src
+
+An action that is not a mapping, a binding that is not a mapping or has an unknown =type= are skipped with a warning; an action without =bindings= is kept empty (with a warning). A document whose root is not a mapping or has no =actions= mapping fails.
+
+*** Order and unknown keys (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: order-and-unknown-keys
+:END:
+- *Declaration order*: actions are kept in the order they were added (file order for a loaded map): =lrg_input_map_get_actions()= returns them in that order, and the writer writes them so. A replaced action (=lrg_input_map_add_action()= with a name already present) keeps its place; a new one goes last.
+- *Unknown keys*: the map keeps the parsed document of its last load. The writer regenerates =actions= (and each action's =bindings=) from the map, but writes every other root key and action key back where it was, and a binding's extra keys after its known keys when the binding at the same index still has the same =type=. Keys of a removed action go with it. Comments are not kept (the editor's document model keeps them).
+- *Numbers*: =threshold= is written in its shortest exact form.
+
+Saving a map loaded from saved text gives the same bytes (=tests/test-format-writers.c= checks the fixture above byte for byte).
+
+*** From memory
+:PROPERTIES:
+:CUSTOM_ID: from-memory
+:END:
+#+begin_src C
+g_autoptr(LrgInputMap) map = lrg_input_map_new ();
+g_autofree gchar *text = NULL;
+
+if (!lrg_input_map_load_from_data (map, yaml_text, -1, &error))
+    return FALSE;
+/* ... rebind ... */
+text = lrg_input_map_save_to_data (map, NULL, &error);
+#+end_src
+
+=lrg_input_map_load_from_data()= behaves exactly like the file loader (it clears the map first); =lrg_input_map_save_to_data()= returns what =lrg_input_map_save_to_file()= writes.
 
 ** Complete Example
 :PROPERTIES:
@@ -409,13 +422,16 @@ void game_update(void)
 - =lrg_input_map_is_down(LrgInputMap *self, const gchar *action_name)=
 - =lrg_input_map_is_released(LrgInputMap *self, const gchar *action_name)=
 - =lrg_input_map_get_value(LrgInputMap *self, const gchar *action_name)=
+- =lrg_input_map_get_axis(LrgInputMap *self, const gchar *action_name)= - the signed analog axis value (see =lrg_input_action_get_axis()=), 0.0 for an unknown action
 
 *** Serialization
 :PROPERTIES:
 :CUSTOM_ID: serialization
 :END:
-- =lrg_input_map_save_to_file(LrgInputMap *self, const gchar *path, GError **error)=
-- =lrg_input_map_load_from_file(LrgInputMap *self, const gchar *path, GError **error)=
+- =lrg_input_map_save_to_file(LrgInputMap *self, const gchar *path, GError **error)= → =gboolean=
+- =lrg_input_map_load_from_file(LrgInputMap *self, const gchar *path, GError **error)= → =gboolean=
+- =lrg_input_map_load_from_data(LrgInputMap *self, const gchar *data, gssize length, GError **error)= → =gboolean= (=length= -1 for nul-terminated text)
+- =lrg_input_map_save_to_data(LrgInputMap *self, gsize *length, GError **error)= → =gchar *= (transfer full, nullable; =length= optional)
 
 ** Notes
 :PROPERTIES:
@@ -423,6 +439,8 @@ void game_update(void)
 :END:
 - Input maps are reference-counted GObjects
 - Loading clears existing actions
+- Actions keep their declaration order; unknown keys of the last loaded document are written back
+- The editor's input-map data editor validates documents with =lrg_input_map_load_from_data()= on the document text (see [[file:../../editor/data-editors.org][Data editors]])
 - File paths are relative to the current working directory (usually the game directory)
 - YAML files are human-editable for manual control customization
 - Convenience queries return safe defaults if action doesn't exist

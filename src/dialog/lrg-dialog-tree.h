@@ -59,8 +59,8 @@ LrgDialogTree *lrg_dialog_tree_new_from_file  (const gchar   *path,
  * Creates a dialog tree by parsing a YAML definition from memory.
  *
  * The expected schema is a mapping with a required `id`, an optional
- * `title`, an optional `start` node id (defaults to the first node's
- * id), and a required non-empty `nodes` sequence. Each node requires
+ * `title` and `description`, an optional `start` node id (defaults to
+ * the first node's id), and a required non-empty `nodes` sequence. Each node requires
  * `id` and `text`, and may carry `speaker`, `next`, a string->string
  * `metadata` mapping, `conditions` and `effects` string sequences,
  * and a `responses` sequence whose entries require `text` and `next`
@@ -68,7 +68,8 @@ LrgDialogTree *lrg_dialog_tree_new_from_file  (const gchar   *path,
  *
  * As a linear-scene authoring convenience, a node with neither `next`
  * nor `responses` is automatically chained to the node that follows
- * it in the sequence. The last node in the sequence is left terminal.
+ * it in the sequence. The last node in the sequence is left terminal,
+ * and so is a node with an explicit `next: null`.
  *
  * The resulting tree is validated with lrg_dialog_tree_validate()
  * before being returned.
@@ -78,6 +79,46 @@ LrgDialogTree *lrg_dialog_tree_new_from_file  (const gchar   *path,
 LrgDialogTree *lrg_dialog_tree_new_from_data  (const gchar   *data,
                                                gssize         length,
                                                GError       **error);
+
+/**
+ * lrg_dialog_tree_save_to_data:
+ * @self: an #LrgDialogTree
+ * @length: (out) (optional): return location for the text length
+ * @error: (nullable): return location for error
+ *
+ * Writes the tree in the format lrg_dialog_tree_new_from_data() reads:
+ * `id`, `title` and `description` (when set), `start` (when it is not the
+ * first node), and `nodes` in the order they were added (the file order
+ * for a loaded tree). Each node gets `id`, `speaker`, `text`, `next`,
+ * `metadata` (keys sorted), `conditions`, `effects` and `responses`
+ * (`text`, `next`, `conditions`, `effects`). A `next` equal to the
+ * following node is left out where the loader's auto-chaining restores it,
+ * and a terminal node that is not the last is written with `next: null`
+ * so it is not auto-chained. Generated response ids are not written.
+ * Saving a tree that was loaded from saved text gives the same bytes.
+ *
+ * A response without a next node cannot be written (the format requires
+ * one) and fails with %G_IO_ERROR_INVALID_DATA.
+ *
+ * Returns: (transfer full) (nullable): the YAML text, or %NULL on error
+ */
+gchar         *lrg_dialog_tree_save_to_data   (LrgDialogTree  *self,
+                                               gsize          *length,
+                                               GError        **error);
+
+/**
+ * lrg_dialog_tree_save_to_file:
+ * @self: an #LrgDialogTree
+ * @path: (type filename): the file to write
+ * @error: (nullable): return location for error
+ *
+ * Writes the tree to @path; see lrg_dialog_tree_save_to_data().
+ *
+ * Returns: %TRUE on success
+ */
+gboolean       lrg_dialog_tree_save_to_file   (LrgDialogTree  *self,
+                                               const gchar    *path,
+                                               GError        **error);
 
 /**
  * lrg_dialog_tree_get_id:
@@ -169,7 +210,8 @@ guint          lrg_dialog_tree_get_node_count (LrgDialogTree *self);
  * lrg_dialog_tree_get_node_ids:
  * @self: an #LrgDialogTree
  *
- * Gets all node IDs in the tree.
+ * Gets all node IDs in the tree, in the order the nodes were added (the
+ * file order for a loaded tree; a replaced node keeps its place).
  *
  * Returns: (transfer container) (element-type utf8): List of node IDs
  */

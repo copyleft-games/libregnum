@@ -96,6 +96,8 @@ sounds:
   pickup: item_pickup.wav
 #+end_src
 
+A manifest may also set =volume: 0.8= (0 to 1). [[file:sound-bank.org][LrgSoundBank]] documents the format, the manifest-only loader (=lrg_sound_bank_new_from_data()=, no audio decoded) and the writer (=lrg_sound_bank_save_to_file()=).
+
 Load the bank:
 
 #+begin_src C

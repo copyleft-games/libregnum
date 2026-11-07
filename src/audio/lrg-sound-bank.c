@@ -11,6 +11,7 @@
 #include "lrg-sound-bank.h"
 #include "lrg-wave-data.h"
 #include "../core/lrg-asset-pack.h"
+#include "../core/lrg-data-loader.h"
 #include "../lrg-log.h"
 
 #include <yaml-glib.h>
@@ -24,6 +25,11 @@ struct _LrgSoundBank
     gchar      *base_path;
     GHashTable *sounds;     /* gchar* -> GrlSound* */
     gfloat      volume;
+
+    /* the manifest: what save_to_data writes */
+    gchar      *base_path_text;  /* base_path as the manifest gives it */
+    GHashTable *files;           /* name -> file */
+    GPtrArray  *file_order;      /* names, manifest order */
 };
 
 G_DEFINE_FINAL_TYPE (LrgSoundBank, lrg_sound_bank, G_TYPE_OBJECT)
@@ -51,6 +57,9 @@ lrg_sound_bank_finalize (GObject *object)
     g_clear_pointer (&self->name, g_free);
     g_clear_pointer (&self->base_path, g_free);
     g_clear_pointer (&self->sounds, g_hash_table_unref);
+    g_clear_pointer (&self->base_path_text, g_free);
+    g_clear_pointer (&self->files, g_hash_table_unref);
+    g_clear_pointer (&self->file_order, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_sound_bank_parent_class)->finalize (object);
 }
@@ -164,6 +173,8 @@ lrg_sound_bank_init (LrgSoundBank *self)
                                            g_free,
                                            g_object_unref);
     self->volume = 1.0f;
+    self->files = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+    self->file_order = g_ptr_array_new_with_free_func (g_free);
 }
 
 /* ==========================================================================
@@ -188,32 +199,126 @@ lrg_sound_bank_new (const gchar *name)
                          NULL);
 }
 
-/* Data structure for iterating sounds in the manifest */
-typedef struct
+/*
+ * Builds a bank from a parsed manifest. @source names it in messages;
+ * @manifest_dir (nullable) is what relative paths start from; with
+ * @manifest_only no audio is decoded.
+ */
+static LrgSoundBank *
+bank_from_parser (YamlParser   *parser,
+                  const gchar  *source,
+                  const gchar  *manifest_dir,
+                  gboolean      manifest_only,
+                  GError      **error)
 {
-    LrgSoundBank *bank;
-} SoundLoadData;
+    g_autoptr(LrgSoundBank) self = NULL;
+    YamlNode *root;
+    YamlMapping *mapping;
+    const gchar *name;
+    const gchar *base_path_str;
 
-/* Callback for yaml_mapping_foreach_member to load each sound */
-static void
-load_sound_foreach (YamlMapping *mapping G_GNUC_UNUSED,
-                    const gchar *member_name,
-                    YamlNode    *member_node,
-                    gpointer     user_data)
-{
-    SoundLoadData *data = (SoundLoadData *)user_data;
-    const gchar *sound_file;
-    g_autoptr(GError) load_error = NULL;
-
-    sound_file = yaml_node_get_string (member_node);
-    if (sound_file == NULL)
-        return;
-
-    if (!lrg_sound_bank_load (data->bank, member_name, sound_file, &load_error))
+    root = yaml_parser_get_root (parser);
+    if (root == NULL)
     {
-        lrg_log_warning ("Failed to load sound '%s': %s",
-                        member_name, load_error->message);
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Empty manifest file: %s", source);
+        return NULL;
     }
+
+    mapping = yaml_node_get_mapping (root);
+    if (mapping == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Manifest root must be a mapping: %s", source);
+        return NULL;
+    }
+
+    /* Get required 'name' field */
+    name = yaml_mapping_get_string_member (mapping, "name");
+    if (name == NULL)
+    {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                     "Manifest missing 'name' field: %s", source);
+        return NULL;
+    }
+
+    /* Create the bank */
+    self = lrg_sound_bank_new (name);
+
+    /* Get optional 'base_path' field, relative to the manifest */
+    base_path_str = yaml_mapping_get_string_member (mapping, "base_path");
+    if (base_path_str != NULL)
+    {
+        if (g_path_is_absolute (base_path_str) || manifest_dir == NULL)
+        {
+            lrg_sound_bank_set_base_path (self, base_path_str);
+        }
+        else
+        {
+            g_autofree gchar *full_path = g_build_filename (manifest_dir, base_path_str, NULL);
+            lrg_sound_bank_set_base_path (self, full_path);
+        }
+    }
+    else
+    {
+        lrg_sound_bank_set_base_path (self, manifest_dir);
+    }
+
+    /* the manifest's own text is what gets written back */
+    g_free (self->base_path_text);
+    self->base_path_text = g_strdup (base_path_str);
+
+    /* Get optional 'volume' field (0..1) */
+    if (yaml_mapping_has_member (mapping, "volume"))
+    {
+        YamlNode *node = yaml_mapping_get_member (mapping, "volume");
+        const gchar *text = node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SCALAR ?
+                            yaml_node_get_scalar (node) : NULL;
+        gchar *end = NULL;
+        gdouble volume = text != NULL ? g_ascii_strtod (text, &end) : -1.0;
+
+        if (text == NULL || end == text || *end != '\0' || !(volume >= 0.0 && volume <= 1.0))
+        {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "Manifest 'volume' must be a number from 0 to 1: %s", source);
+            return NULL;
+        }
+        lrg_sound_bank_set_volume (self, (gfloat)volume);
+    }
+
+    /* Load sounds from 'sounds' mapping, in manifest order */
+    if (yaml_mapping_has_member (mapping, "sounds"))
+    {
+        YamlMapping *sounds_mapping;
+        guint i;
+
+        sounds_mapping = yaml_mapping_get_mapping_member (mapping, "sounds");
+        for (i = 0; sounds_mapping != NULL && i < yaml_mapping_get_size (sounds_mapping); i++)
+        {
+            const gchar *sound_name = yaml_mapping_get_key (sounds_mapping, i);
+            YamlNode *node = yaml_mapping_get_value (sounds_mapping, i);
+            const gchar *sound_file = node != NULL ? yaml_node_get_string (node) : NULL;
+            g_autoptr(GError) load_error = NULL;
+
+            if (sound_name == NULL || sound_file == NULL)
+                continue;
+
+            /* the entry stays in the manifest even when its audio fails */
+            lrg_sound_bank_set_file (self, sound_name, sound_file);
+            if (manifest_only)
+                continue;
+            if (!lrg_sound_bank_load (self, sound_name, sound_file, &load_error))
+            {
+                lrg_log_warning ("Failed to load sound '%s': %s",
+                                sound_name, load_error->message);
+            }
+        }
+    }
+
+    lrg_log_debug ("Loaded sound bank '%s' with %u sounds",
+                  self->name, lrg_sound_bank_get_count (self));
+
+    return g_steal_pointer (&self);
 }
 
 /*
@@ -230,12 +335,7 @@ lrg_sound_bank_new_from_file (const gchar  *manifest_path,
                                GError      **error)
 {
     g_autoptr(YamlParser) parser = NULL;
-    YamlNode *root;
-    YamlMapping *mapping;
-    const gchar *name;
-    const gchar *base_path_str;
     g_autofree gchar *manifest_dir = NULL;
-    LrgSoundBank *self;
 
     g_return_val_if_fail (manifest_path != NULL, NULL);
     g_return_val_if_fail (error == NULL || *error == NULL, NULL);
@@ -245,72 +345,159 @@ lrg_sound_bank_new_from_file (const gchar  *manifest_path,
     if (!yaml_parser_load_from_file (parser, manifest_path, error))
         return NULL;
 
-    root = yaml_parser_get_root (parser);
-    if (root == NULL)
-    {
-        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                     "Empty manifest file: %s", manifest_path);
-        return NULL;
-    }
-
-    mapping = yaml_node_get_mapping (root);
-    if (mapping == NULL)
-    {
-        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                     "Manifest root must be a mapping: %s", manifest_path);
-        return NULL;
-    }
-
-    /* Get required 'name' field */
-    name = yaml_mapping_get_string_member (mapping, "name");
-    if (name == NULL)
-    {
-        g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                     "Manifest missing 'name' field: %s", manifest_path);
-        return NULL;
-    }
-
     /* Get manifest directory for relative paths */
     manifest_dir = g_path_get_dirname (manifest_path);
+    return bank_from_parser (parser, manifest_path, manifest_dir, FALSE, error);
+}
 
-    /* Create the bank */
-    self = lrg_sound_bank_new (name);
+LrgSoundBank *
+lrg_sound_bank_new_from_data (const gchar  *data,
+                              gssize        length,
+                              const gchar  *base_dir,
+                              gboolean      manifest_only,
+                              GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
 
-    /* Get optional 'base_path' field */
-    base_path_str = yaml_mapping_get_string_member (mapping, "base_path");
-    if (base_path_str != NULL)
+    g_return_val_if_fail (data != NULL || length == 0, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_data (parser, data != NULL ? data : "", length, error))
+        return NULL;
+
+    return bank_from_parser (parser, "<data>", base_dir, manifest_only, error);
+}
+
+/* ==========================================================================
+ * Manifest
+ * ========================================================================== */
+
+void
+lrg_sound_bank_set_file (LrgSoundBank *self,
+                         const gchar  *name,
+                         const gchar  *filename)
+{
+    guint i;
+
+    g_return_if_fail (LRG_IS_SOUND_BANK (self));
+    g_return_if_fail (name != NULL);
+
+    if (filename == NULL)
     {
-        if (g_path_is_absolute (base_path_str))
+        if (g_hash_table_remove (self->files, name))
         {
-            lrg_sound_bank_set_base_path (self, base_path_str);
+            for (i = 0; i < self->file_order->len; i++)
+            {
+                if (g_str_equal (g_ptr_array_index (self->file_order, i), name))
+                {
+                    g_ptr_array_remove_index (self->file_order, i);
+                    break;
+                }
+            }
         }
-        else
-        {
-            g_autofree gchar *full_path = g_build_filename (manifest_dir, base_path_str, NULL);
-            lrg_sound_bank_set_base_path (self, full_path);
-        }
+        return;
     }
-    else
+
+    if (!g_hash_table_contains (self->files, name))
+        g_ptr_array_add (self->file_order, g_strdup (name));
+    g_hash_table_replace (self->files, g_strdup (name), g_strdup (filename));
+}
+
+const gchar *
+lrg_sound_bank_get_file (LrgSoundBank *self,
+                         const gchar  *name)
+{
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+
+    return g_hash_table_lookup (self->files, name);
+}
+
+gchar **
+lrg_sound_bank_get_file_names (LrgSoundBank *self)
+{
+    GStrvBuilder *builder;
+    gchar **names;
+    guint i;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), NULL);
+
+    builder = g_strv_builder_new ();
+    for (i = 0; i < self->file_order->len; i++)
+        g_strv_builder_add (builder, g_ptr_array_index (self->file_order, i));
+    names = g_strv_builder_end (builder);
+    g_strv_builder_unref (builder);
+    return names;
+}
+
+/* the manifest of @self as a document tree */
+static YamlNode *
+bank_to_yaml (LrgSoundBank *self)
+{
+    g_autoptr(YamlMapping) root = yaml_mapping_new ();
+    g_autoptr(YamlNode) name = NULL;
+    guint i;
+
+    name = lrg_data_yaml_string (self->name != NULL ? self->name : "");
+    yaml_mapping_set_member (root, "name", name);
+    if (self->base_path_text != NULL)
     {
-        lrg_sound_bank_set_base_path (self, manifest_dir);
-    }
+        g_autoptr(YamlNode) base = lrg_data_yaml_string (self->base_path_text);
 
-    /* Load sounds from 'sounds' mapping */
-    if (yaml_mapping_has_member (mapping, "sounds"))
+        yaml_mapping_set_member (root, "base_path", base);
+    }
+    if (self->volume != 1.0f)
     {
-        YamlMapping *sounds_mapping;
-        sounds_mapping = yaml_mapping_get_mapping_member (mapping, "sounds");
-        if (sounds_mapping != NULL)
-        {
-            SoundLoadData data = { .bank = self };
-            yaml_mapping_foreach_member (sounds_mapping, load_sound_foreach, &data);
-        }
+        g_autoptr(YamlNode) volume = lrg_data_yaml_float (self->volume);
+
+        yaml_mapping_set_member (root, "volume", volume);
     }
+    if (self->file_order->len > 0)
+    {
+        g_autoptr(YamlMapping) sounds = yaml_mapping_new ();
+        g_autoptr(YamlNode) sounds_node = NULL;
 
-    lrg_log_debug ("Loaded sound bank '%s' with %u sounds",
-                  self->name, lrg_sound_bank_get_count (self));
+        for (i = 0; i < self->file_order->len; i++)
+        {
+            const gchar *sound = g_ptr_array_index (self->file_order, i);
+            g_autoptr(YamlNode) file = lrg_data_yaml_string (g_hash_table_lookup (self->files, sound));
 
-    return self;
+            yaml_mapping_set_member (sounds, sound, file);
+        }
+        sounds_node = yaml_node_new_mapping (sounds);
+        yaml_mapping_set_member (root, "sounds", sounds_node);
+    }
+    return yaml_node_new_mapping (root);
+}
+
+gchar *
+lrg_sound_bank_save_to_data (LrgSoundBank  *self,
+                             gsize         *length,
+                             GError       **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    root = bank_to_yaml (self);
+    return lrg_data_yaml_to_data (root, length, error);
+}
+
+gboolean
+lrg_sound_bank_save_to_file (LrgSoundBank  *self,
+                             const gchar   *path,
+                             GError       **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_SOUND_BANK (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    root = bank_to_yaml (self);
+    return lrg_data_yaml_to_file (root, path, error);
 }
 
 /* ==========================================================================
@@ -361,6 +548,10 @@ lrg_sound_bank_set_base_path (LrgSoundBank *self,
                                const gchar  *path)
 {
     g_return_if_fail (LRG_IS_SOUND_BANK (self));
+
+    /* what the manifest writer writes from now on */
+    g_free (self->base_path_text);
+    self->base_path_text = g_strdup (path);
 
     if (g_strcmp0 (self->base_path, path) != 0)
     {
@@ -446,6 +637,7 @@ lrg_sound_bank_load (LrgSoundBank  *self,
         return FALSE;
 
     lrg_sound_bank_add (self, name, sound);
+    lrg_sound_bank_set_file (self, name, filename);
     return TRUE;
 }
 
@@ -615,6 +807,13 @@ lrg_sound_bank_remove (LrgSoundBank *self,
     g_return_val_if_fail (LRG_IS_SOUND_BANK (self), FALSE);
     g_return_val_if_fail (name != NULL, FALSE);
 
+    /* the manifest entry goes too (an entry alone also counts) */
+    if (g_hash_table_contains (self->files, name))
+    {
+        lrg_sound_bank_set_file (self, name, NULL);
+        g_hash_table_remove (self->sounds, name);
+        return TRUE;
+    }
     return g_hash_table_remove (self->sounds, name);
 }
 
@@ -700,6 +899,8 @@ lrg_sound_bank_clear (LrgSoundBank *self)
     g_return_if_fail (LRG_IS_SOUND_BANK (self));
 
     g_hash_table_remove_all (self->sounds);
+    g_hash_table_remove_all (self->files);
+    g_ptr_array_set_size (self->file_order, 0);
 }
 
 /* ==========================================================================

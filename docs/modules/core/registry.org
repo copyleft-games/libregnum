@@ -102,6 +102,12 @@ int main ()
 - [[file:engine.org][LrgEngine]]
 - [[file:data-loader.org][LrgDataLoader]]
 
+** Registry names in composite documents
+:PROPERTIES:
+:CUSTOM_ID: registry-composite
+:END:
+Composite documents ([[file:data-loader.org::#composite-documents][LrgDataLoader composite documents]]) use the registry in both directions: =type: name= in a document is looked up with =lrg_registry_lookup()= (the type must be an instantiable =GObject= type that fits the slot), and the writer names an object's type with =lrg_registry_lookup_name()= (the smallest name when a type has several, so register one canonical name per type, plus aliases that sort after it). A type written with =type:= must be registered, or =lrg_data_loader_save_to_data()= fails with =LRG_DATA_LOADER_ERROR_TYPE=. Types only ever used in slots that imply them (a concrete object property, a container's default child type, the root type a format passes) need no name. See [[file:../../guides/writing-a-data-format.org][Writing a data format]].
+
 ** Built-in type catalog
 :PROPERTIES:
 :CUSTOM_ID: built-in-type-catalog

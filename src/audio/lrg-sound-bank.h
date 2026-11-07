@@ -58,19 +58,128 @@ LrgSoundBank * lrg_sound_bank_new (const gchar *name);
  * ```yaml
  * name: player
  * base_path: sounds/player/
+ * volume: 0.8
  * sounds:
  *   jump: jump.wav
  *   land: land.ogg
  *   hurt: hurt.wav
  * ```
  *
- * Paths in the sounds section are relative to base_path.
+ * Paths in the sounds section are relative to base_path, which is
+ * relative to the manifest's directory (the manifest's directory itself
+ * when absent). `volume` (0 to 1, default 1) is optional. A sound that
+ * fails to load is logged and skipped, but stays in the manifest (see
+ * lrg_sound_bank_get_file()).
  *
  * Returns: (transfer full) (nullable): A new #LrgSoundBank, or %NULL on error
  */
 LRG_AVAILABLE_IN_ALL
 LrgSoundBank * lrg_sound_bank_new_from_file (const gchar  *manifest_path,
                                               GError      **error);
+
+/**
+ * lrg_sound_bank_new_from_data:
+ * @data: (array length=length) (element-type guint8): the YAML manifest text
+ * @length: length of @data in bytes, or -1 when it is nul-terminated
+ * @base_dir: (nullable) (type filename): the directory a relative
+ *   `base_path` (or, without one, the sounds) is relative to, as the
+ *   manifest's directory is for lrg_sound_bank_new_from_file(); %NULL
+ *   leaves relative paths relative to the working directory
+ * @manifest_only: %TRUE to read the manifest without decoding any audio
+ *   (no audio device or sound file needed: tools, validation, editors)
+ * @error: return location for a #GError
+ *
+ * Creates a sound bank from a manifest in the format of
+ * lrg_sound_bank_new_from_file(). With @manifest_only the bank holds the
+ * manifest entries (lrg_sound_bank_get_file_names()) but no sounds, so
+ * lrg_sound_bank_get_count() is 0 until sounds are loaded.
+ *
+ * Returns: (transfer full) (nullable): A new #LrgSoundBank, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSoundBank * lrg_sound_bank_new_from_data (const gchar  *data,
+                                              gssize        length,
+                                              const gchar  *base_dir,
+                                              gboolean      manifest_only,
+                                              GError      **error);
+
+/**
+ * lrg_sound_bank_save_to_data:
+ * @self: a #LrgSoundBank
+ * @length: (out) (optional): return location for the text length
+ * @error: return location for a #GError
+ *
+ * Writes the bank's manifest in the format lrg_sound_bank_new_from_data()
+ * reads: `name`, `base_path` (as the manifest gave it, or as last set with
+ * lrg_sound_bank_set_base_path()), `volume` (when not 1) and `sounds`, the
+ * manifest entries in their order (see lrg_sound_bank_set_file()). Sounds
+ * added from memory, wave data, resources or aliases have no file and are
+ * not written. Saving a bank that was loaded from saved text gives the
+ * same bytes.
+ *
+ * Returns: (transfer full) (nullable): the YAML text, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_sound_bank_save_to_data (LrgSoundBank  *self,
+                                     gsize         *length,
+                                     GError       **error);
+
+/**
+ * lrg_sound_bank_save_to_file:
+ * @self: a #LrgSoundBank
+ * @path: (type filename): the manifest file to write
+ * @error: return location for a #GError
+ *
+ * Writes the bank's manifest to @path; see lrg_sound_bank_save_to_data().
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_sound_bank_save_to_file (LrgSoundBank  *self,
+                                      const gchar   *path,
+                                      GError       **error);
+
+/**
+ * lrg_sound_bank_set_file:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ * @filename: (nullable): the sound file, relative to the base path (or
+ *   absolute), or %NULL to remove the manifest entry
+ *
+ * Sets the manifest entry of @name without loading any audio: what
+ * lrg_sound_bank_save_to_data() writes for it. A new name goes last; an
+ * existing one keeps its place. lrg_sound_bank_load() and the manifest
+ * loaders set entries themselves.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_sound_bank_set_file (LrgSoundBank *self,
+                              const gchar  *name,
+                              const gchar  *filename);
+
+/**
+ * lrg_sound_bank_get_file:
+ * @self: a #LrgSoundBank
+ * @name: the sound name
+ *
+ * Gets the manifest entry of @name: its file as the manifest gives it.
+ *
+ * Returns: (transfer none) (nullable): the file, or %NULL when @name has
+ *   no manifest entry
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_sound_bank_get_file (LrgSoundBank *self,
+                                       const gchar  *name);
+
+/**
+ * lrg_sound_bank_get_file_names:
+ * @self: a #LrgSoundBank
+ *
+ * Gets the names of the manifest entries, in manifest order.
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the names
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_sound_bank_get_file_names (LrgSoundBank *self);
 
 /* ==========================================================================
  * Properties
@@ -138,7 +247,8 @@ void lrg_sound_bank_add (LrgSoundBank *self,
  * @filename: path to the sound file (relative to base_path)
  * @error: return location for a #GError
  *
- * Loads a sound from a file and adds it to the bank.
+ * Loads a sound from a file and adds it to the bank. On success @filename
+ * also becomes the manifest entry of @name (see lrg_sound_bank_set_file()).
  *
  * Returns: %TRUE on success
  */
@@ -237,9 +347,9 @@ gboolean lrg_sound_bank_add_alias (LrgSoundBank *self,
  * @self: a #LrgSoundBank
  * @name: the sound name to remove
  *
- * Removes a sound from the bank.
+ * Removes a sound and its manifest entry from the bank.
  *
- * Returns: %TRUE if the sound was found and removed
+ * Returns: %TRUE if the sound (or its manifest entry) was found and removed
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_sound_bank_remove (LrgSoundBank *self,
@@ -297,7 +407,7 @@ GList * lrg_sound_bank_get_names (LrgSoundBank *self);
  * lrg_sound_bank_clear:
  * @self: a #LrgSoundBank
  *
- * Removes all sounds from the bank.
+ * Removes all sounds and manifest entries from the bank.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_sound_bank_clear (LrgSoundBank *self);

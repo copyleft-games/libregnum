@@ -111,7 +111,8 @@ gboolean lrg_input_map_has_action (LrgInputMap *self,
  * lrg_input_map_get_actions:
  * @self: an #LrgInputMap
  *
- * Gets a list of all actions in this map.
+ * Gets a list of all actions in this map, in the order they were added
+ * (the file order for a loaded map; a replaced action keeps its place).
  *
  * Returns: (transfer container) (element-type LrgInputAction): A list of actions
  */
@@ -249,7 +250,7 @@ gboolean lrg_input_map_load_from_file (LrgInputMap  *self,
  * @path: (type filename): path to save the YAML file
  * @error: (nullable): return location for error
  *
- * Saves input mappings to a YAML file.
+ * Saves input mappings to a YAML file; see lrg_input_map_save_to_data().
  *
  * Returns: %TRUE on success, %FALSE on error
  */
@@ -257,5 +258,52 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_input_map_save_to_file (LrgInputMap  *self,
                                      const gchar  *path,
                                      GError      **error);
+
+/**
+ * lrg_input_map_load_from_data:
+ * @self: an #LrgInputMap
+ * @data: (array length=length) (element-type guint8): the YAML text
+ * @length: length of @data in bytes, or -1 when it is nul-terminated
+ * @error: (nullable): return location for error
+ *
+ * Loads input mappings from YAML text in the format of
+ * lrg_input_map_load_from_file(): an `actions` mapping of action name to
+ * a mapping with a `bindings` list. Each binding has a `type`
+ * (`keyboard`, `mouse_button`, `gamepad_button`, `gamepad_axis`) and its
+ * fields (`key`/`button`/`axis`, `modifiers`, `gamepad`, `threshold`,
+ * `positive`).
+ *
+ * This clears any existing actions before loading. Keys the engine does
+ * not know (at the root, in an action, in a binding) are kept and written
+ * back by lrg_input_map_save_to_data().
+ *
+ * Returns: %TRUE on success, %FALSE on error
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_input_map_load_from_data (LrgInputMap  *self,
+                                       const gchar  *data,
+                                       gssize        length,
+                                       GError      **error);
+
+/**
+ * lrg_input_map_save_to_data:
+ * @self: an #LrgInputMap
+ * @length: (out) (optional): return location for the text length
+ * @error: (nullable): return location for error
+ *
+ * Writes the input mappings as YAML: the actions in the order they were
+ * added (file order for a loaded map), each binding with its known keys.
+ * Keys the engine does not know, from the last loaded document, are
+ * written back where they were: root keys around `actions`, action keys
+ * around `bindings`, and a binding's extra keys after its known ones (when
+ * the binding at that index still has the same type). Comments are not
+ * kept. Saving a map that was loaded from saved text gives the same bytes.
+ *
+ * Returns: (transfer full) (nullable): the YAML text, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_input_map_save_to_data (LrgInputMap  *self,
+                                    gsize        *length,
+                                    GError      **error);
 
 G_END_DECLS

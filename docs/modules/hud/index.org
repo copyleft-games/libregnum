@@ -53,6 +53,39 @@ pieces:
 
 Only pieces with state are written, sorted by id.  =lrg_hud_layout_load_from_file()= replaces the player's state with the file's: a missing file is the default layout; bad YAML, unknown keys, unknown anchors, non-numbers, x or y without an anchor and duplicate ids fail with =G_IO_ERROR_INVALID_DATA=, a version above =LRG_HUD_LAYOUT_FORMAT_VERSION= (1) with =G_IO_ERROR_NOT_SUPPORTED=; a failed load changes nothing.  =lrg_hud_layout_to_variant()= / =lrg_hud_layout_load_variant()= carry the same state as =a{s(bsddbb)}= (id to placed, anchor nick, x, y, locked, hidden) for saves and the network.
 
+=lrg_hud_layout_save_to_data()= returns the text =lrg_hud_layout_save_to_file()= writes, and =lrg_hud_layout_load_from_data()= reads it from memory with the same rules (empty text is the default layout; on error nothing changes); the editor validates HUD layout documents with it, and games that keep the layout inside their own save files use the pair instead of a separate file. Offsets are written in their shortest exact form (=0.1=, =-8.5=, =8=): since 0.9.0 the writer no longer rounds them to six significant digits.
+
+*** API reference
+:PROPERTIES:
+:CUSTOM_ID: hud-layout-api
+:END:
+| Function | Notes |
+|----------+-------|
+| =LrgHudLayout *lrg_hud_layout_new (void)= | An empty layout (transfer full) |
+| =gboolean lrg_hud_layout_add_piece (LrgHudLayout *self, const gchar *piece_id, const gchar *label, LrgHudAnchor anchor, gfloat x, gfloat y)= | Adds a piece with its default placement (=label= nullable: the id). Known state for the id applies. =FALSE= for a duplicate or an invalid id (empty or with whitespace) |
+| =gboolean lrg_hud_layout_remove_piece (LrgHudLayout *self, const gchar *piece_id)= | Removes the piece; its state is kept for when it comes back |
+| =gboolean lrg_hud_layout_has_piece (LrgHudLayout *self, const gchar *piece_id)= | Whether the piece was added |
+| =gchar **lrg_hud_layout_get_pieces (LrgHudLayout *self)= | The ids of the pieces added, in order (transfer full) |
+| =const gchar *lrg_hud_layout_get_label (LrgHudLayout *self, const gchar *piece_id)= | Transfer none, nullable |
+| =gboolean lrg_hud_layout_get_position (self, piece_id, LrgHudAnchor *anchor, gfloat *x, gfloat *y)= | The effective placement (the player's, else the default) |
+| =gboolean lrg_hud_layout_get_default (self, piece_id, LrgHudAnchor *anchor, gfloat *x, gfloat *y)= | The game's default placement |
+| =lrg_hud_layout_set_default()=, =lrg_hud_layout_set_position()=, =lrg_hud_layout_move_by()=, =lrg_hud_layout_place_rect()= | Placement changes, as described above |
+| =lrg_hud_layout_resolve()=, =lrg_hud_layout_is_modified()= | Geometry and "differs from default" |
+| =gboolean lrg_hud_layout_set_locked (self, piece_id, gboolean locked)=, =gboolean lrg_hud_layout_get_locked (self, piece_id)= | The lock |
+| =gboolean lrg_hud_layout_set_hidden (self, piece_id, gboolean hidden)=, =gboolean lrg_hud_layout_get_hidden (self, piece_id)= | The hidden flag |
+| =lrg_hud_layout_reset()=, =lrg_hud_layout_reset_all()= | Drop placements, locks and hidden flags |
+| =lrg_hud_layout_to_variant()=, =lrg_hud_layout_load_variant()= | The state as a =GVariant= |
+| =gboolean lrg_hud_layout_save_to_file (self, const gchar *path, GError **error)= | Writes the YAML (directory created, mode 0700) |
+| =gboolean lrg_hud_layout_load_from_file (self, const gchar *path, GError **error)= | Reads it; a missing file is the default layout |
+| =gchar *lrg_hud_layout_save_to_data (LrgHudLayout *self, gsize *length, GError **error)= | The same YAML as text (transfer full, =length= optional) |
+| =gboolean lrg_hud_layout_load_from_data (LrgHudLayout *self, const gchar *data, gssize length, GError **error)= | Reads it from text (=length= -1 for nul-terminated); messages name the source =<data>= |
+
+*** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: hud-layout-editor
+:END:
+The editor's HUD layout data editor ([[file:../../editor/data-editors.org][Data editors]]) edits layout files as documents and validates them with =lrg_hud_layout_load_from_data()= on the document text (its first error only when the editor's own structural checks found none).
+
 ** LrgFloatingText
 :PROPERTIES:
 :CUSTOM_ID: lrgfloatingtext
@@ -88,4 +121,4 @@ The "you received" corner: =lrg_feed_push(key, label, count)= adds a row, or add
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
-=tests/test-hud.c=: layout pieces, defaults, placements, locks, hidden pieces, waiting state, resets; the geometry of anchors and drags; the YAML file and the variant round trip, every refused input and the missing file; floating text motion, stacking and expiry; radial sectors, dead zone, start angle, stepping, activation and cancelling; feed merging, fading and expiry; and =LrgCameraZoom=.
+=tests/test-hud.c=: layout pieces, defaults, placements, locks, hidden pieces, waiting state, resets; the geometry of anchors and drags; the YAML file and the variant round trip, every refused input and the missing file (=tests/test-format-writers.c= adds the from-data loader and the byte-stable text round trip); floating text motion, stacking and expiry; radial sectors, dead zone, start angle, stepping, activation and cancelling; feed merging, fading and expiry; and =LrgCameraZoom=.

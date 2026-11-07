@@ -14,6 +14,7 @@
 #include "lrg-locale.h"
 #include "lrg-log.h"
 #include "lrg-csv.h"
+#include "../core/lrg-data-loader.h"
 #include <yaml-glib.h>
 #include <string.h>
 
@@ -23,6 +24,7 @@ typedef struct
     gchar       *name;
     GHashTable  *strings;   /* key -> string */
     GHashTable  *plurals;   /* key -> GHashTable<form_key, string> */
+    GPtrArray   *order;     /* every key once, in the order first set */
     LrgPluralRule rule;     /* of default_get_plural_form */
 } LrgLocalePrivate;
 
@@ -230,6 +232,7 @@ lrg_locale_finalize (GObject *object)
     g_clear_pointer (&priv->name, g_free);
     g_clear_pointer (&priv->strings, g_hash_table_unref);
     g_clear_pointer (&priv->plurals, g_hash_table_unref);
+    g_clear_pointer (&priv->order, g_ptr_array_unref);
 
     G_OBJECT_CLASS (lrg_locale_parent_class)->finalize (object);
 }
@@ -342,6 +345,17 @@ lrg_locale_init (LrgLocale *self)
                                            g_free, g_free);
     priv->plurals = g_hash_table_new_full (g_str_hash, g_str_equal,
                                            g_free, plural_table_free);
+    priv->order = g_ptr_array_new_with_free_func (g_free);
+}
+
+/* records @key in the declaration order the first time it is set */
+static void
+remember_key (LrgLocalePrivate *priv,
+              const gchar      *key)
+{
+    if (!g_hash_table_contains (priv->strings, key) &&
+        !g_hash_table_contains (priv->plurals, key))
+        g_ptr_array_add (priv->order, g_strdup (key));
 }
 
 /* ========================================================================== */
@@ -375,33 +389,21 @@ lrg_locale_new (const gchar *code,
 }
 
 /*
- * lrg_locale_new_from_file:
- * @path: path to YAML locale file
- * @error: return location for a #GError, or %NULL
- *
- * Creates a new locale by loading strings from a YAML file.
- *
- * Returns: (transfer full) (nullable): a new #LrgLocale, or %NULL on error
+ * Builds a locale from a parsed document. @source names the text in
+ * messages (a path, or "<data>").
  */
-LrgLocale *
-lrg_locale_new_from_file (const gchar  *path,
-                          GError      **error)
+static LrgLocale *
+locale_from_parser (YamlParser   *parser,
+                    const gchar  *source,
+                    GError      **error)
 {
-    g_autoptr(YamlParser) parser = NULL;
     YamlNode *root = NULL;
     YamlMapping *root_mapping = NULL;
     const gchar *code = NULL;
     const gchar *name = NULL;
+    const gchar *rule_nick = NULL;
     YamlNode *strings_node = NULL;
     LrgLocale *locale = NULL;
-
-    g_return_val_if_fail (path != NULL, NULL);
-    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
-
-    /* Create parser and load file */
-    parser = yaml_parser_new ();
-    if (!yaml_parser_load_from_file (parser, path, error))
-        return NULL;
 
     root = yaml_parser_get_root (parser);
     if (root == NULL || yaml_node_get_node_type (root) != YAML_NODE_MAPPING)
@@ -436,8 +438,30 @@ lrg_locale_new_from_file (const gchar  *path,
         return NULL;
     }
 
-    /* Create locale */
-    locale = lrg_locale_new (code, name);
+    /* Optional plural rule override (an LrgPluralRule nick) */
+    if (yaml_mapping_has_member (root_mapping, "plural_rule"))
+    {
+        GEnumClass *klass;
+        GEnumValue *entry;
+
+        rule_nick = yaml_mapping_get_string_member (root_mapping, "plural_rule");
+        klass = g_type_class_ref (LRG_TYPE_PLURAL_RULE);
+        entry = rule_nick != NULL ? g_enum_get_value_by_nick (klass, rule_nick) : NULL;
+        g_type_class_unref (klass);
+        if (entry == NULL)
+        {
+            g_set_error (error, LRG_I18N_ERROR, LRG_I18N_ERROR_PARSE,
+                         "Locale file has an unknown 'plural_rule' '%s'",
+                         rule_nick != NULL ? rule_nick : "");
+            return NULL;
+        }
+        locale = lrg_locale_new (code, name);
+        lrg_locale_set_plural_rule (locale, (LrgPluralRule)entry->value);
+    }
+    else
+    {
+        locale = lrg_locale_new (code, name);
+    }
 
     /* Load strings if present */
     strings_node = yaml_mapping_get_member (root_mapping, "strings");
@@ -450,9 +474,152 @@ lrg_locale_new_from_file (const gchar  *path,
     }
 
     lrg_log_debug ("Loaded locale '%s' (%s) with %u strings from %s",
-                   code, name, lrg_locale_get_string_count (locale), path);
+                   code, name, lrg_locale_get_string_count (locale), source);
 
     return locale;
+}
+
+/*
+ * lrg_locale_new_from_file:
+ * @path: path to YAML locale file
+ * @error: return location for a #GError, or %NULL
+ *
+ * Creates a new locale by loading strings from a YAML file.
+ *
+ * Returns: (transfer full) (nullable): a new #LrgLocale, or %NULL on error
+ */
+LrgLocale *
+lrg_locale_new_from_file (const gchar  *path,
+                          GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+
+    g_return_val_if_fail (path != NULL, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    /* Create parser and load file */
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_file (parser, path, error))
+        return NULL;
+
+    return locale_from_parser (parser, path, error);
+}
+
+LrgLocale *
+lrg_locale_new_from_data (const gchar  *data,
+                          gssize        length,
+                          GError      **error)
+{
+    g_autoptr(YamlParser) parser = NULL;
+
+    g_return_val_if_fail (data != NULL || length == 0, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    parser = yaml_parser_new ();
+    if (!yaml_parser_load_from_data (parser, data != NULL ? data : "", length, error))
+        return NULL;
+
+    return locale_from_parser (parser, "<data>", error);
+}
+
+/* ========================================================================== */
+/* YAML Saving                                                                */
+/* ========================================================================== */
+
+/* plural forms in the order they are written (CLDR order) */
+static const gchar * const plural_form_keys[] = { "zero", "one", "two", "few", "many", "other", NULL };
+
+/* the document tree of @self in the loader's format */
+static YamlNode *
+locale_to_node (LrgLocale *self)
+{
+    LrgLocalePrivate *priv = lrg_locale_get_instance_private (self);
+    g_autoptr(YamlMapping) root = yaml_mapping_new ();
+    g_autoptr(YamlMapping) strings = yaml_mapping_new ();
+    g_autoptr(YamlNode) code = NULL;
+    g_autoptr(YamlNode) name = NULL;
+    g_autoptr(YamlNode) strings_node = NULL;
+    guint i;
+
+    code = lrg_data_yaml_string (priv->code != NULL ? priv->code : "");
+    name = lrg_data_yaml_string (priv->name != NULL ? priv->name : "");
+    yaml_mapping_set_member (root, "code", code);
+    yaml_mapping_set_member (root, "name", name);
+
+    /* the rule only when the language would not pick it by itself */
+    if (priv->rule != lrg_plural_rule_for_language (priv->code != NULL ? priv->code : ""))
+    {
+        GEnumClass *klass = g_type_class_ref (LRG_TYPE_PLURAL_RULE);
+        GEnumValue *entry = g_enum_get_value (klass, (gint)priv->rule);
+        g_autoptr(YamlNode) rule = lrg_data_yaml_string (entry != NULL ? entry->value_nick : "one-other");
+
+        yaml_mapping_set_member (root, "plural_rule", rule);
+        g_type_class_unref (klass);
+    }
+
+    /* every key in declaration order; plural forms win over a plain string */
+    for (i = 0; i < priv->order->len; i++)
+    {
+        const gchar *key = g_ptr_array_index (priv->order, i);
+        GHashTable *forms = g_hash_table_lookup (priv->plurals, key);
+        g_autoptr(YamlNode) value = NULL;
+
+        if (forms != NULL)
+        {
+            g_autoptr(YamlMapping) form_map = yaml_mapping_new ();
+            guint f;
+
+            for (f = 0; plural_form_keys[f] != NULL; f++)
+            {
+                const gchar *text = g_hash_table_lookup (forms, plural_form_keys[f]);
+                g_autoptr(YamlNode) form = NULL;
+
+                if (text == NULL)
+                    continue;
+                form = lrg_data_yaml_string (text);
+                yaml_mapping_set_member (form_map, plural_form_keys[f], form);
+            }
+            value = yaml_node_new_mapping (form_map);
+        }
+        else
+        {
+            value = lrg_data_yaml_string (g_hash_table_lookup (priv->strings, key));
+        }
+        yaml_mapping_set_member (strings, key, value);
+    }
+    strings_node = yaml_node_new_mapping (strings);
+    yaml_mapping_set_member (root, "strings", strings_node);
+
+    return yaml_node_new_mapping (root);
+}
+
+gchar *
+lrg_locale_save_to_data (LrgLocale  *self,
+                         gsize      *length,
+                         GError    **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_LOCALE (self), NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    root = locale_to_node (self);
+    return lrg_data_yaml_to_data (root, length, error);
+}
+
+gboolean
+lrg_locale_save_to_file (LrgLocale    *self,
+                         const gchar  *path,
+                         GError      **error)
+{
+    g_autoptr(YamlNode) root = NULL;
+
+    g_return_val_if_fail (LRG_IS_LOCALE (self), FALSE);
+    g_return_val_if_fail (path != NULL, FALSE);
+    g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+    root = locale_to_node (self);
+    return lrg_data_yaml_to_file (root, path, error);
 }
 
 /*
@@ -513,6 +680,7 @@ lrg_locale_set_string (LrgLocale   *self,
     g_return_if_fail (value != NULL);
 
     priv = lrg_locale_get_instance_private (self);
+    remember_key (priv, key);
     g_hash_table_replace (priv->strings, g_strdup (key), g_strdup (value));
 }
 
@@ -567,6 +735,7 @@ lrg_locale_set_plural (LrgLocale     *self,
     forms = (GHashTable *)g_hash_table_lookup (priv->plurals, key);
     if (forms == NULL)
     {
+        remember_key (priv, key);
         forms = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
         g_hash_table_insert (priv->plurals, g_strdup (key), forms);
     }
@@ -702,27 +871,16 @@ lrg_locale_get_keys (LrgLocale *self)
 {
     LrgLocalePrivate *priv;
     GPtrArray *keys;
-    GHashTableIter iter;
-    gpointer key_ptr;
+    guint i;
 
     g_return_val_if_fail (LRG_IS_LOCALE (self), NULL);
 
     priv = lrg_locale_get_instance_private (self);
     keys = g_ptr_array_new ();
 
-    /* Add regular string keys */
-    g_hash_table_iter_init (&iter, priv->strings);
-    while (g_hash_table_iter_next (&iter, &key_ptr, NULL))
-    {
-        g_ptr_array_add (keys, key_ptr);
-    }
-
-    /* Add plural keys */
-    g_hash_table_iter_init (&iter, priv->plurals);
-    while (g_hash_table_iter_next (&iter, &key_ptr, NULL))
-    {
-        g_ptr_array_add (keys, key_ptr);
-    }
+    /* every key once (plain and plural), in the order first set */
+    for (i = 0; i < priv->order->len; i++)
+        g_ptr_array_add (keys, g_ptr_array_index (priv->order, i));
 
     return keys;
 }

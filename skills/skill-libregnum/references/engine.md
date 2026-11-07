@@ -72,3 +72,5 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 ## Debug and visibility
 
 - `src/debug/lrg-debug-draw.*`: immediate-mode debug geometry (lines, boxes, spheres, capsules, cylinders, cones, frustums, grids, axes, labels, 2D shapes) with durations, depth-tested/on-top lists and 32 toggleable categories; headless-inspectable. Docs: docs/modules/debug/debug-draw.org. Render layers: docs/modules/graphics/render-layers.org.
+
+- Composite YAML loader + format writers: see references/formats.md.

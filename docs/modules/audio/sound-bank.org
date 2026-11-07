@@ -1,0 +1,155 @@
+* LrgSoundBank - Named Sound Effects
+:PROPERTIES:
+:CUSTOM_ID: lrgsoundbank
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Audio]]* > LrgSoundBank
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgSoundBank= is a dictionary of named =GrlSound= effects (=jump=, =land=, =hurt=), grouped by purpose (=player=, =ui=, =enemy=), with one volume for the whole bank. A bank is filled in code (from files, memory, wave data or an =rres= pack) or from a YAML manifest that maps names to files. Since 0.9.0 the bank also keeps its manifest: the file of every sound loaded from one, in manifest order, so it can write the manifest back (=lrg_sound_bank_save_to_data()=), and it can read a manifest without decoding any audio (=lrg_sound_bank_new_from_data()= with =manifest_only=), for tools and validation on machines without an audio device or the sound files.
+
+| Type | Kind | GIR name | Header |
+|------+------+----------+--------|
+| =LrgSoundBank= | final GObject | =Libregnum.SoundBank= | =audio/lrg-sound-bank.h= |
+
+=LrgAudioManager= owns banks by name (=lrg_audio_manager_load_bank()=, =lrg_audio_manager_play_sound()=); see [[file:index.org][the audio module]].
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Sounds* are decoded =GrlSound= objects, looked up by name. They exist only with an audio device; without one, decoding fails and the sound is skipped (a warning), the game runs silent.
+- *Manifest entries* are name-to-file pairs: what the manifest said, or what =lrg_sound_bank_load()= / =lrg_sound_bank_set_file()= recorded. They are independent of decoding: a sound that failed to load, or a bank read with =manifest_only=, still has its entries, so the manifest survives a round trip on any machine. Sounds added from memory, wave data, packs or aliases have no entry and are not written.
+- *Base path*: relative sound files resolve against it. A manifest's =base_path= is relative to the manifest's directory (the directory itself when absent); the writer writes =base_path= as the manifest gave it, or as last set with =lrg_sound_bank_set_base_path()=.
+- *Volume* (0 to 1) applies to every sound in the bank, including ones added later.
+
+** Manifest format
+:PROPERTIES:
+:CUSTOM_ID: manifest-format
+:END:
+#+begin_src yaml
+# assets/sounds/player.yaml
+name: player           # required: the bank name
+base_path: sounds      # optional: relative to this file's directory; absent = this directory
+volume: 0.8            # optional (0.9.0): 0 to 1, default 1
+sounds:                # optional: name -> file (relative to base_path, or absolute), in order
+  jump: jump.wav
+  land: land.ogg
+  hurt: sub/hurt.wav
+#+end_src
+
+The loaders fail with =G_IO_ERROR_INVALID_DATA= on an empty manifest, a root that is not a mapping, a missing =name= and a =volume= that is not a number from 0 to 1. A sound entry that is not a string is skipped. Keys other than these four are ignored and not written back.
+
+** Loading and saving
+:PROPERTIES:
+:CUSTOM_ID: loading-and-saving
+:END:
+#+begin_src C
+/* the game: decode everything (needs the audio device) */
+g_autoptr(LrgSoundBank) bank = lrg_sound_bank_new_from_file ("assets/sounds/player.yaml", &error);
+
+/* a tool: read the manifest only, relative paths against the manifest's directory */
+g_autoptr(LrgSoundBank) manifest = NULL;
+g_auto(GStrv) names = NULL;
+
+manifest = lrg_sound_bank_new_from_data (text, -1, "assets/sounds", TRUE, &error);
+names = lrg_sound_bank_get_file_names (manifest);          /* jump, land, hurt */
+lrg_sound_bank_set_file (manifest, "dash", "dash.wav");     /* a new entry goes last */
+lrg_sound_bank_set_file (manifest, "land", NULL);           /* removes the entry */
+if (!lrg_sound_bank_save_to_file (manifest, "assets/sounds/player.yaml", &error))
+    g_warning ("%s", error->message);
+#+end_src
+
+The writer writes =name=, =base_path= (when known), =volume= (when not 1, in its shortest exact form) and =sounds= in entry order. Saving a bank loaded from saved text gives the same bytes (=tests/test-format-writers.c=).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+*** Construction and manifests
+:PROPERTIES:
+:CUSTOM_ID: api-construction
+:END:
+| Function | Notes |
+|----------+-------|
+| =LrgSoundBank *lrg_sound_bank_new (const gchar *name)= | An empty bank (transfer full) |
+| =LrgSoundBank *lrg_sound_bank_new_from_file (const gchar *manifest_path, GError **error)= | Reads a manifest and decodes every sound; a sound that fails is logged and skipped but keeps its entry. Transfer full, nullable |
+| =LrgSoundBank *lrg_sound_bank_new_from_data (const gchar *data, gssize length, const gchar *base_dir, gboolean manifest_only, GError **error)= | The same from text (=length= -1 for nul-terminated). =base_dir= (nullable) plays the manifest directory's part; =NULL= leaves relative paths relative to the working directory. =manifest_only= records the entries without decoding (no device, no files needed) |
+| =gchar *lrg_sound_bank_save_to_data (LrgSoundBank *self, gsize *length, GError **error)= | The manifest text (transfer full, =length= optional) |
+| =gboolean lrg_sound_bank_save_to_file (LrgSoundBank *self, const gchar *path, GError **error)= | Writes it atomically |
+| =void lrg_sound_bank_set_file (LrgSoundBank *self, const gchar *name, const gchar *filename)= | Sets (=filename= non-NULL) or removes (=NULL=) a manifest entry without loading audio; a new name goes last, a replaced one keeps its place |
+| =const gchar *lrg_sound_bank_get_file (LrgSoundBank *self, const gchar *name)= | The entry's file as written (transfer none, nullable) |
+| =gchar **lrg_sound_bank_get_file_names (LrgSoundBank *self)= | The entry names in order (transfer full, =NULL=-terminated) |
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+| Function / property | Notes |
+|---------------------+-------|
+| =name= (string, construct-only), =lrg_sound_bank_get_name()= | The bank name (transfer none) |
+| =base-path= (string), =lrg_sound_bank_get_base_path()=, =lrg_sound_bank_set_base_path()= | The resolved base path (nullable). Setting it also sets what the writer writes |
+| =volume= (float 0..1, default 1), =lrg_sound_bank_get_volume()=, =lrg_sound_bank_set_volume()= | Clamped; applied to every sound now and to sounds added later |
+
+*** Sounds
+:PROPERTIES:
+:CUSTOM_ID: api-sounds
+:END:
+| Function | Notes |
+|----------+-------|
+| =void lrg_sound_bank_add (LrgSoundBank *self, const gchar *name, GrlSound *sound)= | Adds a decoded sound (the bank takes a reference); no manifest entry |
+| =gboolean lrg_sound_bank_load (LrgSoundBank *self, const gchar *name, const gchar *filename, GError **error)= | Decodes a file (relative to the base path) and adds it; on success =filename= becomes the entry of =name= |
+| =gboolean lrg_sound_bank_add_from_wave (LrgSoundBank *self, const gchar *name, LrgWaveData *wave)= | From generated wave data; no entry |
+| =gboolean lrg_sound_bank_load_from_memory (LrgSoundBank *self, const gchar *name, const gchar *file_type, const guint8 *data, gsize data_size, GError **error)= | From an encoded file in memory (=file_type= such as =.wav=); no entry |
+| =gboolean lrg_sound_bank_load_from_resource (LrgSoundBank *self, const gchar *name, LrgAssetPack *pack, const gchar *resource_name, GError **error)= | From an =rres= pack; no entry |
+| =gboolean lrg_sound_bank_add_alias (LrgSoundBank *self, const gchar *alias, const gchar *source)= | A second name for an existing sound (same =GrlSound=); no entry |
+| =gboolean lrg_sound_bank_remove (LrgSoundBank *self, const gchar *name)= | Removes the sound and its entry; =TRUE= when either existed |
+| =GrlSound *lrg_sound_bank_get (LrgSoundBank *self, const gchar *name)= | Transfer none, nullable |
+| =gboolean lrg_sound_bank_contains (LrgSoundBank *self, const gchar *name)= | Whether a decoded sound exists |
+| =guint lrg_sound_bank_get_count (LrgSoundBank *self)= | Decoded sounds only (0 for a manifest-only bank) |
+| =GList *lrg_sound_bank_get_names (LrgSoundBank *self)= | Decoded sound names, unordered (transfer container) |
+| =void lrg_sound_bank_clear (LrgSoundBank *self)= | Removes every sound and entry |
+
+*** Playback
+:PROPERTIES:
+:CUSTOM_ID: api-playback
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_sound_bank_play (LrgSoundBank *self, const gchar *name)= | Plays (restarts) the sound; =FALSE= with a warning when unknown |
+| =gboolean lrg_sound_bank_play_multi (LrgSoundBank *self, const gchar *name)= | Plays an overlapping instance |
+| =gboolean lrg_sound_bank_stop (LrgSoundBank *self, const gchar *name)= | Stops the sound and its overlapping instances |
+| =void lrg_sound_bank_stop_all (LrgSoundBank *self)= | Stops every sound |
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Decoding happens at load time, once per sound: load banks behind a loading screen, not mid-game. A manifest-only load parses YAML and nothing else. Playback is a lookup and a raylib call.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_sound_bank_get_count()= and =lrg_sound_bank_get_names()= count decoded sounds; use =lrg_sound_bank_get_file_names()= for the manifest.
+- The writer cannot write sounds that have no file (memory, wave data, packs, aliases); give them one with =lrg_sound_bank_set_file()= if they should be in the manifest.
+- =base_path= is relative to the manifest's directory, not to the working directory; pass =base_dir= to =lrg_sound_bank_new_from_data()= to get the same resolution from text.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+The editor's sound-bank data editor ([[file:../../editor/data-editors.org][Data editors]]) edits manifests as documents, previews sounds and validates with =lrg_sound_bank_new_from_data()= in manifest-only mode on the document text (resolved against the document's directory or the project's =base-dir=), then checks that every file exists and has a known audio type.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:index.org][Audio module]] (=LrgAudioManager=, banks by name)
+- [[file:wave-data.org][LrgWaveData]]
+- [[file:../core/asset-pack.org][LrgAssetPack]]
+- [[file:../../guides/writing-a-data-format.org][Writing a data format]]

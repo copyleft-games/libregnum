@@ -3587,6 +3587,13 @@ message_position (const gchar *message,
 	return FALSE;
 }
 
+/*
+ * The source name the engine's from-data loaders (input map, locale, sound
+ * bank, HUD layout, dialog tree) put in their messages: replaced by the
+ * document's display name, as a temp file's path used to be.
+ */
+#define DATA_SOURCE "<data>"
+
 /* a loader's GError, as an error issue placed as well as possible */
 static void
 add_loader_error (Validation   *v,
@@ -3617,28 +3624,6 @@ add_loader_error (Validation   *v,
 
 	g_ptr_array_add (v->issues,
 	                 lrg_editor_document_issue_new (LRG_EDITOR_PROBLEM_ERROR, path, line, column, msg));
-}
-
-/* writes @text to a fresh temporary .yaml file; returns its name */
-static gchar *
-write_temp (const gchar  *text,
-            gsize         length,
-            GError      **error)
-{
-	g_autofree gchar *name = NULL;
-	gint fd;
-
-	fd = g_file_open_tmp ("lrg-document-XXXXXX.yaml", &name, error);
-	if (fd < 0)
-		return NULL;
-	g_close (fd, NULL);
-	if (!g_file_set_contents (name, text, (gssize) length, error))
-	{
-		g_unlink (name);
-		return NULL;
-	}
-
-	return g_steal_pointer (&name);
 }
 
 /* log capture: loader warnings become warning issues while a loader runs */
@@ -3790,38 +3775,27 @@ validate_input_map (Validation *v)
 	g_autoptr(LrgInputMap) map = NULL;
 	g_autoptr(GError) error = NULL;
 	g_autoptr(GHashTable) seen = NULL;
-	g_autofree gchar *temp = NULL;
 	YamlMapping *actions;
 	Capture capture;
 	guint handler;
 	guint i;
 
-	/* --- the engine loader (file only: no from-data API) --- */
-	temp = write_temp (v->text, v->length, &error);
-	if (temp == NULL)
-	{
-		add_issue (v, LRG_EDITOR_PROBLEM_WARNING, NULL, "loader not run: %s", error->message);
-		g_clear_error (&error);
-	}
-	else
-	{
-		map = lrg_input_map_new ();
+	/* --- the engine loader, on the text itself --- */
+	map = lrg_input_map_new ();
 
-		/* the structural checks below report everything the loader warns
-		 * about, with paths, so its warnings are swallowed */
-		capture.v = v;
-		capture.keep = FALSE;
-		capture.temp_path = temp;
-		handler = g_log_set_handler (LRG_LOG_DOMAIN_INPUT, G_LOG_LEVEL_WARNING | G_LOG_LEVEL_MESSAGE,
-		                             capture_log, &capture);
-		if (!lrg_input_map_load_from_file (map, temp, &error))
-		{
-			add_loader_error (v, error, temp);
-			g_clear_object (&map);
-		}
-		g_log_remove_handler (LRG_LOG_DOMAIN_INPUT, handler);
-		g_unlink (temp);
+	/* the structural checks below report everything the loader warns
+	 * about, with paths, so its warnings are swallowed */
+	capture.v = v;
+	capture.keep = FALSE;
+	capture.temp_path = DATA_SOURCE;
+	handler = g_log_set_handler (LRG_LOG_DOMAIN_INPUT, G_LOG_LEVEL_WARNING | G_LOG_LEVEL_MESSAGE,
+	                             capture_log, &capture);
+	if (!lrg_input_map_load_from_data (map, v->text, (gssize) v->length, &error))
+	{
+		add_loader_error (v, error, DATA_SOURCE);
+		g_clear_object (&map);
 	}
+	g_log_remove_handler (LRG_LOG_DOMAIN_INPUT, handler);
 
 	/* --- structure --- */
 	actions = mapping_at (v->self, "/actions");
@@ -3986,32 +3960,23 @@ static void
 validate_locale (Validation *v)
 {
 	g_autoptr(GError) error = NULL;
-	g_autofree gchar *temp = NULL;
 	YamlNode *strings_node;
 	YamlMapping *strings;
 	LrgEditorDocument *ref;
 	guint i;
 
-	/* --- the engine loader (file only) --- */
-	temp = write_temp (v->text, v->length, &error);
-	if (temp == NULL)
-	{
-		add_issue (v, LRG_EDITOR_PROBLEM_WARNING, NULL, "loader not run: %s", error->message);
-		g_clear_error (&error);
-	}
-	else
+	/* --- the engine loader, on the text itself --- */
 	{
 		g_autoptr(LrgLocale) locale = NULL;
-		Capture capture = { v, TRUE, temp };
+		Capture capture = { v, TRUE, DATA_SOURCE };
 		guint handler;
 
 		handler = g_log_set_handler (LRG_LOG_DOMAIN_I18N, G_LOG_LEVEL_WARNING | G_LOG_LEVEL_MESSAGE,
 		                             capture_log, &capture);
-		locale = lrg_locale_new_from_file (temp, &error);
+		locale = lrg_locale_new_from_data (v->text, (gssize) v->length, &error);
 		g_log_remove_handler (LRG_LOG_DOMAIN_I18N, handler);
 		if (locale == NULL)
-			add_loader_error (v, error, temp);
-		g_unlink (temp);
+			add_loader_error (v, error, DATA_SOURCE);
 	}
 
 	/* --- structure of strings --- */
@@ -4128,33 +4093,19 @@ validate_sound_bank (Validation *v)
 
 	/*
 	 * --- the engine loader ---
-	 * It decodes every sound (which needs audio files and, for playback
-	 * objects, the audio device), so it runs on a copy without `sounds`:
-	 * that still checks the root, `name` and `base_path` the engine way.
-	 * The sounds themselves are checked below.
+	 * Manifest only: it reads the whole manifest the engine way (root,
+	 * `name`, `base_path`, `volume`, `sounds`) without decoding any audio,
+	 * so it needs neither the sound files nor the audio device. The files
+	 * themselves are checked below.
 	 */
 	if (yaml_node_get_node_type (v->self->root) == YAML_NODE_MAPPING)
 	{
-		g_autoptr(YamlNode) copy = yaml_node_copy (v->self->root);
-		g_autofree gchar *stripped = NULL;
-		g_autofree gchar *temp = NULL;
-		gsize length;
+		g_autofree gchar *base_dir = document_base_dir (v->self);
+		g_autoptr(LrgSoundBank) bank = NULL;
 
-		yaml_mapping_remove_member (yaml_node_get_mapping (copy), "sounds");
-		stripped = serialize_node (copy, &length);
-		temp = write_temp (stripped, length, &error);
-		if (temp != NULL)
-		{
-			g_autoptr(LrgSoundBank) bank = lrg_sound_bank_new_from_file (temp, &error);
-
-			if (bank == NULL)
-				add_loader_error (v, error, temp);
-			g_unlink (temp);
-		}
-		else
-		{
-			add_issue (v, LRG_EDITOR_PROBLEM_WARNING, NULL, "loader not run: %s", error->message);
-		}
+		bank = lrg_sound_bank_new_from_data (v->text, (gssize) v->length, base_dir, TRUE, &error);
+		if (bank == NULL)
+			add_loader_error (v, error, DATA_SOURCE);
 	}
 	else
 	{
@@ -4228,7 +4179,6 @@ validate_hud_layout (Validation *v)
 	static const gchar * const root_keys[] = { "version", "pieces", NULL };
 	static const gchar * const piece_keys[] = { "anchor", "x", "y", "locked", "hidden", NULL };
 	g_autoptr(GError) error = NULL;
-	g_autofree gchar *temp = NULL;
 	YamlMapping *root;
 	YamlNode *pieces_node;
 	YamlMapping *pieces;
@@ -4318,19 +4268,13 @@ validate_hud_layout (Validation *v)
 	g_type_class_unref (anchors);
 
 	/* --- the engine loader; its first error only when ours found none --- */
-	temp = write_temp (v->text, v->length, &error);
-	if (temp == NULL)
-	{
-		add_issue (v, LRG_EDITOR_PROBLEM_WARNING, NULL, "loader not run: %s", error->message);
-		return;
-	}
 	{
 		g_autoptr(LrgHudLayout) layout = lrg_hud_layout_new ();
 
-		if (!lrg_hud_layout_load_from_file (layout, temp, &error) && count_errors (v) == errors_before)
-			add_loader_error (v, error, temp);
+		if (!lrg_hud_layout_load_from_data (layout, v->text, (gssize) v->length, &error) &&
+		    count_errors (v) == errors_before)
+			add_loader_error (v, error, DATA_SOURCE);
 	}
-	g_unlink (temp);
 }
 
 /* ==========================================================================
@@ -4481,7 +4425,7 @@ validate_dialog_tree (Validation *v)
 	/* --- the engine loader (from memory); its first error only when ours found none --- */
 	{
 		g_autoptr(LrgDialogTree) tree = NULL;
-		Capture capture = { v, TRUE, NULL };
+		Capture capture = { v, TRUE, DATA_SOURCE };
 		guint handler;
 
 		handler = g_log_set_handler (LRG_LOG_DOMAIN_DIALOG, G_LOG_LEVEL_WARNING | G_LOG_LEVEL_MESSAGE,
@@ -4489,7 +4433,7 @@ validate_dialog_tree (Validation *v)
 		tree = lrg_dialog_tree_new_from_data (v->text, (gssize) v->length, &error);
 		g_log_remove_handler (LRG_LOG_DOMAIN_DIALOG, handler);
 		if (tree == NULL && count_errors (v) == errors_before)
-			add_loader_error (v, error, NULL);
+			add_loader_error (v, error, DATA_SOURCE);
 	}
 }
 

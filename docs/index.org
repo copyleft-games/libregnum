@@ -225,6 +225,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
+- [[file:guides/writing-a-data-format.org][Writing a Data Format]] - Composite YAML formats on LrgDataLoader: types, references, strict validation, writers, tests
 
 *** UI Framework
 :PROPERTIES:

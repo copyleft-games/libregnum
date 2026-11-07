@@ -71,7 +71,7 @@ See [[../../concepts/data-loading.md][Data Loading Concept]] for detailed inform
 :PROPERTIES:
 :CUSTOM_ID: complete-api-reference
 :END:
-See =/var/home/zach/Source/Projects/libregnum/src/core/lrg-data-loader.h= for full function signatures.
+See =src/core/lrg-data-loader.h= for full function signatures; the composite API is listed in [[#composite-api][Composite API reference]] below.
 
 ** Example
 :PROPERTIES:
@@ -143,3 +143,368 @@ A failure returns NULL and a =GError=. A successful call returns a new object
 owned by the caller; it does not modify an existing object. Asset-manager
 reloads use this behavior to keep the previous definition until a replacement
 has fully loaded and validated.
+
+* Composite documents
+:PROPERTIES:
+:CUSTOM_ID: composite-documents
+:END:
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: composite-overview
+:END:
+The flat loaders above build one object from =type:= plus its properties. Composite documents (0.9.0) build a whole tree of typed objects from one YAML file, and write it back: this is the shared base of the engine's structured formats (materials, post stacks, animation graphs, behaviour trees, navigation, particles, terrain, mixer graphs), and of any format a game defines with its own GObject types.
+
+A composite document is made of four things:
+
+- *Typed sub-objects*: a property whose type is a =GObject= class (or interface) takes a nested mapping, built as an object of that type. =type:= may be left out when the property's type is concrete; it names a registered subtype otherwise.
+- *Typed lists*: a =GListModel= property, or a =GPtrArray= property with a declared item type, takes a sequence of such mappings.
+- *Child lists*: an object implementing =LrgDataContainer= takes a =children:= sequence; each element is built and handed to the container in order.
+- *References*: anywhere an object goes, ={ ref: <text> }= stands for an object resolved after the whole document is built: another object of the document (by its =guid= or =id=, or by a =#/pointer=), or one a pluggable resolver returns (an asset by path, an object by GUID). Forward references work.
+
+Validation is strict and complete: every unknown key, wrong value, unknown or mismatched type and unresolved reference is reported, each with its file, line, column and document path, in one =GError=. =lrg_data_loader_save_to_data()= writes the same structure back, deterministically: saving a tree loaded from saved text gives the same bytes.
+
+Flat documents are composite documents with no nesting: they load exactly as with =lrg_data_loader_load_file_validated()=, and every existing API keeps its behaviour.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: composite-concepts
+:END:
+*** Paths
+:PROPERTIES:
+:CUSTOM_ID: composite-paths
+:END:
+Every value of a document has a path, a JSON pointer: the root is =/= (the empty pointer), =/material= is the value of the root's =material= key, =/children/2/layers/0= the first layer of the third child. A =~= in a key is written =~0= and a =/= is written =~1=. Paths appear in error messages and in =#/pointer= references.
+
+*** Slots and implied types
+:PROPERTIES:
+:CUSTOM_ID: composite-slots
+:END:
+Every place an object goes is a slot with a type: an object property's value type, a list's item type, a container's child type, the root type passed by the caller. A mapping in a slot is built as:
+
+| Mapping | Slot type | Result |
+|---------+-----------+--------|
+| has =type: name= | any | the registered type =name=; an error unless it is an instantiable =GObject= type that is (a subtype of) the slot type |
+| no =type:= | concrete class other than =GObject= | the slot type itself |
+| no =type:= | abstract class, interface, =GObject=, none | error: =missing 'type'= |
+
+=type= is the loader's =type-field-name= (see =lrg_data_loader_set_type_field_name()=), the same key flat documents use.
+
+*** Property kinds
+:PROPERTIES:
+:CUSTOM_ID: composite-property-kinds
+:END:
+| Property value type | Kind | YAML value |
+|---------------------+------+------------|
+| =GListModel= (or an implementation such as =GListStore=) | list | a sequence of object mappings or references; =null= empties it |
+| =G_TYPE_PTR_ARRAY= with an item type from =lrg_data_loader_set_param_item_type()= | list | a sequence of object mappings or references |
+| a =GObject= class or an interface whose prerequisite is =GObject= | object | an object mapping, a reference or =null= |
+| anything else | scalar | as =lrg_data_loader_load_file_validated()= (numbers, booleans, strings, enums by nick, flags as a list of nicks, string lists, raw =YamlNode= values), plus =YamlSerializable= custom properties and boxed types with a yaml-glib boxed deserializer |
+
+A list property is filled in place when it holds a =GListStore= (its =items-changed= fires and the owner keeps its store, so a read-only =GListModel= property works); otherwise a new =GListStore= of the item type (writable =GListModel= properties) or a new =GPtrArray= owning its items is set. The item type of a =GListModel= property defaults to the item type of the store it holds.
+
+Construct-only properties are decoded before the object is built (scalars and sub-objects; a construct-only property cannot hold a reference or a list).
+
+*** Child lists
+:PROPERTIES:
+:CUSTOM_ID: composite-children
+:END:
+=LrgDataContainer= is a =GObject= interface with four virtual functions:
+
+| Vfunc | Used by | Meaning |
+|-------+---------+---------|
+| =add_child (self, child, error)= | loading | append a child; return =FALSE= with =error= set to reject it (the message is reported at the child's path) |
+| =get_n_children (self)= | saving | the number of children |
+| =get_child (self, index)= | saving | the child at =index= (transfer none) |
+| =get_child_type (self)= | both | the type a child mapping without =type:= is built as; =G_TYPE_INVALID= (or a =NULL= vfunc) makes =type:= required |
+
+The key is =children= by default (=lrg_data_loader_set_children_key()=). It only means "child list" on objects implementing the interface; on others it is an ordinary property name. Children are built and added in document order; a list containing references is added after resolution, still in order.
+
+*** References
+:PROPERTIES:
+:CUSTOM_ID: composite-references
+:END:
+A reference is a mapping with the single key =ref= (=LRG_DATA_LOADER_REF_KEY=) and a non-empty scalar value. It may stand in any object slot: an object property, a list element, a child. Every reference is resolved after the whole document has been built, in document order, then assigned, so a reference may point forward, backward, up (a cycle is fine: =ref: '#'= is the root) or into another file.
+
+| =ref:= value | Resolved as |
+|--------------+-------------|
+| =#= | the root object |
+| =#/path= | the object built at that path of this document |
+| any other text | the object of this document whose =guid= or =id= string property has that value; else the resolver's answer |
+
+An id shared by two objects of the document is ambiguous: a reference to it is an error (=ambiguous reference=), the objects themselves are fine. The resolved object must fit the slot's type (=reference 'x' is a TestNode, not a TestMaterial=). A reference shares the object: the slot gets the same instance, not a copy.
+
+The resolver (=lrg_data_loader_set_resolver()=) is an =LrgDataResolveFunc=: it gets the loader, the reference text and the slot's type, and returns a new reference to an object, or =NULL= (unresolved), or =NULL= with a =GError= (its message is reported at the reference's path). It is where assets come from: an asset manager lookup by path, a GUID table, another composite document loaded on demand. Every object the resolver returns is tagged with its reference (=lrg_data_loader_get_object_ref()=), so saving writes it back as the same =ref:=.
+
+** Format schema
+:PROPERTIES:
+:CUSTOM_ID: composite-schema
+:END:
+#+begin_src yaml
+# scene.yaml: a composite document (every key below is a property of its object)
+type: node                     # the root names its registered type (unless the caller passes a root type)
+id: root                       # a `guid` or `id` string property also makes the object referable by that text
+name: Level                    # scalars: strings, numbers, booleans ...
+shape: sphere                  # ... enums by nick ...
+tags: [outdoor, night]         # ... string lists, flags as lists of nicks
+material:                      # an object property of a concrete type: `type:` is implied
+  color: red
+  roughness: 0.25              # GParamSpec bounds are enforced (0..1 here)
+target: {ref: lamp}            # a reference, resolved after the build: a forward reference by id
+layers:                        # a GListModel property: a list of objects
+  - color: green               # item type implied
+  - type: shiny                # a registered subtype
+    id: chrome
+    gloss: 2.5
+decals:                        # a GPtrArray property with a declared item type
+  - {ref: chrome}              # a reference inside a list
+  - {ref: lib/rust.mat}        # an external reference: the resolver's job
+children:                      # the LrgDataContainer child list
+  - id: lamp                   # child type implied by get_child_type ()
+    material: {ref: '#/material'}   # a pointer into this document
+    children:
+      - id: bulb
+        target: {ref: '#'}     # the root
+  - {ref: '#/children/0/children/0'} # a child shared with another list
+#+end_src
+
+Reserved keys in every object mapping: the type field (=type=), =ref= (only alone, in a reference) and, on containers, the children key (=children=). A property with one of these names cannot be set from a composite document.
+
+** Strict validation
+:PROPERTIES:
+:CUSTOM_ID: composite-validation
+:END:
+Building goes on after a problem, so one load reports everything it can. Each problem is one line of the =GError= message:
+
+#+begin_example
+scene.yaml:2:1: /count: invalid value '300' for property 'count' (expected an integer from 0 to 100)
+scene.yaml:5:3: /material/colour: unknown property 'colour' of TestMaterial
+scene.yaml:9:5: /children/0/visible: invalid value 'maybe' for property 'visible' (expected true or false)
+scene.yaml:4:5: /children/1: unresolved reference 'nobody'
+#+end_example
+
+- The position is the line and column (1-based) of the value's key (of the element, in a sequence); when the path has no position of its own (a missing key) the nearest ancestor's is used. Positions come from a libyaml event walk of the source text, done only when an error is reported (yaml-glib nodes carry no positions). =lrg_data_loader_load_composite_file()= and =lrg_data_loader_load_composite_data()= have the text; documents built from an already parsed node have paths only.
+- At most 32 problems are spelled out; a last line counts the rest.
+- The error code is the first problem's: =LRG_DATA_LOADER_ERROR_PARSE= (not YAML, not one document, root not a mapping), =LRG_DATA_LOADER_ERROR_TYPE= (missing, unknown, abstract or mismatched types, a reference of the wrong type), =LRG_DATA_LOADER_ERROR_PROPERTY= (unknown, read-only or invalid properties, malformed or unresolved references, a child the container rejects).
+- Unknown keys are errors while =strict= is =TRUE= (the default). With =lrg_data_loader_set_strict(loader, FALSE)= they are logged as warnings (domain =Libregnum-Core=) and skipped; everything else is still an error.
+- Nothing half-built is returned: on any problem the result is =NULL= and every object built so far is released.
+
+** Saving
+:PROPERTIES:
+:CUSTOM_ID: composite-saving
+:END:
+=lrg_data_loader_save_to_data()= and =lrg_data_loader_save_to_file()= write an object tree in the format above:
+
+- The root always gets =type:=; any other object gets it when its type is not exactly the slot's implied type. The name is the type's registry name (=lrg_registry_lookup_name()=, the smallest name when a type has several); an unregistered type fails with =LRG_DATA_LOADER_ERROR_TYPE=.
+- Properties are written in class order (parent class first, then installation order) when they are readable, writable (or a read-only property holding a =GListStore=), not deprecated, and different from a freshly constructed instance of the same type (=g_object_new(type, NULL)=, made once per type per save). Floats and doubles are compared exactly and written in their shortest exact form (=0.1=, not =0.10000000149011612=); strings that would read back as null (=""=, =~=, =null=) are double-quoted.
+- Object properties become nested mappings, lists become sequences, container children the =children:= list.
+- An object marked with a reference (=lrg_data_loader_set_object_ref()=, or resolved through the resolver) is written as that =ref:=. An object met a second time is written as a reference to its first, inline copy: by its =guid=, else its =id=, when that text is unique in the document, else by =#/pointer=.
+- The output is deterministic. Saving a tree loaded from saved text gives the same bytes; the first save of hand-written text may differ in layout (block style, quoting, a forward reference becoming the inline copy).
+
+** Schema hints for list properties
+:PROPERTIES:
+:CUSTOM_ID: composite-hints
+:END:
+A =GPtrArray= property does not say what it holds, so it is only composite once its item type is declared, in class_init:
+
+#+begin_src C
+pspec = g_param_spec_boxed ("decals", NULL, NULL, G_TYPE_PTR_ARRAY,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+lrg_data_loader_set_param_item_type (pspec, MY_TYPE_MATERIAL);
+g_object_class_install_property (object_class, PROP_DECALS, pspec);
+#+end_src
+
+The same hint narrows a =GListModel= property (the item type is otherwise read from the store the property holds, or is =GObject=, which makes =type:= required). =lrg_data_loader_get_param_item_type()= reads it back. The array set by the loader owns its items (=g_object_unref= free function).
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: composite-example
+:END:
+#+begin_src C
+#include <libregnum.h>
+
+/* assets referenced as "materials/<name>.rmat" come from the asset manager */
+static GObject *
+resolve_asset (LrgDataLoader  *loader,
+               const gchar    *ref,
+               GType           expected_type,
+               gpointer        user_data,
+               GError        **error)
+{
+	MyAssets *assets = user_data;
+
+	return my_assets_lookup (assets, ref, expected_type, error);
+}
+
+static gboolean
+load_and_save (MyAssets  *assets,
+               GError   **error)
+{
+	g_autoptr(LrgRegistry) registry = lrg_registry_new ();
+	g_autoptr(LrgDataLoader) loader = lrg_data_loader_new ();
+	g_autoptr(GObject) scene = NULL;
+
+	lrg_registry_register (registry, "node", MY_TYPE_NODE);
+	lrg_registry_register (registry, "material", MY_TYPE_MATERIAL);
+	lrg_data_loader_set_registry (loader, registry);
+	lrg_data_loader_set_resolver (loader, resolve_asset, g_object_ref (assets), g_object_unref);
+
+	scene = lrg_data_loader_load_composite_file (loader, "scene.yaml", G_TYPE_INVALID, error);
+	if (scene == NULL)
+		return FALSE;   /* every problem, with file:line:column and path */
+
+	/* ... edit the tree ... */
+
+	return lrg_data_loader_save_to_file (loader, scene, "scene.yaml", error);
+}
+#+end_src
+
+A type that holds children implements the interface:
+
+#+begin_src C
+static gboolean
+my_node_add_child (LrgDataContainer  *container,
+                   GObject           *child,
+                   GError           **error)
+{
+	if (!MY_IS_NODE (child))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		             "a %s cannot be a child of a node", G_OBJECT_TYPE_NAME (child));
+		return FALSE;
+	}
+	g_ptr_array_add (MY_NODE (container)->children, g_object_ref (child));
+	return TRUE;
+}
+
+static guint
+my_node_get_n_children (LrgDataContainer *container)
+{
+	return MY_NODE (container)->children->len;
+}
+
+static GObject *
+my_node_get_child (LrgDataContainer *container,
+                   guint             index)
+{
+	return g_ptr_array_index (MY_NODE (container)->children, index);
+}
+
+static GType
+my_node_get_child_type (LrgDataContainer *container)
+{
+	return MY_TYPE_NODE;
+}
+
+static void
+my_node_container_init (LrgDataContainerInterface *iface)
+{
+	iface->add_child = my_node_add_child;
+	iface->get_n_children = my_node_get_n_children;
+	iface->get_child = my_node_get_child;
+	iface->get_child_type = my_node_get_child_type;
+}
+
+G_DEFINE_TYPE_WITH_CODE (MyNode, my_node, G_TYPE_OBJECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_DATA_CONTAINER, my_node_container_init))
+#+end_src
+
+=tests/test-data-loader-composite.c= is a complete, runnable version of both (a node container with object, reference, =GListModel= and =GPtrArray= properties, a material class and a subclass).
+
+** Composite API reference
+:PROPERTIES:
+:CUSTOM_ID: composite-api
+:END:
+*** Loading
+:PROPERTIES:
+:CUSTOM_ID: composite-api-loading
+:END:
+| Function | Notes |
+|----------+-------|
+| =GObject *lrg_data_loader_load_composite_data (LrgDataLoader *self, const gchar *data, gssize length, GType root_type, const gchar *source_name, GError **error)= | Loads a document from text. =length= -1 for nul-terminated. =root_type= =G_TYPE_INVALID= takes the root type from =type:=; a concrete type lets the root leave =type:= out. =source_name= (nullable) names the text in messages (=(data)= when =NULL=). Returns a new object (transfer full) or =NULL= with =error= set |
+| =GObject *lrg_data_loader_load_composite_file (LrgDataLoader *self, const gchar *path, GType root_type, GError **error)= | Reads =path= (a =GFileError= when it cannot) and loads it with the path as source name |
+
+*** Saving
+:PROPERTIES:
+:CUSTOM_ID: composite-api-saving
+:END:
+| Function | Notes |
+|----------+-------|
+| =gchar *lrg_data_loader_save_to_data (LrgDataLoader *self, GObject *object, gsize *length, GError **error)= | The document text (transfer full), =length= optional. Fails when a written type is not registered |
+| =gboolean lrg_data_loader_save_to_file (LrgDataLoader *self, GObject *object, const gchar *path, GError **error)= | Writes the same text to =path= (=g_file_set_contents()=, atomic) |
+
+*** Settings
+:PROPERTIES:
+:CUSTOM_ID: composite-api-settings
+:END:
+| Function / property | Notes |
+|---------------------+-------|
+| =lrg_data_loader_set_strict()=, =lrg_data_loader_get_strict()=, property =strict= (boolean, default =TRUE=) | Whether unknown keys are errors or warnings |
+| =lrg_data_loader_set_children_key()=, =lrg_data_loader_get_children_key()=, property =children-key= (string, default =children=) | The key of a container's child list; must be non-empty |
+| =lrg_data_loader_set_resolver (LrgDataLoader *self, LrgDataResolveFunc func, gpointer user_data, GDestroyNotify destroy)= | The external resolver (=func= nullable; scope notified: =destroy= frees =user_data= when replaced or when the loader is finalized) |
+| =LrgDataResolveFunc= | =GObject *(*) (LrgDataLoader *loader, const gchar *ref, GType expected_type, gpointer user_data, GError **error)=; returns transfer full, nullable |
+
+*** Objects and schema hints
+:PROPERTIES:
+:CUSTOM_ID: composite-api-objects
+:END:
+| Function | Notes |
+|----------+-------|
+| =const gchar *lrg_data_loader_get_object_ref (GObject *object)= | The reference an object was resolved from or marked with (transfer none, nullable) |
+| =void lrg_data_loader_set_object_ref (GObject *object, const gchar *ref)= | Marks (or with =NULL= unmarks) an object as external: saving writes =ref:= wherever it appears. Stored as object qdata |
+| =void lrg_data_loader_set_param_item_type (GParamSpec *pspec, GType item_type)= | Declares a list property's item type (a =GObject= type). Stored as pspec qdata |
+| =GType lrg_data_loader_get_param_item_type (GParamSpec *pspec)= | The declared item type, or =G_TYPE_INVALID= |
+| =LRG_DATA_LOADER_REF_KEY= | ="ref"= |
+
+*** LrgDataContainer
+:PROPERTIES:
+:CUSTOM_ID: composite-api-container
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_data_container_add_child (LrgDataContainer *self, GObject *child, GError **error)= | Calls =add_child= (transfer none: the container refs what it keeps). Without the vfunc it fails with =LRG_DATA_LOADER_ERROR_FAILED= |
+| =guint lrg_data_container_get_n_children (LrgDataContainer *self)= | 0 without the vfunc |
+| =GObject *lrg_data_container_get_child (LrgDataContainer *self, guint index)= | Transfer none; =NULL= when out of range or without the vfunc |
+| =GType lrg_data_container_get_child_type (LrgDataContainer *self)= | =G_TYPE_INVALID= without the vfunc |
+| =LRG_TYPE_DATA_CONTAINER=, =LrgDataContainerInterface= | The interface type and its vtable (=parent_iface=, the four vfuncs, 8 reserved slots) |
+
+*** In-tree helpers
+:PROPERTIES:
+:CUSTOM_ID: composite-api-internal
+:END:
+The header also declares, for code built into libregnum only (=LIBREGNUM_COMPILATION=, hidden from the GIR because they use yaml-glib types), =lrg_data_loader_load_composite_node()=, =lrg_data_loader_save_to_node()= and the writer helpers =lrg_data_yaml_string()=, =lrg_data_yaml_double()=, =lrg_data_yaml_float()=, =lrg_data_yaml_int()=, =lrg_data_yaml_boolean()=, =lrg_data_yaml_to_data()=, =lrg_data_yaml_to_file()=. The engine's format writers (locale, dialog tree, sound bank, input map, HUD layout) use them; [[file:../../guides/writing-a-data-format.org][Writing a data format]] explains them.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: composite-performance
+:END:
+- Loading is one pass over the parsed tree plus one pass over the references; each object costs a =g_object_new_with_properties()= and one property set per key. Class lookups are cached by GObject. A document of a few thousand objects loads in milliseconds.
+- Positions are computed only when an error is reported (a second libyaml parse of the text), so valid documents pay nothing for them.
+- Saving constructs one pristine instance per distinct type to compare against. Types whose construction is expensive (opening devices, allocating GPU resources) should defer that work out of =init= and =constructed=; this is good practice for loadable types anyway.
+- References are resolved through hash tables (by id, by path); the external resolver is called once per external reference occurrence (cache in the resolver if the same asset appears many times).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: composite-pitfalls
+:END:
+- A =GPtrArray= property without =lrg_data_loader_set_param_item_type()= is not composite: a document setting it fails (=cannot hold=), and saving skips it.
+- =type=, =ref= and (on containers) =children= are reserved keys: a property with one of those names cannot be set from a document. Rename the property or change the loader's =type-field-name= / =children-key=.
+- An =id= or =guid= shared by two objects makes references by that text ambiguous; use a =#/pointer= or unique ids.
+- A construct-only property cannot hold a reference or a list (it is needed before the reference pass runs).
+- Saving compares with =g_object_new(type, NULL)=: a type that needs construct properties to be valid cannot be saved, and a type whose =init= has side effects (registering itself somewhere) has them once per save.
+- Properties that only make sense together are set in document order; a setter that depends on another property must cope with either order, or the type must defer the check (for example to =add_child= or a validation pass).
+- Equality of boxed values other than string lists and =YamlNode= is by pointer, so such properties are always written.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: composite-editor
+:END:
+Composite documents are YAML, so the editor opens them as text documents (=lrgeditorctl open=, the YAML pane, the document model that keeps comments and unknown keys) like any data file. The asset formats that later 0.9.0 milestones build on the composite loader (=.rmat=, =.rpost=, =.ranim=, =.rbt=, =.rnav=, =.rparticles=, =.rterrain=, =.rmixer=) each get their own data editor, whose validation runs =lrg_data_loader_load_composite_data()= on the document text: the loader's =line:column: /path:= messages map directly onto the problems panel and the YAML pane, with no temporary file. Until a format has its editor, validate a document from a script or a test with the same call. The data editors of [[file:../../editor/data-editors.org][Data editors]] already run the engine loaders on the document text (see there).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: composite-see-also
+:END:
+- [[file:../../guides/writing-a-data-format.org][Writing a data format]]: the format-author guide (types, loader, writer, tests, docs)
+- [[file:registry.org][LrgRegistry]]: the type names =type:= uses
+- [[file:../i18n/locale.org][LrgLocale]], [[file:../dialog/dialog-tree.org][LrgDialogTree]], [[file:../audio/sound-bank.org][LrgSoundBank]], [[file:../input/input-map.org][LrgInputMap]], [[file:../hud/index.org][LrgHudLayout]]: formats with writers built on the same helpers
+- =tests/test-data-loader-composite.c=, =tests/test-format-writers.c=
