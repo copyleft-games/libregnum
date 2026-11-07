@@ -98,6 +98,8 @@ Both keys also accept the hyphenated spelling (=store-prefab-instances=, =apply-
 
 The root-level =physics:= block (next to =project:=) holds the collision layers and collide matrix (=layers=, =no_collide=); see [[file:../modules/physics/physics-layers.org::#format][Physics Layers]]. =lrg_project_get_physics_layers()= exposes it and =lrg_project_save()= writes it, keeping other keys of the block.
 
+The root-level =audio:= block names the project's default mixer layout, =audio: { mixer: audio/main.rmixer }= (a =.rmixer= path relative to the project root; also read inside =project:=). =lrg_project_get_audio_mixer()= returns it and =lrg_project_set_audio_mixer()= changes it (=NULL= or empty for none); =lrg_project_save()= writes the block back, keeping its other keys. Games load the mixer with =lrg_audio_manager_load_project_mixer()= and play-in-editor does the same; see [[file:../modules/audio/mixer-asset.org][Mixer assets]].
+
 ** LrgAssetDatabase and LrgAssetEntry
 :PROPERTIES:
 :CUSTOM_ID: lrgassetdatabase-and-lrgassetentry

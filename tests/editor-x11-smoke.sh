@@ -135,6 +135,16 @@ sleep 1.5
 
 export DISPLAY="${display_num}"
 window="$(xdotool search --name 'libregnum editor' | head -n 1)"
+
+# Wait until the editor renders steadily.  The first frames compile the
+# world renderer's shaders and take seconds each on software GL; a click
+# sent then has its press and release land in one input poll and is lost.
+for _ in $(seq 1 120)
+do
+	fps="$(ipc ui.state | yq -p json '.fps' | awk '{ printf "%d", $1 }')"
+	[[ "${fps:-0}" -ge 4 ]] && break
+	sleep 0.5
+done
 state="$(ipc ui.state)"
 
 # chord MOD KEY: hold MOD across at least one editor frame while KEY is

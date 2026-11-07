@@ -348,18 +348,21 @@ static void
 test_photo_mode_screenshot_directory (void)
 {
     LrgPhotoMode *mode;
+    g_autofree gchar *saved = NULL;
 
     mode = lrg_photo_mode_get_default ();
 
-    /* Should have a default directory */
+    /* Should have a default directory (Pictures, or $HOME without one) */
     g_assert_nonnull (lrg_photo_mode_get_screenshot_directory (mode));
+    saved = g_strdup (lrg_photo_mode_get_screenshot_directory (mode));
 
     /* Set custom directory */
     lrg_photo_mode_set_screenshot_directory (mode, "/tmp/screenshots");
     g_assert_cmpstr (lrg_photo_mode_get_screenshot_directory (mode), ==, "/tmp/screenshots");
 
-    /* Reset to default */
-    lrg_photo_mode_set_screenshot_directory (mode, g_get_user_special_dir (G_USER_DIRECTORY_PICTURES));
+    /* Restore the singleton's previous directory; the XDG Pictures dir is
+     * NULL when no user-dirs.dirs exists (e.g. under build-aux/xrun.sh) */
+    lrg_photo_mode_set_screenshot_directory (mode, saved);
 }
 
 static void
