@@ -111,7 +111,7 @@ centre () {
 	yq -p json -o tsv '.' <<<"${rect}" | awk '{ printf "%d %d\n", $1 + $3 / 2, $2 + $4 / 2 }'
 }
 
-Xvfb "${display_num}" -screen 0 1920x1080x24 >"${work}/xvfb.log" 2>&1 &
+Xvfb "${display_num}" -screen 0 1920x1080x24 -noreset >"${work}/xvfb.log" 2>&1 &
 xvfb_pid=$!
 sleep 1
 

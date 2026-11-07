@@ -2,6 +2,14 @@
 
 Last updated: 2026-11-07
 
+## In Progress: v0.9.0 (closing the gap analysis)
+
+One release that closes every engine and editor row of `docs/editor/gap-analysis.org`, built milestone by milestone on `feat/v0.9.0`.
+
+- **Done, M0 foundations**: runtime level module `src/level/` (levels load with `BUILD_EDITOR=0`), core `lrg-math3d`, composite YAML loader (sub-objects, lists, children, `{ref:}`, strict mode) with writers for locales, dialog trees, sound banks and input maps, `LrgDebugDraw`, render-layer cull masks.
+- **Done, M1 3D runtime**: `LrgEntity3D` + `LrgWorld3D`, 3D `LrgComponent` hooks, mesh/light/camera/audio/sprite/tilemap/spawn/trigger/skinned components, `LrgWorld3DRenderer` shared by editor and game, `lrg_level_instantiate_3d()`, 3D play-in-editor, runtime prefab references and variants, `guid:` resolution and runtime import settings.
+- **Next**: M2 rendering (materials, PBR/IBL, post stack), M3 lighting bake, M4 animation, M5 physics, M6 navigation/AI, M7 VFX/terrain/audio/2D, M8 scripting/profiling, M9 export/plugins, M10 editor workflows and collaboration.
+
 ## Recently Shipped
 
 ### v0.8.2: texture panels and new 3D modes (`src/term/`)
