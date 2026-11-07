@@ -70,6 +70,12 @@ TEST_SOURCES := \
 	test-atlas-packing.c \
 	test-registry.c \
 	test-data-loader.c \
+	test-math3d.c \
+	test-debug-draw.c \
+	test-data-loader-composite.c \
+	test-format-writers.c \
+	test-render-layers.c \
+	test-level-runtime.c \
 	test-asset-dependencies.c \
 	test-asset-manager.c \
 	test-graphics.c \

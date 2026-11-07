@@ -33,6 +33,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-engine.h \
 	src/core/lrg-registry.h \
 	src/core/lrg-data-loader.h \
+	src/core/lrg-math3d.h \
 	src/core/lrg-asset-manager.h \
 	src/core/lrg-asset-pack.h \
 	src/core/lrg-event.h \
@@ -307,6 +308,7 @@ PUBLIC_HEADERS := \
 	src/physics/lrg-character-controller.h \
 	src/physics/lrg-dynamics.h \
 	src/debug/lrg-profiler.h \
+	src/debug/lrg-debug-draw.h \
 	src/debug/lrg-debug-console.h \
 	src/debug/lrg-debug-overlay.h \
 	src/debug/lrg-inspector.h \
@@ -739,6 +741,7 @@ SOURCES := \
 	src/core/lrg-engine.c \
 	src/core/lrg-registry.c \
 	src/core/lrg-data-loader.c \
+	src/core/lrg-math3d.c \
 	src/core/lrg-asset-manager.c \
 	src/core/lrg-asset-pack.c \
 	src/core/lrg-event.c \
@@ -1016,6 +1019,7 @@ SOURCES := \
 	src/physics/lrg-character-controller.c \
 	src/physics/lrg-dynamics.c \
 	src/debug/lrg-profiler.c \
+	src/debug/lrg-debug-draw.c \
 	src/debug/lrg-debug-console.c \
 	src/debug/lrg-debug-overlay.c \
 	src/debug/lrg-inspector.c \

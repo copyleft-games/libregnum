@@ -61,6 +61,7 @@
 #include "core/lrg-engine.h"
 #include "core/lrg-registry.h"
 #include "core/lrg-data-loader.h"
+#include "core/lrg-math3d.h"
 #include "core/lrg-asset-manager.h"
 #include "core/lrg-asset-pack.h"
 #include "core/lrg-event.h"
@@ -384,6 +385,7 @@
 
 /* Debug module */
 #include "debug/lrg-profiler.h"
+#include "debug/lrg-debug-draw.h"
 #include "debug/lrg-debug-console.h"
 #include "debug/lrg-debug-overlay.h"
 #include "debug/lrg-inspector.h"
