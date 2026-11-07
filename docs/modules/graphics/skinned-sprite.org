@@ -105,7 +105,7 @@ CPU skinning costs about 24 .. 38 ns per vertex with four influences (1024 verti
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The next editor wave adds a 2D mesh tool on top of this API: cutting sprites into grids, adding and moving vertices, triangulating, painting weights and an automatic-weights button; the wireframe overlay is =lrg_skinned_sprite_draw_wireframe()=. See [[file:../animation/skeleton2d.org::#editor][LrgSkeleton2D: using it from the editor]].
+The [[file:../../editor/skeleton2d-editor.org][2D Rig Editor]] has a 2D mesh tool on top of this API: cutting sprites into grids, adding and moving vertices, triangulating, painting weights and an automatic-weights button; the wireframe overlay is =lrg_skinned_sprite_draw_wireframe()=. See [[file:../animation/skeleton2d.org::#editor][LrgSkeleton2D: using it from the editor]].
 
 ** See also
 :PROPERTIES:

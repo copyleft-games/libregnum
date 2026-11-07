@@ -16,7 +16,7 @@
 - *Types*: =LrgSkeleton2D= and =LrgSkeleton2DClip= (final GObjects, =LRG_TYPE_SKELETON2D=, =LRG_TYPE_SKELETON2D_CLIP=, GIR =Libregnum.Skeleton2D=, =Libregnum.Skeleton2DClip=); enums =LrgSkeleton2DError=, =LrgSkeleton2DCurve=, =LrgSkeleton2DChannel=
 - *Since*: 0.9.0
 - *Headless*: everything except drawing (=lrg_skeleton2d_draw()=, =lrg_skeleton2d_draw_bones()=, =lrg_skeleton2d_load_textures()=) runs without a window
-- *Format*: =.rskel2d= (version 1), our own design. Spine and DragonBones files are not read or written: their formats are proprietary or restrictively licensed. Rigs are authored in code, by hand in YAML, or (next release) with the editor's 2D rigging tools.
+- *Format*: =.rskel2d= (version 1), our own design. Spine and DragonBones files are not read or written: their formats are proprietary or restrictively licensed. Rigs are authored in code, by hand in YAML, or with the editor's [[file:../../editor/skeleton2d-editor.org][2D Rig Editor]].
 
 ** Overview
 :PROPERTIES:
@@ -467,7 +467,7 @@ So a hundred animated 100-vertex characters cost well under a millisecond of CPU
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-This release ships the engine side; the 2D rigging tools arrive in the next editor wave and are built on these hooks:
+The editor's 2D rig editor ([[file:../../editor/skeleton2d-editor.org][2D Rig Editor]]) is built on these hooks:
 - *Bone tool*: create bones by dragging (=lrg_skeleton2d_add_bone()=), select with =lrg_skeleton2d_pick_bone()=, edit the rest pose with =lrg_skeleton2d_set_bone_setup()= and =lrg_skeleton2d_set_bone_length()=; the overlay is =lrg_skeleton2d_draw_bones()=.
 - *Mesh tool*: cut a sprite into a grid (=lrg_skinned_sprite_new_grid()=) or place vertices (=lrg_skinned_sprite_add_vertex()=, =lrg_skinned_sprite_set_vertex()=, =lrg_skinned_sprite_add_triangle()=), wireframe with =lrg_skinned_sprite_draw_wireframe()=.
 - *Weights*: an "automatic weights" button calls =lrg_skeleton2d_compute_auto_weights()=; weight painting edits =lrg_skinned_sprite_set_weights()=.
@@ -475,7 +475,6 @@ This release ships the engine side; the 2D rigging tools arrive in the next edit
 - *Dopesheet / clip preview*: rows from =lrg_skeleton2d_clip_get_targets()=, keys from =lrg_skeleton2d_clip_get_key()= and friends, scrubbing with =lrg_skeleton2d_component_set_time()=.
 - *Validation*: the document editor runs =lrg_skeleton2d_new_from_data()= on the =.rskel2d= text; messages carry the node path.
 
-Until then, author rigs in code or YAML and preview them with a small program (or a level with an =LrgGameObject= carrying the component).
 
 ** See also
 :PROPERTIES:

@@ -1,0 +1,315 @@
+#+title: 2D Rig Editor
+#+description: The lrgeditor tool for .rskel2d 2D skeletons: textured canvas, bone tool, setup-pose drags, slots and attachments with image drops, mesh tool with automatic triangulation, automatic and painted weights, skins, animation mode with auto-key, dope sheet, curves and play/loop preview, and the skel2d.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor animation 2d skeleton
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* 2D Rig Editor
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > 2D Rig Editor
+#+end_quote
+
+The 2D rig editor (=LrgEditorSkeleton2DEditor=, =src/editor/ui/data/lrg-editor-skeleton2d-editor.{h,c}=, since 0.9.0) rigs and animates 2D characters stored as =.rskel2d= files (the format and the runtime are described in [[file:../modules/animation/skeleton2d.org][LrgSkeleton2D]] and [[file:../modules/graphics/skinned-sprite.org][LrgSkinnedSprite]]). It is one of the [[file:data-editors.org][data editors]]: it sits on an =LrgEditorDocument= of format =LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D=, so it has the shared toolbar (title with a dirty dot, Save, Revert, Validate, the issue chip), the "changed on disk" banner, the issues list and its own undo history, separate from the level's.
+
+#+begin_example
++---------------------------------------------------------------------------------------+
+| hero.rskel2d .  2D skeleton             [Save][Revert][Validate] (Valid)     [Frame]   |
++-----------------------------------------------------------+---------------------------+
+| [Setup][Animate]  [Select][Bone][Mesh][Weights]  [Auto weights][Triangulate] | [+Slot][+Skin][+Clip][^][v][x] |
+| ( Setup . select . drag a joint to move . drag a bone ...)|  BONES                    |
+|                    .-.                                    |   root                    |
+|                   (   )  <- head (textured mesh)          |    hip                    |
+|            <====o--|--   <- arm_r / fore_r kites, joints  |     torso                 |
+|                  /   \                                    |      head  arm_r  fore_r  |
+|                 |torso|  <- mesh wireframe when selected  |  SLOTS . front first      |
+|                  \   /                                    |   arm_r      arm_r        |
+|                  || ||                                    |   head  ...  [eye]        |
+|  (grid, axes through the setup origin)                    |  SKINS  default  gold     |
++-----------------------------------------------------------+  CLIPS  wave  1.20s loop  |
+| [Play][Loop][Key pose][+Clip]          (animation mode)   |---------------------------|
+| fore_r  > rotate   o-----o----------o     | curve view    | v Bone   Name X Y Rotation|
+| arm_r   > rotate   o-----------o          |   /--\        |   Scale X/Y  Length       |
+| events / draw order as ruler flags        |  /    \       | v Slot  v Clip  v Rig     |
++-------------------------------------------+---------------+---------------------------+
+#+end_example
+
+** Opening a rig
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-open
+:END:
+- Double click a =.rskel2d= in the [[file:editor-app.org::#editor-panel-assets][Assets panel]], use the =skel2d.open= IPC method (=lrgeditorctl skel2d open PATH=), or call =lrg_editor_skeleton2d_editor_open (app, path, &error)=. =lrg_editor_data_editor_open()= works too: the data editor registry maps =LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D= to this type, and =lrg_editor_document_detect_format()= recognises =.rskel2d= by its extension and by an =rskel2d:= key.
+- New rigs: the Assets panel's New 2D Skeleton entry, =skel2d.create=, or =lrg_editor_skeleton2d_editor_create (app, path, name, &error)= write a rig with one =root= bone (an existing file is never overwritten: =G_IO_ERROR_EXISTS=).
+- The tab docks next to the other data editors with the id =data:<absolute path>=; a file that is already open is presented.
+- =lrg_editor_skeleton2d_editor_new (app, document)= builds an editor without docking it (embedding, tests).
+- =lrg_editor_skeleton2d_editor_install (app)= registers the =skel2d.*= IPC methods; the editor calls it when it is constructed and the Assets panel calls it at startup, so the methods exist before any rig is open.
+
+** How edits work (undo, comments)
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-model
+:END:
+The YAML document is the source of truth. After every change the editor loads it into a working =LrgSkeleton2D= (=lrg_editor_skeleton2d_editor_get_skeleton()=, replaced on every reload: never keep it) and keeps a /canonical/ copy of what the engine would write for it (=lrg_skeleton2d_save_to_data()=). An edit is made in one of two ways:
+
+1. On the working skeleton through the engine API (adding bones, slots, skins, attachments and clips; setup poses, lengths, colours; mesh vertices and triangles; weights; keys), then serialised.
+2. On a scratch copy of the canonical YAML for what the engine has no API for: removing or renaming bones and slots (every reference is fixed: parents, slots, weight rows, clip timelines, draw-order keys), removing skins, reordering slots, and moving keys in time (the key's whole entry is kept, Bézier control points included).
+
+Either way the new text is validated (=lrg_skeleton2d_new_from_data()=; a broken result never reaches the document) and diffed node by node against the canonical copy; only the nodes that changed are replayed on the real document inside one undo group (=lrg_editor_document_begin_group()=), whose label names the edit ("Add bone", "Rotate bone", "Paint weights", "Key rotate", ...). So:
+
+- every user gesture is *one undo step* (a drag edits the working skeleton live and commits once at release; Escape reloads from the document instead);
+- comments and formatting in untouched sections survive (a comment above =bones:= stays when a slot colour changes); a changed node is rewritten in the engine's own style;
+- Ctrl+Z / Ctrl+Shift+Z inside the tab undo the rig, never the level; an undo reloads the working skeleton and keeps the selection (selection is tracked by name).
+
+While the document does not load (a hand edit gone wrong), the canvas keeps the last good rig, shows the engine's message in a red pill, the issues list points at the node path (=/bones/1/parent: unknown bone "x"= lands on that line), and every editing function fails with =LRG_EDITOR_DOCUMENT_ERROR_PARSE= until the text is fixed (=lrg_editor_skeleton2d_editor_get_parse_error()=).
+
+** The canvas
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-canvas
+:END:
+The canvas (=skel-canvas=) draws the rig in setup space: x right, y down, rotations in degrees clockwise, as in the engine.
+
+- *Rig*: the skeleton is drawn with =lrg_skeleton2d_draw()= inside a paint callback, textures loaded from the attachments' =image= paths relative to the rig (shared per file, cached across reloads). Attachments without an image draw as soft flat shapes.
+- *Overlays* (paint primitives, themed, recorded headless too): a grid that keeps cells about 32 px wide, the axes through the setup origin, a dashed-free connector from each parent's tip to a child's joint, a kite per bone (wide at the joint, pointing at the tip; zero-length bones are a cross) and a joint dot; the selected bone in the accent colour, the hovered one highlighted. The selected attachment shows its wireframe (bright in the mesh and weight tools), its vertices in the mesh tool, and weight heat in the weight tool.
+- *HUD*: a pill at the top left names the mode, tool and what the pointer does; in animation mode the clip and playhead. A drag of an image over the canvas shows what the drop will do.
+- *View*: the wheel zooms about the pointer, the middle button (or Alt + left) pans, F or the Frame chip fits the rig. The first paint fits the rig, and until you pan or zoom the view refits whenever the rig outgrows the canvas. =lrg_editor_skeleton2d_editor_get_view()= / =lrg_editor_skeleton2d_editor_set_view()= read and set zoom and pan, =lrg_editor_skeleton2d_editor_frame_all()= fits, =lrg_editor_skeleton2d_editor_setup_to_canvas()= / =lrg_editor_skeleton2d_editor_canvas_to_setup()= convert points.
+- Internally the skeleton's root transform /is/ the view transform, so world positions and deformed vertices come out in canvas coordinates and picking is =lrg_skeleton2d_pick_bone()= at the pointer.
+
+** Modes and tools
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-tools
+:END:
+The canvas bar (=skel-canvas-bar=) switches modes and tools (=lrg_editor_skeleton2d_editor_set_mode()= with =LrgEditorSkeleton2DMode=, =lrg_editor_skeleton2d_editor_set_tool()= with =LrgEditorSkeleton2DTool=; the GTypes are =lrg_editor_skeleton2d_mode_get_type()= and =lrg_editor_skeleton2d_tool_get_type()=).
+
+| Mode / tool | Chip | Key | What the canvas does |
+|-------------+------+-----+----------------------|
+| Setup (=LRG_EDITOR_SKELETON2D_MODE_SETUP=) | =skel-mode-setup= | Tab | edits change the setup pose, slots, skins, meshes |
+| Animate (=LRG_EDITOR_SKELETON2D_MODE_ANIMATE=) | =skel-mode-animate= | Tab | the selected clip poses the rig at the playhead; bone drags key it |
+| Select (=LRG_EDITOR_SKELETON2D_TOOL_SELECT=) | =skel-tool-select= | Q or V | press on a joint and drag: move the bone; on a bone body: rotate it about its joint; on a mesh: select its slot and attachment; on nothing: clear the selection |
+| Bone (=LRG_EDITOR_SKELETON2D_TOOL_BONE=) | =skel-tool-bone= | B | drag from where the joint goes to where the tip goes: a new bone, child of the selected bone (a root bone when none is selected), selected afterwards so dragging again chains bones; a click selects the parent for the next bone |
+| Mesh (=LRG_EDITOR_SKELETON2D_TOOL_MESH=) | =skel-tool-mesh= | M | edit the selected attachment: click adds a vertex, drag moves one, right click or Delete removes one |
+| Weights (=LRG_EDITOR_SKELETON2D_TOOL_WEIGHTS=) | =skel-tool-weights= | W | paint the selected bone's weight on the selected attachment; Shift erases |
+
+The bone, mesh and weight tools work in setup mode; choosing one switches to setup mode, and animation mode falls back to the select tool. Choosing the mesh or weight tool with a slot selected and no attachment picks what the slot shows. Other keys: Delete removes the selected vertex (mesh tool) or bone (setup mode), Space plays or pauses, K keys the selected bone's pose (animation mode), Escape cancels a drag. Shortcuts with Ctrl, Alt or Super go to the shell (Ctrl+Z undo, Ctrl+S save).
+
+*** Bones
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-bones
+:END:
+- The bone tool converts the drag into the parent's space: the joint becomes =x=, =y= relative to the parent, the drag direction minus the parent's world rotation becomes =rotation=, the drag length divided by the parent's world scale becomes =length=. Names are =bone1=, =bone2=, ... (rename in the grid).
+- Moving a joint sets the setup translation; rotating sets the setup rotation (the drag's angle change added to the rotation at the press). Meshes keep their place in the setup pose and deform from the new joint (=lrg_skeleton2d_set_bone_setup()= rebinds).
+- From code and IPC: =lrg_editor_skeleton2d_editor_add_bone()=, =lrg_editor_skeleton2d_editor_set_bone()= (setup pose, scale and length), =lrg_editor_skeleton2d_editor_rename_bone()=, =lrg_editor_skeleton2d_editor_remove_bone()= (removes the bone with its descendants, the slots on them with their attachments in every skin, their weights in every mesh and their clip timelines; the last bone cannot be removed). =lrg_editor_skeleton2d_editor_get_selected_bone()= / =lrg_editor_skeleton2d_editor_set_selected_bone()= read and set the selection.
+
+*** Slots, attachments and draw order
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-slots
+:END:
+- *Drop an image* from the Assets panel on the canvas (setup mode): it becomes a quad attachment named after the file, centred where it was dropped, its =image= written relative to the rig. It goes on the selected slot, or on a new slot named after the file on the selected bone (the first bone when none is selected), and becomes the slot's setup attachment; one undo step "Attach image". The same in code: =lrg_editor_skeleton2d_editor_drop_image()=.
+- =lrg_editor_skeleton2d_editor_add_attachment()= adds a quad (columns = rows = 1) or a grid mesh (a strip for a limb: rows 1 or columns 1) to the active skin at a given rectangle (the image's own size when the size is 0), rigid on the slot's bone until weighted; it becomes the setup attachment when the slot showed none, and is selected. =lrg_editor_skeleton2d_editor_remove_attachment()= removes one (and clears the setup attachment when it was that one).
+- The outline (=skel-outline=) lists the selected slot's attachments (active skin first, then default) under it; the eye at the right shows or hides an attachment in the setup pose (=lrg_editor_skeleton2d_editor_set_slot_attachment()=). =lrg_editor_skeleton2d_editor_select_attachment()= selects one (what the mesh and weight tools edit; =lrg_editor_skeleton2d_editor_get_selected_attachment()=).
+- Slots: =lrg_editor_skeleton2d_editor_add_slot()= (the side bar's +Slot adds one on the selected bone), =lrg_editor_skeleton2d_editor_set_slot_color()=, =lrg_editor_skeleton2d_editor_rename_slot()=, =lrg_editor_skeleton2d_editor_remove_slot()= (its attachments, timelines and its name in draw-order keys go with it), =lrg_editor_skeleton2d_editor_get_selected_slot()= / =lrg_editor_skeleton2d_editor_set_selected_slot()=.
+- *Draw order*: the outline lists slots front first; the side bar's up and down chips move the selected slot one step (=lrg_editor_skeleton2d_editor_move_slot()=), =lrg_editor_skeleton2d_editor_set_draw_order()= sets the whole order (every slot once, back to front). The slots list order is the setup draw order; clips reorder with draw-order keys (shown as ruler flags in the dope sheet).
+
+*** Skins
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-skins
+:END:
+The outline's SKINS section switches the active skin (a view setting, not saved; =lrg_editor_skeleton2d_editor_set_skin()= / =lrg_editor_skeleton2d_editor_get_skin()=). New attachments go into the active skin; lookups fall back to =default=, so a variant skin only holds what differs. +Skin adds =skin1=, ... and activates it (=lrg_editor_skeleton2d_editor_add_skin()=); =lrg_editor_skeleton2d_editor_remove_skin()= removes any skin but =default=.
+
+*** Mesh tool and triangulation
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-mesh
+:END:
+- Vertices are in setup space. A new vertex gets its texture coordinate from a least-squares affine fit of the existing vertices' positions to their UVs, so the image stays where it is; moving a vertex refits its UV the same way (the picture does not slide under the mesh). A new vertex inherits the weights of its nearest neighbour so it moves with the mesh.
+- After an add or a remove the mesh is triangulated again: a Delaunay triangulation (Bowyer-Watson, in a normalised box for precision) of all vertices, dropping triangles whose centre falls outside the image (UV outside 0 .. 1), so points traced around a silhouette do not grow skin over the gaps. The Triangulate chip (=skel-triangulate=, =lrg_editor_skeleton2d_editor_triangulate()=) does it on demand.
+- API: =lrg_editor_skeleton2d_editor_add_vertex()=, =lrg_editor_skeleton2d_editor_move_vertex()=, =lrg_editor_skeleton2d_editor_remove_vertex()= (a mesh keeps at least three vertices). Engine helpers: =lrg_skinned_sprite_add_vertex()=, =lrg_skinned_sprite_set_vertex()=, =lrg_skinned_sprite_add_triangle()=.
+
+*** Weights
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-weights
+:END:
+- *Auto weights* (=skel-auto-weights=) weights the selected attachment to every bone's setup segment: falloff 4, two influences, one smoothing pass (=lrg_skeleton2d_compute_auto_weights()=; =lrg_editor_skeleton2d_editor_auto_weights()= takes the bones, falloff, influences and smoothing).
+- *The brush* (weight tool): a dab moves the selected bone's weight on every vertex within the radius toward 1 (Shift: toward 0) by strength times a smooth falloff =(1 - d/r)^2=; the other influences scale so the sum stays 1, a vertex without weights counts as fully on its slot's bone, at most four influences are kept (the lightest goes). A stroke is one undo step. Radius (setup units, default 12) and strength (default 0.35) are in the grid's Brush section while the tool is active. =lrg_editor_skeleton2d_editor_paint_weights()= is one dab (negative strength erases) and returns the number of vertices changed.
+- The heat view colours each triangle by the selected bone's average weight: blue 0, green, yellow, red 1; vertex dots use the same ramp.
+
+** Animation mode
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-animate
+:END:
+Clicking a clip in the outline, Tab, the Animate chip or +Clip switch to animation mode; the first clip is selected when none is (=lrg_editor_skeleton2d_editor_set_clip()= / =lrg_editor_skeleton2d_editor_get_clip()=). The strip under the canvas (=skel-anim=) appears with the transport, the dope sheet and the curve view.
+
+- *Posing*: the rig shows =reset_pose= + the clip at the playhead (=lrg_skeleton2d_clip_apply()=).
+- *Auto-key*: in animation mode dragging a joint keys a translate offset and dragging a body keys a rotate offset of that bone at the playhead (values are offsets from the setup pose, as the format stores them; a key at the same time is replaced). The setup pose is never touched. One undo step per drag ("Key translate", "Key rotate").
+- *Key pose* (K, =skel-key=, =lrg_editor_skeleton2d_editor_key_pose()=): keys translate, rotate and scale of the selected bone's current pose at the playhead.
+- *Keys from code/IPC*: =lrg_editor_skeleton2d_editor_set_key()= (any channel, with linear, stepped or Bézier curves and control points), =lrg_editor_skeleton2d_editor_remove_key()=, =lrg_editor_skeleton2d_editor_move_key()= (retimes keeping every field of the key).
+- *Clips*: =lrg_editor_skeleton2d_editor_add_clip()=, =lrg_editor_skeleton2d_editor_remove_clip()=, =lrg_editor_skeleton2d_editor_set_clip_props()= (duration, loop); the grid's Clip section edits name, duration and loop as document paths.
+
+*** Dope sheet
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-dope
+:END:
+The dope sheet (=skel-dope=) is an =LrgTimelineView=: a group track per animated bone (blue) or slot (orange), a child track per keyed channel (=translate=, =rotate=, =scale=, =color=, =attachment=), a keyframe per key (stepped, linear or eased look from the key's curve), events and draw-order keys as ruler flags. Its fps is 30 and snapping to frames is on.
+
+- Dragging keys and Delete edit the clip: the changes the view reports are queued and applied on the editor's next step as one undo step "Edit keys", retiming in the YAML (curves and control points stay) and removing keys from the highest index down.
+- Scrubbing the playhead poses the rig; selecting a key selects its bone and shows its timeline in the curve view.
+
+*** Curve view
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-curves
+:END:
+The curve view (=skel-curves=) is an =LrgCurveEdit= in full mode showing the selected timeline's first value (x for translate and scale, degrees for rotate, red for colour) over the clip's normalised time. Drag keys, click to add, Delete to remove, the wheel (or E / Shift+E) to change a key's easing. At the end of a gesture the timeline is rewritten (one undo step "Edit curve"): times and first values come from the curve, the other values from the old keys (new keys sample the old timeline), and curves map like this:
+
+| Engine curve | Shown as | Written back when the easing is changed to |
+|--------------+----------+--------------------------------------------|
+| linear | =LRG_EASING_LINEAR= | linear |
+| stepped | =LRG_EASING_EASE_IN_EXPO= (flat, then a jump) | kept stepped while the easing is not changed |
+| Bézier =[x1, y1, x2, y2]= | the nearest easing preset | a Bézier preset of that easing (easings.net values; elastic and bounce use the closest back / expo preset) |
+
+A key whose easing was not changed keeps its curve exactly, Bézier control points included. Attachment timelines have no curve.
+
+*** Playback
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-playback
+:END:
+Play (=skel-play=, Space, =lrg_editor_skeleton2d_editor_set_playing()=) advances the playhead with the canvas frame time; Loop (=skel-loop=, on by default, =lrg_editor_skeleton2d_editor_set_loop()=) wraps at the end, otherwise playback stops on the last frame. This is a view setting, not the clip's =loop= flag. =lrg_editor_skeleton2d_editor_set_time()= scrubs (clamped to the clip), =lrg_editor_skeleton2d_editor_get_time()=, =lrg_editor_skeleton2d_editor_get_playing()=, =lrg_editor_skeleton2d_editor_get_loop()= read the state. Leaving animation mode stops playback.
+
+** The side bar
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-side
+:END:
+- *Commands* (=skel-side= > the chip row): =skel-add-slot=, =skel-add-skin=, =skel-add-clip=, =skel-slot-up=, =skel-slot-down=, =skel-delete= (in animation mode the selected clip; otherwise the selected attachment, else slot, else bone). The row folds into icon chips when narrow.
+- *Outline* (=skel-outline= in =skel-outline-scroll=): BONES as a tree, SLOTS front first with each slot's bone and the selected slot's attachments, SKINS (the active one highlighted), CLIPS with duration and loop.
+- *Properties* (=skel-grid=, an =LrgPropertyGrid= on an =LrgEditorDataSource=): Bone (name, x, y, rotation, scale x / y, length), Slot (name, attachment, red, green, blue, alpha), Attachment (image, with an asset picker), Clip (name, duration, loop), Rig (name), Brush (radius, strength; weight tool). Plain fields write their YAML path directly (a typing or drag gesture is one undo step); names rename everywhere through the editor, scale and colour go through the editor, brush settings are view state.
+
+** Validation
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-validation
+:END:
+Validate (and the debounced validation after edits) runs the engine loader on the text: its error becomes an issue at the node path it names (the line of the deepest existing ancestor). A rig that loads is checked for attachment images missing on disk (warnings).
+
+** Using it from C
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-c
+:END:
+#+begin_src C
+g_autoptr(GError)          error = NULL;
+LrgEditorSkeleton2DEditor *ed;
+gint                       upper, fore, slot;
+const gfloat               ease[4] = { 0.42f, 0.0f, 0.58f, 1.0f };
+const gfloat               bend[1] = { 90.0f };
+
+/* a new rig, opened in a tab */
+lrg_editor_skeleton2d_editor_create (app, "rigs/arm.rskel2d", "arm", &error);
+ed = lrg_editor_skeleton2d_editor_open (app, "rigs/arm.rskel2d", &error);
+
+/* two bones under root, a strip on the upper arm, weighted automatically */
+upper = lrg_editor_skeleton2d_editor_add_bone (ed, "upper", 0, 0, 0, 0, 50, &error);
+fore  = lrg_editor_skeleton2d_editor_add_bone (ed, "fore", upper, 50, 0, 0, 50, &error);
+slot  = lrg_editor_skeleton2d_editor_add_slot (ed, "arm", upper, NULL, &error);
+lrg_editor_skeleton2d_editor_add_attachment (ed, slot, "arm", "art/arm.png", 0, -8, 100, 16, 8, 1, &error);
+lrg_editor_skeleton2d_editor_auto_weights (ed, NULL, 0, 4.0f, 2, 1, &error);
+
+/* a clip bending the forearm with an ease */
+lrg_editor_skeleton2d_editor_add_clip (ed, "bend", 1.0f, TRUE, &error);
+lrg_editor_skeleton2d_editor_set_key (ed, "fore", LRG_SKELETON2D_CHANNEL_ROTATE, 0.0f, NULL, 0, NULL,
+                                      LRG_SKELETON2D_CURVE_BEZIER, ease, &error);
+lrg_editor_skeleton2d_editor_set_key (ed, "fore", LRG_SKELETON2D_CHANNEL_ROTATE, 1.0f, bend, 1, NULL,
+                                      LRG_SKELETON2D_CURVE_LINEAR, NULL, &error);
+lrg_editor_skeleton2d_editor_set_playing (ed, TRUE);
+lrg_editor_data_editor_save (LRG_EDITOR_DATA_EDITOR (ed), &error);
+(void) fore;
+#+end_src
+
+Each call above is one undo step of the rig's document. =lrg_editor_skeleton2d_editor_render_image (ed, w, h)= renders the rig (current mode, pose and skin, fitted, with the bone overlay) into a =GrlImage= for thumbnails and tests; it needs a window.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_editor_skeleton2d_editor_new (app, document)= | editor on a document, not docked |
+| =lrg_editor_skeleton2d_editor_open (app, path, error)= | open or present the tab of a =.rskel2d= |
+| =lrg_editor_skeleton2d_editor_create (app, path, name, error)= | write a new rig with a root bone |
+| =lrg_editor_skeleton2d_editor_install (app)= | register =skel2d.*= (idempotent) |
+| =lrg_editor_skeleton2d_editor_get_skeleton (self)= | the working skeleton (transfer none, replaced on reload) |
+| =lrg_editor_skeleton2d_editor_get_parse_error (self)= | why the text does not load, or NULL |
+| =lrg_editor_skeleton2d_editor_get_mode= / =lrg_editor_skeleton2d_editor_set_mode= | setup or animate |
+| =lrg_editor_skeleton2d_editor_get_tool= / =lrg_editor_skeleton2d_editor_set_tool= | canvas tool |
+| =lrg_editor_skeleton2d_editor_get_selected_bone= / =lrg_editor_skeleton2d_editor_set_selected_bone= | bone index or -1 |
+| =lrg_editor_skeleton2d_editor_get_selected_slot= / =lrg_editor_skeleton2d_editor_set_selected_slot= | slot index or -1 (selects what it shows) |
+| =lrg_editor_skeleton2d_editor_get_selected_attachment= / =lrg_editor_skeleton2d_editor_select_attachment= | the attachment the mesh and weight tools edit |
+| =lrg_editor_skeleton2d_editor_get_skin= / =lrg_editor_skeleton2d_editor_set_skin= | active skin (view state) |
+| =lrg_editor_skeleton2d_editor_get_view= / =lrg_editor_skeleton2d_editor_set_view= | zoom and pan |
+| =lrg_editor_skeleton2d_editor_frame_all (self)= | fit the rig |
+| =lrg_editor_skeleton2d_editor_setup_to_canvas= / =lrg_editor_skeleton2d_editor_canvas_to_setup= | point conversion |
+| =lrg_editor_skeleton2d_editor_add_bone (self, name, parent, x, y, rotation, length, error)= | new bone, selected; index |
+| =lrg_editor_skeleton2d_editor_set_bone (self, bone, x, y, rotation, scale_x, scale_y, length, error)= | setup pose and length |
+| =lrg_editor_skeleton2d_editor_rename_bone= / =lrg_editor_skeleton2d_editor_remove_bone= | with every reference fixed |
+| =lrg_editor_skeleton2d_editor_add_slot (self, name, bone, attachment, error)= | new slot (front), selected; index |
+| =lrg_editor_skeleton2d_editor_set_slot_attachment= / =lrg_editor_skeleton2d_editor_set_slot_color= | setup attachment and colour |
+| =lrg_editor_skeleton2d_editor_rename_slot= / =lrg_editor_skeleton2d_editor_remove_slot= | with every reference fixed |
+| =lrg_editor_skeleton2d_editor_move_slot (self, slot, delta, error)= / =lrg_editor_skeleton2d_editor_set_draw_order (self, order, error)= | setup draw order |
+| =lrg_editor_skeleton2d_editor_add_skin= / =lrg_editor_skeleton2d_editor_remove_skin= | skins |
+| =lrg_editor_skeleton2d_editor_add_attachment (self, slot, name, image, x, y, w, h, columns, rows, error)= | quad or grid mesh in the active skin |
+| =lrg_editor_skeleton2d_editor_drop_image (self, image, x, y, error)= | what an image drop does |
+| =lrg_editor_skeleton2d_editor_remove_attachment (self, slot, name, error)= | remove from the active (else default) skin |
+| =lrg_editor_skeleton2d_editor_add_vertex= / =lrg_editor_skeleton2d_editor_move_vertex= / =lrg_editor_skeleton2d_editor_remove_vertex= | mesh of the selected attachment (UV fitted, retriangulated) |
+| =lrg_editor_skeleton2d_editor_triangulate (self, error)= | Delaunay triangulation inside the image |
+| =lrg_editor_skeleton2d_editor_auto_weights (self, bones, n, falloff, max_influences, smooth, error)= | automatic weights |
+| =lrg_editor_skeleton2d_editor_paint_weights (self, bone, x, y, radius, strength, error)= | one brush dab; count changed |
+| =lrg_editor_skeleton2d_editor_add_clip= / =lrg_editor_skeleton2d_editor_remove_clip= / =lrg_editor_skeleton2d_editor_set_clip_props= | clips |
+| =lrg_editor_skeleton2d_editor_get_clip= / =lrg_editor_skeleton2d_editor_set_clip= | the selected clip |
+| =lrg_editor_skeleton2d_editor_set_key (self, target, channel, time, values, n, attachment, curve, bezier, error)= | add or replace a key |
+| =lrg_editor_skeleton2d_editor_remove_key= / =lrg_editor_skeleton2d_editor_move_key= | delete, retime (curve kept) |
+| =lrg_editor_skeleton2d_editor_key_pose (self, bone, error)= | key the bone's pose at the playhead |
+| =lrg_editor_skeleton2d_editor_get_time= / =lrg_editor_skeleton2d_editor_set_time= | playhead |
+| =lrg_editor_skeleton2d_editor_get_playing= / =lrg_editor_skeleton2d_editor_set_playing= | preview playback |
+| =lrg_editor_skeleton2d_editor_get_loop= / =lrg_editor_skeleton2d_editor_set_loop= | preview loop toggle |
+| =lrg_editor_skeleton2d_editor_render_image (self, width, height)= | the rig as an image (window needed) |
+
+Errors of the editing functions are in =LRG_EDITOR_DOCUMENT_ERROR=: =NOT_FOUND= (no such bone, slot, attachment, clip or key; nothing selected), =EXISTS= (a name in use), =WRONG_KIND= (an invalid edit: empty name, last bone, too few vertices, a draw order that does not name every slot), =PARSE= (the document does not load, or the edit would not).
+
+** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-ipc
+:END:
+All =skel2d.*= methods take =path= (the =.rskel2d=, absolute or project relative; the tab opens when needed) and act on the open editor's unsaved state. Bones and slots are given by name (or index). Every mutating call is one undo step of the rig. The table is in [[file:ipc-protocol.org::#ipc-skel2d][IPC protocol: 2D skeleton methods]]; =lrgeditorctl skel2d ...= and the =skel2d_*= MCP tools wrap them ([[file:lrgeditorctl.org][lrgeditorctl]]).
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-performance
+:END:
+- Reloading after an edit parses the document and re-serialises it for the canonical copy: microseconds for typical rigs (tens of bones, a few hundred vertices). The diff walks only nodes whose YAML differs.
+- A drag edits the working skeleton directly each frame and touches the document once at release; brush strokes the same.
+- Drawing costs what =lrg_skeleton2d_draw()= costs (CPU skinning, one batch per texture change); textures are loaded once per image file and kept across reloads. Overlays are a few primitives per bone and per selected-mesh triangle.
+- Triangulation is O(n^2) Bowyer-Watson; fine for the few hundred vertices a 2D mesh has.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-pitfalls
+:END:
+- A node the editor changes is rewritten in the engine's style: comments /inside/ that node are lost (comments elsewhere stay).
+- The working skeleton is replaced on every reload: do not keep the =LrgSkeleton2D= or its sprites across edits.
+- Automatic triangulation is unconstrained Delaunay: a concave outline is respected only through the "inside the image" filter; place extra vertices along deep concavities.
+- Rotation keys are offsets and not wrapped: rotating a bone past 180 in one drag keys the short way from where the drag started.
+- Draw-order keys must name every slot; removing a slot removes its name from them, adding one leaves existing keys short (the engine skips them).
+- The canvas needs a window to show textures; headless (tests, =--headless=) all tools, the outline, grid, dope sheet and IPC work and the overlays are recorded.
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-testing
+:END:
+=tests/test-editor-app-rig.c= drives the editor headless through the canvas and the IPC on procedural rigs and generated PNGs: registry opening and the first fit, parse errors at their line, the bone tool (parenting by click, direction, length, undo/redo, tool keys), joint and body drags as one step each with Escape cancelling, comments surviving edits, image drops and grid attachments, draw order, skins, the mesh tool (UV fit, triangulation, outside-image filter, right-click removal), automatic weights and brush strokes with undo, renames and removals with every reference fixed, animation mode (auto-key, key pose, dope sheet, key moves keeping Bézier points, colour keys, play/loop), the curve view and every =skel2d.*= method. =/editor-app-rig/gpu/render= (under the isolated Xvfb) renders a textured rig.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: skeleton2d-editor-see-also
+:END:
+- [[file:../modules/animation/skeleton2d.org][LrgSkeleton2D]] - the =.rskel2d= format, clips, mixing
+- [[file:../modules/graphics/skinned-sprite.org][LrgSkinnedSprite]] - meshes, skinning, automatic weights
+- [[file:../modules/ecs/components/skeleton2d-component.org][LrgSkeleton2DComponent]] - playing rigs in a world
+- [[file:data-editors.org][Data editors]] - the document model the editor sits on
+- [[file:editor-app.org::#editor-panel-skel2d][Editor application: 2D rig editor]] - widget names
