@@ -427,7 +427,6 @@
 #include "scene/lrg-scene-serializer-yaml.h"
 #include "scene/lrg-scene-serializer-blender.h"
 
-/* Editor / level authoring module */
 /* Immediate-mode GUI toolkit */
 #include "gui/lrg-gui-types.h"
 #include "gui/lrg-gui-draw-list.h"
@@ -435,17 +434,22 @@
 #include "gui/lrg-gui-dock.h"
 #include "gui/lrg-gui-raylib.h"
 
+/* Runtime level module (always built since 0.9.0): .rlevel/.rprefab data,
+ * serializer, prefab resolution and instantiation */
+#include "level/lrg-component-desc.h"
+#include "level/lrg-script-binding.h"
+#include "level/lrg-node-visual.h"
+#include "level/lrg-node-tilemap.h"
+#include "level/lrg-timeline.h"
+#include "level/lrg-node.h"
+#include "level/lrg-level.h"
+#include "level/lrg-level-serializer.h"
+#include "level/lrg-level-instantiate.h"
+#include "level/lrg-prefab.h"
+
+/* Editor / level authoring module */
 #ifdef LRG_BUILD_EDITOR
-#include "editor/lrg-component-desc.h"
-#include "editor/lrg-script-binding.h"
-#include "editor/lrg-node-visual.h"
-#include "editor/lrg-node-tilemap.h"
-#include "editor/lrg-timeline.h"
-#include "editor/lrg-node.h"
-#include "editor/lrg-level.h"
-#include "editor/lrg-level-serializer.h"
 #include "editor/lrg-scene-import.h"
-#include "editor/lrg-level-instantiate.h"
 #include "editor/lrg-editor-command.h"
 #include "editor/lrg-editor-selection.h"
 #include "editor/lrg-editor.h"
@@ -463,7 +467,6 @@
 #include "editor/lrg-editor-validate.h"
 #include "editor/lrg-asset-database.h"
 #include "editor/lrg-project.h"
-#include "editor/lrg-prefab.h"
 #include "editor/lrg-editor-settings-migrate.h"
 #include "editor/lrg-editor-node-model.h"
 #include "editor/lrg-editor-node-source.h"

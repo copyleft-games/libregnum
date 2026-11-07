@@ -761,6 +761,8 @@ lrg_node_foreach (lrg_level_get_root (level), count_visible, &n_visible);
 :END:
 =lrg-editor-math.h= is the headless 3D math every viewport, the gizmo and the picker use. Nothing in it needs a window or GL context.
 
+Since 0.9.0 the matrix helpers, the node transforms and the view/projection matrices are thin wrappers over the shared core math ([[file:../modules/core/math3d.org][lrg-math3d]]) and the runtime level module (=lrg_node_get_local_matrix()=, =lrg_node_get_world_matrix()=); results are bit-identical to 0.8 (see [[file:../modules/core/math3d.org::#math3d-editor-wrappers][Editor wrappers]]). Game code should call the core functions, which exist without the editor. Picking, rays, box selection and =LrgEditorView= stay editor-only.
+
 *** Conventions
 :PROPERTIES:
 :CUSTOM_ID: math-conventions
@@ -1332,6 +1334,8 @@ Every public function of the editor-runtime headers that the sections above do n
 :CUSTOM_ID: see-also
 :END:
 - [[file:level-model.org][Level Model]] — the document being edited
+- [[file:../modules/level/index.org][Runtime Level Module]] — the level/prefab types the editor edits, usable without the editor
+- [[file:../modules/core/math3d.org][3D Math (lrg-math3d)]] — the core math behind =lrg-editor-math.h=
 - [[file:overview.org][Editor Overview]] — dual-frontend architecture
 - [[file:editor-app.org][Editor Application]] — =lrgeditor= / =LrgEditorApp=, drawn with =LrgGuiContext=
 - [[file:external-editor.org][External Editor]] — =LrgEditorSettings= and =LrgExternalEditor=

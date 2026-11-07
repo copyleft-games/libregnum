@@ -92,13 +92,17 @@ capture, data-driven YAML authoring, and a command-line tool.
 - *[[file:reel/audio.org][LrgReelAudioTrack]]* - offline audio mixing and muxing
 - *[[file:reel/player.org][LrgReelPlayer]]* - interactive play/scrub preview window
 
+*** [[file:level/index.org][Runtime Level Module]] - Loading and Playing Levels and Prefabs
+:PROPERTIES:
+:CUSTOM_ID: runtime-level-module
+:END:
+Always built (since 0.9.0, also with =BUILD_EDITOR=0=): the =.rlevel= / =.rprefab= data model (=LrgLevel=, =LrgNode=, =LrgNodeVisual=, =LrgNodeTilemap=, =LrgTimeline=, =LrgComponentDesc=, =LrgScriptBinding=), the YAML serializer, prefab load/instantiate/link and =lrg_level_instantiate()=. A game loads levels with it; the editor builds on it.
+
 *** [[file:editor/index.org][Editor Module]] - Level Authoring and IDE Hosting
 :PROPERTIES:
 :CUSTOM_ID: editor-module---level-authoring-and-ide-hosting
 :END:
-Editor subsystem (=BUILD_EDITOR=1=): level document model, serialization, bake and
-instantiate bridges, editor runtime with undo/redo, project and asset management,
-prefabs. See [[file:../editor/overview.org][Editor Overview]] for the full guide.
+Editor subsystem (=BUILD_EDITOR=1=): editor runtime with undo/redo, selection, gizmo, IPC, project and asset management on top of the [[file:level/index.org][runtime level module]] (which holds the level document model, serialization, prefabs and the instantiate bridges since 0.9.0). See [[file:../editor/overview.org][Editor Overview]] for the full guide.
 
 - *[[file:../editor/level-model.org][LrgLevel / LrgNode / LrgNodeVisual]]* - authoring document and node tree
 - *[[file:../editor/yaml-format.org][.rlevel Format]]* - YAML serialization schema

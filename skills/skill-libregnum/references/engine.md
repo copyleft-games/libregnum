@@ -6,11 +6,12 @@ Authoritative guide: `AGENTS.md` at the root of the checkout (read it before cha
 
 | Path | What |
 |------|------|
-| `src/core/` | `LrgEngine` singleton, `LrgRegistry` (type names -> GTypes; engine types pre-registered at startup), data loader (YAML), asset manager/packs |
+| `src/core/` | `LrgEngine` singleton, `LrgRegistry` (type names -> GTypes; engine types pre-registered at startup), data loader (YAML), asset manager/packs, `lrg-math3d` (shared Euler/quaternion/matrix math, TRS compose/decompose, look-at, projections; plain float-array functions) |
 | `src/ecs/` | `LrgWorld`, `LrgGameObject`, `LrgComponent` and built-in components |
 | `src/graphics/`, `src/scene/`, `src/shapes/`, `src/lighting/`, `src/postprocess/` | Rendering on graylib/raylib |
 | `src/ui/` | Retained widgets (games); `src/gui/` immediate-mode GUI (tools; the editor is drawn with it) |
-| `src/editor/` | `LrgLevel`/`LrgNode` authoring model, `LrgEditor` (commands, undo, selection), math, gizmo, settings, external editor, IPC server, actions, validation, projects, prefabs |
+| `src/level/` | Runtime level module, always built (0.9.0+): `LrgLevel`, `LrgNode` (+ `lrg_node_get_world_matrix`), `LrgNodeVisual`, `LrgNodeTilemap`, `LrgTimeline`, `LrgComponentDesc`, `LrgScriptBinding`, `.rlevel`/`.rprefab` serializer, prefabs (`lrg_prefab_load_resolved`, `instantiate_linked`), `lrg_level_instantiate`. Works with `BUILD_EDITOR=0` |
+| `src/editor/` | `BUILD_EDITOR=1` authoring layer: `LrgEditor` (commands, undo, selection), view math/picking (wraps `lrg-math3d`), gizmo, settings, external editor, IPC server, actions, validation, projects, asset database/`.meta`, scene import. The old `src/editor/lrg-level.h` etc. are forwarders to `src/level/` |
 | `src/editor/ui/` | `LrgEditorApp`: the editor application (panels, viewport render, dialogs, play mode) |
 | `src/editorctl/` | `lrgeditorctl` and the MCP tool table shared with `lrgeditor --mcp` |
 | `src/mcp/` | In-game MCP server (`MCP=1`): input injection and `lrg_input_get_state`, ECS, save, debug (profiler, overlay, console, inspector) tools; `libregnum://engine/{info,config,registry}` resources |
@@ -53,6 +54,7 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - **`g_ptr_array_copy (src, NULL, NULL)`** inherits `src`'s free function: freeing the copy unrefs live objects. Pass a ref-copy function.
 - **Unix socket paths** over 107 bytes are rejected; keep test sockets in `$XDG_RUNTIME_DIR`.
 - **Input bugs** do not show in headless GUI tests (they inject input below raylib/GLFW): use `make test-editor-x11`. Under Xvfb by hand, point `XDG_RUNTIME_DIR` at an empty short directory or GLFW opens the window on your Wayland session.
+- **Level types are not editor code any more.** Put runtime level/prefab/serializer changes in `src/level/` (never in the `src/editor/` forwarders, which are excluded from the GIR scan); `src/level/` must not include editor headers. `tests/check-level-noeditor.sh` builds `BUILD_EDITOR=0` into `build/noeditor` and proves the level API is exported and runnable without the editor.
 - **MCP over stdio owns stdout.** `lrgeditor --mcp` duplicates fd 1 for the protocol and points fd 1 at stderr; never `printf` to stdout in code paths that run under it.
 
 ## Registry built-ins

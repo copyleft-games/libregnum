@@ -8,6 +8,7 @@
  */
 
 #include "lrg-editor-math.h"
+#include "../core/lrg-math3d.h"
 #include "lrg-level.h"
 #include "lrg-node.h"
 #include "lrg-node-visual.h"
@@ -97,13 +98,17 @@ v3_rotate (gfloat *v, const gfloat *axis, gfloat angle)
 
 /* ==========================================================================
  * Matrices
+ *
+ * Since 0.9.0 the implementations live in core (src/core/lrg-math3d.c) so
+ * the runtime level module and games can use them without the editor.
+ * These keep the 0.8 editor API as thin wrappers; results are bit-identical
+ * (tests/test-math3d.c).
  * ========================================================================== */
 
 void
 lrg_editor_math_identity (gfloat *out)
 {
-	memset (out, 0, 16 * sizeof (gfloat));
-	out[0] = out[5] = out[10] = out[15] = 1.0f;
+	lrg_math3d_identity (out);
 }
 
 void
@@ -112,34 +117,7 @@ lrg_editor_math_compose (const gfloat *location,
                          const gfloat *scale,
                          gfloat       *out)
 {
-	gfloat ca = cosf (rotation[0]), sa = sinf (rotation[0]);
-	gfloat cb = cosf (rotation[1]), sb = sinf (rotation[1]);
-	gfloat cc = cosf (rotation[2]), sc = sinf (rotation[2]);
-	gfloat r[3][3];
-	gint   row, col;
-
-	/* R = Rz(c) * Ry(b) * Rx(a) */
-	r[0][0] = cb * cc;
-	r[0][1] = sa * sb * cc - ca * sc;
-	r[0][2] = ca * sb * cc + sa * sc;
-	r[1][0] = cb * sc;
-	r[1][1] = sa * sb * sc + ca * cc;
-	r[1][2] = ca * sb * sc - sa * cc;
-	r[2][0] = -sb;
-	r[2][1] = sa * cb;
-	r[2][2] = ca * cb;
-
-	/* Columns of R scaled by S, then the translation column. */
-	for (col = 0; col < 3; col++)
-	{
-		for (row = 0; row < 3; row++)
-			M (out, row, col) = r[row][col] * scale[col];
-		M (out, 3, col) = 0.0f;
-	}
-	M (out, 0, 3) = location[0];
-	M (out, 1, 3) = location[1];
-	M (out, 2, 3) = location[2];
-	M (out, 3, 3) = 1.0f;
+	lrg_math3d_compose (location, rotation, scale, out);
 }
 
 gboolean
@@ -148,54 +126,7 @@ lrg_editor_math_decompose (const gfloat *m,
                            gfloat       *rotation,
                            gfloat       *scale)
 {
-	gfloat r[3][3];
-	gfloat det;
-	gint   row, col;
-
-	location[0] = M (m, 0, 3);
-	location[1] = M (m, 1, 3);
-	location[2] = M (m, 2, 3);
-
-	/* Scale is the length of each basis column. */
-	for (col = 0; col < 3; col++)
-	{
-		gfloat c[3] = { M (m, 0, col), M (m, 1, col), M (m, 2, col) };
-
-		scale[col] = v3_length (c);
-		if (scale[col] < 1e-12f)
-		{
-			v3_set (rotation, 0.0f, 0.0f, 0.0f);
-			return FALSE;
-		}
-	}
-
-	/* A mirrored basis is represented as a negative X scale. */
-	det = M (m, 0, 0) * (M (m, 1, 1) * M (m, 2, 2) - M (m, 2, 1) * M (m, 1, 2)) -
-	      M (m, 0, 1) * (M (m, 1, 0) * M (m, 2, 2) - M (m, 2, 0) * M (m, 1, 2)) +
-	      M (m, 0, 2) * (M (m, 1, 0) * M (m, 2, 1) - M (m, 2, 0) * M (m, 1, 1));
-	if (det < 0.0f)
-		scale[0] = -scale[0];
-
-	for (col = 0; col < 3; col++)
-		for (row = 0; row < 3; row++)
-			r[row][col] = M (m, row, col) / scale[col];
-
-	/* Invert R = Rz * Ry * Rx (see compose). */
-	if (r[2][0] < 0.9999f && r[2][0] > -0.9999f)
-	{
-		rotation[1] = asinf (-r[2][0]);
-		rotation[0] = atan2f (r[2][1], r[2][2]);
-		rotation[2] = atan2f (r[1][0], r[0][0]);
-	}
-	else
-	{
-		/* Gimbal lock: fold Z into X. */
-		rotation[1] = (r[2][0] <= -0.9999f) ? (gfloat) G_PI_2 : (gfloat) -G_PI_2;
-		rotation[0] = atan2f (-r[1][2], r[1][1]);
-		rotation[2] = 0.0f;
-	}
-
-	return TRUE;
+	return lrg_math3d_decompose (m, location, rotation, scale);
 }
 
 void
@@ -203,76 +134,14 @@ lrg_editor_math_multiply (const gfloat *a,
                           const gfloat *b,
                           gfloat       *out)
 {
-	gfloat tmp[16];
-	gint   row, col, k;
-
-	for (col = 0; col < 4; col++)
-		for (row = 0; row < 4; row++)
-		{
-			gfloat sum = 0.0f;
-
-			for (k = 0; k < 4; k++)
-				sum += M (a, row, k) * M (b, k, col);
-			M (tmp, row, col) = sum;
-		}
-
-	memcpy (out, tmp, sizeof tmp);
+	lrg_math3d_multiply (a, b, out);
 }
 
 gboolean
 lrg_editor_math_invert (const gfloat *m,
                         gfloat       *out)
 {
-	gfloat inv[16];
-	gfloat det;
-	gint   i;
-
-	/* Cofactor expansion (MESA gluInvertMatrix), layout-agnostic. */
-	inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] +
-	         m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
-	inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] -
-	         m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
-	inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] +
-	         m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
-	inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] -
-	          m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
-	inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] -
-	         m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
-	inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] +
-	         m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
-	inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] -
-	         m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
-	inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] +
-	          m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
-	inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] +
-	         m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
-	inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] -
-	         m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
-	inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] +
-	          m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
-	inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] -
-	          m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
-	inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] -
-	         m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
-	inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] +
-	         m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
-	inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] -
-	          m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
-	inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] +
-	          m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
-
-	det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
-	if (fabsf (det) < 1e-20f)
-	{
-		lrg_editor_math_identity (out);
-		return FALSE;
-	}
-
-	det = 1.0f / det;
-	for (i = 0; i < 16; i++)
-		out[i] = inv[i] * det;
-
-	return TRUE;
+	return lrg_math3d_invert (m, out);
 }
 
 void
@@ -280,16 +149,7 @@ lrg_editor_math_transform_point (const gfloat *m,
                                  const gfloat *p,
                                  gfloat       *out)
 {
-	gfloat x = M (m, 0, 0) * p[0] + M (m, 0, 1) * p[1] + M (m, 0, 2) * p[2] + M (m, 0, 3);
-	gfloat y = M (m, 1, 0) * p[0] + M (m, 1, 1) * p[1] + M (m, 1, 2) * p[2] + M (m, 1, 3);
-	gfloat z = M (m, 2, 0) * p[0] + M (m, 2, 1) * p[1] + M (m, 2, 2) * p[2] + M (m, 2, 3);
-	gfloat w = M (m, 3, 0) * p[0] + M (m, 3, 1) * p[1] + M (m, 3, 2) * p[2] + M (m, 3, 3);
-
-	if (w != 0.0f && w != 1.0f)
-	{
-		x /= w; y /= w; z /= w;
-	}
-	v3_set (out, x, y, z);
+	lrg_math3d_transform_point (m, p, out);
 }
 
 void
@@ -297,11 +157,7 @@ lrg_editor_math_transform_direction (const gfloat *m,
                                      const gfloat *d,
                                      gfloat       *out)
 {
-	gfloat x = M (m, 0, 0) * d[0] + M (m, 0, 1) * d[1] + M (m, 0, 2) * d[2];
-	gfloat y = M (m, 1, 0) * d[0] + M (m, 1, 1) * d[1] + M (m, 1, 2) * d[2];
-	gfloat z = M (m, 2, 0) * d[0] + M (m, 2, 1) * d[1] + M (m, 2, 2) * d[2];
-
-	v3_set (out, x, y, z);
+	lrg_math3d_transform_direction (m, d, out);
 }
 
 /* ==========================================================================
@@ -312,36 +168,16 @@ void
 lrg_editor_node_get_local_matrix (LrgNode *node,
                                   gfloat  *out)
 {
-	GrlVector3 *l, *r, *s;
-	gfloat      loc[3], rot[3], scl[3];
-
-	g_return_if_fail (LRG_IS_NODE (node));
-
-	l = lrg_node_get_location (node);
-	r = lrg_node_get_rotation (node);
-	s = lrg_node_get_scale (node);
-	v3_set (loc, l->x, l->y, l->z);
-	v3_set (rot, r->x, r->y, r->z);
-	v3_set (scl, s->x, s->y, s->z);
-
-	lrg_editor_math_compose (loc, rot, scl, out);
+	/* Implemented by the runtime level module since 0.9.0. */
+	lrg_node_get_local_matrix (node, out);
 }
 
 void
 lrg_editor_node_get_world_matrix (LrgNode *node,
                                   gfloat  *out)
 {
-	gfloat   local[16];
-	LrgNode *p;
-
-	g_return_if_fail (LRG_IS_NODE (node));
-
-	lrg_editor_node_get_local_matrix (node, out);
-	for (p = lrg_node_get_parent (node); p != NULL; p = lrg_node_get_parent (p))
-	{
-		lrg_editor_node_get_local_matrix (p, local);
-		lrg_editor_math_multiply (local, out, out);
-	}
+	/* Implemented by the runtime level module since 0.9.0. */
+	lrg_node_get_world_matrix (node, out);
 }
 
 void
@@ -512,18 +348,10 @@ void
 lrg_editor_view_get_view_matrix (const LrgEditorView *view,
                                  gfloat              *out)
 {
-	gfloat f[3], r[3], u[3];
-
 	g_return_if_fail (view != NULL);
 
-	view_basis (view, f, r, u);
-	lrg_editor_math_identity (out);
-	M (out, 0, 0) = r[0]; M (out, 0, 1) = r[1]; M (out, 0, 2) = r[2];
-	M (out, 1, 0) = u[0]; M (out, 1, 1) = u[1]; M (out, 1, 2) = u[2];
-	M (out, 2, 0) = -f[0]; M (out, 2, 1) = -f[1]; M (out, 2, 2) = -f[2];
-	M (out, 0, 3) = -v3_dot (r, view->position);
-	M (out, 1, 3) = -v3_dot (u, view->position);
-	M (out, 2, 3) = v3_dot (f, view->position);
+	/* lrg_math3d_look_at() builds the same basis as view_basis(). */
+	lrg_math3d_look_at (view->position, view->target, view->up, out);
 }
 
 static gfloat
@@ -540,31 +368,23 @@ lrg_editor_view_get_projection_matrix (const LrgEditorView *view,
 
 	g_return_if_fail (view != NULL);
 
+	/* Sanitise the clip range, then defer to the shared core helpers. */
 	n = view->near_plane > 0.0f ? view->near_plane : 0.05f;
 	f = view->far_plane > n ? view->far_plane : n + 1000.0f;
 	aspect = view_aspect (view);
 
-	memset (out, 0, 16 * sizeof (gfloat));
 	if (view->orthographic)
 	{
 		gfloat top = view->ortho_height * 0.5f;
 		gfloat right = top * aspect;
 
-		M (out, 0, 0) = 1.0f / right;
-		M (out, 1, 1) = 1.0f / top;
-		M (out, 2, 2) = -2.0f / (f - n);
-		M (out, 2, 3) = -(f + n) / (f - n);
-		M (out, 3, 3) = 1.0f;
+		lrg_math3d_ortho (-right, right, -top, top, n, f, out);
 	}
 	else
 	{
-		gfloat t = 1.0f / tanf (view->fovy * (gfloat) G_PI / 360.0f);
-
-		M (out, 0, 0) = t / aspect;
-		M (out, 1, 1) = t;
-		M (out, 2, 2) = -(f + n) / (f - n);
-		M (out, 2, 3) = -(2.0f * f * n) / (f - n);
-		M (out, 3, 2) = -1.0f;
+		/* fovy is stored in degrees; the core helper takes radians. */
+		lrg_math3d_perspective (view->fovy * (gfloat) G_PI / 180.0f,
+		                        aspect, n, f, out);
 	}
 }
 

@@ -6,6 +6,8 @@ This document covers the three authoring types that form the editor document:
 =LrgLevel=, =LrgNode=, and =LrgNodeVisual=, plus the supporting record types
 =LrgComponentDesc= and =LrgScriptBinding=.
 
+Since 0.9.0 these types are part of the always-built [[file:../modules/level/index.org][runtime level module]] (=src/level/=): a game built with =BUILD_EDITOR=0= loads and instantiates levels with them. The API and GIR names did not change; the old =src/editor/= headers forward to =src/level/=. See [[file:../guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]].
+
 #+begin_quote
 *[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Level Model
 
@@ -120,6 +122,13 @@ lrg_node_set_is_2d (node, FALSE);
 :END:
 The local TRS transform uses =GrlVector3= boxed types (from graylib). Getters
 return borrowed references (=transfer none=); do not free them.
+
+World and local matrices come from the shared core math ([[file:../modules/core/math3d.org][lrg-math3d]]); they need no editor:
+
+| Function | Description |
+|----------+-------------|
+| =lrg_node_get_local_matrix= | =T * Rz * Ry * Rx * S= of the node's own TRS (column-major 16 floats) |
+| =lrg_node_get_world_matrix= | Product of every ancestor's local matrix and the node's (=parent_world * local=) |
 
 #+begin_src C
 /* Set location / rotation / scale */
@@ -352,6 +361,7 @@ gboolean     enabled    = lrg_script_binding_get_enabled (bind);
 - [[file:editor-runtime.org][Editor Runtime]] — mutating nodes through undo/redo commands
 - [[file:prefabs.org][Prefabs]] — saving and reusing node subtrees
 - [[file:../modules/editor/index.org][Editor Module Reference]]
+- [[file:../modules/level/index.org][Runtime Level Module]] — loading levels in a game without the editor
 
 ** Node property source
 :PROPERTIES:

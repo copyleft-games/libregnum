@@ -13,6 +13,7 @@
 #include "lrg-component-desc.h"
 #include "lrg-script-binding.h"
 #include "lrg-prefab.h"
+#include "../core/lrg-math3d.h"
 
 typedef struct
 {
@@ -526,6 +527,44 @@ lrg_node_set_scale_xyz (LrgNode *self,
 	priv = lrg_node_get_instance_private (self);
 	g_clear_pointer (&priv->scale, grl_vector3_free);
 	priv->scale = grl_vector3_new (sx, sy, sz);
+}
+
+void
+lrg_node_get_local_matrix (LrgNode *self,
+                           gfloat  *out)
+{
+	LrgNodePrivate *priv;
+	gfloat          loc[3], rot[3], scl[3];
+
+	g_return_if_fail (LRG_IS_NODE (self));
+	g_return_if_fail (out != NULL);
+
+	/* Copy the boxed vectors into plain arrays for the core math. */
+	priv = lrg_node_get_instance_private (self);
+	loc[0] = priv->location->x; loc[1] = priv->location->y; loc[2] = priv->location->z;
+	rot[0] = priv->rotation->x; rot[1] = priv->rotation->y; rot[2] = priv->rotation->z;
+	scl[0] = priv->scale->x; scl[1] = priv->scale->y; scl[2] = priv->scale->z;
+
+	lrg_math3d_compose (loc, rot, scl, out);
+}
+
+void
+lrg_node_get_world_matrix (LrgNode *self,
+                           gfloat  *out)
+{
+	gfloat   local[16];
+	LrgNode *p;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+	g_return_if_fail (out != NULL);
+
+	/* Walk up the parents, pre-multiplying each ancestor's local matrix. */
+	lrg_node_get_local_matrix (self, out);
+	for (p = lrg_node_get_parent (self); p != NULL; p = lrg_node_get_parent (p))
+	{
+		lrg_node_get_local_matrix (p, local);
+		lrg_math3d_multiply (local, out, out);
+	}
 }
 
 /* ==========================================================================

@@ -5,6 +5,8 @@
 API reference for the editor and level-authoring subsystem.
 Requires =-DLRG_BUILD_EDITOR= (=BUILD_EDITOR ?= 1=).
 
+Since 0.9.0 the types in [[#core-types][Core Types]] and the =lrg_level_instantiate()= / =lrg_level_to_scene()= bridges live in the always-built [[file:../level/index.org][runtime level module]] (=src/level/=) and work without the editor; the old =src/editor/= headers forward there. The scene importer (=lrg_level_from_scene()=, =lrg_level_import_scene_file()=) stays editor-only, and the matrix helpers are thin wrappers over [[file:../core/math3d.org][lrg-math3d]].
+
 #+begin_quote
 *[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > Editor
 

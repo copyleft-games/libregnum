@@ -1562,9 +1562,37 @@ SOURCES += \
 	src/gui/lrg-gui-dock.c \
 	src/gui/lrg-gui-raylib.c
 
-# Editor / level authoring module (conditional on BUILD_EDITOR=1)
-ifeq ($(BUILD_EDITOR),1)
+# Runtime level module (always built since 0.9.0): the .rlevel/.rprefab data
+# model (LrgLevel, LrgNode, LrgNodeVisual, LrgNodeTilemap, LrgTimeline,
+# LrgComponentDesc, LrgScriptBinding), the YAML serializer, prefab
+# resolution/linking and lrg_level_instantiate().  Games load levels with
+# BUILD_EDITOR=0; the editor (below) only adds the authoring layer.
 PUBLIC_HEADERS += \
+	src/level/lrg-component-desc.h \
+	src/level/lrg-script-binding.h \
+	src/level/lrg-node-visual.h \
+	src/level/lrg-node-tilemap.h \
+	src/level/lrg-timeline.h \
+	src/level/lrg-node.h \
+	src/level/lrg-level.h \
+	src/level/lrg-level-serializer.h \
+	src/level/lrg-level-instantiate.h \
+	src/level/lrg-prefab.h
+SOURCES += \
+	src/level/lrg-component-desc.c \
+	src/level/lrg-script-binding.c \
+	src/level/lrg-node-visual.c \
+	src/level/lrg-node-tilemap.c \
+	src/level/lrg-timeline.c \
+	src/level/lrg-node.c \
+	src/level/lrg-level.c \
+	src/level/lrg-level-serializer.c \
+	src/level/lrg-level-instantiate.c \
+	src/level/lrg-prefab.c
+
+# Old src/editor/ paths of the headers above (thin "#include ../level/..."
+# forwarders kept for source compatibility).  Never GIR-scanned.
+LRG_LEVEL_COMPAT_HEADERS := \
 	src/editor/lrg-component-desc.h \
 	src/editor/lrg-script-binding.h \
 	src/editor/lrg-node-visual.h \
@@ -1573,8 +1601,16 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-node.h \
 	src/editor/lrg-level.h \
 	src/editor/lrg-level-serializer.h \
-	src/editor/lrg-scene-import.h \
 	src/editor/lrg-level-instantiate.h \
+	src/editor/lrg-prefab.h
+
+# Editor / level authoring module (conditional on BUILD_EDITOR=1)
+ifeq ($(BUILD_EDITOR),1)
+# Compatibility forwarding headers for the types that moved to src/level/ in
+# 0.9.0: installed at their old editor/ path, excluded from the GIR scan.
+PUBLIC_HEADERS += $(LRG_LEVEL_COMPAT_HEADERS)
+PUBLIC_HEADERS += \
+	src/editor/lrg-scene-import.h \
 	src/editor/lrg-editor-command.h \
 	src/editor/lrg-editor-selection.h \
 	src/editor/lrg-editor.h \
@@ -1601,19 +1637,9 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-document.h \
 	src/editor/lrg-editor-settings-migrate.h \
 	src/editor/lrg-editor-node-model.h \
-	src/editor/lrg-editor-node-source.h \
-	src/editor/lrg-prefab.h
+	src/editor/lrg-editor-node-source.h
 SOURCES += \
-	src/editor/lrg-component-desc.c \
-	src/editor/lrg-script-binding.c \
-	src/editor/lrg-node-visual.c \
-	src/editor/lrg-node-tilemap.c \
-	src/editor/lrg-timeline.c \
-	src/editor/lrg-node.c \
-	src/editor/lrg-level.c \
-	src/editor/lrg-level-serializer.c \
 	src/editor/lrg-scene-import.c \
-	src/editor/lrg-level-instantiate.c \
 	src/editor/lrg-editor-command.c \
 	src/editor/lrg-editor-selection.c \
 	src/editor/lrg-editor.c \
@@ -1640,8 +1666,7 @@ SOURCES += \
 	src/editor/lrg-editor-document.c \
 	src/editor/lrg-editor-settings-migrate.c \
 	src/editor/lrg-editor-node-model.c \
-	src/editor/lrg-editor-node-source.c \
-	src/editor/lrg-prefab.c
+	src/editor/lrg-editor-node-source.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-data-editor.h \
@@ -2029,6 +2054,7 @@ endif
 # authors use the editor types + the LrgScripting base / manager / component +
 # the LrgScriptLanguage enum, all of which remain introspectable.
 GIR_EXCLUDE := \
+	$(LRG_LEVEL_COMPAT_HEADERS) \
 	src/audio/lrg-midi-synth-vendor.c \
 	src/scripting/lrg-scripting-gi.h \
 	src/scripting/lrg-scripting-gi.c \
@@ -2356,6 +2382,7 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
 DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h \
+	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h)
 
 docs-check:
