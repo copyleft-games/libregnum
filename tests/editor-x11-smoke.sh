@@ -137,6 +137,20 @@ export DISPLAY="${display_num}"
 window="$(xdotool search --name 'libregnum editor' | head -n 1)"
 state="$(ipc ui.state)"
 
+# chord MOD KEY: hold MOD across at least one editor frame while KEY is
+# typed.  "xdotool key ctrl+a" presses and releases the modifier within a
+# few milliseconds; at low frame rates (software GL under load) the press
+# and release land in one input poll and the editor never sees the
+# modifier held.  Two IPC round trips are served on the editor's main
+# loop, so at least one full iteration runs while MOD is down.
+chord () {
+	xdotool keydown "${1}"
+	xdotool key "${2}"
+	ipc editor.info >/dev/null
+	ipc editor.info >/dev/null
+	xdotool keyup "${1}"
+}
+
 # 1. A fast click (press and release between two frames) opens a menu.
 read -r fx fy < <(centre "$(yq -p json -o json -I0 '.menubar.File' <<<"${state}")")
 xdotool mousemove --window "${window}" "${fx}" "${fy}" click 1
@@ -160,7 +174,7 @@ ipc play.stop >/dev/null
 
 # 4. Keyboard shortcut with a modifier (Ctrl+A selects all).
 xdotool mousemove --window "${window}" "${fx}" "$((fy + 300))"
-xdotool key ctrl+a
+chord ctrl a
 sleep 0.3
 check 'Ctrl+A selects every node' "$(ipc selection.get | yq -p json '.nodes | length')" '3'
 ipc selection.clear >/dev/null
@@ -211,7 +225,7 @@ after="$(ipc view.get | yq -p json -o json -I0 '.')"
 check 'wheel zooms' "$([[ "${before}" != "${after}" ]] && echo changed || echo same)" 'changed'
 
 # 9. Alt + F opens the File menu from the keyboard.
-xdotool key alt+f
+chord alt f
 sleep 0.4
 check 'Alt+F opens the File menu' "$(ipc ui.state | yq -p json '.menu')" 'File'
 xdotool key Escape
@@ -233,7 +247,14 @@ sleep 0.3
 check 'B turns tile painting on' "$(ipc tilemap.tool | yq -p json '.mode')" 'true'
 undo_before="$(ipc editor.info | yq -p json '.undo')"
 xdotool mousedown 1
+# Let the editor take a frame with the button down before moving: at low
+# frame rates (software GL under load) the press and the first motion can
+# land in one input poll, and the stroke then starts one cell late.  Two
+# IPC round trips are served on the editor's main loop, so at least one
+# full iteration (input poll + frame) runs between them.
 sleep 0.1
+ipc editor.info >/dev/null
+ipc editor.info >/dev/null
 for _ in $(seq 1 6)
 do
 	xdotool mousemove_relative -- "${step}" 0
