@@ -1,0 +1,443 @@
+#+title: LrgShaderGraph - shader graphs (.rshadergraph)
+#+description: Node-based shaders: the graph data model, the node library with ports and generated GLSL, validation, deterministic GLSL generation into an LrgShaderAsset, and the .rshadergraph format
+
+* LrgShaderGraph - shader graphs (=.rshadergraph=)
+:PROPERTIES:
+:CUSTOM_ID: lrgshadergraph
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > Modules > Graphics > Shader graphs
+#+end_quote
+
+=LrgShaderGraph= is a shader built from nodes instead of text: inputs (UV, normal, time, parameters...), maths, texture samples and noise wired into one output node (PBR or unlit). The graph validates itself (cycles, type mismatches, missing inputs, all reported with node ids) and generates the fragment stage of an [[file:shader-asset.org][LrgShaderAsset]]: the same asset type a hand-written =.rshader= produces, compiled, bound and hot-reloaded the same way.
+
+The graph is a pure data model. It does not depend on =src/ui= or on any editor code, needs no GL context, and generates byte-identical GLSL for the same graph no matter in which order its nodes and links were added.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+| Type | Kind | Purpose |
+|------+------+---------|
+| =LrgShaderGraph= | final GObject (=LRG_TYPE_SHADER_GRAPH=, GIR =Libregnum.ShaderGraph=) | nodes, links, validation, generation, load / save |
+| =LrgShaderGraphProblem= | boxed, immutable (=LRG_TYPE_SHADER_GRAPH_PROBLEM=) | one validation problem: code, node id, port, message |
+| =LrgShaderPortType= | enum (=LRG_TYPE_SHADER_PORT_TYPE=) | =FLOAT=, =VEC2=, =VEC3=, =VEC4=, =SAMPLER2D=, =DYNAMIC= |
+| =LrgShaderGraphError= | enum (=LRG_TYPE_SHADER_GRAPH_ERROR=), domain =LRG_SHADER_GRAPH_ERROR= | =PARSE=, =IO=, =UNKNOWN_NODE=, =UNKNOWN_PORT=, =DUPLICATE_ID=, =CYCLE=, =TYPE_MISMATCH=, =MISSING_INPUT=, =NO_OUTPUT=, =MULTIPLE_OUTPUTS=, =INVALID_PARAM=, =INVALID= |
+
+Header: =graphics/lrg-shader-graph.h=. Error quark =lrg_shader_graph_error_quark()=; enum GTypes =lrg_shader_graph_error_get_type()= and =lrg_shader_port_type_get_type()=; boxed GType =lrg_shader_graph_problem_get_type()=.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Nodes, ports, links
+:PROPERTIES:
+:CUSTOM_ID: nodes
+:END:
+- A *node* has an id (a GLSL identifier unique in the graph, not starting with =gl_= or =lrg=; =add_node= picks =<type><n>= when you pass none), a type from the [[#library][node library]], a canvas position, string and numeric parameters, and a value for each unconnected input.
+- *Ports* are typed. Inputs take at most one link; outputs feed any number. An unconnected input uses its value if set (=lrg_shader_graph_set_input_value()=), else the library default (a number, a built-in such as the UV, or nothing for required inputs).
+- A *link* joins =from_node.from_port= (an output) to =to_node.to_port= (an input). =lrg_shader_graph_connect()= only checks that the ports exist, so an editor can hold a half-wired graph; types and cycles are checked by validation.
+
+*** Types and conversions
+:PROPERTIES:
+:CUSTOM_ID: types-rules
+:END:
+| From \ to | float | vecN | sampler2D |
+|-----------+-------+------+-----------|
+| float | yes | splat: =vecN(x)= | mismatch |
+| vecM, M > N | truncate: =x.x= | truncate: =x.xy= / =x.xyz= | mismatch |
+| vecM, M < N | mismatch | mismatch | mismatch |
+| sampler2D | mismatch | mismatch | yes |
+
+*Dynamic* ports (=LRG_SHADER_PORT_DYNAMIC= in the library) accept float or any vector. A node resolves one width for all its dynamic ports: the widest source feeding any of them (float when nothing wider is connected), then every dynamic input is converted to it (floats splat; a narrower vector is a mismatch). Dynamic outputs have the resolved width. =lrg_shader_graph_get_resolved_port_type()= reports the concrete types after validation.
+
+*** Validation
+:PROPERTIES:
+:CUSTOM_ID: validation
+:END:
+=lrg_shader_graph_validate()= checks the /whole/ graph (also nodes not reachable from the output) and collects every problem, each tagged with its node id (and input port):
+
+| Code | Cause |
+|------+-------|
+| =NO_OUTPUT= | no =pbr_output= / =unlit_output= node (graph-wide, no node id) |
+| =MULTIPLE_OUTPUTS= | more than one output node (one problem per output node) |
+| =CYCLE= | the node lies on a cycle (Kahn's algorithm: every node left over) |
+| =TYPE_MISMATCH= | a link or input value of an incompatible type (=type mismatch (vec2 -> vec3)=) |
+| =MISSING_INPUT= | a required input (=texture_sample.texture=, =swizzle.in=) has no link |
+| =INVALID_PARAM= | a parameter node without a valid =name= / =type=, a =default= of the wrong size, a bad range, two parameters sharing a name with different types, a bad swizzle mask, an unknown =blend= / =cull= |
+
+The =GError= (=LRG_SHADER_GRAPH_ERROR_INVALID=) lists the messages one per line (=node 'mul1': input 'b': type mismatch (vec2 -> vec3)=); =lrg_shader_graph_get_problems()= keeps them for an editor to highlight nodes and ports.
+
+Loading rejects only structural problems (unknown node types or ports, duplicate ids, links to missing nodes, malformed values); a file with a cycle or a mismatch loads and is reported by validation.
+
+*** Generation
+:PROPERTIES:
+:CUSTOM_ID: generation
+:END:
+Generation validates first, then walks back from the output node depth-first, visiting inputs in port order, and emits each reachable node once (common subexpressions are shared by node id):
+
+- /inline/ nodes (=uv=, =position=, =time=, =vertex_color=, =parameter=, =constant=) become expressions at their use;
+- every other node becomes one statement =<type> sg_<id> = <expression>;=, and its outputs read that variable with the output's swizzle (=sg_tex.rgb=, =sg_parts.y=);
+- the output node's code ends =main()=.
+
+Helper functions (the noise) are emitted once before =main()= when a node needs them. Numbers are written in their shortest exact form (=0.35=, =4.0=, =1e-05=). Because the walk follows the links from the output, the text depends only on the graph's content: two graphs with the same nodes, parameters and links generate identical text whatever their insertion order, and unreachable nodes generate nothing.
+
+=lrg_shader_graph_generate()= wraps the text in an =LrgShaderAsset=: the graph's name; =lit= for a =pbr_output= graph; the fragment stage inline; the default vertex stage; one uniform per reachable =parameter= name (generation order, with its type, default, range, hint and default texture); the output node's =blend= / =cull= parameters as the render state.
+
+** Node reference
+:PROPERTIES:
+:CUSTOM_ID: library
+:END:
+Types: =F= float, =V2= / =V3= / =V4= vectors, =S= sampler2D, =D= dynamic (resolved width =W=). =in(name)= is the input's converted expression; defaults in brackets (=@uv= = =fragTexCoord=, =@normal= = =normalize(fragNormal)=, =@view= = =normalize(lrg_view_position() - fragPosition)=; /required/ = must be linked).
+
+*** Inputs
+:PROPERTIES:
+:CUSTOM_ID: library-inputs
+:END:
+| Type | Label | Inputs | Outputs | Generated GLSL |
+|------+-------+--------+---------+----------------|
+| =uv= | UV | none | =uv: V2= | inline =fragTexCoord= |
+| =position= | World position | none | =position: V3= | inline =fragPosition= (draw space) |
+| =normal= | World normal | none | =normal: V3= | =vec3 sg_<id> = normalize(fragNormal);= |
+| =view_dir= | View direction | none | =view_dir: V3= | =vec3 sg_<id> = normalize(lrg_view_position() - fragPosition);= (surface to eye) |
+| =time= | Time | none | =time: F= | inline =lrgTime= |
+| =vertex_color= | Vertex colour | none | =color: V4=, =rgb: V3= (=.rgb=), =alpha: F= (=.a=) | inline =fragColor= |
+| =parameter= | Parameter | none | =value=: by =type= (=float= F, =vec2= V2, =vec3= V3, =vec4= / =color= V4, =sampler2D= S) | inline uniform name; becomes an asset uniform |
+| =constant= | Constant | none | =value=: F .. V4 by the length of =value= | inline literal (=0.5=, =vec3(1.0, 0.5, 0.0)=) |
+
+Parameter node parameters: =name= (uniform name, required), =type= (required), =default= (numbers matching the type), =range= (=[min, max]=), =hint= (inspector hint), =texture= (default texture path or =guid:= of a =sampler2D=). Constant: =value= (1 to 4 numbers, required).
+
+*** Maths
+:PROPERTIES:
+:CUSTOM_ID: library-math
+:END:
+| Type | Inputs | Outputs | Generated GLSL |
+|------+--------+---------+----------------|
+| =add= | =a: D [0]=, =b: D [0]= | =out: D= | =W sg = (a + b);= |
+| =sub= | =a: D [0]=, =b: D [0]= | =out: D= | =(a - b)= |
+| =mul= | =a: D [1]=, =b: D [1]= | =out: D= | =(a * b)= |
+| =div= | =a: D [0]=, =b: D [1]= | =out: D= | =(a / b)= |
+| =lerp= | =a: D [0]=, =b: D [1]=, =t: D [0.5]= | =out: D= | =mix(a, b, t)= |
+| =dot= | =a: D [0]=, =b: D [0]= | =out: F= | =float sg = dot(a, b);= |
+| =cross= | =a: V3 [0]=, =b: V3 [0]= | =out: V3= | =cross(a, b)= |
+| =normalize= | =in: D [0]= | =out: D= | =normalize(in)= |
+| =pow= | =a: D [0]=, =b: D [1]= | =out: D= | =pow(a, b)= |
+| =clamp= | =in: D [0]=, =min: D [0]=, =max: D [1]= | =out: D= | =clamp(in, min, max)= |
+| =saturate= | =in: D [0]= | =out: D= | =clamp(in, 0.0, 1.0)= |
+| =one_minus= | =in: D [0]= | =out: D= | =(1.0 - in)= |
+| =fresnel= | =normal: V3 [@normal]=, =view_dir: V3 [@view]=, =power: F [5]= | =out: F= | =pow(1.0 - clamp(dot(normalize(normal), normalize(view_dir)), 0.0, 1.0), power)= |
+| =step= | =a: D [0.5]= (edge), =b: D [0]= (x) | =out: D= | =step(a, b)= |
+| =smoothstep= | =edge0: D [0]=, =edge1: D [1]=, =x: D [0]= | =out: D= | =smoothstep(edge0, edge1, x)= |
+| =sin= / =cos= | =in: D [0]= | =out: D= | =sin(in)= / =cos(in)= |
+| =abs= / =fract= / =floor= | =in: D [0]= | =out: D= | =abs(in)= / =fract(in)= / =floor(in)= |
+| =min= / =max= | =a: D [0]=, =b: D [0]= | =out: D= | =min(a, b)= / =max(a, b)= |
+| =split= | =in: D [0]= | =x=, =y=, =z=, =w=: F | =vec4 sg = vec4(in, 0.0...);= (padded with zeros); outputs =sg.x= .. =sg.w= |
+| =combine= | =x: F [0]=, =y: F [0]=, =z: F [0]=, =w: F [1]= | =xyzw: V4=, =xyz: V3=, =xy: V2= | =vec4 sg = vec4(x, y, z, w);= |
+| =swizzle= | =in: D= (required) | =out=: width of =mask= | =vecN sg = in.<mask>;= (a float input is splatted: =vecN(in)=) |
+
+Swizzle parameter: =mask=, 1 to 4 letters all from =xyzw= or all from =rgba=, each reading a component the input has.
+
+*** Texture and procedural
+:PROPERTIES:
+:CUSTOM_ID: library-texture
+:END:
+| Type | Inputs | Outputs | Generated GLSL |
+|------+--------+---------+----------------|
+| =texture_sample= | =texture: S= (required, a =sampler2D= parameter), =uv: V2 [@uv]= | =rgba: V4=, =rgb: V3=, =r=, =g=, =b=, =a=: F | =vec4 sg = texture(texture, uv);= |
+| =noise= | =uv: V2 [@uv]=, =scale: F [10]= | =out: F= | =float sg = lrg_sg_noise(uv * scale);= (smooth value noise in 0 .. 1; =lrg_sg_hash= / =lrg_sg_noise= emitted once) |
+
+*** Outputs
+:PROPERTIES:
+:CUSTOM_ID: library-outputs
+:END:
+Exactly one per graph. Both take the parameters =blend= (=opaque cutout alpha additive multiply=) and =cull= (=back front none=), copied into the generated asset's render state.
+
+| Type | Inputs | Generated GLSL |
+|------+--------+----------------|
+| =unlit_output= | =color: V3 [1]= (display space), =alpha: F [1]=, =alpha_clip: F [0]= | =finalColor = vec4(color, alpha);= (preceded by =if (alpha < alpha_clip) discard;= when =alpha_clip= is linked or set) |
+| =pbr_output= | =albedo: V3 [1]= (display space, like =colDiffuse=), =normal: V3 [@normal]= (world space), =metallic: F [0]=, =roughness: F [0.5]=, =ao: F [1]=, =emission: V3 [0]= (display space), =alpha: F [1]=, =alpha_clip: F [0]= | the lit pipeline below; generates a =lit: true= asset |
+
+=pbr_output= follows the built-in shader's =lrg_light_shade()= order, using the light set's library:
+
+#+begin_src glsl
+    vec3 lrg_n = normalize(<normal>);
+    vec3 lrg_v = normalize(lrg_view_position() - fragPosition);
+    vec4 lrg_albedo = vec4(lrg_to_linear(<albedo>), <alpha>);
+    float lrg_metal = <metallic>;
+    float lrg_rough = <roughness>;
+#ifdef LRG_HAS_DECALS
+    lrg_decals_apply(fragPosition, normalize(fragNormal), lrg_albedo, lrg_n, lrg_rough, lrg_metal);
+#endif
+    vec3 lrg_lit = lrg_light_pbr(fragPosition, lrg_n, lrg_v, lrg_albedo, lrg_metal, lrg_rough, <ao>)
+        + lrg_to_linear(<emission>);
+    vec3 lrg_col = lrg_to_display(lrg_lit);
+    /* LRG_HAS_OVERLAY: snow / cloud overlay; LRG_HAS_AIR: volumetric air;
+       LRG_HAS_FOG: distance / height fog; LRG_HAS_OUTPUT_LINEAR: linear output */
+    finalColor = vec4(lrg_col, lrg_albedo.a);
+#+end_src
+
+The =LRG_HAS_*= macros come from the shader asset's preamble ([[file:shader-asset.org::#contract][contract]]) and are defined when the light-set library provides that pass.
+
+** Format: =.rshadergraph=
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+#+begin_src yaml
+version: 1                     # format version; only 1 (always written)
+name: textured                 # graph name = generated asset name (default "untitled")
+nodes:                         # in insertion order
+- id: tex                      # node id: GLSL identifier, unique (required)
+  type: parameter              # node type from the library (required)
+  position:                    # canvas position [x, y] (left out when 0, 0)
+  - -200
+  - 40
+  params:                      # node parameters (only the keys the type takes)
+    name: albedo_map           #   parameter: uniform name
+    type: sampler2D            #   parameter: float | vec2 | vec3 | vec4 | color | sampler2D
+    texture: textures/rock.png #   parameter (sampler2D): default texture path or guid:
+- id: sample
+  type: texture_sample
+- id: tint
+  type: parameter
+  params:
+    name: tint
+    type: color
+    default:                   #   parameter: default numbers (count = type width)
+    - 1
+    - 0.8
+    - 0.6
+    - 1
+    range:                     #   parameter: [min, max]
+    - 0
+    - 1
+    hint: color                #   parameter: inspector hint
+- id: mul
+  type: mul
+- id: out
+  type: unlit_output
+  params:
+    blend: alpha               #   output: render state blend / cull
+  inputs:                      # values of unconnected inputs: a number or 1 .. 4 numbers
+    alpha_clip: 0.1
+links:                         # in insertion order; each input at most once
+- from: tex.value              # node.output
+  to: sample.texture           # node.input
+- from: sample.rgba
+  to: mul.a
+- from: tint.value
+  to: mul.b
+- from: mul.out
+  to: out.color
+- from: sample.a
+  to: out.alpha
+editor:                        # unknown top-level keys are kept and written back
+  zoom: 1.5
+#+end_src
+
+Other parameter keys: =mask= (swizzle), =value= (constant). A =sampler2D= parameter's =default:= may also hold the texture path (read as =texture=; written as =texture:=). Unknown keys inside a node, its =params= or a link are errors. The writer writes params in the order =name type default range hint texture mask value blend cull=, inputs in port order, whole numbers without an exponent; load + save is byte-stable.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Node library
+:PROPERTIES:
+:CUSTOM_ID: api-library
+:END:
+| Function | Notes |
+|----------+-------|
+| =GStrv lrg_shader_graph_list_node_types (void)= | every type, palette order; transfer full |
+| =gboolean lrg_shader_node_type_exists (const gchar *type)= | |
+| =const gchar *lrg_shader_node_type_get_label (const gchar *type)= | palette label |
+| =const gchar *lrg_shader_node_type_get_category (const gchar *type)= | =input math texture procedural output= |
+| =GStrv lrg_shader_node_type_get_inputs (const gchar *type)= / =GStrv lrg_shader_node_type_get_outputs (const gchar *type)= | port names in order; =NULL= for an unknown type |
+| =LrgShaderPortType lrg_shader_node_type_get_port_type (const gchar *type, const gchar *port, gboolean output)= | declared type (=DYNAMIC= for dynamic ports and parameter / constant values) |
+
+*** Graph
+:PROPERTIES:
+:CUSTOM_ID: api-graph
+:END:
+| Function | Notes |
+|----------+-------|
+| =LrgShaderGraph *lrg_shader_graph_new (void)= | empty, named =untitled= |
+| =LrgShaderGraph *lrg_shader_graph_new_from_file (const gchar *path, GError **error)= | =IO= / =PARSE= / =UNKNOWN_NODE= / =UNKNOWN_PORT= / =DUPLICATE_ID=, messages =source: /nodes/2: ...= |
+| =LrgShaderGraph *lrg_shader_graph_new_from_data (const gchar *data, gssize length, GError **error)= | from text (=<data>=) |
+| =gchar *lrg_shader_graph_save_to_data (LrgShaderGraph *self, gsize *length, GError **error)= | transfer full |
+| =gboolean lrg_shader_graph_save_to_file (LrgShaderGraph *self, const gchar *path, GError **error)= | atomic |
+| =lrg_shader_graph_get_name= / =lrg_shader_graph_set_name= | =name= property |
+
+*** Nodes
+:PROPERTIES:
+:CUSTOM_ID: api-nodes
+:END:
+| Function | Notes |
+|----------+-------|
+| =const gchar *lrg_shader_graph_add_node (LrgShaderGraph *self, const gchar *type, const gchar *id, GError **error)= | =id= nullable (generated); returns the id (transfer none) |
+| =gboolean lrg_shader_graph_remove_node (LrgShaderGraph *self, const gchar *id)= | also removes its links |
+| =guint lrg_shader_graph_get_n_nodes (LrgShaderGraph *self)= | |
+| =GStrv lrg_shader_graph_get_node_ids (LrgShaderGraph *self)= | insertion order |
+| =gboolean lrg_shader_graph_has_node (LrgShaderGraph *self, const gchar *id)= | |
+| =const gchar *lrg_shader_graph_get_node_type (LrgShaderGraph *self, const gchar *id)= | |
+| =lrg_shader_graph_set_node_position (self, id, gfloat x, gfloat y)= / =lrg_shader_graph_get_node_position (self, id, gfloat *out_x, gfloat *out_y)= | canvas only |
+| =gboolean lrg_shader_graph_set_node_param (self, id, const gchar *key, const gchar *value)= / =const gchar *lrg_shader_graph_get_node_param (self, id, key)= | string params: =name type hint texture= (parameter), =mask= (swizzle), =blend cull= (outputs); =FALSE= for a key the type does not take |
+| =gboolean lrg_shader_graph_set_node_values (self, id, const gchar *key, const gfloat *values, guint n_values)= / =guint lrg_shader_graph_get_node_values (self, id, key, gfloat *out_values)= | numeric params: =default range= (parameter; =range= takes 2), =value= (constant); 0 clears |
+| =gboolean lrg_shader_graph_set_input_value (self, id, const gchar *port, const gfloat *values, guint n_values)= / =guint lrg_shader_graph_get_input_value (self, id, port, gfloat *out_values)= | unconnected input values; fixed ports take 1 (splat) or their width, dynamic ports 1 .. 4; samplers none |
+
+*** Links
+:PROPERTIES:
+:CUSTOM_ID: api-links
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_shader_graph_connect (self, const gchar *from_node, const gchar *from_port, const gchar *to_node, const gchar *to_port, GError **error)= | replaces the input's link in place |
+| =gboolean lrg_shader_graph_disconnect (self, const gchar *to_node, const gchar *to_port)= | |
+| =guint lrg_shader_graph_get_n_links (LrgShaderGraph *self)= | |
+| =gboolean lrg_shader_graph_get_link (self, guint index, const gchar **out_from_node, const gchar **out_from_port, const gchar **out_to_node, const gchar **out_to_port)= | outs optional, transfer none |
+
+*** Validation and generation
+:PROPERTIES:
+:CUSTOM_ID: api-generate
+:END:
+| Function | Notes |
+|----------+-------|
+| =gboolean lrg_shader_graph_validate (LrgShaderGraph *self, GError **error)= | collects every problem |
+| =GPtrArray *lrg_shader_graph_get_problems (LrgShaderGraph *self)= | element type =LrgShaderGraphProblem=, transfer none |
+| =LrgShaderPortType lrg_shader_graph_get_resolved_port_type (self, const gchar *id, const gchar *port, gboolean output)= | after validation |
+| =gchar *lrg_shader_graph_generate_fragment (LrgShaderGraph *self, GError **error)= | the fragment body (no preamble) |
+| =LrgShaderAsset *lrg_shader_graph_generate (LrgShaderGraph *self, GError **error)= | the asset, not compiled |
+| =lrg_shader_graph_problem_copy= / =lrg_shader_graph_problem_free= | boxed |
+| =LrgShaderGraphError lrg_shader_graph_problem_get_code (const LrgShaderGraphProblem *self)= | |
+| =const gchar *lrg_shader_graph_problem_get_node_id (...)=, =const gchar *lrg_shader_graph_problem_get_port (...)= | nullable |
+| =const gchar *lrg_shader_graph_problem_get_message (...)= | =node 'x': input 'y': ...= |
+
+| Property | Type | Access | Default |
+|----------+------+--------+---------|
+| =name= | string | read-write (explicit notify) | ="untitled"= |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Building a graph in code
+:PROPERTIES:
+:CUSTOM_ID: example-build
+:END:
+A textured, tinted unlit shader:
+
+#+begin_src C
+g_autoptr(LrgShaderGraph) graph = lrg_shader_graph_new ();
+g_autoptr(GError) error = NULL;
+g_autofree gchar *glsl = NULL;
+
+lrg_shader_graph_set_name (graph, "textured");
+lrg_shader_graph_add_node (graph, "parameter", "tex", NULL);
+lrg_shader_graph_set_node_param (graph, "tex", "name", "albedo_map");
+lrg_shader_graph_set_node_param (graph, "tex", "type", "sampler2D");
+lrg_shader_graph_add_node (graph, "texture_sample", "sample", NULL);
+lrg_shader_graph_add_node (graph, "parameter", "tint", NULL);
+lrg_shader_graph_set_node_param (graph, "tint", "name", "tint");
+lrg_shader_graph_set_node_param (graph, "tint", "type", "color");
+lrg_shader_graph_add_node (graph, "mul", "mul", NULL);
+lrg_shader_graph_add_node (graph, "unlit_output", "out", NULL);
+
+lrg_shader_graph_connect (graph, "tex", "value", "sample", "texture", NULL);
+lrg_shader_graph_connect (graph, "sample", "rgba", "mul", "a", NULL);
+lrg_shader_graph_connect (graph, "tint", "value", "mul", "b", NULL);
+lrg_shader_graph_connect (graph, "mul", "out", "out", "color", NULL);
+lrg_shader_graph_connect (graph, "sample", "a", "out", "alpha", NULL);
+
+glsl = lrg_shader_graph_generate_fragment (graph, &error);
+#+end_src
+
+generates:
+
+#+begin_src glsl
+// generated by LrgShaderGraph from 'textured': edit the graph, not this text
+void main()
+{
+    vec4 sg_sample = texture(albedo_map, fragTexCoord);
+    vec4 sg_mul = (sg_sample * tint);
+    finalColor = vec4(sg_mul.xyz, sg_sample.a);
+}
+#+end_src
+
+(=mul= resolves to vec4, the widest of its inputs; the vec3 =color= input truncates it with =.xyz=.)
+
+*** Loading, validating, compiling, drawing
+:PROPERTIES:
+:CUSTOM_ID: example-compile
+:END:
+#+begin_src C
+g_autoptr(LrgShaderGraph) graph = lrg_shader_graph_new_from_file ("shaders/rim.rshadergraph", &error);
+g_autoptr(LrgShaderAsset) asset = NULL;
+
+if (graph == NULL)
+	return;                                      /* structural error, with its /nodes/<n> path */
+if (!lrg_shader_graph_validate (graph, &error))
+{
+	GPtrArray *problems = lrg_shader_graph_get_problems (graph);
+	guint i;
+
+	for (i = 0; i < problems->len; i++)
+		highlight_node (lrg_shader_graph_problem_get_node_id (g_ptr_array_index (problems, i)));
+	return;
+}
+asset = lrg_shader_graph_generate (graph, &error);
+lrg_shader_asset_compile (asset, &error);
+
+/* each frame (a pbr_output graph is lit) */
+lrg_light_set_apply (lights, cam_x, cam_y, cam_z);
+lrg_shader_asset_bind_lights (asset, lights);
+lrg_shader_asset_set_uniform_float (asset, "rim_power", 3.0f);
+lrg_shader_asset_apply (asset, NULL);
+#+end_src
+
+*** Exporting a graph as a =.rshader=
+:PROPERTIES:
+:CUSTOM_ID: example-export
+:END:
+#+begin_src C
+g_autoptr(LrgShaderAsset) asset = lrg_shader_graph_generate (graph, &error);
+
+lrg_shader_asset_save_to_file (asset, "shaders/rim.rshader", &error);   /* inline fragment + uniforms */
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Validation is O(nodes x links) (link lookups are linear); generation visits each reachable node once. Both are fine for graphs of hundreds of nodes; run them on edit, not per frame.
+- Every non-inline node is a temporary computed once, however many links read it, so a node feeding several inputs costs nothing extra.
+- Built-in defaults (=@normal=, =@view=) are re-evaluated where used; link a =normal= / =view_dir= node instead when several nodes need them.
+- Generated shaders compile like any shader asset; recompile after edits, not per frame.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *A narrower vector cannot feed a wider port*: wire it through =combine= (or =split= + =combine=).
+- *Dynamic nodes take the widest input*: =mul= of a vec4 colour and a vec3 gives a mismatch (the vec3 cannot widen); swizzle the colour to =rgb= first.
+- *Parameter names are uniform names*: two parameter nodes with the same =name= share one uniform (and must agree on its type); names cannot start with =gl_= or =lrg=.
+- *Albedo and emission are display-space colours* (as authored, like =colDiffuse=); the PBR output converts them to linear.
+- The =normal= input of =pbr_output= is a world-space normal; there is no tangent frame yet, so normal maps need their own maths.
+- Generation needs a valid graph; =lrg_shader_graph_generate_fragment()= returns =NULL= with =LRG_SHADER_GRAPH_ERROR_INVALID= otherwise.
+- A =pbr_output= asset is lit: bind the lights each frame (=lrg_shader_asset_bind_lights()=).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The shader graph editor (a node canvas on the editor's node graph widget) comes in the next editor pass. Until then the workflow is file based:
+
+- Keep =.rshadergraph= files in the project's asset folder; the writer's output diffs well (one key per line, insertion order kept, unknown keys such as editor view state kept).
+- Edit them by hand or from a tool; validate with =lrg_shader_graph_new_from_data()= + =lrg_shader_graph_validate()= and show =lrg_shader_graph_get_problems()= next to the nodes they name.
+- Generate a =.rshader= with =lrg_shader_graph_generate()= + =lrg_shader_asset_save_to_file()= to look at the GLSL, to hand-tune it, or to ship the shader without the graph; the generated asset hot-reloads like any other when its file changes.
+- Node positions are stored for the canvas but never affect generation.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:shader-asset.org][LrgShaderAsset]]: the generated asset, compiling, hot reload
+- [[file:light-set.org][LrgLightSet]]: the lit library the PBR output uses
+- [[file:material.org][LrgMaterial]]: custom-shader materials
