@@ -208,7 +208,11 @@ The mixer renders 2048 frames at 48 kHz stereo (4 buses, 32 voices, a low-pass, 
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-AUDIO_EMITTER nodes carry the source properties as visual params (=bus=, =rolloff_mode=, =rolloff_curve_keys=, =cone_inner_angle=, =occlusion=...), and play-in-editor builds the project mixer. The next editor wave adds the mixer panel (strips with =lrg_audio_mixer_get_bus_meter()= meters, gain reduction, solo/mute, effect inspectors from the effects' properties, snapshot authoring with live blend preview; it edits an =LrgMixerAsset= and re-applies it on =LrgMixerAsset::changed=) and the attenuation gizmo (=lrg_audio_source_component_debug_draw()= and a rolloff plot from =lrg_audio_source_component_get_distance_gain()=).
+AUDIO_EMITTER nodes carry the source properties as visual params (=bus=, =rolloff_mode=, =rolloff_curve_keys=, =cone_inner_angle=, =occlusion=...). In lrgeditor ([[file:../editor/audio.org][Audio in the Editor]]):
+
+- Selecting an emitter shows its *attenuation gizmo* in the viewport (min and max distance spheres, the half-volume ring, the sound cones) with drag handles for the distances and cone angles, and the inspector's *Audio Source* section (every source setting with the runtime's defaults, a gain-over-distance plot from =lrg_audio_source_component_get_distance_gain()=, a curve editor for the custom rolloff and a bus picker listing the project mixer's buses).
+- The *mixer editor* edits =.rmixer= files (strips, effects, sends, snapshots, ducking, offline preview with meters) and the *Mixer panel* shows the project mixer, metering the game's mixer while play-in-editor runs (it loads the project mixer into the audio manager when play starts).
+- =mixer.*= and =audio.*= IPC methods script all of it.
 
 ** See also
 :PROPERTIES:

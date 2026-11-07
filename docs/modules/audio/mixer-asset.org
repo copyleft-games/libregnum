@@ -356,13 +356,13 @@ Measured with =taskset -c 2 tests/build/release/tests/test-mixer-asset -m perf -
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The 0.9.0 engine wave ships the format, the runtime and these hooks; the mixer panel lands in the next editor wave:
+lrgeditor edits =.rmixer= files with the mixer editor and shows the project's default mixer in the docked Mixer panel ([[file:../../editor/audio.org][Audio in the Editor]]):
 
-- the panel edits an =LrgMixerAsset= through its API and listens to =LrgMixerAsset::changed= to re-apply it to a preview mixer (=lrg_mixer_asset_apply()=) and to push undo snapshots (=lrg_mixer_asset_copy()=);
-- strips show =lrg_audio_mixer_get_bus_meter()= (peak and RMS per channel over the last render), =lrg_audio_mixer_get_bus_duck_gain()= (gain reduction) and =lrg_audio_mixer_is_bus_audible()= (solo state);
-- effect inspectors list the effect's properties (=g_object_class_list_properties()=); ranges come from the param specs, and =lrg_mixer_asset_set_effect_param()= stores the value;
-- unknown keys round-trip, so the panel's own layout state can live in the file;
-- the project settings expose =audio.mixer= in =project.ryaml=, and play-in-editor calls =lrg_audio_manager_load_project_mixer()=.
+- *Mixer editor* (a data editor tab per file): channel strips (fader, peak/RMS meters with gain reduction, mute, solo, effect chain with bypass, sends with levels), a grid for the selected bus or effect (parent, volume, sends; every effect property with its range), snapshots (add, Capture the current faders, blend, default, per-bus / per-send / per-parameter overrides with reset, preview with blend) and ducking rules. Every edit is an =LrgMixerAsset= API call on a copy written back with =lrg_mixer_asset_to_data()= as one undo step, so saves are byte-stable.
+- *Preview*: an offline mixer from =lrg_mixer_asset_create_mixer()= with a pulsed test tone on every leaf bus, rendered each frame; snapshots preview with =lrg_mixer_asset_apply_snapshot()= and =lrg_mixer_asset_blend_snapshots()=, meters read =lrg_audio_mixer_get_bus_meter()=, =lrg_audio_mixer_get_bus_duck_gain()= and =lrg_audio_mixer_is_bus_audible()=.
+- *Mixer panel*: the project mixer (=audio.mixer= in =project.ryaml=, New Mixer writes one) as compact strips; while play-in-editor runs it meters the game mixer, which it builds with =lrg_audio_manager_load_project_mixer()= when the game has none.
+- *IPC*: =mixer.*= methods for every edit, preview and meters (=lrgeditorctl call mixer.set_bus ...=).
+- Unknown keys round-trip, so tools can keep their own state in the file; YAML comments do not survive an editor save.
 
 ** See also
 :PROPERTIES:

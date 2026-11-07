@@ -77,6 +77,13 @@
 #include "../../animation/lrg-animation-state-machine.h"
 #include "../../animation/lrg-ik-chain.h"
 #include "../../world3d/components/lrg-animator-component3d.h"
+#include "../../world3d/components/lrg-audio-source-component.h"
+#include "../../level/lrg-level-instantiate.h"
+#include "../../audio/lrg-mixer-asset.h"
+#include "../../audio/lrg-audio-manager.h"
+#include "../../ui/lrg-curve-edit.h"
+#include "../../tween/lrg-keyframe-curve.h"
+#include "data/lrg-editor-mixer-editor.h"
 #include "data/lrg-editor-anim-graph-editor.h"
 #include "lrg-editor-scene-renderer.h"
 #include "lrg-editor-gizmo-paint.h"
@@ -1507,6 +1514,19 @@ struct _LrgEditorInspectorPanel
 	LrgExpander          *phys_section;
 	LrgLabel             *phys_summary;
 	LrgButton            *phys_add;
+
+	/* Audio source (0.9.0 M7): one audio emitter's attenuation, cone,
+	 * doppler, occlusion and bus, a rolloff plot and the custom curve */
+	LrgExpander          *audio_section;
+	LrgPropertyGrid      *audio_grid;
+	GObject              *audio_src;     /* InspAudioSource, owned */
+	LrgWidget            *audio_plot;    /* custom: gain over distance */
+	LrgCurveEdit         *audio_curve;   /* the custom rolloff curve */
+	LrgLabel             *audio_label;
+	LrgNode              *audio_node;    /* weak: the emitter shown */
+	LrgNode              *audio_before;  /* snapshot while the curve is dragged */
+	gchar                *audio_sig;     /* node + bus list the rows were built for */
+	gboolean              audio_syncing;
 
 	/* LOD preview (0.9.0): mesh-asset nodes whose model has LOD levels */
 	LrgExpander          *lod_section;
@@ -3561,6 +3581,601 @@ build_physics_section (LrgEditorInspectorPanel *self)
 }
 
 /* ==========================================================================
+ * Audio source (0.9.0 M7)
+ *
+ * For one inspected AUDIO_EMITTER node (not while a live object is
+ * inspected): the spatial settings of the LrgAudioSourceComponent the
+ * level builds for it, edited as visual params.
+ *
+ * Rows are the component's own properties (types, ranges, the rolloff
+ * enum) read from the component lrg_level_visual_create_component()
+ * builds, so unset params show the runtime defaults; writes go through
+ * lrg_level_visual_store_property(), the inverse map ("max-distance"
+ * is stored as "radius", enums by nick), each one undoable
+ * (lrg_editor_commit_node_state(); a spin drag is one step). The bus
+ * row picks from the project mixer's buses.
+ *
+ * Under the grid: a plot of the distance gain (the engine's own
+ * lrg_audio_source_component_get_distance_gain()) with the min, half
+ * and max distances, and for the custom rolloff an LrgCurveEdit whose
+ * keys are written to "rolloff_curve_keys" (one undo step per drag).
+ * ========================================================================== */
+
+/* The rows: component property, label, group, tooltip. */
+static const struct
+{
+	const gchar *property;
+	const gchar *label;
+	const gchar *group;
+	const gchar *tooltip;
+} audio_rows[] = {
+	{ "rolloff-mode", "Rolloff", "Distance", "How the volume falls between the min and max distance" },
+	{ "min-distance", "Min distance", "Distance", "Full volume within this distance" },
+	{ "max-distance", "Max distance", "Distance", "Silent beyond this distance (the level's radius)" },
+	{ "rolloff", "Steepness", "Distance", "Steepness of the inverse rolloff (0 is linear)" },
+	{ "rolloff-curve-keys", "Curve keys", "Distance", "The custom curve as t:gain pairs (0 = min, 1 = max)" },
+	{ "cone-inner-angle", "Inner angle", "Cone", "Full angle heard at full volume (360: no cone)" },
+	{ "cone-outer-angle", "Outer angle", "Cone", "Full angle beyond which the outer gain applies" },
+	{ "cone-outer-gain", "Outer gain", "Cone", "Gain behind the cone" },
+	{ "doppler-factor", "Doppler", "Doppler", "Pitch shift scale from relative velocity (0: off)" },
+	{ "speed-of-sound", "Speed of sound", "Doppler", "Units per second" },
+	{ "occlusion", "Occlusion", "Occlusion", "Physics rays between listener and source muffle it" },
+	{ "occlusion-gain", "Gain per body", "Occlusion", "Gain multiplied per occluding body" },
+	{ "occlusion-cutoff", "Low-pass", "Occlusion", "Low-pass cut-off (Hz) of occluded mixer voices" },
+	{ "bus", "Bus", "Routing", "The mixer bus it plays through (empty: a device voice)" },
+	{ "spatial-blend", "Spatial blend", "Routing", "0 plays flat (2D), 1 fully positional" },
+};
+
+/* The visual param a component property is stored in. */
+static gchar *
+audio_param_name (const gchar *property)
+{
+	gchar *name, *p;
+
+	if (g_strcmp0 (property, "max-distance") == 0)
+		return g_strdup ("radius");
+	name = g_strdup (property);
+	for (p = name; *p != '\0'; p++)
+		if (*p == '-')
+			*p = '_';
+	return name;
+}
+
+/* The component property of a param (the IPC's keys), or NULL. */
+static const gchar *
+audio_property_for_param (const gchar *param)
+{
+	guint i;
+
+	if (g_strcmp0 (param, "radius") == 0 || g_strcmp0 (param, "max_distance") == 0)
+		return "max-distance";
+	for (i = 0; i < G_N_ELEMENTS (audio_rows); i++)
+	{
+		g_autofree gchar *name = audio_param_name (audio_rows[i].property);
+
+		if (g_strcmp0 (name, param) == 0)
+			return audio_rows[i].property;
+	}
+	return NULL;
+}
+
+static gboolean
+is_audio_emitter (LrgNode *node)
+{
+	LrgNodeVisual *visual = node != NULL ? lrg_node_get_visual (node) : NULL;
+
+	return visual != NULL && lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_AUDIO_EMITTER;
+}
+
+/* The runtime component of @node's visual (configured from its params). */
+static LrgAudioSourceComponent *
+audio_component (LrgNode *node)
+{
+	LrgComponent *comp;
+
+	if (!is_audio_emitter (node))
+		return NULL;
+	comp = lrg_level_visual_create_component (lrg_node_get_visual (node));
+	if (comp != NULL && !LRG_IS_AUDIO_SOURCE_COMPONENT (comp))
+		g_clear_object (&comp);
+	return (LrgAudioSourceComponent *) comp;
+}
+
+/* The project mixer's buses (the open editor's, else the file's). */
+static gchar **
+audio_project_buses (LrgEditorApp *app)
+{
+	g_autofree gchar         *path = app != NULL ? lrg_editor_mixer_editor_project_mixer_path (app) : NULL;
+	LrgEditorMixerEditor     *ed;
+	g_autoptr(LrgMixerAsset)  disk = NULL;
+
+	if (path == NULL)
+		return NULL;
+	ed = lrg_editor_mixer_editor_find_for_path (app, path, FALSE, NULL);
+	if (ed != NULL && lrg_editor_mixer_editor_get_asset (ed) != NULL)
+		return lrg_mixer_asset_get_bus_names (lrg_editor_mixer_editor_get_asset (ed));
+	disk = lrg_mixer_asset_new_from_file (path, NULL);
+	return disk != NULL ? lrg_mixer_asset_get_bus_names (disk) : NULL;
+}
+
+/*
+ * audio_store:
+ * Writes component property values into @node's visual as ONE undo
+ * step: @values[i] NULL removes the param (back to the default).
+ * @merge coalesces with the previous commit of the same label (a drag).
+ */
+static gboolean
+audio_store (LrgEditor          *editor,
+             LrgNode            *node,
+             const gchar *const *properties,
+             const GValue      **values,
+             guint               n,
+             const gchar        *label,
+             gboolean            merge)
+{
+	g_autoptr(LrgNode) before = lrg_editor_snapshot_node (node);
+	LrgNodeVisual     *visual = lrg_node_get_visual (node);
+	gboolean           ok = TRUE;
+	guint              i;
+
+	for (i = 0; i < n; i++)
+	{
+		if (values[i] == NULL)
+		{
+			g_autofree gchar *param = audio_param_name (properties[i]);
+
+			lrg_node_visual_remove_param (visual, param);
+		}
+		else if (!lrg_level_visual_store_property (visual, properties[i], values[i]))
+			ok = FALSE;
+	}
+	if (lrg_editor_get_level (editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (editor), node);
+	lrg_editor_commit_node_state (editor, node, before, label, merge);
+	return ok;
+}
+
+/* --- InspAudioSource --- */
+
+#define INSP_TYPE_AUDIO_SOURCE (insp_audio_source_get_type ())
+G_DECLARE_FINAL_TYPE (InspAudioSource, insp_audio_source, INSP, AUDIO_SOURCE, GObject)
+
+struct _InspAudioSource
+{
+	GObject                  parent_instance;
+
+	LrgEditorInspectorPanel *panel;     /* not owned: the panel owns us */
+	gboolean                 in_gesture;
+	gboolean                 first;
+};
+
+static void insp_audio_source_iface_init (LrgPropertySourceInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (InspAudioSource, insp_audio_source, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PROPERTY_SOURCE, insp_audio_source_iface_init))
+
+static GParamSpec *
+audio_pspec (const gchar *property)
+{
+	GObjectClass *klass = g_type_class_ref (LRG_TYPE_AUDIO_SOURCE_COMPONENT);
+	GParamSpec   *p = g_object_class_find_property (klass, property);
+
+	g_type_class_unref (klass);
+	return p;
+}
+
+static GPtrArray *
+insp_audio_source_list (LrgPropertySource *source)
+{
+	InspAudioSource *src = INSP_AUDIO_SOURCE (source);
+	GPtrArray       *infos = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_property_info_unref);
+	g_auto(GStrv)    buses = src->panel != NULL ? audio_project_buses (src->panel->app) : NULL;
+	guint            i;
+
+	for (i = 0; i < G_N_ELEMENTS (audio_rows); i++)
+	{
+		GParamSpec      *p = audio_pspec (audio_rows[i].property);
+		LrgPropertyInfo *info;
+
+		if (p == NULL)
+			continue;
+		info = lrg_property_info_new (p);
+		lrg_property_info_set_label (info, audio_rows[i].label);
+		lrg_property_info_set_group (info, audio_rows[i].group);
+		lrg_property_info_set_tooltip (info, audio_rows[i].tooltip);
+		/* the unbounded floats get usable spin ranges */
+		if (g_strcmp0 (audio_rows[i].property, "min-distance") == 0 ||
+		    g_strcmp0 (audio_rows[i].property, "max-distance") == 0)
+			lrg_property_info_set_hint (info, "range:0,10000,0.1");
+		else if (g_strcmp0 (audio_rows[i].property, "rolloff") == 0)
+			lrg_property_info_set_hint (info, "range:0,20,0.05");
+		else if (g_strcmp0 (audio_rows[i].property, "speed-of-sound") == 0)
+			lrg_property_info_set_hint (info, "range:1,10000,1");
+		else if (g_strcmp0 (audio_rows[i].property, "bus") == 0 && buses != NULL)
+		{
+			g_autofree gchar *joined = g_strjoinv (",", buses);
+			g_autofree gchar *hint = g_strdup_printf ("enum-strings:,%s", joined);
+
+			lrg_property_info_set_hint (info, hint);
+		}
+		g_ptr_array_add (infos, info);
+	}
+	return infos;
+}
+
+static gboolean
+insp_audio_source_get (LrgPropertySource *source,
+                       const gchar       *name,
+                       GValue            *value)
+{
+	InspAudioSource                   *src = INSP_AUDIO_SOURCE (source);
+	g_autoptr(LrgAudioSourceComponent) comp = NULL;
+	GParamSpec                        *p = audio_pspec (name);
+
+	if (src->panel == NULL || p == NULL || src->panel->audio_node == NULL)
+		return FALSE;
+	comp = audio_component (src->panel->audio_node);
+	if (comp == NULL)
+		return FALSE;
+	g_value_init (value, G_PARAM_SPEC_VALUE_TYPE (p));
+	g_object_get_property (G_OBJECT (comp), name, value);
+	if (G_VALUE_HOLDS_STRING (value) && g_value_get_string (value) == NULL)
+		g_value_set_string (value, "");
+	return TRUE;
+}
+
+static gboolean
+insp_audio_source_set (LrgPropertySource *source,
+                       const gchar       *name,
+                       const GValue      *value)
+{
+	InspAudioSource         *src = INSP_AUDIO_SOURCE (source);
+	LrgEditorInspectorPanel *panel = src->panel;
+	const gchar             *props[1];
+	const GValue            *vals[1];
+	g_autofree gchar        *label = NULL;
+	gboolean                 merge;
+	gboolean                 ok;
+
+	if (panel == NULL || panel->audio_node == NULL || panel->editor == NULL)
+		return FALSE;
+	props[0] = name;
+	/* an empty bus clears the routing */
+	vals[0] = (G_VALUE_HOLDS_STRING (value) && g_strcmp0 (name, "bus") == 0 &&
+	           (g_value_get_string (value) == NULL || *g_value_get_string (value) == '\0')) ? NULL : value;
+	label = g_strdup_printf ("Set %s", name);
+	merge = src->in_gesture && !src->first;
+	src->first = FALSE;
+	ok = audio_store (panel->editor, panel->audio_node, props, vals, 1, label, merge);
+	return ok;
+}
+
+static LrgPropertyState
+insp_audio_source_get_state (LrgPropertySource *source,
+                             const gchar       *name)
+{
+	InspAudioSource  *src = INSP_AUDIO_SOURCE (source);
+	g_autofree gchar *param = audio_param_name (name);
+
+	if (src->panel == NULL || src->panel->audio_node == NULL || !is_audio_emitter (src->panel->audio_node))
+		return LRG_PROPERTY_STATE_NONE;
+	return lrg_node_visual_get_param (lrg_node_get_visual (src->panel->audio_node), param) != NULL
+	       ? LRG_PROPERTY_STATE_OVERRIDDEN : LRG_PROPERTY_STATE_DEFAULT;
+}
+
+static gboolean
+insp_audio_source_reset (LrgPropertySource *source,
+                         const gchar       *name)
+{
+	InspAudioSource         *src = INSP_AUDIO_SOURCE (source);
+	LrgEditorInspectorPanel *panel = src->panel;
+	const gchar             *props[1];
+	const GValue            *vals[1] = { NULL };
+	g_autofree gchar        *label = g_strdup_printf ("Reset %s", name);
+
+	if (panel == NULL || panel->audio_node == NULL)
+		return FALSE;
+	props[0] = name;
+	return audio_store (panel->editor, panel->audio_node, props, vals, 1, label, FALSE);
+}
+
+static void
+insp_audio_source_iface_init (LrgPropertySourceInterface *iface)
+{
+	iface->list_properties = insp_audio_source_list;
+	iface->get_value = insp_audio_source_get;
+	iface->set_value = insp_audio_source_set;
+	iface->get_state = insp_audio_source_get_state;
+	iface->reset = insp_audio_source_reset;
+}
+
+static void
+insp_audio_source_class_init (InspAudioSourceClass *klass)
+{
+}
+
+static void
+insp_audio_source_init (InspAudioSource *self)
+{
+}
+
+static void
+on_audio_edit_begin (LrgPropertyGrid *grid,
+                     const gchar     *name,
+                     guint            gesture_id,
+                     gpointer         user_data)
+{
+	InspAudioSource *src = INSP_AUDIO_SOURCE (user_data);
+
+	src->in_gesture = TRUE;
+	src->first = TRUE;
+}
+
+static void
+on_audio_edit_end (LrgPropertyGrid *grid,
+                   const gchar     *name,
+                   guint            gesture_id,
+                   gboolean         commit_,
+                   gpointer         user_data)
+{
+	InspAudioSource *src = INSP_AUDIO_SOURCE (user_data);
+
+	src->in_gesture = FALSE;
+	src->first = FALSE;
+}
+
+/* --- the rolloff plot --- */
+
+#define AUDIO_PLOT_H (96.0f)
+
+static void
+audio_plot_measure (LrgCustomWidget     *widget,
+                    gfloat               avail_width,
+                    gfloat               avail_height,
+                    LrgCustomWidgetSize *size,
+                    gpointer             user_data)
+{
+	size->width = 160.0f;
+	size->height = AUDIO_PLOT_H;
+}
+
+static void
+audio_plot_paint (LrgCustomWidget *widget,
+                  LrgPaintList    *list,
+                  gfloat           x,
+                  gfloat           y,
+                  gfloat           width,
+                  gfloat           height,
+                  gpointer         user_data)
+{
+	LrgEditorInspectorPanel           *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	LrgTheme                          *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	g_autoptr(LrgAudioSourceComponent) comp = self->audio_node != NULL ? audio_component (self->audio_node) : NULL;
+	GrlColor                           track, curve;
+	const GrlColor                    *muted, *border;
+	gfloat                             fs, mn = 1.0f, mx = 50.0f, span, gx, gy, gw, gh, px = 0.0f, py = 0.0f;
+	GrlFont                           *font;
+	gint                               i;
+	const gint                         n = 64;
+	g_autofree gchar                  *lab = NULL;
+
+	if (theme == NULL || comp == NULL)
+		return;
+	fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	font = lrg_theme_get_ui_font (theme);
+	muted = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	border = lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER);
+	track = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
+	track.a = (guint8) (track.a / 2);
+	curve = *lrg_theme_get_color (theme, LRG_THEME_COLOR_SUCCESS);
+	lrg_paint_list_rect (list, x, y, width, height, lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS),
+	                     &track);
+	g_object_get (comp, "min-distance", &mn, "max-distance", &mx, NULL);
+	mx = MAX (mx, mn);
+	span = MAX (mx * 1.1f, 0.1f);
+	gx = x + 8.0f;
+	gy = y + 8.0f;
+	gw = width - 16.0f;
+	gh = height - 16.0f - fs - 2.0f;
+
+	/* min and max markers */
+	lrg_paint_list_line (list, gx + gw * mn / span, gy, gx + gw * mn / span, gy + gh, 1.0f, border);
+	lrg_paint_list_line (list, gx + gw * mx / span, gy, gx + gw * mx / span, gy + gh, 1.0f, border);
+	lrg_paint_list_line (list, gx, gy + gh, gx + gw, gy + gh, 1.0f, border);
+
+	/* the curve */
+	for (i = 0; i <= n; i++)
+	{
+		gfloat d = span * (gfloat) i / (gfloat) n;
+		gfloat g = lrg_audio_source_component_get_distance_gain (comp, d);
+		gfloat cx = gx + gw * (gfloat) i / (gfloat) n;
+		gfloat cy = gy + gh * (1.0f - CLAMP (g, 0.0f, 1.0f));
+
+		if (i > 0)
+			lrg_paint_list_line (list, px, py, cx, cy, 2.0f, &curve);
+		px = cx;
+		py = cy;
+	}
+	lab = g_strdup_printf ("min %.3g   max %.3g   (gain over distance)", (gdouble) mn, (gdouble) mx);
+	lrg_paint_list_text (list, font, lab, gx, gy + gh + 4.0f, fs, 0.0f, muted);
+}
+
+/* --- the custom curve --- */
+
+static gchar *
+audio_curve_keys (LrgKeyframeCurve *curve)
+{
+	GString *s = g_string_new (NULL);
+	guint    i;
+
+	for (i = 0; i < lrg_keyframe_curve_get_key_count (curve); i++)
+	{
+		gfloat t = 0.0f, v = 0.0f;
+		gchar  tb[G_ASCII_DTOSTR_BUF_SIZE], vb[G_ASCII_DTOSTR_BUF_SIZE];
+
+		lrg_keyframe_curve_get_key (curve, i, &t, &v, NULL);
+		g_string_append_printf (s, "%s%s:%s", i > 0 ? ", " : "",
+		                        g_ascii_formatd (tb, sizeof tb, "%.4g", (gdouble) CLAMP (t, 0.0f, 1.0f)),
+		                        g_ascii_formatd (vb, sizeof vb, "%.4g", (gdouble) CLAMP (v, 0.0f, 1.0f)));
+	}
+	return g_string_free (s, FALSE);
+}
+
+/* Writes the curve's keys (and custom mode) into the node, live. */
+static void
+audio_curve_write (LrgEditorInspectorPanel *self)
+{
+	LrgNodeVisual    *visual;
+	g_autofree gchar *keys = NULL;
+	g_auto(GValue)    v = G_VALUE_INIT;
+	g_auto(GValue)    m = G_VALUE_INIT;
+
+	if (self->audio_node == NULL || !is_audio_emitter (self->audio_node))
+		return;
+	visual = lrg_node_get_visual (self->audio_node);
+	keys = audio_curve_keys (lrg_curve_edit_get_curve (self->audio_curve));
+	g_value_init (&v, G_TYPE_STRING);
+	g_value_set_string (&v, keys);
+	lrg_level_visual_store_property (visual, "rolloff-curve-keys", &v);
+	g_value_init (&m, LRG_TYPE_AUDIO_ROLLOFF);
+	g_value_set_enum (&m, LRG_AUDIO_ROLLOFF_CUSTOM);
+	lrg_level_visual_store_property (visual, "rolloff-mode", &m);
+	self->audio_syncing = TRUE;
+	if (lrg_editor_get_level (self->editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (self->editor), self->audio_node);
+	self->audio_syncing = FALSE;
+}
+
+static void
+on_audio_curve_begin (LrgCurveEdit *edit,
+                      gpointer      user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+
+	g_clear_object (&self->audio_before);
+	if (self->audio_node != NULL)
+		self->audio_before = lrg_editor_snapshot_node (self->audio_node);
+}
+
+static void
+on_audio_curve_changed (LrgCurveEdit *edit,
+                        gpointer      user_data)
+{
+	audio_curve_write (LRG_EDITOR_INSPECTOR_PANEL (user_data));
+}
+
+static void
+on_audio_curve_end (LrgCurveEdit *edit,
+                    gboolean      commit_,
+                    gpointer      user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+
+	if (self->audio_node != NULL && self->audio_before != NULL)
+	{
+		if (commit_)
+		{
+			audio_curve_write (self);
+			lrg_editor_commit_node_state (self->editor, self->audio_node, self->audio_before,
+			                              "Edit rolloff curve", FALSE);
+		}
+		else
+		{
+			lrg_node_copy_state (self->audio_node, self->audio_before);
+			if (lrg_editor_get_level (self->editor) != NULL)
+				lrg_level_notify_node_changed (lrg_editor_get_level (self->editor), self->audio_node);
+		}
+	}
+	g_clear_object (&self->audio_before);
+}
+
+/* Shows / updates the Audio Source section for what is inspected now. */
+static void
+update_audio (LrgEditorInspectorPanel *self)
+{
+	LrgNode                           *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	gboolean                           show = node != NULL && self->live_object == NULL && is_audio_emitter (node);
+	g_autoptr(LrgAudioSourceComponent) comp = NULL;
+	g_auto(GStrv)                      buses = NULL;
+	g_autofree gchar                  *joined = NULL;
+	g_autofree gchar                  *sig = NULL;
+	LrgAudioRolloff                    mode = LRG_AUDIO_ROLLOFF_INVERSE;
+
+	lrg_widget_set_visible (LRG_WIDGET (self->audio_section), show);
+	if (!show)
+	{
+		g_clear_weak_pointer (&self->audio_node);
+		return;
+	}
+	g_set_weak_pointer (&self->audio_node, node);
+
+	/* rows: rebuilt for another node or another bus list */
+	buses = audio_project_buses (self->app);
+	joined = buses != NULL ? g_strjoinv (",", buses) : g_strdup ("");
+	sig = g_strdup_printf ("%p|%s", (gpointer) node, joined);
+	if (g_strcmp0 (sig, self->audio_sig) != 0)
+	{
+		g_free (self->audio_sig);
+		self->audio_sig = g_steal_pointer (&sig);
+		lrg_property_source_emit_changed (LRG_PROPERTY_SOURCE (self->audio_src), NULL);
+	}
+	else
+		lrg_property_grid_refresh (self->audio_grid);
+
+	/* the custom curve editor: only for the custom rolloff */
+	comp = audio_component (node);
+	if (comp != NULL)
+		g_object_get (comp, "rolloff-mode", &mode, NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->audio_curve), mode == LRG_AUDIO_ROLLOFF_CUSTOM);
+	if (mode == LRG_AUDIO_ROLLOFF_CUSTOM && self->audio_before == NULL && !self->audio_syncing && comp != NULL)
+	{
+		LrgKeyframeCurve *c = lrg_audio_source_component_get_rolloff_curve (comp);
+
+		lrg_curve_edit_set_curve (self->audio_curve, c);
+	}
+	lrg_label_set_text (self->audio_label, mode == LRG_AUDIO_ROLLOFF_CUSTOM
+	                                       ? "Custom curve: gain over distance, min to max"
+	                                       : "Rolloff Custom draws your own curve.");
+}
+
+static LrgExpander *
+build_audio_section (LrgEditorInspectorPanel *self)
+{
+	static const LrgCustomWidgetFuncs plot_funcs = { audio_plot_measure, audio_plot_paint, NULL, NULL, { NULL } };
+	LrgVBox         *box = lrg_vbox_new ();
+	LrgExpander     *section;
+	InspAudioSource *src;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	src = g_object_new (INSP_TYPE_AUDIO_SOURCE, NULL);
+	src->panel = self;
+	self->audio_src = G_OBJECT (src);
+	self->audio_grid = add_owned (box, lrg_property_grid_new ());
+	lrg_widget_set_name (LRG_WIDGET (self->audio_grid), "inspector-audio-grid");
+	lrg_property_grid_set_label_width (self->audio_grid, 110.0f);
+	lrg_property_grid_set_source (self->audio_grid, LRG_PROPERTY_SOURCE (src));
+	g_signal_connect (self->audio_grid, "edit-begin", G_CALLBACK (on_audio_edit_begin), src);
+	g_signal_connect (self->audio_grid, "edit-end", G_CALLBACK (on_audio_edit_end), src);
+	self->audio_plot = add_owned (box, lrg_custom_widget_new ());
+	lrg_widget_set_name (self->audio_plot, "inspector-audio-plot");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->audio_plot), &plot_funcs, self, NULL);
+	self->audio_label = add_owned (box, lrg_label_new (""));
+	lrg_widget_set_name (LRG_WIDGET (self->audio_label), "inspector-audio-hint");
+	lrg_widget_add_class (LRG_WIDGET (self->audio_label), "dim");
+	self->audio_curve = add_owned (box, lrg_curve_edit_new ());
+	lrg_widget_set_name (LRG_WIDGET (self->audio_curve), "inspector-audio-curve");
+	lrg_curve_edit_set_compact (self->audio_curve, FALSE);
+	lrg_curve_edit_set_value_range (self->audio_curve, 0.0f, 1.0f);
+	g_signal_connect (self->audio_curve, "edit-begin", G_CALLBACK (on_audio_curve_begin), self);
+	g_signal_connect (self->audio_curve, "curve-changed", G_CALLBACK (on_audio_curve_changed), self);
+	g_signal_connect (self->audio_curve, "edit-end", G_CALLBACK (on_audio_curve_end), self);
+	section = make_section ("inspector-section-audio", "Audio Source", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	return section;
+}
+
+/* ==========================================================================
  * Animator (0.9.0)
  *
  * For one inspected node with an `animator3d` component (or the live
@@ -4137,6 +4752,7 @@ refresh_all (LrgEditorInspectorPanel *self)
 	self->prefab_rows = prefab;
 	update_lod (self);
 	update_physics (self);
+	update_audio (self);
 	update_animator (self);
 
 	/* 3. Chrome */
@@ -4205,6 +4821,7 @@ on_editor_changed (LrgEditor *editor,
 	}
 	update_title (self, self->live_object);
 	update_physics (self);
+	update_audio (self);
 
 	/* A grid rebuilds its own rows when a source's schema changes (a new
 	 * visual kind): give new rows of prefab instances their menus */
@@ -4488,6 +5105,10 @@ lrg_editor_inspector_panel_dispose (GObject *object)
 		g_signal_handlers_disconnect_by_data (self->view, self);
 	if (self->play != NULL)
 		g_signal_handlers_disconnect_by_data (self->play, self);
+	if (self->audio_src != NULL)
+		INSP_AUDIO_SOURCE (self->audio_src)->panel = NULL;
+	g_clear_object (&self->audio_before);
+	g_clear_weak_pointer (&self->audio_node);
 	if (self->lod_group != NULL)
 		lrg_lod_group_set_force_level (self->lod_group, -1);
 	g_clear_weak_pointer (&self->lod_group);
@@ -4525,6 +5146,8 @@ lrg_editor_inspector_panel_finalize (GObject *object)
 	g_free (self->anim_path);
 	g_free (self->anim_error);
 	g_free (self->anim_drag);
+	g_free (self->audio_sig);
+	g_clear_object (&self->audio_src);
 	G_OBJECT_CLASS (lrg_editor_inspector_panel_parent_class)->finalize (object);
 }
 
@@ -4678,6 +5301,9 @@ build_body (LrgEditorInspectorPanel *self)
 
 	/* Physics summary, linking to the Physics panel */
 	self->phys_section = add_owned (self->body, build_physics_section (self));
+
+	/* Audio source: attenuation, cone, doppler, occlusion, bus */
+	self->audio_section = add_owned (self->body, build_audio_section (self));
 
 	/* LOD preview, shown for mesh assets with levels */
 	self->lod_section = add_owned (self->body, build_lod_section (self));
@@ -5630,6 +6256,245 @@ m_lod_force (LrgEditorServer  *server,
 	return lod_json (self, node);
 }
 
+/* --- audio.* (0.9.0 M7): an audio emitter's spatial settings --- */
+
+/* The AUDIO_EMITTER node named by params.node. */
+static LrgNode *
+audio_target (LrgEditorApp  *app,
+              JsonObject    *params,
+              GError       **error)
+{
+	const gchar *ref = (params != NULL && json_object_has_member (params, "node"))
+	                   ? json_object_get_string_member (params, "node") : NULL;
+	LrgNode     *node;
+
+	if (ref == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS, "Missing \"node\"");
+		return NULL;
+	}
+	node = lrg_editor_find_node (lrg_editor_app_get_editor (app), ref);
+	if (node == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No node '%s'", ref);
+		return NULL;
+	}
+	if (!is_audio_emitter (node))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "'%s' is not an audio emitter", ref);
+		return NULL;
+	}
+	return node;
+}
+
+/* {node, kind, params: {min_distance, max_distance, ...}} from the
+ * component the level builds (unset params show their defaults). */
+static JsonNode *
+audio_json (LrgNode *node)
+{
+	g_autoptr(LrgAudioSourceComponent) comp = audio_component (node);
+	JsonObject                        *o = json_object_new ();
+	JsonObject                        *p = json_object_new ();
+	JsonNode                          *n;
+	guint                              i;
+
+	json_object_set_string_member (o, "node", lrg_node_get_guid (node));
+	json_object_set_string_member (o, "kind", "audio-emitter");
+	for (i = 0; comp != NULL && i < G_N_ELEMENTS (audio_rows); i++)
+	{
+		GParamSpec       *ps = audio_pspec (audio_rows[i].property);
+		g_auto(GValue)    v = G_VALUE_INIT;
+		g_autofree gchar *key = NULL;
+
+		if (ps == NULL)
+			continue;
+		key = g_strcmp0 (audio_rows[i].property, "max-distance") == 0 ? g_strdup ("max_distance")
+		      : audio_param_name (audio_rows[i].property);
+		g_value_init (&v, G_PARAM_SPEC_VALUE_TYPE (ps));
+		g_object_get_property (G_OBJECT (comp), audio_rows[i].property, &v);
+		if (G_VALUE_HOLDS_STRING (&v) && g_value_get_string (&v) == NULL)
+			json_object_set_null_member (p, key);
+		else
+			json_object_set_member (p, key, value_to_json (&v));
+	}
+	if (comp != NULL)
+	{
+		gfloat vol = 1.0f;
+
+		g_object_get (comp, "volume", &vol, NULL);
+		json_object_set_double_member (p, "volume", vol);
+	}
+	json_object_set_object_member (o, "params", p);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_audio_get (LrgEditorServer  *server,
+             JsonObject       *params,
+             gpointer          user_data,
+             GError          **error)
+{
+	LrgNode *node = audio_target (LRG_EDITOR_APP (user_data), params, error);
+
+	return node != NULL ? audio_json (node) : NULL;
+}
+
+/* params: {name: value|null}; null resets to the default. One undo step. */
+static JsonNode *
+m_audio_set (LrgEditorServer  *server,
+             JsonObject       *params,
+             gpointer          user_data,
+             GError          **error)
+{
+	LrgEditorApp       *app = LRG_EDITOR_APP (user_data);
+	LrgNode            *node = audio_target (app, params, error);
+	JsonObject         *po;
+	GList              *members, *l;
+	g_autoptr(GPtrArray) props = NULL;
+	g_autoptr(GPtrArray) vals = NULL;
+	guint               i;
+	gboolean            ok;
+
+	if (node == NULL)
+		return NULL;
+	if (!json_object_has_member (params, "params") || !JSON_NODE_HOLDS_OBJECT (json_object_get_member (params, "params")))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "Missing \"params\" (an object)");
+		return NULL;
+	}
+	po = json_object_get_object_member (params, "params");
+	props = g_ptr_array_new ();
+	vals = g_ptr_array_new_with_free_func (g_free);
+	members = json_object_get_members (po);
+	for (l = members; l != NULL; l = l->next)
+	{
+		const gchar *prop = audio_property_for_param (l->data);
+		JsonNode    *jn = json_object_get_member (po, l->data);
+		GParamSpec  *ps;
+		GValue      *v;
+
+		if (prop == NULL || (ps = audio_pspec (prop)) == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown audio param '%s'", (const gchar *) l->data);
+			g_list_free (members);
+			for (i = 0; i < vals->len; i++)
+				if (g_ptr_array_index (vals, i) != NULL)
+					g_value_unset (g_ptr_array_index (vals, i));
+			return NULL;
+		}
+		v = NULL;
+		if (!JSON_NODE_HOLDS_NULL (jn))
+		{
+			v = g_new0 (GValue, 1);
+			if (!json_to_value (jn, G_PARAM_SPEC_VALUE_TYPE (ps), v, error))
+			{
+				g_free (v);
+				g_list_free (members);
+				for (i = 0; i < vals->len; i++)
+					if (g_ptr_array_index (vals, i) != NULL)
+						g_value_unset (g_ptr_array_index (vals, i));
+				return NULL;
+			}
+		}
+		g_ptr_array_add (props, (gpointer) prop);
+		g_ptr_array_add (vals, v);
+	}
+	g_list_free (members);
+	ok = audio_store (lrg_editor_app_get_editor (app), node, (const gchar * const *) props->pdata,
+	                  (const GValue **) vals->pdata, props->len, "Edit audio source", FALSE);
+	for (i = 0; i < vals->len; i++)
+		if (g_ptr_array_index (vals, i) != NULL)
+			g_value_unset (g_ptr_array_index (vals, i));
+	if (!ok)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "Some values could not be stored");
+		return NULL;
+	}
+	return audio_json (node);
+}
+
+static JsonNode *
+m_audio_curve (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgNode                           *node = audio_target (LRG_EDITOR_APP (user_data), params, error);
+	g_autoptr(LrgAudioSourceComponent) comp = NULL;
+	gint64                             samples = 32;
+	gfloat                             mn = 1.0f, mx = 50.0f;
+	LrgAudioRolloff                    mode = LRG_AUDIO_ROLLOFF_INVERSE;
+	g_autoptr(GEnumClass)              ec = NULL;
+	JsonObject                        *o;
+	JsonArray                         *pts;
+	JsonNode                          *n;
+	gint64                             i;
+
+	if (node == NULL)
+		return NULL;
+	if (json_object_has_member (params, "samples"))
+		samples = json_object_get_int_member (params, "samples");
+	samples = CLAMP (samples, 2, 256);
+	comp = audio_component (node);
+	g_object_get (comp, "min-distance", &mn, "max-distance", &mx, "rolloff-mode", &mode, NULL);
+	mx = MAX (mx, mn);
+	ec = g_type_class_ref (LRG_TYPE_AUDIO_ROLLOFF);
+	o = json_object_new ();
+	json_object_set_double_member (o, "min", mn);
+	json_object_set_double_member (o, "max", mx);
+	json_object_set_string_member (o, "mode", g_enum_get_value (ec, (gint) mode)->value_nick);
+	pts = json_array_new ();
+	for (i = 0; i < samples; i++)
+	{
+		JsonArray *pt = json_array_new ();
+		gfloat     d = mx * 1.1f * (gfloat) i / (gfloat) (samples - 1);
+
+		json_array_add_double_element (pt, d);
+		json_array_add_double_element (pt, lrg_audio_source_component_get_distance_gain (comp, d));
+		json_array_add_array_element (pts, pt);
+	}
+	json_object_set_array_member (o, "points", pts);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_audio_buses (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgEditorApp     *app = LRG_EDITOR_APP (user_data);
+	g_auto(GStrv)     buses = audio_project_buses (app);
+	g_autofree gchar *path = lrg_editor_mixer_editor_project_mixer_path (app);
+	JsonObject       *o = json_object_new ();
+	JsonArray        *arr = json_array_new ();
+	JsonNode         *n;
+	guint             i;
+
+	if (path != NULL)
+	{
+		g_autofree gchar *rel = editor_app_relative_path (app, path);
+
+		json_object_set_string_member (o, "mixer", rel);
+	}
+	else
+		json_object_set_null_member (o, "mixer");
+	for (i = 0; buses != NULL && buses[i] != NULL; i++)
+		json_array_add_string_element (arr, buses[i]);
+	json_object_set_array_member (o, "buses", arr);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
 static void
 register_methods (LrgEditorApp *app)
 {
@@ -5646,6 +6511,10 @@ register_methods (LrgEditorApp *app)
 	lrg_editor_server_register_method (server, "inspector.state", m_inspector_state, app, NULL);
 	lrg_editor_server_register_method (server, "lod.get", m_lod_get, app, NULL);
 	lrg_editor_server_register_method (server, "lod.force", m_lod_force, app, NULL);
+	lrg_editor_server_register_method (server, "audio.get", m_audio_get, app, NULL);
+	lrg_editor_server_register_method (server, "audio.set", m_audio_set, app, NULL);
+	lrg_editor_server_register_method (server, "audio.curve", m_audio_curve, app, NULL);
+	lrg_editor_server_register_method (server, "audio.buses", m_audio_buses, app, NULL);
 }
 
 /* ==========================================================================

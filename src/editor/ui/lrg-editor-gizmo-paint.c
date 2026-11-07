@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include "lrg-editor-gizmo-paint.h"
+#include "lrg-editor-tiles-panel.h"
 #include "../lrg-editor-viewport-nav.h"
 #include "../lrg-node.h"
 #include "../lrg-node-visual.h"
@@ -33,6 +34,8 @@
 #include "../../level/lrg-level.h"
 #include "../../level/lrg-component-desc.h"
 #include "../../paint/lrg-paint-fx.h"
+#include "../../level/lrg-level-instantiate.h"
+#include "../../world3d/components/lrg-audio-source-component.h"
 #include <math.h>
 #include <string.h>
 
@@ -593,6 +596,9 @@ lrg_editor_gizmo_paint_tile_hover (LrgPaintList        *list,
 	g_return_if_fail (view != NULL);
 	g_return_if_fail (LRG_IS_NODE (node));
 
+	/* Isometric, staggered and hexagonal cells: the Tiles panel's outline */
+	if (lrg_editor_tiles_panel_paint_hover (list, theme, view, node, cell_x, cell_y, erase, origin_x, origin_y, scale))
+		return;
 	visual = lrg_node_get_visual (node);
 	ts = (visual != NULL) ? (gfloat) lrg_node_visual_get_param_double (visual, "tile_size", 1.0) : 1.0f;
 	if (!(ts > 0.0f))
@@ -777,6 +783,13 @@ lrg_editor_gizmo_paint_active_outline (LrgPaintList *list,
  *                 the node position (probes ignore rotation and scale), with
  *                 the blend band "blend_distance" inside it; probe volumes
  *                 (light probe grids, 0.9.0 M3) the same box without a band
+ *   audio emitter two spheres at the node position: "min_distance"
+ *                 (full volume, default 1) and "radius" (silent, the
+ *                 source's max-distance, default 10), and when
+ *                 "cone_outer_angle" is below 360 the sound cones along
+ *                 local -Z ("cone_inner_angle" full volume, outer angle
+ *                 beyond which cone_outer_gain applies), drawn with a
+ *                 length of the max distance (0.9.0 M7)
  *
  * Handles are world points; hit testing projects them through the same
  * LrgEditorView the paint uses. A drag turns the pointer ray into a value
@@ -793,8 +806,12 @@ typedef enum
 	VOL_POINT,
 	VOL_SPOT,
 	VOL_DECAL,
-	VOL_PROBE
+	VOL_PROBE,
+	VOL_AUDIO
 } VolumeKind;
+
+/* Handles are tested and painted in enum order up to this one. */
+#define LAST_VOLUME_HANDLE LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE
 
 GType
 lrg_editor_volume_handle_get_type (void)
@@ -814,6 +831,11 @@ lrg_editor_volume_handle_get_type (void)
 			{ LRG_EDITOR_VOLUME_HANDLE_EXTENT_X, "LRG_EDITOR_VOLUME_HANDLE_EXTENT_X", "extent-x" },
 			{ LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y, "LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y", "extent-y" },
 			{ LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z, "LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z", "extent-z" },
+			{ LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE, "LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE", "min-distance" },
+			{ LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE, "LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE", "max-distance" },
+			{ LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE, "LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE", "audio-cone" },
+			{ LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE, "LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE",
+			  "audio-inner-cone" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_enum_register_static (g_intern_static_string ("LrgEditorVolumeHandle"), values);
@@ -828,7 +850,7 @@ lrg_editor_volume_handle_get_param (LrgEditorVolumeHandle handle)
 {
 	static const gchar * const params[] = {
 		NULL, "range", "spot_angle", "spot_inner_angle", "size_x", "size_y", "size_z",
-		"extents_x", "extents_y", "extents_z"
+		"extents_x", "extents_y", "extents_z", "min_distance", "radius", "cone_outer_angle", "cone_inner_angle"
 	};
 
 	if ((guint) handle >= G_N_ELEMENTS (params))
@@ -869,6 +891,8 @@ volume_kind (LrgNode *node)
 		/* a probe volume (0.9.0 M3) is the same axis-aligned box of
 		 * extents_x/y/z, without a blend band */
 		return VOL_PROBE;
+	case LRG_NODE_VISUAL_AUDIO_EMITTER:
+		return VOL_AUDIO;
 	default:
 		return VOL_NONE;
 	}
@@ -987,6 +1011,54 @@ closest_on_axis (const gfloat *o,
 	return TRUE;
 }
 
+/*
+ * The attenuation of an audio emitter as the game will hear it: builds
+ * the LrgAudioSourceComponent lrg_level_instantiate_3d() would attach
+ * (so "radius" maps to max-distance and unset params take the
+ * component's defaults) and reads its distances; @half is where the
+ * rolloff falls to half volume (bisection over min .. max), 0 when it
+ * never does.
+ */
+static void
+audio_distances (LrgNodeVisual *visual,
+                 gfloat        *min_dist,
+                 gfloat        *max_dist,
+                 gfloat        *half)
+{
+	g_autoptr(LrgComponent) comp = lrg_level_visual_create_component (visual);
+	LrgAudioSourceComponent *src;
+	gfloat                   mn = 1.0f, mx = 50.0f, lo, hi;
+	gint                     i;
+
+	*half = 0.0f;
+	if (comp == NULL || !LRG_IS_AUDIO_SOURCE_COMPONENT (comp))
+	{
+		*min_dist = mn;
+		*max_dist = mx;
+		return;
+	}
+	src = LRG_AUDIO_SOURCE_COMPONENT (comp);
+	g_object_get (src, "min-distance", &mn, "max-distance", &mx, NULL);
+	mx = MAX (mx, 0.01f);
+	mn = CLAMP (mn, 0.0f, mx);
+	*min_dist = mn;
+	*max_dist = mx;
+	if (lrg_audio_source_component_get_distance_gain (src, mx) > 0.5f)
+		return;
+	lo = mn;
+	hi = mx;
+	for (i = 0; i < 24; i++)
+	{
+		gfloat mid = 0.5f * (lo + hi);
+
+		if (lrg_audio_source_component_get_distance_gain (src, mid) > 0.5f)
+			lo = mid;
+		else
+			hi = mid;
+	}
+	*half = 0.5f * (lo + hi);
+}
+
 /* Everything one volume needs, from the node. */
 typedef struct
 {
@@ -1002,7 +1074,18 @@ typedef struct
 	gfloat     half[3];     /* decal / probe: half sizes in world units */
 	gfloat     blend;       /* probe */
 	gfloat     size[3];     /* decal params */
+	gfloat     min_dist;    /* audio: full-volume distance (range is the max) */
+	gfloat     half_dist;   /* audio: where the rolloff reaches half volume, 0 = none */
+	gboolean   cone;        /* audio: cone_outer_angle < 360 */
 } Volume;
+
+/* Paints an audio emitter's attenuation spheres and sound cones. */
+static void paint_audio (LrgPaintList        *list,
+                         const Mapper        *m,
+                         const LrgEditorView *view,
+                         const Volume        *vol,
+                         const GrlColor      *line,
+                         const GrlColor      *soft);
 
 static gboolean
 volume_get (LrgNode *node,
@@ -1067,6 +1150,17 @@ volume_get (LrgNode *node,
 			vol->axis_len[k] = 1.0f;
 		}
 		break;
+	case VOL_AUDIO:
+		/* the runtime's own numbers: the component a level would build */
+		audio_distances (visual, &vol->min_dist, &vol->range, &vol->half_dist);
+		lrg_editor_math_transform_direction (vol->world, fwd, vol->dir);
+		v3_normalize (vol->dir);
+		vol->outer = (gfloat) lrg_node_visual_get_param_double (visual, "cone_outer_angle", 360.0);
+		vol->inner = (gfloat) lrg_node_visual_get_param_double (visual, "cone_inner_angle", 360.0);
+		vol->cone = vol->outer < 359.5f;
+		vol->outer = CLAMP (vol->outer, 1.0f, 359.0f);
+		vol->inner = CLAMP (vol->inner, 0.0f, vol->outer);
+		break;
 	case VOL_NONE:
 	default:
 		return FALSE;
@@ -1090,6 +1184,10 @@ volume_has_handle (const Volume          *vol,
 		return handle >= LRG_EDITOR_VOLUME_HANDLE_SIZE_X && handle <= LRG_EDITOR_VOLUME_HANDLE_SIZE_Z;
 	case VOL_PROBE:
 		return handle >= LRG_EDITOR_VOLUME_HANDLE_EXTENT_X && handle <= LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z;
+	case VOL_AUDIO:
+		return handle == LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE || handle == LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE ||
+		       (vol->cone && (handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE ||
+		                      handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE));
 	case VOL_NONE:
 	default:
 		return FALSE;
@@ -1139,6 +1237,50 @@ handle_position (const LrgEditorView   *view,
 		                                                  : (gint) (handle - LRG_EDITOR_VOLUME_HANDLE_SIZE_X);
 		v3_mad (vol->pos, vol->axes[k], vol->half[k], out);
 		break;
+	case LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE:
+		/* on the camera's right, like a point light's range */
+		view_right (view, u);
+		v3_mad (vol->pos, u, vol->min_dist, out);
+		break;
+	case LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE:
+		/* on the camera's up, so it never sits on the min handle */
+		view_right (view, u);
+		{
+			gfloat fwdv[3], up[3];
+
+			fwdv[0] = view->target[0] - view->position[0];
+			fwdv[1] = view->target[1] - view->position[1];
+			fwdv[2] = view->target[2] - view->position[2];
+			v3_normalize (fwdv);
+			v3_cross (u, fwdv, up);
+			v3_normalize (up);
+			v3_mad (vol->pos, up, vol->range, out);
+		}
+		break;
+	case LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE:
+	case LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE:
+		{
+			/* on the cone's surface at the max distance, outer and inner on
+			 * opposite sides; angles above 180 open backwards */
+			gfloat angle = (handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE) ? vol->outer : vol->inner;
+			gfloat half = angle * 0.5f * (gfloat) G_PI / 180.0f;
+			gfloat side = (handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE) ? 1.0f : -1.0f;
+			gfloat fwdv[3];
+			gint   k2;
+
+			/* the side direction lies in the camera plane, so the drag
+			 * (measured in that plane) reads the angle back exactly */
+			fwdv[0] = view->target[0] - view->position[0];
+			fwdv[1] = view->target[1] - view->position[1];
+			fwdv[2] = view->target[2] - view->position[2];
+			v3_normalize (fwdv);
+			v3_cross (fwdv, vol->dir, u);
+			if (v3_normalize (u) < 1e-4f)
+				perpendiculars (vol->dir, u, w);
+			for (k2 = 0; k2 < 3; k2++)
+				out[k2] = vol->pos[k2] + (vol->dir[k2] * cosf (half) + u[k2] * side * sinf (half)) * vol->range;
+		}
+		break;
 	case LRG_EDITOR_VOLUME_HANDLE_NONE:
 	default:
 		memcpy (out, vol->pos, 3 * sizeof (gfloat));
@@ -1180,7 +1322,7 @@ lrg_editor_volume_hit_test (const LrgEditorView *view,
 
 	if (node == NULL || !volume_get (node, &vol))
 		return LRG_EDITOR_VOLUME_HANDLE_NONE;
-	for (h = LRG_EDITOR_VOLUME_HANDLE_RANGE; h <= LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z; h++)
+	for (h = LRG_EDITOR_VOLUME_HANDLE_RANGE; h <= LAST_VOLUME_HANDLE; h++)
 	{
 		gfloat p[3], u, v, d;
 
@@ -1277,6 +1419,66 @@ lrg_editor_volume_drag_value (const LrgEditorView   *view,
 			return FALSE;
 		*out_value = MAX (fabsf (t), 0.05f);
 		return TRUE;
+	case LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE:
+	case LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE:
+		{
+			/* the distance from the emitter to the pointer ray, in the
+			 * camera-facing plane through the emitter */
+			gfloat fwdv[3], hit[3], rel[3], den, s;
+
+			fwdv[0] = view->target[0] - view->position[0];
+			fwdv[1] = view->target[1] - view->position[1];
+			fwdv[2] = view->target[2] - view->position[2];
+			v3_normalize (fwdv);
+			den = v3_dot (rd, fwdv);
+			if (fabsf (den) < 1e-5f)
+				return FALSE;
+			s = (v3_dot (vol.pos, fwdv) - v3_dot (ro, fwdv)) / den;
+			if (s < 0.0f)
+				return FALSE;
+			v3_mad (ro, rd, s, hit);
+			rel[0] = hit[0] - vol.pos[0];
+			rel[1] = hit[1] - vol.pos[1];
+			rel[2] = hit[2] - vol.pos[2];
+			t = sqrtf (v3_dot (rel, rel));
+			/* min stays at or below max and max at or above min */
+			if (handle == LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE)
+				*out_value = CLAMP (t, 0.0f, vol.range);
+			else
+				*out_value = MAX (t, MAX (vol.min_dist, 0.05f));
+			return TRUE;
+		}
+	case LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE:
+	case LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE:
+		{
+			/* the angle between the cone axis and the direction to the
+			 * pointer, taken in the plane of the axis and the camera ray */
+			gfloat fwdv[3], hit[3], rel[3], den, s, c, angle;
+
+			fwdv[0] = view->target[0] - view->position[0];
+			fwdv[1] = view->target[1] - view->position[1];
+			fwdv[2] = view->target[2] - view->position[2];
+			v3_normalize (fwdv);
+			den = v3_dot (rd, fwdv);
+			if (fabsf (den) < 1e-5f)
+				return FALSE;
+			s = (v3_dot (vol.pos, fwdv) - v3_dot (ro, fwdv)) / den;
+			if (s < 0.0f)
+				return FALSE;
+			v3_mad (ro, rd, s, hit);
+			rel[0] = hit[0] - vol.pos[0];
+			rel[1] = hit[1] - vol.pos[1];
+			rel[2] = hit[2] - vol.pos[2];
+			if (v3_normalize (rel) < 1e-5f)
+				return FALSE;
+			c = CLAMP (v3_dot (rel, vol.dir), -1.0f, 1.0f);
+			angle = 2.0f * acosf (c) * 180.0f / (gfloat) G_PI;
+			if (handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE)
+				*out_value = CLAMP (angle, MAX (vol.inner, 1.0f), 359.0f);
+			else
+				*out_value = CLAMP (angle, 0.0f, vol.outer);
+			return TRUE;
+		}
 	case LRG_EDITOR_VOLUME_HANDLE_NONE:
 	default:
 		return FALSE;
@@ -1372,6 +1574,78 @@ paint_handle (LrgPaintList   *list,
 	lrg_paint_list_circle (list, x, y, HANDLE_RADIUS + (hot ? 1.0f : 0.0f), &fill);
 }
 
+/*
+ * An audio emitter: the silent sphere (radius = max distance) as a solid
+ * camera-facing circle plus a ground ring, the full-volume sphere the
+ * same way but softer, the half-volume distance as a dashed ground
+ * ring, and with a cone the outer and inner cone surfaces as rays from
+ * the emitter with their rims at the max distance.
+ */
+static void
+paint_audio (LrgPaintList        *list,
+             const Mapper        *m,
+             const LrgEditorView *view,
+             const Volume        *vol,
+             const GrlColor      *line,
+             const GrlColor      *soft)
+{
+	gfloat       fwd[3], vr[3], vu[3], u[3], w[3];
+	const gfloat x[3] = { 1.0f, 0.0f, 0.0f };
+	const gfloat z[3] = { 0.0f, 0.0f, 1.0f };
+	gint         c, i, k;
+
+	fwd[0] = view->target[0] - view->position[0];
+	fwd[1] = view->target[1] - view->position[1];
+	fwd[2] = view->target[2] - view->position[2];
+	v3_normalize (fwd);
+	view_right (view, vr);
+	v3_cross (vr, fwd, vu);
+	v3_normalize (vu);
+
+	/* max: silhouette and ground ring */
+	world_circle (list, m, vol->pos, vr, vu, vol->range, 2.0f, FALSE, line);
+	world_circle (list, m, vol->pos, x, z, vol->range, 1.2f, FALSE, soft);
+	/* min: the same, thinner */
+	if (vol->min_dist > 0.0f)
+	{
+		world_circle (list, m, vol->pos, vr, vu, vol->min_dist, 1.5f, FALSE, soft);
+		world_circle (list, m, vol->pos, x, z, vol->min_dist, 1.0f, FALSE, soft);
+	}
+	/* half volume */
+	if (vol->half_dist > 0.0f)
+		world_circle (list, m, vol->pos, x, z, vol->half_dist, 1.0f, TRUE, soft);
+
+	if (!vol->cone)
+		return;
+	perpendiculars (vol->dir, u, w);
+	for (c = 0; c < 2; c++)
+	{
+		gfloat half = (c == 0 ? vol->outer : vol->inner) * 0.5f * (gfloat) G_PI / 180.0f;
+		gfloat axial = cosf (half) * vol->range;
+		gfloat radial = sinf (half) * vol->range;
+		gfloat base[3];
+
+		v3_mad (vol->pos, vol->dir, axial, base);
+		world_circle (list, m, base, u, w, fabsf (radial), c == 0 ? 2.0f : 1.2f, c == 1, c == 0 ? line : soft);
+		for (i = 0; i < 4; i++)
+		{
+			gfloat a = (gfloat) i * 0.5f * (gfloat) G_PI;
+			gfloat rim[3];
+
+			for (k = 0; k < 3; k++)
+				rim[k] = base[k] + (u[k] * cosf (a) + w[k] * sinf (a)) * radial;
+			world_line (list, m, vol->pos, rim, c == 0 ? 1.5f : 1.0f, c == 0 ? line : soft);
+		}
+	}
+	/* the forward axis */
+	{
+		gfloat tip[3];
+
+		v3_mad (vol->pos, vol->dir, vol->range, tip);
+		world_line (list, m, vol->pos, tip, 1.0f, soft);
+	}
+}
+
 void
 lrg_editor_gizmo_paint_volume (LrgPaintList          *list,
                                LrgTheme              *theme,
@@ -1411,6 +1685,10 @@ lrg_editor_gizmo_paint_volume (LrgPaintList          *list,
 		break;
 	case VOL_DECAL:
 		line = rgba (0xf5, 0xc2, 0xe7, 0xe0);
+		break;
+	case VOL_AUDIO:
+		/* green, the emitter's icon colour */
+		line = rgba (0xa6, 0xe3, 0xa1, 0xe0);
 		break;
 	default:
 		line = rgba (0x89, 0xdc, 0xeb, 0xe0);
@@ -1493,13 +1771,16 @@ lrg_editor_gizmo_paint_volume (LrgPaintList          *list,
 				world_box (list, &m, vol.pos, vol.axes, inner, 1.0f, &soft);
 		}
 		break;
+	case VOL_AUDIO:
+		paint_audio (list, &m, view, &vol, &line, &soft);
+		break;
 	case VOL_NONE:
 	default:
 		break;
 	}
 
 	/* Handles and the value of the one being dragged */
-	for (h = LRG_EDITOR_VOLUME_HANDLE_RANGE; h <= LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z; h++)
+	for (h = LRG_EDITOR_VOLUME_HANDLE_RANGE; h <= LAST_VOLUME_HANDLE; h++)
 	{
 		gfloat p[3];
 
@@ -1516,16 +1797,21 @@ lrg_editor_gizmo_paint_volume (LrgPaintList          *list,
 
 			if (!map_point (&m, p, &x, &y))
 				continue;
-			if (hot == LRG_EDITOR_VOLUME_HANDLE_CONE)
+			if (hot == LRG_EDITOR_VOLUME_HANDLE_CONE || hot == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE)
 				value = vol.outer;
-			else if (hot == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE)
+			else if (hot == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE || hot == LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE)
 				value = vol.inner;
+			else if (hot == LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE)
+				value = vol.min_dist;
+			else if (hot == LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE)
+				value = vol.range;
 			else
 				value = (gfloat) lrg_node_visual_get_param_double (visual, param,
 				                                                   hot == LRG_EDITOR_VOLUME_HANDLE_RANGE ? 10.0
 				                                                   : hot >= LRG_EDITOR_VOLUME_HANDLE_EXTENT_X ? 5.0
 				                                                                                              : 1.0);
-			text = (hot == LRG_EDITOR_VOLUME_HANDLE_CONE || hot == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE)
+			text = (hot == LRG_EDITOR_VOLUME_HANDLE_CONE || hot == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE ||
+			        hot == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE || hot == LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE)
 			       ? g_strdup_printf ("%s %.1f°", param, (gdouble) value)
 			       : g_strdup_printf ("%s %.2f", param, (gdouble) value);
 			/* a hovered handle names its param; a dragged one is accented */

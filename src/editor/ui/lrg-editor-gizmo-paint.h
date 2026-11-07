@@ -285,6 +285,15 @@ void lrg_editor_gizmo_paint_active_outline (LrgPaintList *list,
  *   along X ("extents_x")
  * @LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y: half size along Y ("extents_y")
  * @LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z: half size along Z ("extents_z")
+ * @LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE: an audio emitter's full-volume
+ *   distance ("min_distance"): the inner sphere's right edge (0.9.0)
+ * @LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE: an audio emitter's silent
+ *   distance ("radius", which levels map to the source's max-distance):
+ *   the outer sphere's top (0.9.0)
+ * @LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE: an audio emitter's outer cone
+ *   ("cone_outer_angle", full angle in degrees; shown when below 360)
+ * @LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE: an audio emitter's inner
+ *   (full volume) cone ("cone_inner_angle", full angle in degrees)
  *
  * The draggable handles of the volume gizmo of the selected node. Each
  * edits one visual param (lrg_editor_volume_handle_get_param()).
@@ -300,7 +309,11 @@ typedef enum
 	LRG_EDITOR_VOLUME_HANDLE_SIZE_Z,
 	LRG_EDITOR_VOLUME_HANDLE_EXTENT_X,
 	LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y,
-	LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z
+	LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z,
+	LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE,
+	LRG_EDITOR_VOLUME_HANDLE_MAX_DISTANCE,
+	LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE,
+	LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE
 } LrgEditorVolumeHandle;
 
 /**
@@ -329,8 +342,10 @@ const gchar * lrg_editor_volume_handle_get_param (LrgEditorVolumeHandle handle);
  *
  * Whether @node shows a volume gizmo when selected: point and spot
  * lights (range sphere, cones), decals (projection box), reflection
- * probes (influence box) and probe volumes (light probe box, the
- * extent handles). Directional lights have none.
+ * probes (influence box), probe volumes (light probe box, the
+ * extent handles) and audio emitters (attenuation spheres at
+ * min_distance and radius, plus the sound cone when cone_outer_angle is
+ * below 360). Directional lights have none.
  *
  * Returns: %TRUE when @node has volume handles
  */
@@ -414,7 +429,11 @@ gboolean lrg_editor_volume_drag_value (const LrgEditorView   *view,
  * Paints @node's volume: a point light's range sphere (silhouette and
  * two great circles), a spot light's outer and inner cones (dashed inner
  * ring), a decal's projection box with its projection direction, or a
- * reflection probe's influence box with the inner blend box; then the
+ * reflection probe's influence box with the inner blend box, or an audio
+ * emitter's attenuation (the full-volume sphere at min_distance, the
+ * silent sphere at radius, both as a camera-facing circle and a ground
+ * ring, the rolloff's half-volume distance as a dashed ring, and the
+ * inner and outer sound cones along local -Z when the cone is on); then the
  * handles as dots (yellow when @hot) and, while @dragging, a chip with
  * the edited value.
  */
