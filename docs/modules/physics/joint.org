@@ -1,0 +1,370 @@
+#+title: LrgJoint
+#+description: Two-body joints for LrgDynamicsWorld: fixed, point, hinge, slider, distance (spring/damper), cone, swing-twist and 6-DOF with limits, soft limits, friction, motors and breaking
+
+* LrgJoint - Joints for the Dynamics World
+:PROPERTIES:
+:CUSTOM_ID: joint
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Physics]] > LrgJoint
+#+end_quote
+
+=LrgJoint= (=src/physics/lrg-joint.h=, GIR =Libregnum.Joint=) connects two bodies of an [[file:dynamics.org][LrgDynamicsWorld]] (or one body and the immovable world frame). It is an =LrgPhysicsConstraint=: the world's sequential-impulse solver calls it every substep after the contacts, so joints, contacts and motors are solved together, warm started, and corrected for drift by the position solve. One type covers every kind of joint:
+
+| Kind | Constant | What it does |
+|------+----------+--------------|
+| fixed | =LRG_JOINT_FIXED= | welds the bodies in their relative pose |
+| point (ball) | =LRG_JOINT_POINT= | the bodies share a pivot and turn freely |
+| hinge | =LRG_JOINT_HINGE= | turns only about one axis, optionally limited, optionally motorised (doors, wheels, elbows) |
+| slider | =LRG_JOINT_SLIDER= | moves only along one axis, optionally limited and motorised (pistons, lifts, drawers) |
+| distance | =LRG_JOINT_DISTANCE= | keeps two anchors between a minimum and a maximum distance; with a spring it is a spring/damper (ropes, suspension, bungees) |
+| cone | =LRG_JOINT_CONE= | a ball joint whose axis stays inside a cone; twist free (shoulders without twist limits, hanging lamps) |
+| swing-twist | =LRG_JOINT_SWING_TWIST= | swing limited by a cone (or pyramid), twist limited: the ragdoll joint |
+| 6-DOF | =LRG_JOINT_SIX_DOF= | each of the three translation and three rotation axes is free, locked or limited, with its own motor, friction and soft limit |
+
+Every kind except distance is a preset of the 6-DOF joint: the kind only chooses which axes start locked, so a hinge can be given translation slack or a slider a rotation motor with the same calls.
+
+The algorithms are ported from Jolt Physics (MIT, Copyright 2021 Jorrit Rouwe): the constraint parts (=AxisConstraintPart=, =PointConstraintPart=, =RotationEulerConstraintPart=, =AngleConstraintPart=, =SwingTwistConstraintPart=, =SpringPart=), the 6-DOF setup and solve order (=SixDOFConstraint=) and the distance constraint. See [[#credits][Credits]].
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Bodies A and B
+:PROPERTIES:
+:CUSTOM_ID: bodies
+:END:
+A joint has a body A (the "parent", =LrgPhysicsConstraint:body-a=) and a body B (=body-b=). Either may be =LRG_DYNAMICS_WORLD_BODY= (=G_MAXUINT=), the immovable world frame. Every measurement (translation, twist, swing, motor velocity) is the motion of B relative to A. Static and kinematic bodies are valid ends: the joint pushes only on the dynamic side.
+
+*** The joint frame
+:PROPERTIES:
+:CUSTOM_ID: frame
+:END:
+Each body carries a copy of the joint frame: an origin (the anchor) and a rotation, both in that body's local space (measured from the body origin, the position =lrg_dynamics_world_get_position()= reports, not the centre of mass). The joint is at rest when the two copies coincide in world space. The frame's axes mean:
+
+- *X*: the hinge axis, the slider axis, the twist axis, the cone axis.
+- *Y* and *Z*: the two swing axes (and the two other translation axes).
+
+The =lrg_joint_new_*()= constructors take one frame in world space (=anchor=, =axis_x=, optionally =axis_y=) and store it in both bodies from their current poses, so the joint starts at rest wherever the bodies are. =lrg_joint_new()= takes the two local frames directly: the form a physics asset, a level file or an editor stores.
+
+*** Axes and modes
+:PROPERTIES:
+:CUSTOM_ID: axes
+:END:
+=LrgJointAxis= names the six degrees of freedom: =TRANSLATION_X/Y/Z= (metres along the frame axes of A) and =ROTATION_X/Y/Z= (radians). The relative rotation is split into *swing* (the rotation that tilts the X axis, about an axis in the YZ plane) and *twist* (the rotation about X that remains): =ROTATION_X= is the twist, =ROTATION_Y= and =ROTATION_Z= are the two components of the swing. Each axis is:
+
+- =LRG_JOINT_AXIS_FREE=: unconstrained;
+- =LRG_JOINT_AXIS_LOCKED=: held at its minimum limit (zero unless =lrg_joint_set_limits()= gave a value);
+- =LRG_JOINT_AXIS_LIMITED=: kept between its minimum and maximum.
+
+=lrg_joint_set_limits()= sets the range and switches the axis to limited (or locked when the two values are equal). Rotation limits are clamped to [-pi, pi]. A hinge is "twist free, swing locked"; give it limits on =ROTATION_X=.
+
+*** Swing shape: cone or pyramid
+:PROPERTIES:
+:CUSTOM_ID: swing-type
+:END:
+When both swing axes are limited, =lrg_joint_set_swing_type()= chooses how they combine:
+
+- =LRG_JOINT_SWING_CONE= (default): an elliptic cone with half angles =max(ROTATION_Y)= and =max(ROTATION_Z)=; the limits are symmetric (the minimum mirrors the maximum). This is the shoulder/hip joint.
+- =LRG_JOINT_SWING_PYRAMID=: the two swing angles are limited independently and may be asymmetric (a knee that bends one way, a pyramid of reach).
+
+A cone deforms for very large swing angles (above about 150 degrees); for a free ball joint use =LRG_JOINT_POINT= instead of a cone of pi.
+
+*** Soft limits
+:PROPERTIES:
+:CUSTOM_ID: soft-limits
+:END:
+=lrg_joint_set_limit_spring (axis, frequency, damping)= turns a translation limit into a spring: past the limit the axis is pulled back with the given frequency (Hz) and damping ratio (1 = critical) instead of stopped dead. Zero frequency makes the limit hard again. Springs are defined relative to the joint's effective mass (Erin Catto's soft constraints): a 2 Hz spring oscillates at 2 Hz whatever the masses, which is why tuning is mass independent. On a distance joint the spring sits on =TRANSLATION_X=; with the minimum equal to the maximum it acts at every length, so the joint is a spring/damper with that rest length.
+
+*** Friction
+:PROPERTIES:
+:CUSTOM_ID: friction
+:END:
+=lrg_joint_set_friction (axis, value)= resists motion on a free or limited axis with at most =value= newtons (translation) or newton-metres (rotation): a creaky hinge, a stiff slider, the muscle tone of a passive ragdoll. It is a velocity motor with target zero and is replaced by a real motor on that axis.
+
+*** Motors
+:PROPERTIES:
+:CUSTOM_ID: motors
+:END:
+=lrg_joint_set_motor (axis, mode, max_force)= puts a motor on one axis:
+
+- =LRG_JOINT_MOTOR_VELOCITY=: drives the axis toward =lrg_joint_set_motor_target_velocity()= (m/s or rad/s) with at most =max_force= (N) or torque (N m). Rotation velocities are about the joint frame axes of body B.
+- =LRG_JOINT_MOTOR_POSITION=: pulls the axis toward =lrg_joint_set_motor_target_position()= with a spring (=lrg_joint_set_motor_spring()=, default 2 Hz, damping 1), capped by =max_force=.
+- =LRG_JOINT_MOTOR_OFF=: no motor.
+
+The three rotation position targets combine into one target orientation, =Rz * Ry * Rx= (X applied first); =lrg_joint_set_target_orientation()= sets that quaternion directly (B's frame in A's frame), which is what a powered ragdoll does. A target outside the swing/twist limits is clamped onto them. Motors are solved before the limits in each iteration, so a motor never pushes an axis through its limit.
+
+*** Breaking
+:PROPERTIES:
+:CUSTOM_ID: breaking
+:END:
+=lrg_joint_set_break_force()= and =lrg_joint_set_break_torque()= make a joint breakable: after every substep the joint sums the impulses all its rows applied (locks, limits, motors, friction), divides by the substep length and compares the force and torque magnitudes with the thresholds (zero = never). When one is exceeded the joint disables itself (=lrg_physics_constraint_set_enabled (FALSE)=), sets =LrgJoint:broken= and emits =LrgJoint::broken= with the force and torque. =lrg_joint_repair()= clears the state and enables it again. =lrg_joint_get_applied_force()= and =lrg_joint_get_applied_torque()= read the last substep's load at any time (the world-space force on body B), for gauges, sounds or your own breaking rules.
+
+*** Measuring
+:PROPERTIES:
+:CUSTOM_ID: measuring
+:END:
+=lrg_joint_measure (joint, world, translation, angles, error)= reads the current joint coordinates from the world's poses: the offset of B's anchor from A's in A's joint frame, and the twist, swing Y and swing Z angles (=2 atan2= of the swing-twist quaternion parts), the same values the limits and motors act on. For a distance joint =translation[0]= is the anchor distance.
+
+** How the solver runs a joint
+:PROPERTIES:
+:CUSTOM_ID: solver
+:END:
+Per substep the world calls the =LrgPhysicsConstraintClass= vfuncs:
+
+1. *setup*: computes world anchors and axes from the current poses, decides which rows are active (a limit row only when the axis is at or past a limit), and their effective masses (with the spring softness for soft rows and position motors).
+2. *warm_start*: re-applies last substep's accumulated impulses (scaled by the step ratio), so stacks of joints converge in a few iterations.
+3. *solve_velocity* (N iterations, default 8): motors and friction first (clamped to =max_force × dt=), then rotation (one 3-DOF rotation row when all rotation axes are locked, otherwise the swing-twist rows), then translation (one 3-DOF point row when all translation axes are locked, otherwise one row per locked or limited axis). Limit rows only push (their accumulated impulse is clamped to one sign).
+4. *solve_position* (M iterations, default 2): non-linear Gauss-Seidel: moves and turns the bodies directly by the Baumgarte fraction of the remaining error (soft rows are skipped). This removes drift without adding energy.
+5. *post_solve*: sums the impulses into the applied force and torque and checks the break thresholds.
+
+The order is deterministic: the same world, the same insertion order and the same fixed step give bit-identical results.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Types
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LrgJoint= | final type deriving from =LrgPhysicsConstraint= |
+| =LrgJointKind= / =LRG_TYPE_JOINT_KIND= / =lrg_joint_kind_get_type()= | =LRG_JOINT_FIXED=, =LRG_JOINT_POINT=, =LRG_JOINT_HINGE=, =LRG_JOINT_SLIDER=, =LRG_JOINT_DISTANCE=, =LRG_JOINT_CONE=, =LRG_JOINT_SWING_TWIST=, =LRG_JOINT_SIX_DOF= (nicks =fixed=, =point=, =hinge=, =slider=, =distance=, =cone=, =swing-twist=, =six-dof=) |
+| =LrgJointAxis= / =LRG_TYPE_JOINT_AXIS= / =lrg_joint_axis_get_type()= | =LRG_JOINT_AXIS_TRANSLATION_X=, =LRG_JOINT_AXIS_TRANSLATION_Y=, =LRG_JOINT_AXIS_TRANSLATION_Z=, =LRG_JOINT_AXIS_ROTATION_X=, =LRG_JOINT_AXIS_ROTATION_Y=, =LRG_JOINT_AXIS_ROTATION_Z= |
+| =LrgJointAxisMode= / =LRG_TYPE_JOINT_AXIS_MODE= / =lrg_joint_axis_mode_get_type()= | =LRG_JOINT_AXIS_FREE=, =LRG_JOINT_AXIS_LOCKED=, =LRG_JOINT_AXIS_LIMITED= |
+| =LrgJointMotorMode= / =LRG_TYPE_JOINT_MOTOR_MODE= / =lrg_joint_motor_mode_get_type()= | =LRG_JOINT_MOTOR_OFF=, =LRG_JOINT_MOTOR_VELOCITY=, =LRG_JOINT_MOTOR_POSITION= |
+| =LrgJointSwingType= / =LRG_TYPE_JOINT_SWING_TYPE= / =lrg_joint_swing_type_get_type()= | =LRG_JOINT_SWING_CONE=, =LRG_JOINT_SWING_PYRAMID= |
+| =LRG_JOINT_ERROR= / =lrg_joint_error_quark()= / =LrgJointError= | =LRG_JOINT_ERROR_INVALID= (a non-finite or zero vector, an angle out of range), =LRG_JOINT_ERROR_BODY= (an unknown body, or both ends the same body) |
+
+*** Construction
+:PROPERTIES:
+:CUSTOM_ID: api-construction
+:END:
+All constructors return a new reference; add the joint with =lrg_dynamics_world_add_constraint()= (the world takes its own reference) and drop yours or keep it to drive the joint.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_joint_new (kind, body_a, body_b, position_a, rotation_a, position_b, rotation_b)= | frames in each body's local space (rotation =NULL= = identity; normalised) |
+| =lrg_joint_new_in_world (world, kind, body_a, body_b, anchor, axis_x, axis_y, error)= | one world-space frame (=axis_y= nullable; made perpendicular to X), stored from the current poses |
+| =lrg_joint_new_fixed (world, a, b, error)= | weld in the current pose (origin: midpoint of the body origins, or body A's origin when B is the world) |
+| =lrg_joint_new_point (world, a, b, anchor, error)= | ball joint at =anchor= |
+| =lrg_joint_new_hinge (world, a, b, anchor, axis, error)= | free hinge about =axis= through =anchor= |
+| =lrg_joint_new_slider (world, a, b, anchor, axis, error)= | free slider along =axis= |
+| =lrg_joint_new_distance (world, a, b, anchor_a, anchor_b, error)= | rigid rod between two world anchors (range = current distance) |
+| =lrg_joint_new_cone (world, a, b, anchor, twist_axis, half_angle, error)= | cone of =half_angle= (0 .. pi) around =twist_axis=, twist free |
+| =lrg_joint_new_swing_twist (world, a, b, anchor, twist_axis, plane_axis, swing_y, swing_z, twist_min, twist_max, error)= | elliptic swing cone plus twist range (=plane_axis= nullable: the swing Y axis) |
+| =lrg_joint_new_six_dof (world, a, b, anchor, axis_x, axis_y, error)= | every axis free |
+
+*** Frames and identity
+:PROPERTIES:
+:CUSTOM_ID: api-frames
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_joint_get_kind()= | the kind (=LrgJoint:kind=, construct-only) |
+| =lrg_joint_get_frame_a (self, position, rotation)= | the frame on A (both out arguments optional) |
+| =lrg_joint_get_frame_b (self, position, rotation)= | the frame on B |
+| =lrg_physics_constraint_get_body_a()= / =lrg_physics_constraint_get_body_b()= | the ends (from the base class) |
+| =lrg_physics_constraint_set_enabled()= / =lrg_physics_constraint_get_enabled()= | switch the joint off without removing it (base class) |
+
+*** Axes, limits, springs, friction
+:PROPERTIES:
+:CUSTOM_ID: api-limits
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_joint_set_axis_mode (self, axis, mode)= / =lrg_joint_get_axis_mode()= | free, locked or limited |
+| =lrg_joint_set_limits (self, axis, min, max)= / =lrg_joint_get_limits (self, axis, &min, &max)= | range (and mode) of one axis |
+| =lrg_joint_set_limit_spring (self, axis, frequency, damping)= / =lrg_joint_get_limit_spring()= | soft translation limit (Hz, ratio) |
+| =lrg_joint_set_friction (self, axis, value)= / =lrg_joint_get_friction()= | joint friction force or torque |
+| =lrg_joint_set_swing_type (self, type)= / =lrg_joint_get_swing_type()= | cone or pyramid (=LrgJoint:swing-type=) |
+| =lrg_joint_set_distance_range (self, min, max)= / =lrg_joint_get_distance_range()= | distance joint range |
+
+*** Motors
+:PROPERTIES:
+:CUSTOM_ID: api-motors
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_joint_set_motor (self, axis, mode, max_force)= | motor mode and force/torque cap |
+| =lrg_joint_get_motor_mode()=, =lrg_joint_get_motor_max_force()= | read back |
+| =lrg_joint_set_motor_spring (self, axis, frequency, damping)= / =lrg_joint_get_motor_spring()= | position motor stiffness (default 2 Hz, 1.0) |
+| =lrg_joint_set_motor_target_velocity (self, axis, v)= / =lrg_joint_get_motor_target_velocity()= | velocity target |
+| =lrg_joint_set_motor_target_position (self, axis, p)= / =lrg_joint_get_motor_target_position()= | position target (rotation targets update the target orientation) |
+| =lrg_joint_set_target_orientation (self, q)= / =lrg_joint_get_target_orientation (self, q)= | rotation target as a quaternion, clamped to the limits |
+
+*** Breaking and feedback
+:PROPERTIES:
+:CUSTOM_ID: api-breaking
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_joint_set_break_force()= / =lrg_joint_get_break_force()= | =LrgJoint:break-force= (N, 0 = never) |
+| =lrg_joint_set_break_torque()= / =lrg_joint_get_break_torque()= | =LrgJoint:break-torque= (N m) |
+| =lrg_joint_is_broken()= | =LrgJoint:broken= (read-only) |
+| =lrg_joint_repair()= | un-break and enable |
+| =lrg_joint_get_applied_force (self, f[3])=, =lrg_joint_get_applied_torque (self, t[3])= | last substep's load on body B |
+| =lrg_joint_measure (self, world, translation, angles, error)= | current coordinates |
+
+*** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: api-properties
+:END:
+| Name | Type | Notes |
+|------+------+-------|
+| =kind= | =LrgJointKind= | construct-only, default =six-dof= |
+| =swing-type= | =LrgJointSwingType= | read-write |
+| =break-force= | float | read-write, >= 0 |
+| =break-torque= | float | read-write, >= 0 |
+| =broken= | boolean | read-only, notified when it changes |
+| =body-a=, =body-b=, =enabled= | (from =LrgPhysicsConstraint=) | |
+| =::broken (gfloat force, gfloat torque)= | signal | emitted once from inside =lrg_dynamics_world_step()= when the joint breaks; the joint is already disabled |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A door on a limited hinge with a closing motor
+:PROPERTIES:
+:CUSTOM_ID: example-door
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+gfloat hinge_point[3] = { 0.0f, 1.0f, 0.0f };
+gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+g_autoptr(LrgJoint) hinge = NULL;
+
+/* frame and door are bodies already in the world */
+hinge = lrg_joint_new_hinge (world, frame, door, hinge_point, up, &error);
+lrg_joint_set_limits (hinge, LRG_JOINT_AXIS_ROTATION_X, 0.0f, 1.8f);      /* opens 0 .. 103 degrees */
+lrg_joint_set_motor (hinge, LRG_JOINT_AXIS_ROTATION_X, LRG_JOINT_MOTOR_POSITION, 40.0f);
+lrg_joint_set_motor_target_position (hinge, LRG_JOINT_AXIS_ROTATION_X, 0.0f);  /* a door closer */
+lrg_joint_set_motor_spring (hinge, LRG_JOINT_AXIS_ROTATION_X, 1.0f, 0.7f);
+lrg_dynamics_world_add_constraint (world, LRG_PHYSICS_CONSTRAINT (hinge), NULL, &error);
+#+end_src
+
+*** A breakable plank bridge
+:PROPERTIES:
+:CUSTOM_ID: example-bridge
+:END:
+#+begin_src C
+static void
+on_plank_broken (LrgJoint *joint,
+                 gfloat    force,
+                 gfloat    torque,
+                 gpointer  user_data)
+{
+	/* play a crack sound; the joint is already disabled */
+	g_message ("plank tore off at %.0f N", force);
+}
+
+for (i = 0; i + 1 < n_planks; i++)
+{
+	gfloat pivot[3] = { x_between (i), y, 0.0f };
+	gfloat across[3] = { 0.0f, 0.0f, 1.0f };
+	g_autoptr(LrgJoint) j = lrg_joint_new_hinge (world, planks[i], planks[i + 1], pivot, across, NULL);
+
+	lrg_joint_set_break_force (j, 4000.0f);
+	g_signal_connect (j, "broken", G_CALLBACK (on_plank_broken), NULL);
+	lrg_dynamics_world_add_constraint (world, LRG_PHYSICS_CONSTRAINT (j), NULL, NULL);
+}
+#+end_src
+
+*** A car suspension (slider with a soft spring) and a piston (slider with a position motor)
+:PROPERTIES:
+:CUSTOM_ID: example-suspension
+:END:
+#+begin_src C
+gfloat down[3] = { 0.0f, -1.0f, 0.0f };
+gfloat axle[3] = { 0.0f, 0.0f, 1.0f };   /* frame Z: the wheel spins about it */
+LrgJoint *strut = lrg_joint_new_six_dof (world, chassis, wheel, wheel_centre, down, axle, &error);
+
+/* frame X runs down the strut, Y = Z x X, Z is the axle */
+lrg_joint_set_axis_mode (strut, LRG_JOINT_AXIS_TRANSLATION_Y, LRG_JOINT_AXIS_LOCKED);
+lrg_joint_set_axis_mode (strut, LRG_JOINT_AXIS_TRANSLATION_Z, LRG_JOINT_AXIS_LOCKED);
+lrg_joint_set_axis_mode (strut, LRG_JOINT_AXIS_ROTATION_X, LRG_JOINT_AXIS_LOCKED);
+lrg_joint_set_axis_mode (strut, LRG_JOINT_AXIS_ROTATION_Y, LRG_JOINT_AXIS_LOCKED);
+lrg_joint_set_swing_type (strut, LRG_JOINT_SWING_PYRAMID);               /* swing Z stays free */
+lrg_joint_set_limits (strut, LRG_JOINT_AXIS_TRANSLATION_X, 0.0f, 0.0f);   /* rest at 0 ... */
+lrg_joint_set_limit_spring (strut, LRG_JOINT_AXIS_TRANSLATION_X, 1.5f, 0.5f); /* ... on a 1.5 Hz spring */
+
+LrgJoint *piston = lrg_joint_new_slider (world, block, ram, ram_origin, axis, &error);
+lrg_joint_set_limits (piston, LRG_JOINT_AXIS_TRANSLATION_X, 0.0f, 0.6f);
+lrg_joint_set_motor (piston, LRG_JOINT_AXIS_TRANSLATION_X, LRG_JOINT_MOTOR_POSITION, 5000.0f);
+lrg_joint_set_motor_target_position (piston, LRG_JOINT_AXIS_TRANSLATION_X, 0.6f);
+#+end_src
+
+*** A bungee (distance spring)
+:PROPERTIES:
+:CUSTOM_ID: example-bungee
+:END:
+#+begin_src C
+LrgJoint *rope = lrg_joint_new_distance (world, LRG_DYNAMICS_WORLD_BODY, jumper, bridge_point, harness, &error);
+
+lrg_joint_set_distance_range (rope, 0.0f, 12.0f);                          /* slack until 12 m */
+lrg_joint_set_limit_spring (rope, LRG_JOINT_AXIS_TRANSLATION_X, 0.8f, 0.2f); /* then a soft pull */
+#+end_src
+
+*** A free-spinning motorised wheel
+:PROPERTIES:
+:CUSTOM_ID: example-wheel
+:END:
+#+begin_src C
+LrgJoint *axle = lrg_joint_new_hinge (world, cart, wheel, hub, side, &error);
+
+lrg_joint_set_motor (axle, LRG_JOINT_AXIS_ROTATION_X, LRG_JOINT_MOTOR_VELOCITY, 300.0f);
+lrg_joint_set_motor_target_velocity (axle, LRG_JOINT_AXIS_ROTATION_X, 12.0f);  /* rad/s */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+A joint costs one setup and, per velocity iteration, one row per active degree of freedom (a locked point is one 3x3 row, a free axis none, a limit only while it is touched). Measured by =tests/test-joint.c= (=/joint/performance=, release build, one core):
+
+- 200-link point-joint chain swinging under gravity, 120 Hz with 8 velocity and 2 position iterations: 0.6-1.2 ms per step for the whole world on a desktop core (3-6 µs per joint per step, contacts and integration included).
+- Accuracy at the defaults: a point-joint pendulum keeps its period within 0.1 percent of the physical-pendulum formula and its anchor within 2 µm; a 12-link chain released horizontally stretches up to 3 cm at the peak of the whip (1 cm at rest while still swinging) with 2 position iterations, 0.9 cm (0.2 cm) with 8.
+
+Tips: lock axes instead of giving them tiny ranges (a locked group becomes one 3-DOF row); prefer =LRG_JOINT_POINT= to a cone of pi; long chains converge better with more velocity iterations (=lrg_contact_solver_set_velocity_iterations()=) than with a smaller step; keep mass ratios across a joint below about 10:1.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Frames are captured at construction.* =lrg_joint_new_*()= read the bodies' current poses; build joints after placing the bodies, or use =lrg_joint_new()= with local frames.
+- *Anchors are from the body origin*, not the centre of mass: a compound or offset shape keeps the same anchors.
+- *Twist is about X.* Pass the hinge, slider, cone or twist axis as =axis_x=; swing Y/Z are the other two frame axes.
+- *Cone limits are symmetric.* Use =LRG_JOINT_SWING_PYRAMID= for asymmetric swing ranges.
+- *Locked at a value*: =lrg_joint_set_limits (axis, v, v)= locks the axis at =v=; =lrg_joint_set_axis_mode (LOCKED)= locks at the stored minimum (zero by default).
+- *Rotation springs*: limit springs apply to translation axes; for springy rotation use a position motor with a low frequency and a torque cap.
+- *Breaking runs inside the step*: in a =::broken= handler do not add or remove bodies or constraints (disable, or remove after the step returns).
+- *Position motors need a cap*: a zero =max_force= motor does nothing.
+- *The world body has no velocity*: a velocity motor between a body and the world drives the body only.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Joints are authored on entities with =LrgJointComponent= (=src/world3d/components/lrg-joint-component.h=, see [[file:../world3d/components.org][World3D components]]) and in the =physics:= block of =.rlevel= nodes, which store exactly what =lrg_joint_new()= takes: the kind, the two bodies, the local frames, limits, springs, motors, friction and break thresholds. The joint inspector and the joint gizmos (frame axes, limit arcs and cones, drawn through the constraint's =debug_draw=) come with the physics editor wave; until then edit the =physics:= block by hand or through =lrgeditorctl= property edits.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-joint.c=: a point-joint physical pendulum matches T = 2 pi sqrt (I / m g L) within 1 percent and keeps its anchor within 2 mm; a hinge falls onto its -0.5 rad limit and stays (no off-axis swing); a hinge velocity motor reaches 3 rad/s; a slider rests on its limit; slider velocity and position motors reach 1.5 m/s and 0.75 m; a 2 Hz distance spring oscillates with a 0.5 s period; a distance range stops a falling body at 1 m; a cone keeps a rod within 0.4 rad under sideways gravity; a swing-twist joint holds its twist range against a torque; a mixed 6-DOF keeps each axis (limited X, locked Y/Z, pyramid swing Y, locked swing Z); a rotation position motor reaches its target; a fixed joint holds a cantilever; a joint breaks above its threshold (signal, disabled, body falls) while a lighter load leaves another intact and reports its force; a 12-link chain stays together for 5 s; two identical runs are bit-identical; a 200-link chain is timed; argument errors.
+
+** Credits
+:PROPERTIES:
+:CUSTOM_ID: credits
+:END:
+=src/physics/lrg-joint.c= contains code derived from Jolt Physics (https://github.com/jrouwe/JoltPhysics), MIT licence, Copyright 2021 Jorrit Rouwe: the constraint parts, the 6-DOF constraint flow, the swing-twist clamp and the ellipse closest point.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:dynamics.org][LrgDynamicsWorld]] (bodies, =lrg_dynamics_world_add_constraint()=, the solver)
+- [[file:ragdoll.org][LrgRagdoll and .rphysasset]] (joints built from a skeleton)
+- [[file:../../guides/physics.org::#joints][Physics guide: joints]]

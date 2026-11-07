@@ -22,7 +22,9 @@ The Physics module consists of three main components:
 - *[[file:solid-geometry.org][LrgSolidGeometry]]*: closed sphere, box, sphyl, convex and aggregate volumes with inside/outside classification, containment, overlap and sphere sweeps (=LrgCollisionModel=, =LrgSolidWorld=)
 - *[[file:rope.org][LrgRope]]*: a verlet rope or chain between two anchored ends (gravity, fixed length, a floor), headless
 - *[[file:character-controller.org][LrgCharacterController]]*: capsule move-and-slide on an =LrgCollisionMesh= and terrain (wall sliding, steps, slope limit, ground snapping, moving platforms)
-- *[[file:dynamics.org][LrgDynamicsWorld]]*: bounded 3D spheres, caller-axis sphyl capsules, contactless bodies, and planes (mass, diagonal inertia, joint frames and limits, contacts, sleep, freeze, eviction, bone-pose sync). This does not change the 2D =LrgRigidBody= and it is not a ragdoll
+- *[[file:dynamics.org][LrgDynamicsWorld]]*: the 3D rigid-body solver (shape bodies, layers, persistent contacts with warm starting, friction/restitution, NGS, islands and sleeping, CCD, kinematic, sensors, signals, queries, constraint hook, interpolation, debug draw), plus *[[file:contact-solver.org][the contact solver and LrgPhysicsConstraint]]* and *[[file:islands.org][LrgIslandBuilder]]*
+- *[[file:joint.org][LrgJoint]]*: fixed, point, hinge, slider, distance (spring/damper), cone, swing-twist and 6-DOF joints for LrgDynamicsWorld (limits, soft limits, friction, motors, breaking)
+- *[[file:ragdoll.org][LrgRagdoll / .rphysasset]]*: ragdolls from an LrgSkeleton and a physics asset (passive or powered, per-bone blend, pose write-back)
 
 ** Core Concepts
 :PROPERTIES:

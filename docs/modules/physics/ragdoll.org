@@ -1,0 +1,315 @@
+#+title: LrgRagdoll and .rphysasset
+#+description: Ragdolls built from an LrgSkeleton and a physics asset: the .rphysasset format, passive and powered ragdolls, per-bone physics/animation blend and pose write-back
+
+* LrgRagdoll and the .rphysasset physics asset
+:PROPERTIES:
+:CUSTOM_ID: ragdoll
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Physics]] > LrgRagdoll
+#+end_quote
+
+A ragdoll is a set of rigid bodies, one per bone that matters, held together by [[file:joint.org][LrgJoint]]s with anatomical limits, simulated by an [[file:dynamics.org][LrgDynamicsWorld]] and written back into the skeleton that skins the character. libregnum splits it in two (=src/physics/lrg-ragdoll.h=):
+
+- *=LrgPhysicsAsset=* (GIR =Libregnum.PhysicsAsset=): the description, stored as a =.rphysasset= YAML file: for each bone a collision shape (capsule, box or sphere) with an offset and a mass, and the joint to the parent part with its limits and motor strength; plus collision exclusions. One asset serves every character that shares the skeleton.
+- *=LrgRagdoll=* (GIR =Libregnum.Ragdoll=): one live instance: the asset bound to an =LrgSkeleton=, its bodies and joints in a world, passive (limp) or powered (motors pull it toward an animation pose), blended with the animation per bone and written back into the skeleton.
+
+The algorithms follow Jolt Physics' ragdoll (MIT, Copyright 2021 Jorrit Rouwe): mass stabilisation (=RagdollSettings::Stabilize=), parent/child collision exclusion, motor drive to a pose (=Ragdoll::DriveToPoseUsingMotors=).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Parts, bones and parents
+:PROPERTIES:
+:CUSTOM_ID: parts
+:END:
+A *part* follows one bone (by name). Bones without a part are not simulated: they keep their animated local pose and simply ride along with their parent. A part's *parent part* is the part of the nearest ancestor bone that has one, so finger or twist bones can be skipped. A part without a parent part is a *root part* (normally the pelvis); it has no joint.
+
+*** Frames
+:PROPERTIES:
+:CUSTOM_ID: frames
+:END:
+Every part has three rigid frames (scale is ignored):
+
+- the *bone frame*: the bone's model-space pose (=lrg_bone_get_world_pose()=), placed in the world by the ragdoll's *root transform* (=lrg_ragdoll_set_root_transform()=, the character's model-to-world transform);
+- the *body frame* = bone frame × =offset/rotation=: where the shape sits. A capsule's axis is its local Y, so =rotation= turns Y onto the bone;
+- the *joint frame* = bone frame × =joint.position/joint.rotation=: the pivot (usually the bone origin, =[0, 0, 0]=) and the joint axes. Its X axis is the twist (hinge, cone) axis, normally pointing along the bone.
+
+The joint frame in the parent's body is taken from the *bind pose* (=lrg_skeleton_compute_bind_world_poses()=), so every joint is at rest, zero twist and zero swing, in the bind pose, and the limits are measured from it. Author limits with the bind pose in mind: an elbow whose bind pose is straight bends from 0 to about 2.5 rad.
+
+*** Joints
+:PROPERTIES:
+:CUSTOM_ID: joints
+:END:
+A part's joint is one of:
+
+| =kind= | Use | Limits read |
+|--------+-----+-------------|
+| =swing-twist= (default) | shoulders, hips, neck, spine | =twist: [min, max]=, =swing: [y, z]= (elliptic cone half angles) |
+| =cone= | a ball joint without twist limits | =swing: [y, z]= |
+| =hinge= | elbows, knees, fingers | =twist: [min, max]= (the hinge angle about joint X) |
+| =point= | a free ball joint | none |
+| =fixed= | welded parts (a helmet) | none |
+
+Each joint also has a =friction= torque (muscle tone for a passive ragdoll) and the motor strength used in powered mode (=motor-max-torque=, =motor-frequency=, =motor-damping=).
+
+*** Collision exclusions
+:PROPERTIES:
+:CUSTOM_ID: exclusions
+:END:
+Parts joined by a joint overlap at the joint and must not collide: with =exclude-adjacent: true= (the default) every part ignores its parent part (=lrg_dynamics_world_set_collision_between()=). List extra pairs under =exclusions:= (an upper arm against the chest, both thighs). All bodies go to =LRG_PHYSICS_LAYER_RAGDOLL= so the [[file:physics-layers.org][layer matrix]] decides what ragdolls hit (debris, characters, triggers).
+
+*** Passive and powered
+:PROPERTIES:
+:CUSTOM_ID: modes
+:END:
+- =LRG_RAGDOLL_PASSIVE=: the joints only limit (plus friction): a limp body.
+- =LRG_RAGDOLL_POWERED=: every joint gets position motors on its three rotation axes; =lrg_ragdoll_drive_to_pose (ragdoll, animated_skeleton)= sets each joint's target to the relative rotation the animation asks for. The ragdoll follows the animation with bounded torque and still reacts to hits: an active ragdoll for stumbles, hit reactions, getting up.
+
+*** Blend and write-back
+:PROPERTIES:
+:CUSTOM_ID: blend
+:END:
+=lrg_ragdoll_write_pose()= turns the bodies back into bone poses: for each bone with a part, the local pose that puts the bone where its body is, blended with the skeleton's *current* local pose (the animation the animator just wrote) by the bone's weight (=lrg_ragdoll_set_bone_blend()=, 0 = animation, 1 = physics; =lrg_ragdoll_set_blend()= sets all). It then recomputes the skeleton's world poses, which is what an =LrgSkinnedModelComponent= reads. Blending per bone gives partial ragdolls (a limp arm on a running character) and smooth transitions (ramp the weight from 0 to 1 over a few frames when a character dies).
+
+*** Mass stabilisation
+:PROPERTIES:
+:CUSTOM_ID: stabilize
+:END:
+A sequential-impulse solver converges badly when a light part hangs on a heavy one (a 0.5 kg hand on a 3 kg forearm is fine; a 2 kg pelvis between two 13 kg thighs is not). =lrg_physics_asset_stabilize (asset, skeleton)= walks each chain from its root and limits every child/parent mass ratio to 0.8 .. 1.2 while keeping the total mass (Jolt's =RagdollSettings::Stabilize= mass pass). =lrg_physics_asset_new_from_skeleton()= calls it; call it yourself after editing masses by hand if the ragdoll stretches. In the test humanoid it halved the impact overshoot of the joint limits.
+
+** The .rphysasset format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+A YAML mapping, version 1. Hand-written loader and writer: strict (unknown keys, keys that do not apply to the part's shape or joint, wrong types and out-of-range values are errors naming the path, e.g. =hero.rphysasset: /parts/3/joint/twist: expected [min, max] with -pi <= min <= max <= pi=), deterministic, defaults left out, floats in their shortest exact form, byte-stable round trip.
+
+#+begin_src yaml
+version: 1                    # required; files newer than LRG_PHYSICS_ASSET_FORMAT_VERSION are refused
+name: humanoid                # optional display name (string)
+exclude-adjacent: false       # default true: a part never collides with its parent part
+parts:                        # list, in any order; one part per bone
+- bone: pelvis                # required: skeleton bone name; unique in the file
+  shape: box                  # capsule (default) | box | sphere
+  half-extents: [0.15, 0.1, 0.1]  # box only: positive half sizes in metres (default 0.1 each)
+  mass: 12                    # kg, positive (default 1)
+- bone: spine
+  radius: 0.1                 # capsule or sphere radius (default 0.05)
+  half-height: 0.05           # capsule only: half the cylinder between the caps, >= 0 (default 0.1)
+  offset: [0, 0.12, 0]        # shape centre in the bone frame (default origin)
+  rotation: [0, 0, 0, 1]      # shape rotation in the bone frame, xyzw (default identity; normalised).
+                              #   a capsule's axis is its local Y
+  mass: 10
+  joint:                      # the joint to the parent part (ignored on a root part)
+    kind: swing-twist         # swing-twist (default) | cone | hinge | point | fixed
+    position: [0, 0, 0]       # pivot in the bone frame (default the bone origin)
+    rotation: [0, 0, 0.7071068, 0.7071068]  # joint frame in the bone frame; its X is the twist axis
+                              #   (here X turned onto the bone's +Y). Default identity
+    twist: [-0.2, 0.2]        # hinge and swing-twist: [min, max] radians in [-pi, pi] (default [-0.25, 0.25])
+    swing: [0.4, 0.3]         # cone and swing-twist: [y, z] half angles in [0, pi] (default [0.5, 0.5])
+    friction: 1.5             # joint friction torque, N m, >= 0 (default 0)
+    motor-max-torque: 300     # powered mode: torque cap, N m, >= 0 (default 300)
+    motor-frequency: 10       # powered mode: motor spring, Hz, > 0 (default 10)
+    motor-damping: 8          # powered mode: damping ratio, >= 0 (default 8)
+- bone: lower_arm_l
+  shape: sphere
+  radius: 0.06
+  joint:
+    kind: hinge
+    twist: [0, 2.5]           # an elbow: straight in the bind pose, bends one way
+exclusions:                   # extra pairs of bones (with parts) that never collide
+- [pelvis, lower_arm_l]
+#+end_src
+
+The writer emits vectors as block sequences (one number per line), =version= first, then =name=, =exclude-adjacent= (only when false), =parts= (in order) and =exclusions=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Enums, errors, constants
+:PROPERTIES:
+:CUSTOM_ID: api-enums
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LRG_PHYSICS_ASSET_FORMAT_VERSION= | 1 |
+| =LrgPhysicsAssetShape= / =LRG_TYPE_PHYSICS_ASSET_SHAPE= / =lrg_physics_asset_shape_get_type()= | =LRG_PHYSICS_ASSET_SHAPE_CAPSULE=, =LRG_PHYSICS_ASSET_SHAPE_BOX=, =LRG_PHYSICS_ASSET_SHAPE_SPHERE= |
+| =LrgRagdollMode= / =LRG_TYPE_RAGDOLL_MODE= / =lrg_ragdoll_mode_get_type()= | =LRG_RAGDOLL_PASSIVE=, =LRG_RAGDOLL_POWERED= |
+| =LRG_RAGDOLL_ERROR= / =lrg_ragdoll_error_quark()= / =LrgRagdollError= | =LRG_RAGDOLL_ERROR_PARSE= (not YAML / not a mapping), =LRG_RAGDOLL_ERROR_FORMAT= (a key is unknown, missing, mistyped or out of range), =LRG_RAGDOLL_ERROR_VERSION= (newer file), =LRG_RAGDOLL_ERROR_SKELETON= (a bone missing from the skeleton, or two parts on one bone), =LRG_RAGDOLL_ERROR_WORLD= (the world refused a body or joint), =LRG_RAGDOLL_ERROR_STATE= (already in a world) |
+
+*** LrgPhysicsAssetPart
+:PROPERTIES:
+:CUSTOM_ID: api-part
+:END:
+A boxed struct with public fields matching the format keys one to one: =bone=, =shape=, =radius=, =half_height=, =half_extents[3]=, =offset[3]=, =rotation[4]=, =mass=, =joint= (an =LrgJointKind=), =joint_position[3]=, =joint_rotation[4]=, =twist_min=, =twist_max=, =swing_y=, =swing_z=, =friction=, =motor_max_torque=, =motor_frequency=, =motor_damping=.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_physics_asset_part_new (bone)= | a part with the format's defaults |
+| =lrg_physics_asset_part_copy (part)= / =lrg_physics_asset_part_free (part)= | deep copy / free (=g_autoptr= works) |
+| =lrg_physics_asset_part_get_type()= / =LRG_TYPE_PHYSICS_ASSET_PART= | the boxed type |
+
+*** LrgPhysicsAsset
+:PROPERTIES:
+:CUSTOM_ID: api-asset
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_physics_asset_new()= | empty asset |
+| =lrg_physics_asset_new_from_data (data, length, error)= / =lrg_physics_asset_new_from_file (path, error)= | strict loaders (messages prefixed with =<data>= or the path) |
+| =lrg_physics_asset_new_from_skeleton (skeleton, total_mass, radius_ratio)= | generate a starting asset: a capsule from each bone to its first child (lowest index), a sphere on leaf bones, swing-twist joints along the bones, masses by volume then stabilised |
+| =lrg_physics_asset_save_to_data (self, &length, error)= / =lrg_physics_asset_save_to_file (self, path, error)= | writer (atomic file write) |
+| =lrg_physics_asset_get_name()= / =lrg_physics_asset_set_name()= | =LrgPhysicsAsset:name= |
+| =lrg_physics_asset_get_exclude_adjacent()= / =lrg_physics_asset_set_exclude_adjacent()= | =LrgPhysicsAsset:exclude-adjacent= |
+| =lrg_physics_asset_get_part_count()=, =lrg_physics_asset_get_part (index)= | read parts (transfer none) |
+| =lrg_physics_asset_find_part (bone)= | index or -1 |
+| =lrg_physics_asset_add_part (self, part, error)= | append a validated copy; returns the index or -1 |
+| =lrg_physics_asset_set_part (self, index, part, error)= | replace a part |
+| =lrg_physics_asset_remove_part (self, index)= | remove (and its exclusions) |
+| =lrg_physics_asset_add_exclusion (a, b)=, =lrg_physics_asset_get_exclusion_count()=, =lrg_physics_asset_get_exclusion (index, &a, &b)=, =lrg_physics_asset_remove_exclusion (index)= | exclusions (pairs are unordered and unique) |
+| =lrg_physics_asset_stabilize (self, skeleton)= | even out masses along chains |
+| =lrg_physics_asset_validate (self, skeleton, error)= | every part and exclusion names a bone of the skeleton |
+
+*** LrgRagdoll
+:PROPERTIES:
+:CUSTOM_ID: api-ragdoll
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_ragdoll_new (asset, skeleton, error)= | bind (validates; computes parents and joint frames from the bind pose) |
+| =lrg_ragdoll_get_asset()=, =lrg_ragdoll_get_skeleton()= | the inputs (transfer none) |
+| =lrg_ragdoll_set_root_transform (self, pose)= / =lrg_ragdoll_get_root_transform (self, &pose)= | model-to-world transform (=NULL= = identity) |
+| =lrg_ragdoll_add_to_world (self, world, error)= | create bodies from the skeleton's current world poses, joints and exclusions; undone on failure |
+| =lrg_ragdoll_remove_from_world (self)= | remove joints and bodies |
+| =lrg_ragdoll_get_world()= | the world or =NULL= |
+| =lrg_ragdoll_get_part_count()=, =lrg_ragdoll_get_part_bone (part)=, =lrg_ragdoll_get_part_parent (part)= | structure (part indices are the asset's) |
+| =lrg_ragdoll_get_body (part)= | body id (=G_MAXUINT= outside a world) |
+| =lrg_ragdoll_get_joint (part)= | the =LrgJoint= to the parent (=NULL= for a root): tune limits, motors, break thresholds at runtime |
+| =lrg_ragdoll_set_mode()= / =lrg_ragdoll_get_mode()= | =LrgRagdoll:mode= |
+| =lrg_ragdoll_drive_to_pose (self, pose_skeleton)= | motor targets from a skeleton's local poses |
+| =lrg_ragdoll_set_blend (weight)=, =lrg_ragdoll_set_bone_blend (bone, weight)=, =lrg_ragdoll_get_bone_blend (bone)= | physics weight per bone (default 1) |
+| =lrg_ragdoll_write_pose()= | bodies → skeleton local poses (blended) → world poses |
+| =lrg_ragdoll_set_linear_velocity (v)= | throw the whole ragdoll |
+
+| Property | Type | Notes |
+|----------+------+-------|
+| =LrgPhysicsAsset:name= | string | read-write |
+| =LrgPhysicsAsset:exclude-adjacent= | boolean | read-write, default true |
+| =LrgRagdoll:mode= | =LrgRagdollMode= | read-write, default passive |
+
+** Worked example: a character dies and becomes a ragdoll
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+/* once, at load */
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgPhysicsAsset) asset = lrg_physics_asset_new_from_file ("assets/hero.rphysasset", &error);
+
+/* when the hero dies */
+LrgBonePose model_to_world;
+gfloat velocity[3];
+
+hero->ragdoll = lrg_ragdoll_new (asset, hero->skeleton, &error);   /* same skeleton the skin reads */
+lrg_bone_pose_set_identity (&model_to_world);
+model_to_world.position_x = hero->x;
+model_to_world.position_y = hero->y;
+model_to_world.position_z = hero->z;
+model_to_world.rotation_y = sinf (0.5f * hero->yaw);
+model_to_world.rotation_w = cosf (0.5f * hero->yaw);
+lrg_ragdoll_set_root_transform (hero->ragdoll, &model_to_world);
+lrg_ragdoll_add_to_world (hero->ragdoll, world, &error);        /* bodies start in the current animation pose */
+character_velocity (hero, velocity);
+lrg_ragdoll_set_linear_velocity (hero->ragdoll, velocity);      /* keep the momentum */
+lrg_ragdoll_set_blend (hero->ragdoll, 0.0f);                    /* fade in over 0.2 s */
+
+/* every frame, after the animator wrote its pose and the world stepped */
+hero->blend = MIN (1.0f, hero->blend + dt / 0.2f);
+lrg_ragdoll_set_blend (hero->ragdoll, hero->blend);
+lrg_ragdoll_write_pose (hero->ragdoll);                         /* the skinned model reads the skeleton */
+#+end_src
+
+*** Powered (active) ragdoll
+:PROPERTIES:
+:CUSTOM_ID: example-powered
+:END:
+#+begin_src C
+/* the animator writes its pose into anim_skeleton; the ragdoll drives physics toward it
+ * and writes the result into render_skeleton (two skeletons, same bones) */
+lrg_ragdoll_set_mode (ragdoll, LRG_RAGDOLL_POWERED);
+
+/* per frame */
+lrg_animator_update (animator, dt);                 /* -> anim_skeleton local poses */
+lrg_ragdoll_drive_to_pose (ragdoll, anim_skeleton); /* motor targets */
+lrg_dynamics_world_step (world, dt, NULL, NULL);
+lrg_ragdoll_write_pose (ragdoll);                   /* -> render_skeleton */
+
+/* a hit: weaken the hit arm for a moment */
+lrg_joint_set_motor (lrg_ragdoll_get_joint (ragdoll, arm_part), LRG_JOINT_AXIS_ROTATION_Y,
+                     LRG_JOINT_MOTOR_POSITION, 20.0f);
+#+end_src
+
+*** Generating and saving an asset
+:PROPERTIES:
+:CUSTOM_ID: example-generate
+:END:
+#+begin_src C
+g_autoptr(LrgPhysicsAsset) asset = lrg_physics_asset_new_from_skeleton (skeleton, 75.0f, 0.2f);
+g_autoptr(LrgPhysicsAssetPart) knee = lrg_physics_asset_part_copy (
+	lrg_physics_asset_get_part (asset, lrg_physics_asset_find_part (asset, "shin_l")));
+
+knee->joint = LRG_JOINT_HINGE;
+knee->twist_min = 0.0f;
+knee->twist_max = 2.4f;
+lrg_physics_asset_set_part (asset, lrg_physics_asset_find_part (asset, "shin_l"), knee, NULL);
+lrg_physics_asset_add_exclusion (asset, "thigh_l", "thigh_r");
+lrg_physics_asset_save_to_file (asset, "assets/hero.rphysasset", &error);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured by =tests/test-ragdoll.c= (=/ragdoll/performance=, release build, one core, 120 Hz, 8 velocity / 2 position iterations): 10 ragdolls of 14 parts (140 bodies, 130 swing-twist joints) falling onto a plane and each other cost about 1.2 ms per step including the pose write-back of all ten skeletons. A ragdoll at rest sleeps with its island and costs nothing. Write-back is O(bones) with no allocation besides one temporary array.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Limits are from the bind pose.* An asset tuned on a T-pose skeleton has different rest angles on an A-pose skeleton.
+- *Twist axis = joint X.* Point it along the bone (=lrg_physics_asset_new_from_skeleton()= does); otherwise "twist" limits act as a swing.
+- *Mass ratios* above about 2:1 across a joint make limits overshoot on impact and chains stretch; run =lrg_physics_asset_stabilize()=.
+- *Powered motors are springs on the part's own inertia* while the joint moves the whole chain below it: keep the damping ratio high (the default 8) or the limb oscillates slowly; raise =motor-frequency= for snappier tracking.
+- *Impacts can push a joint past its limit briefly* (a few tenths of a radian for a hard fall at 8 velocity iterations); it returns within a few steps. Raise the solver iterations for cinematic ragdolls.
+- *drive_to_pose reads world poses* of the pose skeleton: give it the animated skeleton, not the one =write_pose()= writes, or the ragdoll chases itself.
+- *Scale* on the root transform or the bones is ignored.
+- *Do not change the asset* while a ragdoll built from it is in a world; build a new ragdoll.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+=.rphysasset= files are plain YAML: they open in the editor's text editor today, and the physics-asset editor of the next wave (part shapes as gizmos on the skeleton, joint limit cones and arcs, mass and motor fields, "generate from skeleton", "stabilise masses", a simulate-in-place preview) edits them through =LrgPhysicsAsset= and the part struct. A level node or prefab references the asset by path from its =physics:= block.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-ragdoll.c=: a fixture loads field by field and saves back byte for byte; a generated asset (14 parts, 70 kg) round-trips through a file; part editing, validation and exclusion bookkeeping; twenty malformed documents each fail with the right code and path; a ragdoll pushed off its feet falls onto a plane and settles (at rest every joint within 0.02 rad of its limits and 1 cm of its anchor, all parts slower than 0.1 m/s), and the skeleton follows the bodies; a powered ragdoll with a pinned pelvis tracks a pose that bends five joints by 0.35 rad to within 0.05 rad; blend 0 keeps the animation and per-bone weights mix; add/remove restores the world's body and constraint counts; two identical runs are bit-identical; ten ragdolls are timed.
+
+** Credits
+:PROPERTIES:
+:CUSTOM_ID: credits
+:END:
+=src/physics/lrg-ragdoll.c= contains code derived from Jolt Physics (https://github.com/jrouwe/JoltPhysics), MIT licence, Copyright 2021 Jorrit Rouwe: the mass pass of =RagdollSettings::Stabilize= and the motor drive of =Ragdoll::DriveToPoseUsingMotors=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:joint.org][LrgJoint]] (the joint kinds, limits and motors a ragdoll uses)
+- [[file:dynamics.org][LrgDynamicsWorld]]
+- [[file:../animation/skeleton.org][LrgSkeleton]] (bind poses, world poses)
+- [[file:../../guides/physics.org::#ragdolls][Physics guide: ragdolls]]

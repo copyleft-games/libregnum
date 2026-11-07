@@ -147,12 +147,104 @@ A small body moving faster than its size per substep can pass through a thin wal
 :END:
 =lrg_dynamics_world_debug_draw()= draws shapes, contacts, joints, boxes, centres of mass, velocities and the broadphase tree into an =LrgDebugDraw= on the physics category; render the debug draw as usual. Shapes are coloured by kind (green dynamic, blue kinematic, grey static, yellow sensor) and sleeping bodies are dimmed with =LRG_DYNAMICS_DEBUG_SLEEPING=.
 
-** Joints and ragdolls
+** Joints
 :PROPERTIES:
 :CUSTOM_ID: joints
 :END:
-# JOINTS: joints (fixed, point, hinge, slider, distance, cone twist, 6-DOF, motors, breakable) and ragdolls (.rphysasset) go here.
-Joints are =LrgPhysicsConstraint= objects added with =lrg_dynamics_world_add_constraint()=; the hook they implement is described in [[file:../modules/physics/contact-solver.org][Contact solver and the constraint hook]]. (Section continued by the joints work.)
+A joint ties two bodies (or a body and the world, =LRG_DYNAMICS_WORLD_BODY=) together. Every joint is an =LrgJoint=, an =LrgPhysicsConstraint= the world solves with the contacts each substep; the full reference is [[file:../modules/physics/joint.org][LrgJoint]].
+
+*** Choosing a joint
+:PROPERTIES:
+:CUSTOM_ID: joints-choosing
+:END:
+| You want | Use | Then |
+|----------+-----+------|
+| two bodies glued (a breakable weld) | =lrg_joint_new_fixed()= | =lrg_joint_set_break_force()= |
+| a pendulum, a chain link, a ball joint | =lrg_joint_new_point()= | |
+| a door, a wheel axle, a lever, an elbow | =lrg_joint_new_hinge()= | limits on =LRG_JOINT_AXIS_ROTATION_X=, a velocity motor for wheels, a position motor for servos |
+| a drawer, a piston, a lift | =lrg_joint_new_slider()= | limits on =LRG_JOINT_AXIS_TRANSLATION_X=, a position motor |
+| a rope, a rod, a bungee, a spring | =lrg_joint_new_distance()= | =lrg_joint_set_distance_range()=, =lrg_joint_set_limit_spring()= |
+| a hanging lamp, a shoulder without twist limits | =lrg_joint_new_cone()= | |
+| a ragdoll limb | =lrg_joint_new_swing_twist()= | |
+| anything else (vehicle suspension, a gimbal, a crane hook) | =lrg_joint_new_six_dof()= | per axis: =lrg_joint_set_axis_mode()=, limits, springs, motors |
+
+All of them take one world-space frame (an anchor and an axis, which becomes the joint's X axis) and capture it from the bodies' current poses, so build joints after placing the bodies; =lrg_joint_new()= takes the two local frames directly (what files store).
+
+*** A hinge door, end to end
+:PROPERTIES:
+:CUSTOM_ID: joints-example
+:END:
+#+begin_src C
+g_autoptr(LrgPhysicsShape) slab = lrg_physics_shape_new_box (0.45f, 1.0f, 0.03f);
+gfloat door_pos[3] = { 0.45f, 1.0f, 0.0f };
+gfloat hinge_at[3] = { 0.0f, 1.0f, 0.0f };
+gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+g_autoptr(LrgJoint) hinge = NULL;
+guint door;
+
+lrg_dynamics_world_add_body (world, slab, LRG_DYNAMICS_BODY_DYNAMIC, 20.0f, door_pos, NULL, &door, &error);
+hinge = lrg_joint_new_hinge (world, LRG_DYNAMICS_WORLD_BODY, door, hinge_at, up, &error);
+lrg_joint_set_limits (hinge, LRG_JOINT_AXIS_ROTATION_X, -1.7f, 1.7f);
+lrg_joint_set_friction (hinge, LRG_JOINT_AXIS_ROTATION_X, 2.0f);       /* a stiff hinge */
+lrg_dynamics_world_add_constraint (world, LRG_PHYSICS_CONSTRAINT (hinge), NULL, &error);
+#+end_src
+
+*** Limits, motors and springs in one paragraph
+:PROPERTIES:
+:CUSTOM_ID: joints-tuning
+:END:
+Each of the six axes (three translations along the joint frame, twist about X, swing about Y and Z) is free, locked or limited. A *motor* drives one axis to a velocity or (through a spring) to a position with a force/torque cap; motors never beat the limits. A *limit spring* softens a translation limit (Hz and damping ratio, independent of the masses). *Friction* resists motion up to a force or torque. A joint can *break*: past =break-force= or =break-torque= it disables itself and emits =::broken=. =lrg_joint_measure()= reads the current coordinates; =lrg_joint_get_applied_force()= the load.
+
+*** Stability tips
+:PROPERTIES:
+:CUSTOM_ID: joints-stability
+:END:
+- Keep mass ratios across a joint under about 10:1 (2:1 for long chains).
+- Chains stretch a little under fast motion: a 12-link chain whipping at 10 m/s stretches about 3 cm with the default 2 position iterations and 1 cm with 8 (=lrg_contact_solver_set_position_iterations()=); the stretch vanishes at rest.
+- Lock axes rather than giving them tiny ranges; prefer a point joint to a cone of pi.
+- Do not add or remove bodies from a =::broken= handler (it runs inside the step).
+
+** Ragdolls
+:PROPERTIES:
+:CUSTOM_ID: ragdolls
+:END:
+A ragdoll is a skeleton turned into bodies and swing-twist/hinge joints. Describe it once per skeleton in a =.rphysasset= file (=LrgPhysicsAsset=: per bone a capsule, box or sphere with an offset and a mass, and the joint to the parent part with its limits), then instantiate an =LrgRagdoll= per character. The full reference and the annotated format are in [[file:../modules/physics/ragdoll.org][LrgRagdoll and .rphysasset]].
+
+*** From nothing to a falling character
+:PROPERTIES:
+:CUSTOM_ID: ragdolls-quick
+:END:
+#+begin_src C
+/* 1. an asset: generate one from the skeleton, tune, save */
+g_autoptr(LrgPhysicsAsset) asset = lrg_physics_asset_new_from_skeleton (skeleton, 70.0f, 0.2f);
+lrg_physics_asset_save_to_file (asset, "assets/hero.rphysasset", &error);
+
+/* 2. a ragdoll for this character, placed where its model stands */
+g_autoptr(LrgRagdoll) ragdoll = lrg_ragdoll_new (asset, skeleton, &error);
+lrg_ragdoll_set_root_transform (ragdoll, &model_to_world);
+lrg_ragdoll_add_to_world (ragdoll, world, &error);   /* bodies start in the current pose */
+
+/* 3. every frame, after stepping the world */
+lrg_ragdoll_write_pose (ragdoll);                     /* the skin follows the bodies */
+#+end_src
+
+*** Passive, powered, blended
+:PROPERTIES:
+:CUSTOM_ID: ragdolls-modes
+:END:
+- *Passive* (default): a limp body; give joints a little =friction= for muscle tone.
+- *Powered*: =lrg_ragdoll_set_mode (LRG_RAGDOLL_POWERED)= and call =lrg_ragdoll_drive_to_pose (ragdoll, animated_skeleton)= every frame: joint motors pull the parts toward the animation with bounded torque, so the character follows its animation yet reacts to hits.
+- *Blended*: =lrg_ragdoll_set_bone_blend()= (0 animation, 1 physics) per bone for partial ragdolls and smooth hand-overs; =lrg_ragdoll_write_pose()= blends with whatever local pose the animator left in the skeleton.
+
+*** Ragdoll checklist
+:PROPERTIES:
+:CUSTOM_ID: ragdolls-checklist
+:END:
+- Joint limits are measured from the skeleton's bind pose; author them for that pose.
+- Twist axes run along the bones (joint X); hinges for elbows and knees, swing-twist for shoulders, hips, neck.
+- Run =lrg_physics_asset_stabilize()= after editing masses (child/parent ratio 0.8 .. 1.2).
+- Ragdoll bodies live on =LRG_PHYSICS_LAYER_RAGDOLL=; adjacent parts never collide (=exclude-adjacent=), list other pairs under =exclusions:=.
+- Hard impacts can push a joint briefly past its limit; raise the solver iterations for cinematic shots.
 
 ** Components, levels and the character controller
 :PROPERTIES:
