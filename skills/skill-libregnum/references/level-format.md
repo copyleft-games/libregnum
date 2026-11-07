@@ -94,7 +94,7 @@ nodes:
 
 ## Visual params at runtime (0.9.0, used by lrg_level_instantiate_3d)
 
-- light: `light_type` (directional/point/spot), `intensity`, `range`, `spot_angle` (full cone), `cast_shadows`
+- light (-> LrgLightComponent): `light_type` (directional/point/spot; default spot when `spot_angle` > 0), `color` [r,g,b] display 0..1, `intensity` (display-space multiplier, not lux), `range`, `spot_angle` (FULL outer cone, degrees), `spot_inner_angle` (FULL inner cone), `cast_shadows` (sun cascades / point cube / spot map within renderer budgets), `shadow_bias` (world units, 0 = renderer default), `layer_mask` (render layers the light reaches)
 - camera: `fov`, `near`, `far`, `orthographic`, `ortho_size`, `priority`
 - audio emitter: `volume`, `pitch`, `loop`, `autoplay`, `min_distance`, `max_distance` / `radius`
 - sprite: `width`, `height`, `facing`, `preserve_aspect` (`pixels_per_unit` ignored)

@@ -1,8 +1,8 @@
-* LrgLightSet - Forward Lighting for Static Geometry
+* LrgLightSet - Forward PBR Lighting
 :PROPERTIES:
 :CUSTOM_ID: lrglightset---forward-lighting-for-static-geometry
 :END:
-Lights static 3D geometry drawn with =DrawMesh()= - [[file:static-batch.org][LrgStaticBatch]] chunks and [[file:terrain.org][LrgTerrain]] meshes - with an ambient colour, one directional light (the sun or moon) and any number of point lights (torches, lamp posts, windows). Each frame the point lights nearest the camera, up to =LRG_LIGHT_SET_MAX_ACTIVE= (16), are selected and uploaded to a GLSL 330 shader that the light set owns and hands out with =get_shader()=. The same shader applies optional distance fog (linear, exponential, uniform or height), which the weather module's [[file:../weather/index.org][LrgFog]] and =LrgWeatherManager= drive.
+Lights 3D geometry drawn with =DrawMesh()= - [[file:static-batch.org][LrgStaticBatch]] chunks, [[file:terrain.org][LrgTerrain]] meshes, [[file:skinned-mesh.org][LrgSkinnedMesh]], mesh-renderer components and the editor viewport - with GGX/Smith/Schlick metallic-roughness shading (since 0.9.0), an ambient colour or an image-based environment, one directional light (the sun or moon) and any number of point and spot lights (torches, lamp posts, flashlights, street lamps).  It is the one lit shader of the engine: materials ([[file:material.org][LrgMaterial]]), user shaders ([[file:shader-asset.org][LrgShaderAsset]]), the environment ([[file:../lighting/environment.org][LrgEnvironment]]), SSAO ([[file:ssao.org][LrgSsao]]) and decals ([[file:decal.org][LrgDecalSet]]) plug into it through the [[#shader-contract-090][shader contract]] below.  The guide [[file:../../guides/materials-and-pbr.org][Materials and PBR]] walks through the whole flow. Each frame the point lights nearest the camera, up to =LRG_LIGHT_SET_MAX_ACTIVE= (16), are selected and uploaded to a GLSL 330 shader that the light set owns and hands out with =get_shader()=. The same shader applies optional distance fog (linear, exponential, uniform or height), which the weather module's [[file:../weather/index.org][LrgFog]] and =LrgWeatherManager= drive.
 
 Light bookkeeping, the nearest-N selection and the fog model are headless; only the shader needs GL. Without GLSL 330 (or without a window) =get_shader()= returns =NULL= and callers keep raylib's default shader, so a game degrades to unlit rather than failing.
 
@@ -17,6 +17,21 @@ Light bookkeeping, the nearest-N selection and the fog model are headless; only 
 |--------------------------------+-------------+-----------------------------------------------|
 | =LRG_LIGHT_SET_MAX_ACTIVE=     | 16          | point lights evaluated per fragment           |
 | =LRG_LIGHT_SET_INVALID_LIGHT=  | =G_MAXUINT= | returned for an unknown light / active index  |
+| =LRG_LIGHT_SET_GRID_SLOTS= | 16 | default lights per grid cell |
+| =LRG_LIGHT_SET_GRID_MAX_SLOTS= | 32 | most lights per cell (=set_grid_slots()=) |
+| =LRG_LIGHT_SET_GRID_MAX_CELLS= | 128 | largest grid side |
+| =LRG_LIGHT_SET_GRID_MAX_LAYERS= | 16 | most cluster layers |
+| =LRG_LIGHT_SET_GRID_MAX_LIGHTS= | 1024 | lights in one grid upload |
+| =LRG_LIGHT_SET_AIR_MAX_STEPS= | 32 | most volumetric air march steps |
+| =LRG_LIGHT_SET_METALLIC_UNIT= | 1 | legacy metallic-gloss map unit |
+| =LRG_LIGHT_SET_NORMAL_UNIT= | 2 | normal map unit |
+| =LRG_LIGHT_SET_ORM_UNIT= | 4 | ORM map unit (0.9.0) |
+| =LRG_LIGHT_SET_EMISSION_UNIT= | 5 | emission map unit |
+| =LRG_LIGHT_SET_HEIGHT_UNIT= | 6 | height map unit |
+| =LRG_LIGHT_SET_HEIGHT_SCALE= | 0.04 | parallax depth of a full-range height map |
+| =LRG_LIGHT_SET_HOOK_UNIT= | 16 | first unit of the environment / SSAO / decal binders |
+| =LRG_LIGHT_SET_MAP_NORMAL= ... =LRG_LIGHT_SET_MAP_UNLIT= | 1, 2, 4, 8, 16, 32 | =mapFlags= bits, see [[#shader-contract-090][the contract]] |
+| =LRG_LIGHT_SET_DEFAULT_METALLIC= / =_ROUGHNESS= | 0 / 0.5 | =pbrParams= of a draw without a material |
 
 ** API
 :PROPERTIES:
@@ -71,28 +86,103 @@ void         lrg_light_set_sample    (LrgLightSet *self, const GrlVector3 *posit
 void         lrg_light_set_bind      (LrgLightSet *self);
 void         lrg_light_set_unbind    (void);
 LrgLightSet *lrg_light_set_get_bound (void);
+
+/* Light grid, clusters, limit, emission */
+void   lrg_light_set_set_grid           (LrgLightSet *self, gfloat cell_size, guint cells);
+guint  lrg_light_set_get_grid_light_count (LrgLightSet *self, gdouble x, gdouble z);
+guint  lrg_light_set_get_grid_light     (LrgLightSet *self, gdouble x, gdouble z, guint index);
+void   lrg_light_set_set_grid_layers    (LrgLightSet *self, gfloat layer_height, guint layers);
+void   lrg_light_set_set_grid_slots     (LrgLightSet *self, guint slots);
+guint  lrg_light_set_get_grid_slots     (LrgLightSet *self);
+guint  lrg_light_set_get_cluster_light_count (LrgLightSet *self, gdouble x, gdouble y, gdouble z);
+guint  lrg_light_set_get_cluster_light  (LrgLightSet *self, gdouble x, gdouble y, gdouble z, guint index);
+void   lrg_light_set_set_light_limit    (LrgLightSet *self, gfloat limit);   /* 0: off */
+gfloat lrg_light_set_get_light_limit    (LrgLightSet *self);
+gfloat lrg_light_set_limit_light        (gfloat limit, gfloat value);        /* the curve */
+void   lrg_light_set_set_emission       (LrgLightSet *self, const GrlColor *color, gfloat intensity);
+
+/* Shadows, air, ground overlay, read-back */
+void     lrg_light_set_get_origin            (LrgLightSet *self, gdouble *x, gdouble *y, gdouble *z);
+gboolean lrg_light_set_get_directional       (LrgLightSet *self, gfloat *direction, gfloat *rgb);
+void     lrg_light_set_set_point_light_shadow (LrgLightSet *self, guint light, guint priority);
+guint    lrg_light_set_get_point_light_shadow (LrgLightSet *self, guint light);
+void     lrg_light_set_set_shadow_renderer   (LrgLightSet *self, LrgShadowRenderer *renderer);
+LrgShadowRenderer *lrg_light_set_get_shadow_renderer (LrgLightSet *self);
+void     lrg_light_set_set_air    (LrgLightSet *self, gfloat density, gfloat anisotropy, gfloat intensity,
+                                   guint steps, gfloat max_distance, const GrlColor *tint);
+void     lrg_light_set_clear_air  (LrgLightSet *self);
+gboolean lrg_light_set_get_air    (LrgLightSet *self, gfloat *density, gfloat *anisotropy, guint *steps);
+gfloat   lrg_light_set_air_phase  (gfloat anisotropy, gfloat cos_theta);
+gfloat   lrg_light_set_sample_air (LrgLightSet *self, const GrlVector3 *from, const GrlVector3 *to,
+                                   gfloat *out_rgb);
+void     lrg_light_set_set_ground_overlay (LrgLightSet *self, LrgGroundOverlay *overlay);
+LrgGroundOverlay *lrg_light_set_get_ground_overlay (LrgLightSet *self);
+
+/* 0.9.0: spot lights, per-light shadow bias, render layers */
+guint    lrg_light_set_add_spot_light (LrgLightSet *self, gdouble x, gdouble y, gdouble z,
+                                       const GrlVector3 *direction, const GrlColor *color,
+                                       gfloat radius, gfloat inner_degrees, gfloat outer_degrees);
+void     lrg_light_set_set_spot_light (LrgLightSet *self, guint light, const GrlVector3 *direction,
+                                       gfloat inner_degrees, gfloat outer_degrees); /* NULL: point */
+gboolean lrg_light_set_get_spot_light (LrgLightSet *self, guint light, gfloat *direction,
+                                       gfloat *inner_degrees, gfloat *outer_degrees);
+gfloat   lrg_light_set_spot_factor    (gfloat inner_degrees, gfloat outer_degrees, gfloat cos_angle);
+void     lrg_light_set_set_light_shadow_bias (LrgLightSet *self, guint light, gfloat bias);
+gfloat   lrg_light_set_get_light_shadow_bias (LrgLightSet *self, guint light);
+void     lrg_light_set_set_light_layers (LrgLightSet *self, guint light, guint32 layers);
+guint32  lrg_light_set_get_light_layers (LrgLightSet *self, guint light);
+void     lrg_light_set_set_draw_layers  (LrgLightSet *self, guint32 layers);
+guint32  lrg_light_set_get_draw_layers  (LrgLightSet *self);
+guint    lrg_light_set_add_light_desc   (LrgLightSet *self, const LrgLight3DDesc *desc);
+
+/* 0.9.0: PBR model, output, hooks, GLSL for user shaders */
+void     lrg_light_set_brdf (const gfloat *normal, const gfloat *view, const gfloat *light,
+                             const gfloat *albedo, gfloat metallic, gfloat roughness,
+                             gfloat *out_rgb);                 /* CPU reference */
+void     lrg_light_set_set_output_linear (LrgLightSet *self, gboolean linear);
+gboolean lrg_light_set_get_output_linear (LrgLightSet *self);
+void            lrg_light_set_set_environment (LrgLightSet *self, LrgEnvironment *environment);
+LrgEnvironment *lrg_light_set_get_environment (LrgLightSet *self);
+void            lrg_light_set_set_ssao        (LrgLightSet *self, LrgSsao *ssao);
+LrgSsao        *lrg_light_set_get_ssao        (LrgLightSet *self);
+void            lrg_light_set_set_decals      (LrgLightSet *self, LrgDecalSet *decals);
+LrgDecalSet    *lrg_light_set_get_decals      (LrgLightSet *self);
+const gchar    *lrg_light_set_get_glsl_library  (void);   /* no #version, no main */
+const gchar    *lrg_light_set_get_vertex_source (void);   /* complete vertex shader */
+gboolean        lrg_light_set_bind_shader   (LrgLightSet *self, GrlShader *shader); /* a user lit program */
+void            lrg_light_set_forget_shader (LrgLightSet *self, GrlShader *shader);
 #+end_src
 
 ** Semantics
 :PROPERTIES:
 :CUSTOM_ID: semantics
 :END:
-*** Lighting model
+*** Lighting model (0.9.0)
 :PROPERTIES:
 :CUSTOM_ID: lighting-model
 :END:
-Per fragment, with unit normal =n=:
+Per fragment, with the shading normal =n= (the normal map's when the material has one), the geometric normal =ng=, the unit view vector =v= toward the eye (=mapCamera=) and the material's linear albedo, metallic, roughness and occlusion:
 
 #+begin_example
-light = ambient
-      + directional_color * max(dot(n, -direction), 0)
-      + sum over active point lights of
-          color * intensity * k² * max(dot(n, L), 0),   k = clamp(1 - dist / radius, 0, 1)
-lit   = texel * colDiffuse * vertexColor * light
-final = mix(lit, fog_color, fog_amount(fragment))   (alpha unchanged)
+lin(c)  = pow(c, 2.2)                     display (sRGB) -> linear
+brdf(l) = ((1 - F)(1 - metallic) * albedo + pi * D G F / (4 N.V N.L)) * N.L
+          D = GGX(alpha = roughness^2), G = Smith-Schlick (k = (roughness + 1)^2 / 8),
+          F = Schlick, F0 = mix(0.04, albedo, metallic), roughness clamped to >= 0.045
+sun     = brdf(-sunDirection) * lin(sunColor) * sun_shadow
+light_i = brdf(L_i) * lin(color_i * intensity_i * k_i^2 * cone_i) * shadow_i,
+          k = clamp(1 - dist / radius, 0, 1), cone = smoothstep(cos outer, cos inner, cos angle)
+indirect = environment active ? kd * albedo * env_diffuse(n) + env_specular(n, v, roughness) * (F0 * brdf_lut.x + brdf_lut.y)
+                              : lin(ambient) * albedo
+radiance = sun + sum light_i + indirect * occlusion * ssao        (light limit applied here)
+colour   = display(radiance + emission)  -> ground overlay -> volumetric air -> fog -> output encoding
 #+end_example
 
-=L= is the unit vector from the fragment to the light. Colours are the 0..255 channels divided by 255; the sum is not clamped before multiplying, so overlapping lights can over-brighten (clamped by the framebuffer). The directional =direction= is where the light travels (for an [[file:sky-dome.org][LrgSkyDome]], the negated sun direction).
+- The pi is folded into the BRDF: a white rough dielectric facing a white light reflects about 1, so scenes authored for the pre-0.9 Lambert model keep their brightness.  =lrg_light_set_brdf()= is the direct term on the CPU (the reference =tests/test-pbr.c= checks the shader against).
+- Colours stay authored in display space (0..255 channels, colour x intensity): =ambientColor=, =sunColor=, the point and spot colours, =colDiffuse=, the albedo texture and the emission colour are linearized in the shader.  The falloff =k^2= and the cone are display-space factors linearized together with the colour, so one light alone gives the same on-screen =(1 - d / r)^2= curve as before and as =sample()= and the billboards; several lights add in linear space.
+- A light's intensity therefore scales the display-space colour: 2 is about 4.6 times the linear radiance.  It is not a photometric unit (no lux or lumen); a directional light's colour x intensity saturates at white when it comes from =add_light_desc()=.
+- The directional =direction= is where the light travels (for an [[file:sky-dome.org][LrgSkyDome]], the negated sun direction).
+- Without an environment the indirect term is the flat ambient colour times the albedo for metals and dielectrics alike (the two diverge only with real image-based light).
+- =set_output_linear (TRUE)= writes the linear colour (after fog and air, re-linearized) for an HDR target that a post stack tonemaps; the default writes display colour straight to the screen.
 
 *** Shader contract
 :PROPERTIES:
@@ -146,15 +236,35 @@ With only the 16 nearest lights a large scene (a dungeon with 90 torches, a city
 :END:
 The model sums ambient, sun and point lights without tonemapping, so a bright light next to a wall can push the texel to white, brighter than daylight. =set_light_limit (m)= (0 = off, the default) rolls the summed light off per channel: values up to =0.75 m= pass unchanged, above that =knee + (m - knee) (1 - exp(-(l - knee) / (m - knee)))= approaches =m= with slope 1 at the knee, so ordinary levels are untouched. =limit_light (m, value)= is the same curve on the CPU; =sample()= applies it.
 
-*** Material slots (gaps G8)
-
-The lit shader reads three more raylib material maps when a material has them: =normalMap= (unit 2, tangent space, green up), =metallicMap= (unit 1, metallic in red, smoothness in alpha, as Unity's MetallicGloss) and =heightMap= (unit 6, red, 0.5 is the surface).  The tangent frame comes from screen-space derivatives of position and texture coordinate, so meshes need no tangents.  The normal map perturbs the lighting normal (the shadow lookups keep the geometric one); the height map shifts the texture coordinates by a parallax offset of the view ray (=LRG_LIGHT_SET_HEIGHT_SCALE=); a metallic map dims the diffuse by 90 % of its red and adds a Blinn-Phong highlight of the sun and the point lights, tinted by the albedo as metallic grows and sharper with smoothness.  =lrg_static_batch_set_material_normal/metallic/height()= bind the maps per material; the batch sets the shader's =mapFlags= only while such a material draws, so every other draw runs the old path.
+*** Material slots
+:PROPERTIES:
+:CUSTOM_ID: material-slots
+:END:
+The lit shader reads raylib material maps on fixed texture units: =texture0= (unit 0, albedo), =metallicMap= (unit 1, legacy metallic-gloss: metallic in red, smoothness in alpha), =normalMap= (unit 2, tangent space, green up), =ormMap= (unit 4, glTF occlusion-roughness-metallic), =emissionMap= (unit 5) and =heightMap= (unit 6, red, 0.5 is the surface).  The tangent frame comes from screen-space derivatives of position and texture coordinate, so meshes need no tangents.  The normal map perturbs the shading normal, scaled by =pbrParams.w= (the shadow lookups keep the geometric one); the height map shifts the texture coordinates by a parallax offset of the view ray (=LRG_LIGHT_SET_HEIGHT_SCALE=).  Which maps are bound is told by =mapFlags= (see the contract).  =lrg_static_batch_set_material_normal/metallic/height()= still bind the legacy maps per batch material; [[file:material.org][LrgMaterial]] binds the full set with =lrg_material_apply()=.
 
 *** Emission
 :PROPERTIES:
 :CUSTOM_ID: emission
 :END:
-=set_emission (color, intensity)= sets =emissionColor=; the shader adds =texture(emissionMap, uv).rgb * emissionColor= to the lit colour before the fog, independent of the lights (lit windows at night). =emissionMap= is raylib's =MATERIAL_MAP_EMISSION= (texture unit =LRG_LIGHT_SET_EMISSION_UNIT= = 5): [[file:static-batch.org][LrgStaticBatch]] binds a material's map from =lrg_static_batch_set_material_emission()= and a black 1x1 map for materials without one, so nothing left in that unit can glow. The default is no emission (black).
+=set_emission (color, intensity)= sets the light set's global =emissionColor= (lit windows at night).  The shader always adds =lin(texture(emissionMap, uv).rgb * tint)= after the lights, where =tint= is a material's own =emissionOwn.rgb= when =emissionOwn.w= is 1, else the global colour.  =emissionMap= is raylib's =MATERIAL_MAP_EMISSION= (unit 5): [[file:static-batch.org][LrgStaticBatch]] binds a material's map from =lrg_static_batch_set_material_emission()=, white for an own colour without a map and a black 1x1 map otherwise, so nothing left in that unit can glow.  The default is no emission (black).
+
+*** Spot lights (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: spot-lights
+:END:
+A spot light is a point light (same id space, same position / colour / radius / intensity / enable / shadow-priority calls, same selection, grid and clusters) limited to a cone: =add_spot_light (x, y, z, direction, color, radius, inner, outer)= or =set_spot_light (id, direction, inner, outer)= on an existing light (a =NULL= direction makes it a point light again).  The half-angles are degrees; the inner is clamped to 0 .. 89 and the outer to inner .. 89.  The cone factor is =smoothstep (cos outer, cos inner, cos angle)= (=lrg_light_set_spot_factor()=), applied in the lit shader, in =sample()= and in the billboard / grass / water sampler.  The grid and clusters keep treating a spot as its sphere (conservative).  A spot with a shadow priority competes for the shadow renderer's spot maps, not its cubes (=lrg_shadow_renderer_set_spots()=).
+
+*** Render layers and per-light bias (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+=set_light_layers (id, mask)= limits a point or spot light to the [[file:render-layers.org][render layers]] in =mask= (every layer by default); =set_draw_layers (mask)= tells the shader the layers of what draws next (uploaded at once and by every =apply()=).  A light whose mask shares no bit with the draw's is skipped for that draw; the sun and the ambient reach everything.  The 32-bit masks travel as two 16-bit halves (=drawLayers= ivec2, the light texel's =zw=).  =set_light_shadow_bias (id, bias)= gives one light its own shadow depth bias in world units (0 = the shadow renderer's).
+
+*** Lights from components (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: light-desc
+:END:
+=add_light_desc (desc)= adds the light an =LrgLight3DDesc= describes (what [[file:../world3d/components.org][LrgLightComponent]] registers with its world): directional sets the directional light (colour x intensity), point and spot add a light with range as radius, the cone, the layer mask, shadow priority 1 when =cast_shadows= is set and the =shadow-bias= property of =desc->source= when it has one.  =lrg_light_component_add_to_light_set()= is the component-side shortcut.
 
 *** Selection
 :PROPERTIES:
@@ -190,13 +300,174 @@ The same evaluation exists on the GPU for libregnum's own shaders (=graphics/lrg
 :PROPERTIES:
 :CUSTOM_ID: shadows
 :END:
-=lrg_light_set_set_shadow_renderer()= gives the set an [[file:../lighting/shadow-renderer.org][LrgShadowRenderer]]; =lrg_light_set_set_point_light_shadow (id, priority)= lets a point light compete for one of its cubes. Once the renderer's passes are rendered, =apply()= binds its atlases (units 12 and 13) and the shader darkens the directional light's Lambert term and every shadowed point light where casters hide them (the light's shadow slot travels in the light texel's fourth channel with a grid, in =lightShadow[]= without). =lrg_light_set_get_origin()= and =lrg_light_set_get_directional()= read back what the renderer plans with. =sample()= does not look at shadows.
+=lrg_light_set_set_shadow_renderer()= gives the set an [[file:../lighting/shadow-renderer.org][LrgShadowRenderer]]; =lrg_light_set_set_point_light_shadow (id, priority)= lets a point light compete for one of its cubes. Once the renderer's passes are rendered, =apply()= binds its atlases (units 12 and 13) and the shader darkens the directional light's Lambert term and every shadowed point light where casters hide them (the light's shadow slot travels in the light texel's fourth channel with a grid, in =lightShadow[]= without). =lrg_light_set_get_origin()= and =lrg_light_set_get_directional()= read back what the renderer plans with. =sample()= does not look at shadows.  Since 0.9.0 shadowed spot lights get a perspective map in the spot atlas (unit 11, slot in the light texel's =3.y=, =lightSpotExtra[].y= without a grid), filtered with the renderer's PCF radius; each point or spot light may carry its own depth bias.  =lrg_light_set_get_shadow_renderer()= returns the renderer, =lrg_light_set_get_point_light_shadow()= a light's priority.
 
 *** Volumetric air (M14)
 :PROPERTIES:
 :CUSTOM_ID: volumetric-air
 :END:
-=lrg_light_set_set_air (density, anisotropy, intensity, steps, max_distance, tint)= marches each fragment's view ray from the camera (up to =max_distance=) in =steps= jittered steps. Each step adds the light scattered toward the eye: the directional light through the Henyey-Greenstein phase function (=lrg_light_set_air_phase()=, g = =anisotropy=) and its cascade lookup, so shafts form behind casters at dawn and dusk; the renderer's shadowed point lights by their falloff, phase and cube lookup; and the ambient colour over 4 pi. Each step is weighted by =density= and the transmittance up to it; the fragment is then dimmed by the transmittance =exp (-density x distance)=, and the air's colour is =tint=. =lrg_light_set_sample_air()= is the same sum on the CPU (steps at their middles, no shadows). =clear_air()= turns it off (the default).
+=lrg_light_set_set_air (density, anisotropy, intensity, steps, max_distance, tint)= marches each fragment's view ray from the camera (up to =max_distance=) in =steps= jittered steps. Each step adds the light scattered toward the eye: the directional light through the Henyey-Greenstein phase function (=lrg_light_set_air_phase()=, g = =anisotropy=) and its cascade lookup, so shafts form behind casters at dawn and dusk; the renderer's shadowed point lights by their falloff, phase and cube lookup; and the ambient colour over 4 pi. Each step is weighted by =density= and the transmittance up to it; the fragment is then dimmed by the transmittance =exp (-density x distance)=, and the air's colour is =tint=. =lrg_light_set_sample_air()= is the same sum on the CPU (steps at their middles, no shadows). =lrg_light_set_clear_air()= turns it off (the default) and =lrg_light_set_get_air()= reads it back.  The air is evaluated in display space after the PBR lighting; spot lights do not scatter in it (only the sun, the shadowed point lights and the ambient do).
+
+*** Light grid queries, limit and emission calls
+:PROPERTIES:
+:CUSTOM_ID: grid-queries
+:END:
+=lrg_light_set_get_grid_light_count (x, z)= and =lrg_light_set_get_grid_light (x, z, i)= read the flat grid's cell lists (the camera's layer with clusters); =lrg_light_set_get_grid_slots()= returns the lights per cell.  =lrg_light_set_set_light_limit()= / =lrg_light_set_get_light_limit()= set and read the soft limit and =lrg_light_set_limit_light()= is its curve; since 0.9.0 the limit is applied to the summed irradiance in display space and the reflected radiance is scaled by the same factor, so a limited light keeps its colour and the specular highlight scales with it.  =lrg_light_set_set_emission()= is described under [[#emission][Emission]].
+
+** Shader contract (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: shader-contract-090
+:END:
+Everything a material, a user shader, or another pass needs to know to work with the lit shader.  The fragment shader is =#version 330=, the varyings of the vertex source, =finalColor=, the library (=lrg_light_set_get_glsl_library()=) and a one-line =main()= calling =lrg_light_shade()=.
+
+*** Material uniforms
+:PROPERTIES:
+:CUSTOM_ID: material-uniforms
+:END:
+| Uniform | Type | Unit | Meaning |
+|-+-+-+-|
+| =texture0= | sampler2D | 0 | albedo, sRGB; white when unset |
+| =colDiffuse= | vec4 | | base colour, sRGB (raylib's material colour x draw tint) |
+| =metallicMap= | sampler2D | 1 | legacy metallic-gloss (bit 2) |
+| =normalMap= | sampler2D | 2 | tangent-space normal (bit 1) |
+| =ormMap= | sampler2D | 4 | glTF ORM (bit 8) |
+| =emissionMap= | sampler2D | 5 | always sampled; white = even glow, black = none |
+| =heightMap= | sampler2D | 6 | parallax height (bit 4) |
+| =pbrParams= | vec4 | | (metallic, roughness, occlusion strength, normal scale); default (0, 0.5, 1, 1) |
+| =mapFlags= | int | | bits below |
+| =emissionOwn= | vec4 | | material emission colour x strength (sRGB) in rgb, w = 1 to use it instead of =emissionColor= |
+| =emissionColor= | vec3 | | the light set's global emission tint (=set_emission()=); materials must not write it |
+| =alphaCutoff= | float | | discard below this alpha (texel x =colDiffuse= x vertex alpha) |
+| =heightScale= | float | | parallax depth (=LRG_LIGHT_SET_HEIGHT_SCALE=) |
+
+| =mapFlags= bit | Macro | Effect |
+|-+-+-|
+| 1 | =LRG_LIGHT_SET_MAP_NORMAL= | normal map perturbs the shading normal, xy scaled by =pbrParams.w= |
+| 2 | =LRG_LIGHT_SET_MAP_METALLIC_GLOSS= | metallic = R, roughness = 1 - A (replaces the factors) |
+| 4 | =LRG_LIGHT_SET_MAP_HEIGHT= | parallax offset of the texture coordinates |
+| 8 | =LRG_LIGHT_SET_MAP_ORM= | metallic x= B, roughness x= G, occlusion = mix (1, R, =pbrParams.z=) |
+| 16 | =LRG_LIGHT_SET_MAP_EMISSION= | records that unit 5 holds a material's map (the unit is sampled regardless) |
+| 32 | =LRG_LIGHT_SET_MAP_UNLIT= | no lighting: albedo x colour + emission, then overlay, air and fog |
+
+The uniforms persist in the program, so a draw without a material must restore the defaults (=pbrParams= = (=LRG_LIGHT_SET_DEFAULT_METALLIC=, =LRG_LIGHT_SET_DEFAULT_ROUGHNESS=, 1, 1), =mapFlags= 0, =emissionOwn.w= 0); the light set sets them once when it builds the shader.
+
+*** Light uniforms
+:PROPERTIES:
+:CUSTOM_ID: light-uniforms
+:END:
+| Uniform | Meaning |
+|-+-|
+| =ambientColor=, =sunColor= (vec3), =sunDirection= (vec3) | display-space colours, direction the sun's light travels |
+| =lightCount=, =lightPosition[16]=, =lightColor[16]=, =lightRadius[16]=, =lightShadow[16]= | the active list (no grid): draw-space position, colour x intensity, radius, point shadow slot |
+| =lightSpot[16]= (vec4) | spot direction and cos outer; w = -2 for a point light |
+| =lightSpotExtra[16]= (vec4) | cos inner, spot shadow slot, layer mask low and high 16 bits |
+| =useGrid=, =lightData= (unit 14), =lightGrid= (unit 15), =gridParams=, =gridLayers= | the light grid; =lightData= has four RGBA32F texels per light: (position, radius), (colour, point shadow slot), (spot direction, cos outer), (cos inner, spot shadow slot, layers lo, layers hi) |
+| =lightLimit= | soft light limit (0 = off) |
+| =mapCamera= | the eye in draw space (view vector, parallax) |
+| =drawLayers= (ivec2) | the draw's render layers, two 16-bit halves |
+| =outputLinear= (int) | 1: write linear colour |
+| shadow uniforms (=shadowCascades=, =sunShadowMap= unit 12, =pointShadowMap= unit 13, =pointShadowBias[8]=, =spotShadowCount=, =spotShadowMatrix[4]=, =spotShadowLight[4]=, =spotShadowInfo[4]=, =spotShadowParams=, =spotShadowMap= unit 11) | uploaded from the [[file:../lighting/shadow-renderer.org][shadow renderer]] |
+| fog (=fogType=, =fogColor=, =fogParams=, =fogBase=, =fogCamera=), air (=airParams=, ...), overlay (=ov*=) | see the sections above |
+
+*** Texture units
+:PROPERTIES:
+:CUSTOM_ID: texture-units
+:END:
+| Unit | Use |
+|-+-|
+| 0, 1, 2, 4, 5, 6 | material maps (above) |
+| 7 .. 10 | free (raylib's cubemap / irradiance / prefilter / BRDF slots, unused); the hooks' fallback window on a 16-unit driver |
+| 11 | spot shadow atlas |
+| 12, 13 | sun and point shadow atlases |
+| 14, 15 | light grid textures |
+| 16 .. min (GL_MAX_TEXTURE_IMAGE_UNITS, 32) - 1 | hook binders (=LRG_LIGHT_SET_HOOK_UNIT=) |
+
+OpenGL 3.3 guarantees only 16 fragment texture units.  The light set queries =GL_MAX_TEXTURE_IMAGE_UNITS= once (through =rlGetProcAddress ("glGetIntegerv")=): with more than 16 the hooks start at 16, with exactly 16 they get units 7 .. 10 and a hook that finds no unit left binds its inactive state.  Every desktop driver of the last decade (and llvmpipe, 32) has more than 16.
+
+*** Hooks of other passes
+:PROPERTIES:
+:CUSTOM_ID: hooks
+:END:
+Three GLSL snippets, each owned by its feature's private header, are pasted into the library after the cluster, spot, fog, shadow, air and overlay snippets and after =LRG_PI=, =lrg_to_linear()=, =lrg_to_display()= and =struct LrgSurface= (so hooks may use them):
+
+| Macro (header) | Functions | How the shader uses them |
+|-+-+-|
+| =LRG_ENV_GLSL= (=lighting/lrg-environment-glsl-private.h=) | =bool lrg_env_active()=, =vec3 lrg_env_diffuse(vec3 n)=, =vec3 lrg_env_specular(vec3 n, vec3 v, float rough)=, =vec2 lrg_env_brdf(float nv, float rough)= | indirect light when active (linear radiance), else the flat ambient |
+| =LRG_SSAO_GLSL= (=graphics/lrg-ssao-glsl-private.h=) | =float lrg_ssao()= | multiplies the indirect light (with the material occlusion) |
+| =LRG_DECAL_GLSL= (=graphics/lrg-decal-glsl-private.h=) | =void lrg_decals_apply(vec3 p, vec3 ng, inout vec4 albedo, inout vec3 n, inout float rough, inout float metal)= | after material sampling, before lighting; =albedo= is linear |
+
+Each header also declares a binder, called by every =lrg_light_set_apply()= in this order with the lit program enabled:
+
+#+begin_src C
+void lrg_environment_bind_private (LrgEnvironment *env, guint shader_id, gint *texture_unit);
+void lrg_ssao_bind_private (LrgSsao *ssao, guint shader_id, gint *texture_unit);
+void lrg_decal_set_bind_private (LrgDecalSet *decals, guint shader_id, gint *texture_unit);
+#+end_src
+
+A =NULL= object binds the inactive state (uniform switches off).  Binders look their uniforms up per program id, take texture units from =*texture_unit= upward (checking each with =lrg_light_set_hook_unit_usable()= from =graphics/lrg-light-set-private.h=) and advance it.  A =samplerCube= must always point at a unit of its own, even when inactive: left on unit 0 beside the =sampler2D= =texture0= it makes every draw fail with =GL_INVALID_OPERATION=.  =set_environment()=, =set_ssao()= and =set_decals()= hold references.
+
+*** GLSL library for user shaders
+:PROPERTIES:
+:CUSTOM_ID: glsl-library
+:END:
+=lrg_light_set_get_glsl_library()= returns every uniform, hook and function above without =#version=, varyings or =main()=; =lrg_light_set_get_vertex_source()= the complete vertex shader (raylib's attribute and matrix names in; =fragPosition=, =fragTexCoord=, =fragColor=, =fragNormal= out, in draw space).  A user fragment shader is:
+
+#+begin_src C
+g_autofree gchar *fs = g_strconcat ("#version 330\n"
+                                    "in vec3 fragPosition;\n"
+                                    "in vec2 fragTexCoord;\n"
+                                    "in vec4 fragColor;\n"
+                                    "in vec3 fragNormal;\n"
+                                    "out vec4 finalColor;\n",
+                                    lrg_light_set_get_glsl_library (),
+                                    "void main() {\n"
+                                    "    LrgSurface s = lrg_surface(fragPosition, normalize(fragNormal), fragTexCoord, fragColor);\n"
+                                    "    s.albedo.rgb *= vec3(1.0, 0.6, 0.6);   /* tint in linear space */\n"
+                                    "    vec3 v = normalize(mapCamera - fragPosition);\n"
+                                    "    vec3 c = lrg_light_pbr(fragPosition, s.normal, v, s.albedo, s.metallic, s.roughness, s.occlusion);\n"
+                                    "    finalColor = vec4(lrg_to_display(c + s.emission), s.albedo.a);\n"
+                                    "}\n", NULL);
+g_autoptr(GrlShader) shader = grl_shader_new_from_memory (lrg_light_set_get_vertex_source (), fs, &error);
+#+end_src
+
+| Function | Returns |
+|-+-|
+| =vec3 lrg_light_pbr (vec3 p, vec3 n, vec3 v, vec4 albedo, float metal, float rough, float ao)= | linear radiance: sun, point and spot lights with shadows, indirect (environment or ambient) x ao x SSAO, light limit; albedo linear |
+| =vec3 lrg_light_pbr_ex (p, ng, n, v, albedo, metal, rough, ao)= | the same with a separate geometric normal for the shadow offsets |
+| =LrgSurface lrg_surface (vec3 p, vec3 ng, vec2 uv, vec4 vertex_colour)= | the material maps: linear albedo + alpha, shading normal, metallic, roughness, occlusion, linear emission |
+| =vec4 lrg_light_shade (vec3 p, vec3 normal, vec2 uv, vec4 vertex_colour)= | the built-in main(): surface, cutout, decals, lighting, emission, overlay, air, fog, output encoding |
+| =vec3 lrg_brdf_direct (vec3 n, vec3 v, vec3 l, vec3 albedo, float metal, float rough)= | one light's BRDF x N.L |
+| =vec3 lrg_to_linear (vec3)=, =vec3 lrg_to_display (vec3)= | gamma 2.2 conversions |
+
+The library declares =texture0=, =colDiffuse= and the rest: a user shader must not declare them again.  =lrg_light_set_apply()= uploads the uniforms to the light set's own program; =lrg_light_set_bind_shader (lights, user_shader)= uploads the same state (lights of the last selection, grid, shadow atlases, fog, air, overlay, layers, output encoding and the hooks) to a user program, after =apply()= each frame.  The first call for a program looks up its uniforms, points its samplers at the light set's units (the material maps, the grid, the shadow atlases) and sets the material defaults; the locations are cached by program id, so call =lrg_light_set_forget_shader()= before unloading a program whose id could be reused.  =lrg_light_set_set_draw_layers()= updates only the light set's own program at once; a user program gets the layers at its next =bind_shader()=.  [[file:shader-asset.org][LrgShaderAsset]] does this for lit assets; =tests/test-pbr.c= =/pbr/gpu/library= checks a user shader lights pixel-identically to the built-in one.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Per light the GGX path adds one =normalize=, two =pow= and about a dozen multiply-adds to the old Lambert term; the 16-light / grid-slot cap keeps the worst case bounded.  The 0.9.0 change has not been benchmarked separately; measure with =lrg-bench= before raising the slot count.
+- Spot cones cost one dot product and a smoothstep; a spot shadow is one perspective lookup with the PCF taps of the renderer's filter.
+- The grid's light texture grew from two to four texels a light (16 KB per 1024 lights); it is still re-sent only when its texels change.
+- The hooks cost one uniform test each when inactive.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Uniforms persist: a material sets =pbrParams= / =mapFlags= / =emissionOwn= and the next draw without a material inherits them unless restored.
+- Do not write =emissionColor= from a material; that clobbers the light set's global emission for the rest of the frame.
+- Colours are display space everywhere in the C API; do not pre-linearize them.  The light component's =color-r/g/b= are 0..1 display values despite their old "linear" wording.
+- Bind something (white or black) to unit 5 for every draw: the shader samples it unconditionally.
+- A samplerCube left on unit 0 breaks every draw (=GL_INVALID_OPERATION=, nothing drawn): hook binders must claim a unit for it even when inactive.
+- Intensity is a display-space multiplier: doubling it is far more than double the energy.
+- =sample()= stays the diffuse, display-space model (no specular, no shadows); billboards lit with it match a rough dielectric surface, not a metal.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor viewport and play-in-editor draw with the light set of [[file:../world3d/renderer.org][LrgWorld3DRenderer]]: light nodes (=light_type= directional / point / spot, =intensity=, =range=, =spot_angle=, =cast_shadows=, =shadow_bias=) become [[file:../world3d/components.org][LrgLightComponent]]s, which the renderer feeds through =lrg_light_set_add_light_desc()=; material inspection and the environment page edit what the contract above reads.
+
 
 ** Example
 :PROPERTIES:

@@ -5,9 +5,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgShadowRenderer - 3D shadow maps for LrgLightSet: cascaded shadow
- * maps for the directional light (sun or moon) and cube shadow maps for
- * a budget of point lights (a torch, spell lights, key lights), all in
- * two depth atlases. The game draws its shadow casters once per pass
+ * maps for the directional light (sun or moon), cube shadow maps for a
+ * budget of point lights (a torch, spell lights, key lights) and
+ * perspective shadow maps for a budget of spot lights (a flashlight, a
+ * street lamp), in three depth atlases. The game draws its shadow casters once per pass
  * between lrg_shadow_renderer_begin_pass() and
  * lrg_shadow_renderer_end_pass() with lrg_shadow_renderer_get_caster_shader();
  * a light set given the renderer (lrg_light_set_set_shadow_renderer())
@@ -80,10 +81,26 @@ G_BEGIN_DECLS
 #define LRG_SHADOW_POINT_UNIT (13)
 
 /**
+ * LRG_SHADOW_MAX_SPOT_LIGHTS:
+ *
+ * Most spot lights that cast shadows at once.
+ */
+#define LRG_SHADOW_MAX_SPOT_LIGHTS (4)
+
+/**
+ * LRG_SHADOW_SPOT_UNIT:
+ *
+ * Texture unit of the spot lights' shadow atlas (raylib has no material
+ * map on it).
+ */
+#define LRG_SHADOW_SPOT_UNIT (11)
+
+/**
  * LrgShadowPassKind:
  * @LRG_SHADOW_PASS_NONE: no such pass
  * @LRG_SHADOW_PASS_CASCADE: a cascade of the directional light
  * @LRG_SHADOW_PASS_CUBE_FACE: one face of a point light's cube
+ * @LRG_SHADOW_PASS_SPOT: the perspective map of a spot light
  *
  * What a shadow pass renders.
  */
@@ -91,7 +108,8 @@ typedef enum
 {
     LRG_SHADOW_PASS_NONE,
     LRG_SHADOW_PASS_CASCADE,
-    LRG_SHADOW_PASS_CUBE_FACE
+    LRG_SHADOW_PASS_CUBE_FACE,
+    LRG_SHADOW_PASS_SPOT
 } LrgShadowPassKind;
 
 LRG_AVAILABLE_IN_ALL
@@ -231,6 +249,30 @@ lrg_shadow_cube_face_matrices (guint         face,
                                gfloat       *out_view,
                                gfloat       *out_proj);
 
+/**
+ * lrg_shadow_spot_matrices:
+ * @light: (array fixed-size=3): the spot light, in draw space
+ * @direction: (array fixed-size=3): the way it shines (any length > 0)
+ * @outer_degrees: the cone's outer half-angle, 1 .. 89
+ * @radius: the light's reach (the far plane)
+ * @out_view: (out caller-allocates) (array fixed-size=16): view matrix
+ * @out_proj: (out caller-allocates) (array fixed-size=16): perspective
+ *   projection whose field of view holds the cone (2 x @outer_degrees
+ *   plus a two degree margin for the filter)
+ *
+ * The camera of a spot light's shadow map.
+ *
+ * Returns: %FALSE for a zero direction (outputs untouched)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_shadow_spot_matrices (const gfloat *light,
+                          const gfloat *direction,
+                          gfloat        outer_degrees,
+                          gfloat        radius,
+                          gfloat       *out_view,
+                          gfloat       *out_proj);
+
 /* ------------------------------------------------------------------------ */
 /* The renderer                                                             */
 /* ------------------------------------------------------------------------ */
@@ -308,10 +350,78 @@ lrg_shadow_renderer_get_points (LrgShadowRenderer *self,
                                 guint             *out_max_lights);
 
 /**
+ * lrg_shadow_renderer_set_spots:
+ * @self: an #LrgShadowRenderer
+ * @resolution: texels of a spot map's side (32 .. 4096)
+ * @max_lights: spot lights with a map per frame, 0 ..
+ *   %LRG_SHADOW_MAX_SPOT_LIGHTS (0, the default: none)
+ * @max_distance: a spot whose sphere lies further than this from the
+ *   camera gets no map; 0 for no limit
+ *
+ * The spot shadow budget: spot lights with a shadow priority
+ * (lrg_light_set_set_point_light_shadow() on a spot light) compete for
+ * it like point lights for cubes, and each one picked costs one pass
+ * (%LRG_SHADOW_PASS_SPOT) into a row of @max_lights tiles.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_set_spots (LrgShadowRenderer *self,
+                               guint              resolution,
+                               guint              max_lights,
+                               gfloat             max_distance);
+
+/**
+ * lrg_shadow_renderer_get_spots:
+ * @self: an #LrgShadowRenderer
+ * @out_resolution: (out) (optional): map side
+ * @out_max_lights: (out) (optional): the budget
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_get_spots (LrgShadowRenderer *self,
+                               guint             *out_resolution,
+                               guint             *out_max_lights);
+
+/**
+ * lrg_shadow_renderer_get_spot_count:
+ * @self: an #LrgShadowRenderer
+ *
+ * Returns: spot lights with a map after the last update
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_shadow_renderer_get_spot_count (LrgShadowRenderer *self);
+
+/**
+ * lrg_shadow_renderer_get_spot_light:
+ * @self: an #LrgShadowRenderer
+ * @slot: 0 .. spot count - 1
+ *
+ * Returns: the light set's id of the spot light in @slot, or %G_MAXUINT
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_shadow_renderer_get_spot_light (LrgShadowRenderer *self,
+                                    guint              slot);
+
+/**
+ * lrg_shadow_renderer_get_spot_slot:
+ * @self: an #LrgShadowRenderer
+ * @light: a light id of the light set of the last update
+ *
+ * Returns: the spot shadow slot of @light, or %LRG_SHADOW_NO_SLOT
+ */
+LRG_AVAILABLE_IN_ALL
+gint
+lrg_shadow_renderer_get_spot_slot (LrgShadowRenderer *self,
+                                   guint              light);
+
+/**
  * lrg_shadow_renderer_set_bias:
  * @self: an #LrgShadowRenderer
  * @depth_bias: subtracted from a fragment's depth before the test (in
- *   0 .. 1 depth for cascades, in radii for point lights)
+ *   0 .. 1 depth for cascades, in world units for point and spot lights;
+ *   a light's own bias, lrg_light_set_set_light_shadow_bias(), wins)
  * @normal_offset: how far a fragment is pushed along its normal before
  *   the lookup, in shadow texels (against acne on slopes)
  */
@@ -366,8 +476,8 @@ lrg_shadow_renderer_get_strength (LrgShadowRenderer *self);
  * Plans this frame's shadows: the cascades of @lights' directional light
  * around the camera's view (none without a directional light), and the
  * point lights with a shadow priority (lrg_light_set_set_point_light_shadow())
- * that get a cube: highest priority first, then nearest the camera, up
- * to the budget. Everything is in @lights' draw space (world minus its
+ * that get a cube and the spot lights with one that get a spot map:
+ * highest priority first, then nearest the camera, up to each budget. Everything is in @lights' draw space (world minus its
  * origin). Headless. Call it before the passes and before
  * lrg_light_set_apply().
  *
@@ -452,7 +562,7 @@ lrg_shadow_renderer_get_light_slot (LrgShadowRenderer *self,
  * @self: an #LrgShadowRenderer
  *
  * Returns: the passes of this frame: one per cascade, then six per
- *   shadowed point light
+ *   shadowed point light, then one per shadowed spot light
  */
 LRG_AVAILABLE_IN_ALL
 guint
@@ -462,8 +572,10 @@ lrg_shadow_renderer_get_pass_count (LrgShadowRenderer *self);
  * lrg_shadow_renderer_get_pass:
  * @self: an #LrgShadowRenderer
  * @pass: a pass index
- * @out_index: (out) (optional): the cascade, or the point slot
- * @out_face: (out) (optional): the cube face of a point pass
+ * @out_index: (out) (optional): the cascade, the point slot or the spot
+ *   slot
+ * @out_face: (out) (optional): the cube face of a point pass (0
+ *   otherwise)
  * @out_view_proj: (out caller-allocates) (optional) (array fixed-size=16):
  *   the pass's view-projection matrix (draw space)
  *
@@ -502,8 +614,9 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
  * lrg_shadow_renderer_get_pass_state:
  * @self: an #LrgShadowRenderer
  * @out_mode: (out) (optional): 0 for a cascade pass, 1 for a cube face
+ *   or a spot map (both store the distance over the radius)
  * @out_light: (out caller-allocates) (optional) (array fixed-size=4): the
- *   cube's light position and radius (zeros for a cascade)
+ *   light's position and radius (zeros for a cascade)
  * @out_direction: (out caller-allocates) (optional) (array fixed-size=3):
  *   the way the light travels in a cascade pass (unit, draw space)
  *

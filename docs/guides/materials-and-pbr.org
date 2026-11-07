@@ -1,0 +1,183 @@
+#+title: Materials and PBR
+#+description: How libregnum 0.9.0 shades 3D geometry: the one lit shader, GGX metallic-roughness lighting, materials and their maps, lights (directional, point, spot), shadows, image-based light, SSAO, decals and user shaders, from authoring to the pixel
+#+authors: Zach Podbielniak
+#+categories: libregnum guide graphics lighting pbr materials
+#+created: 2026-11-07T02:00:00-05:00
+#+updated: 2026-11-07T02:00:00-05:00
+#+version: 0.1
+
+* Materials and PBR
+:PROPERTIES:
+:CUSTOM_ID: materials-and-pbr
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > Materials and PBR
+#+end_quote
+
+Since 0.9.0 every lit 3D draw in libregnum (static batches, terrain, skinned meshes, mesh-renderer components, the editor viewport) goes through one physically based shader owned by [[file:../modules/graphics/light-set.org][LrgLightSet]].  A surface is described by a material (base colour, metallic, roughness, occlusion, normal and emission), the scene by its lights (one directional light, any number of point and spot lights), their shadows and the indirect light of an environment.  This guide follows a pixel from the authored data to the screen and shows the C you write at each step.
+
+** The flow
+:PROPERTIES:
+:CUSTOM_ID: flow
+:END:
+#+begin_example
+ .rmat / LrgMaterial ──lrg_material_apply()──┐   (texture units 0..6, pbrParams, mapFlags, emissionOwn)
+ LrgLightSet lights ──lrg_light_set_apply()──┤   (sun, point/spot lists or the light grid, fog, layers)
+ LrgShadowRenderer passes ───────────────────┤   (cascades, cubes, spot maps on units 11..13)
+ LrgEnvironment / LrgSsao / LrgDecalSet ─────┤   (hook binders, units 16+)
+                                             ▼
+                           the lit shader, per fragment:
+   lrg_surface()        material maps -> linear albedo, normal, metallic, roughness, occlusion, emission
+   lrg_decals_apply()   decals change albedo / normal / roughness / metallic
+   lrg_light_pbr_ex()   sun + point + spot lights (GGX, Smith, Schlick, shadows)
+                        + indirect (environment IBL or flat ambient) x occlusion x SSAO, light limit
+   + emission -> display colour -> snow / cloud overlay -> volumetric air -> fog -> output encoding
+#+end_example
+
+The same functions are available to your own shaders through =lrg_light_set_get_glsl_library()=, so a custom surface lights exactly like a built-in one.
+
+** Colour spaces
+:PROPERTIES:
+:CUSTOM_ID: colour-spaces
+:END:
+Everything you author is in display (sRGB) space: textures, =GrlColor= light colours, material base colours, emission colours.  The shader converts them to linear light with a 2.2 gamma (=lrg_to_linear()=), does all lighting in linear space and converts back (=lrg_to_display()=) before the overlay, air and fog, which stay in display space as before 0.9.0.  For an HDR pipeline that tonemaps in a post stack, =lrg_light_set_set_output_linear (lights, TRUE)= makes the shader write linear colour instead.
+
+Light colours are multiplied by their intensity in display space before linearizing, so intensity is a perceptual multiplier (2 is about 4.6 times the linear energy), not lux or lumen.  The falloff of point and spot lights, =(1 - distance / radius)^2=, is a display-space factor too: one light alone looks exactly as it did before 0.9.0, and CPU-lit billboards (=lrg_light_set_sample()=) match the geometry.
+
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+A material is an [[file:../modules/graphics/material.org][LrgMaterial]] (=.rmat= files, instances with overrides); its page documents the format and API.  What the shader reads from it:
+
+| Input | Uniform / unit | Notes |
+|-+-+-|
+| base colour | =colDiffuse=, =texture0= (unit 0) | sRGB; multiplied with the vertex colour |
+| metallic, roughness | =pbrParams.xy= | factors; default 0 and 0.5 |
+| occlusion strength, normal scale | =pbrParams.zw= | default 1 and 1 |
+| ORM map | =ormMap= (unit 4), =mapFlags= 8 | glTF layout: R occlusion, G roughness, B metallic |
+| normal map | =normalMap= (unit 2), =mapFlags= 1 | tangent space, green up; tangents are derived per pixel |
+| height map | =heightMap= (unit 6), =mapFlags= 4 | parallax |
+| emission | =emissionMap= (unit 5), =emissionOwn= | map x colour x strength |
+| legacy metallic-gloss | =metallicMap= (unit 1), =mapFlags= 2 | Unity MetallicGloss: R metallic, A smoothness |
+| unlit | =mapFlags= 32 | albedo + emission, no lights |
+
+Static batches, terrain, skinned meshes and the mesh-renderer component take a material (=set_material()=) and call =lrg_material_apply()= around their draws.  A draw without a material gets the defaults: a dielectric of roughness 0.5.
+
+** Lighting
+:PROPERTIES:
+:CUSTOM_ID: lighting
+:END:
+*** The model
+:PROPERTIES:
+:CUSTOM_ID: model
+:END:
+For each light the shader evaluates a Cook-Torrance BRDF:
+
+- GGX (Trowbridge-Reitz) distribution with alpha = roughness^2, roughness clamped to at least 0.045 so mirror-like surfaces do not alias into fireflies;
+- Smith-Schlick geometry with Karis' k = (roughness + 1)^2 / 8;
+- Schlick Fresnel with F0 = mix (0.04, albedo, metallic);
+- Lambert diffuse weighted by (1 - F)(1 - metallic): metals have no diffuse, their colour is in F0.
+
+Pi is folded in, so a white light on a white rough dielectric facing it reflects about 1, as the pre-0.9 Lambert shader did.  =lrg_light_set_brdf()= is the same term on the CPU.
+
+*** Lights
+:PROPERTIES:
+:CUSTOM_ID: lights
+:END:
+#+begin_src C
+g_autoptr(LrgLightSet) lights = lrg_light_set_new ();
+GrlColor   sky = { 40, 46, 60, 255 };
+GrlColor   sun = { 255, 236, 210, 255 };
+GrlColor   lamp = { 255, 190, 120, 255 };
+GrlVector3 sun_dir = { -0.4f, -1.0f, -0.3f };
+GrlVector3 down = { 0.0f, -1.0f, 0.0f };
+guint      street;
+
+lrg_light_set_set_ambient (lights, &sky);
+lrg_light_set_set_directional (lights, &sun_dir, &sun);
+lrg_light_set_add_point_light (lights, 4.0, 1.5, -2.0, &lamp, 6.0f);         /* a torch */
+street = lrg_light_set_add_spot_light (lights, 0.0, 5.0, 0.0, &down, &lamp,
+                                       12.0f, 25.0f, 35.0f);                   /* a street lamp */
+lrg_light_set_set_point_light_intensity (lights, street, 1.4f);
+#+end_src
+
+- Directional: one, set with =set_directional()=; its shadow is the renderer's cascades.
+- Point: =add_point_light()=; radius is where it fades to zero.
+- Spot: =add_spot_light()= or =set_spot_light()=; the cone fades smoothly from the inner to the outer half-angle (=lrg_light_set_spot_factor()=).
+- With more than 16 lights near the camera, turn on the light grid (=set_grid()=, and =set_grid_layers()= for several storeys): every fragment then sees up to 16 (or 32) lights of its own cluster.
+- =set_light_layers()= / =set_draw_layers()= restrict lights to render layers; =set_light_limit()= softly caps very bright spots.
+- From components: an [[file:../modules/world3d/components.org::#light][LrgLightComponent]] describes the same light (kind, colour, intensity, range, cone, shadows, shadow bias, layers); =lrg_light_component_add_to_light_set()= or =lrg_light_set_add_light_desc()= turn it into a light-set light.
+
+*** Shadows
+:PROPERTIES:
+:CUSTOM_ID: shadows
+:END:
+An [[file:../modules/lighting/shadow-renderer.org][LrgShadowRenderer]] renders cascades for the sun, cubes for up to 8 point lights and perspective maps for up to 4 spot lights, all filtered with percentage-closer filtering:
+
+#+begin_src C
+g_autoptr(LrgShadowRenderer) shadows = lrg_shadow_renderer_new ();
+guint pass;
+
+lrg_shadow_renderer_set_sun (shadows, 2048, 3, 120.0f, 0.6f);
+lrg_shadow_renderer_set_spots (shadows, 1024, 1, 60.0f);
+lrg_light_set_set_point_light_shadow (lights, street, 1);    /* compete for a spot map */
+lrg_light_set_set_light_shadow_bias (lights, street, 0.03f);  /* its own bias */
+lrg_light_set_set_shadow_renderer (lights, shadows);
+
+/* each frame, before the 3D pass */
+lrg_shadow_renderer_update (shadows, lights, eye, forward, up, fovy, aspect, 0.1f);
+for (pass = 0; pass < lrg_shadow_renderer_get_pass_count (shadows); pass++)
+{
+    if (lrg_shadow_renderer_pass_is_current (shadows, pass)
+        || !lrg_shadow_renderer_begin_pass (shadows, pass))
+        continue;
+    draw_casters_with (lrg_shadow_renderer_get_caster_shader (shadows));
+    lrg_shadow_renderer_end_pass (shadows);
+}
+#+end_src
+
+*** Indirect light
+:PROPERTIES:
+:CUSTOM_ID: indirect
+:END:
+Without an environment the indirect light is the flat ambient colour times the albedo.  With an [[file:../modules/lighting/environment.org][LrgEnvironment]] (=lrg_light_set_set_environment()=) it is image-based: diffuse irradiance plus prefiltered specular through the split-sum BRDF lookup, with reflection probes blended in where they cover the fragment.  Both are multiplied by the material occlusion and by screen-space ambient occlusion when an [[file:../modules/graphics/ssao.org][LrgSsao]] is set (=lrg_light_set_set_ssao()=).  Decals ([[file:../modules/graphics/decal.org][LrgDecalSet]], =lrg_light_set_set_decals()=) change the surface before any of this is lit.
+
+*** Every frame
+:PROPERTIES:
+:CUSTOM_ID: every-frame
+:END:
+#+begin_src C
+lrg_light_set_set_origin (lights, origin_x, origin_y, origin_z);   /* floating origin, if any */
+lrg_light_set_apply (lights, eye_x, eye_y, eye_z);                 /* selects, uploads, binds hooks */
+BeginMode3D (camera);
+lrg_static_batch_draw (world, LRG_STATIC_BATCH_ALL_LAYERS);        /* batches hold the shader */
+EndMode3D ();
+#+end_src
+
+=LrgWorld3DRenderer= does all of this for a world built from a level; the editor viewport uses the same renderer.
+
+** Your own shaders
+:PROPERTIES:
+:CUSTOM_ID: user-shaders
+:END:
+[[file:../modules/graphics/shader-asset.org][LrgShaderAsset]] with =lit: true= prepends the light-set library to your fragment shader; by hand it is =g_strconcat ("#version 330\n" varyings "out vec4 finalColor;\n", lrg_light_set_get_glsl_library (), your_main, NULL)= with =lrg_light_set_get_vertex_source()= as the vertex shader.  In =main()= call =lrg_surface()= for the material, change what you want, then =lrg_light_pbr()= for the light, or =lrg_light_shade()= for the whole built-in pipeline.  The [[file:../modules/graphics/light-set.org::#glsl-library][library reference]] lists every function and uniform.
+
+** Debugging a surface
+:PROPERTIES:
+:CUSTOM_ID: debugging
+:END:
+- All black: a texture unit holds the wrong sampler type (a cube map on unit 0) or no material ever set =pbrParams=; check =glGetError()= after the draw.
+- Too shiny everywhere: roughness factor 0 (an unset =pbrParams=) or an ORM map loaded as sRGB data in the wrong channels (glTF wants G roughness, B metallic).
+- Washed out: colours pre-linearized by the caller; the API takes display colours.
+- Light leaking through walls in shadows: lower that light's shadow bias; acne: raise it.
+- Spot shows a hard rim: inner and outer angles are equal; leave a few degrees between them.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../modules/graphics/light-set.org][LrgLightSet]] (the shader contract), [[file:../modules/lighting/shadow-renderer.org][LrgShadowRenderer]], [[file:../modules/world3d/components.org::#light][LrgLightComponent]]
+- [[file:../modules/graphics/material.org][LrgMaterial]], [[file:../modules/graphics/shader-asset.org][LrgShaderAsset]], [[file:../modules/graphics/shader-graph.org][LrgShaderGraph]]
+- [[file:../modules/lighting/environment.org][LrgEnvironment]], [[file:../modules/graphics/ssao.org][LrgSsao]], [[file:../modules/graphics/decal.org][LrgDecalSet]]
+- =tests/test-pbr.c= (the BRDF against the shader, spot cones and shadows, the material flags, the hooks, a user shader from the library)

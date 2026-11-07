@@ -29,6 +29,7 @@ struct _LrgLightComponent
 	gfloat          inner_angle;   /* degrees (half-angle) */
 	gfloat          outer_angle;   /* degrees (half-angle) */
 	gboolean        cast_shadows;
+	gfloat          shadow_bias;   /* world units, 0: the shadow renderer's */
 	guint32         layer_mask;
 
 	LrgWorld3D     *world;         /* weak: the world the light is registered with */
@@ -49,6 +50,7 @@ enum
 	PROP_OUTER_ANGLE,
 	PROP_CAST_SHADOWS,
 	PROP_LAYER_MASK,
+	PROP_SHADOW_BIAS,
 	N_PROPS
 };
 
@@ -151,6 +153,7 @@ lrg_light_component_get_property (GObject    *object,
 	case PROP_OUTER_ANGLE:  g_value_set_float (value, self->outer_angle); break;
 	case PROP_CAST_SHADOWS: g_value_set_boolean (value, self->cast_shadows); break;
 	case PROP_LAYER_MASK:   g_value_set_uint (value, (guint) self->layer_mask); break;
+	case PROP_SHADOW_BIAS:  g_value_set_float (value, self->shadow_bias); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -201,11 +204,10 @@ lrg_light_component_set_property (GObject      *object,
 		lrg_light_component_set_cast_shadows (self, g_value_get_boolean (value));
 		break;
 	case PROP_LAYER_MASK:
-		if (self->layer_mask != (guint32) g_value_get_uint (value))
-		{
-			self->layer_mask = (guint32) g_value_get_uint (value);
-			g_object_notify_by_pspec (object, pspec);
-		}
+		lrg_light_component_set_layer_mask (self, (guint32) g_value_get_uint (value));
+		break;
+	case PROP_SHADOW_BIAS:
+		lrg_light_component_set_shadow_bias (self, g_value_get_float (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -259,7 +261,11 @@ lrg_light_component_class_init (LrgLightComponentClass *klass)
 	/**
 	 * LrgLightComponent:intensity:
 	 *
-	 * Multiplier on the colour.
+	 * Multiplier on the colour, in display space: the light set
+	 * linearizes colour x intensity (gamma 2.2), so 1 is the colour
+	 * itself and 2 is about 4.6 times the linear radiance.  Not a
+	 * photometric unit; a directional light's colour x intensity
+	 * saturates at white.
 	 */
 	properties[PROP_INTENSITY] =
 		g_param_spec_float ("intensity", NULL, "Intensity", 0.0f, G_MAXFLOAT, 1.0f, rw);
@@ -304,6 +310,17 @@ lrg_light_component_class_init (LrgLightComponentClass *klass)
 	properties[PROP_LAYER_MASK] =
 		g_param_spec_uint ("layer-mask", NULL, "Lit render layers", 0, G_MAXUINT32,
 		                   LRG_RENDER_LAYERS_MASK_ALL, rw);
+
+	/**
+	 * LrgLightComponent:shadow-bias:
+	 *
+	 * Depth bias of the light's shadow cube or spot map in world units;
+	 * 0 uses the shadow renderer's (lrg_shadow_renderer_set_bias()).
+	 * Raise it against shadow acne, lower it against light leaking
+	 * ("peter-panning").
+	 */
+	properties[PROP_SHADOW_BIAS] =
+		g_param_spec_float ("shadow-bias", NULL, "Shadow depth bias (world units)", 0.0f, 100.0f, 0.0f, rw);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -501,4 +518,70 @@ lrg_light_component_sync (LrgLightComponent *self)
 		return;
 	lrg_light_component_fill_desc (self, &desc);
 	lrg_world3d_register_light (self->world, G_OBJECT (self), &desc);
+}
+
+void
+lrg_light_component_get_spot_angles (LrgLightComponent *self,
+                                     gfloat            *out_inner_degrees,
+                                     gfloat            *out_outer_degrees)
+{
+	g_return_if_fail (LRG_IS_LIGHT_COMPONENT (self));
+
+	if (out_inner_degrees != NULL)
+		*out_inner_degrees = MIN (self->inner_angle, self->outer_angle);
+	if (out_outer_degrees != NULL)
+		*out_outer_degrees = self->outer_angle;
+}
+
+gfloat
+lrg_light_component_get_shadow_bias (LrgLightComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_LIGHT_COMPONENT (self), 0.0f);
+
+	return self->shadow_bias;
+}
+
+void
+lrg_light_component_set_shadow_bias (LrgLightComponent *self,
+                                     gfloat             bias)
+{
+	g_return_if_fail (LRG_IS_LIGHT_COMPONENT (self));
+
+	set_float (self, &self->shadow_bias, isfinite (bias) ? CLAMP (bias, 0.0f, 100.0f) : 0.0f,
+	           PROP_SHADOW_BIAS);
+}
+
+guint32
+lrg_light_component_get_layer_mask (LrgLightComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_LIGHT_COMPONENT (self), 0);
+
+	return self->layer_mask;
+}
+
+void
+lrg_light_component_set_layer_mask (LrgLightComponent *self,
+                                    guint32            mask)
+{
+	g_return_if_fail (LRG_IS_LIGHT_COMPONENT (self));
+
+	if (self->layer_mask == mask)
+		return;
+	self->layer_mask = mask;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LAYER_MASK]);
+}
+
+guint
+lrg_light_component_add_to_light_set (LrgLightComponent *self,
+                                      LrgLightSet       *lights)
+{
+	LrgLight3DDesc desc;
+
+	g_return_val_if_fail (LRG_IS_LIGHT_COMPONENT (self), LRG_LIGHT_SET_INVALID_LIGHT);
+	g_return_val_if_fail (LRG_IS_LIGHT_SET (lights), LRG_LIGHT_SET_INVALID_LIGHT);
+
+	/* the description carries everything but the bias, which
+	 * lrg_light_set_add_light_desc() reads back from desc.source */
+	lrg_light_component_fill_desc (self, &desc);
+	return lrg_light_set_add_light_desc (lights, &desc);
 }

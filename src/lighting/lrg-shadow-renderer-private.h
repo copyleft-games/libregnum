@@ -29,9 +29,15 @@ G_BEGIN_DECLS
  *   offset against acne), 1 outside every cascade;
  * - float lrg_point_shadow (int slot, vec3 p, vec3 n): the same for the
  *   point light in shadow slot @slot (-1: always 1);
- * - lrg_sun_shadow_f / lrg_point_shadow_f: the same with an explicit
- *   filter radius (the volumetric air marches with 0, one tap).
- * Both are already mixed toward 1 by shadowStrength.
+ * - float lrg_spot_shadow (int slot, vec3 p, vec3 n): the same for the
+ *   spot light in spot shadow slot @slot (-1: always 1), a perspective
+ *   map in the spot atlas (distance / radius, as the cube faces);
+ * - lrg_sun_shadow_f / lrg_point_shadow_f / lrg_spot_shadow_f: the same
+ *   with an explicit filter radius (the volumetric air marches with 0,
+ *   one tap).
+ * All are already mixed toward 1 by shadowStrength.  pointShadowBias[k]
+ * and spotShadowInfo[k].x are per-light depth biases in world units
+ * (<= 0: the renderer's shadowParams.z).
  */
 #define LRG_SHADOW_GLSL \
     "uniform int shadowCascades;\n" \
@@ -46,6 +52,13 @@ G_BEGIN_DECLS
     "uniform vec4 pointShadowLight[8];\n" \
     "uniform vec4 pointShadowParams;\n" \
     "uniform sampler2D pointShadowMap;\n" \
+    "uniform float pointShadowBias[8];\n" \
+    "uniform int spotShadowCount;\n" \
+    "uniform mat4 spotShadowMatrix[4];\n" \
+    "uniform vec4 spotShadowLight[4];\n" \
+    "uniform vec4 spotShadowInfo[4];\n" \
+    "uniform vec4 spotShadowParams;\n" \
+    "uniform sampler2D spotShadowMap;\n" \
     "float lrg_sun_shadow_f(vec3 p, vec3 n, int filt) {\n" \
     "    if (shadowCascades <= 0) return 1.0;\n" \
     "    for (int i = 0; i < 4; i++) {\n" \
@@ -94,7 +107,8 @@ G_BEGIN_DECLS
     "    vec2 st = ndc * 0.5 + 0.5;\n" \
     "    float res = pointShadowParams.x;\n" \
     "    vec2 tile = vec2(float(face - (face / 3) * 3), float(slot * 2 + face / 3)) * res;\n" \
-    "    float z = (length(d) - shadowParams.z) / l.w;\n" \
+    "    float bias = pointShadowBias[slot] > 0.0 ? pointShadowBias[slot] : shadowParams.z;\n" \
+    "    float z = (length(d) - bias) / l.w;\n" \
     "    float lit = 0.0;\n" \
     "    float taps = 0.0;\n" \
     "    int r = clamp(filt, 0, 2);\n" \
@@ -109,7 +123,36 @@ G_BEGIN_DECLS
     "    }\n" \
     "    return mix(1.0, lit / taps, shadowStrength);\n" \
     "}\n" \
+    "float lrg_spot_shadow_f(int slot, vec3 p, vec3 n, int filt) {\n" \
+    "    if (slot < 0 || slot >= spotShadowCount) return 1.0;\n" \
+    "    vec4 l = spotShadowLight[slot];\n" \
+    "    float dist0 = length(p - l.xyz);\n" \
+    "    if (dist0 >= l.w) return 1.0;\n" \
+    "    float res = spotShadowParams.x;\n" \
+    "    float texel = 2.0 * dist0 * spotShadowInfo[slot].y / res;\n" \
+    "    vec3 q = p + n * (texel * spotShadowParams.w);\n" \
+    "    vec4 c = spotShadowMatrix[slot] * vec4(q, 1.0);\n" \
+    "    if (c.w <= 1e-5) return 1.0;\n" \
+    "    vec2 st = c.xy / c.w * 0.5 + 0.5;\n" \
+    "    if (st.x < 0.0 || st.y < 0.0 || st.x > 1.0 || st.y > 1.0) return 1.0;\n" \
+    "    float bias = spotShadowInfo[slot].x > 0.0 ? spotShadowInfo[slot].x : shadowParams.z;\n" \
+    "    float z = (length(q - l.xyz) - bias) / l.w;\n" \
+    "    vec2 tile = vec2(float(slot) * res, 0.0);\n" \
+    "    float lit = 0.0;\n" \
+    "    float taps = 0.0;\n" \
+    "    int r = clamp(filt, 0, 2);\n" \
+    "    for (int y = -r; y <= r; y++) {\n" \
+    "        for (int x = -r; x <= r; x++) {\n" \
+    "            vec2 px = clamp(st * res + vec2(float(x), float(y)), vec2(0.5), vec2(res - 0.5));\n" \
+    "            vec2 uv = (tile + px) / spotShadowParams.yz;\n" \
+    "            lit += z <= texture(spotShadowMap, uv).r ? 1.0 : 0.0;\n" \
+    "            taps += 1.0;\n" \
+    "        }\n" \
+    "    }\n" \
+    "    return mix(1.0, lit / taps, shadowStrength);\n" \
+    "}\n" \
     "float lrg_sun_shadow(vec3 p, vec3 n) { return lrg_sun_shadow_f(p, n, shadowFilter); }\n" \
+    "float lrg_spot_shadow(int slot, vec3 p, vec3 n) { return lrg_spot_shadow_f(slot, p, n, shadowFilter); }\n" \
     "float lrg_point_shadow(int slot, vec3 p, vec3 n) { return lrg_point_shadow_f(slot, p, n, shadowFilter); }\n"
 
 /*
@@ -131,12 +174,20 @@ typedef struct
     gint point_lights;
     gint point_params;
     gint point_map;
+    gint point_bias;
+    gint spot_count;
+    gint spot_matrices;
+    gint spot_lights;
+    gint spot_info;
+    gint spot_params;
+    gint spot_map;
 } LrgShadowLocations;
 
 /*
  * lrg_shadow_locations:
  * Looks up the LRG_SHADOW_GLSL uniforms of @shader and points its
- * samplers at LRG_SHADOW_SUN_UNIT and LRG_SHADOW_POINT_UNIT.
+ * samplers at LRG_SHADOW_SUN_UNIT, LRG_SHADOW_POINT_UNIT and
+ * LRG_SHADOW_SPOT_UNIT.
  */
 G_GNUC_INTERNAL
 void
@@ -146,7 +197,8 @@ lrg_shadow_locations (Shader              shader,
 /*
  * lrg_shadow_renderer_upload:
  * Uploads @self's shadows to @shader and binds its atlases; with @self
- * NULL or not ready, uploads "no shadows" (zero cascades and points).
+ * NULL or not ready, uploads "no shadows" (zero cascades, points and
+ * spots).
  * @shader must be the active rlgl shader or SetShaderValue()'s target.
  */
 G_GNUC_INTERNAL

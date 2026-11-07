@@ -222,6 +222,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:guides/extending-ui.org][Extending UI]] - Custom paint-based UI widgets (complete rotary knob walkthrough)
 - [[file:guides/theming.org][Theming]] - Theme YAML files, presets, accents, scoped and runtime themes, contrast
 - [[file:guides/ui-migration.org][UI Migration]] - Porting pre-paint-rework UI code and custom widgets
+- [[file:guides/materials-and-pbr.org][Materials and PBR]] - The lit shader, GGX metallic-roughness, materials, point/spot lights, shadows, IBL, user shaders
 - [[file:guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]] - The runtime level module (=src/level/=), include paths, shared 3D math
 - [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support

@@ -4,8 +4,10 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * LrgLightSet - forward lighting for static 3D geometry: an ambient
- * colour, one directional light and any number of point lights, of
+ * LrgLightSet - forward lighting for 3D geometry with GGX/Smith/Schlick
+ * metallic-roughness shading (0.9.0): an ambient colour (or an image
+ * based environment), one directional light and any number of point
+ * and spot lights, of
  * which the ones nearest the camera (up to LRG_LIGHT_SET_MAX_ACTIVE) are
  * selected each frame and uploaded to a GLSL 330 shader usable with
  * LrgStaticBatch and LrgTerrain, plus optional distance fog (linear,
@@ -33,6 +35,13 @@
 #include "../weather/lrg-ground-overlay.h"
 
 G_BEGIN_DECLS
+
+/* the objects whose lit-shader hooks the light set binds (their own
+ * headers declare the types; repeated here so this header stands alone) */
+typedef struct _LrgEnvironment LrgEnvironment;
+typedef struct _LrgSsao LrgSsao;
+typedef struct _LrgDecalSet LrgDecalSet;
+typedef struct _LrgLight3DDesc LrgLight3DDesc;
 
 #define LRG_TYPE_LIGHT_SET (lrg_light_set_get_type ())
 
@@ -115,6 +124,84 @@ G_BEGIN_DECLS
  * material with maps draws.
  */
 #define LRG_LIGHT_SET_MAP_NORMAL (1)
+
+/**
+ * LRG_LIGHT_SET_MAP_METALLIC_GLOSS:
+ *
+ * Map flag: a legacy metallic-gloss map (metallic in red, smoothness in
+ * alpha) on %LRG_LIGHT_SET_METALLIC_UNIT; it replaces the metallic and
+ * roughness factors.
+ */
+#define LRG_LIGHT_SET_MAP_METALLIC_GLOSS (2)
+
+/**
+ * LRG_LIGHT_SET_MAP_HEIGHT:
+ *
+ * Map flag: a height map on %LRG_LIGHT_SET_HEIGHT_UNIT (parallax).
+ */
+#define LRG_LIGHT_SET_MAP_HEIGHT (4)
+
+/**
+ * LRG_LIGHT_SET_MAP_ORM:
+ *
+ * Map flag: a glTF occlusion-roughness-metallic map (R occlusion, G
+ * roughness, B metallic) on %LRG_LIGHT_SET_ORM_UNIT; roughness and
+ * metallic multiply the factors of pbrParams, occlusion is mixed in by
+ * its strength.
+ */
+#define LRG_LIGHT_SET_MAP_ORM (8)
+
+/**
+ * LRG_LIGHT_SET_MAP_EMISSION:
+ *
+ * Map flag: the texture on %LRG_LIGHT_SET_EMISSION_UNIT is a material's
+ * emission map.  The shader samples that unit for every draw (bind
+ * white for an even glow, black for none), so the flag only records
+ * what is bound.
+ */
+#define LRG_LIGHT_SET_MAP_EMISSION (16)
+
+/**
+ * LRG_LIGHT_SET_MAP_UNLIT:
+ *
+ * Map flag: skip lighting; the fragment is albedo x colDiffuse x vertex
+ * colour plus emission (fog and the ground overlay still apply).
+ */
+#define LRG_LIGHT_SET_MAP_UNLIT (32)
+
+/**
+ * LRG_LIGHT_SET_ORM_UNIT:
+ *
+ * The texture unit (raylib's %MATERIAL_MAP_OCCLUSION) of a material's
+ * ORM map (see %LRG_LIGHT_SET_MAP_ORM).
+ */
+#define LRG_LIGHT_SET_ORM_UNIT (4)
+
+/**
+ * LRG_LIGHT_SET_HOOK_UNIT:
+ *
+ * The first texture unit lrg_light_set_apply() hands the environment,
+ * SSAO and decal binders on a driver with more than 16 fragment texture
+ * units (they take consecutive units up to the driver's limit, at most
+ * 32).  On a driver with only the 16 units OpenGL 3.3 guarantees they get
+ * the unused material slots 7 .. 10 instead, and a binder that finds no
+ * unit left binds its inactive state.
+ */
+#define LRG_LIGHT_SET_HOOK_UNIT (16)
+
+/**
+ * LRG_LIGHT_SET_DEFAULT_METALLIC:
+ *
+ * The metallic factor (pbrParams.x) of a draw without a material.
+ */
+#define LRG_LIGHT_SET_DEFAULT_METALLIC (0.0f)
+
+/**
+ * LRG_LIGHT_SET_DEFAULT_ROUGHNESS:
+ *
+ * The roughness factor (pbrParams.y) of a draw without a material.
+ */
+#define LRG_LIGHT_SET_DEFAULT_ROUGHNESS (0.5f)
 
 /**
  * LRG_LIGHT_SET_INVALID_LIGHT:
@@ -995,11 +1082,29 @@ LRG_AVAILABLE_IN_ALL
 LrgGroundOverlay *
 lrg_light_set_get_ground_overlay (LrgLightSet *self);
 
+/* ------------------------------------------------------------------------ */
+/* 0.9.0 M2: PBR, spot lights, hooks                                        */
+/* ------------------------------------------------------------------------ */
+
 /**
  * lrg_light_set_get_glsl_library:
  *
  * The lit fragment shader's uniforms, hooks and functions without
- * `#version` and `main`, for user shaders (stub, being written).
+ * `#version`, varyings and `main`, for user shaders: prepend
+ * "#version 330", declare the varyings of
+ * lrg_light_set_get_vertex_source() and an output, then call
+ * `vec3 lrg_light_pbr (vec3 p, vec3 n, vec3 v, vec4 albedo, float metal,
+ * float rough, float ao)` (linear radiance of the sun, the point and
+ * spot lights with their shadows and the indirect light; linear albedo),
+ * `LrgSurface lrg_surface (vec3 p, vec3 ng, vec2 uv, vec4 vertex_colour)`
+ * (the material maps) or `vec4 lrg_light_shade (vec3 p, vec3 normal,
+ * vec2 uv, vec4 vertex_colour)` (all of the built-in main(): the final
+ * colour).  `lrg_to_linear()` / `lrg_to_display()` convert colours.  The
+ * library declares `texture0`, `colDiffuse` and every other uniform the
+ * light set binds: do not declare them again.  The uniforms are only
+ * set by lrg_light_set_apply() for the light set's own shader; a user
+ * program gets them from lrg_light_set_bind_shader().  See the
+ * light-set docs page for the full contract.
  *
  * Returns: (transfer none): the GLSL library source
  */
@@ -1009,11 +1114,364 @@ const gchar *lrg_light_set_get_glsl_library (void);
 /**
  * lrg_light_set_get_vertex_source:
  *
- * The lit vertex shader source (stub, being written).
+ * The lit vertex shader (complete, with `#version 330`): raylib's
+ * attribute and matrix names in, `fragPosition`, `fragTexCoord`,
+ * `fragColor` and `fragNormal` (draw space) out.
  *
  * Returns: (transfer none): the GLSL vertex source
  */
 LRG_AVAILABLE_IN_ALL
 const gchar *lrg_light_set_get_vertex_source (void);
+
+/**
+ * lrg_light_set_bind_shader:
+ * @self: an #LrgLightSet
+ * @shader: a program whose fragment shader includes
+ *   lrg_light_set_get_glsl_library() (a lit #LrgShaderAsset, a shader
+ *   graph, a hand-written lit shader), or the light set's own shader
+ *
+ * Uploads everything lrg_light_set_apply() uploads to the light set's
+ * own shader (the lights of the last selection, the grid, the shadow
+ * atlases, fog, air, ground overlay, render layers, output encoding,
+ * the environment / SSAO / decal hooks) to @shader, so a user program
+ * lights exactly like the built-in one.  The first call for a program
+ * looks its uniforms up, points its samplers at the light set's
+ * texture units and sets the material defaults (pbrParams, mapFlags);
+ * later calls only upload.  Call it after lrg_light_set_apply() each
+ * frame (and after changing lights), with a window.  Forget a program
+ * before unloading it (lrg_light_set_forget_shader()): its id could be
+ * reused by another one.
+ *
+ * Returns: %TRUE when @shader was updated (%FALSE without a window or
+ *   for raylib's default program)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_light_set_bind_shader (LrgLightSet *self,
+                           GrlShader   *shader);
+
+/**
+ * lrg_light_set_forget_shader:
+ * @self: an #LrgLightSet
+ * @shader: a program given to lrg_light_set_bind_shader()
+ *
+ * Drops the uniform locations the light set cached for @shader.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_forget_shader (LrgLightSet *self,
+                             GrlShader   *shader);
+
+/**
+ * lrg_light_set_add_spot_light:
+ * @self: an #LrgLightSet
+ * @x: world X
+ * @y: world Y
+ * @z: world Z
+ * @direction: the way the light shines (any length > 0)
+ * @color: light colour (alpha ignored)
+ * @radius: distance at which the light fades to nothing (> 0)
+ * @inner_degrees: half-angle of full intensity, 0 .. 89
+ * @outer_degrees: half-angle where the light reaches zero (clamped to
+ *   @inner_degrees .. 89)
+ *
+ * Adds an enabled spot light of intensity 1: a point light (same id
+ * space, same calls for position, colour, radius, intensity, shadow
+ * priority) limited to a cone that fades smoothly from the inner to the
+ * outer half-angle.
+ *
+ * Returns: the light id, or %LRG_LIGHT_SET_INVALID_LIGHT
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_add_spot_light (LrgLightSet      *self,
+                              gdouble           x,
+                              gdouble           y,
+                              gdouble           z,
+                              const GrlVector3 *direction,
+                              const GrlColor   *color,
+                              gfloat            radius,
+                              gfloat            inner_degrees,
+                              gfloat            outer_degrees);
+
+/**
+ * lrg_light_set_set_spot_light:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ * @direction: (nullable): the way the cone shines, or %NULL to make the
+ *   light a point light again
+ * @inner_degrees: half-angle of full intensity, 0 .. 89
+ * @outer_degrees: half-angle where the light reaches zero
+ *
+ * Turns @light into a spot light (or back into a point light) or moves
+ * its cone.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_spot_light (LrgLightSet      *self,
+                              guint             light,
+                              const GrlVector3 *direction,
+                              gfloat            inner_degrees,
+                              gfloat            outer_degrees);
+
+/**
+ * lrg_light_set_get_spot_light:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ * @out_direction: (out caller-allocates) (optional) (array fixed-size=3):
+ *   the unit direction
+ * @out_inner_degrees: (out) (optional): the inner half-angle
+ * @out_outer_degrees: (out) (optional): the outer half-angle
+ *
+ * Returns: %TRUE when @light is a spot light (outputs untouched
+ *   otherwise)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_light_set_get_spot_light (LrgLightSet *self,
+                              guint        light,
+                              gfloat      *out_direction,
+                              gfloat      *out_inner_degrees,
+                              gfloat      *out_outer_degrees);
+
+/**
+ * lrg_light_set_spot_factor:
+ * @inner_degrees: inner half-angle
+ * @outer_degrees: outer half-angle
+ * @cos_angle: cosine of the angle between the spot's axis and the
+ *   direction from the light to the lit point
+ *
+ * The cone curve the shader and lrg_light_set_sample() use: a smoothstep
+ * from cos (@outer_degrees) (0) to cos (@inner_degrees) (1).
+ *
+ * Returns: the cone factor, 0 .. 1
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_spot_factor (gfloat inner_degrees,
+                           gfloat outer_degrees,
+                           gfloat cos_angle);
+
+/**
+ * lrg_light_set_brdf:
+ * @normal: (array fixed-size=3): unit surface normal
+ * @view: (array fixed-size=3): unit direction from the surface to the eye
+ * @light: (array fixed-size=3): unit direction from the surface to the light
+ * @albedo: (array fixed-size=3): linear base colour
+ * @metallic: 0 .. 1
+ * @roughness: perceptual roughness 0 .. 1 (clamped to 0.045 like the shader)
+ * @out_rgb: (out caller-allocates) (array fixed-size=3): the reflected
+ *   linear radiance per unit of linear light radiance
+ *
+ * The shader's direct lighting term on the CPU (a reference for tests and
+ * tools): GGX distribution, Smith-Schlick visibility with k = (r + 1)^2 / 8,
+ * Schlick Fresnel with F0 = mix (0.04, albedo, metallic), Lambert diffuse
+ * weighted by (1 - F) (1 - metallic), all times N.L with pi folded in (a
+ * white rough dielectric facing a white light reflects about 1).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_brdf (const gfloat *normal,
+                    const gfloat *view,
+                    const gfloat *light,
+                    const gfloat *albedo,
+                    gfloat        metallic,
+                    gfloat        roughness,
+                    gfloat       *out_rgb);
+
+/**
+ * lrg_light_set_set_light_shadow_bias:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ * @bias: depth bias of the light's shadow cube or spot map in world
+ *   units, or 0 (the default) for the shadow renderer's
+ *   (lrg_shadow_renderer_set_bias())
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_light_shadow_bias (LrgLightSet *self,
+                                     guint        light,
+                                     gfloat       bias);
+
+/**
+ * lrg_light_set_get_light_shadow_bias:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ *
+ * Returns: the light's own shadow bias, 0 when it uses the renderer's
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat
+lrg_light_set_get_light_shadow_bias (LrgLightSet *self,
+                                     guint        light);
+
+/**
+ * lrg_light_set_set_light_layers:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ * @layers: render layers the light reaches (bit N: layer N; every layer
+ *   by default)
+ *
+ * The lit shader skips a point or spot light whose layers share no bit
+ * with the draw's (lrg_light_set_set_draw_layers()).  The directional
+ * and ambient light reach every layer.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_light_layers (LrgLightSet *self,
+                                guint        light,
+                                guint32      layers);
+
+/**
+ * lrg_light_set_get_light_layers:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ *
+ * Returns: the light's render layers, 0 for no such light
+ */
+LRG_AVAILABLE_IN_ALL
+guint32
+lrg_light_set_get_light_layers (LrgLightSet *self,
+                                guint        light);
+
+/**
+ * lrg_light_set_set_draw_layers:
+ * @self: an #LrgLightSet
+ * @layers: the render layers of what draws next (every layer by default)
+ *
+ * Sets the layers the following draws belong to and uploads them at
+ * once when the shader exists (lrg_light_set_apply() uploads them too),
+ * so a renderer drawing layer by layer calls it between layers.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_draw_layers (LrgLightSet *self,
+                               guint32      layers);
+
+/**
+ * lrg_light_set_get_draw_layers:
+ * @self: an #LrgLightSet
+ *
+ * Returns: the draw's render layers
+ */
+LRG_AVAILABLE_IN_ALL
+guint32
+lrg_light_set_get_draw_layers (LrgLightSet *self);
+
+/**
+ * lrg_light_set_set_output_linear:
+ * @self: an #LrgLightSet
+ * @linear: %TRUE to write linear colour (for an HDR target that a post
+ *   stack tonemaps), %FALSE (the default) for display (sRGB, gamma 2.2)
+ *   colour straight to the screen
+ *
+ * Takes effect on the next lrg_light_set_apply().
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_output_linear (LrgLightSet *self,
+                                 gboolean     linear);
+
+/**
+ * lrg_light_set_get_output_linear:
+ * @self: an #LrgLightSet
+ *
+ * Returns: whether the shader writes linear colour
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_light_set_get_output_linear (LrgLightSet *self);
+
+/**
+ * lrg_light_set_set_environment:
+ * @self: an #LrgLightSet
+ * @environment: (nullable) (transfer none): the image based lighting
+ *   (irradiance, prefiltered specular, BRDF lookup) the shader uses for
+ *   indirect light instead of the flat ambient colour, or %NULL
+ *
+ * Bound by every lrg_light_set_apply().  The light set keeps a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_environment (LrgLightSet    *self,
+                               LrgEnvironment *environment);
+
+/**
+ * lrg_light_set_get_environment:
+ * @self: an #LrgLightSet
+ *
+ * Returns: (transfer none) (nullable): the environment
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEnvironment *
+lrg_light_set_get_environment (LrgLightSet *self);
+
+/**
+ * lrg_light_set_set_ssao:
+ * @self: an #LrgLightSet
+ * @ssao: (nullable) (transfer none): screen-space ambient occlusion
+ *   whose result darkens the indirect light, or %NULL
+ *
+ * Bound by every lrg_light_set_apply().  The light set keeps a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_ssao (LrgLightSet *self,
+                        LrgSsao     *ssao);
+
+/**
+ * lrg_light_set_get_ssao:
+ * @self: an #LrgLightSet
+ *
+ * Returns: (transfer none) (nullable): the SSAO pass
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSsao *
+lrg_light_set_get_ssao (LrgLightSet *self);
+
+/**
+ * lrg_light_set_set_decals:
+ * @self: an #LrgLightSet
+ * @decals: (nullable) (transfer none): decals the shader projects onto
+ *   the surfaces before lighting them, or %NULL
+ *
+ * Bound by every lrg_light_set_apply().  The light set keeps a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_decals (LrgLightSet *self,
+                          LrgDecalSet *decals);
+
+/**
+ * lrg_light_set_get_decals:
+ * @self: an #LrgLightSet
+ *
+ * Returns: (transfer none) (nullable): the decal set
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDecalSet *
+lrg_light_set_get_decals (LrgLightSet *self);
+
+/**
+ * lrg_light_set_add_light_desc:
+ * @self: an #LrgLightSet
+ * @desc: a light description (lrg_light_component_fill_desc(),
+ *   lrg_world3d_get_lights())
+ *
+ * Adds the light @desc describes: a directional light becomes the
+ * directional light (colour x intensity, saturating at white), a point
+ * or spot light a new light (colour, intensity, range as radius, cone,
+ * layer mask), with shadow priority 1 when @desc->cast_shadows is set.
+ * When @desc->source has a "shadow-bias" float property (an
+ * #LrgLightComponent), it becomes the light's shadow bias.  Disabled
+ * descriptions add nothing.
+ *
+ * Returns: the new light id, or %LRG_LIGHT_SET_INVALID_LIGHT for a
+ *   directional or disabled light
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_light_set_add_light_desc (LrgLightSet          *self,
+                              const LrgLight3DDesc *desc);
 
 G_END_DECLS

@@ -139,16 +139,34 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
     "}\n"
 
 /*
+ * LRG_LIGHT_SPOT_GLSL:
+ * float lrg_spot_cone (vec3 dir, vec4 spot, float cos_inner): the cone
+ * factor of a light seen from a point (@dir: unit direction from the
+ * light to the point).  @spot = (the light's unit direction, cos of the
+ * outer half-angle), with w below -1.5 for a point light (factor 1);
+ * smoothstep from the outer to the inner cosine.  lrg_light_set_spot_factor()
+ * is the same curve on the CPU.
+ */
+#define LRG_LIGHT_SPOT_GLSL \
+    "float lrg_spot_cone(vec3 dir, vec4 spot, float cosInner) {\n" \
+    "    if (spot.w < -1.5) return 1.0;\n" \
+    "    return smoothstep(spot.w, max(cosInner, spot.w + 1e-4), dot(dir, spot.xyz));\n" \
+    "}\n"
+
+/*
  * LRG_LIGHT_SAMPLE_GLSL:
  * GLSL 330 light uniforms plus lrg_light_sample (vec3 p), the light
  * reaching draw-space position @p from every direction (no normal, so
  * no Lambert term): the ambient colour, the directional colour (zero
- * without a directional light), the point lights of @p's grid cell (or
- * the active list without a grid), through the soft light limit.  This
- * is lrg_light_set_sample() with a %NULL normal, evaluated on the GPU;
- * LrgBillboardBatch lights its static quads with it in the vertex
- * shader.  The grid textures are on LRG_LIGHT_SET_GRID_DATA_UNIT and
- * LRG_LIGHT_SET_GRID_CELLS_UNIT.
+ * without a directional light), the point and spot lights of @p's grid
+ * cell (or the active list without a grid), through the soft light
+ * limit.  This is lrg_light_set_sample() with a %NULL normal, evaluated
+ * on the GPU in display space; LrgBillboardBatch lights its static quads
+ * with it in the vertex shader.  The grid textures are on
+ * LRG_LIGHT_SET_GRID_DATA_UNIT and LRG_LIGHT_SET_GRID_CELLS_UNIT; a
+ * light is four texels of its row: (position, radius), (colour x
+ * intensity, point shadow slot), (spot direction, cos outer or -2),
+ * (cos inner, spot shadow slot, layers low 16 bits, layers high 16 bits).
  */
 #define LRG_LIGHT_SAMPLE_GLSL \
     "uniform vec3 ambientColor;\n" \
@@ -157,13 +175,18 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
     "uniform vec3 lightPosition[16];\n" \
     "uniform vec3 lightColor[16];\n" \
     "uniform float lightRadius[16];\n" \
+    "uniform vec4 lightSpot[16];\n" \
+    "uniform vec4 lightSpotExtra[16];\n" \
     "uniform int useGrid;\n" \
     "uniform sampler2D lightData;\n" \
     "uniform sampler2D lightGrid;\n" \
     LRG_LIGHT_CLUSTER_GLSL \
+    LRG_LIGHT_SPOT_GLSL \
     "uniform float lightLimit;\n" \
-    "vec3 lrg_point_reach(vec3 p, vec3 lp, float r, vec3 c) {\n" \
-    "    float k = clamp(1.0 - length(lp - p) / r, 0.0, 1.0);\n" \
+    "vec3 lrg_point_reach(vec3 p, vec3 lp, float r, vec3 c, vec4 spot, float ci) {\n" \
+    "    float d = length(lp - p);\n" \
+    "    float k = clamp(1.0 - d / r, 0.0, 1.0);\n" \
+    "    if (spot.w > -1.5 && d > 1e-4) k *= sqrt(lrg_spot_cone((p - lp) / d, spot, ci));\n" \
     "    return c * (k * k);\n" \
     "}\n" \
     "vec3 lrg_light_sample(vec3 p) {\n" \
@@ -181,14 +204,17 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
     "                    int id = int(ids[j] + 0.5);\n" \
     "                    vec4 pr = texelFetch(lightData, ivec2(0, id), 0);\n" \
     "                    vec4 col = texelFetch(lightData, ivec2(1, id), 0);\n" \
-    "                    light += lrg_point_reach(p, pr.xyz, pr.w, col.rgb);\n" \
+    "                    vec4 sp = texelFetch(lightData, ivec2(2, id), 0);\n" \
+    "                    vec4 sx = texelFetch(lightData, ivec2(3, id), 0);\n" \
+    "                    light += lrg_point_reach(p, pr.xyz, pr.w, col.rgb, sp, sx.x);\n" \
     "                }\n" \
     "            }\n" \
     "        }\n" \
     "    } else {\n" \
     "        for (int i = 0; i < 16; i++) {\n" \
     "            if (i >= lightCount) break;\n" \
-    "            light += lrg_point_reach(p, lightPosition[i], lightRadius[i], lightColor[i]);\n" \
+    "            light += lrg_point_reach(p, lightPosition[i], lightRadius[i], lightColor[i],\n" \
+    "                                     lightSpot[i], lightSpotExtra[i].x);\n" \
     "        }\n" \
     "    }\n" \
     "    if (lightLimit > 0.0) {\n" \
@@ -198,6 +224,9 @@ lrg_light_set_upload_fog (LrgLightSet                   *self,
     "    }\n" \
     "    return light;\n" \
     "}\n"
+
+/* texels per light in the grid's light texture */
+#define LRG_LIGHT_SET_GRID_TEXELS (4)
 
 /* texture units of the light grid textures: above raylib's material maps */
 #define LRG_LIGHT_SET_GRID_DATA_UNIT  (14)
@@ -216,6 +245,8 @@ typedef struct
     gint positions;
     gint colors;
     gint radii;
+    gint spots;
+    gint spot_extra;
     gint use_grid;
     gint light_data;
     gint light_grid;
@@ -347,19 +378,25 @@ lrg_light_set_upload_receive (LrgLightSet                     *self,
  */
 typedef struct
 {
-    guint  id;
-    gfloat position[3];
-    gfloat radius;
-    guint  priority;
-    gfloat key;
+    guint    id;
+    gfloat   position[3];
+    gfloat   radius;
+    guint    priority;
+    gfloat   key;
+    /* 0.9.0: spot lights and per-light bias */
+    gboolean spot;
+    gfloat   direction[3];   /* unit, the way the light shines */
+    gfloat   outer_degrees;  /* half-angle of the cone */
+    gfloat   bias;           /* depth bias in world units, <= 0: the renderer's */
 } LrgLightSetShadowCandidate;
 
 /*
  * lrg_light_set_pick_shadow_lights:
  * Fills @out with up to @max enabled, lit lights of shadow priority > 0
  * (highest priority first, then smallest key, then lowest id), leaving
- * out lights whose key exceeds @max_distance (0: no limit).  @camera is
- * in world space.  Returns how many were picked.
+ * out lights whose key exceeds @max_distance (0: no limit).  @spots
+ * picks spot lights (for spot shadow maps), else point lights (for
+ * cubes).  @camera is in world space.  Returns how many were picked.
  */
 G_GNUC_INTERNAL
 guint
@@ -367,6 +404,32 @@ lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
                                   const gdouble              *camera,
                                   gfloat                      max_distance,
                                   guint                       max,
+                                  gboolean                    spots,
                                   LrgLightSetShadowCandidate *out);
+
+/*
+ * lrg_light_set_hook_unit_usable:
+ * Whether texture unit @unit may be used by a lit-shader hook binder
+ * (lrg_environment_bind_private(), lrg_ssao_bind_private(),
+ * lrg_decal_set_bind_private()).  The hooks get the units from
+ * LRG_LIGHT_SET_HOOK_UNIT (16) up to GL_MAX_TEXTURE_IMAGE_UNITS (at most
+ * 32) when the driver has more than 16; on a driver with only the 16
+ * units GL 3.3 guarantees they get raylib's unused material slots 7 .. 10
+ * instead (lrg_light_set_hook_unit_first()).  A binder whose next unit
+ * is not usable binds its inactive state (uniform flags off) and does
+ * not advance the unit.  Needs a GL context (FALSE without one).
+ */
+G_GNUC_INTERNAL
+gboolean
+lrg_light_set_hook_unit_usable (gint unit);
+
+/*
+ * lrg_light_set_hook_unit_first:
+ * The first texture unit lrg_light_set_apply() hands the hook binders:
+ * LRG_LIGHT_SET_HOOK_UNIT, or 7 on a 16-unit driver (see above).
+ */
+G_GNUC_INTERNAL
+gint
+lrg_light_set_hook_unit_first (void);
 
 G_END_DECLS

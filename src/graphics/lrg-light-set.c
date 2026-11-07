@@ -42,6 +42,11 @@
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "weather/lrg-ground-overlay-private.h"
 #include "core/lrg-prewarm.h"
+#include "graphics/lrg-camera.h"
+#include "world3d/lrg-world3d.h"
+#include "lighting/lrg-environment-glsl-private.h"
+#include "graphics/lrg-ssao-glsl-private.h"
+#include "graphics/lrg-decal-glsl-private.h"
 
 typedef struct
 {
@@ -52,7 +57,50 @@ typedef struct
     gfloat   radius;
     gfloat   intensity;
     guint    shadow;        /* shadow priority, 0: none (M14) */
+    /* 0.9.0: spot lights, per-light shadow bias and render layers */
+    gboolean spot;
+    gfloat   direction[3];  /* unit, the way a spot shines */
+    gfloat   inner;         /* cone half-angles, degrees */
+    gfloat   outer;
+    gfloat   shadow_bias;   /* world units, <= 0: the renderer's */
+    guint32  layers;        /* render layers the light reaches */
 } PointLight;
+
+/* LitLocations:
+ * The uniform locations of one program built from the lit library
+ * (the light set's own, or a user shader given to
+ * lrg_light_set_bind_shader()); -1 where the compiler dropped one. */
+typedef struct
+{
+    gint ambient;
+    gint sun_dir;
+    gint sun_color;
+    gint count;
+    gint positions;
+    gint colors;
+    gint radii;
+    gint cutoff;
+    gint use_grid;
+    gint light_data;
+    gint light_grid;
+    gint grid_params;
+    gint limit;
+    gint emission_color;
+    gint grid_layers;
+    gint light_shadow;
+    gint air_params;
+    gint air_tint;
+    gint air_camera;
+    gint air_light_color;
+    gint map_camera;
+    gint spots;
+    gint spot_extra;
+    gint draw_layers;
+    gint output_linear;
+    LrgLightSetFogLocations   fog;
+    LrgShadowLocations        shadow;
+    LrgGroundOverlayLocations overlay;
+} LitLocations;
 
 struct _LrgLightSet
 {
@@ -138,38 +186,27 @@ struct _LrgLightSet
 
     /* M14 (U14.10): snow and cloud shadows applied in the lit shader */
     LrgGroundOverlay          *overlay;
-    LrgGroundOverlayLocations  overlay_locs;
+
+    /* 0.9.0: the hooks of the other passes, the draw's layers and the
+     * output encoding */
+    LrgEnvironment *environment;
+    LrgSsao        *ssao;
+    LrgDecalSet    *decals;
+    guint32     draw_layers;
+    gboolean    output_linear;
 
     GrlShader  *shader;
     gboolean    shader_tried;
-    gint        loc_ambient;
-    gint        loc_sun_dir;
-    gint        loc_sun_color;
-    gint        loc_count;
-    gint        loc_positions;
-    gint        loc_colors;
-    gint        loc_radii;
-    gint        loc_cutoff;
-    gint        loc_use_grid;
-    gint        loc_light_data;
-    gint        loc_light_grid;
-    gint        loc_grid_params;
-    gint        loc_limit;
-    gint        loc_emission_color;
-    gint        loc_grid_layers;
-    gint        loc_light_shadow;
-    gint        loc_air_params;
-    gint        loc_air_tint;
-    gint        loc_air_camera;
-    gint        loc_air_light_color;
-    gint        loc_map_camera;
-    LrgLightSetFogLocations fog_locs;
-    LrgShadowLocations      shadow_locs;
+    LitLocations locs;          /* of the light set's own program */
+    GHashTable *foreign;        /* program id -> LitLocations, lrg_light_set_bind_shader() */
 };
 
 /* texture units of the grid textures: above raylib's 12 material maps */
 #define GRID_DATA_UNIT  (LRG_LIGHT_SET_GRID_DATA_UNIT)
 #define GRID_CELLS_UNIT (LRG_LIGHT_SET_GRID_CELLS_UNIT)
+
+/* floats per light in the grid's light texture (four RGBA texels) */
+#define TEXEL_FLOATS    (LRG_LIGHT_SET_GRID_TEXELS * 4)
 
 /* the soft light limit passes values up to this share of the limit */
 #define LIMIT_KNEE      (0.75f)
@@ -189,7 +226,8 @@ static void build_grid (LrgLightSet *self,
  * threaded, like raylib's own current-shader state. */
 static LrgLightSet *bound_light_set = NULL;
 
-/* GLSL 330 with raylib's default attribute and uniform names. */
+/* GLSL 330 with raylib's default attribute and uniform names. Also the
+ * vertex source of user lit shaders (lrg_light_set_get_vertex_source()). */
 static const gchar light_vs[] =
     "#version 330\n"
     "in vec3 vertexPosition;\n"
@@ -211,142 +249,292 @@ static const gchar light_vs[] =
     "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
     "}\n";
 
+/*
+ * The lit shader library (lrg_light_set_get_glsl_library()): every
+ * uniform, hook and function of the lit fragment shader, without
+ * "#version", varyings and main().  In order:
+ *
+ * 1. uniforms: the material (texture0, colDiffuse, the map samplers,
+ *    mapFlags, pbrParams, emission), the lights (ambient, sun, the
+ *    active list with its spot cones, the grid), the light limit, the
+ *    eye (mapCamera), the draw's render layers and the output encoding;
+ * 2. the shared snippets: cluster lookup, spot cone, fog, shadows, the
+ *    volumetric air, the ground overlay;
+ * 3. LRG_PI, lrg_to_linear and lrg_to_display (the hooks may use
+ *    them), then the hooks of the other passes (environment / IBL, SSAO, decals),
+ *    no-op defaults until those objects are bound;
+ * 4. the model: lrg_to_linear / lrg_to_display (sRGB as gamma 2.2),
+ *    lrg_brdf_direct (GGX D, Smith-Schlick G with Karis' k, Schlick F,
+ *    Lambert diffuse; pi folded in so a white light on a white surface
+ *    facing it is 1), lrg_light_one (one point or spot light with its
+ *    window falloff, cone, layers and shadows), lrg_light_pbr_ex /
+ *    lrg_light_pbr (sun + lights + indirect + light limit, linear
+ *    radiance), lrg_surface (material sampling), lrg_light_shade
+ *    (everything main() does: surface, decals, lighting, emission, snow,
+ *    air, fog, output encoding, alpha cutout).
+ *
+ * Light colours (sunColor, lightColor, the grid's colour texel and
+ * ambientColor) arrive in display space as before 0.9.0 (colour x
+ * intensity); the falloff and cone are display-space factors too, and
+ * the product is linearized once, so a lone light still gives the
+ * classic (1 - d / r)^2 curve on screen that lrg_light_set_sample() and
+ * the billboards use.
+ */
+#define LIGHT_LIBRARY \
+    "uniform sampler2D texture0;\n" \
+    "uniform vec4 colDiffuse;\n" \
+    "uniform vec3 ambientColor;\n" \
+    "uniform vec3 sunDirection;\n" \
+    "uniform vec3 sunColor;\n" \
+    "uniform int lightCount;\n" \
+    "uniform vec3 lightPosition[16];\n" \
+    "uniform vec3 lightColor[16];\n" \
+    "uniform float lightRadius[16];\n" \
+    "uniform float lightShadow[16];\n" \
+    "uniform vec4 lightSpot[16];\n" \
+    "uniform vec4 lightSpotExtra[16];\n" \
+    "uniform float alphaCutoff;\n" \
+    "uniform int useGrid;\n" \
+    "uniform sampler2D lightData;\n" \
+    "uniform sampler2D lightGrid;\n" \
+    LRG_LIGHT_CLUSTER_GLSL \
+    LRG_LIGHT_SPOT_GLSL \
+    "uniform float lightLimit;\n" \
+    "uniform sampler2D emissionMap;\n" \
+    "uniform vec3 emissionColor;\n" \
+    "uniform vec4 emissionOwn;\n" \
+    "uniform sampler2D normalMap;\n" \
+    "uniform sampler2D metallicMap;\n" \
+    "uniform sampler2D ormMap;\n" \
+    "uniform sampler2D heightMap;\n" \
+    "uniform int mapFlags;\n" \
+    "uniform vec4 pbrParams;\n" \
+    "uniform vec3 mapCamera;\n" \
+    "uniform float heightScale;\n" \
+    "uniform ivec2 drawLayers;\n" \
+    "uniform int outputLinear;\n" \
+    LRG_FOG_GLSL \
+    LRG_SHADOW_GLSL \
+    LRG_LIGHT_AIR_GLSL \
+    LRG_GROUND_OVERLAY_GLSL \
+    "const float LRG_PI = 3.14159265;\n" \
+    "vec3 lrg_to_linear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }\n" \
+    "vec3 lrg_to_display(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)); }\n" \
+    LRG_ENV_GLSL \
+    LRG_SSAO_GLSL \
+    LRG_DECAL_GLSL \
+    "struct LrgSurface {\n" \
+    "    vec4 albedo;\n" \
+    "    vec3 normal;\n" \
+    "    float metallic;\n" \
+    "    float roughness;\n" \
+    "    float occlusion;\n" \
+    "    vec3 emission;\n" \
+    "};\n" \
+    "bool lrg_layers_hit(vec4 extra) {\n" \
+    "    ivec2 m = ivec2(int(extra.z + 0.5), int(extra.w + 0.5));\n" \
+    "    return ((m.x & drawLayers.x) | (m.y & drawLayers.y)) != 0;\n" \
+    "}\n" \
+    "vec3 lrg_brdf_direct(vec3 n, vec3 v, vec3 l, vec3 albedo, float metal, float rough) {\n" \
+    "    float nl = max(dot(n, l), 0.0);\n" \
+    "    if (nl <= 0.0) return vec3(0.0);\n" \
+    "    float nv = max(dot(n, v), 1e-4);\n" \
+    "    vec3 h = normalize(l + v);\n" \
+    "    float nh = max(dot(n, h), 0.0);\n" \
+    "    float vh = max(dot(v, h), 0.0);\n" \
+    "    float r = clamp(rough, 0.045, 1.0);\n" \
+    "    float a2 = r * r * r * r;\n" \
+    "    float dd = nh * nh * (a2 - 1.0) + 1.0;\n" \
+    "    float D = a2 / (LRG_PI * dd * dd);\n" \
+    "    float k = (r + 1.0) * (r + 1.0) / 8.0;\n" \
+    "    float G = (nv / (nv * (1.0 - k) + k)) * (nl / (nl * (1.0 - k) + k));\n" \
+    "    vec3 F0 = mix(vec3(0.04), albedo, metal);\n" \
+    "    vec3 F = F0 + (1.0 - F0) * pow(1.0 - vh, 5.0);\n" \
+    "    vec3 spec = D * G * F / (4.0 * nv * nl);\n" \
+    "    vec3 kd = (1.0 - F) * (1.0 - metal);\n" \
+    "    return (kd * albedo + spec * LRG_PI) * nl;\n" \
+    "}\n" \
+    "vec3 gLrgIrradiance = vec3(0.0);\n" \
+    "vec3 lrg_light_one(vec3 p, vec3 ng, vec3 n, vec3 v, vec3 albedo, float metal, float rough,\n" \
+    "                   vec3 lp, float r, vec3 c, int pslot, vec4 spot, vec4 extra) {\n" \
+    "    if (!lrg_layers_hit(extra)) return vec3(0.0);\n" \
+    "    vec3 d = lp - p;\n" \
+    "    float dist = length(d);\n" \
+    "    float k = clamp(1.0 - dist / r, 0.0, 1.0);\n" \
+    "    if (k <= 0.0) return vec3(0.0);\n" \
+    "    vec3 l = dist > 1e-4 ? d / dist : n;\n" \
+    "    float fd = k * k;\n" \
+    "    if (spot.w > -1.5) fd *= lrg_spot_cone(-l, spot, extra.x);\n" \
+    "    float nl = max(dot(n, l), 0.0);\n" \
+    "    if (fd <= 0.0 || nl <= 0.0) return vec3(0.0);\n" \
+    "    float sh = 1.0;\n" \
+    "    if (pslot >= 0) sh = lrg_point_shadow(pslot, p, ng);\n" \
+    "    int sslot = int(floor(extra.y + 0.5));\n" \
+    "    if (sslot >= 0) sh *= lrg_spot_shadow(sslot, p, ng);\n" \
+    "    vec3 rad = lrg_to_linear(c * fd) * sh;\n" \
+    "    gLrgIrradiance += rad * nl;\n" \
+    "    return lrg_brdf_direct(n, v, l, albedo, metal, rough) * rad;\n" \
+    "}\n" \
+    "vec3 lrg_light_pbr_ex(vec3 p, vec3 ng, vec3 n, vec3 v, vec4 albedo, float metal, float rough, float ao) {\n" \
+    "    vec3 alb = albedo.rgb;\n" \
+    "    vec3 rad = vec3(0.0);\n" \
+    "    gLrgIrradiance = vec3(0.0);\n" \
+    "    if (dot(sunColor, sunColor) > 0.0) {\n" \
+    "        vec3 l = -sunDirection;\n" \
+    "        float nl = max(dot(n, l), 0.0);\n" \
+    "        if (nl > 0.0 || dot(ng, l) > 0.0) {\n" \
+    "            vec3 sr = lrg_to_linear(sunColor) * lrg_sun_shadow(p, ng);\n" \
+    "            gLrgIrradiance += sr * nl;\n" \
+    "            rad += lrg_brdf_direct(n, v, l, alb, metal, rough) * sr;\n" \
+    "        }\n" \
+    "    }\n" \
+    "    if (useGrid == 1) {\n" \
+    "        ivec2 base;\n" \
+    "        if (lrg_cluster_base(p, base)) {\n" \
+    "            int per = int(gridLayers.w + 0.5) / 4;\n" \
+    "            bool done = false;\n" \
+    "            for (int t = 0; t < 8 && !done; t++) {\n" \
+    "                if (t >= per) break;\n" \
+    "                vec4 ids = texelFetch(lightGrid, base + ivec2(t, 0), 0);\n" \
+    "                for (int j = 0; j < 4; j++) {\n" \
+    "                    if (ids[j] < 0.0) { done = true; break; }\n" \
+    "                    int id = int(ids[j] + 0.5);\n" \
+    "                    vec4 pr = texelFetch(lightData, ivec2(0, id), 0);\n" \
+    "                    vec4 col = texelFetch(lightData, ivec2(1, id), 0);\n" \
+    "                    vec4 sp = texelFetch(lightData, ivec2(2, id), 0);\n" \
+    "                    vec4 sx = texelFetch(lightData, ivec2(3, id), 0);\n" \
+    "                    rad += lrg_light_one(p, ng, n, v, alb, metal, rough, pr.xyz, pr.w, col.rgb,\n" \
+    "                                         int(floor(col.w + 0.5)), sp, sx);\n" \
+    "                }\n" \
+    "            }\n" \
+    "        }\n" \
+    "    } else {\n" \
+    "        for (int i = 0; i < 16; i++) {\n" \
+    "            if (i >= lightCount) break;\n" \
+    "            rad += lrg_light_one(p, ng, n, v, alb, metal, rough, lightPosition[i], lightRadius[i],\n" \
+    "                                 lightColor[i], int(floor(lightShadow[i] + 0.5)),\n" \
+    "                                 lightSpot[i], lightSpotExtra[i]);\n" \
+    "        }\n" \
+    "    }\n" \
+    "    float occ = ao * lrg_ssao();\n" \
+    "    vec3 ind;\n" \
+    "    if (lrg_env_active()) {\n" \
+    "        float nv = max(dot(n, v), 1e-4);\n" \
+    "        vec2 brdf = lrg_env_brdf(nv, rough);\n" \
+    "        vec3 F0 = mix(vec3(0.04), alb, metal);\n" \
+    "        vec3 Fr = F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(1.0 - nv, 5.0);\n" \
+    "        vec3 kd = (1.0 - Fr) * (1.0 - metal);\n" \
+    "        vec3 irr = lrg_env_diffuse(n);\n" \
+    "        gLrgIrradiance += irr * occ;\n" \
+    "        ind = kd * alb * irr + lrg_env_specular(n, v, rough) * (F0 * brdf.x + brdf.y);\n" \
+    "    } else {\n" \
+    "        vec3 amb = lrg_to_linear(ambientColor);\n" \
+    "        gLrgIrradiance += amb * occ;\n" \
+    "        ind = amb * alb;\n" \
+    "    }\n" \
+    "    rad += ind * occ;\n" \
+    "    if (lightLimit > 0.0) {\n" \
+    "        vec3 e = lrg_to_display(gLrgIrradiance);\n" \
+    "        float knee = lightLimit * 0.75;\n" \
+    "        vec3 over = max(e - knee, 0.0);\n" \
+    "        vec3 el = min(e, vec3(knee)) + (lightLimit - knee) * (1.0 - exp(-over / (lightLimit - knee)));\n" \
+    "        vec3 lin = lrg_to_linear(el);\n" \
+    "        for (int c = 0; c < 3; c++)\n" \
+    "            if (gLrgIrradiance[c] > 1e-6) rad[c] *= lin[c] / gLrgIrradiance[c];\n" \
+    "    }\n" \
+    "    return rad;\n" \
+    "}\n" \
+    "vec3 lrg_light_pbr(vec3 p, vec3 n, vec3 v, vec4 albedo, float metal, float rough, float ao) {\n" \
+    "    return lrg_light_pbr_ex(p, n, n, v, albedo, metal, rough, ao);\n" \
+    "}\n" \
+    "LrgSurface lrg_surface(vec3 p, vec3 ng, vec2 uv, vec4 vcol) {\n" \
+    "    LrgSurface s;\n" \
+    "    vec3 n = ng;\n" \
+    "    float metal = pbrParams.x;\n" \
+    "    float rough = pbrParams.y;\n" \
+    "    float ao = 1.0;\n" \
+    "    if ((mapFlags & 5) != 0) {\n" \
+    "        vec3 dp1 = dFdx(p);\n" \
+    "        vec3 dp2 = dFdy(p);\n" \
+    "        vec2 du1 = dFdx(uv);\n" \
+    "        vec2 du2 = dFdy(uv);\n" \
+    "        vec3 p2 = cross(dp2, ng);\n" \
+    "        vec3 p1 = cross(ng, dp1);\n" \
+    "        vec3 tt = p2 * du1.x + p1 * du2.x;\n" \
+    "        vec3 bb = p2 * du1.y + p1 * du2.y;\n" \
+    "        float inv = inversesqrt(max(max(dot(tt, tt), dot(bb, bb)), 1e-12));\n" \
+    "        mat3 tbn = mat3(tt * inv, bb * inv, ng);\n" \
+    "        if ((mapFlags & 4) != 0) {\n" \
+    "            vec3 vt = normalize(mapCamera - p) * tbn;\n" \
+    "            float h = texture(heightMap, uv).r;\n" \
+    "            uv -= vt.xy / max(vt.z, 0.25) * (h - 0.5) * heightScale;\n" \
+    "        }\n" \
+    "        if ((mapFlags & 1) != 0) {\n" \
+    "            vec3 nm = texture(normalMap, uv).rgb * 2.0 - 1.0;\n" \
+    "            nm.xy *= pbrParams.w;\n" \
+    "            n = normalize(tbn * nm);\n" \
+    "        }\n" \
+    "    }\n" \
+    "    if ((mapFlags & 2) != 0) {\n" \
+    "        vec4 mg = texture(metallicMap, uv);\n" \
+    "        metal = mg.r;\n" \
+    "        rough = 1.0 - mg.a;\n" \
+    "    }\n" \
+    "    if ((mapFlags & 8) != 0) {\n" \
+    "        vec3 orm = texture(ormMap, uv).rgb;\n" \
+    "        ao = mix(1.0, orm.r, pbrParams.z);\n" \
+    "        rough *= orm.g;\n" \
+    "        metal *= orm.b;\n" \
+    "    }\n" \
+    "    vec4 texel = texture(texture0, uv) * colDiffuse * vcol;\n" \
+    "    s.albedo = vec4(lrg_to_linear(texel.rgb), texel.a);\n" \
+    "    s.normal = n;\n" \
+    "    s.metallic = clamp(metal, 0.0, 1.0);\n" \
+    "    s.roughness = clamp(rough, 0.0, 1.0);\n" \
+    "    s.occlusion = ao;\n" \
+    "    s.emission = lrg_to_linear(texture(emissionMap, uv).rgb\n" \
+    "                               * (emissionOwn.w > 0.5 ? emissionOwn.rgb : emissionColor));\n" \
+    "    return s;\n" \
+    "}\n" \
+    "vec4 lrg_light_shade(vec3 p, vec3 normal, vec2 uv, vec4 vcol) {\n" \
+    "    float nlen = length(normal);\n" \
+    "    vec3 ng = nlen > 0.0 ? normal / nlen : vec3(0.0, 1.0, 0.0);\n" \
+    "    LrgSurface s = lrg_surface(p, ng, uv, vcol);\n" \
+    "    if (s.albedo.a < alphaCutoff) discard;\n" \
+    "    vec3 dv = mapCamera - p;\n" \
+    "    vec3 v = dot(dv, dv) > 1e-10 ? normalize(dv) : ng;\n" \
+    "    vec3 lit;\n" \
+    "    if ((mapFlags & 32) != 0) {\n" \
+    "        lit = s.albedo.rgb + s.emission;\n" \
+    "    } else {\n" \
+    "        lrg_decals_apply(p, ng, s.albedo, s.normal, s.roughness, s.metallic);\n" \
+    "        lit = lrg_light_pbr_ex(p, ng, s.normal, v, s.albedo, s.metallic, s.roughness, s.occlusion)\n" \
+    "              + s.emission;\n" \
+    "    }\n" \
+    "    vec3 col = lrg_to_display(lit);\n" \
+    "    if (ovOn != 0) col = lrg_overlay_apply(p, s.normal, col);\n" \
+    "    if (airParams.x > 0.0) {\n" \
+    "        vec3 ins;\n" \
+    "        float tr = lrg_air(p, ins);\n" \
+    "        col = col * tr + ins;\n" \
+    "    }\n" \
+    "    col = mix(col, fogColor.rgb, lrg_fog_amount(p));\n" \
+    "    if (outputLinear != 0) col = lrg_to_linear(col);\n" \
+    "    return vec4(col, s.albedo.a);\n" \
+    "}\n"
+
+static const gchar light_library[] = LIGHT_LIBRARY;
+
 static const gchar light_fs[] =
     "#version 330\n"
-    "#define MAX_LIGHTS 16\n"
     "in vec3 fragPosition;\n"
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "in vec3 fragNormal;\n"
-    "uniform sampler2D texture0;\n"
-    "uniform vec4 colDiffuse;\n"
-    "uniform vec3 ambientColor;\n"
-    "uniform vec3 sunDirection;\n"
-    "uniform vec3 sunColor;\n"
-    "uniform int lightCount;\n"
-    "uniform vec3 lightPosition[MAX_LIGHTS];\n"
-    "uniform vec3 lightColor[MAX_LIGHTS];\n"
-    "uniform float lightRadius[MAX_LIGHTS];\n"
-    "uniform float lightShadow[MAX_LIGHTS];\n"
-    "uniform float alphaCutoff;\n"
-    "uniform int useGrid;\n"
-    "uniform sampler2D lightData;\n"
-    "uniform sampler2D lightGrid;\n"
-    LRG_LIGHT_CLUSTER_GLSL
-    "uniform float lightLimit;\n"
-    "uniform sampler2D emissionMap;\n"
-    "uniform vec3 emissionColor;\n"
-    "uniform vec4 emissionOwn;\n"
-    "uniform sampler2D normalMap;\n"
-    "uniform sampler2D metallicMap;\n"
-    "uniform sampler2D heightMap;\n"
-    "uniform int mapFlags;\n"
-    "uniform vec3 mapCamera;\n"
-    "uniform float heightScale;\n"
-    "vec3 gView = vec3(0.0, 1.0, 0.0);\n"
-    "float gShin = 8.0;\n"
-    "vec3 gSpec = vec3(0.0);\n"
-    LRG_FOG_GLSL
-    LRG_SHADOW_GLSL
-    LRG_LIGHT_AIR_GLSL
-    LRG_GROUND_OVERLAY_GLSL
     "out vec4 finalColor;\n"
-    "vec3 point_light(vec3 n, vec3 p, float r, vec3 c, int slot) {\n"
-    "    vec3 d = p - fragPosition;\n"
-    "    float dist = length(d);\n"
-    "    float k = clamp(1.0 - dist / r, 0.0, 1.0);\n"
-    "    float lambert = dist > 0.0001 ? max(dot(n, d / dist), 0.0) : 1.0;\n"
-    "    float f = k * k * lambert;\n"
-    "    if (slot >= 0 && f > 0.0) f *= lrg_point_shadow(slot, fragPosition, n);\n"
-    "    if (mapFlags != 0 && f > 0.0 && dist > 0.0001) {\n"
-    "        vec3 h = normalize(d / dist + gView);\n"
-    "        gSpec += c * (f / max(lambert, 0.001)) * step(0.0001, lambert) * pow(max(dot(n, h), 0.0), gShin);\n"
-    "    }\n"
-    "    return c * f;\n"
-    "}\n"
+    LIGHT_LIBRARY
     "void main() {\n"
-    "    float nlen = length(fragNormal);\n"
-    "    vec3 ng = nlen > 0.0 ? fragNormal / nlen : vec3(0.0, 1.0, 0.0);\n"
-    "    vec3 n = ng;\n"
-    "    vec2 uv = fragTexCoord;\n"
-    "    float metal = 0.0;\n"
-    "    float gloss = 0.0;\n"
-    "    if (mapFlags != 0) {\n"
-    "        vec3 dp1 = dFdx(fragPosition);\n"
-    "        vec3 dp2 = dFdy(fragPosition);\n"
-    "        vec2 du1 = dFdx(fragTexCoord);\n"
-    "        vec2 du2 = dFdy(fragTexCoord);\n"
-    "        vec3 p2 = cross(dp2, ng);\n"
-    "        vec3 p1 = cross(ng, dp1);\n"
-    "        vec3 tt = p2 * du1.x + p1 * du2.x;\n"
-    "        vec3 bb = p2 * du1.y + p1 * du2.y;\n"
-    "        float inv = inversesqrt(max(max(dot(tt, tt), dot(bb, bb)), 1e-12));\n"
-    "        mat3 tbn = mat3(tt * inv, bb * inv, ng);\n"
-    "        gView = normalize(mapCamera - fragPosition);\n"
-    "        if ((mapFlags & 4) != 0) {\n"
-    "            vec3 vt = gView * tbn;\n"
-    "            float h = texture(heightMap, uv).r;\n"
-    "            uv -= vt.xy / max(vt.z, 0.25) * (h - 0.5) * heightScale;\n"
-    "        }\n"
-    "        if ((mapFlags & 1) != 0) {\n"
-    "            vec3 nm = texture(normalMap, uv).rgb * 2.0 - 1.0;\n"
-    "            n = normalize(tbn * nm);\n"
-    "        }\n"
-    "        if ((mapFlags & 2) != 0) {\n"
-    "            vec4 mg = texture(metallicMap, uv);\n"
-    "            metal = mg.r;\n"
-    "            gloss = mg.a;\n"
-    "        }\n"
-    "        gShin = mix(6.0, 256.0, gloss * gloss);\n"
-    "    }\n"
-    "    vec4 texel = texture(texture0, uv) * colDiffuse * fragColor;\n"
-    "    if (texel.a < alphaCutoff) discard;\n"
-    "    float sunShadow = 1.0;\n"
-    "    if (dot(ng, -sunDirection) > 0.0 || dot(n, -sunDirection) > 0.0) sunShadow = lrg_sun_shadow(fragPosition, ng);\n"
-    "    float sunLit = max(dot(n, -sunDirection), 0.0) * sunShadow;\n"
-    "    if (mapFlags != 0 && sunLit > 0.0) {\n"
-    "        vec3 h = normalize(-sunDirection + gView);\n"
-    "        gSpec += sunColor * sunShadow * pow(max(dot(n, h), 0.0), gShin);\n"
-    "    }\n"
-    "    vec3 light = ambientColor + sunColor * sunLit;\n"
-    "    if (useGrid == 1) {\n"
-    "        ivec2 base;\n"
-    "        if (lrg_cluster_base(fragPosition, base)) {\n"
-    "            int per = int(gridLayers.w + 0.5) / 4;\n"
-    "            bool done = false;\n"
-    "            for (int t = 0; t < 8 && !done; t++) {\n"
-    "                if (t >= per) break;\n"
-    "                vec4 ids = texelFetch(lightGrid, base + ivec2(t, 0), 0);\n"
-    "                for (int j = 0; j < 4; j++) {\n"
-    "                    if (ids[j] < 0.0) { done = true; break; }\n"
-    "                    int id = int(ids[j] + 0.5);\n"
-    "                    vec4 pr = texelFetch(lightData, ivec2(0, id), 0);\n"
-    "                    vec4 col = texelFetch(lightData, ivec2(1, id), 0);\n"
-    "                    light += point_light(n, pr.xyz, pr.w, col.rgb, int(floor(col.w + 0.5)));\n"
-    "                }\n"
-    "            }\n"
-    "        }\n"
-    "    } else {\n"
-    "        for (int i = 0; i < MAX_LIGHTS; i++) {\n"
-    "            if (i >= lightCount) break;\n"
-    "            light += point_light(n, lightPosition[i], lightRadius[i], lightColor[i],\n"
-    "                                 int(floor(lightShadow[i] + 0.5)));\n"
-    "        }\n"
-    "    }\n"
-    "    if (lightLimit > 0.0) {\n"
-    "        float knee = lightLimit * 0.75;\n"
-    "        vec3 over = max(light - knee, 0.0);\n"
-    "        light = min(light, vec3(knee)) + (lightLimit - knee) * (1.0 - exp(-over / (lightLimit - knee)));\n"
-    "    }\n"
-    "    vec3 lit = texel.rgb * light * (1.0 - metal * 0.9) + texture(emissionMap, uv).rgb * (emissionOwn.w > 0.5 ? emissionOwn.rgb : emissionColor);\n"
-    "    if (mapFlags != 0) lit += gSpec * mix(vec3(0.04), texel.rgb, metal) * (0.25 + 2.0 * gloss);\n"
-    "    if (ovOn != 0) lit = lrg_overlay_apply(fragPosition, n, lit);\n"
-    "    if (airParams.x > 0.0) {\n"
-    "        vec3 ins;\n"
-    "        float tr = lrg_air(fragPosition, ins);\n"
-    "        lit = lit * tr + ins;\n"
-    "    }\n"
-    "    finalColor = vec4(mix(lit, fogColor.rgb, lrg_fog_amount(fragPosition)), texel.a);\n"
+    "    finalColor = lrg_light_shade(fragPosition, fragNormal, fragTexCoord, fragColor);\n"
     "}\n";
 
 /* ------------------------------------------------------------------------ */
@@ -361,6 +549,10 @@ lrg_light_set_finalize (GObject *object)
     g_clear_object (&self->shader);
     g_clear_object (&self->shadows);
     g_clear_object (&self->overlay);
+    g_clear_object (&self->environment);
+    g_clear_object (&self->ssao);
+    g_clear_object (&self->decals);
+    g_clear_pointer (&self->foreign, g_hash_table_unref);
     g_clear_pointer (&self->lights, g_array_unref);
     g_clear_pointer (&self->grid_ids, g_free);
     g_clear_pointer (&self->grid_keys, g_free);
@@ -402,6 +594,7 @@ lrg_light_set_init (LrgLightSet *self)
     self->grid_layers = 1;
     self->grid_layer_height = 4.0f;
     self->air_tint[0] = self->air_tint[1] = self->air_tint[2] = 1.0f;
+    self->draw_layers = LRG_RENDER_LAYERS_MASK_ALL;
 
     /* build the GPU resources behind a loading screen, not on the
      * first draw (see lrg_prewarm_track()) */
@@ -531,6 +724,10 @@ lrg_light_set_add_point_light (LrgLightSet    *self,
     color_to_rgb (color, pl->color);
     pl->radius = radius;
     pl->intensity = 1.0f;
+    pl->direction[1] = -1.0f;
+    pl->inner = 30.0f;
+    pl->outer = 45.0f;
+    pl->layers = LRG_RENDER_LAYERS_MASK_ALL;
     self->n_lights++;
     self->lights_serial++;
     return id;
@@ -1153,6 +1350,87 @@ lrg_light_set_set_alpha_cutoff (LrgLightSet *self,
 /* Shader                                                                   */
 /* ------------------------------------------------------------------------ */
 
+/* lit_locations:
+ * Looks up the uniforms of a program built from the lit library and
+ * points its samplers at their units (the material maps, the grid, the
+ * shadow atlases), sets the material defaults (pbrParams, mapFlags,
+ * heightScale) and every render layer.  raylib's material-map locations
+ * of @handle are pointed at the library's samplers so DrawMesh() binds
+ * the maps where the shader reads them. */
+static void
+lit_locations (Shader       *handle,
+               LitLocations *L)
+{
+    gint   unit;
+    gfloat scale = LRG_LIGHT_SET_HEIGHT_SCALE;
+    gint   off = 0;
+    gfloat pbr[4] = { LRG_LIGHT_SET_DEFAULT_METALLIC, LRG_LIGHT_SET_DEFAULT_ROUGHNESS, 1.0f, 1.0f };
+    gint   layers[2] = { 0xffff, 0xffff };
+
+    L->ambient = GetShaderLocation (*handle, "ambientColor");
+    L->sun_dir = GetShaderLocation (*handle, "sunDirection");
+    L->sun_color = GetShaderLocation (*handle, "sunColor");
+    L->count = GetShaderLocation (*handle, "lightCount");
+    L->positions = GetShaderLocation (*handle, "lightPosition");
+    L->colors = GetShaderLocation (*handle, "lightColor");
+    L->radii = GetShaderLocation (*handle, "lightRadius");
+    L->cutoff = GetShaderLocation (*handle, "alphaCutoff");
+    L->use_grid = GetShaderLocation (*handle, "useGrid");
+    L->light_data = GetShaderLocation (*handle, "lightData");
+    L->light_grid = GetShaderLocation (*handle, "lightGrid");
+    L->grid_params = GetShaderLocation (*handle, "gridParams");
+    L->limit = GetShaderLocation (*handle, "lightLimit");
+    L->emission_color = GetShaderLocation (*handle, "emissionColor");
+    L->grid_layers = GetShaderLocation (*handle, "gridLayers");
+    L->light_shadow = GetShaderLocation (*handle, "lightShadow");
+    L->air_params = GetShaderLocation (*handle, "airParams");
+    L->air_tint = GetShaderLocation (*handle, "airTint");
+    L->air_camera = GetShaderLocation (*handle, "airCamera");
+    L->air_light_color = GetShaderLocation (*handle, "airLightColor");
+    L->map_camera = GetShaderLocation (*handle, "mapCamera");
+    L->spots = GetShaderLocation (*handle, "lightSpot");
+    L->spot_extra = GetShaderLocation (*handle, "lightSpotExtra");
+    L->draw_layers = GetShaderLocation (*handle, "drawLayers");
+    L->output_linear = GetShaderLocation (*handle, "outputLinear");
+    lrg_light_set_fog_locations (*handle, &L->fog);
+    lrg_shadow_locations (*handle, &L->shadow);
+    lrg_ground_overlay_locations (*handle, &L->overlay);
+
+    /* The emission map is raylib's MATERIAL_MAP_EMISSION: DrawMesh()
+     * binds a material's map to that unit and sets the sampler through
+     * this location. Without a map the unit is empty and reads black;
+     * the sampler must not default to unit 0 (the albedo). */
+    unit = LRG_LIGHT_SET_EMISSION_UNIT;
+    handle->locs[SHADER_LOC_MAP_EMISSION] = GetShaderLocation (*handle, "emissionMap");
+    SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_EMISSION], &unit, SHADER_UNIFORM_INT);
+    /* material slots (U9.1): normal, metallic-gloss and height maps
+     * ride raylib's MATERIAL_MAP_NORMAL / METALNESS / HEIGHT units */
+    unit = LRG_LIGHT_SET_NORMAL_UNIT;
+    handle->locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation (*handle, "normalMap");
+    SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_NORMAL], &unit, SHADER_UNIFORM_INT);
+    unit = LRG_LIGHT_SET_METALLIC_UNIT;
+    handle->locs[SHADER_LOC_MAP_METALNESS] = GetShaderLocation (*handle, "metallicMap");
+    SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_METALNESS], &unit, SHADER_UNIFORM_INT);
+    unit = LRG_LIGHT_SET_HEIGHT_UNIT;
+    handle->locs[SHADER_LOC_MAP_HEIGHT] = GetShaderLocation (*handle, "heightMap");
+    SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_HEIGHT], &unit, SHADER_UNIFORM_INT);
+    /* 0.9.0: the ORM map rides raylib's MATERIAL_MAP_OCCLUSION unit */
+    unit = LRG_LIGHT_SET_ORM_UNIT;
+    handle->locs[SHADER_LOC_MAP_OCCLUSION] = GetShaderLocation (*handle, "ormMap");
+    SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_OCCLUSION], &unit, SHADER_UNIFORM_INT);
+
+    /* the material defaults a draw without a material gets */
+    SetShaderValue (*handle, GetShaderLocation (*handle, "heightScale"), &scale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue (*handle, GetShaderLocation (*handle, "mapFlags"), &off, SHADER_UNIFORM_INT);
+    SetShaderValue (*handle, GetShaderLocation (*handle, "pbrParams"), pbr, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, L->draw_layers, layers, SHADER_UNIFORM_IVEC2);
+
+    unit = GRID_DATA_UNIT;
+    SetShaderValue (*handle, L->light_data, &unit, SHADER_UNIFORM_INT);
+    unit = GRID_CELLS_UNIT;
+    SetShaderValue (*handle, L->light_grid, &unit, SHADER_UNIFORM_INT);
+}
+
 GrlShader *
 lrg_light_set_get_shader (LrgLightSet *self)
 {
@@ -1178,65 +1456,7 @@ lrg_light_set_get_shader (LrgLightSet *self)
         return NULL;
     }
 
-    self->loc_ambient = GetShaderLocation (*handle, "ambientColor");
-    self->loc_sun_dir = GetShaderLocation (*handle, "sunDirection");
-    self->loc_sun_color = GetShaderLocation (*handle, "sunColor");
-    self->loc_count = GetShaderLocation (*handle, "lightCount");
-    self->loc_positions = GetShaderLocation (*handle, "lightPosition");
-    self->loc_colors = GetShaderLocation (*handle, "lightColor");
-    self->loc_radii = GetShaderLocation (*handle, "lightRadius");
-    self->loc_cutoff = GetShaderLocation (*handle, "alphaCutoff");
-    self->loc_use_grid = GetShaderLocation (*handle, "useGrid");
-    self->loc_light_data = GetShaderLocation (*handle, "lightData");
-    self->loc_light_grid = GetShaderLocation (*handle, "lightGrid");
-    self->loc_grid_params = GetShaderLocation (*handle, "gridParams");
-    self->loc_limit = GetShaderLocation (*handle, "lightLimit");
-    self->loc_emission_color = GetShaderLocation (*handle, "emissionColor");
-    self->loc_grid_layers = GetShaderLocation (*handle, "gridLayers");
-    self->loc_light_shadow = GetShaderLocation (*handle, "lightShadow");
-    self->loc_air_params = GetShaderLocation (*handle, "airParams");
-    self->loc_air_tint = GetShaderLocation (*handle, "airTint");
-    self->loc_air_camera = GetShaderLocation (*handle, "airCamera");
-    self->loc_air_light_color = GetShaderLocation (*handle, "airLightColor");
-    lrg_light_set_fog_locations (*handle, &self->fog_locs);
-    lrg_shadow_locations (*handle, &self->shadow_locs);
-    lrg_ground_overlay_locations (*handle, &self->overlay_locs);
-
-    /* The emission map is raylib's MATERIAL_MAP_EMISSION: DrawMesh()
-     * binds a material's map to that unit and sets the sampler through
-     * this location. Without a map the unit is empty and reads black;
-     * the sampler must not default to unit 0 (the albedo). */
-    {
-        gint unit = LRG_LIGHT_SET_EMISSION_UNIT;
-
-        handle->locs[SHADER_LOC_MAP_EMISSION] = GetShaderLocation (*handle, "emissionMap");
-        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_EMISSION], &unit, SHADER_UNIFORM_INT);
-        /* material slots (U9.1): normal, metallic-gloss and height maps
-         * ride raylib's MATERIAL_MAP_NORMAL / METALNESS / HEIGHT units */
-        unit = LRG_LIGHT_SET_NORMAL_UNIT;
-        handle->locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation (*handle, "normalMap");
-        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_NORMAL], &unit, SHADER_UNIFORM_INT);
-        unit = LRG_LIGHT_SET_METALLIC_UNIT;
-        handle->locs[SHADER_LOC_MAP_METALNESS] = GetShaderLocation (*handle, "metallicMap");
-        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_METALNESS], &unit, SHADER_UNIFORM_INT);
-        unit = LRG_LIGHT_SET_HEIGHT_UNIT;
-        handle->locs[SHADER_LOC_MAP_HEIGHT] = GetShaderLocation (*handle, "heightMap");
-        SetShaderValue (*handle, handle->locs[SHADER_LOC_MAP_HEIGHT], &unit, SHADER_UNIFORM_INT);
-        {
-            gfloat scale = LRG_LIGHT_SET_HEIGHT_SCALE;
-            gint   off = 0;
-
-            SetShaderValue (*handle, GetShaderLocation (*handle, "heightScale"), &scale,
-                            SHADER_UNIFORM_FLOAT);
-            SetShaderValue (*handle, GetShaderLocation (*handle, "mapFlags"), &off,
-                            SHADER_UNIFORM_INT);
-        }
-        self->loc_map_camera = GetShaderLocation (*handle, "mapCamera");
-        unit = GRID_DATA_UNIT;
-        SetShaderValue (*handle, self->loc_light_data, &unit, SHADER_UNIFORM_INT);
-        unit = GRID_CELLS_UNIT;
-        SetShaderValue (*handle, self->loc_light_grid, &unit, SHADER_UNIFORM_INT);
-    }
+    lit_locations (handle, &self->locs);
     return self->shader;
 }
 
@@ -1283,6 +1503,41 @@ grid_layer_uniform (LrgLightSet *self,
     out[3] = (gfloat)self->grid_slots;
 }
 
+/* spot_texels:
+ * The third and fourth texel of a light (and its lightSpot /
+ * lightSpotExtra uniforms): (spot direction, cos outer) with cos outer
+ * -2 for a point light, (cos inner, spot shadow slot or -1, layers low
+ * 16 bits, layers high 16 bits). */
+static void
+spot_texels (LrgLightSet *self,
+             PointLight  *pl,
+             guint        id,
+             gboolean     shadows_ready,
+             gfloat      *spot,
+             gfloat      *extra)
+{
+    if (pl->spot)
+    {
+        spot[0] = pl->direction[0];
+        spot[1] = pl->direction[1];
+        spot[2] = pl->direction[2];
+        spot[3] = cosf (pl->outer * (gfloat)G_PI / 180.0f);
+        extra[0] = cosf (pl->inner * (gfloat)G_PI / 180.0f);
+        extra[1] = shadows_ready
+                   ? (gfloat)lrg_shadow_renderer_get_spot_slot (self->shadows, id)
+                   : -1.0f;
+    }
+    else
+    {
+        spot[0] = spot[1] = spot[2] = 0.0f;
+        spot[3] = -2.0f;
+        extra[0] = 1.0f;
+        extra[1] = -1.0f;
+    }
+    extra[2] = (gfloat)(pl->layers & 0xffffu);
+    extra[3] = (gfloat)(pl->layers >> 16);
+}
+
 /* upload_grid:
  * The lights of the built grid (two texels each, in first-use order)
  * and the cell lists (four indices per texel, -1 terminated), bound to
@@ -1295,8 +1550,9 @@ grid_layer_uniform (LrgLightSet *self,
  * (a few texels per light) and sent only when it differs from what the
  * GPU holds. The buffers persist between applies. */
 static void
-upload_grid (LrgLightSet *self,
-             Shader      *handle)
+upload_grid (LrgLightSet        *self,
+             Shader             *handle,
+             const LitLocations *L)
 {
     guint   n = self->grid_cells;
     gsize   c;
@@ -1319,8 +1575,8 @@ upload_grid (LrgLightSet *self,
     if (self->up_data == NULL)
     {
         self->up_order = g_new (guint, LRG_LIGHT_SET_GRID_MAX_LIGHTS);
-        self->up_data = g_new0 (gfloat, (gsize)LRG_LIGHT_SET_GRID_MAX_LIGHTS * 8);
-        self->up_fresh = g_new0 (gfloat, (gsize)LRG_LIGHT_SET_GRID_MAX_LIGHTS * 8);
+        self->up_data = g_new0 (gfloat, (gsize)LRG_LIGHT_SET_GRID_MAX_LIGHTS * TEXEL_FLOATS);
+        self->up_fresh = g_new0 (gfloat, (gsize)LRG_LIGHT_SET_GRID_MAX_LIGHTS * TEXEL_FLOATS);
     }
 
     /* the cell lists and the lights' order, after a rebuild (or when the
@@ -1380,14 +1636,15 @@ upload_grid (LrgLightSet *self,
         self->up_grid_serial = self->grid_serial;
     }
 
-    /* the light texture, 2 x lights: position and radius, colour and
-     * shadow slot */
+    /* the light texture, 4 x lights: position and radius, colour and
+     * point shadow slot, spot direction and cos outer, cos inner, spot
+     * shadow slot and layers (see LRG_LIGHT_SAMPLE_GLSL) */
     shadows_ready = self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows);
     for (i = 0; i < self->up_n_data; i++)
     {
         guint       id = self->up_order[i];
         PointLight *pl = &g_array_index (self->lights, PointLight, id);
-        gfloat     *t = self->up_fresh + (gsize)i * 8;
+        gfloat     *t = self->up_fresh + (gsize)i * TEXEL_FLOATS;
         guint       k;
 
         for (k = 0; k < 3; k++)
@@ -1400,18 +1657,19 @@ upload_grid (LrgLightSet *self,
         t[7] = shadows_ready
                ? (gfloat)lrg_shadow_renderer_get_light_slot (self->shadows, id)
                : -1.0f;
+        spot_texels (self, pl, id, shadows_ready, t + 8, t + 12);
     }
     if (self->up_n_data == 0)
-        memset (self->up_fresh, 0, 8 * sizeof (gfloat));
+        memset (self->up_fresh, 0, TEXEL_FLOATS * sizeof (gfloat));
     if (self->tex_data == 0 || self->tex_data_height != (gint)MAX (self->up_n_data, 1u)
         || memcmp (self->up_fresh, self->up_data,
-                   (gsize)MAX (self->up_n_data, 1u) * 8 * sizeof (gfloat)) != 0)
+                   (gsize)MAX (self->up_n_data, 1u) * TEXEL_FLOATS * sizeof (gfloat)) != 0)
     {
-        unused_w = 2;
+        unused_w = LRG_LIGHT_SET_GRID_TEXELS;
         upload_texture (&self->tex_data, &unused_w, &self->tex_data_height,
-                        2, (gint)MAX (self->up_n_data, 1u), self->up_fresh);
+                        LRG_LIGHT_SET_GRID_TEXELS, (gint)MAX (self->up_n_data, 1u), self->up_fresh);
         memcpy (self->up_data, self->up_fresh,
-                (gsize)MAX (self->up_n_data, 1u) * 8 * sizeof (gfloat));
+                (gsize)MAX (self->up_n_data, 1u) * TEXEL_FLOATS * sizeof (gfloat));
     }
 
     rlActiveTextureSlot (GRID_DATA_UNIT);
@@ -1425,16 +1683,17 @@ upload_grid (LrgLightSet *self,
     params[2] = self->grid_cell;
     params[3] = (gfloat)n;
     grid_layer_uniform (self, layers);
-    SetShaderValue (*handle, self->loc_use_grid, &use_grid, SHADER_UNIFORM_INT);
-    SetShaderValue (*handle, self->loc_grid_params, params, SHADER_UNIFORM_VEC4);
-    SetShaderValue (*handle, self->loc_grid_layers, layers, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, L->use_grid, &use_grid, SHADER_UNIFORM_INT);
+    SetShaderValue (*handle, L->grid_params, params, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, L->grid_layers, layers, SHADER_UNIFORM_VEC4);
 }
 
 /* upload_air:
  * The air uniforms of LRG_LIGHT_AIR_GLSL: density 0 turns it off. */
 static void
-upload_air (LrgLightSet *self,
-            Shader      *handle)
+upload_air (LrgLightSet        *self,
+            Shader             *handle,
+            const LitLocations *L)
 {
     gfloat params[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
     gfloat tint[4];
@@ -1457,11 +1716,11 @@ upload_air (LrgLightSet *self,
         camera[k] = (gfloat)(self->camera[k] - self->origin[k]);
     }
     tint[3] = self->air_distance;
-    SetShaderValue (*handle, self->loc_air_params, params, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, L->air_params, params, SHADER_UNIFORM_VEC4);
     if (!self->air_on)
         return;
-    SetShaderValue (*handle, self->loc_air_tint, tint, SHADER_UNIFORM_VEC4);
-    SetShaderValue (*handle, self->loc_air_camera, camera, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, L->air_tint, tint, SHADER_UNIFORM_VEC4);
+    SetShaderValue (*handle, L->air_camera, camera, SHADER_UNIFORM_VEC3);
 
     /* the colours of the shadowed point lights the air scatters */
     if (self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows))
@@ -1474,34 +1733,106 @@ upload_air (LrgLightSet *self,
             colors[i * 3 + k] = pl != NULL ? pl->color[k] * pl->intensity : 0.0f;
     }
     if (n_points > 0)
-        SetShaderValueV (*handle, self->loc_air_light_color, colors, SHADER_UNIFORM_VEC3,
+        SetShaderValueV (*handle, L->air_light_color, colors, SHADER_UNIFORM_VEC3,
                          (gint)n_points);
 }
 
+/* ------------------------------------------------------------------------ */
+/* 0.9.0: the hooks of the other passes                                     */
+/* ------------------------------------------------------------------------ */
+
+/* the first hook unit and the end of the hook window, -1 until queried
+ * with a context (see lrg_light_set_hook_unit_usable()) */
+static gint hook_first = -1;
+static gint hook_end = -1;
+
+typedef void (*GetIntegervFn) (guint pname, gint *data);
+
+/* GL_MAX_TEXTURE_IMAGE_UNITS */
+#define GL_MAX_TEXTURE_IMAGE_UNITS_ENUM (0x8872)
+
+/* hook_window:
+ * Queries the driver's fragment texture units once: more than 16 gives
+ * the hooks LRG_LIGHT_SET_HOOK_UNIT .. MIN (units, 32); the 16 GL 3.3
+ * guarantees give them raylib's unused material slots 7 .. 10. */
+static void
+hook_window (void)
+{
+    GetIntegervFn get_integerv;
+    gint          units = 16;
+
+    if (hook_first >= 0 || !IsWindowReady ())
+        return;
+    get_integerv = (GetIntegervFn)rlGetProcAddress ("glGetIntegerv");
+    if (get_integerv != NULL)
+        get_integerv (GL_MAX_TEXTURE_IMAGE_UNITS_ENUM, &units);
+    if (units > LRG_LIGHT_SET_HOOK_UNIT)
+    {
+        hook_first = LRG_LIGHT_SET_HOOK_UNIT;
+        hook_end = MIN (units, 32);
+    }
+    else
+    {
+        hook_first = 7;
+        hook_end = LRG_SHADOW_SPOT_UNIT;
+    }
+}
+
 gboolean
-lrg_light_set_apply (LrgLightSet *self,
-                     gdouble      camera_x,
-                     gdouble      camera_y,
-                     gdouble      camera_z)
+lrg_light_set_hook_unit_usable (gint unit)
+{
+    hook_window ();
+    return hook_first >= 0 && unit >= hook_first && unit < hook_end;
+}
+
+gint
+lrg_light_set_hook_unit_first (void)
+{
+    hook_window ();
+    return hook_first >= 0 ? hook_first : LRG_LIGHT_SET_HOOK_UNIT;
+}
+
+/* bind_hooks:
+ * Lets the environment, SSAO and decal binders set their uniforms and
+ * textures (or their inactive state for a NULL object) on the lit
+ * program, handing out texture units from the hook window upward. */
+static void
+bind_hooks (LrgLightSet *self,
+            guint        shader_id)
+{
+    gint unit = lrg_light_set_hook_unit_first ();
+
+    rlEnableShader (shader_id);
+    lrg_environment_bind_private (self->environment, shader_id, &unit);
+    lrg_ssao_bind_private (self->ssao, shader_id, &unit);
+    lrg_decal_set_bind_private (self->decals, shader_id, &unit);
+    rlActiveTextureSlot (0);
+}
+
+/* upload_program:
+ * Uploads the lights of the last selection (and the grid, shadows,
+ * air, overlay, fog, layers, output encoding) to @handle, a program
+ * built from the lit library whose locations are @L, and lets the hook
+ * binders bind their state.  The eye is the camera of the last
+ * selection. */
+static void
+upload_program (LrgLightSet        *self,
+                Shader             *handle,
+                const LitLocations *L)
 {
     gfloat  positions[LRG_LIGHT_SET_MAX_ACTIVE * 3];
     gfloat  colors[LRG_LIGHT_SET_MAX_ACTIVE * 3];
     gfloat  radii[LRG_LIGHT_SET_MAX_ACTIVE];
     gfloat  shadow_slots[LRG_LIGHT_SET_MAX_ACTIVE];
+    gfloat  spots[LRG_LIGHT_SET_MAX_ACTIVE * 4];
+    gfloat  spot_extra[LRG_LIGHT_SET_MAX_ACTIVE * 4];
     gfloat  sun_dir[3] = { 0.0f, -1.0f, 0.0f };
     gfloat  sun_color[3] = { 0.0f, 0.0f, 0.0f };
     gboolean shadows_ready;
-    Shader *handle;
     gint    count;
     guint   i;
 
-    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
-
     shadows_ready = self->shadows != NULL && lrg_shadow_renderer_is_ready (self->shadows);
-    lrg_light_set_select (self, camera_x, camera_y, camera_z);
-    if (lrg_light_set_get_shader (self) == NULL)
-        return FALSE;
-    handle = grl_shader_get_handle (self->shader);
 
     /* Positions relative to the floating origin, colours pre-scaled. */
     for (i = 0; i < self->n_active; i++)
@@ -1519,6 +1850,7 @@ lrg_light_set_apply (LrgLightSet *self,
                           ? (gfloat)lrg_shadow_renderer_get_light_slot (self->shadows,
                                                                         self->active[i])
                           : -1.0f;
+        spot_texels (self, pl, self->active[i], shadows_ready, spots + i * 4, spot_extra + i * 4);
     }
     if (self->has_directional)
     {
@@ -1527,48 +1859,122 @@ lrg_light_set_apply (LrgLightSet *self,
     }
     count = (gint)self->n_active;
 
-    SetShaderValue (*handle, self->loc_ambient, self->ambient, SHADER_UNIFORM_VEC3);
-    SetShaderValue (*handle, self->loc_sun_dir, sun_dir, SHADER_UNIFORM_VEC3);
-    SetShaderValue (*handle, self->loc_sun_color, sun_color, SHADER_UNIFORM_VEC3);
-    SetShaderValue (*handle, self->loc_count, &count, SHADER_UNIFORM_INT);
-    SetShaderValue (*handle, self->loc_cutoff, &self->cutoff, SHADER_UNIFORM_FLOAT);
+    SetShaderValue (*handle, L->ambient, self->ambient, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, L->sun_dir, sun_dir, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, L->sun_color, sun_color, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, L->count, &count, SHADER_UNIFORM_INT);
+    SetShaderValue (*handle, L->cutoff, &self->cutoff, SHADER_UNIFORM_FLOAT);
     if (count > 0)
     {
-        SetShaderValueV (*handle, self->loc_positions, positions, SHADER_UNIFORM_VEC3, count);
-        SetShaderValueV (*handle, self->loc_colors, colors, SHADER_UNIFORM_VEC3, count);
-        SetShaderValueV (*handle, self->loc_radii, radii, SHADER_UNIFORM_FLOAT, count);
-        SetShaderValueV (*handle, self->loc_light_shadow, shadow_slots, SHADER_UNIFORM_FLOAT, count);
+        SetShaderValueV (*handle, L->positions, positions, SHADER_UNIFORM_VEC3, count);
+        SetShaderValueV (*handle, L->colors, colors, SHADER_UNIFORM_VEC3, count);
+        SetShaderValueV (*handle, L->radii, radii, SHADER_UNIFORM_FLOAT, count);
+        SetShaderValueV (*handle, L->light_shadow, shadow_slots, SHADER_UNIFORM_FLOAT, count);
+        SetShaderValueV (*handle, L->spots, spots, SHADER_UNIFORM_VEC4, count);
+        SetShaderValueV (*handle, L->spot_extra, spot_extra, SHADER_UNIFORM_VEC4, count);
     }
-    SetShaderValue (*handle, self->loc_limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
-    SetShaderValue (*handle, self->loc_emission_color, self->emission, SHADER_UNIFORM_VEC3);
+    SetShaderValue (*handle, L->limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
+    SetShaderValue (*handle, L->emission_color, self->emission, SHADER_UNIFORM_VEC3);
     {
         /* the camera, origin-relative, for the material slots' view vector */
         gfloat cam[3];
 
-        cam[0] = (gfloat)(camera_x - self->origin[0]);
-        cam[1] = (gfloat)(camera_y - self->origin[1]);
-        cam[2] = (gfloat)(camera_z - self->origin[2]);
-        SetShaderValue (*handle, self->loc_map_camera, cam, SHADER_UNIFORM_VEC3);
+        cam[0] = (gfloat)(self->camera[0] - self->origin[0]);
+        cam[1] = (gfloat)(self->camera[1] - self->origin[1]);
+        cam[2] = (gfloat)(self->camera[2] - self->origin[2]);
+        SetShaderValue (*handle, L->map_camera, cam, SHADER_UNIFORM_VEC3);
     }
     /* M14: the shadow atlases and the air */
     lrg_shadow_renderer_upload (shadows_ready ? self->shadows : NULL, *handle,
-                                &self->shadow_locs);
-    upload_air (self, handle);
+                                &L->shadow);
+    upload_air (self, handle, L);
     /* snow and cloud shadows: placed by the overlay's own origin of the
      * draw space (lrg_ground_overlay_set_origin()) */
-    lrg_ground_overlay_upload (self->overlay, *handle, &self->overlay_locs, NULL);
+    lrg_ground_overlay_upload (self->overlay, *handle, &L->overlay, NULL);
     if (self->grid_cells > 0 && self->grid_built)
     {
-        upload_grid (self, handle);
+        upload_grid (self, handle, L);
     }
     else
     {
         gint use_grid = 0;
 
-        SetShaderValue (*handle, self->loc_use_grid, &use_grid, SHADER_UNIFORM_INT);
+        SetShaderValue (*handle, L->use_grid, &use_grid, SHADER_UNIFORM_INT);
     }
-    lrg_light_set_upload_fog (self, *handle, &self->fog_locs);
+    lrg_light_set_upload_fog (self, *handle, &L->fog);
+    {
+        gint layers[2];
+        gint linear = self->output_linear ? 1 : 0;
+
+        layers[0] = (gint)(self->draw_layers & 0xffffu);
+        layers[1] = (gint)(self->draw_layers >> 16);
+        SetShaderValue (*handle, L->draw_layers, layers, SHADER_UNIFORM_IVEC2);
+        SetShaderValue (*handle, L->output_linear, &linear, SHADER_UNIFORM_INT);
+    }
+    bind_hooks (self, handle->id);
+}
+
+gboolean
+lrg_light_set_apply (LrgLightSet *self,
+                     gdouble      camera_x,
+                     gdouble      camera_y,
+                     gdouble      camera_z)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    lrg_light_set_select (self, camera_x, camera_y, camera_z);
+    if (lrg_light_set_get_shader (self) == NULL)
+        return FALSE;
+    upload_program (self, grl_shader_get_handle (self->shader), &self->locs);
     return TRUE;
+}
+
+gboolean
+lrg_light_set_bind_shader (LrgLightSet *self,
+                           GrlShader   *shader)
+{
+    LitLocations *L;
+    Shader       *handle;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+    g_return_val_if_fail (GRL_IS_SHADER (shader), FALSE);
+
+    if (!IsWindowReady ())
+        return FALSE;
+    handle = grl_shader_get_handle (shader);
+    if (handle->id == 0 || handle->id == rlGetShaderIdDefault ())
+        return FALSE;
+    if (self->shader != NULL && ((Shader *)grl_shader_get_handle (self->shader))->id == handle->id)
+    {
+        upload_program (self, handle, &self->locs);
+        return TRUE;
+    }
+
+    /* a user program: its locations once per program id (and its
+     * samplers pointed at their units then) */
+    if (self->foreign == NULL)
+        self->foreign = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
+    L = g_hash_table_lookup (self->foreign, GUINT_TO_POINTER (handle->id));
+    if (L == NULL)
+    {
+        L = g_new0 (LitLocations, 1);
+        lit_locations (handle, L);
+        g_hash_table_insert (self->foreign, GUINT_TO_POINTER (handle->id), L);
+    }
+    upload_program (self, handle, L);
+    return TRUE;
+}
+
+void
+lrg_light_set_forget_shader (LrgLightSet *self,
+                             GrlShader   *shader)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (GRL_IS_SHADER (shader));
+
+    if (self->foreign != NULL)
+        g_hash_table_remove (self->foreign,
+                             GUINT_TO_POINTER (((Shader *)grl_shader_get_handle (shader))->id));
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1773,6 +2179,8 @@ lrg_light_set_sample_locations (Shader                      shader,
     out_locs->positions = GetShaderLocation (shader, "lightPosition");
     out_locs->colors = GetShaderLocation (shader, "lightColor");
     out_locs->radii = GetShaderLocation (shader, "lightRadius");
+    out_locs->spots = GetShaderLocation (shader, "lightSpot");
+    out_locs->spot_extra = GetShaderLocation (shader, "lightSpotExtra");
     out_locs->use_grid = GetShaderLocation (shader, "useGrid");
     out_locs->light_data = GetShaderLocation (shader, "lightData");
     out_locs->light_grid = GetShaderLocation (shader, "lightGrid");
@@ -1816,6 +2224,8 @@ lrg_light_set_upload_sample (LrgLightSet                      *self,
     gfloat  positions[LRG_LIGHT_SET_MAX_ACTIVE * 3];
     gfloat  colors[LRG_LIGHT_SET_MAX_ACTIVE * 3];
     gfloat  radii[LRG_LIGHT_SET_MAX_ACTIVE];
+    gfloat  spots[LRG_LIGHT_SET_MAX_ACTIVE * 4];
+    gfloat  spot_extra[LRG_LIGHT_SET_MAX_ACTIVE * 4];
     gfloat  sun_color[3] = { 0.0f, 0.0f, 0.0f };
     gint    count;
     gint    use_grid;
@@ -1837,6 +2247,7 @@ lrg_light_set_upload_sample (LrgLightSet                      *self,
             colors[i * 3 + k] = pl->color[k] * pl->intensity;
         }
         radii[i] = pl->radius;
+        spot_texels (self, pl, self->active[i], FALSE, spots + i * 4, spot_extra + i * 4);
     }
     if (self->has_directional)
         memcpy (sun_color, self->directional_color, sizeof sun_color);
@@ -1850,6 +2261,8 @@ lrg_light_set_upload_sample (LrgLightSet                      *self,
         SetShaderValueV (shader, locs->positions, positions, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (shader, locs->colors, colors, SHADER_UNIFORM_VEC3, count);
         SetShaderValueV (shader, locs->radii, radii, SHADER_UNIFORM_FLOAT, count);
+        SetShaderValueV (shader, locs->spots, spots, SHADER_UNIFORM_VEC4, count);
+        SetShaderValueV (shader, locs->spot_extra, spot_extra, SHADER_UNIFORM_VEC4, count);
     }
     SetShaderValue (shader, locs->limit, &self->light_limit, SHADER_UNIFORM_FLOAT);
 
@@ -1966,8 +2379,14 @@ lrg_light_set_sample (LrgLightSet      *self,
             continue;
         if (has_normal && dist > 0.0001f)
             lambert = MAX ((n[0] * d[0] + n[1] * d[1] + n[2] * d[2]) / dist, 0.0f);
+        f = f * f;
+        /* 0.9.0: a spot light's cone, seen from the point */
+        if (pl->spot && dist > 0.0001f)
+            f *= lrg_light_set_spot_factor (pl->inner, pl->outer,
+                                            -(pl->direction[0] * d[0] + pl->direction[1] * d[1]
+                                              + pl->direction[2] * d[2]) / dist);
         for (k = 0; k < 3; k++)
-            out_rgb[k] += pl->color[k] * pl->intensity * f * f * lambert;
+            out_rgb[k] += pl->color[k] * pl->intensity * f * lambert;
     }
 
     for (k = 0; k < 3; k++)
@@ -2092,6 +2511,7 @@ lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
                                   const gdouble              *camera,
                                   gfloat                      max_distance,
                                   guint                       max,
+                                  gboolean                    spots,
                                   LrgLightSetShadowCandidate *out)
 {
     guint n = 0;
@@ -2110,7 +2530,8 @@ lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
         guint   slot;
         guint   k;
 
-        if (!pl->used || !pl->enabled || pl->intensity <= 0.0f || pl->shadow == 0)
+        if (!pl->used || !pl->enabled || pl->intensity <= 0.0f || pl->shadow == 0
+            || (!pl->spot) != (!spots))
             continue;
         for (k = 0; k < 3; k++)
         {
@@ -2120,6 +2541,10 @@ lrg_light_set_pick_shadow_lights (LrgLightSet                *self,
         c.id = id;
         c.radius = pl->radius;
         c.priority = pl->shadow;
+        c.spot = pl->spot;
+        memcpy (c.direction, pl->direction, sizeof c.direction);
+        c.outer_degrees = pl->outer;
+        c.bias = pl->shadow_bias;
         c.key = (gfloat)(sqrt (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) - (gdouble)pl->radius);
         if (max_distance > 0.0f && c.key > max_distance)
             continue;
@@ -2339,16 +2764,426 @@ lrg_light_set_prewarmable_init (LrgPrewarmableInterface *iface)
     iface->prewarm = lrg_light_set_prewarm;
 }
 
-/* stub (0.9.0 M2 contract): replaced by the PBR shader library */
 const gchar *
 lrg_light_set_get_glsl_library (void)
 {
-    return "";
+    return light_library;
 }
 
-/* stub (0.9.0 M2 contract): replaced by the PBR vertex source */
 const gchar *
 lrg_light_set_get_vertex_source (void)
 {
-    return "";
+    return light_vs;
+}
+
+/* ------------------------------------------------------------------------ */
+/* 0.9.0 M2: spot lights, per-light shadow bias and layers                  */
+/* ------------------------------------------------------------------------ */
+
+/* set_cone:
+ * Makes @pl a spot along @direction (normalized here) with the given
+ * half-angles (inner 0 .. 89, outer inner .. 89); FALSE for a zero or
+ * non-finite direction (nothing changed). */
+static gboolean
+set_cone (PointLight       *pl,
+          const GrlVector3 *direction,
+          gfloat            inner_degrees,
+          gfloat            outer_degrees)
+{
+    gfloat len;
+
+    len = sqrtf (direction->x * direction->x + direction->y * direction->y
+                 + direction->z * direction->z);
+    if (!(len > 0.0f) || !isfinite (len))
+        return FALSE;
+    inner_degrees = isfinite (inner_degrees) ? CLAMP (inner_degrees, 0.0f, 89.0f) : 30.0f;
+    outer_degrees = isfinite (outer_degrees) ? CLAMP (outer_degrees, inner_degrees, 89.0f)
+                                             : MAX (inner_degrees, 45.0f);
+    pl->spot = TRUE;
+    pl->direction[0] = direction->x / len;
+    pl->direction[1] = direction->y / len;
+    pl->direction[2] = direction->z / len;
+    pl->inner = inner_degrees;
+    pl->outer = outer_degrees;
+    return TRUE;
+}
+
+guint
+lrg_light_set_add_spot_light (LrgLightSet      *self,
+                              gdouble           x,
+                              gdouble           y,
+                              gdouble           z,
+                              const GrlVector3 *direction,
+                              const GrlColor   *color,
+                              gfloat            radius,
+                              gfloat            inner_degrees,
+                              gfloat            outer_degrees)
+{
+    guint id;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
+    g_return_val_if_fail (direction != NULL, LRG_LIGHT_SET_INVALID_LIGHT);
+
+    id = lrg_light_set_add_point_light (self, x, y, z, color, radius);
+    if (id == LRG_LIGHT_SET_INVALID_LIGHT)
+        return id;
+    if (!set_cone (light_at (self, id), direction, inner_degrees, outer_degrees))
+    {
+        g_warning ("lrg_light_set_add_spot_light: zero direction, added a point light");
+    }
+    self->lights_serial++;
+    return id;
+}
+
+void
+lrg_light_set_set_spot_light (LrgLightSet      *self,
+                              guint             light,
+                              const GrlVector3 *direction,
+                              gfloat            inner_degrees,
+                              gfloat            outer_degrees)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    if (direction == NULL)
+        pl->spot = FALSE;
+    else if (!set_cone (pl, direction, inner_degrees, outer_degrees))
+        g_return_if_reached ();
+    self->lights_serial++;
+}
+
+gboolean
+lrg_light_set_get_spot_light (LrgLightSet *self,
+                              guint        light,
+                              gfloat      *out_direction,
+                              gfloat      *out_inner_degrees,
+                              gfloat      *out_outer_degrees)
+{
+    PointLight *pl;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+
+    pl = light_at (self, light);
+    if (pl == NULL || !pl->spot)
+        return FALSE;
+    if (out_direction != NULL)
+        memcpy (out_direction, pl->direction, sizeof pl->direction);
+    if (out_inner_degrees != NULL)
+        *out_inner_degrees = pl->inner;
+    if (out_outer_degrees != NULL)
+        *out_outer_degrees = pl->outer;
+    return TRUE;
+}
+
+gfloat
+lrg_light_set_spot_factor (gfloat inner_degrees,
+                           gfloat outer_degrees,
+                           gfloat cos_angle)
+{
+    gfloat c_outer;
+    gfloat c_inner;
+    gfloat t;
+
+    /* GLSL smoothstep (edge0 = cos outer, edge1 = cos inner) */
+    c_outer = cosf (outer_degrees * (gfloat)G_PI / 180.0f);
+    c_inner = MAX (cosf (inner_degrees * (gfloat)G_PI / 180.0f), c_outer + 1e-4f);
+    t = CLAMP ((cos_angle - c_outer) / (c_inner - c_outer), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+void
+lrg_light_set_brdf (const gfloat *normal,
+                    const gfloat *view,
+                    const gfloat *light,
+                    const gfloat *albedo,
+                    gfloat        metallic,
+                    gfloat        roughness,
+                    gfloat       *out_rgb)
+{
+    gfloat h[3];
+    gfloat hl;
+    gfloat nl;
+    gfloat nv;
+    gfloat nh;
+    gfloat vh;
+    gfloat r;
+    gfloat a2;
+    gfloat dd;
+    gfloat d;
+    gfloat k;
+    gfloat g;
+    gfloat fw;
+    guint  c;
+
+    g_return_if_fail (normal != NULL && view != NULL && light != NULL);
+    g_return_if_fail (albedo != NULL && out_rgb != NULL);
+
+    /* the same steps as lrg_brdf_direct() in the shader */
+    nl = MAX (normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2], 0.0f);
+    if (nl <= 0.0f)
+    {
+        out_rgb[0] = out_rgb[1] = out_rgb[2] = 0.0f;
+        return;
+    }
+    nv = MAX (normal[0] * view[0] + normal[1] * view[1] + normal[2] * view[2], 1e-4f);
+    for (c = 0; c < 3; c++)
+        h[c] = light[c] + view[c];
+    hl = sqrtf (h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+    if (hl > 0.0f)
+        for (c = 0; c < 3; c++)
+            h[c] /= hl;
+    nh = MAX (normal[0] * h[0] + normal[1] * h[1] + normal[2] * h[2], 0.0f);
+    vh = MAX (view[0] * h[0] + view[1] * h[1] + view[2] * h[2], 0.0f);
+    r = CLAMP (roughness, 0.045f, 1.0f);
+    a2 = r * r * r * r;
+    dd = nh * nh * (a2 - 1.0f) + 1.0f;
+    d = a2 / ((gfloat)G_PI * dd * dd);
+    k = (r + 1.0f) * (r + 1.0f) / 8.0f;
+    g = (nv / (nv * (1.0f - k) + k)) * (nl / (nl * (1.0f - k) + k));
+    fw = powf (1.0f - vh, 5.0f);
+    metallic = CLAMP (metallic, 0.0f, 1.0f);
+    for (c = 0; c < 3; c++)
+    {
+        gfloat f0 = 0.04f + (albedo[c] - 0.04f) * metallic;
+        gfloat f = f0 + (1.0f - f0) * fw;
+        gfloat spec = d * g * f / (4.0f * nv * nl);
+        gfloat kd = (1.0f - f) * (1.0f - metallic);
+
+        out_rgb[c] = (kd * albedo[c] + spec * (gfloat)G_PI) * nl;
+    }
+}
+
+void
+lrg_light_set_set_light_shadow_bias (LrgLightSet *self,
+                                     guint        light,
+                                     gfloat       bias)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->shadow_bias = isfinite (bias) ? MAX (bias, 0.0f) : 0.0f;
+    self->lights_serial++;
+}
+
+gfloat
+lrg_light_set_get_light_shadow_bias (LrgLightSet *self,
+                                     guint        light)
+{
+    PointLight *pl;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0.0f);
+
+    pl = light_at (self, light);
+    return pl != NULL ? pl->shadow_bias : 0.0f;
+}
+
+void
+lrg_light_set_set_light_layers (LrgLightSet *self,
+                                guint        light,
+                                guint32      layers)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    pl->layers = layers;
+    self->lights_serial++;
+}
+
+guint32
+lrg_light_set_get_light_layers (LrgLightSet *self,
+                                guint        light)
+{
+    PointLight *pl;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), 0);
+
+    pl = light_at (self, light);
+    return pl != NULL ? pl->layers : 0;
+}
+
+void
+lrg_light_set_set_draw_layers (LrgLightSet *self,
+                               guint32      layers)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->draw_layers = layers;
+    /* uploaded now, for renderers that switch layers between draws */
+    if (self->shader != NULL && IsWindowReady ())
+    {
+        Shader *handle = grl_shader_get_handle (self->shader);
+        gint    v[2];
+
+        v[0] = (gint)(layers & 0xffffu);
+        v[1] = (gint)(layers >> 16);
+        rlDrawRenderBatchActive ();
+        SetShaderValue (*handle, self->locs.draw_layers, v, SHADER_UNIFORM_IVEC2);
+    }
+}
+
+guint32
+lrg_light_set_get_draw_layers (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_RENDER_LAYERS_MASK_ALL);
+    return self->draw_layers;
+}
+
+void
+lrg_light_set_set_output_linear (LrgLightSet *self,
+                                 gboolean     linear)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    self->output_linear = !!linear;
+}
+
+gboolean
+lrg_light_set_get_output_linear (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), FALSE);
+    return self->output_linear;
+}
+
+/* ------------------------------------------------------------------------ */
+/* 0.9.0 M2: the hook objects                                               */
+/* ------------------------------------------------------------------------ */
+
+void
+lrg_light_set_set_environment (LrgLightSet    *self,
+                               LrgEnvironment *environment)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (environment == NULL || LRG_IS_ENVIRONMENT (environment));
+
+    g_set_object (&self->environment, environment);
+}
+
+LrgEnvironment *
+lrg_light_set_get_environment (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), NULL);
+    return self->environment;
+}
+
+void
+lrg_light_set_set_ssao (LrgLightSet *self,
+                        LrgSsao     *ssao)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (ssao == NULL || LRG_IS_SSAO (ssao));
+
+    g_set_object (&self->ssao, ssao);
+}
+
+LrgSsao *
+lrg_light_set_get_ssao (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), NULL);
+    return self->ssao;
+}
+
+void
+lrg_light_set_set_decals (LrgLightSet *self,
+                          LrgDecalSet *decals)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+    g_return_if_fail (decals == NULL || LRG_IS_DECAL_SET (decals));
+
+    g_set_object (&self->decals, decals);
+}
+
+LrgDecalSet *
+lrg_light_set_get_decals (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), NULL);
+    return self->decals;
+}
+
+/* ------------------------------------------------------------------------ */
+/* 0.9.0 M2: lights from LrgLight3DDesc                                     */
+/* ------------------------------------------------------------------------ */
+
+/* desc_color: the description's colour x @scale as an 8-bit colour,
+ * saturating at white */
+static GrlColor
+desc_color (const LrgLight3DDesc *desc,
+            gfloat                scale)
+{
+    GrlColor c;
+
+    c.r = (guint8)CLAMP (desc->color[0] * scale * 255.0f + 0.5f, 0.0f, 255.0f);
+    c.g = (guint8)CLAMP (desc->color[1] * scale * 255.0f + 0.5f, 0.0f, 255.0f);
+    c.b = (guint8)CLAMP (desc->color[2] * scale * 255.0f + 0.5f, 0.0f, 255.0f);
+    c.a = 255;
+    return c;
+}
+
+guint
+lrg_light_set_add_light_desc (LrgLightSet          *self,
+                              const LrgLight3DDesc *desc)
+{
+    GrlColor   c;
+    GrlVector3 dir;
+    guint      id;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_SET_INVALID_LIGHT);
+    g_return_val_if_fail (desc != NULL, LRG_LIGHT_SET_INVALID_LIGHT);
+
+    if (!desc->enabled)
+        return LRG_LIGHT_SET_INVALID_LIGHT;
+    dir.x = desc->direction[0];
+    dir.y = desc->direction[1];
+    dir.z = desc->direction[2];
+
+    /* the directional light: colour x intensity in the colour */
+    if (desc->kind == LRG_LIGHT3D_DIRECTIONAL)
+    {
+        c = desc_color (desc, MAX (desc->intensity, 0.0f));
+        lrg_light_set_set_directional (self, &dir, &c);
+        return LRG_LIGHT_SET_INVALID_LIGHT;
+    }
+
+    /* points and spots: the colour as given, intensity on the light */
+    c = desc_color (desc, 1.0f);
+    id = lrg_light_set_add_point_light (self, desc->position[0], desc->position[1],
+                                        desc->position[2], &c,
+                                        desc->range > 0.0f ? desc->range : 10.0f);
+    if (id == LRG_LIGHT_SET_INVALID_LIGHT)
+        return id;
+    lrg_light_set_set_point_light_intensity (self, id, MAX (desc->intensity, 0.0f));
+    if (desc->kind == LRG_LIGHT3D_SPOT)
+    {
+        /* radians in the description, degrees here */
+        if (!set_cone (light_at (self, id), &dir, desc->inner_angle * 180.0f / (gfloat)G_PI,
+                       desc->outer_angle * 180.0f / (gfloat)G_PI))
+            g_debug ("lrg_light_set_add_light_desc: a spot without a direction stays a point light");
+    }
+    lrg_light_set_set_light_layers (self, id, desc->layer_mask);
+    if (desc->cast_shadows)
+        lrg_light_set_set_point_light_shadow (self, id, 1);
+
+    /* a light component's own shadow bias */
+    if (desc->source != NULL && G_IS_OBJECT (desc->source))
+    {
+        GParamSpec *pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (desc->source),
+                                                          "shadow-bias");
+
+        if (pspec != NULL && pspec->value_type == G_TYPE_FLOAT)
+        {
+            gfloat bias = 0.0f;
+
+            g_object_get (desc->source, "shadow-bias", &bias, NULL);
+            lrg_light_set_set_light_shadow_bias (self, id, bias);
+        }
+    }
+    self->lights_serial++;
+    return id;
 }
