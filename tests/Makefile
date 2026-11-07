@@ -93,6 +93,12 @@ TEST_SOURCES := \
 	test-post-stack.c \
 	test-render-pipeline.c \
 	test-level-look.c \
+	test-lightmap-bake.c \
+	test-probe-grid.c \
+	test-gltf-animation.c \
+	test-anim-graph.c \
+	test-sequence.c \
+	test-skeleton2d.c \
 	test-runtime-prefab.c \
 	test-runtime-import-settings.c \
 	test-asset-dependencies.c \

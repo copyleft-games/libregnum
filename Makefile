@@ -79,6 +79,8 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-sky-dome.h \
 	src/graphics/lrg-sky-bodies.h \
 	src/graphics/lrg-light-set.h \
+	src/graphics/lrg-uv-unwrap.h \
+	src/graphics/lrg-skinned-sprite.h \
 	src/graphics/lrg-material.h \
 	src/graphics/lrg-shader-asset.h \
 	src/graphics/lrg-shader-graph.h \
@@ -93,6 +95,7 @@ PUBLIC_HEADERS := \
 	src/ecs/lrg-game-object.h \
 	src/ecs/lrg-world.h \
 	src/ecs/components/lrg-sprite-component.h \
+	src/ecs/components/lrg-skeleton2d-component.h \
 	src/ecs/components/lrg-collider-component.h \
 	src/ecs/components/lrg-transform-component.h \
 	src/ecs/components/lrg-animator-component.h \
@@ -401,6 +404,8 @@ PUBLIC_HEADERS := \
 	src/world3d/components/lrg-skinned-model-component.h \
 	src/world3d/components/lrg-decal-component.h \
 	src/world3d/components/lrg-lod-component.h \
+	src/world3d/components/lrg-animator-component3d.h \
+	src/world3d/components/lrg-sequence-component.h \
 	src/world3d/components/lrg-reflection-probe-component.h \
 	src/world3d/lrg-portal-system.h \
 	src/scene/lrg-material3d.h \
@@ -505,6 +510,12 @@ PUBLIC_HEADERS := \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
 	src/animation/lrg-skeleton.h \
+	src/animation/lrg-gltf-animation.h \
+	src/animation/lrg-retargeter.h \
+	src/animation/lrg-anim-graph.h \
+	src/animation/lrg-sequence.h \
+	src/animation/lrg-sequence-player.h \
+	src/animation/lrg-skeleton2d.h \
 	src/animation/lrg-animation-keyframe.h \
 	src/animation/lrg-animation-event.h \
 	src/animation/lrg-animation-clip.h \
@@ -580,6 +591,10 @@ PUBLIC_HEADERS := \
 	src/lighting/lrg-directional-light2d.h \
 	src/lighting/lrg-shadow-map.h \
 	src/lighting/lrg-shadow-renderer.h \
+	src/lighting/lrg-lightmap3d.h \
+	src/lighting/lrg-probe-grid.h \
+	src/lighting/lrg-lightmap-baker.h \
+	src/lighting/lrg-bake-bvh.h \
 	src/lighting/lrg-environment.h \
 	src/lighting/lrg-reflection-probe.h \
 	src/lighting/lrg-volumetric-fog.h \
@@ -818,6 +833,8 @@ SOURCES := \
 	src/graphics/lrg-sky-dome.c \
 	src/graphics/lrg-sky-bodies.c \
 	src/graphics/lrg-light-set.c \
+	src/graphics/lrg-uv-unwrap.c \
+	src/graphics/lrg-skinned-sprite.c \
 	src/graphics/lrg-material.c \
 	src/graphics/lrg-shader-asset.c \
 	src/graphics/lrg-shader-graph.c \
@@ -832,6 +849,7 @@ SOURCES := \
 	src/ecs/lrg-game-object.c \
 	src/ecs/lrg-world.c \
 	src/ecs/components/lrg-sprite-component.c \
+	src/ecs/components/lrg-skeleton2d-component.c \
 	src/ecs/components/lrg-collider-component.c \
 	src/ecs/components/lrg-transform-component.c \
 	src/ecs/components/lrg-animator-component.c \
@@ -1145,6 +1163,8 @@ SOURCES := \
 	src/world3d/components/lrg-skinned-model-component.c \
 	src/world3d/components/lrg-decal-component.c \
 	src/world3d/components/lrg-lod-component.c \
+	src/world3d/components/lrg-animator-component3d.c \
+	src/world3d/components/lrg-sequence-component.c \
 	src/world3d/components/lrg-reflection-probe-component.c \
 	src/world3d/lrg-portal-system.c \
 	src/scene/lrg-material3d.c \
@@ -1249,6 +1269,12 @@ SOURCES := \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
 	src/animation/lrg-skeleton.c \
+	src/animation/lrg-gltf-animation.c \
+	src/animation/lrg-retargeter.c \
+	src/animation/lrg-anim-graph.c \
+	src/animation/lrg-sequence.c \
+	src/animation/lrg-sequence-player.c \
+	src/animation/lrg-skeleton2d.c \
 	src/animation/lrg-animation-keyframe.c \
 	src/animation/lrg-animation-event.c \
 	src/animation/lrg-animation-clip.c \
@@ -1325,6 +1351,10 @@ SOURCES := \
 	src/lighting/lrg-directional-light2d.c \
 	src/lighting/lrg-shadow-map.c \
 	src/lighting/lrg-shadow-renderer.c \
+	src/lighting/lrg-lightmap3d.c \
+	src/lighting/lrg-probe-grid.c \
+	src/lighting/lrg-lightmap-baker.c \
+	src/lighting/lrg-bake-bvh.c \
 	src/lighting/lrg-environment.c \
 	src/lighting/lrg-reflection-probe.c \
 	src/lighting/lrg-volumetric-fog.c \
@@ -2458,6 +2488,7 @@ DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween
 	$(wildcard src/world3d/components/*.h) \
 	src/core/lrg-asset-meta.h src/core/lrg-asset-manager.h \
 	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
+	src/lighting/lrg-lightmap3d.h src/lighting/lrg-probe-grid.h src/lighting/lrg-lightmap-baker.h src/lighting/lrg-bake-bvh.h src/graphics/lrg-uv-unwrap.h src/graphics/lrg-skinned-sprite.h src/animation/lrg-gltf-animation.h src/animation/lrg-retargeter.h src/animation/lrg-anim-graph.h src/animation/lrg-sequence.h src/animation/lrg-sequence-player.h src/animation/lrg-skeleton2d.h src/world3d/components/lrg-animator-component3d.h src/world3d/components/lrg-sequence-component.h src/ecs/components/lrg-skeleton2d-component.h \
 	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h
 
 docs-check:
