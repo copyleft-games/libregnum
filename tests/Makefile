@@ -76,6 +76,13 @@ TEST_SOURCES := \
 	test-format-writers.c \
 	test-render-layers.c \
 	test-level-runtime.c \
+	test-entity3d.c \
+	test-world3d.c \
+	test-world3d-renderer.c \
+	test-world3d-components.c \
+	test-level-instantiate-3d.c \
+	test-runtime-prefab.c \
+	test-runtime-import-settings.c \
 	test-asset-dependencies.c \
 	test-asset-manager.c \
 	test-graphics.c \

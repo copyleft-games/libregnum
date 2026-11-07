@@ -376,6 +376,19 @@ PUBLIC_HEADERS := \
 	src/world3d/lrg-portal.h \
 	src/world3d/lrg-sector.h \
 	src/world3d/lrg-level3d.h \
+	src/world3d/lrg-entity3d.h \
+	src/world3d/lrg-world3d.h \
+	src/world3d/lrg-world3d-renderer.h \
+	src/world3d/components/lrg-mesh-renderer-component.h \
+	src/world3d/components/lrg-light-component.h \
+	src/world3d/components/lrg-camera-component.h \
+	src/world3d/components/lrg-audio-source-component.h \
+	src/world3d/components/lrg-audio-listener-component.h \
+	src/world3d/components/lrg-billboard-component.h \
+	src/world3d/components/lrg-tilemap-component.h \
+	src/world3d/components/lrg-spawn-component.h \
+	src/world3d/components/lrg-trigger-component.h \
+	src/world3d/components/lrg-skinned-model-component.h \
 	src/world3d/lrg-portal-system.h \
 	src/scene/lrg-material3d.h \
 	src/scene/lrg-scene-object.h \
@@ -1089,6 +1102,19 @@ SOURCES := \
 	src/world3d/lrg-portal.c \
 	src/world3d/lrg-sector.c \
 	src/world3d/lrg-level3d.c \
+	src/world3d/lrg-entity3d.c \
+	src/world3d/lrg-world3d.c \
+	src/world3d/lrg-world3d-renderer.c \
+	src/world3d/components/lrg-mesh-renderer-component.c \
+	src/world3d/components/lrg-light-component.c \
+	src/world3d/components/lrg-camera-component.c \
+	src/world3d/components/lrg-audio-source-component.c \
+	src/world3d/components/lrg-audio-listener-component.c \
+	src/world3d/components/lrg-billboard-component.c \
+	src/world3d/components/lrg-tilemap-component.c \
+	src/world3d/components/lrg-spawn-component.c \
+	src/world3d/components/lrg-trigger-component.c \
+	src/world3d/components/lrg-skinned-model-component.c \
 	src/world3d/lrg-portal-system.c \
 	src/scene/lrg-material3d.c \
 	src/scene/lrg-scene-object.c \
