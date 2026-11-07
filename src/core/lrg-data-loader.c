@@ -1582,6 +1582,15 @@ shortest_number (gdouble  value,
         return yaml_node_new_scalar (isnan (value) ? ".nan" : value > 0 ? ".inf" : "-.inf",
                                      YAML_SCALAR_STYLE_PLAIN);
 
+    /* Whole numbers print as integers: "%.1g" would turn 200 into
+     * "2e+02", which round-trips but is unreadable in hand-edited YAML.
+     * Below 1e15 every whole double is exact in "%.0f". */
+    if (value == floor (value) && fabs (value) < 1e15)
+    {
+        g_snprintf (buf, sizeof buf, "%.0f", value);
+        return yaml_node_new_scalar (buf, YAML_SCALAR_STYLE_PLAIN);
+    }
+
     for (digits = 1; digits <= 17; digits++)
     {
         gdouble back;
