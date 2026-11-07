@@ -4,6 +4,16 @@ Last updated: 2026-11-07
 
 ## Recently Shipped
 
+### v0.8.2: texture panels and new 3D modes (`src/term/`)
+
+A runtime release for hosts that composite their own windows in 3D (gsurf's `--lrg=3d`, cmacs lrgterm).
+
+- **Texture panels**: `lrg_3d_surface_sync_texture_panel()` shows a host-owned `GrlTexture` on a live window panel by reference (no read-back, crop or upload) while it keeps layout, focus, pins and picking; `panel_texture_updated()` refreshes mipmaps; `set_capture_enabled (FALSE)` drops the flat-frame read-back for hosts with only texture panels.
+- **Slots and brightness** on `LrgScenePanel` (`set_slot`, `compare_slot`, `set_brightness`) so arrangements can order and fade panels without knowing the host.
+- **Arrangements**: `carousel` (a ring around the viewer, ordinal 0 in front), `grid` (curved wall, one band per group) and `stack` (a Rolodex for history and revisions).
+- **Environments**: `sky` (sky dome following the time of day) and `studio` (neutral grey, ringed floor), through a new optional `draw_sky` hook on `LrgPanelEnvironment`.
+- **Host hooks**: a desktop HUD callback (`set_overlay_func`), panel coverage for refresh throttling, and named camera bookmarks with `lrg_pose_to_string()` / `lrg_pose_from_string()` for persistence.
+
 ### v0.8.1: lrgeditor on the retained UI toolkit (`src/editor/`, `src/editor/ui/`, `src/ui/`)
 
 A tool release: the engine runtime is unchanged and `src/gui/` stays untouched.

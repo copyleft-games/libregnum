@@ -710,6 +710,443 @@ test_arrangement_free (void)
     g_ptr_array_unref (panels);
 }
 
+/* -------------------------------------- panel slots + brightness (no GL) --- */
+
+static void
+test_scene_panel_slot (void)
+{
+    g_autoptr(LrgScenePanel) a = lrg_scene_panel_new (1);
+    g_autoptr(LrgScenePanel) b = lrg_scene_panel_new (2);
+    g_autoptr(LrgScenePanel) c = lrg_scene_panel_new (3);
+    guint i;
+
+    /* Defaults: ungrouped, ordinal 0, full brightness, no external texture. */
+    g_assert_cmpuint (lrg_scene_panel_get_group (a), ==, 0);
+    g_assert_cmpint (lrg_scene_panel_get_ordinal (a), ==, 0);
+    g_assert_cmpfloat_with_epsilon (lrg_scene_panel_get_brightness (a), 1.0f, 1e-6);
+    g_assert_false (lrg_scene_panel_has_external_texture (a));
+    g_assert_null (lrg_scene_panel_get_texture (a));
+
+    /* Group sorts first, then ordinal. */
+    lrg_scene_panel_set_slot (a, 1, 5);
+    lrg_scene_panel_set_slot (b, 0, 9);
+    lrg_scene_panel_set_slot (c, 1, -2);
+    g_assert_cmpint (lrg_scene_panel_compare_slot (b, a), <, 0);
+    g_assert_cmpint (lrg_scene_panel_compare_slot (c, a), <, 0);
+    g_assert_cmpint (lrg_scene_panel_compare_slot (a, a), ==, 0);
+
+    /* Before the first placement brightness snaps; after it, it eases. */
+    lrg_scene_panel_set_brightness (a, 0.5f);
+    g_assert_cmpfloat_with_epsilon (lrg_scene_panel_get_brightness (a), 0.5f, 1e-6);
+    lrg_scene_panel_set_target (a, 0, 0, 0, 0, 1, 1);
+    lrg_scene_panel_set_brightness (a, 1.0f);
+    g_assert_true (lrg_scene_panel_is_animating (a));
+    for (i = 0; i < 200 && lrg_scene_panel_step (a, 1.0f / 60.0f); i++)
+        ;
+    g_assert_cmpfloat_with_epsilon (lrg_scene_panel_get_brightness (a), 1.0f, 1e-6);
+
+    /* Out-of-range values clamp; updating a texture-less panel is a no-op. */
+    lrg_scene_panel_set_brightness (b, 7.0f);
+    g_assert_cmpfloat_with_epsilon (lrg_scene_panel_get_brightness (b), 1.0f, 1e-6);
+    lrg_scene_panel_texture_updated (b);
+}
+
+/* Step every panel until its ease converges (after a re-layout, targets
+   change but the current transform only moves when stepped). */
+static void
+settle_panels (GPtrArray *panels)
+{
+    guint i, k;
+
+    for (k = 0; k < 600; k++)
+    {
+        gboolean any = FALSE;
+        for (i = 0; i < panels->len; i++)
+            any |= lrg_scene_panel_step (g_ptr_array_index (panels, i), 1.0f / 60.0f);
+        if (!any)
+            return;
+    }
+}
+
+/* Make @n 16:10 panels with ordinals first, first + 1, ... */
+static GPtrArray *
+make_panels (guint n,
+             gint  first)
+{
+    GPtrArray *panels = g_ptr_array_new_with_free_func (g_object_unref);
+    guint i;
+
+    for (i = 0; i < n; i++)
+    {
+        LrgScenePanel *p = lrg_scene_panel_new (i + 1);
+        lrg_scene_panel_set_source_rect (p, 0, 0, 1600, 1000);
+        lrg_scene_panel_set_slot (p, 0, first + (gint) i);
+        g_ptr_array_add (panels, p);
+    }
+    return panels;
+}
+
+/* --------------------------------------------- carousel (no GL) ---------- */
+
+static void
+test_arrangement_carousel (void)
+{
+    g_autoptr(LrgSceneArrangement) a = lrg_mode_registry_create_arrangement (
+        lrg_mode_registry_get_default (), "carousel");
+    g_autoptr(GPtrArray) panels = make_panels (5, -2);
+    g_autoptr(GPtrArray) many = make_panels (40, -20);
+    gfloat x[5], z[5], yaw[5];
+    guint i;
+
+    g_assert_nonnull (a);
+    g_assert_cmpstr (lrg_scene_arrangement_get_id (a), ==, "carousel");
+    g_assert_true (LRG_IS_ARRANGEMENT_CAROUSEL (a));
+
+    lrg_scene_arrangement_layout (a, panels, 1600, 1000, 1.0f);
+    for (i = 0; i < 5; i++)
+        lrg_scene_panel_get_geometry (g_ptr_array_index (panels, i), &x[i],
+                                      NULL, &z[i], &yaw[i], NULL, NULL);
+
+    /* Ordinal 0 (index 2) is the front panel: the origin, facing +Z. */
+    g_assert_cmpfloat_with_epsilon (x[2], 0.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (z[2], 0.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (yaw[2], 0.0f, 1e-4);
+
+    /* Lower ordinals to the left, higher to the right, mirror-symmetric, and
+       curving toward the viewer (+Z) while turning to face the centre. */
+    g_assert_cmpfloat (x[0], <, x[1]);
+    g_assert_cmpfloat (x[1], <, 0.0f);
+    g_assert_cmpfloat (x[3], >, 0.0f);
+    g_assert_cmpfloat_with_epsilon (x[1], -x[3], 1e-4);
+    g_assert_cmpfloat_with_epsilon (z[1], z[3], 1e-4);
+    g_assert_cmpfloat (z[1], >, 0.0f);
+    g_assert_cmpfloat (yaw[1], >, 0.0f);
+    g_assert_cmpfloat (yaw[3], <, 0.0f);
+
+    /* A group change widens the gap between neighbours. */
+    lrg_scene_panel_set_slot (g_ptr_array_index (panels, 3), 1, 1);
+    lrg_scene_panel_set_slot (g_ptr_array_index (panels, 4), 1, 2);
+    lrg_scene_arrangement_layout (a, panels, 1600, 1000, 1.0f);
+    settle_panels (panels);
+    {
+        gfloat x3;
+        lrg_scene_panel_get_geometry (g_ptr_array_index (panels, 3), &x3,
+                                      NULL, NULL, NULL, NULL, NULL);
+        g_assert_cmpfloat (x3, >, x[3]);
+    }
+
+    /* Forty panels close the ring: every yaw stays within (-180, 180] and
+       the ring grew past the minimum radius. */
+    lrg_scene_arrangement_layout (a, many, 1600, 1000, 1.0f);
+    for (i = 0; i < many->len; i++)
+    {
+        gfloat y;
+        lrg_scene_panel_get_geometry (g_ptr_array_index (many, i), NULL, NULL,
+                                      NULL, &y, NULL, NULL);
+        g_assert_cmpfloat (y, <=, 180.0f + 1e-3);
+        g_assert_cmpfloat (y, >, -180.0f - 1e-3);
+    }
+
+    /* Setters clamp. */
+    lrg_arrangement_carousel_set_radius (LRG_ARRANGEMENT_CAROUSEL (a), 0.5f);
+    g_assert_cmpfloat (lrg_arrangement_carousel_get_radius (LRG_ARRANGEMENT_CAROUSEL (a)), ==, 2.0f);
+    lrg_arrangement_carousel_set_spacing (LRG_ARRANGEMENT_CAROUSEL (a), 9.0f);
+    g_assert_cmpfloat (lrg_arrangement_carousel_get_spacing (LRG_ARRANGEMENT_CAROUSEL (a)), ==, 4.0f);
+}
+
+/* ------------------------------------------------- grid (no GL) ---------- */
+
+static void
+test_arrangement_grid (void)
+{
+    g_autoptr(LrgSceneArrangement) a = lrg_mode_registry_create_arrangement (
+        lrg_mode_registry_get_default (), "grid");
+    g_autoptr(GPtrArray) panels = make_panels (4, 0);
+    g_autoptr(GPtrArray) grouped = make_panels (2, 0);
+    gfloat x[4], y[4], gy0, gy1;
+    guint i;
+
+    g_assert_nonnull (a);
+    g_assert_cmpstr (lrg_scene_arrangement_get_id (a), ==, "grid");
+
+    /* Four panels, automatic columns: a 2 x 2 wall centred on the origin. */
+    lrg_arrangement_grid_set_curve (LRG_ARRANGEMENT_GRID (a), 0.0f);
+    lrg_scene_arrangement_layout (a, panels, 1600, 1000, 1.0f);
+    for (i = 0; i < 4; i++)
+        lrg_scene_panel_get_geometry (g_ptr_array_index (panels, i), &x[i],
+                                      &y[i], NULL, NULL, NULL, NULL);
+    g_assert_cmpfloat_with_epsilon (x[0], -x[1], 1e-4);
+    g_assert_cmpfloat_with_epsilon (x[0], x[2], 1e-4);
+    g_assert_cmpfloat_with_epsilon (y[0], y[1], 1e-4);
+    g_assert_cmpfloat (y[0], >, y[2]);
+    g_assert_cmpfloat_with_epsilon (y[0], -y[2], 1e-4);
+
+    /* A new slot group starts a new row even with room left in the row. */
+    lrg_arrangement_grid_set_columns (LRG_ARRANGEMENT_GRID (a), 4);
+    g_assert_cmpuint (lrg_arrangement_grid_get_columns (LRG_ARRANGEMENT_GRID (a)), ==, 4);
+    lrg_scene_panel_set_slot (g_ptr_array_index (grouped, 1), 7, 0);
+    lrg_scene_arrangement_layout (a, grouped, 1600, 1000, 1.0f);
+    lrg_scene_panel_get_geometry (g_ptr_array_index (grouped, 0), NULL, &gy0,
+                                  NULL, NULL, NULL, NULL);
+    lrg_scene_panel_get_geometry (g_ptr_array_index (grouped, 1), NULL, &gy1,
+                                  NULL, NULL, NULL, NULL);
+    g_assert_cmpfloat (gy0, >, gy1);
+
+    /* Curved: outer columns come toward the viewer and turn inward. */
+    lrg_arrangement_grid_set_curve (LRG_ARRANGEMENT_GRID (a), 14.0f);
+    lrg_arrangement_grid_set_columns (LRG_ARRANGEMENT_GRID (a), 0);
+    {
+        g_autoptr(GPtrArray) curved = make_panels (4, 0);
+        gfloat z0, yaw0;
+
+        lrg_scene_arrangement_layout (a, curved, 1600, 1000, 1.0f);
+        lrg_scene_panel_get_geometry (g_ptr_array_index (curved, 0), NULL, NULL,
+                                      &z0, &yaw0, NULL, NULL);
+        g_assert_cmpfloat (z0, >, 0.0f);
+        g_assert_cmpfloat (yaw0, >, 0.0f);
+    }
+}
+
+/* ------------------------------------------------ stack (no GL) ---------- */
+
+static void
+test_arrangement_stack (void)
+{
+    g_autoptr(LrgSceneArrangement) a = lrg_mode_registry_create_arrangement (
+        lrg_mode_registry_get_default (), "stack");
+    g_autoptr(GPtrArray) panels = make_panels (4, -1);  /* -1, 0, 1, 2 */
+    gfloat x[4], z[4], b[4];
+    guint i;
+
+    g_assert_nonnull (a);
+    g_assert_cmpstr (lrg_scene_arrangement_get_id (a), ==, "stack");
+
+    lrg_scene_arrangement_layout (a, panels, 1600, 1000, 1.0f);
+    settle_panels (panels);
+    for (i = 0; i < 4; i++)
+    {
+        lrg_scene_panel_get_geometry (g_ptr_array_index (panels, i), &x[i],
+                                      NULL, &z[i], NULL, NULL, NULL);
+        b[i] = lrg_scene_panel_get_brightness (g_ptr_array_index (panels, i));
+    }
+
+    /* Ordinal 0 (index 1) in front at full brightness. */
+    g_assert_cmpfloat_with_epsilon (x[1], 0.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (z[1], 0.0f, 1e-4);
+    g_assert_cmpfloat_with_epsilon (b[1], 1.0f, 1e-4);
+
+    /* Positive ordinals recede left and dim with depth; negative go right. */
+    g_assert_cmpfloat (z[3], <, z[2]);
+    g_assert_cmpfloat (z[2], <, 0.0f);
+    g_assert_cmpfloat (x[2], <, 0.0f);
+    g_assert_cmpfloat (x[0], >, 0.0f);
+    g_assert_cmpfloat (b[3], <, b[2]);
+    g_assert_cmpfloat (b[2], <, 1.0f);
+
+    lrg_arrangement_stack_set_depth_step (LRG_ARRANGEMENT_STACK (a), 100.0f);
+    g_assert_cmpfloat (lrg_arrangement_stack_get_depth_step (LRG_ARRANGEMENT_STACK (a)), ==, 10.0f);
+}
+
+/* ------------------------------- new ids, kinds and environments (no GL) --- */
+
+static void
+test_mode_registry_new_ids (void)
+{
+    LrgModeRegistry *reg = lrg_mode_registry_get_default ();
+    const gchar *arr[] = { "carousel", "grid", "stack" };
+    const gchar *env[] = { "sky", "studio" };
+    LrgArrangementKind ak;
+    LrgEnvironmentKind ek;
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (arr); i++)
+    {
+        g_autoptr(LrgSceneArrangement) a = lrg_mode_registry_create_arrangement (reg, arr[i]);
+        g_assert_nonnull (a);
+        g_assert_cmpstr (lrg_scene_arrangement_get_id (a), ==, arr[i]);
+    }
+    for (i = 0; i < G_N_ELEMENTS (env); i++)
+    {
+        g_autoptr(LrgPanelEnvironment) e = lrg_mode_registry_create_environment (reg, env[i]);
+        g_autoptr(GrlColor) clear = NULL;
+        g_assert_nonnull (e);
+        g_assert_cmpstr (lrg_panel_environment_get_id (e), ==, env[i]);
+        clear = lrg_panel_environment_get_clear_color (e);
+        g_assert_nonnull (clear);
+    }
+
+    g_assert_true (lrg_arrangement_kind_from_string ("grid", &ak));
+    g_assert_cmpint (ak, ==, LRG_ARRANGEMENT_KIND_GRID);
+    g_assert_true (lrg_arrangement_kind_from_string ("stack", &ak));
+    g_assert_cmpstr (lrg_arrangement_kind_to_string (ak), ==, "stack");
+    g_assert_true (lrg_environment_kind_from_string ("sky", &ek));
+    g_assert_cmpint (ek, ==, LRG_ENVIRONMENT_KIND_SKY);
+    g_assert_cmpstr (lrg_environment_kind_to_string (LRG_ENVIRONMENT_KIND_STUDIO), ==, "studio");
+
+    /* The sky's time of day reaches its dome. */
+    {
+        g_autoptr(LrgEnvironmentSky) sky = lrg_environment_sky_new ();
+        lrg_environment_sky_set_time_of_day (sky, 18.0f);
+        g_assert_cmpfloat_with_epsilon (lrg_environment_sky_get_time_of_day (sky), 18.0f, 1e-4);
+        g_assert_cmpfloat_with_epsilon (
+            lrg_sky_dome_get_time_of_day (lrg_environment_sky_get_dome (sky)), 18.0f, 1e-4);
+    }
+}
+
+/* --------------------------------------------- pose strings (no GL) ------ */
+
+static void
+test_pose_string (void)
+{
+    g_autoptr(LrgPose) p = lrg_pose_new (1.5f, -2.25f, 6.6f, 0, 0, 0, 0, 1, 0, 45.0f);
+    g_autofree gchar *s = lrg_pose_to_string (p);
+    g_autoptr(LrgPose) q = lrg_pose_from_string (s);
+    g_autoptr(LrgPose) spaced = lrg_pose_from_string ("  1 2 3  4 5 6 0 1 0 60\n");
+    gfloat x, y, z;
+
+    g_assert_nonnull (q);
+    lrg_pose_get_position (q, &x, &y, &z);
+    g_assert_cmpfloat (x, ==, 1.5f);
+    g_assert_cmpfloat (y, ==, -2.25f);
+    g_assert_cmpfloat (z, ==, 6.6f);
+    g_assert_cmpfloat (lrg_pose_get_fovy (q), ==, 45.0f);
+
+    g_assert_nonnull (spaced);
+    g_assert_cmpfloat (lrg_pose_get_fovy (spaced), ==, 60.0f);
+
+    /* Malformed: too few, too many, junk, non-finite, bad fovy. */
+    g_assert_null (lrg_pose_from_string (""));
+    g_assert_null (lrg_pose_from_string ("1 2 3"));
+    g_assert_null (lrg_pose_from_string ("1 2 3 4 5 6 7 8 9 45 11"));
+    g_assert_null (lrg_pose_from_string ("1 2 3 4 5 6 7 8 9 4x"));
+    g_assert_null (lrg_pose_from_string ("1 2 3 4 5 6 7 8 nan 45"));
+    g_assert_null (lrg_pose_from_string ("1 2 3 4 5 6 7 8 9 0"));
+}
+
+/* ------------------------------ texture-backed panels on the surface (GL) -- */
+
+static guint overlay_calls;
+
+static void
+count_overlay (Lrg3DSurface *surface,
+               gpointer      user_data)
+{
+    (void) surface;
+    (void) user_data;
+    overlay_calls++;
+}
+
+static void
+test_3d_surface_texture_panels (void)
+{
+    g_autoptr(Lrg3DSurface) surf = NULL;
+    g_autoptr(GrlColor) col = NULL;
+    g_autoptr(GrlImage) img = NULL;
+    g_autoptr(GrlTexture) tex_a = NULL;
+    g_autoptr(GrlTexture) tex_b = NULL;
+    g_autoptr(GrlTexture) tex_c = NULL;
+    g_auto(GStrv) views = NULL;
+    g_autofree gchar *home = NULL;
+    gfloat px, py, cov_front, cov_side;
+    guint64 key;
+    gint w, h;
+
+    SKIP_IF_NO_DISPLAY ();
+
+    surf = lrg_3d_surface_new (320, 240, "test-term-tex");
+    if (lrg_frame_surface_get_window (LRG_FRAME_SURFACE (surf)) == NULL)
+    {
+        g_test_skip ("GrlWindow could not be created");
+        return;
+    }
+    w = lrg_frame_surface_get_width (LRG_FRAME_SURFACE (surf));
+    h = lrg_frame_surface_get_height (LRG_FRAME_SURFACE (surf));
+
+    col = grl_color_new (200, 40, 40, 255);
+    img = grl_image_new_color (400, 250, col);
+    tex_a = grl_texture_new_from_image (img);
+    tex_b = grl_texture_new_from_image (img);
+    tex_c = grl_texture_new_from_image (img);
+
+    g_assert_true (lrg_3d_surface_get_capture_enabled (surf));
+    lrg_3d_surface_set_capture_enabled (surf, FALSE);
+    g_assert_false (lrg_3d_surface_get_capture_enabled (surf));
+    g_assert_true (lrg_3d_surface_set_arrangement_id (surf, "carousel"));
+
+    /* Three texture panels, ordinals -1, 0, 1: the middle one is in front. */
+    lrg_3d_surface_begin_window_sync (surf);
+    lrg_3d_surface_sync_texture_panel (surf, 10, tex_a);
+    lrg_3d_surface_sync_texture_panel (surf, 20, tex_b);
+    lrg_3d_surface_sync_texture_panel (surf, 30, tex_c);
+    g_assert_true (lrg_3d_surface_set_panel_slot (surf, 10, 0, -1));
+    g_assert_true (lrg_3d_surface_set_panel_slot (surf, 20, 0, 0));
+    g_assert_true (lrg_3d_surface_set_panel_slot (surf, 30, 0, 1));
+    g_assert_false (lrg_3d_surface_set_panel_slot (surf, 99, 0, 0));
+    lrg_3d_surface_end_window_sync (surf);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 3);
+
+    /* New pixels: only texture panels accept the update. */
+    g_assert_true (lrg_3d_surface_panel_texture_updated (surf, 20));
+    g_assert_false (lrg_3d_surface_panel_texture_updated (surf, 99));
+
+    /* The default camera looks at the origin, where the front panel is: a
+       pick at the screen centre lands on it, in the texture's pixel space. */
+    g_assert_true (lrg_3d_surface_pick_panel (surf, (gfloat) w * 0.5f,
+                                              (gfloat) h * 0.5f, &px, &py, &key));
+    g_assert_cmpuint (key, ==, 20);
+    g_assert_cmpfloat (px, >, 0.0f);
+    g_assert_cmpfloat (px, <, 400.0f);
+    g_assert_cmpfloat (py, >, 0.0f);
+    g_assert_cmpfloat (py, <, 250.0f);
+
+    /* The front panel looks bigger than its neighbour; unknown keys are 0. */
+    cov_front = lrg_3d_surface_get_panel_coverage (surf, 20);
+    cov_side = lrg_3d_surface_get_panel_coverage (surf, 30);
+    g_assert_cmpfloat (cov_front, >, 0.0f);
+    g_assert_cmpfloat (cov_front, >=, cov_side);
+    g_assert_cmpfloat (lrg_3d_surface_get_panel_coverage (surf, 99), ==, 0.0f);
+
+    /* A sync without panel 10 drops it; a texture swap keeps the panel. */
+    lrg_3d_surface_begin_window_sync (surf);
+    lrg_3d_surface_sync_texture_panel (surf, 20, tex_a);
+    lrg_3d_surface_sync_texture_panel (surf, 30, tex_c);
+    lrg_3d_surface_end_window_sync (surf);
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 2);
+
+    /* Camera bookmarks: save, list, serialise, restore, forget. */
+    lrg_3d_surface_save_view (surf, "home");
+    lrg_3d_surface_save_view (surf, "aside");
+    views = lrg_3d_surface_list_views (surf);
+    g_assert_cmpuint (g_strv_length (views), ==, 2);
+    g_assert_cmpstr (views[0], ==, "aside");
+    g_assert_cmpstr (views[1], ==, "home");
+    home = lrg_3d_surface_get_view_string (surf, "home");
+    g_assert_nonnull (home);
+    g_assert_true (lrg_3d_surface_set_view_string (surf, "copy", home));
+    g_assert_false (lrg_3d_surface_set_view_string (surf, "bad", "1 2"));
+    g_assert_true (lrg_3d_surface_restore_view (surf, "copy"));
+    g_assert_false (lrg_3d_surface_restore_view (surf, "missing"));
+    g_assert_true (lrg_3d_surface_forget_view (surf, "copy"));
+    g_assert_false (lrg_3d_surface_forget_view (surf, "copy"));
+    g_assert_null (lrg_3d_surface_get_view_string (surf, "copy"));
+
+    /* The desktop HUD runs once per present, after the scene. */
+    overlay_calls = 0;
+    lrg_3d_surface_set_overlay_func (surf, count_overlay, NULL, NULL);
+    lrg_frame_surface_begin_frame (LRG_FRAME_SURFACE (surf));
+    lrg_frame_surface_begin_content (LRG_FRAME_SURFACE (surf));
+    lrg_frame_surface_end_content (LRG_FRAME_SURFACE (surf));
+    lrg_frame_surface_end_frame (LRG_FRAME_SURFACE (surf));
+    g_assert_cmpuint (overlay_calls, ==, 1);
+
+    /* With capture off there is no whole-frame default panel. */
+    lrg_3d_surface_begin_window_sync (surf);
+    lrg_3d_surface_end_window_sync (surf);
+    lrg_frame_surface_begin_frame (LRG_FRAME_SURFACE (surf));
+    lrg_frame_surface_end_frame (LRG_FRAME_SURFACE (surf));
+    g_assert_cmpuint (lrg_3d_surface_get_panel_count (surf), ==, 0);
+}
+
 /* ------------------------------------ camera drag (immediate, no GL) ------- */
 
 static void
@@ -794,6 +1231,14 @@ main (int   argc,
     g_test_add_func ("/term/arrangement-free", test_arrangement_free);
     g_test_add_func ("/term/spatial-camera-orbit-drag",
                      test_spatial_camera_orbit_drag);
+    g_test_add_func ("/term/scene-panel-slot", test_scene_panel_slot);
+    g_test_add_func ("/term/arrangement-carousel", test_arrangement_carousel);
+    g_test_add_func ("/term/arrangement-grid", test_arrangement_grid);
+    g_test_add_func ("/term/arrangement-stack", test_arrangement_stack);
+    g_test_add_func ("/term/mode-registry-new-ids", test_mode_registry_new_ids);
+    g_test_add_func ("/term/pose-string", test_pose_string);
+    g_test_add_func ("/term/3d-surface-texture-panels",
+                     test_3d_surface_texture_panels);
 
     return g_test_run ();
 }

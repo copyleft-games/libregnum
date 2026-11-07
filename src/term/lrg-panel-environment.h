@@ -19,6 +19,7 @@
 #include <glib-object.h>
 #include <graylib.h>
 #include "../lrg-version.h"
+#include "lrg-pose.h"
 
 G_BEGIN_DECLS
 
@@ -33,6 +34,9 @@ G_DECLARE_INTERFACE (LrgPanelEnvironment, lrg_panel_environment, LRG, PANEL_ENVI
  * @get_id: return the stable string id of this environment
  * @get_clear_color: return the framebuffer clear colour (transfer full)
  * @draw_ambient: draw 3D ambient geometry inside the current camera scope
+ * @draw_sky: (nullable): draw a camera-centred backdrop (sky dome, horizon)
+ *   inside the camera scope, before anything else; gets the camera pose so the
+ *   backdrop can follow the eye.  Optional.
  *
  * Since: 1.0
  */
@@ -43,6 +47,8 @@ struct _LrgPanelEnvironmentInterface
     const gchar * (*get_id)          (LrgPanelEnvironment *self);
     GrlColor *    (*get_clear_color) (LrgPanelEnvironment *self);
     void          (*draw_ambient)    (LrgPanelEnvironment *self);
+    void          (*draw_sky)        (LrgPanelEnvironment *self,
+                                      const LrgPose       *camera);
 };
 
 LRG_AVAILABLE_IN_ALL
@@ -71,5 +77,20 @@ GrlColor * lrg_panel_environment_get_clear_color (LrgPanelEnvironment *self);
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_panel_environment_draw_ambient (LrgPanelEnvironment *self);
+
+/**
+ * lrg_panel_environment_draw_sky:
+ * @self: a #LrgPanelEnvironment
+ * @camera: the current camera pose
+ *
+ * Draws the environment's camera-centred backdrop, if it has one.  Called right
+ * after the camera begins, before the ambient geometry and the panels.  A no-op
+ * for environments without a @draw_sky implementation.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_panel_environment_draw_sky (LrgPanelEnvironment *self,
+                                     const LrgPose       *camera);
 
 G_END_DECLS

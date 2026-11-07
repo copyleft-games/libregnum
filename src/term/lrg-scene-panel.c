@@ -58,6 +58,18 @@ struct _LrgScenePanel
 	   then excluded from the live per-frame capture and from arrangement layout.
 	   Used for workspace panels that render their own (off-screen) contents. */
 	gboolean static_texture;
+
+	/* TRUE when @texture is a caller-owned GPU texture shown by reference
+	   (lrg_scene_panel_set_texture): no capture, no crop, no upload.  The panel
+	   holds a ref but never writes into it except to regenerate mipmaps. */
+	gboolean external_texture;
+
+	/* Generic ordering slot for arrangements (lrg_scene_panel_set_slot). */
+	guint group;
+	gint  ordinal;
+
+	/* Extra brightness multiplier on top of the focus tint, and its target. */
+	gfloat bright, tbright;
 };
 
 G_DEFINE_FINAL_TYPE (LrgScenePanel, lrg_scene_panel, G_TYPE_OBJECT)
@@ -68,7 +80,8 @@ panel_delta (LrgScenePanel *self)
 	return fabsf (self->px - self->tpx) + fabsf (self->py - self->tpy)
 		 + fabsf (self->pz - self->tpz) + fabsf (self->yaw - self->tyaw)
 		 + fabsf (self->w - self->tw) + fabsf (self->h - self->th)
-		 + fabsf (self->focus - self->tfocus);
+		 + fabsf (self->focus - self->tfocus)
+		 + fabsf (self->bright - self->tbright);
 }
 
 /* Ensure the plane mesh + model exist (needs a live GL context). */
@@ -325,6 +338,15 @@ upload_to_texture (LrgScenePanel *self,
 	iw = grl_image_get_width (img);
 	ih = grl_image_get_height (img);
 
+	/* Switching from a borrowed texture to owned pixels: drop the borrowed
+	   reference first, or the update below would write into the caller's
+	   texture. */
+	if (self->external_texture)
+	{
+		g_clear_object (&self->texture);
+		self->external_texture = FALSE;
+	}
+
 	/* A resized window changes the sub-image dimensions; raylib's in-place
 	   update requires a matching size, so drop and recreate on a mismatch. */
 	if (self->texture != NULL
@@ -370,6 +392,11 @@ lrg_scene_panel_update_texture (LrgScenePanel *self,
 
 	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
 	g_return_if_fail (frame != NULL);
+
+	/* An external-texture panel draws the caller's texture: the captured frame
+	   has nothing for it. */
+	if (self->external_texture)
+		return;
 
 	ensure_model (self);
 	if (self->model == NULL)
@@ -443,6 +470,137 @@ lrg_scene_panel_has_static_texture (LrgScenePanel *self)
 	return self->static_texture;
 }
 
+/* Select the filtering an angled, minified text panel needs.  Mipmaps must
+   exist before a mipmapped minification filter is chosen, or the texture is
+   incomplete and samples black. */
+static void
+prepare_external_texture (GrlTexture *texture)
+{
+	grl_texture_gen_mipmaps (texture);
+	grl_texture_set_filter (texture, GRL_TEXTURE_FILTER_TRILINEAR);
+	grl_texture_set_filter (texture, GRL_TEXTURE_FILTER_ANISOTROPIC_16X);
+}
+
+void
+lrg_scene_panel_set_texture (LrgScenePanel *self,
+                             GrlTexture    *texture)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+	g_return_if_fail (GRL_IS_TEXTURE (texture));
+
+	/* Same texture already borrowed: only the size may have to be re-read
+	   (the caller may reuse one GrlTexture across an in-place resize). */
+	if (self->external_texture && self->texture == texture)
+	{
+		self->sw = grl_texture_get_width (texture);
+		self->sh = grl_texture_get_height (texture);
+		return;
+	}
+
+	ensure_model (self);
+	if (self->model == NULL)
+		return;
+
+	/* Drop whatever we drew before (our own captured texture, or a previous
+	   borrowed one) and borrow the new texture. */
+	g_clear_object (&self->texture);
+	self->texture = g_object_ref (texture);
+	self->external_texture = TRUE;
+	self->static_texture = FALSE;
+
+	/* Picks map into the texture's own pixel space. */
+	self->sx = 0;
+	self->sy = 0;
+	self->sw = grl_texture_get_width (texture);
+	self->sh = grl_texture_get_height (texture);
+
+	prepare_external_texture (texture);
+	grl_model_set_texture (self->model, 0, GRL_MATERIAL_MAP_ALBEDO, texture);
+}
+
+GrlTexture *
+lrg_scene_panel_get_texture (LrgScenePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_PANEL (self), NULL);
+	return self->texture;
+}
+
+gboolean
+lrg_scene_panel_has_external_texture (LrgScenePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_PANEL (self), FALSE);
+	return self->external_texture;
+}
+
+void
+lrg_scene_panel_texture_updated (LrgScenePanel *self)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+
+	if (!self->external_texture || self->texture == NULL)
+		return;
+	grl_texture_gen_mipmaps (self->texture);
+}
+
+void
+lrg_scene_panel_set_slot (LrgScenePanel *self,
+                          guint          group,
+                          gint           ordinal)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+
+	self->group = group;
+	self->ordinal = ordinal;
+}
+
+guint
+lrg_scene_panel_get_group (LrgScenePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_PANEL (self), 0);
+	return self->group;
+}
+
+gint
+lrg_scene_panel_get_ordinal (LrgScenePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_PANEL (self), 0);
+	return self->ordinal;
+}
+
+void
+lrg_scene_panel_set_brightness (LrgScenePanel *self,
+                                gfloat         brightness)
+{
+	g_return_if_fail (LRG_IS_SCENE_PANEL (self));
+
+	self->tbright = CLAMP (brightness, 0.0f, 1.0f);
+	/* Before the first placement there is nothing to fade from: snap. */
+	if (!self->placed)
+		self->bright = self->tbright;
+	self->animating = (panel_delta (self) > LRG_SCENE_PANEL_EPSILON);
+}
+
+gfloat
+lrg_scene_panel_get_brightness (LrgScenePanel *self)
+{
+	g_return_val_if_fail (LRG_IS_SCENE_PANEL (self), 1.0f);
+	return self->bright;
+}
+
+gint
+lrg_scene_panel_compare_slot (gconstpointer a,
+                              gconstpointer b)
+{
+	LrgScenePanel *pa = (LrgScenePanel *) a;
+	LrgScenePanel *pb = (LrgScenePanel *) b;
+
+	if (pa->group != pb->group)
+		return pa->group < pb->group ? -1 : 1;
+	if (pa->ordinal != pb->ordinal)
+		return pa->ordinal < pb->ordinal ? -1 : 1;
+	return 0;
+}
+
 gboolean
 lrg_scene_panel_step (LrgScenePanel *self,
 				gfloat    dt)
@@ -465,6 +623,7 @@ lrg_scene_panel_step (LrgScenePanel *self,
 	self->w += (self->tw - self->w) * f;
 	self->h += (self->th - self->h) * f;
 	self->focus += (self->tfocus - self->focus) * f;
+	self->bright += (self->tbright - self->bright) * f;
 
 	if (panel_delta (self) <= LRG_SCENE_PANEL_EPSILON)
 	{
@@ -475,6 +634,7 @@ lrg_scene_panel_step (LrgScenePanel *self,
 		self->w = self->tw;
 		self->h = self->th;
 		self->focus = self->tfocus;
+		self->bright = self->tbright;
 		self->animating = FALSE;
 		g_signal_emit (self, signals[SIGNAL_TRANSFORM_SETTLED], 0);
 	}
@@ -517,6 +677,12 @@ lrg_scene_panel_draw (LrgScenePanel       *self,
 	r = dr + (gint) ((255 - dr) * self->focus);
 	g = dg + (gint) ((255 - dg) * self->focus);
 	b = db + (gint) ((255 - db) * self->focus);
+
+	/* The arrangement's brightness (e.g. depth fade in a stack) scales the
+	   result toward black. */
+	r = (gint) ((gfloat) r * self->bright);
+	g = (gint) ((gfloat) g * self->bright);
+	b = (gint) ((gfloat) b * self->bright);
 	tint = grl_color_new ((guint8) CLAMP (r, 0, 255),
 						  (guint8) CLAMP (g, 0, 255),
 						  (guint8) CLAMP (b, 0, 255), 255);
@@ -621,4 +787,8 @@ lrg_scene_panel_init (LrgScenePanel *self)
 	self->placed = FALSE;
 	self->pinned = FALSE;
 	self->static_texture = FALSE;
+	self->external_texture = FALSE;
+	self->group = 0;
+	self->ordinal = 0;
+	self->bright = self->tbright = 1.0f;
 }

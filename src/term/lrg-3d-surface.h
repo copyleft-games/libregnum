@@ -826,4 +826,223 @@ gboolean lrg_3d_surface_set_panel_transform (Lrg3DSurface *self,
                                              gfloat        w,
                                              gfloat        h);
 
+/* --- Texture-backed panels (host-rendered windows) ----------------------- */
+
+/**
+ * lrg_3d_surface_sync_texture_panel:
+ * @self: a #Lrg3DSurface
+ * @key: a stable identity for the window
+ * @texture: (transfer none): the window's own GPU texture, owned by the caller
+ *
+ * Like lrg_3d_surface_sync_window(), but the panel shows @texture by reference
+ * instead of a slice of the captured frame (see lrg_scene_panel_set_texture()).
+ * Call it between lrg_3d_surface_begin_window_sync() and
+ * lrg_3d_surface_end_window_sync(), mixed freely with sync_window().  The panel
+ * takes part in arrangement layout, focus, pins and picking like any window
+ * panel; picks report pixels in the texture's own space.  A host whose windows
+ * are all texture panels should also call
+ * lrg_3d_surface_set_capture_enabled() with %FALSE to skip the frame read-back.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_sync_texture_panel (Lrg3DSurface *self,
+                                        guint64       key,
+                                        GrlTexture   *texture);
+
+/**
+ * lrg_3d_surface_panel_texture_updated:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ *
+ * Tells the surface that the caller wrote new pixels into the texture of the
+ * texture panel @key, so its mipmaps are regenerated.
+ *
+ * Returns: %TRUE if @key names a texture panel
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_panel_texture_updated (Lrg3DSurface *self,
+                                               guint64       key);
+
+/**
+ * lrg_3d_surface_set_panel_slot:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ * @group: a host-defined cluster id (0 = ungrouped)
+ * @ordinal: the panel's place in its cluster or sequence
+ *
+ * Sets the generic ordering slot the carousel, grid and stack arrangements
+ * use (see lrg_scene_panel_set_slot()).  Call it during a window sync, before
+ * lrg_3d_surface_end_window_sync() runs the layout.
+ *
+ * Returns: %TRUE if the panel exists
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_set_panel_slot (Lrg3DSurface *self,
+                                        guint64       key,
+                                        guint         group,
+                                        gint          ordinal);
+
+/**
+ * lrg_3d_surface_set_capture_enabled:
+ * @self: a #Lrg3DSurface
+ * @enabled: %FALSE to skip the per-frame read-back of the flat frame
+ *
+ * Every present normally reads the whole flat frame back from the GPU to
+ * texture the window panels.  A host that feeds every panel its own texture
+ * (lrg_3d_surface_sync_texture_panel()) does not need that read-back; turning
+ * it off also stops the surface from inventing a whole-frame default panel
+ * when no window panel exists.  In VR the capture always runs.  Defaults to
+ * %TRUE.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_capture_enabled (Lrg3DSurface *self,
+                                         gboolean      enabled);
+
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_get_capture_enabled (Lrg3DSurface *self);
+
+/**
+ * Lrg3DSurfaceOverlayFunc:
+ * @self: the surface
+ * @user_data: data passed to lrg_3d_surface_set_overlay_func()
+ *
+ * Called on the desktop present after the 3D pass and before the buffer swap,
+ * in plain 2D screen coordinates: draw a HUD (address bar, status line,
+ * tooltips) on top of the scene with the ordinary 2D draw calls.
+ *
+ * Since: 1.0
+ */
+typedef void (*Lrg3DSurfaceOverlayFunc) (Lrg3DSurface *self,
+                                         gpointer      user_data);
+
+/**
+ * lrg_3d_surface_set_overlay_func:
+ * @self: a #Lrg3DSurface
+ * @func: (nullable) (scope notified) (closure user_data) (destroy destroy): HUD drawer, or %NULL
+ * @user_data: data for @func
+ * @destroy: (nullable): frees @user_data
+ *
+ * Installs the desktop HUD drawer (see #Lrg3DSurfaceOverlayFunc).
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_set_overlay_func (Lrg3DSurface            *self,
+                                      Lrg3DSurfaceOverlayFunc  func,
+                                      gpointer                 user_data,
+                                      GDestroyNotify           destroy);
+
+/**
+ * lrg_3d_surface_get_panel_coverage:
+ * @self: a #Lrg3DSurface
+ * @key: the panel key
+ *
+ * Estimates how large the panel currently appears: its projected height in
+ * device pixels, or 0 when its centre is behind the camera or outside the
+ * horizontal field of view.  Cheap enough to call per panel per frame; hosts
+ * use it to refresh small or hidden panels less often.
+ *
+ * Returns: the approximate on-screen height in pixels (0 = not visible, or no
+ *   such panel)
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_3d_surface_get_panel_coverage (Lrg3DSurface *self,
+                                          guint64       key);
+
+/* --- Camera bookmarks ----------------------------------------------------- */
+
+/**
+ * lrg_3d_surface_save_view:
+ * @self: a #Lrg3DSurface
+ * @name: the bookmark name
+ *
+ * Records the camera's current pose under @name, replacing any
+ * bookmark of that name.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_3d_surface_save_view (Lrg3DSurface *self,
+                               const gchar  *name);
+
+/**
+ * lrg_3d_surface_restore_view:
+ * @self: a #Lrg3DSurface
+ * @name: the bookmark name
+ *
+ * Eases the camera to the pose saved under @name.
+ *
+ * Returns: %TRUE if the bookmark exists
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_restore_view (Lrg3DSurface *self,
+                                      const gchar  *name);
+
+/**
+ * lrg_3d_surface_forget_view:
+ * @self: a #Lrg3DSurface
+ * @name: the bookmark name
+ *
+ * Returns: %TRUE if a bookmark was removed
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_forget_view (Lrg3DSurface *self,
+                                     const gchar  *name);
+
+/**
+ * lrg_3d_surface_list_views:
+ * @self: a #Lrg3DSurface
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the bookmark names,
+ *   sorted; free with g_strfreev()
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_3d_surface_list_views (Lrg3DSurface *self);
+
+/**
+ * lrg_3d_surface_get_view_string:
+ * @self: a #Lrg3DSurface
+ * @name: the bookmark name
+ *
+ * Returns: (transfer full) (nullable): the bookmark serialised with
+ *   lrg_pose_to_string(), for persisting it, or %NULL if there is none
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_3d_surface_get_view_string (Lrg3DSurface *self,
+                                        const gchar  *name);
+
+/**
+ * lrg_3d_surface_set_view_string:
+ * @self: a #Lrg3DSurface
+ * @name: the bookmark name
+ * @pose: a pose serialised with lrg_pose_to_string()
+ *
+ * Restores a persisted bookmark without moving the camera.
+ *
+ * Returns: %TRUE if @pose parsed
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_3d_surface_set_view_string (Lrg3DSurface *self,
+                                         const gchar  *name,
+                                         const gchar  *pose);
+
 G_END_DECLS

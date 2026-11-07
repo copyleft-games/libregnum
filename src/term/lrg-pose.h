@@ -131,6 +131,35 @@ LrgPose * lrg_pose_lerp (const LrgPose *a,
                          const LrgPose *b,
                          gfloat         t);
 
+/**
+ * lrg_pose_to_string:
+ * @self: a #LrgPose
+ *
+ * Serialises the pose as ten space-separated numbers (position, target, up,
+ * fovy) in the C locale, for saving camera bookmarks.  The format is stable;
+ * lrg_pose_from_string() reads it back.
+ *
+ * Returns: (transfer full): a newly allocated string
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_pose_to_string (const LrgPose *self);
+
+/**
+ * lrg_pose_from_string:
+ * @str: a string written by lrg_pose_to_string()
+ *
+ * Parses a serialised pose.  Exactly ten finite numbers are required and the
+ * fovy must lie in (0, 180).
+ *
+ * Returns: (transfer full) (nullable): the pose, or %NULL if @str is malformed
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPose * lrg_pose_from_string (const gchar *str);
+
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgPose, lrg_pose_free)
 
 G_END_DECLS

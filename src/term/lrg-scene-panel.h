@@ -249,6 +249,132 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_scene_panel_has_static_texture (LrgScenePanel *self);
 
 /**
+ * lrg_scene_panel_set_texture:
+ * @self: a #LrgScenePanel
+ * @texture: (transfer none): a GPU texture owned by the caller
+ *
+ * Shows @texture on the panel *by reference*: no frame capture, no crop and no
+ * upload.  The panel keeps a reference to @texture and draws whatever the caller
+ * last wrote into it, so a host that already renders each window into its own
+ * texture (a browser tab, a video, a libregnum view) can put it in the scene at
+ * no read-back cost.  The source rectangle becomes the texture's own space
+ * (0, 0, width, height), so a pick on the panel reports texture pixels.
+ *
+ * Unlike lrg_scene_panel_set_image(), an external-texture panel still takes part
+ * in arrangement layout, focus and pins: it is a live window panel whose pixels
+ * come from the caller instead of the captured frame.  The live per-frame
+ * capture skips it.  Passing a different texture swaps it; passing the same one
+ * is a no-op.
+ *
+ * The first call (and every swap) generates mipmaps and selects trilinear +
+ * anisotropic filtering on @texture, so text stays legible at an angle.  After
+ * writing new pixels into @texture, call lrg_scene_panel_texture_updated() to
+ * refresh the mipmap chain.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_set_texture (LrgScenePanel *self,
+                                  GrlTexture    *texture);
+
+/**
+ * lrg_scene_panel_get_texture:
+ * @self: a #LrgScenePanel
+ *
+ * Returns: (transfer none) (nullable): the texture the panel draws (its own
+ *   captured texture, or the caller's external one), or %NULL before the first
+ *   upload
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+GrlTexture * lrg_scene_panel_get_texture (LrgScenePanel *self);
+
+/**
+ * lrg_scene_panel_has_external_texture:
+ * @self: a #LrgScenePanel
+ *
+ * Returns: %TRUE if the panel draws a caller-owned texture set with
+ *   lrg_scene_panel_set_texture()
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_scene_panel_has_external_texture (LrgScenePanel *self);
+
+/**
+ * lrg_scene_panel_texture_updated:
+ * @self: a #LrgScenePanel
+ *
+ * Tells the panel that the caller wrote new pixels into its external texture,
+ * so the mipmap chain is regenerated (level 0 alone would leave the smaller
+ * levels showing the old contents when the panel is seen from afar).  A no-op
+ * for panels without an external texture.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_texture_updated (LrgScenePanel *self);
+
+/**
+ * lrg_scene_panel_set_slot:
+ * @self: a #LrgScenePanel
+ * @group: a host-defined cluster id (0 = ungrouped)
+ * @ordinal: the panel's position within its cluster or sequence
+ *
+ * Gives the panel a generic place in an ordering, for arrangements that need
+ * one: the carousel and grid sort by (@group, @ordinal), and the stack treats
+ * @ordinal as depth (0 = front).  What the numbers mean is up to the host --
+ * tab order and tab groups in a browser, history depth, buffer recency in an
+ * editor.  Panels with equal slots keep their sync order.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_set_slot (LrgScenePanel *self,
+                               guint          group,
+                               gint           ordinal);
+
+LRG_AVAILABLE_IN_ALL
+guint lrg_scene_panel_get_group (LrgScenePanel *self);
+
+LRG_AVAILABLE_IN_ALL
+gint lrg_scene_panel_get_ordinal (LrgScenePanel *self);
+
+/**
+ * lrg_scene_panel_set_brightness:
+ * @self: a #LrgScenePanel
+ * @brightness: a multiplier in [0, 1] applied on top of the focus tint
+ *
+ * Sets an extra brightness factor the panel eases toward.  Arrangements use it
+ * to fade panels that are "further away" in a logical sense (deeper in a stack)
+ * without touching the depth-of-field focus the surface owns.  Defaults to 1.
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_scene_panel_set_brightness (LrgScenePanel *self,
+                                     gfloat         brightness);
+
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_scene_panel_get_brightness (LrgScenePanel *self);
+
+/**
+ * lrg_scene_panel_compare_slot:
+ * @a: (type LrgScenePanel): a panel
+ * @b: (type LrgScenePanel): another panel
+ *
+ * Orders two panels by (group, ordinal), for g_ptr_array_sort_values().
+ *
+ * Returns: negative, zero or positive, like strcmp()
+ *
+ * Since: 1.0
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_scene_panel_compare_slot (gconstpointer a,
+                                   gconstpointer b);
+
+/**
  * lrg_scene_panel_step:
  * @self: a #LrgScenePanel
  * @dt: elapsed seconds since the last step

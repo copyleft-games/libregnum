@@ -47,23 +47,70 @@ subclass, never a glue rewrite.
   ~get_panel_geometry~ (to persist a placement) and ~get_panel_count~.  Static
   panels are excluded from the live capture and from arrangement layout and are
   never dropped by the window sync or an arrangement switch.
+- *Texture panels* (host-rendered windows).  A host that already renders each
+  window into its own GPU texture -- a browser tab, a video, a libregnum view --
+  syncs it with ~sync_texture_panel~ (inside ~begin_window_sync~ /
+  ~end_window_sync~, freely mixed with ~sync_window~).  The panel borrows the
+  texture by reference: no read-back, no crop, no upload.  Unlike a static
+  panel it is a *live window panel*: it takes part in arrangement layout, focus,
+  pins and picking, and ~pick_panel~ reports pixels in the texture's own space.
+  After writing new pixels the host calls ~panel_texture_updated~ so the mipmap
+  chain is regenerated.  ~set_capture_enabled (FALSE)~ skips the flat-frame
+  read-back entirely (and stops the surface inventing a whole-frame default
+  panel) for hosts whose panels are all texture panels; VR always captures.
+  ~set_panel_slot (key, group, ordinal)~ gives a panel a place in an ordering
+  that the carousel, grid and stack arrangements use.
+- *Desktop HUD.*  ~set_overlay_func~ installs a callback run on every desktop
+  present after the 3D pass and before the swap, in 2D screen coordinates, for
+  an address bar, status line or tooltips drawn over the scene.
+- *Coverage.*  ~get_panel_coverage (key)~ estimates a panel's on-screen height
+  in pixels (0 when behind the camera or outside the field of view), so a host
+  can refresh small or hidden panels less often.
+- *Camera bookmarks.*  ~save_view~ / ~restore_view~ (eased) / ~forget_view~ /
+  ~list_views~ keep named camera poses; ~get_view_string~ / ~set_view_string~
+  move them in and out of a host's session store using ~lrg_pose_to_string~ /
+  ~lrg_pose_from_string~ (ten C-locale numbers: position, target, up, fovy).
 - ~LrgScenePanel~ (final) — one window→quad: source sub-rect, eased TRS, a
   depth-of-field focus weight, a cached textured ~GrlModel~ plane; exposes its
   world-space corners for picking and a ~pin~/~unpin~ flag (a pinned panel
   ignores arrangement ~set_target~).  A panel may instead carry a *static
   texture* (~set_image~ / ~has_static_texture~): an arbitrary image uploaded
-  whole, kept across redisplays (used for workspace panels).
+  whole, kept across redisplays (used for workspace panels), or an *external
+  texture* (~set_texture~ / ~has_external_texture~ / ~texture_updated~): a
+  caller-owned ~GrlTexture~ drawn by reference with trilinear + 16x anisotropic
+  filtering.  Panels also carry a generic slot (~set_slot~: group + ordinal,
+  ordered by ~compare_slot~) and an eased ~brightness~ multiplier that
+  arrangements use to fade logically distant panels.
 - ~LrgSpatialCamera~ (final) — wraps ~LrgCamera3D~, eases an ~LrgPose~ (boxed),
   and offers ~reset~ / ~zoom~ / ~orbit~ (eased) plus ~orbit_drag~ / ~pan_drag~
   (immediate, for cursor-following drags).
 - ~LrgSceneArrangement~ (interface) — lays panels out; built-ins
   ~LrgArrangementSingle~ ("single-panel"), ~LrgArrangementPerWindow~
   ("per-window") and ~LrgArrangementFree~ ("free": a loose spread that the user
-  then grabs/moves/pins).
+  then grabs/moves/pins), plus three that order panels by their slot:
+  - ~LrgArrangementCarousel~ ("carousel") -- a ring centred on the viewer's side
+    of the origin, so it curves around the default camera.  Ordinal 0 is the
+    front panel at the origin; lower ordinals run left, higher run right, and a
+    slot-group change leaves a gap.  The ring grows (~set_radius~ is the
+    minimum) until it closes into a full circle; ~set_spacing~ sets the
+    centre-to-centre distance in panel widths.  A host sets ordinal = index -
+    active index, so changing the active window spins the ring.
+  - ~LrgArrangementGrid~ ("grid") -- rows and columns sorted by slot, centred
+    on the origin, one row band per slot group, bent around the viewer by
+    ~set_curve~ (radius; 0 = flat); ~set_columns~ (0 = about square).
+  - ~LrgArrangementStack~ ("stack") -- a Rolodex keyed by ordinal: 0 in front,
+    positive ordinals recede left, negative right, each level ~set_depth_step~
+    further back and dimmer (brightness floor 0.25).  Built for history
+    (back / forward) and revisions.
 - ~LrgPanelEnvironment~ (interface) — the ambient scene (clear colour +
-  ~draw_ambient~); built-ins ~LrgEnvironmentSolid~ ("void"),
-  ~LrgEnvironmentWorkshop~ ("workshop", grid floor),
-  ~LrgEnvironmentCockpit~ ("cockpit", enclosed grid room).
+  ~draw_ambient~, and an optional camera-centred ~draw_sky~ that receives the
+  camera pose and runs first inside the camera scope); built-ins
+  ~LrgEnvironmentSolid~ ("void"), ~LrgEnvironmentWorkshop~ ("workshop", grid
+  floor), ~LrgEnvironmentCockpit~ ("cockpit", enclosed grid room),
+  ~LrgEnvironmentSky~ ("sky": an ~LrgSkyDome~ whose sun and colours follow
+  ~set_time_of_day~, above a faint ground grid) and ~LrgEnvironmentStudio~
+  ("studio": a neutral grey backdrop with a ringed floor).  Panels are drawn
+  unlit on top of every environment, so the room never costs legibility.
 - ~LrgModeRegistry~ (final) — string-id → GType for arrangements and
   environments, pre-loaded with the built-ins; the seam for adding new modes
   (implement the interface, register an id) without touching the surface.

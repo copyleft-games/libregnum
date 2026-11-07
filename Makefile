@@ -1461,10 +1461,15 @@ PUBLIC_HEADERS += \
 	src/term/lrg-arrangement-single.h \
 	src/term/lrg-arrangement-per-window.h \
 	src/term/lrg-arrangement-free.h \
+	src/term/lrg-arrangement-carousel.h \
+	src/term/lrg-arrangement-grid.h \
+	src/term/lrg-arrangement-stack.h \
 	src/term/lrg-panel-environment.h \
 	src/term/lrg-environment-solid.h \
 	src/term/lrg-environment-workshop.h \
 	src/term/lrg-environment-cockpit.h \
+	src/term/lrg-environment-sky.h \
+	src/term/lrg-environment-studio.h \
 	src/term/lrg-mode-registry.h \
 	src/term/lrg-3d-surface.h
 SOURCES += \
@@ -1483,10 +1488,15 @@ SOURCES += \
 	src/term/lrg-arrangement-single.c \
 	src/term/lrg-arrangement-per-window.c \
 	src/term/lrg-arrangement-free.c \
+	src/term/lrg-arrangement-carousel.c \
+	src/term/lrg-arrangement-grid.c \
+	src/term/lrg-arrangement-stack.c \
 	src/term/lrg-panel-environment.c \
 	src/term/lrg-environment-solid.c \
 	src/term/lrg-environment-workshop.c \
 	src/term/lrg-environment-cockpit.c \
+	src/term/lrg-environment-sky.c \
+	src/term/lrg-environment-studio.c \
 	src/term/lrg-mode-registry.c \
 	src/term/lrg-3d-surface.c
 
