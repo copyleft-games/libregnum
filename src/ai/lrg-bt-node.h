@@ -124,6 +124,21 @@ void                lrg_bt_node_abort                (LrgBTNode *self);
 LRG_AVAILABLE_IN_ALL
 gboolean            lrg_bt_node_is_running           (LrgBTNode *self);
 
+/**
+ * lrg_bt_node_get_tick_count:
+ * @self: an #LrgBTNode
+ *
+ * How many times the node has been ticked since it was created (resets do
+ * not clear it). Debug views compare it before and after a tree tick to
+ * tell which nodes the tick visited (see lrg_bt_runner_get_node_visited()).
+ *
+ * Returns: the tick count
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint64             lrg_bt_node_get_tick_count       (LrgBTNode *self);
+
 G_END_DECLS
 
 #endif /* LRG_BT_NODE_H */

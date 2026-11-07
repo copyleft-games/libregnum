@@ -16,6 +16,7 @@ typedef struct
 {
     gchar       *name;
     LrgBTStatus  status;
+    guint64      tick_count;   /* times ticked, for debug views */
 } LrgBTNodePrivate;
 
 #pragma GCC visibility push(default)
@@ -261,9 +262,21 @@ lrg_bt_node_tick (LrgBTNode     *self,
     priv = lrg_bt_node_get_instance_private (self);
     klass = LRG_BT_NODE_GET_CLASS (self);
 
+    priv->tick_count++;
     priv->status = klass->tick (self, blackboard, delta_time);
 
     return priv->status;
+}
+
+guint64
+lrg_bt_node_get_tick_count (LrgBTNode *self)
+{
+    LrgBTNodePrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_BT_NODE (self), 0);
+
+    priv = lrg_bt_node_get_instance_private (self);
+    return priv->tick_count;
 }
 
 /*

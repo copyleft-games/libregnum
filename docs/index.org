@@ -242,10 +242,12 @@ User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][Lr
 - [[file:guides/lighting-bake.org][Lighting bake]] - Baked lightmaps and SH probe grids: light modes, the level =lighting:= block, the runtime path and the baker
 - [[file:guides/animation-pipeline.org][Animation pipeline]] - glTF skins/clips/morphs, retargeting, .ranim graphs with IK and root motion, the 3D animator, .rseq sequences and 2D skeletons
 - [[file:guides/audio.org][Audio]] - The audio stack: manager, mixer graph and .rmixer, snapshots/ducking, spatial sources (rolloff curves, cones, doppler, occlusion)
+- [[file:guides/ai.org][AI]] - .rbt behaviour trees, .rfsm logic state machines, LrgAiComponent and LLM decisions (0.9.0)
 - [[file:guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]] - The runtime level module (=src/level/=), include paths, shared 3D math
 - [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
+- [[file:guides/2d.org][2D games]] - Tileset assets, rule tiles, isometric/hexagonal maps, .rsprite frame animations, 2D lights with shadows
 - [[file:guides/writing-a-data-format.org][Writing a Data Format]] - Composite YAML formats on LrgDataLoader: types, references, strict validation, writers, tests
 
 *** UI Framework

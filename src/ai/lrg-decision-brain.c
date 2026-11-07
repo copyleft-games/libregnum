@@ -29,6 +29,12 @@ typedef struct
     LrgJudgments *latest;
     gint64        latest_at;
     gchar        *error;
+    /* for inspectors (0.9.0) */
+    guint         asked;
+    guint         answered;
+    guint         cached;
+    guint         failed;
+    gdouble       latency;     /* seconds of the last answered question, -1 none */
 } Topic;
 
 /* an answer kept for a request */
@@ -71,6 +77,7 @@ enum
 {
     SIGNAL_ANSWERED,
     SIGNAL_FAILED,
+    SIGNAL_ASKED,
     N_SIGNALS
 };
 
@@ -157,6 +164,20 @@ lrg_decision_brain_class_init (LrgDecisionBrainClass *klass)
      */
     signals[SIGNAL_FAILED] = g_signal_new ("failed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0,
                                            NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+
+    /**
+     * LrgDecisionBrain::asked:
+     * @self: the brain
+     * @topic: the topic
+     * @request: the question as JSON (what goes to the model)
+     *
+     * A topic's question went out to the model (not answered from the
+     * cache). Decision inspectors show the request from here.
+     *
+     * Since: 0.9.0
+     */
+    signals[SIGNAL_ASKED] = g_signal_new ("asked", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0,
+                                          NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 }
 
 static void
@@ -226,6 +247,7 @@ topic_get (LrgDecisionBrain *self,
     {
         topic = g_new0 (Topic, 1);
         topic->name = g_strdup (name);
+        topic->latency = -1.0;
         g_hash_table_insert (self->topics, topic->name, topic);
     }
     return topic;
@@ -365,6 +387,7 @@ answered (GObject      *source,
     if (judgments == NULL)
     {
         self->failed++;
+        topic->failed++;
         g_free (topic->error);
         topic->error = g_strdup (error->message);
         lrg_debug (LRG_LOG_DOMAIN, "decision %s failed: %s", topic->name, error->message);
@@ -376,6 +399,8 @@ answered (GObject      *source,
     /* the totals, the cache, the journal, then the topic */
     self->answered++;
     self->seconds += seconds;
+    topic->answered++;
+    topic->latency = seconds;
     {
         gint64 in = -1;
         gint64 out = -1;
@@ -429,6 +454,9 @@ lrg_decision_brain_ask (LrgDecisionBrain    *self,
         (gdouble)(g_get_monotonic_time () - cached->at) / (gdouble)G_USEC_PER_SEC <= self->cache_seconds)
     {
         self->cached++;
+        topic->cached++;
+        g_free (topic->request);
+        topic->request = g_strdup (json);
         journal_write (self, topic_name, json, cached->judgments, NULL, 0.0, TRUE);
         take_answer (self, topic, cached->judgments, FALSE);
         if (out_cached != NULL)
@@ -440,6 +468,7 @@ lrg_decision_brain_ask (LrgDecisionBrain    *self,
 
     /* out to the model */
     self->asked++;
+    topic->asked++;
     g_free (topic->request);
     topic->request = g_steal_pointer (&json);
     topic->sent = g_get_monotonic_time ();
@@ -447,6 +476,7 @@ lrg_decision_brain_ask (LrgDecisionBrain    *self,
     pending = g_new0 (Pending, 1);
     g_set_weak_pointer (&pending->brain, self);
     pending->topic = g_strdup (topic_name);
+    g_signal_emit (self, signals[SIGNAL_ASKED], 0, topic->name, topic->request);
     lrg_decider_decide_async (self->decider, request, topic->pending, answered, pending);
     return TRUE;
 }
@@ -562,5 +592,170 @@ lrg_decision_brain_dup_status (LrgDecisionBrain *self)
                                 lrg_judgments_get_model (topic->latest) : "~",
                                 error != NULL ? "\"" : "", error != NULL ? error : "~", error != NULL ? "\"" : "");
     }
+    return g_string_free (out, FALSE);
+}
+
+/* ==========================================================================
+ * Inspector access (0.9.0)
+ * ========================================================================== */
+
+gchar **
+lrg_decision_brain_dup_topics (LrgDecisionBrain *self)
+{
+    GPtrArray *names;
+    GHashTableIter iter;
+    gpointer key;
+
+    g_return_val_if_fail (LRG_IS_DECISION_BRAIN (self), NULL);
+
+    names = g_ptr_array_new ();
+    g_hash_table_iter_init (&iter, self->topics);
+    while (g_hash_table_iter_next (&iter, &key, NULL))
+        g_ptr_array_add (names, g_strdup (key));
+    g_ptr_array_sort (names, compare_names);
+    g_ptr_array_add (names, NULL);
+    return (gchar **) g_ptr_array_free (names, FALSE);
+}
+
+const gchar *
+lrg_decision_brain_get_request (LrgDecisionBrain *self,
+                                const gchar      *topic_name)
+{
+    Topic *topic;
+
+    g_return_val_if_fail (LRG_IS_DECISION_BRAIN (self), NULL);
+
+    topic = topic_name != NULL ? g_hash_table_lookup (self->topics, topic_name) : NULL;
+    return topic != NULL ? topic->request : NULL;
+}
+
+gdouble
+lrg_decision_brain_get_latency (LrgDecisionBrain *self,
+                                const gchar      *topic_name)
+{
+    Topic *topic;
+
+    g_return_val_if_fail (LRG_IS_DECISION_BRAIN (self), -1.0);
+
+    topic = topic_name != NULL ? g_hash_table_lookup (self->topics, topic_name) : NULL;
+    return topic != NULL ? topic->latency : -1.0;
+}
+
+gdouble
+lrg_decision_brain_get_pending_seconds (LrgDecisionBrain *self,
+                                        const gchar      *topic_name)
+{
+    Topic *topic;
+
+    g_return_val_if_fail (LRG_IS_DECISION_BRAIN (self), -1.0);
+
+    topic = topic_name != NULL ? g_hash_table_lookup (self->topics, topic_name) : NULL;
+    if (topic == NULL || topic->pending == NULL)
+        return -1.0;
+    return (gdouble)(g_get_monotonic_time () - topic->sent) / (gdouble)G_USEC_PER_SEC;
+}
+
+gboolean
+lrg_decision_brain_get_topic_counts (LrgDecisionBrain *self,
+                                     const gchar      *topic_name,
+                                     guint            *out_asked,
+                                     guint            *out_answered,
+                                     guint            *out_cached,
+                                     guint            *out_failed)
+{
+    Topic *topic;
+
+    g_return_val_if_fail (LRG_IS_DECISION_BRAIN (self), FALSE);
+
+    topic = topic_name != NULL ? g_hash_table_lookup (self->topics, topic_name) : NULL;
+    if (out_asked != NULL)
+        *out_asked = topic != NULL ? topic->asked : 0;
+    if (out_answered != NULL)
+        *out_answered = topic != NULL ? topic->answered : 0;
+    if (out_cached != NULL)
+        *out_cached = topic != NULL ? topic->cached : 0;
+    if (out_failed != NULL)
+        *out_failed = topic != NULL ? topic->failed : 0;
+    return topic != NULL;
+}
+
+void
+lrg_decision_brain_get_totals (LrgDecisionBrain *self,
+                               guint            *out_asked,
+                               guint            *out_answered,
+                               guint            *out_cached,
+                               guint            *out_failed,
+                               gint64           *out_input_tokens,
+                               gint64           *out_output_tokens,
+                               gdouble          *out_mean_seconds)
+{
+    g_return_if_fail (LRG_IS_DECISION_BRAIN (self));
+
+    if (out_asked != NULL)
+        *out_asked = self->asked;
+    if (out_answered != NULL)
+        *out_answered = self->answered;
+    if (out_cached != NULL)
+        *out_cached = self->cached;
+    if (out_failed != NULL)
+        *out_failed = self->failed;
+    if (out_input_tokens != NULL)
+        *out_input_tokens = self->input_tokens;
+    if (out_output_tokens != NULL)
+        *out_output_tokens = self->output_tokens;
+    if (out_mean_seconds != NULL)
+        *out_mean_seconds = self->answered > 0 ? self->seconds / (gdouble)self->answered : 0.0;
+}
+
+/* a YAML double-quoted scalar of @text (or ~) */
+static void
+append_quoted (GString     *out,
+               const gchar *text)
+{
+    g_autofree gchar *esc = NULL;
+
+    if (text == NULL)
+    {
+        g_string_append (out, "~");
+        return;
+    }
+    esc = g_strescape (text, NULL);
+    g_string_append_printf (out, "\"%s\"", esc);
+}
+
+gchar *
+lrg_decision_brain_dup_topic_state (LrgDecisionBrain *self,
+                                    const gchar      *topic_name)
+{
+    Topic *topic;
+    GString *out;
+    gdouble age = -1.0;
+    g_autofree gchar *latest = NULL;
+
+    g_return_val_if_fail (LRG_IS_DECISION_BRAIN (self), NULL);
+
+    topic = topic_name != NULL ? g_hash_table_lookup (self->topics, topic_name) : NULL;
+    if (topic == NULL)
+        return NULL;
+    (void)lrg_decision_brain_get_latest (self, topic->name, &age);
+    if (topic->latest != NULL)
+        latest = lrg_judgments_dup_json (topic->latest);
+
+    out = g_string_new (NULL);
+    g_string_append (out, "topic: ");
+    append_quoted (out, topic->name);
+    g_string_append_printf (out, "\nbusy: %s\npending-seconds: %.3f\nlatency: %.3f\nage: %.3f\n"
+                            "asked: %u\nanswered: %u\ncached: %u\nfailed: %u\nmodel: ",
+                            topic->pending != NULL ? "true" : "false",
+                            lrg_decision_brain_get_pending_seconds (self, topic->name), topic->latency, age,
+                            topic->asked, topic->answered, topic->cached, topic->failed);
+    append_quoted (out, topic->latest != NULL ? lrg_judgments_get_model (topic->latest) : NULL);
+    g_string_append (out, "\nerror: ");
+    append_quoted (out, topic->error);
+    g_string_append (out, "\nrequest: ");
+    append_quoted (out, topic->request);
+    g_string_append (out, "\nlatest: ");
+    append_quoted (out, latest);
+    g_string_append_c (out, '\n');
     return g_string_free (out, FALSE);
 }

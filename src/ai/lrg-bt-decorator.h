@@ -13,6 +13,7 @@
 #include <glib-object.h>
 #include "lrg-version.h"
 #include "lrg-bt-node.h"
+#include "lrg-blackboard.h"
 
 G_BEGIN_DECLS
 
@@ -157,6 +158,196 @@ G_DECLARE_FINAL_TYPE (LrgBTFailer, lrg_bt_failer, LRG, BT_FAILER, LrgBTDecorator
  */
 LRG_AVAILABLE_IN_ALL
 LrgBTFailer *       lrg_bt_failer_new                (LrgBTNode *child);
+
+/* ==========================================================================
+ * Cooldown - Refuses to run its child again for a while (0.9.0)
+ * ========================================================================== */
+
+#define LRG_TYPE_BT_COOLDOWN (lrg_bt_cooldown_get_type ())
+
+/**
+ * LrgBTCooldown:
+ *
+ * After its child completes (success or failure) the cooldown fails
+ * without ticking the child until @seconds of tick time have passed. Tick
+ * time is the delta of the ticks that reach the node, so a cooldown under
+ * a branch that is not visited does not count down. `.rbt` spelling:
+ * `type: cooldown` with `seconds:`.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgBTCooldown, lrg_bt_cooldown, LRG, BT_COOLDOWN, LrgBTDecorator)
+
+/**
+ * lrg_bt_cooldown_new:
+ * @child: (nullable) (transfer none): The child node
+ * @seconds: the cooldown length
+ *
+ * Returns: (transfer full): A new #LrgBTCooldown
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgBTCooldown *     lrg_bt_cooldown_new              (LrgBTNode *child,
+                                                      gfloat     seconds);
+
+/**
+ * lrg_bt_cooldown_get_seconds:
+ * @self: an #LrgBTCooldown
+ *
+ * Returns: the cooldown length in seconds
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_bt_cooldown_get_seconds      (LrgBTCooldown *self);
+
+/**
+ * lrg_bt_cooldown_set_seconds:
+ * @self: an #LrgBTCooldown
+ * @seconds: the cooldown length (negative is clamped to 0)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_bt_cooldown_set_seconds      (LrgBTCooldown *self,
+                                                      gfloat         seconds);
+
+/**
+ * lrg_bt_cooldown_get_remaining:
+ * @self: an #LrgBTCooldown
+ *
+ * Returns: the seconds left before the child may run again (0 when ready)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_bt_cooldown_get_remaining    (LrgBTCooldown *self);
+
+/* ==========================================================================
+ * TimeLimit - Fails a child that runs too long (0.9.0)
+ * ========================================================================== */
+
+#define LRG_TYPE_BT_TIME_LIMIT (lrg_bt_time_limit_get_type ())
+
+/**
+ * LrgBTTimeLimit:
+ *
+ * Ticks its child; when the child has been running for more than
+ * @seconds of tick time the child is aborted and the node fails. `.rbt`
+ * spelling: `type: time_limit` with `seconds:`.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgBTTimeLimit, lrg_bt_time_limit, LRG, BT_TIME_LIMIT, LrgBTDecorator)
+
+/**
+ * lrg_bt_time_limit_new:
+ * @child: (nullable) (transfer none): The child node
+ * @seconds: the limit
+ *
+ * Returns: (transfer full): A new #LrgBTTimeLimit
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgBTTimeLimit *    lrg_bt_time_limit_new            (LrgBTNode *child,
+                                                      gfloat     seconds);
+
+/**
+ * lrg_bt_time_limit_get_seconds:
+ * @self: an #LrgBTTimeLimit
+ *
+ * Returns: the limit in seconds
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_bt_time_limit_get_seconds    (LrgBTTimeLimit *self);
+
+/**
+ * lrg_bt_time_limit_set_seconds:
+ * @self: an #LrgBTTimeLimit
+ * @seconds: the limit (negative is clamped to 0)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_bt_time_limit_set_seconds    (LrgBTTimeLimit *self,
+                                                      gfloat          seconds);
+
+/* ==========================================================================
+ * Guard - Runs its child only while a blackboard test holds (0.9.0)
+ * ========================================================================== */
+
+#define LRG_TYPE_BT_GUARD (lrg_bt_guard_get_type ())
+
+/**
+ * LrgBTGuard:
+ *
+ * Tests a blackboard key on every tick (lrg_blackboard_test()): while the
+ * test holds the child is ticked and its status returned; when it fails a
+ * running child is aborted and the guard fails. This makes a branch
+ * reactive: it stops the moment its precondition changes. `.rbt`
+ * spelling: `type: guard` with `key:`, `op:` and `value:`.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+G_DECLARE_FINAL_TYPE (LrgBTGuard, lrg_bt_guard, LRG, BT_GUARD, LrgBTDecorator)
+
+/**
+ * lrg_bt_guard_new:
+ * @child: (nullable) (transfer none): The child node
+ * @key: the blackboard key tested
+ * @op: the comparison
+ * @operand: (nullable): what the value is compared with (a floating
+ *   reference is sunk)
+ *
+ * Returns: (transfer full): A new #LrgBTGuard
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgBTGuard *        lrg_bt_guard_new                 (LrgBTNode       *child,
+                                                      const gchar     *key,
+                                                      LrgBlackboardOp  op,
+                                                      GVariant        *operand);
+
+/**
+ * lrg_bt_guard_get_key:
+ * @self: an #LrgBTGuard
+ *
+ * Returns: (transfer none): the tested key
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *       lrg_bt_guard_get_key             (LrgBTGuard *self);
+
+/**
+ * lrg_bt_guard_get_op:
+ * @self: an #LrgBTGuard
+ *
+ * Returns: the comparison
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgBlackboardOp     lrg_bt_guard_get_op              (LrgBTGuard *self);
+
+/**
+ * lrg_bt_guard_get_operand:
+ * @self: an #LrgBTGuard
+ *
+ * Returns: (transfer none) (nullable): the operand
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant *          lrg_bt_guard_get_operand         (LrgBTGuard *self);
 
 G_END_DECLS
 

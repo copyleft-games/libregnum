@@ -307,7 +307,8 @@ lrg_decider_decide_async (LrgDecider          *self,
     if (self->backend == BACKEND_SCRIPTED)
     {
         g_task_set_task_data (task, json, g_free);
-        g_idle_add (scripted_answer, g_steal_pointer (&task));
+        /* the idle source owns the task reference and drops it when done */
+        g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, scripted_answer, g_steal_pointer (&task), g_object_unref);
         return;
     }
 #ifdef LRG_ENABLE_AI

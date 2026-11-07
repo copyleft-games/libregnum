@@ -1,0 +1,416 @@
+#+title: Logic state machines (.rfsm)
+#+description: LrgLogicMachine, LrgLogicState, LrgLogicTransition, LrgLogicAction and LrgLogicCondition: hierarchical gameplay state machines as files, with events, timers, blackboard conditions, C and script actions and a live debug state
+#+authors: Zach Podbielniak
+#+categories: libregnum ai state-machines formats
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 1.0
+
+* Logic state machines
+:PROPERTIES:
+:CUSTOM_ID: logic-machines
+:END:
+=LrgLogicMachine= runs a generic, hierarchical state machine for gameplay logic: doors, quest steps, an enemy's alert levels, a boss's phases, a vending machine. It is the animation-free counterpart of the animation state machine in [[file:../animation/anim-graph.org][.ranim graphs]]: states run lists of actions when they are entered, on every update and when they are left; transitions leave a state on an event, after a time, when blackboard conditions hold, or on any combination; states nest. The definition lives in a =.rfsm= file; the same object runs it.
+
+| Type | What |
+|------+------|
+| =LrgLogicMachine= | the definition (name, schema, root state) and the runtime (active chain, timers, event queue, debug state) |
+| =LrgLogicState= | a state: =enter:=, =update:=, =exit:= actions, transitions, child states and an initial child |
+| =LrgLogicTransition= | target, event, timer (=after=), conditions (=when:=) and actions (=do:=) |
+| =LrgLogicAction= (boxed) | call a registered C action, call a script function, set a blackboard key, raise an event |
+| =LrgLogicCondition= (boxed) | a blackboard comparison, a registered C condition, a script function |
+
+See also: [[file:bt-asset.org][behaviour tree assets]] (the binding registry is shared), [[file:blackboard.org][LrgBlackboard]], [[file:ai-component.org][LrgAiComponent]], the [[file:../../guides/ai.org][AI guide]].
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** The root and the active chain
+:PROPERTIES:
+:CUSTOM_ID: root-and-chain
+:END:
+A machine has an implicit root state (=lrg_logic_machine_get_root()=, name ""): the file's top level. Its children are the top-level states, its =initial:= the machine's initial state, its =transitions:= apply in every state ("any state"), and its =enter:=, =update:= and =exit:= lists run when the machine starts, on every update and when it stops. While running, the *active chain* is the root plus one state per level down to a leaf: entering a state with children enters its initial child (=initial:=, else the first), and so on. =lrg_logic_machine_get_active_state()= is the innermost state's path (=combat/attack=), =lrg_logic_machine_dup_active_path()= every active path outermost first, =lrg_logic_machine_is_in_state()= tests any level.
+
+*** Paths and targets
+:PROPERTIES:
+:CUSTOM_ID: paths-and-targets
+:END:
+A state's path joins the names from below the root with =/= (=lrg_logic_state_dup_path()=); names are unique among siblings and contain no =/=. A transition's =to:= is:
+
+- =/a/b=: absolute, from the root;
+- =name= or =name/child=: the first segment is looked up among the owning state's siblings, then its parent's siblings, and so on up to the top-level states, then among the owning state's own children; the rest descends from there.
+
+So inside =combat=, =to: idle= finds the top-level =idle=, =to: attack= the sibling =attack=, and a parent's =to: approach= one of its children. Targets are resolved when the file loads (=LRG_LOGIC_MACHINE_ERROR_REFERENCE= with the key path) and when a transition fires.
+
+*** One update
+:PROPERTIES:
+:CUSTOM_ID: update
+:END:
+=lrg_logic_machine_update (machine, dt)= does, in order:
+
+1. every active state's timer advances by =dt=;
+2. the events queued before this call (=lrg_logic_machine_send_event()=, =event:= actions) are handled in order: each takes at most one transition, the first whose =event= matches, whose owner has been active for at least =after= seconds and whose =when:= conditions all hold, searching the active states outermost first and each state's transitions in file order; an event nothing takes is dropped;
+3. event-less transitions are taken the same way, again and again while one matches, up to =lrg_logic_machine_set_max_transitions()= (default 8) so two states that keep pointing at each other cannot hang a frame;
+4. the active states' =update:= actions run, outermost first, with =dt=.
+
+Events raised during the update (by =enter:=, =exit:=, =do:= or =update:= actions) wait for the next update. The order is fixed, nothing depends on wall-clock time or hash order, so the same inputs give the same states: machines are deterministic and replayable.
+
+Outer states win: an =alert= transition on =combat= is taken before one on =combat/attack= for the same event, which is how a parent interrupts its children.
+
+*** Taking a transition
+:PROPERTIES:
+:CUSTOM_ID: taking-a-transition
+:END:
+From owner =S= to target =T= the *domain* is the deepest state strictly containing both (the root for an any-state transition). The machine then:
+
+1. exits the active states below the domain, innermost first, running each one's =exit:= actions;
+2. runs the transition's =do:= actions;
+3. enters the states from the domain down to =T=, outermost first, running =enter:= actions, then =T='s initial chain;
+4. counts the firing (=lrg_logic_transition_get_fire_count()=), records it (=lrg_logic_machine_get_last_transition()=) and emits =transitioned=.
+
+A transition to its own state (=to:= the owner) exits and re-enters it, restarting its sub-machine and its timer. An any-state transition whose target is already active is skipped, so =transitions: [{to: dead, when: [{key: hp, op: le, value: 0}]}]= at the top level fires once.
+
+*** Actions and conditions
+:PROPERTIES:
+:CUSTOM_ID: actions-and-conditions
+:END:
+| Action entry | =LrgLogicActionKind= | Does |
+|--------------+----------------------+------|
+| =action: NAME= (+ =params:=) | =LRG_LOGIC_ACTION_CALL= | the C action registered with =lrg_bt_register_action()=; its status is ignored, =dt= is 0 in =enter:=, =exit:= and =do:= |
+| =script: NAME= (+ =params:=) | =LRG_LOGIC_ACTION_SCRIPT= | the script function, with =(blackboard, dt, param values...)= |
+| =set: KEY= + =value:= | =LRG_LOGIC_ACTION_SET= | =lrg_blackboard_set_variant()= |
+| =event: NAME= | =LRG_LOGIC_ACTION_EVENT= | queues the event on this machine |
+
+| Condition entry | =LrgLogicConditionKind= | Holds when |
+|-----------------+-------------------------+------------|
+| =key: KEY= (+ =op:=, =value:=) | =LRG_LOGIC_CONDITION_CHECK= | =lrg_blackboard_test()=; no =op=: =eq= with a value, =set= without |
+| =condition: NAME= (+ =params:=) | =LRG_LOGIC_CONDITION_CALL= | the registered C condition returns true |
+| =script: NAME= (+ =params:=) | =LRG_LOGIC_CONDITION_SCRIPT= | the script returns a truth value |
+
+C actions and conditions are looked up in the registry when they run (the machine's definition stays editable while it runs). =lrg_logic_machine_start()= checks every binding first and fails with =LRG_LOGIC_MACHINE_ERROR_BINDING= unless =lrg_logic_machine_set_allow_unbound()= is on; then a missing action is skipped and a missing condition is false, each logged once. =lrg_logic_machine_dup_unbound()= lists them.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+*** Schema
+:PROPERTIES:
+:CUSTOM_ID: format-schema
+:END:
+Top level (the root state):
+
+| Key | Type | Meaning |
+|-----+------+---------|
+| =version= | int | 1 (absent means 1; newer than =LRG_LOGIC_MACHINE_FORMAT_VERSION= is refused) |
+| =name= | string | the machine's name |
+| =blackboard= | list of ={name, type, default}= | the schema, as in [[file:bt-asset.org#schema][.rbt]]: defaults written at start; =set:= and =key:= entries must name declared keys when it is not empty |
+| =initial= | string | the first top-level state (default: the first listed) |
+| =enter=, =update=, =exit= | list of actions | machine-wide actions |
+| =transitions= | list of transitions | any-state transitions |
+| =states= | list of states | the top-level states |
+| anything else | any | kept and written back |
+
+A state: =name= (required) plus the same =initial=, =enter=, =update=, =exit=, =transitions= and =states= keys, and unknown keys (kept).
+
+A transition:
+
+| Key | Type | Meaning |
+|-----+------+---------|
+| =to= | string | required target (name, relative path or =/absolute=) |
+| =event= | string | the triggering event; absent: checked on every update |
+| =after= | number >= 0 | seconds the owner must have been active |
+| =when= | list of conditions | all must hold |
+| =do= | list of actions | run between the exits and the entries |
+| anything else | any | kept |
+
+Action and condition entries take exactly one kind key (see the tables above) and only their own keys; an unknown key there is an error.
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+version: 1
+name: sentry
+blackboard:
+- {name: hp, type: float, default: 100}
+- {name: target_visible, type: bool}
+- {name: mode, type: string, default: "idle"}
+initial: patrol
+enter:                                   # once, at start
+- {action: log, params: {msg: "sentry online"}}
+transitions:                             # any state
+- to: dead
+  when: [{key: hp, op: le, value: 0}]    # fires once: skipped while dead is active
+states:
+- name: patrol
+  enter: [{set: mode, value: "patrol"}]
+  update: [{action: walk_waypoints, params: {speed: 2.0}}]
+  transitions:
+  - to: combat                           # resolves to the sibling 'combat'
+    event: spotted
+  - to: combat
+    when: [{key: target_visible}]        # no op, no value: "set"
+- name: combat
+  initial: approach
+  enter: [{set: mode, value: "combat"}, {event: call_for_help}]
+  exit: [{action: stop_moving}]
+  transitions:
+  - to: patrol                           # outer: wins over the children's
+    event: lost
+    after: 3.0                           # only after 3 s in combat
+    do: [{script: shrug}]
+  states:
+  - name: approach
+    update: [{action: move_to_target}]
+    transitions:
+    - to: attack
+      when: [{condition: in_range, params: {range: 2.5}}]
+  - name: attack
+    enter: [{action: swing}]
+    transitions:
+    - {to: approach, after: 0.8}         # a timer: back after the swing
+- name: dead
+  enter: [{action: play_death}]
+editor:                                  # kept: node positions and the like
+  positions: {patrol: [0, 0], combat: [240, 0]}
+#+end_src
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+=LRG_LOGIC_MACHINE_ERROR= (=LrgLogicMachineError=), messages starting with the key path:
+
+| Code | When | Example |
+|------+------+---------|
+| =LRG_LOGIC_MACHINE_ERROR_PARSE= | not YAML, not a mapping | =the document is not a mapping= |
+| =LRG_LOGIC_MACHINE_ERROR_VERSION= | a newer format | =version: 7 is newer than this build reads (1)= |
+| =LRG_LOGIC_MACHINE_ERROR_INVALID= | wrong types, missing keys, duplicate or bad state names, malformed entries, negative =after= | =states[0].enter[0]: has both 'action' and 'event'= |
+| =LRG_LOGIC_MACHINE_ERROR_REFERENCE= | unknown targets or initial states; at validate/start, undeclared blackboard keys | =states[1].transitions[0].to: unknown state 'attak'= |
+| =LRG_LOGIC_MACHINE_ERROR_BINDING= | (start) missing actions, conditions, script functions | =action:swing is not bound= |
+| =LRG_LOGIC_MACHINE_ERROR_IO= | reading or writing a file | |
+
+*** Round trip
+:PROPERTIES:
+:CUSTOM_ID: round-trip
+:END:
+=lrg_logic_machine_to_data()= writes =version=, =name=, =blackboard=, =initial=, =enter=, =update=, =exit=, =transitions=, =states=, then unknown keys; a state =name= first; a transition =to=, =event=, =after=, =when=, =do=; a check condition leaves =op= out when it is the default. After the first save of a hand-written file, load/save is byte-stable. =lrg_logic_machine_duplicate()= copies a definition through that text.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** LrgLogicMachine
+:PROPERTIES:
+:CUSTOM_ID: api-machine
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_logic_machine_new (void)= | an empty machine |
+| =lrg_logic_machine_new_from_file (path, error)=, =lrg_logic_machine_new_from_data (data, length, error)= | load |
+| =lrg_logic_machine_load_from_file=, =lrg_logic_machine_load_from_data= | replace the definition (stops a running machine; unchanged on error) |
+| =lrg_logic_machine_to_data (self, error)=, =lrg_logic_machine_save_to_file (self, path, error)= | save |
+| =lrg_logic_machine_duplicate (self, error)= | a stopped copy for another entity |
+| =lrg_logic_machine_get_name=, =lrg_logic_machine_set_name= | |
+| =lrg_logic_machine_get_schema (self)= | the blackboard schema |
+| =lrg_logic_machine_get_root (self)= | the root state |
+| =lrg_logic_machine_find_state (self, path)= | a state by path |
+| =lrg_logic_machine_get_allow_unbound=, =lrg_logic_machine_set_allow_unbound= | lenient starts |
+| =lrg_logic_machine_get_max_transitions=, =lrg_logic_machine_set_max_transitions= | the event-less chain cap |
+| =lrg_logic_machine_validate (self, error)= | structure, targets, schema keys |
+| =lrg_logic_machine_dup_unbound (self, scripting)= | =action:=, =condition:=, =script:= entries |
+| =lrg_logic_machine_start (self, blackboard, scripting, error)= | validate, bind, defaults, enter |
+| =lrg_logic_machine_stop (self)= | exit everything (innermost first), drop events |
+| =lrg_logic_machine_is_running (self)= | |
+| =lrg_logic_machine_update (self, delta_time)= | one step |
+| =lrg_logic_machine_send_event (self, event)= | queue for the next update |
+| =lrg_logic_machine_get_blackboard (self)= | |
+| =lrg_logic_machine_get_active_state (self)= | innermost path |
+| =lrg_logic_machine_dup_active_path (self)= | every active path, outermost first |
+| =lrg_logic_machine_is_in_state (self, path)= | |
+| =lrg_logic_machine_get_state_time (self, path)= | seconds active (=NULL=: innermost), -1 inactive |
+| =lrg_logic_machine_get_update_count (self)= | updates since start |
+| =lrg_logic_machine_get_last_transition (self, &from, &to, &event)= | the last transition taken |
+| =lrg_logic_machine_dup_debug_state (self)= | YAML for inspectors |
+
+*Signals* (all =G_SIGNAL_RUN_LAST=): =state-entered (self, const gchar *path)= after a state's =enter:= actions, =state-exited (self, const gchar *path)= after its =exit:= actions (neither fires for the root), =transitioned (self, const gchar *from, const gchar *to, const gchar *event)= after a transition completes (=event= is =NULL= for event-less ones).
+
+The debug state:
+
+#+begin_src yaml
+running: true
+updates: 120
+active:
+- {state: "combat", time: 2.5000}
+- {state: "combat/attack", time: 0.2500}
+last_transition: {from: "combat/approach", to: "combat/attack", event: ~}
+queued: ["call_for_help"]
+#+end_src
+
+=lrg_logic_machine_error_quark()= / =LRG_LOGIC_MACHINE_ERROR=, =lrg_logic_machine_error_get_type()=, =lrg_logic_phase_get_type()=, =lrg_logic_action_kind_get_type()= and =lrg_logic_condition_kind_get_type()= register the domain and enums (=LrgLogicPhase=: =LRG_LOGIC_PHASE_ENTER=, =LRG_LOGIC_PHASE_UPDATE=, =LRG_LOGIC_PHASE_EXIT=).
+
+*** LrgLogicState
+:PROPERTIES:
+:CUSTOM_ID: api-state
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_logic_state_new (name)= | |
+| =lrg_logic_state_get_name=, =lrg_logic_state_set_name= | renaming does not update transitions naming the state |
+| =lrg_logic_state_dup_path (self)= | =a/b= |
+| =lrg_logic_state_get_parent (self)= | |
+| =lrg_logic_state_add_state (self, child)=, =lrg_logic_state_remove_state (self, child)= | children |
+| =lrg_logic_state_get_state_count=, =lrg_logic_state_get_state (self, index)=, =lrg_logic_state_find_state (self, name)= | |
+| =lrg_logic_state_get_initial=, =lrg_logic_state_set_initial= | the initial child (=NULL=: first) |
+| =lrg_logic_state_add_action (self, phase, action)= | append a copy of =action= to the =LrgLogicPhase= list |
+| =lrg_logic_state_remove_action=, =lrg_logic_state_get_action_count=, =lrg_logic_state_get_action= | |
+| =lrg_logic_state_add_transition=, =lrg_logic_state_remove_transition=, =lrg_logic_state_get_transition_count=, =lrg_logic_state_get_transition= | in priority order |
+
+*** LrgLogicTransition
+:PROPERTIES:
+:CUSTOM_ID: api-transition
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_logic_transition_new (target)= | |
+| =lrg_logic_transition_get_target=, =lrg_logic_transition_set_target= | |
+| =lrg_logic_transition_get_event=, =lrg_logic_transition_set_event= | =NULL=: event-less |
+| =lrg_logic_transition_get_after=, =lrg_logic_transition_set_after= | the timer |
+| =lrg_logic_transition_add_condition=, =lrg_logic_transition_remove_condition=, =lrg_logic_transition_get_condition_count=, =lrg_logic_transition_get_condition= | =when:= |
+| =lrg_logic_transition_add_action=, =lrg_logic_transition_remove_action=, =lrg_logic_transition_get_action_count=, =lrg_logic_transition_get_action= | =do:= |
+| =lrg_logic_transition_get_fire_count (self)= | how often a running machine took it |
+
+*** LrgLogicAction and LrgLogicCondition
+:PROPERTIES:
+:CUSTOM_ID: api-entries
+:END:
+Immutable boxed values (=lrg_logic_action_get_type()=, =lrg_logic_condition_get_type()=, with =g_autoptr= cleanups).
+
+| Function | Description |
+|----------+-------------|
+| =lrg_logic_action_new_call (name, params)= | =params= an =a{sv}= or =NULL= |
+| =lrg_logic_action_new_script (func, params)= | |
+| =lrg_logic_action_new_set (key, value)= | |
+| =lrg_logic_action_new_event (event)= | |
+| =lrg_logic_action_copy=, =lrg_logic_action_free= | |
+| =lrg_logic_action_get_kind=, =lrg_logic_action_get_name=, =lrg_logic_action_get_params=, =lrg_logic_action_get_value= | |
+| =lrg_logic_condition_new_check (key, op, value)= | |
+| =lrg_logic_condition_new_call (name, params)=, =lrg_logic_condition_new_script (func, params)= | |
+| =lrg_logic_condition_copy=, =lrg_logic_condition_free= | |
+| =lrg_logic_condition_get_kind=, =lrg_logic_condition_get_name=, =lrg_logic_condition_get_op=, =lrg_logic_condition_get_value=, =lrg_logic_condition_get_params= | |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A door
+:PROPERTIES:
+:CUSTOM_ID: example-door
+:END:
+#+begin_src yaml
+# door.rfsm
+blackboard: [{name: locked, type: bool}]
+initial: closed
+states:
+- name: closed
+  transitions: [{to: opening, event: use, when: [{key: locked, value: false}]}]
+- name: opening
+  enter: [{action: play_anim, params: {clip: open}}]
+  transitions: [{to: open, after: 0.6}]
+- name: open
+  transitions: [{to: closing, after: 5.0}, {to: closing, event: use}]
+- name: closing
+  enter: [{action: play_anim, params: {clip: close}}]
+  transitions: [{to: closed, after: 0.6}]
+#+end_src
+
+#+begin_src C
+static LrgBTStatus
+play_anim (LrgBlackboard *bb, gfloat dt, GVariant *params, gpointer user_data)
+{
+	LrgEntity3D *door = lrg_blackboard_get_pointer (bb, LRG_AI_COMPONENT_OWNER_KEY);
+
+	game_play_clip (door, lrg_bt_params_get_string (params, "clip", "open"));
+	return LRG_BT_STATUS_SUCCESS;
+}
+
+/* once */
+lrg_bt_register_action ("play_anim", play_anim, NULL, NULL);
+
+/* per door: the component loads, starts and updates the machine */
+ai = lrg_ai_component_new ();
+lrg_ai_component_set_machine_path (ai, "logic/door.rfsm");
+lrg_entity3d_add_component (door, LRG_COMPONENT (ai));
+
+/* the player presses use */
+lrg_ai_component_send_event (ai, "use");
+#+end_src
+
+*** Running a machine by hand
+:PROPERTIES:
+:CUSTOM_ID: example-manual
+:END:
+#+begin_src C
+g_autoptr(LrgLogicMachine) m = lrg_logic_machine_new_from_file ("logic/sentry.rfsm", &error);
+
+if (m == NULL || !lrg_logic_machine_start (m, NULL, scripting, &error))
+	g_error ("%s", error->message);
+g_signal_connect (m, "transitioned", G_CALLBACK (on_transitioned), NULL);
+for (;;)
+{
+	lrg_blackboard_set_bool (lrg_logic_machine_get_blackboard (m), "target_visible", can_see_player ());
+	lrg_logic_machine_update (m, frame_dt);
+	if (lrg_logic_machine_is_in_state (m, "combat"))
+		draw_alert_icon ();
+}
+#+end_src
+
+*** Building a machine in code
+:PROPERTIES:
+:CUSTOM_ID: example-code
+:END:
+#+begin_src C
+g_autoptr(LrgLogicMachine)    m = lrg_logic_machine_new ();
+g_autoptr(LrgLogicState)      idle = lrg_logic_state_new ("idle");
+g_autoptr(LrgLogicState)      busy = lrg_logic_state_new ("busy");
+g_autoptr(LrgLogicTransition) go = lrg_logic_transition_new ("busy");
+g_autoptr(LrgLogicCondition)  has_job = lrg_logic_condition_new_check ("jobs", LRG_BLACKBOARD_OP_GT,
+                                                                      g_variant_new_int32 (0));
+g_autoptr(LrgLogicAction)     start = lrg_logic_action_new_call ("start_job", NULL);
+
+lrg_logic_state_add_state (lrg_logic_machine_get_root (m), idle);
+lrg_logic_state_add_state (lrg_logic_machine_get_root (m), busy);
+lrg_logic_transition_add_condition (go, has_job);
+lrg_logic_state_add_transition (idle, go);
+lrg_logic_state_add_action (busy, LRG_LOGIC_PHASE_ENTER, start);
+lrg_logic_machine_save_to_file (m, "logic/worker.rfsm", &error);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+On an i7-1280P pinned to one core (=taskset -c 3=), release build, a two-level machine (=idle=, =combat= with =approach=/=attack= on 0.5 s / 0.25 s timers, an event-less blackboard transition, a C =update:= action, an event every 100 updates): *0.94 µs per update*. Costs scale with the active states' transitions (each checked once per pass) and the actions run; a C action or condition costs one registry lookup (a mutex and a hash lookup) per call. =dup_debug_state= allocates: poll it for inspectors only.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Events wait a frame.* An event raised by an action is handled on the next update, not immediately; =send_event= before =update= is handled in that update.
+- *One transition per event.* An event is consumed by the first matching transition; to fan out, raise more events.
+- *Event-less loops.* Two states whose transitions always hold flip up to the cap every update; give one a condition or an =after=.
+- *Self transitions restart.* =to:= the owning state exits and re-enters it (resetting its timer and children); to stay put, do not transition.
+- *Any-state transitions skip active targets.* A root transition never re-enters its own target; use the target state's own transitions for re-entry.
+- *One machine, one entity.* The machine object holds the runtime; give each entity its own (load per entity, =lrg_logic_machine_duplicate()=, or =LrgAiComponent:machine-path=).
+- *Timers count updates.* =after= measures the =dt= passed to =update=; a paused component's machine does not age.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The state-machine editor arrives in the next wave; the engine side is ready for it:
+
+- *Graph.* =lrg_logic_machine_get_root()= and the state/transition accessors give nodes (states, nested) and edges (transitions with their event, timer, conditions and actions); every mutation an editor needs (add/remove states, transitions, conditions, actions; rename; set initial) exists; unknown keys (an =editor:= block with positions) survive saves; =lrg_logic_machine_validate()= and =lrg_logic_machine_dup_unbound()= drive the problems list.
+- *Live state.* In play-in-editor =lrg_ai_component_get_machine()= is the running instance: =state-entered=, =state-exited= and =transitioned= drive highlighting, =lrg_logic_machine_get_state_time()= shows timers, =lrg_logic_transition_get_fire_count()= heats edges, =lrg_logic_machine_dup_debug_state()= (or =lrg_ai_component_dup_debug_state()=) is the IPC payload, and =lrg_logic_machine_send_event()= lets a tool poke the machine.

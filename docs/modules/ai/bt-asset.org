@@ -1,0 +1,467 @@
+#+title: Behaviour tree assets (.rbt)
+#+description: LrgBtAsset, LrgBtAssetNode, LrgBtRunner and the binding registry: behaviour trees as files with typed blackboards, C and script leaf bindings, subtrees and a live per-node debug state
+#+authors: Zach Podbielniak
+#+categories: libregnum ai behaviour-trees formats
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 1.0
+
+* Behaviour tree assets
+:PROPERTIES:
+:CUSTOM_ID: bt-assets
+:END:
+A =.rbt= file describes a behaviour tree as data: composites, decorators and leaves with their parameters, a typed blackboard schema with defaults, and named subtrees (inline or in other files). Leaves do their work through *bindings*: C functions registered by name with =lrg_bt_register_action()= / =lrg_bt_register_condition()=, or functions of a scripting context (=LrgScripting=: Lua, Python, GJS, native C units). An asset builds as many =LrgBehaviorTree= instances as there are agents; =LrgBtRunner= wraps one with the per-node, per-tick state a live editor view draws.
+
+| Type | What |
+|------+------|
+| =LrgBtAsset= | the file: name, =LrgBlackboardSchema=, subtrees, root =LrgBtAssetNode=; load, save, validate, build |
+| =LrgBtAssetNode= | one authored node: type, id, name, properties, binding parameters, children |
+| =LrgBtRunner= | a built tree with its id map and debug state (visited nodes, statuses, active path) |
+| registry | =lrg_bt_register_action()=, =lrg_bt_register_condition()=, =lrg_bt_register_node_type()= (process-wide, shared with [[file:logic-machine.org][.rfsm machines]]) |
+
+See also: [[file:behavior-tree.org][LrgBehaviorTree]], [[file:blackboard.org][LrgBlackboard and LrgBlackboardSchema]], [[file:bt-decorator.org][decorators]], [[file:logic-machine.org][logic state machines]], [[file:ai-component.org][LrgAiComponent]], the [[file:../../guides/ai.org][AI guide]].
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Asset, build, runner
+:PROPERTIES:
+:CUSTOM_ID: asset-build-runner
+:END:
+An =LrgBtAsset= holds no runtime state, so one asset serves every agent. =lrg_bt_asset_build()= validates it, resolves every binding, expands subtrees and returns a fresh =LrgBehaviorTree= (each call its own nodes). =lrg_bt_runner_new()= does the same and also keeps, for every built node, the asset node id it came from; after each =lrg_bt_runner_tick()= it knows which nodes the tick reached (each =LrgBTNode= counts its ticks: =lrg_bt_node_get_tick_count()=), their statuses, and the running branch. Edits to an asset after a build do not change built trees: build again.
+
+*** Node kinds
+:PROPERTIES:
+:CUSTOM_ID: node-kinds
+:END:
+Every node type has a kind (=LrgBtNodeKind=): =LRG_BT_NODE_KIND_COMPOSITE= (a =children:= list), =LRG_BT_NODE_KIND_DECORATOR= (exactly one =child:=), =LRG_BT_NODE_KIND_LEAF= (no children) or =LRG_BT_NODE_KIND_SUBTREE= (expands to a subtree). =lrg_bt_lookup_node_type()= gives a type's kind, =lrg_bt_dup_node_type_names()= every known type in palette order.
+
+*** Bindings
+:PROPERTIES:
+:CUSTOM_ID: bindings
+:END:
+=action= and =condition= leaves name what they call:
+
+- =action: NAME= / =condition: NAME=: a C function registered under that name. It receives the blackboard, the tick's delta (actions) and the node's =params:= as an =a{sv}= =GVariant=. Bindings resolve at build time: a built tree keeps the function it found even if the name is re-registered or unregistered later (registry entries are reference counted; the =GDestroyNotify= runs when the last tree using an entry goes).
+- =script: NAME=: a function of the =LrgScripting= passed to the build, called through =lrg_scripting_call_function()= with the arguments =(blackboard, delta_time, param values in file order)=. A script action returns a status: a string (="success"=, ="failure"=, ="running"=), a boolean (true is success), a number (an =LrgBTStatus= value: 1 success, 2 failure, 3 running) or nothing (success). A script condition returns a truth value (booleans, non-zero numbers, ="true"=/="success"=). A failing call fails the leaf and is logged once.
+
+A missing binding (an unregistered name, a script function the context does not have, an unknown node type) fails the build with =LRG_BT_ASSET_ERROR_BINDING=, unless =lrg_bt_asset_set_allow_unbound()= is on: then the leaf always fails and says so once in the log, which is what an editor wants when it previews a game's tree without the game's code. =lrg_bt_asset_dup_unbound()= lists what is missing.
+
+*** Parameters and properties
+:PROPERTIES:
+:CUSTOM_ID: parameters-and-properties
+:END:
+A node has two dictionaries, both kept in file order:
+
+- *properties*: the type's own keys (=count=, =seconds=, =key=, =op=, =value=, =action=, =script=, =condition=, =ref=, =policy=, =duration=; for custom types every scalar key). =lrg_bt_asset_node_get_prop()=, =lrg_bt_asset_node_set_prop()=, =lrg_bt_asset_node_dup_prop_names()=.
+- *parameters*: the =params:= mapping handed to the bound action, condition or script. =lrg_bt_asset_node_get_param()=, =lrg_bt_asset_node_set_param()=, =lrg_bt_asset_node_dup_param_names()=, =lrg_bt_asset_node_get_params()= (the =a{sv}=).
+
+Plain YAML scalars are typed when read: =true=/=false= are booleans (=b=), integers 64-bit integers (=x=), other numbers doubles (=d=), anything else a string (=s=); a quoted scalar is always a string (="7"= stays text). Writing reverses this and quotes strings that would read back as something else. In C, read parameters with =lrg_bt_params_get_double()=, =lrg_bt_params_get_int()=, =lrg_bt_params_get_bool()= and =lrg_bt_params_get_string()=, which convert between the numeric types and take a default.
+
+*** Ids
+:PROPERTIES:
+:CUSTOM_ID: ids
+:END:
+A node's =id:= is its name for tools and the runner: unique in the file, non-empty, without =/=. Nodes without one get generated ids (=n0=, =n1=, ...) the first time the asset needs ids (=lrg_bt_asset_find_node()=, a build); generated ids are stable for the life of the node objects but are not saved (=lrg_bt_asset_node_has_explicit_id()=). An editor gives every node it creates an explicit id. Inside a subtree expansion the ids are prefixed with the subtree node's id and a slash: a node =walk= of a subtree used by node =patrol= is =patrol/walk=; the subtree node's own id names the expansion's root (an alias).
+
+*** The blackboard schema
+:PROPERTIES:
+:CUSTOM_ID: schema
+:END:
+=blackboard:= declares typed keys (=int=, =float=, =bool=, =string=, =object=) with optional defaults (=lrg_bt_asset_get_schema()=, an [[file:blackboard.org#schema][LrgBlackboardSchema]]). A build writes the defaults for keys the blackboard does not have yet (keys without a default get 0, 0.0, false or "", objects nothing), file subtrees add their own schema's defaults. When the schema is not empty, =check=, =guard= and =set= nodes must name declared keys (=LRG_BT_ASSET_ERROR_REFERENCE= otherwise), which catches typos at load-and-validate time instead of as a silently failing branch.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+*** Schema
+:PROPERTIES:
+:CUSTOM_ID: format-schema
+:END:
+| Key | Type | Meaning |
+|-----+------+---------|
+| =version= | int | format version, 1 (absent means 1; newer than =LRG_BT_ASSET_FORMAT_VERSION= is refused) |
+| =name= | string | the tree's name |
+| =blackboard= | list of ={name, type, default}= | the schema; =type= is =int=, =float=, =bool=, =string= or =object= (no default) |
+| =subtrees= | map name -> ={path: FILE}= or ={root: NODE}= | named subtrees; =path= resolves against the file's directory |
+| =root= | node | the tree |
+| anything else | any | kept and written back |
+
+A node is a mapping:
+
+| Key | Type | Meaning |
+|-----+------+---------|
+| =type= | string | required: a built-in type below, or a registered custom type |
+| =id= | string | optional unique id |
+| =name= | string | optional display name (the built =LrgBTNode= name; the id when absent) |
+| =children= | list of nodes | composites |
+| =child= | node | decorators |
+| =params= | map of scalars | binding parameters (=action=, =condition=, custom types) |
+| type keys | scalars | the properties below |
+| anything else | any | kept and written back |
+
+Built-in types:
+
+| Type | Kind | Properties | Behaviour |
+|------+------+------------+-----------|
+| =sequence= | composite | | ticks children in order, fails at the first failure |
+| =selector= | composite | | ticks children in order, succeeds at the first success |
+| =parallel= | composite | =policy=: =all= (default) or =one= | ticks every child; =one=: succeeds when any succeeds, =all=: fails when any fails |
+| =inverter= | decorator | | swaps success and failure |
+| =repeater= | decorator | =count= (int >= 0, default 1, 0 = forever) | reruns the child, one run per tick |
+| =succeeder= | decorator | | always success (unless running) |
+| =failer= | decorator | | always failure (unless running) |
+| =cooldown= | decorator | =seconds= (required) | after the child completes, fails for =seconds= of tick time ([[file:bt-decorator.org#cooldown][LrgBTCooldown]]) |
+| =time_limit= | decorator | =seconds= (required) | aborts a child running longer and fails ([[file:bt-decorator.org#time-limit][LrgBTTimeLimit]]) |
+| =guard= | decorator | =key=, =op=, =value= | runs the child while the test holds, aborts it when it stops holding ([[file:bt-decorator.org#guard][LrgBTGuard]]) |
+| =action= | leaf | =action= or =script= | calls the binding, returns its status |
+| =condition= | leaf | =condition= or =script= | calls the binding, success when it holds |
+| =check= | leaf | =key=, =op=, =value= | =lrg_blackboard_test()= on the blackboard |
+| =set= | leaf | =key=, =value= | writes the typed value (=lrg_blackboard_set_variant()=), success |
+| =wait= | leaf | =duration= (required) | running until =duration= seconds of tick time passed |
+| =subtree= | subtree | =ref= | the named subtree |
+
+=op= is =eq=, =ne=, =lt=, =le=, =gt=, =ge=, =set= or =unset= (=LrgBlackboardOp=; the symbols =\=\==, =!\==, =<=, =<\==, =>=, =>\== are read too and saved by name). Without =op= a =check= or =guard= with a =value= tests equality and one without tests =set= (present and truthy).
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+version: 1
+name: guard                       # LrgBtAsset:name
+blackboard:                       # typed keys; defaults land in the blackboard at build
+- name: health
+  type: float
+  default: 100.0
+- name: alert
+  type: bool                      # no default: false
+- name: target
+  type: object                    # objects never get a default
+subtrees:
+  patrol:
+    path: patrol.rbt              # another file, relative to this one
+  search:
+    root:                         # written inline
+      type: sequence
+      id: search
+      children:
+      - {type: action, id: look, action: look_around}
+      - {type: wait, id: pause, duration: 1.5}
+root:
+  type: selector
+  id: root
+  children:
+  - type: guard                   # reactive: aborts the attack when alert drops
+    id: engaged
+    key: alert
+    value: true
+    child:
+      type: sequence
+      id: fight
+      children:
+      - {type: check, id: has_target, key: target}          # op absent, no value: "set"
+      - type: cooldown
+        id: swing_cd
+        seconds: 0.8
+        child:
+          type: action
+          id: swing
+          action: melee_attack    # lrg_bt_register_action ("melee_attack", ...)
+          params:
+            damage: 12            # int64
+            element: "fire"       # quoted: always a string
+  - type: sequence
+    id: hurt
+    children:
+    - {type: check, id: low, key: health, op: lt, value: 25}
+    - {type: action, id: flee, script: flee_from_target, params: {speed: 6.5}}
+  - {type: subtree, id: patrolling, ref: patrol}
+editor:                           # unknown keys are kept: editor layout, notes
+  zoom: 1.25
+#+end_src
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+Errors are in the =LRG_BT_ASSET_ERROR= domain (=LrgBtAssetError=), messages start with the key path:
+
+| Code | When | Example |
+|------+------+---------|
+| =LRG_BT_ASSET_ERROR_PARSE= | not YAML, not a mapping | =the document is not a mapping= |
+| =LRG_BT_ASSET_ERROR_VERSION= | a newer format | =version: 2 is newer than this build reads (1)= |
+| =LRG_BT_ASSET_ERROR_INVALID= | wrong value type or range, a missing required key, wrong child key, duplicate id; at build, wrong child counts | =root.children[0].duration: 'soon' is not a non-negative number= |
+| =LRG_BT_ASSET_ERROR_REFERENCE= | an undeclared subtree, a subtree containing itself, an undeclared blackboard key | =root.ref: unknown subtree 'patorl' (declare it under subtrees:)= |
+| =LRG_BT_ASSET_ERROR_BINDING= | (build) an unregistered action, condition, script function or node type | =node 'swing' (action): action 'melee_atack' is not registered= |
+| =LRG_BT_ASSET_ERROR_IO= | reading or writing a file | |
+
+Loading checks values, ids and subtree names; structure (a decorator with no child, a missing =duration=) and blackboard key references are checked by =lrg_bt_asset_validate()= and every build, so an editor can open and save a tree that is still being written.
+
+*** Round trip
+:PROPERTIES:
+:CUSTOM_ID: round-trip
+:END:
+=lrg_bt_asset_to_data()= writes keys in a fixed order (=version=, =name=, =blackboard=, =subtrees=, =root=, then unknown keys; per node =type=, =id=, =name=, properties in their order, =params=, =child=/=children=, unknown keys) in block style. The first save of a hand-written file normalises spacing, flow mappings and number spelling (=100= for a float default becomes =100.0=); saving what was loaded is byte-stable from then on.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Registry
+:PROPERTIES:
+:CUSTOM_ID: api-registry
+:END:
+| Function | Description |
+|----------+-------------|
+| =void lrg_bt_register_action (name, LrgBtBoundActionFunc func, user_data, destroy)= | register or replace a named C action |
+| =void lrg_bt_register_condition (name, LrgBtBoundConditionFunc func, user_data, destroy)= | register or replace a named C condition |
+| =gboolean lrg_bt_unregister_action (name)=, =lrg_bt_unregister_condition (name)= | remove (built trees keep theirs) |
+| =gboolean lrg_bt_has_action (name)=, =lrg_bt_has_condition (name)= | lookups |
+| =gchar **lrg_bt_dup_action_names (void)=, =lrg_bt_dup_condition_names (void)= | sorted names (an editor palette) |
+| =gboolean lrg_bt_register_node_type (name, GType type)= | a custom =LrgBTNode= subclass as a =type:=; =FALSE= for a built-in name |
+| =gboolean lrg_bt_lookup_node_type (name, LrgBtNodeKind *out_kind)= | known type and its kind |
+| =gchar **lrg_bt_dup_node_type_names (void)= | built-ins in palette order, then registered types |
+| =gdouble lrg_bt_params_get_double (params, key, default)= | numeric parameter |
+| =gint64 lrg_bt_params_get_int (params, key, default)= | integer parameter |
+| =gboolean lrg_bt_params_get_bool (params, key, default)= | boolean parameter (numbers: non-zero) |
+| =const gchar *lrg_bt_params_get_string (params, key, default)= | string parameter (owned by =params=) |
+| =const gchar *lrg_bt_status_to_string (LrgBTStatus)= | =invalid=, =success=, =failure=, =running= |
+
+=LrgBtBoundActionFunc= is =LrgBTStatus (*)(LrgBlackboard *blackboard, gfloat delta_time, GVariant *params, gpointer user_data)=; =LrgBtBoundConditionFunc= is =gboolean (*)(LrgBlackboard *blackboard, GVariant *params, gpointer user_data)=. =params= is never =NULL= (an empty =a{sv}= when the node has none). The registry is thread-safe; the functions run on the thread that ticks the tree.
+
+*Custom node types.* A registered type's scalar keys are set as GObject properties (=ticks_needed= sets =ticks-needed=): booleans, integers, floats, strings and enums by nick, through GLib value transforms. =LrgBTComposite= subclasses take =children:=, =LrgBTDecorator= subclasses one =child:=, anything else is a leaf.
+
+*** LrgBtAsset
+:PROPERTIES:
+:CUSTOM_ID: api-asset
+:END:
+| Function | Description |
+|----------+-------------|
+| =LrgBtAsset *lrg_bt_asset_new (void)= | an empty asset |
+| =LrgBtAsset *lrg_bt_asset_new_from_file (path, error)= | load a file (its directory becomes the base directory) |
+| =LrgBtAsset *lrg_bt_asset_new_from_data (data, length, error)= | load text |
+| =gboolean lrg_bt_asset_load_from_file (self, path, error)= | replace the contents (unchanged on error) |
+| =gboolean lrg_bt_asset_load_from_data (self, data, length, error)= | replace the contents (unchanged on error) |
+| =gchar *lrg_bt_asset_to_data (self, error)= | serialise |
+| =gboolean lrg_bt_asset_save_to_file (self, path, error)= | write a file |
+| =lrg_bt_asset_get_name=, =lrg_bt_asset_set_name= | the tree's name |
+| =lrg_bt_asset_get_base_dir=, =lrg_bt_asset_set_base_dir= | where relative subtree paths resolve |
+| =LrgBlackboardSchema *lrg_bt_asset_get_schema (self)= | the schema, edited in place |
+| =lrg_bt_asset_get_root=, =lrg_bt_asset_set_root= | the root node |
+| =LrgBtAssetNode *lrg_bt_asset_find_node (self, id)= | a node of the root tree or an inline subtree |
+| =lrg_bt_asset_set_subtree_path (self, name, path)= | declare a file subtree |
+| =lrg_bt_asset_set_subtree_root (self, name, root)= | declare an inline subtree |
+| =gboolean lrg_bt_asset_remove_subtree (self, name)= | |
+| =gchar **lrg_bt_asset_dup_subtree_names (self)= | in declaration order |
+| =lrg_bt_asset_get_subtree_path=, =lrg_bt_asset_get_subtree_root= | one of the two is set |
+| =lrg_bt_asset_get_allow_unbound=, =lrg_bt_asset_set_allow_unbound= | lenient builds |
+| =gboolean lrg_bt_asset_validate (self, error)= | structure, properties, subtrees, schema keys |
+| =gchar **lrg_bt_asset_dup_unbound (self, scripting)= | =action:NAME=, =condition:NAME=, =script:NAME=, =type:NAME= |
+| =LrgBehaviorTree *lrg_bt_asset_build (self, scripting, blackboard, error)= | a runnable tree (sharing =blackboard= when given) |
+
+=LRG_BT_ASSET_FORMAT_VERSION= is the version written. =lrg_bt_asset_error_quark()= / =LRG_BT_ASSET_ERROR=, =lrg_bt_asset_error_get_type()=, =lrg_bt_node_kind_get_type()= register the domain and enums.
+
+*** LrgBtAssetNode
+:PROPERTIES:
+:CUSTOM_ID: api-node
+:END:
+| Function | Description |
+|----------+-------------|
+| =LrgBtAssetNode *lrg_bt_asset_node_new (type_name)= | a node |
+| =LrgBtAssetNode *lrg_bt_asset_node_copy (self)= | deep copy (ids included) |
+| =lrg_bt_asset_node_get_type_name=, =lrg_bt_asset_node_set_type_name= | the type |
+| =LrgBtNodeKind lrg_bt_asset_node_get_kind (self)= | the type's kind (unknown types: from their children) |
+| =lrg_bt_asset_node_get_id=, =lrg_bt_asset_node_set_id=, =lrg_bt_asset_node_has_explicit_id= | ids |
+| =lrg_bt_asset_node_get_name=, =lrg_bt_asset_node_set_name= | display name |
+| =lrg_bt_asset_node_get_prop=, =lrg_bt_asset_node_set_prop=, =lrg_bt_asset_node_dup_prop_names= | type properties (=NULL= value removes) |
+| =lrg_bt_asset_node_get_param=, =lrg_bt_asset_node_set_param=, =lrg_bt_asset_node_dup_param_names=, =lrg_bt_asset_node_get_params= | binding parameters |
+| =lrg_bt_asset_node_get_child_count=, =lrg_bt_asset_node_get_child= | children |
+| =lrg_bt_asset_node_insert_child (self, child, position)= | -1 appends; the child must have no parent |
+| =gboolean lrg_bt_asset_node_remove_child (self, child)= | |
+| =LrgBtAssetNode *lrg_bt_asset_node_get_parent (self)= | |
+
+*** LrgBtRunner
+:PROPERTIES:
+:CUSTOM_ID: api-runner
+:END:
+| Function | Description |
+|----------+-------------|
+| =LrgBtRunner *lrg_bt_runner_new (asset, scripting, blackboard, error)= | build with the id map |
+| =lrg_bt_runner_get_asset=, =lrg_bt_runner_get_tree=, =lrg_bt_runner_get_blackboard= | parts |
+| =LrgBTStatus lrg_bt_runner_tick (self, delta_time)= | tick and record; emits =ticked= |
+| =void lrg_bt_runner_reset (self)= | abort and reset (blackboard kept) |
+| =lrg_bt_runner_get_status=, =lrg_bt_runner_get_tick_count= | the last tick |
+| =lrg_bt_runner_get_node_count=, =lrg_bt_runner_get_node_id (self, index)= | node ids, depth-first root first (aliases included) |
+| =LrgBTNode *lrg_bt_runner_get_node (self, id)= | the built node |
+| =LrgBTStatus lrg_bt_runner_get_node_status (self, id)= | status after the last tick that reached it |
+| =gboolean lrg_bt_runner_get_node_visited (self, id)= | did the last tick reach it |
+| =gchar **lrg_bt_runner_dup_active_path (self)= | the running branch, root first |
+| =const gchar *lrg_bt_runner_get_current_node (self)= | the deepest running node, else the last visited |
+| =gchar *lrg_bt_runner_dup_debug_state (self)= | the last tick as YAML |
+
+*Signal* =ticked (LrgBtRunner *self, guint64 tick, LrgBTStatus status)=, =G_SIGNAL_RUN_LAST=, after the debug state is recorded.
+
+The debug state:
+
+#+begin_src yaml
+tick: 42
+status: running
+current: swing
+nodes:
+- {id: "root", status: running, visited: true, ticks: 42}
+- {id: "engaged", status: running, visited: true, ticks: 42}
+- {id: "hurt", status: failure, visited: false, ticks: 17}
+#+end_src
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Registering actions and running a tree
+:PROPERTIES:
+:CUSTOM_ID: example-run
+:END:
+#+begin_src C
+static LrgBTStatus
+melee_attack (LrgBlackboard *bb,
+              gfloat         dt,
+              GVariant      *params,
+              gpointer       user_data)
+{
+	LrgEntity3D *self = lrg_blackboard_get_pointer (bb, LRG_AI_COMPONENT_OWNER_KEY);
+	GObject     *target = lrg_blackboard_get_object (bb, "target");
+	gint64       damage = lrg_bt_params_get_int (params, "damage", 1);
+
+	if (self == NULL || target == NULL)
+		return LRG_BT_STATUS_FAILURE;
+	game_deal_damage (self, target, (gint) damage);
+	return LRG_BT_STATUS_SUCCESS;
+}
+
+static void
+setup_ai (void)
+{
+	g_autoptr(GError)      error = NULL;
+	g_autoptr(LrgBtAsset)  asset = NULL;
+	g_autoptr(LrgBtRunner) runner = NULL;
+
+	lrg_bt_register_action ("melee_attack", melee_attack, NULL, NULL);
+	asset = lrg_bt_asset_new_from_file ("ai/guard.rbt", &error);
+	if (asset == NULL)
+		g_error ("%s", error->message);          /* e.g. "ai/guard.rbt: root.children[1]...: ..." */
+	runner = lrg_bt_runner_new (asset, NULL, NULL, &error);
+	if (runner == NULL)
+		g_error ("%s", error->message);          /* a missing binding names the node */
+
+	lrg_blackboard_set_bool (lrg_bt_runner_get_blackboard (runner), "alert", TRUE);
+	lrg_bt_runner_tick (runner, 1.0f / 60.0f);
+	g_print ("in %s\n", lrg_bt_runner_get_current_node (runner));
+}
+#+end_src
+
+On an entity, use [[file:ai-component.org][LrgAiComponent]] instead: it owns the blackboard, steps the runner every update and puts the entity under =LRG_AI_COMPONENT_OWNER_KEY=.
+
+*** Script leaves
+:PROPERTIES:
+:CUSTOM_ID: example-script
+:END:
+#+begin_src lua
+-- ai.lua, loaded into an LrgScriptingLua
+function flee_from_target(bb, dt, speed)   -- (blackboard, delta, params in file order)
+  move_away(speed * dt)
+  if far_enough() then return "success" end
+  return "running"
+end
+#+end_src
+
+#+begin_src C
+g_autoptr(LrgScriptingLua) lua = lrg_scripting_lua_new ();
+
+lrg_scripting_load_file (LRG_SCRIPTING (lua), "ai/ai.lua", &error);
+runner = lrg_bt_runner_new (asset, LRG_SCRIPTING (lua), NULL, &error);
+#+end_src
+
+*** Building a tree in code (what an editor does)
+:PROPERTIES:
+:CUSTOM_ID: example-edit
+:END:
+#+begin_src C
+g_autoptr(LrgBtAsset)     asset = lrg_bt_asset_new ();
+g_autoptr(LrgBtAssetNode) root = lrg_bt_asset_node_new ("selector");
+g_autoptr(LrgBtAssetNode) low = lrg_bt_asset_node_new ("check");
+g_autoptr(LrgBtAssetNode) flee = lrg_bt_asset_node_new ("action");
+
+lrg_bt_asset_node_set_id (root, "root");
+lrg_bt_asset_node_set_id (low, "low");
+lrg_bt_asset_node_set_prop (low, "key", g_variant_new_string ("health"));
+lrg_bt_asset_node_set_prop (low, "op", g_variant_new_string ("lt"));
+lrg_bt_asset_node_set_prop (low, "value", g_variant_new_double (25.0));
+lrg_bt_asset_node_set_id (flee, "flee");
+lrg_bt_asset_node_set_prop (flee, "script", g_variant_new_string ("flee_from_target"));
+lrg_bt_asset_node_set_param (flee, "speed", g_variant_new_double (6.5));
+lrg_bt_asset_node_insert_child (root, low, -1);
+lrg_bt_asset_node_insert_child (root, flee, -1);
+lrg_bt_asset_set_root (asset, root);
+lrg_blackboard_schema_add_key (lrg_bt_asset_get_schema (asset), "health", G_TYPE_FLOAT,
+                               g_variant_new_double (100.0));
+if (!lrg_bt_asset_validate (asset, &error))
+	g_warning ("%s", error->message);
+lrg_bt_asset_save_to_file (asset, "ai/coward.rbt", &error);
+#+end_src
+
+*** A custom node type
+:PROPERTIES:
+:CUSTOM_ID: example-custom
+:END:
+#+begin_src C
+/* MyLineOfSight: an LrgBTNode subclass with a "range" float property */
+lrg_bt_register_node_type ("line_of_sight", MY_TYPE_LINE_OF_SIGHT);
+#+end_src
+
+#+begin_src yaml
+- {type: line_of_sight, id: los, range: 30.0}
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured on an i7-1280P pinned to one core (=taskset -c 3=), release build, a 65-node tree (a selector over 16 =guard= decorators, each guarding a =check=, a C =action= and a =set=; the last guard holds, so a tick reaches 21 nodes):
+
+| Operation | Time |
+|-----------+------|
+| =lrg_behavior_tree_tick()= of the built tree | 2.9 µs |
+| =lrg_bt_runner_tick()= (tick + debug bookkeeping over all 65 records) | 5.1 µs |
+| =lrg_bt_runner_dup_debug_state()= | 23 µs |
+| =lrg_bt_runner_new()= (validate, bind, build 65 nodes) | 0.31 ms |
+| =lrg_bt_asset_to_data()= + =lrg_bt_asset_new_from_data()= | 2.2 ms |
+
+- Build once per agent and keep the runner; never build per frame.
+- The runner's bookkeeping is O(nodes) per tick; for hundreds of agents with large trees and no inspector attached, tick =lrg_bt_runner_get_tree()= directly (the debug state then goes stale) or use [[file:ai-component.org][LrgAiComponent:tick-interval]] to think at 5-10 Hz.
+- Bindings are resolved at build: a tick costs one function call per leaf, no registry lookup.
+- =dup_debug_state= allocates; poll it for an inspector, not per agent per frame.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Register before building.* Bindings resolve when the tree is built; registering =melee_attack= after =lrg_bt_runner_new()= does not reach that runner.
+- *Quoted versus plain.* =value: 7= is an integer, =value: "7"= a string; a =check= with =op: eq= of a float key against the string never holds.
+- *Float keys compare in single precision.* =lrg_blackboard_test()= rounds a double operand to float for float keys, so =value: 0.1= equals a stored 0.1f.
+- *Cooldowns and waits count tick time.* They only advance when a tick reaches them; a =wait= under a branch a selector skips does not run down.
+- *Composites resume.* A =sequence= whose child returned running resumes at that child on the next tick; put conditions that must be re-checked every tick in a =guard=, not in front of the running child.
+- *Ids in subtrees.* Two uses of one subtree build two copies; their ids differ by prefix (=a/walk=, =b/walk=).
+- *Object keys and the owner.* =LrgAiComponent= stores its owner as a pointer (=lrg_blackboard_get_pointer()=), not an object, to avoid a reference cycle.
+- *Unbound in shipped games.* =allow-unbound= is for tools; a game should build strictly so a typo fails loudly.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The 0.9.0 engine wave ships the format and the hooks; the BT editor with live state comes in the next wave. What it builds on:
+
+- *Graph model.* The node tree is =LrgBtAssetNode= (children, kinds, properties, parameters, ids); =lrg_bt_dup_node_type_names()=, =lrg_bt_lookup_node_type()=, =lrg_bt_dup_action_names()= and =lrg_bt_dup_condition_names()= fill the palette; =lrg_bt_asset_validate()= and =lrg_bt_asset_dup_unbound()= drive the problems list; unknown keys (an =editor:= block with node positions) survive saves.
+- *Preview without game code.* =lrg_bt_asset_set_allow_unbound (asset, TRUE)= builds trees whose game actions are not registered in the editor process.
+- *Live state.* In play-in-editor the game's =LrgAiComponent= owns an =LrgBtRunner= (=lrg_ai_component_get_runner()=); its =ticked= signal and =lrg_bt_runner_get_node_visited()=, =lrg_bt_runner_get_node_status()= and =lrg_bt_runner_dup_active_path()= map back to the asset's node ids; =lrg_bt_runner_dup_debug_state()= and =lrg_ai_component_dup_debug_state()= are the IPC payloads.

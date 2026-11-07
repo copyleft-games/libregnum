@@ -259,6 +259,17 @@ lrg_behavior_tree_get_blackboard (LrgBehaviorTree *self)
     return self->blackboard;
 }
 
+void
+lrg_behavior_tree_set_blackboard (LrgBehaviorTree *self,
+                                  LrgBlackboard   *blackboard)
+{
+    g_return_if_fail (LRG_IS_BEHAVIOR_TREE (self));
+    g_return_if_fail (LRG_IS_BLACKBOARD (blackboard));
+
+    if (g_set_object (&self->blackboard, blackboard))
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BLACKBOARD]);
+}
+
 /*
  * lrg_behavior_tree_tick:
  * @self: an #LrgBehaviorTree
