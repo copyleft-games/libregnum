@@ -1,0 +1,380 @@
+#+title: LrgWorld3DRenderer
+#+description: The shared 3D renderer: draws an LrgWorld3D (or any LrgRenderList) with lights, shadows, sky, post and static batching; the editor viewport draws through it too.
+
+* LrgWorld3DRenderer
+:PROPERTIES:
+:CUSTOM_ID: lrgworld3drenderer
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgWorld3DRenderer= (=src/world3d/lrg-world3d-renderer.{h,c}=, since 0.9.0) is the engine's one 3D drawing implementation. It takes an =LrgRenderList= (collected from an =LrgWorld3D= through a camera, or built by hand) and a view, and draws it with the engine's lighting: an =LrgLightSet= synced from the list's lights, the cascaded (and cube) shadow maps of =LrgShadowRenderer=, an =LrgSkyDome=, opaque, cutout and transparent passes, optional static batching through =LrgStaticBatch=, the debug draw, and a preview post chain (FXAA, bloom, vignette, colour grade).
+
+It was extracted from the editor viewport (=LrgEditorSceneRenderer=, the most complete 3D renderer the engine had), and the editor now draws through it: authoring nodes become a transient render list, and while a 3D level plays the viewport draws the play session's =LrgWorld3D=. A game and the editor therefore draw the same scene the same way; the viewport's render modes (lit, unlit, wireframe, normals, lighting only) are the renderer's.
+
+Without a window, or with =headless= set, a render runs every pass without touching the GPU and records what it would draw (per-pass counts and the entities in draw order), which is how its logic is tested.
+
+#+begin_example
+ LrgWorld3D --collect_render(camera)--> LrgRenderList --render_list(view)--> target
+                                          │ items: OPAQUE / CUTOUT / TRANSPARENT / SHADOW_CASTER
+                                          │ lights: LrgLight3DDesc
+                                          ▼
+   lights -> LrgLightSet      shadow passes (per cascade / cube face): replay SHADOW_CASTER
+   clear (post image?)  ->  sky  ->  "draw-background"  ->  OPAQUE (static batch first)
+   -> CUTOUT  ->  TRANSPARENT  ->  "draw-overlay"  ->  debug draw  ->  labels  ->  post
+#+end_example
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Render lists and items
+:PROPERTIES:
+:CUSTOM_ID: concepts-render-list
+:END:
+The renderer draws the contract defined in [[file:world3d.org::#render-list-contract][LrgRenderList]]: each =LrgRenderItem= is one draw (a primitive, a =GrlMesh=, a =GrlModel=, a billboard or a custom callback) with a world matrix, colour, optional texture and material, render layer and flags. =lrg_world3d_collect_render()= fills a list from every active, visible entity's components, keeps the items the camera's cull mask and frustum accept, adds the registered lights and sorts it: opaque and cutout by sort key then front to back, transparent back to front, shadow casters by sort key. The renderer replays each category in that order; it does not re-sort.
+
+How each kind is drawn:
+
+| Kind | Drawing |
+|------+---------|
+| =PRIMITIVE= | A unit mesh scaled by the item's =params= (0 means unit size): a 1x1x1 cube (=params= width, height, depth), spheres and discs of radius 0.5 (=params[0]= radius), cylinders and cones of radius 0.5 and height 1 standing centred on the origin (=params[0]= radius, =params[1]= height), a 1x1 plane in XZ (=params[0]= width, =params[1]= depth), a torus of major radius 0.375 (=params[0]= major radius, uniform scale), =RECTANGLE_2D= / =CIRCLE_2D= stood up into the XY plane, =GRID= as 10 lines of 0.1 (colour passes only), anything else as a wire box. |
+| =MESH= | The =GrlMesh= with the item's colour and texture. |
+| =MODEL= | Every mesh of the =GrlModel= (or only =mesh_index=) with its own material map; its diffuse colour is multiplied by the item colour and its texture replaced by the item texture when one is set. A mesh renderer component that left =model= =NULL= has its =mesh-asset= resolved through the renderer's cache; a model that cannot be loaded draws a magenta wire box. For an =LrgSkinnedModelComponent= item, =lrg_skinned_model_component_apply_pose()= runs right before the draw, so components sharing one model each draw their own pose. |
+| =BILLBOARD= | A camera-facing quad at the item's position, =params[0]= wide and =params[1]= high (default 1 and twice the half width), unlit; =params[2]= is an =LrgBillboardMode=: =LRG_BILLBOARD_MODE_SPHERICAL= faces the camera fully, =LRG_BILLBOARD_MODE_AXIS_Y= stays upright and turns about world Y. An item of an =LrgBillboardComponent= without a texture has the component's texture path resolved through the renderer's cache (this also applies to its fixed-orientation plane items). Not a shadow caster. |
+| =CUSTOM= | =draw_func (item, category, renderer)= inside the 3D pass with the pass's shader bound; =pass_data= is the =LrgWorld3DRenderer=. Called for =LRG_RENDER_CATEGORY_SHADOW_CASTER= in shadow passes. The renderer does not push the item's world matrix: the callback applies it (the tilemap component does). |
+
+The item colour is multiplied by the colour of its =material= when that is an =LrgMaterial3D=. Flags: =UNLIT= items use the unlit shader in the lit modes, =DOUBLE_SIDED= turns back-face culling off for the draw, =TRANSPARENT= and =CUTOUT= pick the category (see below), =CAST_SHADOW= puts the item into the shadow-caster list.
+
+*** Passes
+:PROPERTIES:
+:CUSTOM_ID: concepts-passes
+:END:
+=lrg_world3d_renderer_render_list()= runs, in order (=LrgWorld3DRenderPass= names the recorded ones):
+
+1. *Lights*: the list's lights go into the light set (=lrg_world3d_renderer_sync_lights()=).
+2. *Shadows* (=SHADOW=): with =LRG_WORLD3D_RENDER_FLAG_SHADOWS=, a lit mode and a perspective view, =lrg_shadow_renderer_update()= plans the passes around the view (3 cascades of the sun by default, plus 6 cube faces per shadowed point light when =lrg_shadow_renderer_set_points()= is configured) and the =SHADOW_CASTER= list is replayed once per pass between =lrg_shadow_renderer_begin_pass()= and =lrg_shadow_renderer_end_pass()= with the caster shader. Items replay when their layer is in both the view's cull mask and the shadow renderer's caster mask (=lrg_shadow_renderer_set_caster_mask()=). Billboards, grids and wire boxes cast nothing. When every pass rendered, the light set samples the shadow maps.
+3. *Clear*: to =background= (=LRG_WORLD3D_RENDER_FLAG_CLEAR=), into the post processor's scene image when post-processing runs.
+4. *Sky* (=SKY=): with =LRG_WORLD3D_RENDER_FLAG_SKY= in a perspective view, the sky dome, its sun opposite the light set's sun, radius half the far plane (1 .. 500).
+5. *=draw-background=* signal (GPU renders): extra background geometry with the view loaded (the editor's grid).
+6. *Opaque* (=OPAQUE=): the static batch first (=LRG_WORLD3D_RENDER_FLAG_BATCH_STATIC=, lit mode), then every other opaque item.
+7. *Cutout* (=CUTOUT=): the light set's alpha cutoff is 0.5 for this pass (fragments below it are discarded), then back to 0.
+8. *Transparent* (=TRANSPARENT=): back to front with depth writes off, blended with raylib's alpha blending.
+9. *=draw-overlay=* signal (GPU renders), still in wire mode for the wireframe mode: editor icons and helpers.
+10. *Debug draw*: =lrg_debug_draw_draw_3d()= with =LRG_WORLD3D_RENDER_FLAG_DEBUG_DRAW= and a debug draw set; after the 3D mode ends, =lrg_debug_draw_draw_labels()=.
+11. *Post* (=POST=): with =LRG_WORLD3D_RENDER_FLAG_POST= and a post processor, the scene image goes through the post shader (FXAA, bloom, vignette with the processor's =LrgFxaa=, =LrgBloom= and =LrgVignette= parameters) and then =LrgColorGrade= into the original target.
+
+The view and projection matrices are loaded straight into rlgl (the same =lrg_math3d_look_at()= / =lrg_math3d_perspective()= the editor's picking uses), so the image and picking agree pixel for pixel. The target is left bound with its 2D projection, ready for 2D overlays.
+
+*** Render modes
+:PROPERTIES:
+:CUSTOM_ID: concepts-render-modes
+:END:
+| Mode | Shader | Notes |
+|------+--------+-------|
+| =LRG_WORLD3D_RENDER_MODE_LIT= | The light set's shader (sun, clustered point lights, ambient, fog, shadows); the fallback lit shader (one two-sided sun plus ambient 0.35) when the light set has none | Shadows and static batching only here |
+| =LRG_WORLD3D_RENDER_MODE_UNLIT= | Flat albedo (texture times colour) | No shadows |
+| =LRG_WORLD3D_RENDER_MODE_WIREFRAME= | Unlit, rlgl wire mode | No shadows |
+| =LRG_WORLD3D_RENDER_MODE_NORMALS= | World normals as colours (x red, y green, z blue) | No shadows |
+| =LRG_WORLD3D_RENDER_MODE_LIGHTING_ONLY= | The lit shader on white surfaces | Shadows, no batching |
+
+The values equal =LrgEditorRenderMode= one to one. The GLSL is built in (=lrg_world3d_renderer_get_shader_source()=); the readable copies are =data/editor/shaders/*.glsl=.
+
+*** Lights
+:PROPERTIES:
+:CUSTOM_ID: concepts-lights
+:END:
+=lrg_world3d_renderer_sync_lights()= maps =LrgLight3DDesc= records onto the light set:
+
+- the first enabled *directional* light is the sun: direction normalised, colour times intensity clamped to 8 bits; further directional lights are ignored;
+- every enabled *point* light becomes a point light at its position, radius = range (10 when not positive), its intensity and colour;
+- *spot* lights are previewed as point lights: the engine's 3D light set has no spot lights until 0.9 M2 adds them (with their own shadow maps);
+- disabled lights are skipped; a light's =layer_mask= is not applied per surface;
+- without a directional light the *fallback sun* (direction 0.5, -0.75, -0.45; colour 214, 206, 192) lights the scene while =fallback-sun= is on (the default); with it off the sun is black.
+
+Ambient is 58, 62, 78 unless =lrg_world3d_renderer_set_ambient()= changes it.
+
+*** Assets
+:PROPERTIES:
+:CUSTOM_ID: concepts-assets
+:END:
+The renderer caches =GrlModel= and =GrlTexture= objects by absolute path; failures are cached too (and logged once). An asset string is resolved by the resolver (=lrg_world3d_renderer_set_asset_resolver()=, for GUIDs or virtual paths) when it returns a path, otherwise absolute paths stay as they are and relative ones resolve against =base-dir= (the working directory without one). A per-string lookup table makes repeated lookups one hash probe; it is dropped when the base directory or resolver changes. =lrg_world3d_renderer_forget_asset()= drops one file (live reload), =lrg_world3d_renderer_reload_asset()= reloads it at once, and =lrg_world3d_renderer_get_generation()= counts these changes for views that render on demand. Loading needs a window: without one =get_model()= / =get_texture()= return =NULL= and cache nothing.
+
+*** Static batching
+:PROPERTIES:
+:CUSTOM_ID: concepts-static-batching
+:END:
+With =LRG_WORLD3D_RENDER_FLAG_BATCH_STATIC= in the lit mode, the opaque items of entities marked static (=lrg_entity3d_set_static()=) that are solid primitives or =GrlMesh= meshes, untextured, single-sided and lit, are merged into one =LrgStaticBatch= (colours baked into vertex colours, one chunk per 65535 vertices and layer) and drawn in a few calls with the light-set shader. The batch is rebuilt only when the set changes (entity, world version, shape, parameters, colour, matrix or layer); everything else draws item by item. Shadow passes replay the items individually. =lrg_world3d_renderer_get_batched_count()= reports how many items went through the batch.
+
+*** Headless recording
+:PROPERTIES:
+:CUSTOM_ID: concepts-headless
+:END:
+Without a window, or with =headless= set, a render plans the shadow passes (=lrg_shadow_renderer_update()= is headless), replays every category and records each draw: =lrg_world3d_renderer_get_pass_count()= per pass, =lrg_world3d_renderer_get_recorded_entity()= in draw order, =lrg_world3d_renderer_get_shadow_pass_count()=, =lrg_world3d_renderer_get_batched_count()=. The hooks (=draw-background=, =draw-overlay=) are not emitted and nothing is cleared. The same records are kept on GPU renders.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+The renderer has no file format of its own: it draws render lists. What it draws comes from =.rlevel= nodes (through =lrg_level_instantiate_3d()= and the world3d components) and asset files (models: glTF/GLB, OBJ, IQM, VOX, M3D; images: anything raylib loads plus =.pep=). Light and environment blocks in =.rlevel= arrive in 0.9 M2.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** Types
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgWorld3DRenderer= | Final =GObject= (=LRG_TYPE_WORLD3D_RENDERER=) | The renderer |
+| =LrgWorld3DView= | Boxed struct (=LRG_TYPE_WORLD3D_VIEW=, =lrg_world3d_view_get_type()=) | =position[3]=, =target[3]=, =up[3]=, =fovy= (degrees), =ortho_height=, =orthographic=, =near_plane=, =far_plane=, =width=, =height= (pixels), =cull_mask= (bit N = layer N) |
+| =LrgWorld3DRenderMode= | Enum (=LRG_TYPE_WORLD3D_RENDER_MODE=, =lrg_world3d_render_mode_get_type()=) | =LIT=, =UNLIT=, =WIREFRAME=, =NORMALS=, =LIGHTING_ONLY= (nicks =lit=, =unlit=, =wireframe=, =normals=, =lighting-only=) |
+| =LrgWorld3DRenderFlags= | Flags (=LRG_TYPE_WORLD3D_RENDER_FLAGS=, =lrg_world3d_render_flags_get_type()=) | =NONE=, =SHADOWS=, =SKY=, =POST=, =CLEAR=, =DEBUG_DRAW=, =BATCH_STATIC=; =LRG_WORLD3D_RENDER_FLAGS_DEFAULT= = shadows, sky, clear, debug draw |
+| =LrgWorld3DRenderPass= | Enum (=LRG_TYPE_WORLD3D_RENDER_PASS=, =lrg_world3d_render_pass_get_type()=) | =SHADOW=, =SKY=, =OPAQUE=, =CUTOUT=, =TRANSPARENT=, =POST=; =LRG_WORLD3D_RENDER_PASS_COUNT= (6) |
+| =LrgWorld3DAssetResolver= | Callback | =gchar * (*) (const gchar *asset, gpointer user_data)=: an absolute path (transfer full) or =NULL= for the default resolution |
+
+*** Views
+:PROPERTIES:
+:CUSTOM_ID: api-views
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_world3d_view_init (view, width, height)= | The editor's default camera: at (8, 6, 8) looking at the origin, +Y up, 45 degrees, clip 0.05 .. 2000, ortho height 10, every layer |
+| =lrg_world3d_view_init_from_camera (view, camera, width, height)= | Through an =LrgCamera3D=: its render pose (=lrg_camera3d_get_render_pose()=, so fixed-step interpolation is honoured), up, fovy (the ortho height for orthographic cameras, as raylib reads it), clip planes (the owning =LrgCameraComponent='s near and far when =lrg_camera_component_from_camera()= finds one, rlgl's cull distances otherwise) and =LrgCamera:cull-mask= |
+| =lrg_world3d_view_copy (view)= | Heap copy (transfer full) |
+| =lrg_world3d_view_free (view)= | Frees a heap view (nullable) |
+| =lrg_world3d_view_get_view_matrix (view, out[16])= | Column-major world-to-eye matrix (=lrg_math3d_look_at()=) |
+| =lrg_world3d_view_get_projection_matrix (view, out[16])= | Perspective or orthographic projection for the view's aspect; a non-positive near plane becomes 0.05 and a far plane at or before it near + 1000 |
+
+*** Rendering
+:PROPERTIES:
+:CUSTOM_ID: api-rendering
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_world3d_renderer_new ()= | A renderer (transfer full) with the default flags, lit mode, background 30, 30, 46, fallback sun on; no GPU work until the first render |
+| =lrg_world3d_renderer_render (self, world, camera, target, width, height)= | Game entry point: collects =world= for =camera= (nullable: =lrg_world3d_get_active_camera()=, which must be an =LrgCamera3D=) and draws into =target= (a =GrlRenderTexture=, nullable: the screen, then call it between =BeginDrawing()= and =EndDrawing()=). =width= / =height= 0 take the target's (or screen's) size. Returns =TRUE= when the GPU drew; =FALSE= without a camera or when it only recorded |
+| =lrg_world3d_renderer_render_view (self, world, view)= | Collects every visible entity (no frustum culling), applies =view->cull_mask= at draw time, sorts for the view's eye and draws into the currently bound target (the editor's play view) |
+| =lrg_world3d_renderer_render_list (self, list, view)= | Draws a sorted list into the currently bound target (see [[#concepts-passes][Passes]]) |
+| =lrg_world3d_renderer_get_render_list (self)= | The list =render()= / =render_view()= collect into (transfer none), valid until the next render |
+
+*** Settings
+:PROPERTIES:
+:CUSTOM_ID: api-settings
+:END:
+| Function | Property | Description |
+|----------+----------+-------------|
+| =lrg_world3d_renderer_set_render_mode (self, mode)= / =lrg_world3d_renderer_get_render_mode (self)= | =render-mode= | Shading of the colour passes |
+| =lrg_world3d_renderer_set_flags (self, flags)= / =lrg_world3d_renderer_get_flags (self)= | =flags= | Optional parts of a render |
+| =lrg_world3d_renderer_set_background (self, color)= / =lrg_world3d_renderer_get_background (self, out)= | | Clear colour |
+| =lrg_world3d_renderer_set_ambient (self, color)= | | Light-set ambient from the next render |
+| =lrg_world3d_renderer_set_fallback_sun (self, on)= / =lrg_world3d_renderer_get_fallback_sun (self)= | =fallback-sun= | Default sun without a directional light |
+| =lrg_world3d_renderer_set_post_processor (self, processor)= / =lrg_world3d_renderer_get_post_processor (self)= | =post-processor= | Post chain (reads its "fxaa", "bloom", "vignette" and "color-grade" effects); images kept per processor |
+| =lrg_world3d_renderer_new_preview_post_processor ()= | | A processor with the four effects and the editor's subtle preview look (bloom threshold 0.75 / intensity 0.6, vignette 0.35 / 0.55 / 0.45, grade contrast 1.05 / saturation 1.08) |
+| =lrg_world3d_renderer_set_debug_draw (self, debug_draw)= / =lrg_world3d_renderer_get_debug_draw (self)= | =debug-draw= | Debug draw shown with =DEBUG_DRAW=; the renderer never ends its frame |
+| =lrg_world3d_renderer_set_headless (self, headless)= / =lrg_world3d_renderer_get_headless (self)= | =headless= | Record instead of drawing |
+| =lrg_world3d_renderer_set_base_dir (self, dir)= / =lrg_world3d_renderer_get_base_dir (self)= | =base-dir= | Relative asset paths resolve here |
+
+Signals: =draw-background (LrgWorld3DView *view)= after the sky, =draw-overlay (LrgWorld3DView *view)= after the transparent pass; both inside the 3D mode, GPU renders only, the view is only valid during emission.
+
+*** Lighting
+:PROPERTIES:
+:CUSTOM_ID: api-lighting
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_world3d_renderer_sync_lights (self, lights, n_lights)= | Rebuilds the light set from an array (see [[#concepts-lights][Lights]]); returns how many of the given lights are in it; headless |
+| =lrg_world3d_renderer_has_scene_sun (self)= | Whether the last sync took the sun from the lights |
+| =lrg_world3d_renderer_get_sun_direction (self, out[3])= | Unit direction sunlight travels |
+| =lrg_world3d_renderer_get_light_set (self)= | The =LrgLightSet= (transfer none); replaced by =release()= |
+| =lrg_world3d_renderer_get_shadow_renderer (self)= | The =LrgShadowRenderer= (3 cascades of 2048 px over 60 units, split 0.6, 3x3 PCF, strength 0.85) |
+| =lrg_world3d_renderer_get_sky_dome (self)= | The =LrgSkyDome= |
+
+*** Assets
+:PROPERTIES:
+:CUSTOM_ID: api-assets
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_world3d_renderer_set_asset_resolver (self, resolver, user_data, destroy)= | Resolver for asset strings (scope notified) |
+| =lrg_world3d_renderer_resolve_asset (self, asset)= | The absolute path the caches use (transfer full) |
+| =lrg_world3d_renderer_get_model (self, asset)= | Cached =GrlModel= (transfer none, nullable); needs a window |
+| =lrg_world3d_renderer_get_texture (self, asset)= | Cached =GrlTexture= (transfer none, nullable); needs a window |
+| =lrg_world3d_renderer_is_asset_missing (self, asset)= | File missing or failed to load; headless |
+| =lrg_world3d_renderer_forget_asset (self, abs_path)= | Drop one cached file; =TRUE= when something was cached |
+| =lrg_world3d_renderer_reload_asset (self, abs_path)= | Forget and load again (model by cache entry or extension, else texture) |
+| =lrg_world3d_renderer_get_generation (self)= | Bumped by forget, reload, base directory and resolver changes |
+
+*** Statistics and resources
+:PROPERTIES:
+:CUSTOM_ID: api-stats
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_world3d_renderer_get_drawn (self)= | Draws of the last render (items, model meshes, batch chunks, casters; recorded ones included) |
+| =lrg_world3d_renderer_get_pass_count (self, pass)= | Draws of one pass (1 for a sky or post pass that ran) |
+| =lrg_world3d_renderer_get_recorded_entity (self, pass, index)= | Entity of the index-th draw of a pass, in order (=NULL= out of range or without an entity; batched items are not listed) |
+| =lrg_world3d_renderer_get_shadow_pass_count (self)= | Shadow passes run |
+| =lrg_world3d_renderer_get_batched_count (self)= | Items drawn through the static batch |
+| =lrg_world3d_renderer_get_shader_source (name)= | Built-in GLSL: ="scene.vs"=, ="lit.fs"=, ="unlit.fs"=, ="normals.fs"=, ="post.fs"= |
+| =lrg_world3d_renderer_release (self)= | Frees every GPU resource and replaces the light set; call before =CloseWindow()=; safe twice and without a window |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** A game loop
+:PROPERTIES:
+:CUSTOM_ID: example-game-loop
+:END:
+#+begin_src c
+g_autoptr(LrgWorld3D)         world = lrg_world3d_new ();
+g_autoptr(LrgWorld3DRenderer) renderer = lrg_world3d_renderer_new ();
+g_autoptr(LrgCamera3D)        camera = lrg_camera3d_new ();
+g_autoptr(LrgEntity3D)        crate = lrg_entity3d_new_with_name ("Crate");
+g_autoptr(LrgEntity3D)        sun = lrg_entity3d_new_with_name ("Sun");
+g_autoptr(LrgMeshRendererComponent) mesh = lrg_mesh_renderer_component_new_primitive (LRG_PRIMITIVE_CUBE);
+g_autoptr(LrgLightComponent)  light = lrg_light_component_new_with_kind (LRG_LIGHT3D_DIRECTIONAL);
+const gfloat                  tilt[3] = { -1.0f, 0.6f, 0.0f };
+
+InitWindow (1280, 720, "game");
+lrg_entity3d_set_position_xyz (crate, 0.0f, 0.5f, 0.0f);
+lrg_entity3d_add_component (crate, LRG_COMPONENT (mesh));
+lrg_world3d_add_entity (world, crate);
+lrg_entity3d_set_rotation_euler (sun, tilt);          /* lights shine down local -Z */
+lrg_entity3d_add_component (sun, LRG_COMPONENT (light));
+lrg_world3d_add_entity (world, sun);
+
+lrg_camera3d_set_position_xyz (camera, 6.0f, 4.0f, 6.0f);
+lrg_camera3d_set_target_xyz (camera, 0.0f, 0.5f, 0.0f);
+lrg_world3d_register_camera (world, LRG_CAMERA (camera), 0);
+lrg_world3d_renderer_set_base_dir (renderer, "assets");
+
+while (!WindowShouldClose ())
+{
+	lrg_world3d_step (world, GetFrameTime ());     /* fixed, update, late (lights re-register) */
+	BeginDrawing ();
+	lrg_world3d_renderer_render (renderer, world, NULL, NULL, 0, 0);   /* active camera, screen */
+	DrawFPS (10, 10);
+	EndDrawing ();
+}
+lrg_world3d_renderer_release (renderer);              /* before the context goes */
+CloseWindow ();
+#+end_src
+
+*** Into a texture, with post-processing and debug draw
+:PROPERTIES:
+:CUSTOM_ID: example-texture-post
+:END:
+#+begin_src c
+g_autoptr(GrlRenderTexture) target = grl_render_texture_new (640, 360);
+g_autoptr(LrgPostProcessor) post = lrg_world3d_renderer_new_preview_post_processor ();
+LrgDebugDraw               *dd = lrg_debug_draw_get_default ();
+
+lrg_world3d_renderer_set_post_processor (renderer, post);
+lrg_world3d_renderer_set_debug_draw (renderer, dd);
+lrg_world3d_renderer_set_flags (renderer, LRG_WORLD3D_RENDER_FLAGS_DEFAULT | LRG_WORLD3D_RENDER_FLAG_POST);
+
+lrg_debug_draw_sphere (dd, &(GrlVector3) { 0.0f, 2.0f, 0.0f }, 0.5f, &(GrlColor) { 255, 0, 0, 255 }, 0.0f);
+lrg_world3d_renderer_render (renderer, world, camera, target, 0, 0);
+lrg_debug_draw_end_frame (dd);   /* the renderer draws the batch but never ends the frame */
+#+end_src
+
+*** A hand-built list (tools, previews, the editor)
+:PROPERTIES:
+:CUSTOM_ID: example-hand-built-list
+:END:
+#+begin_src c
+g_autoptr(LrgRenderList) list = lrg_render_list_new ();
+LrgRenderItem            item;
+LrgLight3DDesc           sun;
+LrgWorld3DView           view;
+
+lrg_render_item_init (&item);                 /* a white unit cube casting shadows */
+item.color[0] = 0.9f; item.color[1] = 0.4f; item.color[2] = 0.3f;
+item.world_matrix[13] = 0.5f;                 /* lifted half a unit */
+lrg_render_list_add (list, &item);
+
+item.kind = LRG_RENDER_ITEM_MODEL;            /* a cached model next to it */
+item.model = lrg_world3d_renderer_get_model (renderer, "models/barrel.glb");
+item.world_matrix[12] = 2.0f;
+if (item.model != NULL)
+	lrg_render_list_add (list, &item);
+
+lrg_light3d_desc_init (&sun);
+sun.kind = LRG_LIGHT3D_DIRECTIONAL;
+sun.direction[0] = 0.4f; sun.direction[1] = -1.0f; sun.direction[2] = 0.3f;
+lrg_render_list_add_light (list, &sun);
+
+lrg_world3d_view_init (&view, 512.0f, 512.0f);
+lrg_render_list_set_view (list, view.position, view.cull_mask, NULL);
+lrg_render_list_sort (list);
+
+BeginTextureMode (rt);
+lrg_world3d_renderer_render_list (renderer, list, &view);
+EndTextureMode ();
+#+end_src
+
+*** Testing what a scene draws, headless
+:PROPERTIES:
+:CUSTOM_ID: example-headless
+:END:
+#+begin_src c
+g_autoptr(LrgWorld3DRenderer) r = lrg_world3d_renderer_new ();
+
+lrg_world3d_renderer_set_headless (r, TRUE);
+lrg_world3d_renderer_render (r, world, camera, NULL, 1280, 720);
+g_assert_cmpuint (lrg_world3d_renderer_get_pass_count (r, LRG_WORLD3D_RENDER_PASS_OPAQUE), ==, 3);
+g_assert_cmpuint (lrg_world3d_renderer_get_pass_count (r, LRG_WORLD3D_RENDER_PASS_SHADOW), ==,
+                  3 * lrg_world3d_renderer_get_shadow_pass_count (r));   /* 3 casters per pass */
+g_assert_true (lrg_world3d_renderer_get_recorded_entity (r, LRG_WORLD3D_RENDER_PASS_OPAQUE, 0) == nearest);
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- One render costs: a light-set rebuild (O(lights)), one shadow replay of the caster list per shadow pass (3 cascades by default: each caster is drawn 3 more times; point-light shadows add 6 per light), and one draw per item and model mesh in the colour passes. Keep =CAST_SHADOW= off for small props, or put them on a layer the caster mask leaves out.
+- Static scenery: mark entities static and turn =BATCH_STATIC= on; thousands of props become a handful of draws. The merge is CPU work done only when the static set changes; moving a static entity (its world version changes) re-merges everything, so do not animate static entities.
+- Model and texture lookups are one hash probe per item after the first; =lrg_world3d_collect_render()= reuses the list's arrays when you reuse the list (the renderer does).
+- The cutout pass re-applies the light-set uniforms twice (on, then off), only when cutout items exist.
+- Post-processing renders the scene into a full-size image plus one more pass; images are kept per processor and resized only when the target size changes.
+- Headless recording costs about the same CPU as a GPU render minus the draw calls; it allocates nothing per frame after the first.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Release before closing the window.* =lrg_world3d_renderer_release()= unloads meshes, shaders, cached models and textures, shadow atlases and post images. After =CloseWindow()= only bookkeeping can be dropped; cached =GrlModel= / =GrlTexture= objects are then leaked on purpose (their finalizers would call GL).
+- *Do not keep the light set across a release*: it is replaced (its shader belongs to the old context).
+- *Spot lights render as point lights* until 0.9 M2 adds 3D spots to the light set.
+- *Shadows need a lit mode and a perspective view*; orthographic views and the unlit / wireframe / normals modes skip them (and the sky).
+- *The target must be bound for =render_view()= / =render_list()=*; =render()= binds a =GrlRenderTexture= itself. The shadow and post passes switch framebuffers and come back to the bound one; do not call them inside =BeginMode3D()=.
+- *Sorting is the list's*: =render_list()= replays the categories in their stored order. Call =lrg_render_list_sort()= after =lrg_render_list_set_view()= for a hand-built list.
+- *Debug draw frames*: the renderer draws the debug batch but does not call =lrg_debug_draw_end_frame()= (several views may share one batch); end the frame once per frame yourself or one-frame primitives pile up.
+- *Model colours multiply*: a model's material colour is multiplied by the item colour (white by default), never replaced.
+- *Without a window* =get_model()= / =get_texture()= return =NULL= and cache nothing, so a missing asset is only "missing" (=is_asset_missing()=) by file existence.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor viewport draws through this renderer (see [[file:../../editor/editor-app.org::#scene-renderer][Scene renderer]]): =LrgEditorSceneRenderer= owns one (=lrg_editor_scene_renderer_get_runtime_renderer()=), turns the level's nodes into a render list every frame (primitives, models, sprites as textured quads, CAD parts, LIGHT nodes as =LrgLight3DDesc= lights), maps the viewport's render mode and overlays onto =render-mode= and =flags= (=SHADOWS= / =SKY= in perspective views, =POST= with the viewport's own processor), and draws the grid, icons, selection bounds, tilemap grids and missing-asset placeholders from the =draw-background= and =draw-overlay= hooks. While a 3D level plays, the viewport draws the play session's =LrgWorld3D= with =lrg_world3d_renderer_render_view()= and the world's own lights, so play-in-editor shows exactly what the game draws. The view's =Render Mode= menu, the =view.render_mode= / =view.overlay= IPC methods and =lrgeditorctl= =view render-mode= / =view overlay= therefore drive this renderer.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:world3d.org][LrgWorld3D]] and its [[file:world3d.org::#render-list-contract][render-list contract]]
+- [[file:entity3d.org][LrgEntity3D]]
+- [[file:../graphics/light-set.org][LrgLightSet]], [[file:../lighting/shadow-renderer.org][LrgShadowRenderer]], [[file:../graphics/sky-dome.org][LrgSkyDome]], [[file:../graphics/static-batch.org][LrgStaticBatch]]
+- [[file:../debug/debug-draw.org][LrgDebugDraw]] and [[file:../graphics/index.org::#render-layers][render layers]]
+- [[file:../postprocess/index.org][Post-processing]]
+- [[file:../../editor/editor-app.org::#scene-renderer][Editor scene renderer]]

@@ -406,6 +406,7 @@ lrg_editor_app_new (LrgEditor *editor)
 	self->renderer = lrg_editor_scene_renderer_new (self->editor);
 	lrg_editor_scene_renderer_set_settings (self->renderer, self->settings);
 	lrg_editor_scene_renderer_set_gizmo (self->renderer, self->gizmo);
+	lrg_editor_scene_renderer_set_play_session (self->renderer, self->play);
 
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_editor_changed), self);
 	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_level_replaced), self);

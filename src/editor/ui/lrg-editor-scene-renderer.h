@@ -7,7 +7,9 @@
  * LrgEditorSceneRenderer: draws the editor's 3D scene view (grid, nodes,
  * icons, selection bounds, transform gizmo, orientation axes, overlay
  * text) into the render texture of an editor viewport, and renders model
- * and font thumbnails for the asset browser.
+ * and font thumbnails for the asset browser.  The scene itself is drawn by
+ * the engine's shared #LrgWorld3DRenderer, so the viewport and a game
+ * look the same.
  */
 
 #pragma once
@@ -27,6 +29,8 @@
 #include "../../lighting/lrg-shadow-renderer.h"
 #include "../../graphics/lrg-sky-dome.h"
 #include "../../postprocess/lrg-post-processor.h"
+#include "../../world3d/lrg-world3d-renderer.h"
+#include "../lrg-editor-play-session.h"
 
 G_BEGIN_DECLS
 
@@ -36,11 +40,15 @@ G_BEGIN_DECLS
  * LrgEditorSceneRenderer:
  *
  * Renders the level of an #LrgEditor as seen by one camera of an
- * #LrgEditorViewState. The renderer owns every GPU resource it needs
- * (lit shader, primitive meshes, model and texture caches); they are
- * created lazily by the first lrg_editor_scene_renderer_render() and
- * freed by lrg_editor_scene_renderer_release(). Without a window every
- * call is a harmless no-op.
+ * #LrgEditorViewState. The level's nodes are turned into a transient
+ * #LrgRenderList every render and drawn by an #LrgWorld3DRenderer the
+ * renderer owns (lit shader, primitive meshes, model and texture caches,
+ * lights, shadows, sky, post); while a 3D level plays, the play session's
+ * #LrgWorld3D is drawn instead (lrg_editor_scene_renderer_set_play_session()).
+ * GPU resources are created lazily by the first
+ * lrg_editor_scene_renderer_render() and freed by
+ * lrg_editor_scene_renderer_release(). Without a window every call is a
+ * harmless no-op.
  */
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgEditorSceneRenderer, lrg_editor_scene_renderer, LRG, EDITOR_SCENE_RENDERER, GObject)
@@ -135,6 +143,45 @@ void lrg_editor_scene_renderer_set_playing (LrgEditorSceneRenderer *self,
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_scene_renderer_get_playing (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_set_play_session:
+ * @self: an #LrgEditorSceneRenderer
+ * @session: (nullable): the editor's play session, or %NULL
+ *
+ * While @session runs a 3D level (lrg_editor_play_session_get_world3d()
+ * returns a world), every render draws that runtime world through the
+ * shared #LrgWorld3DRenderer with the world's own lights, instead of the
+ * authoring nodes. The grid and the 2D overlays (gizmo, axes, label,
+ * stats) still draw; node icons, bounds and tilemap grids do not (the
+ * play entities are not the authoring nodes).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_play_session (LrgEditorSceneRenderer *self,
+                                                 LrgEditorPlaySession   *session);
+
+/**
+ * lrg_editor_scene_renderer_get_play_session:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Returns: (transfer none) (nullable): the play session
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorPlaySession * lrg_editor_scene_renderer_get_play_session (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_runtime_renderer:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The shared engine renderer the viewport draws through. Its render
+ * mode, flags, background and post processor are set from the viewport
+ * before every render; its asset caches, light set, shadow renderer and
+ * sky dome are the viewport's.
+ *
+ * Returns: (transfer none): the runtime renderer
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWorld3DRenderer * lrg_editor_scene_renderer_get_runtime_renderer (LrgEditorSceneRenderer *self);
 
 /**
  * lrg_editor_scene_renderer_render:
@@ -266,7 +313,9 @@ LrgLightSet * lrg_editor_scene_renderer_get_light_set (LrgEditorSceneRenderer *s
  * spot lights in the engine's 3D light set: "spot" lights (or a
  * "spot_angle" above 0) are previewed as point lights. Without a
  * directional light in the level the default editor sun is used so the
- * scene stays readable. Works without a window.
+ * scene stays readable. The lights go through
+ * lrg_world3d_renderer_sync_lights() as #LrgLight3DDesc records, exactly
+ * as a game's light components do. Works without a window.
  *
  * Returns: the number of the level's lights in the set (0 when
  *   @scene_lighting is %FALSE)
@@ -378,7 +427,8 @@ void lrg_editor_scene_renderer_camera_node_view (LrgNode       *node,
  * @name: a shader name: "scene.vs", "lit.fs", "unlit.fs", "normals.fs"
  *   or "post.fs"
  *
- * The built-in GLSL of the editor's viewport shaders. The readable
+ * The built-in GLSL of the viewport shaders, which are the shared
+ * renderer's (lrg_world3d_renderer_get_shader_source()). The readable
  * copies live in data/editor/shaders/@name.glsl; the library embeds
  * them so an installed editor needs no data files.
  *
