@@ -48,6 +48,7 @@
 
 #include "config.h"
 
+#include "data/lrg-editor-data-editor.h"
 #include "lrg-editor-assets-panel.h"
 #include "lrg-editor-app-private.h"
 #include "../lrg-asset-meta.h"
@@ -1950,6 +1951,10 @@ open_entry (LrgEditorAssetsPanel *self,
 		go_to (self, path);
 		return;
 	}
+	/* data formats (input maps, locales, themes, ...) open in their editor;
+	 * a file that does not parse falls through to the usual handling */
+	if (lrg_editor_data_editor_can_open (path) && lrg_editor_data_editor_open (self->app, path, NULL) != NULL)
+		return;
 	mode = lrg_editor_settings_get_script_editor (self->app->settings);
 	if (lrg_asset_database_classify (path) == LRG_ASSET_TYPE_SCRIPT && g_strcmp0 (mode, "internal") == 0 &&
 	    open_in_code_panel (self, path))
@@ -4329,6 +4334,7 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 
 	self = g_object_new (LRG_TYPE_EDITOR_ASSETS_PANEL, NULL);
 	g_set_weak_pointer (&self->app, app);
+	lrg_editor_data_editor_install (app);     /* data.open for open_entry() */
 	register_with_app (self);
 	sync_app (self);
 	update_context_menu (self, TRUE);
