@@ -17,6 +17,21 @@
  * overridden property paths). lrg_prefab_sync_instance() re-applies the
  * source everywhere except at overridden paths, and the apply / revert /
  * relink / unlink functions below manage the overrides.
+ *
+ * Since 0.9.0:
+ *
+ *  - a prefab may be a *variant*: its root is itself a linked instance of a
+ *    base prefab (it carries an #LrgPrefabLink to the base). Loading a
+ *    variant with lrg_prefab_load_resolved() walks the base chain (cycles
+ *    and chains deeper than 8 are errors) and syncs the variant against
+ *    its resolved base, so base edits reach the variant and, through it,
+ *    every instance of the variant;
+ *  - a level may store a linked instance as a *reference* (the link, the
+ *    overridden values and the instance-added children) instead of the
+ *    expanded subtree (#LrgPrefabStorage). lrg_prefab_make_reference()
+ *    builds that sparse form and lrg_prefab_instantiate_reference()
+ *    expands it again; the level serializer does both, so
+ *    lrg_level_instantiate() and games always see the full subtree.
  */
 
 #pragma once
@@ -30,6 +45,94 @@
 #include "../lrg-types.h"
 
 G_BEGIN_DECLS
+
+/* ==========================================================================
+ * LrgPrefabStorage
+ * ========================================================================== */
+
+/**
+ * LrgPrefabStorage:
+ * @LRG_PREFAB_STORAGE_DEFAULT: no preference here; the next level of
+ *   configuration decides (serializer, then level, then project, then
+ *   %LRG_PREFAB_STORAGE_EXPANDED)
+ * @LRG_PREFAB_STORAGE_EXPANDED: a linked instance is saved as its whole
+ *   subtree plus the `prefab:` link block (the 0.8.x format; a game that
+ *   ignores links still sees every node)
+ * @LRG_PREFAB_STORAGE_REFERENCE: a linked instance is saved as a reference:
+ *   its root, the link, the overridden values and the instance-added
+ *   children only. The rest is rebuilt from the `.rprefab` when the level
+ *   loads, so prefab edits reach the level without re-saving it
+ *
+ * How a level stores linked prefab instances (the `store_prefab_instances`
+ * setting of a level or project; see `docs/modules/level/prefabs-runtime.org`).
+ * Loading always understands both forms.
+ *
+ * Since: 0.9.0
+ */
+typedef enum
+{
+	LRG_PREFAB_STORAGE_DEFAULT,
+	LRG_PREFAB_STORAGE_EXPANDED,
+	LRG_PREFAB_STORAGE_REFERENCE
+} LrgPrefabStorage;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_prefab_storage_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_PREFAB_STORAGE (lrg_prefab_storage_get_type ())
+
+/**
+ * lrg_prefab_storage_from_string:
+ * @text: (nullable): `expanded`, `reference` or `default` (case
+ *   insensitive)
+ *
+ * Parses the value of a `store_prefab_instances` setting.
+ *
+ * Returns: the storage, %LRG_PREFAB_STORAGE_DEFAULT for %NULL or unknown
+ *   text
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPrefabStorage lrg_prefab_storage_from_string (const gchar *text);
+
+/**
+ * lrg_prefab_storage_to_string:
+ * @storage: a storage mode
+ *
+ * Returns: (transfer none): `default`, `expanded` or `reference`
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_prefab_storage_to_string (LrgPrefabStorage storage);
+
+/**
+ * lrg_prefab_level_get_storage:
+ * @level: an #LrgLevel
+ *
+ * Gets the level's own `store_prefab_instances` setting (read from and
+ * written to the `.rlevel` file by the serializer).
+ *
+ * Returns: the level setting, %LRG_PREFAB_STORAGE_DEFAULT when unset
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPrefabStorage lrg_prefab_level_get_storage (LrgLevel *level);
+
+/**
+ * lrg_prefab_level_set_storage:
+ * @level: an #LrgLevel
+ * @storage: the level setting; %LRG_PREFAB_STORAGE_DEFAULT defers to the
+ *   project
+ *
+ * Sets how this level stores linked prefab instances when it is saved.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_prefab_level_set_storage (LrgLevel         *level,
+                                   LrgPrefabStorage  storage);
 
 /* ==========================================================================
  * LrgPrefabLink
@@ -401,9 +504,11 @@ LrgNode * lrg_prefab_instantiate_linked (LrgNode     *prefab,
  *
  * Saves @node (and its subtree) as a prefab. Node guids are written as they
  * are (since 0.8.1), so the source node guids recorded by linked instances
- * stay valid across saves. A prefab link on @node itself is not written
- * (prefab variants are not supported); links on descendants (nested
- * instances) are.
+ * stay valid across saves. Links on descendants (nested instances) are
+ * written. Since 0.9.0 a link on @node itself is written too: @node is
+ * then a prefab variant of the link's source. Save a copy made with
+ * lrg_prefab_copy() (@keep_root_link %FALSE) to save an instance as an
+ * independent prefab.
  *
  * Returns: %TRUE on success
  */
@@ -419,7 +524,8 @@ gboolean lrg_prefab_save (LrgNode      *node,
  *
  * Loads a prefab root node from disk. Nested instances are returned as
  * stored; see lrg_prefab_load_resolved() to refresh them from their own
- * sources.
+ * sources. Since 0.9.0 the root keeps its #LrgPrefabLink when the file is
+ * a prefab variant (its base is not read; see lrg_prefab_load_resolved()).
  *
  * Returns: (transfer full) (nullable): the prefab root node, or %NULL on error
  */
@@ -437,7 +543,13 @@ LrgNode * lrg_prefab_load (const gchar  *path,
  *
  * Loads a prefab like lrg_prefab_load(), then runs
  * lrg_prefab_resolve_nested() on it so nested instances reflect their own
- * source files.
+ * source files. Since 0.9.0, when the prefab is a variant its base chain
+ * is loaded and resolved first and the variant is synced against it
+ * (variant overrides kept), so a base edit shows in the variant without
+ * re-saving it. Nesting and the variant chain share one depth limit (8)
+ * and one cycle check. @dependencies then lists the bases too. A relative
+ * source path is tried as given (current directory) and then relative to
+ * the directory of the prefab that names it.
  *
  * Returns: (transfer full) (nullable): the resolved prefab root, or %NULL on
  *   error
@@ -458,7 +570,9 @@ LrgNode * lrg_prefab_load_resolved (const gchar   *path,
  * carries an #LrgPrefabLink) against its own source file, loaded and
  * resolved recursively (depth limit 8, cycles are an error). The nested
  * instance's overrides, which belong to @prefab, are kept. @prefab itself is
- * modified in memory only.
+ * modified in memory only. When @prefab is a variant, descendants that
+ * mirror its base (mapped by the root link) are left to the base sync and
+ * not resolved again.
  *
  * Returns: %TRUE on success; on failure the nested instances processed so
  *   far stay updated
@@ -723,5 +837,175 @@ gboolean lrg_prefab_relink (LrgNode     *instance,
  */
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_prefab_get_marker_source (LrgNode *node);
+
+/* ==========================================================================
+ * Guids, copies and variants (since 0.9.0)
+ * ========================================================================== */
+
+/**
+ * lrg_prefab_derive_guid:
+ * @instance_root_guid: guid of a linked instance root
+ * @source_guid: guid of a node of its source prefab
+ *
+ * Computes the guid an instance node mirroring @source_guid gets below
+ * the instance root @instance_root_guid. It is a name-based
+ * (UUIDv5-shaped) guid of the two, the same one
+ * lrg_prefab_instantiate_linked() and lrg_prefab_sync_instance() assign.
+ * Reference storage relies on it: a level does not record the map
+ * entries a loader can re-derive.
+ *
+ * Returns: (transfer full): the derived guid
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_prefab_derive_guid (const gchar *instance_root_guid,
+                                const gchar *source_guid);
+
+/**
+ * lrg_prefab_copy:
+ * @node: a node subtree
+ * @keep_root_link: whether the copy keeps @node's own #LrgPrefabLink
+ *
+ * An exact deep copy: same guids, same nested links (unlike
+ * lrg_prefab_clone(), which assigns fresh guids). With @keep_root_link
+ * %FALSE the copy of a linked instance root is a plain subtree, which
+ * lrg_prefab_save() writes as an independent prefab.
+ *
+ * Returns: (transfer full): the copy
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_prefab_copy (LrgNode  *node,
+                           gboolean  keep_root_link);
+
+/**
+ * lrg_prefab_is_variant:
+ * @prefab: a prefab root node
+ *
+ * Returns: %TRUE when @prefab is a variant (its root carries a link to a
+ *   base prefab)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_prefab_is_variant (LrgNode *prefab);
+
+/**
+ * lrg_prefab_get_variant_chain:
+ * @path: a `.rprefab` path
+ * @error: (nullable): return location for an error
+ *
+ * Follows the base links of a variant: @path first, then its base, the
+ * base's base, and so on. A prefab that is not a variant yields just
+ * @path. Only the root links are read; nothing is resolved.
+ *
+ * Returns: (transfer full) (array zero-terminated=1) (nullable): the chain
+ *   from @path to the outermost base, or %NULL with @error set when a file
+ *   cannot be read, the chain loops (%G_IO_ERROR_INVALID_DATA) or is deeper
+ *   than 8
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GStrv lrg_prefab_get_variant_chain (const gchar  *path,
+                                    GError      **error);
+
+/**
+ * lrg_prefab_create_variant:
+ * @base: the base prefab root (resolved)
+ * @base_path: the base's `.rprefab` path
+ * @base_guid: (nullable): the base's asset guid, if known
+ *
+ * Creates a new variant of @base: a linked instance of it (see
+ * lrg_prefab_instantiate_linked()) with no overrides whose root location
+ * and rotation are zeroed. Save it with lrg_prefab_save(); edits to it are
+ * overrides relative to @base.
+ *
+ * Returns: (transfer full): the variant root
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_prefab_create_variant (LrgNode     *base,
+                                     const gchar *base_path,
+                                     const gchar *base_guid);
+
+/**
+ * lrg_prefab_derive_variant:
+ * @instance: a linked instance root (its overrides become the variant's)
+ * @variant_path: where the variant will be saved
+ * @variant_guid: (nullable): the variant's asset guid, if known
+ *
+ * "Create Variant" from an instance: returns a variant of the instance's
+ * source holding the instance's overrides (a copy with fresh guids whose
+ * root link is the instance link, rewritten), and relinks @instance to
+ * that variant with no overrides of its own, so it looks exactly as
+ * before. The variant root's location and rotation are zeroed. The caller
+ * saves the variant to @variant_path (lrg_prefab_save()).
+ *
+ * Returns: (transfer full) (nullable): the variant root, or %NULL when
+ *   @instance is not a linked instance root
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_prefab_derive_variant (LrgNode     *instance,
+                                     const gchar *variant_path,
+                                     const gchar *variant_guid);
+
+/* ==========================================================================
+ * Reference storage (since 0.9.0)
+ * ========================================================================== */
+
+/**
+ * lrg_prefab_make_reference:
+ * @instance: a linked instance root
+ *
+ * Builds the sparse *reference* form of @instance that reference storage
+ * writes: the root with its own state and a copy of the link; below it
+ * only the nodes that matter, namely nodes with overrides, nodes moved on
+ * purpose (`children/+<guid>`), instance-added subtrees (copied whole,
+ * guids and nested links kept) and their ancestors. When a node is kept,
+ * all its children are kept too (other mapped children as bare
+ * placeholders with name and guid), so the child order survives. Nested
+ * links of mapped nodes are dropped: they come back from the source.
+ *
+ * Returns: (transfer full) (nullable): the sparse root, or %NULL when
+ *   @instance carries no link
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_prefab_make_reference (LrgNode *instance);
+
+/**
+ * lrg_prefab_instantiate_reference:
+ * @reference: a sparse instance root (from lrg_prefab_make_reference() or
+ *   read from a level in reference storage)
+ * @prefab: its source prefab root, resolved (lrg_prefab_load_resolved())
+ * @error: (nullable): return location for an error
+ *
+ * Expands a reference into the full linked instance, without any editor
+ * object: every source node is created with the guid recorded in the
+ * link map or else lrg_prefab_derive_guid() of the root guid (the guid the
+ * editor gave it), source children removed by `children/-` overrides are
+ * skipped, nested links are translated from the source, the values at
+ * the overridden paths are copied from @reference, instance-added
+ * subtrees are inserted where they were, nodes moved on purpose are moved
+ * and the recorded child order is restored. The root keeps its own name,
+ * location, rotation and locked flag. The result carries the complete
+ * link map, exactly as an expanded instance would.
+ *
+ * Returns: (transfer full) (nullable): the expanded instance root, or
+ *   %NULL with @error set when @reference carries no link
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_prefab_instantiate_reference (LrgNode  *reference,
+                                            LrgNode  *prefab,
+                                            GError  **error);
 
 G_END_DECLS

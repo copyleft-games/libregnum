@@ -228,6 +228,8 @@ guint n = lrg_editor_prefab_changed (editor, "prefabs/wheel.rprefab");
 | Sync, revert, relink, unlink | =LRG_EDITOR_CMD_PREFAB_SYNC= (subtree snapshot) |
 | Prefab changed / saved | one group of =PREFAB_SYNC= commands, one per changed instance |
 | Apply | one group: =PREFAB_SYNC= for the instance, =LRG_EDITOR_CMD_PREFAB_FILE= for the file, then the dependents' syncs |
+| Create Variant from an asset (0.9.0) | =LRG_EDITOR_CMD_PREFAB_FILE= made by =lrg_editor_command_new_prefab_create()=: undo removes the new file |
+| Create Variant from an instance (0.9.0) | one group: the file creation, then =PREFAB_SYNC= for the relinked instance |
 
 =PREFAB_SYNC= snapshots every node's own state, link and child list before and after, holding references to the live nodes, so undo puts back removed nodes as the same objects and node-added/node-removed fire on the level. Writing a prefab with =lrg_editor_save_prefab()= is not itself undoable (only the syncs it triggers are); saving an instance onto its own source is treated as Apply All.
 
@@ -241,14 +243,62 @@ guint n = lrg_editor_prefab_changed (editor, "prefabs/wheel.rprefab");
 :PROPERTIES:
 :CUSTOM_ID: limits
 :END:
-- Prefab variants (a prefab whose root is itself an instance) are not supported: a root link is dropped on save and ignored on load.
-- Nesting is resolved up to 8 levels; a prefab that contains itself is an error.
+- Nesting and variant chains together are resolved up to 8 files deep; a prefab that contains or derives from itself is an error (=G_IO_ERROR_INVALID_DATA=).
 - Sync does not reorder existing children, and child order is not an override.
-- Paths are stored as given; the editor does not rewrite links when a prefab is moved or renamed. The asset guid is recorded for that future resolver but is not used for lookup yet.
+- Paths are stored as given; the editor does not rewrite links when a prefab is moved or renamed. Since 0.9.0 the recorded asset guid is used to find the source of a reference-stored instance (see [[#prefabs-runtime-references][Runtime references]]); expanded instances and nested links are still resolved by path.
 - A node reparented across instances or between unrelated parents is tracked as removal plus addition, not as a move.
 - Components and scripts are matched by type name and script path; renaming a script path is a removal plus an addition.
 - Object-property edits made on a visual, material or component object directly (not through the node setters) are not marked.
-- The runtime (=lrg_level_instantiate()=) never resolves prefabs: it instantiates the expanded subtree stored in the level.
+- The runtime instantiates the full subtree it is given: expanded instances as stored, reference-stored instances after the serializer expanded them from their =.rprefab= (since 0.9.0).
+
+** Prefab Variants
+:PROPERTIES:
+:CUSTOM_ID: prefabs-variants
+:END:
+A *variant* (since 0.9.0) is a prefab whose root is a linked instance of another prefab, its *base*. The variant stores only what it changes as overrides relative to the base; everything else follows the base. A variant can be the base of another variant, forming a chain (=crate.rprefab > crate_red.rprefab > crate_red_big.rprefab=). This is Unity's Prefab Variant and Godot's inherited scene.
+
+*** Creating a variant
+:PROPERTIES:
+:CUSTOM_ID: prefabs-variants-create
+:END:
+- *From a prefab asset*: =lrg_editor_create_prefab_variant (editor, base_path, variant_path, error)= writes a new variant with no overrides (=lrg_prefab_create_variant()=: a linked instance of the resolved base, root at the origin). The file must not exist (=G_IO_ERROR_EXISTS=). Undo removes the file again, unless it changed since.
+- *From an instance in the level*: the *Create Variant* button of the inspector's prefab bar, or =lrg_editor_prefab_create_variant (editor, instance, variant_path, error)=. The instance's overrides become the variant's (=lrg_prefab_derive_variant()=: a fresh-guid copy whose root link is the instance's link), and the instance is relinked to the variant with no overrides of its own, so nothing visible changes. File creation and relink are one undo step.
+- =lrg_editor_prefab_suggest_variant_path (source)= proposes =<stem>_variant.rprefab= next to the source (=_variant2=, =_variant3=, ... when taken); the button uses it.
+
+#+begin_src C
+/* From an asset ... */
+g_autofree gchar *path = lrg_editor_prefab_suggest_variant_path ("prefabs/crate.rprefab");
+lrg_editor_create_prefab_variant (editor, "prefabs/crate.rprefab", path, &error);
+
+/* ... or from a placed instance that already looks right. */
+lrg_editor_prefab_create_variant (editor, instance, "prefabs/crate_red.rprefab", &error);
+#+end_src
+
+*** Editing a variant
+:PROPERTIES:
+:CUSTOM_ID: prefabs-variants-edit
+:END:
+Open the variant's =.rprefab= like any prefab: its root is a linked instance of the base, so the inspector shows the prefab bar with the base as the source, and every edit is marked as an override of the base, with the same [[#override-paths][override paths]], Apply All (into the base), Revert All and per-row revert. Save it as a level document; the root link is kept (=lrg_prefab_save()= and the serializer write it since 0.9.0).
+
+*** Propagation
+:PROPERTIES:
+:CUSTOM_ID: prefabs-variants-propagation
+:END:
+=lrg_prefab_load_resolved()= loads the base chain and syncs the variant against it, so the variant always shows the current base, with its own overrides on top; the variant file itself is never rewritten by a base change. Its =dependencies= include every base, so =lrg_editor_prefab_changed()= on a base re-syncs the instances of its variants in the open level: base, then variant, then instances. Overrides of an instance are always relative to its nearest source (the variant), and Apply on an instance of a variant writes into the variant, not the base.
+
+*** The prefab bar
+:PROPERTIES:
+:CUSTOM_ID: prefabs-variants-bar
+:END:
+For an instance of a variant the info line reads =Variant chain crate.rprefab > crate_red.rprefab, 2 overrides=: the chain from the outermost base to the instance's source (=lrg_prefab_get_variant_chain()=, read once per source and cached), then the override count relative to that source. *Create Variant* is enabled on an instance root.
+
+** Runtime References
+:PROPERTIES:
+:CUSTOM_ID: prefabs-runtime-references
+:END:
+A level can store each linked instance as a *reference* (source, overrides, added nodes) instead of the expanded subtree: put =store_prefab_instances: reference= at the top of the =.rlevel=, or in the =project:= mapping of =project.ryaml= for the whole project. The default stays =expanded= (the 0.8.x format). The editor loads both forms the same way: a reference is expanded from its =.rprefab= while loading, so the hierarchy, inspector, sync and Apply/Revert all see a normal linked instance, and it is written back in the configured form. With reference storage a prefab edit reaches every level the next time it loads, without re-saving it. Child guids are derived from the instance root guid (=lrg_prefab_derive_guid()=), so they are the same in both forms.
+
+Trade-offs, the file format and the expansion rules are in [[file:../modules/level/prefabs-runtime.org][Prefabs at Runtime]].
 
 ** Notes
 :PROPERTIES:
@@ -260,7 +310,10 @@ guint n = lrg_editor_prefab_changed (editor, "prefabs/wheel.rprefab");
   links inside the cloned subtree (rewritten to the new guids), which is how
   duplicating or pasting a linked instance yields another linked instance.
 - =lrg_prefab_save()= keeps node guids (since 0.8.1), so linked instances keep
-  mapping onto the source nodes across saves.
+  mapping onto the source nodes across saves. Since 0.9.0 it also writes a
+  link on the root (a variant). =lrg_editor_save_prefab()= saves an instance
+  under another name as an independent prefab (a copy made with
+  =lrg_prefab_copy (node, FALSE)=); use Create Variant to keep the link.
 - The =PREFAB_INSTANCE= visual kind (=LRG_NODE_VISUAL_PREFAB_INSTANCE=) stores the
   asset reference to the =.rprefab= file and marks an instance root whose source
   root has no visual. It is kept on linked instances for compatibility with
@@ -302,6 +355,26 @@ Every public function of the prefab headers that the sections above do not walk 
 | =lrg_prefab_regenerate_guids ()= | Gives every node of /root/ a fresh random guid and rewrites every prefab link inside the subtree to the new guids (used when pasting). |
 | =lrg_prefab_mark_override ()= | Marks /path/ of /node/ overridden on the owning instance root. |
 | =lrg_prefab_get_marker_source ()= | Reads the 0.8.0 source marker of a prefab instance: the `prefab:source` visual param, or the asset of a =LRG_NODE_VISUAL_PREFAB_INSTANCE= visual. |
+| =lrg_prefab_copy ()= | Exact deep copy (same guids, nested links); the root link only when asked (0.9.0). |
+| =lrg_prefab_is_variant ()= | Whether a prefab root links to a base (0.9.0). |
+| =lrg_prefab_get_variant_chain ()= | A prefab path and its bases, nearest first (0.9.0). |
+| =lrg_prefab_create_variant ()= | A new variant of a resolved base (0.9.0). |
+| =lrg_prefab_derive_variant ()= | Moves an instance's overrides into a new variant and relinks the instance to it (0.9.0). |
+| =lrg_prefab_derive_guid ()= | The guid a source node gets inside an instance (0.9.0). |
+| =lrg_prefab_make_reference ()= / =lrg_prefab_instantiate_reference ()= | Sparse reference form of an instance and its expansion (0.9.0, see [[file:../modules/level/prefabs-runtime.org][Prefabs at Runtime]]). |
+| =lrg_prefab_level_get_storage ()= / =lrg_prefab_level_set_storage ()= | A level's =store_prefab_instances= setting (0.9.0). |
+
+*** =lrg-editor.h= (prefab variants, 0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: prefabs-api-lrg-editor-variants
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_prefab_suggest_variant_path ()= | A free =<stem>_variant.rprefab= path next to a source. |
+| =lrg_editor_create_prefab_variant ()= | Create Variant from a prefab asset; undo removes the file. |
+| =lrg_editor_prefab_create_variant ()= | Create Variant from an instance; one undo step. |
+| =lrg_editor_command_new_prefab_create ()= | The command behind both: writes a new file, undo removes it. |
 
 ** See Also
 :PROPERTIES:
@@ -311,3 +384,4 @@ Every public function of the prefab headers that the sections above do not walk 
 - [[file:yaml-format.org][.rlevel Format]] — shared schema for =.rprefab=
 - [[file:projects-and-assets.org][Projects and Assets]] — =LrgAssetType= classifies =.rprefab= files; =.meta= sidecars hold asset guids
 - [[file:editor-runtime.org][Editor Runtime]] — commands, groups and undo
+- [[file:../modules/level/prefabs-runtime.org][Prefabs at Runtime]] — reference storage, variants and resolution outside the editor

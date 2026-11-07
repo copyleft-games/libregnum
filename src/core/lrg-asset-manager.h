@@ -26,8 +26,32 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "lrg-asset-meta.h"
 
 G_BEGIN_DECLS
+
+/**
+ * LRG_ASSET_GUID_PREFIX:
+ *
+ * The prefix of an asset reference by guid: `guid:<uuid>`. Anywhere a
+ * loader of #LrgAssetManager takes an asset name (and in `.rlevel`,
+ * `.rprefab` and YAML definitions that reach it) the name may be
+ * `guid:` followed by the asset guid from its `.meta` sidecar instead of
+ * a path; lrg_asset_manager_resolve_reference() turns it into a path.
+ *
+ * Since: 0.9.0
+ */
+#define LRG_ASSET_GUID_PREFIX "guid:"
+
+/**
+ * LRG_ASSET_GUID_INDEX_VERSION:
+ *
+ * The `version:` written to a cached guid index file (see
+ * lrg_asset_manager_save_guid_index()).
+ *
+ * Since: 0.9.0
+ */
+#define LRG_ASSET_GUID_INDEX_VERSION (1)
 
 #define LRG_TYPE_ASSET_MANAGER (lrg_asset_manager_get_type ())
 
@@ -150,6 +174,10 @@ const GPtrArray * lrg_asset_manager_get_search_paths (LrgAssetManager *self);
  *
  * If the texture is already cached, returns the cached instance.
  * Search paths are checked in reverse order (last added has priority).
+ * Since 0.9.0 @name may be a `guid:<uuid>` reference, and the texture
+ * importer settings of the file's `.meta` sidecar (max-size, mipmaps,
+ * filter, wrap) are applied while loading (see
+ * #LrgAssetManager:apply-import-settings).
  *
  * Returns: (transfer none) (nullable): The #GrlTexture, or %NULL on error
  */
@@ -162,13 +190,16 @@ GrlTexture * lrg_asset_manager_load_texture (LrgAssetManager  *self,
  * lrg_asset_manager_load_font:
  * @self: an #LrgAssetManager
  * @name: relative path to font file (e.g., "fonts/main.ttf")
- * @size: font size in pixels
+ * @size: font size in pixels; since 0.9.0 0 or less means the `size`
+ *   setting of the font's `.meta` sidecar (32 without one)
  * @error: (nullable): return location for error
  *
  * Loads a font from the search paths.
  *
  * The cache key includes the size, so the same font file at different
- * sizes creates separate cache entries.
+ * sizes creates separate cache entries. Since 0.9.0 @name may be a
+ * `guid:<uuid>` reference and the sidecar's `codepoints` setting chooses
+ * the rasterized glyphs.
  *
  * Returns: (transfer none) (nullable): The #GrlFont, or %NULL on error
  */
@@ -187,6 +218,9 @@ GrlFont * lrg_asset_manager_load_font (LrgAssetManager  *self,
  * Loads a sound effect from the search paths.
  *
  * Sound files are fully loaded into memory for low-latency playback.
+ * Since 0.9.0 @name may be a `guid:<uuid>` reference and the sidecar's
+ * `volume` is applied (see lrg_asset_manager_load_audio() to honour the
+ * sidecar's stream/sample mode).
  *
  * Returns: (transfer none) (nullable): The #GrlSound, or %NULL on error
  */
@@ -204,6 +238,8 @@ GrlSound * lrg_asset_manager_load_sound (LrgAssetManager  *self,
  * Loads a streaming music track from the search paths.
  *
  * Unlike sounds, music is streamed from disk during playback.
+ * Since 0.9.0 @name may be a `guid:<uuid>` reference and the sidecar's
+ * `volume` and `loop` are applied.
  *
  * Returns: (transfer none) (nullable): The #GrlMusic, or %NULL on error
  */
@@ -543,7 +579,10 @@ gchar * lrg_asset_manager_resolve_path (LrgAssetManager *self,
  *
  * Loads a 3D model (glTF/GLB, OBJ, IQM, M3D, VOX) and caches it under its
  * canonical resolved path (see lrg_asset_manager_resolve_path()), so
- * different spellings of one file share a single #GrlModel.
+ * different spellings of one file share a single #GrlModel. Since 0.9.0
+ * @name may be a `guid:<uuid>` reference, and the model importer settings
+ * of the `.meta` sidecar are applied: `scale` and `up-axis` into the model
+ * transform, `generate-normals` by recomputing vertex normals.
  *
  * The manager owns the model and unloads it on lrg_asset_manager_unload(),
  * lrg_asset_manager_unload_all() or finalization, together with the
@@ -613,5 +652,285 @@ guint lrg_asset_manager_get_model_cache_size (LrgAssetManager *self);
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_asset_manager_get_animation_cache_size (LrgAssetManager *self);
+
+/* ==========================================================================
+ * Projects and guid references (since 0.9.0)
+ * ========================================================================== */
+
+/**
+ * lrg_asset_manager_set_project_root:
+ * @self: an #LrgAssetManager
+ * @root: (nullable) (type filename): the project directory (the one holding
+ *   `project.ryaml`), or %NULL to forget the project
+ *
+ * Makes the manager project-aware. @root is added as a search path (asset
+ * paths in levels and prefabs are project-relative), and when
+ * `<root>/project.ryaml` exists its `asset_dirs` become the guid index
+ * directories (lrg_asset_manager_add_asset_dir()) and its
+ * `apply_import_settings` key (default true) sets
+ * #LrgAssetManager:apply-import-settings. Without a manifest @root itself
+ * is the only asset directory. The guid index is rebuilt lazily on the
+ * next guid lookup.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_manager_set_project_root (LrgAssetManager *self,
+                                         const gchar     *root);
+
+/**
+ * lrg_asset_manager_get_project_root:
+ * @self: an #LrgAssetManager
+ *
+ * Returns: (transfer none) (nullable) (type filename): the project root
+ *   set with lrg_asset_manager_set_project_root()
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_asset_manager_get_project_root (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_add_asset_dir:
+ * @self: an #LrgAssetManager
+ * @dir: (type filename): a directory to index; relative paths are taken
+ *   relative to the project root when one is set
+ *
+ * Adds a directory to the guid index. The index covers every file below
+ * the asset directories (version-control directories skipped), exactly
+ * like the editor's #LrgAssetDatabase: an asset's guid is the `guid:` of
+ * its `.meta` sidecar, or, without a sidecar, the legacy guid computed
+ * from its path relative to the directory
+ * (lrg_asset_meta_compute_legacy_guid()). When the same guid appears
+ * twice the first file (directory order, then sorted path order) wins.
+ * When no asset directory is set, the search paths are indexed instead.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_manager_add_asset_dir (LrgAssetManager *self,
+                                      const gchar     *dir);
+
+/**
+ * lrg_asset_manager_get_asset_dirs:
+ * @self: an #LrgAssetManager
+ *
+ * Returns: (transfer none) (element-type filename): the absolute guid
+ *   index directories, in the order they were added
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const GPtrArray * lrg_asset_manager_get_asset_dirs (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_clear_asset_dirs:
+ * @self: an #LrgAssetManager
+ *
+ * Removes every guid index directory and empties the index.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_manager_clear_asset_dirs (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_rebuild_guid_index:
+ * @self: an #LrgAssetManager
+ *
+ * Scans the asset directories (see lrg_asset_manager_add_asset_dir()) and
+ * rebuilds the guid index now. Lookups build the index on first use, and
+ * rebuild it once when an indexed file has disappeared, so calling this
+ * is only needed after assets were added while the game runs.
+ *
+ * Returns: the number of indexed assets
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_asset_manager_rebuild_guid_index (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_get_guid_index_size:
+ * @self: an #LrgAssetManager
+ *
+ * Returns: the number of assets in the guid index (0 before it is built)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_asset_manager_get_guid_index_size (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_resolve_guid:
+ * @self: an #LrgAssetManager
+ * @guid: an asset guid, with or without the `guid:` prefix
+ *
+ * Looks @guid up in the guid index (built on first use).
+ *
+ * Returns: (transfer full) (nullable) (type filename): the absolute,
+ *   canonical path of the asset, or %NULL when no indexed asset has @guid
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_asset_manager_resolve_guid (LrgAssetManager *self,
+                                        const gchar     *guid);
+
+/**
+ * lrg_asset_manager_lookup_guid:
+ * @self: an #LrgAssetManager
+ * @name: an asset name (searched like the loaders do) or absolute path
+ *
+ * The reverse of lrg_asset_manager_resolve_guid(): the guid the index
+ * holds for the file @name resolves to.
+ *
+ * Returns: (transfer full) (nullable): the guid, or %NULL when the file is
+ *   not inside an asset directory
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_asset_manager_lookup_guid (LrgAssetManager *self,
+                                       const gchar     *name);
+
+/**
+ * lrg_asset_manager_resolve_reference:
+ * @self: an #LrgAssetManager
+ * @ref: an asset reference: `guid:<uuid>`, a name relative to a search
+ *   path, or an absolute path
+ *
+ * Resolves any asset reference to an existing file: `guid:` references go
+ * through the guid index, everything else through the search paths
+ * (last added first).
+ *
+ * Returns: (transfer full) (nullable) (type filename): the absolute,
+ *   canonical path, or %NULL when nothing matches
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_asset_manager_resolve_reference (LrgAssetManager *self,
+                                             const gchar     *ref);
+
+/**
+ * lrg_asset_manager_save_guid_index:
+ * @self: an #LrgAssetManager
+ * @path: (type filename): the index file to write
+ * @error: (nullable): return location for an error
+ *
+ * Writes the guid index (building it first if needed) as YAML:
+ *
+ * |[
+ * version: 1
+ * assets:
+ *   2f1c...: textures/crate.png     # relative to the project root
+ * ]|
+ *
+ * Paths are written relative to the project root when one is set (and the
+ * asset is inside it), absolute otherwise. A shipped game can load this
+ * file with lrg_asset_manager_load_guid_index() instead of scanning.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_save_guid_index (LrgAssetManager  *self,
+                                            const gchar      *path,
+                                            GError          **error);
+
+/**
+ * lrg_asset_manager_load_guid_index:
+ * @self: an #LrgAssetManager
+ * @path: (type filename): an index file written by
+ *   lrg_asset_manager_save_guid_index()
+ * @error: (nullable): return location for an error
+ *
+ * Replaces the guid index with the cached one in @path (relative entries
+ * resolve against the project root, else against the directory of
+ * @path). The cache is trusted until a lookup finds that an indexed file
+ * no longer exists; the index is then rebuilt from the asset directories
+ * once.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_load_guid_index (LrgAssetManager  *self,
+                                            const gchar      *path,
+                                            GError          **error);
+
+/* ==========================================================================
+ * Runtime import settings (since 0.9.0)
+ * ========================================================================== */
+
+/**
+ * lrg_asset_manager_set_apply_import_settings:
+ * @self: an #LrgAssetManager
+ * @apply: whether loaders apply `.meta` importer settings
+ *
+ * Sets #LrgAssetManager:apply-import-settings. Changing it does not touch
+ * assets already in the caches; unload them to reload with the new
+ * policy.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_manager_set_apply_import_settings (LrgAssetManager *self,
+                                                  gboolean         apply);
+
+/**
+ * lrg_asset_manager_get_apply_import_settings:
+ * @self: an #LrgAssetManager
+ *
+ * Returns: whether loaders apply `.meta` importer settings (default %TRUE)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_manager_get_apply_import_settings (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_get_asset_meta:
+ * @self: an #LrgAssetManager
+ * @name: an asset reference (`guid:`, name or absolute path)
+ *
+ * Reads the `.meta` sidecar of the file @name resolves to. Use it for
+ * settings the runtime records but cannot apply to the GPU object itself
+ * (for example the texture `srgb` flag, or `loop` of a sample).
+ *
+ * Returns: (transfer full) (nullable): the sidecar, or %NULL when the
+ *   asset or its sidecar does not exist
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAssetMeta * lrg_asset_manager_get_asset_meta (LrgAssetManager *self,
+                                                 const gchar     *name);
+
+/**
+ * lrg_asset_manager_load_audio:
+ * @self: an #LrgAssetManager
+ * @name: an audio asset reference (`guid:`, name or absolute path)
+ * @error: (nullable): return location for error
+ *
+ * Loads an audio file the way its `.meta` sidecar asks: `mode: stream`
+ * gives a cached #GrlMusic (lrg_asset_manager_load_music()), `mode:
+ * sample` a cached #GrlSound (lrg_asset_manager_load_sound()), with
+ * `volume` (and, for music, `loop`) applied. Without a sidecar, or with
+ * #LrgAssetManager:apply-import-settings off, `.wav` files load as sounds
+ * and other formats stream as music, like lrg_asset_manager_load_asset().
+ *
+ * Returns: (transfer none) (nullable): the cached #GrlSound or #GrlMusic,
+ *   or %NULL on error
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GObject * lrg_asset_manager_load_audio (LrgAssetManager  *self,
+                                        const gchar      *name,
+                                        GError          **error);
 
 G_END_DECLS

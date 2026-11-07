@@ -9,7 +9,16 @@
  * LrgLevelSerializer reads and writes the `.rlevel` authoring format: a YAML
  * document describing the level metadata and a recursive tree of nodes, each
  * with a transform, an optional tagged visual payload, component descriptions,
- * and script bindings. It is stateless; a single instance may be reused.
+ * and script bindings. A single instance may be reused for many loads and
+ * saves.
+ *
+ * Since 0.9.0 linked prefab instances may be stored as references (see
+ * #LrgPrefabStorage and `docs/modules/level/prefabs-runtime.org`): the
+ * #LrgLevelSerializer:prefab-storage property, the level's own
+ * `store_prefab_instances` setting and the project's choose the form on
+ * save, and loading expands references from their `.rprefab` files, so
+ * every consumer of the loaded #LrgLevel (lrg_level_instantiate(), the
+ * editor, games) sees full subtrees.
  */
 
 #pragma once
@@ -21,6 +30,8 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "lrg-prefab.h"
+#include "../core/lrg-asset-manager.h"
 
 G_BEGIN_DECLS
 
@@ -114,5 +125,86 @@ LRG_AVAILABLE_IN_ALL
 gchar * lrg_level_serializer_save_to_data (LrgLevelSerializer *self,
                                            LrgLevel           *level,
                                            gsize              *length);
+
+/* ==========================================================================
+ * Prefab storage and resolution (since 0.9.0)
+ * ========================================================================== */
+
+/**
+ * lrg_level_serializer_set_prefab_storage:
+ * @self: an #LrgLevelSerializer
+ * @storage: how saving stores linked prefab instances;
+ *   %LRG_PREFAB_STORAGE_DEFAULT defers to the level, then the project
+ *
+ * Sets #LrgLevelSerializer:prefab-storage.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_serializer_set_prefab_storage (LrgLevelSerializer *self,
+                                              LrgPrefabStorage    storage);
+
+/**
+ * lrg_level_serializer_get_prefab_storage:
+ * @self: an #LrgLevelSerializer
+ *
+ * Returns: the #LrgLevelSerializer:prefab-storage override
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPrefabStorage lrg_level_serializer_get_prefab_storage (LrgLevelSerializer *self);
+
+/**
+ * lrg_level_serializer_set_project_root:
+ * @self: an #LrgLevelSerializer
+ * @root: (nullable) (type filename): the project directory, or %NULL to
+ *   discover it from the level path
+ *
+ * Sets #LrgLevelSerializer:project-root.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_serializer_set_project_root (LrgLevelSerializer *self,
+                                            const gchar        *root);
+
+/**
+ * lrg_level_serializer_get_project_root:
+ * @self: an #LrgLevelSerializer
+ *
+ * Returns: (transfer none) (nullable) (type filename): the explicit
+ *   project root
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_level_serializer_get_project_root (LrgLevelSerializer *self);
+
+/**
+ * lrg_level_serializer_set_asset_manager:
+ * @self: an #LrgLevelSerializer
+ * @manager: (nullable): an asset manager whose guid index resolves prefab
+ *   sources
+ *
+ * Sets #LrgLevelSerializer:asset-manager.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_serializer_set_asset_manager (LrgLevelSerializer *self,
+                                             LrgAssetManager    *manager);
+
+/**
+ * lrg_level_serializer_get_asset_manager:
+ * @self: an #LrgLevelSerializer
+ *
+ * Returns: (transfer none) (nullable): the asset manager used to resolve
+ *   guid prefab sources
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAssetManager * lrg_level_serializer_get_asset_manager (LrgLevelSerializer *self);
 
 G_END_DECLS

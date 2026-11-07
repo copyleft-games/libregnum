@@ -756,15 +756,20 @@ lrg_prefab_clone (LrgNode *node)
 	return dst;
 }
 
-/* An exact copy (same guids, same links) minus the root's own link. */
-static LrgNode *
-copy_exact (LrgNode *node)
+LrgNode *
+lrg_prefab_copy (LrgNode  *node,
+                 gboolean  keep_root_link)
 {
-	g_autoptr(GHashTable) table = new_guid_table ();
+	g_autoptr(GHashTable) table = NULL;
 	LrgNode              *dst;
 
+	g_return_val_if_fail (LRG_IS_NODE (node), NULL);
+
+	/* Same guids, so the guid table is the identity; links are copied as
+	 * they are (the root's only when asked). */
+	table = new_guid_table ();
 	dst = clone_tree (node, GUID_KEEP, NULL, table);
-	copy_links (node, dst, table, TRUE);
+	copy_links (node, dst, table, !keep_root_link);
 	return dst;
 }
 
@@ -2545,8 +2550,9 @@ lrg_prefab_save (LrgNode      *node,
 	g_return_val_if_fail (path != NULL, FALSE);
 
 	/* Copy so we never mutate the source node's parent linkage. Guids are
-	 * kept: linked instances map onto them. */
-	copy = copy_exact (node);
+	 * kept: linked instances map onto them. A link on @node itself is kept
+	 * (since 0.9.0): the prefab is then a variant of the link's source. */
+	copy = lrg_prefab_copy (node, TRUE);
 
 	level = lrg_level_new ("prefab");
 	lrg_level_add_node (level, copy, NULL);
@@ -2582,27 +2588,62 @@ lrg_prefab_load (const gchar  *path,
 	}
 
 	/* Detach the first node from the (soon-discarded) level and return it.
-	 * A prefab root is never itself an instance (no variants). */
+	 * Its own link, if any, makes it a variant (since 0.9.0). */
 	node = g_object_ref (g_ptr_array_index (children, 0));
 	lrg_level_remove_node (level, node);
-	lrg_node_set_prefab_link (node, NULL);
 
 	return node;
 }
 
 /* --------------------------------------------------------------------------
- * Nested resolution
+ * Nested resolution and variant chains
  * -------------------------------------------------------------------------- */
 
 static LrgNode *load_resolved (const gchar *path, GPtrArray *stack,
                                GHashTable *deps, GError **error);
 
-/* Resolves the outermost nested instances below @node (not @node). */
+/*
+ * resolve_source_path:
+ * @source: a source path recorded in a link
+ * @from: (nullable): the file that names it
+ *
+ * A relative source path is tried as given (relative to the current
+ * directory, the editor's convention) and then relative to the directory
+ * of @from, so prefab files referencing their neighbours load from
+ * anywhere. Returns the first existing candidate, else @source.
+ */
+static gchar *
+resolve_source_path (const gchar *source,
+                     const gchar *from)
+{
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *near = NULL;
+
+	if (g_path_is_absolute (source) || g_file_test (source, G_FILE_TEST_EXISTS) || from == NULL)
+		return g_strdup (source);
+
+	dir = g_path_get_dirname (from);
+	near = g_build_filename (dir, source, NULL);
+	if (g_file_test (near, G_FILE_TEST_EXISTS))
+		return g_steal_pointer (&near);
+	return g_strdup (source);
+}
+
+/*
+ * resolve_below:
+ *
+ * Resolves the outermost nested instances below @node (not @node). In a
+ * variant, descendants mirroring the base (mapped by @root_link) were
+ * already synced with the base and are only descended into, to reach
+ * nested instances the variant added below them.
+ */
 static gboolean
-resolve_below (LrgNode     *node,
-               GPtrArray   *stack,
-               GHashTable  *deps,
-               GError     **error)
+resolve_below (LrgNode       *node,
+               LrgPrefabLink *root_link,
+               const gchar   *from,
+               GPtrArray     *stack,
+               GHashTable    *deps,
+               GError       **error)
 {
 	GPtrArray *children = lrg_node_get_children (node);
 	guint      i;
@@ -2611,23 +2652,59 @@ resolve_below (LrgNode     *node,
 	{
 		LrgNode       *child = g_ptr_array_index (children, i);
 		LrgPrefabLink *link = lrg_node_get_prefab_link (child);
+		gboolean       mapped = root_link != NULL &&
+		                        lrg_prefab_link_map_lookup (root_link, lrg_node_get_guid (child)) != NULL;
 
-		if (link != NULL && lrg_prefab_link_get_source_path (link) != NULL)
+		if (link != NULL && !mapped && lrg_prefab_link_get_source_path (link) != NULL)
 		{
 			g_autoptr(LrgNode) nested = NULL;
+			g_autofree gchar  *src = resolve_source_path (lrg_prefab_link_get_source_path (link), from);
 
-			g_hash_table_add (deps, canonical_path (lrg_prefab_link_get_source_path (link)));
-			nested = load_resolved (lrg_prefab_link_get_source_path (link), stack, deps, error);
+			g_hash_table_add (deps, canonical_path (src));
+			nested = load_resolved (src, stack, deps, error);
 			if (nested == NULL)
 				return FALSE;
 			lrg_prefab_sync_instance (child, nested);
 			continue;  /* its own nesting came resolved from its source */
 		}
 
-		if (!resolve_below (child, stack, deps, error))
+		if (!resolve_below (child, root_link, from, stack, deps, error))
 			return FALSE;
 	}
 
+	return TRUE;
+}
+
+/*
+ * check_stack:
+ *
+ * The shared guard of nesting and variant chains: a file already on the
+ * stack is a cycle, and the stack may hold at most PREFAB_MAX_DEPTH files.
+ */
+static gboolean
+check_stack (GPtrArray    *stack,
+             const gchar  *canon,
+             const gchar  *path,
+             GError      **error)
+{
+	guint i;
+
+	for (i = 0; i < stack->len; i++)
+	{
+		if (g_strcmp0 (g_ptr_array_index (stack, i), canon) == 0)
+		{
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			             "Prefab %s contains itself (nesting or variant cycle)", path);
+			return FALSE;
+		}
+	}
+	if (stack->len >= PREFAB_MAX_DEPTH)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		             "Prefab nesting or variant chain deeper than %d levels at %s",
+		             PREFAB_MAX_DEPTH, path);
+		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -2639,32 +2716,37 @@ load_resolved (const gchar  *path,
 {
 	g_autofree gchar   *canon = canonical_path (path);
 	g_autoptr(LrgNode)  prefab = NULL;
-	guint               i;
-	gboolean            ok;
+	LrgPrefabLink      *base_link;
+	gboolean            ok = TRUE;
 
-	for (i = 0; i < stack->len; i++)
-	{
-		if (g_strcmp0 (g_ptr_array_index (stack, i), canon) == 0)
-		{
-			g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-			             "Prefab %s contains itself", path);
-			return NULL;
-		}
-	}
-	if (stack->len >= PREFAB_MAX_DEPTH)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		             "Prefab nesting deeper than %d levels at %s",
-		             PREFAB_MAX_DEPTH, path);
+	if (!check_stack (stack, canon, path, error))
 		return NULL;
-	}
 
 	prefab = lrg_prefab_load (path, error);
 	if (prefab == NULL)
 		return NULL;
 
 	g_ptr_array_add (stack, g_strdup (canon));
-	ok = resolve_below (prefab, stack, deps, error);
+
+	/* 1. A variant: resolve its base chain first, then sync the variant
+	 *    against the resolved base (the variant's overrides are kept). */
+	base_link = lrg_node_get_prefab_link (prefab);
+	if (base_link != NULL && lrg_prefab_link_get_source_path (base_link) != NULL)
+	{
+		g_autofree gchar   *base_path = resolve_source_path (lrg_prefab_link_get_source_path (base_link), path);
+		g_autoptr(LrgNode)  base = NULL;
+
+		g_hash_table_add (deps, canonical_path (base_path));
+		base = load_resolved (base_path, stack, deps, error);
+		if (base == NULL)
+			ok = FALSE;
+		else
+			lrg_prefab_sync_instance (prefab, base);
+	}
+
+	/* 2. Nested instances the prefab (or variant) holds itself. */
+	if (ok)
+		ok = resolve_below (prefab, base_link, path, stack, deps, error);
 	g_ptr_array_remove_index (stack, stack->len - 1);
 
 	return ok ? g_steal_pointer (&prefab) : NULL;
@@ -2681,7 +2763,7 @@ lrg_prefab_resolve_nested (LrgNode  *prefab,
 
 	stack = g_ptr_array_new_with_free_func (g_free);
 	deps = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
-	return resolve_below (prefab, stack, deps, error);
+	return resolve_below (prefab, lrg_node_get_prefab_link (prefab), NULL, stack, deps, error);
 }
 
 LrgNode *
@@ -2703,4 +2785,674 @@ lrg_prefab_load_resolved (const gchar  *path,
 		*dependencies = (prefab != NULL) ? sorted_keys (deps) : NULL;
 
 	return prefab;
+}
+
+/* ==========================================================================
+ * LrgPrefabStorage and the level setting (since 0.9.0)
+ * ========================================================================== */
+
+GType
+lrg_prefab_storage_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_PREFAB_STORAGE_DEFAULT, "LRG_PREFAB_STORAGE_DEFAULT", "default" },
+			{ LRG_PREFAB_STORAGE_EXPANDED, "LRG_PREFAB_STORAGE_EXPANDED", "expanded" },
+			{ LRG_PREFAB_STORAGE_REFERENCE, "LRG_PREFAB_STORAGE_REFERENCE", "reference" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgPrefabStorage"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+LrgPrefabStorage
+lrg_prefab_storage_from_string (const gchar *text)
+{
+	if (text == NULL)
+		return LRG_PREFAB_STORAGE_DEFAULT;
+	if (g_ascii_strcasecmp (text, "expanded") == 0)
+		return LRG_PREFAB_STORAGE_EXPANDED;
+	if (g_ascii_strcasecmp (text, "reference") == 0)
+		return LRG_PREFAB_STORAGE_REFERENCE;
+	return LRG_PREFAB_STORAGE_DEFAULT;
+}
+
+const gchar *
+lrg_prefab_storage_to_string (LrgPrefabStorage storage)
+{
+	switch (storage)
+	{
+	case LRG_PREFAB_STORAGE_EXPANDED:  return "expanded";
+	case LRG_PREFAB_STORAGE_REFERENCE: return "reference";
+	case LRG_PREFAB_STORAGE_DEFAULT:
+	default:                           return "default";
+	}
+}
+
+/* The level setting rides on the LrgLevel as qdata: it is a property of
+ * the document that only the serializer and the prefab code care about. */
+static GQuark
+level_storage_quark (void)
+{
+	return g_quark_from_static_string ("lrg-prefab-level-storage");
+}
+
+LrgPrefabStorage
+lrg_prefab_level_get_storage (LrgLevel *level)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (level), LRG_PREFAB_STORAGE_DEFAULT);
+
+	return (LrgPrefabStorage) GPOINTER_TO_INT (g_object_get_qdata (G_OBJECT (level), level_storage_quark ()));
+}
+
+void
+lrg_prefab_level_set_storage (LrgLevel         *level,
+                              LrgPrefabStorage  storage)
+{
+	g_return_if_fail (LRG_IS_LEVEL (level));
+
+	g_object_set_qdata (G_OBJECT (level), level_storage_quark (), GINT_TO_POINTER ((gint) storage));
+}
+
+/* ==========================================================================
+ * Guids and variants (since 0.9.0)
+ * ========================================================================== */
+
+gchar *
+lrg_prefab_derive_guid (const gchar *instance_root_guid,
+                        const gchar *source_guid)
+{
+	g_return_val_if_fail (instance_root_guid != NULL, NULL);
+	g_return_val_if_fail (source_guid != NULL, NULL);
+
+	return derive_guid (instance_root_guid, source_guid);
+}
+
+gboolean
+lrg_prefab_is_variant (LrgNode *prefab)
+{
+	LrgPrefabLink *link;
+
+	g_return_val_if_fail (LRG_IS_NODE (prefab), FALSE);
+
+	link = lrg_node_get_prefab_link (prefab);
+	return link != NULL && lrg_prefab_link_get_source_path (link) != NULL;
+}
+
+GStrv
+lrg_prefab_get_variant_chain (const gchar  *path,
+                              GError      **error)
+{
+	g_autoptr(GPtrArray) chain = NULL;
+	g_autoptr(GPtrArray) seen = NULL;
+	g_autofree gchar    *current = NULL;
+
+	g_return_val_if_fail (path != NULL, NULL);
+
+	chain = g_ptr_array_new_with_free_func (g_free);
+	seen = g_ptr_array_new_with_free_func (g_free);
+	current = g_strdup (path);
+
+	/* Read each root link in turn; the shared guard catches loops and
+	 * over-long chains. */
+	while (current != NULL)
+	{
+		g_autofree gchar   *canon = canonical_path (current);
+		g_autoptr(LrgNode)  prefab = NULL;
+		LrgPrefabLink      *link;
+		gchar              *next = NULL;
+
+		if (!check_stack (seen, canon, current, error))
+			return NULL;
+		prefab = lrg_prefab_load (current, error);
+		if (prefab == NULL)
+			return NULL;
+		g_ptr_array_add (seen, g_steal_pointer (&canon));
+
+		link = lrg_node_get_prefab_link (prefab);
+		if (link != NULL && lrg_prefab_link_get_source_path (link) != NULL)
+			next = resolve_source_path (lrg_prefab_link_get_source_path (link), current);
+
+		g_ptr_array_add (chain, g_steal_pointer (&current));
+		current = next;
+	}
+
+	g_ptr_array_add (chain, NULL);
+	return (GStrv) g_ptr_array_free (g_steal_pointer (&chain), FALSE);
+}
+
+/* A new variant root sits at the prefab origin. */
+static void
+zero_root_placement (LrgNode *root)
+{
+	lrg_node_set_location_xyz (root, 0.0f, 0.0f, 0.0f);
+	lrg_node_set_rotation_xyz (root, 0.0f, 0.0f, 0.0f);
+}
+
+LrgNode *
+lrg_prefab_create_variant (LrgNode     *base,
+                           const gchar *base_path,
+                           const gchar *base_guid)
+{
+	LrgNode *variant;
+
+	g_return_val_if_fail (LRG_IS_NODE (base), NULL);
+	g_return_val_if_fail (base_path != NULL, NULL);
+
+	/* A variant is a linked instance of its base saved as a prefab. */
+	variant = lrg_prefab_instantiate_linked (base, base_path, base_guid);
+	zero_root_placement (variant);
+	return variant;
+}
+
+/* Fills @table with instance guid -> copy guid for two parallel trees. */
+static void
+pair_guids (LrgNode    *a,
+            LrgNode    *b,
+            GHashTable *table)
+{
+	GPtrArray *ac = lrg_node_get_children (a);
+	GPtrArray *bc = lrg_node_get_children (b);
+	guint      i;
+
+	g_hash_table_insert (table, g_strdup (lrg_node_get_guid (a)), g_strdup (lrg_node_get_guid (b)));
+	for (i = 0; i < ac->len && i < bc->len; i++)
+		pair_guids (g_ptr_array_index (ac, i), g_ptr_array_index (bc, i), table);
+}
+
+LrgNode *
+lrg_prefab_derive_variant (LrgNode     *instance,
+                           const gchar *variant_path,
+                           const gchar *variant_guid)
+{
+	LrgPrefabLink            *link;
+	LrgNode                  *variant;
+	g_autoptr(GHashTable)     table = NULL;
+	g_autoptr(LrgPrefabLink)  relinked = NULL;
+	GHashTableIter            iter;
+	gpointer                  key;
+	gpointer                  value;
+
+	g_return_val_if_fail (LRG_IS_NODE (instance), NULL);
+	g_return_val_if_fail (variant_path != NULL, NULL);
+
+	link = lrg_node_get_prefab_link (instance);
+	if (link == NULL || lrg_prefab_link_get_source_path (link) == NULL)
+		return NULL;
+
+	/* 1. The variant: a fresh-guid copy whose root link (the instance's
+	 *    link, map and overrides rewritten to the new guids) points at
+	 *    the instance's source. */
+	variant = lrg_prefab_clone (instance);
+	zero_root_placement (variant);
+
+	/* 2. Relink the instance to the variant: every instance node mirrors
+	 *    its copy, and nothing is overridden (it matches the variant). */
+	table = new_guid_table ();
+	pair_guids (instance, variant, table);
+	relinked = lrg_prefab_link_new (variant_path, variant_guid);
+	g_hash_table_iter_init (&iter, table);
+	while (g_hash_table_iter_next (&iter, &key, &value))
+		lrg_prefab_link_map_set (relinked, key, value);
+	lrg_node_set_prefab_link (instance, relinked);
+	ensure_marker (instance, variant_path);
+
+	return variant;
+}
+
+/* ==========================================================================
+ * Reference storage (since 0.9.0)
+ * ========================================================================== */
+
+/* TRUE when some override key is qualified with @guid, or adds/moves the
+ * node with that guid (`children/+<guid>` anywhere). */
+static gboolean
+node_has_keys (LrgPrefabLink *link,
+               const gchar   *guid)
+{
+	g_autofree gchar *qual = g_strconcat (guid, ":", NULL);
+	g_autofree gchar *added = g_strconcat ("children/+", guid, NULL);
+	GHashTableIter    iter;
+	gpointer          k;
+
+	g_hash_table_iter_init (&iter, link->overrides);
+	while (g_hash_table_iter_next (&iter, &k, NULL))
+	{
+		g_autofree gchar *kg = NULL;
+		const gchar      *path = split_key (k, &kg);
+
+		if (g_str_has_prefix (k, qual) || g_strcmp0 (path, added) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* Whether the sparse form must keep @node (see make_reference). */
+static gboolean
+ref_keeps (LrgPrefabLink *link,
+           LrgNode       *node)
+{
+	GPtrArray *children;
+	guint      i;
+
+	if (lrg_prefab_link_map_lookup (link, lrg_node_get_guid (node)) == NULL)
+		return TRUE;  /* instance-added */
+	if (node_has_keys (link, lrg_node_get_guid (node)))
+		return TRUE;
+
+	children = lrg_node_get_children (node);
+	for (i = 0; i < children->len; i++)
+		if (ref_keeps (link, g_ptr_array_index (children, i)))
+			return TRUE;
+	return FALSE;
+}
+
+static LrgNode *ref_sparse (LrgPrefabLink *link, LrgNode *node, gboolean is_root);
+
+/* The children of a kept node: kept ones recursively, the others as
+ * placeholders; nothing when no child is kept. */
+static void
+ref_sparse_children (LrgPrefabLink *link,
+                     LrgNode       *node,
+                     LrgNode       *dst)
+{
+	GPtrArray *children = lrg_node_get_children (node);
+	gboolean   any = FALSE;
+	guint      i;
+
+	for (i = 0; i < children->len && !any; i++)
+		any = ref_keeps (link, g_ptr_array_index (children, i));
+	if (!any)
+		return;
+
+	for (i = 0; i < children->len; i++)
+	{
+		LrgNode            *c = g_ptr_array_index (children, i);
+		g_autoptr(LrgNode)  copy = NULL;
+
+		if (ref_keeps (link, c))
+			copy = ref_sparse (link, c, FALSE);
+		else
+		{
+			copy = lrg_node_new (lrg_node_get_name (c));
+			lrg_node_set_guid (copy, lrg_node_get_guid (c));
+		}
+		lrg_node_add_child (dst, copy);
+	}
+}
+
+static LrgNode *
+ref_sparse (LrgPrefabLink *link,
+            LrgNode       *node,
+            gboolean       is_root)
+{
+	LrgNode *dst;
+
+	/* Instance-added subtrees are copied whole (guids, nested links). */
+	if (!is_root && lrg_prefab_link_map_lookup (link, lrg_node_get_guid (node)) == NULL)
+		return lrg_prefab_copy (node, TRUE);
+
+	/* A kept mapped node: its own state (nested links come back from
+	 * the source), plus its children when one of them is kept. */
+	dst = lrg_node_new (lrg_node_get_name (node));
+	lrg_node_copy_state (dst, node);
+	lrg_node_set_guid (dst, lrg_node_get_guid (node));
+	ref_sparse_children (link, node, dst);
+	return dst;
+}
+
+LrgNode *
+lrg_prefab_make_reference (LrgNode *instance)
+{
+	LrgPrefabLink            *link;
+	LrgNode                  *sparse;
+	g_autoptr(LrgPrefabLink)  copy = NULL;
+
+	g_return_val_if_fail (LRG_IS_NODE (instance), NULL);
+
+	link = lrg_node_get_prefab_link (instance);
+	if (link == NULL)
+		return NULL;
+
+	sparse = ref_sparse (link, instance, TRUE);
+	copy = lrg_prefab_link_copy (link);
+	lrg_node_set_prefab_link (sparse, copy);
+	return sparse;
+}
+
+/*
+ * RefExpand: state of one lrg_prefab_instantiate_reference() call.
+ */
+typedef struct
+{
+	LrgNode       *sparse;      /* the reference (read only) */
+	LrgPrefabLink *in_link;     /* its link: exceptions of the map + keys */
+	LrgNode       *prefab;      /* the resolved source */
+	LrgNode       *full;        /* the instance being built */
+	LrgPrefabLink *out_link;    /* the full link of @full */
+	const gchar   *root_guid;
+} RefExpand;
+
+/* The instance guid of source node @sg: recorded, else derived. */
+static gchar *
+ref_guid_for (RefExpand   *x,
+              const gchar *sg)
+{
+	const gchar *ig = lrg_prefab_link_map_lookup_instance (x->in_link, sg);
+
+	if (ig != NULL)
+		return g_strdup (ig);
+	return derive_guid (x->root_guid, sg);
+}
+
+/* The override key for @path on the instance node with guid @ig. */
+static gchar *
+ref_key (RefExpand   *x,
+         const gchar *ig,
+         const gchar *path)
+{
+	if (g_strcmp0 (ig, x->root_guid) == 0)
+		return g_strdup (path);
+	return g_strdup_printf ("%s:%s", ig, path);
+}
+
+/*
+ * ref_build:
+ *
+ * Creates the instance copy of source subtree @src (not the root): each
+ * node gets its recorded or derived guid and a map entry; children the
+ * instance removed (`children/-<source guid>` on their parent) are
+ * skipped.
+ */
+static LrgNode *
+ref_build (RefExpand *x,
+           LrgNode   *src)
+{
+	LrgNode          *node;
+	g_autofree gchar *ig = ref_guid_for (x, lrg_node_get_guid (src));
+	GPtrArray        *children;
+	guint             i;
+
+	node = lrg_node_new (lrg_node_get_name (src));
+	lrg_node_copy_state (node, src);
+	lrg_node_set_guid (node, ig);
+	lrg_prefab_link_map_set (x->out_link, ig, lrg_node_get_guid (src));
+
+	children = lrg_node_get_children (src);
+	for (i = 0; i < children->len; i++)
+	{
+		LrgNode            *sc = g_ptr_array_index (children, i);
+		g_autofree gchar   *removed = g_strconcat ("children/-", lrg_node_get_guid (sc), NULL);
+		g_autofree gchar   *key = ref_key (x, ig, removed);
+		g_autoptr(LrgNode)  child = NULL;
+
+		if (lrg_prefab_link_has_override (x->in_link, key))
+			continue;
+		child = ref_build (x, sc);
+		lrg_node_add_child (node, child);
+	}
+	return node;
+}
+
+/* Gives every built node whose source node is nested-linked the
+ * translated link (like a sync would). */
+static gboolean
+ref_nested_links (LrgNode  *src,
+                  gpointer  user_data)
+{
+	RefExpand     *x = user_data;
+	LrgPrefabLink *src_link = lrg_node_get_prefab_link (src);
+	const gchar   *ig;
+	LrgNode       *inst;
+	Walk           w;
+
+	if (src_link == NULL || src == x->prefab)
+		return TRUE;
+	ig = lrg_prefab_link_map_lookup_instance (x->out_link, lrg_node_get_guid (src));
+	inst = (ig != NULL) ? lrg_node_find_by_guid (x->full, ig) : NULL;
+	if (inst == NULL)
+		return TRUE;
+
+	walk_init (&w, x->full, x->prefab);
+	{
+		g_autoptr(LrgPrefabLink) translated = translate_link (&w, src_link);
+
+		lrg_node_set_prefab_link (inst, translated);
+	}
+	return TRUE;
+}
+
+/* Moves @node to index @index of @parent (any old parent). */
+static void
+ref_place (LrgNode *parent,
+           LrgNode *node,
+           gint     index)
+{
+	if (lrg_node_get_parent (node) == parent && lrg_node_get_child_index (parent, node) == index)
+		return;
+	detach (node);
+	lrg_node_insert_child (parent, node, index);
+	g_object_unref (node);
+}
+
+/*
+ * ref_children:
+ *
+ * Applies the recorded children of sparse node @sp to the built node
+ * with the same guid: inserts instance-added subtrees, moves nodes moved
+ * on purpose (`children/+<guid>` on the parent), re-creates moved nodes
+ * the old parent removed, recurses into kept mapped children and finally
+ * restores the recorded order. Children the source added since the save
+ * keep their source position.
+ */
+static void
+ref_children (RefExpand *x,
+              LrgNode   *sp)
+{
+	GPtrArray           *sc = lrg_node_get_children (sp);
+	LrgNode             *fp = lrg_node_find_by_guid (x->full, lrg_node_get_guid (sp));
+	g_autoptr(GPtrArray) wanted = NULL;
+	g_autoptr(GPtrArray) current = NULL;
+	guint                i;
+	guint                k;
+
+	if (fp == NULL || sc->len == 0)
+		return;
+
+	wanted = g_ptr_array_new ();
+	for (i = 0; i < sc->len; i++)
+	{
+		LrgNode          *c = g_ptr_array_index (sc, i);
+		const gchar      *g = lrg_node_get_guid (c);
+		const gchar      *sg = lrg_prefab_link_map_lookup (x->in_link, g);
+		LrgNode          *existing = lrg_node_find_by_guid (x->full, g);
+		g_autofree gchar *added = g_strconcat ("children/+", g, NULL);
+		g_autofree gchar *key = ref_key (x, lrg_node_get_guid (fp), added);
+		gboolean          on_purpose = lrg_prefab_link_has_override (x->in_link, key);
+
+		if (sg == NULL || lrg_node_find_by_guid (x->prefab, sg) == NULL)
+		{
+			/* Instance-added, or its source node is gone: keep the
+			 * recorded subtree when it is added or edited. */
+			if (existing == NULL && (sg == NULL || node_has_keys (x->in_link, g)))
+			{
+				g_autoptr(LrgNode) copy = lrg_prefab_copy (c, TRUE);
+
+				if (sg != NULL)
+				{
+					/* No longer mirrors anything: an added child. */
+					g_autofree gchar *k2 = ref_key (x, lrg_node_get_guid (fp), added);
+
+					lrg_node_foreach (copy, purge_node, x->out_link);
+					lrg_prefab_link_add_override (x->out_link, k2);
+				}
+				lrg_node_add_child (fp, copy);
+				existing = copy;
+			}
+			if (existing != NULL)
+				g_ptr_array_add (wanted, existing);
+			continue;
+		}
+
+		if (existing == NULL)
+		{
+			/* Removed where the source has it and moved here. */
+			if (!on_purpose)
+				continue;
+			{
+				g_autoptr(LrgNode) built = ref_build (x, lrg_node_find_by_guid (x->prefab, sg));
+
+				lrg_node_add_child (fp, built);
+				existing = built;
+			}
+		}
+		else if (lrg_node_get_parent (existing) != fp)
+		{
+			if (!on_purpose)
+				continue;  /* the source moved it: follow the source */
+			ref_place (fp, existing, -1);
+		}
+
+		g_ptr_array_add (wanted, existing);
+		ref_children (x, c);
+	}
+
+	/* Restore the recorded order on the slots the recorded children
+	 * occupy; other children (new in the source) stay where they are. */
+	current = g_ptr_array_copy (lrg_node_get_children (fp), NULL, NULL);
+	g_ptr_array_set_free_func (current, NULL);  /* borrowed: the copy inherits unref */
+	k = 0;
+	for (i = 0; i < current->len && k < wanted->len; i++)
+	{
+		LrgNode *c = g_ptr_array_index (current, i);
+
+		if (g_ptr_array_find (wanted, c, NULL))
+		{
+			ref_place (fp, g_ptr_array_index (wanted, k), (gint) i);
+			k++;
+		}
+	}
+}
+
+LrgNode *
+lrg_prefab_instantiate_reference (LrgNode  *reference,
+                                  LrgNode  *prefab,
+                                  GError  **error)
+{
+	RefExpand                x;
+	LrgPrefabLink           *in_link;
+	g_autoptr(LrgPrefabLink) out_link = NULL;
+	g_auto(GStrv)            keys = NULL;
+	GPtrArray               *children;
+	LrgNode                 *full;
+	CopyCtx                  ctx;
+	guint                    i;
+
+	g_return_val_if_fail (LRG_IS_NODE (reference), NULL);
+	g_return_val_if_fail (LRG_IS_NODE (prefab), NULL);
+
+	in_link = lrg_node_get_prefab_link (reference);
+	if (in_link == NULL)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		             "Node %s is not a prefab reference (no link)",
+		             lrg_node_get_name (reference) != NULL ? lrg_node_get_name (reference) : "?");
+		return NULL;
+	}
+
+	/* 1. The root: source state, then the instance-owned fields. */
+	full = lrg_node_new (lrg_node_get_name (reference));
+	lrg_node_copy_state (full, prefab);
+	lrg_node_set_guid (full, lrg_node_get_guid (reference));
+	lrg_node_set_name (full, lrg_node_get_name (reference));
+	{
+		GrlVector3 *v = lrg_node_get_location (reference);
+
+		lrg_node_set_location_xyz (full, v->x, v->y, v->z);
+		v = lrg_node_get_rotation (reference);
+		lrg_node_set_rotation_xyz (full, v->x, v->y, v->z);
+	}
+	lrg_node_set_locked (full, lrg_node_get_locked (reference));
+
+	out_link = lrg_prefab_link_new (lrg_prefab_link_get_source_path (in_link),
+	                                lrg_prefab_link_get_source_guid (in_link));
+	keys = lrg_prefab_link_get_overrides (in_link);
+	for (i = 0; keys != NULL && keys[i] != NULL; i++)
+		lrg_prefab_link_add_override (out_link, keys[i]);
+	lrg_prefab_link_map_set (out_link, lrg_node_get_guid (full), lrg_node_get_guid (prefab));
+	lrg_node_set_prefab_link (full, out_link);
+
+	x.sparse = reference;
+	x.in_link = in_link;
+	x.prefab = prefab;
+	x.full = full;
+	x.out_link = out_link;
+	x.root_guid = lrg_node_get_guid (full);
+
+	/* 2. Every source child, minus the ones the instance removed. */
+	children = lrg_node_get_children (prefab);
+	for (i = 0; i < children->len; i++)
+	{
+		LrgNode            *sc = g_ptr_array_index (children, i);
+		g_autofree gchar   *removed = g_strconcat ("children/-", lrg_node_get_guid (sc), NULL);
+		g_autoptr(LrgNode)  child = NULL;
+
+		if (lrg_prefab_link_has_override (in_link, removed))
+			continue;
+		child = ref_build (&x, sc);
+		lrg_node_add_child (full, child);
+	}
+	lrg_node_foreach (prefab, ref_nested_links, &x);
+
+	/* 3. Structure recorded in the reference: added subtrees, purposeful
+	 *    moves, child order. */
+	ref_children (&x, reference);
+
+	/* 4. Overridden values, copied from the recorded nodes. */
+	ctx.to_source = FALSE;
+	ctx.marker_path = lrg_prefab_link_get_source_path (in_link);
+	for (i = 0; keys != NULL && keys[i] != NULL; i++)
+	{
+		g_autofree gchar *guid = NULL;
+		const gchar      *path = split_key (keys[i], &guid);
+		const gchar      *target = guid != NULL ? guid : x.root_guid;
+		LrgNode          *dst;
+		LrgNode          *src;
+
+		if (g_str_has_prefix (path, "children/"))
+			continue;
+		dst = lrg_node_find_by_guid (full, target);
+		src = lrg_node_find_by_guid (reference, target);
+		if (dst == NULL || src == NULL)
+			continue;
+		ctx.root = (dst == full);
+		copy_path (dst, src, path, &ctx);
+	}
+
+	/* 5. Recorded map entries of nodes the instance no longer has (kept by
+	 *    the editor after a delete) stay in the map, as in the expanded
+	 *    form. */
+	{
+		g_auto(GStrv) mapped = lrg_prefab_link_get_mapped_guids (in_link);
+
+		for (i = 0; mapped != NULL && mapped[i] != NULL; i++)
+		{
+			const gchar *sg = lrg_prefab_link_map_lookup (in_link, mapped[i]);
+
+			if (lrg_node_find_by_guid (full, mapped[i]) == NULL &&
+			    lrg_prefab_link_map_lookup (out_link, mapped[i]) == NULL &&
+			    lrg_prefab_link_map_lookup_instance (out_link, sg) == NULL)
+				lrg_prefab_link_map_set (out_link, mapped[i], sg);
+		}
+	}
+
+	/* 6. The 0.8.0 source marker, as every linked instance root has. */
+	ensure_marker (full, lrg_prefab_link_get_source_path (in_link));
+	return full;
 }

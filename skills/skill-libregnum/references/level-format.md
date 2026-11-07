@@ -68,3 +68,26 @@ nodes:
 ## Runtime
 
 `lrg_level_instantiate()` turns a level into an `LrgWorld` of `LrgGameObject`s (components via the engine registry, scripts as `LrgScriptComponent`, each object tagged with its node GUID); `lrg_level_to_scene()` bakes renderable nodes into an `LrgScene`. Games are shared modules run by `lrgldr MODULE.so -- ARGS`; `lrgeditor --module MODULE.so` loads one so its component types can be edited and played in the editor.
+
+## Prefab references, variants and guid: references (0.9.0)
+
+- `store_prefab_instances: reference` (top of a `.rlevel`, or under `project:` in `project.ryaml`; default `expanded`) saves each linked prefab instance as a reference: root state + a `prefab:` block with `storage: reference` + only overridden / moved / added nodes (other children of a kept node as `{name, guid}` placeholders). Loading rebuilds the full subtree from the `.rprefab` (child guids = `lrg_prefab_derive_guid (root_guid, source_guid)`, as the editor does), so prefab edits reach levels without re-saving. Needs the prefab files at runtime; a missing prefab keeps the bare reference.
+
+```yaml
+- name: Crate 1
+  guid: 13e1...
+  transform: {location: [5,0,-2], rotation: [0,0,0], scale: [2,2,2]}
+  prefab:
+    source: prefabs/crate.rprefab     # or guid:<uuid>
+    guid: <asset guid>
+    storage: reference
+    map: {13e1...: 5d49...}           # only non-derivable entries
+    overrides: [transform/scale, d73f...:transform/location, children/-235f...]
+  children:
+  - name: Lid
+    guid: d73f...
+    transform: {location: [0,3,0], rotation: [0,0,0], scale: [1,1,1]}
+```
+
+- A prefab variant is a `.rprefab` whose root carries a `prefab:` block pointing at its base; its overrides are its differences. `lrg_prefab_load_resolved()` applies the base chain (max 8 deep with nesting; cycles are errors). Editor: inspector prefab bar "Create Variant" (from an instance), `lrg_editor_create_prefab_variant()` (from an asset); the bar shows `base > variant`.
+- Asset references may be `guid:<uuid>` (the guid from the asset's `.meta`). `LrgAssetManager` resolves them through a GUID index of the project's `asset_dirs` (`lrg_asset_manager_set_project_root()`), matching the editor's asset database. Loaders apply `.meta` import settings (texture filter/wrap/mipmaps/max-size, model scale/up-axis/generate-normals, audio mode/volume/loop, font size/codepoints) unless `apply_import_settings: false`.

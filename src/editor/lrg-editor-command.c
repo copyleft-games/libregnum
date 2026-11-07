@@ -13,6 +13,7 @@
  */
 
 #include "lrg-editor-command.h"
+#include <glib/gstdio.h>
 #include "lrg-level.h"
 #include "lrg-node.h"
 #include "lrg-node-visual.h"
@@ -59,6 +60,7 @@ struct _LrgEditorCommand
 
 	gchar    *file_before;  /* prefab-file: contents (owned, nullable) */
 	gchar    *file_after;
+	gboolean  file_create;  /* prefab-file: undo deletes the file (0.9.0) */
 
 	GPtrArray *marks;       /* OverrideMark*: override-set changes (nullable) */
 };
@@ -677,6 +679,41 @@ lrg_editor_command_new_prefab_file (const gchar *path,
 	return self;
 }
 
+LrgEditorCommand *
+lrg_editor_command_new_prefab_create (const gchar *path,
+                                      const gchar *contents)
+{
+	LrgEditorCommand *self;
+
+	g_return_val_if_fail (path != NULL, NULL);
+	g_return_val_if_fail (contents != NULL, NULL);
+
+	/* A prefab-file command whose "before" is "no file": undo removes the
+	 * file it created (Create Variant), redo writes it again. */
+	self = lrg_editor_command_new_prefab_file (path, NULL, contents);
+	self->file_create = TRUE;
+	return self;
+}
+
+/* Undo of a created prefab file: remove it (only if it still holds what
+ * the command wrote, so a file edited since is never lost). */
+static void
+remove_created_file (const gchar *path,
+                     const gchar *contents)
+{
+	g_autofree gchar *now = NULL;
+
+	if (!g_file_get_contents (path, &now, NULL, NULL))
+		return;
+	if (g_strcmp0 (now, contents) != 0)
+	{
+		g_warning ("Not removing %s on undo: it changed since it was created", path);
+		return;
+	}
+	if (g_remove (path) != 0)
+		g_warning ("Could not remove %s on undo", path);
+}
+
 static void
 write_prefab_file (const gchar *path,
                    const gchar *contents)
@@ -1171,7 +1208,10 @@ lrg_editor_command_undo (LrgEditorCommand *self)
 		tree_snap_restore (self->level, self->tree_before);
 		break;
 	case LRG_EDITOR_CMD_PREFAB_FILE:
-		write_prefab_file (self->prop_name, self->file_before);
+		if (self->file_create)
+			remove_created_file (self->prop_name, self->file_after);
+		else
+			write_prefab_file (self->prop_name, self->file_before);
 		break;
 	default:
 		break;
@@ -1311,7 +1351,7 @@ lrg_editor_command_describe (LrgEditorCommand *self)
 		{
 			g_autofree gchar *base = g_path_get_basename (self->prop_name);
 
-			return g_strdup_printf ("Write %s", base);
+			return g_strdup_printf ("%s %s", self->file_create ? "Create" : "Write", base);
 		}
 	default:
 		return g_strdup ("Command");

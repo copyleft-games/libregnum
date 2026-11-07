@@ -17,27 +17,278 @@
 #include "lrg-script-binding.h"
 #include "lrg-prefab.h"
 #include "../scene/lrg-material3d.h"
+#include "../core/lrg-asset-manager.h"
 #include "../lrg-enums.h"
 #include "../ui/lrg-property-source.h"
 #include <graylib.h>
 #include <yaml-glib.h>
+#include <string.h>
+
+/* The level / project key naming how linked instances are stored. The
+ * hyphenated spelling is accepted on read. */
+#define STORAGE_KEY      "store_prefab_instances"
+#define STORAGE_KEY_ALT  "store-prefab-instances"
+#define PROJECT_MANIFEST "project.ryaml"
 
 struct _LrgLevelSerializer
 {
-	GObject parent_instance;
+	GObject           parent_instance;
+
+	LrgPrefabStorage  prefab_storage;   /* DEFAULT: level, then project */
+	gchar            *project_root;     /* nullable; else discovered */
+	LrgAssetManager  *asset_manager;    /* nullable; resolves guid: */
 };
 
 G_DEFINE_FINAL_TYPE (LrgLevelSerializer, lrg_level_serializer, G_TYPE_OBJECT)
 
+enum
+{
+	PROP_0,
+	PROP_PREFAB_STORAGE,
+	PROP_PROJECT_ROOT,
+	PROP_ASSET_MANAGER,
+	N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void
+lrg_level_serializer_finalize (GObject *object)
+{
+	LrgLevelSerializer *self = LRG_LEVEL_SERIALIZER (object);
+
+	g_clear_pointer (&self->project_root, g_free);
+	g_clear_object (&self->asset_manager);
+
+	G_OBJECT_CLASS (lrg_level_serializer_parent_class)->finalize (object);
+}
+
+static void
+lrg_level_serializer_get_property (GObject    *object,
+                                   guint       prop_id,
+                                   GValue     *value,
+                                   GParamSpec *pspec)
+{
+	LrgLevelSerializer *self = LRG_LEVEL_SERIALIZER (object);
+
+	switch (prop_id)
+	{
+	case PROP_PREFAB_STORAGE:
+		g_value_set_enum (value, self->prefab_storage);
+		break;
+	case PROP_PROJECT_ROOT:
+		g_value_set_string (value, self->project_root);
+		break;
+	case PROP_ASSET_MANAGER:
+		g_value_set_object (value, self->asset_manager);
+		break;
+	default:
+		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
+}
+
+static void
+lrg_level_serializer_set_property (GObject      *object,
+                                   guint         prop_id,
+                                   const GValue *value,
+                                   GParamSpec   *pspec)
+{
+	LrgLevelSerializer *self = LRG_LEVEL_SERIALIZER (object);
+
+	switch (prop_id)
+	{
+	case PROP_PREFAB_STORAGE:
+		lrg_level_serializer_set_prefab_storage (self, (LrgPrefabStorage) g_value_get_enum (value));
+		break;
+	case PROP_PROJECT_ROOT:
+		lrg_level_serializer_set_project_root (self, g_value_get_string (value));
+		break;
+	case PROP_ASSET_MANAGER:
+		lrg_level_serializer_set_asset_manager (self, g_value_get_object (value));
+		break;
+	default:
+		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+	}
+}
+
 static void
 lrg_level_serializer_class_init (LrgLevelSerializerClass *klass)
 {
+	GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+	object_class->finalize = lrg_level_serializer_finalize;
+	object_class->get_property = lrg_level_serializer_get_property;
+	object_class->set_property = lrg_level_serializer_set_property;
+
+	/**
+	 * LrgLevelSerializer:prefab-storage:
+	 *
+	 * How saving stores linked prefab instances. %LRG_PREFAB_STORAGE_DEFAULT
+	 * (the default) defers to the level's own setting
+	 * (lrg_prefab_level_get_storage()), then to `store_prefab_instances` in
+	 * the project's `project.ryaml`, then to
+	 * %LRG_PREFAB_STORAGE_EXPANDED. Loading always reads both forms.
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_PREFAB_STORAGE] =
+		g_param_spec_enum ("prefab-storage", "Prefab storage",
+		                   "How linked prefab instances are saved",
+		                   LRG_TYPE_PREFAB_STORAGE, LRG_PREFAB_STORAGE_DEFAULT,
+		                   G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgLevelSerializer:project-root:
+	 *
+	 * The project directory, used to find `project.ryaml` (the project
+	 * `store_prefab_instances` setting) and to resolve project-relative
+	 * prefab paths of reference-stored instances. When %NULL, file loads
+	 * and saves look for `project.ryaml` in the level's directory and its
+	 * parents.
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_PROJECT_ROOT] =
+		g_param_spec_string ("project-root", "Project root",
+		                     "Project directory (holding project.ryaml)",
+		                     NULL,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgLevelSerializer:asset-manager:
+	 *
+	 * An optional #LrgAssetManager whose guid index resolves the prefab
+	 * sources of reference-stored instances (by the link's asset guid, or
+	 * a `guid:` source path) before any path is tried. Without one, guid
+	 * sources are resolved through a guid index of the project root, when
+	 * one is known.
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_ASSET_MANAGER] =
+		g_param_spec_object ("asset-manager", "Asset manager",
+		                     "Resolves guid prefab sources",
+		                     LRG_TYPE_ASSET_MANAGER,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void
 lrg_level_serializer_init (LrgLevelSerializer *self)
 {
+	self->prefab_storage = LRG_PREFAB_STORAGE_DEFAULT;
 }
+
+/* ==========================================================================
+ * Project settings
+ * ========================================================================== */
+
+/*
+ * find_project_root:
+ * @start: (nullable): a directory
+ *
+ * Walks up from @start to the first directory holding project.ryaml.
+ */
+static gchar *
+find_project_root (const gchar *start)
+{
+	g_autofree gchar *dir = NULL;
+	guint             depth;
+
+	if (start == NULL)
+		return NULL;
+	dir = g_canonicalize_filename (start, NULL);
+	for (depth = 0; depth < 64 && dir != NULL; depth++)
+	{
+		g_autofree gchar *manifest = g_build_filename (dir, PROJECT_MANIFEST, NULL);
+		g_autofree gchar *parent = NULL;
+
+		if (g_file_test (manifest, G_FILE_TEST_IS_REGULAR))
+			return g_steal_pointer (&dir);
+		parent = g_path_get_dirname (dir);
+		if (g_strcmp0 (parent, dir) == 0)
+			break;
+		g_free (dir);
+		dir = g_steal_pointer (&parent);
+	}
+	return NULL;
+}
+
+/* The serializer's project root, or one discovered above @level_path. */
+static gchar *
+effective_project_root (LrgLevelSerializer *self,
+                        const gchar        *level_path)
+{
+	g_autofree gchar *dir = NULL;
+
+	if (self->project_root != NULL)
+		return g_strdup (self->project_root);
+	if (level_path == NULL)
+		return NULL;
+	dir = g_path_get_dirname (level_path);
+	return find_project_root (dir);
+}
+
+/* Reads `project.store_prefab_instances` from <root>/project.ryaml. */
+static LrgPrefabStorage
+project_storage (const gchar *root)
+{
+	g_autofree gchar      *path = NULL;
+	g_autoptr(YamlParser)  parser = NULL;
+	YamlNode              *doc;
+	YamlNode              *proj;
+	YamlMapping           *map;
+	const gchar           *text = NULL;
+
+	if (root == NULL)
+		return LRG_PREFAB_STORAGE_DEFAULT;
+	path = g_build_filename (root, PROJECT_MANIFEST, NULL);
+	parser = yaml_parser_new ();
+	if (!yaml_parser_load_from_file (parser, path, NULL))
+		return LRG_PREFAB_STORAGE_DEFAULT;
+	doc = yaml_parser_get_root (parser);
+	if (doc == NULL || yaml_node_get_node_type (doc) != YAML_NODE_MAPPING)
+		return LRG_PREFAB_STORAGE_DEFAULT;
+	proj = yaml_mapping_get_member (yaml_node_get_mapping (doc), "project");
+	if (proj == NULL || yaml_node_get_node_type (proj) != YAML_NODE_MAPPING)
+		return LRG_PREFAB_STORAGE_DEFAULT;
+	map = yaml_node_get_mapping (proj);
+	if (yaml_mapping_has_member (map, STORAGE_KEY))
+		text = yaml_mapping_get_string_member (map, STORAGE_KEY);
+	else if (yaml_mapping_has_member (map, STORAGE_KEY_ALT))
+		text = yaml_mapping_get_string_member (map, STORAGE_KEY_ALT);
+	return lrg_prefab_storage_from_string (text);
+}
+
+/*
+ * effective_storage:
+ *
+ * Serializer property, then the level setting, then the project, then
+ * expanded (the 0.8.x format).
+ */
+static LrgPrefabStorage
+effective_storage (LrgLevelSerializer *self,
+                   LrgLevel           *level,
+                   const gchar        *level_path)
+{
+	LrgPrefabStorage  storage = self->prefab_storage;
+	g_autofree gchar *root = NULL;
+
+	if (storage == LRG_PREFAB_STORAGE_DEFAULT)
+		storage = lrg_prefab_level_get_storage (level);
+	if (storage == LRG_PREFAB_STORAGE_DEFAULT)
+	{
+		root = effective_project_root (self, level_path);
+		storage = project_storage (root);
+	}
+	if (storage == LRG_PREFAB_STORAGE_DEFAULT)
+		storage = LRG_PREFAB_STORAGE_EXPANDED;
+	return storage;
+}
+
+static gchar *save_to_data_internal (LrgLevelSerializer *self, LrgLevel *level,
+                                     const gchar *path, gsize *length);
 
 /* ==========================================================================
  * Enum <-> nick helpers
@@ -402,19 +653,31 @@ build_script_mapping (LrgScriptBinding *binding)
 
 /*
  * build_prefab_mapping:
+ * @link: the link to write
+ * @full: (nullable): for a reference-stored instance, the instance root
+ * @sparse: (nullable): for a reference-stored instance, its sparse tree
  *
- * The optional `prefab:` block of a linked instance root (editor-only
- * metadata; the runtime ignores it):
+ * The optional `prefab:` block of a linked instance root:
  *
  *   prefab:
  *     source: prefabs/crate.rprefab
  *     guid: <asset guid>            (omitted when unknown)
+ *     storage: reference            (0.9.0; omitted for expanded storage)
  *     map: { <instance guid>: <source guid>, ... }
  *     overrides: [ <key>, ... ]     (omitted when empty)
+ *
+ * In reference storage the map only lists the entries a loader cannot
+ * re-derive: guids that differ from lrg_prefab_derive_guid() of the root
+ * guid, every node the sparse tree records (so a loader can tell a
+ * recorded mapped node from an instance-added one) and entries of nodes
+ * the instance no longer has.
  */
 static YamlMapping *
-build_prefab_mapping (LrgPrefabLink *link)
+build_prefab_mapping (LrgPrefabLink *link,
+                      LrgNode       *full,
+                      LrgNode       *sparse)
 {
+	const gchar            *root_guid = (full != NULL) ? lrg_node_get_guid (full) : NULL;
 	YamlMapping            *map = yaml_mapping_new ();
 	g_autoptr(YamlMapping)  guid_map = yaml_mapping_new ();
 	g_auto(GStrv)           guids = lrg_prefab_link_get_mapped_guids (link);
@@ -425,10 +688,24 @@ build_prefab_mapping (LrgPrefabLink *link)
 		yaml_mapping_set_string_member (map, "source", lrg_prefab_link_get_source_path (link));
 	if (lrg_prefab_link_get_source_guid (link) != NULL)
 		yaml_mapping_set_string_member (map, "guid", lrg_prefab_link_get_source_guid (link));
+	if (sparse != NULL)
+		yaml_mapping_set_string_member (map, "storage", "reference");
 
 	for (i = 0; guids != NULL && guids[i] != NULL; i++)
-		yaml_mapping_set_string_member (guid_map, guids[i],
-		                                lrg_prefab_link_map_lookup (link, guids[i]));
+	{
+		const gchar *sg = lrg_prefab_link_map_lookup (link, guids[i]);
+
+		/* Entries of nodes the instance no longer has are kept too. */
+		if (sparse != NULL && root_guid != NULL && lrg_node_find_by_guid (sparse, guids[i]) == NULL &&
+		    lrg_node_find_by_guid (full, guids[i]) != NULL)
+		{
+			g_autofree gchar *derived = lrg_prefab_derive_guid (root_guid, sg);
+
+			if (g_strcmp0 (derived, guids[i]) == 0)
+				continue;  /* re-derived on load */
+		}
+		yaml_mapping_set_string_member (guid_map, guids[i], sg);
+	}
 	yaml_mapping_set_mapping_member (map, "map", guid_map);
 
 	if (keys != NULL && keys[0] != NULL)
@@ -443,10 +720,39 @@ build_prefab_mapping (LrgPrefabLink *link)
 	return map;
 }
 
-static YamlMapping *
-build_node_mapping (LrgNode *node)
+/*
+ * WriteRef: while writing the sparse tree of a reference-stored instance,
+ * the instance's (full) link, used to tell recorded mapped nodes from
+ * instance-added ones.
+ */
+typedef struct
 {
-	YamlMapping             *map = yaml_mapping_new ();
+	LrgPrefabLink *link;
+} WriteRef;
+
+static YamlMapping *build_node_mapping (LrgNode *node, LrgPrefabStorage storage, WriteRef *ref);
+
+/* TRUE when the link has an override key that names @guid. */
+static gboolean
+link_names_guid (LrgPrefabLink *link,
+                 const gchar   *guid)
+{
+	g_auto(GStrv)     keys = lrg_prefab_link_get_overrides (link);
+	g_autofree gchar *qual = g_strconcat (guid, ":", NULL);
+	g_autofree gchar *added = g_strconcat ("children/+", guid, NULL);
+	guint             i;
+
+	for (i = 0; keys != NULL && keys[i] != NULL; i++)
+		if (g_str_has_prefix (keys[i], qual) || g_str_has_suffix (keys[i], added))
+			return TRUE;
+	return FALSE;
+}
+
+/* Writes the node's own state (everything but the link and children). */
+static void
+build_node_state (LrgNode     *node,
+                  YamlMapping *map)
+{
 	g_autoptr(YamlMapping)   transform_map = yaml_mapping_new ();
 	g_autoptr(YamlSequence)  loc_seq = NULL;
 	g_autoptr(YamlSequence)  rot_seq = NULL;
@@ -454,7 +760,6 @@ build_node_mapping (LrgNode *node)
 	LrgNodeVisual           *visual;
 	GPtrArray               *components;
 	GPtrArray               *scripts;
-	GPtrArray               *children;
 	guint                    i;
 
 	if (lrg_node_get_name (node) != NULL)
@@ -510,29 +815,98 @@ build_node_mapping (LrgNode *node)
 		}
 		yaml_mapping_set_sequence_member (map, "scripts", script_seq);
 	}
+}
 
-	if (lrg_node_get_prefab_link (node) != NULL)
+/* Writes the children of @node (if any) as `children:`. */
+static void
+build_children (LrgNode          *node,
+                YamlMapping      *map,
+                LrgPrefabStorage  storage,
+                WriteRef         *ref)
+{
+	GPtrArray               *children = lrg_node_get_children (node);
+	g_autoptr(YamlSequence)  child_seq = NULL;
+	guint                    i;
+
+	if (children == NULL || children->len == 0)
+		return;
+
+	child_seq = yaml_sequence_new ();
+	for (i = 0; i < children->len; i++)
 	{
-		g_autoptr(YamlMapping) prefab_map = build_prefab_mapping (lrg_node_get_prefab_link (node));
+		g_autoptr(YamlMapping) child_map = build_node_mapping (g_ptr_array_index (children, i), storage, ref);
+
+		yaml_sequence_add_mapping_element (child_seq, child_map);
+	}
+	yaml_mapping_set_sequence_member (map, "children", child_seq);
+}
+
+/*
+ * build_node_mapping:
+ * @node: the node to write
+ * @storage: how linked instance roots are stored
+ * @ref: (nullable): set while writing inside a reference-stored instance
+ *
+ * Writes one node and its children. A linked instance root in reference
+ * storage is written as its sparse form (lrg_prefab_make_reference());
+ * inside it, recorded mapped nodes without overrides or children shrink
+ * to placeholders (`name` and `guid`), mapped nodes drop their nested
+ * links (the source brings them back), and instance-added subtrees are
+ * written normally (their own linked roots may be references again).
+ */
+static YamlMapping *
+build_node_mapping (LrgNode          *node,
+                    LrgPrefabStorage  storage,
+                    WriteRef         *ref)
+{
+	YamlMapping *map = yaml_mapping_new ();
+	gboolean     mapped = FALSE;
+
+	/* 1. Inside a reference: an instance-added node is written like any
+	 *    other node; a recorded mapped node without overrides or children
+	 *    is a placeholder. */
+	if (ref != NULL)
+	{
+		mapped = lrg_prefab_link_map_lookup (ref->link, lrg_node_get_guid (node)) != NULL;
+		if (!mapped)
+			ref = NULL;
+		else if (lrg_node_get_children (node)->len == 0 &&
+		         !link_names_guid (ref->link, lrg_node_get_guid (node)))
+		{
+			if (lrg_node_get_name (node) != NULL)
+				yaml_mapping_set_string_member (map, "name", lrg_node_get_name (node));
+			yaml_mapping_set_string_member (map, "guid", lrg_node_get_guid (node));
+			return map;
+		}
+	}
+
+	/* 2. A linked instance root (outside any reference) in reference
+	 *    storage: its sparse form. */
+	if (ref == NULL && storage == LRG_PREFAB_STORAGE_REFERENCE &&
+	    lrg_node_get_prefab_link (node) != NULL)
+	{
+		g_autoptr(LrgNode)      sparse = lrg_prefab_make_reference (node);
+		g_autoptr(YamlMapping)  prefab_map = NULL;
+		WriteRef                inner;
+
+		inner.link = lrg_node_get_prefab_link (node);
+		build_node_state (sparse, map);
+		prefab_map = build_prefab_mapping (inner.link, node, sparse);
+		yaml_mapping_set_mapping_member (map, "prefab", prefab_map);
+		build_children (sparse, map, storage, &inner);
+		return map;
+	}
+
+	/* 3. A plain node (or a recorded mapped node of a reference, which
+	 *    drops its nested link: the source brings it back). */
+	build_node_state (node, map);
+	if (lrg_node_get_prefab_link (node) != NULL && !mapped)
+	{
+		g_autoptr(YamlMapping) prefab_map = build_prefab_mapping (lrg_node_get_prefab_link (node), NULL, NULL);
 
 		yaml_mapping_set_mapping_member (map, "prefab", prefab_map);
 	}
-
-	children = lrg_node_get_children (node);
-	if (children != NULL && children->len > 0)
-	{
-		g_autoptr(YamlSequence) child_seq = yaml_sequence_new ();
-
-		for (i = 0; i < children->len; i++)
-		{
-			LrgNode                *child = g_ptr_array_index (children, i);
-			g_autoptr(YamlMapping)  child_map = build_node_mapping (child);
-
-			yaml_sequence_add_mapping_element (child_seq, child_map);
-		}
-		yaml_mapping_set_sequence_member (map, "children", child_seq);
-	}
-
+	build_children (node, map, storage, ref);
 	return map;
 }
 
@@ -590,7 +964,8 @@ build_timelines_sequence (LrgLevel *level)
 }
 
 static YamlNode *
-build_level_yaml (LrgLevel *level)
+build_level_yaml (LrgLevel         *level,
+                  LrgPrefabStorage  storage)
 {
 	g_autoptr(YamlMapping)   root_map = yaml_mapping_new ();
 	g_autoptr(YamlSequence)  nodes_seq = yaml_sequence_new ();
@@ -603,13 +978,17 @@ build_level_yaml (LrgLevel *level)
 		yaml_mapping_set_string_member (root_map, "name", lrg_level_get_name (level));
 	yaml_mapping_set_string_member (root_map, "default_view",
 	                                lrg_level_get_default_2d (level) ? "2d" : "3d");
+	/* The level's own storage setting (0.9.0), only when it has one. */
+	if (lrg_prefab_level_get_storage (level) != LRG_PREFAB_STORAGE_DEFAULT)
+		yaml_mapping_set_string_member (root_map, STORAGE_KEY,
+		                                lrg_prefab_storage_to_string (lrg_prefab_level_get_storage (level)));
 
 	root = lrg_level_get_root (level);
 	top = lrg_node_get_children (root);
 	for (i = 0; top != NULL && i < top->len; i++)
 	{
 		LrgNode                *node = g_ptr_array_index (top, i);
-		g_autoptr(YamlMapping)  node_map = build_node_mapping (node);
+		g_autoptr(YamlMapping)  node_map = build_node_mapping (node, storage, NULL);
 
 		yaml_sequence_add_mapping_element (nodes_seq, node_map);
 	}
@@ -915,8 +1294,161 @@ parse_prefab (YamlMapping *map)
 	return link;
 }
 
+/*
+ * ParseCtx: what one load needs to expand reference-stored instances.
+ */
+typedef struct
+{
+	LrgLevelSerializer *self;
+	gchar              *level_dir;      /* nullable (data loads) */
+	gchar              *project_root;   /* nullable */
+	LrgAssetManager    *guid_index;     /* lazily made from project_root */
+	GHashTable         *prefabs;        /* canonical path -> LrgNode* (resolved) */
+} ParseCtx;
+
+static void
+parse_ctx_init (ParseCtx           *ctx,
+                LrgLevelSerializer *self,
+                const gchar        *level_path)
+{
+	ctx->self = self;
+	ctx->level_dir = (level_path != NULL) ? g_path_get_dirname (level_path) : NULL;
+	ctx->project_root = effective_project_root (self, level_path);
+	ctx->guid_index = NULL;
+	ctx->prefabs = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
+}
+
+static void
+parse_ctx_clear (ParseCtx *ctx)
+{
+	g_clear_pointer (&ctx->level_dir, g_free);
+	g_clear_pointer (&ctx->project_root, g_free);
+	g_clear_object (&ctx->guid_index);
+	g_clear_pointer (&ctx->prefabs, g_hash_table_unref);
+}
+
+/* Resolves a guid through the serializer's asset manager, else through a
+ * guid index of the project root (built once per load). */
+static gchar *
+ctx_resolve_guid (ParseCtx    *ctx,
+                  const gchar *guid)
+{
+	if (guid == NULL || *guid == '\0')
+		return NULL;
+	if (ctx->self->asset_manager != NULL)
+		return lrg_asset_manager_resolve_guid (ctx->self->asset_manager, guid);
+	if (ctx->project_root == NULL)
+		return NULL;
+	if (ctx->guid_index == NULL)
+	{
+		ctx->guid_index = lrg_asset_manager_new ();
+		lrg_asset_manager_set_project_root (ctx->guid_index, ctx->project_root);
+	}
+	return lrg_asset_manager_resolve_guid (ctx->guid_index, guid);
+}
+
+/*
+ * ctx_resolve_source:
+ *
+ * Finds the `.rprefab` of a reference-stored instance: by asset guid (the
+ * link's `guid`, or a `guid:` source), then the path as given (absolute,
+ * or relative to the current directory as the editor writes it), then
+ * relative to the project root and to the level's directory.
+ */
+static gchar *
+ctx_resolve_source (ParseCtx      *ctx,
+                    LrgPrefabLink *link)
+{
+	const gchar *source = lrg_prefab_link_get_source_path (link);
+	const gchar *bases[2];
+	gchar       *found;
+	guint        i;
+
+	if (source != NULL && g_str_has_prefix (source, LRG_ASSET_GUID_PREFIX))
+	{
+		found = ctx_resolve_guid (ctx, source + strlen (LRG_ASSET_GUID_PREFIX));
+		if (found != NULL)
+			return found;
+	}
+	found = ctx_resolve_guid (ctx, lrg_prefab_link_get_source_guid (link));
+	if (found != NULL)
+		return found;
+	if (source == NULL)
+		return NULL;
+
+	if (g_file_test (source, G_FILE_TEST_IS_REGULAR))
+		return g_strdup (source);
+	if (g_path_is_absolute (source))
+		return NULL;
+
+	bases[0] = ctx->project_root;
+	bases[1] = ctx->level_dir;
+	for (i = 0; i < G_N_ELEMENTS (bases); i++)
+	{
+		g_autofree gchar *candidate = NULL;
+
+		if (bases[i] == NULL)
+			continue;
+		candidate = g_build_filename (bases[i], source, NULL);
+		if (g_file_test (candidate, G_FILE_TEST_IS_REGULAR))
+			return g_steal_pointer (&candidate);
+	}
+	return NULL;
+}
+
+/*
+ * expand_reference:
+ *
+ * Replaces a parsed sparse instance by the full linked instance built
+ * from its (resolved, cached) source. When the source cannot be found or
+ * loaded the sparse node is kept as it is (with its link, so the editor
+ * can relink it) and a message is logged: a missing prefab never makes
+ * the level unloadable.
+ */
 static LrgNode *
-parse_node (YamlMapping *map)
+expand_reference (ParseCtx *ctx,
+                  LrgNode  *sparse)
+{
+	LrgPrefabLink     *link = lrg_node_get_prefab_link (sparse);
+	g_autofree gchar  *path = ctx_resolve_source (ctx, link);
+	g_autofree gchar  *canon = NULL;
+	g_autoptr(GError)  error = NULL;
+	LrgNode           *prefab;
+	LrgNode           *full;
+
+	if (path == NULL)
+	{
+		g_message ("Prefab %s of reference-stored instance %s not found; keeping the reference",
+		           lrg_prefab_link_get_source_path (link), lrg_node_get_guid (sparse));
+		return g_object_ref (sparse);
+	}
+
+	canon = g_canonicalize_filename (path, NULL);
+	prefab = g_hash_table_lookup (ctx->prefabs, canon);
+	if (prefab == NULL)
+	{
+		prefab = lrg_prefab_load_resolved (path, NULL, &error);
+		if (prefab == NULL)
+		{
+			g_message ("Cannot load prefab %s for instance %s: %s; keeping the reference",
+			           path, lrg_node_get_guid (sparse), error->message);
+			return g_object_ref (sparse);
+		}
+		g_hash_table_insert (ctx->prefabs, g_strdup (canon), prefab);
+	}
+
+	full = lrg_prefab_instantiate_reference (sparse, prefab, &error);
+	if (full == NULL)
+	{
+		g_message ("Cannot expand prefab reference %s: %s", lrg_node_get_guid (sparse), error->message);
+		return g_object_ref (sparse);
+	}
+	return full;
+}
+
+static LrgNode *
+parse_node (YamlMapping *map,
+            ParseCtx    *ctx)
 {
 	LrgNode  *node;
 	const gchar *guid;
@@ -926,6 +1458,7 @@ parse_node (YamlMapping *map)
 	YamlNode *scripts_node;
 	YamlNode *children_node;
 	YamlNode *prefab_node;
+	gboolean  is_reference = FALSE;
 
 	node = lrg_node_new (yaml_mapping_get_string_member (map, "name"));
 
@@ -1020,9 +1553,12 @@ parse_node (YamlMapping *map)
 	prefab_node = yaml_mapping_get_member (map, "prefab");
 	if (prefab_node != NULL && yaml_node_get_node_type (prefab_node) == YAML_NODE_MAPPING)
 	{
-		g_autoptr(LrgPrefabLink) link = parse_prefab (yaml_node_get_mapping (prefab_node));
+		YamlMapping              *pm = yaml_node_get_mapping (prefab_node);
+		g_autoptr(LrgPrefabLink)  link = parse_prefab (pm);
 
 		lrg_node_set_prefab_link (node, link);
+		is_reference = link != NULL &&
+		               g_strcmp0 (yaml_mapping_get_string_member (pm, "storage"), "reference") == 0;
 	}
 
 	children_node = yaml_mapping_get_member (map, "children");
@@ -1037,10 +1573,18 @@ parse_node (YamlMapping *map)
 
 			if (cn != NULL && yaml_node_get_node_type (cn) == YAML_NODE_MAPPING)
 			{
-				g_autoptr(LrgNode) child = parse_node (yaml_node_get_mapping (cn));
+				g_autoptr(LrgNode) child = parse_node (yaml_node_get_mapping (cn), ctx);
 				lrg_node_add_child (node, child);
 			}
 		}
+	}
+
+	/* A reference-stored instance becomes the full linked instance. */
+	if (is_reference && ctx != NULL)
+	{
+		g_autoptr(LrgNode) sparse = node;
+
+		return expand_reference (ctx, sparse);
 	}
 
 	return node;
@@ -1133,6 +1677,7 @@ parse_timelines (LrgLevel     *level,
 
 static LrgLevel *
 parse_level_from_root (YamlNode  *root,
+                       ParseCtx  *ctx,
                        GError   **error)
 {
 	YamlMapping *root_map;
@@ -1157,6 +1702,14 @@ parse_level_from_root (YamlNode  *root,
 	if (view != NULL && g_ascii_strcasecmp (view, "2d") == 0)
 		lrg_level_set_default_2d (level, TRUE);
 
+	/* The level's own prefab storage setting (0.9.0). */
+	if (yaml_mapping_has_member (root_map, STORAGE_KEY))
+		lrg_prefab_level_set_storage (level, lrg_prefab_storage_from_string (
+			yaml_mapping_get_string_member (root_map, STORAGE_KEY)));
+	else if (yaml_mapping_has_member (root_map, STORAGE_KEY_ALT))
+		lrg_prefab_level_set_storage (level, lrg_prefab_storage_from_string (
+			yaml_mapping_get_string_member (root_map, STORAGE_KEY_ALT)));
+
 	nodes_node = yaml_mapping_get_member (root_map, "nodes");
 	if (nodes_node != NULL && yaml_node_get_node_type (nodes_node) == YAML_NODE_SEQUENCE)
 	{
@@ -1169,7 +1722,7 @@ parse_level_from_root (YamlNode  *root,
 
 			if (cn != NULL && yaml_node_get_node_type (cn) == YAML_NODE_MAPPING)
 			{
-				g_autoptr(LrgNode) node = parse_node (yaml_node_get_mapping (cn));
+				g_autoptr(LrgNode) node = parse_node (yaml_node_get_mapping (cn), ctx);
 				lrg_level_add_node (level, node, NULL);
 			}
 		}
@@ -1199,6 +1752,8 @@ lrg_level_serializer_load_from_file (LrgLevelSerializer  *self,
 {
 	g_autoptr(YamlParser) parser = NULL;
 	YamlNode             *root;
+	ParseCtx              ctx;
+	LrgLevel             *level;
 
 	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), NULL);
 	g_return_val_if_fail (path != NULL, NULL);
@@ -1215,7 +1770,10 @@ lrg_level_serializer_load_from_file (LrgLevelSerializer  *self,
 		return NULL;
 	}
 
-	return parse_level_from_root (root, error);
+	parse_ctx_init (&ctx, self, path);
+	level = parse_level_from_root (root, &ctx, error);
+	parse_ctx_clear (&ctx);
+	return level;
 }
 
 LrgLevel *
@@ -1226,6 +1784,8 @@ lrg_level_serializer_load_from_data (LrgLevelSerializer  *self,
 {
 	g_autoptr(YamlParser) parser = NULL;
 	YamlNode             *root;
+	ParseCtx              ctx;
+	LrgLevel             *level;
 
 	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), NULL);
 	g_return_val_if_fail (data != NULL, NULL);
@@ -1242,7 +1802,10 @@ lrg_level_serializer_load_from_data (LrgLevelSerializer  *self,
 		return NULL;
 	}
 
-	return parse_level_from_root (root, error);
+	parse_ctx_init (&ctx, self, NULL);
+	level = parse_level_from_root (root, &ctx, error);
+	parse_ctx_clear (&ctx);
+	return level;
 }
 
 gboolean
@@ -1258,7 +1821,7 @@ lrg_level_serializer_save_to_file (LrgLevelSerializer  *self,
 	g_return_val_if_fail (LRG_IS_LEVEL (level), FALSE);
 	g_return_val_if_fail (path != NULL, FALSE);
 
-	data = lrg_level_serializer_save_to_data (self, level, &length);
+	data = save_to_data_internal (self, level, path, &length);
 	if (data == NULL)
 	{
 		g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_FAILED,
@@ -1269,22 +1832,93 @@ lrg_level_serializer_save_to_file (LrgLevelSerializer  *self,
 	return g_file_set_contents (path, data, (gssize) length, error);
 }
 
-gchar *
-lrg_level_serializer_save_to_data (LrgLevelSerializer *self,
-                                   LrgLevel           *level,
-                                   gsize              *length)
+/* Serializes with the storage mode that applies to @path (nullable). */
+static gchar *
+save_to_data_internal (LrgLevelSerializer *self,
+                       LrgLevel           *level,
+                       const gchar        *path,
+                       gsize              *length)
 {
 	g_autoptr(YamlNode)      root = NULL;
 	g_autoptr(YamlDocument)  doc = NULL;
 	g_autoptr(YamlGenerator) gen = NULL;
 
-	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), NULL);
-	g_return_val_if_fail (LRG_IS_LEVEL (level), NULL);
-
-	root = build_level_yaml (level);
+	root = build_level_yaml (level, effective_storage (self, level, path));
 	doc = yaml_document_new_with_root (root);
 	gen = yaml_generator_new ();
 
 	yaml_generator_set_document (gen, doc);
 	return yaml_generator_to_data (gen, length, NULL);
+}
+
+gchar *
+lrg_level_serializer_save_to_data (LrgLevelSerializer *self,
+                                   LrgLevel           *level,
+                                   gsize              *length)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), NULL);
+	g_return_val_if_fail (LRG_IS_LEVEL (level), NULL);
+
+	return save_to_data_internal (self, level, NULL, length);
+}
+
+/* ==========================================================================
+ * Properties (since 0.9.0)
+ * ========================================================================== */
+
+void
+lrg_level_serializer_set_prefab_storage (LrgLevelSerializer *self,
+                                         LrgPrefabStorage    storage)
+{
+	g_return_if_fail (LRG_IS_LEVEL_SERIALIZER (self));
+
+	if (self->prefab_storage == storage)
+		return;
+	self->prefab_storage = storage;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PREFAB_STORAGE]);
+}
+
+LrgPrefabStorage
+lrg_level_serializer_get_prefab_storage (LrgLevelSerializer *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), LRG_PREFAB_STORAGE_DEFAULT);
+	return self->prefab_storage;
+}
+
+void
+lrg_level_serializer_set_project_root (LrgLevelSerializer *self,
+                                       const gchar        *root)
+{
+	g_return_if_fail (LRG_IS_LEVEL_SERIALIZER (self));
+
+	if (g_strcmp0 (self->project_root, root) == 0)
+		return;
+	g_free (self->project_root);
+	self->project_root = g_strdup (root);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROJECT_ROOT]);
+}
+
+const gchar *
+lrg_level_serializer_get_project_root (LrgLevelSerializer *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), NULL);
+	return self->project_root;
+}
+
+void
+lrg_level_serializer_set_asset_manager (LrgLevelSerializer *self,
+                                        LrgAssetManager    *manager)
+{
+	g_return_if_fail (LRG_IS_LEVEL_SERIALIZER (self));
+	g_return_if_fail (manager == NULL || LRG_IS_ASSET_MANAGER (manager));
+
+	if (g_set_object (&self->asset_manager, manager))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ASSET_MANAGER]);
+}
+
+LrgAssetManager *
+lrg_level_serializer_get_asset_manager (LrgLevelSerializer *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL_SERIALIZER (self), NULL);
+	return self->asset_manager;
 }

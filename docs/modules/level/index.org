@@ -16,7 +16,7 @@
 | Piece | Header | What it is |
 |-------+--------+------------|
 | =LrgLevel= | =level/lrg-level.h= | The document: name, default 2D/3D view, an implicit root =LrgNode= and the timelines |
-| =LrgNode= | =level/lrg-node.h= | A node: guid, name, flags, Euler TRS, children, visual, components, scripts, prefab link; derivable with an =instantiate= vfunc |
+| =LrgNode= | =level/lrg-node.h= | A node: guid, name, flags, Euler TRS, children, visual, components, scripts, prefab link; derivable with the =instantiate= (2D) and =instantiate_3d= vfuncs |
 | =LrgNodeVisual= | =level/lrg-node-visual.h= | Tagged visual payload: primitive, mesh, sprite, light, camera, audio emitter, tilemap, prefab instance, CAD part, plus a param bag |
 | =LrgNodeTilemap= | =level/lrg-node-tilemap.h= | Layered tile grid carried by a tilemap visual; =lrg_node_tilemap_to_runtime()= builds an =LrgTilemap= |
 | =LrgTimeline=, =LrgTimelineTrack= | =level/lrg-timeline.h= | Keyframed node-channel animation stored in the level |
@@ -24,7 +24,8 @@
 | =LrgScriptBinding= | =level/lrg-script-binding.h= | A serializable script reference: language, path, enabled |
 | =LrgLevelSerializer= | =level/lrg-level-serializer.h= | =.rlevel= / =.rprefab= YAML load and save |
 | =LrgPrefabLink= and =lrg_prefab_*= | =level/lrg-prefab.h= | Prefab load, nested resolution, clone, instantiate (linked or not), overrides, sync |
-| =lrg_level_instantiate()=, =lrg_level_to_scene()= | =level/lrg-level-instantiate.h= | Level to =LrgWorld= (one =LrgGameObject= per node) and level to =LrgScene= (primitive bake) |
+| =lrg_level_instantiate_3d()=, =lrg_level_load_world3d()=, =lrg_level_instantiate_node_3d()= | =level/lrg-level-instantiate.h= | Level to =LrgWorld3D=: one =LrgEntity3D= per node, same GUID, full TRS, a component per visual (see [[#level-instantiate-3d][3D instantiation]]) |
+| =lrg_level_instantiate()=, =lrg_level_to_scene()= | =level/lrg-level-instantiate.h= | Level to the 2D =LrgWorld= (one =LrgGameObject= per node) and level to =LrgScene= (primitive bake) |
 
 The transforms use the shared core math, [[file:../core/math3d.org][lrg-math3d]]: =lrg_node_get_local_matrix()= and =lrg_node_get_world_matrix()= give a node's column-major 4x4 matrix exactly as the editor viewport computes it.
 
@@ -38,13 +39,16 @@ What stays editor-only: =LrgEditor= and its commands, selection, gizmo, view mat
 :PROPERTIES:
 :CUSTOM_ID: level-authoring-vs-runtime
 :END:
-An =LrgLevel= is data: a tree of =LrgNode=s that describes what to create. Playing it means instantiating that data into runtime objects. In 0.9.0 the runtime target is the 2D =LrgWorld=: =lrg_level_instantiate()= creates one =LrgGameObject= per node (position from the node's X/Y), materialises each =LrgComponentDesc= through the engine's =LrgRegistry=, attaches each enabled =LrgScriptBinding= as an =LrgScriptComponent=, tags the object with the node's guid and calls the node class's =instantiate= vfunc. The 3D runtime model (=LrgEntity3D= / =LrgWorld3D=, =lrg_level_instantiate_3d()=) builds on this module in milestone M1.
+An =LrgLevel= is data: a tree of =LrgNode=s that describes what to create. Playing it means instantiating that data into runtime objects. There are two runtime targets:
+
+- *3D* (=lrg_level_instantiate_3d()=, since 0.9.0): one =LrgEntity3D= per node in an =LrgWorld3D=, with the node's GUID, name, hierarchy and full local transform, a component for the node's visual (mesh renderer, light, camera, audio source, billboard, tilemap), the registry components and the scripts, then the node class's =instantiate_3d= vfunc. This is what a 3D game and the editor's 3D play mode use. See [[#level-instantiate-3d][3D instantiation]].
+- *2D* (=lrg_level_instantiate()=): one =LrgGameObject= per node in an =LrgWorld= (position from the node's X/Y), each =LrgComponentDesc= materialised through the engine's =LrgRegistry=, each enabled =LrgScriptBinding= attached as an =LrgScriptComponent=, the object tagged with the node's guid, then the node class's =instantiate= vfunc. Unchanged since 0.8.
 
 *** GUIDs
 :PROPERTIES:
 :CUSTOM_ID: level-guids
 :END:
-Every node has a stable guid stored in the file. Runtime objects are tagged with it, so =lrg_world_find_by_tag (world, guid)= finds the object a node produced, and =lrg_level_find_node (level, guid)= finds the node. Linked prefab instances derive their child guids from the instance root guid, so they stay stable across saves.
+Every node has a stable guid stored in the file. A 3D entity carries it as its own GUID, so =lrg_world3d_find_by_guid (world, guid)= finds the entity a node produced in O(1); 2D game objects are tagged with it (=lrg_world_find_by_tag (world, guid)=). =lrg_level_find_node (level, guid)= finds the node. Linked prefab instances derive their child guids from the instance root guid, so they stay stable across saves.
 
 *** Prefabs at runtime
 :PROPERTIES:
@@ -96,11 +100,137 @@ timelines:                  # optional LrgTimeline list
 
 Tilemap visuals store their layers inline (see [[file:../../editor/editor-tools.org::#tilemap-yaml][tilemap saved format]]); timeline channels and easing are in [[file:../../editor/editor-tools.org::#timeline-yaml][timeline saved format]].
 
-** Loading a level in a game (no editor)
+** 3D instantiation
+:PROPERTIES:
+:CUSTOM_ID: level-instantiate-3d
+:END:
+=lrg_level_instantiate_3d (level, world, engine, &error)= turns the node tree into an entity tree, appended under =lrg_world3d_get_root (world)= in the level's order. The level's implicit root node is not an entity; its children are the world's top-level entities. The level is not modified and the world is not cleared first.
+
+*** What each node becomes
+:PROPERTIES:
+:CUSTOM_ID: level-instantiate-3d-node
+:END:
+| Node | Entity |
+|------+--------|
+| GUID | =lrg_entity3d_set_guid()= with the same string. A GUID already in the world (the level instantiated twice) or used twice inside the level gets a fresh GUID instead (the second case with a warning), so the world's GUID map stays 1:1. |
+| name | =LrgEntity3D:name= |
+| children | child entities in the same order (=lrg_entity3d_get_child()=) |
+| location / rotation / scale | local position, rotation and scale. The rotation goes in through =lrg_entity3d_set_rotation_euler()=, so the entity keeps the authored Euler angles (=lrg_entity3d_has_authored_euler()=) and =lrg_entity3d_get_world_matrix()= equals =lrg_node_get_world_matrix()= |
+| =visible= | =LrgEntity3D:visible= (not collected for rendering); the entity is always active |
+| =locked=, =is_2d= | nothing (editor-only flags) |
+| visual | one component, see the map below; group nodes (no visual, =none=) and prefab instance roots get none |
+| =components= | each =LrgComponentDesc= whose type name is registered: =lrg_registry_create()=, then the props applied exactly as in 2D (enum and flags props from nicks or numbers, other types through =g_value_transform()=); unregistered types are skipped (a =g_debug()=) |
+| =scripts= | each enabled binding as an =LrgScriptComponent= |
+| node class | =LrgNodeClass.instantiate_3d (node, entity, world)= last, before the children |
+
+Components attach in this order: the visual's component, the registry components in description order, the scripts. The entity joins the world (its parent is already in it) before any component attaches, so =attached_entity()= and =world_entered()= see the world. Prefab instances are stored expanded in the level, so their nodes instantiate like any other; the =prefab:= link block is editor metadata and ignored.
+
+*** Visual to component property map
+:PROPERTIES:
+:CUSTOM_ID: level-visual-map
+:END:
+=lrg_level_visual_create_component (visual)= builds the component for one visual; =lrg_level_visual_get_component_type (kind)= says which type. The visual's parts map onto the component's GObject properties:
+
+| Visual kind | Component | Explicit mappings | Params (by name, =_= becomes =-=) |
+|-------------+-----------+-------------------+-----------------------------------|
+| =primitive= | =LrgMeshRendererComponent= | =primitive= to =primitive=; material colour to =color-r= .. =color-a=, =roughness=, =metallic= (no material: the editor's grey 0.75, 0.75, 0.78) | =size_x= .. =size_z=, =radius=, =height=, =major_radius=, =minor_radius=, =emission_r= .. =emission_strength=, =cast_shadows=, =receive_shadows=, =transparent=, =double_sided=, =unlit=, =layer= |
+| =mesh-asset= | =LrgMeshRendererComponent= | =asset= to =mesh-asset=; material as above | as above, plus =mesh_index= |
+| =light= | =LrgLightComponent= | param =light_type= (=directional= / =point= / =spot=) to =kind=; param =spot_angle= (the full cone, degrees) to =outer-angle= (a half-angle: =spot_angle= / 2); material colour to =color-r= .. =color-b= | =intensity=, =range=, =inner_angle=, =cast_shadows=, =layer_mask= |
+| =camera= | =LrgCameraComponent= | none | =fov=, =near=, =far=, =aspect=, =orthographic=, =ortho_size=, =priority=, =active=, =cull_mask= |
+| =audio-emitter= | =LrgAudioSourceComponent= | =asset= to =sound-path=; param =radius= to =max-distance= | =bank=, =sound=, =volume=, =pitch=, =min_distance=, =max_distance=, =rolloff=, =spatial_blend=, =loop=, =autoplay= |
+| =sprite= | =LrgBillboardComponent= | =asset= to =texture-path=; material colour to =color-r= .. =color-a=; =facing= defaults to =fixed= and =preserve-aspect= to on (the editor's aspect-fit 1 x 1 quad in the node's XY plane); param =pixels_per_unit= is ignored, as the editor ignores it | =width=, =height=, =facing=, =preserve_aspect=, =cutout=, =cast_shadows= |
+| =tilemap= | =LrgTilemapComponent= | =asset= to =tileset-path=; the painted grid (=visual.tilemap=) is copied into =lrg_tilemap_component_set_node_tilemap()=, which builds the runtime =LrgTilemap= with =lrg_node_tilemap_to_runtime()= once the tileset loads | =tile_size=, =cast_shadows= |
+| =none=, =prefab-instance=, =cad-part= | none | | |
+
+Game and editor draw the same sizes and colours: a sprite is the editor's aspect-fit quad whatever =pixels_per_unit= says (0.8 levels may carry it; set =width= / =height= params for another size), a mesh without a material is the editor's grey rather than the renderer's white, and a spot light's =spot_angle= keeps the editor's full-cone meaning. A light without =light_type= follows the editor viewport's rule: a positive =spot_angle= makes a spot light, anything else a point light. Params whose component has no such property are skipped (a =g_debug()=), so editor-only params never fail a load. The light, camera and audio defaults are the components' own (a light of intensity 1, a 60 degree camera, ...).
+
+=lrg_level_visual_store_property (visual, property, value)= walks the same map backwards: it stores a component property value into the visual (param, material, asset or primitive). Play-in-editor's "Apply to Level" uses it for visual components. A param keeps the type it already has; a new one is stored as the type a level file round-trips (double for floating point, int64 for integers, boolean, string; enums and flags as their nick string).
+
+#+begin_src yaml
+# A light node and what it becomes
+- name: Sun
+  guid: 7a000000-0000-4000-8000-000000000001
+  transform:
+    rotation: [-0.95, 0.65, 0.0]   # the light shines down the entity's local -Z
+  visual:
+    kind: light                    # -> LrgLightComponent
+    material:
+      color: [1.0, 0.93, 0.8, 1.0] # -> color-r / color-g / color-b
+    params:
+      light_type: directional      # -> kind = LRG_LIGHT3D_DIRECTIONAL
+      intensity: 1.6               # -> intensity
+      cast_shadows: true           # -> cast-shadows
+#+end_src
+
+*** Custom node kinds
+:PROPERTIES:
+:CUSTOM_ID: level-instantiate-3d-vfunc
+:END:
+A subclass of =LrgNode= adds its own runtime pieces in =instantiate_3d=. The hook runs once per node after the entity has its identity, transform, flags and the visual, registry and script components, after it joined the world, and before the node's children are instantiated. The default is =NULL=, so there is nothing to chain up to. =lrg_node_instantiate_3d()= is the dispatcher.
+
+#+begin_src C
+static void
+spawn_node_instantiate_3d (LrgNode     *node,
+                           LrgEntity3D *entity,
+                           LrgWorld3D  *world)
+{
+	MySpawnNode *self = MY_SPAWN_NODE (node);
+
+	/* A runtime component that knows the node's authored data */
+	g_autoptr(MySpawner) spawner = my_spawner_new (self->prefab_path, self->interval);
+
+	lrg_entity3d_add_component (entity, LRG_COMPONENT (spawner));
+	lrg_entity3d_add_tag (entity, "spawner");
+}
+
+static void
+my_spawn_node_class_init (MySpawnNodeClass *klass)
+{
+	LRG_NODE_CLASS (klass)->instantiate_3d = spawn_node_instantiate_3d;
+}
+#+end_src
+
+*** Loading a 3D level in a game
+:PROPERTIES:
+:CUSTOM_ID: level-game-loading-3d
+:END:
+The guide [[file:../../guides/load-a-level-in-your-game.org][Load a level in your game]] walks through a whole game loop; =examples/level-3d-runtime.c= ([[file:../../examples/level-3d-runtime.org][example page]]) is the complete program. The core is three calls:
+
+#+begin_src C
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+g_autoptr(LrgLevel)   level = NULL;
+
+lrg_registry_register (lrg_engine_get_registry (lrg_engine_get_default ()), "spinner", GAME_TYPE_SPINNER);
+level = lrg_level_load_world3d ("levels/main.rlevel", world, &error);   /* load + instantiate */
+/* every frame */
+lrg_world3d_step (world, GetFrameTime ());
+lrg_world3d_renderer_render (renderer, world, NULL, NULL, 0, 0);
+#+end_src
+
+=lrg_level_load_world3d()= returns the loaded level (keep it to look nodes up, or drop it: the world does not reference it). =lrg_level_instantiate_node_3d (node, parent, world, engine, &error)= instantiates one subtree under =parent= (or the world root), which is how a game spawns a prefab at runtime:
+
+#+begin_src C
+static LrgEntity3D *
+spawn_crate (LrgWorld3D   *world,
+             const gfloat *position,
+             GError      **error)
+{
+	g_autoptr(LrgNode) prefab = lrg_prefab_load_resolved ("prefabs/crate.rprefab", NULL, error);
+	g_autoptr(LrgNode) crate = NULL;
+
+	if (prefab == NULL)
+		return NULL;
+	crate = lrg_prefab_instantiate (prefab);   /* fresh GUIDs */
+	lrg_node_set_location_xyz (crate, position[0], position[1], position[2]);
+	return lrg_level_instantiate_node_3d (crate, NULL, world, NULL, error);
+}
+#+end_src
+
+** Loading a level in a 2D game (no editor)
 :PROPERTIES:
 :CUSTOM_ID: level-game-loading
 :END:
-This program links against a =BUILD_EDITOR=0= library; =tests/test-level-runtime.c= is the same flow as a test.
+This 2D program links against a =BUILD_EDITOR=0= library; =tests/test-level-runtime.c= is the same flow as a test.
 
 #+begin_src C
 #include <libregnum.h>
@@ -177,7 +307,7 @@ Cache the loaded =prefab= root if you spawn it often: =lrg_prefab_load_resolved(
 :PROPERTIES:
 :CUSTOM_ID: level-game-tilemaps
 :END:
-=lrg_level_instantiate()= does not yet create runtime tilemaps (gap-analysis item, M1): walk the nodes and call =lrg_node_tilemap_to_runtime()= on each tilemap visual's =LrgNodeTilemap=. Timelines can be sampled with =lrg_timeline_apply()= against the level's nodes, then read back with =lrg_node_get_world_matrix()=.
+=lrg_level_instantiate_3d()= gives each tilemap node an =LrgTilemapComponent= holding a copy of its grid; the component builds the runtime =LrgTilemap= with =lrg_node_tilemap_to_runtime()= once the tileset loads (=lrg_tilemap_component_get_tilemap()=). The 2D =lrg_level_instantiate()= does not create tilemaps: walk the nodes and call =lrg_node_tilemap_to_runtime()= on each tilemap visual's =LrgNodeTilemap=. Timelines can be sampled with =lrg_timeline_apply()= against the level's nodes, then read back with =lrg_node_get_world_matrix()=.
 
 ** Build
 :PROPERTIES:
@@ -202,7 +332,7 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 | Header | Types / functions | In-depth documentation |
 |--------+-------------------+------------------------|
 | =lrg-level.h= | =LrgLevel=: =lrg_level_new=, =lrg_level_get_root=, =lrg_level_add_node=, =lrg_level_insert_node=, =lrg_level_remove_node=, =lrg_level_find_node=, =lrg_level_count_nodes=, =lrg_level_notify_node_changed=, timelines (=lrg_level_get_n_timelines=, =lrg_level_get_timeline=, =lrg_level_find_timeline=, =lrg_level_insert_timeline=, =lrg_level_remove_timeline=) | [[file:../../editor/level-model.org::#lrglevel][Level Model: LrgLevel]] |
-| =lrg-node.h= | =LrgNode= (derivable, =instantiate= vfunc): identity, flags, transform, =lrg_node_get_local_matrix=, =lrg_node_get_world_matrix=, hierarchy, visual, components, scripts, paths, =lrg_node_foreach=, prefab link | [[file:../../editor/level-model.org::#lrgnode][Level Model: LrgNode]], [[file:../../editor/editor-runtime.org::#lrgnode-tree-helpers][Node tree helpers]] |
+| =lrg-node.h= | =LrgNode= (derivable, =instantiate= and =instantiate_3d= vfuncs, =lrg_node_instantiate_3d=): identity, flags, transform, =lrg_node_get_local_matrix=, =lrg_node_get_world_matrix=, hierarchy, visual, components, scripts, paths, =lrg_node_foreach=, prefab link | [[file:../../editor/level-model.org::#lrgnode][Level Model: LrgNode]], [[file:../../editor/editor-runtime.org::#lrgnode-tree-helpers][Node tree helpers]] |
 | =lrg-node-visual.h= | =LrgNodeVisual=, =LrgNodeVisualKind= | [[file:../../editor/level-model.org::#lrgnodevisual][Level Model: LrgNodeVisual]] |
 | =lrg-node-tilemap.h= | =LrgNodeTilemap=, =lrg_node_tilemap_to_runtime= | [[file:../../editor/editor-tools.org::#tilemap-model][Tilemap data model]], [[file:../../editor/editor-tools.org::#editor-tools-api-lrg-node-tilemap][API]] |
 | =lrg-timeline.h= | =LrgTimeline=, =LrgTimelineTrack=, channel helpers | [[file:../../editor/editor-tools.org::#timeline-model][Timeline data model]], [[file:../../editor/editor-tools.org::#editor-tools-api-lrg-timeline][API]] |
@@ -210,14 +340,15 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 | =lrg-script-binding.h= | =LrgScriptBinding= | [[file:../../editor/level-model.org::#lrgscriptbinding][Level Model: LrgScriptBinding]] |
 | =lrg-level-serializer.h= | =LrgLevelSerializer=: load/save file and data | [[file:../../editor/yaml-format.org][.rlevel YAML Format]], [[file:../../editor/level-model.org::#level-model-api-lrg-level-serializer][API]] |
 | =lrg-prefab.h= | =LrgPrefabLink=, =lrg_prefab_load=, =lrg_prefab_load_resolved=, =lrg_prefab_instantiate=, =lrg_prefab_instantiate_linked=, overrides, sync, apply/revert | [[file:../../editor/prefabs.org][Prefabs]], [[file:../../editor/prefabs.org::#prefabs-api-lrg-prefab][API]] |
-| =lrg-level-instantiate.h= | =lrg_level_instantiate=, =lrg_level_to_scene= | [[file:../editor/index.org::#bridge-functions][Bridge functions]] |
+| =lrg-level-instantiate.h= | =lrg_level_instantiate_3d=, =lrg_level_instantiate_node_3d=, =lrg_level_load_world3d=, =lrg_level_visual_get_component_type=, =lrg_level_visual_create_component=, =lrg_level_visual_store_property=, =lrg_level_instantiate=, =lrg_level_to_scene= | [[#level-instantiate-3d][3D instantiation]], [[file:../editor/index.org::#bridge-functions][Bridge functions]] |
 
 ** Performance
 :PROPERTIES:
 :CUSTOM_ID: level-performance
 :END:
 - Loading is a YAML parse plus one GObject per node, component description and script binding; load levels behind a loading screen, not mid-frame.
-- =lrg_level_instantiate()= is linear in the node count and creates components through the registry (one =g_object_new= each).
+- =lrg_level_instantiate()= and =lrg_level_instantiate_3d()= are linear in the node count and create components through the registry (one =g_object_new= each). The 3D path also creates one component per visual and walks each visual's param bag once; a level of a few thousand nodes instantiates in milliseconds.
+- Instantiating 3D does no GPU work: meshes, textures and tilesets load on the first render (the renderer's caches) or through an =LrgAssetManager= set on the components.
 - =lrg_node_get_world_matrix()= recomposes every ancestor per call (O(depth)); cache world matrices of static nodes.
 
 ** Pitfalls
@@ -225,7 +356,10 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 :CUSTOM_ID: level-pitfalls
 :END:
 - *Unregistered component types are skipped silently.* Register every type name the level uses before =lrg_level_instantiate()=; =lrgeditor --validate= reports unknown types at authoring time.
-- *Instantiation is 2D in 0.9.0 M0.* Only X/Y reach the =LrgGameObject=; use =lrg_node_get_world_matrix()= for the full transform until the 3D runtime lands.
+- *2D instantiation is X/Y only.* Only X/Y reach an =LrgGameObject=; use =lrg_level_instantiate_3d()= for the full transform.
+- *Relative asset paths.* A visual's =asset= is stored as written (usually relative to the project root). =LrgWorld3DRenderer= resolves meshes and textures against =lrg_world3d_renderer_set_base_dir()= (or the working directory); audio files are opened by path, so make =sound-path= absolute or run from the project root.
+- *Autoplay audio fires on world entry*, i.e. during =lrg_level_instantiate_3d()=; if you fix up =sound-path= afterwards, start the emitter again (=lrg_audio_source_component_play()=).
+- *Instantiating the same level twice* into one world gives the second copy fresh GUIDs; look entities of the second copy up by name or path (=lrg_world3d_find_by_path()=), not by the node GUID.
 - *Relative prefab paths* in =prefab: source:= (and nested prefab sources inside a =.rprefab=) are canonicalised against the process working directory (=g_canonicalize_filename()=); run the game from the project root or load prefabs with absolute paths.
 - *Do not include =src/level/*.h= directly* from applications; =<libregnum.h>= is the only supported entry point.
 
@@ -233,13 +367,16 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 :PROPERTIES:
 :CUSTOM_ID: level-from-editor
 :END:
-Everything the editor saves is this module's data: =LrgEditor= owns an =LrgLevel=, play-in-editor calls =lrg_level_instantiate()=, prefab panels call the =lrg_prefab_*= functions. Nothing changes for editor users; =lrgeditor=, =lrgeditorctl= and the MCP tools work as in 0.8.1.
+Everything the editor saves is this module's data: =LrgEditor= owns an =LrgLevel=, prefab panels call the =lrg_prefab_*= functions, and play-in-editor instantiates the level the way a game does: =lrg_level_instantiate_3d()= when the level's default view is 3D (the inspector's level section, /2D view/ off; =default_view: 3d= in the file), =lrg_level_instantiate()= when it is 2D. While a 3D level plays the viewport draws the runtime =LrgWorld3D= through =LrgWorld3DRenderer=, the hierarchy's Live tab shows the entity tree, and the inspector shows the picked entity's transform and components, with "Apply to Level" writing component values back into the node (registry components into their description, visual components into the visual). See [[file:../../editor/view-model.org::#play-3d][Play session: 2D or 3D]]. =lrgeditorctl play start= / =play.state= work as before.
 
 ** See also
 :PROPERTIES:
 :CUSTOM_ID: level-see-also
 :END:
+- [[file:../../guides/load-a-level-in-your-game.org][Guide: Load a level in your game]] · [[file:../../examples/level-3d-runtime.org][Example: level-3d-runtime]]
 - [[file:../core/math3d.org][3D Math (lrg-math3d)]]
 - [[file:../editor/index.org][Editor Module Reference]]
 - [[file:../../editor/level-model.org][Level Model]] · [[file:../../editor/yaml-format.org][.rlevel YAML Format]] · [[file:../../editor/prefabs.org][Prefabs]]
 - [[file:../../guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]]
+
+A level stores each prefab instance expanded (default) or, since 0.9.0, as a reference expanded at load time; prefabs may be variants. See [[file:prefabs-runtime.org][Prefabs at Runtime]].

@@ -858,6 +858,65 @@ gboolean lrg_editor_prefab_unlink (LrgEditor *self,
                                    LrgNode   *instance);
 
 /**
+ * lrg_editor_prefab_suggest_variant_path:
+ * @source_path: a `.rprefab` path
+ *
+ * The path "Create Variant" proposes: `<stem>_variant.rprefab` next to
+ * @source_path (then `_variant2`, `_variant3`, ... while taken), spelled
+ * relative or absolute like @source_path.
+ *
+ * Returns: (transfer full) (nullable): a path that does not exist yet
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_prefab_suggest_variant_path (const gchar *source_path);
+
+/**
+ * lrg_editor_create_prefab_variant:
+ * @self: an #LrgEditor
+ * @base_path: the base `.rprefab` (may itself be a variant)
+ * @variant_path: the new file; must not exist
+ * @error: (nullable): return location for an error
+ *
+ * "Create Variant" from a prefab asset: writes a new variant of
+ * @base_path (lrg_prefab_create_variant()) with no overrides. Undoing
+ * removes the file again (lrg_editor_command_new_prefab_create()).
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_create_prefab_variant (LrgEditor    *self,
+                                           const gchar  *base_path,
+                                           const gchar  *variant_path,
+                                           GError      **error);
+
+/**
+ * lrg_editor_prefab_create_variant:
+ * @self: an #LrgEditor
+ * @instance: a linked prefab instance root
+ * @variant_path: the new file; must not exist
+ * @error: (nullable): return location for an error
+ *
+ * "Create Variant" from an instance: the instance's overrides become a new
+ * variant of its source saved to @variant_path, and @instance is relinked
+ * to the variant with no overrides of its own
+ * (lrg_prefab_derive_variant()). File creation and relink are one undo
+ * step.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_prefab_create_variant (LrgEditor    *self,
+                                           LrgNode      *instance,
+                                           const gchar  *variant_path,
+                                           GError      **error);
+
+/**
  * lrg_editor_prefab_set_override:
  * @self: an #LrgEditor
  * @node: a node of a linked prefab instance

@@ -25,7 +25,6 @@
 #include "config.h"
 
 #include "lrg-asset-meta.h"
-#include "lrg-asset-database.h"
 #include <gio/gio.h>
 #include <yaml-glib.h>
 #include <errno.h>
@@ -446,7 +445,7 @@ lrg_asset_meta_new_for_asset (const gchar *asset_path)
 
 	self = lrg_asset_meta_new ();
 	yaml_mapping_set_string_member (self->root, "importer",
-	                                lrg_asset_meta_importer_for_type (lrg_asset_database_classify (asset_path)));
+	                                lrg_asset_meta_importer_for_type (lrg_asset_meta_classify (asset_path)));
 	return self;
 }
 
@@ -581,6 +580,70 @@ gboolean
 lrg_asset_meta_is_meta_path (const gchar *path)
 {
 	return path != NULL && g_str_has_suffix (path, LRG_ASSET_META_SUFFIX);
+}
+
+static gboolean
+has_ext (const gchar        *lower,
+         const gchar * const *exts)
+{
+	guint i;
+
+	for (i = 0; exts[i] != NULL; i++)
+		if (g_str_has_suffix (lower, exts[i]))
+			return TRUE;
+
+	return FALSE;
+}
+
+/*
+ * lrg_asset_meta_classify:
+ *
+ * The extension table moved here from lrg-asset-database.c in 0.9.0 so the
+ * runtime asset manager classifies files exactly like the editor. CAD
+ * extensions are tested first (".ccad" would otherwise never match).
+ */
+LrgAssetType
+lrg_asset_meta_classify (const gchar *path)
+{
+	g_autofree gchar *lower = NULL;
+
+	static const gchar * const tex[]   = { ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".pep", NULL };
+	static const gchar * const model[] = { ".gltf", ".glb", ".obj", ".fbx", ".ply",
+	                                       ".stl", ".step", ".stp", ".iges", ".igs",
+	                                       ".3mf", NULL };
+	static const gchar * const cad[]   = { ".cad", ".ccad", NULL };
+	static const gchar * const audio[] = { ".wav", ".ogg", ".flac", ".mp3", NULL };
+	static const gchar * const font[]  = { ".ttf", ".otf", NULL };
+	static const gchar * const script[] = { ".lua", ".py", ".js", ".c", NULL };
+	static const gchar * const tileset[] = { ".tileset", ".tsx", NULL };
+
+	if (path == NULL)
+		return LRG_ASSET_TYPE_UNKNOWN;
+
+	lower = g_ascii_strdown (path, -1);
+
+	if (has_ext (lower, cad))
+		return LRG_ASSET_TYPE_CAD;
+	if (has_ext (lower, tex))
+		return LRG_ASSET_TYPE_TEXTURE;
+	if (has_ext (lower, model))
+		return LRG_ASSET_TYPE_MODEL;
+	if (has_ext (lower, audio))
+		return LRG_ASSET_TYPE_AUDIO;
+	if (has_ext (lower, font))
+		return LRG_ASSET_TYPE_FONT;
+	if (g_str_has_suffix (lower, ".rlevel"))
+		return LRG_ASSET_TYPE_LEVEL;
+	if (g_str_has_suffix (lower, ".rprefab"))
+		return LRG_ASSET_TYPE_PREFAB;
+	if (has_ext (lower, tileset))
+		return LRG_ASSET_TYPE_TILESET;
+	if (g_str_has_suffix (lower, ".scene"))
+		return LRG_ASSET_TYPE_SCENE;
+	if (has_ext (lower, script))
+		return LRG_ASSET_TYPE_SCRIPT;
+
+	return LRG_ASSET_TYPE_UNKNOWN;
 }
 
 const gchar *

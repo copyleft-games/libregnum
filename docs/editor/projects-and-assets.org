@@ -83,6 +83,19 @@ asset_dirs:
   - "content/sprites/"
 #+end_src
 
+*** Runtime Project Settings
+:PROPERTIES:
+:CUSTOM_ID: runtime-project-settings
+:END:
+Two keys of the =project:= mapping are read by the runtime (0.9.0), not by =LrgProject=:
+
+| Key | Values | Read by | Meaning |
+|-----+--------+---------+---------|
+| =store_prefab_instances= | =expanded= (default) / =reference= | =LrgLevelSerializer= on save (it finds =project.ryaml= above the level file, or uses its =project-root=) | How linked prefab instances are stored in the project's levels; a level's own =store_prefab_instances= wins. See [[file:../modules/level/prefabs-runtime.org][Prefabs at Runtime]] |
+| =apply_import_settings= | =true= (default) / =false= | =LrgAssetManager= (=lrg_asset_manager_set_project_root()=) | Whether loaders apply =.meta= importer settings |
+
+Both keys also accept the hyphenated spelling (=store-prefab-instances=, =apply-import-settings=). Note that =lrg_project_save()= in 0.9.0 M1 rewrites the manifest from its known fields, so add these keys by hand (or re-add them after the Project Settings dialog saved).
+
 ** LrgAssetDatabase and LrgAssetEntry
 :PROPERTIES:
 :CUSTOM_ID: lrgassetdatabase-and-lrgassetentry
@@ -211,7 +224,9 @@ The known settings per importer, with their defaults and the typed accessors:
 | =font= | =size= | integer 1..1024 (pixels) | =32= | =lrg_asset_meta_get/set_font_size()= |
 | =font= | =codepoints= | comma-separated code points and inclusive ranges, decimal, =0x= or =U+= hex | =32-126= | =lrg_asset_meta_get/set_font_codepoints()=, =lrg_asset_meta_parse_codepoints()= |
 
-Import settings are applied in editor previews only in 0.8.1 (for example a texture thumbnail honours =max-size=); the runtime loaders do not read sidecars yet. That engine work is tracked in [[file:gap-analysis.org][the gap analysis]].
+In 0.8.1 import settings were applied in editor previews only (for example a texture thumbnail honours =max-size=). Since 0.9.0 the runtime applies them too: =LrgAssetManager= reads the sidecar when it loads an asset and applies the texture filter, wrap, mipmaps and size limit, the model scale, up axis and normals, the audio mode, volume and looping, and the font size and code points (=apply-import-settings=, default on). The details, including what =srgb= and sample =loop= mean at runtime, are in [[file:../modules/core/asset-manager.org::#import-settings][Runtime import settings]].
+
+=LrgAssetMeta= lives in the core module since 0.9.0 (=src/core/lrg-asset-meta.h=; the old =src/editor/lrg-asset-meta.h= path forwards there), so games built with =BUILD_EDITOR=0= read sidecars. =lrg_asset_meta_classify()= is the extension table shared by =lrg_asset_database_classify()= and the runtime.
 
 *** Generic Access for IPC and Property Grids
 :PROPERTIES:
@@ -252,6 +267,14 @@ Up to 0.8.0 an asset's GUID was the lowercase hex SHA-256 of its path relative t
 5. Two assets claiming the same GUID (a file copied together with its sidecar outside the editor) are resolved in path order: the first keeps it, the later one gets a fresh UUID.
 
 Brand-new assets created by the editor (duplicates, imports) get a random UUID v4 (=g_uuid_string_random()=).
+
+*** Runtime GUID Resolution
+:PROPERTIES:
+:CUSTOM_ID: runtime-guid-resolution
+:END:
+Since 0.9.0 asset references in levels, prefabs and loader calls may be written =guid:<uuid>= instead of a path. At runtime =LrgAssetManager= resolves them through a guid index built from the same sidecars, with the same scan rules as this database (sorted walk, VCS directories skipped, legacy guid for files without a sidecar, first file wins on a duplicate), so a guid the Assets panel shows resolves to the same file in the game. Point the manager at the project with =lrg_asset_manager_set_project_root()=: it reads =asset_dirs= from =project.ryaml=. Prefab links record the source's asset guid (=LrgPrefabLink= =guid=), and the level serializer uses it to find the =.rprefab= of a reference-stored instance even after the file moved. See [[file:../modules/core/asset-manager.org::#guid-references][Guid references]].
+
+The guid the database gives a *losing* duplicate is fresh and in memory only until its sidecar is written (=write-meta=); the runtime cannot resolve it before that.
 
 *** Writing Sidecars (write-meta and the Write Guard)
 :PROPERTIES:

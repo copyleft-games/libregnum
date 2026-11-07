@@ -34,6 +34,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-registry.h \
 	src/core/lrg-data-loader.h \
 	src/core/lrg-math3d.h \
+	src/core/lrg-asset-meta.h \
 	src/core/lrg-asset-manager.h \
 	src/core/lrg-asset-pack.h \
 	src/core/lrg-event.h \
@@ -755,6 +756,7 @@ SOURCES := \
 	src/core/lrg-registry.c \
 	src/core/lrg-data-loader.c \
 	src/core/lrg-math3d.c \
+	src/core/lrg-asset-meta.c \
 	src/core/lrg-asset-manager.c \
 	src/core/lrg-asset-pack.c \
 	src/core/lrg-event.c \
@@ -1628,7 +1630,8 @@ LRG_LEVEL_COMPAT_HEADERS := \
 	src/editor/lrg-level.h \
 	src/editor/lrg-level-serializer.h \
 	src/editor/lrg-level-instantiate.h \
-	src/editor/lrg-prefab.h
+	src/editor/lrg-prefab.h \
+	src/editor/lrg-asset-meta.h
 
 # Editor / level authoring module (conditional on BUILD_EDITOR=1)
 ifeq ($(BUILD_EDITOR),1)
@@ -1658,7 +1661,6 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-view-state.h \
 	src/editor/lrg-editor-play-session.h \
 	src/editor/lrg-editor-viewport-nav.h \
-	src/editor/lrg-asset-meta.h \
 	src/editor/lrg-editor-vcs.h \
 	src/editor/lrg-editor-document.h \
 	src/editor/lrg-editor-settings-migrate.h \
@@ -1687,7 +1689,6 @@ SOURCES += \
 	src/editor/lrg-editor-view-state.c \
 	src/editor/lrg-editor-play-session.c \
 	src/editor/lrg-editor-viewport-nav.c \
-	src/editor/lrg-asset-meta.c \
 	src/editor/lrg-editor-vcs.c \
 	src/editor/lrg-editor-document.c \
 	src/editor/lrg-editor-settings-migrate.c \
@@ -2412,7 +2413,8 @@ DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
 	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \
-	$(wildcard src/world3d/components/*.h)
+	$(wildcard src/world3d/components/*.h) \
+	src/core/lrg-asset-meta.h src/core/lrg-asset-manager.h
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)
@@ -2636,7 +2638,7 @@ $(OBJDIR)/src/core/lrg-data-loader.o: src/core/lrg-data-loader.c src/core/lrg-da
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/src/core/lrg-asset-manager.o: src/core/lrg-asset-manager.c src/core/lrg-asset-manager.h
+$(OBJDIR)/src/core/lrg-asset-manager.o: src/core/lrg-asset-manager.c src/core/lrg-asset-manager.h src/core/lrg-asset-meta.h
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -c -o $@ $<

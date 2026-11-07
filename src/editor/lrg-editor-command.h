@@ -49,7 +49,8 @@ G_BEGIN_DECLS
  *   (states, links, children) from before/after snapshots; behind sync,
  *   apply, revert, relink and unlink (since 0.8.1)
  * @LRG_EDITOR_CMD_PREFAB_FILE: rewrite a prefab file between two contents
- *   (apply-to-source; since 0.8.1)
+ *   (apply-to-source; since 0.8.1), or create and remove one (Create
+ *   Variant; since 0.9.0)
  *
  * The kind of mutation an #LrgEditorCommand represents.
  *
@@ -379,6 +380,24 @@ LRG_AVAILABLE_IN_ALL
 LrgEditorCommand * lrg_editor_command_new_prefab_file (const gchar *path,
                                                        const gchar *before,
                                                        const gchar *after);
+
+/**
+ * lrg_editor_command_new_prefab_create:
+ * @path: the prefab file the command created
+ * @contents: what was written to it
+ *
+ * Creates a prefab-file command (%LRG_EDITOR_CMD_PREFAB_FILE) for a file
+ * that did not exist before, as "Create Variant" makes: applying writes
+ * @contents to @path, undoing removes the file again, unless it changed
+ * since (then it is left alone with a warning).
+ *
+ * Returns: (transfer full): a new command
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_prefab_create (const gchar *path,
+                                                         const gchar *contents);
 
 /**
  * lrg_editor_command_add_override_mark:
