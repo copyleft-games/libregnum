@@ -645,6 +645,15 @@ mixer_panel (EditorAppFixture *f)
 		g_object_unref (panel);
 		lrg_editor_app_add_panel (f->app, dock, "tab:viewport");
 	}
+	else
+	{
+		/* The shell docks the Mixer in the short bottom area; the strip
+		 * clicks below need the tall centre area, so move it there */
+		LrgDockArea *area = lrg_editor_app_get_dock (f->app);
+
+		lrg_dock_area_move_panel (area, lrg_dock_area_get_panel (area, LRG_EDITOR_MIXER_PANEL_ID),
+		                          lrg_dock_area_get_panel (area, "viewport"), LRG_DOCK_POSITION_CENTER);
+	}
 	efx_frames (f, 2);
 	return panel;
 }
