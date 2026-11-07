@@ -273,6 +273,43 @@ lrg_world3d_renderer_release (renderer);   /* GPU resources, before the window c
 
 =lrg_world3d_step()= runs =lrg_world3d_fixed_update()= (zero or more fixed steps), =lrg_world3d_update()= and =lrg_world3d_late_update()=; call them separately when you need something in between (physics, input). =lrg_world3d_renderer_render()= collects the world's render list for the camera (layer mask, frustum culling, sorting, the registered lights) and draws it; pass a =GrlRenderTexture= to render off-screen.
 
+** Step 5b: the level's look
+:PROPERTIES:
+:CUSTOM_ID: load-level-look
+:END:
+A level authored in 0.9.0 carries its look: the =environment:= block (sky, image-based lighting, ambient, fog, volumetric fog), the =.rpost= post stack it names, decal and reflection-probe nodes, materials (=.rmat=), lights with shadows and LOD'd meshes. =lrg_level_load_world3d()= brings all of it over:
+
+| Authored | At runtime | Who uses it |
+|----------+------------+-------------|
+| =environment:= block | a copy on the world, sky images loaded: =lrg_world3d_get_environment()= | the renderer draws the sky, binds IBL, fog and probes (baked lazily before the first frame) |
+| =environment.post_stack= | =lrg_world3d_get_post_stack()= | the renderer builds it into its post processor (bloom, tonemap, vignette, ...) |
+| decal node | =LrgDecalComponent= in the world's decal set | the renderer projects it in the lit pass |
+| reflection-probe node | =LrgReflectionProbeComponent=, its probe on the world's environment | blended by the lit shader once captured |
+| mesh asset whose =.meta= has =lod-levels= > 1 | =LrgLodComponent= (needs =lrg_engine_startup()=) | the renderer draws the selected level with cross-fades |
+
+Three things are yours to do: start the engine before loading (its asset manager loads materials and LOD chains), capture the reflection probes once the window is open, and decide whether post-processing is on.
+
+#+begin_src C
+LrgEngine *engine = lrg_engine_get_default ();
+
+lrg_engine_startup (engine, &error);                       /* asset manager, registry */
+lrg_asset_manager_add_search_path (lrg_engine_get_asset_manager (engine), level_dir);
+level = lrg_level_load_world3d (path, world, &error);       /* world gets env + post stack */
+
+renderer = lrg_world3d_renderer_new ();
+lrg_world3d_renderer_set_base_dir (renderer, level_dir);
+lrg_world3d_renderer_set_flags (renderer, lrg_world3d_renderer_get_flags (renderer)
+                                          | LRG_WORLD3D_RENDER_FLAG_POST);
+lrg_world3d_renderer_bake_environment (renderer, &error);  /* optional: else on the first frame */
+lrg_world3d_renderer_capture_probes (renderer, world);     /* window open, outside BeginDrawing */
+
+/* in the loop, when probes moved or were asked to recapture */
+if (lrg_reflection_probe_component_count_pending (world) > 0)
+	lrg_world3d_renderer_capture_probes (renderer, world);
+#+end_src
+
+To change the look while playing, swap the world's environment or post stack (=lrg_world3d_set_environment()=, =lrg_world3d_set_post_stack()=) or edit the objects they hold (=lrg_environment_set_exposure (lrg_world3d_get_environment (world), -1.0f)=); the level you loaded is not affected, since the world holds a copy. =examples/pbr-showcase.c= ([[file:../examples/pbr-showcase.org][example page]]) is a complete program built this way, with keys that toggle each feature.
+
 ** Step 6: spawning at runtime
 :PROPERTIES:
 :CUSTOM_ID: load-level-spawn
@@ -315,6 +352,7 @@ cc -o mygame mygame.c $(pkg-config --cflags --libs libregnum)
 :PROPERTIES:
 :CUSTOM_ID: load-level-from-editor
 :END:
+- Play applies the level's look: the play world gets a copy of the level's environment (sharing the sky images the viewport already loaded) and its post stack, so playing looks like editing.
 - Author the level with /2D view/ off in the inspector's level section (=default_view: 3d=, the default of a new level). Play (F5, =lrgeditorctl play start=) then instantiates it with =lrg_level_instantiate_3d()= into an =LrgWorld3D= and the viewport draws that runtime world through =LrgWorld3DRenderer=: the same entities, components and lights your game gets.
 - Register your game components where the editor can see them (an editor plugin or project module calling =lrg_registry_register()=), so they run during play and show in the Add Component picker.
 - While playing, the hierarchy's Live tab shows the entity tree and the inspector shows the picked entity's transform and component properties. "Apply to Level" on a component row writes the value back into the node (a registry component's description, or the visual for a light, camera, mesh renderer, ...). See [[file:../editor/view-model.org::#play-3d][Play session: 2D or 3D]].
@@ -339,6 +377,8 @@ cc -o mygame mygame.c $(pkg-config --cflags --libs libregnum)
 - *Autoplay sounds fire during instantiation*, before you can fix paths; restart them after.
 - *A level without a camera node* draws nothing with =camera = NULL=; add a camera node or pass your own =LrgCamera3D=.
 - *Instantiating twice* gives the second copy fresh GUIDs; find its entities by path.
+- *Probes and sky need the window.* Instantiation is headless; the environment bake and the probe captures happen on the GPU (lazily on the first render for the bake, explicitly for probes). A probe never captured reflects nothing.
+- *A missing sky or post stack is a warning, not an error.* Watch stderr for =lrg_level_instantiate_3d: ...= messages when the look is wrong.
 - *The editor's /visible/ eye* is saved as =visible: false= and makes the entity invisible at runtime too.
 
 ** See also

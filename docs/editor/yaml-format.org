@@ -151,6 +151,64 @@ For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the wor
 | =camera= | =LRG_NODE_VISUAL_CAMERA= |
 | =audio-emitter= | =LRG_NODE_VISUAL_AUDIO_EMITTER= |
 | =prefab-instance= | =LRG_NODE_VISUAL_PREFAB_INSTANCE= |
+| =decal= | =LRG_NODE_VISUAL_DECAL= (0.9.0) |
+| =reflection-probe= | =LRG_NODE_VISUAL_REFLECTION_PROBE= (0.9.0) |
+
+**** Decal and reflection-probe nodes (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: decal-probe-nodes
+:END:
+Two node kinds shape a level's look together with the [[#environment][environment]] block. Older readers keep the kind string they do not know (the node loads as =none=). Every param is optional; the defaults are the components'. At runtime =lrg_level_instantiate_3d()= turns them into an =LrgDecalComponent= and an =LrgReflectionProbeComponent= (see [[file:../modules/level/index.org::#level-look][The level's look]]); the editor draws their boxes as gizmos.
+
+#+begin_src yaml
+- name: Oil stain
+  transform:
+    location: [2.0, 0.0, -1.0]  # box centre; the box projects along local -Y (onto the floor here)
+    rotation: [0.0, 0.6, 0.0]
+  visual:
+    kind: decal
+    asset: textures/oil.png     # albedo texture (path or guid:) -> albedo-path
+    material:
+      color: [1.0, 1.0, 1.0, 0.85]  # tint and alpha -> color-r .. color-a
+    params:
+      size_x: 2.0               # box width (local X)
+      size_y: 0.5               # projection depth (local Y)
+      size_z: 1.5               # box height (local Z)
+      normal: textures/oil_n.png  # optional normal map -> normal-path
+      orm: textures/oil_orm.png   # optional occlusion/roughness/metallic -> orm-path
+      opacity: 1.0
+      fade_angle: 60.0          # degrees: surfaces turned further away fade out
+      fade_width: 20.0          #   over this many degrees
+      sort_order: 0             # higher draws over lower
+      normal_strength: 1.0
+      blend: alpha              # LrgDecalBlend nick
+- name: Hall probe
+  transform:
+    location: [0.0, 2.0, 0.0]   # capture point and box centre
+  visual:
+    kind: reflection-probe
+    params:
+      extents_x: 8.0            # HALF sizes of the axis-aligned box (times the node scale)
+      extents_y: 2.0
+      extents_z: 4.0
+      blend_distance: 1.0       # influence fades over this band inside the box
+      intensity: 1.0
+      box_projection: true      # parallax-corrected (rooms); false for open areas
+      resolution: 128           # cubemap edge (power of two 16..1024)
+#+end_src
+
+| Kind | Param | Type | Default | Meaning |
+|------+-------+------+---------+---------|
+| decal | =asset= (visual field) | string | none | albedo texture |
+| decal | =size_x=, =size_y=, =size_z= | double | 1 | box size; Y is the projection depth |
+| decal | =normal=, =orm= | string | none | extra texture maps |
+| decal | =opacity=, =fade_angle=, =fade_width=, =sort_order=, =normal_strength=, =blend= | | as =LrgDecal= | look of the decal |
+| reflection-probe | =extents_x=, =extents_y=, =extents_z= | double | 5 | half sizes of the box |
+| reflection-probe | =blend_distance= | double | 1 | influence fade band |
+| reflection-probe | =intensity= | double | 1 | multiplier |
+| reflection-probe | =box_projection= | bool | true | box projection |
+| reflection-probe | =resolution= | int | 128 | cubemap edge |
+| reflection-probe | =near_clip=, =far_clip=, =auto_recapture= | double / bool | 0.05, 1000, true | capture planes, recapture after moves |
 
 *** Components
 :PROPERTIES:
@@ -386,6 +444,8 @@ environment:
     intensity: 1.0
   post_stack: post/day.rpost  # path or guid: of the .rpost stack (LrgPostStack)
 #+end_src
+
+At runtime =lrg_level_instantiate_3d()= gives the world a copy of this block (=lrg_world3d_get_environment()=) with its sky images loaded, and the stack named by =post_stack= (=lrg_world3d_get_post_stack()=); relative paths resolve against the level file's directory first. See [[file:../modules/level/index.org::#level-look][The level's look]].
 
 | Key | Type | Default | Meaning |
 |-----+------+---------+---------|

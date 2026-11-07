@@ -146,6 +146,9 @@ Components attach in this order: the visual's component, the registry components
 | =audio-emitter= | =LrgAudioSourceComponent= | =asset= to =sound-path=; param =radius= to =max-distance= | =bank=, =sound=, =volume=, =pitch=, =min_distance=, =max_distance=, =rolloff=, =spatial_blend=, =loop=, =autoplay= |
 | =sprite= | =LrgBillboardComponent= | =asset= to =texture-path=; material colour to =color-r= .. =color-a=; =facing= defaults to =fixed= and =preserve-aspect= to on (the editor's aspect-fit 1 x 1 quad in the node's XY plane); param =pixels_per_unit= is ignored, as the editor ignores it | =width=, =height=, =facing=, =preserve_aspect=, =cutout=, =cast_shadows= |
 | =tilemap= | =LrgTilemapComponent= | =asset= to =tileset-path=; the painted grid (=visual.tilemap=) is copied into =lrg_tilemap_component_set_node_tilemap()=, which builds the runtime =LrgTilemap= with =lrg_node_tilemap_to_runtime()= once the tileset loads | =tile_size=, =cast_shadows= |
+| =mesh-asset= whose =.meta= has =lod-levels= > 1 | =LrgLodComponent= | the resolved (absolute) asset to =mesh-asset= and the engine's asset manager to =asset-manager=; material as above (needs a started engine and =apply-import-settings= on) | =cast_shadows=, =receive_shadows=, =layer=, =force_level=, =bias= |
+| =decal= (0.9.0) | =LrgDecalComponent= | =asset= to =albedo-path=; param =normal= to =normal-path=, =orm= to =orm-path= (each stored absolute when it resolves, else as written for the renderer's resolver); material colour to =color-r= .. =color-a= | =size_x=, =size_y= (projection depth, local Y), =size_z=, =opacity=, =fade_angle=, =fade_width=, =depth_fade=, =sort_order=, =layer_mask=, =blend=, =channels=, =normal_strength=, =roughness=, =metallic= |
+| =reflection-probe= (0.9.0) | =LrgReflectionProbeComponent= | none | =extents_x= .. =extents_z= (half sizes), =blend_distance=, =intensity=, =box_projection=, =resolution=, =near_clip=, =far_clip=, =auto_recapture= |
 | =none=, =prefab-instance=, =cad-part= | none | | |
 
 Game and editor draw the same sizes and colours: a sprite is the editor's aspect-fit quad whatever =pixels_per_unit= says (0.8 levels may carry it; set =width= / =height= params for another size), a mesh without a material is the editor's grey rather than the renderer's white, and a spot light's =spot_angle= keeps the editor's full-cone meaning. A light without =light_type= follows the editor viewport's rule: a positive =spot_angle= makes a spot light, anything else a point light. Params whose component has no such property are skipped (a =g_debug()=), so editor-only params never fail a load. The light, camera and audio defaults are the components' own (a light of intensity 1, a 60 degree camera, ...).
@@ -166,6 +169,40 @@ Game and editor draw the same sizes and colours: a sprite is the editor's aspect
       light_type: directional      # -> kind = LRG_LIGHT3D_DIRECTIONAL
       intensity: 1.6               # -> intensity
       cast_shadows: true           # -> cast-shadows
+#+end_src
+
+*** The level's look
+:PROPERTIES:
+:CUSTOM_ID: level-look
+:END:
+Before any node is instantiated, the level's =environment:= block (=lrg_level_get_environment()=) becomes the world's environment and its =post_stack:= the world's post stack (see [[file:../world3d/world3d.org::#look][The world's look]]):
+
+1. The environment is copied (its YAML block is written and read back into a new =LrgEnvironment=), so the runtime (reflection probes registering, a game changing the exposure) never changes the authored level.
+2. Sky images the level's environment already holds (the editor loaded them for its viewport, or the game called =lrg_environment_load_sources()= on the level) are shared with the copy. Otherwise the copy's sky references are resolved and loaded with =lrg_environment_load_sources()=.
+3. The =post_stack:= reference is resolved and loaded with =lrg_post_stack_new_from_file()=, then set with =lrg_world3d_set_post_stack()=.
+
+References are resolved, in order: =guid:= through the asset manager's GUID index; absolute paths as they are; relative paths against the base directory (=lrg_level_instantiate_3d_with_base_dir()=, which =lrg_level_load_world3d()= calls with the level file's directory and play-in-editor with the open level's directory), then the asset manager's search paths, its project root, and the working directory. The same order resolves the =.meta= of mesh assets (the LOD decision) and decal textures. A sky or post stack that does not load is a =g_warning()= and is left out; it never fails the instantiation. A level without an =environment:= block leaves the world's environment and post stack as they are.
+
+Reflection probe components register with the world's environment as they enter the world, so after instantiation =lrg_environment_get_n_probes (lrg_world3d_get_environment (world))= counts them; they reflect nothing until captured (=lrg_world3d_renderer_capture_probes()=).
+
+#+begin_src yaml
+# The environment block and the two node kinds that make a level's look
+environment:
+  sky: { source: equirect, path: skies/noon.hdr, exposure: 0.0 }  # -> world environment (copy)
+  post_stack: post/day.rpost                                       # -> world post stack
+nodes:
+  - name: Splat
+    transform: { location: [0.0, 0.0, 0.0] }   # local -Y is the projection direction
+    visual:
+      kind: decal                   # -> LrgDecalComponent
+      asset: textures/splat.png     # -> albedo-path (absolute when it resolves)
+      material: { color: [1.0, 1.0, 1.0, 0.9] }  # -> color-r .. color-a
+      params: { size_x: 2.0, size_y: 0.5, size_z: 2.0, fade_angle: 60.0 }
+  - name: Room probe
+    transform: { location: [0.0, 2.0, 0.0] }
+    visual:
+      kind: reflection-probe        # -> LrgReflectionProbeComponent on the world environment
+      params: { extents_x: 6.0, extents_y: 2.0, extents_z: 4.0, resolution: 128 }
 #+end_src
 
 *** Custom node kinds
@@ -346,7 +383,7 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 | =lrg-script-binding.h= | =LrgScriptBinding= | [[file:../../editor/level-model.org::#lrgscriptbinding][Level Model: LrgScriptBinding]] |
 | =lrg-level-serializer.h= | =LrgLevelSerializer=: load/save file and data | [[file:../../editor/yaml-format.org][.rlevel YAML Format]], [[file:../../editor/level-model.org::#level-model-api-lrg-level-serializer][API]] |
 | =lrg-prefab.h= | =LrgPrefabLink=, =lrg_prefab_load=, =lrg_prefab_load_resolved=, =lrg_prefab_instantiate=, =lrg_prefab_instantiate_linked=, overrides, sync, apply/revert | [[file:../../editor/prefabs.org][Prefabs]], [[file:../../editor/prefabs.org::#prefabs-api-lrg-prefab][API]] |
-| =lrg-level-instantiate.h= | =lrg_level_instantiate_3d=, =lrg_level_instantiate_node_3d=, =lrg_level_load_world3d=, =lrg_level_visual_get_component_type=, =lrg_level_visual_create_component=, =lrg_level_visual_store_property=, =lrg_level_instantiate=, =lrg_level_to_scene= | [[#level-instantiate-3d][3D instantiation]], [[file:../editor/index.org::#bridge-functions][Bridge functions]] |
+| =lrg-level-instantiate.h= | =lrg_level_instantiate_3d=, =lrg_level_instantiate_3d_with_base_dir=, =lrg_level_instantiate_node_3d=, =lrg_level_load_world3d=, =lrg_level_visual_get_component_type=, =lrg_level_visual_create_component=, =lrg_level_visual_store_property=, =lrg_level_instantiate=, =lrg_level_to_scene= | [[#level-instantiate-3d][3D instantiation]], [[file:../editor/index.org::#bridge-functions][Bridge functions]] |
 
 ** Performance
 :PROPERTIES:
@@ -363,6 +400,7 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 :END:
 - *Unregistered component types are skipped silently.* Register every type name the level uses before =lrg_level_instantiate()=; =lrgeditor --validate= reports unknown types at authoring time.
 - *2D instantiation is X/Y only.* Only X/Y reach an =LrgGameObject=; use =lrg_level_instantiate_3d()= for the full transform.
+- *The look is a copy.* Changing =lrg_level_get_environment()= after instantiation does not change the world; change =lrg_world3d_get_environment()= (or instantiate again).
 - *Relative asset paths.* A visual's =asset= is stored as written (usually relative to the project root). =LrgWorld3DRenderer= resolves meshes and textures against =lrg_world3d_renderer_set_base_dir()= (or the working directory); audio files are opened by path, so make =sound-path= absolute or run from the project root.
 - *Autoplay audio fires on world entry*, i.e. during =lrg_level_instantiate_3d()=; if you fix up =sound-path= afterwards, start the emitter again (=lrg_audio_source_component_play()=).
 - *Instantiating the same level twice* into one world gives the second copy fresh GUIDs; look entities of the second copy up by name or path (=lrg_world3d_find_by_path()=), not by the node GUID.

@@ -821,6 +821,8 @@ instantiate_level (LrgEditorPlaySession  *self,
                    LrgLevel              *level,
                    GError               **error)
 {
+	g_autofree gchar *level_dir = NULL;
+
 	if (lrg_level_get_default_2d (level))
 	{
 		self->world = lrg_world_new ();
@@ -830,9 +832,15 @@ instantiate_level (LrgEditorPlaySession  *self,
 		return TRUE;
 	}
 
-	/* A 3D level: one LrgEntity3D per node, same GUIDs */
+	/* A 3D level: one LrgEntity3D per node, same GUIDs.  The world also
+	 * gets the level's look (a copy of its environment sharing the sky
+	 * images the editor already loaded, and its post stack), so playing
+	 * looks like the level; the level's own directory resolves relative
+	 * sky / post-stack / LOD references the asset manager does not. */
 	self->world3d = lrg_world3d_new ();
-	if (!lrg_level_instantiate_3d (level, self->world3d, engine (self), error))
+	if (lrg_editor_get_path (self->editor) != NULL)
+		level_dir = g_path_get_dirname (lrg_editor_get_path (self->editor));
+	if (!lrg_level_instantiate_3d_with_base_dir (level, self->world3d, engine (self), level_dir, error))
 		return FALSE;
 	record_entity_baselines_3d (self);
 	return TRUE;

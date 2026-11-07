@@ -38,6 +38,19 @@
 #include "../lighting/lrg-spot-light2d.h"
 #include "../lighting/lrg-directional-light2d.h"
 #include "../graphics/lrg-light-set.h"
+#include "../world3d/components/lrg-mesh-renderer-component.h"
+#include "../world3d/components/lrg-skinned-model-component.h"
+#include "../world3d/components/lrg-light-component.h"
+#include "../world3d/components/lrg-camera-component.h"
+#include "../world3d/components/lrg-audio-source-component.h"
+#include "../world3d/components/lrg-audio-listener-component.h"
+#include "../world3d/components/lrg-billboard-component.h"
+#include "../world3d/components/lrg-tilemap-component.h"
+#include "../world3d/components/lrg-spawn-component.h"
+#include "../world3d/components/lrg-trigger-component.h"
+#include "../world3d/components/lrg-decal-component.h"
+#include "../world3d/components/lrg-lod-component.h"
+#include "../world3d/components/lrg-reflection-probe-component.h"
 #include "../particles/lrg-particle-system.h"
 #include "../particles/lrg-particle-emitter.h"
 #include "../particles/lrg-particle-force.h"
@@ -461,6 +474,21 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "sprite",                    lrg_sprite_component_get_type },
     { "collider",                  lrg_collider_component_get_type },
     { "animator",                  lrg_animator_component_get_type },
+
+    /* 3D (LrgWorld3D) components: same suffix rule as the ECS ones */
+    { "mesh-renderer",             lrg_mesh_renderer_component_get_type },
+    { "skinned-model",             lrg_skinned_model_component_get_type },
+    { "light",                     lrg_light_component_get_type },
+    { "camera",                    lrg_camera_component_get_type },
+    { "audio-source",              lrg_audio_source_component_get_type },
+    { "audio-listener",            lrg_audio_listener_component_get_type },
+    { "billboard",                 lrg_billboard_component_get_type },
+    { "tilemap",                   lrg_tilemap_component_get_type },
+    { "spawn",                     lrg_spawn_component_get_type },
+    { "trigger",                   lrg_trigger_component_get_type },
+    { "decal",                     lrg_decal_component_get_type },
+    { "lod",                       lrg_lod_component_get_type },
+    { "reflection-probe",          lrg_reflection_probe_component_get_type },
 
     /* Scenes and 3D levels */
     { "scene",                     lrg_scene_get_type },

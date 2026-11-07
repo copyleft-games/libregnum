@@ -1,0 +1,12 @@
+# glow.rmat - libregnum pbr-showcase
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The lamp bulb next to the point light: unlit and emissive, for the bloom.
+version: 1
+name: glow
+shading_model: unlit
+base_color: [1.0, 0.62, 0.3, 1.0]
+emission_color: [1.0, 0.62, 0.3]
+emission_strength: 4.0

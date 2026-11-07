@@ -13,6 +13,13 @@
  *  - MESH_ASSET / SPRITE / TILEMAP / AUDIO_EMITTER / PREFAB_INSTANCE: an asset
  *    reference (path or guid) plus kind-specific params
  *  - LIGHT / CAMERA: kind-specific params only
+ *  - DECAL (0.9.0): the asset is the albedo texture; params size_x,
+ *    size_y (projection depth), size_z, normal, orm, opacity, fade_angle,
+ *    fade_width, sort_order, normal_strength, blend; the material colour
+ *    tints it
+ *  - REFLECTION_PROBE (0.9.0): params extents_x / extents_y / extents_z
+ *    (half sizes, default 5), blend_distance, intensity, box_projection,
+ *    resolution (default 128), near_clip, far_clip, auto_recapture
  *
  * Kind-specific scalar settings (light intensity, camera fov, audio volume,
  * sprite source rectangle, etc.) live in a typed parameter bag, mirroring the

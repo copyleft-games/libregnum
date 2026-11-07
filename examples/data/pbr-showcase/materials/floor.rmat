@@ -1,0 +1,12 @@
+# floor.rmat - libregnum pbr-showcase
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# A slightly glossy dark stone floor: catches the probe's reflections.
+version: 1
+name: floor
+shading_model: lit
+base_color: [0.32, 0.33, 0.36, 1.0]
+metallic: 0.0
+roughness: 0.18

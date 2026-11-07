@@ -140,6 +140,27 @@ Defaults from =lrg_light3d_desc_init()= / =lrg_light3d_desc_new()=: enabled whit
 :END:
 Camera components register their =LrgCamera= with a priority (=lrg_world3d_register_camera()=, the world holds a reference). =lrg_world3d_get_active_camera()= returns the camera forced with =lrg_world3d_set_active_camera()=, else the highest priority (earliest registered on ties), else =NULL=. The audio listener (=lrg_world3d_set_audio_listener()=) is a weak entity pointer cleared automatically when the entity leaves.
 
+*** The world's look: environment and post stack
+:PROPERTIES:
+:CUSTOM_ID: look
+:END:
+A world carries the look it is rendered with (0.9.0): an [[file:../lighting/environment.org][LrgEnvironment]] (sky, image-based lighting, ambient, fog, volumetric fog, reflection probes) and an [[file:../postprocess/post-stack.org][LrgPostStack]] (the =.rpost= post-processing chain). Both are plain references the world holds; it does nothing with them itself.
+
+- =lrg_world3d_set_environment (world, env)= / =lrg_world3d_get_environment (world)=: =lrg_level_instantiate_3d()= sets a runtime copy of the level's =environment:= block here. #LrgWorld3DRenderer draws the sky, binds the IBL and fog and captures probes from it unless the renderer was given its own (=lrg_world3d_renderer_set_environment()=). [[file:components.org::#reflection-probe][LrgReflectionProbeComponent]] registers its probe with this environment and follows it when it is replaced (on the next =late_update=).
+- =lrg_world3d_set_post_stack (world, stack)= / =lrg_world3d_get_post_stack (world)=: =lrg_level_instantiate_3d()= loads the environment's =post_stack:= reference here. The renderer builds it into its post processor while post-processing is on, unless it has its own stack (=lrg_world3d_renderer_set_post_stack()=).
+
+Swapping either at runtime (entering a cave, a cut-scene grade) is a pointer swap; the renderer re-bakes a new environment lazily before its first frame (or call =lrg_world3d_renderer_bake_environment()= during a loading screen) and rebuilds the post chain on the next render.
+
+#+begin_src C
+/* A darker look for the cave: its own environment and post stack */
+g_autoptr(LrgEnvironment) cave = lrg_environment_new_from_file ("looks/cave.yaml", &error);
+g_autoptr(LrgPostStack)   grade = lrg_post_stack_new_from_file ("looks/cave.rpost", &error);
+
+lrg_world3d_set_environment (world, cave);   /* probes move over on the next late update */
+lrg_world3d_set_post_stack (world, grade);
+lrg_world3d_renderer_bake_environment (renderer, &error);   /* optional: avoid a hitch */
+#+end_src
+
 *** Spatial index
 :PROPERTIES:
 :CUSTOM_ID: spatial-index
@@ -253,6 +274,8 @@ Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[
 | =lrg_world3d_get_cameras()=                                | transfer container                                  |
 | =lrg_world3d_set_active_camera()= / =lrg_world3d_get_active_camera()= | forced vs priority                       |
 | =lrg_world3d_set_audio_listener()= / =lrg_world3d_get_audio_listener()= | weak                                   |
+| =lrg_world3d_set_environment()= / =lrg_world3d_get_environment()= | the world's look (ref held, nullable), see [[#look][The world's look]] |
+| =lrg_world3d_set_post_stack()= / =lrg_world3d_get_post_stack()= | the world's post stack (ref held, nullable) |
 
 *** Properties and signals
 :PROPERTIES:
@@ -404,13 +427,14 @@ near = lrg_world3d_query_sphere (world, at, 5.0f);
 - Register lights from =world_entered= and refresh them in =late_update=; a light registered in =update= may lag one frame behind a parent moved later in the same =update=.
 - =lrg_world3d_get_lights()= returns pointers into the registry: do not keep them across register/unregister calls.
 - Signal handlers on =transform-changed= that move other entities are handled in the same flush (bounded to 16 rounds).
+- The world's environment is shared by reference: changing it (exposure, fog) changes every renderer drawing the world; give a renderer its own environment for a different look in one view.
 - =LrgCamera3D= exposes no clip planes, so frustum culling uses near 0.05 / far 10000; disable =frustum-culling= for unusual cameras.
 
 ** Using it from the editor
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-When you press Play on a 3D level, the editor's play session instantiates the level into an =LrgWorld3D=, steps it every frame, and the viewport draws the runtime world through =LrgWorld3DRenderer= consuming the same render lists described above, so editor and game render identically. The hierarchy panel shows the live entity tree; on Stop, changed TRS values sync back to the authored nodes. See [[file:../../editor/editor-runtime.org][Editor runtime (play mode)]].
+When you press Play on a 3D level, the editor's play session instantiates the level into an =LrgWorld3D=, steps it every frame, and the viewport draws the runtime world through =LrgWorld3DRenderer= consuming the same render lists described above, so editor and game render identically. The play world carries the level's look (a copy of the level's environment, sharing the sky images the editor loaded, and its post stack), so playing looks like the level. The hierarchy panel shows the live entity tree; on Stop, changed TRS values sync back to the authored nodes. See [[file:../../editor/editor-runtime.org][Editor runtime (play mode)]].
 
 ** See also
 :PROPERTIES:
@@ -420,3 +444,4 @@ When you press Play on a 3D level, the editor's play session instantiates the le
 - [[file:../ecs/component.org::#component-hooks-3d][LrgComponent 3D hooks]]
 - [[file:octree.org][LrgOctree]], [[file:bounding-box3d.org][LrgBoundingBox3D]]
 - [[file:../graphics/render-layers.org][Render layers]]
+- [[file:../lighting/environment.org][LrgEnvironment]], [[file:../postprocess/post-stack.org][LrgPostStack]], [[file:components.org::#reflection-probe][LrgReflectionProbeComponent]]

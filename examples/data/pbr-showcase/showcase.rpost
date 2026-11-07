@@ -1,0 +1,26 @@
+# showcase.rpost - libregnum pbr-showcase
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The level's post stack (environment.post_stack): bloom on the bright
+# highlights and the glowing bulb, ACES tonemapping, a soft vignette.
+version: 1
+name: Showcase
+quality: high
+hdr: true
+effects:
+  - type: bloom
+    params:
+      threshold: 0.9
+      soft_knee: 0.5
+      intensity: 0.7
+  - type: tonemap
+    params:
+      operator: aces
+      exposure: 0.2
+  - type: vignette
+    params:
+      intensity: 0.3
+      radius: 0.75
+      smoothness: 0.5

@@ -106,6 +106,28 @@ gboolean lrg_level_instantiate (LrgLevel   *level,
  *   #LrgScriptComponent;
  * - finally the node class's #LrgNodeClass.instantiate_3d hook runs.
  *
+ * Visual kinds added in 0.9.0: a decal becomes an #LrgDecalComponent
+ * (the visual's asset is the albedo texture, params `normal` / `orm`
+ * the other maps, the material colour the tint, the other params map
+ * by name: `size_x` -> `size-x`, `fade_angle` -> `fade-angle`, ...), a
+ * reflection probe an #LrgReflectionProbeComponent (`extents_x` ..,
+ * `blend_distance`, `intensity`, `box_projection`, `resolution`), and a
+ * mesh asset whose `.meta` sidecar asks for more than one level of
+ * detail (`lod-levels` > 1, with the asset manager applying import
+ * settings) an #LrgLodComponent instead of an #LrgMeshRendererComponent.
+ *
+ * The level's look: when the level has an `environment:` block, a copy
+ * of it becomes the world's environment (lrg_world3d_set_environment()),
+ * so the runtime never changes the authored level.  Sky images the
+ * level's environment already loaded are shared; otherwise its sky
+ * references are resolved (see lrg_level_instantiate_3d_with_base_dir())
+ * and loaded with lrg_environment_load_sources().  The block's
+ * `post_stack:` reference is loaded with lrg_post_stack_new_from_file()
+ * and set with lrg_world3d_set_post_stack().  A sky or post stack that
+ * does not load is reported with g_warning() and left out; it does not
+ * fail the call.  Renderers use the world's environment and post stack
+ * unless they were given their own.
+ *
  * @world is not cleared first. lrg_level_instantiate() (2D) is unchanged.
  *
  * Returns: %TRUE on success
@@ -117,6 +139,37 @@ gboolean lrg_level_instantiate_3d (LrgLevel    *level,
                                    LrgWorld3D  *world,
                                    LrgEngine   *engine,
                                    GError     **error);
+
+/**
+ * lrg_level_instantiate_3d_with_base_dir:
+ * @level: an #LrgLevel
+ * @world: the #LrgWorld3D to populate
+ * @engine: (nullable): the engine whose #LrgRegistry resolves component
+ *   types and whose #LrgAssetManager loads assets; if %NULL, the default
+ *   engine is used
+ * @base_dir: (nullable) (type filename): the directory relative asset
+ *   references of the level are tried against first, usually the level
+ *   file's directory or the project root
+ * @error: (nullable): return location for an error
+ *
+ * lrg_level_instantiate_3d() with a base directory.  Relative references
+ * the instantiation itself resolves (the environment's sky images and
+ * post stack, the `.meta` of mesh assets deciding LOD, decal textures)
+ * are tried in this order: @base_dir, the asset manager's search paths,
+ * its project root, then the working directory; `guid:` references go
+ * through the asset manager's GUID index.  Resolved decal texture and
+ * LOD mesh paths are stored absolute on the components.
+ *
+ * Returns: %TRUE on success
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
+                                                 LrgWorld3D   *world,
+                                                 LrgEngine    *engine,
+                                                 const gchar  *base_dir,
+                                                 GError      **error);
 
 /**
  * lrg_level_instantiate_node_3d:
@@ -153,7 +206,11 @@ LrgEntity3D * lrg_level_instantiate_node_3d (LrgNode      *node,
  * The component type lrg_level_instantiate_3d() creates for a visual of
  * kind @kind: #LrgMeshRendererComponent for primitives and mesh assets,
  * #LrgLightComponent, #LrgCameraComponent, #LrgAudioSourceComponent,
- * #LrgBillboardComponent for sprites and #LrgTilemapComponent.
+ * #LrgBillboardComponent for sprites, #LrgTilemapComponent,
+ * #LrgDecalComponent for decals and #LrgReflectionProbeComponent for
+ * reflection probes.  (A mesh asset with an LOD chain in its `.meta`
+ * gets an #LrgLodComponent at instantiation; its kind still reports the
+ * mesh renderer, whose property names the LOD component shares.)
  *
  * Returns: the component #GType, or %G_TYPE_INVALID for kinds that make
  *   no component (none, prefab instance, CAD part)
@@ -207,8 +264,9 @@ gboolean lrg_level_visual_store_property (LrgNodeVisual *visual,
  * @error: (nullable): return location for an error
  *
  * Convenience for games: loads @path with #LrgLevelSerializer and
- * instantiates it into @world with lrg_level_instantiate_3d() and the
- * default engine. Register your component types in the default engine's
+ * instantiates it into @world with lrg_level_instantiate_3d_with_base_dir()
+ * (the level file's directory as the base directory) and the default
+ * engine. Register your component types in the default engine's
  * registry first.
  *
  * Returns: (transfer full) (nullable): the loaded #LrgLevel (keep it to

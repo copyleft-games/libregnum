@@ -31,6 +31,13 @@
 #include "../world3d/components/lrg-audio-source-component.h"
 #include "../world3d/components/lrg-billboard-component.h"
 #include "../world3d/components/lrg-tilemap-component.h"
+#include "../world3d/components/lrg-decal-component.h"
+#include "../world3d/components/lrg-reflection-probe-component.h"
+#include "../world3d/components/lrg-lod-component.h"
+#include "../lighting/lrg-environment.h"
+#include "../postprocess/lrg-post-stack.h"
+#include "../core/lrg-asset-manager.h"
+#include "../core/lrg-asset-meta.h"
 #include "../core/lrg-engine.h"
 #include "../core/lrg-registry.h"
 #include "../lrg-enums.h"
@@ -351,6 +358,7 @@ typedef struct
 	LrgWorld3D  *world;
 	LrgRegistry *registry;    /* nullable */
 	LrgAssetManager *assets;  /* nullable: material references load through it */
+	const gchar *base_dir;    /* nullable: relative references are tried here first */
 	GHashTable  *used_guids;  /* GUIDs given out by this call (set) */
 } Instantiate3D;
 
@@ -571,6 +579,21 @@ static const VisualMap visual_map[] = {
 	/* tilemap -> LrgTilemapComponent (the grid itself is converted
 	 * with lrg_node_tilemap_to_runtime(), see configure_tilemap()) */
 	{ LRG_NODE_VISUAL_TILEMAP,    MAP_ASSET,     NULL, 0, "tileset-path", 1.0 },
+
+	/* decal -> LrgDecalComponent: the asset is the albedo texture, the
+	 * material colour the tint; size_x, opacity, fade_angle, ... map by
+	 * name (size-x, opacity, fade-angle, ...) */
+	{ LRG_NODE_VISUAL_DECAL,      MAP_ASSET,     NULL, 0, "albedo-path", 1.0 },
+	{ LRG_NODE_VISUAL_DECAL,      MAP_PARAM,     "normal", 0, "normal-path", 1.0 },
+	{ LRG_NODE_VISUAL_DECAL,      MAP_PARAM,     "orm", 0, "orm-path", 1.0 },
+	{ LRG_NODE_VISUAL_DECAL,      MAP_COLOR,     NULL, 0, "color-r", 1.0 },
+	{ LRG_NODE_VISUAL_DECAL,      MAP_COLOR,     NULL, 1, "color-g", 1.0 },
+	{ LRG_NODE_VISUAL_DECAL,      MAP_COLOR,     NULL, 2, "color-b", 1.0 },
+	{ LRG_NODE_VISUAL_DECAL,      MAP_COLOR,     NULL, 3, "color-a", 1.0 },
+
+	/* reflection probe -> LrgReflectionProbeComponent: every param maps
+	 * by name (extents_x -> extents-x, blend_distance, intensity,
+	 * box_projection, resolution, near_clip, far_clip, auto_recapture) */
 };
 
 GType
@@ -591,6 +614,10 @@ lrg_level_visual_get_component_type (LrgNodeVisualKind kind)
 		return LRG_TYPE_BILLBOARD_COMPONENT;
 	case LRG_NODE_VISUAL_TILEMAP:
 		return LRG_TYPE_TILEMAP_COMPONENT;
+	case LRG_NODE_VISUAL_DECAL:
+		return LRG_TYPE_DECAL_COMPONENT;
+	case LRG_NODE_VISUAL_REFLECTION_PROBE:
+		return LRG_TYPE_REFLECTION_PROBE_COMPONENT;
 	case LRG_NODE_VISUAL_NONE:
 	case LRG_NODE_VISUAL_PREFAB_INSTANCE:
 	case LRG_NODE_VISUAL_CAD_PART:
@@ -936,9 +963,137 @@ apply_material_ref (LrgNodeVisual   *visual,
 		g_object_set (comp, "material", material, NULL);
 }
 
+/*
+ * resolve_asset_ref:
+ *
+ * The existing file an authored reference names: `guid:` through the
+ * manager's GUID index; an absolute path as is; a relative one tried
+ * against @base_dir, the manager's search paths, its project root and
+ * finally the working directory.
+ *
+ * Returns: (transfer full) (nullable): the canonical path, or NULL
+ */
+static gchar *
+resolve_asset_ref (LrgAssetManager *manager,
+                   const gchar     *base_dir,
+                   const gchar     *ref)
+{
+	gchar *path;
+
+	if (ref == NULL || *ref == '\0')
+		return NULL;
+	if (g_str_has_prefix (ref, LRG_ASSET_GUID_PREFIX))
+		return manager != NULL ? lrg_asset_manager_resolve_guid (manager, ref) : NULL;
+	if (g_path_is_absolute (ref))
+		return g_file_test (ref, G_FILE_TEST_EXISTS) ? g_canonicalize_filename (ref, NULL) : NULL;
+
+	/* 1. the level's (or project's) directory */
+	if (base_dir != NULL)
+	{
+		path = g_build_filename (base_dir, ref, NULL);
+		if (g_file_test (path, G_FILE_TEST_EXISTS))
+		{
+			gchar *canon = g_canonicalize_filename (path, NULL);
+
+			g_free (path);
+			return canon;
+		}
+		g_free (path);
+	}
+
+	/* 2. the asset manager: search paths, then the project root */
+	if (manager != NULL)
+	{
+		const gchar *root = lrg_asset_manager_get_project_root (manager);
+
+		path = lrg_asset_manager_resolve_reference (manager, ref);
+		if (path != NULL)
+			return path;
+		if (root != NULL)
+		{
+			path = g_build_filename (root, ref, NULL);
+			if (g_file_test (path, G_FILE_TEST_EXISTS))
+			{
+				gchar *canon = g_canonicalize_filename (path, NULL);
+
+				g_free (path);
+				return canon;
+			}
+			g_free (path);
+		}
+	}
+
+	/* 3. the working directory */
+	if (g_file_test (ref, G_FILE_TEST_EXISTS))
+		return g_canonicalize_filename (ref, NULL);
+	return NULL;
+}
+
+/*
+ * lod_mesh_path:
+ *
+ * For a mesh asset visual whose `.meta` sidecar asks for an LOD chain
+ * (`lod-levels` > 1), the resolved model path; NULL for everything else
+ * (no manager to generate the chain with, import settings off, no
+ * sidecar, one level).
+ *
+ * Returns: (transfer full) (nullable): the model path
+ */
+static gchar *
+lod_mesh_path (LrgNodeVisual   *visual,
+               LrgAssetManager *manager,
+               const gchar     *base_dir)
+{
+	g_autofree gchar        *path = NULL;
+	g_autoptr(LrgAssetMeta)  meta = NULL;
+
+	if (lrg_node_visual_get_kind (visual) != LRG_NODE_VISUAL_MESH_ASSET ||
+	    lrg_node_visual_get_asset (visual) == NULL || manager == NULL ||
+	    !lrg_asset_manager_get_apply_import_settings (manager))
+		return NULL;
+	path = resolve_asset_ref (manager, base_dir, lrg_node_visual_get_asset (visual));
+	if (path == NULL)
+		return NULL;
+	meta = lrg_asset_meta_load_for_asset (path, NULL);
+	if (meta == NULL || lrg_asset_meta_get_model_lod_levels (meta) <= 1)
+		return NULL;
+	return g_steal_pointer (&path);
+}
+
+/*
+ * resolve_decal_paths:
+ *
+ * Stores the decal's texture references as absolute paths when they
+ * resolve, so the textures load whatever directory the renderer
+ * resolves against.  Unresolved ones are left for the renderer's
+ * resolver.
+ */
+static void
+resolve_decal_paths (GObject         *comp,
+                     LrgAssetManager *manager,
+                     const gchar     *base_dir)
+{
+	static const gchar *props[] = { "albedo-path", "normal-path", "orm-path" };
+	guint               i;
+
+	for (i = 0; i < G_N_ELEMENTS (props); i++)
+	{
+		g_autofree gchar *ref = NULL;
+		g_autofree gchar *path = NULL;
+
+		g_object_get (comp, props[i], &ref, NULL);
+		if (ref == NULL || g_str_has_prefix (ref, LRG_ASSET_GUID_PREFIX))
+			continue;   /* guid: references stay for the resolver */
+		path = resolve_asset_ref (manager, base_dir, ref);
+		if (path != NULL)
+			g_object_set (comp, props[i], path, NULL);
+	}
+}
+
 static LrgComponent *
 create_visual_component (LrgNodeVisual   *visual,
-                         LrgAssetManager *manager);
+                         LrgAssetManager *manager,
+                         const gchar     *base_dir);
 
 LrgComponent *
 lrg_level_visual_create_component (LrgNodeVisual *visual)
@@ -949,31 +1104,50 @@ lrg_level_visual_create_component (LrgNodeVisual *visual)
 
 	engine = lrg_engine_get_default ();
 	return create_visual_component (visual, engine != NULL ? lrg_engine_get_asset_manager (engine)
-	                                                       : NULL);
+	                                                       : NULL, NULL);
 }
 
-/* lrg_level_visual_create_component() with an explicit asset manager. */
+/* lrg_level_visual_create_component() with an explicit asset manager and
+ * base directory. */
 static LrgComponent *
 create_visual_component (LrgNodeVisual   *visual,
-                         LrgAssetManager *manager)
+                         LrgAssetManager *manager,
+                         const gchar     *base_dir)
 {
-	GType    type;
-	GObject *comp;
+	LrgNodeVisualKind  kind = lrg_node_visual_get_kind (visual);
+	g_autofree gchar  *lod_path = NULL;
+	GType              type;
+	GObject           *comp;
 
-	type = lrg_level_visual_get_component_type (lrg_node_visual_get_kind (visual));
+	type = lrg_level_visual_get_component_type (kind);
 	if (type == G_TYPE_INVALID || !g_type_is_a (type, LRG_TYPE_COMPONENT))
 		return NULL;
 
+	/* A mesh asset with an LOD chain in its sidecar draws through an
+	 * LrgLodComponent, which shares the mesh renderer's property names
+	 * (mesh-asset, color-*, material, cast-shadows, layer). */
+	lod_path = lod_mesh_path (visual, manager, base_dir);
+	if (lod_path != NULL)
+		type = LRG_TYPE_LOD_COMPONENT;
+
 	comp = g_object_new (type, NULL);
-	if (lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_LIGHT)
+	if (kind == LRG_NODE_VISUAL_LIGHT)
 		default_light_kind (visual, comp);
-	else if (lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_SPRITE)
+	else if (kind == LRG_NODE_VISUAL_SPRITE)
 		default_sprite (comp);
 	apply_explicit_rows (visual, comp);
 	apply_params (visual, comp);
 	apply_material_ref (visual, comp, manager);
-	if (lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_TILEMAP)
+	if (kind == LRG_NODE_VISUAL_TILEMAP)
 		configure_tilemap (visual, comp);
+	else if (kind == LRG_NODE_VISUAL_DECAL)
+		resolve_decal_paths (comp, manager, base_dir);
+	if (lod_path != NULL)
+	{
+		/* the chain is generated from the resolved model on first draw */
+		lrg_lod_component_set_mesh_asset (LRG_LOD_COMPONENT (comp), lod_path);
+		lrg_lod_component_set_asset_manager (LRG_LOD_COMPONENT (comp), manager);
+	}
 	return LRG_COMPONENT (comp);
 }
 
@@ -1183,7 +1357,7 @@ add_visual_component (Instantiate3D *ctx,
 
 	if (visual == NULL)
 		return;
-	comp = create_visual_component (visual, ctx->assets);
+	comp = create_visual_component (visual, ctx->assets, ctx->base_dir);
 	if (comp != NULL)
 		lrg_entity3d_add_component (entity, comp);
 }
@@ -1258,6 +1432,7 @@ instantiate_3d_init (Instantiate3D *ctx,
 	ctx->world = world;
 	ctx->registry = NULL;
 	ctx->assets = NULL;
+	ctx->base_dir = NULL;
 	ctx->used_guids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
 	if (engine == NULL)
@@ -1266,6 +1441,133 @@ instantiate_3d_init (Instantiate3D *ctx,
 	{
 		ctx->registry = lrg_engine_get_registry (engine);
 		ctx->assets = lrg_engine_get_asset_manager (engine);
+	}
+}
+
+/* ==========================================================================
+ * The level's look: environment and post stack
+ * ========================================================================== */
+
+/*
+ * resolve_sky_refs:
+ *
+ * Rewrites a sky reference of the runtime copy to its resolved absolute
+ * path, so lrg_environment_load_sources() needs no base directory.
+ * Unresolved references are kept (the load then reports them).
+ */
+static void
+resolve_sky_refs (Instantiate3D  *ctx,
+                  LrgEnvironment *env)
+{
+	g_autofree gchar *sky = NULL;
+	guint             i;
+
+	sky = resolve_asset_ref (ctx->assets, ctx->base_dir, lrg_environment_get_sky_path (env));
+	if (sky != NULL)
+		lrg_environment_set_sky_path (env, sky);
+	for (i = 0; i < 6; i++)
+	{
+		g_autofree gchar *face = resolve_asset_ref (ctx->assets, ctx->base_dir,
+		                                            lrg_environment_get_sky_face_path (env, i));
+
+		if (face != NULL)
+			lrg_environment_set_sky_face_path (env, i, face);
+	}
+}
+
+/*
+ * copy_sky_images:
+ *
+ * Shares the sky images @src already holds (the editor loaded them for
+ * its viewport) with @dst.
+ *
+ * Returns: %TRUE when @dst needs no lrg_environment_load_sources()
+ */
+static gboolean
+copy_sky_images (LrgEnvironment *src,
+                 LrgEnvironment *dst)
+{
+	guint i;
+
+	lrg_environment_set_sky_dome (dst, lrg_environment_get_sky_dome (src));
+	switch (lrg_environment_get_sky_source (src))
+	{
+	case LRG_ENVIRONMENT_SKY_EQUIRECT:
+		if (lrg_environment_get_equirect (src) == NULL)
+			return FALSE;
+		lrg_environment_set_equirect (dst, lrg_environment_get_equirect (src));
+		return TRUE;
+	case LRG_ENVIRONMENT_SKY_CUBEMAP:
+		for (i = 0; i < 6; i++)
+			if (lrg_environment_get_cubemap_face (src, i) == NULL)
+				return FALSE;
+		for (i = 0; i < 6; i++)
+			lrg_environment_set_cubemap_face (dst, i, lrg_environment_get_cubemap_face (src, i));
+		return TRUE;
+	case LRG_ENVIRONMENT_SKY_COLOR:
+	case LRG_ENVIRONMENT_SKY_GRADIENT:
+	case LRG_ENVIRONMENT_SKY_DOME:
+	default:
+		return TRUE;
+	}
+}
+
+/*
+ * apply_level_look:
+ *
+ * The world gets a runtime copy of the level's environment (settings
+ * through the block's YAML, sky images shared or loaded) and the post
+ * stack its `post_stack:` names.  Nothing happens for a level without an
+ * environment block: the world keeps what it has.
+ */
+static void
+apply_level_look (Instantiate3D *ctx,
+                  LrgLevel      *level)
+{
+	LrgEnvironment            *src = lrg_level_get_environment (level);
+	g_autoptr(LrgEnvironment)  env = NULL;
+	g_autofree gchar          *data = NULL;
+	g_autoptr(GError)          error = NULL;
+	const gchar               *post_ref;
+
+	if (src == NULL)
+		return;
+
+	/* 1. the settings: the block round trip copies every one of them */
+	env = lrg_environment_new ();
+	data = lrg_environment_to_data (src);
+	if (!lrg_environment_load_from_data (env, data, -1, &error))
+	{
+		g_warning ("lrg_level_instantiate_3d: cannot copy the level environment: %s", error->message);
+		return;
+	}
+
+	/* 2. the sky images: shared when loaded, else loaded for the copy */
+	if (!copy_sky_images (src, env))
+	{
+		resolve_sky_refs (ctx, env);
+		if (!lrg_environment_load_sources (env, ctx->assets, ctx->base_dir, &error))
+		{
+			g_warning ("lrg_level_instantiate_3d: the level sky did not load: %s", error->message);
+			g_clear_error (&error);
+		}
+	}
+	lrg_world3d_set_environment (ctx->world, env);
+
+	/* 3. the post-processing stack */
+	post_ref = lrg_environment_get_post_stack (env);
+	if (post_ref != NULL && *post_ref != '\0')
+	{
+		g_autofree gchar         *path = resolve_asset_ref (ctx->assets, ctx->base_dir, post_ref);
+		g_autoptr(LrgPostStack)   stack = NULL;
+
+		if (path != NULL)
+			stack = lrg_post_stack_new_from_file (path, &error);
+		if (stack != NULL)
+			lrg_world3d_set_post_stack (ctx->world, stack);
+		else
+			g_warning ("lrg_level_instantiate_3d: post stack '%s' did not load: %s", post_ref,
+			           error != NULL ? error->message : "not found");
 	}
 }
 
@@ -1280,6 +1582,16 @@ lrg_level_instantiate_3d (LrgLevel    *level,
                           LrgEngine   *engine,
                           GError     **error)
 {
+	return lrg_level_instantiate_3d_with_base_dir (level, world, engine, NULL, error);
+}
+
+gboolean
+lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
+                                        LrgWorld3D   *world,
+                                        LrgEngine    *engine,
+                                        const gchar  *base_dir,
+                                        GError      **error)
+{
 	Instantiate3D  ctx;
 	LrgEntity3D   *world_root;
 
@@ -1289,7 +1601,12 @@ lrg_level_instantiate_3d (LrgLevel    *level,
 	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
 	instantiate_3d_init (&ctx, world, engine);
+	ctx.base_dir = base_dir;
 	world_root = lrg_world3d_get_root (world);
+
+	/* The look first, so probe components entering the world find the
+	 * environment to register with. */
+	apply_level_look (&ctx, level);
 
 	/* The level's implicit root is not an entity: its children are the
 	 * world's top-level entities. */
@@ -1346,6 +1663,7 @@ lrg_level_load_world3d (const gchar  *path,
 {
 	g_autoptr(LrgLevelSerializer) serializer = NULL;
 	g_autoptr(LrgLevel)           level = NULL;
+	g_autofree gchar             *dir = NULL;
 
 	g_return_val_if_fail (path != NULL, NULL);
 	g_return_val_if_fail (LRG_IS_WORLD3D (world), NULL);
@@ -1355,7 +1673,8 @@ lrg_level_load_world3d (const gchar  *path,
 	level = lrg_level_serializer_load_from_file (serializer, path, error);
 	if (level == NULL)
 		return NULL;
-	if (!lrg_level_instantiate_3d (level, world, NULL, error))
+	dir = g_path_get_dirname (path);
+	if (!lrg_level_instantiate_3d_with_base_dir (level, world, NULL, dir, error))
 		return NULL;
 	return g_steal_pointer (&level);
 }

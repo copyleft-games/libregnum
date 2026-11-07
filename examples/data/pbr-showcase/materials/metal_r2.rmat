@@ -1,0 +1,10 @@
+# metal_r2.rmat - libregnum pbr-showcase
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# An instance: everything but the roughness comes from the parent.
+version: 1
+name: metal_r2
+parent: metal.rmat
+roughness: 0.45

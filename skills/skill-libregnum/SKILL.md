@@ -69,6 +69,14 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 
 8. **Working on libregnum's code.** Read `AGENTS.md` in the checkout first, then `references/engine.md`. Essentials: gnu89 C, tabs, GNU-style `func (args)` calls, `/* */` comments, gtk-doc/GIR comments in headers (once per identifier), zero warnings (`-Werror`, never silence a warning), no `memcpy` into raylib `Matrix`, raylib calls rely on `-include stdbool.h`; work in a git worktree under `./trees/`; build with `make -j"$(nproc)"`; test with `make test`, plus `make test-editorctl`, `make test-emacs` and `make test-editor-x11` for editor work; update the org docs under `docs/` in the same change; Conventional Commits.
 
+## Workflows (0.9.0)
+
+### Give a level a look
+1. Add an `environment:` block to the .rlevel (sky source/path, ibl, ambient, fog, volumetric, `post_stack: look.rpost`) — or use the editor's environment panel.
+2. Point nodes at `.rmat` materials (`material: materials/x.rmat`); add `kind: decal` / `kind: reflection-probe` nodes; add `lod-levels: 3` to a model's `.meta` for LOD.
+3. Game: `lrg_engine_startup()`, add the level dir as an asset search path, `lrg_level_load_world3d()`, set `LRG_WORLD3D_RENDER_FLAG_POST`, `lrg_world3d_renderer_bake_environment()`, `lrg_world3d_renderer_capture_probes(renderer, world)`; recapture when `lrg_reflection_probe_component_count_pending(world) > 0`.
+4. Play-in-editor applies the same look automatically. Reference: examples/pbr-showcase.c.
+
 ## Output Format
 
 - For editor work: report what changed as `node/PATH created|configured|deleted` lines (what `lrgeditorctl` prints), whether the level is saved or still dirty, and any problems from `get problems`.

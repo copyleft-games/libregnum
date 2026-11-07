@@ -720,12 +720,69 @@ lrg_entity3d_add_component (tag, LRG_COMPONENT (decal));
 lrg_world3d_add_entity (world, tag);
 #+end_src
 
+** LrgReflectionProbeComponent
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe
+:END:
+
+A box-projected local reflection probe ([[file:../lighting/reflection-probe.org][LrgReflectionProbe]]) placed by the entity (0.9.0). The component owns the probe, keeps it at the entity's world position with an axis-aligned box of the authored half sizes (=extents-x/-y/-z=) times the entity's world scale (the entity's rotation does not turn the box), and registers it with the environment of the world it is in (=lrg_world3d_get_environment()=). The lit shader then blends the two probes with the largest influence around each draw (see [[file:../lighting/environment.org][LrgEnvironment]]). Probes are not render items: =collect_render= submits nothing, =get_bounds= reports the local box for picking and the octree.
+
+*Registration.* =world_entered= and every =late_update= (=lrg_reflection_probe_component_sync()=) move the probe into the world's current environment: replacing the world's environment moves the probe on the next frame, a world without an environment leaves it unregistered (unused until the world gets one), a disabled component or an inactive entity takes it out, =world_exited= removes it. =lrg_level_instantiate_3d()= gives the world the level's environment before any entity enters it.
+
+*Captures.* A probe has to be rendered (six faces, then GGX prefiltered) before it reflects anything, which is GPU work done outside =BeginDrawing()=. The component only tracks when it is due: a capture is pending after the probe enters a world, after a resolution or clip change, after =lrg_reflection_probe_component_request_capture()=, and (with =auto-recapture=, the default) after the entity moved or the box changed. Any successful capture of the probe after the request clears it, whoever makes it: =lrg_world3d_renderer_capture_probes()= (the usual call, it captures every probe of the environment in effect with the renderer's own lit passes), =lrg_reflection_probe_component_capture_world()= with your own draw callback, or a direct =lrg_reflection_probe_capture()=.
+
+#+begin_src C
+/* after loading the level and opening the window, once: */
+lrg_world3d_renderer_capture_probes (renderer, world);
+
+/* every frame: recapture the probes whose capture is pending (moved,
+ * requested); cheap when there are none */
+if (lrg_reflection_probe_component_count_pending (world) > 0)
+	lrg_world3d_renderer_capture_probes (renderer, world);
+#+end_src
+
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =extents-x=, =extents-y=, =extents-z= | float | 5 | half sizes of the box before the entity's scale (a 10 m cube by default) |
+| =blend-distance= | float | 1 | band inside the box faces over which the influence fades out |
+| =intensity= | float | 1 | multiplier of the captured light |
+| =box-projection= | bool | true | parallax-correct lookups against the box (rooms); off for open areas |
+| =resolution= | uint | 128 | cubemap edge, power of two 16 .. 1024; a change requests a capture |
+| =near-clip=, =far-clip= | float | 0.05, 1000 | capture clip planes; a change requests a capture |
+| =auto-recapture= | bool | true | moving the entity or changing the box requests a capture |
+| =needs-capture= | bool (read only) | false | a capture is pending (notified on requests only) |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_reflection_probe_component_new()= | a component with a new probe (probe defaults, auto-recapture on) |
+| =lrg_reflection_probe_component_get_probe()= | the #LrgReflectionProbe (transfer none); its position and extents are rewritten on each sync |
+| =lrg_reflection_probe_component_set_extents()= / =lrg_reflection_probe_component_get_extents()= | the authored half sizes (=out_extents= is a float[3]) |
+| =lrg_reflection_probe_component_set_auto_recapture()= / =lrg_reflection_probe_component_get_auto_recapture()= | recapture on change |
+| =lrg_reflection_probe_component_request_capture()= | mark a capture as pending (the surroundings changed) |
+| =lrg_reflection_probe_component_get_needs_capture()= | is one pending |
+| =lrg_reflection_probe_component_sync()= | position, box and environment registration now |
+| =lrg_reflection_probe_component_capture()= | sync and capture with a draw callback; clears the request |
+| =lrg_reflection_probe_component_capture_world()= | capture the pending (or, forced, all) probes of a world in hierarchy order; returns the count or -1 |
+| =lrg_reflection_probe_component_count_pending()= | how many live probes of a world have a capture pending |
+
+#+begin_src C
+/* A probe filling a 12 x 4 x 8 m room centred at (0, 2, 0) */
+g_autoptr(LrgEntity3D)                 room = lrg_entity3d_new_with_name ("room-probe");
+g_autoptr(LrgReflectionProbeComponent) probe = lrg_reflection_probe_component_new ();
+
+lrg_reflection_probe_component_set_extents (probe, 6.0f, 2.0f, 4.0f);
+g_object_set (probe, "blend-distance", 0.5f, "resolution", 256u, NULL);
+lrg_entity3d_set_position_xyz (room, 0.0f, 2.0f, 0.0f);
+lrg_entity3d_add_component (room, LRG_COMPONENT (probe));
+lrg_world3d_add_entity (world, room);      /* registers with the world's environment */
+#+end_src
+
 ** Type functions
 :PROPERTIES:
 :CUSTOM_ID: type-functions
 :END:
 
-=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()= and =lrg_decal_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=).
+=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()= and =lrg_reflection_probe_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=).
 
 ** Using it from the editor
 :PROPERTIES:
@@ -743,6 +800,9 @@ You do not add these components by hand in the editor (0.9 M1): each node visual
 | AUDIO_EMITTER | audio source               | asset → =sound-path=, =volume=                                           |
 | SPRITE        | billboard                  | asset → =texture-path=, material colour → =color-*=, =pixels_per_unit=  |
 | TILEMAP       | tilemap                    | the painted grid (copied) → =node-tilemap=, asset → =tileset-path=, =tile_size= |
+| MESH_ASSET with =lod-levels= > 1 in its =.meta= | LOD | resolved asset (absolute) → =mesh-asset=, the engine's asset manager, material as above |
+| DECAL         | decal                      | asset → =albedo-path= (absolute when it resolves), =normal= → =normal-path=, =orm= → =orm-path=, material colour → =color-*=, =size_x= .. =size_z=, =opacity=, =fade_angle=, =fade_width=, =sort_order=, =normal_strength=, =blend= by name |
+| REFLECTION_PROBE | reflection probe        | =extents_x= .. =extents_z=, =blend_distance=, =intensity=, =box_projection=, =resolution= by name |
 
 Because the map is shared with =lrg_level_visual_store_property()=, a component property changed while playing can be written back to the node visual it came from.
 
@@ -792,8 +852,11 @@ nodes:
 - *Asset loads need a graphics context.* With an asset manager but no window, the first load fails and is not retried until the path or manager changes; set the manager after the window opens (or let the renderer resolve assets).
 - *Tilemap custom items transform themselves.* A renderer must not push the item's world matrix before calling the =draw_func=.
 - *LOD state is per render list.* A renderer that reuses one list for several cameras makes them share the hysteresis and fade state; give each view its own list (the editor's viewports do).
-- *Level instantiation does not create LOD components yet.* A MESH_ASSET visual still becomes a mesh renderer; add an #LrgLodComponent in code (or wait for the 0.9 wave 2b mapping).
-- *Decals need the renderer to drive the world's set.* Until a renderer calls =lrg_decal_component_sync_world()=, =lrg_decal_set_select()= and =lrg_light_set_set_decals()= (wave 2b does this in #LrgWorld3DRenderer), decal components register but nothing paints. A decal projects along the entity's local -Y, not -Z.
+- *LOD at instantiation needs the engine's asset manager.* A MESH_ASSET visual becomes an #LrgLodComponent only when the engine is started (=lrg_engine_startup()= creates the asset manager), import settings apply, the asset resolves to a file and its =.meta= says =lod-levels= > 1; otherwise it stays a mesh renderer.
+- *Decals need a renderer to drive the world's set.* #LrgWorld3DRenderer calls =lrg_decal_component_sync_world()=, =lrg_decal_set_select()= and =lrg_light_set_set_decals()= every frame; a custom renderer must do the same or nothing paints. A decal projects along the entity's local -Y, not -Z.
+- *Reflection probes reflect nothing until captured.* Call =lrg_world3d_renderer_capture_probes()= once after the window opens and the level is loaded (and again when =lrg_reflection_probe_component_count_pending()= says so); a probe whose world has no environment is not used at all.
+- *A probe is bound by where the camera is.* #LrgWorld3DRenderer selects probes once per view at the camera position, so make the box contain the places the camera goes (the blend distance fades it in at the edges); a box tightly around an object reflects nothing while the camera is outside.
+- *Probe boxes do not rotate.* The box is axis aligned in world space; rotating the probe's entity changes nothing.
 - *Fixed billboards* are plane primitives: a renderer's plane must be the editor's unit XZ plane for the Rx(90°) turn to land in XY.
 
 ** See also

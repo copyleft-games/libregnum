@@ -117,3 +117,10 @@ environment:
 ```
 Colours are sRGB 0..1 (like all engine colours); .hdr pixels are linear. An unknown sky source / fog type fails the level load (LRG_LEVEL_ERROR_PARSE).
 Runtime: lrg_environment_load_sources(env, asset_manager, level_dir, &err); lrg_environment_bake(env, &err) (needs GL); lrg_light_set_set_environment(lights, env); lrg_environment_apply_to_light_set(env, lights); lrg_environment_draw_sky(env, &eye) first inside BeginMode3D; lrg_volumetric_fog_set_from_environment(fog, env).
+
+### Decal and reflection-probe nodes (0.9.0)
+- `kind: decal` -> LrgDecalComponent. `asset:` = albedo texture (path/guid); params `size_x`, `size_y` (projection depth, local -Y), `size_z`, `normal`, `orm`, `opacity`, `fade_angle`, `fade_width`, `sort_order`, `normal_strength`, `blend` (alpha|multiply|add); `material.color` tints.
+- `kind: reflection-probe` -> LrgReflectionProbeComponent. params `extents_x/y/z` (HALF sizes, default 5, times node scale; axis-aligned), `blend_distance`, `intensity`, `box_projection`, `resolution` (128), `near_clip`, `far_clip`, `auto_recapture`. Needs `lrg_world3d_renderer_capture_probes()` once after the window opens.
+- `kind: mesh-asset` whose `<asset>.meta` has `lod-levels > 1` -> LrgLodComponent (engine must be started).
+### Environment at runtime
+`lrg_level_instantiate_3d()` / `lrg_level_load_world3d()` put a COPY of `environment:` on the world (`lrg_world3d_get_environment`) with sky images loaded, and the `post_stack:` `.rpost` on `lrg_world3d_get_post_stack`. Relative refs resolve: base dir (level file dir) -> asset manager search paths -> project root -> cwd. Missing sky/post = g_warning, not an error. Edit the world's environment at runtime, not the level's.

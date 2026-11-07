@@ -118,7 +118,7 @@ Engine startup calls =lrg_registry_register_builtin()= before connecting its dat
 :PROPERTIES:
 :CUSTOM_ID: built-in-naming
 :END:
-Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= becomes =point-light2d=, =lrg_item_def= becomes =item-def=). ECS components drop the =-component= suffix (=transform=, not =transform-component=). These are the same names applications already used when they registered engine types by hand.
+Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= becomes =point-light2d=, =lrg_item_def= becomes =item-def=). ECS components drop the =-component= suffix (=transform=, not =transform-component=), and so do the 3D components of =LrgWorld3D= (=mesh-renderer=, =light=, =reflection-probe=; since 0.9.0). The 3D names are short because they live in the same namespace as everything else: =light= is #LrgLightComponent, while the 2D lights keep their =point-light2d= style names. These are the same names applications already used when they registered engine types by hand.
 
 *** Catalog
 :PROPERTIES:
@@ -132,6 +132,19 @@ Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= be
 |                        | sprite                      | LrgSpriteComponent            |
 |                        | collider                    | LrgColliderComponent          |
 |                        | animator                    | LrgAnimatorComponent          |
+| 3D components (0.9.0)  | mesh-renderer               | LrgMeshRendererComponent      |
+|                        | skinned-model               | LrgSkinnedModelComponent      |
+|                        | light                       | LrgLightComponent             |
+|                        | camera                      | LrgCameraComponent            |
+|                        | audio-source                | LrgAudioSourceComponent       |
+|                        | audio-listener              | LrgAudioListenerComponent     |
+|                        | billboard                   | LrgBillboardComponent         |
+|                        | tilemap                     | LrgTilemapComponent           |
+|                        | spawn                       | LrgSpawnComponent             |
+|                        | trigger                     | LrgTriggerComponent           |
+|                        | decal                       | LrgDecalComponent             |
+|                        | lod                         | LrgLodComponent               |
+|                        | reflection-probe            | LrgReflectionProbeComponent   |
 | Scenes and levels      | scene                       | LrgScene                      |
 |                        | scene-entity                | LrgSceneEntity                |
 |                        | scene-object                | LrgSceneObject                |
