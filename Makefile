@@ -34,6 +34,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-registry.h \
 	src/core/lrg-data-loader.h \
 	src/core/lrg-math3d.h \
+	src/core/lrg-color-gradient.h \
 	src/core/lrg-asset-meta.h \
 	src/core/lrg-asset-manager.h \
 	src/core/lrg-asset-pack.h \
@@ -76,6 +77,10 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-skinned-mesh.h \
 	src/graphics/lrg-billboard-batch.h \
 	src/graphics/lrg-terrain.h \
+	src/graphics/lrg-terrain-asset.h \
+	src/graphics/lrg-terrain-brush.h \
+	src/graphics/lrg-foliage.h \
+	src/graphics/lrg-water-body.h \
 	src/graphics/lrg-sky-dome.h \
 	src/graphics/lrg-sky-bodies.h \
 	src/graphics/lrg-light-set.h \
@@ -216,6 +221,7 @@ PUBLIC_HEADERS := \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
+	src/tilemap/lrg-rule-tile.h \
 	src/save/lrg-saveable.h \
 	src/save/lrg-save-context.h \
 	src/save/lrg-save-game.h \
@@ -261,6 +267,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-audio-manager.h \
 	src/audio/lrg-wave-data.h \
 	src/audio/lrg-audio-mixer.h \
+	src/audio/lrg-mixer-asset.h \
 	src/audio/lrg-procedural-audio.h \
 	src/audio/lrg-midi-synth.h \
 	src/audio/lrg-audio-effect.h \
@@ -287,6 +294,8 @@ PUBLIC_HEADERS := \
 	src/pathfinding/lrg-path.h \
 	src/pathfinding/lrg-nav-grid.h \
 	src/pathfinding/lrg-pathfinder.h \
+	src/pathfinding/lrg-nav-bake.h \
+	src/pathfinding/lrg-nav-agent.h \
 	src/pathfinding/lrg-nav-mesh.h \
 	src/pathfinding/lrg-nav-poly-mesh.h \
 	src/pathfinding/lrg-nav-poly-mesh-cache.h \
@@ -306,6 +315,8 @@ PUBLIC_HEADERS := \
 	src/ai/lrg-bt-decorator.h \
 	src/ai/lrg-bt-leaf.h \
 	src/ai/lrg-behavior-tree.h \
+	src/ai/lrg-bt-asset.h \
+	src/ai/lrg-logic-machine.h \
 	src/ai/lrg-decision.h \
 	src/ai/lrg-decider.h \
 	src/ai/lrg-decision-brain.h \
@@ -421,6 +432,12 @@ PUBLIC_HEADERS := \
 	src/world3d/components/lrg-joint-component.h \
 	src/world3d/components/lrg-cloth-component.h \
 	src/world3d/components/lrg-destructible-component.h \
+	src/world3d/components/lrg-nav-agent-component.h \
+	src/world3d/components/lrg-ai-component.h \
+	src/world3d/components/lrg-particle-component.h \
+	src/world3d/components/lrg-terrain-component.h \
+	src/world3d/components/lrg-foliage-component.h \
+	src/world3d/components/lrg-water-component.h \
 	src/world3d/components/lrg-reflection-probe-component.h \
 	src/world3d/lrg-portal-system.h \
 	src/scene/lrg-material3d.h \
@@ -506,6 +523,10 @@ PUBLIC_HEADERS := \
 	src/particles/lrg-particle-emitter.h \
 	src/particles/lrg-particle-force.h \
 	src/particles/lrg-particle-system.h \
+	src/particles/lrg-particle-asset.h \
+	src/particles/lrg-particle-ribbon-renderer.h \
+	src/particles/lrg-particle-mesh-renderer.h \
+	src/particles/lrg-gpu-particles.h \
 	src/particles/lrg-particle-billboard-renderer.h \
 	src/postprocess/lrg-post-effect.h \
 	src/postprocess/lrg-post-processor.h \
@@ -578,6 +599,7 @@ PUBLIC_HEADERS := \
 	src/atlas/lrg-atlas-region.h \
 	src/atlas/lrg-texture-atlas.h \
 	src/atlas/lrg-sprite-sheet.h \
+	src/atlas/lrg-sprite-animation.h \
 	src/atlas/lrg-nine-slice.h \
 	src/atlas/lrg-atlas-packer.h \
 	src/tutorial/lrg-tutorial-step.h \
@@ -592,6 +614,7 @@ PUBLIC_HEADERS := \
 	src/weather/lrg-fog.h \
 	src/weather/lrg-lightning.h \
 	src/weather/lrg-weather.h \
+	src/weather/lrg-weather-asset.h \
 	src/weather/lrg-day-night-cycle.h \
 	src/weather/lrg-weather-manager.h \
 	src/weather/lrg-celestial.h \
@@ -803,6 +826,7 @@ SOURCES := \
 	src/core/lrg-registry.c \
 	src/core/lrg-data-loader.c \
 	src/core/lrg-math3d.c \
+	src/core/lrg-color-gradient.c \
 	src/core/lrg-asset-meta.c \
 	src/core/lrg-asset-manager.c \
 	src/core/lrg-asset-pack.c \
@@ -845,6 +869,10 @@ SOURCES := \
 	src/graphics/lrg-skinned-mesh.c \
 	src/graphics/lrg-billboard-batch.c \
 	src/graphics/lrg-terrain.c \
+	src/graphics/lrg-terrain-asset.c \
+	src/graphics/lrg-terrain-brush.c \
+	src/graphics/lrg-foliage.c \
+	src/graphics/lrg-water-body.c \
 	src/graphics/lrg-sky-dome.c \
 	src/graphics/lrg-sky-bodies.c \
 	src/graphics/lrg-light-set.c \
@@ -986,6 +1014,7 @@ SOURCES := \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \
+	src/tilemap/lrg-rule-tile.c \
 	src/save/lrg-saveable.c \
 	src/save/lrg-save-context.c \
 	src/save/lrg-save-game.c \
@@ -1031,6 +1060,7 @@ SOURCES := \
 	src/audio/lrg-audio-manager.c \
 	src/audio/lrg-wave-data.c \
 	src/audio/lrg-audio-mixer.c \
+	src/audio/lrg-mixer-asset.c \
 	src/audio/lrg-procedural-audio.c \
 	src/audio/lrg-midi-synth.c \
 	src/audio/lrg-midi-synth-vendor.c \
@@ -1059,6 +1089,8 @@ SOURCES := \
 	src/pathfinding/lrg-path.c \
 	src/pathfinding/lrg-nav-grid.c \
 	src/pathfinding/lrg-pathfinder.c \
+	src/pathfinding/lrg-nav-bake.c \
+	src/pathfinding/lrg-nav-agent.c \
 	src/pathfinding/lrg-nav-mesh.c \
 	src/pathfinding/lrg-nav-poly-mesh.c \
 	src/pathfinding/lrg-nav-poly-mesh-cache.c \
@@ -1078,6 +1110,8 @@ SOURCES := \
 	src/ai/lrg-bt-decorator.c \
 	src/ai/lrg-bt-leaf.c \
 	src/ai/lrg-behavior-tree.c \
+	src/ai/lrg-bt-asset.c \
+	src/ai/lrg-logic-machine.c \
 	src/ai/lrg-decision.c \
 	src/ai/lrg-decider.c \
 	src/ai/lrg-decision-brain.c \
@@ -1195,6 +1229,12 @@ SOURCES := \
 	src/world3d/components/lrg-joint-component.c \
 	src/world3d/components/lrg-cloth-component.c \
 	src/world3d/components/lrg-destructible-component.c \
+	src/world3d/components/lrg-nav-agent-component.c \
+	src/world3d/components/lrg-ai-component.c \
+	src/world3d/components/lrg-particle-component.c \
+	src/world3d/components/lrg-terrain-component.c \
+	src/world3d/components/lrg-foliage-component.c \
+	src/world3d/components/lrg-water-component.c \
 	src/world3d/components/lrg-reflection-probe-component.c \
 	src/world3d/lrg-portal-system.c \
 	src/scene/lrg-material3d.c \
@@ -1280,6 +1320,10 @@ SOURCES := \
 	src/particles/lrg-particle-emitter.c \
 	src/particles/lrg-particle-force.c \
 	src/particles/lrg-particle-system.c \
+	src/particles/lrg-particle-asset.c \
+	src/particles/lrg-particle-ribbon-renderer.c \
+	src/particles/lrg-particle-mesh-renderer.c \
+	src/particles/lrg-gpu-particles.c \
 	src/particles/lrg-particle-billboard-renderer.c \
 	src/postprocess/lrg-post-effect.c \
 	src/postprocess/lrg-post-processor.c \
@@ -1353,6 +1397,7 @@ SOURCES := \
 	src/atlas/lrg-atlas-region.c \
 	src/atlas/lrg-texture-atlas.c \
 	src/atlas/lrg-sprite-sheet.c \
+	src/atlas/lrg-sprite-animation.c \
 	src/atlas/lrg-nine-slice.c \
 	src/atlas/lrg-atlas-packer.c \
 	src/tutorial/lrg-tutorial-step.c \
@@ -1367,6 +1412,7 @@ SOURCES := \
 	src/weather/lrg-fog.c \
 	src/weather/lrg-lightning.c \
 	src/weather/lrg-weather.c \
+	src/weather/lrg-weather-asset.c \
 	src/weather/lrg-day-night-cycle.c \
 	src/weather/lrg-weather-manager.c \
 	src/weather/lrg-celestial.c \
@@ -2539,6 +2585,7 @@ DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween
 	$(wildcard src/world3d/components/*.h) \
 	src/core/lrg-asset-meta.h src/core/lrg-asset-manager.h \
 	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
+	src/pathfinding/lrg-nav-bake.h src/pathfinding/lrg-nav-agent.h src/ai/lrg-bt-asset.h src/ai/lrg-logic-machine.h src/particles/lrg-particle-asset.h src/particles/lrg-particle-ribbon-renderer.h src/particles/lrg-particle-mesh-renderer.h src/particles/lrg-gpu-particles.h src/core/lrg-color-gradient.h src/weather/lrg-weather-asset.h src/graphics/lrg-terrain-asset.h src/graphics/lrg-terrain-brush.h src/graphics/lrg-foliage.h src/graphics/lrg-water-body.h src/audio/lrg-mixer-asset.h src/tilemap/lrg-rule-tile.h src/atlas/lrg-sprite-animation.h src/world3d/components/lrg-nav-agent-component.h src/world3d/components/lrg-ai-component.h src/world3d/components/lrg-particle-component.h src/world3d/components/lrg-terrain-component.h src/world3d/components/lrg-foliage-component.h src/world3d/components/lrg-water-component.h \
 	src/physics/lrg-dynamics.h src/physics/lrg-physics-shape.h src/physics/lrg-collide.h src/physics/lrg-broadphase.h src/physics/lrg-physics-layers.h src/physics/lrg-contact-solver.h src/physics/lrg-island.h src/physics/lrg-joint.h src/physics/lrg-ragdoll.h src/physics/lrg-cloth.h src/physics/lrg-fracture.h src/world3d/components/lrg-rigid-body-component.h src/world3d/components/lrg-collider-component3d.h src/world3d/components/lrg-joint-component.h src/world3d/components/lrg-cloth-component.h src/world3d/components/lrg-destructible-component.h \
 	src/lighting/lrg-lightmap3d.h src/lighting/lrg-probe-grid.h src/lighting/lrg-lightmap-baker.h src/lighting/lrg-bake-bvh.h src/graphics/lrg-uv-unwrap.h src/graphics/lrg-skinned-sprite.h src/animation/lrg-gltf-animation.h src/animation/lrg-retargeter.h src/animation/lrg-anim-graph.h src/animation/lrg-sequence.h src/animation/lrg-sequence-player.h src/animation/lrg-skeleton2d.h src/world3d/components/lrg-animator-component3d.h src/world3d/components/lrg-sequence-component.h src/ecs/components/lrg-skeleton2d-component.h \
 	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h

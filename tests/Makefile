@@ -101,6 +101,17 @@ TEST_SOURCES := \
 	test-physics-bodies.c \
 	test-cloth.c \
 	test-fracture.c \
+	test-nav-bake.c \
+	test-nav-agent.c \
+	test-bt-asset.c \
+	test-logic-machine.c \
+	test-particle-asset.c \
+	test-gpu-particles.c \
+	test-weather-asset.c \
+	test-terrain-asset.c \
+	test-mixer-asset.c \
+	test-rule-tile.c \
+	test-sprite-animation.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \
 	test-gltf-animation.c \
