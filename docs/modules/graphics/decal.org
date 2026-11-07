@@ -1,0 +1,423 @@
+#+title: LrgDecal and LrgDecalSet
+#+description: Clustered forward decals: box projectors painting albedo, normal and roughness/metallic in the lit shader
+#+authors: Zach Podbielniak
+#+categories: graphics rendering
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* LrgDecal / LrgDecalSet - Forward Decals
+:PROPERTIES:
+:CUSTOM_ID: lrgdecal
+:END:
+
+A decal is a box that projects a picture onto whatever lit geometry is inside it: bullet holes, blood, graffiti, road markings, puddles, moss, scorch marks, posters on uneven walls. libregnum's decals are /forward/ decals: they are not drawn as separate geometry; instead the one lit shader of [[file:light-set.org][LrgLightSet]] calls =lrg_decals_apply()= after sampling the material and before lighting, so a decal changes the surface's albedo, shading normal, roughness and metallic and is then lit, shadowed and fogged exactly like the surface itself.
+
+- =LrgDecal= is one projector: transform, colour, up to three textures (albedo, normal, ORM), blend mode, written channels, angle and depth fades, sort order and receiving layers.
+- =LrgDecalSet= is the frame's collection: it selects the decals near the camera, orders them, bins them into a clustered grid with the same layout as the light set's light grid, packs them into one float texture and copies their textures into an atlas. The light set binds it (=lrg_light_set_set_decals()=).
+- [[file:../world3d/components.org::#decal][LrgDecalComponent]] puts a decal on an =LrgEntity3D= and registers it with its world's set.
+
+Selection, binning and the coverage model are headless; uploads and the shader need GL 3.3 (no compute).
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgDecal= - *Final GObject Class*, =LRG_TYPE_DECAL=, GIR =Libregnum.Decal=
+- =LrgDecalSet= - *Final GObject Class*, =LRG_TYPE_DECAL_SET=, GIR =Libregnum.DecalSet=
+- =LrgDecalBlend= - enum, =LRG_TYPE_DECAL_BLEND= (=lrg_decal_blend_get_type()=): =LRG_DECAL_BLEND_ALPHA= (nick =alpha=), =LRG_DECAL_BLEND_MULTIPLY= (=multiply=), =LRG_DECAL_BLEND_ADD= (=add=)
+- =LrgDecalChannels= - flags, =LRG_TYPE_DECAL_CHANNELS= (=lrg_decal_channels_get_type()=): =LRG_DECAL_CHANNEL_NONE=, =_ALBEDO= (1), =_NORMAL= (2), =_ROUGHNESS= (4), =_METALLIC= (8), =_ALL= (15)
+- *Header* - =graphics/lrg-decal.h= (through =<libregnum.h>=)
+
+| Constant                      | Value | Meaning                                                   |
+|-------------------------------+-------+-----------------------------------------------------------|
+| =LRG_DECAL_SET_MAX_DECALS=    | 1024  | most decals one selection uploads (with a grid)           |
+| =LRG_DECAL_SET_MAX_UNGRIDDED= | 64    | most decals selected without a grid (the nearest)         |
+| =LRG_DECAL_SET_MAX_SLOTS=     | 32    | most decals per grid cell                                 |
+| =LRG_DECAL_SET_MAX_CELLS=     | 128   | largest grid side                                         |
+| =LRG_DECAL_SET_MAX_LAYERS=    | 16    | most vertical grid layers                                 |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** The projector box
+:PROPERTIES:
+:CUSTOM_ID: concepts-box
+:END:
+A decal's volume is the unit cube (-0.5 .. 0.5 on every axis) under its world matrix (=lrg_decal_set_transform()=, or =lrg_decal_set_trs()= from position, rotation quaternion and size). It projects along its local *-Y*: a decal with no rotation lies flat and paints the floor below and above its centre within half its Y size. The picture's U runs along local +X and V along local +Z, with the image's top edge at local -Z - so seen from above with -Z "up the screen", the picture reads upright. Rotate the box to aim it at walls: +90° about X makes it project along -Z onto a wall facing +Z.
+
+The box's size is its scale: X and Z are the picture's width and height in world units, Y is the projection depth. Keep Y small (0.2 - 1 m) so the decal does not reach through thin walls onto the other side.
+
+*** Coverage: angle and depth fades
+:PROPERTIES:
+:CUSTOM_ID: concepts-coverage
+:END:
+For a fragment at =p= with geometric normal =ng= inside the box, the decal's weight is
+
+#+begin_example
+w = opacity * colour.a * texture.a
+    * smoothstep (cos (fade_angle + fade_width), cos (fade_angle), dot (ng, box_up))
+    * (1 - smoothstep (1 - depth_fade, 1, |local.y| * 2))
+#+end_example
+
+- The *angle fade* keeps a floor decal off the sides of a crate standing in it: surfaces within =fade-angle= of the box's up axis get the full decal, then it fades out over =fade-width= degrees. 60° + 20° (the default) paints floors and gentle slopes, not walls. 180° paints everything in the box, including back faces.
+- The *depth fade* softens the cut where the box's top and bottom faces slice through geometry (a decal on uneven ground).
+- =lrg_decal_get_coverage()= is this model on the CPU (without the texture alpha), for gameplay queries and tests.
+
+*** Blending and channels
+:PROPERTIES:
+:CUSTOM_ID: concepts-blend
+:END:
+The decal colour times its albedo texture is converted to linear (the hook receives the material's linear albedo) and combined by =blend=:
+
+| Blend      | Albedo after                       | Typical use                               |
+|------------+------------------------------------+-------------------------------------------|
+| =alpha=    | =mix (albedo, colour, w)=          | stickers, posters, paint, road markings   |
+| =multiply= | =albedo * mix (1, colour, w)=      | dirt, grime, scorch, wet darkening        |
+| =add=      | =albedo + colour * w=              | glowing paint, frost highlights           |
+
+=channels= says what the decal writes. =NORMAL= bends the shading normal towards the normal map (tangent space: red along local +X, green up the image = local -Z, blue along the box's up axis) by =w * normal-strength=, which needs a normal texture. =ROUGHNESS= and =METALLIC= replace the material's values by =w=, with the ORM texture's green and blue channels, or the decal's =roughness=/=metallic= values when it has no ORM texture - a wet puddle is a multiply decal with =ROUGHNESS= and roughness 0.05.
+
+*** Order
+:PROPERTIES:
+:CUSTOM_ID: concepts-order
+:END:
+Decals apply in ascending =sort-order=; equal orders keep the set's insertion order. Later decals paint over earlier ones, so give the blood splat a higher order than the floor grime it sits on.
+
+*** Receiving layers
+:PROPERTIES:
+:CUSTOM_ID: concepts-layers
+:END:
+A decal applies to a fragment only when its =layer-mask= shares a bit with the set's receiver mask (=lrg_decal_set_set_receiver_layers()=), which is a shader uniform bound with the set. The default (every bit on both sides) paints everything. To keep decals off a layer (characters, say), draw that layer after setting the receiver mask to its bit and rebinding (=lrg_light_set_apply()= rebinds), and clear that bit from the decals' masks.
+
+*** Selection and the cluster grid
+:PROPERTIES:
+:CUSTOM_ID: concepts-grid
+:END:
+=lrg_decal_set_select()= runs once per frame per camera:
+
+1. Candidates are the enabled decals with opacity, colour alpha and channels, whose box is within =max-distance= of the camera (0 = no limit) and, with a grid, overlaps the grid.
+2. Over the limit (=LRG_DECAL_SET_MAX_DECALS= with a grid, =LRG_DECAL_SET_MAX_UNGRIDDED= without), the nearest stay.
+3. The rest are ordered by sort order then insertion (the /application order/).
+4. With a grid (=lrg_decal_set_set_grid()=), a square of =cells= x =cells= cells of =cell_size= around the camera's cell (and optional vertical layers, =lrg_decal_set_set_grid_layers()=, the outer ones reaching on without end) lists, per cell, the decals whose world bounds touch it - at most =slots= per cell (=lrg_decal_set_set_grid_slots()=, default 8); a full cell keeps the highest sort orders. This is the layout the light set uses for its light grid ([[file:light-set.org][LrgLightSet]] =set_grid()=), with its own data so the two can be sized independently.
+
+Without a grid every fragment tests every selected decal (up to 64): fine for a handful, wasteful for a level full of them.
+
+*** GPU packing
+:PROPERTIES:
+:CUSTOM_ID: concepts-packing
+:END:
+=lrg_decal_set_upload()= (called by the binder when the selection changed) builds:
+
+- *One RGBA32F texture*, =MAX (8, cells * slots / 4)= texels wide: one row per selected decal in application order (eight texels: the three rows of the draw-space to box matrix, colour, atlas rectangle, opacity/fade cosines/flags, normal strength/roughness/metallic/blend, layer mask halves/depth fade), then the grid's cell rows (four decal indices per texel, -1 after the last).
+- *The atlas*, an RGBA8 texture of =size= x 3 =size= holding three bands (albedo, normal, ORM) of =tiles= x =tiles= tiles each. Every distinct texture combination of the selected decals takes one tile in all three bands. Textures are read back from the GPU and resampled to the tile size on the CPU, only when a new combination appears, so uploads work anywhere in a frame.
+
+The hook therefore uses two texture units (data and atlas), or one when no selected decal has a texture. Both come from the light set's hook window (=lrg_light_set_hook_unit_usable()=); when no unit is left the decals are off for that draw.
+
+*** Floating origin
+:PROPERTIES:
+:CUSTOM_ID: concepts-origin
+:END:
+The lit shader works in /draw space/ (world minus the light set's origin, =lrg_light_set_set_origin()=). Give the set the same origin with =lrg_decal_set_set_origin()=; the box matrices are shifted on upload so precision stays with the camera.
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+
+*** LrgDecal properties
+:PROPERTIES:
+:CUSTOM_ID: decal-properties
+:END:
+
+| Property | Type | Default | Visual effect |
+|----------+------+---------+---------------|
+| =color-r=, =color-g=, =color-b= | float 0..1 | 1 | tint of the albedo texture (or the plain colour without one), sRGB-encoded like material colours |
+| =color-a= | float 0..1 | 1 | scales the coverage |
+| =opacity= | float 0..1 | 1 | overall strength; animate it to fade decals in and out |
+| =fade-angle= | float 0..180 | 60 | surfaces within this angle of the box's up axis get the full decal |
+| =fade-width= | float 0..180 | 20 | degrees over which the decal fades past the fade angle (0 = hard cut) |
+| =depth-fade= | float 0..1 | 0 | share of the half depth fading towards the box's top and bottom faces |
+| =sort-order= | int | 0 | application order: higher paints on top |
+| =layer-mask= | uint | all | render layers that receive the decal |
+| =blend= | #LrgDecalBlend | alpha | how the colour combines with the albedo |
+| =channels= | #LrgDecalChannels | albedo, normal | what the decal writes |
+| =normal-strength= | float 0..1 | 1 | how far the normal turns to the decal's normal map |
+| =roughness= | float 0..1 | 0.5 | roughness written without an ORM map (with =ROUGHNESS=) |
+| =metallic= | float 0..1 | 0 | metallic written without an ORM map (with =METALLIC=) |
+| =enabled= | boolean | TRUE | whether the decal draws (it stays in its set) |
+| =albedo-texture= | #GrlTexture | NULL | albedo (RGB) and coverage (A) |
+| =normal-texture= | #GrlTexture | NULL | tangent-space normal map (OpenGL convention) |
+| =orm-texture= | #GrlTexture | NULL | glTF ORM (G roughness, B metallic) |
+
+The transform and the uv rectangle (=lrg_decal_set_uv_rect()=, the part of the textures shown - one cell of a decal sheet) are set through functions.
+
+*** LrgDecalSet settings
+:PROPERTIES:
+:CUSTOM_ID: set-settings
+:END:
+
+| Setting | Function | Default | Effect |
+|---------+----------+---------+--------|
+| grid | =lrg_decal_set_set_grid()= | off | cells per side and cell size of the cluster grid |
+| layers | =lrg_decal_set_set_grid_layers()= | 1 x 4 m | vertical clusters for stacked floors |
+| slots | =lrg_decal_set_set_grid_slots()= | 8 | decals per cell (multiple of 4) |
+| distance | =lrg_decal_set_set_max_distance()= | 0 (none) | decals farther away are not selected |
+| receivers | =lrg_decal_set_set_receiver_layers()= | all | layers of the geometry being drawn |
+| atlas | =lrg_decal_set_set_atlas()= | 1024 px, 4 x 4 tiles | atlas resolution and tile count |
+| origin | =lrg_decal_set_set_origin()= | 0, 0, 0 | floating origin (match the light set) |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** LrgDecal
+:PROPERTIES:
+:CUSTOM_ID: api-decal
+:END:
+#+begin_src C
+LrgDecal *       lrg_decal_new                  (void);
+void             lrg_decal_set_transform        (LrgDecal *self, const gfloat *matrix);
+void             lrg_decal_get_transform        (LrgDecal *self, gfloat *out_matrix);
+void             lrg_decal_set_trs              (LrgDecal *self, const gfloat *position,
+                                                 const gfloat *rotation, const gfloat *size);
+void             lrg_decal_get_world_bounds     (LrgDecal *self, gfloat *out_min, gfloat *out_max);
+gboolean         lrg_decal_project_point        (LrgDecal *self, const gfloat *point, gfloat *out_local);
+gfloat           lrg_decal_get_coverage         (LrgDecal *self, const gfloat *point, const gfloat *normal);
+void             lrg_decal_set_color            (LrgDecal *self, gfloat r, gfloat g, gfloat b, gfloat a);
+void             lrg_decal_get_color            (LrgDecal *self, gfloat *out_rgba);
+void             lrg_decal_set_opacity          (LrgDecal *self, gfloat opacity);
+gfloat           lrg_decal_get_opacity          (LrgDecal *self);
+void             lrg_decal_set_fade_angle       (LrgDecal *self, gfloat degrees);
+gfloat           lrg_decal_get_fade_angle       (LrgDecal *self);
+void             lrg_decal_set_fade_width       (LrgDecal *self, gfloat degrees);
+gfloat           lrg_decal_get_fade_width       (LrgDecal *self);
+void             lrg_decal_set_depth_fade       (LrgDecal *self, gfloat fade);
+gfloat           lrg_decal_get_depth_fade       (LrgDecal *self);
+void             lrg_decal_set_sort_order       (LrgDecal *self, gint order);
+gint             lrg_decal_get_sort_order       (LrgDecal *self);
+void             lrg_decal_set_layer_mask       (LrgDecal *self, guint32 mask);
+guint32          lrg_decal_get_layer_mask       (LrgDecal *self);
+void             lrg_decal_set_blend            (LrgDecal *self, LrgDecalBlend blend);
+LrgDecalBlend    lrg_decal_get_blend            (LrgDecal *self);
+void             lrg_decal_set_channels         (LrgDecal *self, LrgDecalChannels channels);
+LrgDecalChannels lrg_decal_get_channels         (LrgDecal *self);
+void             lrg_decal_set_normal_strength  (LrgDecal *self, gfloat strength);
+gfloat           lrg_decal_get_normal_strength  (LrgDecal *self);
+void             lrg_decal_set_roughness        (LrgDecal *self, gfloat roughness);
+gfloat           lrg_decal_get_roughness        (LrgDecal *self);
+void             lrg_decal_set_metallic         (LrgDecal *self, gfloat metallic);
+gfloat           lrg_decal_get_metallic         (LrgDecal *self);
+void             lrg_decal_set_enabled          (LrgDecal *self, gboolean enabled);
+gboolean         lrg_decal_get_enabled          (LrgDecal *self);
+void             lrg_decal_set_albedo_texture   (LrgDecal *self, GrlTexture *texture);
+GrlTexture *     lrg_decal_get_albedo_texture   (LrgDecal *self);
+void             lrg_decal_set_normal_texture   (LrgDecal *self, GrlTexture *texture);
+GrlTexture *     lrg_decal_get_normal_texture   (LrgDecal *self);
+void             lrg_decal_set_orm_texture      (LrgDecal *self, GrlTexture *texture);
+GrlTexture *     lrg_decal_get_orm_texture      (LrgDecal *self);
+void             lrg_decal_set_uv_rect          (LrgDecal *self, gfloat x, gfloat y, gfloat width, gfloat height);
+void             lrg_decal_get_uv_rect          (LrgDecal *self, gfloat *out_rect);
+guint            lrg_decal_get_version          (LrgDecal *self);
+#+end_src
+
+| Function | Description |
+|----------+-------------|
+| =lrg_decal_new()= | a 1 m cube at the origin projecting down, white, alpha blend |
+| =lrg_decal_set_transform()= / =lrg_decal_get_transform()= | the column-major unit-box matrix |
+| =lrg_decal_set_trs()= | the matrix from position, rotation (x, y, z, w; NULL = none) and size |
+| =lrg_decal_get_world_bounds()= | world AABB of the box |
+| =lrg_decal_project_point()= | world point -> unit-box coordinates; TRUE inside |
+| =lrg_decal_get_coverage()= | the shader's weight before textures (0 outside, disabled or faded) |
+| =lrg_decal_set_color()= ... =lrg_decal_get_enabled()= | the properties above |
+| =lrg_decal_set_albedo_texture()= / =lrg_decal_set_normal_texture()= / =lrg_decal_set_orm_texture()= (+ getters) | the three maps (a reference is held) |
+| =lrg_decal_set_uv_rect()= / =lrg_decal_get_uv_rect()= | the texture region shown, clamped inside 0 .. 1 |
+| =lrg_decal_get_version()= | change counter |
+
+*** LrgDecalSet
+:PROPERTIES:
+:CUSTOM_ID: api-set
+:END:
+#+begin_src C
+LrgDecalSet * lrg_decal_set_new                     (void);
+void          lrg_decal_set_add                     (LrgDecalSet *self, LrgDecal *decal);
+gboolean      lrg_decal_set_remove                  (LrgDecalSet *self, LrgDecal *decal);
+void          lrg_decal_set_clear                   (LrgDecalSet *self);
+guint         lrg_decal_set_get_count               (LrgDecalSet *self);
+LrgDecal *    lrg_decal_set_get_decal               (LrgDecalSet *self, guint index);
+void          lrg_decal_set_set_origin              (LrgDecalSet *self, gdouble x, gdouble y, gdouble z);
+void          lrg_decal_set_get_origin              (LrgDecalSet *self, gdouble *out_x, gdouble *out_y, gdouble *out_z);
+void          lrg_decal_set_set_grid                (LrgDecalSet *self, guint cells, gfloat cell_size);
+guint         lrg_decal_set_get_grid_cells          (LrgDecalSet *self);
+void          lrg_decal_set_set_grid_layers         (LrgDecalSet *self, guint layers, gfloat layer_height);
+void          lrg_decal_set_set_grid_slots          (LrgDecalSet *self, guint slots);
+guint         lrg_decal_set_get_grid_slots          (LrgDecalSet *self);
+void          lrg_decal_set_set_max_distance        (LrgDecalSet *self, gfloat distance);
+gfloat        lrg_decal_set_get_max_distance        (LrgDecalSet *self);
+void          lrg_decal_set_set_receiver_layers     (LrgDecalSet *self, guint32 mask);
+guint32       lrg_decal_set_get_receiver_layers     (LrgDecalSet *self);
+void          lrg_decal_set_set_atlas               (LrgDecalSet *self, guint size, guint tiles);
+guint         lrg_decal_set_get_atlas_size          (LrgDecalSet *self);
+guint         lrg_decal_set_get_atlas_tiles         (LrgDecalSet *self);
+guint         lrg_decal_set_select                  (LrgDecalSet *self, gdouble camera_x, gdouble camera_y, gdouble camera_z);
+guint         lrg_decal_set_get_active_count        (LrgDecalSet *self);
+LrgDecal *    lrg_decal_set_get_active_decal        (LrgDecalSet *self, guint index);
+guint         lrg_decal_set_get_cluster_decal_count (LrgDecalSet *self, gdouble x, gdouble y, gdouble z);
+LrgDecal *    lrg_decal_set_get_cluster_decal       (LrgDecalSet *self, gdouble x, gdouble y, gdouble z, guint index);
+gboolean      lrg_decal_set_upload                  (LrgDecalSet *self);
+gint          lrg_decal_set_bind                    (LrgDecalSet *self, guint shader_id, gint first_unit);
+void          lrg_decal_set_bind_inactive           (guint shader_id);
+const gchar * lrg_decal_set_get_glsl                (void);
+void          lrg_decal_set_release                 (LrgDecalSet *self);
+#+end_src
+
+| Function | Description |
+|----------+-------------|
+| =lrg_decal_set_new()= | an empty set |
+| =lrg_decal_set_add()= / =lrg_decal_set_remove()= / =lrg_decal_set_clear()= | membership (references held; insertion order kept) |
+| =lrg_decal_set_get_count()= / =lrg_decal_set_get_decal()= | the members |
+| =lrg_decal_set_set_origin()= / =lrg_decal_set_get_origin()= | floating origin |
+| =lrg_decal_set_set_grid()=, =lrg_decal_set_get_grid_cells()=, =lrg_decal_set_set_grid_layers()=, =lrg_decal_set_set_grid_slots()=, =lrg_decal_set_get_grid_slots()= | the cluster grid |
+| =lrg_decal_set_set_max_distance()= / =lrg_decal_set_get_max_distance()= | selection range |
+| =lrg_decal_set_set_receiver_layers()= / =lrg_decal_set_get_receiver_layers()= | layers being drawn |
+| =lrg_decal_set_set_atlas()=, =lrg_decal_set_get_atlas_size()=, =lrg_decal_set_get_atlas_tiles()= | atlas layout (64 .. 4096 px, 1 .. 16 tiles per side) |
+| =lrg_decal_set_select()= | the frame's selection and binning (headless) |
+| =lrg_decal_set_get_active_count()= / =lrg_decal_set_get_active_decal()= | the selection in application order |
+| =lrg_decal_set_get_cluster_decal_count()= / =lrg_decal_set_get_cluster_decal()= | a cell's list, as the shader walks it |
+| =lrg_decal_set_upload()= | GPU data and atlas tiles when the selection changed |
+| =lrg_decal_set_bind()= | binds into your own shader that pasted =lrg_decal_set_get_glsl()=; returns the next free unit |
+| =lrg_decal_set_bind_inactive()= | turns the hook off in a shader |
+| =lrg_decal_set_get_glsl()= | the hook source (needs =vec3 lrg_to_linear (vec3)= defined before it) |
+| =lrg_decal_set_release()= | frees GPU textures and atlas tiles (before =CloseWindow()=) |
+
+The light set's binder is =lrg_decal_set_bind_private()= (private header =graphics/lrg-decal-glsl-private.h=, which also documents the data layout).
+
+*** The GLSL hook
+:PROPERTIES:
+:CUSTOM_ID: api-glsl
+:END:
+#+begin_src glsl
+/* p: draw-space position, ng: geometric normal (unit); albedo is LINEAR rgb */
+void lrg_decals_apply (vec3 p, vec3 ng, inout vec4 albedo, inout vec3 n,
+                       inout float rough, inout float metal);
+#+end_src
+
+Uniforms (all prefixed =lrgDecal=): =On=, =Count=, =Grid=, =Receiver=, =CellRow=, =Textures=, =Data= (sampler2D), =Atlas= (sampler2D), =GridParams= (vec4 corner X, corner Z, cell size, cells), =GridLayers= (vec4 layer 0 base, layer height, layers, slots), =AtlasTexel= (vec2).
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** A scorch mark on the floor, lit by the light set
+:PROPERTIES:
+:CUSTOM_ID: example-scorch
+:END:
+#+begin_src C
+g_autoptr(LrgDecalSet) decals = lrg_decal_set_new ();
+g_autoptr(LrgDecal)    scorch = lrg_decal_new ();
+gfloat                 pos[3] = { 4.0f, 0.0f, -2.0f };
+gfloat                 size[3] = { 2.5f, 0.6f, 2.5f };   /* 2.5 m wide, 0.6 m deep */
+
+lrg_decal_set_trs (scorch, pos, NULL, size);
+lrg_decal_set_albedo_texture (scorch, scorch_texture);   /* alpha = shape */
+lrg_decal_set_blend (scorch, LRG_DECAL_BLEND_MULTIPLY);
+lrg_decal_set_color (scorch, 0.25f, 0.22f, 0.2f, 1.0f);
+lrg_decal_set_channels (scorch, LRG_DECAL_CHANNEL_ALBEDO | LRG_DECAL_CHANNEL_ROUGHNESS);
+lrg_decal_set_roughness (scorch, 0.95f);                  /* soot is matte */
+lrg_decal_set_depth_fade (scorch, 0.3f);
+lrg_decal_set_add (decals, scorch);
+
+lrg_decal_set_set_grid (decals, 32, 4.0f);   /* 128 m around the camera */
+lrg_light_set_set_decals (lights, decals);
+
+/* every frame, before drawing */
+lrg_decal_set_select (decals, cam_x, cam_y, cam_z);
+lrg_light_set_apply (lights, cam_x, cam_y, cam_z);   /* binds the decals */
+#+end_src
+
+*** A poster on a wall from a decal sheet
+:PROPERTIES:
+:CUSTOM_ID: example-poster
+:END:
+#+begin_src C
+gfloat axis[3] = { 1.0f, 0.0f, 0.0f };
+gfloat q[4];
+gfloat pos[3] = { 0.0f, 1.6f, -3.95f };     /* just in front of a wall facing +Z */
+gfloat size[3] = { 0.8f, 0.2f, 1.2f };
+
+lrg_math3d_quat_from_axis_angle (axis, G_PI / 2.0f, q);   /* project along -Z */
+lrg_decal_set_trs (poster, pos, q, size);
+lrg_decal_set_albedo_texture (poster, sheet);
+lrg_decal_set_normal_texture (poster, sheet_normals);     /* paper wrinkles */
+lrg_decal_set_uv_rect (poster, 0.5f, 0.0f, 0.5f, 1.0f);   /* right half of the sheet */
+lrg_decal_set_sort_order (poster, 10);                    /* over the grime */
+#+end_src
+
+*** A puddle that fades in with rain
+:PROPERTIES:
+:CUSTOM_ID: example-puddle
+:END:
+#+begin_src C
+lrg_decal_set_blend (puddle, LRG_DECAL_BLEND_MULTIPLY);
+lrg_decal_set_color (puddle, 0.6f, 0.6f, 0.65f, 1.0f);
+lrg_decal_set_channels (puddle, LRG_DECAL_CHANNEL_ALBEDO | LRG_DECAL_CHANNEL_ROUGHNESS
+                                | LRG_DECAL_CHANNEL_METALLIC);
+lrg_decal_set_roughness (puddle, 0.05f);
+lrg_decal_set_metallic (puddle, 0.0f);
+lrg_decal_set_opacity (puddle, rain_amount);   /* 0 .. 1 per frame */
+#+end_src
+
+*** Gameplay query: is the player standing in the puddle?
+:PROPERTIES:
+:CUSTOM_ID: example-query
+:END:
+#+begin_src C
+gfloat feet[3] = { px, py, pz };
+gfloat up[3] = { 0.0f, 1.0f, 0.0f };
+
+if (lrg_decal_get_coverage (puddle, feet, up) > 0.5f)
+	play_splash ();
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Per fragment, the shader walks the cell's list: one bounds test (three texel fetches) per listed decal, five more fetches and up to three atlas samples for each decal that covers the fragment. Keep =slots= at 8 unless dense decal clusters lose decals; a full cell drops the lowest sort orders.
+- Without a grid every fragment tests up to 64 decals. Use a grid as soon as you have more than a dozen decals; cell size 2 - 8 m with 16 - 64 cells per side suits most levels.
+- Count limits: 1024 decals per selection (with a grid), 64 without; the data texture is =1024 + cells x layers= rows high at most, within any GL 3.3 desktop driver's texture size.
+- =select()= is O(decals + covered cells) on the CPU and does not allocate per decal beyond one small array; uploads happen only when =select()= ran (once per frame).
+- Atlas copies (GPU read-back plus a CPU resample) happen only for texture combinations not already in a tile, typically at level load. A 1024 px atlas of 4 x 4 tiles gives 256 px tiles in 12 MB of VRAM; raise =tiles= for many small decals, =size= for close-up detail.
+- Two texture units per lit draw (one without textured decals).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Select every frame.* The upload and the GPU data follow =lrg_decal_set_select()=; changes to decals after it show at the next select.
+- *Projection direction is local -Y.* A decal "facing" a wall must be rotated so its local +Y points out of the wall.
+- *Deep boxes paint both sides* of thin geometry (a decal on a 10 cm wall with a 1 m deep box shows on the other side too, unless the angle fade removes it - it does for back-facing surfaces with fade angles below 90°).
+- *No mipmaps.* The atlas is sampled at level 0; a detailed texture on a decal seen from afar shimmers. Keep decal textures close to their on-screen size or blur them.
+- *Too many texture combinations.* Beyond =tiles= x =tiles= distinct (albedo, normal, ORM) combinations among the selected decals, the extra decals draw with their colour only and a warning is logged once. Share textures, use decal sheets with =uv_rect=, or raise =tiles=.
+- *Colours are sRGB-encoded* like material colours; the hook converts them. Custom shaders pasting the hook must define =lrg_to_linear()= first and pass linear albedo.
+- *Normal maps* use the OpenGL convention (green up). DirectX-style maps look inverted vertically.
+- *Float textures.* The data texture is RGBA32F; GL 3.3 core has it, GLES2 does not (unsupported).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+In wave 2a decals are an engine API plus [[file:../world3d/components.org::#decal][LrgDecalComponent]], which already works in play-in-editor once the renderer integration lands. Wave 2b adds the editor side: a decal gizmo in the viewport (the projector box with an arrow along -Y, resizable with handles), a decal node visual and its inspector (textures, blend, channels, fades, order, layers), mapping that visual to an =LrgDecalComponent= on level instantiation, and a "Decal complexity" debug view of the per-cell counts. Until then add the component from code or a script.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:light-set.org::#shader-contract-090][Light-set shader contract]] - where =lrg_decals_apply()= runs
+- [[file:../world3d/components.org::#decal][LrgDecalComponent]] - decals on entities
+- [[file:material.org][LrgMaterial]] - the surface properties decals modify
+- [[file:ssao.org][LrgSsao]] - the other wave 2a hook
+- [[file:render-layers.org][Render layers]] - the bits =layer-mask= uses
