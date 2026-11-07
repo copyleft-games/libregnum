@@ -1,0 +1,299 @@
+#+title: Physics
+#+description: Using libregnum's 3D physics: worlds and bodies, shapes, layers, materials, queries, sensors and contacts; joints and ragdolls, components and levels, cloth and destruction follow in their sections.
+
+* Physics
+:PROPERTIES:
+:CUSTOM_ID: physics
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > Guides > Physics
+#+end_quote
+
+libregnum 0.9 ships its own 3D rigid-body engine, =LrgDynamicsWorld=, written in GObject C with algorithms ported from Jolt Physics. This guide walks through it from a game's point of view: making a world, filling it with bodies, choosing shapes and layers, asking it questions, and reacting to what happens. The module pages hold the full reference: [[file:../modules/physics/dynamics.org][LrgDynamicsWorld]], [[file:../modules/physics/physics-shape.org][shapes]], [[file:../modules/physics/collide.org][collision]], [[file:../modules/physics/broadphase.org][broadphase]], [[file:../modules/physics/physics-layers.org][layers]], [[file:../modules/physics/contact-solver.org][solver and constraints]], [[file:../modules/physics/islands.org][islands]].
+
+** A world and a step
+:PROPERTIES:
+:CUSTOM_ID: world
+:END:
+A world is a container of bodies with a gravity and a fixed time step. Make one per level (or per independent simulation), set gravity (it is zero by default, so you pick the up axis), and step it once per frame with the frame time. The world runs as many fixed 1/60 s substeps as the time covers (at most four per call by default) and keeps the remainder for the next frame.
+
+#+begin_src c
+g_autoptr(LrgDynamicsWorld) world = lrg_dynamics_world_new ();
+g_autoptr(GError) error = NULL;
+gfloat gravity[3] = { 0.0f, -9.81f, 0.0f };
+
+lrg_dynamics_world_set_gravity (world, gravity, &error);
+lrg_dynamics_world_set_step_limits (world, 1.0f / 60.0f, 4, &error);
+
+/* every frame */
+lrg_dynamics_world_step (world, frame_dt, NULL, &error);
+#+end_src
+
+Because the step is fixed, poses jump in 1/60 s increments. Render each body at =lrg_dynamics_world_get_interpolated_pose()= to blend between the last two substeps; =lrg_dynamics_world_get_interpolation_alpha()= is the blend factor. Game logic that must see exact physics (hit detection, scoring) reads =lrg_dynamics_world_get_position()=.
+
+Hook per-substep logic (buoyancy, thrusters, a character controller) to =LrgDynamicsWorld::pre-substep=, which runs with the fixed dt before every substep.
+
+** Bodies
+:PROPERTIES:
+:CUSTOM_ID: bodies
+:END:
+A body is a shape plus a motion kind:
+
+- *static*: level geometry that never moves (floors, walls, terrain, static meshes),
+- *dynamic*: things physics moves (crates, debris, balls, ragdoll bones), with a mass,
+- *kinematic*: things you move and physics respects (doors, lifts, moving platforms, a player capsule you drive yourself).
+
+#+begin_src c
+g_autoptr(LrgPhysicsShape) floor_shape = lrg_physics_shape_new_box (20.0f, 0.5f, 20.0f);
+g_autoptr(LrgPhysicsShape) crate_shape = lrg_physics_shape_new_box (0.5f, 0.5f, 0.5f);
+gfloat floor_at[3] = { 0.0f, -0.5f, 0.0f };
+gfloat crate_at[3] = { 0.0f, 3.0f, 0.0f };
+guint floor_body;
+guint crate;
+
+lrg_dynamics_world_add_body (world, floor_shape, LRG_DYNAMICS_BODY_STATIC, 0.0f, floor_at, NULL, &floor_body, &error);
+lrg_dynamics_world_add_body (world, crate_shape, LRG_DYNAMICS_BODY_DYNAMIC, 20.0f, crate_at, NULL, &crate, &error);
+lrg_dynamics_world_set_user_data (world, crate, my_entity_id);
+#+end_src
+
+The id you get back is stable for the body's lifetime; store your entity id on the body with =lrg_dynamics_world_set_user_data()= so contacts and queries lead back to your game objects. Remove a body with =lrg_dynamics_world_remove_body()=.
+
+Move dynamic bodies with physics, not by writing positions: =lrg_dynamics_world_apply_force()= (continuous pushes, consumed by the next substep), =lrg_dynamics_world_apply_impulse()= (instant kicks, explosions, bullets), =lrg_dynamics_world_set_linear_velocity()= (a jump, a launch). Move kinematic bodies with =lrg_dynamics_world_move_kinematic()= every frame, so the solver knows their velocity and pushes what they touch. =lrg_dynamics_world_set_pose()= teleports (respawns, editor moves).
+
+** Shapes
+:PROPERTIES:
+:CUSTOM_ID: shapes
+:END:
+Pick the cheapest shape that looks right; shapes are shared and immutable, so build each once and reuse it for every body that needs it.
+
+| Shape | Good for | Notes |
+|-------+----------+-------|
+| sphere | balls, projectiles, wheels, round debris | cheapest |
+| capsule | characters, limbs, bottles | along local Y |
+| cylinder | barrels, pillars | along local Y |
+| box | crates, walls, platforms | the workhorse |
+| convex hull | rocks, irregular props | built from points (quickhull), optional rounding radius |
+| compound | chairs, cars, anything concave that moves | children with local transforms |
+| triangle mesh | static level geometry | static or kinematic only, two-sided, internal edges smoothed |
+| heightfield | terrain | static or kinematic only, holes supported |
+| plane | an infinite ground | static only |
+
+A dynamic body needs a shape with a volume, so a concave prop is a compound of hulls, not a mesh. The body's mass is yours; its inertia and centre of mass come from the shape. See [[file:../modules/physics/physics-shape.org][LrgPhysicsShape]].
+
+** Materials and feel
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+=lrg_dynamics_world_set_body_material()= sets friction (0 ice, 0.5 the default for shape bodies, 1 rubber) and restitution (0 dead, 1 superball). Contacts combine friction as the geometric mean and restitution as the maximum, so a bouncy ball bounces on any floor. =lrg_dynamics_world_set_damping()= adds air drag (shape bodies start at 0.05), and =lrg_dynamics_world_set_gravity_factor()= makes a body floaty (0.3) or heavy (2).
+
+** Layers
+:PROPERTIES:
+:CUSTOM_ID: layers
+:END:
+Layers decide who collides with whom. There are 32 object layers, a symmetric collide matrix, and a per-body mask. The defaults name the common ones (=LRG_PHYSICS_LAYER_DEFAULT=, =STATIC=, =DYNAMIC=, =KINEMATIC=, =CHARACTER=, =TRIGGER=, =DEBRIS=, =RAGDOLL=, =PROJECTILE=). A typical setup: debris collides with the level but not with characters or other debris; projectiles skip their shooter's layer; triggers see characters only.
+
+#+begin_src c
+g_autoptr(LrgPhysicsLayers) layers = lrg_physics_layers_new_default ();
+lrg_physics_layers_set_collides (layers, LRG_PHYSICS_LAYER_DEBRIS, LRG_PHYSICS_LAYER_CHARACTER, FALSE);
+lrg_physics_layers_set_collides (layers, LRG_PHYSICS_LAYER_DEBRIS, LRG_PHYSICS_LAYER_DEBRIS, FALSE);
+lrg_dynamics_world_set_layers (world, layers);
+lrg_dynamics_world_set_body_layer (world, chunk, LRG_PHYSICS_LAYER_DEBRIS, LRG_PHYSICS_LAYERS_ALL, &error);
+#+end_src
+
+A project keeps its layer names and matrix in the =physics:= block of =project.ryaml= ([[file:../modules/physics/physics-layers.org][format]]); load it with =lrg_physics_layers_load_from_file()=. For single pairs (a ragdoll's neighbouring bones, a vehicle and its own wheels) use =lrg_dynamics_world_set_collision_between()=.
+
+** Asking the world: queries
+:PROPERTIES:
+:CUSTOM_ID: queries
+:END:
+| Question | Call |
+|----------+------|
+| what does this ray hit first? (hitscan, line of sight, ground under the feet) | =lrg_dynamics_world_raycast()= |
+| everything along a ray (piercing shots) | =lrg_dynamics_world_raycast_all()= |
+| where would this shape stop if moved? (character sweeps, thick bullets, placement) | =lrg_dynamics_world_shape_cast()= |
+| what overlaps this shape here? (explosions, melee hit boxes, spawn checks) | =lrg_dynamics_world_overlap_shape()= |
+| what is roughly in this box? (cheap area scans) | =lrg_dynamics_world_overlap_aabb()= |
+
+Each takes a layer mask and a body to ignore (the caster). Ray distances are in multiples of the direction you pass, so a unit direction gives metres.
+
+#+begin_src c
+/* Ground check under a character. */
+LrgRayHit hit;
+gfloat feet[3];
+gfloat down[3] = { 0.0f, -1.0f, 0.0f };
+
+lrg_dynamics_world_get_position (world, player, feet, &error);
+if (lrg_dynamics_world_raycast (world, feet, down, 1.1f,
+                                LRG_PHYSICS_LAYERS_ALL & ~LRG_PHYSICS_LAYER_BIT (LRG_PHYSICS_LAYER_TRIGGER),
+                                player, &hit))
+	on_ground = TRUE;
+#+end_src
+
+** Reacting: contacts and sensors
+:PROPERTIES:
+:CUSTOM_ID: events
+:END:
+Connect to =LrgDynamicsWorld::contact-added= for impacts (sounds, damage, particles: the =LrgDynamicsContact= carries the point, normal and impact speed) and =LrgDynamicsWorld::contact-removed= for separations. Make trigger volumes with =lrg_dynamics_world_set_sensor()= and connect =LrgDynamicsWorld::sensor-entered= / =LrgDynamicsWorld::sensor-exited= (checkpoints, damage zones, doors that open). Signals arrive after the step, in a deterministic order, and cost nothing while nobody listens.
+
+** Fast things and sleeping things
+:PROPERTIES:
+:CUSTOM_ID: ccd-sleep
+:END:
+A small body moving faster than its size per substep can pass through a thin wall. Turn on =lrg_dynamics_world_set_ccd()= for bullets, thrown grenades and anything fast and small. Bodies that come to rest fall asleep in groups (islands) after about half a second and cost nothing until something touches them, so big piles are cheap once settled; =lrg_dynamics_world_set_allow_sleep()= keeps a body awake when your code reads it constantly.
+
+** Debug view
+:PROPERTIES:
+:CUSTOM_ID: debug
+:END:
+=lrg_dynamics_world_debug_draw()= draws shapes, contacts, joints, boxes, centres of mass, velocities and the broadphase tree into an =LrgDebugDraw= on the physics category; render the debug draw as usual. Shapes are coloured by kind (green dynamic, blue kinematic, grey static, yellow sensor) and sleeping bodies are dimmed with =LRG_DYNAMICS_DEBUG_SLEEPING=.
+
+** Joints and ragdolls
+:PROPERTIES:
+:CUSTOM_ID: joints
+:END:
+# JOINTS: joints (fixed, point, hinge, slider, distance, cone twist, 6-DOF, motors, breakable) and ragdolls (.rphysasset) go here.
+Joints are =LrgPhysicsConstraint= objects added with =lrg_dynamics_world_add_constraint()=; the hook they implement is described in [[file:../modules/physics/contact-solver.org][Contact solver and the constraint hook]]. (Section continued by the joints work.)
+
+** Components, levels and the character controller
+:PROPERTIES:
+:CUSTOM_ID: components
+:END:
+In a 3D game you rarely call the body API directly: entities get physics from three components, and #LrgWorld3D steps the physics world and keeps entities and bodies in step (full reference: [[file:../modules/world3d/components.org::#physics-components][physics components]]).
+
+| Component                 | Gives the entity                                                              |
+|---------------------------+-------------------------------------------------------------------------------|
+| =LrgRigidBodyComponent=   | a body: kind (static / kinematic / dynamic), mass, friction, restitution, damping, gravity factor, CCD, layer |
+| =LrgColliderComponent3D=  | one shape (sphere, capsule, cylinder, box, convex hull, triangle mesh, plane) with an offset and rotation; a trigger flag makes it a sensor with enter / exit signals |
+| =LrgJointComponent=       | a joint (fixed, point, hinge, slider, distance, cone, swing-twist, 6-DOF) to another entity or the world, with limits, a spring, a motor and a break force |
+
+#+begin_src C
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+g_autoptr(LrgEntity3D) crate = lrg_entity3d_new_with_name ("crate");
+g_autoptr(LrgRigidBodyComponent) body = lrg_rigid_body_component_new (LRG_DYNAMICS_BODY_DYNAMIC);
+g_autoptr(LrgColliderComponent3D) box = lrg_collider_component3d_new_box (0.5f, 0.5f, 0.5f);
+
+lrg_world3d_ensure_physics (world);              /* attach an LrgDynamicsWorld */
+lrg_rigid_body_component_set_mass (body, 20.0f);
+lrg_entity3d_add_component (crate, LRG_COMPONENT (body));
+lrg_entity3d_add_component (crate, LRG_COMPONENT (box));
+lrg_entity3d_set_position_xyz (crate, 0.0f, 5.0f, 0.0f);
+lrg_world3d_add_entity (world, crate);
+
+for (;;)
+	lrg_world3d_step (world, frame_time);        /* the crate falls; its entity follows */
+#+end_src
+
+The rules in one place:
+
+- Colliders on an entity with a rigid body make up that body's shape (a compound when there are several). Colliders without a rigid body make one static body. Trigger colliders always get their own kinematic sensor body.
+- Bodies are built in the first fixed update after a change and rebuilt (velocity kept) when colliders, settings or the entity's world scale change. Scale is baked into the shape.
+- Static and kinematic bodies follow their entity (a kinematic one with the velocity that reaches the new pose, so it pushes); dynamic bodies drive their entity; moving a dynamic body's entity from code teleports the body.
+- Rendering blends dynamic entities between the last two physics states (=LrgWorld3D:physics-interpolation=, =LrgRigidBodyComponent:interpolate=).
+- Signals: =trigger-entered= / =trigger-exited= on trigger colliders, =collision-entered= / =collision-exited= on rigid bodies (tracked while connected), =broken= on joints; all emitted right after the physics step, once per other entity.
+- =lrg_world3d_find_body_entity()= maps a body id from a query back to its entity:
+
+#+begin_src C
+LrgRayHit hit;
+LrgDynamicsWorld *physics = lrg_world3d_get_physics (world);
+
+if (lrg_dynamics_world_raycast (physics, eye, dir, 100.0f, LRG_PHYSICS_LAYERS_ALL, G_MAXUINT, &hit))
+{
+	LrgEntity3D *what = lrg_world3d_find_body_entity (world, hit.body);
+	/* ... */
+}
+#+end_src
+
+- Debug draw: =lrg_world3d_debug_draw_physics (world, draw, LRG_DYNAMICS_DEBUG_SHAPES | LRG_DYNAMICS_DEBUG_CONTACTS)= every frame into the renderer's =LrgDebugDraw=. The 2D =LrgPhysicsWorld= has =lrg_physics_world_debug_draw()= with the same flags (shapes, AABBs, sleeping, centres, velocities).
+
+The example [[file:../examples/physics-sandbox.org][physics-sandbox]] builds stacks, ramps, a ragdoll, a chain, a breakable wall and a cloth flag this way.
+
+** Physics in levels and prefabs
+:PROPERTIES:
+:CUSTOM_ID: levels
+:END:
+A node's =physics:= block describes its body, shapes and joints; it is saved in =.rlevel= and =.rprefab= files and becomes the three components when the level is instantiated (format: [[file:../editor/yaml-format.org::#physics][.rlevel physics block]]):
+
+#+begin_src yaml
+- name: Door
+  guid: 6c4f...-door
+  transform: { location: [3, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }
+  visual: { kind: primitive, primitive: cube, params: { size_x: 1, size_y: 2, size_z: 0.1 } }
+  physics:
+    body: dynamic
+    mass: 15
+    friction: 0.5
+    restitution: 0
+    linear_damping: 0.05
+    angular_damping: 0.05
+    gravity_factor: 1
+    shapes:
+      - kind: box
+        half_extents: [0.5, 1, 0.05]
+    joints:
+      - kind: hinge
+        target: 9a2b...-frame       # the door frame node
+        anchor: [-0.5, 0, 0]         # the hinge side, node-local
+        limits: [-1.57, 1.57]
+#+end_src
+
+In C, the same block is an =LrgNodePhysics=:
+
+#+begin_src C
+g_autoptr(LrgNodePhysics)      phys = lrg_node_physics_new (LRG_DYNAMICS_BODY_DYNAMIC);
+g_autoptr(LrgNodePhysicsShape) shape = lrg_node_physics_shape_new (LRG_COLLIDER3D_BOX);
+g_autoptr(LrgNodePhysicsJoint) hinge = lrg_node_physics_joint_new (LRG_JOINT_HINGE);
+
+lrg_node_physics_shape_set_half_extents (shape, 0.5f, 1.0f, 0.05f);
+lrg_node_physics_add_shape (phys, shape);
+lrg_node_physics_joint_set_target (hinge, lrg_node_get_guid (frame));
+lrg_node_physics_joint_set_anchor (hinge, -0.5f, 0.0f, 0.0f);
+lrg_node_physics_joint_set_limits (hinge, TRUE, -G_PI_2, G_PI_2);
+lrg_node_physics_add_joint (phys, hinge);
+lrg_node_physics_set_mass (phys, 15.0f);
+lrg_node_set_physics (door, phys);
+#+end_src
+
+- =lrg_level_instantiate_3d()= attaches a physics world (=lrg_world3d_ensure_physics()=) when the level has bodies; set the project's layer table on it (=lrg_dynamics_world_set_layers()=) before stepping.
+- Joint targets are node GUIDs: a joint to a node instantiated later is built once that entity exists.
+- Undo snapshots (=lrg_node_copy_state()=), =lrg_node_state_equal()= and prefabs carry the block (deep copies).
+- The block saves byte stable: keys in a fixed order, defaults left out where the format says so.
+
+** Characters
+:PROPERTIES:
+:CUSTOM_ID: character
+:END:
+=LrgCharacterController= moves an upright capsule with collide-and-slide, step climbing, a slope limit and ground snapping. Since 0.9.0 it collides with the bodies of a physics world (and still with an =LrgCollisionMesh= and a height function, combined):
+
+#+begin_src C
+lrg_character_controller_set_physics (cc, lrg_world3d_get_physics (world), LRG_PHYSICS_LAYERS_ALL);
+lrg_character_controller_set_ignore_body (cc, lrg_rigid_body_component_get_body_id (own_body));
+
+/* each fixed update of the player component */
+lrg_entity3d_get_world_position (player, feet);
+lrg_character_controller_move (cc, feet, motion, TRUE, &move);
+lrg_entity3d_set_world_position (player, move.position);
+if (move.grounded && move.ground_body != LRG_PHYSICS_NO_BODY)
+	platform = lrg_world3d_find_body_entity (world, move.ground_body);   /* stood on */
+#+end_src
+
+Give the player entity a kinematic rigid body with a capsule collider matching the controller so it pushes crates, and ignore that body in the controller. Level geometry works best as static triangle-mesh colliders (=LrgCollider3DKind= =mesh=, from the node's model). Details and the query semantics: [[file:../modules/physics/character-controller.org::#physics-world][character controller against a physics world]].
+
+** Cloth and destruction
+:PROPERTIES:
+:CUSTOM_ID: soft
+:END:
+# SOFT: cloth and fracture go here.
+(Section continued by the soft-body work.)
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Gravity starts at zero: set it.
+- Do not drive dynamic bodies by writing their position every frame; use forces, impulses or velocities, or make the body kinematic.
+- Positions are the shape origin, not the centre of mass.
+- Mesh and heightfield shapes cannot be dynamic.
+- Fast and small needs CCD.
+- With the components, move a dynamic body's entity only to teleport it; push it with =lrg_rigid_body_component_apply_impulse()= or a velocity. Keep dynamic entities top-level (or under static parents).
+- An attached physics world is stepped by =LrgWorld3D=; do not step it yourself as well.
+- Coming from 0.8: see the behaviour changes in [[file:../modules/physics/dynamics.org#pitfalls][LrgDynamicsWorld pitfalls]] and the [[file:migration-0-8-to-0-9.org][migration guide]].

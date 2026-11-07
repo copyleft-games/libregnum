@@ -126,3 +126,19 @@ The =Libregnum-1= namespace keeps every type and function name. New in M0: names
 :CUSTOM_ID: migration-post-real
 :END:
 =LrgPostProcessor= and the bloom, vignette, FXAA, film grain and screen shake effects now really render (before 0.9 they were no-ops): a chain that was set up but invisible will now show. Every built-in effect scales by =LrgPostEffect:intensity=. =LrgScreenShake= offsets are smooth noise instead of per-frame jitter. Post stacks can be authored as =.rpost= files: see [[file:../modules/postprocess/post-stack.org][Post Stacks]].
+
+** 3D physics: LrgDynamicsWorld
+:PROPERTIES:
+:CUSTOM_ID: migration-dynamics
+:END:
+=LrgDynamicsWorld= is now a full 3D rigid-body solver (shapes, layers, islands, CCD, constraints; see [[file:physics.org][Physics]]). The 0.8 API is kept, but some behaviour changes:
+
+| Change | Effect | What to do |
+|--------+--------+------------|
+| Contacts are solved before positions integrate | a fast body no longer tunnels through a touching neighbour | tests that relied on tunnelling need their bodies moved apart |
+| Body ids are =slot \| generation<<24= | the first ids are still 0, 1, 2...; a removed id never comes back; no body/joint cap (the =MAX_*= macros limit nothing) | keep ids as opaque =guint= values |
+| Sleep is per island; defaults 9e-4 for 30 substeps (0.8: 1e-4 for 8); sleeping zeroes velocities | bodies sleep a little later and as groups | tune with =lrg_dynamics_world_set_sleep()= |
+| 10 velocity iterations by default (0.8: 8); NGS position correction (slop 0.02, baumgarte 0.2) | stiffer stacks | tune through =lrg_dynamics_world_get_contact_solver()= |
+| A contact at depth exactly 0 counts as touching | resting contacts are reported | none |
+| Shape bodies default to friction 0.5, restitution 0, damping 0.05; 0.8 primitives keep the world material and zero damping | new bodies slide less | set materials explicitly |
+| =get_contact()= keeps the "pushes A out" normal; =LrgDynamicsContact= uses the A-to-B normal | two conventions | read the docs of the call you use |

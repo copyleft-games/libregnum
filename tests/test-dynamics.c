@@ -645,7 +645,9 @@ test_eviction (void)
     maximum[2] = 1.0f;
     require (lrg_dynamics_world_set_bounds (world, minimum, maximum, &error), &error);
     leaving = add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 0.0f, 0.0f, 0.0f);
-    staying = add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 0.2f, 0.0f, 0.0f);
+    /* Off the leaving sphere's path: since 0.9 contacts are solved before
+     * positions integrate, so a sphere in the way would be hit, not tunnelled. */
+    staying = add_sphere (world, LRG_DYNAMICS_BODY_DYNAMIC, 1.0f, 0.1f, 0.2f, 0.5f, 0.0f);
     velocity[0] = 20.0f;
     velocity[1] = 0.0f;
     velocity[2] = 0.0f;
