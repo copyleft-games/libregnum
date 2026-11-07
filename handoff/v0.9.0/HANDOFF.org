@@ -1,0 +1,111 @@
+#+title: libregnum 0.9.0 handoff
+#+description: State of the 0.9.0 "close the gap analysis" release, what is left, and how the work was run
+#+authors: Claude (lead agent) for Zach Podbielniak
+#+categories: libregnum handoff release
+#+created: 2026-11-07T14:10:00-05:00
+#+updated: 2026-11-07T14:10:00-05:00
+#+version: 1.0
+
+* Read this first
+:PROPERTIES:
+:CUSTOM_ID: read-first
+:END:
+The goal (Zach's /goal): finish the lrgeditor rewrite, then implement everything in the gap analysis (=docs/editor/gap-analysis.org=, ROADMAP 0.9.0 section), both engine gaps and editor gaps, as ONE big 0.9.0 release. The approved plan is [[file:plan.md][plan.md]] (milestones M0 to M11, decisions, docs/skill rules). This directory is NOT part of the release: delete =handoff/= before merging to master.
+
+Branches (all pushed to origin, gitlab.com/copyleft-games/libregnum):
+- =feat/v0.9.0=: the release branch. Green through M7 (full gate passed) plus the registered M8 stubs and this handoff. Builds with 0 warnings; =make test= 5913 ok; docs-check 0 undocumented except the 17 symbols of the M8 stub files.
+- =wip/v0.9.0-m8=: =feat/v0.9.0= + ONE commit holding the M8 agents' unfinished work at the moment they were stopped (usage limits). It does NOT build (errors in =lrg-vscript-program.c= and =lrg-editor-script-api.c=, see [[#m8-wip][M8 WIP state]]). Cherry-pick per area or continue on it.
+- Other worktree branches (=ci/hardening=, =feat/editor-tiles=, =feat/rollback-net=, =feat/shadows-wfc=, =fix/audio-context=, =fix/determinism=, =release/v0.6.2=) are older work from before 0.9.0, pushed only so nothing is lost; =feat/v0.9.0= already merged =origin/master= at v0.8.3.
+
+* Done (committed on feat/v0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: done
+:END:
+- M0 foundations: runtime level module =src/level/=, =lrg-math3d=, composite YAML loader + writers, =LrgDebugDraw=, render layers.
+- M1 3D runtime: =LrgEntity3D=, =LrgWorld3D=, 3D components, =LrgWorld3DRenderer= shared by editor and game, =lrg_level_instantiate_3d()=, 3D play-in-editor, runtime prefabs/variants, GUIDs, import settings.
+- M2 rendering: =.rmat=, shaders + shader graph, PBR/IBL, spot lights/shadows, environment, reflection probes, fog, SSAO, decals, LOD, post stacks; editor material/shader-graph/environment/post editors.
+- M3 lighting bake, M4 animation (glTF skins, =.ranim=, IK, root motion, retargeting, =.rseq= sequencer, 2D skeletons) with editors.
+- M5 physics (Jolt-derived solver, joints, ragdolls, cloth, destruction, layers) with editors; =examples/physics-sandbox=.
+- M6/M7 engine: =.rnav= + ORCA crowds, =.rbt=/=.rfsm= + =LrgAiComponent=, =.rparticles= + ribbons/mesh/GPU particles, =.rweather=, =.rterrain=/foliage/=.rwater=, =.rmixer= + attenuation, rule tiles/=.rtileset=/iso-hex/2D shadows/=.rsprite=.
+- M6/M7 editor: Navigation, AI, Terrain, Mixer panels; BT/FSM/particle/weather/water/mixer/tileset/sprite editors; engine-backed documents; 458 MCP tools; SKILL.md workflows.
+- Fixed along the way: play-in-editor now starts the engine registry (level =components:= were silently skipped before); x11 smoke waits for steady fps; =build-aux/xrun.sh= is the isolated 1920x1200 Xvfb helper (AGENTS.md documents screenshots at 1920x1080).
+- Gap-analysis rows and ROADMAP are updated through M7 (engine + editor).
+
+* What is left
+:PROPERTIES:
+:CUSTOM_ID: left
+:END:
+** M8: scripting, debugging, profiling (+ dock tab overflow) - IN PROGRESS
+:PROPERTIES:
+:CUSTOM_ID: m8
+:END:
+Brief: [[file:scratch/m8-brief.md][scratch/m8-brief.md]] (per-agent ownership and deliverables). Stubs are registered (commit =affec36=). Eight agents ran; all stopped part-way. Areas:
+- SCRIPTRT: script hot reload (=lrg-script-reloader=) + backend-neutral debugger (=lrg-script-debugger=; Lua =lua_sethook=, Python =sys.monitoring=). Public headers drafted; implementation not started; the =SCRIPTRT-API-READY= marker was never written.
+- CODE: DAP server (=src/scripting/lrg-dap-server=), LSP client (=src/editor/lrg-lsp-client=, in progress), =LrgTextEditor= gutter/diagnostics/completion, code panel debugger UI, Debug panel, =editors/emacs/libregnum-dape.el=.
+- VSCRIPT: =.rvscript= program format (=lrg-vscript-program=, partial, does not compile), =LrgScriptingGraph= backend, node-graph + block editors; owns document/data-editor/assets-panel for its formats.
+- TOOLSCRIPT: =LrgEditorScriptApi= (=editor= global; header changed, .c not yet: conflicting types), console REPL, =editor_scripts/=, =run-in-editor= on the script component (touches =src/ecs/components/lrg-script-component=, =src/level/lrg-script-binding=, instantiate/serializer). PLUMB asked to rename IPC =script.run-tool= / =run-in-editor= / =editor-running= to underscores.
+- PROF: hierarchical profiler + =.rprof= captures, =lrg-gpu-timer= (timer queries), =lrg-frame-capture= + Frame Debugger panel; owns =lrg-world3d-renderer.c= for hooks. Profiler/gpu-timer edits in progress.
+- MEMNET: =lrg-memory-profiler=, =lrg-net-stats= with hooks in =src/net=, =src/mmo= (in progress), Memory/Network panels. Pending additive patch =scratch/m8-patches/lrg-asset-manager.MEMNET.patch= (=lrg_asset_manager_foreach_cached()=): approve and apply.
+- DOCKTAB: dock tab overflow (right dock shows 8 tabs as bare icons today), multi-shortcut canvas (then Tiles vertical flip back to Y), a default-layout proposal. =lrg-dock-area= / =lrg-canvas= edits in progress.
+- PLUMB: lrgeditorctl/MCP/Emacs/IPC docs generated from =scratch/m8-ipc/*.md= with =scratch/plumb/gen.py --splice= (+ =spec.py=); CODE's =debug.*= / =lsp.*= were wired, PROF/TOOLSCRIPT next.
+
+** M9: assets, build, project, extensibility
+:PROPERTIES:
+:CUSTOM_ID: m9
+:END:
+=lrgpack= export (dependency walk, cooking, rres/VFS packs, Linux tarball/Flatpak/AppImage/Windows zip, export dialog with profiles), reference scanner + safe rename/delete, reimport on change, custom importers, FBX via ufbx (vendored), =.ply= classification fix, autoloads, per-platform setting overrides, project templates gallery, mod template, Steam settings page, editor plugins (manifest, GModule/GI, panel/menu/action/inspector registration). See plan.md M9.
+
+** M10: editor workflows, localization, collaboration
+:PROPERTIES:
+:CUSTOM_ID: m10
+:END:
+Sub-levels/level instances + async streaming + multi-scene editing, node tags + filter, pivot modes, vertex/surface snap + drop to floor, align/distribute, unified gizmo, game view with aspect presets, nested inspector (arrays/dicts/objects) + second inspector, WYSIWYG UI designer + UI animation, PO import/export + string extraction + pseudoloc, VCS panel (commit/diff/history, Magit hand-off), git-lfs locks, =.rlevel= three-way merge driver, multi-user live editing (op log by GUID, locks, presence), MCP/CLI coverage. Screenshots to Zach after M10.
+
+** M11: release
+:PROPERTIES:
+:CUSTOM_ID: m11
+:END:
+Every gap-analysis row "have (0.9.0)" or an honest remainder; docs pages per format; tutorial, ROADMAP, CHANGELOG; migration guide 0.8 -> 0.9 complete; a showcase 3D game example (levels, PBR, physics, nav agents, animation); graylib 0.9.0 in lockstep; full verification; merge, tag, push. CONFIRM WITH ZACH BEFORE PUSHING A RELEASE. Third-party notices: [[#notices][list below]].
+
+* Lead follow-ups (bugs and polish found during M2-M7)
+:PROPERTIES:
+:CUSTOM_ID: followups
+:END:
+- Weather engine: an instant =lrg_weather_manager_set_weather= after a crossfade keeps the faded level/target (restore both in the instant path); =lrg_weather_manager_render()= sizes its 2D overlay by the window, not the render target.
+- =LrgTilemapComponent= (world3d runtime) draws orthogonal grids only and ignores flip bits; the editor draws iso/hex/flips correctly.
+- Audio emitter max distance: =lrg-editor-node-source.c= default radius 10 vs the component's default 50; pick one.
+- =LrgNavAgentComponent= has no destination property (scripts only); consider =destination= / =target-node=.
+- Tilemap node selection outline is a unit box; terrain click-picking uses node bounds, not the heightfield.
+- Weather lightning bolt renders as a dull grey ribbon with no visible flash; the shader graph's default layout overlaps nodes; =LrgEditorProblem= has no line field; the sandbox ragdoll is component-based.
+- AUDIO's optional "load the level's mixer" patch was never applied; NAV's tiled bakes for large levels were skipped.
+- More in [[file:scratch/m67e-pending.md][m67e-pending.md]] and [[file:scratch/m2-patches.txt][m2-patches.txt]].
+
+* Third-party notices to collect at release
+:PROPERTIES:
+:CUSTOM_ID: notices
+:END:
+- Jolt Physics (MIT, Copyright 2021 Jorrit Rouwe): ported parts in =src/physics/lrg-collide.c=, =lrg-physics-shape.c=, =lrg-dynamics.{c,h}=, =lrg-dynamics-private.h=, =lrg-contact-solver.{c,h}=, =lrg-island.{c,h}=, =lrg-joint.c=, =lrg-ragdoll.c=, =lrg-cloth.c= (details per file in m2-patches.txt). Notices are in the file headers.
+- RVO2 Library 2.0 (Apache-2.0, Copyright 2008 UNC Chapel Hill): ORCA in =src/pathfinding/lrg-nav-agent.c=.
+- Credits only (no code copied): Box2D dynamic AABB tree design (Erin Catto, MIT) in =lrg-broadphase.c=; PCG32 (M. E. O'Neill) in the particle RNG; meshoptimizer/xatlas concepts.
+
+* How the work was run (method)
+:PROPERTIES:
+:CUSTOM_ID: method
+:END:
+- Worktree =trees/v0.9.0= on =feat/v0.9.0=. The lead pre-creates stubs (=scratch/mkstub.sh=, =scratch/mktest.sh=) and registers them in =Makefile=, =src/libregnum.h=, =tests/Makefile= (see =scratch/reg-m8.py= for the pattern), commits them, then runs up to 8 parallel agents with disjoint file ownership. Shared rules for agents: [[file:scratch/brief.md][scratch/brief.md]]; UI tool patterns: [[file:scratch/brief-w4.md][scratch/brief-w4.md]].
+- Builds are shared: every agent takes =flock= on a lock file before =make=.
+- Agents never touch git; the lead commits each feature by staging only its files, adds registry rows (=src/core/lrg-registry.c= + =docs/modules/core/registry.org=; helper =scratch/reg-add.py ANCHOR name:get_type:Type[:include]=), applies shell patches (=lrg-editor-app.c=, =-window.c=) and index links.
+- Cross-owner hooks: agents drop patches in =m8-patches/=, IPC lists in =m8-ipc/<AGENT>.md= (=FINAL= when done); PLUMB generates CLI/MCP/docs from the lists.
+- Paths in the scratch files point at the old machine's =/tmp/claude-1000/.../scratchpad/v090/= (now =handoff/v0.9.0/scratch/=) and =/var/home/zach/source/projects/libregnum/trees/v0.9.0=: adjust when reusing them.
+- Gate (every milestone): =make all= (GIR, 0 warnings), =make docs-check=, =make examples=, =tests/check-level-noeditor.sh=, =build-aux/xrun.sh make test=, =make test-editorctl=, =make test-emacs=, =make test-editor-x11= (all GPU/display work under =build-aux/xrun.sh=; never on the developer's session). Script: =scratch/gate.sh=. Tests need =G_TEST_SRCDIR=$PWD/tests= and =LD_LIBRARY_PATH=$PWD/build/release/lib:$PWD/deps/graylib/build/lib:$PWD/deps/yaml-glib/build=.
+- Every milestone also: gap-analysis rows + ROADMAP line, skill updates (=skills/skill-libregnum/=) and =make install-skills=, screenshots at 1920x1080 dark + light looked at; send Zach screenshots after M10.
+- Zach's constraints: no =dnf install= / =bootc usr-overlay= on the host (list Fedora packages instead); podman not docker; =gio trash= not =rm=; never force-push master/main; ask before =psql=; gnu89, tabs, =/* */= comments, GIR-clean, zero warnings; docs in org without hard wraps.
+
+* M8 WIP state (branch wip/v0.9.0-m8)
+:PROPERTIES:
+:CUSTOM_ID: m8-wip
+:END:
+At stop time =make all= failed with:
+- =src/editor/lrg-editor-script-api.c=: conflicting types for =lrg_editor_script_api_new= (header updated by TOOLSCRIPT, .c still the stub).
+- =src/scripting/lrg-vscript-program.c=: half-written (unused helpers, a const discard, a null dereference warning).
+Files touched by the WIP commit: =src/scripting/lrg-script-{debugger,reloader}.h=, =lrg-scripting.{c,h}=, =lrg-vscript-program.{c,h}=, =src/editor/lrg-lsp-client.{c,h}=, =lrg-editor-script-api.h=, =src/debug/lrg-profiler.{c,h}=, =lrg-gpu-timer.{c,h}=, =src/net/*= + =src/mmo/lrg-mmo-{datagram,protocol}.c= + =lrg-net-stats.{c,h}=, =src/ui/lrg-dock-area.{c,h}=, =lrg-canvas.{c,h}=, =src/editor/ui/lrg-editor-tiles-panel.c=, =src/ecs/components/lrg-script-component.{c,h}=, =src/level/lrg-script-binding.{c,h}=, =lrg-level-instantiate.c=, =lrg-level-serializer.c=, editorctl + MCP + IPC docs + Emacs + skill references (PLUMB), =tests/test-net-stats.c=, =tests/editorctl-smoke.sh=.
