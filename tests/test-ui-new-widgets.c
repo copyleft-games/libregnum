@@ -546,6 +546,106 @@ test_scroll_box_culls (void)
 	g_assert_cmpfloat (lrg_widget_get_world_y (last), <, 100.0f);
 }
 
+/* A box short of room takes it from its flexible children, not past its edge */
+static void
+test_box_shrinks_flexible_children (void)
+{
+	g_autoptr(LrgHBox) row = lrg_hbox_new ();
+	LrgWidget         *fixed = block_new (100.0f, 20.0f);
+	LrgWidget         *wide = block_new (400.0f, 20.0f);
+	LrgWidget         *floor_ = block_new (400.0f, 20.0f);
+
+	lrg_widget_set_fill_weight (wide, 1.0f);
+	lrg_container_add_child (LRG_CONTAINER (row), fixed);
+	lrg_container_add_child (LRG_CONTAINER (row), wide);
+	g_object_unref (fixed);
+	g_object_unref (wide);
+
+	/* 500 asked for, 300 there: the flexible one gives back all 200 */
+	lrg_widget_allocate (LRG_WIDGET (row), 0.0f, 0.0f, 300.0f, 20.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (fixed), ==, 100.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (wide), ==, 200.0f);
+	g_assert_cmpfloat (lrg_widget_get_x (wide) + lrg_widget_get_width (wide), <=, 300.0f);
+
+	/* never below its own minimum: what it cannot give stays a deficit */
+	lrg_widget_set_min_size (wide, 250.0f, 0.0f);
+	lrg_widget_allocate (LRG_WIDGET (row), 0.0f, 0.0f, 300.0f, 20.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (wide), ==, 250.0f);
+
+	/* two flexible children share it by weight */
+	lrg_widget_set_min_size (wide, -1.0f, -1.0f);
+	lrg_widget_set_fill_weight (floor_, 3.0f);
+	lrg_container_add_child (LRG_CONTAINER (row), floor_);
+	g_object_unref (floor_);
+	lrg_widget_allocate (LRG_WIDGET (row), 0.0f, 0.0f, 500.0f, 20.0f);
+	/* 900 asked, 500 there: 400 back, 100 from the weight-1, 300 from the weight-3 */
+	g_assert_cmpfloat (lrg_widget_get_width (wide), ==, 300.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (floor_), ==, 100.0f);
+
+	/* with room to spare nothing changes: extra still goes by weight */
+	lrg_widget_allocate (LRG_WIDGET (row), 0.0f, 0.0f, 1300.0f, 20.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (fixed), ==, 100.0f);
+	g_assert_cmpfloat (lrg_widget_get_width (wide), ==, 500.0f);
+}
+
+/* Glyph instances recorded, for counting what a label drew */
+static guint
+count_glyphs (LrgPaintList *list)
+{
+	guint i;
+	guint n = 0;
+
+	for (i = 0; i < lrg_paint_list_get_n_instances (list); i++)
+		if (lrg_paint_instance_get_prim (lrg_paint_list_get_instance (list, i)) == LRG_PAINT_PRIM_GLYPH)
+			n++;
+	return n;
+}
+
+/* An ellipsizing label given less than its text draws less of it */
+static void
+test_label_ellipsize (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgLabel            *label = lrg_label_new ("a sentence much longer than the space it is given");
+	gfloat               natural = 0.0f;
+	guint                whole;
+	guint                cut;
+
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (label));
+	g_object_unref (label);
+	lrg_widget_measure (LRG_WIDGET (label), &natural, NULL);
+	if (natural <= 0.0f)
+	{
+		g_test_skip ("no font to measure with");
+		return;
+	}
+
+	/* still asks for the whole text */
+	lrg_label_set_ellipsize (label, TRUE);
+	g_assert_true (lrg_label_get_ellipsize (label));
+	{
+		gfloat again = 0.0f;
+
+		lrg_widget_measure (LRG_WIDGET (label), &again, NULL);
+		g_assert_cmpfloat (again, ==, natural);
+	}
+
+	/* given all of it, all of it is drawn */
+	lrg_label_set_ellipsize (label, FALSE);
+	lrg_widget_allocate (LRG_WIDGET (label), 0.0f, 0.0f, natural, 30.0f);
+	whole = count_glyphs (lrg_canvas_record (canvas));
+
+	/* given a third without ellipsizing, it still draws everything (past its edge) */
+	lrg_widget_allocate (LRG_WIDGET (label), 0.0f, 0.0f, natural / 3.0f, 30.0f);
+	g_assert_cmpuint (count_glyphs (lrg_canvas_record (canvas)), ==, whole);
+
+	/* ellipsizing, it draws a prefix and the ellipsis: fewer glyphs */
+	lrg_label_set_ellipsize (label, TRUE);
+	cut = count_glyphs (lrg_canvas_record (canvas));
+	g_assert_cmpuint (cut, >, 0);
+	g_assert_cmpuint (cut, <, whole / 2);
+}
+
 static void
 test_scroll_box_hit_test (void)
 {
@@ -1308,6 +1408,8 @@ main (int   argc,
 	g_test_add_func ("/ui/scroll-box/scroll-to-widget", test_scroll_box_scroll_to_widget);
 	g_test_add_func ("/ui/scroll-box/clip", test_scroll_box_clip);
 	g_test_add_func ("/ui/scroll-box/culls", test_scroll_box_culls);
+	g_test_add_func ("/ui/box/shrinks-flexible-children", test_box_shrinks_flexible_children);
+	g_test_add_func ("/ui/label/ellipsize", test_label_ellipsize);
 	g_test_add_func ("/ui/scroll-box/hit-test", test_scroll_box_hit_test);
 	g_test_add_func ("/ui/scroll-box/scrollbar-paint", test_scroll_box_scrollbar_paint);
 

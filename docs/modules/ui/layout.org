@@ -120,7 +120,7 @@ Because of step 2, alignment other than =FILL= is how a widget keeps its natural
 
 Measuring a box: main axis = sum of outer sizes (or the largest times =n= when homogeneous) + spacing; cross axis = largest outer size; plus padding on both sides.
 
-When the children do not fit (=extra < 0=) they keep their preferred lengths and overflow the end of the box; wrap the box in an =LrgScrollBox= (see [[file:widgets/scroll-box.org][scroll box]]) or give it more room.
+When the children do not fit (=extra < 0=), the flexible ones give the deficit back, in proportion to their fill weight and none below its own minimum size (=lrg_widget_set_min_size()=) plus margins; one that reaches its minimum drops out and the rest share what is left (since 0.8.6).  Only a box whose flexible children are all at their minimum -- or one with no flexible child -- still overflows its end: a fixed child is never squashed, since a button narrower than its label would draw the label over its neighbour.  Before 0.8.6 a deficit was ignored altogether, so one child that asked for more than the box had -- a one-line label holding a sentence, a markdown label still at the width it had before its window shrank -- pushed every sibling after it past the box's edge.  So the child that can afford to lose width should be the flexible one; pair a one-line label there with =lrg_label_set_ellipsize()= so it draws "…" rather than over its neighbours.  To scroll instead, wrap the box in an =LrgScrollBox= (see [[file:widgets/scroll-box.org][scroll box]]).
 
 #+begin_src c
 /* A toolbar: label on the left, a stretchy gap, two buttons on the right */

@@ -52,6 +52,14 @@ struct _LrgLabel
     gfloat            measured_width;
     gfloat            measured_height;
     gboolean          measured_valid;
+
+    /* LrgLabel:ellipsize, and the one line it last cut to fit: reused
+     * while the text, font, size and width are unchanged */
+    gboolean          ellipsize;
+    gchar            *cut_text;
+    GrlFont          *cut_font;        /* font cut with (owned ref) */
+    gfloat            cut_size;
+    gfloat            cut_width;
 };
 
 G_DEFINE_TYPE (LrgLabel, lrg_label, LRG_TYPE_WIDGET)
@@ -64,6 +72,7 @@ enum
     PROP_FONT_SIZE,
     PROP_COLOR,
     PROP_ALIGNMENT,
+    PROP_ELLIPSIZE,
     N_PROPS
 };
 
@@ -173,6 +182,59 @@ label_offscreen (LrgLabel *self)
            y + height + margin < view.y ||
            x - margin > view.x + view.width ||
            y - margin > view.y + view.height;
+}
+
+/*
+ * label_fit_line:
+ *
+ * @line cut to fit @width with an ellipsis after the last character
+ * that fits, for LrgLabel:ellipsize.  Binary search over character
+ * counts, so a long sentence costs a dozen measurements, not one per
+ * character -- and the result is cached by the caller, since a label is
+ * painted every frame and resized rarely.  Returns a copy of @line when
+ * it already fits, and the bare ellipsis when not even one character
+ * does.
+ */
+static gchar *
+label_fit_line (GrlFont     *font,
+                const gchar *line,
+                gfloat       size,
+                gfloat       width)
+{
+    static const gchar *ellipsis = "\xe2\x80\xa6";
+    glong  chars = g_utf8_strlen (line, -1);
+    glong  lo = 0;
+    glong  hi = chars;
+    gfloat lw = 0.0f;
+
+    lrg_paint_measure_text (font, line, size, 1.0f, &lw, NULL);
+    if (lw <= width)
+        return g_strdup (line);
+
+    /* the most characters whose prefix plus the ellipsis still fits */
+    while (lo < hi)
+    {
+        glong        mid = (lo + hi + 1) / 2;
+        const gchar *end = g_utf8_offset_to_pointer (line, mid);
+        g_autofree gchar *probe = g_strdup_printf ("%.*s%s", (gint) (end - line),
+                                                   line, ellipsis);
+        gfloat       pw = 0.0f;
+
+        lrg_paint_measure_text (font, probe, size, 1.0f, &pw, NULL);
+        if (pw <= width)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+
+    {
+        const gchar *end = g_utf8_offset_to_pointer (line, lo);
+        g_autofree gchar *kept = g_strndup (line, (gsize) (end - line));
+
+        /* no dangling space before the ellipsis */
+        g_strchomp (kept);
+        return g_strconcat (kept, ellipsis, NULL);
+    }
 }
 
 /* ==========================================================================
@@ -285,6 +347,40 @@ lrg_label_paint (LrgWidget    *widget,
     if (h > th)
         y += (h - th) * 0.5f;
 
+    /*
+     * Wider than its allocation and allowed to ellipsize: the first line,
+     * cut to fit with "…".  A label that cannot wrap and is given less
+     * than its text -- a box short of room shrinks its flexible children
+     * -- otherwise draws straight over whatever sits beside it.
+     */
+    if (self->ellipsize && w > 0.0f && tw > w + 0.5f)
+    {
+        if (self->cut_text == NULL || self->cut_font != font ||
+            self->cut_size != size || self->cut_width != w)
+        {
+            g_auto(GStrv) first = g_strsplit (self->text, "\n", 2);
+
+            g_free (self->cut_text);
+            self->cut_text = label_fit_line (font, first[0] != NULL ? first[0] : "", size, w);
+            g_set_object (&self->cut_font, font);
+            self->cut_size = size;
+            self->cut_width = w;
+        }
+
+        {
+            gfloat cx = x;
+            gfloat cw = 0.0f;
+
+            if (align != LRG_TEXT_ALIGN_LEFT)
+            {
+                lrg_paint_measure_text (font, self->cut_text, size, 1.0f, &cw, NULL);
+                cx += align == LRG_TEXT_ALIGN_CENTER ? (w - cw) * 0.5f : w - cw;
+            }
+            lrg_paint_list_text (list, font, self->cut_text, cx, y, size, 1.0f, &fg);
+        }
+        return;
+    }
+
     /* Single line, left aligned: one call, no splitting */
     if (align == LRG_TEXT_ALIGN_LEFT && strchr (self->text, '\n') == NULL)
     {
@@ -372,6 +468,8 @@ lrg_label_finalize (GObject *object)
     g_free (self->text);
     g_clear_object (&self->font);
     g_clear_object (&self->measured_font);
+    g_clear_pointer (&self->cut_text, g_free);
+    g_clear_object (&self->cut_font);
 
     G_OBJECT_CLASS (lrg_label_parent_class)->finalize (object);
 }
@@ -400,6 +498,9 @@ lrg_label_get_property (GObject    *object,
         break;
     case PROP_ALIGNMENT:
         g_value_set_enum (value, self->alignment);
+        break;
+    case PROP_ELLIPSIZE:
+        g_value_set_boolean (value, self->ellipsize);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -432,6 +533,9 @@ lrg_label_set_property (GObject      *object,
         break;
     case PROP_ALIGNMENT:
         lrg_label_set_alignment (self, g_value_get_enum (value));
+        break;
+    case PROP_ELLIPSIZE:
+        lrg_label_set_ellipsize (self, g_value_get_boolean (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -531,6 +635,23 @@ lrg_label_class_init (LrgLabelClass *klass)
                            G_PARAM_STATIC_STRINGS |
                            G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgLabel:ellipsize:
+     *
+     * When the label is given less width than its text, draw the first
+     * line cut short with "…" instead of past the label's edge.  The
+     * label still asks for its whole text's width; this only says what
+     * to draw with less.  Off by default.
+     */
+    properties[PROP_ELLIPSIZE] =
+        g_param_spec_boolean ("ellipsize",
+                              "Ellipsize",
+                              "Cut the text with an ellipsis when it does not fit",
+                              FALSE,
+                              G_PARAM_READWRITE |
+                              G_PARAM_STATIC_STRINGS |
+                              G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -574,6 +695,7 @@ lrg_label_set_text (LrgLabel    *self,
         g_free (self->text);
         self->text = g_strdup (text);
         self->measured_valid = FALSE;
+        g_clear_pointer (&self->cut_text, g_free);
         lrg_widget_queue_layout (LRG_WIDGET (self));
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TEXT]);
     }
@@ -595,6 +717,7 @@ lrg_label_set_font (LrgLabel *self,
     if (g_set_object (&self->font, font))
     {
         self->measured_valid = FALSE;
+        g_clear_pointer (&self->cut_text, g_free);
         lrg_widget_queue_layout (LRG_WIDGET (self));
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FONT]);
     }
@@ -619,6 +742,7 @@ lrg_label_set_font_size (LrgLabel *self,
         self->font_size_set = TRUE;
         self->font_size = size;
         self->measured_valid = FALSE;
+        g_clear_pointer (&self->cut_text, g_free);
         lrg_widget_queue_layout (LRG_WIDGET (self));
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FONT_SIZE]);
     }
@@ -667,5 +791,26 @@ lrg_label_set_alignment (LrgLabel         *self,
     {
         self->alignment = alignment;
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ALIGNMENT]);
+    }
+}
+
+gboolean
+lrg_label_get_ellipsize (LrgLabel *self)
+{
+    g_return_val_if_fail (LRG_IS_LABEL (self), FALSE);
+    return self->ellipsize;
+}
+
+void
+lrg_label_set_ellipsize (LrgLabel *self,
+                         gboolean  ellipsize)
+{
+    g_return_if_fail (LRG_IS_LABEL (self));
+
+    ellipsize = !!ellipsize;
+    if (self->ellipsize != ellipsize)
+    {
+        self->ellipsize = ellipsize;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ELLIPSIZE]);
     }
 }

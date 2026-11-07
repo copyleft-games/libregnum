@@ -727,6 +727,95 @@ _lrg_box_measure (LrgContainer *self,
         *height = (vertical ? main_sum : cross) + padding * 2.0f;
 }
 
+/*
+ * box_shrink_lengths:
+ *
+ * The main-axis length of each visible child, in order, after @deficit
+ * has been taken from the flexible ones (fill weight > 0) in proportion
+ * to their weight, none below its minimum size plus margins.  Rounds
+ * until the deficit is gone or every flexible child is at its minimum;
+ * each round either clears the deficit or pins at least one child, so
+ * it ends within as many rounds as there are children.
+ */
+static GArray *
+box_shrink_lengths (LrgContainer *self,
+                    gboolean      vertical,
+                    gfloat        deficit)
+{
+    GArray   *lengths = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    GArray   *floors = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    GArray   *weight = g_array_new (FALSE, FALSE, sizeof (gfloat));
+    GList    *l;
+    guint     i;
+    guint     round;
+
+    for (l = lrg_container_get_children (self); l != NULL; l = l->next)
+    {
+        LrgWidget *child = LRG_WIDGET (l->data);
+        gfloat     w;
+        gfloat     h;
+        gfloat     pw;
+        gfloat     ph;
+        gfloat     min_w;
+        gfloat     min_h;
+        gfloat     len;
+        gfloat     floor_len;
+        gfloat     fw;
+
+        if (!lrg_widget_get_visible (child))
+            continue;
+
+        _lrg_widget_outer_size (child, &w, &h);
+        lrg_widget_get_preferred_size (child, &pw, &ph);
+        lrg_widget_get_min_size (child, &min_w, &min_h);
+        len = vertical ? h : w;
+        /* the margins are part of the length and never given back */
+        floor_len = vertical ? MAX (min_h, 0.0f) + (h - ph)
+                             : MAX (min_w, 0.0f) + (w - pw);
+        fw = lrg_widget_get_fill_weight (child);
+
+        g_array_append_val (lengths, len);
+        floor_len = MIN (floor_len, len);
+        g_array_append_val (floors, floor_len);
+        g_array_append_val (weight, fw);
+    }
+
+    for (round = 0; round <= lengths->len && deficit > 0.01f; round++)
+    {
+        gfloat active = 0.0f;
+        gfloat taken = 0.0f;
+
+        for (i = 0; i < lengths->len; i++)
+        {
+            if (g_array_index (weight, gfloat, i) > 0.0f &&
+                g_array_index (lengths, gfloat, i) > g_array_index (floors, gfloat, i))
+                active += g_array_index (weight, gfloat, i);
+        }
+        if (active <= 0.0f)
+            break;
+
+        for (i = 0; i < lengths->len; i++)
+        {
+            gfloat *len = &g_array_index (lengths, gfloat, i);
+            gfloat  fl = g_array_index (floors, gfloat, i);
+            gfloat  fw = g_array_index (weight, gfloat, i);
+            gfloat  cut;
+
+            if (fw <= 0.0f || *len <= fl)
+                continue;
+
+            cut = MIN (deficit * fw / active, *len - fl);
+            *len -= cut;
+            taken += cut;
+        }
+        deficit -= taken;
+    }
+
+    g_array_unref (floors);
+    g_array_unref (weight);
+    return lengths;
+}
+
 void
 _lrg_box_layout (LrgContainer *self,
                  gboolean      vertical,
@@ -743,7 +832,9 @@ _lrg_box_layout (LrgContainer *self,
     gfloat     extra;
     gfloat     pos;
     guint      n = 0;
+    guint      index = 0;
     GList     *l;
+    g_autoptr(GArray) shrink = NULL;
 
     content_w = MAX (0.0f, lrg_widget_get_width (widget) - padding * 2.0f);
     content_h = MAX (0.0f, lrg_widget_get_height (widget) - padding * 2.0f);
@@ -769,6 +860,24 @@ _lrg_box_layout (LrgContainer *self,
     used += spacing * (gfloat) (n - 1);
     extra = main_space - used;
 
+    /*
+     * Short of room: take it back from the flexible children.
+     *
+     * Extra space was handed out by fill weight and a deficit was
+     * ignored, so one child that asked for more than the box had -- a
+     * one-line label holding a long sentence, a markdown label still at
+     * the width it had before the window shrank -- pushed every sibling
+     * after it past the box's edge, with nothing to say they had gone.
+     * The flexible children give it back in proportion to their weight,
+     * none below its own minimum size; one that reaches its minimum
+     * drops out and the rest share what is left.  A box with no
+     * flexible child overflows as before: shrinking a fixed child would
+     * squash a button under its own label.
+     */
+    shrink = NULL;
+    if (!homogeneous && extra < 0.0f && weights > 0.0f)
+        shrink = box_shrink_lengths (self, vertical, -extra);
+
     /* Pass 2: hand out slots and place each child in its slot */
     pos = padding;
     for (l = lrg_container_get_children (self); l != NULL; l = l->next)
@@ -791,8 +900,11 @@ _lrg_box_layout (LrgContainer *self,
             len = vertical ? h : w;
             if (extra > 0.0f && weights > 0.0f)
                 len += extra * lrg_widget_get_fill_weight (child) / weights;
+            else if (shrink != NULL)
+                len = g_array_index (shrink, gfloat, index);
         }
         len = MAX (len, 0.0f);
+        index++;
 
         if (vertical)
             lrg_widget_place_in_slot (child, padding, pos, content_w, len);

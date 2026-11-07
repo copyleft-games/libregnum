@@ -39,6 +39,7 @@ lrg_widget_add_class (LRG_WIDGET (hint), "muted");
 | =font-size= | float              | 20 (reported)   | Theme size (by class) until set                          |
 | =color=     | =GrlColor=         | legacy white    | Theme =TEXT= / =TEXT_MUTED= until set                    |
 | =alignment= | =LrgTextAlignment= | =LEFT=          | Horizontal alignment of each line                        |
+| =ellipsize= | boolean            | =FALSE=         | Given less width than its text, draw the first line cut with "…" instead of past its edge (since 0.8.6) |
 
 =font-size= and =color= keep their old default values in their getters, but the label draws with the theme until a value is set explicitly. Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
@@ -124,6 +125,7 @@ lrg_container_add_child (LRG_CONTAINER (card), LRG_WIDGET (bio));
 - =lrg_label_get_font_size= / =lrg_label_set_font_size=
 - =lrg_label_get_color= / =lrg_label_set_color=
 - =lrg_label_get_alignment= / =lrg_label_set_alignment=
+- =lrg_label_get_ellipsize= / =lrg_label_set_ellipsize= -- the preferred width stays the whole text, so pair it with a fill weight: a box short of room takes width from its flexible children ([[file:../layout.org::#layout-box][box layout]])
 
 ** Related
 :PROPERTIES:
