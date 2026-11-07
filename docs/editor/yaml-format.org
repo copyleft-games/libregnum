@@ -116,6 +116,12 @@ visual:
     height: 8
     tile_width: 16         # tileset slicing in pixels
     tile_height: 16
+    orientation: isometric # 0.9.0, optional: orthogonal (default), isometric, staggered, hexagonal
+    stagger_axis: x        # staggered/hexagonal: x or y (default y)
+    stagger_index: even    # staggered/hexagonal: odd (default) or even
+    hex_side_length: 8     # hexagonal: pixels of the flat side (0 = from the tile size)
+    cell_width: 32         # grid cell in pixels when it differs from the tile (0 = tile size)
+    cell_height: 16
     layers:                # bottom first
       - name: base
         visible: true
@@ -154,6 +160,8 @@ For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the wor
 | =decal= | =LRG_NODE_VISUAL_DECAL= (0.9.0) |
 | =reflection-probe= | =LRG_NODE_VISUAL_REFLECTION_PROBE= (0.9.0) |
 | =probe-volume= | =LRG_NODE_VISUAL_PROBE_VOLUME= (0.9.0 M3: a box of baked light probes) |
+| =terrain= | =LRG_NODE_VISUAL_TERRAIN= (0.9.0 M7: a .rterrain, see [[file:../modules/graphics/terrain-asset.org][LrgTerrainAsset]]) |
+| =water= | =LRG_NODE_VISUAL_WATER= (0.9.0 M7: a .rwater, see [[file:../modules/graphics/water-body.org][LrgWaterBody]]) |
 
 **** Decal and reflection-probe nodes (0.9.0)
 :PROPERTIES:
@@ -213,6 +221,12 @@ Two node kinds shape a level's look together with the [[#environment][environmen
 | probe-volume | =extents_x=, =extents_y=, =extents_z= | double | 5 | half sizes of the world-aligned probe box around the node |
 | probe-volume | =spacing= | double | 0 | distance between probes; 0 = =lighting: settings: probe_spacing= (else 2) |
 | probe-volume | =resolution= | int | 0 | probes per axis (2 .. 64); 0 = from the spacing |
+| terrain | =asset= | string | none | the .rterrain (path or =guid:=) |
+| terrain | =cast_shadows=, =physics=, =foliage= | bool | true | chunk shadows, static heightfield body, foliage layers |
+| terrain | =layer= | int | -1 | render layer (-1 = the entity's) |
+| water | =asset= | string | none | the .rwater (path or =guid:=) |
+| water | =capture= | bool | true | screen-space reflection/refraction capture |
+| water | =layer= | int | -1 | render layer (-1 = the entity's) |
 
 Probe volumes become unbaked =LrgProbeGrid= boxes on the world (=lrg_node_visual_get_probe_volume()=) for the lightmap baker, unless the level already lists baked grids; see [[file:bake.org::#editor-bake-probe-volumes][Lighting Bake > Probe volumes]].
 

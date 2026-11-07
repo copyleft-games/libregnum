@@ -18,7 +18,7 @@ libregnum 0.9 adds a runtime 3D world: an [[file:world3d.org][LrgWorld3D]] ownin
 
 =LrgParticleComponent= (=.rparticles= effects on an entity, drawn in the transparent pass) has its own page: [[file:particle-component.org][LrgParticleComponent]].
 
-This page documents the ten built-in 3D components, which live in =src/world3d/components/=:
+This page documents the built-in 3D components, which live in =src/world3d/components/=:
 
 | Component                    | What it is                                              | Editor visual it comes from |
 |------------------------------+---------------------------------------------------------+-----------------------------|
@@ -36,6 +36,11 @@ This page documents the ten built-in 3D components, which live in =src/world3d/c
 | =LrgColliderComponent3D=     | one collision shape, or a trigger volume                 | =physics: shapes:=          |
 | =LrgJointComponent=          | a joint to another body or the world                     | =physics: joints:=          |
 | =LrgNavAgentComponent=       | a navigation agent of the world's crowd (0.9.0 M6)       | (none: add it in the components list) |
+| =LrgTerrainComponent=        | a .rterrain with foliage and a heightfield body (0.9.0 M7, [[file:../graphics/terrain-asset.org][terrain-asset]]) | TERRAIN |
+| =LrgFoliageComponent=        | standalone foliage layers (0.9.0 M7, [[file:../graphics/foliage.org][foliage]])       | (none: add it in the components list) |
+| =LrgWaterComponent=          | a .rwater plane, lake or river (0.9.0 M7, [[file:../graphics/water-body.org][water-body]]) | WATER |
+| =LrgParticleComponent=       | a .rparticles effect (0.9.0 M7, [[file:particle-component.org][particle-component]]) | (none: =type: particles=) |
+| =LrgAiComponent=             | a .rbt tree and/or .rfsm machine over a blackboard (0.9.0 M6, [[file:../ai/ai-component.org][ai-component]]) | (none: =type: ai=) |
 
 Three rules hold for all of them:
 
@@ -1321,6 +1326,12 @@ Makes its entity a navigation agent (0.9.0 M6). While the entity is in a world t
 | =angular-speed= | 720 | degrees per second |
 
 API: =lrg_nav_agent_component_new()=, =lrg_nav_agent_component_get_agent()=, =lrg_nav_agent_component_set_destination()= / =lrg_nav_agent_component_get_destination()= (a destination set before the world has a mesh waits for it), =lrg_nav_agent_component_stop()=, =lrg_nav_agent_component_get_state()=, =lrg_nav_agent_component_has_arrived()=, =lrg_nav_agent_component_get_remaining_distance()=, and getters / setters for =speed=, =acceleration=, =radius=, =height= and =avoidance-priority= (=lrg_nav_agent_component_get_speed()= ... =lrg_nav_agent_component_set_avoidance_priority()=). Signals =arrived= and =path-failed=. Full reference: [[file:../pathfinding/nav-agent.org::#api-component][nav-agent]].
+
+** LrgAiComponent
+:PROPERTIES:
+:CUSTOM_ID: ai-component
+:END:
+See [[file:../ai/ai-component.org][ai-component.org]]: runs a .rbt tree and/or .rfsm machine on the entity over a shared blackboard (=tree-path=, =machine-path=, =tick-interval=, =use-fixed-update=).
 
 ** Type functions
 :PROPERTIES:

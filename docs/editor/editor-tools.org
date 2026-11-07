@@ -330,6 +330,8 @@ Every public function of the tilemap and timeline headers that the sections abov
 | =lrg_node_tilemap_get_tile_width ()= | Returns the width of one tileset tile in pixels. |
 | =lrg_node_tilemap_get_tile_height ()= | Returns the height of one tileset tile in pixels. |
 | =lrg_node_tilemap_set_tile_size ()= | Sets how the tileset image is sliced into tiles. |
+| =lrg_node_tilemap_set_grid ()= | Sets the grid layout (0.9.0): orientation (orthogonal, isometric, staggered, hexagonal), stagger axis and index, hex side length and the cell size in pixels (0 = the tile size). Saved as the =orientation=, =stagger_axis=, =stagger_index=, =hex_side_length=, =cell_width= and =cell_height= keys only when they differ from the defaults; the runtime #LrgTilemapComponent passes them to its #LrgTilemap. See [[file:../modules/tilemap/iso-hex.org][Isometric and hexagonal tilemaps]]. |
+| =lrg_node_tilemap_get_grid ()= | Gets the grid layout set with =lrg_node_tilemap_set_grid ()=; every out argument is optional. |
 | =lrg_node_tilemap_get_n_layers ()= | Returns the number of layers (bottom first). |
 | =lrg_node_tilemap_add_layer ()= | Appends an empty, visible layer on top. |
 | =lrg_node_tilemap_remove_layer ()= | Removes a layer. The last remaining layer cannot be removed. |

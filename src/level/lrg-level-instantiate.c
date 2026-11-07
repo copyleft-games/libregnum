@@ -43,6 +43,8 @@
 #include "../core/lrg-asset-meta.h"
 #include "../core/lrg-engine.h"
 #include "../core/lrg-registry.h"
+#include "../world3d/components/lrg-terrain-component.h"
+#include "../world3d/components/lrg-water-component.h"
 #include "../lrg-enums.h"
 #include "../ui/lrg-property-source.h"
 #include <graylib.h>
@@ -600,6 +602,12 @@ static const VisualMap visual_map[] = {
 	/* reflection probe -> LrgReflectionProbeComponent: every param maps
 	 * by name (extents_x -> extents-x, blend_distance, intensity,
 	 * box_projection, resolution, near_clip, far_clip, auto_recapture) */
+
+	/* terrain -> LrgTerrainComponent (.rterrain), water -> LrgWaterComponent
+	 * (.rwater); cast_shadows, physics, foliage, layer and capture map by
+	 * name */
+	{ LRG_NODE_VISUAL_TERRAIN,    MAP_ASSET,     NULL, 0, "asset-path", 1.0 },
+	{ LRG_NODE_VISUAL_WATER,      MAP_ASSET,     NULL, 0, "body-path", 1.0 },
 };
 
 GType
@@ -624,6 +632,10 @@ lrg_level_visual_get_component_type (LrgNodeVisualKind kind)
 		return LRG_TYPE_DECAL_COMPONENT;
 	case LRG_NODE_VISUAL_REFLECTION_PROBE:
 		return LRG_TYPE_REFLECTION_PROBE_COMPONENT;
+	case LRG_NODE_VISUAL_TERRAIN:
+		return LRG_TYPE_TERRAIN_COMPONENT;
+	case LRG_NODE_VISUAL_WATER:
+		return LRG_TYPE_WATER_COMPONENT;
 	case LRG_NODE_VISUAL_NONE:
 	case LRG_NODE_VISUAL_PREFAB_INSTANCE:
 	case LRG_NODE_VISUAL_CAD_PART:
@@ -1148,6 +1160,18 @@ create_visual_component (LrgNodeVisual   *visual,
 		configure_tilemap (visual, comp);
 	else if (kind == LRG_NODE_VISUAL_DECAL)
 		resolve_decal_paths (comp, manager, base_dir);
+	else if (kind == LRG_NODE_VISUAL_TERRAIN || kind == LRG_NODE_VISUAL_WATER)
+	{
+		/* absolute paths, so the .rterrain sidecars resolve next to it */
+		g_autofree gchar *ref = NULL;
+		g_autofree gchar *path = NULL;
+		const gchar      *prop;
+
+		prop = kind == LRG_NODE_VISUAL_TERRAIN ? "asset-path" : "body-path";
+		g_object_get (comp, prop, &ref, NULL);
+		if (ref != NULL && (path = resolve_asset_ref (manager, base_dir, ref)) != NULL)
+			g_object_set (comp, prop, path, NULL);
+	}
 	if (lod_path != NULL)
 	{
 		/* the chain is generated from the resolved model on first draw */

@@ -35,6 +35,14 @@ struct _LrgNodeTilemap
 	guint      tile_width;   /* tileset slicing, pixels */
 	guint      tile_height;
 	GPtrArray *layers;       /* TileLayer*, bottom first */
+
+	/* 0.9.0 grid layout, applied by lrg_node_tilemap_to_runtime() */
+	LrgTilemapOrientation  orientation;
+	LrgTilemapStaggerAxis  stagger_axis;
+	LrgTilemapStaggerIndex stagger_index;
+	guint                  hex_side_length;
+	guint                  cell_width;
+	guint                  cell_height;
 };
 
 G_DEFINE_FINAL_TYPE (LrgNodeTilemap, lrg_node_tilemap, G_TYPE_OBJECT)
@@ -91,6 +99,7 @@ lrg_node_tilemap_init (LrgNodeTilemap *self)
 {
 	self->layers = g_ptr_array_new_with_free_func (tile_layer_free);
 	self->tile_width = 16;
+	self->stagger_axis = LRG_TILEMAP_STAGGER_AXIS_Y;
 	self->tile_height = 16;
 }
 
@@ -463,6 +472,12 @@ lrg_node_tilemap_copy (LrgNodeTilemap *self)
 	copy->height = self->height;
 	copy->tile_width = self->tile_width;
 	copy->tile_height = self->tile_height;
+	copy->orientation = self->orientation;
+	copy->stagger_axis = self->stagger_axis;
+	copy->stagger_index = self->stagger_index;
+	copy->hex_side_length = self->hex_side_length;
+	copy->cell_width = self->cell_width;
+	copy->cell_height = self->cell_height;
 	for (i = 0; i < self->layers->len; i++)
 	{
 		TileLayer *src = g_ptr_array_index (self->layers, i);
@@ -487,6 +502,9 @@ lrg_node_tilemap_equal (LrgNodeTilemap *a,
 		return FALSE;
 	if (a->width != b->width || a->height != b->height ||
 	    a->tile_width != b->tile_width || a->tile_height != b->tile_height ||
+	    a->orientation != b->orientation || a->stagger_axis != b->stagger_axis ||
+	    a->stagger_index != b->stagger_index || a->hex_side_length != b->hex_side_length ||
+	    a->cell_width != b->cell_width || a->cell_height != b->cell_height ||
 	    a->layers->len != b->layers->len)
 		return FALSE;
 
@@ -513,6 +531,11 @@ lrg_node_tilemap_to_runtime (LrgNodeTilemap *self,
 	g_return_val_if_fail (LRG_IS_TILESET (tileset), NULL);
 
 	map = lrg_tilemap_new (tileset);
+	lrg_tilemap_set_orientation (map, self->orientation);
+	lrg_tilemap_set_stagger_axis (map, self->stagger_axis);
+	lrg_tilemap_set_stagger_index (map, self->stagger_index);
+	lrg_tilemap_set_hex_side_length (map, self->hex_side_length);
+	lrg_tilemap_set_cell_size (map, self->cell_width, self->cell_height);
 	for (i = 0; i < self->layers->len; i++)
 	{
 		TileLayer                *src = g_ptr_array_index (self->layers, i);
@@ -524,4 +547,49 @@ lrg_node_tilemap_to_runtime (LrgNodeTilemap *self,
 		lrg_tilemap_add_layer (map, layer);
 	}
 	return map;
+}
+
+void
+lrg_node_tilemap_set_grid (LrgNodeTilemap         *self,
+                           LrgTilemapOrientation   orientation,
+                           LrgTilemapStaggerAxis   stagger_axis,
+                           LrgTilemapStaggerIndex  stagger_index,
+                           guint                   hex_side_length,
+                           guint                   cell_width,
+                           guint                   cell_height)
+{
+	g_return_if_fail (LRG_IS_NODE_TILEMAP (self));
+	g_return_if_fail (orientation <= LRG_TILEMAP_ORIENTATION_HEXAGONAL);
+
+	self->orientation = orientation;
+	self->stagger_axis = stagger_axis;
+	self->stagger_index = stagger_index;
+	self->hex_side_length = hex_side_length;
+	self->cell_width = cell_width;
+	self->cell_height = cell_height;
+}
+
+void
+lrg_node_tilemap_get_grid (LrgNodeTilemap         *self,
+                           LrgTilemapOrientation  *orientation,
+                           LrgTilemapStaggerAxis  *stagger_axis,
+                           LrgTilemapStaggerIndex *stagger_index,
+                           guint                  *hex_side_length,
+                           guint                  *cell_width,
+                           guint                  *cell_height)
+{
+	g_return_if_fail (LRG_IS_NODE_TILEMAP (self));
+
+	if (orientation != NULL)
+		*orientation = self->orientation;
+	if (stagger_axis != NULL)
+		*stagger_axis = self->stagger_axis;
+	if (stagger_index != NULL)
+		*stagger_index = self->stagger_index;
+	if (hex_side_length != NULL)
+		*hex_side_length = self->hex_side_length;
+	if (cell_width != NULL)
+		*cell_width = self->cell_width;
+	if (cell_height != NULL)
+		*cell_height = self->cell_height;
 }

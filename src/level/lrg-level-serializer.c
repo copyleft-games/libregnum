@@ -778,6 +778,33 @@ build_tilemap_mapping (LrgNodeTilemap *tilemap)
 	yaml_mapping_set_int_member (map, "tile_width", lrg_node_tilemap_get_tile_width (tilemap));
 	yaml_mapping_set_int_member (map, "tile_height", lrg_node_tilemap_get_tile_height (tilemap));
 
+	/* 0.9.0 grid layout: written only when it differs from the default */
+	{
+		LrgTilemapOrientation  orientation;
+		LrgTilemapStaggerAxis  axis;
+		LrgTilemapStaggerIndex index;
+		guint                  side, cw, ch;
+
+		lrg_node_tilemap_get_grid (tilemap, &orientation, &axis, &index, &side, &cw, &ch);
+		if (orientation != LRG_TILEMAP_ORIENTATION_ORTHOGONAL)
+		{
+			GEnumClass *klass = g_type_class_ref (LRG_TYPE_TILEMAP_ORIENTATION);
+
+			yaml_mapping_set_string_member (map, "orientation", g_enum_get_value (klass, orientation)->value_nick);
+			g_type_class_unref (klass);
+		}
+		if (axis != LRG_TILEMAP_STAGGER_AXIS_Y)
+			yaml_mapping_set_string_member (map, "stagger_axis", "x");
+		if (index != LRG_TILEMAP_STAGGER_INDEX_ODD)
+			yaml_mapping_set_string_member (map, "stagger_index", "even");
+		if (side != 0)
+			yaml_mapping_set_int_member (map, "hex_side_length", side);
+		if (cw != 0)
+			yaml_mapping_set_int_member (map, "cell_width", cw);
+		if (ch != 0)
+			yaml_mapping_set_int_member (map, "cell_height", ch);
+	}
+
 	for (i = 0; i < lrg_node_tilemap_get_n_layers (tilemap); i++)
 	{
 		g_autoptr(YamlMapping)  lmap = yaml_mapping_new ();
@@ -1791,6 +1818,36 @@ parse_tilemap (YamlMapping *map)
 	th = yaml_mapping_has_member (map, "tile_height") ? yaml_mapping_get_int_member (map, "tile_height") : 16;
 	if (tw > 0 && th > 0)
 		lrg_node_tilemap_set_tile_size (tilemap, (guint) tw, (guint) th);
+
+	/* 0.9.0 grid layout; unknown values fall back to the defaults */
+	{
+		LrgTilemapOrientation  orientation = LRG_TILEMAP_ORIENTATION_ORTHOGONAL;
+		const gchar           *text = yaml_mapping_has_member (map, "orientation")
+		                              ? yaml_mapping_get_string_member (map, "orientation") : NULL;
+		gint64                 side, cw, ch;
+
+		if (text != NULL)
+		{
+			GEnumClass *klass = g_type_class_ref (LRG_TYPE_TILEMAP_ORIENTATION);
+			GEnumValue *value = g_enum_get_value_by_nick (klass, text);
+
+			if (value != NULL)
+				orientation = (LrgTilemapOrientation) value->value;
+			g_type_class_unref (klass);
+		}
+		side = yaml_mapping_has_member (map, "hex_side_length") ? yaml_mapping_get_int_member (map, "hex_side_length") : 0;
+		cw = yaml_mapping_has_member (map, "cell_width") ? yaml_mapping_get_int_member (map, "cell_width") : 0;
+		ch = yaml_mapping_has_member (map, "cell_height") ? yaml_mapping_get_int_member (map, "cell_height") : 0;
+		lrg_node_tilemap_set_grid (tilemap, orientation,
+		                           g_strcmp0 (yaml_mapping_has_member (map, "stagger_axis")
+		                                      ? yaml_mapping_get_string_member (map, "stagger_axis") : NULL, "x") == 0
+		                           ? LRG_TILEMAP_STAGGER_AXIS_X : LRG_TILEMAP_STAGGER_AXIS_Y,
+		                           g_strcmp0 (yaml_mapping_has_member (map, "stagger_index")
+		                                      ? yaml_mapping_get_string_member (map, "stagger_index") : NULL, "even") == 0
+		                           ? LRG_TILEMAP_STAGGER_INDEX_EVEN : LRG_TILEMAP_STAGGER_INDEX_ODD,
+		                           (guint) CLAMP (side, 0, 65536), (guint) CLAMP (cw, 0, 65536),
+		                           (guint) CLAMP (ch, 0, 65536));
+	}
 
 	layers_node = yaml_mapping_get_member (map, "layers");
 	if (layers_node != NULL && yaml_node_get_node_type (layers_node) == YAML_NODE_SEQUENCE)

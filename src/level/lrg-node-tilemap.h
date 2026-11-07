@@ -29,6 +29,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../tilemap/lrg-tilemap.h"
 
 G_BEGIN_DECLS
 
@@ -122,6 +123,50 @@ LRG_AVAILABLE_IN_ALL
 void lrg_node_tilemap_set_tile_size (LrgNodeTilemap *self,
                                      guint           tile_width,
                                      guint           tile_height);
+
+/**
+ * lrg_node_tilemap_set_grid:
+ * @self: an #LrgNodeTilemap
+ * @orientation: the grid orientation
+ * @stagger_axis: stagger axis of staggered and hexagonal grids
+ * @stagger_index: which rows/columns are shifted
+ * @hex_side_length: hexagon side length in pixels (0: automatic)
+ * @cell_width: grid cell width in pixels (0: the tile width)
+ * @cell_height: grid cell height in pixels (0: the tile height)
+ *
+ * Sets the grid layout the runtime #LrgTilemap gets (see
+ * lrg_tilemap_set_orientation()).  The defaults (orthogonal, y, odd, 0,
+ * 0, 0) keep pre-0.9.0 levels unchanged.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_tilemap_set_grid (LrgNodeTilemap         *self,
+                                LrgTilemapOrientation   orientation,
+                                LrgTilemapStaggerAxis   stagger_axis,
+                                LrgTilemapStaggerIndex  stagger_index,
+                                guint                   hex_side_length,
+                                guint                   cell_width,
+                                guint                   cell_height);
+
+/**
+ * lrg_node_tilemap_get_grid:
+ * @self: an #LrgNodeTilemap
+ * @orientation: (out) (optional): the grid orientation
+ * @stagger_axis: (out) (optional): the stagger axis
+ * @stagger_index: (out) (optional): the stagger index
+ * @hex_side_length: (out) (optional): hexagon side length (0: automatic)
+ * @cell_width: (out) (optional): cell width (0: the tile width)
+ * @cell_height: (out) (optional): cell height (0: the tile height)
+ *
+ * Gets the grid layout set with lrg_node_tilemap_set_grid().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_tilemap_get_grid (LrgNodeTilemap         *self,
+                                LrgTilemapOrientation  *orientation,
+                                LrgTilemapStaggerAxis  *stagger_axis,
+                                LrgTilemapStaggerIndex *stagger_index,
+                                guint                  *hex_side_length,
+                                guint                  *cell_width,
+                                guint                  *cell_height);
 
 /**
  * lrg_node_tilemap_get_n_layers:

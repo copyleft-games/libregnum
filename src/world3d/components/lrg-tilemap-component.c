@@ -122,7 +122,34 @@ resolve_tileset (LrgTilemapComponent *self)
 	if (tw == 0 || th == 0)
 		return;
 
-	if (self->asset_manager != NULL)
+	if (g_str_has_suffix (self->tileset_path, ".rtileset"))
+	{
+		/*
+		 * 0.9.0 tileset asset: the description (tile size, collision, rule
+		 * tiles, animated tiles) comes from the file; the image is loaded
+		 * through the asset manager (relative to the .rtileset) or from
+		 * disk when a window exists.
+		 */
+		g_autoptr(LrgTileset) ts = lrg_tileset_new_from_asset_file (self->tileset_path, FALSE, &error);
+
+		if (ts != NULL && lrg_tileset_get_image_path (ts) != NULL)
+		{
+			if (self->asset_manager != NULL)
+			{
+				g_autofree gchar *dir = g_path_get_dirname (self->tileset_path);
+				g_autofree gchar *image = g_build_filename (dir, lrg_tileset_get_image_path (ts), NULL);
+				GrlTexture *tex = lrg_asset_manager_load_texture (self->asset_manager, image, &error);
+
+				if (tex != NULL)
+					lrg_tileset_set_texture (ts, tex);
+			}
+			else if (IsWindowReady ())
+				lrg_tileset_load_texture (ts, &error);
+		}
+		if (ts != NULL && lrg_tileset_get_texture (ts) != NULL)
+			self->tileset = g_steal_pointer (&ts);
+	}
+	else if (self->asset_manager != NULL)
 	{
 		GrlTexture *tex = lrg_asset_manager_load_texture (self->asset_manager, self->tileset_path, &error);
 
