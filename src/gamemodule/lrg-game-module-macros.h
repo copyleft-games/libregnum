@@ -85,4 +85,45 @@ G_BEGIN_DECLS
 
 #endif /* LRG_GAME_BUILD_MODULE */
 
+/**
+ * LRG_DEFINE_GAME_MODULE_EDITOR:
+ * @func: a function `gboolean func (LrgEditorApp *app, GError **error)`
+ *   (an #LrgGameModuleEditorInit)
+ *
+ * Emits the optional editor entry point of a game module: when
+ * `lrgeditor --module SO` loads the module it calls @func once, right
+ * after the editor application is created and its preferences are
+ * loaded, so the module can register asset sources
+ * (lrg_editor_app_add_asset_source()), panels and actions. Returning
+ * %FALSE (with @error set) makes lrgeditor print the error and exit.
+ *
+ * Use it next to LRG_DEFINE_GAME_MODULE(), without a trailing semicolon.
+ * In the module build (-DLRG_GAME_BUILD_MODULE) it exports
+ * #LRG_GAME_MODULE_EDITOR_SYMBOL; in the standalone build it emits no
+ * symbol (only an unused reference, so a static @func does not warn).
+ * The macro only needs a forward declaration of the editor type; the
+ * file calling editor API includes <libregnum.h> as usual.
+ *
+ * Since: 0.8.2
+ */
+#if defined(LRG_GAME_BUILD_MODULE)
+
+# define LRG_DEFINE_GAME_MODULE_EDITOR(func)                                   \
+    G_MODULE_EXPORT gboolean lrg_game_module_editor_init                       \
+        (struct _LrgEditorApp *app, GError **error);                           \
+    G_MODULE_EXPORT gboolean                                                   \
+    lrg_game_module_editor_init (struct _LrgEditorApp  *app,                   \
+                                 GError               **error)                 \
+    {                                                                          \
+        return (func) (app, error);                                            \
+    }
+
+#else /* standalone executable */
+
+# define LRG_DEFINE_GAME_MODULE_EDITOR(func)                                   \
+    G_GNUC_UNUSED static gboolean (* const _lrg_game_module_editor_unused)     \
+        (struct _LrgEditorApp *, GError **) = (func);
+
+#endif /* LRG_GAME_BUILD_MODULE */
+
 G_END_DECLS

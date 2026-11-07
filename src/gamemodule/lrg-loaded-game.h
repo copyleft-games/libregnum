@@ -40,6 +40,21 @@ G_BEGIN_DECLS
 #define LRG_GAME_MODULE_ENTRY_SYMBOL "lrg_game_module_query"
 
 /**
+ * LRG_GAME_MODULE_EDITOR_SYMBOL:
+ *
+ * The name of the optional symbol a game module exports to run code
+ * inside the editor (register asset sources, panels, actions). It is
+ * emitted by LRG_DEFINE_GAME_MODULE_EDITOR() and called by
+ * lrg_editor_app_init_module() with the editor application; its type is
+ * the editor's #LrgGameModuleEditorInit. The game module layer only
+ * looks it up (lrg_loaded_game_lookup_symbol()) and has no editor
+ * dependency.
+ *
+ * Since: 0.8.2
+ */
+#define LRG_GAME_MODULE_EDITOR_SYMBOL "lrg_game_module_editor_init"
+
+/**
  * LrgGameModuleInfo:
  * @abi_version: the #LRG_GAME_MODULE_ABI_VERSION the module was built against
  * @lrg_major: the libregnum major version the module was built against
@@ -180,6 +195,25 @@ lrg_loaded_game_get_game (LrgLoadedGame *self);
 LRG_AVAILABLE_IN_ALL
 const LrgGameModuleInfo *
 lrg_loaded_game_get_info (LrgLoadedGame *self);
+
+/**
+ * lrg_loaded_game_lookup_symbol:
+ * @self: an #LrgLoadedGame
+ * @name: a symbol name, e.g. #LRG_GAME_MODULE_EDITOR_SYMBOL
+ *
+ * Looks up an exported symbol of the loaded module, for optional entry
+ * points beyond #LRG_GAME_MODULE_ENTRY_SYMBOL. The module is resident,
+ * so the address stays valid for the process lifetime.
+ *
+ * Returns: (transfer none) (nullable): the symbol's address, or %NULL
+ *   when the module does not export it (or was unloaded)
+ *
+ * Since: 0.8.2
+ */
+LRG_AVAILABLE_IN_ALL
+gpointer
+lrg_loaded_game_lookup_symbol (LrgLoadedGame *self,
+                               const gchar   *name);
 
 /**
  * lrg_loaded_game_unload:
