@@ -120,3 +120,9 @@ The =Libregnum-1= namespace keeps every type and function name. New in M0: names
 | Change | Effect | What to do | See |
 |--------+--------+------------+-----|
 | 3D-default levels now play in =LrgWorld3D= | editor plugins reading play objects as =LrgGameObject= get =NULL= for 3D levels | use =lrg_editor_play_session_get_live_*= / =apply_live=, or mark the level 2D | [[file:../editor/view-model.org::#play-3d][view model]] |
+
+** Post-processing renders for real
+:PROPERTIES:
+:CUSTOM_ID: migration-post-real
+:END:
+=LrgPostProcessor= and the bloom, vignette, FXAA, film grain and screen shake effects now really render (before 0.9 they were no-ops): a chain that was set up but invisible will now show. Every built-in effect scales by =LrgPostEffect:intensity=. =LrgScreenShake= offsets are smooth noise instead of per-frame jitter. Post stacks can be authored as =.rpost= files: see [[file:../modules/postprocess/post-stack.org][Post Stacks]].

@@ -2,50 +2,72 @@
 :PROPERTIES:
 :CUSTOM_ID: built-in-effects
 :END:
-This page documents all built-in post-processing effects.
+Every built-in effect is an [[file:post-effect.org][LrgPostEffect]] that runs as a real shader pass in an [[file:post-processor.org][LrgPostProcessor]] chain, compiles its GLSL 330 shader lazily on its first pass (or in a prewarm: they all implement =LrgPrewarmable=), and mixes its result with its input by the base intensity (=lrg_post_effect_set_intensity()=, a stack's =weight=). Every tunable is a GObject property, so a [[file:post-stack.org][.rpost]] stack sets it by name under the effect's type name (the =get_name()= value below). Without a window they are pure CPU objects.
+
+Recommended order: =screen-shake=, =heat-haze= (distortions on the scene), =bloom= (needs HDR values), =tonemap=, =color-grade=, =colorblind-filter=, =sharpen=, =fxaa=, =palettize=, =film-grain=, =vignette=.
+
+| Effect | Type name | Passes | Page |
+|--------+-----------+--------+------|
+| =LrgBloom= | =bloom= | 2 per level | [[#lrgbloom][below]] |
+| =LrgTonemap= | =tonemap= | 1 | [[#lrgtonemap][below]] |
+| =LrgVignette= | =vignette= | 1 | [[#lrgvignette][below]] |
+| =LrgColorGrade= | =color-grade= | 1 | [[#lrgcolorgrade][below]], [[file:color-lut.org][LUTs]] |
+| =LrgFxaa= | =fxaa= | 1 | [[#lrgfxaa][below]] |
+| =LrgFilmGrain= | =film-grain= | 1 | [[#lrgfilmgrain][below]] |
+| =LrgScreenShake= | =screen-shake= | 1 | [[#lrgscreenshake][below]] |
+| =LrgHeatHaze= | =heat-haze= | 1 | [[#lrgheathaze][below]] |
+| =LrgColorblindFilter= | =colorblind-filter= | 1 | [[file:accessibility.org][accessibility.org]] |
+| =LrgSharpen= | =sharpen= | 1 | [[file:sharpen.org][sharpen.org]] |
+| =LrgPalettize= | =palettize= | 1 | [[file:palettize.org][palettize.org]] |
 
 ** LrgBloom
 :PROPERTIES:
 :CUSTOM_ID: lrgbloom
 :END:
-Adds glow around bright areas. Great for fire, magic, and light sources.
+A glow around everything brighter than a threshold: fire, magic, emissive signs, the sun on water. With HDR targets (the default) the threshold sees values above 1.0, so =threshold: 1.0= blooms only what is "brighter than white".
 
 #+begin_src C
-#define LRG_TYPE_BLOOM (lrg_bloom_get_type ())
 G_DECLARE_FINAL_TYPE (LrgBloom, lrg_bloom, LRG, BLOOM, LrgPostEffect)
+
+LrgBloom *lrg_bloom_new            (void);
+gfloat    lrg_bloom_get_threshold  (LrgBloom *self);
+void      lrg_bloom_set_threshold  (LrgBloom *self, gfloat threshold);   /* 0..10 */
+gfloat    lrg_bloom_get_intensity  (LrgBloom *self);
+void      lrg_bloom_set_intensity  (LrgBloom *self, gfloat intensity);   /* 0..5 */
+gfloat    lrg_bloom_get_blur_size  (LrgBloom *self);
+void      lrg_bloom_set_blur_size  (LrgBloom *self, gfloat blur_size);   /* 1..20 */
+guint     lrg_bloom_get_iterations (LrgBloom *self);
+void      lrg_bloom_set_iterations (LrgBloom *self, guint iterations);   /* 1..8 */
+gfloat    lrg_bloom_get_soft_knee  (LrgBloom *self);
+void      lrg_bloom_set_soft_knee  (LrgBloom *self, gfloat soft_knee);   /* 0..1 */
+void      lrg_bloom_get_tint       (LrgBloom *self, gfloat *r, gfloat *g, gfloat *b);
+void      lrg_bloom_set_tint       (LrgBloom *self, gfloat r, gfloat g, gfloat b);
 #+end_src
 
-*** Functions
+*** How it renders
 :PROPERTIES:
-:CUSTOM_ID: functions
+:CUSTOM_ID: bloom-algorithm
 :END:
-#+begin_src C
-LrgBloom *lrg_bloom_new (void);
+A progressive mip chain, in the effect's own render targets (RGBA16F when possible):
+1. *Prefilter* the source into level 0 at half resolution (quarter at the low tier): four bilinear taps averaged, then a soft-knee threshold on the brightest channel: =w = max(soft, l - threshold) / l=, =soft = clamp(l - threshold + knee, 0, 2 knee)^2 / (4 knee)=, =knee = threshold * soft-knee=.
+2. *Downsample* level /i-1/ into level /i/ (half size each): centre x4 plus four diagonal taps, /8.
+3. *Upsample* from the smallest level back to level 0, adding (additive blending) a 9-tap tent of radius =blur-size= / 4 texels onto each larger level, so wide and tight halos add up.
+4. *Composite* into the processor's target: =source + level0 / levels * intensity * tint * base intensity=.
 
-/* Brightness threshold for bloom extraction */
-gfloat lrg_bloom_get_threshold (LrgBloom *self);
-void lrg_bloom_set_threshold (LrgBloom *self, gfloat threshold);  /* 0.0 - 10.0 */
+The number of levels is =iterations= capped by the quality tier (low 3, medium 4, high 6, ultra 8) and by the image size (a level stops at 2 pixels). More levels make a wider, softer glow; =blur-size= widens each tap.
 
-/* Bloom brightness multiplier */
-gfloat lrg_bloom_get_intensity (LrgBloom *self);
-void lrg_bloom_set_intensity (LrgBloom *self, gfloat intensity);  /* 0.0 - 5.0 */
-
-/* Blur kernel size */
-gfloat lrg_bloom_get_blur_size (LrgBloom *self);
-void lrg_bloom_set_blur_size (LrgBloom *self, gfloat blur_size);  /* 1.0 - 20.0 */
-
-/* Number of blur passes */
-guint lrg_bloom_get_iterations (LrgBloom *self);
-void lrg_bloom_set_iterations (LrgBloom *self, guint iterations);  /* 1 - 8 */
-
-/* Threshold softness */
-gfloat lrg_bloom_get_soft_knee (LrgBloom *self);
-void lrg_bloom_set_soft_knee (LrgBloom *self, gfloat soft_knee);  /* 0.0 - 1.0 */
-
-/* Color tint */
-void lrg_bloom_get_tint (LrgBloom *self, gfloat *r, gfloat *g, gfloat *b);
-void lrg_bloom_set_tint (LrgBloom *self, gfloat r, gfloat g, gfloat b);
-#+end_src
+*** Parameters (.rpost)
+:PROPERTIES:
+:CUSTOM_ID: bloom-params
+:END:
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =threshold= | 0..10 | 0.8 | Brightness where the glow starts (0 blooms everything) |
+| =soft-knee= | 0..1 | 0.5 | 0 = hard cut at the threshold, 1 = gradual |
+| =intensity= | 0..5 | 1 | Glow strength |
+| =blur-size= | 1..20 | 4 | Tap spread of the upsample (4 = one texel) |
+| =iterations= | 1..8 | 3 | Mip levels (capped by the tier) |
+| =tint-r/g/b= | 0..1 | 1 | Glow colour (=tint: [r, g, b]=) |
 
 *** Example
 :PROPERTIES:
@@ -53,10 +75,78 @@ void lrg_bloom_set_tint (LrgBloom *self, gfloat r, gfloat g, gfloat b);
 :END:
 #+begin_src C
 g_autoptr(LrgBloom) bloom = lrg_bloom_new ();
-lrg_bloom_set_threshold (bloom, 0.8f);
+lrg_bloom_set_threshold (bloom, 1.0f);    /* only HDR highlights */
 lrg_bloom_set_intensity (bloom, 1.5f);
-lrg_bloom_set_blur_size (bloom, 5.0f);
-lrg_bloom_set_iterations (bloom, 4);
+lrg_bloom_set_iterations (bloom, 5);      /* wide glow (needs medium tier or better) */
+lrg_bloom_set_tint (bloom, 1.0f, 0.9f, 0.75f);
+#+end_src
+
+--------------
+
+** LrgTonemap
+:PROPERTIES:
+:CUSTOM_ID: lrgtonemap
+:END:
+Exposure and a tonemapping curve from scene values (possibly far above 1.0 in the HDR target) to display values (=postprocess/effects/lrg-tonemap.h=, name =tonemap=).
+
+#+begin_src C
+G_DECLARE_FINAL_TYPE (LrgTonemap, lrg_tonemap, LRG, TONEMAP, LrgPostEffect)
+
+typedef enum {
+	LRG_TONEMAP_OPERATOR_NONE,       /* exposure, clamp */
+	LRG_TONEMAP_OPERATOR_REINHARD,   /* extended Reinhard */
+	LRG_TONEMAP_OPERATOR_FILMIC,     /* Hable (Uncharted 2) */
+	LRG_TONEMAP_OPERATOR_ACES        /* Narkowicz ACES fit */
+} LrgTonemapOperator;              /* lrg_tonemap_operator_get_type () */
+
+LrgTonemap        *lrg_tonemap_new                 (void);
+LrgTonemapOperator lrg_tonemap_get_operator        (LrgTonemap *self);
+void               lrg_tonemap_set_operator        (LrgTonemap *self, LrgTonemapOperator op);
+gfloat             lrg_tonemap_get_exposure        (LrgTonemap *self);
+void               lrg_tonemap_set_exposure        (LrgTonemap *self, gfloat ev);      /* -16..16 */
+gfloat             lrg_tonemap_get_white_point     (LrgTonemap *self);
+void               lrg_tonemap_set_white_point     (LrgTonemap *self, gfloat white);   /* 0.1..100 */
+gboolean           lrg_tonemap_get_linear_input    (LrgTonemap *self);
+void               lrg_tonemap_set_linear_input    (LrgTonemap *self, gboolean linear);
+void               lrg_tonemap_apply_rgb           (LrgTonemap *self, const gfloat *rgb, gfloat *out);
+const gchar       *lrg_tonemap_get_fragment_shader (void);
+#+end_src
+
+*** The curve
+:PROPERTIES:
+:CUSTOM_ID: tonemap-curve
+:END:
+Per channel: decode =x = c^2.2= (skipped when =linear-input=), =x *= 2^exposure=, map, clamp to 0..1, encode =m^(1/2.2)=, mix with the input by the base intensity. =lrg_tonemap_apply_rgb()= is the same arithmetic on the CPU (the GPU test compares both).
+| Operator | Formula | Look |
+|----------+---------+------|
+| =none= | =x= | Hard clip; exposure only |
+| =reinhard= | =x (1 + x / W^2) / (1 + x)= | Soft, low contrast, desaturates highlights; white at W |
+| =filmic= | =h(2x) / h(W)=, =h(x) = (x(Ax+CB)+DE)/(x(Ax+B)+DF) - E/F=, A .15 B .5 C .1 D .2 E .02 F .3 | Toe in the shadows, long shoulder; white at W |
+| =aces= | =x (2.51x + .03) / (x (2.43x + .59) + .14)= | Punchy contrast and saturation (the default) |
+
+The engine's shaders write gamma-encoded colour (the lit shader decodes and re-encodes), so the default =linear-input: false= decodes first and the curves act on linear light. Mid grey at exposure 0 comes out darker with ACES than without a tonemap; raise =exposure= to compensate.
+
+*** Parameters (.rpost)
+:PROPERTIES:
+:CUSTOM_ID: tonemap-params
+:END:
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =operator= | none, reinhard, filmic, aces | aces | Curve |
+| =exposure= | -16..16 | 0 | Stops before the curve |
+| =white-point= | 0.1..100 | 4 | Linear value that reaches white (reinhard, filmic) |
+| =linear-input= | bool | false | The image already holds linear light |
+
+*** Example
+:PROPERTIES:
+:CUSTOM_ID: tonemap-example
+:END:
+#+begin_src C
+g_autoptr(LrgTonemap) tm = lrg_tonemap_new ();
+lrg_tonemap_set_operator (tm, LRG_TONEMAP_OPERATOR_FILMIC);
+lrg_tonemap_set_exposure (tm, 0.5f);
+lrg_tonemap_set_white_point (tm, 6.0f);
+lrg_post_effect_set_priority (LRG_POST_EFFECT (tm), 10);   /* after bloom */
 #+end_src
 
 --------------
@@ -65,40 +155,33 @@ lrg_bloom_set_iterations (bloom, 4);
 :PROPERTIES:
 :CUSTOM_ID: lrgvignette
 :END:
-Darkens the edges of the screen for a cinematic look.
+Darkens (or tints) the edges of the screen to frame the centre.
 
 #+begin_src C
-#define LRG_TYPE_VIGNETTE (lrg_vignette_get_type ())
 G_DECLARE_FINAL_TYPE (LrgVignette, lrg_vignette, LRG, VIGNETTE, LrgPostEffect)
+
+LrgVignette *lrg_vignette_new            (void);
+gfloat       lrg_vignette_get_intensity  (LrgVignette *self);
+void         lrg_vignette_set_intensity  (LrgVignette *self, gfloat intensity);    /* 0..1 */
+gfloat       lrg_vignette_get_radius     (LrgVignette *self);
+void         lrg_vignette_set_radius     (LrgVignette *self, gfloat radius);       /* 0..1 */
+gfloat       lrg_vignette_get_smoothness (LrgVignette *self);
+void         lrg_vignette_set_smoothness (LrgVignette *self, gfloat smoothness);   /* 0..1 */
+gfloat       lrg_vignette_get_roundness  (LrgVignette *self);
+void         lrg_vignette_set_roundness  (LrgVignette *self, gfloat roundness);    /* 0..1 */
+void         lrg_vignette_get_color      (LrgVignette *self, gfloat *r, gfloat *g, gfloat *b);
+void         lrg_vignette_set_color      (LrgVignette *self, gfloat r, gfloat g, gfloat b);
 #+end_src
 
-*** Functions
-:PROPERTIES:
-:CUSTOM_ID: functions-1
-:END:
-#+begin_src C
-LrgVignette *lrg_vignette_new (void);
+The distance from the centre is measured with x scaled by =mix(1, aspect, roundness)= and scaled so a corner of a square screen is 1.0: =d = length(uv - 0.5) * sqrt(2)=. The edge colour is mixed in by =smoothstep(radius, radius + smoothness, d) * intensity * base intensity=. This is the same arithmetic as the editor viewport's preview pass.
 
-/* Vignette strength */
-gfloat lrg_vignette_get_intensity (LrgVignette *self);
-void lrg_vignette_set_intensity (LrgVignette *self, gfloat intensity);  /* 0.0 - 1.0 */
-
-/* Inner radius where vignette starts */
-gfloat lrg_vignette_get_radius (LrgVignette *self);
-void lrg_vignette_set_radius (LrgVignette *self, gfloat radius);  /* 0.0 - 1.0 */
-
-/* Edge softness */
-gfloat lrg_vignette_get_smoothness (LrgVignette *self);
-void lrg_vignette_set_smoothness (LrgVignette *self, gfloat smoothness);  /* 0.0 - 1.0 */
-
-/* Shape: 1.0 = circular, 0.0 = follows screen aspect */
-gfloat lrg_vignette_get_roundness (LrgVignette *self);
-void lrg_vignette_set_roundness (LrgVignette *self, gfloat roundness);  /* 0.0 - 1.0 */
-
-/* Vignette color (default: black) */
-void lrg_vignette_get_color (LrgVignette *self, gfloat *r, gfloat *g, gfloat *b);
-void lrg_vignette_set_color (LrgVignette *self, gfloat r, gfloat g, gfloat b);
-#+end_src
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =intensity= | 0..1 | 0.5 | How dark the edges get |
+| =radius= | 0..1 | 0.5 | Where the darkening starts (1 = the corners) |
+| =smoothness= | 0..1 | 0.3 | Width of the falloff |
+| =roundness= | 0..1 | 1 | 1 = a circle, 0 = follows the screen's rectangle |
+| =color-r/g/b= | 0..1 | 0 | Edge colour (=color: [r, g, b]=) |
 
 *** Example
 :PROPERTIES:
@@ -107,8 +190,9 @@ void lrg_vignette_set_color (LrgVignette *self, gfloat r, gfloat g, gfloat b);
 #+begin_src C
 g_autoptr(LrgVignette) vignette = lrg_vignette_new ();
 lrg_vignette_set_intensity (vignette, 0.4f);
-lrg_vignette_set_radius (vignette, 0.8f);
+lrg_vignette_set_radius (vignette, 0.6f);
 lrg_vignette_set_smoothness (vignette, 0.5f);
+lrg_vignette_set_color (vignette, 0.15f, 0.0f, 0.0f);   /* low-health red */
 #+end_src
 
 --------------
@@ -193,6 +277,22 @@ The shader is compiled on first use (=lrg_color_grade_get_shader()=, %NULL witho
 :END:
 =lrg_color_grade_set_lut (grade, lut, strength)= adds a 3D lookup table ([[file:color-lut.org][LrgColorLut]]) after the grade's steps: the shader looks the graded, clamped colour up in the table (uploaded as a strip texture on unit 1 when it changes) and mixes it in by =strength=, before the effect's intensity; =lrg_color_grade_apply_rgb()= does the same on the CPU. A grade with a table is never the identity. =lrg_color_grade_bake_lut (grade, size)= samples the whole grade into a new table, e.g. to blend two grades or save one as a =.cube= file.
 
+*** Parameters (.rpost)
+:PROPERTIES:
+:CUSTOM_ID: color-grade-params
+:END:
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =exposure= | -5..5 | 0 | Stops; brighter/darker overall |
+| =contrast= | 0..2 | 1 | Around mid grey |
+| =saturation= | 0..2 | 1 | 0 is greyscale |
+| =temperature= | -1..1 | 0 | Warm (+) / cool (-) |
+| =tint= | -1..1 | 0 | Magenta (+) / green (-) |
+| =lift-r/g/b= | -1..1 | 0 | Shadows offset (=lift: [r, g, b]=) |
+| =gamma-r/g/b= | 0.1..4 | 1 | Midtones (=gamma: [r, g, b]=) |
+| =gain-r/g/b= | 0..4 | 1 | Highlights (=gain: [r, g, b]=) |
+| =lut=, =lut-strength= | path, 0..1 | none, 1 | Special stack parameters: a =.cube= file and its mix |
+
 *** Example
 :PROPERTIES:
 :CUSTOM_ID: example-2
@@ -219,48 +319,36 @@ lrg_color_grade_set_gain (grade, 0.1f, 0.05f, 0.0f);    /* Orange highlights */
 :PROPERTIES:
 :CUSTOM_ID: lrgfxaa
 :END:
-Fast Approximate Anti-Aliasing for smooth edges.
+Fast approximate anti-aliasing: smooths stair-stepped edges after the image is drawn. Run it late (after tonemap and grading, before film grain).
 
 #+begin_src C
-#define LRG_TYPE_FXAA (lrg_fxaa_get_type ())
 G_DECLARE_FINAL_TYPE (LrgFxaa, lrg_fxaa, LRG, FXAA, LrgPostEffect)
-#+end_src
 
-*** Quality Presets
-:PROPERTIES:
-:CUSTOM_ID: quality-presets
-:END:
-#+begin_src C
 typedef enum {
-    LRG_FXAA_QUALITY_LOW,     /* Fastest */
-    LRG_FXAA_QUALITY_MEDIUM,
-    LRG_FXAA_QUALITY_HIGH,
-    LRG_FXAA_QUALITY_ULTRA    /* Best quality */
+	LRG_FXAA_QUALITY_LOW, LRG_FXAA_QUALITY_MEDIUM, LRG_FXAA_QUALITY_HIGH, LRG_FXAA_QUALITY_ULTRA
 } LrgFxaaQuality;
+
+LrgFxaa       *lrg_fxaa_new                    (void);
+LrgFxaaQuality lrg_fxaa_get_quality            (LrgFxaa *self);
+void           lrg_fxaa_set_quality            (LrgFxaa *self, LrgFxaaQuality quality);
+gfloat         lrg_fxaa_get_subpixel_quality   (LrgFxaa *self);
+void           lrg_fxaa_set_subpixel_quality   (LrgFxaa *self, gfloat quality);     /* 0..1 */
+gfloat         lrg_fxaa_get_edge_threshold     (LrgFxaa *self);
+void           lrg_fxaa_set_edge_threshold     (LrgFxaa *self, gfloat threshold);   /* 0..0.5 */
+gfloat         lrg_fxaa_get_edge_threshold_min (LrgFxaa *self);
+void           lrg_fxaa_set_edge_threshold_min (LrgFxaa *self, gfloat threshold);   /* 0..0.1 */
 #+end_src
 
-*** Functions
-:PROPERTIES:
-:CUSTOM_ID: functions-3
-:END:
-#+begin_src C
-LrgFxaa *lrg_fxaa_new (void);
+One pass: the luma of the centre and four diagonal neighbours; pixels whose local contrast is below =max(edge-threshold-min, max_luma * edge-threshold)= are left alone. On edges, the blend direction comes from the luma gradient, clamped to a span of 4/6/8/12 pixels for the low/medium/high/ultra =quality=; a two-tap and a four-tap average along it, the four-tap one unless it leaves the local luma range. Then a sub-pixel term blends towards the local average by the contrast, scaled by =subpixel-quality=. The result is mixed with the input by the base intensity.
 
-LrgFxaaQuality lrg_fxaa_get_quality (LrgFxaa *self);
-void lrg_fxaa_set_quality (LrgFxaa *self, LrgFxaaQuality quality);
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =quality= | 0..3 (int: low, medium, high, ultra) | 1 (medium) | Longest blend along an edge |
+| =subpixel-quality= | 0..1 | 0.75 | Softens single-pixel detail (0 = sharpest) |
+| =edge-threshold= | 0..0.5 | 0.166 | Contrast (relative) an edge needs; lower catches more |
+| =edge-threshold-min= | 0..0.1 | 0.0833 | Ignores edges in dark areas below this |
 
-/* Subpixel quality (higher = more blur) */
-gfloat lrg_fxaa_get_subpixel_quality (LrgFxaa *self);
-void lrg_fxaa_set_subpixel_quality (LrgFxaa *self, gfloat quality);  /* 0.0 - 1.0 */
-
-/* Edge detection threshold */
-gfloat lrg_fxaa_get_edge_threshold (LrgFxaa *self);
-void lrg_fxaa_set_edge_threshold (LrgFxaa *self, gfloat threshold);  /* 0.0 - 0.5 */
-
-/* Minimum edge threshold (dark pixels) */
-gfloat lrg_fxaa_get_edge_threshold_min (LrgFxaa *self);
-void lrg_fxaa_set_edge_threshold_min (LrgFxaa *self, gfloat threshold);  /* 0.0 - 0.1 */
-#+end_src
+=LrgFxaa:quality= is FXAA's own search quality; the processor's tier (=quality-tier=) does not change it.
 
 *** Example
 :PROPERTIES:
@@ -269,10 +357,8 @@ void lrg_fxaa_set_edge_threshold_min (LrgFxaa *self, gfloat threshold);  /* 0.0 
 #+begin_src C
 g_autoptr(LrgFxaa) fxaa = lrg_fxaa_new ();
 lrg_fxaa_set_quality (fxaa, LRG_FXAA_QUALITY_HIGH);
-lrg_fxaa_set_subpixel_quality (fxaa, 0.75f);
-
-/* Apply last in the chain */
-lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 1000);
+lrg_fxaa_set_subpixel_quality (fxaa, 0.5f);
+lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 1000);   /* last */
 #+end_src
 
 --------------
@@ -281,42 +367,34 @@ lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 1000);
 :PROPERTIES:
 :CUSTOM_ID: lrgfilmgrain
 :END:
-Adds animated film grain texture.
+Animated film grain.
 
 #+begin_src C
-#define LRG_TYPE_FILM_GRAIN (lrg_film_grain_get_type ())
 G_DECLARE_FINAL_TYPE (LrgFilmGrain, lrg_film_grain, LRG, FILM_GRAIN, LrgPostEffect)
+
+LrgFilmGrain *lrg_film_grain_new                    (void);
+gfloat        lrg_film_grain_get_intensity          (LrgFilmGrain *self);
+void          lrg_film_grain_set_intensity          (LrgFilmGrain *self, gfloat intensity);   /* 0..1 */
+gfloat        lrg_film_grain_get_size               (LrgFilmGrain *self);
+void          lrg_film_grain_set_size               (LrgFilmGrain *self, gfloat size);        /* 1..5 */
+gfloat        lrg_film_grain_get_speed              (LrgFilmGrain *self);
+void          lrg_film_grain_set_speed              (LrgFilmGrain *self, gfloat speed);       /* 0..10 */
+gboolean      lrg_film_grain_get_colored            (LrgFilmGrain *self);
+void          lrg_film_grain_set_colored            (LrgFilmGrain *self, gboolean colored);
+gfloat        lrg_film_grain_get_luminance_response (LrgFilmGrain *self);
+void          lrg_film_grain_set_luminance_response (LrgFilmGrain *self, gfloat response);    /* 0..1 */
+void          lrg_film_grain_update                 (LrgFilmGrain *self, gfloat delta_time);
 #+end_src
 
-*** Functions
-:PROPERTIES:
-:CUSTOM_ID: functions-4
-:END:
-#+begin_src C
-LrgFilmGrain *lrg_film_grain_new (void);
+The screen is split into cells of =size= pixels; each cell gets white noise from an integer hash of the cell and the grain frame, which advances 24 times per second of grain time (=time * speed=, advanced by =apply()='s delta or =update()=), so grain flickers like film instead of crawling. Monochrome grain adds the same value to r, g and b; coloured grain hashes each channel. The amount is =intensity * base intensity * mix(1, 1 - luma, luminance-response)=: bright areas get less grain.
 
-/* Grain visibility */
-gfloat lrg_film_grain_get_intensity (LrgFilmGrain *self);
-void lrg_film_grain_set_intensity (LrgFilmGrain *self, gfloat intensity);  /* 0.0 - 1.0 */
-
-/* Grain coarseness */
-gfloat lrg_film_grain_get_size (LrgFilmGrain *self);
-void lrg_film_grain_set_size (LrgFilmGrain *self, gfloat size);  /* 1.0 - 5.0 */
-
-/* Animation speed */
-gfloat lrg_film_grain_get_speed (LrgFilmGrain *self);
-void lrg_film_grain_set_speed (LrgFilmGrain *self, gfloat speed);
-
-/* Color or monochrome grain */
-gboolean lrg_film_grain_get_colored (LrgFilmGrain *self);
-void lrg_film_grain_set_colored (LrgFilmGrain *self, gboolean colored);
-
-/* Grain response to brightness (0 = uniform, 1 = more in darks) */
-gfloat lrg_film_grain_get_luminance_response (LrgFilmGrain *self);
-void lrg_film_grain_set_luminance_response (LrgFilmGrain *self, gfloat response);
-
-void lrg_film_grain_update (LrgFilmGrain *self, gfloat delta_time);
-#+end_src
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =intensity= | 0..1 | 0.1 | Grain strength (+-0.5 * intensity per channel) |
+| =size= | 1..5 | 1.5 | Grain cell size in pixels |
+| =speed= | 0..10 | 1 | Grain frame rate multiplier (0 = frozen) |
+| =colored= | bool | false | Per-channel grain |
+| =luminance-response= | 0..1 | 0.5 | Less grain in highlights |
 
 *** Example
 :PROPERTIES:
@@ -324,10 +402,8 @@ void lrg_film_grain_update (LrgFilmGrain *self, gfloat delta_time);
 :END:
 #+begin_src C
 g_autoptr(LrgFilmGrain) grain = lrg_film_grain_new ();
-lrg_film_grain_set_intensity (grain, 0.15f);
+lrg_film_grain_set_intensity (grain, 0.08f);
 lrg_film_grain_set_size (grain, 2.0f);
-lrg_film_grain_set_colored (grain, FALSE);  /* Monochrome */
-lrg_film_grain_set_luminance_response (grain, 0.5f);
 #+end_src
 
 --------------
@@ -336,63 +412,44 @@ lrg_film_grain_set_luminance_response (grain, 0.5f);
 :PROPERTIES:
 :CUSTOM_ID: lrgscreenshake
 :END:
-Trauma-based screen shake for impacts and explosions.
+Trauma-based screen shake for impacts and explosions, applied to the finished image (the camera does not move, so it also shakes UI drawn before =render()=).
 
 #+begin_src C
-#define LRG_TYPE_SCREEN_SHAKE (lrg_screen_shake_get_type ())
 G_DECLARE_FINAL_TYPE (LrgScreenShake, lrg_screen_shake, LRG, SCREEN_SHAKE, LrgPostEffect)
+
+LrgScreenShake *lrg_screen_shake_new                  (void);
+void            lrg_screen_shake_add_trauma           (LrgScreenShake *self, gfloat amount);
+gfloat          lrg_screen_shake_get_trauma           (LrgScreenShake *self);
+void            lrg_screen_shake_set_trauma           (LrgScreenShake *self, gfloat trauma);   /* 0..1 */
+gfloat          lrg_screen_shake_get_decay            (LrgScreenShake *self);
+void            lrg_screen_shake_set_decay            (LrgScreenShake *self, gfloat decay);    /* per second */
+void            lrg_screen_shake_get_max_offset       (LrgScreenShake *self, gfloat *x, gfloat *y);
+void            lrg_screen_shake_set_max_offset       (LrgScreenShake *self, gfloat x, gfloat y);   /* pixels */
+gfloat          lrg_screen_shake_get_max_rotation     (LrgScreenShake *self);
+void            lrg_screen_shake_set_max_rotation     (LrgScreenShake *self, gfloat degrees);
+gfloat          lrg_screen_shake_get_frequency        (LrgScreenShake *self);
+void            lrg_screen_shake_set_frequency        (LrgScreenShake *self, gfloat frequency);
+void            lrg_screen_shake_update               (LrgScreenShake *self, gfloat delta_time);
+void            lrg_screen_shake_get_current_offset   (LrgScreenShake *self, gfloat *x, gfloat *y);
+gfloat          lrg_screen_shake_get_current_rotation (LrgScreenShake *self);
 #+end_src
 
-*** Functions
-:PROPERTIES:
-:CUSTOM_ID: functions-5
-:END:
-#+begin_src C
-LrgScreenShake *lrg_screen_shake_new (void);
+=update()= decays trauma (=decay= per second), and computes this frame's offset and rotation: =trauma^2 * max * noise(time * frequency)=, with smooth 1D value noise (a different seed per axis) so the image sways rather than jitters. =apply()= calls =update()= itself with the frame's delta unless the game already called it since the last pass (calling both does not double the decay). The pass samples the source rotated about the centre in pixel space and shifted, zoomed in just enough (overscan) to keep the borders off screen; at trauma 0 it is a plain copy. Offsets and rotation are scaled by the base intensity (a "reduce screen shake" accessibility option can set it).
 
-/* Add trauma (accumulative) */
-void lrg_screen_shake_add_trauma (LrgScreenShake *self, gfloat amount);  /* 0.0 - 1.0 */
+| Trauma | Shake |
+|--------+-------|
+| 0.0 | 0% |
+| 0.5 | 25% |
+| 0.7 | 49% |
+| 1.0 | 100% |
 
-/* Direct trauma control */
-gfloat lrg_screen_shake_get_trauma (LrgScreenShake *self);
-void lrg_screen_shake_set_trauma (LrgScreenShake *self, gfloat trauma);
-
-/* Decay rate per second */
-gfloat lrg_screen_shake_get_decay (LrgScreenShake *self);
-void lrg_screen_shake_set_decay (LrgScreenShake *self, gfloat decay);
-
-/* Maximum shake offset in pixels */
-void lrg_screen_shake_get_max_offset (LrgScreenShake *self, gfloat *x, gfloat *y);
-void lrg_screen_shake_set_max_offset (LrgScreenShake *self, gfloat x, gfloat y);
-
-/* Maximum rotation in degrees */
-gfloat lrg_screen_shake_get_max_rotation (LrgScreenShake *self);
-void lrg_screen_shake_set_max_rotation (LrgScreenShake *self, gfloat degrees);
-
-/* Shake frequency */
-gfloat lrg_screen_shake_get_frequency (LrgScreenShake *self);
-void lrg_screen_shake_set_frequency (LrgScreenShake *self, gfloat frequency);
-
-/* Update (decays trauma, updates noise) */
-void lrg_screen_shake_update (LrgScreenShake *self, gfloat delta_time);
-
-/* Current frame values */
-void lrg_screen_shake_get_current_offset (LrgScreenShake *self, gfloat *x, gfloat *y);
-gfloat lrg_screen_shake_get_current_rotation (LrgScreenShake *self);
-#+end_src
-
-*** Trauma System
-:PROPERTIES:
-:CUSTOM_ID: trauma-system
-:END:
-Trauma is squared to calculate shake intensity, creating smooth falloff:
-
-| Trauma | Shake Intensity |
-|--------+-----------------|
-| 0.0    | 0%              |
-| 0.5    | 25%             |
-| 0.7    | 49%             |
-| 1.0    | 100%            |
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =trauma= | 0..1 | 0 | Current shake (usually set from code) |
+| =decay= | 0..10 | 1 | Trauma lost per second |
+| =frequency= | 0.1..50 | 15 | Sway speed |
+| =max-rotation= | 0..45 | 5 | Degrees at full trauma |
+| =max-offset-x=, =max-offset-y= | >= 0 | 20, 15 | Pixels at full trauma |
 
 *** Example
 :PROPERTIES:
@@ -401,14 +458,11 @@ Trauma is squared to calculate shake intensity, creating smooth falloff:
 #+begin_src C
 g_autoptr(LrgScreenShake) shake = lrg_screen_shake_new ();
 lrg_screen_shake_set_max_offset (shake, 15.0f, 15.0f);
-lrg_screen_shake_set_max_rotation (shake, 3.0f);
-lrg_screen_shake_set_decay (shake, 2.0f);  /* Full decay in 0.5 seconds */
+lrg_screen_shake_set_decay (shake, 2.0f);       /* full trauma gone in 0.5 s */
+lrg_post_processor_add_effect (post, LRG_POST_EFFECT (shake));
 
-/* On explosion */
+/* on an explosion */
 lrg_screen_shake_add_trauma (shake, 0.8f);
-
-/* On small hit */
-lrg_screen_shake_add_trauma (shake, 0.2f);
 #+end_src
 
 --------------
@@ -417,22 +471,32 @@ lrg_screen_shake_add_trauma (shake, 0.2f);
 :PROPERTIES:
 :CUSTOM_ID: lrgheathaze
 :END:
-A shimmering distortion in a band about the horizon, for hot air over sand and stone (=postprocess/effects/lrg-heat-haze.h=, final, derives from =LrgPostEffect=).
+A shimmering distortion in a band about the horizon, for hot air over sand and stone (=postprocess/effects/lrg-heat-haze.h=).
 
 #+begin_src C
 G_DECLARE_FINAL_TYPE (LrgHeatHaze, lrg_heat_haze, LRG, HEAT_HAZE, LrgPostEffect)
 
-LrgHeatHaze *lrg_heat_haze_new (void);
-void     lrg_heat_haze_set_strength (LrgHeatHaze *self, gfloat strength);   /* 0 .. 0.05 of the screen */
-gfloat   lrg_heat_haze_get_strength (LrgHeatHaze *self);
-void     lrg_heat_haze_set_shape (LrgHeatHaze *self, gfloat scale, gfloat speed,
-                                  gfloat horizon, gfloat band);
-void     lrg_heat_haze_set_time (LrgHeatHaze *self, gfloat time);
-void     lrg_heat_haze_get_offset (LrgHeatHaze *self, gfloat u, gfloat v,
-                                   gfloat *out_du, gfloat *out_dv);
-gboolean lrg_heat_haze_is_identity (LrgHeatHaze *self);
-gboolean lrg_heat_haze_draw_texture (LrgHeatHaze *self, GrlTexture *texture,
-                                     const GrlRectangle *source, const GrlRectangle *dest);
+LrgHeatHaze *lrg_heat_haze_new          (void);
+void         lrg_heat_haze_set_strength (LrgHeatHaze *self, gfloat strength);   /* 0 .. 0.05 of the screen */
+gfloat       lrg_heat_haze_get_strength (LrgHeatHaze *self);
+void         lrg_heat_haze_set_shape    (LrgHeatHaze *self, gfloat scale, gfloat speed,
+                                         gfloat horizon, gfloat band);
+void         lrg_heat_haze_set_time     (LrgHeatHaze *self, gfloat time);
+void         lrg_heat_haze_get_offset   (LrgHeatHaze *self, gfloat u, gfloat v,
+                                         gfloat *out_du, gfloat *out_dv);
+gboolean     lrg_heat_haze_is_identity  (LrgHeatHaze *self);
+gboolean     lrg_heat_haze_draw_texture (LrgHeatHaze *self, GrlTexture *texture,
+                                         const GrlRectangle *source, const GrlRectangle *dest);
 #+end_src
 
-Each pixel samples its source shifted by two crossed sine ripples (rising with time) times a band weight exp(-d^2 k), d = (v - horizon) / band, with k = 2.5 above the horizon line (thin air) and 0.6 below (the hot ground); the vertical shift is half the horizontal.  The shader reads the screen height from =gl_FragCoord=, so the band does not depend on how the source is flipped; =get_offset()= is the same arithmetic on the CPU, scaled by the effect's intensity.  In a post processor =apply()= also advances the time by the frame's delta; =draw_texture()= draws one texture through the haze (plainly without a shader), as =LrgColorGrade='s does.  Defaults: strength 0.004, scale 9, speed 2.2, horizon 0.55, band 0.18.
+Each pixel samples its source shifted by two crossed sine ripples (rising with time) times a band weight exp(-d^2 k), d = (v - horizon) / band, with k = 2.5 above the horizon line (thin air) and 0.6 below (the hot ground); the vertical shift is half the horizontal. The shader reads the screen height from =gl_FragCoord=, so the band does not depend on how the source is flipped; =get_offset()= is the same arithmetic on the CPU, scaled by the effect's intensity. In a post processor =apply()= also advances the time by the frame's delta; =draw_texture()= draws one texture through the haze (plainly without a shader), as =LrgColorGrade='s does.
+
+| Property | Range | Default | Look |
+|----------+-------+---------+------|
+| =strength= | 0..0.05 | 0.004 | Peak shift as a fraction of the screen |
+| =scale= | > 0 | 9 | Ripple frequency |
+| =speed= | any | 2.2 | Rise speed |
+| =horizon= | 0..1 | 0.55 | Band centre (0 bottom, 1 top) |
+| =band= | > 0 | 0.18 | Band half height |
+
+See also: [[file:post-processor.org][LrgPostProcessor]], [[file:post-stack.org][LrgPostStack (.rpost)]], [[file:post-effect.org][writing an effect]].

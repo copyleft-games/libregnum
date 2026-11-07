@@ -36,3 +36,9 @@ As a =LrgPostEffect= it also works inside a =LrgPostProcessor= chain (=apply()= 
 :CUSTOM_ID: tests
 :END:
 =tests/test-sharpen.c=: a flat area is unchanged; an edge in mid-grey gains contrast and more sharpness gains more; a full-range edge is left alone; results stay in range; the properties, the identity rule and the shader's uniforms.
+
+** In a post stack
+:PROPERTIES:
+:CUSTOM_ID: sharpen-post-stack
+:END:
+The type name is =sharpen=, with the parameter =sharpness= (0..1, default 0.5): =- type: sharpen= / =params: { sharpness: 0.4 }=. Put it after tonemapping and grading and before FXAA. See [[file:post-stack.org][post-stack.org]].

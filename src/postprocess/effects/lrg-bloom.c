@@ -7,6 +7,112 @@
 
 #include "config.h"
 #include "lrg-bloom.h"
+#include <string.h>
+#include <raylib.h>
+#include <rlgl.h>
+#include "core/lrg-prewarm.h"
+
+#define BLOOM_MAX_LEVELS (8)
+
+/*
+ * Bloom as a mip chain (the "progressive downsample / upsample" bloom):
+ *
+ *  1. prefilter  source -> level 0 (half resolution, quarter at the low
+ *                tier): four bilinear taps averaged, then the soft-knee
+ *                threshold keeps only what is brighter than @threshold;
+ *  2. down       level i-1 -> level i (half again): centre x4 + four
+ *                diagonal taps, /8, for each further level;
+ *  3. up         level i -> level i-1, added (additive blending) through a
+ *                9-tap tent whose radius is blur-size / 4 texels, from the
+ *                smallest level back to level 0, so wide and tight glows
+ *                add up;
+ *  4. composite  source + level0 / levels * intensity * tint, into the
+ *                target the processor bound.
+ *
+ * Levels = iterations, capped by the quality tier (3/4/6/8) and by the
+ * image size. Targets are RGBA16F when the driver can render to them.
+ */
+static const gchar bloom_prefilter_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec2 texel;\n"
+    "uniform vec2 thresh;\n"   /* threshold, soft knee */
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    vec2 uv = fragTexCoord;\n"
+    "    vec3 c = 0.25 * (texture(texture0, uv + vec2(-0.5, -0.5) * texel).rgb +\n"
+    "                     texture(texture0, uv + vec2(0.5, -0.5) * texel).rgb +\n"
+    "                     texture(texture0, uv + vec2(-0.5, 0.5) * texel).rgb +\n"
+    "                     texture(texture0, uv + vec2(0.5, 0.5) * texel).rgb);\n"
+    "    float l = max(c.r, max(c.g, c.b));\n"
+    "    float knee = max(thresh.x * thresh.y, 0.0001);\n"
+    "    float soft = clamp(l - thresh.x + knee, 0.0, 2.0 * knee);\n"
+    "    float w;\n"
+    "    soft = soft * soft / (4.0 * knee);\n"
+    "    w = max(soft, l - thresh.x) / max(l, 0.0001);\n"
+    "    finalColor = vec4(c * w, 1.0);\n"
+    "}\n";
+
+static const gchar bloom_down_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec2 texel;\n"
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    vec2 uv = fragTexCoord;\n"
+    "    vec3 c = texture(texture0, uv).rgb * 4.0;\n"
+    "    c += texture(texture0, uv + vec2(-1.0, -1.0) * texel).rgb;\n"
+    "    c += texture(texture0, uv + vec2(1.0, -1.0) * texel).rgb;\n"
+    "    c += texture(texture0, uv + vec2(-1.0, 1.0) * texel).rgb;\n"
+    "    c += texture(texture0, uv + vec2(1.0, 1.0) * texel).rgb;\n"
+    "    finalColor = vec4(c * 0.125, 1.0);\n"
+    "}\n";
+
+static const gchar bloom_up_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform vec2 texel;\n"
+    "uniform float radius;\n"
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    vec2 uv = fragTexCoord;\n"
+    "    vec2 d = texel * radius;\n"
+    "    vec3 c = texture(texture0, uv).rgb * 4.0;\n"
+    "    c += (texture(texture0, uv + vec2(-d.x, 0.0)).rgb + texture(texture0, uv + vec2(d.x, 0.0)).rgb +\n"
+    "          texture(texture0, uv + vec2(0.0, -d.y)).rgb + texture(texture0, uv + vec2(0.0, d.y)).rgb) * 2.0;\n"
+    "    c += texture(texture0, uv - d).rgb + texture(texture0, uv + d).rgb +\n"
+    "         texture(texture0, uv + vec2(-d.x, d.y)).rgb + texture(texture0, uv + vec2(d.x, -d.y)).rgb;\n"
+    "    finalColor = vec4(c / 16.0, 1.0);\n"
+    "}\n";
+
+static const gchar bloom_composite_fs[] =
+    "#version 330\n"
+    "in vec2 fragTexCoord;\n"
+    "uniform sampler2D texture0;\n"
+    "uniform sampler2D bloomMap;\n"
+    "uniform vec3 tint;\n"     /* already scaled by intensity / levels */
+    "out vec4 finalColor;\n"
+    "void main()\n"
+    "{\n"
+    "    vec4 c = texture(texture0, fragTexCoord);\n"
+    "    vec3 b = texture(bloomMap, fragTexCoord).rgb;\n"
+    "    finalColor = vec4(c.rgb + b * tint, c.a);\n"
+    "}\n";
+
+enum
+{
+    BLOOM_PASS_PREFILTER,
+    BLOOM_PASS_DOWN,
+    BLOOM_PASS_UP,
+    BLOOM_PASS_COMPOSITE,
+    N_BLOOM_PASSES
+};
 
 /**
  * SECTION:lrg-bloom
@@ -48,13 +154,27 @@ struct _LrgBloom
     gfloat         tint_g;
     gfloat         tint_b;
 
-    /* Internal render targets (would be actual textures) */
-    gpointer       bright_texture;
-    gpointer       blur_texture_a;
-    gpointer       blur_texture_b;
+    /* GPU: one shader per pass, the mip chain */
+    GrlShader      *shaders[N_BLOOM_PASSES];
+    gboolean        shaders_tried;
+    gint            loc_texel[N_BLOOM_PASSES];
+    gint            loc_thresh;
+    gint            loc_radius;
+    gint            loc_tint;
+    gint            loc_bloom_map;
+    RenderTexture2D mips[BLOOM_MAX_LEVELS];
+    guint           mip_count;
+    guint           chain_width;     /* source size the chain was built for */
+    guint           chain_height;
+    LrgPostQuality  chain_quality;
+    guint           chain_levels;
 };
 
-G_DEFINE_TYPE (LrgBloom, lrg_bloom, LRG_TYPE_POST_EFFECT)
+static void lrg_bloom_prewarmable_init (LrgPrewarmableInterface *iface);
+
+G_DEFINE_TYPE_WITH_CODE (LrgBloom, lrg_bloom, LRG_TYPE_POST_EFFECT,
+                         G_IMPLEMENT_INTERFACE (LRG_TYPE_PREWARMABLE,
+                                                lrg_bloom_prewarmable_init))
 
 enum
 {
@@ -64,6 +184,9 @@ enum
     PROP_BLUR_SIZE,
     PROP_ITERATIONS,
     PROP_SOFT_KNEE,
+    PROP_TINT_R,
+    PROP_TINT_G,
+    PROP_TINT_B,
     N_PROPS
 };
 
@@ -75,29 +198,155 @@ lrg_bloom_real_initialize (LrgPostEffect *effect,
                            guint          height,
                            GError       **error)
 {
-    /*
-     * In a real implementation, create:
-     * - Brightness extraction render target (half or quarter resolution)
-     * - Two ping-pong blur render targets
-     * - Load bloom shaders (threshold, blur, combine)
-     */
+    /* GPU resources are built lazily on the first apply */
     (void)effect;
     (void)width;
     (void)height;
     (void)error;
-
     return TRUE;
+}
+
+static void
+free_chain (LrgBloom *self)
+{
+    guint i;
+
+    for (i = 0; i < self->mip_count; i++)
+        if (self->mips[i].id != 0 && IsWindowReady ())
+            UnloadRenderTexture (self->mips[i]);
+    memset (self->mips, 0, sizeof self->mips);
+    self->mip_count = 0;
+    self->chain_width = 0;
+    self->chain_height = 0;
+}
+
+/* Levels for the tier, capped by the iterations property */
+static guint
+bloom_levels (LrgBloom *self)
+{
+    static const guint caps[] = { 3, 4, 6, 8 };
+    LrgPostQuality q = lrg_post_effect_get_quality_tier (LRG_POST_EFFECT (self));
+
+    return MIN (self->iterations, caps[CLAMP ((gint)q, 0, 3)]);
+}
+
+static gboolean
+load_mip (RenderTexture2D *rt,
+          guint            w,
+          guint            h)
+{
+    gint fmt;
+
+    for (fmt = 0; fmt < 2; fmt++)
+    {
+        *rt = LoadRenderTextureEx ((gint)w, (gint)h,
+                                   fmt == 0 ? PIXELFORMAT_UNCOMPRESSED_R16G16B16A16
+                                            : PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        if (rt->id != 0 && rt->texture.id != 0 && rlFramebufferComplete (rt->id))
+        {
+            SetTextureFilter (rt->texture, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap (rt->texture, TEXTURE_WRAP_CLAMP);
+            return TRUE;
+        }
+        if (rt->id != 0 || rt->texture.id != 0)
+            UnloadRenderTexture (*rt);
+        memset (rt, 0, sizeof *rt);
+    }
+    return FALSE;
+}
+
+/* (Re)builds the chain for a @width x @height source. Creating render
+ * textures rebinds framebuffers: the caller rebinds its target after. */
+static gboolean
+ensure_chain (LrgBloom *self,
+              guint     width,
+              guint     height)
+{
+    LrgPostQuality q = lrg_post_effect_get_quality_tier (LRG_POST_EFFECT (self));
+    guint levels = bloom_levels (self);
+    guint w, h, i;
+
+    if (self->mip_count > 0 && self->chain_width == width && self->chain_height == height &&
+        self->chain_quality == q && self->chain_levels == levels)
+        return TRUE;
+
+    rlDrawRenderBatchActive ();
+    free_chain (self);
+    w = width / (q == LRG_POST_QUALITY_LOW ? 4u : 2u);
+    h = height / (q == LRG_POST_QUALITY_LOW ? 4u : 2u);
+    for (i = 0; i < levels && w >= 2 && h >= 2; i++)
+    {
+        if (!load_mip (&self->mips[i], w, h))
+            break;
+        self->mip_count = i + 1;
+        w /= 2;
+        h /= 2;
+    }
+    self->chain_width = width;
+    self->chain_height = height;
+    self->chain_quality = q;
+    self->chain_levels = levels;
+    return self->mip_count > 0;
+}
+
+static gboolean
+ensure_shaders (LrgBloom *self)
+{
+    static const gchar *sources[N_BLOOM_PASSES] = {
+        bloom_prefilter_fs, bloom_down_fs, bloom_up_fs, bloom_composite_fs
+    };
+    gint i;
+
+    if (self->shaders_tried || !IsWindowReady ())
+        return self->shaders[BLOOM_PASS_COMPOSITE] != NULL;
+    self->shaders_tried = TRUE;
+    for (i = 0; i < N_BLOOM_PASSES; i++)
+    {
+        g_autoptr(GError) error = NULL;
+
+        self->shaders[i] = lrg_post_effect_compile_shader (sources[i], &error);
+        if (self->shaders[i] == NULL)
+        {
+            g_warning ("bloom: pass %d: %s", i, error->message);
+            for (i = 0; i < N_BLOOM_PASSES; i++)
+                g_clear_object (&self->shaders[i]);
+            return FALSE;
+        }
+        self->loc_texel[i] = grl_shader_get_location (self->shaders[i], "texel");
+    }
+    self->loc_thresh = grl_shader_get_location (self->shaders[BLOOM_PASS_PREFILTER], "thresh");
+    self->loc_radius = grl_shader_get_location (self->shaders[BLOOM_PASS_UP], "radius");
+    self->loc_tint = grl_shader_get_location (self->shaders[BLOOM_PASS_COMPOSITE], "tint");
+    self->loc_bloom_map = grl_shader_get_location (self->shaders[BLOOM_PASS_COMPOSITE], "bloomMap");
+    return TRUE;
+}
+
+/* One pass: @src (sized @sw x @sh) through @shader into @dst */
+static void
+run_pass (GrlShader       *shader,
+          gint             loc_texel,
+          guint            src,
+          guint            sw,
+          guint            sh,
+          RenderTexture2D *dst)
+{
+    lrg_post_effect_bind_framebuffer (dst->id, (guint)dst->texture.width, (guint)dst->texture.height);
+    grl_shader_set_value_vec2 (shader, loc_texel, 1.0f / (gfloat)MAX (sw, 1u), 1.0f / (gfloat)MAX (sh, 1u));
+    grl_shader_begin (shader);
+    lrg_post_effect_draw_fullscreen (src, (guint)dst->texture.width, (guint)dst->texture.height);
+    grl_shader_end (shader);
 }
 
 static void
 lrg_bloom_real_shutdown (LrgPostEffect *effect)
 {
     LrgBloom *self = LRG_BLOOM (effect);
+    gint i;
 
-    /* Free render targets */
-    g_clear_pointer (&self->bright_texture, g_free);
-    g_clear_pointer (&self->blur_texture_a, g_free);
-    g_clear_pointer (&self->blur_texture_b, g_free);
+    free_chain (self);
+    for (i = 0; i < N_BLOOM_PASSES; i++)
+        g_clear_object (&self->shaders[i]);
+    self->shaders_tried = FALSE;
 }
 
 static void
@@ -108,48 +357,91 @@ lrg_bloom_real_apply (LrgPostEffect *effect,
                       guint          height,
                       gfloat         delta_time)
 {
-    /*
-     * Real implementation would:
-     *
-     * Pass 1: Brightness extraction
-     * - Sample input, convert to luminance
-     * - Apply soft threshold: max(0, lum - threshold) * knee_factor
-     * - Write to bright_texture
-     *
-     * Pass 2-N: Gaussian blur (ping-pong)
-     * - For each iteration:
-     *   - Horizontal blur pass
-     *   - Vertical blur pass
-     * - Use separable Gaussian kernel for efficiency
-     *
-     * Pass N+1: Combine
-     * - Sample original input
-     * - Sample blurred bright areas
-     * - output = input + blur * intensity * tint
-     *
-     * Shader example (threshold):
-     * #version 330
-     * uniform sampler2D texture0;
-     * uniform float threshold;
-     * uniform float softKnee;
-     *
-     * void main() {
-     *     vec4 color = texture(texture0, uv);
-     *     float brightness = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
-     *     float knee = threshold * softKnee;
-     *     float soft = brightness - threshold + knee;
-     *     soft = clamp(soft / (2.0 * knee + 0.0001), 0.0, 1.0);
-     *     soft = soft * soft;
-     *     float contrib = max(soft, step(threshold, brightness));
-     *     gl_FragColor = vec4(color.rgb * contrib, 1.0);
-     * }
-     */
-    (void)effect;
-    (void)source_texture_id;
+    LrgBloom *self = LRG_BLOOM (effect);
+    GrlShader *composite;
+    Shader *handle;
+    Texture2D bloom_tex;
+    guint target_fbo;
+    gfloat k;
+    gint i;
+
     (void)target_texture_id;
-    (void)width;
-    (void)height;
     (void)delta_time;
+
+    k = self->intensity * lrg_post_effect_get_intensity (effect);
+    if (k <= 0.0f || !ensure_shaders (self))
+    {
+        lrg_post_effect_draw_fullscreen (source_texture_id, width, height);
+        return;
+    }
+
+    /* The processor's target, to come back to after the chain */
+    rlDrawRenderBatchActive ();
+    target_fbo = rlGetActiveFramebuffer ();
+    if (!ensure_chain (self, width, height))
+    {
+        lrg_post_effect_bind_framebuffer (target_fbo, width, height);
+        lrg_post_effect_draw_fullscreen (source_texture_id, width, height);
+        return;
+    }
+
+    /* 1. prefilter, 2. downsample (blending stays off, as on entry) */
+    grl_shader_set_value_vec2 (self->shaders[BLOOM_PASS_PREFILTER], self->loc_thresh,
+                               self->threshold, self->soft_knee);
+    run_pass (self->shaders[BLOOM_PASS_PREFILTER], self->loc_texel[BLOOM_PASS_PREFILTER],
+              source_texture_id, width, height, &self->mips[0]);
+    for (i = 1; i < (gint)self->mip_count; i++)
+        run_pass (self->shaders[BLOOM_PASS_DOWN], self->loc_texel[BLOOM_PASS_DOWN],
+                  self->mips[i - 1].texture.id, (guint)self->mips[i - 1].texture.width,
+                  (guint)self->mips[i - 1].texture.height, &self->mips[i]);
+
+    /* 3. upsample, added onto each larger level */
+    if (self->mip_count > 1)
+    {
+        grl_shader_set_value_float (self->shaders[BLOOM_PASS_UP], self->loc_radius,
+                                    self->blur_size * 0.25f);
+        rlDrawRenderBatchActive ();
+        rlEnableColorBlend ();
+        BeginBlendMode (BLEND_ADDITIVE);
+        for (i = (gint)self->mip_count - 1; i >= 1; i--)
+            run_pass (self->shaders[BLOOM_PASS_UP], self->loc_texel[BLOOM_PASS_UP],
+                      self->mips[i].texture.id, (guint)self->mips[i].texture.width,
+                      (guint)self->mips[i].texture.height, &self->mips[i - 1]);
+        EndBlendMode ();
+        rlDisableColorBlend ();
+    }
+
+    /* 4. composite into the processor's target */
+    lrg_post_effect_bind_framebuffer (target_fbo, width, height);
+    composite = self->shaders[BLOOM_PASS_COMPOSITE];
+    handle = grl_shader_get_handle (composite);
+    memset (&bloom_tex, 0, sizeof bloom_tex);
+    bloom_tex.id = self->mips[0].texture.id;
+    bloom_tex.width = self->mips[0].texture.width;
+    bloom_tex.height = self->mips[0].texture.height;
+    bloom_tex.mipmaps = 1;
+    bloom_tex.format = self->mips[0].texture.format;
+    k /= (gfloat)self->mip_count;
+    grl_shader_set_value_vec3 (composite, self->loc_tint, self->tint_r * k, self->tint_g * k,
+                               self->tint_b * k);
+    grl_shader_begin (composite);
+    SetShaderValueTexture (*handle, self->loc_bloom_map, bloom_tex);
+    lrg_post_effect_draw_fullscreen (source_texture_id, width, height);
+    grl_shader_end (composite);
+}
+
+/* lrg_bloom_prewarm: compiles the four pass shaders ahead of the first frame */
+static gboolean
+lrg_bloom_prewarm (LrgPrewarmable *prewarmable)
+{
+    ensure_shaders (LRG_BLOOM (prewarmable));
+    return TRUE;
+}
+
+static void
+lrg_bloom_prewarmable_init (LrgPrewarmableInterface *iface)
+{
+    iface->prewarm = lrg_bloom_prewarm;
 }
 
 static const gchar *
@@ -164,10 +456,7 @@ lrg_bloom_real_resize (LrgPostEffect *effect,
                        guint          width,
                        guint          height)
 {
-    /*
-     * Recreate render targets at new resolution
-     * (typically half or quarter size for performance)
-     */
+    /* the chain follows the source size on the next apply */
     (void)effect;
     (void)width;
     (void)height;
@@ -198,6 +487,15 @@ lrg_bloom_get_property (GObject    *object,
     case PROP_SOFT_KNEE:
         g_value_set_float (value, self->soft_knee);
         break;
+    case PROP_TINT_R:
+        g_value_set_float (value, self->tint_r);
+        break;
+    case PROP_TINT_G:
+        g_value_set_float (value, self->tint_g);
+        break;
+    case PROP_TINT_B:
+        g_value_set_float (value, self->tint_b);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -227,6 +525,15 @@ lrg_bloom_set_property (GObject      *object,
         break;
     case PROP_SOFT_KNEE:
         lrg_bloom_set_soft_knee (self, g_value_get_float (value));
+        break;
+    case PROP_TINT_R:
+        lrg_bloom_set_tint (self, g_value_get_float (value), self->tint_g, self->tint_b);
+        break;
+    case PROP_TINT_G:
+        lrg_bloom_set_tint (self, self->tint_r, g_value_get_float (value), self->tint_b);
+        break;
+    case PROP_TINT_B:
+        lrg_bloom_set_tint (self, self->tint_r, self->tint_g, g_value_get_float (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -293,6 +600,33 @@ lrg_bloom_class_init (LrgBloomClass *klass)
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgBloom:tint-r:
+     *
+     * Red multiplier of the glow (0..1).
+     */
+    properties[PROP_TINT_R] =
+        g_param_spec_float ("tint-r", "Tint R", "Glow red multiplier", 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgBloom:tint-g:
+     *
+     * Green multiplier of the glow (0..1).
+     */
+    properties[PROP_TINT_G] =
+        g_param_spec_float ("tint-g", "Tint G", "Glow green multiplier", 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgBloom:tint-b:
+     *
+     * Blue multiplier of the glow (0..1).
+     */
+    properties[PROP_TINT_B] =
+        g_param_spec_float ("tint-b", "Tint B", "Glow blue multiplier", 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -307,9 +641,9 @@ lrg_bloom_init (LrgBloom *self)
     self->tint_r = 1.0f;
     self->tint_g = 1.0f;
     self->tint_b = 1.0f;
-    self->bright_texture = NULL;
-    self->blur_texture_a = NULL;
-    self->blur_texture_b = NULL;
+
+    /* compile ahead of the first frame when a loading screen prewarms */
+    lrg_prewarm_track (LRG_PREWARMABLE (self));
 }
 
 LrgBloom *
@@ -462,7 +796,22 @@ lrg_bloom_set_tint (LrgBloom *self,
 {
     g_return_if_fail (LRG_IS_BLOOM (self));
 
-    self->tint_r = CLAMP (r, 0.0f, 1.0f);
-    self->tint_g = CLAMP (g, 0.0f, 1.0f);
-    self->tint_b = CLAMP (b, 0.0f, 1.0f);
+    r = CLAMP (r, 0.0f, 1.0f);
+    g = CLAMP (g, 0.0f, 1.0f);
+    b = CLAMP (b, 0.0f, 1.0f);
+    if (self->tint_r != r)
+    {
+        self->tint_r = r;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TINT_R]);
+    }
+    if (self->tint_g != g)
+    {
+        self->tint_g = g;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TINT_G]);
+    }
+    if (self->tint_b != b)
+    {
+        self->tint_b = b;
+        g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TINT_B]);
+    }
 }

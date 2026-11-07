@@ -1,6 +1,6 @@
 # Data formats (YAML)
 
-## Composite documents (LrgDataLoader, 0.9.0): base of .rmat/.rpost/.ranim/.rbt/.rnav/.rparticles/.rterrain/.rmixer
+## Composite documents (LrgDataLoader, 0.9.0): base of .rmat/.ranim/.rbt/.rnav/.rparticles/.rterrain/.rmixer
 
 - Load: `lrg_data_loader_load_composite_file (loader, path, ROOT_TYPE or G_TYPE_INVALID, &err)`; `_data (text, len, root_type, source, &err)`. Save: `lrg_data_loader_save_to_file` / `_to_data`.
 - Object property (GObject class/interface) = nested mapping; `type: <registry name>` is optional when the property type is concrete.
@@ -22,3 +22,10 @@
 | HUD layout | `lrg_hud_layout_load_from_file` / `_from_data` | `lrg_hud_layout_save_to_file` / `_data` | version, pieces (sorted) |
 
 Editor data editors validate with these from-data loaders (no temp files) but save through the document model (keeps comments). Guide: docs/guides/writing-a-data-format.org.
+
+## Post stacks (.rpost, 0.9.0): LrgPostStack
+- `version: 1`, `name`, `quality: low|medium|high|ultra`, `hdr: true`, `effects:` (ordered list). Entry: `type:` (bloom, tonemap, vignette, color-grade, fxaa, film-grain, screen-shake, heat-haze, colorblind-filter, sharpen, palettize, or a registered/GType name), `enabled`, `weight` (0..1 = base intensity), `priority` (default index*10), `params:` = effect GObject properties (kebab or snake case).
+- `[r, g, b]` expands to `name-r/g/b` (bloom `tint`, vignette `color`, color-grade `lift`/`gamma`/`gain`). Special: palettize `palette: ["#rrggbb", ...]`; color-grade `lut: file.cube` (relative to the .rpost) + `lut_strength`.
+- Load `lrg_post_stack_new_from_file` / `_from_data (text, len, base_dir, &err)`; save `lrg_post_stack_save_to_file` / `_to_data` (byte-stable; unknown top-level and per-effect keys kept). Strict: unknown effect type / param, bad value, version > 1 are errors (LRG_POST_STACK_ERROR_*). Not an LrgDataLoader document (own reader: per-effect param validation).
+- `lrg_post_stack_build (stack, processor, &err)` reuses same-type effects in order, resets unset params to defaults (except screen-shake trauma), removes unlisted effects: cheap per frame. `lrg_post_stack_blend (a, b, t)` for post volumes. Custom effects: `lrg_post_stack_register_effect_type ("my-sepia", TYPE)`.
+- Order: bloom (wants HDR) -> tonemap -> grade/colorblind/sharpen/fxaa/palettize/film-grain/vignette. Docs: docs/modules/postprocess/post-stack.org.

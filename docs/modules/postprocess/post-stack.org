@@ -1,0 +1,320 @@
+#+title: LrgPostStack and the .rpost format
+#+description: Post-processing looks as data: the .rpost schema, building into a processor, blending for volumes
+#+authors: Zach Podbielniak
+#+categories: libregnum postprocess formats
+
+* LrgPostStack
+:PROPERTIES:
+:CUSTOM_ID: lrgpoststack
+:END:
+=LrgPostStack= (=postprocess/lrg-post-stack.h=, final, =GObject=) is a post-processing look as data: an ordered list of effects named by type, each with an enabled flag, a weight and its parameters, plus a quality tier and an HDR request. It loads and saves the =.rpost= YAML format, builds itself into an [[file:post-processor.org][LrgPostProcessor]] and blends with another stack by weight, which is what post volumes (a level region that changes the look as the camera enters it) need.
+
+A level's =environment:= block names the stack of the level by path or =guid:= (=post_stack:=, see the level format page); the editor's look panel saves the viewport's chain as a stack.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: post-stack-concepts
+:END:
+- *Effect type names.* Every effect in a stack is named by a registered type name. The built-in effects are registered under their effect names: =bloom=, =color-grade=, =colorblind-filter=, =film-grain=, =fxaa=, =heat-haze=, =palettize=, =screen-shake=, =sharpen=, =tonemap=, =vignette=. A game registers its own with =lrg_post_stack_register_effect_type()=; a GType name (=MyGameSepia=) of a concrete =LrgPostEffect= subtype also works without registration. =lrg_post_stack_lookup_effect_type()= resolves a name and =lrg_post_stack_list_effect_types()= lists the registered ones (sorted; editor menus use it).
+- *Order.* Effects run in the order they are listed: entry /i/ gets priority /i/ * 10 at build, unless the entry sets =priority:=.
+- *Parameters are properties.* An effect's parameters are its GObject properties (kebab-case; =snake_case= is accepted and normalised). The base-class properties (=enabled=, =intensity=, =priority=, =quality-tier=) are not parameters: they come from the entry's =enabled=, =weight=, =priority= and the stack's =quality=. A parameter is validated against the effect class when it is read, and stored as a value of the property's type, so an unknown name or a value of the wrong kind is an error at load, not a surprise at runtime. Numbers out of a property's range are clamped to it.
+- *Vectors.* A list of three or four numbers sets the =name-r=, =name-g=, =name-b= (and =name-a=) properties: =tint: [1, 0.9, 0.8]= on bloom sets =tint-r=, =tint-g=, =tint-b=. Colour parameters of the built-in effects follow that pattern (=color-r/g/b= on vignette, =tint-r/g/b= on bloom, =lift-/gamma-/gain-r/g/b= on color-grade). They are written back as the individual properties.
+- *Special parameters.* Data that is not a property: =palettize= takes =palette:= (a list of ="#rrggbb"= colours, 1 to 256); =color-grade= takes =lut:= (a =.cube= file, relative to the =.rpost= file's directory) and =lut-strength:= (0..1, default 1).
+- *Weight.* The entry's weight (0..1) becomes the effect's base intensity (=lrg_post_effect_set_intensity()=), which every built-in effect mixes its result by. Blending fades effects in and out through it.
+- *Unknown keys are kept.* Keys this version does not know, at the top level and in an effect entry, are kept and written back unchanged, so a newer editor's keys survive a round trip through an older build. Unknown /parameters/ are errors (they are checked against the effect class).
+
+** The .rpost format
+:PROPERTIES:
+:CUSTOM_ID: rpost-format
+:END:
+#+begin_src yaml
+# dusk.rpost: a warm evening look
+version: 1                 # format version; files from a newer version are refused
+name: Dusk                 # display name (optional)
+quality: high              # low | medium | high | ultra (default high)
+hdr: true                  # request RGBA16F targets (default true)
+effects:                   # required; [] for an empty stack
+  - type: bloom            # registered type name (or a GType name)
+    enabled: true          # default true
+    weight: 0.8            # base intensity, 0..1 (default 1)
+    params:
+      threshold: 0.9       # bloom starts at this brightness
+      soft_knee: 0.4       # snake_case is accepted (soft-knee)
+      intensity: 1.2
+      tint: [1.0, 0.85, 0.7]   # tint-r, tint-g, tint-b
+  - type: tonemap
+    params:
+      operator: aces       # enum by nick (none | reinhard | filmic | aces)
+      exposure: 0.3        # stops
+  - type: color-grade
+    params:
+      temperature: 0.25
+      saturation: 1.1
+      lift: [0.02, 0.0, -0.02]  # lift-r, lift-g, lift-b
+      lut: luts/dusk.cube  # relative to this file
+      lut_strength: 0.6
+  - type: vignette
+    priority: 900          # explicit chain position (default index * 10)
+    params:
+      intensity: 0.35
+      radius: 0.6
+      smoothness: 0.45
+  - type: fxaa
+    enabled: false         # kept in the chain but skipped
+#+end_src
+
+| Key | Where | Type | Default | Meaning |
+|-----+-------+------+---------+---------|
+| =version= | top | int | 1 | Must be at most =LRG_POST_STACK_FORMAT_VERSION= (1) |
+| =name= | top | string | none | Display name |
+| =quality= | top | =LrgPostQuality= nick | =high= | Quality tier handed to every effect |
+| =hdr= | top | bool | =true= | Ask for RGBA16F targets (=lrg_post_processor_set_hdr()=) |
+| =effects= | top | list | required | The chain, in order |
+| =type= | effect | string | required | Effect type name |
+| =enabled= | effect | bool | =true= | =LrgPostEffect:enabled= |
+| =weight= | effect | float 0..1 | 1 | =LrgPostEffect:intensity= |
+| =priority= | effect | int | index * 10 | =LrgPostEffect:priority= |
+| =params= | effect | mapping | none | Effect properties and special parameters |
+
+Values: booleans are =true/false/yes/no/on/off/1/0=; enums take the nick (=reinhard=), the full name (=LRG_TONEMAP_OPERATOR_REINHARD=) or the number; numbers are parsed locale-independently. Floats are written with six significant digits.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: post-stack-api
+:END:
+*** Registry
+:PROPERTIES:
+:CUSTOM_ID: post-stack-api-registry
+:END:
+#+begin_src C
+void    lrg_post_stack_register_effect_type (const gchar *name, GType type);
+GType   lrg_post_stack_lookup_effect_type   (const gchar *name);   /* G_TYPE_INVALID if unknown */
+gchar **lrg_post_stack_list_effect_types    (void);                /* sorted, g_strfreev() */
+#+end_src
+The registry is process-wide and thread-safe; registering a built-in name again replaces it.
+
+*** Load and save
+:PROPERTIES:
+:CUSTOM_ID: post-stack-api-io
+:END:
+#+begin_src C
+LrgPostStack *lrg_post_stack_new                (void);
+LrgPostStack *lrg_post_stack_new_from_file      (const gchar *path, GError **error);
+LrgPostStack *lrg_post_stack_new_from_data      (const gchar *data, gssize length,
+                                                 const gchar *base_dir, GError **error);
+LrgPostStack *lrg_post_stack_new_from_processor (LrgPostProcessor *processor);
+LrgPostStack *lrg_post_stack_copy               (LrgPostStack *self);
+gchar        *lrg_post_stack_to_data            (LrgPostStack *self, GError **error);
+gboolean      lrg_post_stack_save_to_file       (LrgPostStack *self, const gchar *path, GError **error);
+#+end_src
+- =new_from_file()= resolves relative =lut:= paths against the file's directory; =new_from_data()= against =base_dir= (or the working directory when %NULL).
+- =new_from_processor()= captures a live chain: every effect whose type is registered (others are skipped), in chain order, with its enabled flag, base intensity as =weight= and the properties that differ from their defaults (a palettize palette as =palette:=; a colour grade LUT cannot be captured because the processor does not know its file). Priorities are not captured: the order is.
+- =to_data()= writes =version=, =name=, =quality=, =hdr=, the unknown top-level keys, then =effects= (each: =type=, =enabled=, =weight=, =priority= when set, =params=, unknown keys). Loading what it wrote and writing again gives the same text.
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: post-stack-errors
+:END:
+=LRG_POST_STACK_ERROR= (=lrg_post_stack_error_quark()=), codes =LrgPostStackError= (=lrg_post_stack_error_get_type()=):
+| Code | When |
+|------+------|
+| =LRG_POST_STACK_ERROR_PARSE= | YAML syntax, the root is not a mapping, no =effects:=, =effects= not a list, an entry without =type:=, =version:= newer than 1 |
+| =LRG_POST_STACK_ERROR_UNKNOWN_EFFECT= | a =type:= that is not registered (nor a GType name of an effect) |
+| =LRG_POST_STACK_ERROR_UNKNOWN_PARAM= | a parameter that is neither a property of the effect nor a special key |
+| =LRG_POST_STACK_ERROR_INVALID_VALUE= | a value that does not convert (=threshold: bright=, an unknown enum nick, a list of 2 numbers, a bad =#rrggbb=) |
+| =LRG_POST_STACK_ERROR_IO= | reading or writing the file, or a =lut:= file that does not load (at build) |
+Messages name the entry and parameter (=effects[2]: unknown effect type 'lens-flare'=, =bloom.threshold: 'bright' is not a valid gfloat=).
+
+*** Stack settings and effects
+:PROPERTIES:
+:CUSTOM_ID: post-stack-api-edit
+:END:
+#+begin_src C
+const gchar   *lrg_post_stack_get_name    (LrgPostStack *self);
+void           lrg_post_stack_set_name    (LrgPostStack *self, const gchar *name);
+LrgPostQuality lrg_post_stack_get_quality (LrgPostStack *self);
+void           lrg_post_stack_set_quality (LrgPostStack *self, LrgPostQuality quality);
+gboolean       lrg_post_stack_get_hdr     (LrgPostStack *self);
+void           lrg_post_stack_set_hdr     (LrgPostStack *self, gboolean hdr);
+
+guint        lrg_post_stack_get_effect_count   (LrgPostStack *self);
+gint         lrg_post_stack_add_effect         (LrgPostStack *self, const gchar *type_name, GError **error);
+void         lrg_post_stack_remove_effect      (LrgPostStack *self, guint index);
+void         lrg_post_stack_move_effect        (LrgPostStack *self, guint from, guint to);
+gint         lrg_post_stack_find_effect        (LrgPostStack *self, const gchar *type_name);
+const gchar *lrg_post_stack_get_effect_type    (LrgPostStack *self, guint index);
+gboolean     lrg_post_stack_get_effect_enabled (LrgPostStack *self, guint index);
+void         lrg_post_stack_set_effect_enabled (LrgPostStack *self, guint index, gboolean enabled);
+gfloat       lrg_post_stack_get_effect_weight  (LrgPostStack *self, guint index);
+void         lrg_post_stack_set_effect_weight  (LrgPostStack *self, guint index, gfloat weight);
+
+gboolean lrg_post_stack_set_param       (LrgPostStack *self, guint index, const gchar *name,
+                                         const GValue *value, GError **error);
+gboolean lrg_post_stack_get_param       (LrgPostStack *self, guint index, const gchar *name, GValue *value);
+void     lrg_post_stack_unset_param     (LrgPostStack *self, guint index, const gchar *name);
+gchar  **lrg_post_stack_get_param_names (LrgPostStack *self, guint index);
+#+end_src
+=set_param()= converts the value to the property's type (a string is parsed as in a file; other types go through =g_value_transform()=) and validates it. =get_param()= returns only what the stack sets, not property defaults (=FALSE= otherwise). =unset_param()= drops a parameter so the property default applies again at the next build.
+
+*** Build
+:PROPERTIES:
+:CUSTOM_ID: post-stack-build
+:END:
+#+begin_src C
+gboolean lrg_post_stack_build (LrgPostStack *self, LrgPostProcessor *processor, GError **error);
+#+end_src
+Makes the processor's chain match the stack:
+1. *Plan.* For each entry, the first effect of the same GType already in the processor (not yet claimed) is reused, otherwise a new one is created. LUT files are loaded. Nothing changes yet: on an error (=LRG_POST_STACK_ERROR_IO=) the processor keeps its chain.
+2. *Remove* the processor's effects that no entry claimed.
+3. *Configure.* The processor gets the stack's HDR request and quality (=lrg_post_processor_set_quality()=, handed to every effect). Every parameter property of each effect is set to the stack's value or, when the stack does not set it, to the property default (except runtime state: =screen-shake= =trauma=), so values left over from another stack or from code do not leak. Then enabled, weight (base intensity) and priority. Palettes and LUTs are applied only when they change.
+4. *Add* the new effects and sort by priority.
+
+Because effects are reused and only changed properties are set, calling =build()= every frame (a blended volume) costs a handful of property compares; shaders and render targets are kept.
+
+*** Blend
+:PROPERTIES:
+:CUSTOM_ID: post-stack-blend
+:END:
+#+begin_src C
+LrgPostStack *lrg_post_stack_blend (LrgPostStack *a, LrgPostStack *b, gfloat weight);
+#+end_src
+A new stack between =a= (weight 0) and =b= (weight 1):
+- effects match by type in order: the n-th =bloom= of =a= with the n-th =bloom= of =b=;
+- matched effects interpolate every numeric parameter (float, double, int, uint; a parameter set on only one side uses the property default on the other) and their weights; booleans, enums, strings, palettes and LUT paths switch at 0.5;
+- effects only in =a= keep their parameters and fade out (weight * (1 - =weight=)); effects only in =b= fade in (weight * =weight=) and are appended after =a='s;
+- a disabled effect counts as weight 0; a blended effect is enabled when its weight is above 0 (it stays in the chain at 0 so the chain does not change shape while blending);
+- quality switches at 0.5, HDR is on when either asks for it, the name is =a='s.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: post-stack-examples
+:END:
+*** Load a look and run it
+:PROPERTIES:
+:CUSTOM_ID: post-stack-example-run
+:END:
+#+begin_src C
+g_autoptr(GError)           error = NULL;
+g_autoptr(LrgPostProcessor) post = lrg_post_processor_new (GetRenderWidth (), GetRenderHeight ());
+g_autoptr(LrgPostStack)     look = lrg_post_stack_new_from_file ("data/looks/dusk.rpost", &error);
+
+if (look == NULL || !lrg_post_stack_build (look, post, &error))
+	g_warning ("look: %s", error->message);
+lrg_post_processor_set_auto_resize (post, TRUE);
+
+while (!WindowShouldClose ())
+{
+	BeginDrawing ();
+	lrg_post_processor_begin_capture (post);
+	ClearBackground (BLACK);
+	draw_world ();
+	lrg_post_processor_end_capture (post);
+	lrg_post_processor_render (post, GetFrameTime ());
+	draw_hud ();               /* after render: the HUD is not post-processed */
+	EndDrawing ();
+}
+lrg_post_processor_release (post);   /* before CloseWindow () */
+#+end_src
+
+*** A post volume
+:PROPERTIES:
+:CUSTOM_ID: post-stack-example-volume
+:END:
+#+begin_src C
+/* base: the level's look; cave: the volume's; t: 0 outside .. 1 inside
+ * (e.g. distance to the volume's box over its blend distance) */
+static void
+update_look (LrgPostStack *base, LrgPostStack *cave, gfloat t, LrgPostProcessor *post)
+{
+	g_autoptr(LrgPostStack) mixed = lrg_post_stack_blend (base, cave, t);
+
+	lrg_post_stack_build (mixed, post, NULL);   /* reuses the effects: cheap per frame */
+}
+#+end_src
+Several volumes: blend them pairwise in priority order (=blend (blend (base, v1, t1), v2, t2)=).
+
+*** Build a stack in code and save it
+:PROPERTIES:
+:CUSTOM_ID: post-stack-example-save
+:END:
+#+begin_src C
+g_autoptr(LrgPostStack) stack = lrg_post_stack_new ();
+g_auto(GValue)          v = G_VALUE_INIT;
+gint                    tm;
+
+lrg_post_stack_set_name (stack, "Noir");
+tm = lrg_post_stack_add_effect (stack, "tonemap", NULL);
+g_value_init (&v, G_TYPE_STRING);
+g_value_set_string (&v, "filmic");            /* strings are parsed like the file */
+lrg_post_stack_set_param (stack, tm, "operator", &v, NULL);
+g_value_unset (&v);
+lrg_post_stack_add_effect (stack, "color-grade", NULL);
+g_value_init (&v, G_TYPE_FLOAT);
+g_value_set_float (&v, 0.0f);
+lrg_post_stack_set_param (stack, 1, "saturation", &v, NULL);
+lrg_post_stack_save_to_file (stack, "noir.rpost", NULL);
+#+end_src
+
+*** A custom effect in a stack
+:PROPERTIES:
+:CUSTOM_ID: post-stack-example-custom
+:END:
+#+begin_src C
+/* MyGameSepia: an LrgPostEffect with an "amount" property (see post-effect.org) */
+lrg_post_stack_register_effect_type ("sepia", MY_GAME_TYPE_SEPIA);
+#+end_src
+#+begin_src yaml
+effects:
+  - type: sepia
+    params: { amount: 0.6 }
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: post-stack-performance
+:END:
+Measured by =tests/test-post-stack= (=LRG_POST_BENCH=1=, path =/post-stack/gpu/bench=) at 1920x1080, RGBA16F targets, under Xvfb with *software GL* (Mesa llvmpipe, 20 threads). Software rendering makes every full-screen pass expensive, so read the numbers as relative costs, not as what a GPU spends: on hardware a single full-screen pass at 1080p is a small fraction of a millisecond.
+
+| Chain | ms/frame (llvmpipe) | Cost of the effect | Passes |
+|-------+---------------------+--------------------+--------|
+| capture + composite only | 16.8 | (baseline) | 1 copy |
+| tonemap | 46.2 | 29.4 | 1 |
+| color-grade (non-identity) | 45.1 | 28.3 | 1 |
+| colorblind-filter | 42.5 | 25.7 | 1 |
+| film-grain | 51.5 | 34.7 | 1 |
+| screen-shake | 51.7 | 34.9 | 1 |
+| vignette | 51.9 | 35.2 | 1 |
+| palettize | 70.6 | 53.8 | 1 (+ dither) |
+| fxaa | 75.8 | 59.0 | 1, 9 taps |
+| heat-haze | 86.1 | 69.3 | 1 |
+| sharpen | 88.4 | 71.6 | 1, 5 taps |
+| bloom (high, 3 levels) | 129.7 | 112.9 | 2 x levels |
+
+- Every effect is one full-screen pass except bloom (prefilter at half resolution, one downsample and one upsample per extra level, a full-resolution composite). Bloom's levels are its =iterations= capped by the quality tier (low 3 at quarter resolution, medium 4, high 6, ultra 8).
+- An effect whose weight or own strength is 0 still copies its input (it stays in the chain); disable it (=enabled: false=) to skip the pass entirely.
+- Order cheap colour effects together and put FXAA last: its edge search reads 9 taps.
+- RGBA16F targets cost twice the bandwidth of RGBA8; turn =hdr= off on very weak GPUs (bloom thresholds and tonemapping then see clamped values).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: post-stack-pitfalls
+:END:
+- *Build replaces hand-set values.* Properties the stack does not set go back to their defaults at every build. Change the stack (=set_param=), not the effect, if the change should survive the next build. The one exception is runtime state: =screen-shake='s =trauma= is left alone unless the stack sets it, so =lrg_screen_shake_add_trauma()= on the built effect keeps working while a volume rebuilds the stack every frame.
+- *Effects added by hand are removed.* A build removes processor effects the stack does not list; add game-controlled effects (an accessibility filter) to the stack instead.
+- *Order matters.* Put bloom before tonemap (bloom wants HDR values) and tonemap before colour grade, vignette, FXAA, film grain and palettize (they expect display values).
+- *Effects match by type in order.* Two blooms in one stack are fine, but a blended volume pairs the first with the first.
+- *The base intensity is the weight.* Bloom, vignette and film grain also have their own =intensity= property (a parameter); the entry's =weight= scales on top of it.
+- *Unknown parameters are errors* (a typo would silently do nothing otherwise); unknown /keys/ are kept.
+- *Registered names are global.* Register custom effect types before loading stacks that use them, and use a prefix (=mygame-sepia=) to stay clear of future built-ins.
+- *LUT paths are relative to the =.rpost= file*, not the working directory, when loaded with =new_from_file()=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: post-stack-editor
+:END:
+- A level's =environment:= block names the level's stack (=post_stack:= with a project path or =guid:=); see the level format page.
+- The editor viewport and play-in-editor draw through =LrgWorld3DRenderer=, whose post processor comes from =lrg_world3d_renderer_new_preview_post_processor()= (FXAA, bloom, vignette, colour grade). =lrg_post_stack_build()= works on that processor (=lrg_world3d_renderer_get_post_processor()=), and =lrg_post_stack_new_from_processor()= captures it as a stack that =lrg_post_stack_save_to_file()= writes as a =.rpost= asset.
+- Current limit: the renderer draws post with its own single fused pass and reads only the =fxaa=, =bloom=, =vignette= and =color-grade= effects from its processor (by name); other effects in a stack built into it (tonemap, film grain...) do not show in the viewport yet. Running the processor's whole chain there (=lrg_post_processor_process()= on the renderer's scene texture) is the renderer integration step.
+- =.rpost= files are plain YAML; edit them in Emacs or any editor and load them again with =lrg_post_stack_new_from_file()=.
+
+See also: [[file:post-processor.org][LrgPostProcessor]], [[file:post-effect.org][LrgPostEffect]], [[file:effects.org][the built-in effects]], [[file:../world3d/renderer.org][LrgWorld3DRenderer]].

@@ -2,194 +2,154 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgpostprocessor
 :END:
-=LrgPostProcessor= manages the post-processing pipeline, handling render targets, effect chains, and the capture/render workflow.
+=LrgPostProcessor= (=postprocess/lrg-post-processor.h=, derivable, =GObject=) runs a chain of [[file:post-effect.org][LrgPostEffect]] passes over a captured scene: the scene is drawn into an offscreen target (RGBA16F when the driver can render to it, else RGBA8), each enabled effect runs as a shader pass in priority order, ping-ponging between two targets, and the result is composited into whatever target was bound when =lrg_post_processor_render()= is called. A look can be described as data and built into a processor with [[file:post-stack.org][LrgPostStack]] (=.rpost=).
 
-** Type
-:PROPERTIES:
-:CUSTOM_ID: type
-:END:
 #+begin_src C
 #define LRG_TYPE_POST_PROCESSOR (lrg_post_processor_get_type ())
 G_DECLARE_DERIVABLE_TYPE (LrgPostProcessor, lrg_post_processor, LRG, POST_PROCESSOR, GObject)
 #+end_src
 
-** Functions
+** Frame flow
 :PROPERTIES:
-:CUSTOM_ID: functions
+:CUSTOM_ID: post-processor-frame-flow
 :END:
-*** Creation
-:PROPERTIES:
-:CUSTOM_ID: creation
-:END:
-#+begin_src C
-LrgPostProcessor *lrg_post_processor_new (guint width, guint height);
-#+end_src
+1. =lrg_post_processor_begin_capture()= flushes the batch, remembers the bound target (the window or a render texture, and its size), creates or resizes the two targets when needed, binds target 0 and clears it to transparent black. With =auto-resize= on, the processor first takes the bound target's size.
+2. The caller draws the scene (2D or =BeginMode3D()=; the capture target has a depth buffer and =BeginMode3D()= takes its aspect from it).
+3. =lrg_post_processor_end_capture()= flushes and rebinds the remembered target.
+4. =lrg_post_processor_render()= ends a capture still in progress, then runs =lrg_post_processor_process()= on the captured image and draws the result over the whole bound target, scaled to it when the sizes differ, with alpha blending (pixels the scene never covered stay transparent and show what was behind).
 
-Creates a processor with render targets of the specified size.
+Inside =process()= each enabled effect gets the previous image as =source_texture_id= and the other ping-pong target bound (colour blending disabled, so alpha and values above 1.0 pass through untouched); the target binding active when =process()= was called is restored on return. Disabled effects are skipped; the number of passes run is =lrg_post_processor_get_pass_count()=.
 
-*** Effect Management
-:PROPERTIES:
-:CUSTOM_ID: effect-management
-:END:
-#+begin_src C
-void lrg_post_processor_add_effect (LrgPostProcessor *self, LrgPostEffect *effect);
-void lrg_post_processor_remove_effect (LrgPostProcessor *self, LrgPostEffect *effect);
-LrgPostEffect *lrg_post_processor_get_effect (LrgPostProcessor *self, const gchar *name);
-GList *lrg_post_processor_get_effects (LrgPostProcessor *self);
-guint lrg_post_processor_get_effect_count (LrgPostProcessor *self);
-void lrg_post_processor_clear_effects (LrgPostProcessor *self);
-void lrg_post_processor_sort_effects (LrgPostProcessor *self);
-#+end_src
+Without a window (headless tests, servers) captures only change the =is_capturing= state, =render()= draws nothing and =process()= returns its input.
 
-*** Render Pipeline
+** Construction and chain
 :PROPERTIES:
-:CUSTOM_ID: render-pipeline
+:CUSTOM_ID: post-processor-chain
 :END:
 #+begin_src C
-void lrg_post_processor_begin_capture (LrgPostProcessor *self);
-void lrg_post_processor_end_capture (LrgPostProcessor *self);
-void lrg_post_processor_render (LrgPostProcessor *self, gfloat delta_time);
+LrgPostProcessor *lrg_post_processor_new             (guint width, guint height);
+void              lrg_post_processor_add_effect      (LrgPostProcessor *self, LrgPostEffect *effect);
+void              lrg_post_processor_remove_effect   (LrgPostProcessor *self, LrgPostEffect *effect);
+LrgPostEffect    *lrg_post_processor_get_effect      (LrgPostProcessor *self, const gchar *name);
+GList            *lrg_post_processor_get_effects     (LrgPostProcessor *self);   /* transfer none, chain order */
+guint             lrg_post_processor_get_effect_count (LrgPostProcessor *self);
+void              lrg_post_processor_clear_effects   (LrgPostProcessor *self);
+void              lrg_post_processor_sort_effects    (LrgPostProcessor *self);
 #+end_src
+- =add_effect()= takes a reference, initialises the effect (CPU side: =lrg_post_effect_initialize()=; shaders compile lazily on its first pass or in a prewarm), hands it the processor's quality tier and inserts it by priority (lower first, stable for equal priorities). Adding an effect twice does nothing.
+- =get_effect()= finds an effect by its name (=lrg_post_effect_get_name()=: ="bloom"=, ="tonemap"=...).
+- =remove_effect()= and =clear_effects()= shut the effects down (their GPU resources are released) and drop the references.
+- After changing priorities call =sort_effects()=.
 
-*** Properties
+** Capture and render
 :PROPERTIES:
-:CUSTOM_ID: properties
+:CUSTOM_ID: post-processor-render
 :END:
 #+begin_src C
-guint lrg_post_processor_get_width (LrgPostProcessor *self);
-guint lrg_post_processor_get_height (LrgPostProcessor *self);
-void lrg_post_processor_resize (LrgPostProcessor *self, guint width, guint height);
-
-gboolean lrg_post_processor_is_enabled (LrgPostProcessor *self);
-void lrg_post_processor_set_enabled (LrgPostProcessor *self, gboolean enabled);
-
-gboolean lrg_post_processor_is_capturing (LrgPostProcessor *self);
+void     lrg_post_processor_begin_capture       (LrgPostProcessor *self);
+void     lrg_post_processor_end_capture         (LrgPostProcessor *self);
+void     lrg_post_processor_render              (LrgPostProcessor *self, gfloat delta_time);
+guint    lrg_post_processor_process             (LrgPostProcessor *self, guint source_texture_id,
+                                                 gfloat delta_time);
+guint    lrg_post_processor_get_capture_texture (LrgPostProcessor *self);
+gboolean lrg_post_processor_is_capturing        (LrgPostProcessor *self);
+guint    lrg_post_processor_get_pass_count      (LrgPostProcessor *self);
 #+end_src
+- =delta_time= drives animated effects (film grain, heat haze, screen shake).
+- =process()= is for renderers that own their scene target (=LrgWorld3DRenderer=): pass a render texture of the processor's size and draw the returned texture yourself (it is bottom-up like any render texture: draw it with a negative source height, or with =lrg_post_effect_draw_fullscreen()=). The returned id is valid until the next process, capture or resize.
+- =get_capture_texture()= is target 0's colour texture (0 before the first GPU capture).
 
-** Render Workflow
+The class virtuals =begin_capture=, =end_capture= and =render= can be overridden by subclasses (=LrgPostProcessorClass=); the default implementations are the flow above.
+
+** Settings
 :PROPERTIES:
-:CUSTOM_ID: render-workflow
-:END:
-The typical usage pattern in a game loop:
-
-#+begin_src C
-void
-game_render (gfloat delta_time)
-{
-    /* 1. Start capture */
-    lrg_post_processor_begin_capture (processor);
-
-    /* 2. Render scene normally */
-    render_background ();
-    render_entities ();
-    render_particles ();
-    render_ui ();
-
-    /* 3. End capture */
-    lrg_post_processor_end_capture (processor);
-
-    /* 4. Apply effects and output to screen */
-    lrg_post_processor_render (processor, delta_time);
-}
-#+end_src
-
-** Handling Window Resize
-:PROPERTIES:
-:CUSTOM_ID: handling-window-resize
+:CUSTOM_ID: post-processor-settings
 :END:
 #+begin_src C
-static void
-on_window_resize (guint new_width, guint new_height)
-{
-    /* Resize render targets */
-    lrg_post_processor_resize (processor, new_width, new_height);
-}
+void           lrg_post_processor_resize          (LrgPostProcessor *self, guint width, guint height);
+guint          lrg_post_processor_get_width       (LrgPostProcessor *self);
+guint          lrg_post_processor_get_height      (LrgPostProcessor *self);
+gboolean       lrg_post_processor_is_enabled      (LrgPostProcessor *self);
+void           lrg_post_processor_set_enabled     (LrgPostProcessor *self, gboolean enabled);
+gboolean       lrg_post_processor_get_hdr         (LrgPostProcessor *self);
+void           lrg_post_processor_set_hdr         (LrgPostProcessor *self, gboolean hdr);
+gboolean       lrg_post_processor_is_hdr_active   (LrgPostProcessor *self);
+LrgPostQuality lrg_post_processor_get_quality     (LrgPostProcessor *self);
+void           lrg_post_processor_set_quality     (LrgPostProcessor *self, LrgPostQuality quality);
+gboolean       lrg_post_processor_get_auto_resize (LrgPostProcessor *self);
+void           lrg_post_processor_set_auto_resize (LrgPostProcessor *self, gboolean auto_resize);
+void           lrg_post_processor_release         (LrgPostProcessor *self);
 #+end_src
 
-** Effect Priority and Ordering
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =width=, =height= | guint | 800, 600 | Target size (=resize()= recreates targets on the next capture and calls =lrg_post_effect_resize()= on every effect) |
+| =enabled= | gboolean | TRUE | Off: captures do nothing, the scene draws straight to the bound target |
+| =hdr= | gboolean | TRUE | Request RGBA16F targets; =is_hdr_active()= says whether the live targets are float (FALSE before the first capture or on fallback) |
+| =quality= | =LrgPostQuality= | high | Handed to every effect (=LrgPostEffect:quality-tier=) now and when added |
+| =auto-resize= | gboolean | FALSE | Each capture takes the bound target's size |
+| =effect-count= | guint (read) | 0 | Number of effects |
+
+=LrgPostQuality= (=lrg_post_quality_get_type()=): =LRG_POST_QUALITY_LOW=, =_MEDIUM=, =_HIGH=, =_ULTRA=. What a tier changes is up to each effect; see [[file:effects.org][the effects]] (bloom: levels and starting resolution).
+
+=release()= drops every GPU resource (targets, effect shaders and bloom chains) and keeps the chain; everything is recreated on the next capture. Call it before =CloseWindow()= when the processor outlives the window; finalising a processor after the window closed is safe (GPU objects are only unloaded while a window is ready).
+
+** Example
 :PROPERTIES:
-:CUSTOM_ID: effect-priority-and-ordering
-:END:
-Effects are applied in priority order. After changing priorities, re-sort:
-
-#+begin_src C
-lrg_post_effect_set_priority (bloom, 50);
-lrg_post_effect_set_priority (color_grade, 10);
-lrg_post_effect_set_priority (fxaa, 1000);
-
-/* Re-sort after priority changes */
-lrg_post_processor_sort_effects (processor);
-#+end_src
-
-** Finding Effects by Name
-:PROPERTIES:
-:CUSTOM_ID: finding-effects-by-name
-:END:
-#+begin_src C
-LrgPostEffect *bloom = lrg_post_processor_get_effect (processor, "Bloom");
-if (bloom != NULL)
-{
-    lrg_post_effect_set_intensity (bloom, 0.8f);
-}
-#+end_src
-
-** Bypassing Post-Processing
-:PROPERTIES:
-:CUSTOM_ID: bypassing-post-processing
-:END:
-Disable the entire chain for debugging or performance:
-
-#+begin_src C
-/* Disable all post-processing */
-lrg_post_processor_set_enabled (processor, FALSE);
-
-/* Scene renders directly to screen */
-#+end_src
-
-** Complete Example
-:PROPERTIES:
-:CUSTOM_ID: complete-example
+:CUSTOM_ID: post-processor-example
 :END:
 #+begin_src C
-static LrgPostProcessor *processor = NULL;
-static LrgBloom *bloom = NULL;
-static LrgVignette *vignette = NULL;
-static LrgScreenShake *shake = NULL;
+g_autoptr(LrgPostProcessor) post = lrg_post_processor_new (1280, 720);
+g_autoptr(LrgBloom)         bloom = lrg_bloom_new ();
+g_autoptr(LrgTonemap)       tonemap = lrg_tonemap_new ();
+g_autoptr(LrgVignette)      vignette = lrg_vignette_new ();
+g_autoptr(LrgFxaa)          fxaa = lrg_fxaa_new ();
 
-void
-init_post_processing (guint width, guint height)
-{
-    processor = lrg_post_processor_new (width, height);
+/* bloom on HDR values, then tonemap, then display-space effects */
+lrg_post_effect_set_priority (LRG_POST_EFFECT (bloom), 0);
+lrg_post_effect_set_priority (LRG_POST_EFFECT (tonemap), 10);
+lrg_post_effect_set_priority (LRG_POST_EFFECT (vignette), 20);
+lrg_post_effect_set_priority (LRG_POST_EFFECT (fxaa), 30);
+lrg_post_processor_add_effect (post, LRG_POST_EFFECT (bloom));
+lrg_post_processor_add_effect (post, LRG_POST_EFFECT (tonemap));
+lrg_post_processor_add_effect (post, LRG_POST_EFFECT (vignette));
+lrg_post_processor_add_effect (post, LRG_POST_EFFECT (fxaa));
+lrg_post_processor_set_auto_resize (post, TRUE);
 
-    /* Add effects in desired order */
-    bloom = lrg_bloom_new ();
-    lrg_bloom_set_threshold (bloom, 0.8f);
-    lrg_bloom_set_intensity (bloom, 1.2f);
-    lrg_post_effect_set_priority (LRG_POST_EFFECT (bloom), 100);
-    lrg_post_processor_add_effect (processor, LRG_POST_EFFECT (bloom));
-
-    vignette = lrg_vignette_new ();
-    lrg_vignette_set_intensity (vignette, 0.3f);
-    lrg_post_effect_set_priority (LRG_POST_EFFECT (vignette), 200);
-    lrg_post_processor_add_effect (processor, LRG_POST_EFFECT (vignette));
-
-    shake = lrg_screen_shake_new ();
-    lrg_screen_shake_set_max_offset (shake, 10.0f, 10.0f);
-    lrg_post_effect_set_priority (LRG_POST_EFFECT (shake), 300);
-    lrg_post_processor_add_effect (processor, LRG_POST_EFFECT (shake));
-}
-
-void
-trigger_explosion (void)
-{
-    /* Add trauma for screen shake */
-    lrg_screen_shake_add_trauma (shake, 0.5f);
-}
-
-void
-cleanup_post_processing (void)
-{
-    g_clear_object (&processor);
-    /* Effects are owned by processor, no need to free individually */
-}
+BeginDrawing ();
+lrg_post_processor_begin_capture (post);
+ClearBackground (BLACK);
+BeginMode3D (camera);
+draw_world ();
+EndMode3D ();
+lrg_post_processor_end_capture (post);
+lrg_post_processor_render (post, GetFrameTime ());
+DrawFPS (10, 10);          /* not post-processed */
+EndDrawing ();
 #+end_src
+
+Rendering into a render texture works the same way: =BeginTextureMode (rt)= before =begin_capture()= and =render()= composites into =rt=.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: post-processor-performance
+:END:
+The fixed cost is the capture target and one composite copy; each enabled effect adds one full-screen pass (bloom more). Disabled effects cost nothing. Measured numbers per effect are in [[file:post-stack.org::#post-stack-performance][post-stack.org]].
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: post-processor-pitfalls
+:END:
+- *Pair the calls.* Every =begin_capture()= needs an =end_capture()= (or a =render()=, which ends it) in the same frame; the remembered target is rebound there.
+- *HUD after render.* Anything drawn after =render()= is not post-processed; anything drawn between capture and render into the bound target is overwritten by the composite.
+- *Sizes.* Without =auto-resize=, call =resize()= when the window size changes; a size mismatch is scaled at the composite but effects that measure in pixels (screen shake offsets, film grain size, FXAA) then work at the processor's size.
+- *Nested targets.* Capturing inside =BeginTextureMode()= is fine (the render texture is rebound), but do not call =BeginTextureMode()= / =EndTextureMode()= on other targets between =begin_capture()= and =end_capture()= without restoring the capture target: =EndTextureMode()= binds the window.
+- *Shaders and effects that draw.* Effects must leave blending disabled and their target bound ([[file:post-effect.org::#post-effect-contract][the contract]]).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: post-processor-editor
+:END:
+The editor viewport, play-in-editor and =LrgWorld3DRenderer= hold an =LrgPostProcessor= (=lrg_world3d_renderer_new_preview_post_processor()=: FXAA, bloom 0.75/0.6, vignette 0.35/0.55/0.45, colour grade contrast 1.05 saturation 1.08) and draw it with the renderer's own fused preview pass, which reads those four effects' parameters by name. Toggle it with the viewport's post flag (=LRG_WORLD3D_RENDER_FLAG_POST=). Looks are saved and loaded as [[file:post-stack.org][.rpost stacks]].
+
+See also: [[file:post-effect.org][LrgPostEffect]], [[file:effects.org][built-in effects]], [[file:post-stack.org][LrgPostStack]], [[file:../world3d/renderer.org][LrgWorld3DRenderer]].

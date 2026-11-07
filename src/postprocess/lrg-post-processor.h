@@ -28,9 +28,12 @@ G_DECLARE_DERIVABLE_TYPE (LrgPostProcessor, lrg_post_processor, LRG, POST_PROCES
 /**
  * LrgPostProcessorClass:
  * @parent_class: Parent class
- * @begin_capture: Virtual method to start scene capture
- * @end_capture: Virtual method to end scene capture
- * @render: Virtual method to render the post-processing chain
+ * @begin_capture: Virtual method to start scene capture (binds the
+ *   capture target)
+ * @end_capture: Virtual method to end scene capture (rebinds the target
+ *   that was bound before the capture)
+ * @render: Virtual method to run the effect chain and composite the result
+ *   into the currently bound target
  *
  * The class structure for #LrgPostProcessor.
  */
@@ -63,7 +66,9 @@ struct _LrgPostProcessorClass
      * @self: A #LrgPostProcessor
      * @delta_time: Time since last frame
      *
-     * Renders the post-processing effect chain and outputs to screen.
+     * Runs the effect chain over the captured image and composites the
+     * result into the currently bound target (the window or a render
+     * texture).
      */
     void    (*render)           (LrgPostProcessor   *self,
                                  gfloat              delta_time);
@@ -156,7 +161,12 @@ void                lrg_post_processor_clear_effects    (LrgPostProcessor   *sel
  * lrg_post_processor_begin_capture:
  * @self: A #LrgPostProcessor
  *
- * Begins scene capture. Call before rendering the scene.
+ * Begins scene capture. Call before rendering the scene. With a GL context
+ * this creates (or resizes) the capture target, remembers the bound target
+ * and binds the capture target cleared to transparent black; everything
+ * drawn until lrg_post_processor_end_capture() lands in it. Without a
+ * window only the capturing state changes. Does nothing while the
+ * processor is disabled (the scene then draws straight to the target).
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_post_processor_begin_capture    (LrgPostProcessor   *self);
@@ -165,7 +175,8 @@ void                lrg_post_processor_begin_capture    (LrgPostProcessor   *sel
  * lrg_post_processor_end_capture:
  * @self: A #LrgPostProcessor
  *
- * Ends scene capture. Call after rendering the scene.
+ * Ends scene capture. Call after rendering the scene. Rebinds the target
+ * that was bound at lrg_post_processor_begin_capture().
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_post_processor_end_capture      (LrgPostProcessor   *self);
@@ -175,7 +186,11 @@ void                lrg_post_processor_end_capture      (LrgPostProcessor   *sel
  * @self: A #LrgPostProcessor
  * @delta_time: Time since last frame
  *
- * Applies the effect chain and renders to screen.
+ * Runs every enabled effect in priority order over the captured image
+ * (lrg_post_processor_process()) and draws the result over the whole
+ * currently bound target with alpha blending, scaled when the sizes
+ * differ. Ends a capture still in progress. Does nothing when nothing
+ * was captured this frame.
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_post_processor_render           (LrgPostProcessor   *self,
@@ -187,7 +202,8 @@ void                lrg_post_processor_render           (LrgPostProcessor   *sel
  * @width: New width
  * @height: New height
  *
- * Resizes the render targets.
+ * Resizes the render targets (recreated on the next capture) and tells
+ * every effect (lrg_post_effect_resize()).
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_post_processor_resize           (LrgPostProcessor   *self,
@@ -257,5 +273,143 @@ gboolean            lrg_post_processor_is_capturing     (LrgPostProcessor   *sel
  */
 LRG_AVAILABLE_IN_ALL
 void                lrg_post_processor_sort_effects     (LrgPostProcessor   *self);
+
+/**
+ * lrg_post_processor_process:
+ * @self: A #LrgPostProcessor
+ * @source_texture_id: OpenGL texture ID of the input image (a render
+ *   texture of the processor's size, stored bottom up)
+ * @delta_time: Time since last frame
+ *
+ * Runs the enabled effects over @source_texture_id through the processor's
+ * ping-pong targets, without drawing anything into the bound target (the
+ * binding is restored on return). This is the entry point for renderers
+ * that own their scene target (#LrgWorld3DRenderer): draw the returned
+ * texture yourself. Without a GL context, or with no enabled effect, it
+ * returns @source_texture_id.
+ *
+ * Returns: The texture ID holding the result; valid until the next
+ *   process, capture or resize
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_post_processor_process          (LrgPostProcessor   *self,
+                                                         guint               source_texture_id,
+                                                         gfloat              delta_time);
+
+/**
+ * lrg_post_processor_get_capture_texture:
+ * @self: A #LrgPostProcessor
+ *
+ * Gets the capture target's colour texture.
+ *
+ * Returns: The OpenGL texture ID, or 0 before the first GPU capture
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_post_processor_get_capture_texture (LrgPostProcessor *self);
+
+/**
+ * lrg_post_processor_get_hdr:
+ * @self: A #LrgPostProcessor
+ *
+ * Gets whether a floating-point (RGBA16F) capture target is requested.
+ *
+ * Returns: %TRUE if HDR targets are requested
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_post_processor_get_hdr          (LrgPostProcessor   *self);
+
+/**
+ * lrg_post_processor_set_hdr:
+ * @self: A #LrgPostProcessor
+ * @hdr: Whether to request floating-point targets
+ *
+ * Requests floating-point (RGBA16F) targets so values above 1.0 survive
+ * until a tonemap (#LrgTonemap). When the driver cannot render to them the
+ * processor falls back to RGBA8 (lrg_post_processor_is_hdr_active()).
+ * Takes effect on the next capture.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_post_processor_set_hdr          (LrgPostProcessor   *self,
+                                                         gboolean            hdr);
+
+/**
+ * lrg_post_processor_is_hdr_active:
+ * @self: A #LrgPostProcessor
+ *
+ * Checks whether the current targets are floating point.
+ *
+ * Returns: %TRUE if the live targets are RGBA16F
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_post_processor_is_hdr_active    (LrgPostProcessor   *self);
+
+/**
+ * lrg_post_processor_get_quality:
+ * @self: A #LrgPostProcessor
+ *
+ * Gets the quality tier.
+ *
+ * Returns: The quality tier
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPostQuality      lrg_post_processor_get_quality      (LrgPostProcessor   *self);
+
+/**
+ * lrg_post_processor_set_quality:
+ * @self: A #LrgPostProcessor
+ * @quality: The quality tier
+ *
+ * Sets the quality tier and hands it to every effect (now and when added).
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_post_processor_set_quality      (LrgPostProcessor   *self,
+                                                         LrgPostQuality      quality);
+
+/**
+ * lrg_post_processor_get_auto_resize:
+ * @self: A #LrgPostProcessor
+ *
+ * Gets whether captures follow the bound target's size.
+ *
+ * Returns: %TRUE if auto-resize is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_post_processor_get_auto_resize  (LrgPostProcessor   *self);
+
+/**
+ * lrg_post_processor_set_auto_resize:
+ * @self: A #LrgPostProcessor
+ * @auto_resize: Whether to follow the bound target's size
+ *
+ * When on, lrg_post_processor_begin_capture() resizes the processor to the
+ * target bound at that moment (the window's render size, or the render
+ * texture's), so a resizable window needs no resize calls.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_post_processor_set_auto_resize  (LrgPostProcessor   *self,
+                                                         gboolean            auto_resize);
+
+/**
+ * lrg_post_processor_get_pass_count:
+ * @self: A #LrgPostProcessor
+ *
+ * Gets how many effect passes the last process or render ran (one per
+ * enabled effect; multi-pass effects count once).
+ *
+ * Returns: The pass count
+ */
+LRG_AVAILABLE_IN_ALL
+guint               lrg_post_processor_get_pass_count   (LrgPostProcessor   *self);
+
+/**
+ * lrg_post_processor_release:
+ * @self: A #LrgPostProcessor
+ *
+ * Releases every GPU resource (targets, effect shaders and targets) while
+ * keeping the effect chain; they are recreated on the next capture. Call
+ * before CloseWindow() when the processor outlives the window.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_post_processor_release          (LrgPostProcessor   *self);
 
 G_END_DECLS

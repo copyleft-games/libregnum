@@ -2,157 +2,178 @@
 :PROPERTIES:
 :CUSTOM_ID: lrgposteffect
 :END:
-=LrgPostEffect= is the base class for all post-processing effects. It defines the interface for initializing, applying, and managing effects.
+=LrgPostEffect= (=postprocess/lrg-post-effect.h=, derivable, =GObject=) is the base class of every post-processing effect: one step of an [[file:post-processor.org][LrgPostProcessor]] chain that reads the previous image and draws the next one. The base class holds what every effect has (enabled flag, intensity, priority, quality tier, initialised state) and provides helpers to compile a pass shader and draw a full-screen pass.
 
-** Type
-:PROPERTIES:
-:CUSTOM_ID: type
-:END:
 #+begin_src C
 #define LRG_TYPE_POST_EFFECT (lrg_post_effect_get_type ())
 G_DECLARE_DERIVABLE_TYPE (LrgPostEffect, lrg_post_effect, LRG, POST_EFFECT, GObject)
 #+end_src
 
-This is a derivable type for creating custom effects.
-
-** Virtual Methods
+** Lifecycle
 :PROPERTIES:
-:CUSTOM_ID: virtual-methods
+:CUSTOM_ID: post-effect-lifecycle
 :END:
-Subclasses can override these methods:
+1. Construction (=g_object_new()= / =lrg_*_new()=): CPU state only, safe without a window.
+2. =lrg_post_effect_initialize()=: called by =lrg_post_processor_add_effect()= with the processor size; CPU-side setup. The wrapper records the size and marks the effect initialised (=lrg_post_effect_is_initialized()=) when the vfunc succeeds, whether or not the subclass chains up. GPU resources are created lazily on the first =apply()= (they need a window), or ahead of time by a prewarm (every built-in effect implements =LrgPrewarmable=).
+3. =lrg_post_effect_apply()=: each frame, only when enabled and initialised.
+4. =lrg_post_effect_resize()=: when the processor's size changes.
+5. =lrg_post_effect_shutdown()=: when removed, when the processor is released or finalised, and at dispose; releases GPU resources and clears the initialised flag.
 
+#+begin_src C
+gboolean     lrg_post_effect_initialize     (LrgPostEffect *self, guint width, guint height, GError **error);
+void         lrg_post_effect_shutdown       (LrgPostEffect *self);
+gboolean     lrg_post_effect_is_initialized (LrgPostEffect *self);
+void         lrg_post_effect_apply          (LrgPostEffect *self, guint source_texture_id,
+                                             guint target_texture_id, guint width, guint height,
+                                             gfloat delta_time);
+void         lrg_post_effect_resize         (LrgPostEffect *self, guint width, guint height);
+const gchar *lrg_post_effect_get_name       (LrgPostEffect *self);
+#+end_src
+
+** The apply contract
+:PROPERTIES:
+:CUSTOM_ID: post-effect-contract
+:END:
+When =apply (self, source, target, width, height, delta_time)= runs inside a processor:
+- the framebuffer whose colour attachment is =target_texture_id= is bound, sized =width= x =height=, with a top-left origin orthographic projection (as after =BeginTextureMode()=);
+- colour blending is disabled, so what the effect writes replaces the target, alpha and values above 1.0 included (targets are RGBA16F when HDR is active);
+- =source_texture_id= is a render texture of the same size, stored bottom up.
+
+The effect must draw the whole target (=lrg_post_effect_draw_fullscreen()= through its shader, or a plain copy when it has nothing to do) and return with the same framebuffer bound and blending disabled. A multi-pass effect reads the processor's framebuffer with =rlGetActiveFramebuffer()= first, draws into its own targets with =lrg_post_effect_bind_framebuffer()=, and binds the processor's framebuffer again for its last pass (see =LrgBloom=). An effect that changes the blend state (an additive pass) restores it to disabled.
+
+** Helpers for effect implementations
+:PROPERTIES:
+:CUSTOM_ID: post-effect-helpers
+:END:
+#+begin_src C
+GrlShader *lrg_post_effect_compile_shader   (const gchar *fragment_source, GError **error);
+void       lrg_post_effect_draw_fullscreen  (guint texture_id, guint width, guint height);
+void       lrg_post_effect_bind_framebuffer (guint framebuffer_id, guint width, guint height);
+#+end_src
+- =compile_shader()= compiles a GLSL 330 fragment shader with raylib's default vertex shader (inputs =fragTexCoord=, =fragColor=; the source image is =texture0=, output =finalColor=). Without a window it fails with =G_IO_ERROR_NOT_INITIALIZED=; when the GLSL does not compile (raylib then hands back its default shader) with =G_IO_ERROR_FAILED= (the GLSL log is in raylib's trace log).
+- =draw_fullscreen()= draws a texture over =(0, 0, width, height)= of the bound target, flipped vertically (render textures are bottom up), with the active shader. Extra textures go through =SetShaderValueTexture()= after =grl_shader_begin()=, so they bind with the draw.
+- =bind_framebuffer()= flushes and binds a framebuffer with the projection for its size (0 is the window, as =EndTextureMode()=).
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: post-effect-properties
+:END:
+#+begin_src C
+gboolean       lrg_post_effect_is_enabled       (LrgPostEffect *self);
+void           lrg_post_effect_set_enabled      (LrgPostEffect *self, gboolean enabled);
+gfloat         lrg_post_effect_get_intensity    (LrgPostEffect *self);
+void           lrg_post_effect_set_intensity    (LrgPostEffect *self, gfloat intensity);   /* 0..1 */
+gint           lrg_post_effect_get_priority     (LrgPostEffect *self);
+void           lrg_post_effect_set_priority     (LrgPostEffect *self, gint priority);
+LrgPostQuality lrg_post_effect_get_quality_tier (LrgPostEffect *self);
+void           lrg_post_effect_set_quality_tier (LrgPostEffect *self, LrgPostQuality quality);
+#+end_src
+
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =enabled= | gboolean | TRUE | Disabled effects are skipped (no pass) |
+| =intensity= | gfloat 0..1 | 1 | How much of the effect shows: every built-in effect mixes its result with its input by it (bloom, vignette, film grain and screen shake scale their strength by it). A post stack's =weight= sets it |
+| =priority= | gint | 0 | Chain order, lower first |
+| =quality-tier= | =LrgPostQuality= | high | Set by the processor (=lrg_post_processor_set_quality()=) |
+| =initialized= | gboolean (read) | FALSE | See the lifecycle |
+
+=LrgPostQuality= (=lrg_post_quality_get_type()=, =LRG_TYPE_POST_QUALITY=): =LRG_POST_QUALITY_LOW=, =LRG_POST_QUALITY_MEDIUM=, =LRG_POST_QUALITY_HIGH=, =LRG_POST_QUALITY_ULTRA=.
+
+Some effects shadow the base =intensity= property with their own (=LrgBloom:intensity= is a glow multiplier up to 5, =LrgVignette:intensity= the darkening); =lrg_post_effect_get_intensity()= always reads the base value.
+
+** Virtual methods
+:PROPERTIES:
+:CUSTOM_ID: post-effect-vfuncs
+:END:
 #+begin_src C
 struct _LrgPostEffectClass
 {
     GObjectClass parent_class;
 
-    gboolean (*initialize) (LrgPostEffect *self, guint width, guint height, GError **error);
-    void     (*shutdown)   (LrgPostEffect *self);
-    void     (*apply)      (LrgPostEffect *self, guint source, guint target,
-                            guint width, guint height, gfloat delta_time);
-    void     (*resize)     (LrgPostEffect *self, guint width, guint height);
-    const gchar * (*get_name) (LrgPostEffect *self);
+    gboolean      (*initialize) (LrgPostEffect *self, guint width, guint height, GError **error);
+    void          (*shutdown)   (LrgPostEffect *self);
+    void          (*apply)      (LrgPostEffect *self, guint source_texture_id, guint target_texture_id,
+                                 guint width, guint height, gfloat delta_time);
+    void          (*resize)     (LrgPostEffect *self, guint width, guint height);
+    const gchar * (*get_name)   (LrgPostEffect *self);
 };
 #+end_src
+=get_name()= is the effect's name in =lrg_post_processor_get_effect()= and, by convention, its type name in [[file:post-stack.org][.rpost]] files (register it with =lrg_post_stack_register_effect_type()=).
 
-** Functions
+** Writing an effect
 :PROPERTIES:
-:CUSTOM_ID: functions
-:END:
-*** Lifecycle
-:PROPERTIES:
-:CUSTOM_ID: lifecycle
+:CUSTOM_ID: post-effect-custom
 :END:
 #+begin_src C
-gboolean lrg_post_effect_initialize (LrgPostEffect *self, guint width, guint height, GError **error);
-void lrg_post_effect_shutdown (LrgPostEffect *self);
-gboolean lrg_post_effect_is_initialized (LrgPostEffect *self);
-#+end_src
+static const gchar sepia_fs[] =
+	"#version 330\n"
+	"in vec2 fragTexCoord;\n"
+	"uniform sampler2D texture0;\n"
+	"uniform float amount;\n"
+	"out vec4 finalColor;\n"
+	"void main()\n"
+	"{\n"
+	"    vec4 c = texture(texture0, fragTexCoord);\n"
+	"    vec3 s = vec3(dot(c.rgb, vec3(0.393, 0.769, 0.189)),\n"
+	"                  dot(c.rgb, vec3(0.349, 0.686, 0.168)),\n"
+	"                  dot(c.rgb, vec3(0.272, 0.534, 0.131)));\n"
+	"    finalColor = vec4(mix(c.rgb, s, amount), c.a);\n"
+	"}\n";
 
-*** Application
-:PROPERTIES:
-:CUSTOM_ID: application
-:END:
-#+begin_src C
-void lrg_post_effect_apply (LrgPostEffect *self, guint source_texture_id,
-                            guint target_texture_id, guint width, guint height,
-                            gfloat delta_time);
-void lrg_post_effect_resize (LrgPostEffect *self, guint width, guint height);
-#+end_src
-
-*** Properties
-:PROPERTIES:
-:CUSTOM_ID: properties
-:END:
-#+begin_src C
-const gchar *lrg_post_effect_get_name (LrgPostEffect *self);
-
-gboolean lrg_post_effect_is_enabled (LrgPostEffect *self);
-void lrg_post_effect_set_enabled (LrgPostEffect *self, gboolean enabled);
-
-gfloat lrg_post_effect_get_intensity (LrgPostEffect *self);
-void lrg_post_effect_set_intensity (LrgPostEffect *self, gfloat intensity);
-
-gint lrg_post_effect_get_priority (LrgPostEffect *self);
-void lrg_post_effect_set_priority (LrgPostEffect *self, gint priority);
-#+end_src
-
-** Priority
-:PROPERTIES:
-:CUSTOM_ID: priority
-:END:
-Effects are applied in priority order (lower numbers first):
-
-| Typical Priority | Effect Type                        |
-|------------------+------------------------------------|
-| 0-100            | Scene modifications (color grade)  |
-| 100-200          | Artistic effects (bloom, vignette) |
-| 200-300          | Post effects (film grain)          |
-| 900+             | Final pass (anti-aliasing)         |
-
-** Creating Custom Effects
-:PROPERTIES:
-:CUSTOM_ID: creating-custom-effects
-:END:
-#+begin_src C
-struct _MyCustomEffect
+struct _MyGameSepia
 {
-    LrgPostEffect parent;
-    guint shader_program;
-    /* Custom fields */
+	LrgPostEffect parent_instance;
+	gfloat        amount;      /* a GObject property "amount": .rpost can set it */
+	GrlShader    *shader;
+	gboolean      tried;
+	gint          loc_amount;
 };
 
-G_DEFINE_TYPE (MyCustomEffect, my_custom_effect, LRG_TYPE_POST_EFFECT)
-
-static gboolean
-my_custom_effect_initialize (LrgPostEffect *effect,
-                             guint width,
-                             guint height,
-                             GError **error)
+static void
+my_game_sepia_apply (LrgPostEffect *effect, guint src, guint dst, guint w, guint h, gfloat dt)
 {
-    MyCustomEffect *self = MY_CUSTOM_EFFECT (effect);
+	MyGameSepia *self = MY_GAME_SEPIA (effect);
 
-    /* Load shader */
-    self->shader_program = /* compile shader */;
+	if (self->shader == NULL && !self->tried && IsWindowReady ())
+	{
+		g_autoptr(GError) error = NULL;
 
-    return TRUE;
+		self->tried = TRUE;
+		self->shader = lrg_post_effect_compile_shader (sepia_fs, &error);
+		if (self->shader == NULL)
+			g_warning ("sepia: %s", error->message);
+		else
+			self->loc_amount = grl_shader_get_location (self->shader, "amount");
+	}
+	if (self->shader != NULL)
+	{
+		grl_shader_set_value_float (self->shader, self->loc_amount,
+		                            self->amount * lrg_post_effect_get_intensity (effect));
+		grl_shader_begin (self->shader);
+	}
+	lrg_post_effect_draw_fullscreen (src, w, h);   /* plain copy without the shader */
+	if (self->shader != NULL)
+		grl_shader_end (self->shader);
 }
 
 static void
-my_custom_effect_apply (LrgPostEffect *effect,
-                        guint source,
-                        guint target,
-                        guint width,
-                        guint height,
-                        gfloat delta_time)
+my_game_sepia_shutdown (LrgPostEffect *effect)
 {
-    MyCustomEffect *self = MY_CUSTOM_EFFECT (effect);
+	MyGameSepia *self = MY_GAME_SEPIA (effect);
 
-    /* Bind target framebuffer */
-    /* Bind source texture */
-    /* Use shader program */
-    /* Draw fullscreen quad */
-}
-
-static void
-my_custom_effect_class_init (MyCustomEffectClass *klass)
-{
-    LrgPostEffectClass *effect_class = LRG_POST_EFFECT_CLASS (klass);
-    effect_class->initialize = my_custom_effect_initialize;
-    effect_class->apply = my_custom_effect_apply;
+	g_clear_object (&self->shader);
+	self->tried = FALSE;
 }
 #+end_src
+Set =apply=, =shutdown= and =get_name= in =class_init=; implement =LrgPrewarmable= (call the same lazy compile) and =lrg_prewarm_track()= in =init= so loading screens compile it ahead of the first frame.
 
-** Dynamic Enable/Disable
+** Pitfalls
 :PROPERTIES:
-:CUSTOM_ID: dynamic-enabledisable
+:CUSTOM_ID: post-effect-pitfalls
 :END:
-Toggle effects at runtime:
+- Never compile shaders or create targets in =initialize()=: effects are added (and initialised) before windows open, for example by the editor's preview processor.
+- Never set a "tried" flag before =IsWindowReady()=, or the effect never compiles once the window opens.
+- Draw the whole target every time, even when the effect is a no-op (a plain =draw_fullscreen()=): the target holds the image of two passes ago otherwise.
+- Do not call =EndTextureMode()= inside =apply()=: it binds the window. Use =lrg_post_effect_bind_framebuffer()= with the processor's framebuffer.
 
-#+begin_src C
-/* Disable bloom during menus */
-lrg_post_effect_set_enabled (bloom, FALSE);
-
-/* Fade effect with intensity */
-lrg_post_effect_set_intensity (vignette, 0.5f);  /* Half strength */
-#+end_src
+See also: [[file:post-processor.org][LrgPostProcessor]], [[file:effects.org][the built-in effects]], [[file:post-stack.org][LrgPostStack]].

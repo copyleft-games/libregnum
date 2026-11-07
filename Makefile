@@ -500,6 +500,7 @@ PUBLIC_HEADERS := \
 	src/postprocess/lrg-color-lut.h \
 	src/postprocess/effects/lrg-palettize.h \
 	src/postprocess/effects/lrg-fxaa.h \
+	src/postprocess/effects/lrg-tonemap.h \
 	src/animation/lrg-bone-pose.h \
 	src/animation/lrg-bone.h \
 	src/animation/lrg-skeleton.h \
@@ -1242,6 +1243,7 @@ SOURCES := \
 	src/postprocess/lrg-color-lut.c \
 	src/postprocess/effects/lrg-palettize.c \
 	src/postprocess/effects/lrg-fxaa.c \
+	src/postprocess/effects/lrg-tonemap.c \
 	src/animation/lrg-bone-pose.c \
 	src/animation/lrg-bone.c \
 	src/animation/lrg-skeleton.c \

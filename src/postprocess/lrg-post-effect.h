@@ -16,8 +16,40 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-enums.h"
+#include <graylib.h>
 
 G_BEGIN_DECLS
+
+/**
+ * LrgPostQuality:
+ * @LRG_POST_QUALITY_LOW: Cheapest settings (fewest bloom levels, shortest searches)
+ * @LRG_POST_QUALITY_MEDIUM: Balanced settings for integrated GPUs
+ * @LRG_POST_QUALITY_HIGH: The default; full quality for discrete GPUs
+ * @LRG_POST_QUALITY_ULTRA: Extra bloom levels and taps, for screenshots and fast GPUs
+ *
+ * A quality tier for a whole post stack. #LrgPostProcessor hands its tier
+ * to every effect it owns (#LrgPostEffect:quality-tier); each effect decides
+ * what the tier changes (see the effect pages in docs/modules/postprocess/).
+ */
+typedef enum
+{
+    LRG_POST_QUALITY_LOW,
+    LRG_POST_QUALITY_MEDIUM,
+    LRG_POST_QUALITY_HIGH,
+    LRG_POST_QUALITY_ULTRA
+} LrgPostQuality;
+
+/**
+ * lrg_post_quality_get_type:
+ *
+ * Gets the #GType of #LrgPostQuality.
+ *
+ * Returns: the enum #GType
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_post_quality_get_type (void) G_GNUC_CONST;
+
+#define LRG_TYPE_POST_QUALITY (lrg_post_quality_get_type ())
 
 #define LRG_TYPE_POST_EFFECT (lrg_post_effect_get_type ())
 
@@ -76,7 +108,12 @@ struct _LrgPostEffectClass
      * @height: Texture height
      * @delta_time: Time since last frame (for animated effects)
      *
-     * Applies the effect, rendering from source to target.
+     * Applies the effect, rendering from source to target. The caller
+     * (normally #LrgPostProcessor) has already bound the framebuffer
+     * whose colour attachment is @target_texture_id, sized @width x
+     * @height, with colour blending disabled. Draw the whole target
+     * (lrg_post_effect_draw_fullscreen()) and leave the same framebuffer
+     * bound and blending disabled on return.
      */
     void        (*apply)        (LrgPostEffect  *self,
                                  guint           source_texture_id,
@@ -257,5 +294,79 @@ gint            lrg_post_effect_get_priority    (LrgPostEffect  *self);
 LRG_AVAILABLE_IN_ALL
 void            lrg_post_effect_set_priority    (LrgPostEffect  *self,
                                                  gint            priority);
+
+/**
+ * lrg_post_effect_get_quality_tier:
+ * @self: A #LrgPostEffect
+ *
+ * Gets the quality tier the effect renders at.
+ *
+ * Returns: The quality tier
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPostQuality  lrg_post_effect_get_quality_tier     (LrgPostEffect  *self);
+
+/**
+ * lrg_post_effect_set_quality_tier:
+ * @self: A #LrgPostEffect
+ * @quality: The quality tier
+ *
+ * Sets the quality tier. #LrgPostProcessor sets this on every effect it
+ * owns when its own tier changes (lrg_post_processor_set_quality()).
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_post_effect_set_quality_tier     (LrgPostEffect  *self,
+                                                 LrgPostQuality  quality);
+
+/**
+ * lrg_post_effect_compile_shader:
+ * @fragment_source: GLSL 330 fragment shader source; raylib's default
+ *   vertex shader feeds it `fragTexCoord` and `fragColor`, the source
+ *   image is `texture0`
+ * @error: (nullable): Return location for an error
+ *
+ * Compiles a full-screen pass shader for an effect. Needs a window (a GL
+ * context): without one it returns %NULL and sets
+ * %G_IO_ERROR_NOT_INITIALIZED. A compile failure (raylib falls back to its
+ * default shader) sets %G_IO_ERROR_FAILED.
+ *
+ * Returns: (transfer full) (nullable): The shader, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+GrlShader *     lrg_post_effect_compile_shader  (const gchar    *fragment_source,
+                                                 GError        **error);
+
+/**
+ * lrg_post_effect_draw_fullscreen:
+ * @texture_id: OpenGL texture ID of a render-texture image
+ * @width: Width of the bound target
+ * @height: Height of the bound target
+ *
+ * Draws @texture_id over the whole bound target (0, 0, @width, @height)
+ * with the active shader (or raylib's default one), flipped vertically
+ * because render textures are stored bottom up. This is the one draw a
+ * single-pass effect makes in its #LrgPostEffectClass.apply.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_post_effect_draw_fullscreen (guint           texture_id,
+                                                 guint           width,
+                                                 guint           height);
+
+/**
+ * lrg_post_effect_bind_framebuffer:
+ * @framebuffer_id: OpenGL framebuffer ID, 0 for the window
+ * @width: Width of that framebuffer
+ * @height: Height of that framebuffer
+ *
+ * Flushes the pending batch and makes @framebuffer_id the draw target with
+ * a top-left origin orthographic projection of @width x @height (what
+ * BeginTextureMode() does; 0 is EndTextureMode()). Multi-pass effects use
+ * it to draw into their own targets and to return to the target the
+ * processor bound (read it with rlGetActiveFramebuffer() first).
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_post_effect_bind_framebuffer (guint          framebuffer_id,
+                                                  guint          width,
+                                                  guint          height);
 
 G_END_DECLS

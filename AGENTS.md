@@ -60,7 +60,7 @@ libregnum/
 │   │
 │   │ # Visual Effects
 │   ├── particles/            # ParticleEmitter, Particle, ParticleSystem, ParticleForce
-│   ├── postprocess/          # PostProcessor, PostEffect, Bloom, ColorGrade, FXAA
+│   ├── postprocess/          # PostProcessor, PostEffect, PostStack (.rpost), Bloom, Tonemap, ColorGrade, FXAA, ...
 │   ├── lighting/             # Light2D, PointLight2D, SpotLight2D, DirectionalLight2D, ShadowMap
 │   ├── weather/              # Rain, Snow, Fog, Lightning, Weather, DayNightCycle
 │   │
@@ -1105,15 +1105,7 @@ synth_generate (LrgProceduralAudio *audio, gfloat *buffer, gint frames)
 
 ### Custom Post-Processing Effects
 
-Subclass `LrgPostEffect`:
-
-```c
-static void
-sepia_effect_apply (LrgPostEffect *effect)
-{
-    /* Apply sepia shader to render target */
-}
-```
+Subclass `LrgPostEffect`; the full walkthrough (shader compile, fullscreen draw, prewarm, registering the type for `.rpost`) is in `docs/modules/postprocess/post-effect.org#post-effect-custom`.
 
 ### Custom Weather Effects
 

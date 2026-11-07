@@ -134,6 +134,15 @@ enum
     PROP_SATURATION,
     PROP_TEMPERATURE,
     PROP_TINT,
+    PROP_LIFT_R,
+    PROP_LIFT_G,
+    PROP_LIFT_B,
+    PROP_GAMMA_R,
+    PROP_GAMMA_G,
+    PROP_GAMMA_B,
+    PROP_GAIN_R,
+    PROP_GAIN_G,
+    PROP_GAIN_B,
     N_PROPS
 };
 
@@ -332,6 +341,33 @@ lrg_color_grade_get_property (GObject    *object,
     case PROP_TINT:
         g_value_set_float (value, self->tint);
         break;
+    case PROP_LIFT_R:
+        g_value_set_float (value, self->lift_r);
+        break;
+    case PROP_LIFT_G:
+        g_value_set_float (value, self->lift_g);
+        break;
+    case PROP_LIFT_B:
+        g_value_set_float (value, self->lift_b);
+        break;
+    case PROP_GAMMA_R:
+        g_value_set_float (value, self->gamma_r);
+        break;
+    case PROP_GAMMA_G:
+        g_value_set_float (value, self->gamma_g);
+        break;
+    case PROP_GAMMA_B:
+        g_value_set_float (value, self->gamma_b);
+        break;
+    case PROP_GAIN_R:
+        g_value_set_float (value, self->gain_r);
+        break;
+    case PROP_GAIN_G:
+        g_value_set_float (value, self->gain_g);
+        break;
+    case PROP_GAIN_B:
+        g_value_set_float (value, self->gain_b);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -361,6 +397,42 @@ lrg_color_grade_set_property (GObject      *object,
         break;
     case PROP_TINT:
         lrg_color_grade_set_tint (self, g_value_get_float (value));
+        break;
+    case PROP_LIFT_R:
+        lrg_color_grade_set_lift (self, g_value_get_float (value), self->lift_g, self->lift_b);
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_LIFT_G:
+        lrg_color_grade_set_lift (self, self->lift_r, g_value_get_float (value), self->lift_b);
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_LIFT_B:
+        lrg_color_grade_set_lift (self, self->lift_r, self->lift_g, g_value_get_float (value));
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GAMMA_R:
+        lrg_color_grade_set_gamma (self, g_value_get_float (value), self->gamma_g, self->gamma_b);
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GAMMA_G:
+        lrg_color_grade_set_gamma (self, self->gamma_r, g_value_get_float (value), self->gamma_b);
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GAMMA_B:
+        lrg_color_grade_set_gamma (self, self->gamma_r, self->gamma_g, g_value_get_float (value));
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GAIN_R:
+        lrg_color_grade_set_gain (self, g_value_get_float (value), self->gain_g, self->gain_b);
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GAIN_G:
+        lrg_color_grade_set_gain (self, self->gain_r, g_value_get_float (value), self->gain_b);
+        g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GAIN_B:
+        lrg_color_grade_set_gain (self, self->gain_r, self->gain_g, g_value_get_float (value));
+        g_object_notify_by_pspec (object, pspec);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -441,6 +513,87 @@ lrg_color_grade_class_init (LrgColorGradeClass *klass)
                             G_PARAM_READWRITE |
                             G_PARAM_STATIC_STRINGS |
                             G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:lift-r:
+     *
+     * Shadows offset, red channel (-1..1; lrg_color_grade_set_lift()).
+     */
+    properties[PROP_LIFT_R] =
+        g_param_spec_float ("lift-r", NULL, NULL, -1.0f, 1.0f, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:lift-g:
+     *
+     * Shadows offset, green channel (-1..1; lrg_color_grade_set_lift()).
+     */
+    properties[PROP_LIFT_G] =
+        g_param_spec_float ("lift-g", NULL, NULL, -1.0f, 1.0f, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:lift-b:
+     *
+     * Shadows offset, blue channel (-1..1; lrg_color_grade_set_lift()).
+     */
+    properties[PROP_LIFT_B] =
+        g_param_spec_float ("lift-b", NULL, NULL, -1.0f, 1.0f, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:gamma-r:
+     *
+     * Midtones exponent divisor, red channel (0.1..4; lrg_color_grade_set_gamma()).
+     */
+    properties[PROP_GAMMA_R] =
+        g_param_spec_float ("gamma-r", NULL, NULL, 0.1f, 4.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:gamma-g:
+     *
+     * Midtones exponent divisor, green channel (0.1..4; lrg_color_grade_set_gamma()).
+     */
+    properties[PROP_GAMMA_G] =
+        g_param_spec_float ("gamma-g", NULL, NULL, 0.1f, 4.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:gamma-b:
+     *
+     * Midtones exponent divisor, blue channel (0.1..4; lrg_color_grade_set_gamma()).
+     */
+    properties[PROP_GAMMA_B] =
+        g_param_spec_float ("gamma-b", NULL, NULL, 0.1f, 4.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:gain-r:
+     *
+     * Highlights multiplier, red channel (0..4; lrg_color_grade_set_gain()).
+     */
+    properties[PROP_GAIN_R] =
+        g_param_spec_float ("gain-r", NULL, NULL, 0.0f, 4.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:gain-g:
+     *
+     * Highlights multiplier, green channel (0..4; lrg_color_grade_set_gain()).
+     */
+    properties[PROP_GAIN_G] =
+        g_param_spec_float ("gain-g", NULL, NULL, 0.0f, 4.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgColorGrade:gain-b:
+     *
+     * Highlights multiplier, blue channel (0..4; lrg_color_grade_set_gain()).
+     */
+    properties[PROP_GAIN_B] =
+        g_param_spec_float ("gain-b", NULL, NULL, 0.0f, 4.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
 
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
