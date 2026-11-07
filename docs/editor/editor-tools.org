@@ -381,6 +381,7 @@ Every public function of the tilemap and timeline headers that the sections abov
 |-+-|
 | =lrg_timeline_channel_write ()= | Writes a channel directly (not undoable; used for playback). |
 | =lrg_timeline_channel_get_bone ()= | Splits a bone channel into bone name and transform component (0.9.0). |
+| =lrg_timeline_channel_is_valid ()= | Whether a channel name is animatable: the transform channels, =bone.BONE.GROUP.AXIS=, visual params and component properties. |
 | =lrg_timeline_get_bone_offset ()= | Reads the bind-pose offset bone channels wrote onto a node (0.9.0). |
 | =lrg_timeline_clear_bone_offsets ()= | Forgets a node's bone offsets (0.9.0). |
 | =lrg_timeline_track_set_key_tangents ()= | Makes a key a Bézier key (0.9.0). |
