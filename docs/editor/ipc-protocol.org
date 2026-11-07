@@ -345,6 +345,41 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =clip.info= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
 | =clip.preview= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
 | =clip.set_morph= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
+| =physics.get= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.add_body= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.remove_body= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.set_body= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.add_shape= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.remove_shape= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.set_shape= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.move_shape= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.add_joint= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.remove_joint= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.set_joint= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.fit= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.state= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.show= | 0.9.0 | physics panel | [[#ipc-physics][Physics]] |
+| =physics.overlay= | 0.9.0 | viewport panel | [[#ipc-physics][Physics]] |
+| =physics.layers.get= | 0.9.0 | physics asset editor install | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physics.layers.set_name= | 0.9.0 | physics asset editor install | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physics.layers.set_collides= | 0.9.0 | physics asset editor install | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physics.layers.settings= | 0.9.0 | physics asset editor install | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physics.layers.reset= | 0.9.0 | physics asset editor install | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physics.layers.open= | 0.9.0 | physics asset editor install | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.open= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.create= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.get= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.set_model= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.add_part= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.remove_part= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.set_part= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.generate= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.stabilize= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.exclude= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.set= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.select= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.simulate= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =physasset.save= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
 
 Errors are the codes of the [[#messages][message table]] everywhere: a missing or mistyped parameter is =invalid-params=, an unknown node, file, path or panel item =not-found=, and an operation that could not be carried out =failed= with the reason in =message=. The sections below name the cases that are specific to a method.
 
@@ -696,6 +731,86 @@ Since 0.9.0. The =environment.*= methods are registered by the Environment panel
 | =lod.get= | =node= (guid or name path) | ={node, asset, available, levels: [{level, triangles, screen_size, error}], screen_size?, current, forced}= | selects the node; =available= is false without a window or LOD levels |
 | =lod.force= | =node=, =level= (-1 = automatic) | as =lod.get= | a preview on the shared group of the asset; =failed= when the node has no levels |
 | =view.layers= | =viewport?=, =mask?= (number, ="all"=, ="none"=, ="0x..."=), =layer?= (0..31 or a name such as =water=, =editor-only=), =enabled?= (omitted toggles) | ={viewport, mask, layers: [{index, name, enabled}]}= | per-viewport render-layer cull mask; not saved |
+
+** Physics methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-physics
+:END:
+Since 0.9.0. The =physics.*= methods edit a node's =physics:= block; the Physics panel registers them, except =physics.overlay= (the viewport panel). =node= is a GUID or a name path and defaults to the primary selection. Every write is one undo step and returns the =physics.get= result (=add_shape= / =add_joint= add =index=). Field names are the property names of =LrgNodePhysics=, =LrgNodePhysicsShape= and =LrgNodePhysicsJoint= ('_' works for '-'); enums are nicks or numbers; vectors are =[x, y, z]=; =target= is a GUID or path ("" or null: the world). Errors: a missing node, shape, joint or target is =not-found=, a bad field or value =invalid-params= (the whole call is rejected, nothing changes), a body that already exists =failed=. See [[file:physics.org][Physics in Levels]].
+
+| Method | Params | Result | Notes |
+|--------+--------+--------+-------|
+| =physics.get= | =node?= | ={node, name, body: null or {body-kind, mass, layer, friction, restitution, linear-damping, angular-damping, gravity-factor, ccd}, shapes: [{index, kind, half-extents, radius, half-height, offset, rotation, trigger, friction, restitution, layer, mesh}], joints: [{index, kind, target, target-name, anchor, axis, limits-enabled, limit-min, limit-max, spring-frequency, spring-damping, motor-velocity, motor-max-force, break-force}], layers: [names]}= | =layer= / =mesh= / =target= are null when unset; =layers= are the project's named layers |
+| =physics.add_body= | =node?=, =kind?= (=dynamic=), =shape?= (=auto=: fitted to the geometry; a shape kind, fitted; =none=) | as =physics.get= | =failed= when the node has a body |
+| =physics.remove_body= | =node?= | as =physics.get= | removes shapes and joints too |
+| =physics.set_body= | =node?=, =values: {field: value}= | as =physics.get= | creates a dynamic body when there is none |
+| =physics.add_shape= | =node?=, =kind?= (=box=), =fit?= (false), =values?= | as =physics.get= + =index= | creates a dynamic body when needed; with =values= the shape and its values are one step |
+| =physics.remove_shape= | =node?=, =index= | as =physics.get= | |
+| =physics.set_shape= | =node?=, =index=, =values= | as =physics.get= | also =half-extents=, =offset=, =rotation= (degrees) as vectors |
+| =physics.move_shape= | =node?=, =index=, =to= | as =physics.get= | =to= is clamped to the list |
+| =physics.add_joint= | =node?=, =kind?= (=fixed=), =target?=, =values?= | as =physics.get= + =index= | the node itself is not a valid target |
+| =physics.remove_joint= | =node?=, =index= | as =physics.get= | |
+| =physics.set_joint= | =node?=, =index=, =values= | as =physics.get= | =anchor=, =axis= as vectors (axis normalised, zero rejected); limits in radians or metres |
+| =physics.fit= | =node?=, =index?= (0), =kind?= (the shape's kind) | as =physics.get= | box, sphere, capsule, cylinder from the node's bounds; convex / mesh take the node's model |
+| =physics.state= | =node?= | ={node, playing, has-body, body: null or {body-id, position, velocity, angular-velocity, sleeping, mass, contacts}}= | =body= is the live rigid body while a 3D level plays |
+| =physics.show= | | ={panel: "physics", shown}= | brings the panel to the front |
+| =physics.overlay= | =viewport?= (all when omitted), =flags?= (replace), =enable?=, =disable?= | ={flags: [names], recorded}= | names: =shapes=, =aabbs=, =contacts=, =joints= (=constraints=), =sleeping=, =com= (=center-of-mass=), =velocity=, =broadphase=, =all=, =none=; =recorded= is the play world's primitive count (0 while authoring). Not saved |
+
+#+begin_src json
+{"id":7,"method":"physics.add_shape","params":{"node":"Crate","kind":"capsule","values":{"radius":0.3,"half-height":0.4,"offset":[0,1,0]}}}
+{"id":7,"result":{"node":"5c1e...","name":"Crate","body":{"body-kind":"dynamic","mass":20.0,"layer":"debris",...},"shapes":[{"index":0,"kind":"box",...},{"index":1,"kind":"capsule","radius":0.3,"half-height":0.4,"offset":[0.0,1.0,0.0],...}],"joints":[],"layers":["default","static","dynamic",...],"index":1}}
+#+end_src
+
+** Physics layer and physics asset methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-physics-assets
+:END:
+Since 0.9.0. Both families are registered by =lrg_editor_physics_asset_editor_install()=, which the Assets panel calls at startup. See [[file:physics-asset-editor.org][Physics Asset Editor and Layers]].
+
+*** physics.layers.*
+:PROPERTIES:
+:CUSTOM_ID: ipc-physics-layers
+:END:
+The project's collision layers and collide matrix (=lrg_project_get_physics_layers()=) and the world settings of the =physics:= block of =project.ryaml=. Every write saves =project.ryaml= at once (no undo; the Project Settings dialog is the place for an explicit Save / Cancel). Layer parameters (=a=, =b=) are a name or an index 0 to 31. Errors: no project open or an unknown layer is =not-found=; a duplicate or invalid name, an index out of range, a settings value out of range is =invalid-params=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =physics.layers.get= | | ={layers: [32 names or null], count, matrix: [32 row masks], no_collide: [[a, b]...], settings: {gravity: [x, y, z], fixed_dt, max_substeps, iterations, sleep_threshold, sleep_substeps}}=; =count= is one past the highest named slot, =no_collide= the cleared cells of the upper triangle (names, or indices for unnamed slots) |
+| =physics.layers.set_name= | =index= (0-31), =name= (string; null or "" unnames the slot) | as =physics.layers.get= |
+| =physics.layers.set_collides= | =a=, =b=, =collides= (bool) | as =physics.layers.get=; sets the cell and its mirror |
+| =physics.layers.settings= | =gravity?= ([x, y, z] m/s²), =fixed_dt?= (s, (0, 0.1]), =max_substeps?= (1-8), =iterations?= (1-32), =sleep_threshold?= (\vert v\vert²+\vert ω\vert², >= 0), =sleep_substeps?= (>= 1), =reset?= (true: the defaults) | the settings object; without parameters only reads |
+| =physics.layers.reset= | =empty?= (false: the default nine layers and matrix; true: no names, everything collides) | as =physics.layers.get= |
+| =physics.layers.open= | | ={dialog: "project-settings", page: "physics"}=; opens Project Settings on its Physics page |
+
+*** physasset.*
+:PROPERTIES:
+:CUSTOM_ID: ipc-physasset
+:END:
+=path= is a =.rphysasset= file, absolute or project relative; the methods open its editor tab when needed and act on the open editor's document (unsaved state). =part= is a part index or a bone name. Every edit is one undo step of the file's document (=data.undo= undoes it). Angles are radians (the =*_degrees= keys take degrees). Errors: a missing parameter or an unknown =values= key is =invalid-params=; an unknown file, part or bone (or no preview model where one is needed) =not-found=; a refused value (non-positive mass or size, twist min > max, a bone that already has a part) =invalid-params= or =failed= with the loader's message.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =physasset.open= | =path= | ={path, panel}= |
+| =physasset.create= | =path=, =model?= (skinned glTF: one part per bone), =total_mass?= (70), =radius_ratio?= (0.2) | ={path, parts}=; fails when =path= exists |
+| =physasset.get= | =path= | ={path, name, exclude_adjacent, total_mass, model, parts: [{index, bone, shape, radius?, half_height?, half_extents?, offset, rotation, mass, parent, joint: {kind, position, rotation, twist: [min, max], swing: [y, z], friction, motor_max_torque, motor_frequency, motor_damping}}], exclusions: [[a, b]], bones, free_bones, selected, simulating, load_error?}=; =parent= (the parent part's bone, null for a root) only with a preview model |
+| =physasset.set_model= | =path=, =model= (null clears) | as =physasset.get=; the choice goes to the =.meta= sidecar (=preview_model=), not the undo history |
+| =physasset.add_part= | =path=, =bone=, =values?= | as =physasset.get= + =index=; with a preview model the part runs along the bone |
+| =physasset.remove_part= | =path=, =part= | as =physasset.get=; exclusions naming the bone go too |
+| =physasset.set_part= | =path=, =part=, =values= | the part (as in =physasset.get=) |
+| =physasset.generate= | =path=, =total_mass?= (70), =radius_ratio?= (0.2) | as =physasset.get=; replaces every part (keeps the name) |
+| =physasset.stabilize= | =path= | as =physasset.get= |
+| =physasset.exclude= | =path=, =a=, =b=, =remove?= | as =physasset.get= |
+| =physasset.set= | =path=, =name?=, =exclude_adjacent?= | as =physasset.get= |
+| =physasset.select= | =path=, =part= | ={selected, bone}= |
+| =physasset.simulate= | =path=, =run?= (true), =reset?=, =advance?= (seconds, at most 60) | ={simulating, time, parts: [{bone, position}]}= |
+| =physasset.save= | =path= | ={path}= |
+
+=values= keys (=-= and =_= are the same): =shape= (=capsule box sphere=), =radius=, =half_height=, =half_extents= [x, y, z], =offset= [x, y, z], =rotation= [x, y, z, w] or =rotation_degrees= [x, y, z], =mass=, =joint= (=swing-twist cone hinge point fixed=), =joint_position=, =joint_rotation= or =joint_rotation_degrees=, =twist= [min, max] or =twist_degrees=, =swing= [y, z] or =swing_degrees=, =friction=, =motor_max_torque=, =motor_frequency=, =motor_damping=, =bone= (renames the part). A shape change converts the size (a capsule becomes the box around it).
+
+#+begin_src json
+{"id":3,"method":"physasset.set_part","params":{"path":"chars/hero.rphysasset","part":"shin_l","values":{"joint":"hinge","twist_degrees":[0,140]}}}
+{"id":3,"result":{"index":10,"bone":"shin_l","shape":"capsule","radius":0.09,"half_height":0.21,"offset":[0.0,-0.21,0.0],"rotation":[0.0,0.0,0.0,1.0],"mass":4.1,"parent":"thigh_l","joint":{"kind":"hinge","position":[0.0,0.0,0.0],"rotation":[0.0,0.0,-0.7071068,0.7071068],"twist":[0.0,2.443461],"swing":[0.5,0.5],"friction":0.0,"motor_max_torque":300.0,"motor_frequency":10.0,"motor_damping":8.0}}}
+#+end_src
 
 ** Data editor methods
 :PROPERTIES:

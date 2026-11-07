@@ -101,7 +101,7 @@ else
 
 =lrg_editor_document_detect_format (name, text, len)= decides in this order:
 
-0. *An engine asset extension* (since 0.9.0) decides on its own: =.rmat= → =LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL= (nick =material=, the [[file:material-editor.org][material editor]]), =.rpost= → =LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK= (=post-stack=, the post stack editor), =.rshadergraph= → =LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH= (=shader-graph=, the [[file:shader-graph-editor.org][shader graph editor]]). These formats have no document-level validator (their editors validate with the engine loaders) and =lrg_editor_data_editor_can_open()= accepts the three extensions besides =.yaml= / =.yml=.
+0. *An engine asset extension* (since 0.9.0) decides on its own: =.rmat= → =LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL= (nick =material=, the [[file:material-editor.org][material editor]]), =.rpost= → =LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK= (=post-stack=, the post stack editor), =.rshadergraph= → =LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH= (=shader-graph=, the [[file:shader-graph-editor.org][shader graph editor]]). These formats have no document-level validator (their editors validate with the engine loaders) and =lrg_editor_data_editor_can_open()= accepts the three extensions besides =.yaml= / =.yml=. =.rphysasset= → =LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET= (=physics-asset=, the [[file:physics-asset-editor.org][physics asset editor]]) joined in 0.9.0; a YAML mapping with =version:= and a =parts:= sequence whose first item has a =bone:= key is detected by content too.
 1. *A double extension* is an explicit statement: =*.input.yaml= (also =.inputmap=), =*.locale.yaml=, =*.bank.yaml= (also =.soundbank=), =*.hud.yaml=, =*.ui.yaml=, =*.dialog.yaml=, =*.dungeon.yaml=, =*.theme.yaml=, plus the bare names =dungeon.yaml= and =theme.yaml=. =.yml= works too.
 2. *The content*: the keys each loader requires or is known by. =actions:= mapping → input map; =sounds:= → sound bank; =pieces:= → HUD layout; =nodes:= sequence → dialog tree; =strings:= or =code:= + =name:= → locale; =generator:= → dungeon; =colors=, =metrics=, =preset=, =accent=, =styles= or =motion= → theme; a root =type:= → UI layout.
 3. *The parent directory*: =locales=, =locale=, =i18n=, =lang=, =themes=, =dialogs=, =dialog=, =dialogue=, =input=, =dungeons=, =ui=.
@@ -479,6 +479,7 @@ Header: =editor/lrg-editor-document.h= (included by =<libregnum.h>= in editor bu
 | =lrg_editor_document_set_null= | null |
 | =lrg_editor_document_set_value= | typed setter from a =GValue= |
 | =lrg_editor_document_replace= | replace a subtree from YAML text |
+| =lrg_editor_document_replace_gesture= | the same with a gesture id: consecutive replacements of one path in one gesture merge into one undo step (0.9.0; the physics asset editor rewrites a part on every step of a drag) |
 | =lrg_editor_document_insert_item= | insert into a sequence |
 | =lrg_editor_document_move_item= | reorder a sequence item |
 | =lrg_editor_document_add_key= | add a mapping key at a position |

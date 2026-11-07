@@ -57,6 +57,9 @@ G_BEGIN_DECLS
  *   or a mapping with `type: sequence`). Since 0.9.0.
  * @LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D: an #LrgSkeleton2D (a `.rskel2d`
  *   file, or a mapping with an `rskel2d:` version key). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET: an #LrgPhysicsAsset (a
+ *   `.rphysasset` ragdoll description, or a mapping whose `parts:` is a
+ *   sequence of mappings with a `bone:` key). Since 0.9.0.
  *
  * The engine format a document holds. It picks the validator, the
  * skeleton of a new document and the editor panel that opens the file.
@@ -78,7 +81,8 @@ typedef enum
 	LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH,
 	LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP,
 	LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE,
-	LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D
+	LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D,
+	LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET
 } LrgEditorDocumentFormat;
 
 #define LRG_TYPE_EDITOR_DOCUMENT_FORMAT (lrg_editor_document_format_get_type ())
@@ -847,6 +851,29 @@ gboolean lrg_editor_document_replace (LrgEditorDocument  *self,
                                       const gchar        *path,
                                       const gchar        *yaml,
                                       GError            **error);
+
+/**
+ * lrg_editor_document_replace_gesture:
+ * @self: an #LrgEditorDocument
+ * @path: a YAML path (as for lrg_editor_document_replace())
+ * @yaml: YAML text of the new subtree
+ * @gesture_id: 0, or the id shared by the steps of one gesture:
+ *   consecutive replacements of the same path with the same non-zero id
+ *   merge into one undo step (see lrg_editor_document_set_string())
+ * @error: return location for a #GError
+ *
+ * lrg_editor_document_replace() for editors that rewrite a whole subtree
+ * on every step of a drag (a physics asset part written in its canonical
+ * form while a size is scrubbed). Since 0.9.0.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_document_replace_gesture (LrgEditorDocument  *self,
+                                              const gchar        *path,
+                                              const gchar        *yaml,
+                                              guint               gesture_id,
+                                              GError            **error);
 
 /**
  * lrg_editor_document_insert_item:

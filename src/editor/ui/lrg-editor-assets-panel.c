@@ -56,8 +56,10 @@
  * Create Variant for prefabs and materials.
  *
  * Animation assets (0.9.0). Animation graphs (.ranim), bone maps
- * (.rbonemap), sequences (.rseq) and 2D skeletons (.rskel2d) get glyphs,
- * type names and New entries in the background menu; double-click opens
+ * (.rbonemap), sequences (.rseq), 2D skeletons (.rskel2d) and physics assets
+ * (.rphysasset) get glyphs, type names and New entries in the background
+ * menu ("New Physics Asset from Model" on a glTF model generates one part
+ * per bone of its skeleton); double-click opens
  * them in their editors (sequences in the docked sequencer). glTF models
  * get "Preview Animations..." in the entry menu: a dialog with the model
  * on a turntable playing one of its clips (clip list, play / pause, scrub
@@ -74,6 +76,7 @@
 #include "data/lrg-editor-anim-graph-editor.h"
 #include "data/lrg-editor-bone-map-editor.h"
 #include "data/lrg-editor-skeleton2d-editor.h"
+#include "data/lrg-editor-physics-asset-editor.h"
 #include "lrg-editor-sequencer-panel.h"
 #include "../../animation/lrg-gltf-animation.h"
 #include "../../ui/lrg-slider.h"
@@ -561,7 +564,8 @@ typedef enum
 	SPECIAL_ANIM_GRAPH,
 	SPECIAL_BONE_MAP,
 	SPECIAL_SEQUENCE,
-	SPECIAL_SKELETON2D
+	SPECIAL_SKELETON2D,
+	SPECIAL_PHYSICS_ASSET
 } SpecialKind;
 
 static SpecialKind
@@ -586,6 +590,8 @@ special_kind (const gchar *path)
 		return SPECIAL_SEQUENCE;
 	if (g_str_has_suffix (lower, ".rskel2d"))
 		return SPECIAL_SKELETON2D;
+	if (g_str_has_suffix (lower, ".rphysasset"))
+		return SPECIAL_PHYSICS_ASSET;
 	if (g_str_has_suffix (lower, ".glsl") || g_str_has_suffix (lower, ".vert") || g_str_has_suffix (lower, ".frag") ||
 	    g_str_has_suffix (lower, ".vs") || g_str_has_suffix (lower, ".fs"))
 		return SPECIAL_SHADER_STAGE;
@@ -605,6 +611,7 @@ special_glyph (SpecialKind kind)
 	case SPECIAL_BONE_MAP:     return "BM";
 	case SPECIAL_SEQUENCE:     return "Sq";
 	case SPECIAL_SKELETON2D:   return "2D";
+	case SPECIAL_PHYSICS_ASSET: return "Rd";
 	default:                   return NULL;
 	}
 }
@@ -622,6 +629,7 @@ special_name (SpecialKind kind)
 	case SPECIAL_BONE_MAP:     return "Bone map";
 	case SPECIAL_SEQUENCE:     return "Sequence";
 	case SPECIAL_SKELETON2D:   return "2D skeleton";
+	case SPECIAL_PHYSICS_ASSET: return "Physics asset";
 	default:                   return NULL;
 	}
 }
@@ -638,6 +646,7 @@ special_role (SpecialKind kind)
 	case SPECIAL_BONE_MAP:     return LRG_THEME_COLOR_LINK;
 	case SPECIAL_SEQUENCE:
 	case SPECIAL_SKELETON2D:   return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_PHYSICS_ASSET: return LRG_THEME_COLOR_SUCCESS;
 	default:                   return LRG_THEME_COLOR_ACCENT;
 	}
 }
@@ -2650,6 +2659,22 @@ new_anim_asset (LrgEditorAssetsPanel *self,
 		path = free_name (self, "new_skeleton", "rskel2d");
 		ok = path != NULL && lrg_editor_skeleton2d_editor_create (self->app, path, NULL, &error);
 		break;
+	case SPECIAL_PHYSICS_ASSET:
+		/* from a model: one part per bone of its skeleton (70 kg) */
+		if (model != NULL)
+		{
+			g_autofree gchar *base = g_path_get_basename (model);
+			gchar            *dot = strrchr (base, '.');
+
+			if (dot != NULL)
+				*dot = '\0';
+			path = free_name (self, base, "rphysasset");
+		}
+		else
+			path = free_name (self, "new_physics_asset", "rphysasset");
+		ok = path != NULL && lrg_editor_physics_asset_editor_create (self->app, path, model, 70.0f, 0.2f, NULL,
+		                                                             &error);
+		break;
 	default:
 		return;
 	}
@@ -3101,6 +3126,22 @@ act_new_skeleton2d (GSimpleAction *a, GVariant *p, gpointer user_data)
 }
 
 static void
+act_new_physics_asset (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_anim_asset (user_data, SPECIAL_PHYSICS_ASSET, NULL);
+}
+
+static void
+act_physics_asset_from_model (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+
+	if (path != NULL)
+		new_anim_asset (self, SPECIAL_PHYSICS_ASSET, path);
+}
+
+static void
 act_anim_graph_from_model (GSimpleAction *a, GVariant *p, gpointer user_data)
 {
 	LrgEditorAssetsPanel *self = user_data;
@@ -3192,6 +3233,8 @@ static const GActionEntry action_entries[] = {
 	{ "new-sequence", act_new_sequence, NULL, NULL, NULL, { 0 } },
 	{ "new-skeleton2d", act_new_skeleton2d, NULL, NULL, NULL, { 0 } },
 	{ "anim-graph-from-model", act_anim_graph_from_model, NULL, NULL, NULL, { 0 } },
+	{ "new-physics-asset", act_new_physics_asset, NULL, NULL, NULL, { 0 } },
+	{ "physics-asset-from-model", act_physics_asset_from_model, NULL, NULL, NULL, { 0 } },
 	{ "preview-clips", act_preview_clips, NULL, NULL, NULL, { 0 } },
 	{ "create-variant", act_create_variant, NULL, NULL, NULL, { 0 } },
 	{ "refresh", act_refresh, NULL, NULL, NULL, { 0 } },
@@ -3251,6 +3294,7 @@ build_entry_menu (LrgEditorAssetsPanel *self)
 	{
 		menu_add (open, "Preview Animations\xe2\x80\xa6", "assets.preview-clips", NULL);
 		menu_add (open, "New Animation Graph from Model", "assets.anim-graph-from-model", NULL);
+		menu_add (open, "New Physics Asset from Model", "assets.physics-asset-from-model", NULL);
 	}
 
 	menu_add (edit, "Rename", "assets.rename", "F2");
@@ -3293,6 +3337,7 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	menu_add (anim, "New Bone Map", "assets.new-bone-map", NULL);
 	menu_add (anim, "New Sequence", "assets.new-sequence", NULL);
 	menu_add (anim, "New 2D Skeleton", "assets.new-skeleton2d", NULL);
+	menu_add (anim, "New Physics Asset", "assets.new-physics-asset", NULL);
 
 	menu_add (view, "Refresh", "assets.refresh", NULL);
 	menu_add (view, "Show in File Manager", "assets.show-in-file-manager", NULL);
@@ -5393,6 +5438,7 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 	lrg_editor_anim_graph_editor_install (app); /* anim.* */
 	lrg_editor_bone_map_editor_install (app); /* bonemap.* */
 	lrg_editor_skeleton2d_editor_install (app); /* skel2d.* */
+	lrg_editor_physics_asset_editor_install (app); /* physasset.*, physics.layers.* */
 	register_with_app (self);
 	sync_app (self);
 	update_context_menu (self, TRUE);

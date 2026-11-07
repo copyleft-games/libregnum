@@ -50,6 +50,8 @@ static gboolean  opt_force    = FALSE;
 static gboolean  opt_wait     = FALSE;
 static gchar    *opt_level    = NULL;
 static gchar    *opt_type     = NULL;
+static gchar    *opt_node     = NULL;
+static gchar    *opt_target   = NULL;
 static gboolean  opt_license  = FALSE;
 static gboolean  opt_version  = FALSE;
 static gchar   **opt_args     = NULL;
@@ -80,6 +82,9 @@ static const GOptionEntry entries[] = {
 	{ "level", 'l', 0, G_OPTION_ARG_STRING, &opt_level,
 	  "Toast level for notify: info, success, warning, error (or 0-3)", "LEVEL" },
 	{ "type", 't', 0, G_OPTION_ARG_STRING, &opt_type, "Asset type filter for get assets", "TYPE" },
+	{ "node", 'n', 0, G_OPTION_ARG_STRING, &opt_node,
+	  "Node for physics verbs (GUID or name path; default the primary selection)", "NODE" },
+	{ "target", 0, 0, G_OPTION_ARG_STRING, &opt_target, "Joint target node for physics add-joint", "NODE" },
 	{ "license", 0, 0, G_OPTION_ARG_NONE, &opt_license, "Print the license and exit", NULL },
 	{ "version", 'v', 0, G_OPTION_ARG_NONE, &opt_version, "Print the version and exit", NULL },
 	{ G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_args, NULL, "COMMAND [RESOURCE] [ARGS...]" },
@@ -148,6 +153,14 @@ static const gchar *description =
 	"                                   .ranim animation graphs\n"
 	"  bonemap open|create|get|set|auto-fill|rules|models|preview|save PATH ...  .rbonemap retarget maps\n"
 	"  clip list|info|preview|morph MODEL ...  glTF clips and morph targets of a model\n"
+	"  physics get|add-body [KIND]|remove-body|set-body K=V..|add-shape [KIND] [K=V..]|remove-shape I\n"
+	"          |set-shape I K=V..|move-shape I TO|add-joint [KIND] [--target N] [K=V..]|remove-joint I\n"
+	"          |set-joint I K=V..|fit [I] [--kind K]|overlay [NAME..|+NAME|-NAME]|state|show  [--node N]\n"
+	"                                   the selected node's physics: block (body, shapes, joints)\n"
+	"  physics layers [get]|name I NAME|-|collide A B on|off|settings [K=V..]|reset [empty=true]|open\n"
+	"                                   project collision layers, collide matrix, world settings\n"
+	"  physasset open|create|get|model|add-part|remove-part|set-part|generate|stabilize|exclude|unexclude\n"
+	"            |set|select|simulate|save PATH ...  .rphysasset ragdolls\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
@@ -195,6 +208,13 @@ static const gchar *description =
 	"  lrgeditorctl anim add-transition anims/hero.ranim idle walk conditions='[{\"parameter\":\"speed\",\"op\":\">\",\"value\":0.1}]'\n"
 	"  lrgeditorctl bonemap auto-fill maps/mixamo.rbonemap\n"
 	"  lrgeditorctl clip list models/hero.glb\n"
+	"  lrgeditorctl physics add-body dynamic --node Props/Crate; lrgeditorctl physics set-body mass=20 --node Props/Crate\n"
+	"  lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --node Door\n"
+	"  lrgeditorctl physics layers name 9 water; lrgeditorctl physics layers collide water debris off\n"
+	"  lrgeditorctl physics layers settings gravity=0,-3.7,0 iterations=12\n"
+	"  lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80\n"
+	"  lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140\n"
+	"  lrgeditorctl physasset simulate chars/hero.rphysasset advance=2\n"
 	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
@@ -2861,6 +2881,307 @@ cmd_clip (gchar  **args,
 	return run_family ("clip", table, G_N_ELEMENTS (table), args, error);
 }
 
+/* ==========================================================================
+ * 0.9.0 M5 physics verbs: physics (node physics blocks, project layers)
+ * and physasset (.rphysasset ragdolls)
+ * ========================================================================== */
+
+/*
+ * values_call:
+ * Calls @method with params from @args: arguments without '=' fill @keys
+ * in order (as in family_params: '@' a path, '~' a typed value);
+ * key=value arguments whose key is in @top go to the top level, every
+ * other one into a "values" object (the field = value maps of
+ * physics.set_* and physasset.set_part). --node fills "node" when
+ * @with_node and node= was not given.
+ */
+static gboolean
+values_call (const gchar         *method,
+             const gchar * const *keys,
+             const gchar * const *top,
+             gboolean             with_node,
+             gchar              **args,
+             JsonObject          *extra,
+             GError             **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonObject) values = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		const gchar *eq = strchr (args[i], '=');
+
+		if (eq == NULL || eq == args[i])
+		{
+			const gchar *key = keys != NULL ? keys[k] : NULL;
+
+			if (key == NULL)
+				return usage_error (error, "%s: unexpected argument '%s'", method, args[i]);
+			if (*key == '@')
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, key + 1, path);
+			}
+			else if (*key == '~')
+				json_object_set_member (p, key + 1, typed_value (args[i]));
+			else
+				json_object_set_string_member (p, key, args[i]);
+			k++;
+		}
+		else
+		{
+			g_autofree gchar *key = g_strndup (args[i], eq - args[i]);
+
+			if (top != NULL && g_strv_contains (top, key))
+				json_object_set_member (p, key, lrg_ctl_parse_value (eq + 1));
+			else
+				json_object_set_member (values, key, lrg_ctl_parse_value (eq + 1));
+		}
+	}
+	if (json_object_get_size (values) > 0)
+		json_object_set_object_member (p, "values", json_object_ref (values));
+	if (with_node && opt_node != NULL && !json_object_has_member (p, "node"))
+		json_object_set_string_member (p, "node", opt_node);
+	if (extra != NULL)
+	{
+		GList *members = json_object_get_members (extra);
+		GList *l;
+
+		for (l = members; l != NULL; l = l->next)
+			if (!json_object_has_member (p, l->data))
+				json_object_set_member (p, l->data, json_object_dup_member (extra, l->data));
+		g_list_free (members);
+	}
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/*
+ * physics overlay [NAME..] [+NAME] [-NAME] [viewport=N]: no names reads
+ * the flags; bare names set them ("all", "none" too), +NAME / -NAME turn
+ * one on or off.
+ */
+static gboolean
+physics_overlay (gchar  **args,
+                 GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	JsonArray            *flags = json_array_new ();
+	JsonArray            *on = json_array_new ();
+	JsonArray            *off = json_array_new ();
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		if (strchr (args[i], '=') != NULL)
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+			{
+				json_array_unref (flags);
+				json_array_unref (on);
+				json_array_unref (off);
+				return FALSE;
+			}
+		}
+		else if (args[i][0] == '+')
+			json_array_add_string_element (on, args[i] + 1);
+		else if (args[i][0] == '-' && args[i][1] != '\0')
+			json_array_add_string_element (off, args[i] + 1);
+		else
+			json_array_add_string_element (flags, args[i]);
+	}
+	if (json_array_get_length (flags) > 0)
+		json_object_set_array_member (p, "flags", flags);
+	else
+		json_array_unref (flags);
+	if (json_array_get_length (on) > 0)
+		json_object_set_array_member (p, "enable", on);
+	else
+		json_array_unref (on);
+	if (json_array_get_length (off) > 0)
+		json_object_set_array_member (p, "disable", off);
+	else
+		json_array_unref (off);
+	r = call ("physics.overlay", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/*
+ * physics layers [get] | name I NAME|- | collide A B on|off |
+ * settings [K=V..] | reset [empty=true] | open
+ */
+static gboolean
+physics_layers (gchar  **args,
+                GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "physics.layers.get", { NULL } },
+		{ "name", "physics.layers.set_name", { "~index", "name", NULL } },
+		{ "collide", "physics.layers.set_collides", { "a", "b", "~collides", NULL } },
+		{ "settings", "physics.layers.settings", { NULL } },
+		{ "reset", "physics.layers.reset", { NULL } },
+		{ "open", "physics.layers.open", { NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *get[] = { (gchar *) "get", NULL };
+
+		return run_family ("physics layers", table, G_N_ELEMENTS (table), get, error);
+	}
+	/* "name I -" (or no name) clears the slot */
+	if (g_strcmp0 (args[0], "name") == 0 && args[1] != NULL && (args[2] == NULL || g_strcmp0 (args[2], "-") == 0))
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		json_object_set_member (p, "index", typed_value (args[1]));
+		json_object_set_null_member (p, "name");
+		r = call ("physics.layers.set_name", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	/* layer names that look like numbers are indices */
+	if (g_strcmp0 (args[0], "collide") == 0 && args[1] != NULL && args[2] != NULL && args[3] != NULL)
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+		guint                 k;
+
+		for (k = 0; k < 2; k++)
+		{
+			gchar *end = NULL;
+			gint64 v = g_ascii_strtoll (args[1 + k], &end, 10);
+
+			if (end != args[1 + k] && *end == '\0')
+				json_object_set_int_member (p, k == 0 ? "a" : "b", v);
+			else
+				json_object_set_string_member (p, k == 0 ? "a" : "b", args[1 + k]);
+		}
+		json_object_set_member (p, "collides", typed_value (args[3]));
+		r = call ("physics.layers.set_collides", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	return run_family ("physics layers", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* physics VERB ... [--node N]: the node physics: block (see the usage) */
+static gboolean
+cmd_physics (gchar  **args,
+             GError **error)
+{
+	static const gchar * const no_keys[] = { NULL };
+	static const gchar * const kind_key[] = { "kind", NULL };
+	static const gchar * const index_key[] = { "~index", NULL };
+	static const gchar * const move_keys[] = { "~index", "~to", NULL };
+	static const gchar * const node_top[] = { "node", NULL };
+	static const gchar * const body_top[] = { "node", "kind", "shape", NULL };
+	static const gchar * const shape_top[] = { "node", "kind", "fit", NULL };
+	static const gchar * const joint_top[] = { "node", "kind", "target", NULL };
+	static const gchar * const index_top[] = { "node", "index", NULL };
+	static const gchar * const fit_top[] = { "node", "index", "kind", NULL };
+	static const gchar * const move_top[] = { "node", "index", "to", NULL };
+	const gchar               *verb = args[0];
+	g_autoptr(JsonObject)      extra = json_object_new ();
+
+	if (verb == NULL || g_strcmp0 (verb, "get") == 0)
+		return values_call ("physics.get", no_keys, node_top, TRUE, verb != NULL ? args + 1 : args, NULL, error);
+	if (g_strcmp0 (verb, "layers") == 0)
+		return physics_layers (args + 1, error);
+	if (g_strcmp0 (verb, "overlay") == 0)
+		return physics_overlay (args + 1, error);
+	if (opt_kind != NULL)
+		json_object_set_string_member (extra, "kind", opt_kind);
+	if (g_strcmp0 (verb, "state") == 0)
+		return values_call ("physics.state", no_keys, node_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "show") == 0)
+		return values_call ("physics.show", no_keys, NULL, FALSE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "add-body") == 0)
+		return values_call ("physics.add_body", kind_key, body_top, TRUE, args + 1, extra, error);
+	if (g_strcmp0 (verb, "remove-body") == 0)
+		return values_call ("physics.remove_body", no_keys, node_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "set-body") == 0)
+		return values_call ("physics.set_body", no_keys, node_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "add-shape") == 0)
+		return values_call ("physics.add_shape", kind_key, shape_top, TRUE, args + 1, extra, error);
+	if (g_strcmp0 (verb, "remove-shape") == 0)
+		return values_call ("physics.remove_shape", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "set-shape") == 0)
+		return values_call ("physics.set_shape", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "move-shape") == 0)
+		return values_call ("physics.move_shape", move_keys, move_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "add-joint") == 0)
+	{
+		if (opt_target != NULL)
+			json_object_set_string_member (extra, "target", opt_target);
+		return values_call ("physics.add_joint", kind_key, joint_top, TRUE, args + 1, extra, error);
+	}
+	if (g_strcmp0 (verb, "remove-joint") == 0)
+		return values_call ("physics.remove_joint", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "set-joint") == 0)
+		return values_call ("physics.set_joint", index_key, index_top, TRUE, args + 1, NULL, error);
+	if (g_strcmp0 (verb, "fit") == 0)
+		return values_call ("physics.fit", index_key, fit_top, TRUE, args + 1, extra, error);
+	return usage_error (error, "physics get|add-body|remove-body|set-body|add-shape|remove-shape|set-shape|move-shape"
+	                           "|add-joint|remove-joint|set-joint|fit|overlay|state|show|layers ...");
+}
+
+/* physasset VERB PATH ...: the .rphysasset editor (every verb names the file) */
+static gboolean
+cmd_physasset (gchar  **args,
+               GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "physasset.open", { "@path", NULL } },
+		{ "create", "physasset.create", { "@path", NULL } },
+		{ "get", "physasset.get", { "@path", NULL } },
+		{ "model", "physasset.set_model", { "@path", "model", NULL } },
+		{ "remove-part", "physasset.remove_part", { "@path", "part", NULL } },
+		{ "generate", "physasset.generate", { "@path", NULL } },
+		{ "stabilize", "physasset.stabilize", { "@path", NULL } },
+		{ "exclude", "physasset.exclude", { "@path", "a", "b", NULL } },
+		{ "set", "physasset.set", { "@path", NULL } },
+		{ "select", "physasset.select", { "@path", "part", NULL } },
+		{ "simulate", "physasset.simulate", { "@path", NULL } },
+		{ "save", "physasset.save", { "@path", NULL } },
+	};
+	static const gchar * const add_keys[] = { "@path", "bone", NULL };
+	static const gchar * const set_keys[] = { "@path", "part", NULL };
+	static const gchar * const path_top[] = { "path", NULL };
+
+	if (args[0] != NULL && g_strcmp0 (args[0], "add-part") == 0)
+		return values_call ("physasset.add_part", add_keys, path_top, FALSE, args + 1, NULL, error);
+	if (args[0] != NULL && g_strcmp0 (args[0], "set-part") == 0)
+		return values_call ("physasset.set_part", set_keys, path_top, FALSE, args + 1, NULL, error);
+	if (args[0] != NULL && g_strcmp0 (args[0], "unexclude") == 0)
+	{
+		static const gchar * const excl_keys[] = { "@path", "a", "b", NULL };
+		g_autoptr(JsonObject)      extra = json_object_new ();
+
+		json_object_set_boolean_member (extra, "remove", TRUE);
+		return values_call ("physasset.exclude", excl_keys, NULL, FALSE, args + 1, extra, error);
+	}
+	return run_family ("physasset", table, G_N_ELEMENTS (table), args, error);
+}
+
 /*
  * view layers [MASK | LAYER on|off] [viewport=N]: a viewport's render
  * layer cull mask. MASK is a number (0x... hex too), "all" or "none";
@@ -2963,7 +3284,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -3004,6 +3325,8 @@ static const gchar *completion_script =
 	"\t\tanim) mapfile -t COMPREPLY < <(compgen -W 'open create get enter add-layer remove-layer add-state remove-state set-state add-transition set-transition remove-transition add-param remove-param set-param blend-tree preview validate save' -- \"${cur}\") ;;\n"
 	"\t\tbonemap) mapfile -t COMPREPLY < <(compgen -W 'open create get set auto-fill rules models preview save' -- \"${cur}\") ;;\n"
 	"\t\tclip) mapfile -t COMPREPLY < <(compgen -W 'list info preview morph' -- \"${cur}\") ;;\n"
+	"\t\tphysics) mapfile -t COMPREPLY < <(compgen -W 'get add-body remove-body set-body add-shape remove-shape set-shape move-shape add-joint remove-joint set-joint fit overlay state show layers' -- \"${cur}\") ;;\n"
+	"\t\tphysasset) mapfile -t COMPREPLY < <(compgen -W 'open create get model add-part remove-part set-part generate stabilize exclude unexclude set select simulate save' -- \"${cur}\") ;;\n"
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
 	"\t\tcode) mapfile -t COMPREPLY < <(compgen -W 'open list save' -- \"${cur}\") ;;\n"
@@ -3086,6 +3409,10 @@ dispatch (gchar  **argv,
 		return cmd_bonemap (rest, error);
 	if (g_strcmp0 (verb, "clip") == 0)
 		return cmd_clip (rest, error);
+	if (g_strcmp0 (verb, "physics") == 0)
+		return cmd_physics (rest, error);
+	if (g_strcmp0 (verb, "physasset") == 0)
+		return cmd_physasset (rest, error);
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)

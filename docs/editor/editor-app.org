@@ -1631,7 +1631,7 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 | Recover Autosave (=recover=) | opening a level with a newer autosave | Restore (loads it, keeps the level's path, marks it modified), Discard Autosave (to the trash), Later |
 | About (=about=) | Help > About | Version, description, copyright, AGPL-3.0-or-later, the IPC socket; Documentation, Source code and License buttons |
 | Keyboard Shortcuts (=shortcuts=) | Help > Keyboard Shortcuts (Ctrl+/) | The live, searchable shortcut table and the viewport mouse gestures; Edit Keybindings... opens Preferences on Keybindings |
-| Project Settings (=project-settings=) | File > Project Settings | Editable: name, default level (with Use current), game module, run command (={project} {level} {module}=), scripts folder and the asset folder list (Remove per folder, an Add field); Save writes =project.ryaml= through the =LrgProject= setters and =lrg_project_save()= |
+| Project Settings (=project-settings=) | File > Project Settings | Editable: name, default level (with Use current), game module, run command (={project} {level} {module}=), scripts folder and the asset folder list (Remove per folder, an Add field); Save writes =project.ryaml= through the =LrgProject= setters and =lrg_project_save()=. Since 0.9.0 the dialog has two pages, General and Physics (=project-settings-tabs=): the 32 collision layer names, the collide matrix (click a cell, the hovered row and column light up) and the world settings (gravity, substep, iterations, sleep), edited on a copy that Save applies; see [[file:physics-asset-editor.org::#project-physics][Project Settings > Physics]] |
 | Preferences (=preferences=) | Edit > Preferences | See [[#editor-panel-preferences][Preferences]] |
 | Save changes? (=confirm=), File changed on disk (=code-reload=), Go to Line (=goto-line=) | the code editor | See [[#editor-panel-code][Code editor]] |
 
@@ -1693,6 +1693,18 @@ Since 0.9.0 M4. The animation tools are described in [[file:animation-editor.org
 - *Inspector.* The Animator section =inspector-section-animator= (=inspector-animator-graph=, =inspector-animator-open=, the painted list =inspector-animator-list=) for one node with an =animator3d= component.
 - *Viewport.* The overlays menu's Animation section: =vp.anim-bones= (Bones) and =vp.anim-ik= (IK Targets), per viewport.
 - *IPC.* =anim.*=, =bonemap.*= and =clip.*= ([[file:ipc-protocol.org::#ipc-animation][IPC: animation methods]]), registered when the Assets panel is created.
+
+** Physics panel and physics gizmos
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-physics
+:END:
+Since 0.9.0 M5. The physics tools are described in [[file:physics.org][Physics in Levels]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorPhysicsPanel= (=lrg_editor_physics_panel_new()=, dock id "physics", a tab of the Inspector's stack; View > Panels > Physics, action =physics.show=). Widgets: =physics-panel=; header =physics-top= / =physics-header= (=physics-title=, =physics-node=, =physics-add-body=, =physics-remove-body=); content =physics-scroll= / =physics-content=: =physics-live-section= (=physics-live=, playing only), =physics-body-grid=, =physics-shapes-heading= (=physics-shape-kind=, =physics-add-shape=), the painted list =physics-shape-list= (24 px rows from y + 1; per row up, down and remove buttons, 22 px each, right aligned), =physics-fit-row= (=physics-fit-kind=, =physics-fit=), =physics-shape-grid=, =physics-joints-heading= (=physics-joint-kind=, =physics-add-joint=), =physics-joint-list= (one remove button per row), =physics-joint-grid=; empty state =physics-empty= (=physics-hint-none=, =physics-hint-2d=, =physics-hint=, =physics-empty-kind=, =physics-empty-add=). Every edit is one level command.
+- *Viewport.* Collider, joint and 2D collider gizmos with drag handles for the selected node (one undo step per drag, Escape cancels, Ctrl snaps); the overlays menu's Physics section (=vp.physics-shapes=, =vp.physics-joints=, =vp.physics-aabbs=, =vp.physics-contacts=, =vp.physics-sleeping=, =vp.physics-com=, =vp.physics-velocity=, =vp.physics-broadphase=, per viewport); while a 3D level plays the play world's physics debug draw inside the 3D pass.
+- *Inspector.* =inspector-section-physics= (=inspector-physics-summary=, =inspector-physics-open=) for one inspected 3D node.
+- *Hierarchy.* A body-kind badge on rows with a body; =hierarchy.state= rows carry ="physics"=.
+- *IPC.* =physics.*= ([[file:ipc-protocol.org::#ipc-physics][IPC: physics methods]]), registered when the panel is created; =physics.overlay= by the viewport panel.
 
 ** API index
 :PROPERTIES:
@@ -1760,6 +1772,12 @@ The full table with one line per function is in [[file:sequencer.org::#sequencer
 | =lrg_editor_viewport_panel_get_preview_node ()= | Returns the camera node the preview shows, or =NULL= when the preview is hidden. |
 | =lrg_editor_viewport_panel_get_preview_enabled ()= | Returns whether a selected camera shows its preview. |
 | =lrg_editor_viewport_panel_set_layer_mask ()= | The viewport's render-layer picker: sets which layers it draws (handed to =lrg_editor_scene_renderer_set_cull_mask()=); a view setting, not saved (0.9.0, see [[file:environment.org::#view-modes][View modes and render layers]]). |
+| =lrg_editor_viewport_panel_set_physics_overlay ()= | The Physics overlay flags (=LrgDynamicsDebugFlags=): authored shapes / joints / bounds / origins while authoring, the play world's debug draw while playing; a view setting (0.9.0, see [[file:physics.org::#editor-physics-overlay][Physics overlay]]). |
+| =lrg_editor_viewport_panel_get_physics_overlay ()= | The Physics overlay flags (0.9.0). |
+| =lrg_editor_viewport_panel_record_physics ()= | Records the play world's physics into the panel's debug draw batch; returns the primitive count (0.9.0). |
+| =lrg_editor_viewport_panel_get_physics_debug_draw ()= | The batch the 3D pass draws the play world's physics from (0.9.0). |
+| =lrg_editor_viewport_panel_get_physics_painted ()= | Shapes and joints the last authoring overlay paint drew (0.9.0). |
+| =lrg_editor_viewport_panel_get_physics_handle ()= | The physics gizmo handle being dragged, else hovered (0.9.0). |
 | =lrg_editor_viewport_panel_get_layer_mask ()= | Returns the viewport's render-layer mask (default all) (0.9.0). |
 | =lrg_editor_viewport_panel_queue_render ()= | Renders the scene again next frame, for changes the panel does not watch (a previewed post stack, a bake) (0.9.0). |
 
@@ -1821,6 +1839,15 @@ The full table with one line per function is in [[file:sequencer.org::#sequencer
 | =lrg_editor_gizmo_paint_missing_asset ()= | Paints a magenta box around the screen bounds of /node/ with a small "missing: file" tag, so broken references stand out in every render mode. |
 | =lrg_editor_gizmo_paint_active_outline ()= | Paints the accent outline of the active viewport of a split layout. |
 | =lrg_editor_volume_handle_get_type ()= | The =GType= of =LrgEditorVolumeHandle=, the handles of the volume gizmos (0.9.0, see [[file:environment.org::#volume-gizmos][Volume gizmos]]). |
+| =lrg_editor_physics_handle_get_type ()= | The =GType= of =LrgEditorPhysicsHandle=, the handles of the physics gizmo (0.9.0, see [[file:physics.org::#editor-physics-gizmos][Collider and joint gizmos]]). |
+| =lrg_editor_physics_handle_get_field ()= | The field a physics handle edits (0.9.0). |
+| =lrg_editor_physics_has_gizmo ()= | Whether a node shows the physics gizmo (0.9.0). |
+| =lrg_editor_physics_get_shape_frame ()= | The runtime collider frame of a shape (0.9.0). |
+| =lrg_editor_physics_get_handle_position ()= | World position of a physics handle (0.9.0). |
+| =lrg_editor_physics_hit_test ()= | The physics handle under the pointer (0.9.0). |
+| =lrg_editor_physics_drag_value ()= | The field value that puts a handle under the pointer (0.9.0). |
+| =lrg_editor_gizmo_paint_physics_shapes ()= | Paints a node's authored physics as wireframes (0.9.0). |
+| =lrg_editor_gizmo_paint_physics ()= | Paints the selected node's physics gizmo with handles (0.9.0). |
 | =lrg_editor_volume_handle_get_param ()= | The visual param a volume handle edits ("range", "spot_angle", "size_x", "extents_y", ...). |
 | =lrg_editor_volume_has_gizmo ()= | Whether a node shows a volume gizmo (point and spot lights, decals, reflection probes). |
 | =lrg_editor_volume_get_handle_position ()= | A volume handle's world position, as the viewport draws it. |

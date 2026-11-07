@@ -13,7 +13,11 @@
  * shortcut table (LrgEditorPreferences' keymap, read-only) and the
  * editable project settings (name, default level, game module, run
  * command, scripts folder and the asset folder list, written to
- * project.ryaml through LrgProject).
+ * project.ryaml through LrgProject) with a second Physics page: the 32
+ * collision layer names, the symmetric collide matrix (click a cell to
+ * toggle, the row and column under the pointer are highlighted) and the
+ * world settings of the `physics:` block (gravity, substep, iterations,
+ * sleep); the page edits a copy that Save applies.
  *
  * One dialog is open at a time. Its id goes into
  * LrgEditorViewState:dialog while it shows (ui.state "dialog" reports the
@@ -39,8 +43,18 @@
 #include "../../ui/lrg-vbox.h"
 #include "../../ui/lrg-hbox.h"
 #include "../../ui/lrg-button.h"
+#include "../../ui/lrg-tab-view.h"
+#include "../../ui/lrg-scroll-box.h"
+#include "../../ui/lrg-spin-box.h"
+#include "../../ui/lrg-custom-widget.h"
+#include "../../ui/lrg-ui-event.h"
+#include "../../paint/lrg-paint-list.h"
+#include "../../paint/lrg-paint-icons.h"
 #include "lrg-editor-code-panel.h"
 #include "lrg-editor-preferences.h"
+#define LRG_EDITOR_PANEL_INTERNAL
+#include "data/lrg-editor-physics-asset-editor.h"
+#include <math.h>
 #include <string.h>
 
 #define DIALOG_KEY "lrg-editor-dialog"
@@ -890,14 +904,489 @@ field_or_null (LrgDialog   *dialog,
 	return (text != NULL && *text != '\0') ? text : NULL;
 }
 
+/* ==========================================================================
+ * Project settings: the Physics page
+ *
+ * A working copy of the project's LrgPhysicsLayers and of the world
+ * settings; Save assigns the copy to the project and writes both through
+ * editor_physics_project_save(), Cancel drops them.
+ * ========================================================================== */
+
+#define MATRIX_LABEL_W (150.0f)
+#define MATRIX_HEAD_H  (22.0f)
+#define MATRIX_CELL    (19.0f)
+
+typedef struct
+{
+	LrgPhysicsLayers *layers;        /* the working copy (owned) */
+	LrgWidget        *matrix;
+	LrgLabel         *status;
+	LrgTextInput     *names[LRG_PHYSICS_LAYERS_MAX];
+	LrgSpinBox       *gravity[3];
+	LrgSpinBox       *fixed_dt;
+	LrgSpinBox       *max_substeps;
+	LrgSpinBox       *iterations;
+	LrgSpinBox       *sleep_threshold;
+	LrgSpinBox       *sleep_substeps;
+	gint              hover_a;
+	gint              hover_b;
+	gboolean          syncing;
+} PhysicsPage;
+
+static void
+physics_page_free (gpointer data)
+{
+	PhysicsPage *page = data;
+
+	g_clear_object (&page->layers);
+	g_free (page);
+}
+
+/* Rows of the matrix: the named slots (at least one). */
+static guint
+matrix_rows (PhysicsPage *page)
+{
+	return MAX (lrg_physics_layers_get_count (page->layers), 1u);
+}
+
+/* "7 ragdoll", or just "12" for an unnamed slot. */
+static gchar *
+layer_label (PhysicsPage *page,
+             guint        index)
+{
+	const gchar *name = lrg_physics_layers_get_name (page->layers, index);
+
+	return name != NULL ? g_strdup_printf ("%u  %s", index, name) : g_strdup_printf ("%u", index);
+}
+
+static void
+physics_status (PhysicsPage   *page,
+                const gchar   *text,
+                LrgThemeColor  role)
+{
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (page->status));
+
+	lrg_label_set_text (page->status, text);
+	lrg_label_set_color (page->status, lrg_theme_get_color (theme, role));
+}
+
+static void
+matrix_measure (LrgCustomWidget     *widget,
+                gfloat               avail_width,
+                gfloat               avail_height,
+                LrgCustomWidgetSize *size,
+                gpointer             user_data)
+{
+	PhysicsPage *page = user_data;
+	guint        n = matrix_rows (page);
+
+	size->width = MATRIX_LABEL_W + (gfloat) n * MATRIX_CELL + 4.0f;
+	size->height = MATRIX_HEAD_H + (gfloat) n * MATRIX_CELL + 4.0f;
+}
+
+/*
+ * The upper triangle of the symmetric matrix: row i holds the cells
+ * j >= i, so every pair shows once. The hovered cell's row and column are
+ * highlighted along their whole length.
+ */
+static void
+matrix_paint (LrgCustomWidget *widget,
+              LrgPaintList    *list,
+              gfloat           x,
+              gfloat           y,
+              gfloat           width,
+              gfloat           height,
+              gpointer         user_data)
+{
+	PhysicsPage   *page = user_data;
+	LrgTheme      *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont       *font = lrg_theme_get_ui_font (theme);
+	gfloat         fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	guint          n = matrix_rows (page);
+	gfloat         gx = x + MATRIX_LABEL_W;
+	gfloat         gy = y + MATRIX_HEAD_H;
+	GrlColor       band;
+	guint          i, j;
+
+	lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT), 0.16f, &band);
+
+	/* the hovered row and column */
+	if (page->hover_a >= 0 && page->hover_b >= 0)
+	{
+		lrg_paint_list_rect (list, x, gy + (gfloat) page->hover_a * MATRIX_CELL, MATRIX_LABEL_W + (gfloat) n * MATRIX_CELL,
+		                     MATRIX_CELL, 4.0f, &band);
+		lrg_paint_list_rect (list, gx + (gfloat) page->hover_b * MATRIX_CELL, y, MATRIX_CELL,
+		                     MATRIX_HEAD_H + (gfloat) n * MATRIX_CELL, 4.0f, &band);
+	}
+
+	/* column indices and row labels */
+	for (j = 0; j < n; j++)
+	{
+		g_autofree gchar *t = g_strdup_printf ("%u", j);
+		gfloat            tw = 0.0f;
+		gboolean          hot = (gint) j == page->hover_b;
+
+		lrg_paint_measure_text (font, t, fs, 0.0f, &tw, NULL);
+		lrg_paint_list_text (list, font, t, gx + (gfloat) j * MATRIX_CELL + (MATRIX_CELL - tw) * 0.5f,
+		                     y + (MATRIX_HEAD_H - fs) * 0.5f, fs, 0.0f,
+		                     lrg_theme_get_color (theme, hot ? LRG_THEME_COLOR_TEXT : LRG_THEME_COLOR_TEXT_MUTED));
+	}
+	for (i = 0; i < n; i++)
+	{
+		g_autofree gchar *t = layer_label (page, i);
+		gboolean          hot = (gint) i == page->hover_a;
+
+		lrg_paint_list_push_clip (list, x, gy + (gfloat) i * MATRIX_CELL, MATRIX_LABEL_W - 6.0f, MATRIX_CELL);
+		lrg_paint_list_text (list, font, t, x + 4.0f, gy + (gfloat) i * MATRIX_CELL + (MATRIX_CELL - fs) * 0.5f, fs,
+		                     0.0f, lrg_theme_get_color (theme, hot ? LRG_THEME_COLOR_TEXT : LRG_THEME_COLOR_TEXT_MUTED));
+		lrg_paint_list_pop_clip (list);
+	}
+
+	/* the cells */
+	for (i = 0; i < n; i++)
+		for (j = i; j < n; j++)
+		{
+			gfloat   cx = gx + (gfloat) j * MATRIX_CELL + 2.0f;
+			gfloat   cy = gy + (gfloat) i * MATRIX_CELL + 2.0f;
+			gfloat   cs = MATRIX_CELL - 4.0f;
+			gboolean on = lrg_physics_layers_get_collides (page->layers, i, j);
+			gboolean hot = (gint) i == page->hover_a && (gint) j == page->hover_b;
+
+			lrg_paint_list_rect (list, cx, cy, cs, cs, 3.0f,
+			                     lrg_theme_get_color (theme, on ? LRG_THEME_COLOR_ACCENT : LRG_THEME_COLOR_CONTROL));
+			lrg_paint_list_border (list, cx, cy, cs, cs, 3.0f, hot ? 2.0f : 1.0f,
+			                       lrg_theme_get_color (theme, hot ? LRG_THEME_COLOR_FOCUS : LRG_THEME_COLOR_BORDER));
+			if (on)
+				lrg_paint_list_icon (list, LRG_ICON_CHECK, cx + 2.0f, cy + 2.0f, cs - 4.0f, 0.0f,
+				                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_ON_ACCENT));
+		}
+}
+
+/* The cell under canvas point (@px, @py); FALSE outside the triangle. */
+static gboolean
+matrix_cell_at (PhysicsPage *page,
+                LrgWidget   *widget,
+                gfloat       px,
+                gfloat       py,
+                gint        *a,
+                gint        *b)
+{
+	gfloat lx = px - lrg_widget_get_world_x (widget) - MATRIX_LABEL_W;
+	gfloat ly = py - lrg_widget_get_world_y (widget) - MATRIX_HEAD_H;
+	gint   n = (gint) matrix_rows (page);
+	gint   i, j;
+
+	if (lx < 0.0f || ly < 0.0f)
+		return FALSE;
+	i = (gint) (ly / MATRIX_CELL);
+	j = (gint) (lx / MATRIX_CELL);
+	if (i >= n || j >= n || j < i)
+		return FALSE;
+	*a = i;
+	*b = j;
+	return TRUE;
+}
+
+static void
+matrix_show_pair (PhysicsPage *page,
+                  gint         a,
+                  gint         b)
+{
+	g_autofree gchar *la = layer_label (page, (guint) a);
+	g_autofree gchar *lb = layer_label (page, (guint) b);
+	gboolean          on = lrg_physics_layers_get_collides (page->layers, (guint) a, (guint) b);
+	g_autofree gchar *text = g_strdup_printf ("%s  \xe2\x9f\xb7  %s: %s", la, lb, on ? "collide" : "never collide");
+
+	physics_status (page, text, on ? LRG_THEME_COLOR_SUCCESS : LRG_THEME_COLOR_TEXT_MUTED);
+}
+
+static gboolean
+matrix_event (LrgCustomWidget  *widget,
+              const LrgUIEvent *event,
+              gpointer          user_data)
+{
+	PhysicsPage *page = user_data;
+	gint         a = -1, b = -1;
+	gboolean     inside = matrix_cell_at (page, LRG_WIDGET (widget), lrg_ui_event_get_x (event),
+	                                      lrg_ui_event_get_y (event), &a, &b);
+
+	switch (lrg_ui_event_get_event_type (event))
+	{
+	case LRG_UI_EVENT_MOUSE_MOVE:
+	case LRG_UI_EVENT_POINTER_ENTER:
+		page->hover_a = inside ? a : -1;
+		page->hover_b = inside ? b : -1;
+		if (inside)
+			matrix_show_pair (page, a, b);
+		return FALSE;
+	case LRG_UI_EVENT_POINTER_LEAVE:
+		page->hover_a = page->hover_b = -1;
+		return FALSE;
+	case LRG_UI_EVENT_MOUSE_BUTTON_DOWN:
+		if (!inside)
+			return FALSE;
+		lrg_physics_layers_set_collides (page->layers, (guint) a, (guint) b,
+		                                 !lrg_physics_layers_get_collides (page->layers, (guint) a, (guint) b));
+		page->hover_a = a;
+		page->hover_b = b;
+		matrix_show_pair (page, a, b);
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static void
+on_layer_name_changed (LrgTextInput *input,
+                       gpointer      user_data)
+{
+	LrgDialog         *dialog = LRG_DIALOG (user_data);
+	PhysicsPage       *page = g_object_get_data (G_OBJECT (dialog), "physics");
+	guint              index = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (input), "index"));
+	g_autofree gchar  *name = NULL;
+	g_autoptr(GError)  error = NULL;
+
+	if (page == NULL || page->syncing)
+		return;
+	name = g_strstrip (g_strdup (lrg_text_input_get_text (input) != NULL ? lrg_text_input_get_text (input) : ""));
+	if (!lrg_physics_layers_set_name (page->layers, index, *name != '\0' ? name : NULL, &error))
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Layer %u: %s", index, error->message);
+
+		physics_status (page, msg, LRG_THEME_COLOR_DANGER);
+		return;
+	}
+	physics_status (page, "", LRG_THEME_COLOR_TEXT_MUTED);
+	lrg_widget_queue_layout (page->matrix);
+}
+
+/* Pushes the working copy and @s into the widgets. */
+static void
+physics_page_sync (PhysicsPage                 *page,
+                   const EditorPhysicsSettings *s)
+{
+	guint i;
+
+	page->syncing = TRUE;
+	for (i = 0; i < LRG_PHYSICS_LAYERS_MAX; i++)
+	{
+		const gchar *name = lrg_physics_layers_get_name (page->layers, i);
+
+		lrg_text_input_set_text (page->names[i], name != NULL ? name : "");
+	}
+	for (i = 0; i < 3; i++)
+		lrg_spin_box_set_value (page->gravity[i], s->gravity[i]);
+	lrg_spin_box_set_value (page->fixed_dt, s->fixed_dt);
+	lrg_spin_box_set_value (page->max_substeps, s->max_substeps);
+	lrg_spin_box_set_value (page->iterations, s->iterations);
+	lrg_spin_box_set_value (page->sleep_threshold, s->sleep_threshold);
+	lrg_spin_box_set_value (page->sleep_substeps, s->sleep_substeps);
+	page->syncing = FALSE;
+	lrg_widget_queue_layout (page->matrix);
+}
+
+/* The settings the widgets hold. */
+static void
+physics_page_read (PhysicsPage           *page,
+                   EditorPhysicsSettings *s)
+{
+	guint i;
+
+	for (i = 0; i < 3; i++)
+		s->gravity[i] = (gfloat) lrg_spin_box_get_value (page->gravity[i]);
+	s->fixed_dt = (gfloat) lrg_spin_box_get_value (page->fixed_dt);
+	s->max_substeps = (guint) lrg_spin_box_get_value (page->max_substeps);
+	s->iterations = (guint) lrg_spin_box_get_value (page->iterations);
+	s->sleep_threshold = (gfloat) lrg_spin_box_get_value (page->sleep_threshold);
+	s->sleep_substeps = (guint) lrg_spin_box_get_value (page->sleep_substeps);
+}
+
+static void
+on_physics_defaults (LrgButton *button,
+                     gpointer   user_data)
+{
+	PhysicsPage          *page = g_object_get_data (G_OBJECT (user_data), "physics");
+	EditorPhysicsSettings s;
+
+	lrg_physics_layers_reset_default (page->layers);
+	editor_physics_settings_defaults (&s);
+	physics_page_sync (page, &s);
+	physics_status (page, "Default layers and settings (Save applies them)", LRG_THEME_COLOR_TEXT_MUTED);
+}
+
+static LrgSpinBox *
+physics_spin (LrgWidget   *row,
+              const gchar *label,
+              const gchar *name,
+              gdouble      min,
+              gdouble      max,
+              gdouble      step,
+              guint        digits)
+{
+	g_autoptr(LrgLabel) l = lrg_label_new (label);
+	LrgSpinBox         *spin = lrg_spin_box_new_with_range (min, max, step);
+
+	lrg_widget_set_valign (LRG_WIDGET (l), LRG_ALIGN_CENTER);
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (l));
+	lrg_spin_box_set_digits (spin, digits);
+	lrg_widget_set_name (LRG_WIDGET (spin), name);
+	lrg_widget_set_min_size (LRG_WIDGET (spin), 96.0f, 0.0f);
+	lrg_container_add_child (LRG_CONTAINER (row), LRG_WIDGET (spin));
+	g_object_unref (spin);
+	return spin;
+}
+
+static LrgWidget *
+physics_heading (const gchar *text)
+{
+	LrgLabel *l = lrg_label_new (text);
+
+	lrg_widget_add_class (LRG_WIDGET (l), "heading");
+	return LRG_WIDGET (l);
+}
+
+static void
+add_owned (LrgWidget *box,
+           LrgWidget *child)
+{
+	lrg_container_add_child (LRG_CONTAINER (box), child);
+	g_object_unref (child);
+}
+
+/* Builds the Physics page of @dialog (a scroll box). */
+static LrgWidget *
+physics_page_new (LrgEditorApp *self,
+                  LrgDialog    *dialog)
+{
+	static const LrgCustomWidgetFuncs matrix_funcs = { matrix_measure, matrix_paint, NULL, matrix_event, { NULL } };
+	PhysicsPage          *page = g_new0 (PhysicsPage, 1);
+	EditorPhysicsSettings s;
+	LrgScrollBox         *scroll = lrg_scroll_box_new ();
+	LrgWidget            *box = LRG_WIDGET (lrg_vbox_new ());
+	LrgWidget            *row, *cols, *col, *side, *names, *mcol;
+	LrgButton            *defaults;
+	guint                 i, k;
+	LrgLabel             *intro;
+
+	page->layers = lrg_physics_layers_copy (lrg_project_get_physics_layers (self->project));
+	page->hover_a = page->hover_b = -1;
+	g_object_set_data_full (G_OBJECT (dialog), "physics", page, physics_page_free);
+	editor_physics_settings_load (self, &s);
+
+	lrg_widget_set_name (LRG_WIDGET (scroll), "project-physics-page");
+	lrg_container_set_spacing (LRG_CONTAINER (box), 8.0f);
+	lrg_container_set_padding (LRG_CONTAINER (box), 10.0f);
+	intro = lrg_label_new ("The physics: block of project.ryaml. A body has one layer; two bodies collide");
+	lrg_widget_add_class (LRG_WIDGET (intro), "dim-label");
+	add_owned (box, LRG_WIDGET (intro));
+	intro = lrg_label_new ("when their layers' cell is on and each body's mask accepts the other.");
+	lrg_widget_add_class (LRG_WIDGET (intro), "dim-label");
+	add_owned (box, LRG_WIDGET (intro));
+
+	/* --- world settings --- */
+	add_owned (box, physics_heading ("World"));
+	row = LRG_WIDGET (lrg_hbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	for (k = 0; k < 3; k++)
+	{
+		static const gchar * const labels[] = { "Gravity X", "Y", "Z" };
+		g_autofree gchar *name = g_strdup_printf ("project-physics-gravity-%c", 'x' + k);
+
+		page->gravity[k] = physics_spin (row, labels[k], name, -1000.0, 1000.0, 0.1, 2);
+	}
+	add_owned (box, row);
+	row = LRG_WIDGET (lrg_hbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	page->fixed_dt = physics_spin (row, "Substep (s)", "project-physics-fixed-dt", 0.001, 0.1, 0.001, 4);
+	page->max_substeps = physics_spin (row, "Max substeps", "project-physics-max-substeps", 1.0,
+	                                   (gdouble) LRG_DYNAMICS_MAX_SUBSTEPS, 1.0, 0);
+	page->iterations = physics_spin (row, "Solver iterations", "project-physics-iterations", 1.0, 32.0, 1.0, 0);
+	add_owned (box, row);
+	row = LRG_WIDGET (lrg_hbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	page->sleep_threshold = physics_spin (row, "Sleep below |v|\xc2\xb2+|\xcf\x89|\xc2\xb2", "project-physics-sleep",
+	                                      0.0, 10.0, 0.0001, 5);
+	page->sleep_substeps = physics_spin (row, "for substeps", "project-physics-sleep-substeps", 1.0, 10000.0, 1.0, 0);
+	add_owned (box, row);
+
+	/* --- layer names (two columns of sixteen) beside the collide matrix --- */
+	side = LRG_WIDGET (lrg_hbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (side), 24.0f);
+	names = LRG_WIDGET (lrg_vbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (names), 6.0f);
+	add_owned (names, physics_heading ("Layers"));
+	cols = LRG_WIDGET (lrg_hbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (cols), 12.0f);
+	for (k = 0; k < 2; k++)
+	{
+		col = LRG_WIDGET (lrg_vbox_new ());
+		lrg_container_set_spacing (LRG_CONTAINER (col), 2.0f);
+		for (i = k * 16; i < k * 16 + 16; i++)
+		{
+			g_autofree gchar *idx = g_strdup_printf ("%2u", i);
+			g_autofree gchar *name = g_strdup_printf ("project-physics-layer-%u", i);
+			LrgLabel         *l = lrg_label_new (idx);
+			LrgTextInput     *input = lrg_text_input_new_with_placeholder ("(unnamed)");
+
+			row = LRG_WIDGET (lrg_hbox_new ());
+			lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+			lrg_widget_set_min_size (LRG_WIDGET (l), 22.0f, 0.0f);
+			lrg_widget_set_valign (LRG_WIDGET (l), LRG_ALIGN_CENTER);
+			lrg_widget_add_class (LRG_WIDGET (l), "dim-label");
+			add_owned (row, LRG_WIDGET (l));
+			lrg_widget_set_name (LRG_WIDGET (input), name);
+			lrg_widget_set_min_size (LRG_WIDGET (input), 150.0f, 0.0f);
+			g_object_set_data (G_OBJECT (input), "index", GUINT_TO_POINTER (i));
+			g_signal_connect_object (input, "text-changed", G_CALLBACK (on_layer_name_changed), dialog, 0);
+			page->names[i] = input;
+			add_owned (row, LRG_WIDGET (input));
+			add_owned (col, row);
+		}
+		add_owned (cols, col);
+	}
+	add_owned (names, cols);
+	add_owned (side, names);
+
+	/* --- the collide matrix --- */
+	mcol = LRG_WIDGET (lrg_vbox_new ());
+	lrg_container_set_spacing (LRG_CONTAINER (mcol), 6.0f);
+	add_owned (mcol, physics_heading ("Collide matrix"));
+	page->matrix = LRG_WIDGET (lrg_custom_widget_new ());
+	lrg_widget_set_name (page->matrix, "project-physics-matrix");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (page->matrix), &matrix_funcs, page, NULL);
+	add_owned (mcol, page->matrix);
+	page->status = lrg_label_new ("Hover a cell to see the pair; click to toggle it");
+	lrg_widget_set_name (LRG_WIDGET (page->status), "project-physics-status");
+	lrg_widget_add_class (LRG_WIDGET (page->status), "dim-label");
+	add_owned (mcol, LRG_WIDGET (page->status));
+	defaults = lrg_button_new ("Reset to Defaults");
+	lrg_widget_set_name (LRG_WIDGET (defaults), "project-physics-defaults");
+	lrg_widget_set_halign (LRG_WIDGET (defaults), LRG_ALIGN_START);
+	g_signal_connect_object (defaults, "clicked", G_CALLBACK (on_physics_defaults), dialog, 0);
+	add_owned (mcol, LRG_WIDGET (defaults));
+	add_owned (side, mcol);
+	add_owned (box, side);
+
+	lrg_scroll_box_set_child (scroll, box);
+	g_object_unref (box);
+	physics_page_sync (page, &s);
+	return LRG_WIDGET (scroll);
+}
+
+/* ==========================================================================
+ * Project settings: the dialog
+ * ========================================================================== */
+
 static void
 project_settings_done (LrgEditorApp *self,
                        LrgDialog    *dialog,
                        gint          response)
 {
-	GPtrArray        *dirs = g_object_get_data (G_OBJECT (dialog), "dirs");
-	g_autoptr(GError) error = NULL;
-	guint             i;
+	GPtrArray            *dirs = g_object_get_data (G_OBJECT (dialog), "dirs");
+	PhysicsPage          *page = g_object_get_data (G_OBJECT (dialog), "physics");
+	EditorPhysicsSettings s;
+	g_autoptr(GError)     error = NULL;
+	guint                 i;
 
 	if (response != RESPONSE_PRIMARY || self->project == NULL)
 		return;
@@ -910,7 +1399,24 @@ project_settings_done (LrgEditorApp *self,
 	lrg_project_clear_asset_dirs (self->project);
 	for (i = 0; i < dirs->len; i++)
 		lrg_project_add_asset_dir (self->project, g_ptr_array_index (dirs, i));
-	if (!lrg_project_save (self->project, &error))
+
+	/* the Physics page: the layer copy and the world settings */
+	editor_physics_settings_load (self, &s);
+	if (page != NULL)
+	{
+		EditorPhysicsSettings edited;
+
+		physics_page_read (page, &edited);
+		if (editor_physics_settings_validate (&edited, &error))
+			s = edited;
+		else
+		{
+			editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Physics settings not changed: %s", error->message);
+			g_clear_error (&error);
+		}
+		lrg_physics_layers_assign (lrg_project_get_physics_layers (self->project), page->layers);
+	}
+	if (!editor_physics_project_save (self, &s, &error))
 		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Could not save the project: %s", error->message);
 	else
 		editor_app_notify (self, EDITOR_NOTIFY_SUCCESS, "Saved project settings");
@@ -930,9 +1436,13 @@ editor_dialog_project_settings (LrgEditorApp *self)
 	g_autoptr(LrgHBox)    add_row = lrg_hbox_new ();
 	g_autoptr(LrgTextInput) dir_input = lrg_text_input_new_with_placeholder ("assets/audio");
 	g_autoptr(LrgButton)  add = lrg_button_new ("Add");
+	g_autoptr(LrgTabView) tabs = lrg_tab_view_new ();
+	g_autoptr(LrgScrollBox) general = lrg_scroll_box_new ();
 	GPtrArray            *dirs = g_ptr_array_new_with_free_func (g_free);
 	GPtrArray            *pdirs;
 	LrgTextInput         *input;
+	LrgWidget            *physics;
+	gfloat                cw = 1600.0f, ch = 960.0f;
 	guint                 i;
 
 	if (self->project == NULL)
@@ -944,6 +1454,7 @@ editor_dialog_project_settings (LrgEditorApp *self)
 	dialog = lrg_dialog_new ("Project Settings", body);
 	g_object_set_data (G_OBJECT (dialog), "app", self);
 	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	lrg_container_set_padding (LRG_CONTAINER (box), 10.0f);
 
 	input = add_field (box, "Name", lrg_project_get_name (self->project), "project-name");
 	g_object_set_data (G_OBJECT (dialog), "name", input);
@@ -994,8 +1505,39 @@ editor_dialog_project_settings (LrgEditorApp *self)
 	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (add_row));
 	project_dirs_rebuild (dialog);
 
-	lrg_dialog_set_content (dialog, LRG_WIDGET (box));
+	/* Two pages: General and Physics, sized to the window */
+	lrg_widget_set_name (LRG_WIDGET (general), "project-general-page");
+	lrg_scroll_box_set_child (general, LRG_WIDGET (box));
+	lrg_widget_set_name (LRG_WIDGET (tabs), "project-settings-tabs");
+	lrg_tab_view_add_tab (tabs, "General", LRG_WIDGET (general));
+	physics = physics_page_new (self, dialog);
+	lrg_tab_view_add_tab (tabs, "Physics", physics);
+	g_object_unref (physics);
+	if (self->canvas != NULL && lrg_widget_get_width (LRG_WIDGET (self->canvas)) > 0.0f)
+	{
+		cw = lrg_widget_get_width (LRG_WIDGET (self->canvas));
+		ch = lrg_widget_get_height (LRG_WIDGET (self->canvas));
+	}
+	lrg_widget_set_min_size (LRG_WIDGET (tabs), MIN (900.0f, MAX (cw - 120.0f, 420.0f)),
+	                         MIN (640.0f, MAX (ch - 260.0f, 320.0f)));
+	g_object_set_data (G_OBJECT (dialog), "tabs", tabs);
+
+	lrg_dialog_set_content (dialog, LRG_WIDGET (tabs));
 	lrg_dialog_add_button (dialog, "Cancel", LRG_DIALOG_RESPONSE_CANCEL, FALSE);
 	lrg_dialog_add_button (dialog, "Save", RESPONSE_PRIMARY, TRUE);
 	present (self, dialog, "project-settings", project_settings_done);
+}
+
+void
+editor_dialog_project_settings_page (LrgEditorApp *app,
+                                     const gchar  *page)
+{
+	GObject *dialog;
+	GObject *tabs;
+
+	editor_dialog_project_settings (app);
+	dialog = g_object_get_data (G_OBJECT (app), DIALOG_KEY);
+	tabs = dialog != NULL ? g_object_get_data (dialog, "tabs") : NULL;
+	if (tabs != NULL && LRG_IS_TAB_VIEW (tabs))
+		lrg_tab_view_set_active_tab (LRG_TAB_VIEW (tabs), g_strcmp0 (page, "physics") == 0 ? 1 : 0);
 }

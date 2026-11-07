@@ -152,3 +152,9 @@ Examples: lrgeditorctl material set materials/steel.rmat metallic 1; lrgeditorct
 - bonemap open|create|get|auto-fill|rules|models|preview|save PATH; bonemap set PATH SOURCE TARGET|null
 - clip list|info|preview MODEL [CLIP]; clip morph MODEL TARGET WEIGHT
 Examples: lrgeditorctl bake set samples 256 && lrgeditorctl bake start --wait; lrgeditorctl bake evaluate 0 0.01 0 0 1 0
+
+## Physics verbs (0.9.0)
+- `physics [get] | add-body [KIND] [shape=auto|KIND|none] | remove-body | set-body K=V.. | add-shape [KIND] [fit=true] [K=V..] | remove-shape I | set-shape I K=V.. | move-shape I TO | add-joint [KIND] [--target N] [K=V..] | remove-joint I | set-joint I K=V.. | fit [I] [--kind K] | overlay [NAME..|+NAME|-NAME] [viewport=N] | state | show` (acts on `--node/-n NODE`, default the primary selection; K=V go into `values`)
+- `physics layers [get] | name I NAME|- | collide A B on|off | settings [K=V..] | reset [empty=true] | open`
+- `physasset open|get|stabilize|save PATH | create PATH [model= total_mass= radius_ratio=] | model PATH MODEL | add-part PATH BONE [K=V..] | set-part PATH PART K=V.. | remove-part|select PATH PART | generate PATH [total_mass= radius_ratio=] | exclude|unexclude PATH A B | set PATH [name= exclude_adjacent=] | simulate PATH [advance=S run=false reset=true]`
+Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --node Door; lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140

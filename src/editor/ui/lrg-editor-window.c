@@ -54,7 +54,7 @@ static const gchar * const menu_titles[] = {
 static const gchar * const panel_entries[][2] = {
 	{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
 	{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
-	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "environment", "Environment" }, { "bake", "Lighting" }, { "timeline", "Timeline" }, { "sequencer", "Sequencer" },
+	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "environment", "Environment" }, { "bake", "Lighting" }, { "physics", "Physics" }, { "timeline", "Timeline" }, { "sequencer", "Sequencer" },
 	{ "profiler", "Profiler" }, { "code", "Code" }, { "sources", "Sources" }
 };
 

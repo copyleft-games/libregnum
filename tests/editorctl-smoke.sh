@@ -22,7 +22,8 @@
 # data, palette, preferences, hierarchy filter, notify --level), the
 # 0.9.0 rendering verbs (material, shader, shadergraph, env, post, lod,
 # view layers; skipped until the editor registers their methods), the
-# 0.9.0 M3/M4 verbs (bake, seq, skel2d, anim, bonemap; likewise skipped)
+# 0.9.0 M3/M4 verbs (bake, seq, skel2d, anim, bonemap; likewise skipped),
+# the 0.9.0 M5 physics verbs (physasset, physics layers, physics)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -400,6 +401,42 @@ then
 else
 	skip 'bonemap'
 fi
+# 0.9.0 M5 physics verbs (physasset, physics layers, physics; skipped
+# until the editor registers their methods).
+if has_method physasset.create
+then
+	paf="${work}/game/smoke.rphysasset"
+	check 'physasset create' "$(ctl physasset create "${paf}")" 'smoke.rphysasset'
+	check 'physasset set' "$(ctl physasset set "${paf}" name=Smoke -o json)" '"Smoke"'
+	check 'physasset add-part' "$(ctl physasset add-part "${paf}" pelvis shape=sphere radius=0.2 -o json)" '"pelvis"'
+	check 'physasset set-part' "$(ctl physasset set-part "${paf}" pelvis mass=12.5 -o json)" '12.5'
+	check 'physasset get' "$(ctl physasset get "${paf}" -o json)" '"sphere"'
+	check 'physasset save' "$(ctl physasset save "${paf}")" 'smoke.rphysasset'
+	check 'physasset file' "$(cat "${paf}")" 'bone: pelvis'
+	ctl data close "${paf}" --force >/dev/null 2>&1 || true
+else
+	skip 'physasset'
+fi
+if has_method physics.layers.get
+then
+	check 'physics layers' "$(ctl physics layers -o json)" '"ragdoll"'
+	check 'physics layers name' "$(ctl physics layers name 9 water -o json)" '"water"'
+	check 'physics layers collide' "$(ctl physics layers collide water debris off -o json | tr -d ' \n')" '["debris","water"]'
+	check 'physics layers settings' "$(ctl physics layers settings gravity=0,-3.7,0 iterations=12 -o json)" '"iterations" : 12'
+	check 'project.ryaml has the physics block' "$(cat "${work}/game/project.ryaml")" 'water'
+else
+	skip 'physics layers'
+fi
+if has_method physics.get
+then
+	check 'physics add-body' "$(ctl physics add-body dynamic --node Box -o json)" '"body"'
+	check 'physics set-body' "$(ctl physics set-body mass=20 --node Box -o json)" '20'
+	check 'physics get' "$(ctl physics get --node Box -o json)" '"shapes"'
+	check 'physics overlay' "$(ctl physics overlay -o json)" '"flags"'
+	ctl undo >/dev/null; ctl undo >/dev/null
+else
+	skip 'physics'
+fi
 # 0.8.3: asset sources (none registered without a game module).
 check 'source list empty' "$(ctl source list -o json)" '[]'
 "${ctl}" source ls nope >/dev/null 2>&1 && status=0 || status=$?
@@ -459,6 +496,12 @@ else
 	check 'mcp skel2d tools' "${out}" '"name":"skel2d_paint_weights"'
 	check 'mcp anim tools' "${out}" '"name":"anim_add_transition"'
 	check 'mcp bonemap and clip tools' "${out}" '"name":"clip_set_morph"'
+	check 'mcp physics tools' "${out}" '"name":"physics_set_joint"'
+	check 'mcp physics layer tools' "${out}" '"name":"physics_layers_set_collides"'
+	check 'mcp physasset tools' "${out}" '"name":"physasset_simulate"'
+	check 'mcp physics_layers_get is read-only and takes no params' \
+		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"physics_layers_get"[^]]*' | head -n 1)" \
+		'"properties":{}},"annotations":{"readOnlyHint":true'
 	check 'mcp bake_progress is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"bake_progress"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'

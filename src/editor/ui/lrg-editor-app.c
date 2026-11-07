@@ -27,6 +27,7 @@
 #include "lrg-editor-tiles-panel.h"
 #include "lrg-editor-environment-panel.h"
 #include "lrg-editor-bake-panel.h"
+#include "lrg-editor-physics-panel.h"
 #include "lrg-editor-sequencer-panel.h"
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-profiler-panel.h"
@@ -214,6 +215,7 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
 	make_panel (self, "environment", "Environment", "star", LRG_WIDGET (lrg_editor_environment_panel_new (self)), TRUE);
 	make_panel (self, LRG_EDITOR_BAKE_PANEL_ID, "Lighting", "refresh", LRG_WIDGET (lrg_editor_bake_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_PHYSICS_PANEL_ID, "Physics", "download", LRG_WIDGET (lrg_editor_physics_panel_new (self)), TRUE);
 	make_panel (self, "sources", "Sources", "folder", LRG_WIDGET (lrg_editor_sources_panel_new (self)), TRUE);
 }
 
@@ -244,6 +246,7 @@ dock_default (LrgEditorApp *self,
 		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "environment", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "bake", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "physics", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "sources", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 	};
 	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
@@ -277,7 +280,7 @@ editor_app_reset_layout (LrgEditorApp *self)
 {
 	static const gchar *order[] = {
 		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
-		"timeline", "sequencer", "profiler", "code", "tiles", "environment", "bake", "sources", NULL
+		"timeline", "sequencer", "profiler", "code", "tiles", "environment", "bake", "physics", "sources", NULL
 	};
 	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
 	GList         *docked = lrg_dock_area_get_panels (dock);

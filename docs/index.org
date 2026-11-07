@@ -75,6 +75,8 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:editor/shader-graph-editor.org][Shader Graph Editor]]* - .rshadergraph node shaders
 - *[[file:editor/bake.org][Lighting Bake]]* - the Lighting panel: bake lightmaps and probe grids from the editor, probe volumes, baked lighting while authoring (0.9.0)
 - *[[file:editor/environment.org][Level Look]]* - the Environment panel, =.rpost= post-stack editor, debug view modes, render layers, volume gizmos and LOD preview (0.9.0)
+- *[[file:editor/physics.org][Physics in Levels]]* - the Physics panel (body, shapes, joints, fit to mesh, live state), collider / joint / 2D collider gizmos, the Physics overlay, =physics.*= IPC (0.9.0)
+- *[[file:editor/physics-asset-editor.org][Physics Asset Editor and Layers]]* - =.rphysasset= ragdolls on a skeleton (joint limit gizmos, Generate, Stabilize, Simulate) and Project Settings > Physics (collision layers, collide matrix, world settings), =physasset.*= / =physics.layers.*= IPC (0.9.0)
 - *[[file:editor/sequencer.org][Sequencer]]* - =.rseq= cinematics: tracks by binding, Bézier curve editor, camera cuts, audio, events, preview with camera piloting (0.9.0)
 - *[[file:editor/skeleton2d-editor.org][2D Rig Editor]]* - =.rskel2d= 2D rigging and animation: bone tool, slots and image drops, mesh tool with triangulation, weight painting, skins, dope sheet, curves, play/loop (0.9.0)
 - *[[file:editor/gap-analysis.org][Gap Analysis]]* - the editor and engine against Godot 4, Unity 6 and Unreal 5, with the engine roadmap

@@ -49,6 +49,7 @@
 #include "lrg-editor-anim-graph-editor.h"
 #include "lrg-editor-bone-map-editor.h"
 #include "lrg-editor-skeleton2d-editor.h"
+#include "lrg-editor-physics-asset-editor.h"
 #include "../lrg-editor-shader-graph-editor.h"
 #include "../lrg-editor-app-private.h"
 #include "../lrg-editor-console-panel.h"
@@ -232,6 +233,7 @@ registry_ensure (void)
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH, LRG_TYPE_EDITOR_ANIM_GRAPH_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP, LRG_TYPE_EDITOR_BONE_MAP_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D, LRG_TYPE_EDITOR_SKELETON2D_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET, LRG_TYPE_EDITOR_PHYSICS_ASSET_EDITOR);
 	/* .rseq files are opened by the docked sequencer panel, not a data
 	 * editor: LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE has no builtin here */
 }
@@ -279,12 +281,12 @@ lrg_editor_data_editor_can_open (const gchar *path)
 	 * their own extensions and editors), plus the engine assets edited
 	 * on documents: .rmat materials, .rpost post stacks, .rshadergraph
 	 * shader graphs, .ranim animation graphs, .rbonemap bone maps,
-	 * .rseq sequences and .rskel2d 2D skeletons */
+	 * .rseq sequences, .rskel2d 2D skeletons and .rphysasset ragdolls */
 	if (!g_str_has_suffix (path, ".yaml") && !g_str_has_suffix (path, ".yml") &&
 	    !g_str_has_suffix (path, ".rmat") && !g_str_has_suffix (path, ".rpost") &&
 	    !g_str_has_suffix (path, ".rshadergraph") && !g_str_has_suffix (path, ".ranim") &&
 	    !g_str_has_suffix (path, ".rbonemap") && !g_str_has_suffix (path, ".rseq") &&
-	    !g_str_has_suffix (path, ".rskel2d"))
+	    !g_str_has_suffix (path, ".rskel2d") && !g_str_has_suffix (path, ".rphysasset"))
 		return FALSE;
 	format = detect_file_format (path);
 	return format != LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN &&
@@ -414,6 +416,8 @@ format_icon (LrgEditorDocumentFormat format)
 		return LRG_ICON_CLOCK;
 	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
 		return LRG_ICON_EDIT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET:
+		return LRG_ICON_USER;
 	default:
 		return LRG_ICON_FILE;
 	}
@@ -455,6 +459,8 @@ format_label (LrgEditorDocumentFormat format)
 		return "Sequence";
 	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
 		return "2D skeleton";
+	case LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET:
+		return "Physics asset";
 	default:
 		return "Data";
 	}

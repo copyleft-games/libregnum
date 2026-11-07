@@ -105,6 +105,7 @@ The window is an =LrgEditorWindow=: an =LrgMenuBar= (File, Edit, Create, Node, V
 | Data editors | per file | Input maps, locales, sound banks, themes, HUD and UI layouts, dialog trees, dungeons | [[file:data-editors.org::#data-editors-panel-base][Data editor panels]] |
 | Material editor | per =.rmat= | Live lit preview, PBR grid, instances with overrides, uniform inspector (0.9.0) | [[file:material-editor.org][Material Editor]] |
 | Environment | right (tab of the Inspector) | The level's sky, IBL, ambient, fog, volumetric fog and post stack, undoable, with a sky preview and a Bake progress bar (0.9.0) | [[file:environment.org::#environment-panel][Environment panel]] |
+| Physics | right (tab of the Inspector) | The selected node's =physics:= block: body, shapes, joints, fit to mesh, undoable; live body state while playing (0.9.0) | [[file:physics.org::#editor-physics-panel][Physics panel]] |
 | Lighting | right (tab of the Inspector) | The level's lighting bake: settings, async bake with progress and cancel, atlas pages, light at cursor, save / clear with undo (0.9.0 M3) | [[file:bake.org][Lighting Bake]] |
 | Post-stack editor | per =.rpost= | Effect chain, per-effect parameters, live viewport preview, save current look (0.9.0) | [[file:environment.org::#post-stack-editor][Post-stack editor]] |
 | Sequencer | bottom (tab next to Timeline) | =.rseq= sequences: tracks by binding, Bézier curve editor, sections, events, scrub/play preview on level nodes with camera piloting (0.9.0) | [[file:sequencer.org][Sequencer]] |
@@ -274,6 +275,8 @@ The Fedora packages the application needs beyond the base build are listed in [[
 - [[file:data-editors.org][Data Editors]]: =LrgEditorDocument= and the eight data editor panels
 - [[file:material-editor.org][Material Editor]]: =.rmat= materials, preview, instances, assignment
 - [[file:environment.org][Level Look]]: the Environment panel, the =.rpost= post-stack editor, debug view modes and render layers, volume gizmos, the LOD preview
+- [[file:physics.org][Physics in Levels]]: the Physics panel, collider and joint gizmos, the Physics overlay, =physics.*= IPC
+- [[file:physics-asset-editor.org][Physics Asset Editor and Layers]]: =.rphysasset= ragdolls, Project Settings > Physics, =physasset.*= and =physics.layers.*= IPC
 - [[file:bake.org][Lighting Bake]]: the Lighting panel, static lighting rows, probe volumes, baked lighting in the viewport
 - [[file:sequencer.org][Sequencer]]: =.rseq= sequences, the curve editor, preview and =sequence.*= IPC
 - [[file:skeleton2d-editor.org][2D Rig Editor]]: =.rskel2d= rigs, the canvas tools, weights, skins, animation mode and =skel2d.*= IPC
