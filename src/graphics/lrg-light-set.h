@@ -33,6 +33,7 @@
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
 #include "../weather/lrg-ground-overlay.h"
+#include "../lighting/lrg-lightmap3d.h"
 
 G_BEGIN_DECLS
 
@@ -1473,5 +1474,59 @@ LRG_AVAILABLE_IN_ALL
 guint
 lrg_light_set_add_light_desc (LrgLightSet          *self,
                               const LrgLight3DDesc *desc);
+
+/**
+ * lrg_light_set_set_light_mode:
+ * @self: an #LrgLightSet
+ * @light: a point or spot light id
+ * @mode: its bake mode
+ *
+ * A light in %LRG_LIGHT_MODE_BAKED mode is skipped by draws that read a
+ * lightmap (its direct light is baked into it) and lights everything
+ * else; realtime and mixed lights light every draw.
+ * lrg_light_set_add_light_desc() sets it from the description's
+ * bake_mode.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_light_mode (LrgLightSet  *self,
+                              guint         light,
+                              LrgLightMode  mode);
+
+/**
+ * lrg_light_set_get_light_mode:
+ * @self: an #LrgLightSet
+ * @light: a light id
+ *
+ * Returns: the light's bake mode (%LRG_LIGHT_MODE_REALTIME for an
+ *   unknown light)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightMode
+lrg_light_set_get_light_mode (LrgLightSet *self,
+                              guint        light);
+
+/**
+ * lrg_light_set_set_directional_mode:
+ * @self: an #LrgLightSet
+ * @mode: the directional light's bake mode
+ *
+ * Like lrg_light_set_set_light_mode() for the directional light (kept
+ * across lrg_light_set_set_directional() calls).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_light_set_set_directional_mode (LrgLightSet  *self,
+                                    LrgLightMode  mode);
+
+/**
+ * lrg_light_set_get_directional_mode:
+ * @self: an #LrgLightSet
+ *
+ * Returns: the directional light's bake mode
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightMode
+lrg_light_set_get_directional_mode (LrgLightSet *self);
 
 G_END_DECLS

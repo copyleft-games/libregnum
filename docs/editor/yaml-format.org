@@ -472,6 +472,37 @@ environment:
   ambient: { color: [0.05, 0.05, 0.08] }
 #+end_src
 
+** Lighting
+:PROPERTIES:
+:CUSTOM_ID: lighting
+:END:
+Optional, additive (0.9.0 M3): the level's baked lighting. Written only when the level has a lightmap, a probe grid or a bake setting (=lrg_level_has_lighting()=); older readers ignore it. A malformed block (=probes= not a sequence, a setting that is not a number or boolean, =lightmap= not a scalar) fails the load with =LRG_LEVEL_ERROR_PARSE=.
+
+#+begin_src yaml
+lighting:
+  lightmap: maps/town.rlightmap        # .rlightmap index: path (relative to the level) or guid:<uuid>
+  probes:                              # .rprobes grids, same reference rules, any number
+    - maps/town-0.rprobes
+    - guid:3f2a9c4e-...
+  settings:                            # what the bake panel hands the baker; numbers, booleans as true/false or 0/1
+    texels_per_unit: 8                 # lightmap texels per world unit (times each mesh's lightmap_scale)
+    samples: 256                       # rays per texel / probe
+    bounces: 2                         # indirect bounces
+    max_lightmap_size: 1024            # largest atlas page edge
+    denoise: true                      # written back as 1
+    probe_spacing: 2                   # default world units between probes of a probe volume
+#+end_src
+
+| Key | Type | Meaning |
+|-+-+-|
+| =lightmap= | string | [[file:../modules/lighting/lightmap3d.org][LrgLightmap3D]] index; =lrg_level_get_lightmap_ref()= / =lrg_level_set_lightmap_ref()= |
+| =probes= | sequence of strings | [[file:../modules/lighting/probe-grid.org][LrgProbeGrid]] files, in order, without duplicates; =lrg_level_get_probe_refs()=, =lrg_level_add_probe_ref()=, =lrg_level_remove_probe_ref()= |
+| =settings= | mapping string -> number | bake settings; =lrg_level_set_bake_setting()=, =lrg_level_get_bake_setting()=, =lrg_level_get_bake_setting_keys()=; any key is kept (the baker documents the ones it reads) |
+
+=lrg_level_clear_lighting()= drops the block. At runtime =lrg_level_instantiate_3d()= loads the lightmap into =lrg_world3d_set_lightmap()= and each grid into =lrg_world3d_add_probe_grid()=; a reference that does not resolve or load logs a warning and is skipped (the level still loads, lit by realtime lights and the environment).
+
+Node params that steer the bake (they map onto component properties by name): =static_lighting= and =lightmap_scale= on primitive and mesh-asset visuals (=LrgMeshRendererComponent:static-lighting= / =lightmap-scale=), =bake_mode= (=realtime= / =mixed= / =baked=) on lights (=LrgLightComponent:bake-mode=). Lightmap entries are keyed by node GUID, which is why GUIDs must stay stable.
+
 ** Notes
 :PROPERTIES:
 :CUSTOM_ID: notes

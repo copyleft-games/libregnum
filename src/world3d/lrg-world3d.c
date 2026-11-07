@@ -791,6 +791,8 @@ struct _LrgWorld3D
 	/* Look (0.9.0 M2): used by renderers without their own */
 	LrgEnvironment *environment;   /* owned ref or NULL */
 	LrgPostStack   *post_stack;    /* owned ref or NULL */
+	LrgLightmap3D  *lightmap;      /* owned ref or NULL (0.9.0 M3) */
+	GPtrArray      *probe_grids;   /* LrgProbeGrid, owned refs (0.9.0 M3) */
 };
 
 G_DEFINE_FINAL_TYPE (LrgWorld3D, lrg_world3d, G_TYPE_OBJECT)
@@ -1027,6 +1029,8 @@ lrg_world3d_dispose (GObject *object)
 	g_clear_object (&self->octree);
 	g_clear_object (&self->environment);
 	g_clear_object (&self->post_stack);
+	g_clear_object (&self->lightmap);
+	g_clear_pointer (&self->probe_grids, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_world3d_parent_class)->dispose (object);
 }
@@ -2266,4 +2270,109 @@ lrg_world3d_get_post_stack (LrgWorld3D *self)
 	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
 
 	return self->post_stack;
+}
+
+/* ==========================================================================
+ * Baked lighting (0.9.0 M3)
+ * ========================================================================== */
+
+void
+lrg_world3d_set_lightmap (LrgWorld3D    *self,
+                          LrgLightmap3D *lightmap)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (lightmap == NULL || LRG_IS_LIGHTMAP3D (lightmap));
+
+	g_set_object (&self->lightmap, lightmap);
+}
+
+LrgLightmap3D *
+lrg_world3d_get_lightmap (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+
+	return self->lightmap;
+}
+
+/* the grid array, created on first use */
+static GPtrArray *
+ensure_probe_grids (LrgWorld3D *self)
+{
+	if (self->probe_grids == NULL)
+		self->probe_grids = g_ptr_array_new_with_free_func (g_object_unref);
+	return self->probe_grids;
+}
+
+void
+lrg_world3d_add_probe_grid (LrgWorld3D   *self,
+                            LrgProbeGrid *grid)
+{
+	GPtrArray *grids;
+
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (LRG_IS_PROBE_GRID (grid));
+
+	grids = ensure_probe_grids (self);
+	if (g_ptr_array_find (grids, grid, NULL))
+		return;
+	g_ptr_array_add (grids, g_object_ref (grid));
+}
+
+gboolean
+lrg_world3d_remove_probe_grid (LrgWorld3D   *self,
+                               LrgProbeGrid *grid)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), FALSE);
+
+	if (self->probe_grids == NULL || grid == NULL)
+		return FALSE;
+	return g_ptr_array_remove (self->probe_grids, grid);
+}
+
+void
+lrg_world3d_clear_probe_grids (LrgWorld3D *self)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+
+	if (self->probe_grids != NULL)
+		g_ptr_array_set_size (self->probe_grids, 0);
+}
+
+GPtrArray *
+lrg_world3d_get_probe_grids (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+
+	return ensure_probe_grids (self);
+}
+
+LrgProbeGrid *
+lrg_world3d_find_probe_grid (LrgWorld3D   *self,
+                             const gfloat *position)
+{
+	LrgProbeGrid *best = NULL;
+	gfloat        best_volume = G_MAXFLOAT;
+	guint         i;
+
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+	g_return_val_if_fail (position != NULL, NULL);
+
+	if (self->probe_grids == NULL)
+		return NULL;
+	for (i = 0; i < self->probe_grids->len; i++)
+	{
+		LrgProbeGrid *g = g_ptr_array_index (self->probe_grids, i);
+		gfloat        mn[3], mx[3], volume;
+
+		if (!lrg_probe_grid_contains (g, position) || lrg_probe_grid_get_n_valid (g) == 0)
+			continue;
+		lrg_probe_grid_get_bounds (g, mn, mx);
+		volume = (mx[0] - mn[0]) * (mx[1] - mn[1]) * (mx[2] - mn[2]);
+		if (volume < best_volume)
+		{
+			best = g;
+			best_volume = volume;
+		}
+	}
+	return best;
 }

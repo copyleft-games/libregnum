@@ -1,0 +1,278 @@
+* LrgLightmap3D - Baked Lighting of Static Geometry
+:PROPERTIES:
+:CUSTOM_ID: lrglightmap3d
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Lighting]]* > Lightmap (3D)
+#+end_quote
+
+A lightmap stores the light that reaches static surfaces, computed offline by the [[file:../../guides/lighting-bake.org][lighting bake]] (direct light of baked lights, every bounce, the sky), in HDR atlas pages. At runtime the lit shader reads it through each object's second UV set instead of the flat ambient or the environment's diffuse light, so static scenes get soft shadows, colour bleeding and sky occlusion at the cost of one texture lookup. It is the 3D counterpart of the 2D [[file:index.org][LrgLightmap]], which stays as it is.
+
+- *Type* - =LrgLightmap3D=, final GObject, =LRG_TYPE_LIGHTMAP3D=, GIR =Libregnum.Lightmap3D=
+- *Header* - =lighting/lrg-lightmap3d.h=
+- *Enums* - =LrgLightMode= (=LRG_TYPE_LIGHT_MODE=), =LrgLightmap3DError= (=LRG_TYPE_LIGHTMAP3D_ERROR=, domain =LRG_LIGHTMAP3D_ERROR=)
+- *Properties* - =intensity= (gfloat, read-write, default 1), =n-pages= (guint, read-only), =n-entries= (guint, read-only)
+- *Signal* - =changed= (no arguments): pages, entries or settings changed (a bake finished, a page was replaced, the lightmap was cleared); renderers and the editor refresh from it
+- *File format* - =.rlightmap= (YAML index) plus Radiance =.hdr= pages
+- *Since* - 0.9.0
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-concepts
+:END:
+*** Pages and entries
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-pages-entries
+:END:
+The lightmap is a list of *pages*, each an [[file:../graphics/hdr-image.org][LrgHdrImage]] of linear float RGB (rows from the top), and a table of *entries*, one per lightmapped object, keyed by the object's node / entity GUID string. An entry names the page the object's charts were packed into and a scale / offset that maps the object's second texture coordinate into the page:
+
+#+begin_example
+atlas_uv = uv2 * scale_offset.xy + scale_offset.zw
+#+end_example
+
+The object's =uv2= (raylib's =texcoords2= / the =vertexTexCoord2= attribute, glTF =TEXCOORD_1=) is unique per object (no overlapping charts) and spans 0 .. 1; the baker either takes it from the mesh or generates it with its chart unwrapper. Keying by GUID keeps the lightmap valid across saves and loads: the level's node GUID becomes the runtime entity's GUID (=lrg_level_instantiate_3d()=), so the renderer goes item -> entity -> GUID -> entry.
+
+*** What a texel holds
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-texel
+:END:
+Each texel is the *irradiance divided by pi* at that surface point, in linear radiance: the light a white Lambert surface reflects. The shader multiplies it by the material's (linear) albedo and the diffuse factor of the PBR model, exactly where it would otherwise use the environment's SH irradiance or the flat ambient. Specular reflections still come from the environment and reflection probes when they are active. Its scale matches =LrgEnvironment='s irradiance (=lrg_environment_sh_irradiance()=), so a lightmap baked under a constant sky of colour C shows C on an unoccluded white floor.
+
+*** Directional term: not stored (choice)
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-directional
+:END:
+0.9.0 stores only the non-directional term. A normal map therefore does not modulate baked light (it still modulates realtime and mixed lights and the specular term). This halves the storage, keeps the page format a plain =.hdr= and avoids the seams directional encodings show at chart borders. The index has a =directional: false= key reserved for a later dominant-direction or SH-per-texel variant; loaders ignore it today.
+
+*** Light modes
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-light-modes
+:END:
+Every light has a bake mode, =LrgLightMode= (=LrgLight3DDesc.bake_mode=, =LrgLightComponent:bake-mode=, node parameter =bake_mode=, =lrg_light_set_set_light_mode()=):
+
+| Mode | Baker | Runtime on a lightmapped draw | Runtime elsewhere (dynamic, probe-lit, not baked) |
+|-+-+-+-|
+| =realtime= (default) | ignores the light | lit | lit |
+| =mixed= | adds its *bounced* light to lightmaps and probes | lit (direct, shadows) | lit |
+| =baked= | stores its direct and bounced light in the lightmaps, bounced only in probes | *skipped* (its light is in the lightmap) | lit |
+
+Mixed is the usual choice for the sun: its shadows stay sharp and move with dynamic objects, while the bounce comes for free. Baked suits fill lights, lamps and emissive panels that never change; their shadows are soft (light radius) and cost nothing at runtime. A baked light still lights dynamic objects so they match the scene; the probe grids hold only its indirect light for that reason. The directional light's mode works the same (=lrg_light_set_set_directional_mode()=).
+
+The shader learns a light's mode through its point shadow slot: the light set uploads a baked light's slot plus 64 (=lightShadow[]= and the light grid's colour texel w); the lit library strips it and skips the light when the draw is lightmapped. The sun's mode is the =lrgBakedSun= uniform.
+
+*** Runtime path
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-runtime
+:END:
+1. The world holds the lightmap: =lrg_world3d_set_lightmap()= (=lrg_level_instantiate_3d()= sets it from the level's =lighting: lightmap:=).
+2. Per item, =LrgWorld3DRenderer= looks the item's entity GUID up in its world's lightmap (=lrg_lightmap3d_get_entry()=). With an entry it uploads the pages when needed and binds the page and the scale / offset (hook mode 1); otherwise it looks for a [[file:probe-grid.org][probe grid]] around the item's centre (mode 2); otherwise the hook stays inactive and the draw uses the environment or the ambient as before.
+3. Lightmapped items are never merged into the static batch (they need their own uv2 and entry).
+
+The shader side is the =LRG_BAKED_GLSL= hook of [[file:../graphics/light-set.org::#hooks][the light set]].
+
+** Format: =.rlightmap=
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-format
+:END:
+A YAML index next to its pages. =lrg_lightmap3d_save (lm, "maps/level.rlightmap", ...)= writes the pages as =maps/level-0.hdr=, =maps/level-1.hdr=, ...
+
+#+begin_src yaml
+version: 1                      # LRG_LIGHTMAP3D_FORMAT_VERSION; newer files are refused
+intensity: 1                    # multiplier on every texel
+directional: false              # reserved: only the irradiance term exists in 0.9.0
+pages:                          # Radiance .hdr files, relative to this file (absolute paths allowed)
+  - level-0.hdr
+  - level-1.hdr
+entries:                        # node / entity GUID -> placement
+  5f0c...-0001:
+    page: 0
+    scale_offset: [0.25, 0.25, 0.5, 0]    # su, sv, ou, ov: atlas_uv = uv2 * (su, sv) + (ou, ov)
+  5f0c...-0002:
+    page: 1
+    scale_offset: [0.5, 0.5, 0, 0.5]
+settings:                       # the bake settings that produced it (numbers; booleans as 0 / 1)
+  texels_per_unit: 8
+  samples: 256
+  bounces: 2
+  max_lightmap_size: 1024
+  denoise: 1
+#+end_src
+
+| Key | Type | Meaning |
+|-+-+-|
+| =version= | int | format version, 1 |
+| =intensity= | float | =LrgLightmap3D:intensity= |
+| =directional= | bool | reserved, written =false= |
+| =pages= | sequence of strings | page files; at most =LRG_LIGHTMAP3D_MAX_PAGES= (64) are read |
+| =entries= | mapping GUID -> ={page, scale_offset}= | =scale_offset= has exactly 4 numbers |
+| =settings= | mapping string -> number / bool | informational (=lrg_lightmap3d_get_setting()=); other value types are skipped |
+
+Pages are RGBE (=.hdr=), about 1% precision, 4 bytes a texel on disk and 12 (RGB32F) on the GPU. Errors: =LRG_LIGHTMAP3D_ERROR_IO= (unreadable index or page), =_FORMAT= (not a mapping, a malformed entry or page list), =_VERSION= (newer file), =_GPU= (no context at upload).
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-api
+:END:
+#+begin_src C
+#define LRG_LIGHTMAP3D_FORMAT_VERSION (1)
+#define LRG_LIGHTMAP3D_MAX_PAGES      (64)
+
+typedef enum { LRG_LIGHT_MODE_REALTIME, LRG_LIGHT_MODE_MIXED, LRG_LIGHT_MODE_BAKED } LrgLightMode;
+GType  lrg_light_mode_get_type (void);
+
+typedef enum {
+	LRG_LIGHTMAP3D_ERROR_FAILED, LRG_LIGHTMAP3D_ERROR_IO, LRG_LIGHTMAP3D_ERROR_FORMAT,
+	LRG_LIGHTMAP3D_ERROR_VERSION, LRG_LIGHTMAP3D_ERROR_GPU
+} LrgLightmap3DError;
+GType  lrg_lightmap3d_error_get_type (void);
+GQuark lrg_lightmap3d_error_quark (void);
+
+LrgLightmap3D *lrg_lightmap3d_new           (void);
+LrgLightmap3D *lrg_lightmap3d_new_from_file (const gchar *path, GError **error);
+gboolean       lrg_lightmap3d_save          (LrgLightmap3D *self, const gchar *path, GError **error);
+const gchar   *lrg_lightmap3d_get_path      (LrgLightmap3D *self);
+void           lrg_lightmap3d_clear         (LrgLightmap3D *self);
+
+/* pages */
+guint        lrg_lightmap3d_add_page            (LrgLightmap3D *self, LrgHdrImage *image);
+gboolean     lrg_lightmap3d_set_page            (LrgLightmap3D *self, guint page, LrgHdrImage *image);
+LrgHdrImage *lrg_lightmap3d_get_page            (LrgLightmap3D *self, guint page);
+guint        lrg_lightmap3d_get_n_pages         (LrgLightmap3D *self);
+void         lrg_lightmap3d_notify_page_changed (LrgLightmap3D *self, guint page);
+
+/* entries */
+void       lrg_lightmap3d_set_entry     (LrgLightmap3D *self, const gchar *guid, guint page,
+                                         const gfloat *scale_offset);
+gboolean   lrg_lightmap3d_get_entry     (LrgLightmap3D *self, const gchar *guid, guint *out_page,
+                                         gfloat *out_scale_offset);
+gboolean   lrg_lightmap3d_remove_entry  (LrgLightmap3D *self, const gchar *guid);
+guint      lrg_lightmap3d_get_n_entries (LrgLightmap3D *self);
+GPtrArray *lrg_lightmap3d_get_guids     (LrgLightmap3D *self);
+
+/* CPU sampling */
+gboolean lrg_lightmap3d_sample_page (LrgLightmap3D *self, guint page, gfloat u, gfloat v, gfloat *out_rgb);
+gboolean lrg_lightmap3d_sample      (LrgLightmap3D *self, const gchar *guid, const gfloat *uv2,
+                                     gfloat *out_rgb);
+
+/* settings, intensity */
+void       lrg_lightmap3d_set_setting      (LrgLightmap3D *self, const gchar *key, gdouble value);
+gboolean   lrg_lightmap3d_get_setting      (LrgLightmap3D *self, const gchar *key, gdouble *out_value);
+GPtrArray *lrg_lightmap3d_get_setting_keys (LrgLightmap3D *self);
+void       lrg_lightmap3d_set_intensity    (LrgLightmap3D *self, gfloat intensity);
+gfloat     lrg_lightmap3d_get_intensity    (LrgLightmap3D *self);
+
+/* GPU */
+gboolean lrg_lightmap3d_upload           (LrgLightmap3D *self, GError **error);
+void     lrg_lightmap3d_unload_gpu       (LrgLightmap3D *self);
+guint    lrg_lightmap3d_get_page_texture (LrgLightmap3D *self, guint page);
+#+end_src
+
+| Function | Notes |
+|-+-|
+| =lrg_lightmap3d_new()= | empty: no pages, entries or settings, intensity 1 (transfer full) |
+| =lrg_lightmap3d_new_from_file()= | loads the index and its pages; remembers the path; =NULL= with =error= (transfer full, nullable) |
+| =lrg_lightmap3d_save()= | writes the index and =<basename>-<n>.hdr= pages beside it, entries and settings sorted (stable diffs); remembers the path |
+| =lrg_lightmap3d_get_path()= | the file last loaded or saved (transfer none, nullable) |
+| =lrg_lightmap3d_clear()= | drops pages (and their textures), entries, settings; emits =changed= |
+| =lrg_lightmap3d_add_page()= | keeps a reference; returns the index or =G_MAXUINT= when 64 pages exist; emits =changed= |
+| =lrg_lightmap3d_set_page()= | replaces a page (re-uploaded on the next upload); =FALSE= for an unknown index |
+| =lrg_lightmap3d_get_page()= | transfer none, =NULL= for an unknown index |
+| =lrg_lightmap3d_notify_page_changed()= | after writing pixels in place (=lrg_hdr_image_get_data()=): marks the texture stale, emits =changed= |
+| =lrg_lightmap3d_set_entry()= | adds or replaces; =scale_offset= is 4 floats; emits =changed= |
+| =lrg_lightmap3d_get_entry()= | both out arguments optional; =FALSE= for a =NULL= or unknown GUID |
+| =lrg_lightmap3d_get_guids()= | sorted, transfer full (=g_ptr_array_unref()=) |
+| =lrg_lightmap3d_sample_page()= | bilinear, texel centres at =(i + 0.5) / size=, clamped edges (what =GL_LINEAR= + =CLAMP_TO_EDGE= return), times the intensity; black and =FALSE= for an unknown page |
+| =lrg_lightmap3d_sample()= | the same through an entry's scale / offset |
+| =lrg_lightmap3d_set_setting()= / =get_setting()= / =get_setting_keys()= | the =settings:= mapping; the baker records what it used |
+| =lrg_lightmap3d_set_intensity()= | clamped to >= 0; notifies =intensity= |
+| =lrg_lightmap3d_upload()= | needs a window; uploads stale pages as RGB32F, bilinear, clamped, no mipmaps; the renderer calls it lazily |
+| =lrg_lightmap3d_unload_gpu()= | frees the textures (re-made on demand); call before closing the window when the lightmap outlives it |
+| =lrg_lightmap3d_get_page_texture()= | the GL id, 0 when not uploaded or stale |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-examples
+:END:
+*** Loading a baked level
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-example-level
+:END:
+Nothing to do by hand: a level with a =lighting:= block gives the world its lightmap and grids.
+
+#+begin_src C
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+g_autoptr(LrgLevel)   level = lrg_level_load_world3d ("levels/town.rlevel", world, &error);
+
+/* each frame */
+lrg_world3d_renderer_render (renderer, world, camera, NULL, 0, 0);
+#+end_src
+
+*** Building a lightmap by hand (or in a baker)
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-example-build
+:END:
+#+begin_src C
+g_autoptr(LrgLightmap3D) lm = lrg_lightmap3d_new ();
+g_autoptr(LrgHdrImage)   page = lrg_hdr_image_new (1024, 1024);
+gfloat                   so[4] = { 0.25f, 0.25f, 0.0f, 0.5f };   /* the floor's charts: one quarter */
+gfloat                  *px;
+
+px = lrg_hdr_image_get_data (page, NULL);      /* write irradiance / pi, linear RGB */
+/* ... */
+lrg_lightmap3d_add_page (lm, page);
+lrg_lightmap3d_set_entry (lm, lrg_entity3d_get_guid (floor), 0, so);
+lrg_lightmap3d_set_setting (lm, "texels_per_unit", 8.0);
+lrg_lightmap3d_save (lm, "maps/town.rlightmap", &error);
+lrg_world3d_set_lightmap (world, lm);
+#+end_src
+
+*** Checking a baked value on the CPU
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-example-sample
+:END:
+#+begin_src C
+gfloat uv2[2] = { 0.5f, 0.5f }, rgb[3];
+
+if (lrg_lightmap3d_sample (lm, guid, uv2, rgb))
+	g_print ("irradiance / pi: %f %f %f\n", rgb[0], rgb[1], rgb[2]);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-performance
+:END:
+- Shader: one bilinear =texture()= per fragment of a lightmapped draw, replacing the nine-term SH sum of the environment (a lightmapped draw is slightly cheaper than an IBL-lit one). An inactive hook costs one integer compare.
+- Per item the renderer does one hash lookup (GUID) and, when the bound source changes, one batch flush plus three uniform writes and a texture bind; the GPU frame cost of the hook has not been benchmarked separately (measure real scenes with =lrg-bench=).
+- CPU (measured, release build, one core of the development machine): =lrg_lightmap3d_sample_page()= about 120 ns a call; saving a 1024 x 1024 page about 26 ms, loading it about 22 ms (RGBE encode / decode, 78 KB on disk for a flat page, up to 4 MB for a noisy one).
+- Memory: a 1024 x 1024 page is 12 MB on the GPU (RGB32F) and about 4 MB on disk; prefer a few large pages to many small ones (each page is a texture switch between items).
+- Lightmapped items are kept out of the static batch; static scenes that are fully lightmapped therefore draw one call per item.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-pitfalls
+:END:
+- A mesh without a second UV set reads uv2 = (0, 0) everywhere (raylib's default attribute): the whole object shows one texel. Bake through the baker (which generates uv2) or import glTF with =TEXCOORD_1=.
+- The entry is per entity: two mesh renderers on one entity share it. Give separately baked parts their own entities.
+- Duplicating a node in the editor gives it a fresh GUID: it has no entry until the next bake and falls back to probes / ambient.
+- A custom lit shader (=LrgShaderAsset=) must call =lrg_baked_set_uv2(fragTexCoord2)= in its =main()= (and declare =in vec2 fragTexCoord2;=) to read lightmaps; otherwise it samples the entry's offset texel. Probe lighting needs nothing extra.
+- Texels are linear radiance: do not write display (sRGB) values into pages.
+- Bilinear filtering reads half a texel past a chart's edge: a chart that ends exactly on the scale / offset border blends with its neighbour in the atlas. The baker pads and dilates charts (gutters); hand-made atlases need the same.
+- Moving or scaling a lightmapped object keeps its old light: bake again (the runtime cannot know).
+- =unload_gpu()= before closing the window if the lightmap outlives it (the world's reference usually does).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-editor
+:END:
+The editor's bake tools arrive in the next 0.9.0 wave: the *bake panel* (settings stored in the level's =lighting: settings:=, bake / cancel with progress from =LrgLightmapBaker='s =progress= signal, the result written as =<level>.rlightmap= next to the level and referenced from =lighting: lightmap:=), the *lightmap scale* field in the inspector (the mesh renderer's =lightmap_scale= node parameter), a *static lighting* toggle (=static_lighting=) and a *bake mode* field on lights (=bake_mode=). Until then set these parameters in the inspector's raw parameter table or in the =.rlevel= text, bake from C, and the play view shows the result, since play-in-editor instantiates the level through =lrg_level_instantiate_3d()=. =lrg_lightmap3d_get_guids()= and the =changed= signal are the hooks for a lightmap preview (per-object texel density overlay).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: lightmap3d-see-also
+:END:
+- [[file:probe-grid.org][LrgProbeGrid]] - baked light for dynamic and non-lightmapped objects
+- [[file:../../guides/lighting-bake.org][Lighting bake guide]] - the whole workflow
+- [[file:../graphics/light-set.org::#hooks][LrgLightSet hooks]] - =LRG_BAKED_GLSL=
+- [[file:environment.org][LrgEnvironment]] - the SH convention and the sky the baker samples
+- [[file:../world3d/renderer.org][LrgWorld3DRenderer]] - per-item binding
+- [[file:../../editor/yaml-format.org::#lighting][.rlevel lighting: block]]

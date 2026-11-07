@@ -53,6 +53,10 @@ struct _LrgMeshRendererComponent
 	gboolean          double_sided;
 	gboolean          unlit;
 	gint              layer;
+
+	/* Baked lighting (0.9.0 M3) */
+	gboolean          static_lighting;
+	gfloat            lightmap_scale;
 };
 
 G_DEFINE_FINAL_TYPE (LrgMeshRendererComponent, lrg_mesh_renderer_component, LRG_TYPE_COMPONENT)
@@ -89,6 +93,8 @@ enum
 	PROP_DOUBLE_SIDED,
 	PROP_UNLIT,
 	PROP_LAYER,
+	PROP_STATIC_LIGHTING,
+	PROP_LIGHTMAP_SCALE,
 	N_PROPS
 };
 
@@ -457,6 +463,8 @@ lrg_mesh_renderer_component_get_property (GObject    *object,
 	case PROP_DOUBLE_SIDED:      g_value_set_boolean (value, self->double_sided); break;
 	case PROP_UNLIT:             g_value_set_boolean (value, self->unlit); break;
 	case PROP_LAYER:             g_value_set_int (value, self->layer); break;
+	case PROP_STATIC_LIGHTING:   g_value_set_boolean (value, self->static_lighting); break;
+	case PROP_LIGHTMAP_SCALE:    g_value_set_float (value, self->lightmap_scale); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -554,6 +562,12 @@ lrg_mesh_renderer_component_set_property (GObject      *object,
 		break;
 	case PROP_LAYER:
 		lrg_mesh_renderer_component_set_layer (self, g_value_get_int (value));
+		break;
+	case PROP_STATIC_LIGHTING:
+		lrg_mesh_renderer_component_set_static_lighting (self, g_value_get_boolean (value));
+		break;
+	case PROP_LIGHTMAP_SCALE:
+		lrg_mesh_renderer_component_set_lightmap_scale (self, g_value_get_float (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -818,6 +832,27 @@ lrg_mesh_renderer_component_class_init (LrgMeshRendererComponentClass *klass)
 	properties[PROP_LAYER] =
 		g_param_spec_int ("layer", NULL, "Render layer (-1 entity)", -1, 31, -1, rw);
 
+	/**
+	 * LrgMeshRendererComponent:static-lighting:
+	 *
+	 * Whether the mesh takes part in the lighting bake (since 0.9.0): it
+	 * casts and bounces light for the baker and receives a lightmap
+	 * entry (keyed by its entity's GUID).  Only meaningful for meshes
+	 * that never move.  Node parameter `static_lighting`.
+	 */
+	properties[PROP_STATIC_LIGHTING] = bool_prop ("static-lighting", "Contributes to and receives the lighting bake", FALSE);
+
+	/**
+	 * LrgMeshRendererComponent:lightmap-scale:
+	 *
+	 * Multiplier on the bake's texels per unit for this mesh (since
+	 * 0.9.0): 2 gives it twice the lightmap resolution, 0.5 half; 0
+	 * keeps it out of the lightmaps (it still contributes to the bake
+	 * and is lit by the probe grids).  Node parameter `lightmap_scale`.
+	 */
+	properties[PROP_LIGHTMAP_SCALE] =
+		g_param_spec_float ("lightmap-scale", NULL, "Lightmap resolution multiplier", 0.0f, 16.0f, 1.0f, rw);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -836,6 +871,7 @@ lrg_mesh_renderer_component_init (LrgMeshRendererComponent *self)
 	self->cast_shadows = TRUE;
 	self->receive_shadows = TRUE;
 	self->layer = -1;
+	self->lightmap_scale = 1.0f;
 	self->scalar_material = lrg_material3d_new ();
 	sync_scalar_material (self);
 }
@@ -1242,4 +1278,46 @@ lrg_mesh_renderer_component_clear_submesh_materials (LrgMeshRendererComponent *s
 {
 	g_return_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self));
 	g_clear_pointer (&self->submesh, g_ptr_array_unref);
+}
+
+gboolean
+lrg_mesh_renderer_component_get_static_lighting (LrgMeshRendererComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self), FALSE);
+
+	return self->static_lighting;
+}
+
+void
+lrg_mesh_renderer_component_set_static_lighting (LrgMeshRendererComponent *self,
+                                                 gboolean                  static_lighting)
+{
+	g_return_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self));
+
+	static_lighting = static_lighting != FALSE;
+	if (self->static_lighting == static_lighting)
+		return;
+	self->static_lighting = static_lighting;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_STATIC_LIGHTING]);
+}
+
+gfloat
+lrg_mesh_renderer_component_get_lightmap_scale (LrgMeshRendererComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self), 1.0f);
+
+	return self->lightmap_scale;
+}
+
+void
+lrg_mesh_renderer_component_set_lightmap_scale (LrgMeshRendererComponent *self,
+                                                gfloat                    scale)
+{
+	g_return_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self));
+
+	scale = isfinite (scale) ? CLAMP (scale, 0.0f, 16.0f) : 1.0f;
+	if (self->lightmap_scale == scale)
+		return;
+	self->lightmap_scale = scale;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LIGHTMAP_SCALE]);
 }

@@ -151,6 +151,12 @@ const gchar    *lrg_light_set_get_glsl_library  (void);   /* no #version, no mai
 const gchar    *lrg_light_set_get_vertex_source (void);   /* complete vertex shader */
 gboolean        lrg_light_set_bind_shader   (LrgLightSet *self, GrlShader *shader); /* a user lit program */
 void            lrg_light_set_forget_shader (LrgLightSet *self, GrlShader *shader);
+
+/* 0.9.0 M3: bake modes (see lighting/lightmap3d.org) */
+void         lrg_light_set_set_light_mode       (LrgLightSet *self, guint light, LrgLightMode mode);
+LrgLightMode lrg_light_set_get_light_mode       (LrgLightSet *self, guint light);   /* REALTIME if unknown */
+void         lrg_light_set_set_directional_mode (LrgLightSet *self, LrgLightMode mode);
+LrgLightMode lrg_light_set_get_directional_mode (LrgLightSet *self);
 #+end_src
 
 ** Semantics
@@ -171,7 +177,9 @@ brdf(l) = ((1 - F)(1 - metallic) * albedo + pi * D G F / (4 N.V N.L)) * N.L
 sun     = brdf(-sunDirection) * lin(sunColor) * sun_shadow
 light_i = brdf(L_i) * lin(color_i * intensity_i * k_i^2 * cone_i) * shadow_i,
           k = clamp(1 - dist / radius, 0, 1), cone = smoothstep(cos outer, cos inner, cos angle)
-indirect = environment active ? kd * albedo * env_diffuse(n) + env_specular(n, v, roughness) * (F0 * brdf_lut.x + brdf_lut.y)
+indirect = baked active (0.9.0 M3) ? the same with lrg_baked_diffuse(p, n) for env_diffuse(n) (environment on)
+                                    or lrg_baked_diffuse(p, n) * albedo (environment off)
+         : environment active ? kd * albedo * env_diffuse(n) + env_specular(n, v, roughness) * (F0 * brdf_lut.x + brdf_lut.y)
                               : lin(ambient) * albedo
 radiance = sun + sum light_i + indirect * occlusion * ssao        (light limit applied here)
 colour   = display(radiance + emission)  -> ground overlay -> volumetric air -> fog -> output encoding
@@ -259,6 +267,12 @@ A spot light is a point light (same id space, same position / colour / radius / 
 :CUSTOM_ID: render-layers
 :END:
 =set_light_layers (id, mask)= limits a point or spot light to the [[file:render-layers.org][render layers]] in =mask= (every layer by default); =set_draw_layers (mask)= tells the shader the layers of what draws next (uploaded at once and by every =apply()=).  A light whose mask shares no bit with the draw's is skipped for that draw; the sun and the ambient reach everything.  The 32-bit masks travel as two 16-bit halves (=drawLayers= ivec2, the light texel's =zw=).  =set_light_shadow_bias (id, bias)= gives one light its own shadow depth bias in world units (0 = the shadow renderer's).
+
+*** Bake modes (0.9.0 M3)
+:PROPERTIES:
+:CUSTOM_ID: bake-modes
+:END:
+Each point / spot light and the directional light carry an =LrgLightMode= (realtime, mixed, baked; =lrg_light_set_set_light_mode()=, =lrg_light_set_set_directional_mode()=, or the description's =bake_mode= through =add_light_desc()=, which sets both).  A *baked* light is skipped by draws that read a [[file:../lighting/lightmap3d.org][lightmap]] (its light is in it) and lights every other draw; realtime and mixed lights light everything.  The light set uploads a baked light's point shadow slot plus 64 (=lightShadow[]= and the light grid's colour texel w; the library subtracts it again) and the directional light's flag as =lrgBakedSun=.  Modes do not change =sample()=, selection or shadows.  =lrg_light_set_get_directional_mode()= keeps its value across =set_directional()= calls; =LrgWorld3DRenderer= resets it to realtime for its default sun.
 
 *** Lights from components (0.9.0)
 :PROPERTIES:
@@ -381,6 +395,7 @@ The uniforms persist in the program, so a draw without a material must restore t
 | 12, 13 | sun and point shadow atlases |
 | 14, 15 | light grid textures |
 | 16 .. min (GL_MAX_TEXTURE_IMAGE_UNITS, 32) - 1 | hook binders (=LRG_LIGHT_SET_HOOK_UNIT=) |
+| (hook window, in binder order) | environment (1 .. 4), baked probes =sampler3D= + lightmap =sampler2D= (2), SSAO (1), decals |
 
 OpenGL 3.3 guarantees only 16 fragment texture units.  The light set queries =GL_MAX_TEXTURE_IMAGE_UNITS= once (through =rlGetProcAddress ("glGetIntegerv")=): with more than 16 the hooks start at 16, with exactly 16 they get units 7 .. 10 and a hook that finds no unit left binds its inactive state.  Every desktop driver of the last decade (and llvmpipe, 32) has more than 16.
 
@@ -394,23 +409,25 @@ Three GLSL snippets, each owned by its feature's private header, are pasted into
 |-+-+-|
 | =LRG_ENV_GLSL= (=lighting/lrg-environment-glsl-private.h=) | =bool lrg_env_active()=, =vec3 lrg_env_diffuse(vec3 n)=, =vec3 lrg_env_specular(vec3 n, vec3 v, float rough)=, =vec2 lrg_env_brdf(float nv, float rough)= | indirect light when active (linear radiance), else the flat ambient |
 | =LRG_SSAO_GLSL= (=graphics/lrg-ssao-glsl-private.h=) | =float lrg_ssao()= | multiplies the indirect light (with the material occlusion) |
+| =LRG_BAKED_GLSL= (=lighting/lrg-baked-glsl-private.h=, 0.9.0 M3) | =void lrg_baked_set_uv2(vec2 uv2)=, =bool lrg_baked_active()=, =bool lrg_baked_lightmapped()=, =vec3 lrg_baked_diffuse(vec3 p, vec3 n)= | when active, the indirect diffuse (irradiance / pi, linear) comes from the draw's lightmap texel at uv2 or its probe grid's SH at =p=, =n= instead of =lrg_env_diffuse()= / the ambient (environment specular stays); a lightmapped draw also skips baked lights and a baked sun |
 | =LRG_DECAL_GLSL= (=graphics/lrg-decal-glsl-private.h=) | =void lrg_decals_apply(vec3 p, vec3 ng, inout vec4 albedo, inout vec3 n, inout float rough, inout float metal)= | after material sampling, before lighting; =albedo= is linear |
 
 Each header also declares a binder, called by every =lrg_light_set_apply()= in this order with the lit program enabled:
 
 #+begin_src C
 void lrg_environment_bind_private (LrgEnvironment *env, guint shader_id, gint *texture_unit);
+void lrg_baked_lighting_bind_private (guint shader_id, gint *texture_unit);   /* 0.9.0 M3 */
 void lrg_ssao_bind_private (LrgSsao *ssao, guint shader_id, gint *texture_unit);
 void lrg_decal_set_bind_private (LrgDecalSet *decals, guint shader_id, gint *texture_unit);
 #+end_src
 
-A =NULL= object binds the inactive state (uniform switches off).  Binders look their uniforms up per program id, take texture units from =*texture_unit= upward (checking each with =lrg_light_set_hook_unit_usable()= from =graphics/lrg-light-set-private.h=) and advance it.  A =samplerCube= must always point at a unit of its own, even when inactive: left on unit 0 beside the =sampler2D= =texture0= it makes every draw fail with =GL_INVALID_OPERATION=.  =set_environment()=, =set_ssao()= and =set_decals()= hold references.
+A =NULL= object binds the inactive state (uniform switches off).  The baked binder has no object: it claims two units (the probe =sampler3D= first, then the lightmap =sampler2D=, which falls back to unit 0 beside =texture0= when no unit is left), remembers them per program id and binds the inactive state; the per-draw source is chosen afterwards by =lrg_baked_lighting_set_draw_private (shader_id, lightmap, page, scale_offset, grid, origin)=, which [[file:../world3d/renderer.org][LrgWorld3DRenderer]] calls for every lit item (and calls again with =NULL= sources after a baked draw so the next draw does not inherit it).  On a 16-unit driver the window 7 .. 10 then holds the environment (7), the probes (8), the lightmap (9) and SSAO (10); decals get no unit there.  Binders look their uniforms up per program id, take texture units from =*texture_unit= upward (checking each with =lrg_light_set_hook_unit_usable()= from =graphics/lrg-light-set-private.h=) and advance it.  A =samplerCube= must always point at a unit of its own, even when inactive: left on unit 0 beside the =sampler2D= =texture0= it makes every draw fail with =GL_INVALID_OPERATION=.  =set_environment()=, =set_ssao()= and =set_decals()= hold references.
 
 *** GLSL library for user shaders
 :PROPERTIES:
 :CUSTOM_ID: glsl-library
 :END:
-=lrg_light_set_get_glsl_library()= returns every uniform, hook and function above without =#version=, varyings or =main()=; =lrg_light_set_get_vertex_source()= the complete vertex shader (raylib's attribute and matrix names in; =fragPosition=, =fragTexCoord=, =fragColor=, =fragNormal= out, in draw space).  A user fragment shader is:
+=lrg_light_set_get_glsl_library()= returns every uniform, hook and function above without =#version=, varyings or =main()=; =lrg_light_set_get_vertex_source()= the complete vertex shader (raylib's attribute and matrix names in, =vertexTexCoord2= included; =fragPosition=, =fragTexCoord=, =fragColor=, =fragNormal= and, since 0.9.0 M3, =fragTexCoord2= out, in draw space).  A user fragment shader that should read lightmaps declares =in vec2 fragTexCoord2;= and calls =lrg_baked_set_uv2(fragTexCoord2);= first in =main()= (the built-in =main()= does); probe lighting needs nothing.  A user fragment shader is:
 
 #+begin_src C
 g_autofree gchar *fs = g_strconcat ("#version 330\n"
@@ -448,7 +465,7 @@ The library declares =texture0=, =colDiffuse= and the rest: a user shader must n
 - Per light the GGX path adds one =normalize=, two =pow= and about a dozen multiply-adds to the old Lambert term; the 16-light / grid-slot cap keeps the worst case bounded.  The 0.9.0 change has not been benchmarked separately; measure with =lrg-bench= before raising the slot count.
 - Spot cones cost one dot product and a smoothstep; a spot shadow is one perspective lookup with the PCF taps of the renderer's filter.
 - The grid's light texture grew from two to four texels a light (16 KB per 1024 lights); it is still re-sent only when its texels change.
-- The hooks cost one uniform test each when inactive.
+- The hooks cost one uniform test each when inactive.  An active baked hook costs one texture lookup (lightmap) or seven 3D lookups and the SH sum (probe grid) per fragment.
 
 ** Pitfalls
 :PROPERTIES:

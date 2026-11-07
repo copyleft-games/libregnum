@@ -427,4 +427,45 @@ void lrg_mesh_renderer_component_set_layer (LrgMeshRendererComponent *self,
 LRG_AVAILABLE_IN_ALL
 LrgRenderItemFlags lrg_mesh_renderer_component_get_flags (LrgMeshRendererComponent *self);
 
+/**
+ * lrg_mesh_renderer_component_get_static_lighting:
+ * @self: a #LrgMeshRendererComponent
+ *
+ * Returns: #LrgMeshRendererComponent:static-lighting
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_mesh_renderer_component_get_static_lighting (LrgMeshRendererComponent *self);
+
+/**
+ * lrg_mesh_renderer_component_set_static_lighting:
+ * @self: a #LrgMeshRendererComponent
+ * @static_lighting: whether the mesh takes part in the lighting bake
+ *
+ * Sets #LrgMeshRendererComponent:static-lighting.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_mesh_renderer_component_set_static_lighting (LrgMeshRendererComponent *self,
+                                                      gboolean                  static_lighting);
+
+/**
+ * lrg_mesh_renderer_component_get_lightmap_scale:
+ * @self: a #LrgMeshRendererComponent
+ *
+ * Returns: #LrgMeshRendererComponent:lightmap-scale
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_mesh_renderer_component_get_lightmap_scale (LrgMeshRendererComponent *self);
+
+/**
+ * lrg_mesh_renderer_component_set_lightmap_scale:
+ * @self: a #LrgMeshRendererComponent
+ * @scale: multiplier on the bake's texels per unit (0 .. 16; 0 keeps
+ *   the mesh out of the lightmaps)
+ *
+ * Sets #LrgMeshRendererComponent:lightmap-scale.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_mesh_renderer_component_set_lightmap_scale (LrgMeshRendererComponent *self,
+                                                     gfloat                    scale);
+
 G_END_DECLS

@@ -28,6 +28,11 @@ The 3D scene's indirect light (0.9.0):
 - [[file:reflection-probe.org][LrgReflectionProbe]] - box-projected local reflection cubemaps blended into the environment's specular light
 - [[file:volumetric-fog.org][LrgVolumetricFog]] - screen-space ray-marched height fog with sun shafts, half-resolution with a bilateral upsample
 
+Baked lighting (0.9.0 M3, see the [[file:../../guides/lighting-bake.org][lighting bake guide]]):
+
+- [[file:lightmap3d.org][LrgLightmap3D]] - HDR lightmap atlas pages and per-object (GUID) uv2 entries, the =.rlightmap= format, light modes (realtime / mixed / baked)
+- [[file:probe-grid.org][LrgProbeGrid]] - boxes of L2 SH irradiance probes for dynamic and non-lightmapped objects, the =.rprobes= format
+
 ** Quick Start
 :PROPERTIES:
 :CUSTOM_ID: quick-start

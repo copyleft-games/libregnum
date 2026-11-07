@@ -281,4 +281,116 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_level_remove_timeline (LrgLevel *self,
                                     guint     index);
 
+/**
+ * lrg_level_get_lightmap_ref:
+ * @self: an #LrgLevel
+ *
+ * The `lighting: lightmap:` reference: a `.rlightmap` path (relative to
+ * the level file) or a `guid:` asset reference (since 0.9.0).
+ *
+ * Returns: (transfer none) (nullable): the reference
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_level_get_lightmap_ref (LrgLevel *self);
+
+/**
+ * lrg_level_set_lightmap_ref:
+ * @self: an #LrgLevel
+ * @ref: (nullable): a `.rlightmap` path or `guid:` reference, %NULL or
+ *   empty to drop it
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_lightmap_ref (LrgLevel    *self,
+                                 const gchar *ref);
+
+/**
+ * lrg_level_add_probe_ref:
+ * @self: an #LrgLevel
+ * @ref: a `.rprobes` path or `guid:` reference
+ *
+ * Appends to `lighting: probes:` (a reference already listed is not
+ * added twice).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_add_probe_ref (LrgLevel    *self,
+                              const gchar *ref);
+
+/**
+ * lrg_level_remove_probe_ref:
+ * @self: an #LrgLevel
+ * @ref: a listed reference
+ *
+ * Returns: %TRUE when @ref was listed
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_remove_probe_ref (LrgLevel    *self,
+                                     const gchar *ref);
+
+/**
+ * lrg_level_get_probe_refs:
+ * @self: an #LrgLevel
+ *
+ * Returns: (transfer none) (element-type utf8): the `lighting: probes:`
+ *   references, in file order
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *lrg_level_get_probe_refs (LrgLevel *self);
+
+/**
+ * lrg_level_set_bake_setting:
+ * @self: an #LrgLevel
+ * @key: a bake setting (texels_per_unit, samples, bounces,
+ *   max_lightmap_size, denoise, probe_spacing, ...)
+ * @value: its value (booleans as 0 / 1)
+ *
+ * Sets one entry of `lighting: settings:`, the settings the editor's
+ * bake panel hands the baker.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_bake_setting (LrgLevel    *self,
+                                 const gchar *key,
+                                 gdouble      value);
+
+/**
+ * lrg_level_get_bake_setting:
+ * @self: an #LrgLevel
+ * @key: a bake setting
+ * @out_value: (out) (optional): its value
+ *
+ * Returns: %TRUE when @key is set
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_get_bake_setting (LrgLevel    *self,
+                                     const gchar *key,
+                                     gdouble     *out_value);
+
+/**
+ * lrg_level_get_bake_setting_keys:
+ * @self: an #LrgLevel
+ *
+ * Returns: (transfer full) (element-type utf8): the set bake settings,
+ *   sorted
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *lrg_level_get_bake_setting_keys (LrgLevel *self);
+
+/**
+ * lrg_level_has_lighting:
+ * @self: an #LrgLevel
+ *
+ * Returns: %TRUE when the level has a lightmap, probe grids or bake
+ *   settings (and therefore a `lighting:` block)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_has_lighting (LrgLevel *self);
+
+/**
+ * lrg_level_clear_lighting:
+ * @self: an #LrgLevel
+ *
+ * Drops the whole `lighting:` block.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_clear_lighting (LrgLevel *self);
+
 G_END_DECLS

@@ -38,6 +38,8 @@
 #include "lrg-bounding-box3d.h"
 #include "lrg-entity3d.h"
 #include "../lighting/lrg-environment.h"
+#include "../lighting/lrg-lightmap3d.h"
+#include "../lighting/lrg-probe-grid.h"
 #include "../postprocess/lrg-post-stack.h"
 
 G_BEGIN_DECLS
@@ -174,6 +176,8 @@ typedef struct _LrgLight3DDesc LrgLight3DDesc;
  *   (%LRG_RENDER_LAYERS_MASK_ALL by default)
  * @source: (nullable): the object that registered the light (normally a
  *   light component); not owned
+ * @bake_mode: how the light takes part in baked lighting (since 0.9.0;
+ *   %LRG_LIGHT_MODE_REALTIME by default)
  *
  * The renderer-facing description of one light.  Light components fill
  * it from their properties and their entity's world transform and push it
@@ -194,9 +198,10 @@ struct _LrgLight3DDesc
 	gfloat          direction[3];
 	guint32         layer_mask;
 	GObject        *source;
+	LrgLightMode    bake_mode;
 
 	/*< private >*/
-	gpointer _reserved[4];
+	gpointer _reserved[3];
 };
 
 LRG_AVAILABLE_IN_ALL
@@ -1193,5 +1198,88 @@ void lrg_world3d_set_post_stack (LrgWorld3D   *self,
  */
 LRG_AVAILABLE_IN_ALL
 LrgPostStack * lrg_world3d_get_post_stack (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_set_lightmap:
+ * @self: a #LrgWorld3D
+ * @lightmap: (nullable): the world's baked lightmap, or %NULL
+ *
+ * Sets the lightmap renderers read per item: an item whose entity GUID
+ * has an entry draws its indirect light (and the direct light of
+ * %LRG_LIGHT_MODE_BAKED lights) from it.  lrg_level_instantiate_3d()
+ * sets the level's `lighting: lightmap:` here.  The world holds a
+ * reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_set_lightmap (LrgWorld3D    *self,
+                               LrgLightmap3D *lightmap);
+
+/**
+ * lrg_world3d_get_lightmap:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the world's lightmap
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightmap3D * lrg_world3d_get_lightmap (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_add_probe_grid:
+ * @self: a #LrgWorld3D
+ * @grid: a probe grid
+ *
+ * Adds a grid lighting items without a lightmap entry (several grids may
+ * overlap: see lrg_world3d_find_probe_grid()).  Adding a grid twice does
+ * nothing.  The world holds a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_add_probe_grid (LrgWorld3D   *self,
+                                 LrgProbeGrid *grid);
+
+/**
+ * lrg_world3d_remove_probe_grid:
+ * @self: a #LrgWorld3D
+ * @grid: a probe grid
+ *
+ * Returns: %TRUE when @grid was in the world
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_remove_probe_grid (LrgWorld3D   *self,
+                                        LrgProbeGrid *grid);
+
+/**
+ * lrg_world3d_clear_probe_grids:
+ * @self: a #LrgWorld3D
+ *
+ * Removes every probe grid.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_clear_probe_grids (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_get_probe_grids:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (element-type LrgProbeGrid): the grids, in
+ *   the order they were added
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_world3d_get_probe_grids (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_find_probe_grid:
+ * @self: a #LrgWorld3D
+ * @position: (array fixed-size=3): a world position
+ *
+ * The grid lighting @position: among the grids that contain it and have
+ * a valid probe, the one with the smallest box (the most detailed);
+ * ties go to the grid added first.
+ *
+ * Returns: (transfer none) (nullable): the grid, %NULL when none
+ *   contains @position
+ */
+LRG_AVAILABLE_IN_ALL
+LrgProbeGrid * lrg_world3d_find_probe_grid (LrgWorld3D   *self,
+                                            const gfloat *position);
 
 G_END_DECLS

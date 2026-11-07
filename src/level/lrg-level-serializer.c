@@ -457,6 +457,168 @@ seq_get_double (YamlSequence *seq,
 }
 
 /* ==========================================================================
+ * The `lighting:` block (0.9.0 M3)
+ *
+ * lighting:
+ *   lightmap: lightmaps/level.rlightmap     # path (relative to the level) or guid:...
+ *   probes: [lightmaps/hall.rprobes, guid:...]
+ *   settings: { texels_per_unit: 8, samples: 256, bounces: 2,
+ *               max_lightmap_size: 1024, denoise: 1, probe_spacing: 2 }
+ * ========================================================================== */
+
+/* the `lighting:` mapping of @level */
+static YamlMapping *
+build_lighting_mapping (LrgLevel *level)
+{
+	YamlMapping          *map = yaml_mapping_new ();
+	GPtrArray            *probes = lrg_level_get_probe_refs (level);
+	g_autoptr(GPtrArray)  keys = lrg_level_get_bake_setting_keys (level);
+	guint                 i;
+
+	if (lrg_level_get_lightmap_ref (level) != NULL)
+		yaml_mapping_set_string_member (map, "lightmap", lrg_level_get_lightmap_ref (level));
+	if (probes->len > 0)
+	{
+		g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+
+		for (i = 0; i < probes->len; i++)
+			yaml_sequence_add_string_element (seq, g_ptr_array_index (probes, i));
+		yaml_mapping_set_sequence_member (map, "probes", seq);
+	}
+	if (keys->len > 0)
+	{
+		g_autoptr(YamlMapping) settings = yaml_mapping_new ();
+
+		for (i = 0; i < keys->len; i++)
+		{
+			const gchar         *key = g_ptr_array_index (keys, i);
+			gdouble              v = 0.0;
+			gchar                buf[G_ASCII_DTOSTR_BUF_SIZE];
+			g_autoptr(YamlNode)  n = NULL;
+
+			lrg_level_get_bake_setting (level, key, &v);
+			n = yaml_node_new_scalar (g_ascii_formatd (buf, sizeof buf, "%.9g", v), YAML_SCALAR_STYLE_PLAIN);
+			yaml_mapping_set_member (settings, key, n);
+		}
+		yaml_mapping_set_mapping_member (map, "settings", settings);
+	}
+	return map;
+}
+
+/* a scalar as a number: numbers, and true / yes / false / no as 1 / 0 */
+static gboolean
+lighting_number (YamlNode *node,
+                 gdouble  *out)
+{
+	const gchar *s;
+	gchar       *end = NULL;
+
+	if (node == NULL || yaml_node_get_node_type (node) != YAML_NODE_SCALAR)
+		return FALSE;
+	s = yaml_node_get_scalar (node);
+	if (s == NULL)
+		return FALSE;
+	if (g_ascii_strcasecmp (s, "true") == 0 || g_ascii_strcasecmp (s, "yes") == 0)
+	{
+		*out = 1.0;
+		return TRUE;
+	}
+	if (g_ascii_strcasecmp (s, "false") == 0 || g_ascii_strcasecmp (s, "no") == 0)
+	{
+		*out = 0.0;
+		return TRUE;
+	}
+	*out = g_ascii_strtod (s, &end);
+	return end != s && *end == '\0';
+}
+
+/* reads a `lighting:` node into @level; FALSE with @error when malformed */
+static gboolean
+parse_lighting (LrgLevel  *level,
+                YamlNode  *node,
+                GError   **error)
+{
+	YamlMapping *map;
+	YamlNode    *member;
+
+	if (yaml_node_get_node_type (node) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, "must be a mapping");
+		return FALSE;
+	}
+	map = yaml_node_get_mapping (node);
+
+	member = yaml_mapping_get_member (map, "lightmap");
+	if (member != NULL && !yaml_node_is_null (member))
+	{
+		if (yaml_node_get_node_type (member) != YAML_NODE_SCALAR)
+		{
+			g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+			                     "lightmap must be a path or guid: reference");
+			return FALSE;
+		}
+		lrg_level_set_lightmap_ref (level, yaml_node_get_scalar (member));
+	}
+
+	member = yaml_mapping_get_member (map, "probes");
+	if (member != NULL && !yaml_node_is_null (member))
+	{
+		YamlSequence *seq;
+		guint         i, n;
+
+		if (yaml_node_get_node_type (member) != YAML_NODE_SEQUENCE)
+		{
+			g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+			                     "probes must be a sequence of paths or guid: references");
+			return FALSE;
+		}
+		seq = yaml_node_get_sequence (member);
+		n = yaml_sequence_get_length (seq);
+		for (i = 0; i < n; i++)
+		{
+			const gchar *ref = yaml_sequence_get_string_element (seq, i);
+
+			if (ref == NULL || *ref == '\0')
+			{
+				g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+				             "probes[%u] is not a path or guid: reference", i);
+				return FALSE;
+			}
+			lrg_level_add_probe_ref (level, ref);
+		}
+	}
+
+	member = yaml_mapping_get_member (map, "settings");
+	if (member != NULL && !yaml_node_is_null (member))
+	{
+		YamlMapping      *smap;
+		g_autoptr(GList)  keys = NULL;
+		GList            *l;
+
+		if (yaml_node_get_node_type (member) != YAML_NODE_MAPPING)
+		{
+			g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, "settings must be a mapping");
+			return FALSE;
+		}
+		smap = yaml_node_get_mapping (member);
+		keys = yaml_mapping_get_members (smap);
+		for (l = keys; l != NULL; l = l->next)
+		{
+			gdouble v;
+
+			if (!lighting_number (yaml_mapping_get_member (smap, l->data), &v))
+			{
+				g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+				             "settings.%s must be a number or a boolean", (const gchar *)l->data);
+				return FALSE;
+			}
+			lrg_level_set_bake_setting (level, l->data, v);
+		}
+	}
+	return TRUE;
+}
+
+/* ==========================================================================
  * Build (write) path
  * ========================================================================== */
 
@@ -965,6 +1127,8 @@ build_timelines_sequence (LrgLevel *level)
 				gfloat                 t = 0.0f, v = 0.0f;
 				LrgEasingType          e = LRG_EASING_LINEAR;
 				const gchar           *nick;
+				LrgSequenceTangentMode tmode = LRG_SEQUENCE_TANGENT_AUTO;
+				gfloat                 tin = 0.0f, tout = 0.0f;
 
 				lrg_timeline_track_get_key (track, k, &t, &v, &e);
 				yaml_mapping_set_double_member (kmap, "time", t);
@@ -972,6 +1136,19 @@ build_timelines_sequence (LrgLevel *level)
 				nick = enum_to_nick (LRG_TYPE_EASING_TYPE, e);
 				if (nick != NULL && e != LRG_EASING_LINEAR)
 					yaml_mapping_set_string_member (kmap, "easing", nick);
+				/* Bézier keys (0.9.0): tangent mode nick, user slope(s) */
+				if (lrg_timeline_track_get_key_tangents (track, k, &tmode, &tin, &tout))
+				{
+					yaml_mapping_set_string_member (kmap, "tangent",
+					                                enum_to_nick (LRG_TYPE_SEQUENCE_TANGENT_MODE, (gint) tmode));
+					if (tmode == LRG_SEQUENCE_TANGENT_USER)
+						yaml_mapping_set_double_member (kmap, "slope", tin);
+					else if (tmode == LRG_SEQUENCE_TANGENT_BROKEN)
+					{
+						yaml_mapping_set_double_member (kmap, "in", tin);
+						yaml_mapping_set_double_member (kmap, "out", tout);
+					}
+				}
 				yaml_sequence_add_mapping_element (keys, kmap);
 			}
 			yaml_mapping_set_sequence_member (tmap, "keys", keys);
@@ -1022,6 +1199,14 @@ build_level_yaml (LrgLevel         *level,
 			lrg_environment_to_yaml_private (lrg_level_get_environment (level));
 
 		yaml_mapping_set_mapping_member (root_map, "environment", env_map);
+	}
+
+	/* Additive (0.9.0 M3): the baked-lighting block, only when set. */
+	if (lrg_level_has_lighting (level))
+	{
+		g_autoptr(YamlMapping) lighting_map = build_lighting_mapping (level);
+
+		yaml_mapping_set_mapping_member (root_map, "lighting", lighting_map);
 	}
 
 	/* Additive: files without timelines keep their old shape. */
@@ -1706,16 +1891,32 @@ parse_timelines (LrgLevel     *level,
 				{
 					YamlNode    *kn = yaml_sequence_get_element (yaml_node_get_sequence (keys_node), k);
 					YamlMapping *kmap;
+					gfloat       kt;
+					gint         kidx;
 
 					if (kn == NULL || yaml_node_get_node_type (kn) != YAML_NODE_MAPPING)
 						continue;
 					kmap = yaml_node_get_mapping (kn);
-					lrg_timeline_track_set_key (track,
-					                            (gfloat) mapping_double (kmap, "time", 0.0),
+					kt = (gfloat) mapping_double (kmap, "time", 0.0);
+					lrg_timeline_track_set_key (track, kt,
 					                            (gfloat) mapping_double (kmap, "value", 0.0),
 					                            nick_to_enum (LRG_TYPE_EASING_TYPE,
 					                                          yaml_mapping_get_string_member (kmap, "easing"),
 					                                          LRG_EASING_LINEAR));
+					/* Bézier keys (0.9.0): "tangent" makes the key a Bézier key */
+					kidx = lrg_timeline_track_find_key (track, MAX (kt, 0.0f), 0.0005f);
+					if (kidx >= 0 && yaml_mapping_has_member (kmap, "tangent"))
+					{
+						LrgSequenceTangentMode tmode;
+						gdouble                slope = mapping_double (kmap, "slope", 0.0);
+
+						tmode = (LrgSequenceTangentMode) nick_to_enum (LRG_TYPE_SEQUENCE_TANGENT_MODE,
+						                                                 yaml_mapping_get_string_member (kmap, "tangent"),
+						                                                 LRG_SEQUENCE_TANGENT_AUTO);
+						lrg_timeline_track_set_key_tangents (track, (guint) kidx, tmode,
+						                                     (gfloat) mapping_double (kmap, "in", slope),
+						                                     (gfloat) mapping_double (kmap, "out", slope));
+					}
 				}
 			}
 		}
@@ -1796,6 +1997,21 @@ parse_level_from_root (YamlNode  *root,
 			return NULL;
 		}
 		lrg_level_set_environment (level, env);
+	}
+
+	/* The baked-lighting block (0.9.0 M3); a malformed one fails the load. */
+	{
+		YamlNode         *lighting_node = yaml_mapping_get_member (root_map, "lighting");
+		g_autoptr(GError) lighting_error = NULL;
+
+		if (lighting_node != NULL && !yaml_node_is_null (lighting_node)
+		    && !parse_lighting (level, lighting_node, &lighting_error))
+		{
+			g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+			             "lighting: %s", lighting_error->message);
+			g_object_unref (level);
+			return NULL;
+		}
 	}
 
 	return level;

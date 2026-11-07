@@ -205,6 +205,23 @@ nodes:
       params: { extents_x: 6.0, extents_y: 2.0, extents_z: 4.0, resolution: 128 }
 #+end_src
 
+*** The level's baked lighting
+:PROPERTIES:
+:CUSTOM_ID: level-lighting
+:END:
+After the look, the level's =lighting:= block (0.9.0 M3, see [[file:../../editor/yaml-format.org::#lighting][the format]]) loads onto the world: the =lightmap:= reference becomes =lrg_world3d_set_lightmap()= (=lrg_lightmap3d_new_from_file()=) and every =probes:= reference a grid added with =lrg_world3d_add_probe_grid()= (=lrg_probe_grid_new_from_file()=). References resolve exactly like the look's; one that does not resolve or load is a =g_warning()= and is skipped. A level without the block leaves the world's lightmap and grids as they are. The block's settings are not used at runtime: they are the baker's input (the editor's bake panel).
+
+Node GUIDs key the lightmap entries, and =assign_guid= keeps the node's GUID on its entity unless it is already taken in the world (an instance spawned twice), in which case that copy is not lightmapped.
+
+#+begin_src C
+/* the LrgLevel side of the block */
+lrg_level_set_lightmap_ref (level, "maps/town.rlightmap");
+lrg_level_add_probe_ref (level, "maps/town-0.rprobes");
+lrg_level_set_bake_setting (level, "texels_per_unit", 8.0);
+if (lrg_level_has_lighting (level))
+	g_print ("%u grids\n", lrg_level_get_probe_refs (level)->len);
+#+end_src
+
 *** Custom node kinds
 :PROPERTIES:
 :CUSTOM_ID: level-instantiate-3d-vfunc
@@ -350,7 +367,7 @@ Cache the loaded =prefab= root if you spawn it often: =lrg_prefab_load_resolved(
 :PROPERTIES:
 :CUSTOM_ID: level-game-tilemaps
 :END:
-=lrg_level_instantiate_3d()= gives each tilemap node an =LrgTilemapComponent= holding a copy of its grid; the component builds the runtime =LrgTilemap= with =lrg_node_tilemap_to_runtime()= once the tileset loads (=lrg_tilemap_component_get_tilemap()=). The 2D =lrg_level_instantiate()= does not create tilemaps: walk the nodes and call =lrg_node_tilemap_to_runtime()= on each tilemap visual's =LrgNodeTilemap=. Timelines can be sampled with =lrg_timeline_apply()= against the level's nodes, then read back with =lrg_node_get_world_matrix()=.
+=lrg_level_instantiate_3d()= gives each tilemap node an =LrgTilemapComponent= holding a copy of its grid; the component builds the runtime =LrgTilemap= with =lrg_node_tilemap_to_runtime()= once the tileset loads (=lrg_tilemap_component_get_tilemap()=). The 2D =lrg_level_instantiate()= does not create tilemaps: walk the nodes and call =lrg_node_tilemap_to_runtime()= on each tilemap visual's =LrgNodeTilemap=. Timelines can be sampled with =lrg_timeline_apply()= against the level's nodes, then read back with =lrg_node_get_world_matrix()=. To play a timeline on the instantiated =LrgWorld3D= entities, convert it with =lrg_sequence_new_from_timeline()= and play the result with an =LrgSequencePlayer= ([[file:../animation/sequence.org::#sequence-example-timeline][Sequences]]); since 0.9.0 timelines also have Bézier keys and bone channels ([[file:../../editor/editor-tools.org::#timeline-bezier][Bézier tangents]]).
 
 ** Build
 :PROPERTIES:
@@ -374,7 +391,7 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 
 | Header | Types / functions | In-depth documentation |
 |--------+-------------------+------------------------|
-| =lrg-level.h= | =LrgLevel=: =lrg_level_new=, =lrg_level_get_root=, =lrg_level_add_node=, =lrg_level_insert_node=, =lrg_level_remove_node=, =lrg_level_find_node=, =lrg_level_count_nodes=, =lrg_level_notify_node_changed=, timelines (=lrg_level_get_n_timelines=, =lrg_level_get_timeline=, =lrg_level_find_timeline=, =lrg_level_insert_timeline=, =lrg_level_remove_timeline=), environment (=lrg_level_get_environment=, =lrg_level_set_environment=, =lrg_level_ensure_environment=) | [[file:../../editor/level-model.org::#lrglevel][Level Model: LrgLevel]], [[file:../lighting/environment.org][LrgEnvironment]] |
+| =lrg-level.h= | =LrgLevel=: =lrg_level_new=, =lrg_level_get_root=, =lrg_level_add_node=, =lrg_level_insert_node=, =lrg_level_remove_node=, =lrg_level_find_node=, =lrg_level_count_nodes=, =lrg_level_notify_node_changed=, timelines (=lrg_level_get_n_timelines=, =lrg_level_get_timeline=, =lrg_level_find_timeline=, =lrg_level_insert_timeline=, =lrg_level_remove_timeline=), environment (=lrg_level_get_environment=, =lrg_level_set_environment=, =lrg_level_ensure_environment=), baked lighting (=lrg_level_get_lightmap_ref=, =lrg_level_set_lightmap_ref=, =lrg_level_add_probe_ref=, =lrg_level_remove_probe_ref=, =lrg_level_get_probe_refs=, =lrg_level_set_bake_setting=, =lrg_level_get_bake_setting=, =lrg_level_get_bake_setting_keys=, =lrg_level_has_lighting=, =lrg_level_clear_lighting=, see [[#level-lighting][baked lighting]]) | [[file:../../editor/level-model.org::#lrglevel][Level Model: LrgLevel]], [[file:../lighting/environment.org][LrgEnvironment]] |
 | =lrg-node.h= | =LrgNode= (derivable, =instantiate= and =instantiate_3d= vfuncs, =lrg_node_instantiate_3d=): identity, flags, transform, =lrg_node_get_local_matrix=, =lrg_node_get_world_matrix=, hierarchy, visual, components, scripts, paths, =lrg_node_foreach=, prefab link | [[file:../../editor/level-model.org::#lrgnode][Level Model: LrgNode]], [[file:../../editor/editor-runtime.org::#lrgnode-tree-helpers][Node tree helpers]] |
 | =lrg-node-visual.h= | =LrgNodeVisual=, =LrgNodeVisualKind= | [[file:../../editor/level-model.org::#lrgnodevisual][Level Model: LrgNodeVisual]] |
 | =lrg-node-tilemap.h= | =LrgNodeTilemap=, =lrg_node_tilemap_to_runtime= | [[file:../../editor/editor-tools.org::#tilemap-model][Tilemap data model]], [[file:../../editor/editor-tools.org::#editor-tools-api-lrg-node-tilemap][API]] |

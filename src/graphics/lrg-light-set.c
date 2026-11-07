@@ -48,6 +48,7 @@
 #include "lighting/lrg-environment-glsl-private.h"
 #include "graphics/lrg-ssao-glsl-private.h"
 #include "graphics/lrg-decal-glsl-private.h"
+#include "lighting/lrg-baked-glsl-private.h"
 
 typedef struct
 {
@@ -65,6 +66,8 @@ typedef struct
     gfloat   outer;
     gfloat   shadow_bias;   /* world units, <= 0: the renderer's */
     guint32  layers;        /* render layers the light reaches */
+    /* 0.9.0 M3: baked lighting */
+    LrgLightMode mode;      /* BAKED: skipped on lightmapped draws */
 } PointLight;
 
 /* LitLocations:
@@ -111,6 +114,7 @@ struct _LrgLightSet
     gboolean    has_directional;
     gfloat      directional_dir[3];
     gfloat      directional_color[3];
+    LrgLightMode directional_mode;  /* 0.9.0 M3 */
     gdouble     origin[3];
 
     GArray     *lights;          /* PointLight, slot = id */
@@ -235,6 +239,7 @@ static const gchar light_vs[] =
     "in vec2 vertexTexCoord;\n"
     "in vec3 vertexNormal;\n"
     "in vec4 vertexColor;\n"
+    "in vec2 vertexTexCoord2;\n"
     "uniform mat4 mvp;\n"
     "uniform mat4 matModel;\n"
     "uniform mat4 matNormal;\n"
@@ -242,9 +247,11 @@ static const gchar light_vs[] =
     "out vec2 fragTexCoord;\n"
     "out vec4 fragColor;\n"
     "out vec3 fragNormal;\n"
+    "out vec2 fragTexCoord2;\n"
     "void main() {\n"
     "    fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));\n"
     "    fragTexCoord = vertexTexCoord;\n"
+    "    fragTexCoord2 = vertexTexCoord2;\n"
     "    fragColor = vertexColor;\n"
     "    fragNormal = vec3(matNormal * vec4(vertexNormal, 0.0));\n"
     "    gl_Position = mvp * vec4(vertexPosition, 1.0);\n"
@@ -322,6 +329,7 @@ static const gchar light_vs[] =
     "vec3 lrg_to_linear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }\n" \
     "vec3 lrg_to_display(vec3 c) { return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)); }\n" \
     LRG_ENV_GLSL \
+    LRG_BAKED_GLSL \
     LRG_SSAO_GLSL \
     LRG_DECAL_GLSL \
     "struct LrgSurface {\n" \
@@ -359,6 +367,10 @@ static const gchar light_vs[] =
     "vec3 lrg_light_one(vec3 p, vec3 ng, vec3 n, vec3 v, vec3 albedo, float metal, float rough,\n" \
     "                   vec3 lp, float r, vec3 c, int pslot, vec4 spot, vec4 extra) {\n" \
     "    if (!lrg_layers_hit(extra)) return vec3(0.0);\n" \
+    "    if (pslot >= 48) {\n" \
+    "        if (lrg_baked_lightmapped()) return vec3(0.0);\n" \
+    "        pslot -= 64;\n" \
+    "    }\n" \
     "    vec3 d = lp - p;\n" \
     "    float dist = length(d);\n" \
     "    float k = clamp(1.0 - dist / r, 0.0, 1.0);\n" \
@@ -380,7 +392,7 @@ static const gchar light_vs[] =
     "    vec3 alb = albedo.rgb;\n" \
     "    vec3 rad = vec3(0.0);\n" \
     "    gLrgIrradiance = vec3(0.0);\n" \
-    "    if (dot(sunColor, sunColor) > 0.0) {\n" \
+    "    if (dot(sunColor, sunColor) > 0.0 && !(lrgBakedSun != 0 && lrg_baked_lightmapped())) {\n" \
     "        vec3 l = -sunDirection;\n" \
     "        float nl = max(dot(n, l), 0.0);\n" \
     "        if (nl > 0.0 || dot(ng, l) > 0.0) {\n" \
@@ -426,9 +438,13 @@ static const gchar light_vs[] =
     "        vec3 F0 = mix(vec3(0.04), alb, metal);\n" \
     "        vec3 Fr = F0 + (max(vec3(1.0 - rough), F0) - F0) * pow(1.0 - nv, 5.0);\n" \
     "        vec3 kd = (1.0 - Fr) * (1.0 - metal);\n" \
-    "        vec3 irr = lrg_env_diffuse(n);\n" \
+    "        vec3 irr = lrg_baked_active() ? lrg_baked_diffuse(p, n) : lrg_env_diffuse(n);\n" \
     "        gLrgIrradiance += irr * occ;\n" \
     "        ind = kd * alb * irr + lrg_env_specular(n, v, rough) * (F0 * brdf.x + brdf.y);\n" \
+    "    } else if (lrg_baked_active()) {\n" \
+    "        vec3 irr = lrg_baked_diffuse(p, n);\n" \
+    "        gLrgIrradiance += irr * occ;\n" \
+    "        ind = irr * alb;\n" \
     "    } else {\n" \
     "        vec3 amb = lrg_to_linear(ambientColor);\n" \
     "        gLrgIrradiance += amb * occ;\n" \
@@ -533,9 +549,11 @@ static const gchar light_fs[] =
     "in vec2 fragTexCoord;\n"
     "in vec4 fragColor;\n"
     "in vec3 fragNormal;\n"
+    "in vec2 fragTexCoord2;\n"
     "out vec4 finalColor;\n"
     LIGHT_LIBRARY
     "void main() {\n"
+    "    lrg_baked_set_uv2(fragTexCoord2);\n"
     "    finalColor = lrg_light_shade(fragPosition, fragNormal, fragTexCoord, fragColor);\n"
     "}\n";
 
@@ -1683,6 +1701,9 @@ upload_grid (LrgLightSet        *self,
         t[7] = shadows_ready
                ? (gfloat)lrg_shadow_renderer_get_light_slot (self->shadows, id)
                : -1.0f;
+        /* 0.9.0 M3: a baked light carries LRG_BAKED_SLOT_OFFSET */
+        if (pl->mode == LRG_LIGHT_MODE_BAKED)
+            t[7] += (gfloat)LRG_BAKED_SLOT_OFFSET;
         spot_texels (self, pl, id, shadows_ready, t + 8, t + 12);
     }
     if (self->up_n_data == 0)
@@ -1830,6 +1851,9 @@ bind_hooks (LrgLightSet *self,
 
     rlEnableShader (shader_id);
     lrg_environment_bind_private (self->environment, shader_id, &unit);
+    lrg_baked_lighting_bind_private (shader_id, &unit);
+    lrg_baked_lighting_set_sun_private (shader_id, self->has_directional
+                                        && self->directional_mode == LRG_LIGHT_MODE_BAKED);
     lrg_ssao_bind_private (self->ssao, shader_id, &unit);
     lrg_decal_set_bind_private (self->decals, shader_id, &unit);
     rlActiveTextureSlot (0);
@@ -1876,6 +1900,8 @@ upload_program (LrgLightSet        *self,
                           ? (gfloat)lrg_shadow_renderer_get_light_slot (self->shadows,
                                                                         self->active[i])
                           : -1.0f;
+        if (pl->mode == LRG_LIGHT_MODE_BAKED)
+            shadow_slots[i] += (gfloat)LRG_BAKED_SLOT_OFFSET;
         spot_texels (self, pl, self->active[i], shadows_ready, spots + i * 4, spot_extra + i * 4);
     }
     if (self->has_directional)
@@ -3174,6 +3200,7 @@ lrg_light_set_add_light_desc (LrgLightSet          *self,
     {
         c = desc_color (desc, MAX (desc->intensity, 0.0f));
         lrg_light_set_set_directional (self, &dir, &c);
+        self->directional_mode = desc->bake_mode;
         return LRG_LIGHT_SET_INVALID_LIGHT;
     }
 
@@ -3193,6 +3220,7 @@ lrg_light_set_add_light_desc (LrgLightSet          *self,
             g_debug ("lrg_light_set_add_light_desc: a spot without a direction stays a point light");
     }
     lrg_light_set_set_light_layers (self, id, desc->layer_mask);
+    lrg_light_set_set_light_mode (self, id, desc->bake_mode);
     if (desc->cast_shadows)
         lrg_light_set_set_point_light_shadow (self, id, 1);
 
@@ -3212,4 +3240,54 @@ lrg_light_set_add_light_desc (LrgLightSet          *self,
     }
     self->lights_serial++;
     return id;
+}
+
+/* ==========================================================================
+ * 0.9.0 M3: light modes for baked lighting
+ * ========================================================================== */
+
+void
+lrg_light_set_set_light_mode (LrgLightSet  *self,
+                              guint         light,
+                              LrgLightMode  mode)
+{
+    PointLight *pl;
+
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    pl = light_at (self, light);
+    g_return_if_fail (pl != NULL);
+    if (pl->mode == mode)
+        return;
+    pl->mode = mode;
+    self->lights_serial++;
+}
+
+LrgLightMode
+lrg_light_set_get_light_mode (LrgLightSet *self,
+                              guint        light)
+{
+    PointLight *pl;
+
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_MODE_REALTIME);
+
+    pl = light_at (self, light);
+    return pl != NULL ? pl->mode : LRG_LIGHT_MODE_REALTIME;
+}
+
+void
+lrg_light_set_set_directional_mode (LrgLightSet  *self,
+                                    LrgLightMode  mode)
+{
+    g_return_if_fail (LRG_IS_LIGHT_SET (self));
+
+    self->directional_mode = mode;
+}
+
+LrgLightMode
+lrg_light_set_get_directional_mode (LrgLightSet *self)
+{
+    g_return_val_if_fail (LRG_IS_LIGHT_SET (self), LRG_LIGHT_MODE_REALTIME);
+
+    return self->directional_mode;
 }

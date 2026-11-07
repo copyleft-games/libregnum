@@ -59,6 +59,7 @@
 #include "../postprocess/effects/lrg-tonemap.h"
 #include "../graphics/lrg-light-set-private.h"
 #include "../lighting/lrg-environment-glsl-private.h"
+#include "../lighting/lrg-baked-glsl-private.h"
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
@@ -1243,6 +1244,8 @@ sync_end (LrgWorld3DRenderer *self,
 		dir.y = self->sun_dir[1];
 		dir.z = self->sun_dir[2];
 		lrg_light_set_set_directional (self->lights, &dir, self->fallback_sun ? &sun : &none);
+		/* the default sun is never baked (a removed baked sun's mode stays otherwise) */
+		lrg_light_set_set_directional_mode (self->lights, LRG_LIGHT_MODE_REALTIME);
 	}
 	self->scene_sun = ls->have_sun;
 	return ls->count;
@@ -1727,10 +1730,95 @@ typedef struct
 } Replay;
 
 /* Whether the static batch takes @item instead of the opaque pass. */
+/*
+ * The lightmap holding @item's baked light (0.9.0 M3): the lightmap of
+ * the world the item's entity lives in, when the entity's GUID has an
+ * entry there; @page and @scale_offset (4 floats) get the entry.  NULL
+ * for items without an entity, world, lightmap or entry.
+ */
+static LrgLightmap3D *
+item_lightmap (const LrgRenderItem *item,
+               guint               *page,
+               gfloat              *scale_offset)
+{
+	LrgWorld3D    *world;
+	LrgLightmap3D *lightmap;
+
+	if (item->entity == NULL)
+		return NULL;
+	world = lrg_entity3d_get_world (item->entity);
+	if (world == NULL)
+		return NULL;
+	lightmap = lrg_world3d_get_lightmap (world);
+	if (lightmap == NULL || lrg_lightmap3d_get_n_entries (lightmap) == 0)
+		return NULL;
+	if (!lrg_lightmap3d_get_entry (lightmap, lrg_entity3d_get_guid (item->entity), page, scale_offset))
+		return NULL;
+	return lightmap;
+}
+
+/* The centre of @item: its bounds' when known, else its origin. */
+static void
+item_center (const LrgRenderItem *item,
+             gfloat              *c)
+{
+	if (item->bounds.min.x <= item->bounds.max.x && item->bounds.min.y <= item->bounds.max.y &&
+	    item->bounds.min.z <= item->bounds.max.z)
+	{
+		c[0] = (item->bounds.min.x + item->bounds.max.x) * 0.5f;
+		c[1] = (item->bounds.min.y + item->bounds.max.y) * 0.5f;
+		c[2] = (item->bounds.min.z + item->bounds.max.z) * 0.5f;
+	}
+	else
+	{
+		c[0] = item->world_matrix[12];
+		c[1] = item->world_matrix[13];
+		c[2] = item->world_matrix[14];
+	}
+}
+
+/*
+ * Binds @item's baked light on the lit program @shader_id (0.9.0 M3):
+ * its lightmap entry, else the world's probe grid around its centre,
+ * else nothing.  Returns the hook mode bound (0 none, 1 lightmap, 2
+ * probes) so the caller puts the inactive state back after the draw.
+ */
+static gint
+bind_baked (LrgWorld3DRenderer  *self,
+            const LrgRenderItem *item,
+            guint                shader_id)
+{
+	LrgLightmap3D *lightmap;
+	LrgProbeGrid  *grid = NULL;
+	gfloat         so[4];
+	guint          page = 0;
+	gdouble        origin[3] = { 0.0, 0.0, 0.0 };
+
+	lightmap = item_lightmap (item, &page, so);
+	if (lightmap == NULL && item->entity != NULL && lrg_entity3d_get_world (item->entity) != NULL)
+	{
+		LrgWorld3D *world = lrg_entity3d_get_world (item->entity);
+		gfloat      c[3];
+
+		if (lrg_world3d_get_probe_grids (world)->len > 0)
+		{
+			item_center (item, c);
+			grid = lrg_world3d_find_probe_grid (world, c);
+		}
+	}
+	if (self->lights != NULL)
+		lrg_light_set_get_origin (self->lights, &origin[0], &origin[1], &origin[2]);
+	return lrg_baked_lighting_set_draw_private (shader_id, lightmap, page, lightmap != NULL ? so : NULL,
+	                                            grid, origin);
+}
+
 static gboolean
 item_is_batchable (const LrgRenderItem *item)
 {
 	if (item->entity == NULL || !lrg_entity3d_get_static (item->entity))
+		return FALSE;
+	/* a lightmapped item keeps its own draw: it needs its uv2 and entry */
+	if (item_lightmap (item, NULL, NULL) != NULL)
 		return FALSE;
 	if (lrg_render_item_get_category (item) != LRG_RENDER_CATEGORY_OPAQUE)
 		return FALSE;
@@ -1920,6 +2008,7 @@ replay_item (const LrgRenderItem *item,
 	LrgShaderAsset     *custom = NULL;
 	Shader              shader;
 	gboolean            two_sided, bound = FALSE;
+	gint                baked = 0;
 
 	if ((r->mask & LRG_RENDER_LAYERS_BIT (item->layer)) == 0)
 		return;
@@ -1978,6 +2067,11 @@ replay_item (const LrgRenderItem *item,
 	 * else its origin), rebound only when the pick changes */
 	if (self->probe_env != NULL && r->materials && !r->casters_only)
 		pick_probes (self, item, shader.id);
+
+	/* Baked light (0.9.0 M3): the item's lightmap entry or probe grid on
+	 * the lit programs (the light set's, a lit custom shader's) */
+	if (r->materials && !r->casters_only && shader.id != r->unlit_shader.id)
+		baked = bind_baked (self, item, shader.id);
 
 	/* Material uniforms and render state (colour passes) */
 	if (r->materials && !r->casters_only)
@@ -2057,6 +2151,9 @@ replay_item (const LrgRenderItem *item,
 	}
 	else if (bound)
 		reset_material3d (self, shader);
+	/* the next draw (maybe a batch or terrain) must not inherit it */
+	if (baked != 0)
+		lrg_baked_lighting_set_draw_private (shader.id, NULL, 0, NULL, NULL, NULL);
 	self->cur_mat = NULL;
 }
 

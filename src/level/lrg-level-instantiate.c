@@ -1572,6 +1572,55 @@ apply_level_look (Instantiate3D *ctx,
 }
 
 /*
+ * apply_level_lighting:
+ *
+ * The level's `lighting:` block (0.9.0 M3): its lightmap becomes the
+ * world's (lrg_world3d_set_lightmap()) and each probe grid is added
+ * (lrg_world3d_add_probe_grid()).  References resolve like every other
+ * asset reference; one that does not resolve or load is reported with a
+ * warning and skipped (the scene then draws with realtime and ambient
+ * light), so a level whose bake was never run still loads.
+ */
+static void
+apply_level_lighting (Instantiate3D *ctx,
+                      LrgLevel      *level)
+{
+	const gchar *ref = lrg_level_get_lightmap_ref (level);
+	GPtrArray   *probes = lrg_level_get_probe_refs (level);
+	guint        i;
+
+	if (ref != NULL)
+	{
+		g_autofree gchar         *path = resolve_asset_ref (ctx->assets, ctx->base_dir, ref);
+		g_autoptr(LrgLightmap3D)  lightmap = NULL;
+		g_autoptr(GError)         error = NULL;
+
+		if (path != NULL)
+			lightmap = lrg_lightmap3d_new_from_file (path, &error);
+		if (lightmap != NULL)
+			lrg_world3d_set_lightmap (ctx->world, lightmap);
+		else
+			g_warning ("lrg_level_instantiate_3d: lightmap '%s' did not load: %s", ref,
+			           error != NULL ? error->message : "not found");
+	}
+	for (i = 0; i < probes->len; i++)
+	{
+		const gchar             *pref = g_ptr_array_index (probes, i);
+		g_autofree gchar        *path = resolve_asset_ref (ctx->assets, ctx->base_dir, pref);
+		g_autoptr(LrgProbeGrid)  grid = NULL;
+		g_autoptr(GError)        error = NULL;
+
+		if (path != NULL)
+			grid = lrg_probe_grid_new_from_file (path, &error);
+		if (grid != NULL)
+			lrg_world3d_add_probe_grid (ctx->world, grid);
+		else
+			g_warning ("lrg_level_instantiate_3d: probe grid '%s' did not load: %s", pref,
+			           error != NULL ? error->message : "not found");
+	}
+}
+
+/*
  * lrg_level_instantiate_3d:
  *
  * One entity per node under the world root, see the header.
@@ -1607,6 +1656,7 @@ lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
 	/* The look first, so probe components entering the world find the
 	 * environment to register with. */
 	apply_level_look (&ctx, level);
+	apply_level_lighting (&ctx, level);
 
 	/* The level's implicit root is not an entity: its children are the
 	 * world's top-level entities. */

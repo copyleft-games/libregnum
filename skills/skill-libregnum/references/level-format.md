@@ -129,3 +129,7 @@ Runtime: lrg_environment_load_sources(env, asset_manager, level_dir, &err); lrg_
 - Timeline keys may add `tangent` plus `slope` (user) or `in`/`out` (broken) to make a Bézier key; the segment starting at a Bézier key ignores `easing`.
 - Channel `bone.BONE.location|rotation|scale.x|y|z` holds a bind-pose offset (bone names may contain dots).
 - Component desc `type: sequence` with params `sequence_path`, `autoplay`, `play_mode`, `rate`.
+
+## lighting: (0.9.0, optional)
+- `lightmap: path|guid:`, `probes: [path|guid:]`, `settings: {texels_per_unit, samples, bounces, max_lightmap_size, denoise, probe_spacing}` (numbers; booleans accepted). Instantiate loads them onto the world; missing files are a warning.
+- Node params: `static_lighting` and `lightmap_scale` on primitive/mesh-asset nodes; `bake_mode: realtime|mixed|baked` on lights.

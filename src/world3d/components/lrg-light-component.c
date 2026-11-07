@@ -31,6 +31,7 @@ struct _LrgLightComponent
 	gboolean        cast_shadows;
 	gfloat          shadow_bias;   /* world units, 0: the shadow renderer's */
 	guint32         layer_mask;
+	LrgLightMode    bake_mode;     /* 0.9.0 M3 */
 
 	LrgWorld3D     *world;         /* weak: the world the light is registered with */
 };
@@ -51,6 +52,7 @@ enum
 	PROP_CAST_SHADOWS,
 	PROP_LAYER_MASK,
 	PROP_SHADOW_BIAS,
+	PROP_BAKE_MODE,
 	N_PROPS
 };
 
@@ -154,6 +156,7 @@ lrg_light_component_get_property (GObject    *object,
 	case PROP_CAST_SHADOWS: g_value_set_boolean (value, self->cast_shadows); break;
 	case PROP_LAYER_MASK:   g_value_set_uint (value, (guint) self->layer_mask); break;
 	case PROP_SHADOW_BIAS:  g_value_set_float (value, self->shadow_bias); break;
+	case PROP_BAKE_MODE:    g_value_set_enum (value, (gint) self->bake_mode); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -208,6 +211,9 @@ lrg_light_component_set_property (GObject      *object,
 		break;
 	case PROP_SHADOW_BIAS:
 		lrg_light_component_set_shadow_bias (self, g_value_get_float (value));
+		break;
+	case PROP_BAKE_MODE:
+		lrg_light_component_set_bake_mode (self, (LrgLightMode) g_value_get_enum (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -321,6 +327,19 @@ lrg_light_component_class_init (LrgLightComponentClass *klass)
 	 */
 	properties[PROP_SHADOW_BIAS] =
 		g_param_spec_float ("shadow-bias", NULL, "Shadow depth bias (world units)", 0.0f, 100.0f, 0.0f, rw);
+
+	/**
+	 * LrgLightComponent:bake-mode:
+	 *
+	 * How the light takes part in baked lighting (since 0.9.0):
+	 * realtime (ignored by the baker), mixed (the baker adds its bounced
+	 * light; direct light stays realtime) or baked (direct and bounced
+	 * light go into the lightmaps; skipped at runtime on lightmapped
+	 * draws).  Node parameter `bake_mode`.
+	 */
+	properties[PROP_BAKE_MODE] =
+		g_param_spec_enum ("bake-mode", NULL, "Bake mode", LRG_TYPE_LIGHT_MODE,
+		                   LRG_LIGHT_MODE_REALTIME, rw);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -494,6 +513,7 @@ lrg_light_component_fill_desc (LrgLightComponent *self,
 	out->outer_angle = outer * (gfloat) G_PI / 180.0f;
 	out->cast_shadows = self->cast_shadows;
 	out->layer_mask = self->layer_mask;
+	out->bake_mode = self->bake_mode;
 	out->source = G_OBJECT (self);
 	out->enabled = lrg_component_get_enabled (LRG_COMPONENT (self));
 
@@ -584,4 +604,24 @@ lrg_light_component_add_to_light_set (LrgLightComponent *self,
 	 * lrg_light_set_add_light_desc() reads back from desc.source */
 	lrg_light_component_fill_desc (self, &desc);
 	return lrg_light_set_add_light_desc (lights, &desc);
+}
+
+LrgLightMode
+lrg_light_component_get_bake_mode (LrgLightComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_LIGHT_COMPONENT (self), LRG_LIGHT_MODE_REALTIME);
+
+	return self->bake_mode;
+}
+
+void
+lrg_light_component_set_bake_mode (LrgLightComponent *self,
+                                   LrgLightMode       mode)
+{
+	g_return_if_fail (LRG_IS_LIGHT_COMPONENT (self));
+
+	if (self->bake_mode == mode)
+		return;
+	self->bake_mode = mode;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BAKE_MODE]);
 }

@@ -161,6 +161,26 @@ lrg_world3d_set_post_stack (world, grade);
 lrg_world3d_renderer_bake_environment (renderer, &error);   /* optional: avoid a hitch */
 #+end_src
 
+*** Baked lighting: lightmap and probe grids
+:PROPERTIES:
+:CUSTOM_ID: baked-lighting
+:END:
+A world also holds its baked light (0.9.0 M3): one [[file:../lighting/lightmap3d.org][LrgLightmap3D]] and any number of [[file:../lighting/probe-grid.org][LrgProbeGrid]]s, plain references like the look above. =lrg_level_instantiate_3d()= loads them from the level's =lighting:= block.
+
+- =lrg_world3d_set_lightmap (world, lightmap)= / =lrg_world3d_get_lightmap (world)= (ref held, nullable): #LrgWorld3DRenderer draws every item whose entity GUID has an entry with the lightmap.
+- =lrg_world3d_add_probe_grid()= (ref held; adding twice is a no-op), =lrg_world3d_remove_probe_grid()=, =lrg_world3d_clear_probe_grids()=, =lrg_world3d_get_probe_grids()= (transfer none, added order).
+- =lrg_world3d_find_probe_grid (world, position)=: the smallest-box grid that contains the position and has a valid probe (ties: the first added), =NULL= outside every grid. The renderer asks it with each non-lightmapped item's centre.
+
+#+begin_src C
+g_autoptr(LrgLightmap3D) lm = lrg_lightmap3d_new_from_file ("maps/cave.rlightmap", &error);
+g_autoptr(LrgProbeGrid)  hall = lrg_probe_grid_new_from_file ("maps/cave-hall.rprobes", &error);
+
+lrg_world3d_set_lightmap (world, lm);
+lrg_world3d_add_probe_grid (world, hall);
+#+end_src
+
+The description of a light carries its bake mode: =LrgLight3DDesc.bake_mode= (=LrgLightMode=, realtime by default, taken from a former reserved slot), filled by =lrg_light_component_fill_desc()= from =bake-mode= and applied by =lrg_light_set_add_light_desc()=.
+
 *** Spatial index
 :PROPERTIES:
 :CUSTOM_ID: spatial-index
@@ -276,6 +296,9 @@ Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[
 | =lrg_world3d_set_audio_listener()= / =lrg_world3d_get_audio_listener()= | weak                                   |
 | =lrg_world3d_set_environment()= / =lrg_world3d_get_environment()= | the world's look (ref held, nullable), see [[#look][The world's look]] |
 | =lrg_world3d_set_post_stack()= / =lrg_world3d_get_post_stack()= | the world's post stack (ref held, nullable) |
+| =lrg_world3d_set_lightmap()= / =lrg_world3d_get_lightmap()= | the baked lightmap (ref held, nullable), see [[#baked-lighting][Baked lighting]] (0.9.0) |
+| =lrg_world3d_add_probe_grid()= / =lrg_world3d_remove_probe_grid()= / =lrg_world3d_clear_probe_grids()= / =lrg_world3d_get_probe_grids()= | the probe grids (refs held) (0.9.0) |
+| =lrg_world3d_find_probe_grid()= | the grid lighting a point (transfer none, nullable) (0.9.0) |
 
 *** Properties and signals
 :PROPERTIES:

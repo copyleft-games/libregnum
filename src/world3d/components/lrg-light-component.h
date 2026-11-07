@@ -271,4 +271,24 @@ void lrg_light_component_fill_desc (LrgLightComponent *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_light_component_sync (LrgLightComponent *self);
 
+/**
+ * lrg_light_component_get_bake_mode:
+ * @self: an #LrgLightComponent
+ *
+ * Returns: #LrgLightComponent:bake-mode
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightMode lrg_light_component_get_bake_mode (LrgLightComponent *self);
+
+/**
+ * lrg_light_component_set_bake_mode:
+ * @self: an #LrgLightComponent
+ * @mode: the bake mode
+ *
+ * Sets #LrgLightComponent:bake-mode.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_light_component_set_bake_mode (LrgLightComponent *self,
+                                        LrgLightMode       mode);
+
 G_END_DECLS

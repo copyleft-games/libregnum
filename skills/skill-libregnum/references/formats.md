@@ -63,3 +63,7 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 - Header `type: sequence`, `version: 1`, `name`, `length`, `fps`, `play_mode` (once|loop|ping-pong), `bindings: [{guid, name}]`, `tracks: [...]`; every track has `kind`, `name`, `binding`, `muted`.
 - Kinds: `transform` (optional `bone`, `channels: {location.x: [keys], ...}`), `property` (`component` GType name, `property`, `keys`), `camera-cut` (`sections: [{start, camera}]`), `audio` (`sections: [{start, duration, sound: "bank:sound"|path, volume}]`), `event` (`events: [{time, name, payload}]`), `animation` (`sections: [{start, duration, clip, offset, rate, loop, weight}]`), `subsequence` (`sections: [{start, duration, sequence: name|relative.rseq, offset, rate, loop}]`, depth <= 8).
 - Keys `{time, value, tangent: auto|user|broken|linear|constant, slope | in/out}`; auto is the default and omitted. Byte-stable writer; errors LRG_SEQUENCE_ERROR_{IO,PARSE,INVALID,VERSION}.
+
+## Baked lighting files (0.9.0)
+- `.rlightmap`: version, intensity, directional: false, pages: [*.hdr relative], entries: {guid: {page, scale_offset: [su,sv,ou,ov]}}, settings: {...}; atlas_uv = uv2*so.xy + so.zw.
+- `.rprobes`: version, bounds {min,max}, resolution [nx,ny,nz], intensity, encoding: base64-f32le, sh: base64 (27 floats per probe, probe order x + nx(y + ny z)), valid: base64 (one byte per probe).

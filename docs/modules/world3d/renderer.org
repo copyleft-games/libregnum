@@ -138,6 +138,8 @@ Probes live on the environment (=lrg_environment_add_probe()=; an =LrgReflection
 
 Probes are picked *per item*: before each lit draw the renderer asks =lrg_environment_select_probes()= for the two ready probes with the strongest influence at the item's centre (its bounds, else its origin) and, when that pair changes, binds the environment again with that reference point. An object inside a probe box therefore reflects that probe from any camera position, and objects outside every box reflect the environment's sky. Within the bound pair the shader blends per fragment (=lrg_env_set_point()=), so the blend distance fades across box edges.
 
+*Baked light* is bound per item too (0.9.0 M3): for every lit colour-pass item (the light set's program or a lit custom shader) the renderer looks the item's entity GUID up in its world's [[file:../lighting/lightmap3d.org][lightmap]]; with an entry it binds the page and the entry's uv2 scale / offset, otherwise the world's [[file:../lighting/probe-grid.org][probe grid]] around the item's centre (=lrg_world3d_find_probe_grid()=, the grid's box moved by the light set's origin), otherwise nothing. Pages and grids upload on first use. After a baked draw the hook goes back to its inactive state, so the static batch, terrain and other draws never inherit it. Lightmapped items are not merged into the static batch. The fallback sun is always realtime.
+
 *** Assets
 :PROPERTIES:
 :CUSTOM_ID: concepts-assets

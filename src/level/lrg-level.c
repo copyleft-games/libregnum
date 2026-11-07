@@ -26,6 +26,11 @@ struct _LrgLevel
 	gboolean  default_2d;
 	GPtrArray *timelines;  /* LrgTimeline* (owned) */
 	LrgEnvironment *environment;  /* nullable, owned */
+
+	/* the `lighting:` block (0.9.0 M3) */
+	gchar      *lightmap_ref;     /* nullable */
+	GPtrArray  *probe_refs;       /* gchar *, owned */
+	GHashTable *bake_settings;    /* gchar * -> gdouble * */
 };
 
 G_DEFINE_FINAL_TYPE (LrgLevel, lrg_level, G_TYPE_OBJECT)
@@ -63,6 +68,9 @@ lrg_level_finalize (GObject *object)
 	g_clear_object (&self->root);
 	g_clear_pointer (&self->timelines, g_ptr_array_unref);
 	g_clear_object (&self->environment);
+	g_clear_pointer (&self->lightmap_ref, g_free);
+	g_clear_pointer (&self->probe_refs, g_ptr_array_unref);
+	g_clear_pointer (&self->bake_settings, g_hash_table_unref);
 
 	G_OBJECT_CLASS (lrg_level_parent_class)->finalize (object);
 }
@@ -481,4 +489,160 @@ lrg_level_ensure_environment (LrgLevel *self)
 		lrg_level_set_environment (self, env);
 	}
 	return self->environment;
+}
+
+/* ==========================================================================
+ * Baked lighting (the `lighting:` block, 0.9.0 M3)
+ * ========================================================================== */
+
+const gchar *
+lrg_level_get_lightmap_ref (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return self->lightmap_ref;
+}
+
+void
+lrg_level_set_lightmap_ref (LrgLevel    *self,
+                            const gchar *ref)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+
+	g_free (self->lightmap_ref);
+	self->lightmap_ref = (ref != NULL && *ref != '\0') ? g_strdup (ref) : NULL;
+}
+
+/* the probe reference array, created on first use */
+static GPtrArray *
+ensure_probe_refs (LrgLevel *self)
+{
+	if (self->probe_refs == NULL)
+		self->probe_refs = g_ptr_array_new_with_free_func (g_free);
+	return self->probe_refs;
+}
+
+void
+lrg_level_add_probe_ref (LrgLevel    *self,
+                         const gchar *ref)
+{
+	GPtrArray *refs;
+	guint      i;
+
+	g_return_if_fail (LRG_IS_LEVEL (self));
+	g_return_if_fail (ref != NULL && *ref != '\0');
+
+	refs = ensure_probe_refs (self);
+	for (i = 0; i < refs->len; i++)
+		if (g_strcmp0 (g_ptr_array_index (refs, i), ref) == 0)
+			return;
+	g_ptr_array_add (refs, g_strdup (ref));
+}
+
+gboolean
+lrg_level_remove_probe_ref (LrgLevel    *self,
+                            const gchar *ref)
+{
+	guint i;
+
+	g_return_val_if_fail (LRG_IS_LEVEL (self), FALSE);
+
+	if (self->probe_refs == NULL || ref == NULL)
+		return FALSE;
+	for (i = 0; i < self->probe_refs->len; i++)
+		if (g_strcmp0 (g_ptr_array_index (self->probe_refs, i), ref) == 0)
+		{
+			g_ptr_array_remove_index (self->probe_refs, i);
+			return TRUE;
+		}
+	return FALSE;
+}
+
+GPtrArray *
+lrg_level_get_probe_refs (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return ensure_probe_refs (self);
+}
+
+void
+lrg_level_set_bake_setting (LrgLevel    *self,
+                            const gchar *key,
+                            gdouble      value)
+{
+	gdouble *v;
+
+	g_return_if_fail (LRG_IS_LEVEL (self));
+	g_return_if_fail (key != NULL && *key != '\0');
+
+	if (self->bake_settings == NULL)
+		self->bake_settings = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+	v = g_new (gdouble, 1);
+	*v = value;
+	g_hash_table_replace (self->bake_settings, g_strdup (key), v);
+}
+
+gboolean
+lrg_level_get_bake_setting (LrgLevel    *self,
+                            const gchar *key,
+                            gdouble     *out_value)
+{
+	gdouble *v;
+
+	g_return_val_if_fail (LRG_IS_LEVEL (self), FALSE);
+
+	if (self->bake_settings == NULL || key == NULL)
+		return FALSE;
+	v = g_hash_table_lookup (self->bake_settings, key);
+	if (v == NULL)
+		return FALSE;
+	if (out_value != NULL)
+		*out_value = *v;
+	return TRUE;
+}
+
+static gint
+compare_keys (gconstpointer a,
+              gconstpointer b)
+{
+	return g_strcmp0 (*(const gchar * const *)a, *(const gchar * const *)b);
+}
+
+GPtrArray *
+lrg_level_get_bake_setting_keys (LrgLevel *self)
+{
+	GPtrArray      *out;
+	GHashTableIter  it;
+	gpointer        key;
+
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+
+	out = g_ptr_array_new_with_free_func (g_free);
+	if (self->bake_settings == NULL)
+		return out;
+	g_hash_table_iter_init (&it, self->bake_settings);
+	while (g_hash_table_iter_next (&it, &key, NULL))
+		g_ptr_array_add (out, g_strdup (key));
+	g_ptr_array_sort (out, compare_keys);
+	return out;
+}
+
+gboolean
+lrg_level_has_lighting (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), FALSE);
+
+	return self->lightmap_ref != NULL || (self->probe_refs != NULL && self->probe_refs->len > 0)
+	       || (self->bake_settings != NULL && g_hash_table_size (self->bake_settings) > 0);
+}
+
+void
+lrg_level_clear_lighting (LrgLevel *self)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+
+	g_clear_pointer (&self->lightmap_ref, g_free);
+	if (self->probe_refs != NULL)
+		g_ptr_array_set_size (self->probe_refs, 0);
+	if (self->bake_settings != NULL)
+		g_hash_table_remove_all (self->bake_settings);
 }
