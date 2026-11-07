@@ -55,6 +55,8 @@ Core:
 - [[file:tooltip.org][Tooltips]]: =LrgTooltip=, =LrgTooltipLayout=.
 - [[file:inspector.org][UI inspector]]: =LrgUIInspector=, tree snapshots, paths, pick mode, highlight overlay, timings, live property edits and the =lrg_ui_*= MCP tools.
 - [[file:actions.org][Actions and shortcuts]]: widget-scoped GIO action groups, the built-in =app= and =ui= actions, =lrg_canvas_add_shortcut()=, accelerator syntax, YAML wiring and right-to-left layout.
+- [[file:drag-and-drop.org][Drag and drop]]: =LrgDragPayload=, =LrgDragSource= and =LrgDropTarget= controllers, canvas drag sessions (threshold, preview, Escape), and the tree, list and tile view drop positions (0.8.1).
+- [[file:property-grid.org][Property grid]]: =LrgPropertySource= (and =LrgObjectPropertySource= for any =GObject=), =LrgPropertyGrid= with hints, multi-edit and mixed values, row states, and delegate mode for one undo step per drag (0.8.1).
 
 Related:
 
@@ -121,6 +123,11 @@ Related:
 | =LrgHeaderBar= | [[file:widgets/header-bar.org][header-bar]] | self-drawn window title bar |
 | =LrgNotification= | [[file:widgets/notification.org][notification]] | desktop notifications with an in-app toast fallback |
 | =LrgGrid= | [[file:layout.org::#layout-grid][grid layout]] | layout container |
+| =LrgPropertyGrid= | [[file:property-grid.org][property-grid]] | reflected property editor over an =LrgPropertySource= (0.8.1) |
+| =LrgVectorEdit= | [[file:widgets/vector-edit.org][vector-edit]] | 1 to 4 axis fields with scrubbing and a uniform-scale lock (0.8.1) |
+| =LrgCurveEdit= | [[file:widgets/curve-edit.org][curve-edit]] | keyframe curve editor for an =LrgKeyframeCurve= (0.8.1) |
+| =LrgGradientEdit= | [[file:widgets/gradient-edit.org][gradient-edit]] | colour stop editor for =LrgGradientStops= (0.8.1) |
+| =LrgDragSource= / =LrgDropTarget= | [[file:drag-and-drop.org][drag-and-drop]] | drag and drop controllers (0.8.1) |
 
 ** Quick start
 :PROPERTIES:
@@ -251,6 +258,8 @@ Widgets report preferred sizes (=measure=) and declare margin, alignment, fill w
 | =lrg-vbox.h=, =lrg-hbox.h=, =lrg-grid.h=, =lrg-panel.h=, =lrg-scroll-box.h=, =lrg-overlay.h=, =lrg-list-view.h=, =lrg-tab-view.h=, =lrg-dialog.h= | containers |
 | =lrg-button.h=, =lrg-label.h=, =lrg-checkbox.h=, =lrg-slider.h=, =lrg-spin-box.h=, =lrg-combo-box.h=, =lrg-text-input.h=, =lrg-progress-bar.h=, =lrg-image.h=, =lrg-separator.h= | widgets |
 | =lrg-toast.h=, =lrg-toast-queue.h=, =lrg-tooltip.h=, =lrg-tooltip-layout.h= | notifications and tooltips |
+| =lrg-drag.h=, =lrg-drop-target.h= | drag and drop (0.8.1) |
+| =lrg-property-source.h=, =lrg-property-grid.h=, =lrg-vector-edit.h=, =lrg-curve-edit.h=, =lrg-gradient-edit.h= | property grid and its editors (0.8.1) |
 | =src/lrg-enums.h= (UI framework section) | =LrgNavDirection=, =LrgMotion=, =LrgAlign=, =LrgAppear=, =LrgWidgetState=, =LrgUIPart=, =LrgThemeColor=, =LrgThemeMetric=, =LrgPopupPlacement=, =LrgToastMode=, =LrgCheckboxStyle=, =LrgSelectionMode=, =LrgPaintPrim=, ... |
 
 All of them are included by =<libregnum.h>=.

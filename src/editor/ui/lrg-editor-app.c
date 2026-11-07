@@ -4,47 +4,72 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The libregnum editor application: lifecycle, documents, the per-frame
- * UI pass (menu bar, toolbar, dock with panels, status bar, toasts),
- * autosave and crash recovery, file monitoring, and the window and
- * headless main loops. Panels, dialogs, actions, rendering and play mode
- * live in their own files (see lrg-editor-app-private.h).
+ * The libregnum editor application: lifecycle, documents, settings and
+ * theme, the panels and their dock layout, the per-frame pass
+ * (lrg_editor_app_process_frame), autosave and crash recovery, file
+ * monitoring, and the window and headless main loops.
+ *
+ * Since 0.8.1 the UI is retained: an LrgCanvas holds an LrgEditorWindow
+ * (menu bar, toolbar, dock, status bar) whose dock holds one LrgDockPanel
+ * per panel. The canvas and window exist from construction, also without
+ * a window, so tests drive them with synthetic LrgCanvasInput frames.
+ * Actions, IPC, dialogs, playback and the viewport live in their own
+ * files (see lrg-editor-app-private.h).
  */
 
+#include "config.h"
+
 #include "lrg-editor-app-private.h"
+#include "lrg-editor-hierarchy-panel.h"
+#include "lrg-editor-inspector-panel.h"
+#include "lrg-editor-assets-panel.h"
+#include "lrg-editor-console-panel.h"
+#include "lrg-editor-tiles-panel.h"
+#include "lrg-editor-timeline-panel.h"
+#include "lrg-editor-profiler-panel.h"
+#include "lrg-editor-code-panel.h"
+#include "../../ui/lrg-label.h"
+#include "../../ui/lrg-toast-queue.h"
 #include "../../core/lrg-engine.h"
 #include "../../core/lrg-cpu-affinity.h"
 #include "../../graphics/lrg-grl-window.h"
-#include "../../gui/lrg-gui-raylib-private.h"
 #include "drawing/grl-fast2d-private.h"
 #include <glib/gstdio.h>
 #include <glib-unix.h>
+#include <raylib.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #define AUTOSAVE_DIR          ".lrg-editor/autosave"
-#define TOAST_SECONDS         (4.0)
 #define PROBLEMS_DEBOUNCE     (0.4)
+#define DEFAULT_THEME         "catppuccin-mocha"
 
 G_DEFINE_FINAL_TYPE (LrgEditorApp, lrg_editor_app, G_TYPE_OBJECT)
 
 static void on_editor_changed (LrgEditor *editor, gpointer user_data);
 static void on_level_replaced (LrgEditor *editor, LrgLevel *level, gpointer user_data);
 static void watch_level_file  (LrgEditorApp *self);
-static void perform_pending   (LrgEditorApp *self, EditorPending what, const gchar *path);
+static void watch_project     (LrgEditorApp *self);
 
 /* ==========================================================================
  * GObject
  * ========================================================================== */
 
 static void
-toast_free (gpointer data)
+clear_monitors (LrgEditorApp *self)
 {
-	EditorToast *t = data;
+	guint i;
 
-	g_free (t->text);
-	g_free (t);
+	for (i = 0; self->asset_monitors != NULL && i < self->asset_monitors->len; i++)
+	{
+		GFileMonitor *m = g_ptr_array_index (self->asset_monitors, i);
+
+		g_file_monitor_cancel (m);
+		g_signal_handlers_disconnect_by_data (m, self);
+	}
+	if (self->asset_monitors != NULL)
+		g_ptr_array_set_size (self->asset_monitors, 0);
 }
 
 static void
@@ -52,44 +77,47 @@ lrg_editor_app_dispose (GObject *object)
 {
 	LrgEditorApp *self = LRG_EDITOR_APP (object);
 
-	if (self->playing)
-		editor_play_stop (self);
-	editor_run_stop (self);
+	editor_dialog_close_all (self);
+	editor_play_dispose (self);
 
 	if (self->server != NULL)
 		lrg_editor_server_stop (self->server);
 	if (self->editor != NULL)
 		g_signal_handlers_disconnect_by_data (self->editor, self);
-	if (self->asset_monitor != NULL)
-	{
-		g_file_monitor_cancel (self->asset_monitor);
-		g_signal_handlers_disconnect_by_data (self->asset_monitor, self);
-		g_clear_object (&self->asset_monitor);
-	}
+	if (self->settings != NULL)
+		g_signal_handlers_disconnect_by_data (self->settings, self);
+	clear_monitors (self);
 	if (self->level_monitor != NULL)
 	{
 		g_file_monitor_cancel (self->level_monitor);
 		g_signal_handlers_disconnect_by_data (self->level_monitor, self);
 		g_clear_object (&self->level_monitor);
 	}
-
-	editor_render_shutdown (self);
-	editor_tiles_dispose (self);
-	editor_timeline_dispose (self);
 	editor_thumbnails_dispose (self);
 
-	g_clear_object (&self->server);
+	/* The widgets point back at us: drop them first */
+	if (self->window != NULL)
+		g_signal_handlers_disconnect_by_data (lrg_editor_window_get_dock (self->window), self);
+	g_clear_pointer (&self->panels, g_hash_table_unref);
+	self->viewport_panel = NULL;
+	g_clear_object (&self->window);
+	g_clear_object (&self->canvas);
+	g_clear_object (&self->theme);
+	g_clear_object (&self->renderer);
+	g_clear_pointer (&self->legacy, editor_legacy_input_free);
+
+	g_clear_object (&self->nav);
+	g_clear_object (&self->view);
 	g_clear_object (&self->gizmo);
-	g_clear_object (&self->dock);
-	g_clear_object (&self->backend);
-	g_clear_object (&self->gui);
+	g_clear_object (&self->server);
 	g_clear_object (&self->actions);
 	g_clear_object (&self->external);
 	g_clear_object (&self->log);
+	g_clear_object (&self->vcs);
+	g_clear_object (&self->assets);
 	g_clear_object (&self->project);
 	g_clear_object (&self->settings);
 	g_clear_object (&self->editor);
-	g_clear_object (&self->play_world);
 
 	G_OBJECT_CLASS (lrg_editor_app_parent_class)->dispose (object);
 }
@@ -102,53 +130,13 @@ lrg_editor_app_finalize (GObject *object)
 	g_free (self->project_dir);
 	g_free (self->settings_path);
 	g_free (self->applied_theme);
-	g_string_free (self->hierarchy_filter, TRUE);
-	g_free (self->rename_guid);
-	g_string_free (self->rename_buf, TRUE);
-	g_free (self->range_anchor);
-	g_ptr_array_unref (self->visible_rows);
-	g_clear_pointer (&self->hierarchy_shown, g_hash_table_unref);
-	g_free (self->hierarchy_shown_needle);
-	g_string_free (self->component_search, TRUE);
-	g_string_free (self->param_key, TRUE);
-	g_string_free (self->scratch, TRUE);
-	g_free (self->asset_dir);
-	g_string_free (self->asset_filter, TRUE);
-	g_ptr_array_unref (self->asset_entries);
-	g_free (self->asset_selected);
-	g_free (self->asset_rename);
-	g_string_free (self->asset_rename_buf, TRUE);
-	g_string_free (self->console_input, TRUE);
-	g_string_free (self->console_filter, TRUE);
-	g_ptr_array_unref (self->console_history);
-	g_clear_pointer (&self->console_shown, g_ptr_array_unref);
-	g_clear_pointer (&self->console_rows, g_ptr_array_unref);
-	g_free (self->console_shown_needle);
-	g_ptr_array_unref (self->problems);
-	g_free (self->file_dir);
-	g_string_free (self->file_name, TRUE);
-	g_ptr_array_unref (self->file_entries);
-	g_free (self->file_selected);
-	g_free (self->file_ext);
-	g_free (self->file_target_guid);
 	g_free (self->pending_path);
-	g_free (self->confirm_message);
-	g_string_free (self->dialog_text1, TRUE);
-	g_string_free (self->dialog_text2, TRUE);
-	g_string_free (self->dialog_text3, TRUE);
-	g_string_free (self->dialog_text4, TRUE);
-	g_string_free (self->dialog_text5, TRUE);
-	g_free (self->capture_action);
-	g_string_free (self->palette_query, TRUE);
-	g_ptr_array_unref (self->quick_files);
 	g_free (self->recovery_file);
-	g_free (self->play_snapshot);
-	g_clear_pointer (&self->play_entries, g_hash_table_unref);
 	g_free (self->window_shot);
-	g_free (self->status);
-	g_queue_clear_full (&self->toasts, toast_free);
 	g_free (self->window_title);
 	g_free (self->level_dir);
+	g_ptr_array_unref (self->problems);
+	g_ptr_array_unref (self->asset_monitors);
 
 	G_OBJECT_CLASS (lrg_editor_app_parent_class)->finalize (object);
 }
@@ -162,81 +150,230 @@ lrg_editor_app_class_init (LrgEditorAppClass *klass)
 	object_class->finalize = lrg_editor_app_finalize;
 }
 
+static void
+lrg_editor_app_init (LrgEditorApp *self)
+{
+	self->problems = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_editor_problem_free);
+	self->problems_dirty = TRUE;
+	self->asset_monitors = g_ptr_array_new_with_free_func (g_object_unref);
+	self->panels = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
+	self->width = 1600;
+	self->height = 960;
+	self->applied_scale = -1.0;
+	lrg_canvas_input_init (&self->last_input);
+	editor_thumbnails_init (self);
+}
+
+/* ==========================================================================
+ * Panels and the dock layout
+ * ========================================================================== */
+
+static void
+make_panel (LrgEditorApp *self,
+            const gchar  *id,
+            const gchar  *title,
+            const gchar  *icon,
+            LrgWidget    *content,
+            gboolean      closable)
+{
+	LrgDockPanel *panel = lrg_dock_panel_new (id, title);
+
+	lrg_dock_panel_set_icon (panel, icon);
+	lrg_dock_panel_set_closable (panel, closable);
+	lrg_dock_panel_set_child (panel, content);
+	g_object_unref (content);
+	g_hash_table_insert (self->panels, g_strdup (id), g_object_ref_sink (panel));
+}
+
+/* Every built-in panel, created once; docking happens in reset_layout. */
+static void
+create_panels (LrgEditorApp *self)
+{
+	/* The split owns all four viewport panels; viewport 0 is the one
+	 * the 0.8.0 "viewport" rect and screenshots refer to */
+	self->viewport_split = lrg_editor_viewport_split_new (self);
+	self->viewport_panel = lrg_editor_viewport_split_get_panel (self->viewport_split, 0);
+	make_panel (self, "viewport", "Viewport", "eye", LRG_WIDGET (self->viewport_split), FALSE);
+	make_panel (self, "hierarchy", "Hierarchy", "list", LRG_WIDGET (lrg_editor_hierarchy_panel_new (self)), TRUE);
+	make_panel (self, "inspector", "Inspector", "gear", LRG_WIDGET (lrg_editor_inspector_panel_new (self)), TRUE);
+	make_panel (self, "assets", "Assets", "folder", LRG_WIDGET (lrg_editor_assets_panel_new (self)), TRUE);
+	make_panel (self, "console", "Console", "info", LRG_WIDGET (lrg_editor_console_panel_new (self)), TRUE);
+	make_panel (self, "problems", "Problems", "warning", LRG_WIDGET (lrg_editor_problems_panel_new (self)), TRUE);
+	make_panel (self, "history", "History", "undo", LRG_WIDGET (lrg_editor_history_panel_new (self)), TRUE);
+	make_panel (self, "timeline", "Timeline", "play", LRG_WIDGET (lrg_editor_timeline_panel_new (self)), TRUE);
+	make_panel (self, "profiler", "Profiler", "chart", LRG_WIDGET (lrg_editor_profiler_panel_new (self)), TRUE);
+	make_panel (self, "code", "Code", "code", LRG_WIDGET (lrg_editor_code_panel_new (self)), TRUE);
+	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
+}
+
+static LrgDockPanel *
+panel (LrgEditorApp *self,
+       const gchar  *id)
+{
+	return g_hash_table_lookup (self->panels, id);
+}
+
+/* Docks @id where the default layout has it. */
+static void
+dock_default (LrgEditorApp *self,
+              const gchar  *id)
+{
+	static const struct { const gchar *id; const gchar *ref; LrgDockPosition pos; gfloat share; } where[] = {
+		{ "viewport", NULL, LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "hierarchy", "viewport", LRG_DOCK_POSITION_LEFT, 0.18f },
+		{ "inspector", "viewport", LRG_DOCK_POSITION_RIGHT, 0.27f },
+		{ "assets", "viewport", LRG_DOCK_POSITION_BOTTOM, 0.30f },
+		{ "console", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "problems", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "history", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "timeline", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "profiler", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "code", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+	};
+	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
+	LrgDockPanel *p = panel (self, id);
+	LrgDockPanel *ref = NULL;
+	gsize         i;
+
+	if (p == NULL || lrg_dock_panel_get_dock_area (p) != NULL)
+		return;
+	for (i = 0; i < G_N_ELEMENTS (where); i++)
+	{
+		if (g_strcmp0 (where[i].id, id) != 0)
+			continue;
+		if (where[i].ref != NULL)
+			ref = lrg_dock_area_get_panel (dock, where[i].ref);
+		if (ref == NULL && where[i].ref != NULL)
+			ref = lrg_dock_area_get_panel (dock, "viewport");
+		lrg_dock_area_add_panel (dock, p, ref,
+		                         (ref == NULL && where[i].ref != NULL) ? where[i].pos : where[i].pos);
+		if (where[i].share > 0.0f)
+			lrg_dock_area_set_panel_share (dock, p, where[i].share);
+		return;
+	}
+	/* Custom panels without a remembered place become tabs */
+	lrg_dock_area_add_panel (dock, p, NULL, LRG_DOCK_POSITION_CENTER);
+}
+
 /* The layout new users get (and View > Reset Layout restores). */
 void
 editor_app_reset_layout (LrgEditorApp *self)
 {
-	g_clear_object (&self->dock);
-	self->dock = lrg_gui_dock_new ();
+	static const gchar *order[] = {
+		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
+		"timeline", "profiler", "code", "tiles", NULL
+	};
+	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
+	GList         *docked = lrg_dock_area_get_panels (dock);
+	GList         *l;
+	GHashTableIter iter;
+	gpointer       key;
+	guint          i;
 
-	lrg_gui_dock_dock_panel (self->dock, "viewport", NULL, LRG_GUI_DOCK_CENTER, 0.0f);
-	lrg_gui_dock_dock_panel (self->dock, "hierarchy", "viewport", LRG_GUI_DOCK_LEFT, 0.18f);
-	lrg_gui_dock_dock_panel (self->dock, "inspector", "viewport", LRG_GUI_DOCK_RIGHT, 0.27f);
-	lrg_gui_dock_dock_panel (self->dock, "assets", "viewport", LRG_GUI_DOCK_BOTTOM, 0.30f);
-	lrg_gui_dock_dock_panel (self->dock, "console", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
-	lrg_gui_dock_dock_panel (self->dock, "problems", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
-	lrg_gui_dock_dock_panel (self->dock, "history", "inspector", LRG_GUI_DOCK_CENTER, 0.0f);
-	lrg_gui_dock_dock_panel (self->dock, "tiles", "inspector", LRG_GUI_DOCK_CENTER, 0.0f);
-	lrg_gui_dock_dock_panel (self->dock, "timeline", "assets", LRG_GUI_DOCK_CENTER, 0.0f);
-	lrg_gui_dock_open_panel (self->dock, "assets");
-	lrg_gui_dock_open_panel (self->dock, "inspector");
+	for (l = docked; l != NULL; l = l->next)
+		lrg_dock_area_remove_panel (dock, l->data);
+	g_list_free (docked);
 
-	lrg_gui_dock_set_closable (self->dock, "viewport", FALSE);
-	lrg_gui_dock_set_panel_flags (self->dock, "viewport", LRG_GUI_REGION_NO_PADDING);
-	lrg_gui_dock_set_panel_flags (self->dock, "console", LRG_GUI_REGION_NONE);
-	lrg_gui_dock_set_panel_flags (self->dock, "assets", LRG_GUI_REGION_NONE);
-	lrg_gui_dock_set_panel_flags (self->dock, "hierarchy", LRG_GUI_REGION_NONE);
+	for (i = 0; order[i] != NULL; i++)
+		dock_default (self, order[i]);
+	g_hash_table_iter_init (&iter, self->panels);
+	while (g_hash_table_iter_next (&iter, &key, NULL))
+		dock_default (self, key);
+
+	lrg_dock_area_present_panel (dock, panel (self, "assets"));
+	lrg_dock_area_present_panel (dock, panel (self, "inspector"));
+	lrg_dock_area_present_panel (dock, panel (self, "viewport"));
 }
 
-static void
-lrg_editor_app_init (LrgEditorApp *self)
+gboolean
+editor_app_panel_is_shown (LrgEditorApp *self,
+                           const gchar  *id)
 {
-	self->hierarchy_filter = g_string_new (NULL);
-	self->rename_buf = g_string_new (NULL);
-	self->visible_rows = g_ptr_array_new ();
-	self->component_search = g_string_new (NULL);
-	self->param_key = g_string_new (NULL);
-	self->scratch = g_string_new (NULL);
-	self->asset_filter = g_string_new (NULL);
-	self->asset_entries = g_ptr_array_new_with_free_func (editor_file_entry_free);
-	self->asset_rename_buf = g_string_new (NULL);
-	self->console_input = g_string_new (NULL);
-	self->console_filter = g_string_new (NULL);
-	self->console_levels = G_LOG_LEVEL_ERROR | G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING |
-	                       G_LOG_LEVEL_MESSAGE | G_LOG_LEVEL_INFO;
-	self->console_autoscroll = TRUE;
-	self->console_history = g_ptr_array_new_with_free_func (g_free);
-	self->console_history_pos = -1;
-	self->problems = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_editor_problem_free);
-	self->problems_dirty = TRUE;
-	self->file_name = g_string_new (NULL);
-	self->file_entries = g_ptr_array_new_with_free_func (editor_file_entry_free);
-	self->dialog_text1 = g_string_new (NULL);
-	self->dialog_text2 = g_string_new (NULL);
-	self->dialog_text3 = g_string_new (NULL);
-	self->dialog_text4 = g_string_new (NULL);
-	self->dialog_text5 = g_string_new (NULL);
-	self->palette_query = g_string_new (NULL);
-	self->quick_files = g_ptr_array_new_with_free_func (g_free);
-	g_queue_init (&self->toasts);
+	LrgDockPanel *p = panel (self, id);
 
-	self->show_grid = TRUE;
-	self->show_icons = TRUE;
-	self->show_stats = TRUE;
-	self->fly_speed = 8.0f;
-	self->nav_axis = -1;
-	self->axis_hot = -1;
-	self->width = 1600.0f;
-	self->height = 960.0f;
-	self->headless = TRUE;   /* until a window exists */
-	self->assets_dirty = TRUE;
+	return p != NULL && lrg_dock_panel_get_dock_area (p) != NULL;
+}
 
-	editor_timeline_init (self);
-	editor_thumbnails_init (self);
+/* Docks @id if it was closed and brings it to the front. */
+void
+editor_app_show_panel (LrgEditorApp *self,
+                       const gchar  *id)
+{
+	LrgDockPanel *p = panel (self, id);
 
-	lrg_gui_input_init (&self->input);
-	lrg_editor_view_init_default (&self->view, 800.0f, 600.0f);
-	editor_app_reset_layout (self);
+	if (p == NULL || self->window == NULL)
+		return;
+	if (lrg_dock_panel_get_dock_area (p) == NULL)
+		dock_default (self, id);
+	lrg_dock_area_present_panel (lrg_editor_window_get_dock (self->window), p);
+}
+
+/* View > Panels: a visible panel closes (the viewport never does),
+ * a hidden or closed one comes to the front. */
+void
+editor_app_toggle_panel (LrgEditorApp *self,
+                         const gchar  *id)
+{
+	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
+	LrgDockPanel *p = panel (self, id);
+
+	if (p == NULL)
+		return;
+	if (lrg_dock_panel_get_dock_area (p) != NULL && g_strcmp0 (id, "viewport") != 0 &&
+	    lrg_widget_get_visible (LRG_WIDGET (p)) && lrg_dock_area_get_active_panel (dock) == p)
+		lrg_dock_area_close_panel (dock, p);
+	else
+		editor_app_show_panel (self, id);
+}
+
+/* The arrangement changed (drag, split, close): remember it in the
+ * settings; the file is written by lrg_editor_app_save_settings(). */
+static void
+on_layout_changed (LrgDockArea *dock,
+                   gpointer     user_data)
+{
+	LrgEditorApp     *self = LRG_EDITOR_APP (user_data);
+	g_autofree gchar *yaml = lrg_dock_area_save_layout (dock);
+
+	g_object_set (self->settings, "ui-layout", yaml, NULL);
+}
+
+void
+lrg_editor_app_add_panel (LrgEditorApp *self,
+                          LrgDockPanel *panel_,
+                          const gchar  *where)
+{
+	LrgDockArea  *dock;
+	LrgDockPanel *ref = NULL;
+	LrgDockPosition pos = LRG_DOCK_POSITION_CENTER;
+	const gchar  *id;
+
+	g_return_if_fail (LRG_IS_EDITOR_APP (self));
+	g_return_if_fail (LRG_IS_DOCK_PANEL (panel_));
+
+	id = lrg_dock_panel_get_id (panel_);
+	g_return_if_fail (id != NULL);
+	dock = lrg_editor_window_get_dock (self->window);
+
+	g_hash_table_replace (self->panels, g_strdup (id), g_object_ref_sink (panel_));
+	if (where == NULL || g_strcmp0 (where, "center") == 0)
+		ref = lrg_dock_area_get_panel (dock, "viewport");
+	else if (g_str_has_prefix (where, "tab:"))
+		ref = lrg_dock_area_get_panel (dock, where + 4);
+	else if (g_strcmp0 (where, "left") == 0)
+		pos = LRG_DOCK_POSITION_LEFT;
+	else if (g_strcmp0 (where, "right") == 0)
+		pos = LRG_DOCK_POSITION_RIGHT;
+	else if (g_strcmp0 (where, "bottom") == 0)
+		pos = LRG_DOCK_POSITION_BOTTOM;
+	else if (g_strcmp0 (where, "top") == 0)
+		pos = LRG_DOCK_POSITION_TOP;
+	else
+		g_warning ("lrg_editor_app_add_panel: unknown position \"%s\", adding as a tab", where);
+
+	if (lrg_dock_panel_get_dock_area (panel_) == NULL)
+		lrg_dock_area_add_panel (dock, panel_, ref, pos);
 }
 
 /* ==========================================================================
@@ -254,26 +391,45 @@ lrg_editor_app_new (LrgEditor *editor)
 	self->external = lrg_external_editor_new (self->settings);
 	self->log = g_object_ref (lrg_editor_log_install ());
 	self->actions = lrg_editor_actions_new (self->settings);
-	self->gui = lrg_gui_context_new ();
-	self->gizmo = lrg_editor_gizmo_new (self->editor);
 	self->server = lrg_editor_server_new (self->editor);
-	editor_tiles_init (self);
 	lrg_editor_server_set_external_editor (self->server, self->external);
 	lrg_editor_server_set_log (self->server, self->log);
+
+	/* The headless view model */
+	self->view = lrg_editor_view_state_new (self->editor);
+	self->nav = lrg_editor_viewport_nav_new (self->view);
+	lrg_editor_viewport_nav_bind_settings (self->nav, self->settings);
+	self->gizmo = lrg_editor_gizmo_new (self->editor);
+	editor_play_init (self);
+
+	/* The scene renderer makes no GL calls until it first renders */
+	self->renderer = lrg_editor_scene_renderer_new (self->editor);
+	lrg_editor_scene_renderer_set_settings (self->renderer, self->settings);
+	lrg_editor_scene_renderer_set_gizmo (self->renderer, self->gizmo);
 
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_editor_changed), self);
 	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_level_replaced), self);
 
+	/* Actions first: the window builds its menus from them */
 	editor_app_register_actions (self);
 	editor_app_register_methods (self);
+
+	/* The UI: canvas, window, panels, toasts */
+	self->canvas = g_object_ref_sink (lrg_canvas_new ());
+	lrg_canvas_set_paint_background (self->canvas, TRUE);
+	self->window = g_object_ref_sink (lrg_editor_window_new (self));
+	lrg_container_add_child (LRG_CONTAINER (self->canvas), LRG_WIDGET (self->window));
+	lrg_canvas_add_overlay (self->canvas, LRG_WIDGET (lrg_editor_window_get_toasts (self->window)));
+	editor_window_set_menus_enabled (self->window, TRUE);
+	create_panels (self);
+	editor_app_reset_layout (self);
+	g_signal_connect (lrg_editor_window_get_dock (self->window), "layout-changed",
+	                  G_CALLBACK (on_layout_changed), self);
+
 	editor_app_apply_settings (self);
-	{
-		g_autofree gchar *cwd = g_get_current_dir ();
-
-		editor_assets_set_dir (self, cwd);
-	}
-	editor_view_reset (self);
-
+	editor_window_sync_shortcuts (self->window);
+	lrg_editor_view_state_reset_camera (self->view);
+	lrg_editor_scene_renderer_set_base_dir (self->renderer, editor_app_base_dir (self));
 	return self;
 }
 
@@ -316,7 +472,49 @@ LrgGuiContext *
 lrg_editor_app_get_gui (LrgEditorApp *self)
 {
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
-	return self->gui;
+	return NULL;
+}
+
+LrgCanvas *
+lrg_editor_app_get_canvas (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+	return self->canvas;
+}
+
+LrgEditorWindow *
+lrg_editor_app_get_window (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+	return self->window;
+}
+
+LrgDockArea *
+lrg_editor_app_get_dock (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+	return lrg_editor_window_get_dock (self->window);
+}
+
+LrgEditorViewState *
+lrg_editor_app_get_view_state (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+	return self->view;
+}
+
+LrgEditorViewportNav *
+lrg_editor_app_get_viewport_nav (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+	return self->nav;
+}
+
+LrgEditorPlaySession *
+lrg_editor_app_get_play_session (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+	return self->play;
 }
 
 const gchar *
@@ -330,14 +528,14 @@ const gchar *
 lrg_editor_app_get_status (LrgEditorApp *self)
 {
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
-	return self->status;
+	return lrg_editor_view_state_get_status (self->view);
 }
 
 gboolean
 lrg_editor_app_is_playing (LrgEditorApp *self)
 {
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), FALSE);
-	return self->playing;
+	return editor_play_is_playing (self);
 }
 
 gboolean
@@ -348,8 +546,14 @@ lrg_editor_app_activate_action (LrgEditorApp *self,
 	return lrg_editor_actions_activate (self->actions, id);
 }
 
+gboolean
+editor_app_is_headless (LrgEditorApp *self)
+{
+	return !self->window_open;
+}
+
 /* ==========================================================================
- * Messages
+ * Messages and clipboard
  * ========================================================================== */
 
 void
@@ -357,43 +561,64 @@ editor_app_set_status (LrgEditorApp *self,
                        const gchar  *format,
                        ...)
 {
-	va_list args;
+	g_autofree gchar *text = NULL;
+	va_list           args;
 
-	g_free (self->status);
 	va_start (args, format);
-	self->status = g_strdup_vprintf (format, args);
+	text = g_strdup_vprintf (format, args);
 	va_end (args);
+	lrg_editor_view_state_set_status (self->view, text);
 }
 
-/* A toast plus a log line (and the status bar). @level: 0 info, 1 ok,
- * 2 warning, 3 error. */
+/* A toast plus a log line (and the status bar). @level: EDITOR_NOTIFY_*. */
 void
 editor_app_notify (LrgEditorApp *self,
                    gint          level,
                    const gchar  *format,
                    ...)
 {
-	EditorToast *toast;
-	va_list      args;
-	gchar       *text;
+	g_autofree gchar *text = NULL;
+	va_list           args;
 
 	va_start (args, format);
 	text = g_strdup_vprintf (format, args);
 	va_end (args);
 
-	lrg_editor_log_append (self->log,
-	                       level >= 3 ? G_LOG_LEVEL_WARNING : G_LOG_LEVEL_MESSAGE,
+	lrg_editor_log_append (self->log, level >= EDITOR_NOTIFY_ERROR ? G_LOG_LEVEL_WARNING : G_LOG_LEVEL_MESSAGE,
 	                       "editor", text);
-	g_free (self->status);
-	self->status = g_strdup (text);
+	lrg_editor_view_state_set_status (self->view, text);
+	if (self->window != NULL)
+		editor_window_toast (self->window, level, text);
+}
 
-	toast = g_new0 (EditorToast, 1);
-	toast->text = text;
-	toast->level = level;
-	toast->expires = self->time + TOAST_SECONDS + (level >= 3 ? 3.0 : 0.0);
-	g_queue_push_tail (&self->toasts, toast);
-	while (g_queue_get_length (&self->toasts) > 5)
-		toast_free (g_queue_pop_head (&self->toasts));
+/* The system clipboard with a window, else a private one (headless). */
+void
+editor_app_set_clipboard (LrgEditorApp *self,
+                          const gchar  *text)
+{
+	if (IsWindowReady ())
+		SetClipboardText (text);
+	g_object_set_data_full (G_OBJECT (self), "lrg-editor-clipboard", g_strdup (text), g_free);
+}
+
+gchar *
+editor_app_get_clipboard (LrgEditorApp *self)
+{
+	if (IsWindowReady ())
+	{
+		const gchar *text = GetClipboardText ();
+
+		if (text != NULL && *text != '\0')
+			return g_strdup (text);
+	}
+	return g_strdup (g_object_get_data (G_OBJECT (self), "lrg-editor-clipboard"));
+}
+
+/* Nodes in the level, cached against the node tree serial. */
+guint
+editor_app_count_nodes (LrgEditorApp *self)
+{
+	return lrg_level_count_nodes (lrg_editor_get_level (self->editor));
 }
 
 /* ==========================================================================
@@ -453,65 +678,98 @@ editor_app_relative_path (LrgEditorApp *self,
 	return g_strdup (path);
 }
 
-gboolean
-editor_app_ensure_project_dir (LrgEditorApp *self)
-{
-	return self->project_dir != NULL;
-}
 
 /* ==========================================================================
- * Settings
+ * Settings and theme
  * ========================================================================== */
+
+/* Builds the canvas theme from the settings: a theme file, else a preset,
+ * with every metric scaled by ui-scale x font-size / 16. */
+static void
+apply_theme (LrgEditorApp *self)
+{
+	const gchar         *file = lrg_editor_settings_get_theme_file (self->settings);
+	const gchar         *preset = lrg_editor_settings_get_theme_preset (self->settings);
+	g_autofree gchar    *value = NULL;
+	g_autoptr(LrgTheme)  theme = NULL;
+	g_autoptr(GError)    error = NULL;
+	gdouble              scale = 1.0;
+	gint                 font_size = 16;
+	gint                 m;
+
+	g_object_get (self->settings, "theme", &value, "ui-scale", &scale, "font-size", &font_size, NULL);
+	scale = CLAMP (scale, 0.5, 4.0) * (font_size > 0 ? font_size / 16.0 : 1.0);
+	if (self->theme != NULL && g_strcmp0 (value, self->applied_theme) == 0 && fabs (scale - self->applied_scale) < 1e-6)
+		return;
+
+	if (file != NULL)
+	{
+		theme = lrg_theme_new_from_file (file, &error);
+		if (theme == NULL)
+			lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "editor", error->message);
+	}
+	if (theme == NULL)
+		theme = lrg_theme_new_preset (preset != NULL ? preset : DEFAULT_THEME);
+	if (theme == NULL)
+		theme = lrg_theme_new_preset (DEFAULT_THEME);
+	if (fabs (scale - 1.0) > 1e-6)
+		for (m = 0; m < LRG_THEME_METRIC_COUNT; m++)
+			lrg_theme_set_metric (theme, (LrgThemeMetric) m,
+			                      lrg_theme_get_metric (theme, (LrgThemeMetric) m) * (gfloat) scale);
+
+	g_set_object (&self->theme, theme);
+	lrg_widget_set_theme (LRG_WIDGET (self->canvas), self->theme);
+	g_free (self->applied_theme);
+	self->applied_theme = g_steal_pointer (&value);
+	self->applied_scale = scale;
+}
 
 void
 editor_app_apply_settings (LrgEditorApp *self)
 {
-	g_autofree gchar *theme = NULL;
 	g_autofree gchar *layout = NULL;
-	g_autofree gchar *font_path = NULL;
-	gdouble           scale, st, sr, ss, fly;
-	gint              font_size;
+	gdouble           st, sr, ss;
 	guint             history;
 	gboolean          snap;
-	LrgGuiStyle      *style;
 
 	g_object_get (self->settings,
-	              "theme", &theme, "ui-scale", &scale, "font-size", &font_size,
-	              "font-path", &font_path, "layout", &layout,
 	              "snap-enabled", &snap, "snap-translate", &st,
 	              "snap-rotate-degrees", &sr, "snap-scale", &ss,
-	              "history-limit", &history, "camera-fly-speed", &fly,
-	              "grid-visible", &self->show_grid,
+	              "history-limit", &history, "ui-layout", &layout,
 	              NULL);
 
-	/* Theme and metrics; fonts follow the scaled size. */
-	style = lrg_gui_context_get_style (self->gui);
-	lrg_gui_style_init (style, theme, (gfloat) scale * (gfloat) font_size / 15.0f);
-	if (self->backend != NULL &&
-	    (self->applied_scale != style->font_size || g_strcmp0 (self->applied_theme, theme) != 0))
-		lrg_gui_raylib_load_fonts (self->backend, font_path, NULL, style->font_size);
-	self->applied_scale = style->font_size;
-	g_free (self->applied_theme);
-	self->applied_theme = g_strdup (theme);
-
+	apply_theme (self);
 	lrg_editor_set_snap_enabled (self->editor, snap);
 	lrg_editor_set_snap (self->editor, st, sr * G_PI / 180.0, ss);
 	lrg_editor_set_history_limit (self->editor, history);
-	self->fly_speed = (gfloat) fly;
+	lrg_editor_view_state_load_settings (self->view, self->settings);
 
+	/* The saved dock layout; the viewport can never be lost */
 	if (layout != NULL && *layout != '\0')
 	{
-		g_autoptr(GError) error = NULL;
+		LrgDockArea       *dock = lrg_editor_window_get_dock (self->window);
+		g_autoptr(GError)  error = NULL;
 
-		if (!lrg_gui_dock_load_string (self->dock, layout, &error))
+		g_signal_handlers_block_by_func (dock, on_layout_changed, self);
+		if (!lrg_dock_area_load_layout (dock, layout, &error))
 			lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "editor", error->message);
-		else
-		{
-			/* The viewport can never be lost. */
-			if (!lrg_gui_dock_has_panel (self->dock, "viewport"))
-				lrg_gui_dock_open_panel (self->dock, "viewport");
-		}
+		if (lrg_dock_area_get_panel (dock, "viewport") == NULL)
+			dock_default (self, "viewport");
+		g_signal_handlers_unblock_by_func (dock, on_layout_changed, self);
 	}
+}
+
+static void
+on_settings_notify (GObject    *settings,
+                    GParamSpec *pspec,
+                    gpointer    user_data)
+{
+	LrgEditorApp *self = LRG_EDITOR_APP (user_data);
+	const gchar  *name = g_param_spec_get_name (pspec);
+
+	/* Theme and scale apply live (Preferences) */
+	if (g_strcmp0 (name, "theme") == 0 || g_strcmp0 (name, "ui-scale") == 0 || g_strcmp0 (name, "font-size") == 0)
+		apply_theme (self);
 }
 
 gboolean
@@ -519,6 +777,8 @@ lrg_editor_app_load_settings (LrgEditorApp  *self,
                               const gchar   *path,
                               GError       **error)
 {
+	g_autoptr(GError) merr = NULL;
+
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), FALSE);
 
 	g_free (self->settings_path);
@@ -526,7 +786,13 @@ lrg_editor_app_load_settings (LrgEditorApp  *self,
 	if (!lrg_editor_settings_load (self->settings, path, error))
 		return FALSE;
 
+	/* A 0.8.0 file is brought up to date (a backup is written first) */
+	if (!lrg_editor_settings_migrate (self->settings, path, &merr))
+		lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "editor", merr->message);
+
 	editor_app_apply_settings (self);
+	g_signal_handlers_disconnect_by_func (self->settings, on_settings_notify, self);
+	g_signal_connect (self->settings, "notify", G_CALLBACK (on_settings_notify), self);
 	return TRUE;
 }
 
@@ -539,17 +805,17 @@ lrg_editor_app_save_settings (LrgEditorApp  *self,
 
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), FALSE);
 
-	/* Persist the live layout and snap state with the preferences. */
-	layout = lrg_gui_dock_to_string (self->dock);
+	/* Persist the live layout, cameras and snap state with the preferences */
+	layout = lrg_dock_area_save_layout (lrg_editor_window_get_dock (self->window));
 	lrg_editor_get_snap (self->editor, &st, &sr, &ss);
 	g_object_set (self->settings,
-	              "layout", layout,
+	              "ui-layout", layout,
 	              "snap-enabled", lrg_editor_get_snap_enabled (self->editor),
 	              "snap-translate", st,
 	              "snap-rotate-degrees", sr * 180.0 / G_PI,
 	              "snap-scale", ss,
-	              "grid-visible", self->show_grid,
 	              NULL);
+	lrg_editor_view_state_save_settings (self->view, self->settings);
 
 	return lrg_editor_settings_save (self->settings, self->settings_path, error);
 }
@@ -557,6 +823,28 @@ lrg_editor_app_save_settings (LrgEditorApp  *self,
 /* ==========================================================================
  * Projects and levels
  * ========================================================================== */
+
+/* The project's asset database (sidecars written: this is the editor),
+ * git status and folder monitors. */
+static void
+scan_project (LrgEditorApp *self)
+{
+	g_autoptr(GError) error = NULL;
+
+	g_clear_object (&self->assets);
+	g_clear_object (&self->vcs);
+	if (self->project_dir == NULL)
+		return;
+
+	self->assets = lrg_asset_database_new ();
+	lrg_asset_database_set_write_meta (self->assets, TRUE);
+	lrg_asset_database_add_search_dir (self->assets, self->project_dir);
+	if (!lrg_asset_database_scan (self->assets, &error))
+		lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "editor", error->message);
+
+	self->vcs = lrg_editor_vcs_new (self->project_dir);
+	lrg_editor_vcs_queue_refresh (self->vcs);
+}
 
 static void
 set_project_dir (LrgEditorApp *self,
@@ -566,8 +854,9 @@ set_project_dir (LrgEditorApp *self,
 	self->project_dir = g_canonicalize_filename (dir, NULL);
 	lrg_external_editor_set_project_dir (self->external, self->project_dir);
 	lrg_editor_server_set_project_dir (self->server, self->project_dir);
-	editor_assets_set_dir (self, self->project_dir);
-	g_ptr_array_set_size (self->quick_files, 0);
+	lrg_editor_scene_renderer_set_base_dir (self->renderer, self->project_dir);
+	scan_project (self);
+	watch_project (self);
 	self->problems_dirty = TRUE;
 }
 
@@ -590,7 +879,7 @@ lrg_editor_app_open_project (LrgEditorApp  *self,
 		return FALSE;
 	}
 
-	/* A directory without a manifest is still usable as a loose project. */
+	/* A directory without a manifest is still usable as a loose project */
 	manifest = g_build_filename (abs, LRG_PROJECT_MANIFEST, NULL);
 	if (g_file_test (manifest, G_FILE_TEST_EXISTS))
 	{
@@ -609,7 +898,7 @@ lrg_editor_app_open_project (LrgEditorApp  *self,
 	set_project_dir (self, abs);
 	lrg_editor_settings_add_recent_project (self->settings, abs);
 
-	/* Open the default level if nothing is open yet. */
+	/* Open the default level if nothing is open yet */
 	if (lrg_editor_get_path (self->editor) == NULL && !lrg_editor_is_dirty (self->editor) &&
 	    lrg_project_get_default_level (project) != NULL)
 	{
@@ -618,10 +907,10 @@ lrg_editor_app_open_project (LrgEditorApp  *self,
 
 		if (g_file_test (level, G_FILE_TEST_EXISTS) &&
 		    !lrg_editor_app_open_level (self, level, &lerr))
-			editor_app_notify (self, 3, "Could not open the default level: %s", lerr->message);
+			editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Could not open the default level: %s", lerr->message);
 	}
 
-	editor_app_notify (self, 1, "Opened project %s", lrg_project_get_name (project));
+	editor_app_notify (self, EDITOR_NOTIFY_SUCCESS, "Opened project %s", lrg_project_get_name (project));
 	return TRUE;
 }
 
@@ -636,6 +925,8 @@ static const gchar *starter_level =
 	"      rotation: [-0.9, 0.6, 0.0]\n"
 	"    visual:\n"
 	"      kind: light\n"
+	"      params:\n"
+	"        light_type: directional\n"
 	"  - name: Camera\n"
 	"    transform:\n"
 	"      location: [0.0, 3.0, 8.0]\n"
@@ -755,37 +1046,32 @@ lrg_editor_app_open_level (LrgEditorApp  *self,
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), FALSE);
 	g_return_val_if_fail (path != NULL, FALSE);
 
-	if (self->playing)
-		editor_play_stop (self);
+	editor_play_stop (self);
+	editor_timeline_end_preview (self);
 
 	abs = editor_app_project_path (self, path);
 	if (!lrg_editor_load_level (self->editor, abs, error))
 		return FALSE;
 
-	/* A level outside any project: treat its parent as the root for
-	 * relative asset paths and the browser. */
+	/* A level outside any project: relative asset paths resolve next to it */
 	if (self->project_dir == NULL)
-	{
-		g_autofree gchar *dir = g_path_get_dirname (abs);
-
-		editor_assets_set_dir (self, dir);
-	}
+		lrg_editor_scene_renderer_set_base_dir (self->renderer, editor_app_base_dir (self));
 
 	lrg_editor_settings_add_recent_level (self->settings, abs);
 	self->level_saved_mtime = file_mtime (abs);
 	self->level_changed_on_disk = FALSE;
 	watch_level_file (self);
 
-	/* Offer crash recovery when the autosave is newer than the file. */
+	/* Offer crash recovery when the autosave is newer than the file */
 	autosave = autosave_path_for (self, abs);
 	if (autosave != NULL && file_mtime (autosave) > self->level_saved_mtime)
 	{
 		g_free (self->recovery_file);
 		self->recovery_file = g_strdup (autosave);
-		if (!self->headless)
-			editor_dialog_open (self, EDITOR_DIALOG_RECOVER);
+		if (!editor_app_is_headless (self))
+			editor_dialog_recover (self);
 		else
-			editor_app_notify (self, 2, "A newer autosave exists: %s", autosave);
+			editor_app_notify (self, EDITOR_NOTIFY_WARNING, "A newer autosave exists: %s", autosave);
 	}
 
 	editor_app_set_status (self, "Opened %s", abs);
@@ -798,33 +1084,29 @@ editor_app_save (LrgEditorApp *self)
 	g_autoptr(GError) error = NULL;
 	g_autofree gchar *autosave = NULL;
 
-	/* A timeline preview poses nodes outside the history: never save it. */
+	/* A timeline preview poses nodes outside the history: never save it */
 	editor_timeline_end_preview (self);
 
 	if (lrg_editor_get_path (self->editor) == NULL)
 	{
-		g_autofree gchar *dir = (self->project_dir != NULL)
-		                        ? g_build_filename (self->project_dir, "levels", NULL)
-		                        : g_get_current_dir ();
-
-		editor_file_dialog_open (self, EDITOR_FILE_SAVE_LEVEL_AS, dir, ".rlevel");
+		editor_dialog_save_level_as (self);
 		return FALSE;
 	}
 
 	if (!lrg_editor_save (self->editor, &error))
 	{
-		editor_app_notify (self, 3, "Save failed: %s", error->message);
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Save failed: %s", error->message);
 		return FALSE;
 	}
 
-	/* Our own write must not trigger the "changed on disk" prompt. */
+	/* Our own write must not trigger the "changed on disk" prompt */
 	self->level_saved_mtime = file_mtime (lrg_editor_get_path (self->editor));
 	self->level_changed_on_disk = FALSE;
 	autosave = autosave_path_for (self, lrg_editor_get_path (self->editor));
 	if (autosave != NULL)
 		g_unlink (autosave);
 
-	editor_app_notify (self, 1, "Saved %s", lrg_editor_get_path (self->editor));
+	editor_app_notify (self, EDITOR_NOTIFY_SUCCESS, "Saved %s", lrg_editor_get_path (self->editor));
 	return TRUE;
 }
 
@@ -854,60 +1136,45 @@ editor_app_save_as (LrgEditorApp *self,
 	pending_path = g_steal_pointer (&self->pending_path);
 	self->pending = EDITOR_PENDING_NONE;
 	if (what != EDITOR_PENDING_NONE)
-		perform_pending (self, what, pending_path);
+		editor_app_perform_pending (self, what, pending_path);
 	return TRUE;
 }
 
-LrgScriptLanguage
-editor_script_language_for_path (const gchar *path)
-{
-	if (g_str_has_suffix (path, ".py"))
-		return LRG_SCRIPT_LANGUAGE_PYTHON;
-	if (g_str_has_suffix (path, ".js"))
-		return LRG_SCRIPT_LANGUAGE_GJS;
-	if (g_str_has_suffix (path, ".c"))
-		return LRG_SCRIPT_LANGUAGE_CRISPY;
-	if (g_str_has_suffix (path, ".el"))
-		return LRG_SCRIPT_LANGUAGE_ELISP;
-	return LRG_SCRIPT_LANGUAGE_LUA;
-}
-
 /* Carries out a document operation that may discard changes. */
-static void
-perform_pending (LrgEditorApp  *self,
-                 EditorPending  what,
-                 const gchar   *path)
+void
+editor_app_perform_pending (LrgEditorApp  *self,
+                            EditorPending  what,
+                            const gchar   *path)
 {
 	g_autoptr(GError) error = NULL;
 
 	switch (what)
 	{
 	case EDITOR_PENDING_NEW_LEVEL:
-		if (self->playing)
-			editor_play_stop (self);
+		editor_play_stop (self);
 		lrg_editor_new_level (self->editor, "untitled");
 		watch_level_file (self);
 		editor_app_set_status (self, "New level");
 		break;
 	case EDITOR_PENDING_OPEN_LEVEL:
 		if (!lrg_editor_app_open_level (self, path, &error))
-			editor_app_notify (self, 3, "Cannot open %s: %s", path, error->message);
+			editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot open %s: %s", path, error->message);
 		break;
 	case EDITOR_PENDING_OPEN_PROJECT:
 		lrg_editor_new_level (self->editor, "untitled");
 		g_clear_object (&self->project);
 		g_clear_pointer (&self->project_dir, g_free);
 		if (!lrg_editor_app_open_project (self, path, &error))
-			editor_app_notify (self, 3, "Cannot open project: %s", error->message);
+			editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot open project: %s", error->message);
 		break;
 	case EDITOR_PENDING_RELOAD:
 		if (!lrg_editor_reload (self->editor, &error))
-			editor_app_notify (self, 3, "Reload failed: %s", error->message);
+			editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Reload failed: %s", error->message);
 		else
 		{
 			self->level_saved_mtime = file_mtime (lrg_editor_get_path (self->editor));
 			self->level_changed_on_disk = FALSE;
-			editor_app_notify (self, 0, "Reloaded %s", lrg_editor_get_path (self->editor));
+			editor_app_notify (self, EDITOR_NOTIFY_INFO, "Reloaded %s", lrg_editor_get_path (self->editor));
 		}
 		break;
 	case EDITOR_PENDING_QUIT:
@@ -927,21 +1194,22 @@ editor_app_request (LrgEditorApp  *self,
 
 	g_object_get (self->settings, "confirm-on-close", &confirm, NULL);
 
-	/* Ask before throwing away unsaved work (not possible headless). */
-	if (lrg_editor_is_dirty (self->editor) && confirm && !self->headless)
+	/* Ask before throwing away unsaved work (not possible headless) */
+	if (lrg_editor_is_dirty (self->editor) && confirm && !editor_app_is_headless (self))
 	{
+		g_autofree gchar *message = NULL;
+
 		self->pending = what;
 		g_free (self->pending_path);
 		self->pending_path = g_strdup (path);
-		g_free (self->confirm_message);
-		self->confirm_message = g_strdup_printf ("\"%s\" has unsaved changes.",
-		                                         lrg_editor_get_path (self->editor) != NULL
-		                                         ? lrg_editor_get_path (self->editor) : "untitled");
-		editor_dialog_open (self, EDITOR_DIALOG_CONFIRM);
+		message = g_strdup_printf ("\"%s\" has unsaved changes.",
+		                           lrg_editor_get_path (self->editor) != NULL
+		                           ? lrg_editor_get_path (self->editor) : "untitled");
+		editor_dialog_confirm (self, message);
 		return;
 	}
 
-	perform_pending (self, what, path);
+	editor_app_perform_pending (self, what, path);
 }
 
 void
@@ -977,10 +1245,10 @@ editor_app_confirm_choice (LrgEditorApp *self,
 	}
 	if (choice == 0 && lrg_editor_get_path (self->editor) == NULL)
 	{
-		/* Untitled: Save As first, then carry on (editor_app_save_as). */
-		editor_app_save (self);
+		/* Untitled: Save As first, then carry on (editor_app_save_as) */
 		self->pending = what;
 		self->pending_path = g_steal_pointer (&path);
+		editor_app_save (self);
 		return;
 	}
 	if (choice == 0 && !editor_app_save (self))
@@ -989,12 +1257,26 @@ editor_app_confirm_choice (LrgEditorApp *self,
 		return;   /* the save failed */
 	}
 
-	perform_pending (self, what, path);
+	editor_app_perform_pending (self, what, path);
 }
 
 /* ==========================================================================
  * Opening files
  * ========================================================================== */
+
+LrgScriptLanguage
+editor_script_language_for_path (const gchar *path)
+{
+	if (g_str_has_suffix (path, ".py"))
+		return LRG_SCRIPT_LANGUAGE_PYTHON;
+	if (g_str_has_suffix (path, ".js"))
+		return LRG_SCRIPT_LANGUAGE_GJS;
+	if (g_str_has_suffix (path, ".c"))
+		return LRG_SCRIPT_LANGUAGE_CRISPY;
+	if (g_str_has_suffix (path, ".el"))
+		return LRG_SCRIPT_LANGUAGE_ELISP;
+	return LRG_SCRIPT_LANGUAGE_LUA;
+}
 
 void
 editor_app_open_file (LrgEditorApp *self,
@@ -1005,8 +1287,15 @@ editor_app_open_file (LrgEditorApp *self,
 	g_autoptr(GError) error = NULL;
 	g_autofree gchar *abs = editor_app_project_path (self, path);
 
+	/* script-editor "internal": the code panel takes it (only when the
+	 * panel exists, or open_script would come back here) */
+	if (g_strcmp0 (lrg_editor_settings_get_script_editor (self->settings), "internal") == 0 &&
+	    g_object_get_data (G_OBJECT (self), "lrg-editor-code-panel") != NULL &&
+	    lrg_editor_code_panel_open_script (self, path, line))
+		return;
+
 	if (!lrg_external_editor_open (self->external, abs, line, col, &error))
-		editor_app_notify (self, 3, "Cannot open %s: %s", abs, error->message);
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot open %s: %s", abs, error->message);
 	else
 		editor_app_set_status (self, "Opened %s in the external editor", abs);
 }
@@ -1036,7 +1325,7 @@ editor_app_open_asset (LrgEditorApp *self,
 			g_autoptr(GError) error = NULL;
 
 			if (uri == NULL || !g_app_info_launch_default_for_uri (uri, NULL, &error))
-				editor_app_notify (self, 3, "No application for %s%s%s", abs,
+				editor_app_notify (self, EDITOR_NOTIFY_ERROR, "No application for %s%s%s", abs,
 				                   error != NULL ? ": " : "", error != NULL ? error->message : "");
 		}
 		break;
@@ -1047,8 +1336,36 @@ editor_app_open_asset (LrgEditorApp *self,
 }
 
 /* ==========================================================================
- * Nodes and views
+ * Nodes
  * ========================================================================== */
+
+/* The Create menu (and the viewport context menu): node kinds in menu
+ * order; "-" entries separate groups. */
+const EditorCreateItem *
+editor_create_items (guint *n_items)
+{
+	static const EditorCreateItem items[] = {
+		{ "empty", "Empty", "Node", LRG_NODE_VISUAL_NONE, 0 },
+		{ "cube", "Cube", "Cube", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CUBE },
+		{ "sphere", "Sphere", "Sphere", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_UV_SPHERE },
+		{ "plane", "Plane", "Plane", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_PLANE },
+		{ "cylinder", "Cylinder", "Cylinder", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CYLINDER },
+		{ "cone", "Cone", "Cone", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CONE },
+		{ "torus", "Torus", "Torus", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_TORUS },
+		{ "rectangle", "Rectangle (2D)", "Rectangle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_RECTANGLE_2D },
+		{ "circle", "Circle (2D)", "Circle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CIRCLE_2D },
+		{ "-", NULL, NULL, 0, 0 },
+		{ "light", "Light", "Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "camera", "Camera", "Camera", LRG_NODE_VISUAL_CAMERA, 0 },
+		{ "audio", "Audio Emitter", "Audio", LRG_NODE_VISUAL_AUDIO_EMITTER, 0 },
+		{ "sprite", "Sprite", "Sprite", LRG_NODE_VISUAL_SPRITE, 0 },
+		{ "mesh", "Mesh (asset)", "Mesh", LRG_NODE_VISUAL_MESH_ASSET, 0 },
+		{ "tilemap", "Tilemap", "Tilemap", LRG_NODE_VISUAL_TILEMAP, 0 },
+	};
+
+	*n_items = G_N_ELEMENTS (items);
+	return items;
+}
 
 LrgNode *
 editor_app_create_node (LrgEditorApp      *self,
@@ -1057,9 +1374,9 @@ editor_app_create_node (LrgEditorApp      *self,
                         LrgPrimitiveType   primitive,
                         LrgNode           *parent)
 {
-	g_autoptr(LrgNode) node = lrg_node_new (name);
-	LrgNode           *target = parent;
-	gfloat             pos[3] = { 0.0f, 0.0f, 0.0f };
+	g_autoptr(LrgNode)   node = lrg_node_new (name);
+	LrgEditorViewCamera *camera = lrg_editor_view_state_get_camera (self->view, -1);
+	gfloat               pos[3] = { 0.0f, 0.0f, 0.0f };
 
 	if (kind != LRG_NODE_VISUAL_NONE)
 	{
@@ -1075,53 +1392,41 @@ editor_app_create_node (LrgEditorApp      *self,
 		lrg_node_set_visual (node, visual);
 	}
 
-	/* New top-level nodes appear where the camera looks, on the ground. */
-	if (target == NULL)
+	/* New top-level nodes appear where the camera looks, on the ground */
+	if (parent == NULL)
 	{
-		pos[0] = roundf (self->view.target[0]);
-		pos[2] = roundf (self->view.target[2]);
+		pos[0] = roundf (camera->view.target[0]);
+		pos[2] = roundf (camera->view.target[2]);
 		if (kind == LRG_NODE_VISUAL_PRIMITIVE && primitive != LRG_PRIMITIVE_PLANE &&
-		    primitive != LRG_PRIMITIVE_GRID && !self->view_2d)
+		    primitive != LRG_PRIMITIVE_GRID && !camera->view_2d)
 			pos[1] = 0.5f;
 	}
-	if (self->view_2d)
+	if (camera->view_2d)
 	{
 		lrg_node_set_is_2d (node, TRUE);
-		pos[1] = roundf (self->view.target[1]);
+		pos[1] = roundf (camera->view.target[1]);
 		pos[2] = 0.0f;
 	}
 	lrg_node_set_location_xyz (node, pos[0], pos[1], pos[2]);
 
-	lrg_editor_insert_node (self->editor, node, target, -1);
-	self->reveal_pending = TRUE;
+	lrg_editor_insert_node (self->editor, node, parent, -1);
 	return node;   /* the level holds a reference */
 }
 
-void
-editor_app_frame_selection (LrgEditorApp *self)
+/* A node of a Create-menu kind ("cube", "light"...), or NULL. */
+LrgNode *
+editor_app_create_node_kind (LrgEditorApp *self,
+                             const gchar  *kind,
+                             LrgNode      *parent)
 {
-	g_autoptr(GPtrArray) roots = lrg_editor_get_selected_roots (self->editor);
-	gfloat               center[3], radius;
+	const EditorCreateItem *items;
+	guint                   n, i;
 
-	if (roots->len == 0)
-	{
-		editor_app_frame_all (self);
-		return;
-	}
-	if (lrg_editor_compute_bounds (roots, center, &radius))
-		lrg_editor_view_frame (&self->view, center, radius);
-}
-
-void
-editor_app_frame_all (LrgEditorApp *self)
-{
-	GPtrArray *top = lrg_node_get_children (lrg_level_get_root (lrg_editor_get_level (self->editor)));
-	gfloat     center[3], radius;
-
-	if (lrg_editor_compute_bounds (top, center, &radius))
-		lrg_editor_view_frame (&self->view, center, radius);
-	else
-		editor_view_reset (self);
+	items = editor_create_items (&n);
+	for (i = 0; i < n; i++)
+		if (items[i].name != NULL && g_strcmp0 (items[i].id, kind) == 0)
+			return editor_app_create_node (self, items[i].name, items[i].kind, items[i].primitive, parent);
+	return NULL;
 }
 
 gchar *
@@ -1183,7 +1488,6 @@ editor_app_create_script (LrgEditorApp       *self,
 			return NULL;
 	}
 
-	self->assets_dirty = TRUE;
 	return editor_app_relative_path (self, path);
 }
 
@@ -1195,9 +1499,7 @@ static void
 on_editor_changed (LrgEditor *editor,
                    gpointer   user_data)
 {
-	LrgEditorApp *self = LRG_EDITOR_APP (user_data);
-
-	self->problems_dirty = TRUE;
+	LRG_EDITOR_APP (user_data)->problems_dirty = TRUE;
 }
 
 static void
@@ -1207,14 +1509,12 @@ on_level_replaced (LrgEditor *editor,
 {
 	LrgEditorApp *self = LRG_EDITOR_APP (user_data);
 
-	/* Node pointers held by views are now stale. */
-	g_clear_pointer (&self->rename_guid, g_free);
-	g_clear_pointer (&self->range_anchor, g_free);
-	g_ptr_array_set_size (self->visible_rows, 0);
-	self->last_primary = NULL;
 	self->problems_dirty = TRUE;
-	self->view_2d = lrg_level_get_default_2d (level);
-	editor_view_reset (self);
+	self->timeline_key_valid = FALSE;
+	g_hash_table_remove_all (self->timeline_rest);
+	lrg_editor_view_state_set_timeline_previewing (self->view, FALSE);
+	lrg_editor_view_state_set_timeline_playing (self->view, FALSE);
+	lrg_editor_view_state_reset_for_level (self->view, level);
 }
 
 static void
@@ -1235,14 +1535,14 @@ on_level_file_changed (GFileMonitor      *monitor,
 		return;   /* our own save */
 
 	/* Edited elsewhere (e.g. the YAML in Emacs): reload silently when we
-	 * have nothing to lose, otherwise ask. */
+	 * have nothing to lose, otherwise ask in the status bar */
 	g_object_get (self->settings, "reload-on-external-change", &reload, NULL);
 	if (reload && !lrg_editor_is_dirty (self->editor))
-		perform_pending (self, EDITOR_PENDING_RELOAD, NULL);
+		editor_app_perform_pending (self, EDITOR_PENDING_RELOAD, NULL);
 	else
 	{
 		self->level_changed_on_disk = TRUE;
-		editor_app_notify (self, 2, "%s changed on disk", path);
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "%s changed on disk", path);
 	}
 }
 
@@ -1261,11 +1561,87 @@ watch_level_file (LrgEditorApp *self)
 	if (path == NULL)
 		return;
 
-	/* Watch the file (editors often replace it atomically). */
+	/* Watch the file (editors often replace it atomically) */
 	file = g_file_new_for_path (path);
 	self->level_monitor = g_file_monitor_file (file, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
 	if (self->level_monitor != NULL)
 		g_signal_connect (self->level_monitor, "changed", G_CALLBACK (on_level_file_changed), self);
+}
+
+/*
+ * A file in a project folder changed: stale thumbnails and GPU copies go,
+ * prefabs edited on disk sync their linked instances (a no-op when they
+ * are already up to date, e.g. after our own save), and git status is
+ * refreshed (debounced).
+ */
+static void
+on_project_file_changed (GFileMonitor      *monitor,
+                         GFile             *file,
+                         GFile             *other,
+                         GFileMonitorEvent  event,
+                         gpointer           user_data)
+{
+	LrgEditorApp     *self = LRG_EDITOR_APP (user_data);
+	g_autofree gchar *path = (file != NULL) ? g_file_get_path (file) : NULL;
+
+	if (path == NULL || strstr (path, "/.cache/") != NULL || strstr (path, "/.lrg-editor/") != NULL)
+		return;
+	if (event == G_FILE_MONITOR_EVENT_ATTRIBUTE_CHANGED || event == G_FILE_MONITOR_EVENT_PRE_UNMOUNT ||
+	    event == G_FILE_MONITOR_EVENT_UNMOUNTED)
+		return;
+
+	editor_thumbnails_file_changed (self, path);
+	if (self->renderer != NULL)
+		lrg_editor_scene_renderer_forget_asset (self->renderer, path);
+	if (g_str_has_suffix (path, ".rprefab") &&
+	    (event == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT || event == G_FILE_MONITOR_EVENT_CREATED ||
+	     event == G_FILE_MONITOR_EVENT_MOVED_IN || event == G_FILE_MONITOR_EVENT_RENAMED))
+	{
+		guint n = lrg_editor_prefab_changed (self->editor, path);
+
+		if (n > 0)
+			editor_app_set_status (self, "Synced %u prefab instance(s) with %s", n, path);
+	}
+	if (self->vcs != NULL)
+		lrg_editor_vcs_queue_refresh (self->vcs);
+}
+
+static void
+monitor_dir (LrgEditorApp *self,
+             const gchar  *dir)
+{
+	g_autoptr(GFile) file = g_file_new_for_path (dir);
+	GFileMonitor    *m;
+
+	if (!g_file_test (dir, G_FILE_TEST_IS_DIR))
+		return;
+	m = g_file_monitor_directory (file, G_FILE_MONITOR_WATCH_MOVES, NULL, NULL);
+	if (m == NULL)
+		return;
+	g_signal_connect (m, "changed", G_CALLBACK (on_project_file_changed), self);
+	g_ptr_array_add (self->asset_monitors, m);
+}
+
+/* Monitors the project root and its asset folders (not recursive, as
+ * before 0.8.1). */
+static void
+watch_project (LrgEditorApp *self)
+{
+	GPtrArray *dirs;
+	guint      i;
+
+	clear_monitors (self);
+	if (self->project_dir == NULL)
+		return;
+	monitor_dir (self, self->project_dir);
+	dirs = (self->project != NULL) ? lrg_project_get_asset_dirs (self->project) : NULL;
+	for (i = 0; dirs != NULL && i < dirs->len; i++)
+	{
+		g_autofree gchar *abs = editor_app_project_path (self, g_ptr_array_index (dirs, i));
+
+		if (g_strcmp0 (abs, self->project_dir) != 0)
+			monitor_dir (self, abs);
+	}
 }
 
 static void
@@ -1277,7 +1653,7 @@ autosave_tick (LrgEditorApp *self)
 	g_autofree gchar *data = NULL;
 
 	g_object_get (self->settings, "autosave-interval", &interval, NULL);
-	if (interval == 0 || !lrg_editor_is_dirty (self->editor) || self->playing)
+	if (interval == 0 || !lrg_editor_is_dirty (self->editor) || editor_play_is_playing (self))
 	{
 		self->last_autosave = self->time;
 		return;
@@ -1306,428 +1682,8 @@ autosave_tick (LrgEditorApp *self)
 }
 
 /* ==========================================================================
- * Frame: chrome
+ * Frame
  * ========================================================================== */
-
-/* Menu item bound to an action: label, shortcut, enabled and check state
- * all come from the registry. */
-void
-editor_app_menu_item_action (LrgEditorApp *self,
-                             const gchar  *id)
-{
-	const gchar      *label = lrg_editor_actions_get_label (self->actions, id);
-	const gchar      *shortcut = lrg_editor_actions_get_shortcut (self->actions, id);
-	g_autofree gchar *first = NULL;
-
-	if (label == NULL)
-		return;
-
-	/* Only the first of several alternatives is shown. */
-	if (shortcut != NULL)
-	{
-		const gchar *bar = strchr (shortcut, '|');
-
-		first = (bar != NULL) ? g_strndup (shortcut, bar - shortcut) : g_strdup (shortcut);
-	}
-	if (lrg_gui_menu_item (self->gui, label, first,
-	                       lrg_editor_actions_is_checked (self->actions, id),
-	                       lrg_editor_actions_is_enabled (self->actions, id)))
-		lrg_editor_actions_activate (self->actions, id);
-}
-
-static void
-menu_items (LrgEditorApp        *self,
-            const gchar * const *ids)
-{
-	guint i;
-
-	for (i = 0; ids[i] != NULL; i++)
-	{
-		if (*ids[i] == '-')
-			lrg_gui_separator (self->gui);
-		else
-			editor_app_menu_item_action (self, ids[i]);
-	}
-}
-
-void
-editor_app_menu_create (LrgEditorApp *self,
-                        LrgNode      *parent)
-{
-	static const struct
-	{
-		const gchar      *label;
-		const gchar      *name;
-		LrgNodeVisualKind kind;
-		LrgPrimitiveType  prim;
-	} items[] = {
-		{ "Empty", "Node", LRG_NODE_VISUAL_NONE, 0 },
-		{ "Cube", "Cube", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CUBE },
-		{ "Sphere", "Sphere", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_UV_SPHERE },
-		{ "Plane", "Plane", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_PLANE },
-		{ "Cylinder", "Cylinder", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CYLINDER },
-		{ "Cone", "Cone", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CONE },
-		{ "Torus", "Torus", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_TORUS },
-		{ "Rectangle (2D)", "Rectangle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_RECTANGLE_2D },
-		{ "Circle (2D)", "Circle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CIRCLE_2D },
-		{ NULL, NULL, 0, 0 },
-		{ "Light", "Light", LRG_NODE_VISUAL_LIGHT, 0 },
-		{ "Camera", "Camera", LRG_NODE_VISUAL_CAMERA, 0 },
-		{ "Audio Emitter", "Audio", LRG_NODE_VISUAL_AUDIO_EMITTER, 0 },
-		{ "Sprite", "Sprite", LRG_NODE_VISUAL_SPRITE, 0 },
-		{ "Mesh (asset)", "Mesh", LRG_NODE_VISUAL_MESH_ASSET, 0 },
-		{ "Tilemap", "Tilemap", LRG_NODE_VISUAL_TILEMAP, 0 },
-	};
-	gsize i;
-
-	for (i = 0; i < G_N_ELEMENTS (items); i++)
-	{
-		if (items[i].label == NULL)
-		{
-			lrg_gui_separator (self->gui);
-			continue;
-		}
-		if (lrg_gui_menu_item (self->gui, items[i].label, NULL, FALSE, TRUE))
-		{
-			LrgNode *node = editor_app_create_node (self, items[i].name, items[i].kind, items[i].prim,
-			                                        parent);
-
-			editor_app_set_status (self, "Created %s", lrg_node_get_name (node));
-		}
-	}
-	lrg_gui_separator (self->gui);
-	editor_app_menu_item_action (self, "node.instantiate-prefab");
-}
-
-/* Top-level menu header; remembers where it is for ui.state. */
-static gboolean
-begin_top_menu (LrgEditorApp *self,
-                gint          index,
-                const gchar  *label)
-{
-	gboolean open = lrg_gui_begin_menu (self->gui, label, TRUE);
-
-	/* Opening the menu adds no item, so this is still the header. */
-	lrg_gui_get_item_rect (self->gui, &self->menu_rects[index]);
-	return open;
-}
-
-static void
-draw_menu_bar (LrgEditorApp *self)
-{
-	static const gchar *file_items[] = {
-		"file.new-level", "file.open-level", "-", "file.save", "file.save-as", "file.reload", "-",
-		"file.new-project", "file.open-project", "file.project-settings", "-",
-		"file.import-scene", "-", "file.quit", NULL
-	};
-	static const gchar *edit_items[] = {
-		"edit.undo", "edit.redo", "-", "edit.cut", "edit.copy", "edit.paste", "edit.duplicate",
-		"edit.delete", "-", "edit.select-all", "edit.deselect", "edit.find", "-",
-		"edit.preferences", NULL
-	};
-	static const gchar *node_items[] = {
-		"node.rename", "node.toggle-visible", "node.toggle-lock", "node.group", "node.ungroup", "-",
-		"node.save-prefab", "node.instantiate-prefab", "-", "node.attach-script",
-		"node.open-scripts", NULL
-	};
-	static const gchar *view_items[] = {
-		"view.focus", "view.frame-all", "-", "view.top", "view.front", "view.right",
-		"view.perspective", "view.toggle-2d", "-", "view.grid", "view.icons", "view.wireframe",
-		"view.stats", NULL
-	};
-	static const gchar *panels[][2] = {
-		{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
-		{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
-		{ "problems", "Problems" }, { "tiles", "Tiles" }, { "timeline", "Timeline" }
-	};
-	static const gchar *play_items[] = {
-		"play.start", "play.pause", "play.step", "play.stop", "-", "run.start", "run.stop", NULL
-	};
-	static const gchar *tool_items[] = {
-		"tool.select", "tool.move", "tool.rotate", "tool.scale", "-", "tool.toggle-space",
-		"tool.toggle-snap", "-", "tools.validate", "tools.palette", "tools.quick-open",
-		"tools.open-level-yaml", "tools.reveal-socket", "-", "tilemap.paint-mode", "tilemap.show-panel",
-		"timeline.key", "timeline.play", "timeline.show-panel", "tools.rebuild-thumbnails", NULL
-	};
-	static const gchar *help_items[] = { "help.shortcuts", "help.docs", "help.about", NULL };
-	const LrgGuiRect    bar = { 0.0f, 0.0f, self->width, EDITOR_MENUBAR_H };
-	gsize               i;
-
-	lrg_gui_begin_menu_bar (self->gui, &bar);
-
-	/* Alt + the first letter opens a menu from the keyboard, under its
-	 * header (where it was drawn last frame). */
-	if (self->dialog == EDITOR_DIALOG_NONE && !self->palette_open &&
-	    !lrg_gui_context_wants_keyboard (self->gui))
-	{
-		static const struct { LrgGuiKey key; const gchar *label; } keys[] = {
-			{ LRG_GUI_KEY_F, "File" }, { LRG_GUI_KEY_E, "Edit" }, { LRG_GUI_KEY_C, "Create" },
-			{ LRG_GUI_KEY_N, "Node" }, { LRG_GUI_KEY_V, "View" }, { LRG_GUI_KEY_P, "Play" },
-			{ LRG_GUI_KEY_T, "Tools" }, { LRG_GUI_KEY_H, "Help" }
-		};
-
-		for (i = 0; i < G_N_ELEMENTS (keys); i++)
-			if (lrg_gui_shortcut (self->gui, LRG_GUI_MOD_ALT, keys[i].key) && self->menu_rects[i].w > 0.0f)
-			{
-				lrg_gui_close_all_popups (self->gui);
-				lrg_gui_set_next_popup_pos (self->gui, self->menu_rects[i].x,
-				                            self->menu_rects[i].y + self->menu_rects[i].h);
-				lrg_gui_open_popup (self->gui, keys[i].label);
-			}
-	}
-
-	if (begin_top_menu (self, 0, "File"))
-	{
-		menu_items (self, file_items);
-		lrg_gui_separator (self->gui);
-		if (lrg_gui_begin_menu (self->gui, "Recent", TRUE))
-		{
-			const gchar * const *levels = lrg_editor_settings_get_recent_levels (self->settings);
-			const gchar * const *projects = lrg_editor_settings_get_recent_projects (self->settings);
-
-			for (i = 0; levels != NULL && levels[i] != NULL; i++)
-			{
-				lrg_gui_push_id_int (self->gui, (gint64) i);
-				if (lrg_gui_menu_item (self->gui, levels[i], NULL, FALSE, TRUE))
-					editor_app_request (self, EDITOR_PENDING_OPEN_LEVEL, levels[i]);
-				lrg_gui_pop_id (self->gui);
-			}
-			lrg_gui_separator (self->gui);
-			for (i = 0; projects != NULL && projects[i] != NULL; i++)
-			{
-				lrg_gui_push_id_int (self->gui, (gint64) i + 1000);
-				if (lrg_gui_menu_item (self->gui, projects[i], NULL, FALSE, TRUE))
-					editor_app_request (self, EDITOR_PENDING_OPEN_PROJECT, projects[i]);
-				lrg_gui_pop_id (self->gui);
-			}
-			lrg_gui_end_menu (self->gui);
-		}
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 1, "Edit"))
-	{
-		menu_items (self, edit_items);
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 2, "Create"))
-	{
-		editor_app_menu_create (self, NULL);
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 3, "Node"))
-	{
-		menu_items (self, node_items);
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 4, "View"))
-	{
-		menu_items (self, view_items);
-		lrg_gui_separator (self->gui);
-		if (lrg_gui_begin_menu (self->gui, "Panels", TRUE))
-		{
-			for (i = 0; i < G_N_ELEMENTS (panels); i++)
-				if (lrg_gui_menu_item (self->gui, panels[i][1], NULL,
-				                       lrg_gui_dock_has_panel (self->dock, panels[i][0]), TRUE))
-				{
-					if (lrg_gui_dock_has_panel (self->dock, panels[i][0]) &&
-					    lrg_gui_dock_is_panel_visible (self->dock, panels[i][0]) &&
-					    g_strcmp0 (panels[i][0], "viewport") != 0)
-						lrg_gui_dock_close_panel (self->dock, panels[i][0]);
-					else
-						lrg_gui_dock_open_panel (self->dock, panels[i][0]);
-				}
-			lrg_gui_end_menu (self->gui);
-		}
-		editor_app_menu_item_action (self, "view.reset-layout");
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 5, "Play"))
-	{
-		menu_items (self, play_items);
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 6, "Tools"))
-	{
-		menu_items (self, tool_items);
-		lrg_gui_end_menu (self->gui);
-	}
-	if (begin_top_menu (self, 7, "Help"))
-	{
-		menu_items (self, help_items);
-		lrg_gui_end_menu (self->gui);
-	}
-
-	lrg_gui_end_menu_bar (self->gui);
-}
-
-/* A toolbar button that runs an action and reflects its checked state. */
-static void
-tool_button (LrgEditorApp *self,
-             const gchar  *label,
-             const gchar  *action)
-{
-	gboolean          checked = lrg_editor_actions_is_checked (self->actions, action);
-	gboolean          enabled = lrg_editor_actions_is_enabled (self->actions, action);
-	g_autofree gchar *id = g_strdup_printf ("%s##tb-%s", label, action);
-
-	if (lrg_gui_toggle_button (self->gui, id, &checked) && enabled)
-		lrg_editor_actions_activate (self->actions, action);
-	{
-		const gchar      *sc = lrg_editor_actions_get_shortcut (self->actions, action);
-		g_autofree gchar *tip = g_strdup_printf ("%s%s%s%s",
-		                                         lrg_editor_actions_get_label (self->actions, action),
-		                                         sc != NULL ? " (" : "", sc != NULL ? sc : "",
-		                                         sc != NULL ? ")" : "");
-
-		lrg_gui_set_item_tooltip (self->gui, tip);
-	}
-}
-
-static void
-draw_toolbar (LrgEditorApp *self)
-{
-	const LrgGuiRect bar = { 0.0f, EDITOR_MENUBAR_H, self->width, EDITOR_TOOLBAR_H };
-	gdouble          st, sr, ss;
-	gfloat           v;
-
-	lrg_gui_begin_region (self->gui, "##toolbar", &bar,
-	                      LRG_GUI_REGION_HORIZONTAL | LRG_GUI_REGION_BACKGROUND);
-
-	tool_button (self, "Select", "tool.select");
-	tool_button (self, "Move", "tool.move");
-	tool_button (self, "Rotate", "tool.rotate");
-	tool_button (self, "Scale", "tool.scale");
-	lrg_gui_dummy (self->gui, 8.0f, 1.0f);
-	tool_button (self, lrg_editor_get_space (self->editor) == LRG_EDITOR_SPACE_LOCAL ? "Local" : "World",
-	             "tool.toggle-space");
-	tool_button (self, "Snap", "tool.toggle-snap");
-
-	/* Snap increments, edited in place. */
-	lrg_editor_get_snap (self->editor, &st, &sr, &ss);
-	lrg_gui_set_next_item_width (self->gui, 64.0f);
-	v = (gfloat) st;
-	if (lrg_gui_drag_float (self->gui, "##snap-t", &v, 0.01f, 0.0f, 1000.0f, "%.2f m"))
-		lrg_editor_set_snap (self->editor, v, sr, ss);
-	lrg_gui_set_item_tooltip (self->gui, "Move snap");
-	lrg_gui_set_next_item_width (self->gui, 64.0f);
-	v = (gfloat) (sr * 180.0 / G_PI);
-	if (lrg_gui_drag_float (self->gui, "##snap-r", &v, 0.5f, 0.0f, 360.0f, "%.0f deg"))
-		lrg_editor_set_snap (self->editor, st, v * G_PI / 180.0, ss);
-	lrg_gui_set_item_tooltip (self->gui, "Rotate snap");
-	lrg_gui_set_next_item_width (self->gui, 56.0f);
-	v = (gfloat) ss;
-	if (lrg_gui_drag_float (self->gui, "##snap-s", &v, 0.01f, 0.0f, 100.0f, "%.2f"))
-		lrg_editor_set_snap (self->editor, st, sr, v);
-	lrg_gui_set_item_tooltip (self->gui, "Scale snap");
-
-	lrg_gui_dummy (self->gui, 8.0f, 1.0f);
-	tool_button (self, self->view_2d ? "2D" : "3D", "view.toggle-2d");
-	lrg_gui_dummy (self->gui, 16.0f, 1.0f);
-
-	tool_button (self, self->playing ? "Playing" : "Play", "play.start");
-	tool_button (self, "Pause", "play.pause");
-	tool_button (self, "Step", "play.step");
-	tool_button (self, "Stop", "play.stop");
-	lrg_gui_dummy (self->gui, 8.0f, 1.0f);
-	tool_button (self, self->run_proc != NULL ? "Running" : "Run Game", "run.start");
-
-	lrg_gui_end_region (self->gui);
-}
-
-static void
-draw_status_bar (LrgEditorApp *self)
-{
-	const LrgGuiRect  bar = { 0.0f, self->height - EDITOR_STATUSBAR_H, self->width, EDITOR_STATUSBAR_H };
-	LrgGuiStyle      *style = lrg_gui_context_get_style (self->gui);
-	guint             warnings, errors, clients;
-	g_autofree gchar *right = NULL;
-	g_autofree gchar *doc = NULL;
-	const gchar      *path = lrg_editor_get_path (self->editor);
-	gfloat            rw;
-
-	lrg_gui_begin_region (self->gui, "##statusbar", &bar,
-	                      LRG_GUI_REGION_HORIZONTAL | LRG_GUI_REGION_BACKGROUND);
-
-	/* Document and dirty marker. */
-	{
-		g_autofree gchar *base = (path != NULL) ? g_path_get_basename (path) : g_strdup ("untitled");
-
-		doc = g_strdup_printf ("%s%s", base, lrg_editor_is_dirty (self->editor) ? " *" : "");
-	}
-	lrg_gui_text (self->gui, doc);
-	if (self->playing)
-		lrg_gui_text_colored (self->gui, style->colors[LRG_GUI_COL_SUCCESS],
-		                      self->paused ? "PAUSED" : "PLAYING");
-	if (self->level_changed_on_disk)
-	{
-		lrg_gui_text_colored (self->gui, style->colors[LRG_GUI_COL_WARNING], "changed on disk:");
-		if (lrg_gui_button (self->gui, "Reload##status"))
-			perform_pending (self, EDITOR_PENDING_RELOAD, NULL);
-		if (lrg_gui_button (self->gui, "Keep mine##status"))
-			self->level_changed_on_disk = FALSE;
-	}
-	if (self->status != NULL)
-		lrg_gui_text_disabled (self->gui, self->status);
-
-	/* Right side: selection, log counters, IPC clients, fps. */
-	warnings = lrg_editor_log_count_level (self->log, G_LOG_LEVEL_WARNING);
-	errors = lrg_editor_log_count_level (self->log, G_LOG_LEVEL_ERROR | G_LOG_LEVEL_CRITICAL);
-	clients = lrg_editor_server_get_n_clients (self->server);
-	right = g_strdup_printf ("%u selected   %u nodes   %s%u errors  %u warnings   %s%s   %.0f fps",
-	                         lrg_editor_selection_get_count (lrg_editor_get_selection (self->editor)),
-	                         editor_app_count_nodes (self),
-	                         "", errors, warnings,
-	                         lrg_editor_server_get_socket_path (self->server) != NULL ? "IPC " : "",
-	                         lrg_editor_server_get_socket_path (self->server) != NULL
-	                         ? (lrg_editor_server_has_capability (self->server, "open-file")
-	                            ? "emacs" : (clients > 0 ? "client" : "idle"))
-	                         : "",
-	                         self->fps);
-	rw = lrg_gui_calc_text_width (self->gui, right);
-	lrg_gui_set_cursor (self->gui, MAX (bar.x + 200.0f, bar.x + bar.w - rw - 12.0f),
-	                    bar.y + (bar.h - style->font_size) * 0.5f);
-	lrg_gui_text_disabled (self->gui, right);
-	if (lrg_gui_is_item_clicked (self->gui, LRG_GUI_MOUSE_LEFT))
-		lrg_gui_dock_open_panel (self->dock, "console");
-
-	lrg_gui_end_region (self->gui);
-}
-
-static void
-draw_toasts (LrgEditorApp *self)
-{
-	LrgGuiStyle    *style = lrg_gui_context_get_style (self->gui);
-	LrgGuiDrawList *dl;
-	GList          *l;
-	gfloat          y = self->height - EDITOR_STATUSBAR_H - 12.0f;
-	static const LrgGuiStyleColor accents[] = {
-		LRG_GUI_COL_ACCENT, LRG_GUI_COL_SUCCESS, LRG_GUI_COL_WARNING, LRG_GUI_COL_ERROR
-	};
-
-	/* Expire old toasts. */
-	while (!g_queue_is_empty (&self->toasts) &&
-	       ((EditorToast *) g_queue_peek_head (&self->toasts))->expires < self->time)
-		toast_free (g_queue_pop_head (&self->toasts));
-
-	dl = lrg_gui_get_draw_list (self->gui);
-	for (l = g_queue_peek_tail_link (&self->toasts); l != NULL; l = l->prev)
-	{
-		EditorToast *t = l->data;
-		gfloat       w = MIN (self->width * 0.4f, lrg_gui_calc_text_width (self->gui, t->text) + 28.0f);
-		LrgGuiRect   r = { self->width - w - 14.0f, y - style->font_size - 14.0f, w, style->font_size + 14.0f };
-		LrgGuiRect   bar = { r.x, r.y, 4.0f, r.h };
-		LrgGuiRect   text = { r.x + 14.0f, r.y, r.w - 18.0f, r.h };
-
-		lrg_gui_draw_list_rect_filled (dl, &r, style->colors[LRG_GUI_COL_POPUP_BG], style->rounding);
-		lrg_gui_draw_list_rect_outline (dl, &r, style->colors[LRG_GUI_COL_BORDER], 1.0f, style->rounding);
-		lrg_gui_draw_list_rect_filled (dl, &bar, style->colors[accents[CLAMP (t->level, 0, 3)]], 2.0f);
-		lrg_gui_draw_list_push_clip (dl, &text);
-		lrg_gui_draw_list_text (dl, text.x, text.y + 7.0f, t->text, -1, style->font_size,
-		                        style->colors[LRG_GUI_COL_TEXT], FALSE);
-		lrg_gui_draw_list_pop_clip (dl);
-		y = r.y - 6.0f;
-	}
-}
 
 static void
 update_title (LrgEditorApp *self)
@@ -1749,9 +1705,88 @@ update_title (LrgEditorApp *self)
 		SetWindowTitle (self->window_title);
 }
 
-/* ==========================================================================
- * Frame
- * ========================================================================== */
+/* Validates the level now (Tools > Validate, debounced edits). */
+void
+editor_app_validate_now (LrgEditorApp *self)
+{
+	LrgEngine *engine = lrg_engine_get_default ();
+
+	g_ptr_array_unref (self->problems);
+	self->problems = lrg_editor_validate_level (lrg_editor_get_level (self->editor), editor_app_base_dir (self),
+	                                            engine != NULL ? lrg_engine_get_registry (engine) : NULL);
+	self->problems_dirty = FALSE;
+	self->problems_time = self->time;
+}
+
+/* Timers that do not depend on the UI (frames and the headless loop). */
+static void
+tick_timers (LrgEditorApp *self,
+             gfloat        delta)
+{
+	lrg_editor_play_session_tick (self->play, delta);
+	editor_timeline_tick (self, delta);
+	editor_thumbnails_pump (self);
+	autosave_tick (self);
+	if (self->problems_dirty && self->time - self->problems_time > PROBLEMS_DEBOUNCE)
+		editor_app_validate_now (self);
+}
+
+void
+lrg_editor_app_process_frame (LrgEditorApp         *self,
+                              const LrgCanvasInput *input,
+                              gint                  width,
+                              gint                  height)
+{
+	LrgProfiler *prof;
+
+	g_return_if_fail (LRG_IS_EDITOR_APP (self));
+	g_return_if_fail (input != NULL);
+
+	/* Editor phases show in the profiler panel (no-ops while it is off) */
+	prof = lrg_profiler_get_default ();
+	lrg_profiler_begin_frame (prof);
+
+	/* Clock and size */
+	self->width = MAX (width, 1);
+	self->height = MAX (height, 1);
+	self->time += MAX (input->delta_time, 0.0f);
+	self->frames++;
+	if (input->delta_time > 0.0f)
+		self->fps = self->fps * 0.95f + (1.0f / input->delta_time) * 0.05f;
+	self->last_input = *input;
+
+	lrg_widget_set_size (LRG_WIDGET (self->canvas), (gfloat) self->width, (gfloat) self->height);
+	lrg_widget_set_size (LRG_WIDGET (self->window), (gfloat) self->width, (gfloat) self->height);
+	lrg_widget_set_size (LRG_WIDGET (lrg_editor_window_get_toasts (self->window)),
+	                     (gfloat) self->width, (gfloat) self->height);
+
+	/* Model -> widgets (enabled / checked states, shortcuts, status
+	 * bar), then a layout pass so input hits this frame's rectangles */
+	lrg_profiler_begin_section (prof, "ui.update");
+	editor_window_set_menus_enabled (self->window, lrg_editor_view_state_get_dialog (self->view) == NULL);
+	editor_window_refresh (self->window);
+	lrg_widget_layout (LRG_WIDGET (self->canvas));
+	lrg_profiler_end_section (prof, "ui.update");
+
+	/* Input: shortcuts, menus, dialogs, the viewport; advances springs */
+	lrg_profiler_begin_section (prof, "ui.input");
+	lrg_canvas_process_input (self->canvas, input);
+	lrg_profiler_end_section (prof, "ui.input");
+	editor_viewport_panel_tick (self->viewport_panel, input->delta_time);
+
+	tick_timers (self, input->delta_time);
+	update_title (self);
+
+	/* Headless, record so popups and widgets are laid out for ui.state */
+	if (!self->window_open)
+		lrg_canvas_record (self->canvas);
+
+	if (self->quit_requested && lrg_editor_view_state_get_dialog (self->view) == NULL &&
+	    !lrg_editor_is_dirty (self->editor))
+		self->quit_now = TRUE;
+
+	lrg_profiler_end_frame (prof);
+}
 
 void
 lrg_editor_app_frame (LrgEditorApp      *self,
@@ -1759,135 +1794,15 @@ lrg_editor_app_frame (LrgEditorApp      *self,
                       gfloat             width,
                       gfloat             height)
 {
-	LrgGuiRect dock_rect;
-	LrgNode   *primary;
+	LrgCanvasInput frame;
 
 	g_return_if_fail (LRG_IS_EDITOR_APP (self));
 	g_return_if_fail (input != NULL);
 
-	self->width = width;
-	self->height = height;
-	self->time = input->time;
-	self->frames++;
-	if (input->delta > 0.0f)
-		self->fps = self->fps * 0.95f + (1.0f / input->delta) * 0.05f;
-
-	lrg_gui_context_begin_frame (self->gui, input, width, height);
-	self->cur_input = input;
-	self->last_input = *input;
-
-	/* Shortcuts first, while focus state is still last frame's. */
-	editor_app_process_shortcuts (self);
-
-	/* Selection changes from anywhere (viewport, IPC) reveal the node. */
-	primary = lrg_editor_selection_get_primary (lrg_editor_get_selection (self->editor));
-	if (primary != self->last_primary)
-	{
-		self->last_primary = primary;
-		if (primary != NULL)
-			self->reveal_pending = TRUE;
-	}
-
-	draw_menu_bar (self);
-	draw_toolbar (self);
-
-	dock_rect.x = 0.0f;
-	dock_rect.y = EDITOR_MENUBAR_H + EDITOR_TOOLBAR_H;
-	dock_rect.w = width;
-	dock_rect.h = MAX (50.0f, height - dock_rect.y - EDITOR_STATUSBAR_H);
-
-	lrg_gui_dock_begin (self->dock, self->gui, &dock_rect);
-
-	self->viewport_visible = FALSE;
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "viewport",
-	                              self->playing ? "Viewport (playing)###viewport" : "Viewport###viewport"))
-	{
-		editor_panel_viewport (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "hierarchy", "Hierarchy"))
-	{
-		editor_panel_hierarchy (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "inspector", "Inspector"))
-	{
-		editor_panel_inspector (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "assets", "Assets"))
-	{
-		editor_panel_assets (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	{
-		guint             errors = lrg_editor_log_count_level (self->log, G_LOG_LEVEL_ERROR |
-		                                                       G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING);
-		g_autofree gchar *title = (errors > 0) ? g_strdup_printf ("Console (%u)###console", errors)
-		                                       : g_strdup ("Console###console");
-
-		if (lrg_gui_dock_begin_panel (self->dock, self->gui, "console", title))
-		{
-			editor_panel_console (self);
-			lrg_gui_dock_end_panel (self->dock, self->gui);
-		}
-	}
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "history", "History"))
-	{
-		editor_panel_history (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "tiles", "Tiles"))
-	{
-		editor_panel_tiles (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	if (lrg_gui_dock_begin_panel (self->dock, self->gui, "timeline", "Timeline"))
-	{
-		editor_panel_timeline (self);
-		lrg_gui_dock_end_panel (self->dock, self->gui);
-	}
-	{
-		g_autofree gchar *title = (self->problems->len > 0)
-		                          ? g_strdup_printf ("Problems (%u)###problems", self->problems->len)
-		                          : g_strdup ("Problems###problems");
-
-		if (lrg_gui_dock_begin_panel (self->dock, self->gui, "problems", title))
-		{
-			editor_panel_problems (self);
-			lrg_gui_dock_end_panel (self->dock, self->gui);
-		}
-	}
-	lrg_gui_dock_end (self->dock, self->gui);
-
-	draw_status_bar (self);
-	editor_dialogs_draw (self);
-	draw_toasts (self);
-
-	lrg_gui_context_end_frame (self->gui);
-	self->cur_input = NULL;
-
-	/* Timers that do not depend on the UI. */
-	if (self->playing)
-		editor_play_tick (self, input->delta);
-	editor_timeline_tick (self, input->delta);
-	editor_thumbnails_pump (self);
-	autosave_tick (self);
-	if (self->problems_dirty && self->time - self->problems_time > PROBLEMS_DEBOUNCE)
-	{
-		LrgEngine *engine = lrg_engine_get_default ();
-
-		g_ptr_array_unref (self->problems);
-		self->problems = lrg_editor_validate_level (lrg_editor_get_level (self->editor),
-		                                            editor_app_base_dir (self),
-		                                            engine != NULL ? lrg_engine_get_registry (engine) : NULL);
-		self->problems_dirty = FALSE;
-		self->problems_time = self->time;
-	}
-	update_title (self);
-
-	if (self->quit_requested && self->dialog == EDITOR_DIALOG_NONE && !lrg_editor_is_dirty (self->editor))
-		self->quit_now = TRUE;
+	if (self->legacy == NULL)
+		self->legacy = editor_legacy_input_new ();
+	editor_legacy_input_translate (self->legacy, input, &frame);
+	lrg_editor_app_process_frame (self, &frame, (gint) width, (gint) height);
 }
 
 /* ==========================================================================
@@ -1935,8 +1850,8 @@ lrg_editor_app_set_window_size (LrgEditorApp *self,
 {
 	g_return_if_fail (LRG_IS_EDITOR_APP (self));
 
-	self->width = (gfloat) MAX (width, 320);
-	self->height = (gfloat) MAX (height, 240);
+	self->width = MAX (width, 320);
+	self->height = MAX (height, 240);
 }
 
 /*
@@ -1981,8 +1896,6 @@ editor_cpu_affinity_disabled (void)
 gint
 lrg_editor_app_run (LrgEditorApp *self)
 {
-	gint w, h;
-
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), 1);
 
 	if (!has_display ())
@@ -2000,7 +1913,7 @@ lrg_editor_app_run (LrgEditorApp *self)
 
 	SetConfigFlags (FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
 	SetTraceLogLevel (LOG_WARNING);
-	InitWindow ((gint) self->width, (gint) self->height, "libregnum editor");
+	InitWindow (self->width, self->height, "libregnum editor");
 	if (!IsWindowReady ())
 	{
 		g_printerr ("lrgeditor: could not open a window\n");
@@ -2014,43 +1927,35 @@ lrg_editor_app_run (LrgEditorApp *self)
 	grl_frame_sync_set_max_frames_in_flight (
 		lrg_grl_window_resolve_max_frames_in_flight (EDITOR_MAX_FRAMES_IN_FLIGHT));
 	self->window_open = TRUE;
-	self->headless = FALSE;
-
-	self->backend = lrg_gui_raylib_new ();
-	lrg_gui_raylib_attach (self->backend, self->gui);
-	self->applied_scale = -1.0f;
-	editor_app_apply_settings (self);
-	editor_render_init (self);
+	g_clear_pointer (&self->window_title, g_free);
 	editor_thumbnails_window_opened (self);
 
 	while (!self->quit_now)
 	{
-		GMainContext *ctx = g_main_context_default ();
+		GMainContext   *ctx = g_main_context_default ();
+		LrgCanvasInput  input;
 
-		/* Keep IPC, monitors and subprocess reaping alive. */
+		/* Keep IPC, monitors, file dialogs and subprocess reaping alive */
 		while (g_main_context_iteration (ctx, FALSE))
 			;
 
 		if (WindowShouldClose ())
 			lrg_editor_app_request_quit (self);
 
-		lrg_gui_raylib_poll_input (self->backend, &self->input);
-		w = GetScreenWidth ();
-		h = GetScreenHeight ();
-		lrg_editor_app_frame (self, &self->input, (gfloat) w, (gfloat) h);
-		lrg_gui_raylib_apply_cursor (self->backend, lrg_gui_context_get_cursor (self->gui));
+		lrg_canvas_input_poll (&input, GetFrameTime ());
+		lrg_editor_app_process_frame (self, &input, GetScreenWidth (), GetScreenHeight ());
 
-		/* 3D into its render target, then the UI on top. */
-		editor_render_viewport (self);
+		/* The canvas steps the viewport (its render texture is drawn
+		 * there), so drawing is just the UI pass */
 		BeginDrawing ();
 		ClearBackground ((Color) { 17, 17, 27, 255 });
-		lrg_gui_raylib_render (self->backend, lrg_gui_context_get_draw_list (self->gui));
+		lrg_canvas_render (self->canvas);
 		if (self->window_shot != NULL)
 		{
 			Image shot = LoadImageFromScreen ();
 
 			if (!ExportImage (shot, self->window_shot))
-				editor_app_notify (self, 3, "Could not write %s", self->window_shot);
+				editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Could not write %s", self->window_shot);
 			UnloadImage (shot);
 			g_clear_pointer (&self->window_shot, g_free);
 		}
@@ -2065,19 +1970,18 @@ lrg_editor_app_run (LrgEditorApp *self)
 			g_printerr ("lrgeditor: could not save settings: %s\n", error->message);
 	}
 
-	/* GL objects owned outside the renderer go first. */
+	/* GL objects go before the context: thumbnails, the scene renderer,
+	 * the viewport's render texture (leaving render mode frees it) */
+	editor_dialog_close_all (self);
 	editor_thumbnails_window_closing (self);
-	g_clear_object (&self->tile_palette_tex);
-	g_clear_pointer (&self->tile_palette_path, g_free);
-	editor_render_shutdown (self);
-	g_clear_object (&self->backend);
-	lrg_gui_context_set_measure_func (self->gui, NULL, NULL, NULL);
-	lrg_gui_context_set_clipboard_funcs (self->gui, NULL, NULL, NULL, NULL);
+	lrg_editor_scene_renderer_release (self->renderer);
+	lrg_editor_viewport_split_set_gpu_enabled (self->viewport_split, FALSE);
+	lrg_canvas_input_detach_latch ();
 	grl_frame_sync_reset ();	/* its fences belong to the context closing */
 	grl_fast2d_shutdown ();	/* graylib's 2D batch, ditto */
 	CloseWindow ();
 	self->window_open = FALSE;
-	self->headless = TRUE;
+	lrg_editor_viewport_split_set_gpu_enabled (self->viewport_split, TRUE);
 	return 0;
 }
 
@@ -2092,19 +1996,22 @@ typedef struct
 {
 	LrgEditorApp *self;
 	GMainLoop    *loop;
+	gint64        last;
 } HeadlessData;
 
+/* The headless loop has no frames: timers run every 100 ms (play,
+ * timeline playback, thumbnails, autosave, validation). view.*, play.*
+ * and timeline.* IPC act on the same headless objects as the UI. */
 static gboolean
 headless_tick (gpointer user_data)
 {
 	HeadlessData *data = user_data;
+	gint64        now = g_get_monotonic_time ();
+	gfloat        delta = (data->last > 0) ? (gfloat) (now - data->last) / (gfloat) G_USEC_PER_SEC : 0.1f;
 
-	data->self->time = g_get_monotonic_time () / (gdouble) G_USEC_PER_SEC;
-	autosave_tick (data->self);
-	if (data->self->playing)
-		editor_play_tick (data->self, 0.1f);
-	editor_timeline_tick (data->self, 0.1f);
-	editor_thumbnails_pump (data->self);
+	data->last = now;
+	data->self->time = now / (gdouble) G_USEC_PER_SEC;
+	tick_timers (data->self, MIN (delta, 0.1f));
 	if (data->self->quit_now)
 		g_main_loop_quit (data->loop);
 	return G_SOURCE_CONTINUE;
@@ -2119,10 +2026,10 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 
 	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), 1);
 
-	self->headless = TRUE;
 	loop = g_main_loop_new (NULL, FALSE);
 	data.self = self;
 	data.loop = loop;
+	data.last = 0;
 
 	sigint = g_unix_signal_add (SIGINT, on_quit_signal, loop);
 	sigterm = g_unix_signal_add (SIGTERM, on_quit_signal, loop);

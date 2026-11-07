@@ -90,6 +90,30 @@ LRG_AVAILABLE_IN_ALL
 void lrg_checkbox_toggle (LrgCheckbox *self);
 
 /**
+ * lrg_checkbox_get_inconsistent:
+ * @self: an #LrgCheckbox
+ *
+ * Returns: %TRUE while the indeterminate (mixed) dash is shown
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_checkbox_get_inconsistent (LrgCheckbox *self);
+
+/**
+ * lrg_checkbox_set_inconsistent:
+ * @self: an #LrgCheckbox
+ * @inconsistent: %TRUE to show the indeterminate state
+ *
+ * Shows a dash instead of the tick (a centred knob for the switch
+ * style), for a value that is neither on nor off, such as a flag that
+ * differs between several edited objects. Independent of the checked
+ * state; lrg_checkbox_toggle() (a click, ACTIVATE) clears it and checks
+ * the box, emitting #LrgCheckbox::toggled.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_checkbox_set_inconsistent (LrgCheckbox *self,
+                                    gboolean     inconsistent);
+
+/**
  * lrg_checkbox_get_check_progress:
  * @self: an #LrgCheckbox
  *

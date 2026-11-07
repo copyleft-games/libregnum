@@ -15,8 +15,10 @@
 #include "lrg-timeline.h"
 #include "lrg-component-desc.h"
 #include "lrg-script-binding.h"
+#include "lrg-prefab.h"
 #include "../scene/lrg-material3d.h"
 #include "../lrg-enums.h"
+#include "../ui/lrg-property-source.h"
 #include <graylib.h>
 #include <yaml-glib.h>
 
@@ -101,6 +103,18 @@ set_value_member (YamlMapping  *map,
 		yaml_mapping_set_double_member (map, key, g_value_get_double (value));
 		break;
 	default:
+		if (G_TYPE_IS_ENUM (vtype) || G_TYPE_IS_FLAGS (vtype))
+		{
+			/* Enums and flags as their nicks ("melee", "fire|ice"):
+			 * readable, stable across renumbering, and parsed back
+			 * by lrg_property_value_from_string() when the level is
+			 * instantiated (GLib's own transform writes the C value
+			 * name, which nothing reads back). */
+			g_autofree gchar *nick = lrg_property_value_to_string (value);
+
+			yaml_mapping_set_string_member (map, key, nick);
+			break;
+		}
 		{
 			/* Fall back to a transformed string representation. */
 			GValue strv = G_VALUE_INIT;
@@ -386,6 +400,49 @@ build_script_mapping (LrgScriptBinding *binding)
 	return map;
 }
 
+/*
+ * build_prefab_mapping:
+ *
+ * The optional `prefab:` block of a linked instance root (editor-only
+ * metadata; the runtime ignores it):
+ *
+ *   prefab:
+ *     source: prefabs/crate.rprefab
+ *     guid: <asset guid>            (omitted when unknown)
+ *     map: { <instance guid>: <source guid>, ... }
+ *     overrides: [ <key>, ... ]     (omitted when empty)
+ */
+static YamlMapping *
+build_prefab_mapping (LrgPrefabLink *link)
+{
+	YamlMapping            *map = yaml_mapping_new ();
+	g_autoptr(YamlMapping)  guid_map = yaml_mapping_new ();
+	g_auto(GStrv)           guids = lrg_prefab_link_get_mapped_guids (link);
+	g_auto(GStrv)           keys = lrg_prefab_link_get_overrides (link);
+	guint                   i;
+
+	if (lrg_prefab_link_get_source_path (link) != NULL)
+		yaml_mapping_set_string_member (map, "source", lrg_prefab_link_get_source_path (link));
+	if (lrg_prefab_link_get_source_guid (link) != NULL)
+		yaml_mapping_set_string_member (map, "guid", lrg_prefab_link_get_source_guid (link));
+
+	for (i = 0; guids != NULL && guids[i] != NULL; i++)
+		yaml_mapping_set_string_member (guid_map, guids[i],
+		                                lrg_prefab_link_map_lookup (link, guids[i]));
+	yaml_mapping_set_mapping_member (map, "map", guid_map);
+
+	if (keys != NULL && keys[0] != NULL)
+	{
+		g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+
+		for (i = 0; keys[i] != NULL; i++)
+			yaml_sequence_add_string_element (seq, keys[i]);
+		yaml_mapping_set_sequence_member (map, "overrides", seq);
+	}
+
+	return map;
+}
+
 static YamlMapping *
 build_node_mapping (LrgNode *node)
 {
@@ -452,6 +509,13 @@ build_node_mapping (LrgNode *node)
 			yaml_sequence_add_mapping_element (script_seq, script_map);
 		}
 		yaml_mapping_set_sequence_member (map, "scripts", script_seq);
+	}
+
+	if (lrg_node_get_prefab_link (node) != NULL)
+	{
+		g_autoptr(YamlMapping) prefab_map = build_prefab_mapping (lrg_node_get_prefab_link (node));
+
+		yaml_mapping_set_mapping_member (map, "prefab", prefab_map);
 	}
 
 	children = lrg_node_get_children (node);
@@ -801,6 +865,56 @@ parse_script (YamlMapping *map)
 	return binding;
 }
 
+/* Reads a `prefab:` block (see build_prefab_mapping()); NULL when it
+ * has no source. */
+static LrgPrefabLink *
+parse_prefab (YamlMapping *map)
+{
+	LrgPrefabLink *link;
+	const gchar   *source = yaml_mapping_get_string_member (map, "source");
+	YamlNode      *map_node;
+	YamlNode      *ov_node;
+
+	if (source == NULL)
+		return NULL;
+
+	link = lrg_prefab_link_new (source, yaml_mapping_get_string_member (map, "guid"));
+
+	map_node = yaml_mapping_get_member (map, "map");
+	if (map_node != NULL && yaml_node_get_node_type (map_node) == YAML_NODE_MAPPING)
+	{
+		YamlMapping *gm = yaml_node_get_mapping (map_node);
+		GList       *keys = yaml_mapping_get_members (gm);
+		GList       *l;
+
+		for (l = keys; l != NULL; l = l->next)
+		{
+			const gchar *src_guid = yaml_mapping_get_string_member (gm, l->data);
+
+			if (src_guid != NULL)
+				lrg_prefab_link_map_set (link, l->data, src_guid);
+		}
+		g_list_free (keys);
+	}
+
+	ov_node = yaml_mapping_get_member (map, "overrides");
+	if (ov_node != NULL && yaml_node_get_node_type (ov_node) == YAML_NODE_SEQUENCE)
+	{
+		YamlSequence *seq = yaml_node_get_sequence (ov_node);
+		guint         i, n = yaml_sequence_get_length (seq);
+
+		for (i = 0; i < n; i++)
+		{
+			const gchar *key = yaml_sequence_get_string_element (seq, i);
+
+			if (key != NULL && *key != '\0')
+				lrg_prefab_link_add_override (link, key);
+		}
+	}
+
+	return link;
+}
+
 static LrgNode *
 parse_node (YamlMapping *map)
 {
@@ -811,6 +925,7 @@ parse_node (YamlMapping *map)
 	YamlNode *components_node;
 	YamlNode *scripts_node;
 	YamlNode *children_node;
+	YamlNode *prefab_node;
 
 	node = lrg_node_new (yaml_mapping_get_string_member (map, "name"));
 
@@ -900,6 +1015,14 @@ parse_node (YamlMapping *map)
 				lrg_node_add_script (node, binding);
 			}
 		}
+	}
+
+	prefab_node = yaml_mapping_get_member (map, "prefab");
+	if (prefab_node != NULL && yaml_node_get_node_type (prefab_node) == YAML_NODE_MAPPING)
+	{
+		g_autoptr(LrgPrefabLink) link = parse_prefab (yaml_node_get_mapping (prefab_node));
+
+		lrg_node_set_prefab_link (node, link);
 	}
 
 	children_node = yaml_mapping_get_member (map, "children");

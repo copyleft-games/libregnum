@@ -42,10 +42,24 @@ g_signal_connect (vsync, "toggled", G_CALLBACK (on_vsync_toggled), NULL);
 | =box-color=   | =GrlColor=         | legacy grey    | Unchecked fill; theme =CONTROL= (=TRACK= for switches) until set |
 | =check-color= | =GrlColor=         | legacy green   | Checked fill; theme =ACCENT= until set                      |
 | =text-color=  | =GrlColor=         | legacy white   | Label colour; theme =TEXT= until set                        |
+| =inconsistent= | boolean           | =FALSE=        | Indeterminate ("mixed") state: a dash instead of the tick (since 0.8.1) |
 
 The legacy properties keep their old default values in their getters, but the checkbox draws with the theme until a value is set explicitly. An explicitly set value then wins over the theme default and over theme style rules (hover and pressed shades are derived from it; an explicit check colour also outlines and tints the glow of the checked indicator, and an explicit text colour applies in every state but the disabled one). Precedence, lowest to highest: widget defaults < theme style rules < explicit setters < =lrg_widget_set_part_look()= overrides (see [[file:../styling.org::#styling-precedence][UI styling: precedence]]).
 
 =lrg_checkbox_get_check_progress()= reports the check spring (0 unchecked, 1 checked) for custom drawing or tests.
+
+*** Inconsistent state
+:PROPERTIES:
+:CUSTOM_ID: checkbox-inconsistent
+:END:
+=inconsistent= (=lrg_checkbox_get_inconsistent()= / =lrg_checkbox_set_inconsistent()=, since 0.8.1) shows a value that is neither on nor off, typically a flag that differs between several objects edited together (the property grid's /mixed/ rows). The indicator fills with the checked look and shows a horizontal dash instead of the tick; a second spring cross-fades tick and dash. Radio buttons draw the dash instead of the dot, switches park the knob in the middle.
+- It is independent of =checked=: setting it does not change the checked state, and =lrg_checkbox_set_checked()= does not clear it.
+- A user toggle (click, Enter, Space, gamepad A, or =lrg_checkbox_toggle()=) clears it and checks the box. =toggled= is emitted with =TRUE= even when the box was already checked underneath, because what the user sees changed from mixed to on.
+#+begin_src C
+/* Three selected nodes, two visible: show it as mixed */
+lrg_checkbox_set_checked (visible, TRUE);
+lrg_checkbox_set_inconsistent (visible, n_visible != 0 && n_visible != n_selected);
+#+end_src
 
 ** Signals
 :PROPERTIES:
@@ -105,6 +119,7 @@ styles:
 - Focusable: Tab, arrows and the D-pad reach it; a click focuses it.
 - A left click anywhere on the widget (indicator or label) toggles it on release.
 - Enter, Space and gamepad A toggle the focused checkbox.
+- On an inconsistent checkbox any toggle clears the dash and checks it.
 
 ** Example
 :PROPERTIES:
@@ -154,6 +169,7 @@ build_modes (LrgContainer *box,
 - =lrg_checkbox_new_with_style (const gchar *label, LrgCheckboxStyle style)=
 - =lrg_checkbox_get_checked= / =lrg_checkbox_set_checked= / =lrg_checkbox_toggle=
 - =lrg_checkbox_get_check_progress=
+- =lrg_checkbox_get_inconsistent= / =lrg_checkbox_set_inconsistent= (since 0.8.1)
 - =lrg_checkbox_get_style= / =lrg_checkbox_set_style=
 - =lrg_checkbox_get_label= / =lrg_checkbox_set_label=
 - =lrg_checkbox_get_box_size= / =lrg_checkbox_set_box_size=

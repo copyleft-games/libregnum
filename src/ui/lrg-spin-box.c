@@ -15,6 +15,14 @@
  * squashes slightly when pressed. Holding a button repeats after
  * 0.4 s at 12 Hz; dragging sideways on the value scrubs one step per
  * 6 units; every change flashes the border in the accent colour.
+ *
+ * Press gestures: a press on the value (scrubbing) or on a step button
+ * (a click or a held repeat) is one gesture, announced with
+ * LrgSpinBox::scrub-begin before the first change and closed with
+ * LrgSpinBox::scrub-end on release (commit), on focus loss (commit) or
+ * on CANCEL (Escape, gamepad B), which also puts back the value the
+ * gesture started from. Editors that record undo steps group the
+ * value changes in between into one step.
  */
 
 #include "config.h"
@@ -65,6 +73,11 @@ struct _LrgSpinBox
 	gboolean   hold_timing; /* held counts from the frame after the press */
 	guint      repeats;
 
+	/* Press gesture (scrub-begin .. scrub-end) and the value it started
+	 * from, put back when the gesture is cancelled */
+	gboolean   gesture;
+	gdouble    gesture_value;
+
 	/* Own springs, stepped in step(); until the first step the flash
 	 * is ignored so a new box does not flash in */
 	LrgSpring  hover_minus;
@@ -91,6 +104,8 @@ enum
 enum
 {
 	SIGNAL_VALUE_CHANGED,
+	SIGNAL_SCRUB_BEGIN,
+	SIGNAL_SCRUB_END,
 	N_SIGNALS
 };
 
@@ -469,6 +484,43 @@ end_press (LrgSpinBox *self)
 	self->repeats = 0;
 }
 
+/*
+ * begin_gesture:
+ *
+ * Opens a press gesture: remembers the value to restore on cancel and
+ * emits scrub-begin. Called before the press changes anything, so the
+ * first step of a step button already belongs to the gesture.
+ */
+static void
+begin_gesture (LrgSpinBox *self)
+{
+	if (self->gesture)
+		return;
+	self->gesture = TRUE;
+	self->gesture_value = self->value;
+	g_signal_emit (self, signals[SIGNAL_SCRUB_BEGIN], 0);
+}
+
+/*
+ * end_gesture:
+ *
+ * Closes the press gesture, if one is open. Without @commit the value
+ * goes back to where the gesture started (emitting value-changed when
+ * that differs) before scrub-end is emitted, so a handler of scrub-end
+ * already sees the restored value.
+ */
+static void
+end_gesture (LrgSpinBox *self,
+             gboolean    commit)
+{
+	if (!self->gesture)
+		return;
+	self->gesture = FALSE;
+	if (!commit)
+		lrg_spin_box_set_value (self, self->gesture_value);
+	g_signal_emit (self, signals[SIGNAL_SCRUB_END], 0, commit);
+}
+
 static gboolean
 lrg_spin_box_handle_event (LrgWidget        *widget,
                            const LrgUIEvent *event)
@@ -500,9 +552,14 @@ lrg_spin_box_handle_event (LrgWidget        *widget,
 			return FALSE;
 		self->hover_part = part_at (self, px, py);
 		end_press (self);
+		end_gesture (self, TRUE);
 		self->press_part = self->hover_part;
 		self->held = 0.0;
 		self->hold_timing = FALSE;
+
+		/* A press on any part is one gesture, until release or cancel */
+		if (self->press_part != SPIN_PART_NONE)
+			begin_gesture (self);
 
 		if (self->press_part == SPIN_PART_MINUS)
 			lrg_spin_box_spin (self, -1);
@@ -520,6 +577,16 @@ lrg_spin_box_handle_event (LrgWidget        *widget,
 		if (lrg_ui_event_get_button (event) != 0 || self->press_part == SPIN_PART_NONE)
 			return FALSE;
 		end_press (self);
+		end_gesture (self, TRUE);
+		return TRUE;
+
+	case LRG_UI_EVENT_CANCEL:
+		/* Escape in the middle of a press: restore and drop the rest
+		 * of the drag (moves no longer scrub, the release is ignored) */
+		if (!self->gesture)
+			return FALSE;
+		end_press (self);
+		end_gesture (self, FALSE);
 		return TRUE;
 
 	case LRG_UI_EVENT_SCROLL:
@@ -559,6 +626,7 @@ lrg_spin_box_handle_event (LrgWidget        *widget,
 
 	case LRG_UI_EVENT_FOCUS_OUT:
 		end_press (self);
+		end_gesture (self, TRUE);
 		return FALSE;
 
 	default:
@@ -710,6 +778,40 @@ lrg_spin_box_class_init (LrgSpinBoxClass *klass)
 		              G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL,
 		              G_TYPE_NONE, 0);
+
+	/**
+	 * LrgSpinBox::scrub-begin:
+	 * @self: the spin box
+	 *
+	 * A press gesture starts: the pointer went down on the value
+	 * (scrubbing) or on a step button (a click or a held repeat).
+	 * Emitted before the press changes the value, so every
+	 * #LrgSpinBox::value-changed until #LrgSpinBox::scrub-end belongs
+	 * to the gesture. Wheel notches and keys are not gestures.
+	 */
+	signals[SIGNAL_SCRUB_BEGIN] =
+		g_signal_new ("scrub-begin",
+		              G_TYPE_FROM_CLASS (klass),
+		              G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL,
+		              G_TYPE_NONE, 0);
+
+	/**
+	 * LrgSpinBox::scrub-end:
+	 * @self: the spin box
+	 * @commit: %TRUE when the gesture ended normally (release, focus
+	 *   lost), %FALSE when it was cancelled (Escape, gamepad B,
+	 *   lrg_spin_box_cancel_scrub()); the value is then already back
+	 *   at what it was at #LrgSpinBox::scrub-begin
+	 *
+	 * The press gesture ended.
+	 */
+	signals[SIGNAL_SCRUB_END] =
+		g_signal_new ("scrub-end",
+		              G_TYPE_FROM_CLASS (klass),
+		              G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL,
+		              G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
 }
 
 static void
@@ -911,4 +1013,22 @@ lrg_spin_box_spin (LrgSpinBox *self,
 	g_return_if_fail (LRG_IS_SPIN_BOX (self));
 
 	lrg_spin_box_set_value (self, tidy (self->value + (gdouble) steps * self->step));
+}
+
+gboolean
+lrg_spin_box_get_scrubbing (LrgSpinBox *self)
+{
+	g_return_val_if_fail (LRG_IS_SPIN_BOX (self), FALSE);
+	return self->gesture;
+}
+
+void
+lrg_spin_box_cancel_scrub (LrgSpinBox *self)
+{
+	g_return_if_fail (LRG_IS_SPIN_BOX (self));
+
+	if (!self->gesture)
+		return;
+	end_press (self);
+	end_gesture (self, FALSE);
 }

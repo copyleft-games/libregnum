@@ -17,6 +17,7 @@
 #include <gio/gio.h>
 #include "../lrg-version.h"
 #include "lrg-container.h"
+#include "lrg-tree-view.h"   /* LrgSelectMode */
 
 G_BEGIN_DECLS
 
@@ -279,5 +280,87 @@ LrgWidget * lrg_tile_view_get_tile_widget (LrgTileView *self,
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_tile_view_get_n_tiles (LrgTileView *self);
+
+/* ==========================================================================
+ * Editor support: multi-selection and geometry
+ * ========================================================================== */
+
+/**
+ * lrg_tile_view_select_full:
+ * @self: an #LrgTileView
+ * @position: a model position
+ * @mode: how the selection changes
+ *
+ * Changes the selection the way a click does: REPLACE (plain click),
+ * TOGGLE (Ctrl+click) or EXTEND (Shift+click: every tile from the
+ * anchor to @position in model order, row by row). The cursor moves to
+ * @position; the view does not scroll. TOGGLE and EXTEND need
+ * %LRG_SELECTION_MODE_MULTIPLE (see #LrgSelectMode).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_tile_view_select_full (LrgTileView   *self,
+                                guint          position,
+                                LrgSelectMode  mode);
+
+/**
+ * lrg_tile_view_get_selected_positions:
+ * @self: an #LrgTileView
+ *
+ * Returns: (transfer full) (element-type guint): the selected positions
+ *   in ascending order
+ */
+LRG_AVAILABLE_IN_ALL
+GArray * lrg_tile_view_get_selected_positions (LrgTileView *self);
+
+/**
+ * lrg_tile_view_get_anchor:
+ * @self: an #LrgTileView
+ *
+ * Returns: the tile Shift ranges start from, or
+ *   %LRG_TILE_VIEW_INVALID_POSITION
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_tile_view_get_anchor (LrgTileView *self);
+
+/**
+ * lrg_tile_view_get_item_at:
+ * @self: an #LrgTileView
+ * @x: canvas x
+ * @y: canvas y
+ *
+ * The tile under a point, with the same hit test as clicks: the gaps
+ * between tiles and the margins around the grid miss. The editor's
+ * asset browser uses it to find the drop target of a drag.
+ *
+ * Returns: the position of the tile, or %LRG_TILE_VIEW_INVALID_POSITION
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_tile_view_get_item_at (LrgTileView *self,
+                                 gfloat       x,
+                                 gfloat       y);
+
+/**
+ * lrg_tile_view_get_tile_rect:
+ * @self: an #LrgTileView
+ * @position: a model position
+ * @x: (out) (optional): left of the resting card, canvas (world)
+ *   coordinates
+ * @y: (out) (optional): top, canvas coordinates at the displayed scroll
+ *   offset
+ * @width: (out) (optional): tile width
+ * @height: (out) (optional): tile height
+ *
+ * The rectangle of tile @position (without the hover lift), whether or
+ * not it is scrolled into view.
+ *
+ * Returns: %TRUE if @position is in the model
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_tile_view_get_tile_rect (LrgTileView *self,
+                                      guint        position,
+                                      gfloat      *x,
+                                      gfloat      *y,
+                                      gfloat      *width,
+                                      gfloat      *height);
 
 G_END_DECLS

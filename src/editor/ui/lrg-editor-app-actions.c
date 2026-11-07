@@ -6,7 +6,11 @@
  *
  * Every editor command as a named action (menus, toolbar, shortcuts,
  * command palette, IPC "action.run"), the application's extra IPC methods,
- * and keyboard shortcut dispatch.
+ * The window turns every action into an "editor.<id>" GAction and every
+ * accelerator into a canvas shortcut (lrg-editor-window.c); IPC methods
+ * act on the headless view model (LrgEditorViewState / ViewportNav /
+ * PlaySession), so view.*, play.*, timeline.* and tilemap.tool work with
+ * --headless too.
  *
  * Default shortcuts follow Godot 4 and Unity where they agree (Q/W/E/R
  * tools, F to focus, Ctrl+D duplicate, F2 rename) and common editor
@@ -18,6 +22,8 @@
 #include "../../core/lrg-registry.h"
 #include "../lrg-asset-database.h"
 #include "../lrg-scene-import.h"
+#include "../../ui/lrg-menu-bar.h"
+#include "../../ui/lrg-menu.h"
 #include <math.h>
 #include <string.h>
 
@@ -55,7 +61,7 @@ static gboolean
 has_clipboard (gpointer data)
 {
 	return lrg_editor_get_clipboard (APP (data)->editor) != NULL ||
-	       !APP (data)->headless;   /* the system clipboard may hold YAML */
+	       !editor_app_is_headless (APP (data));   /* the system clipboard may hold YAML */
 }
 
 static gboolean
@@ -117,49 +123,49 @@ snap_on (gpointer data)
 static gboolean
 is_2d (gpointer data)
 {
-	return APP (data)->view_2d;
+	return lrg_editor_view_state_get_camera (APP (data)->view, -1)->view_2d;
 }
 
 static gboolean
 is_ortho (gpointer data)
 {
-	return APP (data)->view.orthographic;
+	return lrg_editor_view_state_get_camera (APP (data)->view, -1)->view.orthographic;
 }
 
 static gboolean
 grid_on (gpointer data)
 {
-	return APP (data)->show_grid;
+	return lrg_editor_view_state_has_overlay (APP (data)->view, -1, LRG_EDITOR_VIEW_OVERLAY_GRID);
 }
 
 static gboolean
 icons_on (gpointer data)
 {
-	return APP (data)->show_icons;
+	return lrg_editor_view_state_has_overlay (APP (data)->view, -1, LRG_EDITOR_VIEW_OVERLAY_ICONS);
 }
 
 static gboolean
 wire_on (gpointer data)
 {
-	return APP (data)->wireframe;
+	return lrg_editor_view_state_get_render_mode (APP (data)->view, -1) == LRG_EDITOR_RENDER_MODE_WIREFRAME;
 }
 
 static gboolean
 stats_on (gpointer data)
 {
-	return APP (data)->show_stats;
+	return lrg_editor_view_state_has_overlay (APP (data)->view, -1, LRG_EDITOR_VIEW_OVERLAY_STATS);
 }
 
 static gboolean
 is_playing (gpointer data)
 {
-	return APP (data)->playing;
+	return editor_play_is_playing (APP (data));
 }
 
 static gboolean
 is_paused (gpointer data)
 {
-	return APP (data)->playing && APP (data)->paused;
+	return lrg_editor_play_session_is_paused (APP (data)->play);
 }
 
 static gboolean
@@ -178,22 +184,6 @@ not_running (gpointer data)
  * Activations
  * ========================================================================== */
 
-static gchar *
-levels_dir (LrgEditorApp *self)
-{
-	if (self->project_dir != NULL)
-	{
-		g_autofree gchar *levels = g_build_filename (self->project_dir, "levels", NULL);
-
-		if (g_file_test (levels, G_FILE_TEST_IS_DIR))
-			return g_steal_pointer (&levels);
-		return g_strdup (self->project_dir);
-	}
-	if (lrg_editor_get_path (self->editor) != NULL)
-		return g_path_get_dirname (lrg_editor_get_path (self->editor));
-	return g_get_current_dir ();
-}
-
 static void
 a_new_level (gpointer data)
 {
@@ -203,9 +193,7 @@ a_new_level (gpointer data)
 static void
 a_open_level (gpointer data)
 {
-	g_autofree gchar *dir = levels_dir (APP (data));
-
-	editor_file_dialog_open (APP (data), EDITOR_FILE_OPEN_LEVEL, dir, ".rlevel");
+	editor_dialog_open_level (APP (data));
 }
 
 static void
@@ -217,9 +205,7 @@ a_save (gpointer data)
 static void
 a_save_as (gpointer data)
 {
-	g_autofree gchar *dir = levels_dir (APP (data));
-
-	editor_file_dialog_open (APP (data), EDITOR_FILE_SAVE_LEVEL_AS, dir, ".rlevel");
+	editor_dialog_save_level_as (APP (data));
 }
 
 static void
@@ -231,31 +217,25 @@ a_reload (gpointer data)
 static void
 a_new_project (gpointer data)
 {
-	editor_dialog_open (APP (data), EDITOR_DIALOG_NEW_PROJECT);
+	editor_dialog_new_project (APP (data));
 }
 
 static void
 a_open_project (gpointer data)
 {
-	LrgEditorApp     *self = APP (data);
-	g_autofree gchar *dir = (self->project_dir != NULL) ? g_path_get_dirname (self->project_dir)
-	                                                    : g_get_current_dir ();
-
-	editor_file_dialog_open (self, EDITOR_FILE_OPEN_PROJECT, dir, NULL);
+	editor_dialog_open_project (APP (data));
 }
 
 static void
 a_project_settings (gpointer data)
 {
-	editor_dialog_open (APP (data), EDITOR_DIALOG_PROJECT_SETTINGS);
+	editor_dialog_project_settings (APP (data));
 }
 
 static void
 a_import_scene (gpointer data)
 {
-	g_autofree gchar *dir = levels_dir (APP (data));
-
-	editor_file_dialog_open (APP (data), EDITOR_FILE_IMPORT_SCENE, dir, ".yaml");
+	editor_dialog_import_scene (APP (data));
 }
 
 static void
@@ -285,7 +265,7 @@ a_copy (gpointer data)
 	/* Also on the system clipboard: paste into a .rlevel in Emacs. */
 	if (yaml != NULL)
 	{
-		lrg_gui_context_set_clipboard (self->gui, yaml);
+		editor_app_set_clipboard (self, yaml);
 		editor_app_set_status (self, "Copied %u node(s)",
 		                       lrg_editor_selection_get_count (lrg_editor_get_selection (self->editor)));
 	}
@@ -298,14 +278,14 @@ a_cut (gpointer data)
 	g_autofree gchar *yaml = lrg_editor_cut_selection (self->editor);
 
 	if (yaml != NULL)
-		lrg_gui_context_set_clipboard (self->gui, yaml);
+		editor_app_set_clipboard (self, yaml);
 }
 
 static void
 a_paste (gpointer data)
 {
 	LrgEditorApp         *self = APP (data);
-	g_autofree gchar     *text = lrg_gui_context_get_clipboard (self->gui);
+	g_autofree gchar     *text = editor_app_get_clipboard (self);
 	g_autoptr(GPtrArray)  created = NULL;
 	g_autoptr(GError)     error = NULL;
 	LrgNode              *parent = NULL;
@@ -320,7 +300,7 @@ a_paste (gpointer data)
 
 	created = lrg_editor_paste (self->editor, text, parent, &error);
 	if (created == NULL)
-		editor_app_notify (self, 2, "Paste: %s", error->message);
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Paste: %s", error->message);
 	else
 		editor_app_set_status (self, "Pasted %u node(s)", created->len);
 }
@@ -356,17 +336,14 @@ a_deselect (gpointer data)
 static void
 a_find (gpointer data)
 {
-	LrgEditorApp *self = APP (data);
-
-	lrg_gui_dock_open_panel (self->dock, "hierarchy");
-	g_free (self->rename_guid);
-	self->rename_guid = g_strdup ("##filter");   /* hierarchy focuses its filter */
+	/* The hierarchy's filter field arrives with the panel (Wave 4) */
+	editor_app_show_panel (APP (data), "hierarchy");
 }
 
 static void
 a_preferences (gpointer data)
 {
-	editor_dialog_open (APP (data), EDITOR_DIALOG_PREFERENCES);
+	editor_app_notify (APP (data), EDITOR_NOTIFY_INFO, "Preferences: coming in Wave 4 (edit editor.yaml meanwhile)");
 }
 
 static void
@@ -377,12 +354,10 @@ a_rename (gpointer data)
 
 	if (n == NULL)
 		return;
-	lrg_gui_dock_open_panel (self->dock, "hierarchy");
-	g_free (self->rename_guid);
-	self->rename_guid = g_strdup (lrg_node_get_guid (n));
-	g_string_assign (self->rename_buf, lrg_node_get_name (n) != NULL ? lrg_node_get_name (n) : "");
-	self->rename_focus = TRUE;
-	self->reveal_pending = TRUE;
+	/* Inline rename arrives with the hierarchy panel (Wave 4) */
+	editor_app_show_panel (self, "hierarchy");
+	editor_app_set_status (self, "Rename %s: in the hierarchy (Wave 4) or with node.rename over IPC",
+	                       lrg_node_get_name (n) != NULL ? lrg_node_get_name (n) : "node");
 }
 
 static void
@@ -480,7 +455,6 @@ a_group (gpointer data)
 	lrg_editor_end_group (self->editor);
 
 	lrg_editor_select (self->editor, group, FALSE);
-	self->reveal_pending = TRUE;
 }
 
 static gpointer
@@ -551,30 +525,13 @@ a_move_down (gpointer data)
 static void
 a_save_prefab (gpointer data)
 {
-	LrgEditorApp     *self = APP (data);
-	g_autofree gchar *dir = (self->project_dir != NULL)
-	                        ? g_build_filename (self->project_dir, "prefabs", NULL)
-	                        : g_get_current_dir ();
-
-	if (primary (self) == NULL)
-		return;
-	editor_file_dialog_open (self, EDITOR_FILE_SAVE_PREFAB, dir, ".rprefab");
-	g_string_assign (self->file_name, lrg_node_get_name (primary (self)) != NULL
-	                                  ? lrg_node_get_name (primary (self)) : "prefab");
-	g_string_append (self->file_name, ".rprefab");
+	editor_dialog_save_prefab (APP (data));
 }
 
 static void
 a_instantiate_prefab (gpointer data)
 {
-	LrgEditorApp     *self = APP (data);
-	g_autofree gchar *dir = (self->project_dir != NULL)
-	                        ? g_build_filename (self->project_dir, "prefabs", NULL)
-	                        : g_get_current_dir ();
-
-	editor_file_dialog_open (self, EDITOR_FILE_PICK_ASSET, dir, ".rprefab");
-	g_clear_pointer (&self->file_target_guid, g_free);
-	self->file_target_slot = -2;   /* instantiate */
+	editor_dialog_instantiate_prefab (APP (data));
 }
 
 static void
@@ -584,9 +541,7 @@ a_attach_script (gpointer data)
 
 	if (primary (self) == NULL)
 		return;
-	g_free (self->file_target_guid);
-	self->file_target_guid = g_strdup (lrg_node_get_guid (primary (self)));
-	editor_dialog_open (self, EDITOR_DIALOG_NEW_SCRIPT);
+	editor_dialog_new_script (self, lrg_node_get_guid (primary (self)));
 }
 
 static void
@@ -612,57 +567,54 @@ a_open_scripts (gpointer data)
 static void
 a_focus (gpointer data)
 {
-	editor_app_frame_selection (APP (data));
+	lrg_editor_view_state_focus_selection (APP (data)->view);
 }
 
 static void
 a_frame_all (gpointer data)
 {
-	editor_app_frame_all (APP (data));
+	lrg_editor_view_state_frame_all (APP (data)->view);
 }
 
 /* Axis views look at the target from the given side (orthographic until
- * the next orbit). */
-static void a_view_top (gpointer d)    { editor_view_align (APP (d), 0, 1, 0); }
-static void a_view_bottom (gpointer d) { editor_view_align (APP (d), 0, -1, 0); }
-static void a_view_front (gpointer d)  { editor_view_align (APP (d), 0, 0, 1); }
-static void a_view_back (gpointer d)   { editor_view_align (APP (d), 0, 0, -1); }
-static void a_view_right (gpointer d)  { editor_view_align (APP (d), 1, 0, 0); }
-static void a_view_left (gpointer d)   { editor_view_align (APP (d), -1, 0, 0); }
-
-/* Numpad orbiting in 15 degree steps, and keyboard zoom. */
-#define ORBIT_STEP ((gfloat) G_PI / 12.0f)
-static void a_orbit_left (gpointer d)  { editor_view_orbit (APP (d), ORBIT_STEP, 0.0f); }
-static void a_orbit_right (gpointer d) { editor_view_orbit (APP (d), -ORBIT_STEP, 0.0f); }
-static void a_orbit_up (gpointer d)    { editor_view_orbit (APP (d), 0.0f, -ORBIT_STEP); }
-static void a_orbit_down (gpointer d)  { editor_view_orbit (APP (d), 0.0f, ORBIT_STEP); }
-static void a_zoom_in (gpointer d)     { lrg_editor_view_dolly (&APP (d)->view, 0.8f); }
-static void a_zoom_out (gpointer d)    { lrg_editor_view_dolly (&APP (d)->view, 1.25f); }
-
-static void
-a_view_persp (gpointer data)
-{
-	LrgEditorApp *self = APP (data);
-
-	if (self->view_2d)
-		return;
-	self->view.orthographic = !self->view.orthographic;
-	self->ortho_from_align = FALSE;
-}
+ * the next orbit); numpad orbiting in 15 degree steps; keyboard zoom.
+ * All act on the active viewport's camera. */
+#define VIEW(d) (APP (d)->view)
+static void a_view_top (gpointer d)    { lrg_editor_view_state_set_axis_view (VIEW (d), LRG_EDITOR_AXIS_VIEW_TOP); }
+static void a_view_bottom (gpointer d) { lrg_editor_view_state_set_axis_view (VIEW (d), LRG_EDITOR_AXIS_VIEW_BOTTOM); }
+static void a_view_front (gpointer d)  { lrg_editor_view_state_set_axis_view (VIEW (d), LRG_EDITOR_AXIS_VIEW_FRONT); }
+static void a_view_back (gpointer d)   { lrg_editor_view_state_set_axis_view (VIEW (d), LRG_EDITOR_AXIS_VIEW_BACK); }
+static void a_view_right (gpointer d)  { lrg_editor_view_state_set_axis_view (VIEW (d), LRG_EDITOR_AXIS_VIEW_RIGHT); }
+static void a_view_left (gpointer d)   { lrg_editor_view_state_set_axis_view (VIEW (d), LRG_EDITOR_AXIS_VIEW_LEFT); }
+static void a_orbit_left (gpointer d)  { lrg_editor_view_state_orbit_step (VIEW (d), -1, 0); }
+static void a_orbit_right (gpointer d) { lrg_editor_view_state_orbit_step (VIEW (d), 1, 0); }
+static void a_orbit_up (gpointer d)    { lrg_editor_view_state_orbit_step (VIEW (d), 0, -1); }
+static void a_orbit_down (gpointer d)  { lrg_editor_view_state_orbit_step (VIEW (d), 0, 1); }
+static void a_zoom_in (gpointer d)     { lrg_editor_view_state_zoom_step (VIEW (d), TRUE); }
+static void a_zoom_out (gpointer d)    { lrg_editor_view_state_zoom_step (VIEW (d), FALSE); }
+static void a_view_persp (gpointer d)  { lrg_editor_view_state_toggle_ortho (VIEW (d)); }
+static void a_toggle_2d (gpointer d)   { lrg_editor_view_state_toggle_2d (VIEW (d)); }
+static void a_grid (gpointer d)  { lrg_editor_view_state_toggle_overlay (VIEW (d), -1, LRG_EDITOR_VIEW_OVERLAY_GRID); }
+static void a_icons (gpointer d) { lrg_editor_view_state_toggle_overlay (VIEW (d), -1, LRG_EDITOR_VIEW_OVERLAY_ICONS); }
+static void a_stats (gpointer d) { lrg_editor_view_state_toggle_overlay (VIEW (d), -1, LRG_EDITOR_VIEW_OVERLAY_STATS); }
 
 static void
-a_toggle_2d (gpointer data)
+a_wireframe (gpointer data)
 {
-	LrgEditorApp *self = APP (data);
+	LrgEditorViewState *view = APP (data)->view;
 
-	self->view_2d = !self->view_2d;
-	editor_view_reset (self);
+	lrg_editor_view_state_set_render_mode (view, -1,
+	                                       lrg_editor_view_state_get_render_mode (view, -1)
+	                                       == LRG_EDITOR_RENDER_MODE_WIREFRAME
+	                                       ? LRG_EDITOR_RENDER_MODE_LIT : LRG_EDITOR_RENDER_MODE_WIREFRAME);
 }
 
-static void a_grid (gpointer d)      { APP (d)->show_grid = !APP (d)->show_grid; }
-static void a_icons (gpointer d)     { APP (d)->show_icons = !APP (d)->show_icons; }
-static void a_wireframe (gpointer d) { APP (d)->wireframe = !APP (d)->wireframe; }
-static void a_stats (gpointer d)     { APP (d)->show_stats = !APP (d)->show_stats; }
+/* View > Layout and Next Viewport (split and quad viewports) */
+static void a_layout_single (gpointer d) { lrg_editor_view_state_set_layout (VIEW (d), LRG_EDITOR_VIEWPORT_LAYOUT_SINGLE); }
+static void a_layout_split_h (gpointer d) { lrg_editor_view_state_set_layout (VIEW (d), LRG_EDITOR_VIEWPORT_LAYOUT_SPLIT_H); }
+static void a_layout_split_v (gpointer d) { lrg_editor_view_state_set_layout (VIEW (d), LRG_EDITOR_VIEWPORT_LAYOUT_SPLIT_V); }
+static void a_layout_quad (gpointer d)   { lrg_editor_view_state_set_layout (VIEW (d), LRG_EDITOR_VIEWPORT_LAYOUT_QUAD); }
+static void a_next_viewport (gpointer d) { lrg_editor_view_state_next_viewport (VIEW (d)); }
 
 static void
 a_reset_layout (gpointer data)
@@ -702,8 +654,7 @@ a_toggle_snap (gpointer data)
 static void
 a_play (gpointer data)
 {
-	if (!APP (data)->playing)
-		editor_play_start (APP (data));
+	editor_play_start (APP (data));
 }
 
 static void a_pause (gpointer d) { editor_play_toggle_pause (APP (d)); }
@@ -716,7 +667,7 @@ a_run (gpointer data)
 	g_autoptr(GError) error = NULL;
 
 	if (!editor_run_start (APP (data), &error))
-		editor_app_notify (APP (data), 3, "Run failed: %s", error->message);
+		editor_app_notify (APP (data), EDITOR_NOTIFY_ERROR, "Run failed: %s", error->message);
 }
 
 static void a_run_stop (gpointer d) { editor_run_stop (APP (d)); }
@@ -726,13 +677,24 @@ a_validate (gpointer data)
 {
 	LrgEditorApp *self = APP (data);
 
-	self->problems_dirty = TRUE;
-	self->problems_time = -1000.0;
-	lrg_gui_dock_open_panel (self->dock, "problems");
+	editor_app_validate_now (self);
+	editor_app_show_panel (self, "problems");
+	editor_app_notify (self, self->problems->len > 0 ? EDITOR_NOTIFY_WARNING : EDITOR_NOTIFY_SUCCESS,
+	                   "Validation: %u problem(s)", self->problems->len);
 }
 
-static void a_palette (gpointer d)    { editor_palette_open (APP (d), FALSE); }
-static void a_quick_open (gpointer d) { editor_palette_open (APP (d), TRUE); }
+/* The command palette and quick open are Wave 4 (P6) */
+static void
+a_palette (gpointer d)
+{
+	editor_app_notify (APP (d), EDITOR_NOTIFY_INFO, "Command palette: coming in Wave 4 (use the menus or action.run)");
+}
+
+static void
+a_quick_open (gpointer d)
+{
+	editor_app_notify (APP (d), EDITOR_NOTIFY_INFO, "Quick open: coming in Wave 4");
+}
 
 /* The level is plain YAML: open it in the external editor (Emacs edits
  * reload live when there are no unsaved changes here). */
@@ -744,7 +706,7 @@ a_open_level_yaml (gpointer data)
 
 	if (path == NULL)
 	{
-		editor_app_notify (self, 2, "Save the level first");
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Save the level first");
 		return;
 	}
 	if (lrg_editor_is_dirty (self->editor))
@@ -781,24 +743,27 @@ a_reveal_socket (gpointer data)
 
 		if (!lrg_editor_app_start_server (self, NULL, &error))
 		{
-			editor_app_notify (self, 3, "IPC server: %s", error->message);
+			editor_app_notify (self, EDITOR_NOTIFY_ERROR, "IPC server: %s", error->message);
 			return;
 		}
 		sock = lrg_editor_server_get_socket_path (self->server);
 	}
-	lrg_gui_context_set_clipboard (self->gui, sock);
-	editor_app_notify (self, 0, "IPC socket (copied): %s", sock);
+	editor_app_set_clipboard (self, sock);
+	editor_app_notify (self, EDITOR_NOTIFY_INFO, "IPC socket (copied): %s", sock);
 }
 
 static void
 a_refresh_assets (gpointer data)
 {
-	APP (data)->assets_dirty = TRUE;
-	g_ptr_array_set_size (APP (data)->quick_files, 0);
+	LrgEditorApp     *self = APP (data);
+	g_autoptr(GError) error = NULL;
+
+	if (self->assets != NULL && !lrg_asset_database_scan (self->assets, &error))
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Refresh assets: %s", error->message);
 }
 
-static void a_shortcuts (gpointer d) { editor_dialog_open (APP (d), EDITOR_DIALOG_SHORTCUTS); }
-static void a_about (gpointer d)     { editor_dialog_open (APP (d), EDITOR_DIALOG_ABOUT); }
+static void a_shortcuts (gpointer d) { editor_dialog_shortcuts (APP (d)); }
+static void a_about (gpointer d)     { editor_dialog_about (APP (d)); }
 
 /* The editor docs: next to the binary in a source tree
  * (build/<type>/lrgeditor -> docs/editor), or installed. */
@@ -818,7 +783,7 @@ a_docs (gpointer data)
 	else if (g_file_test (installed, G_FILE_TEST_EXISTS))
 		editor_app_open_file (self, installed, 1, 1);
 	else
-		editor_app_notify (self, 2, "Editor documentation not found (docs/editor/ in the source tree)");
+		editor_app_notify (self, EDITOR_NOTIFY_WARNING, "Editor documentation not found (docs/editor/ in the source tree)");
 }
 
 /* ==========================================================================
@@ -834,45 +799,49 @@ has_tile_target (gpointer data)
 static gboolean
 tile_mode_on (gpointer data)
 {
-	return APP (data)->tile_mode && editor_tiles_target (APP (data)) != NULL;
+	return lrg_editor_view_state_get_tile_mode (APP (data)->view) && editor_tiles_target (APP (data)) != NULL;
 }
 
-static gboolean tile_tool_brush (gpointer d)  { return APP (d)->tile_tool == EDITOR_TILE_BRUSH; }
-static gboolean tile_tool_eraser (gpointer d) { return APP (d)->tile_tool == EDITOR_TILE_ERASER; }
-static gboolean tile_tool_rect (gpointer d)   { return APP (d)->tile_tool == EDITOR_TILE_RECT; }
-static gboolean tile_tool_fill (gpointer d)   { return APP (d)->tile_tool == EDITOR_TILE_FILL; }
-static gboolean tile_tool_pick (gpointer d)   { return APP (d)->tile_tool == EDITOR_TILE_PICK; }
+#define TILE_TOOL(d) lrg_editor_view_state_get_tile_tool (APP (d)->view)
+static gboolean tile_tool_brush (gpointer d)  { return TILE_TOOL (d) == LRG_EDITOR_TILE_TOOL_BRUSH; }
+static gboolean tile_tool_eraser (gpointer d) { return TILE_TOOL (d) == LRG_EDITOR_TILE_TOOL_ERASER; }
+static gboolean tile_tool_rect (gpointer d)   { return TILE_TOOL (d) == LRG_EDITOR_TILE_TOOL_RECT; }
+static gboolean tile_tool_fill (gpointer d)   { return TILE_TOOL (d) == LRG_EDITOR_TILE_TOOL_FILL; }
+static gboolean tile_tool_pick (gpointer d)   { return TILE_TOOL (d) == LRG_EDITOR_TILE_TOOL_PICK; }
 
 static void
 a_tile_mode (gpointer data)
 {
 	LrgEditorApp *self = APP (data);
 
+	gboolean      on;
+
 	if (editor_tiles_target (self) == NULL)
 	{
-		self->tile_mode = FALSE;
+		lrg_editor_view_state_set_tile_mode (self->view, FALSE);
 		editor_app_set_status (self, "Select a tilemap node to paint");
 		return;
 	}
-	self->tile_mode = !self->tile_mode;
-	if (self->tile_mode)
-		lrg_gui_dock_open_panel (self->dock, "tiles");
-	editor_app_set_status (self, self->tile_mode ? "Tile painting on" : "Tile painting off");
+	on = !lrg_editor_view_state_get_tile_mode (self->view);
+	lrg_editor_view_state_set_tile_mode (self->view, on);
+	if (on)
+		editor_app_show_panel (self, "tiles");
+	editor_app_set_status (self, on ? "Tile painting on" : "Tile painting off");
 }
 
 static void
-set_tile_tool (LrgEditorApp   *self,
-               EditorTileTool  tool)
+set_tile_tool (LrgEditorApp      *self,
+               LrgEditorTileTool  tool)
 {
-	self->tile_tool = tool;
-	self->tile_mode = (editor_tiles_target (self) != NULL);
+	lrg_editor_view_state_set_tile_tool (self->view, tool);
+	lrg_editor_view_state_set_tile_mode (self->view, editor_tiles_target (self) != NULL);
 }
 
-static void a_tile_brush (gpointer d)  { set_tile_tool (APP (d), EDITOR_TILE_BRUSH); }
-static void a_tile_eraser (gpointer d) { set_tile_tool (APP (d), EDITOR_TILE_ERASER); }
-static void a_tile_rect (gpointer d)   { set_tile_tool (APP (d), EDITOR_TILE_RECT); }
-static void a_tile_fill (gpointer d)   { set_tile_tool (APP (d), EDITOR_TILE_FILL); }
-static void a_tile_pick (gpointer d)   { set_tile_tool (APP (d), EDITOR_TILE_PICK); }
+static void a_tile_brush (gpointer d)  { set_tile_tool (APP (d), LRG_EDITOR_TILE_TOOL_BRUSH); }
+static void a_tile_eraser (gpointer d) { set_tile_tool (APP (d), LRG_EDITOR_TILE_TOOL_ERASER); }
+static void a_tile_rect (gpointer d)   { set_tile_tool (APP (d), LRG_EDITOR_TILE_TOOL_RECT); }
+static void a_tile_fill (gpointer d)   { set_tile_tool (APP (d), LRG_EDITOR_TILE_TOOL_FILL); }
+static void a_tile_pick (gpointer d)   { set_tile_tool (APP (d), LRG_EDITOR_TILE_TOOL_PICK); }
 
 static void
 a_tile_brush_grow (gpointer data)
@@ -922,7 +891,7 @@ static void a_tile_remove_layer (gpointer d) { edit_tile_layers (APP (d), FALSE)
 static void
 a_tile_panel (gpointer data)
 {
-	lrg_gui_dock_open_panel (APP (data)->dock, "tiles");
+	editor_app_show_panel (APP (data), "tiles");
 }
 
 static gboolean
@@ -934,7 +903,7 @@ has_timeline (gpointer data)
 static gboolean
 timeline_playing (gpointer data)
 {
-	return APP (data)->timeline_playing;
+	return lrg_editor_view_state_get_timeline_playing (APP (data)->view);
 }
 
 static gboolean
@@ -946,7 +915,7 @@ timeline_key_selected (gpointer data)
 static void
 a_timeline_panel (gpointer data)
 {
-	lrg_gui_dock_open_panel (APP (data)->dock, "timeline");
+	editor_app_show_panel (APP (data), "timeline");
 }
 
 static void
@@ -955,7 +924,7 @@ a_timeline_key (gpointer data)
 	LrgEditorApp *self = APP (data);
 
 	if (editor_timeline_key_selection (self) > 0)
-		lrg_gui_dock_open_panel (self->dock, "timeline");
+		editor_app_show_panel (self, "timeline");
 }
 
 static void
@@ -963,7 +932,7 @@ a_timeline_play (gpointer data)
 {
 	LrgEditorApp *self = APP (data);
 
-	editor_timeline_set_playing (self, !self->timeline_playing);
+	editor_timeline_set_playing (self, !lrg_editor_view_state_get_timeline_playing (self->view));
 }
 
 static void
@@ -972,7 +941,7 @@ a_timeline_stop (gpointer data)
 	LrgEditorApp *self = APP (data);
 
 	editor_timeline_end_preview (self);
-	self->timeline_time = 0.0f;
+	lrg_editor_view_state_set_timeline_time (self->view, 0.0f);
 }
 
 static void
@@ -991,10 +960,9 @@ a_timeline_new (gpointer data)
 	if (lrg_editor_timeline_add (self->editor, name, 2.0f, FALSE))
 	{
 		editor_timeline_end_preview (self);
-		g_free (self->timeline_name);
-		self->timeline_name = g_steal_pointer (&name);
-		self->timeline_time = 0.0f;
-		lrg_gui_dock_open_panel (self->dock, "timeline");
+		lrg_editor_view_state_set_timeline_name (self->view, name);
+		lrg_editor_view_state_set_timeline_time (self->view, 0.0f);
+		editor_app_show_panel (self, "timeline");
 	}
 }
 
@@ -1019,6 +987,7 @@ jump_key (LrgEditorApp *self,
 {
 	LrgTimeline *tl = editor_timeline_current (self);
 	gfloat       best = dir > 0 ? G_MAXFLOAT : -G_MAXFLOAT;
+	gfloat       now = lrg_editor_view_state_get_timeline_time (self->view);
 	guint        i, k;
 
 	if (tl == NULL)
@@ -1032,9 +1001,9 @@ jump_key (LrgEditorApp *self,
 			gfloat kt = 0.0f;
 
 			lrg_timeline_track_get_key (t, k, &kt, NULL, NULL);
-			if (dir > 0 && kt > self->timeline_time + 0.0005f && kt < best)
+			if (dir > 0 && kt > now + 0.0005f && kt < best)
 				best = kt;
-			if (dir < 0 && kt < self->timeline_time - 0.0005f && kt > best)
+			if (dir < 0 && kt < now - 0.0005f && kt > best)
 				best = kt;
 		}
 	}
@@ -1045,8 +1014,13 @@ jump_key (LrgEditorApp *self,
 static void a_timeline_next_key (gpointer d) { jump_key (APP (d), 1); }
 static void a_timeline_prev_key (gpointer d) { jump_key (APP (d), -1); }
 
-static gboolean asset_grid_on (gpointer d) { return APP (d)->asset_grid; }
-static void     a_asset_grid (gpointer d)   { APP (d)->asset_grid = !APP (d)->asset_grid; }
+/* The asset grid view belongs to the assets panel (Wave 4); the toggle
+ * is kept so bindings and scripts that name it keep working. */
+static gboolean asset_grid_on (gpointer d) { return GPOINTER_TO_INT (g_object_get_data (G_OBJECT (d), "lrg-asset-grid")); }
+static void     a_asset_grid (gpointer d)
+{
+	g_object_set_data (G_OBJECT (d), "lrg-asset-grid", GINT_TO_POINTER (!asset_grid_on (d)));
+}
 
 static void
 a_rebuild_thumbnails (gpointer data)
@@ -1128,6 +1102,11 @@ editor_app_register_actions (LrgEditorApp *self)
 		{ "view.wireframe", "Wireframe", "View", "Shift+Z", a_wireframe, NULL, wire_on },
 		{ "view.stats", "Show Stats", "View", NULL, a_stats, NULL, stats_on },
 		{ "view.reset-layout", "Reset Layout", "View", NULL, a_reset_layout, NULL, NULL },
+		{ "view.layout-single", "Single Viewport", "View", NULL, a_layout_single, NULL, NULL },
+		{ "view.layout-split-h", "Two Viewports Side by Side", "View", NULL, a_layout_split_h, NULL, NULL },
+		{ "view.layout-split-v", "Two Viewports Stacked", "View", NULL, a_layout_split_v, NULL, NULL },
+		{ "view.layout-quad", "Four Viewports", "View", NULL, a_layout_quad, NULL, NULL },
+		{ "view.next-viewport", "Next Viewport", "View", NULL, a_next_viewport, NULL, NULL },
 
 		{ "tool.select", "Select Tool", "Tool", "Q", a_tool_select, NULL, tool_is_select },
 		{ "tool.move", "Move Tool", "Tool", "W", a_tool_move, NULL, tool_is_move },
@@ -1185,53 +1164,6 @@ editor_app_register_actions (LrgEditorApp *self)
 		lrg_editor_actions_add (self->actions, table[i].id, table[i].label, table[i].category,
 		                        table[i].shortcut, table[i].activate, table[i].enabled,
 		                        table[i].checked, self);
-}
-
-/* ==========================================================================
- * Shortcut dispatch
- * ========================================================================== */
-
-void
-editor_app_process_shortcuts (LrgEditorApp *self)
-{
-	gboolean typing = lrg_gui_context_wants_keyboard (self->gui);
-	guint    i;
-
-	if (self->cur_input == NULL || self->dialog != EDITOR_DIALOG_NONE || self->palette_open)
-		return;
-
-	for (i = 0; i < self->cur_input->n_keys; i++)
-	{
-		const LrgGuiKeyEvent *ev = &self->cur_input->keys[i];
-		LrgGuiModifiers       mods = ev->mods & (LRG_GUI_MOD_CTRL | LRG_GUI_MOD_SHIFT |
-		                                         LRG_GUI_MOD_ALT | LRG_GUI_MOD_SUPER);
-		const gchar          *id;
-
-		if (ev->repeat && ev->key != LRG_GUI_KEY_Z && ev->key != LRG_GUI_KEY_Y)
-			continue;
-
-		/* While typing, only Ctrl/Alt chords that are not text editing
-		 * fire (Ctrl+S saves from a text field; Ctrl+A selects text). */
-		if (typing)
-		{
-			if (!(mods & (LRG_GUI_MOD_CTRL | LRG_GUI_MOD_ALT)))
-				continue;
-			if ((mods & LRG_GUI_MOD_CTRL) &&
-			    (ev->key == LRG_GUI_KEY_A || ev->key == LRG_GUI_KEY_C || ev->key == LRG_GUI_KEY_V ||
-			     ev->key == LRG_GUI_KEY_X || ev->key == LRG_GUI_KEY_Z || ev->key == LRG_GUI_KEY_Y ||
-			     ev->key == LRG_GUI_KEY_LEFT || ev->key == LRG_GUI_KEY_RIGHT ||
-			     ev->key == LRG_GUI_KEY_BACKSPACE || ev->key == LRG_GUI_KEY_DELETE))
-				continue;
-		}
-
-		/* A gizmo drag owns Escape. */
-		if (ev->key == LRG_GUI_KEY_ESCAPE && lrg_editor_gizmo_is_dragging (self->gizmo))
-			continue;
-
-		id = lrg_editor_actions_find_by_shortcut (self->actions, mods, ev->key);
-		if (id != NULL)
-			lrg_editor_actions_activate (self->actions, id);
-	}
 }
 
 /* ==========================================================================
@@ -1384,17 +1316,53 @@ read_vec3 (JsonObject  *params,
 	return TRUE;
 }
 
-static JsonNode *
-view_json (LrgEditorApp *self)
+/* The camera of the "viewport" parameter (an index; omitted or -1 is the
+ * active viewport). */
+static gboolean
+p_viewport (LrgEditorApp  *self,
+            JsonObject    *params,
+            gint          *index,
+            GError       **error)
 {
-	JsonObject *o = json_object_new ();
+	JsonNode *n;
+	gint64    v;
 
-	vec3_member (o, "position", self->view.position);
-	vec3_member (o, "target", self->view.target);
-	json_object_set_double_member (o, "fovy", self->view.fovy);
-	json_object_set_boolean_member (o, "orthographic", self->view.orthographic);
-	json_object_set_double_member (o, "ortho_height", self->view.ortho_height);
-	json_object_set_boolean_member (o, "mode_2d", self->view_2d);
+	*index = -1;
+	if (params == NULL || !json_object_has_member (params, "viewport"))
+		return TRUE;
+	n = json_object_get_member (params, "viewport");
+	if (!JSON_NODE_HOLDS_VALUE (n) || json_node_get_value_type (n) != G_TYPE_INT64)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "'viewport' must be an integer");
+		return FALSE;
+	}
+	v = json_node_get_int (n);
+	if (v < -1 || v >= LRG_EDITOR_VIEW_MAX_VIEWPORTS)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "'viewport' must be -1..%d", LRG_EDITOR_VIEW_MAX_VIEWPORTS - 1);
+		return FALSE;
+	}
+	*index = (gint) v;
+	return TRUE;
+}
+
+static JsonNode *
+view_json (LrgEditorApp *self,
+           gint          index)
+{
+	LrgEditorViewCamera *camera = lrg_editor_view_state_get_camera (self->view, index);
+	JsonObject          *o = json_object_new ();
+
+	vec3_member (o, "position", camera->view.position);
+	vec3_member (o, "target", camera->view.target);
+	json_object_set_double_member (o, "fovy", camera->view.fovy);
+	json_object_set_boolean_member (o, "orthographic", camera->view.orthographic);
+	json_object_set_double_member (o, "ortho_height", camera->view.ortho_height);
+	json_object_set_boolean_member (o, "mode_2d", camera->view_2d);
+	json_object_set_int_member (o, "viewport", index >= 0 ? index
+	                            : (gint64) lrg_editor_view_state_get_active_viewport (self->view));
 	return obj_node (o);
 }
 
@@ -1404,7 +1372,11 @@ m_view_get (LrgEditorServer  *server,
             gpointer          user_data,
             GError          **error)
 {
-	return view_json (APP (user_data));
+	gint index;
+
+	if (!p_viewport (APP (user_data), params, &index, error))
+		return NULL;
+	return view_json (APP (user_data), index);
 }
 
 static JsonNode *
@@ -1413,23 +1385,35 @@ m_view_set (LrgEditorServer  *server,
             gpointer          user_data,
             GError          **error)
 {
-	LrgEditorApp *self = APP (user_data);
-	gfloat        v[3];
+	LrgEditorApp        *self = APP (user_data);
+	LrgEditorViewCamera *camera;
+	gfloat               v[3];
+	gint                 index;
 
-	if (read_vec3 (params, "position", v))
-		memcpy (self->view.position, v, sizeof v);
-	if (read_vec3 (params, "target", v))
-		memcpy (self->view.target, v, sizeof v);
-	if (params != NULL && json_object_has_member (params, "orthographic"))
-		self->view.orthographic = p_bool (params, "orthographic", FALSE);
-	if (params != NULL && json_object_has_member (params, "ortho_height"))
-		self->view.ortho_height = MAX (0.01f, (gfloat) json_object_get_double_member (params, "ortho_height"));
+	if (!p_viewport (self, params, &index, error))
+		return NULL;
+	camera = lrg_editor_view_state_get_camera (self->view, index);
+
+	/* 2D first: it resets the camera, explicit values then apply */
 	if (params != NULL && json_object_has_member (params, "mode_2d"))
 	{
-		self->view_2d = p_bool (params, "mode_2d", FALSE);
-		editor_view_reset (self);
+		gdouble fov = lrg_editor_view_state_get_fov (self->view);
+
+		lrg_editor_view_camera_set_2d (camera, p_bool (params, "mode_2d", FALSE), (gfloat) fov);
 	}
-	return view_json (self);
+	if (read_vec3 (params, "position", v))
+		memcpy (camera->view.position, v, sizeof v);
+	if (read_vec3 (params, "target", v))
+		memcpy (camera->view.target, v, sizeof v);
+	if (params != NULL && json_object_has_member (params, "orthographic"))
+	{
+		camera->view.orthographic = p_bool (params, "orthographic", FALSE);
+		camera->ortho_from_align = FALSE;
+	}
+	if (params != NULL && json_object_has_member (params, "ortho_height"))
+		camera->view.ortho_height = MAX (0.01f, (gfloat) json_object_get_double_member (params, "ortho_height"));
+	lrg_editor_view_state_camera_changed (self->view, index);
+	return view_json (self, index);
 }
 
 static JsonNode *
@@ -1440,7 +1424,11 @@ m_view_focus (LrgEditorServer  *server,
 {
 	LrgEditorApp *self = APP (user_data);
 	const gchar  *ref = p_string (params, "node");
+	gint          index;
+	guint         active;
 
+	if (!p_viewport (self, params, &index, error))
+		return NULL;
 	if (ref != NULL)
 	{
 		LrgNode *n = lrg_editor_find_node (self->editor, ref);
@@ -1453,8 +1441,15 @@ m_view_focus (LrgEditorServer  *server,
 		}
 		lrg_editor_select (self->editor, n, FALSE);
 	}
-	editor_app_frame_selection (self);
-	return view_json (self);
+
+	/* Focus acts on the active viewport: make @index active for it */
+	active = lrg_editor_view_state_get_active_viewport (self->view);
+	if (index >= 0)
+		lrg_editor_view_state_set_active_viewport (self->view, (guint) index);
+	lrg_editor_view_state_focus_selection (self->view);
+	if (index >= 0)
+		lrg_editor_view_state_set_active_viewport (self->view, active);
+	return view_json (self, index);
 }
 
 static JsonNode *
@@ -1475,7 +1470,7 @@ m_view_screenshot (LrgEditorServer  *server,
 	}
 	abs = editor_app_project_path (self, path);
 
-	/* The whole window is captured after the next frame is drawn. */
+	/* The whole window is captured after the next frame is drawn */
 	if (p_bool (params, "window", FALSE))
 	{
 		if (!self->window_open)
@@ -1487,7 +1482,7 @@ m_view_screenshot (LrgEditorServer  *server,
 		self->window_shot = g_strdup (abs);
 		return str_node (abs);
 	}
-	if (!editor_render_screenshot (self, abs, error))
+	if (!editor_viewport_panel_screenshot (self->viewport_panel, abs, error))
 		return NULL;
 	return str_node (abs);
 }
@@ -1497,9 +1492,9 @@ play_state (LrgEditorApp *self)
 {
 	JsonObject *o = json_object_new ();
 
-	json_object_set_boolean_member (o, "playing", self->playing);
-	json_object_set_boolean_member (o, "paused", self->paused);
-	json_object_set_double_member (o, "time", self->play_time);
+	json_object_set_boolean_member (o, "playing", lrg_editor_play_session_is_playing (self->play));
+	json_object_set_boolean_member (o, "paused", lrg_editor_play_session_is_paused (self->play));
+	json_object_set_double_member (o, "time", lrg_editor_play_session_get_time (self->play));
 	json_object_set_boolean_member (o, "running", self->run_proc != NULL);
 	return obj_node (o);
 }
@@ -1507,8 +1502,7 @@ play_state (LrgEditorApp *self)
 static JsonNode *
 m_play_start (LrgEditorServer *s, JsonObject *p, gpointer d, GError **e)
 {
-	if (!APP (d)->playing)
-		editor_play_start (APP (d));
+	editor_play_start (APP (d));
 	return play_state (APP (d));
 }
 
@@ -1643,6 +1637,7 @@ m_asset_list (LrgEditorServer  *server,
 
 	/* The whole project (or the level's directory). */
 	db = lrg_asset_database_new ();
+	/* A read-only scan: asset.list never writes .meta sidecars */
 	if (editor_app_base_dir (self) != NULL)
 		lrg_asset_database_add_search_dir (db, editor_app_base_dir (self));
 	if (!lrg_asset_database_scan (db, error))
@@ -1713,71 +1708,115 @@ m_level_validate (LrgEditorServer  *server,
 	return n;
 }
 
-/* What the UI is doing and the input it last saw: for tools, tests and
- * diagnosing "my clicks do nothing". */
+static JsonArray *
+rect_array (gfloat x,
+            gfloat y,
+            gfloat w,
+            gfloat h)
+{
+	JsonArray *r = json_array_new ();
+
+	json_array_add_double_element (r, x);
+	json_array_add_double_element (r, y);
+	json_array_add_double_element (r, w);
+	json_array_add_double_element (r, h);
+	return r;
+}
+
+/*
+ * ui.state: what the UI is doing and the input it last saw, for tools,
+ * tests (tests/editor-x11-smoke.sh clicks the menubar rectangles) and
+ * diagnosing "my clicks do nothing". The 0.8.0 fields keep their names
+ * and meaning; 0.8.1 adds "viewports", "active_viewport", "layout",
+ * "focus" and "panels".
+ */
 static JsonNode *
 m_ui_state (LrgEditorServer  *server,
             JsonObject       *params,
             gpointer          user_data,
             GError          **error)
 {
-	static const gchar *menus[] = { "File", "Edit", "Create", "Node", "View", "Play", "Tools", "Help" };
-	static const gchar *dialogs[] = {
-		NULL, "preferences", "project-settings", "file", "confirm", "new-project", "new-script",
-		"about", "shortcuts", "recover"
-	};
-	static const gchar *navs[] = { "none", "fly", "orbit", "pan", "box", "zoom", "gizmo" };
 	LrgEditorApp *self = APP (user_data);
+	LrgMenuBar   *bar = lrg_editor_window_get_menu_bar (self->window);
 	JsonObject   *o = json_object_new ();
 	JsonObject   *in = json_object_new ();
+	JsonObject   *menubar = json_object_new ();
 	JsonArray    *buttons = json_array_new ();
-	const gchar  *menu = NULL;
-	gsize         i;
+	JsonArray    *viewports = json_array_new ();
+	JsonArray    *panels = json_array_new ();
+	LrgMenu      *first;
+	LrgWidget    *focus;
+	GList        *docked, *l;
+	gfloat        x = 0.0f, y = 0.0f, w = 0.0f, h = 0.0f;
+	guint         i;
 
-	for (i = 0; i < G_N_ELEMENTS (menus); i++)
-		if (lrg_gui_is_popup_open (self->gui, menus[i]))
-			menu = menus[i];
+	/* Menus: the open one, every title's rectangle, the row height */
+	json_object_set_member (o, "menu", str_node (lrg_menu_bar_get_open_title (bar)));
+	for (i = 0; i < lrg_menu_bar_get_n_titles (bar); i++)
+	{
+		x = y = w = h = 0.0f;
+		lrg_menu_bar_get_title_rect (bar, i, &x, &y, &w, &h);
+		json_object_set_array_member (menubar, lrg_menu_bar_get_title (bar, i), rect_array (x, y, w, h));
+	}
+	json_object_set_object_member (o, "menubar", menubar);
+	first = lrg_menu_bar_get_n_titles (bar) > 0 ? lrg_menu_bar_get_menu (bar, 0) : NULL;
+	json_object_set_double_member (o, "frame_height", first != NULL ? lrg_menu_get_row_height (first) : 0.0);
 
-	json_object_set_member (o, "menu", str_node (menu));
-	json_object_set_member (o, "dialog", str_node ((gint) self->dialog < (gint) G_N_ELEMENTS (dialogs)
-	                                               ? dialogs[self->dialog] : NULL));
-	json_object_set_boolean_member (o, "palette", self->palette_open);
-	json_object_set_string_member (o, "nav", (gint) self->nav < (gint) G_N_ELEMENTS (navs) ? navs[self->nav] : "?");
-	json_object_set_boolean_member (o, "viewport_hovered", self->viewport_hovered);
+	/* Dialog, palette, navigation, window */
+	json_object_set_member (o, "dialog", str_node (lrg_editor_view_state_get_dialog (self->view)));
+	json_object_set_boolean_member (o, "palette", lrg_editor_view_state_get_palette_open (self->view));
+	json_object_set_string_member (o, "nav", lrg_editor_nav_mode_to_string (lrg_editor_view_state_get_nav_mode (self->view)));
+	json_object_set_boolean_member (o, "viewport_hovered", editor_viewport_panel_is_hovered (self->viewport_panel));
 	json_object_set_boolean_member (o, "window", self->window_open);
 	json_object_set_double_member (o, "fps", self->fps);
-	json_object_set_double_member (o, "frame_height", lrg_gui_get_frame_height (self->gui));
-	{
-		JsonObject *bar = json_object_new ();
 
-		for (i = 0; i < G_N_ELEMENTS (menus); i++)
+	/* The viewport: the 0.8.0 "viewport" rect is the first (and in Wave 3
+	 * the only drawn) viewport */
+	x = y = w = h = 0.0f;
+	editor_viewport_panel_get_rect (self->viewport_panel, &x, &y, &w, &h);
+	json_object_set_array_member (o, "viewport", rect_array (x, y, w, h));
+	for (i = 0; i < lrg_editor_view_state_get_viewport_count (self->view); i++)
+	{
+		JsonObject *vp = json_object_new ();
+		g_autoptr(GEnumClass) modes = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+		GEnumValue *mode = g_enum_get_value (modes, lrg_editor_view_state_get_render_mode (self->view, (gint) i));
+
+		json_object_set_int_member (vp, "index", i);
 		{
-			JsonArray *r = json_array_new ();
+			gfloat vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f;
 
-			json_array_add_double_element (r, self->menu_rects[i].x);
-			json_array_add_double_element (r, self->menu_rects[i].y);
-			json_array_add_double_element (r, self->menu_rects[i].w);
-			json_array_add_double_element (r, self->menu_rects[i].h);
-			json_object_set_array_member (bar, menus[i], r);
+			/* Each viewport of the split; hidden ones report zeros */
+			editor_viewport_panel_get_rect (lrg_editor_viewport_split_get_panel (self->viewport_split, i),
+			                                &vx, &vy, &vw, &vh);
+			json_object_set_array_member (vp, "rect", rect_array (vx, vy, vw, vh));
 		}
-		json_object_set_object_member (o, "menubar", bar);
+		json_object_set_string_member (vp, "render_mode", mode != NULL ? mode->value_nick : "lit");
+		json_object_set_boolean_member (vp, "mode_2d", lrg_editor_view_state_get_camera (self->view, (gint) i)->view_2d);
+		json_array_add_object_element (viewports, vp);
 	}
-	{
-		JsonArray *r = json_array_new ();
+	json_object_set_array_member (o, "viewports", viewports);
+	json_object_set_int_member (o, "active_viewport", lrg_editor_view_state_get_active_viewport (self->view));
+	json_object_set_string_member (o, "layout", lrg_editor_view_state_get_layout_name (self->view));
 
-		json_array_add_double_element (r, self->viewport_rect.x);
-		json_array_add_double_element (r, self->viewport_rect.y);
-		json_array_add_double_element (r, self->viewport_rect.w);
-		json_array_add_double_element (r, self->viewport_rect.h);
-		json_object_set_array_member (o, "viewport", r);
-	}
+	/* Docked panels and keyboard focus */
+	docked = lrg_dock_area_get_panels (lrg_editor_window_get_dock (self->window));
+	for (l = docked; l != NULL; l = l->next)
+		json_array_add_string_element (panels, lrg_dock_panel_get_id (l->data));
+	g_list_free (docked);
+	json_object_set_array_member (o, "panels", panels);
+	focus = lrg_canvas_get_focused_widget (self->canvas);
+	json_object_set_member (o, "focus", str_node (focus != NULL ? (lrg_widget_get_name (focus) != NULL
+	                                                                ? lrg_widget_get_name (focus)
+	                                                                : G_OBJECT_TYPE_NAME (focus)) : NULL));
 
-	json_object_set_double_member (in, "x", self->last_input.mouse_x);
-	json_object_set_double_member (in, "y", self->last_input.mouse_y);
-	for (i = 0; i < LRG_GUI_MOUSE_BUTTON_COUNT; i++)
-		json_array_add_boolean_element (buttons, self->last_input.mouse_down[i]);
+	/* The last input frame, as the canvas saw it */
+	json_object_set_double_member (in, "x", self->last_input.pointer_x);
+	json_object_set_double_member (in, "y", self->last_input.pointer_y);
+	json_array_add_boolean_element (buttons, (self->last_input.buttons_down & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT)) != 0);
+	json_array_add_boolean_element (buttons, (self->last_input.buttons_down & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_RIGHT)) != 0);
+	json_array_add_boolean_element (buttons, (self->last_input.buttons_down & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_MIDDLE)) != 0);
 	json_object_set_array_member (in, "buttons", buttons);
-	json_object_set_int_member (in, "mods", self->last_input.mods);
+	json_object_set_int_member (in, "mods", self->last_input.modifiers);
 	json_object_set_object_member (o, "input", in);
 	return obj_node (o);
 }
@@ -1788,9 +1827,12 @@ m_ui_notify (LrgEditorServer  *server,
              gpointer          user_data,
              GError          **error)
 {
-	const gchar *msg = p_string (params, "message");
-	const gchar *lvl = p_string (params, "level");
-	gint         level = 0;
+	static const gchar * const names[] = { "info", "success", "warning", "error" };
+	const gchar               *msg = p_string (params, "message");
+	const gchar               *lvl = p_string (params, "level");
+	JsonNode                  *n;
+	gint                       level = 0;
+	gsize                      i;
 
 	if (msg == NULL)
 	{
@@ -1798,12 +1840,24 @@ m_ui_notify (LrgEditorServer  *server,
 		                     "Missing string parameter 'message'");
 		return NULL;
 	}
-	if (g_strcmp0 (lvl, "success") == 0)
-		level = 1;
-	else if (g_strcmp0 (lvl, "warning") == 0)
-		level = 2;
-	else if (g_strcmp0 (lvl, "error") == 0)
-		level = 3;
+
+	/* The level is a name (info, success, warning, error); for clients
+	 * from 0.8.0, whose lrgeditorctl sent a number, 0..3 map onto the
+	 * same names. Anything else falls back to info rather than failing:
+	 * a toast with the wrong colour beats a lost message. */
+	for (i = 0; lvl != NULL && i < G_N_ELEMENTS (names); i++)
+		if (g_ascii_strcasecmp (lvl, names[i]) == 0)
+			level = (gint) i;
+	n = (params != NULL && json_object_has_member (params, "level"))
+	    ? json_object_get_member (params, "level") : NULL;
+	if (lvl == NULL && n != NULL && JSON_NODE_HOLDS_VALUE (n) &&
+	    (json_node_get_value_type (n) == G_TYPE_INT64 || json_node_get_value_type (n) == G_TYPE_DOUBLE))
+	{
+		gint64 v = (json_node_get_value_type (n) == G_TYPE_INT64)
+		           ? json_node_get_int (n) : (gint64) json_node_get_double (n);
+
+		level = (gint) CLAMP (v, 0, (gint64) G_N_ELEMENTS (names) - 1);
+	}
 	editor_app_notify (APP (user_data), level, "%s", msg);
 	return bool_node (TRUE);
 }
@@ -1877,13 +1931,13 @@ tile_tool_json (LrgEditorApp *self)
 	JsonObject *o = json_object_new ();
 	LrgNode    *target = editor_tiles_target (self);
 
-	json_object_set_string_member (o, "tool", editor_tile_tool_name (self->tile_tool));
-	json_object_set_boolean_member (o, "mode", self->tile_mode);
+	json_object_set_string_member (o, "tool", lrg_editor_tile_tool_to_string (lrg_editor_view_state_get_tile_tool (self->view)));
+	json_object_set_boolean_member (o, "mode", lrg_editor_view_state_get_tile_mode (self->view));
 	json_object_set_int_member (o, "tile", lrg_editor_tile_painter_get_tile (self->tile_painter));
 	json_object_set_int_member (o, "layer", lrg_editor_tile_painter_get_layer (self->tile_painter));
 	json_object_set_int_member (o, "brush", lrg_editor_tile_painter_get_brush_size (self->tile_painter));
 	json_object_set_member (o, "target", str_node (target != NULL ? lrg_node_get_guid (target) : NULL));
-	if (self->tile_hover_valid)
+	if (self->tile_hover_valid && lrg_editor_view_state_get_tile_mode (self->view))
 	{
 		JsonArray *hover = json_array_new ();
 
@@ -1902,20 +1956,20 @@ m_tilemap_tool (LrgEditorServer  *server,
                 gpointer          user_data,
                 GError          **error)
 {
-	LrgEditorApp  *self = APP (user_data);
-	const gchar   *tool = p_string (params, "tool");
-	gdouble        v;
-	EditorTileTool t;
+	LrgEditorApp      *self = APP (user_data);
+	const gchar       *tool = p_string (params, "tool");
+	gdouble            v;
+	LrgEditorTileTool  t;
 
 	if (tool != NULL)
 	{
-		if (!editor_tile_tool_from_name (tool, &t))
+		if (!lrg_editor_tile_tool_from_string (tool, &t))
 		{
 			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
 			             "Unknown tile tool '%s' (brush eraser rect fill pick)", tool);
 			return NULL;
 		}
-		self->tile_tool = t;
+		lrg_editor_view_state_set_tile_tool (self->view, t);
 	}
 	if (p_number (params, "tile", &v))
 		lrg_editor_tile_painter_set_tile (self->tile_painter, (guint) MAX (v, 0.0));
@@ -1924,7 +1978,7 @@ m_tilemap_tool (LrgEditorServer  *server,
 	if (p_number (params, "brush", &v))
 		lrg_editor_tile_painter_set_brush_size (self->tile_painter, (guint) MAX (v, 1.0));
 	if (params != NULL && json_object_has_member (params, "mode"))
-		self->tile_mode = p_bool (params, "mode", FALSE);
+		lrg_editor_view_state_set_tile_mode (self->view, p_bool (params, "mode", FALSE));
 	return tile_tool_json (self);
 }
 
@@ -1935,9 +1989,9 @@ timeline_state_json (LrgEditorApp *self)
 	LrgTimeline *tl = editor_timeline_current (self);
 
 	json_object_set_member (o, "name", str_node (tl != NULL ? lrg_timeline_get_name (tl) : NULL));
-	json_object_set_double_member (o, "time", self->timeline_time);
-	json_object_set_boolean_member (o, "playing", self->timeline_playing);
-	json_object_set_boolean_member (o, "previewing", self->timeline_previewing);
+	json_object_set_double_member (o, "time", lrg_editor_view_state_get_timeline_time (self->view));
+	json_object_set_boolean_member (o, "playing", lrg_editor_view_state_get_timeline_playing (self->view));
+	json_object_set_boolean_member (o, "previewing", lrg_editor_view_state_get_timeline_previewing (self->view));
 	return obj_node (o);
 }
 
@@ -1962,12 +2016,11 @@ choose_timeline (LrgEditorApp  *self,
 		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No timeline '%s'", name);
 		return FALSE;
 	}
-	if (g_strcmp0 (name, self->timeline_name) != 0)
+	if (g_strcmp0 (name, lrg_editor_view_state_get_timeline_name (self->view)) != 0)
 	{
 		editor_timeline_end_preview (self);
-		g_free (self->timeline_name);
-		self->timeline_name = g_strdup (name);
-		self->timeline_time = 0.0f;
+		lrg_editor_view_state_set_timeline_name (self->view, name);
+		lrg_editor_view_state_set_timeline_time (self->view, 0.0f);
 	}
 	return TRUE;
 }
@@ -1984,7 +2037,7 @@ m_timeline_play (LrgEditorServer  *server,
 	if (!choose_timeline (self, params, error))
 		return NULL;
 	if (p_number (params, "from", &from))
-		self->timeline_time = (gfloat) MAX (from, 0.0);
+		lrg_editor_view_state_set_timeline_time (self->view, (gfloat) MAX (from, 0.0));
 	editor_timeline_set_playing (self, p_bool (params, "playing", TRUE));
 	return timeline_state_json (self);
 }
@@ -1998,7 +2051,7 @@ m_timeline_stop (LrgEditorServer  *server,
 	LrgEditorApp *self = APP (user_data);
 
 	editor_timeline_end_preview (self);
-	self->timeline_time = 0.0f;
+	lrg_editor_view_state_set_timeline_time (self->view, 0.0f);
 	return timeline_state_json (self);
 }
 
@@ -2019,7 +2072,7 @@ m_timeline_seek (LrgEditorServer  *server,
 	}
 	if (!choose_timeline (self, params, error))
 		return NULL;
-	self->timeline_playing = FALSE;
+	lrg_editor_view_state_set_timeline_playing (self->view, FALSE);
 	editor_timeline_seek (self, (gfloat) time);
 	return timeline_state_json (self);
 }

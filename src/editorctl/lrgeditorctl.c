@@ -47,7 +47,7 @@ static gboolean  opt_watch    = FALSE;
 static gint      opt_tail     = 50;
 static gboolean  opt_window   = FALSE;
 static gboolean  opt_force    = FALSE;
-static gint      opt_level    = 0;
+static gchar    *opt_level    = NULL;
 static gchar    *opt_type     = NULL;
 static gboolean  opt_license  = FALSE;
 static gboolean  opt_version  = FALSE;
@@ -75,7 +75,8 @@ static const GOptionEntry entries[] = {
 	{ "tail", 0, 0, G_OPTION_ARG_INT, &opt_tail, "Log records to show first (default 50)", "N" },
 	{ "window", 0, 0, G_OPTION_ARG_NONE, &opt_window, "Screenshot the whole window, not just the viewport", NULL },
 	{ "force", 0, 0, G_OPTION_ARG_NONE, &opt_force, "Discard unsaved changes (open, new, quit)", NULL },
-	{ "level", 'l', 0, G_OPTION_ARG_INT, &opt_level, "Toast level for notify: 0 info, 1 success, 2 warning, 3 error", "N" },
+	{ "level", 'l', 0, G_OPTION_ARG_STRING, &opt_level,
+	  "Toast level for notify: info, success, warning, error (or 0-3)", "LEVEL" },
 	{ "type", 't', 0, G_OPTION_ARG_STRING, &opt_type, "Asset type filter for get assets", "TYPE" },
 	{ "license", 0, 0, G_OPTION_ARG_NONE, &opt_license, "Print the license and exit", NULL },
 	{ "version", 'v', 0, G_OPTION_ARG_NONE, &opt_version, "Print the version and exit", NULL },
@@ -109,10 +110,24 @@ static const gchar *description =
 	"  tiles NODE [ACTION key=value...] tilemap grid; ACTION: paint rect fill pick configure\n"
 	"  timeline [list|get|add|rm|key|play|stop|seek|state] ...  keyframe timelines\n"
 	"  thumbnail PATH                   generate/print an asset's cached thumbnail\n"
+	"  meta get PATH | meta set PATH key=value... [guid=G]  asset .meta sidecar\n"
+	"  vcs [PATH]                       git branch and file status (badges)\n"
+	"  prefab overrides|apply|revert|relink|unlink NODE [keys=a,b] | prefab sync [PATH]\n"
+	"  code open PATH[:LINE] | code list | code save [PATH]   built-in code editor\n"
+	"  inspector list|get|set|reset|state|apply-override|revert-override [NODE] [NAME] [key=value...]\n"
+	"  hierarchy reveal|rename NODE [NEW_NAME] | hierarchy filter TEXT | hierarchy state\n"
+	"  asset reveal|duplicate|trash PATH | asset rename PATH NAME | asset move PATH DEST | asset orphans\n"
+	"  profiler [frames=N] [enable=true]  profiler section timings\n"
+	"  data list | data open PATH       data editors (input map, locale, sound bank, theme, layouts, ...)\n"
+	"  data get [PATH] [AT] | data set [PATH] AT VALUE | data edit [PATH] OP AT [key=value...]\n"
+	"  data undo|redo|validate|save|reload|close|reveal [PATH] [AT] [key=value...]  (close --force)\n"
+	"  palette [commands|files] [QUERY] open the command palette / quick-open\n"
+	"  preferences [PAGE]               open the preferences dialog (e.g. keybindings)\n"
+	"  view layout single|split-h|split-v|quad | view render-mode MODE | view overlay NAME on|off\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
-	"  notify MESSAGE [--level N]       toast in the editor\n"
+	"  notify MESSAGE [--level LEVEL]   toast in the editor: info, success, warning, error (or 0-3)\n"
 	"  quit [--force]\n"
 	"  mcp                              serve MCP on stdio (for AI agents)\n"
 	"  completion bash                  shell completion script\n"
@@ -131,6 +146,13 @@ static const gchar *description =
 	"  lrgeditorctl tiles Ground paint tile=3 points=[[0,0],[7,0]] brush=2\n"
 	"  lrgeditorctl timeline key Intro Props/Crate time=1 channel=location.y value=2 easing=ease-out-bounce\n"
 	"  lrgeditorctl thumbnail assets/crate.png\n"
+	"  lrgeditorctl meta set assets/crate.png filter=point max-size=512\n"
+	"  lrgeditorctl prefab apply Props/Crate keys=transform.location\n"
+	"  lrgeditorctl code open scripts/door.lua:12\n"
+	"  lrgeditorctl view layout quad\n"
+	"  lrgeditorctl data open data/input.yaml\n"
+	"  lrgeditorctl data set /actions/jump/bindings/0/key ENTER; lrgeditorctl data save\n"
+	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
 static const gchar *license_text =
@@ -223,6 +245,86 @@ str_member (JsonObject  *o,
 	       ? json_node_get_string (n) : NULL;
 }
 
+/* An argument naming a file: absolute when it exists from here (the
+ * editor resolves relative paths against its project, not our cwd). */
+static gchar *
+path_arg (const gchar *arg)
+{
+	g_autofree gchar *abs = g_canonicalize_filename (arg, NULL);
+
+	return g_file_test (abs, G_FILE_TEST_EXISTS) ? g_steal_pointer (&abs) : g_strdup (arg);
+}
+
+/*
+ * Calls @method with params built from @args: arguments without '=' fill
+ * @keys in order (a key named "path" or "dest" goes through path_arg()),
+ * key=value arguments are parsed with lrg_ctl_parse_assignments(). The
+ * result prints as YAML unless -o says otherwise. Every verb added for
+ * the 0.8.1 methods goes through here, so the editor's params stay the
+ * single source of truth (unknown keys pass straight through).
+ */
+static gboolean
+passthrough (const gchar         *method,
+             const gchar * const *keys,
+             gchar              **args,
+             GError             **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(GPtrArray)  assigns = g_ptr_array_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		if (strchr (args[i], '=') == NULL && keys != NULL && keys[k] != NULL)
+		{
+			if (g_strcmp0 (keys[k], "path") == 0 || g_strcmp0 (keys[k], "dest") == 0)
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, keys[k], path);
+			}
+			else
+				json_object_set_string_member (p, keys[k], args[i]);
+			k++;
+		}
+		else
+			g_ptr_array_add (assigns, args[i]);
+	}
+	g_ptr_array_add (assigns, NULL);
+	if (!lrg_ctl_parse_assignments ((gchar * const *) assigns->pdata, p, error))
+		return FALSE;
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/* "a,b,c" (or one name) -> ["a","b","c"], for keys= arguments */
+static void
+split_list_member (JsonObject  *p,
+                   const gchar *name)
+{
+	JsonNode *n;
+
+	if (!json_object_has_member (p, name))
+		return;
+	n = json_object_get_member (p, name);
+	if (JSON_NODE_HOLDS_VALUE (n) && json_node_get_value_type (n) == G_TYPE_STRING)
+	{
+		g_auto(GStrv) parts = g_strsplit (json_node_get_string (n), ",", -1);
+		JsonArray    *arr = json_array_new ();
+		guint         i;
+
+		for (i = 0; parts[i] != NULL; i++)
+			if (*g_strstrip (parts[i]) != '\0')
+				json_array_add_string_element (arr, parts[i]);
+		json_object_set_array_member (p, name, arr);
+	}
+}
+
 /* GUID of a node given by path or GUID (paths change on rename/move). */
 static gchar *
 node_guid (const gchar  *node,
@@ -268,6 +370,29 @@ canonical_resource (const gchar *r)
 	for (i = 0; r != NULL && i < G_N_ELEMENTS (table); i++)
 		if (g_strcmp0 (r, table[i][0]) == 0)
 			return table[i][1];
+	return NULL;
+}
+
+/*
+ * notify_level_name:
+ * @arg: a --level argument: a toast level name or its number
+ *
+ * Maps the --level argument of `notify` onto the name ui.notify takes:
+ * "info", "success", "warning" or "error" pass through (any case), and
+ * 0, 1, 2, 3 select them in that order. Returns %NULL for anything else.
+ */
+static const gchar *
+notify_level_name (const gchar *arg)
+{
+	static const gchar * const names[] = { "info", "success", "warning", "error" };
+	gint64                     n = -1;
+	gsize                      i;
+
+	for (i = 0; i < G_N_ELEMENTS (names); i++)
+		if (g_ascii_strcasecmp (arg, names[i]) == 0)
+			return names[i];
+	if (g_ascii_string_to_signed (arg, 10, 0, (gint64) G_N_ELEMENTS (names) - 1, &n, NULL))
+		return names[n];
 	return NULL;
 }
 
@@ -1090,6 +1215,47 @@ cmd_view (gchar  **args,
 			return FALSE;
 		return call_ok ("view.set", p, error);
 	}
+	if (g_strcmp0 (args[0], "layout") == 0)
+	{
+		static const gchar * const keys[] = { "layout", NULL };
+
+		return passthrough ("view.layout", keys, args + 1, error);
+	}
+	if (g_strcmp0 (args[0], "render-mode") == 0 || g_strcmp0 (args[0], "render_mode") == 0)
+	{
+		static const gchar * const keys[] = { "mode", NULL };
+
+		return passthrough ("view.render_mode", keys, args + 1, error);
+	}
+	if (g_strcmp0 (args[0], "overlay") == 0)
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+		guint                 i;
+		guint                 pos = 0;
+
+		/* view overlay [NAME [on|off]] [viewport=N] */
+		for (i = 1; args[i] != NULL; i++)
+		{
+			if (strchr (args[i], '=') != NULL)
+			{
+				gchar *one[] = { args[i], NULL };
+
+				if (!lrg_ctl_parse_assignments (one, p, error))
+					return FALSE;
+			}
+			else if (pos++ == 0)
+				json_object_set_string_member (p, "name", args[i]);
+			else
+				json_object_set_boolean_member (p, "enabled", g_strcmp0 (args[i], "on") == 0 ||
+				                                g_strcmp0 (args[i], "true") == 0 || g_strcmp0 (args[i], "1") == 0);
+		}
+		r = call ("view.overlay", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
 	for (i = 0; i < G_N_ELEMENTS (aligned); i++)
 		if (g_strcmp0 (args[0], aligned[i][0]) == 0)
 		{
@@ -1098,7 +1264,8 @@ cmd_view (gchar  **args,
 			json_object_set_string_member (p, "id", aligned[i][1]);
 			return call_ok ("action.run", p, error);
 		}
-	return usage_error (error, "view top|front|right|bottom|back|left|persp|all, view focus NAME, view set key=value");
+	return usage_error (error, "view top|front|right|bottom|back|left|persp|all, view focus NAME, view set key=value, "
+	                    "view layout NAME, view render-mode MODE, view overlay NAME on|off");
 }
 
 static gboolean
@@ -1419,6 +1586,492 @@ cmd_thumbnail (gchar  **args,
 	return TRUE;
 }
 
+/* ==========================================================================
+ * 0.8.1 verbs: asset sidecars, git, linked prefabs, panels, code editor
+ * ========================================================================== */
+
+/* meta get PATH | meta set PATH key=value... [guid=GUID] */
+static gboolean
+cmd_meta (gchar  **args,
+          GError **error)
+{
+	static const gchar * const keys[] = { "path", NULL };
+	g_autoptr(JsonObject)       p = NULL;
+	g_autoptr(JsonObject)       settings = NULL;
+	g_autoptr(JsonNode)         r = NULL;
+	g_autofree gchar           *path = NULL;
+	guint                       i;
+
+	if (g_strcmp0 (args[0], "get") == 0 && args[1] != NULL)
+		return passthrough ("asset.meta.get", keys, args + 1, error);
+	if (g_strcmp0 (args[0], "set") != 0 || args[1] == NULL)
+		return usage_error (error, "meta get PATH | meta set PATH key=value... [guid=GUID]");
+
+	/* Every key=value but guid is an importer setting (null resets it) */
+	p = json_object_new ();
+	settings = json_object_new ();
+	path = path_arg (args[1]);
+	json_object_set_string_member (p, "path", path);
+	for (i = 2; args[i] != NULL; i++)
+	{
+		gchar *one[] = { args[i], NULL };
+
+		if (g_str_has_prefix (args[i], "guid="))
+			json_object_set_string_member (p, "guid", args[i] + 5);
+		else if (!lrg_ctl_parse_assignments (one, settings, error))
+			return FALSE;
+	}
+	if (json_object_get_size (settings) > 0)
+		json_object_set_object_member (p, "settings", json_object_ref (settings));
+	r = call ("asset.meta.set", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/* vcs [PATH]: the project's git status, or one path's badge */
+static gboolean
+cmd_vcs (gchar  **args,
+         GError **error)
+{
+	static const gchar * const keys[] = { "path", NULL };
+	g_autoptr(JsonObject)       p = json_object_new ();
+	g_autoptr(JsonNode)         r = NULL;
+	static const LrgCtlColumn   columns[] = {
+		{ "STATUS", "status", FALSE }, { "LETTER", "letter", TRUE }, { "PATH", "path", FALSE }
+	};
+
+	if (args[0] != NULL)
+		return passthrough ("vcs.status", keys, args, error);
+	r = call ("vcs.status", p, error);
+	if (r == NULL)
+		return FALSE;
+	if (output == LRG_CTL_FORMAT_DEFAULT || output == LRG_CTL_FORMAT_TABLE || output == LRG_CTL_FORMAT_WIDE)
+	{
+		JsonObject  *o = json_node_get_object (r);
+		const gchar *branch = str_member (o, "branch");
+
+		if (!json_object_get_boolean_member_with_default (o, "repository", FALSE))
+		{
+			printf ("not a git repository\n");
+			return TRUE;
+		}
+		printf ("branch %s\n", branch != NULL ? branch : "?");
+		if (json_object_has_member (o, "files"))
+			lrg_ctl_print_table (json_object_get_array_member (o, "files"), columns, G_N_ELEMENTS (columns),
+			                     output, "path");
+		return TRUE;
+	}
+	lrg_ctl_print (r, output);
+	return TRUE;
+}
+
+/* prefab overrides|apply|revert|relink|unlink NODE [keys=a,b] [path=P]
+ * prefab sync [PATH] */
+static gboolean
+cmd_prefab (gchar  **args,
+            GError **error)
+{
+	static const gchar * const node_keys[] = { "node", NULL };
+	static const gchar * const what[] = { "overrides", "apply", "revert", "relink", "unlink", NULL };
+	g_autoptr(JsonObject)       p = NULL;
+	g_autoptr(JsonNode)         r = NULL;
+	g_autofree gchar           *method = NULL;
+	guint                       i;
+
+	if (g_strcmp0 (args[0], "sync") == 0)
+	{
+		static const gchar * const path_keys[] = { "path", NULL };
+
+		return passthrough ("prefab.sync", path_keys, args + 1, error);
+	}
+	if (args[0] == NULL || !g_strv_contains (what, args[0]) || args[1] == NULL)
+		return usage_error (error, "prefab overrides|apply|revert|relink|unlink NODE [keys=a,b] [path=P] | "
+		                    "prefab sync [PATH]");
+
+	/* As passthrough, but keys=a,b becomes a list */
+	p = json_object_new ();
+	json_object_set_string_member (p, node_keys[0], args[1]);
+	for (i = 2; args[i] != NULL; i++)
+	{
+		gchar *one[] = { args[i], NULL };
+
+		if (g_str_has_prefix (args[i], "path="))
+		{
+			g_autofree gchar *path = path_arg (args[i] + 5);
+
+			json_object_set_string_member (p, "path", path);
+		}
+		else if (!lrg_ctl_parse_assignments (one, p, error))
+			return FALSE;
+	}
+	split_list_member (p, "keys");
+	method = g_strconcat ("prefab.", args[0], NULL);
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/* code open PATH[:LINE] | code list | code save [PATH] */
+static gboolean
+cmd_code (gchar  **args,
+          GError **error)
+{
+	static const gchar * const keys[] = { "path", NULL };
+	static const LrgCtlColumn  columns[] = {
+		{ "TAB", "tab", FALSE }, { "DIRTY", "dirty", FALSE }, { "LINE", "line", FALSE },
+		{ "LANGUAGE", "language", TRUE }, { "PATH", "path", FALSE }
+	};
+
+	if (g_strcmp0 (args[0], "open") == 0 && args[1] != NULL)
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+		g_autofree gchar     *file = g_strdup (args[1]);
+		g_autofree gchar     *path = NULL;
+		gchar                *colon = strrchr (file, ':');
+		gint64                line = 0;
+
+		/* PATH:LINE, unless PATH itself exists with the colon */
+		if (colon != NULL && !g_file_test (file, G_FILE_TEST_EXISTS) &&
+		    g_ascii_string_to_signed (colon + 1, 10, 1, G_MAXINT, &line, NULL))
+			*colon = '\0';
+		path = path_arg (file);
+		json_object_set_string_member (p, "path", path);
+		if (line > 0)
+			json_object_set_int_member (p, "line", line);
+		if (args[2] != NULL)
+		{
+			gchar *one[] = { args[2], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return FALSE;
+		}
+		r = call ("code.open", p, error);
+		if (r == NULL)
+			return FALSE;
+		if (output == LRG_CTL_FORMAT_DEFAULT)
+			printf ("opened %s:%" G_GINT64_FORMAT "\n", str_member (json_node_get_object (r), "path"),
+			        json_object_get_int_member (json_node_get_object (r), "line"));
+		else
+			lrg_ctl_print (r, output);
+		return TRUE;
+	}
+	if (g_strcmp0 (args[0], "list") == 0 || args[0] == NULL)
+	{
+		g_autoptr(JsonNode) r = call ("code.list", NULL, error);
+
+		if (r == NULL)
+			return FALSE;
+		if (output == LRG_CTL_FORMAT_YAML || output == LRG_CTL_FORMAT_JSON)
+			lrg_ctl_print (r, output);
+		else
+			lrg_ctl_print_table (json_node_get_array (r), columns, G_N_ELEMENTS (columns), output, "path");
+		return TRUE;
+	}
+	if (g_strcmp0 (args[0], "save") == 0)
+		return passthrough ("code.save", keys, args + 1, error);
+	return usage_error (error, "code open PATH[:LINE] | code list | code save [PATH]");
+}
+
+/* inspector list|get|set|reset|state|apply-override|revert-override
+ * [NODE] [key=value...]: the inspector panel's view of a node */
+static gboolean
+cmd_inspector (gchar  **args,
+               GError **error)
+{
+	static const gchar * const what[] = {
+		"list", "get", "set", "reset", "state", "apply-override", "revert-override", NULL
+	};
+	static const gchar * const keys[] = { "node", "name", NULL };
+	g_autofree gchar           *method = NULL;
+
+	if (args[0] == NULL || !g_strv_contains (what, args[0]))
+		return usage_error (error, "inspector list|get|set|reset|state|apply-override|revert-override [NODE] "
+		                    "[NAME] [key=value...]");
+	method = g_strconcat ("inspector.", args[0], NULL);
+	g_strdelimit (method, "-", '_');
+	return passthrough (method, keys, args + 1, error);
+}
+
+/* hierarchy reveal|rename NODE [name=NEW] | hierarchy filter TEXT |
+ * hierarchy state */
+static gboolean
+cmd_hierarchy (gchar  **args,
+               GError **error)
+{
+	static const gchar * const node_keys[] = { "node", "name", NULL };
+	static const gchar * const text_keys[] = { "text", NULL };
+
+	if ((g_strcmp0 (args[0], "reveal") == 0 || g_strcmp0 (args[0], "rename") == 0) && args[1] != NULL)
+	{
+		g_autofree gchar *method = g_strconcat ("hierarchy.", args[0], NULL);
+
+		return passthrough (method, node_keys, args + 1, error);
+	}
+	if (g_strcmp0 (args[0], "filter") == 0)
+		return passthrough ("hierarchy.filter", text_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "state") == 0 || args[0] == NULL)
+		return passthrough ("hierarchy.state", NULL, args[0] != NULL ? args + 1 : args, error);
+	return usage_error (error, "hierarchy reveal|rename NODE [NEW_NAME] | hierarchy filter TEXT | hierarchy state");
+}
+
+/* asset reveal|duplicate|trash PATH | asset rename PATH NAME |
+ * asset move PATH DEST | asset orphans [trash=true] */
+static gboolean
+cmd_asset (gchar  **args,
+           GError **error)
+{
+	static const gchar * const path_keys[] = { "path", NULL };
+	static const gchar * const rename_keys[] = { "path", "name", NULL };
+	static const gchar * const move_keys[] = { "path", "dest", NULL };
+	const gchar * const        *keys = path_keys;
+	g_autofree gchar           *method = NULL;
+
+	if (g_strcmp0 (args[0], "orphans") == 0)
+		return passthrough ("asset.orphans", NULL, args + 1, error);
+	if (args[0] == NULL || args[1] == NULL)
+		return usage_error (error, "asset reveal|duplicate|trash PATH | asset rename PATH NAME | "
+		                    "asset move PATH DEST | asset orphans [trash=true]");
+	if (g_strcmp0 (args[0], "rename") == 0)
+		keys = rename_keys;
+	else if (g_strcmp0 (args[0], "move") == 0)
+		keys = move_keys;
+	else if (g_strcmp0 (args[0], "reveal") != 0 && g_strcmp0 (args[0], "duplicate") != 0 &&
+	         g_strcmp0 (args[0], "trash") != 0)
+		return usage_error (error, "Unknown asset command '%s'", args[0]);
+	method = g_strconcat ("asset.", args[0], NULL);
+	return passthrough (method, keys, args + 1, error);
+}
+
+/* profiler [frames=N] [enable=true|false]: section timings */
+static gboolean
+cmd_profiler (gchar  **args,
+              GError **error)
+{
+	static const LrgCtlColumn columns[] = {
+		{ "SECTION", "name", FALSE }, { "LAST_MS", "last_ms", FALSE }, { "AVG_MS", "avg_ms", FALSE },
+		{ "MAX_MS", "max_ms", FALSE }, { "MIN_MS", "min_ms", TRUE }, { "COUNT", "count", TRUE }
+	};
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	JsonObject           *o;
+
+	if (!lrg_ctl_parse_assignments (args, p, error))
+		return FALSE;
+	r = call ("profiler.sample", p, error);
+	if (r == NULL)
+		return FALSE;
+	o = JSON_NODE_HOLDS_OBJECT (r) ? json_node_get_object (r) : NULL;
+	if ((output == LRG_CTL_FORMAT_DEFAULT || output == LRG_CTL_FORMAT_TABLE || output == LRG_CTL_FORMAT_WIDE) &&
+	    o != NULL && json_object_has_member (o, "sections") &&
+	    JSON_NODE_HOLDS_ARRAY (json_object_get_member (o, "sections")))
+	{
+		lrg_ctl_print_table (json_object_get_array_member (o, "sections"), columns, G_N_ELEMENTS (columns), output,
+		                     "name");
+		return TRUE;
+	}
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/*
+ * data_is_file_arg:
+ * @arg: a positional argument of a `data` command
+ *
+ * Whether @arg names the data file rather than a YAML path. YAML paths
+ * start with '/' (/actions/jump), and so do absolute file names; an
+ * argument starting with '/' is a file only when it is a regular file
+ * here. Anything else (data/input.yaml, relative to the project) is the
+ * file.
+ */
+static gboolean
+data_is_file_arg (const gchar *arg)
+{
+	if (arg[0] != '/')
+		return TRUE;
+	return g_file_test (arg, G_FILE_TEST_IS_REGULAR);
+}
+
+/*
+ * data open PATH | data list | data get|set|edit|reveal [PATH] ... |
+ * data undo|redo|validate|save|reload|close [PATH] [key=value...]
+ *
+ * The data editors (input maps, locales, sound banks, themes, HUD and UI
+ * layouts, dialog trees, dungeons) over the data.* methods. The file is
+ * optional everywhere but open: without it the focused data editor is
+ * meant. The remaining positionals fill the command's keys in order:
+ *   get    AT
+ *   set    AT VALUE        (VALUE parsed like key=value values: JSON,
+ *                           numbers, booleans, null, else a string)
+ *   edit   OP AT           (op arguments as key=value)
+ *   reveal AT
+ * validate exits 1 when the document has errors, like `validate` does
+ * for the level; close takes --force.
+ */
+static gboolean
+cmd_data (gchar  **args,
+          GError **error)
+{
+	static const gchar * const plain[] = {
+		"open", "undo", "redo", "validate", "save", "reload", "close", NULL
+	};
+	static const gchar * const get_keys[] = { "at", NULL };
+	static const gchar * const set_keys[] = { "at", "value", NULL };
+	static const gchar * const edit_keys[] = { "op", "at", NULL };
+	static const LrgCtlColumn  columns[] = {
+		{ "FORMAT", "format", FALSE }, { "DIRTY", "dirty", FALSE }, { "ISSUES", "issues", FALSE },
+		{ "ERRORS", "errors", FALSE }, { "EDITOR", "editor", TRUE }, { "UNDO", "undo_label", TRUE },
+		{ "PATH", "path", FALSE }
+	};
+	const gchar * const       *keys = NULL;
+	const gchar               *sub = args[0];
+	g_autoptr(JsonObject)      p = json_object_new ();
+	g_autoptr(GPtrArray)       assigns = g_ptr_array_new ();
+	g_autoptr(JsonNode)        r = NULL;
+	g_autofree gchar          *method = NULL;
+	gboolean                   have_path = FALSE;
+	guint                      k = 0;
+	guint                      i;
+
+	if (sub == NULL || g_strcmp0 (sub, "list") == 0)
+	{
+		r = call ("data.list", NULL, error);
+		if (r == NULL)
+			return FALSE;
+		if (output == LRG_CTL_FORMAT_YAML || output == LRG_CTL_FORMAT_JSON)
+			lrg_ctl_print (r, output);
+		else
+			lrg_ctl_print_table (json_node_get_array (r), columns, G_N_ELEMENTS (columns), output, "path");
+		return TRUE;
+	}
+	if (g_strcmp0 (sub, "get") == 0 || g_strcmp0 (sub, "reveal") == 0)
+		keys = get_keys;
+	else if (g_strcmp0 (sub, "set") == 0)
+		keys = set_keys;
+	else if (g_strcmp0 (sub, "edit") == 0)
+		keys = edit_keys;
+	else if (!g_strv_contains (plain, sub))
+		return usage_error (error, "data open PATH | data list | data get [PATH] [AT] | data set [PATH] AT VALUE | "
+		                    "data edit [PATH] OP AT [key=value...] | data reveal [PATH] AT | "
+		                    "data undo|redo|validate|save|reload|close [PATH] [key=value...]");
+	if (g_strcmp0 (sub, "open") == 0 && args[1] == NULL)
+		return usage_error (error, "data open PATH");
+
+	/* Positionals: the file first (when it looks like one), then the
+	 * command's keys in order; key=value arguments pass straight through
+	 * (save_as=, force=, index=, yaml=, as=, gesture=, ...). */
+	for (i = 1; args[i] != NULL; i++)
+	{
+		gboolean assign = strchr (args[i], '=') != NULL;
+
+		/* set's VALUE may itself contain '=' ("a=b"): once AT is filled,
+		 * the next argument is the value whatever it holds */
+		if (keys == set_keys && k == 1 && !json_object_has_member (p, "value"))
+			assign = FALSE;
+		if (assign)
+		{
+			g_ptr_array_add (assigns, args[i]);
+			continue;
+		}
+		/* edit's first positional is the op unless it has a dot (op
+		 * names never do; file names do) */
+		if (!have_path && k == 0 && data_is_file_arg (args[i]) &&
+		    (keys != edit_keys || strchr (args[i], '.') != NULL))
+		{
+			g_autofree gchar *path = path_arg (args[i]);
+
+			json_object_set_string_member (p, "path", path);
+			have_path = TRUE;
+			continue;
+		}
+		if (keys == NULL || keys[k] == NULL)
+			return usage_error (error, "Unexpected argument '%s' for data %s", args[i], sub);
+		if (g_strcmp0 (keys[k], "value") == 0)
+			json_object_set_member (p, "value", lrg_ctl_parse_value (args[i]));
+		else
+			json_object_set_string_member (p, keys[k], args[i]);
+		k++;
+	}
+	g_ptr_array_add (assigns, NULL);
+	if (!lrg_ctl_parse_assignments ((gchar * const *) assigns->pdata, p, error))
+		return FALSE;
+	if (g_strcmp0 (sub, "set") == 0 && !json_object_has_member (p, "value") && !json_object_has_member (p, "yaml"))
+		return usage_error (error, "data set [PATH] AT VALUE (or yaml=TEXT)");
+	if (g_strcmp0 (sub, "edit") == 0 && !json_object_has_member (p, "op"))
+		return usage_error (error, "data edit [PATH] insert|move|add_key|rename_key|remove AT [key=value...]");
+	if (g_strcmp0 (sub, "close") == 0 && opt_force)
+		json_object_set_boolean_member (p, "force", TRUE);
+
+	method = g_strconcat ("data.", sub, NULL);
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+
+	/* Exit status 1 when validation finds errors (for scripts and CI). */
+	if (g_strcmp0 (sub, "validate") == 0 && JSON_NODE_HOLDS_OBJECT (r) &&
+	    json_object_has_member (json_node_get_object (r), "errors") &&
+	    json_object_get_int_member (json_node_get_object (r), "errors") > 0)
+	{
+		g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "the data file has errors");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* palette [commands|files] [QUERY...]: open the command palette or the
+ * quick-open file finder in the editor, pre-filled with QUERY */
+static gboolean
+cmd_palette (gchar  **args,
+             GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	guint                 first = 0;
+
+	if (g_strcmp0 (args[0], "commands") == 0 || g_strcmp0 (args[0], "files") == 0)
+	{
+		json_object_set_string_member (p, "mode", args[0]);
+		first = 1;
+	}
+	if (args[first] != NULL)
+	{
+		g_autofree gchar *query = g_strjoinv (" ", args + first);
+
+		json_object_set_string_member (p, "query", query);
+	}
+	r = call ("palette.open", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/* preferences [PAGE]: open the preferences dialog (on PAGE) */
+static gboolean
+cmd_preferences (gchar  **args,
+                 GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+
+	if (args[0] != NULL)
+		json_object_set_string_member (p, "page", args[0]);
+	r = call ("preferences.open", p, error);
+	if (r == NULL)
+		return FALSE;
+	if (output == LRG_CTL_FORMAT_DEFAULT && JSON_NODE_HOLDS_VALUE (r) &&
+	    json_node_get_value_type (r) == G_TYPE_STRING)
+		printf ("preferences/%s opened\n", json_node_get_string (r));
+	else
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
 #ifdef LRG_EDITORCTL_HAVE_MCP
 static gboolean
 cmd_mcp (GError **error)
@@ -1453,12 +2106,13 @@ static const gchar *completion_script =
 	"\tverb=\"${COMP_WORDS[1]}\"\n"
 	"\tcase \"${prev}\" in\n"
 	"\t\t-o|--output) mapfile -t COMPREPLY < <(compgen -W 'yaml json table wide name' -- \"${cur}\"); return ;;\n"
+	"\t\t-l|--level) mapfile -t COMPREPLY < <(compgen -W 'info success warning error' -- \"${cur}\"); return ;;\n"
 	"\t\t-f|--filename) mapfile -t COMPREPLY < <(compgen -f -- \"${cur}\"); return ;;\n"
 	"\t\t-p|--parent) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get nodes -o name 2>/dev/null | sed 's|^node/||')\" -- \"${cur}\"); return ;;\n"
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -1480,7 +2134,15 @@ static const gchar *completion_script =
 	"\t\trun) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get actions -o name 2>/dev/null)\" -- \"${cur}\") ;;\n"
 	"\t\tplay) mapfile -t COMPREPLY < <(compgen -W 'start pause step stop state' -- \"${cur}\") ;;\n"
 	"\t\tgame) mapfile -t COMPREPLY < <(compgen -W 'start stop' -- \"${cur}\") ;;\n"
-	"\t\tview) mapfile -t COMPREPLY < <(compgen -W 'top front right bottom back left persp all focus set' -- \"${cur}\") ;;\n"
+	"\t\tview) mapfile -t COMPREPLY < <(compgen -W 'top front right bottom back left persp all focus set layout render-mode overlay' -- \"${cur}\") ;;\n"
+	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
+	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
+	"\t\tcode) mapfile -t COMPREPLY < <(compgen -W 'open list save' -- \"${cur}\") ;;\n"
+	"\t\tinspector) mapfile -t COMPREPLY < <(compgen -W 'list get set reset state apply-override revert-override' -- \"${cur}\") ;;\n"
+	"\t\thierarchy) mapfile -t COMPREPLY < <(compgen -W 'reveal rename filter state' -- \"${cur}\") ;;\n"
+	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans' -- \"${cur}\") ;;\n"
+	"\t\tdata) mapfile -t COMPREPLY < <(compgen -W 'list open get set edit undo redo validate save reload close reveal' -- \"${cur}\") ;;\n"
+	"\t\tpalette) mapfile -t COMPREPLY < <(compgen -W 'commands files' -- \"${cur}\") ;;\n"
 	"\t\tcall) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get methods -o json 2>/dev/null | tr -d '[]\\\",')\" -- \"${cur}\") ;;\n"
 	"\t\tcompletion) mapfile -t COMPREPLY < <(compgen -W 'bash' -- \"${cur}\") ;;\n"
 	"\tesac\n"
@@ -1506,6 +2168,28 @@ dispatch (gchar  **argv,
 		return cmd_timeline (rest, error);
 	if (g_strcmp0 (verb, "thumbnail") == 0)
 		return cmd_thumbnail (rest, error);
+	if (g_strcmp0 (verb, "meta") == 0)
+		return cmd_meta (rest, error);
+	if (g_strcmp0 (verb, "vcs") == 0 || g_strcmp0 (verb, "git") == 0)
+		return cmd_vcs (rest, error);
+	if (g_strcmp0 (verb, "prefab") == 0)
+		return cmd_prefab (rest, error);
+	if (g_strcmp0 (verb, "code") == 0)
+		return cmd_code (rest, error);
+	if (g_strcmp0 (verb, "inspector") == 0)
+		return cmd_inspector (rest, error);
+	if (g_strcmp0 (verb, "hierarchy") == 0)
+		return cmd_hierarchy (rest, error);
+	if (g_strcmp0 (verb, "asset") == 0)
+		return cmd_asset (rest, error);
+	if (g_strcmp0 (verb, "profiler") == 0)
+		return cmd_profiler (rest, error);
+	if (g_strcmp0 (verb, "data") == 0)
+		return cmd_data (rest, error);
+	if (g_strcmp0 (verb, "palette") == 0)
+		return cmd_palette (rest, error);
+	if (g_strcmp0 (verb, "preferences") == 0 || g_strcmp0 (verb, "prefs") == 0)
+		return cmd_preferences (rest, error);
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)
@@ -1647,11 +2331,18 @@ dispatch (gchar  **argv,
 		g_autoptr(JsonObject) p = json_object_new ();
 		g_autofree gchar     *msg = NULL;
 
+		const gchar          *level = NULL;
+
 		if (rest[0] == NULL)
-			return usage_error (error, "notify MESSAGE [--level N]");
+			return usage_error (error, "notify MESSAGE [--level info|success|warning|error]");
+		if (opt_level != NULL && (level = notify_level_name (opt_level)) == NULL)
+			return usage_error (error, "Unknown toast level '%s' (info, success, warning, error or 0-3)",
+			                    opt_level);
 		msg = g_strjoinv (" ", rest);
 		json_object_set_string_member (p, "message", msg);
-		json_object_set_int_member (p, "level", opt_level);
+		/* ui.notify takes the level by name; the app still accepts 0-3
+		 * from older clients, but the name is the documented form */
+		json_object_set_string_member (p, "level", level != NULL ? level : "info");
 		return simple_method ("ui.notify", p, NULL, error);
 	}
 	if (g_strcmp0 (verb, "quit") == 0)

@@ -1,0 +1,59 @@
+# catppuccin-frappe.yaml: the Catppuccin Frappé palette as an LrgTheme
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Shipped with the libregnum editor for settings migrated from 0.8.0,
+# whose "frappe" theme had no built-in LrgTheme preset. The roles follow
+# the catppuccin-mocha preset exactly, with Frappé colours from the
+# official palette (https://catppuccin.com/palette): crust #232634,
+# mantle #292c3c, base #303446, surface0-2 #414559 #51576d #626880,
+# overlay0 #737994, subtext0 #a5adce, text #c6d0f5, mauve #ca9ee6.
+# The accent family (accent-hover, accent-pressed, focus, selection,
+# text-on-accent) is derived from the mauve accent; link is set to blue
+# afterwards, as in the mocha preset.
+name: catppuccin-frappe
+dark: true
+motion: bouncy
+accent: '#ca9ee6'
+colors:
+  window: '#232634'
+  panel: '#303446'
+  surface: '#414559'
+  border: '#51576d'
+  text: '#c6d0f5'
+  text-muted: '#a5adce'
+  control: '#414559'
+  control-hover: '#51576d'
+  control-pressed: '#626880'
+  input: '#292c3c'
+  track: '#51576d'
+  handle: '#c6d0f5'
+  popup: '#303446'
+  tooltip: '#292c3c'
+  shadow: '#000000b0'
+  veil: '#232634b0'
+  success: '#a6d189'
+  warning: '#e5c890'
+  danger: '#e78284'
+  link: '#8caaee'
+  disabled: '#737994'
+metrics:
+  font-size: 16
+  font-size-small: 12
+  font-size-large: 24
+  font-size-title: 32
+  corner-radius: 10
+  border-width: 1
+  control-height: 36
+  padding-x: 14
+  padding-y: 8
+  spacing: 8
+  row-height: 32
+  popup-radius: 14
+  shadow-blur: 18
+  shadow-offset-y: 6
+  focus-ring-width: 2
+  scrollbar-size: 8
+  check-size: 20
+  handle-size: 18

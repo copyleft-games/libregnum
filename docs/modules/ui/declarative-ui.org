@@ -799,6 +799,46 @@ tracks[0].keyframes[2]: unknown LrgTimelineViewInterpolation value 'wobbly' (exp
 - *Per-child keys* (=anchor=, =page-name=, =pack=) are re-applied through the parent when they change and reset when removed; children re-added for reordering get them again.
 - *Menus, graphs, layouts, tracks and markers*: see [[#menus][Menus]] and [[#widget-specific-keys][Widget-specific keys]]: each is applied again only when its resolved value changed.
 
+** Source tracking
+:PROPERTIES:
+:CUSTOM_ID: source-tracking
+:END:
+A live UI-layout designer needs to go from a widget on screen to the YAML that made it (click a widget, jump to its node) and back (put the caret on a node, highlight its widget). The loader records this when asked: =lrg_ui_loader_set_track_sources (loader, TRUE)= before loading. Documents loaded or reloaded afterwards remember, for every widget they build, where its node is written in the *main document*:
+
+- =lrg_ui_loader_get_source_path (loader, widget)=: a JSON pointer (RFC 6901) into the main document's YAML. =""= is a root written at the top of the document, =/root= a =root:= key, =/children/2/children/0= the first child of the third child. Keys are escaped as the RFC says (=~= becomes =~0=, =/= becomes =~1=). =NULL= for widgets no loader built, or built while tracking was off.
+- =lrg_ui_loader_get_widget_for_path (loader, path)=: the live widget built from the node at =path= (=/= is accepted for the root), searching the most recent document first, depth first with parents before children. Only widgets reachable through containers are searched.
+- =lrg_ui_loader_get_source_location (loader, widget, &line, &column)=: the 1-based position of that same node. Positions are kept whether or not tracking is on (they also feed error messages), so this works without tracking.
+
+What a pointer names when the widget does not come from its own node:
+
+| Widget built from                         | Reported pointer and position                                                                 |
+|-------------------------------------------+-----------------------------------------------------------------------------------------------|
+| A plain node                              | The node's own mapping                                                                        |
+| A component (its root and every widget of its body) | The component *use site* (=type: Card= ...), wherever the component is declared     |
+| Children given to a component (slot fills) | Their own nodes at the use site (=/children/2/children/0= below the use)                     |
+| An included file                          | The =include:= entry in the main document                                                     |
+| =repeat= / =for-each= copies              | The template node (=/children/3/body=), shared by every copy; the first copy wins in =get_widget_for_path= |
+| A root written beside =components:= / =variables:= | =""=                                                                                   |
+
+A hot reload refreshes the pointers of the widgets it reuses (each widget remembers the node it currently reflects), so inserting a sibling above a widget moves its pointer from =/children/0= to =/children/1= while the widget keeps its identity.
+
+#+begin_src C
+lrg_ui_loader_set_track_sources (loader, TRUE);
+root = lrg_ui_loader_watch_file (loader, "ui/hud.yaml", LRG_CONTAINER (canvas), &error);
+
+/* Designer: the user clicked a widget */
+const gchar *ptr = lrg_ui_loader_get_source_path (loader, picked);   /* "/children/1" */
+guint        line;
+
+if (lrg_ui_loader_get_source_location (loader, picked, &line, NULL))
+	my_editor_goto_line ("ui/hud.yaml", line);
+
+/* ...and back: the caret is on a node */
+LrgWidget *w = lrg_ui_loader_get_widget_for_path (loader, "/children/1/children/0");
+#+end_src
+
+Cost: one small string per YAML value of the main document while tracking is on (included files are never annotated: their widgets report the include site). Off by default.
+
 ** Worked example
 :PROPERTIES:
 :CUSTOM_ID: worked-example
@@ -886,6 +926,18 @@ root:
 | =lrg_ui_loader_load_from_file (self, path, error)=          | Builds a file; includes are relative to it; not watched; returns the root (transfer full) or =NULL=                 |
 | =lrg_ui_loader_get_widget (self, id)=                       | A live widget built by this loader, by =id= (transfer none; the loader holds only a weak reference). The most recent load wins for duplicate ids; within one document the first in depth-first order |
 
+*** Source tracking
+:PROPERTIES:
+:CUSTOM_ID: api-source-tracking
+:END:
+| Function                                                    | Description                                                                                                         |
+|-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------|
+| =lrg_ui_loader_set_track_sources (self, track_sources)=     | Record JSON pointers for documents loaded afterwards (default =FALSE=); see [[#source-tracking][Source tracking]]       |
+| =lrg_ui_loader_get_track_sources (self)=                    | Whether tracking is on                                                                                              |
+| =lrg_ui_loader_get_source_path (self, widget)=              | JSON pointer of the widget's node in the main document (use site for components and includes), or =NULL=           |
+| =lrg_ui_loader_get_widget_for_path (self, path)=            | The live widget built from the node at =path= (transfer none), or =NULL=                                           |
+| =lrg_ui_loader_get_source_location (self, widget, &line, &column)= | 1-based line and column of that node; =FALSE= for widgets no loader built                                    |
+
 *** Hot reload
 :PROPERTIES:
 :CUSTOM_ID: api-hot-reload
@@ -930,4 +982,5 @@ root:
 - When the root of a watched document must be rebuilt it is appended to the host, not put back at its old index.
 - A removed explicit colour property cannot be reset in place, so its widget is rebuilt (it loses its state).
 - Only the first document of a multi-document YAML stream is read.
+- Source pointers name YAML nodes, not widgets: copies made by =repeat= / =for-each= share one pointer, and a component's whole body shares its use site's.
 - =poll()= compares modification time (nanoseconds on Linux), size and inode; a write that keeps all three identical is not seen.

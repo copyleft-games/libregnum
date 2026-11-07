@@ -18,6 +18,8 @@
 #include "lrg-container.h"
 #include "lrg-ui-event.h"
 #include "lrg-canvas-input.h"
+#include "lrg-drag.h"
+#include "lrg-drop-target.h"
 
 G_BEGIN_DECLS
 
@@ -516,5 +518,86 @@ LrgWidgetDirection lrg_canvas_get_default_direction (LrgCanvas *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_canvas_set_default_direction (LrgCanvas          *self,
                                        LrgWidgetDirection  direction);
+
+/* ==========================================================================
+ * Drag and drop
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_begin_drag:
+ * @self: an #LrgCanvas
+ * @source_widget: (nullable): the widget the drag comes from; its first
+ *   #LrgDragSource (if any) gets #LrgDragSource::drag-begin and
+ *   #LrgDragSource::drag-end
+ * @payload: the payload to drag
+ * @x: pointer X in canvas coordinates
+ * @y: pointer Y in canvas coordinates
+ *
+ * Starts a drag from code: a keyboard "pick up" command, a long press,
+ * a drag that continues from a gesture the widget handles itself. A
+ * press the pointer is holding on a widget is cancelled (no click on
+ * release). While the left button is held the drag ends on its
+ * release; otherwise the next left press drops (click to drop). Escape
+ * cancels either way.
+ *
+ * Returns: %TRUE when the drag started, %FALSE when one is already
+ *   running
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_begin_drag (LrgCanvas      *self,
+                                LrgWidget      *source_widget,
+                                LrgDragPayload *payload,
+                                gfloat          x,
+                                gfloat          y);
+
+/**
+ * lrg_canvas_is_dragging:
+ * @self: an #LrgCanvas
+ *
+ * Returns: %TRUE while a drag and drop session is running
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_is_dragging (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_drag_payload:
+ * @self: an #LrgCanvas
+ *
+ * Returns: (transfer none) (nullable): the payload being dragged, or
+ *   %NULL outside a drag
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDragPayload * lrg_canvas_get_drag_payload (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_drop_target:
+ * @self: an #LrgCanvas
+ *
+ * Returns: (transfer none) (nullable): the drop target the drag is
+ *   over (it accepted the payload), or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDropTarget * lrg_canvas_get_drop_target (LrgCanvas *self);
+
+/**
+ * lrg_canvas_get_drag_action:
+ * @self: an #LrgCanvas
+ *
+ * Returns: the action a drop right now would perform,
+ *   %LRG_DRAG_ACTION_NONE when it would be refused or nothing is dragged
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDragAction lrg_canvas_get_drag_action (LrgCanvas *self);
+
+/**
+ * lrg_canvas_cancel_drag:
+ * @self: an #LrgCanvas
+ *
+ * Cancels the running drag: the target under the pointer gets
+ * #LrgDropTarget::leave and the source #LrgDragSource::drag-end with
+ * @dropped %FALSE. Does nothing outside a drag.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_cancel_drag (LrgCanvas *self);
 
 G_END_DECLS

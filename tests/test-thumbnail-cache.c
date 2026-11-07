@@ -7,7 +7,10 @@
  * Headless tests for LrgThumbnailCache: cache keys (path + mtime + size),
  * synchronous generation for textures and level/prefab schematics,
  * staleness after edits, invalidation, the asynchronous worker path and
- * the main-thread GPU queue with a fake renderer.
+ * the main-thread GPU queue with a fake renderer. Since 0.8.1 also audio
+ * waveforms (decoded on the CPU; skipped if decoding is unavailable),
+ * texture import settings from ".meta" sidecars (max-size and the
+ * settings hash in the cache key) and the font renderer hook.
  */
 
 #include <glib.h>
@@ -295,6 +298,182 @@ test_async_requests (Fixture       *f,
 	g_hash_table_unref (log.ready);
 }
 
+/* Writes a mono 16-bit WAV: silence for the first half, a full-scale
+ * square wave at @amp for the second half. */
+static gchar *
+write_wav (Fixture     *f,
+           const gchar *name,
+           gfloat       amp)
+{
+	const guint         rate = 8000;
+	const guint         frames = 8000;
+	g_autofree gint16  *pcm = g_new0 (gint16, frames);
+	g_autoptr(GrlWave)  wave = NULL;
+	g_autoptr(GError)   error = NULL;
+	gchar              *path = g_build_filename (f->dir, name, NULL);
+	guint               i;
+
+	for (i = frames / 2; i < frames; i++)
+		pcm[i] = (gint16) (((i / 20) % 2 == 0 ? amp : -amp) * 32767.0f);
+	wave = grl_wave_new_from_samples (rate, 16, 1, (const guint8 *) pcm, frames * sizeof (gint16));
+	g_assert_nonnull (wave);
+	if (!grl_wave_export (wave, path, &error))
+	{
+		g_free (path);
+		return NULL;
+	}
+	return path;
+}
+
+/* RGBA of one pixel. */
+static void
+pixel (GrlImage *img,
+       gint      x,
+       gint      y,
+       guint8    out[4])
+{
+	gsize   n = 0;
+	guint8 *px = grl_image_get_pixels (img, &n);
+	gsize   at = ((gsize) y * (gsize) grl_image_get_width (img) + (gsize) x) * 4;
+
+	g_assert_nonnull (px);
+	g_assert_cmpuint (at + 3, <, n);
+	memcpy (out, px + at, 4);
+}
+
+static void
+test_waveform (Fixture       *f,
+               gconstpointer  data)
+{
+	g_autofree gchar   *wav = write_wav (f, "beep.wav", 0.8f);
+	g_autoptr(GError)   error = NULL;
+	g_autoptr(GrlImage) img = NULL;
+	g_autofree gchar   *thumb = NULL;
+	guint8              top_quiet[4], top_loud[4], mid_quiet[4], bg[4];
+	gint                h;
+
+	if (wav == NULL)
+	{
+		g_test_skip ("Cannot write WAV files in this build");
+		return;
+	}
+	g_assert_cmpint (lrg_thumbnail_cache_get_kind (wav), ==, LRG_THUMBNAIL_KIND_WAVEFORM);
+	g_assert_true (lrg_thumbnail_cache_is_supported (f->thumbs, wav));
+
+	img = lrg_thumbnail_cache_render_waveform (wav, 64, 32, &error);
+	if (img == NULL && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED))
+	{
+		g_test_skip ("Audio decoding unavailable");
+		return;
+	}
+	g_assert_no_error (error);
+	g_assert_cmpint (grl_image_get_width (img), ==, 64);
+	g_assert_cmpint (grl_image_get_height (img), ==, 32);
+	h = grl_image_get_height (img);
+
+	/* Quiet half: only the centre line is drawn; loud half: the envelope
+	 * reaches well above the centre (0.8 * 0.45 * h ~ 11 px). */
+	pixel (img, 8, h / 2 - 8, top_quiet);
+	pixel (img, 56, h / 2 - 8, top_loud);
+	pixel (img, 8, h / 2, mid_quiet);
+	pixel (img, 56, 0, bg);
+	g_assert_cmpint (top_quiet[0], ==, bg[0]);
+	g_assert_cmpint (top_loud[0], !=, bg[0]);
+	g_assert_cmpint (mid_quiet[0], !=, bg[0]);
+
+	/* Through the cache (sync), at the cache size (square). */
+	thumb = lrg_thumbnail_cache_generate (f->thumbs, wav, &error);
+	g_assert_no_error (error);
+	g_clear_object (&img);
+	img = grl_image_new_from_file (thumb);
+	g_assert_cmpint (grl_image_get_width (img), ==, 32);
+	g_assert_cmpint (grl_image_get_height (img), ==, 32);
+
+	/* Garbage audio fails cleanly. */
+	g_clear_object (&img);
+	{
+		g_autofree gchar *bad = g_build_filename (f->dir, "bad.wav", NULL);
+
+		g_assert_true (g_file_set_contents (bad, "RIFFnope", -1, NULL));
+		img = lrg_thumbnail_cache_render_waveform (bad, 32, 32, &error);
+		g_assert_null (img);
+		g_assert_nonnull (error);
+	}
+}
+
+static void
+test_texture_meta (Fixture       *f,
+                   gconstpointer  data)
+{
+	g_autofree gchar       *png = write_png (f, "big.png", 64, 32, 50);
+	g_autofree gchar       *meta_path = g_strconcat (png, ".meta", NULL);
+	g_autofree gchar       *plain = NULL;
+	g_autofree gchar       *keyed = NULL;
+	g_autofree gchar       *keyed2 = NULL;
+	g_autofree gchar       *k = NULL;
+	g_autoptr(LrgAssetMeta) meta = lrg_asset_meta_new_for_asset (png);
+	g_autoptr(GrlImage)     img = NULL;
+	g_autoptr(GError)       error = NULL;
+
+	k = lrg_thumbnail_cache_make_key_full ("/a.png", 1, 2, "0123456789abcdef");
+	g_assert_true (g_str_has_suffix (k, "-1-2-0123456789ab.png"));
+
+	plain = lrg_thumbnail_cache_get_entry_path (f->thumbs, png);
+
+	/* A sidecar changes the key (settings hash) and max-size shrinks the
+	 * preview before fitting. */
+	lrg_asset_meta_set_texture_max_size (meta, 8);
+	g_assert_true (lrg_asset_meta_save_to_file (meta, meta_path, &error));
+	keyed = lrg_thumbnail_cache_get_entry_path (f->thumbs, png);
+	g_assert_cmpstr (keyed, !=, plain);
+	img = lrg_thumbnail_cache_render_cpu (png, 32, &error);
+	g_assert_no_error (error);
+	g_assert_cmpint (grl_image_get_width (img), ==, 8);
+	g_assert_cmpint (grl_image_get_height (img), ==, 4);
+
+	/* Rewriting the sidecar with only a new guid keeps the key: the hash
+	 * covers settings, not identity. */
+	lrg_asset_meta_regenerate_guid (meta);
+	g_assert_true (lrg_asset_meta_save_to_file (meta, meta_path, &error));
+	keyed2 = lrg_thumbnail_cache_get_entry_path (f->thumbs, png);
+	g_assert_cmpstr (keyed2, ==, keyed);
+}
+
+static void
+test_font_renderer (Fixture       *f,
+                    gconstpointer  data)
+{
+	g_autofree gchar *ttf = g_build_filename (f->dir, "ui.ttf", NULL);
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *thumb = NULL;
+	guint             renders = 0;
+
+	g_assert_true (g_file_set_contents (ttf, "not really a font", -1, NULL));
+	g_assert_cmpint (lrg_thumbnail_cache_get_kind (ttf), ==, LRG_THUMBNAIL_KIND_FONT);
+	g_assert_cmpint (lrg_thumbnail_cache_get_kind ("x.txt"), ==, LRG_THUMBNAIL_KIND_NONE);
+
+	/* Without the UI hook fonts are unsupported. */
+	g_assert_false (lrg_thumbnail_cache_is_supported (f->thumbs, ttf));
+	g_assert_null (lrg_thumbnail_cache_generate (f->thumbs, ttf, &error));
+	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+	g_clear_error (&error);
+
+	/* The model renderer does not cover fonts, the font hook does. */
+	lrg_thumbnail_cache_set_renderer (f->thumbs, fake_render, &renders, NULL);
+	g_assert_false (lrg_thumbnail_cache_is_supported (f->thumbs, ttf));
+	lrg_thumbnail_cache_set_kind_renderer (f->thumbs, LRG_THUMBNAIL_KIND_FONT, fake_render, &renders, NULL);
+	g_assert_true (lrg_thumbnail_cache_is_supported (f->thumbs, ttf));
+	thumb = lrg_thumbnail_cache_generate (f->thumbs, ttf, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (thumb);
+	g_assert_cmpuint (renders, ==, 1);
+
+	/* Only GPU kinds have a slot. */
+	g_test_expect_message (G_LOG_DOMAIN, G_LOG_LEVEL_CRITICAL, "*no renderer slot*");
+	lrg_thumbnail_cache_set_kind_renderer (f->thumbs, LRG_THUMBNAIL_KIND_IMAGE, fake_render, &renders, NULL);
+	g_test_assert_expected_messages ();
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -306,6 +485,9 @@ main (int   argc,
 	ADD ("/thumbnail-cache/texture-staleness", test_generate_texture_and_staleness);
 	ADD ("/thumbnail-cache/level-unsupported", test_generate_level_and_unsupported);
 	ADD ("/thumbnail-cache/async", test_async_requests);
+	ADD ("/thumbnail-cache/waveform", test_waveform);
+	ADD ("/thumbnail-cache/texture-meta", test_texture_meta);
+	ADD ("/thumbnail-cache/font-renderer", test_font_renderer);
 #undef ADD
 
 	return g_test_run ();

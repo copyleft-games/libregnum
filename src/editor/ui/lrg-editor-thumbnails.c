@@ -12,8 +12,9 @@
  *    $XDG_CACHE_HOME/libregnum/thumbnails without a project);
  *  - the per-asset state the assets panel reads (pending / file ready /
  *    texture uploaded / failed);
- *  - a bounded number of texture uploads per frame, and one GPU (model)
- *    render per frame through editor_render_model_thumbnail();
+ *  - a bounded number of texture uploads per frame, and one GPU render
+ *    per frame (models and font samples, through LrgEditorSceneRenderer,
+ *    registered while a window exists);
  *  - invalidation from the assets directory monitor (live reload).
  */
 
@@ -84,7 +85,25 @@ render_model (const gchar *path,
               guint        size,
               gpointer     user_data)
 {
-	return editor_render_model_thumbnail (LRG_EDITOR_APP (user_data), path, size);
+	return lrg_editor_scene_renderer_render_model_thumbnail (LRG_EDITOR_APP (user_data)->renderer, path, size);
+}
+
+static GrlImage *
+render_font (const gchar *path,
+             guint        size,
+             gpointer     user_data)
+{
+	return lrg_editor_scene_renderer_render_font_thumbnail (LRG_EDITOR_APP (user_data)->renderer, path, size);
+}
+
+/* The GPU hooks (models, fonts): only while a window (GL) exists. */
+static void
+set_gpu_renderers (LrgEditorApp *self,
+                   gboolean      on)
+{
+	lrg_thumbnail_cache_set_renderer (self->thumbs, on ? render_model : NULL, on ? self : NULL, NULL);
+	lrg_thumbnail_cache_set_kind_renderer (self->thumbs, LRG_THUMBNAIL_KIND_FONT, on ? render_font : NULL,
+	                                       on ? self : NULL, NULL);
 }
 
 /* The cache for the current project, (re)created when the project
@@ -106,15 +125,16 @@ editor_thumbnails_cache (LrgEditorApp *self)
 	self->thumbs_dir = g_strdup (dir);
 	self->thumbs = lrg_thumbnail_cache_new (dir);
 	g_signal_connect (self->thumbs, "ready", G_CALLBACK (on_ready), self);
-	if (self->window_open && self->render != NULL)
-		lrg_thumbnail_cache_set_renderer (self->thumbs, render_model, self, NULL);
+	if (self->window_open && self->renderer != NULL)
+		set_gpu_renderers (self, TRUE);
 	return self->thumbs;
 }
 
 void
 editor_thumbnails_window_opened (LrgEditorApp *self)
 {
-	lrg_thumbnail_cache_set_renderer (editor_thumbnails_cache (self), render_model, self, NULL);
+	editor_thumbnails_cache (self);
+	set_gpu_renderers (self, TRUE);
 }
 
 void
@@ -124,7 +144,7 @@ editor_thumbnails_window_closing (LrgEditorApp *self)
 	gpointer       value;
 
 	if (self->thumbs != NULL)
-		lrg_thumbnail_cache_set_renderer (self->thumbs, NULL, NULL, NULL);
+		set_gpu_renderers (self, FALSE);
 
 	/* Textures die with the GL context; keep the files. */
 	g_hash_table_iter_init (&iter, self->thumb_entries);
@@ -145,7 +165,7 @@ void
 editor_thumbnails_pump (LrgEditorApp *self)
 {
 	if (self->thumbs != NULL)
-		lrg_thumbnail_cache_process (self->thumbs, (self->window_open && !self->headless) ? 1 : 0);
+		lrg_thumbnail_cache_process (self->thumbs, self->window_open ? 1 : 0);
 }
 
 /*
@@ -171,7 +191,7 @@ editor_thumbnail_texture (LrgEditorApp *self,
 		g_hash_table_insert (self->thumb_entries, g_strdup (path), t);
 	}
 
-	if (t->state == THUMB_READY && !self->headless && self->window_open)
+	if (t->state == THUMB_READY && self->window_open)
 	{
 		if (self->thumb_upload_frame != self->frames)
 		{
@@ -211,7 +231,8 @@ editor_thumbnails_file_changed (LrgEditorApp *self,
 	g_hash_table_remove (self->thumb_entries, abs);
 	if (g_strcmp0 (abs, path) != 0)
 		g_hash_table_remove (self->thumb_entries, path);
-	editor_render_forget_asset (self, abs);
+	if (self->renderer != NULL)
+		lrg_editor_scene_renderer_forget_asset (self->renderer, abs);
 }
 
 /* Drops all thumbnails of the current directory listing and regenerates

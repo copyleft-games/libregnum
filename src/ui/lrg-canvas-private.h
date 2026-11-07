@@ -110,4 +110,55 @@ guint _lrg_canvas_get_n_key_hooks  (struct _LrgCanvas  *self);
 GActionGroup * _lrg_ui_actions_new_app_group (struct _LrgCanvas *canvas);
 GActionGroup * _lrg_ui_actions_new_ui_group  (struct _LrgCanvas *canvas);
 
+/*
+ * Drag and drop session hooks (lrg-drag.c, lrg-drop-target.c). The
+ * canvas runs the session; the controllers store their configuration
+ * and emit their signals through these.
+ *
+ * _lrg_widget_peek_drag_sources / _lrg_widget_peek_drop_targets: the
+ *   controllers attached to @widget (borrowed GPtrArray, or NULL).
+ * _lrg_drag_source_prepare: emits ::prepare; returns a new reference
+ *   to the payload or NULL.
+ * _lrg_drag_source_begin / _end: set LrgDragSource:dragging and emit
+ *   ::drag-begin / ::drag-end.
+ * _lrg_drop_target_accept: emits ::accept (types were matched already).
+ * _lrg_drop_target_enter: sets current-drop, emits ::enter.
+ * _lrg_drop_target_motion: stores @proposed for the default handler,
+ *   emits ::motion, clamps the result to the allowed actions and
+ *   records it as current-action.
+ * _lrg_drop_target_leave: emits ::leave, then clears current-drop.
+ * _lrg_drop_target_drop: emits ::drop.
+ */
+struct _LrgDragSource;
+struct _LrgDropTarget;
+struct _LrgDragPayload;
+
+GPtrArray *              _lrg_widget_peek_drag_sources  (struct _LrgWidget      *widget);
+GPtrArray *              _lrg_widget_peek_drop_targets  (struct _LrgWidget      *widget);
+struct _LrgDragPayload * _lrg_drag_source_prepare       (struct _LrgDragSource  *self,
+                                                         gfloat                  x,
+                                                         gfloat                  y);
+void                     _lrg_drag_source_begin         (struct _LrgDragSource  *self,
+                                                         struct _LrgDragPayload *payload);
+void                     _lrg_drag_source_end           (struct _LrgDragSource  *self,
+                                                         struct _LrgDragPayload *payload,
+                                                         gboolean                dropped,
+                                                         guint                   action);
+gboolean                 _lrg_drop_target_accept        (struct _LrgDropTarget  *self,
+                                                         struct _LrgDragPayload *payload);
+void                     _lrg_drop_target_enter         (struct _LrgDropTarget  *self,
+                                                         struct _LrgDragPayload *payload,
+                                                         gfloat                  x,
+                                                         gfloat                  y);
+guint                    _lrg_drop_target_motion        (struct _LrgDropTarget  *self,
+                                                         struct _LrgDragPayload *payload,
+                                                         gfloat                  x,
+                                                         gfloat                  y,
+                                                         guint                   proposed);
+void                     _lrg_drop_target_leave         (struct _LrgDropTarget  *self);
+gboolean                 _lrg_drop_target_drop          (struct _LrgDropTarget  *self,
+                                                         struct _LrgDragPayload *payload,
+                                                         gfloat                  x,
+                                                         gfloat                  y);
+
 G_END_DECLS

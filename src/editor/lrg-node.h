@@ -27,6 +27,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "lrg-prefab.h"
 
 G_BEGIN_DECLS
 
@@ -549,7 +550,8 @@ LrgNode * lrg_node_find_by_path (LrgNode     *self,
  * Copies the node's own editable state from @source into @self: name, flags,
  * local transform, and deep copies of the visual payload, component
  * descriptions and script bindings. The GUID, parent and children of @self
- * are left untouched. This is the primitive behind the editor's
+ * are left untouched, and so is the prefab link (#LrgNode:prefab-link).
+ * This is the primitive behind the editor's
  * snapshot-based undo (see lrg_editor_snapshot_node()).
  */
 LRG_AVAILABLE_IN_ALL
@@ -585,6 +587,55 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_node_foreach (LrgNode         *self,
                            LrgNodeForeachFunc func,
                            gpointer         user_data);
+
+/* ==========================================================================
+ * Prefab link (linked prefab instances, since 0.8.1)
+ * ========================================================================== */
+
+/**
+ * lrg_node_get_prefab_link:
+ * @self: an #LrgNode
+ *
+ * Gets the link of a prefab instance root (see lrg_prefab_instantiate_linked()).
+ * Only instance roots, including nested ones, carry a link; the link is not
+ * part of the node's editable state (lrg_node_copy_state() and
+ * lrg_node_state_equal() ignore it).
+ *
+ * Returns: (transfer none) (nullable): the link, or %NULL
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPrefabLink * lrg_node_get_prefab_link (LrgNode *self);
+
+/**
+ * lrg_node_set_prefab_link:
+ * @self: an #LrgNode
+ * @link: (nullable): the link, or %NULL to unlink
+ *
+ * Sets (a reference to) @link as this node's prefab link.
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_prefab_link (LrgNode       *self,
+                               LrgPrefabLink *link);
+
+/**
+ * lrg_node_get_prefab_source_guid:
+ * @self: an #LrgNode
+ *
+ * The back-reference of an instance node: the guid of the source prefab
+ * node it mirrors, looked up in the link of its owning instance root (see
+ * lrg_prefab_find_owner()). Works for roots and descendants alike.
+ *
+ * Returns: (transfer none) (nullable): the source node guid, or %NULL when
+ *   the node is not part of a linked instance or was added in the instance
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_get_prefab_source_guid (LrgNode *self);
 
 /* ==========================================================================
  * Instantiation

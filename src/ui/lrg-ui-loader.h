@@ -351,4 +351,94 @@ void lrg_ui_loader_set_use_monitors (LrgUILoader *self,
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_ui_loader_get_use_monitors (LrgUILoader *self);
 
+/* ==========================================================================
+ * Source tracking
+ * ========================================================================== */
+
+/**
+ * lrg_ui_loader_set_track_sources:
+ * @self: an #LrgUILoader
+ * @track_sources: whether to record where each widget is written
+ *
+ * When %TRUE, documents loaded (or reloaded) afterwards record, for
+ * every widget they build, the JSON pointer (RFC 6901) of the node that
+ * produced it inside the main document, for example
+ * `/children/2/children/0`. lrg_ui_loader_get_source_path() and
+ * lrg_ui_loader_get_widget_for_path() then map widgets to YAML and back,
+ * which is what a live UI designer needs (click a widget, jump to its
+ * YAML). Widgets that come from a component body or an included file
+ * report the use site: the component use or the `include:` entry in the
+ * main document. Costs one small string per YAML value. Default: %FALSE.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_ui_loader_set_track_sources (LrgUILoader *self,
+                                      gboolean     track_sources);
+
+/**
+ * lrg_ui_loader_get_track_sources:
+ * @self: an #LrgUILoader
+ *
+ * Returns: whether documents record where each widget is written
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_ui_loader_get_track_sources (LrgUILoader *self);
+
+/**
+ * lrg_ui_loader_get_source_path:
+ * @self: an #LrgUILoader
+ * @widget: a widget built by @self
+ *
+ * The JSON pointer of the node @widget was built from, inside the main
+ * document: `""` for the root written at the top of the document,
+ * `/root` for a `root:` key, `/children/2/children/0` for a nested child.
+ * Generated widgets (`repeat`, `for-each`) share the pointer of their
+ * template; widgets of a component body or an included file report the
+ * component use or the include entry. A hot reload updates the pointers
+ * of reused widgets.
+ *
+ * Returns: (nullable): the pointer, or %NULL when @widget was not built
+ *   by a loader or was built while source tracking was off
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_ui_loader_get_source_path (LrgUILoader *self,
+                                             LrgWidget   *widget);
+
+/**
+ * lrg_ui_loader_get_widget_for_path:
+ * @self: an #LrgUILoader
+ * @path: a JSON pointer as returned by lrg_ui_loader_get_source_path()
+ *   (`"/"` is accepted for the root)
+ *
+ * Finds the live widget built from the node at @path. The most recently
+ * loaded document is searched first, depth first with parents before
+ * children, so for a component use the component's root wins over the
+ * widgets of its body. Only widgets reachable through containers are
+ * searched.
+ *
+ * Returns: (transfer none) (nullable): the widget, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgWidget * lrg_ui_loader_get_widget_for_path (LrgUILoader *self,
+                                               const gchar *path);
+
+/**
+ * lrg_ui_loader_get_source_location:
+ * @self: an #LrgUILoader
+ * @widget: a widget built by a loader
+ * @line: (out) (optional): 1-based line of the node in the main document
+ * @column: (out) (optional): 1-based column
+ *
+ * The position of the node lrg_ui_loader_get_source_path() names (the
+ * use site for component and include widgets). Available whether or not
+ * source tracking is on.
+ *
+ * Returns: %TRUE if @widget was built by a loader and its position is
+ *   known
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_ui_loader_get_source_location (LrgUILoader *self,
+                                            LrgWidget   *widget,
+                                            guint       *line,
+                                            guint       *column);
+
 G_END_DECLS

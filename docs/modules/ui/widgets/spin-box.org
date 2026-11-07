@@ -41,9 +41,43 @@ lrg_spin_box_set_value (scale, 1.0);
 | =step=   | =gdouble= | 1       | Change per click, key, notch or 6 units of scrub |
 | =digits= | =guint=   | 0       | Decimals shown (0..10)           |
 
-| Signal          | Arguments | Emitted                                        |
-|-----------------+-----------+------------------------------------------------|
-| =value-changed= | none      | Whenever the value changes (user or program)    |
+| Signal          | Arguments          | Emitted                                                                 |
+|-----------------+--------------------+-------------------------------------------------------------------------|
+| =value-changed= | none               | Whenever the value changes (user or program)                             |
+| =scrub-begin=   | none               | A press gesture starts (on the number or a step button), before the first change |
+| =scrub-end=     | =gboolean commit=  | The press gesture ended: =TRUE= on release or focus loss, =FALSE= when cancelled |
+
+** Press gestures (undo grouping)
+:PROPERTIES:
+:CUSTOM_ID: spin-box-gestures
+:END:
+Since 0.8.1 a press is a /gesture/ an application can turn into one undo step. A press on the number (scrubbing) or on a step button (a click, or a held auto-repeat) emits =scrub-begin= before it changes anything, every =value-changed= until the gesture ends belongs to it, and =scrub-end= closes it:
+| How the gesture ends                         | =commit= | Value                                         |
+|----------------------------------------------+----------+-----------------------------------------------|
+| Button released                              | =TRUE=   | As scrubbed                                   |
+| Focus lost (another widget, the window)      | =TRUE=   | As scrubbed                                   |
+| CANCEL (Escape, gamepad B) while pressed     | =FALSE=  | Restored to the value at =scrub-begin= first  |
+| =lrg_spin_box_cancel_scrub()=                | =FALSE=  | Restored to the value at =scrub-begin= first  |
+After a cancel the rest of the drag is ignored (moves no longer scrub, the release does nothing), and the restore happens before =scrub-end= is emitted, so a handler already sees the old value. A new press while a gesture is somehow still open commits the old one first. =lrg_spin_box_get_scrubbing()= is =TRUE= between the two signals. Wheel notches and keys are one-shot changes, not gestures.
+#+begin_src C
+static void
+on_scrub_begin (LrgSpinBox *spin, gpointer app)
+{
+	app_begin_undo_group (app, "Change Volume");
+}
+
+static void
+on_scrub_end (LrgSpinBox *spin, gboolean commit, gpointer app)
+{
+	if (commit)
+		app_end_undo_group (app);
+	else
+		app_cancel_undo_group (app);   /* the spin box already shows the old value */
+}
+
+g_signal_connect (spin, "scrub-begin", G_CALLBACK (on_scrub_begin), app);
+g_signal_connect (spin, "scrub-end", G_CALLBACK (on_scrub_end), app);
+#+end_src
 
 ** Parts and states
 :PROPERTIES:
@@ -72,6 +106,7 @@ Each button has its own hover and press springs, so only the button under the po
 | Page Up / Page Down | +10 / -10 steps |
 | Home / End          | min / max       |
 | Wheel up / down     | +1 / -1 step (no focus needed) |
+| Escape / gamepad B  | During a press: cancel the gesture, restore the value |
 Up and Down are consumed so they do not move focus; Left and Right still navigate. A gamepad's d-pad currently moves focus rather than stepping (the canvas routes gamepad directions straight to focus navigation).
 
 ** Theming
@@ -129,6 +164,8 @@ g_object_unref (fov);
 - =lrg_spin_box_get_step= / =set_step=, =get_digits= / =set_digits=
 - =lrg_spin_box_get_text (LrgSpinBox *self)= (transfer full)
 - =lrg_spin_box_spin (LrgSpinBox *self, gint steps)=
+- =lrg_spin_box_get_scrubbing (LrgSpinBox *self)=: a press gesture is open (since 0.8.1)
+- =lrg_spin_box_cancel_scrub (LrgSpinBox *self)=: cancel it as Escape does (since 0.8.1)
 
 ** Related
 :PROPERTIES:

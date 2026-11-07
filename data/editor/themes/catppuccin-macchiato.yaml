@@ -1,0 +1,59 @@
+# catppuccin-macchiato.yaml: the Catppuccin Macchiato palette as an LrgTheme
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Shipped with the libregnum editor for settings migrated from 0.8.0,
+# whose "macchiato" theme had no built-in LrgTheme preset. The roles follow
+# the catppuccin-mocha preset exactly, with Macchiato colours from the
+# official palette (https://catppuccin.com/palette): crust #181926,
+# mantle #1e2030, base #24273a, surface0-2 #363a4f #494d64 #5b6078,
+# overlay0 #6e738d, subtext0 #a5adcb, text #cad3f5, mauve #c6a0f6.
+# The accent family (accent-hover, accent-pressed, focus, selection,
+# text-on-accent) is derived from the mauve accent; link is set to blue
+# afterwards, as in the mocha preset.
+name: catppuccin-macchiato
+dark: true
+motion: bouncy
+accent: '#c6a0f6'
+colors:
+  window: '#181926'
+  panel: '#24273a'
+  surface: '#363a4f'
+  border: '#494d64'
+  text: '#cad3f5'
+  text-muted: '#a5adcb'
+  control: '#363a4f'
+  control-hover: '#494d64'
+  control-pressed: '#5b6078'
+  input: '#1e2030'
+  track: '#494d64'
+  handle: '#cad3f5'
+  popup: '#24273a'
+  tooltip: '#1e2030'
+  shadow: '#000000b0'
+  veil: '#181926b0'
+  success: '#a6da95'
+  warning: '#eed49f'
+  danger: '#ed8796'
+  link: '#8aadf4'
+  disabled: '#6e738d'
+metrics:
+  font-size: 16
+  font-size-small: 12
+  font-size-large: 24
+  font-size-title: 32
+  corner-radius: 10
+  border-width: 1
+  control-height: 36
+  padding-x: 14
+  padding-y: 8
+  spacing: 8
+  row-height: 32
+  popup-radius: 14
+  shadow-blur: 18
+  shadow-offset-y: 6
+  focus-ring-width: 2
+  scrollbar-size: 8
+  check-size: 20
+  handle-size: 18

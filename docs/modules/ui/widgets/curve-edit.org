@@ -1,0 +1,101 @@
+* Curve edit
+:PROPERTIES:
+:CUSTOM_ID: curve-edit
+:END:
+=LrgCurveEdit= shows and edits an =LrgKeyframeCurve= (=src/tween=): keys at normalised times with a value and the easing used towards the next key. It has two modes in one type:
+- *compact* (the default): an input-coloured box with the curve drawn as a polyline. A click (or ACTIVATE) opens a full editor in a popup below it. This is what the property grid shows for curve properties.
+- *full* (=lrg_curve_edit_set_compact()= with =FALSE=): the editor itself, a 320 x 200 graph with a light grid, the curve, a dot per key and a footer with the selected key's time, value and easing.
+The widget edits its own copy of the curve; =lrg_curve_edit_get_curve()= returns it.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-creation
+:END:
+#+begin_src C
+LrgCurveEdit *falloff = lrg_curve_edit_new ();
+
+lrg_curve_edit_set_curve (falloff, weapon->falloff);       /* copied */
+lrg_curve_edit_set_value_range (falloff, 0.0f, 1.0f);
+g_signal_connect (falloff, "edit-end", G_CALLBACK (on_falloff_done), weapon);
+#+end_src
+
+** Behaviour (full editor)
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-behaviour
+:END:
+| Input                            | Action                                                                     |
+|----------------------------------+----------------------------------------------------------------------------|
+| Drag a key                       | Move it in time and value; time stays between its neighbours (order kept) |
+| Click empty graph                | Add a key there (linear easing) and select it                             |
+| Delete / Backspace               | Remove the selected key (one always stays)                                |
+| Wheel over the editor, E / Shift+E | Cycle the selected key's easing forwards / backwards                    |
+| Escape (CANCEL) while dragging   | Put the keys back; the gesture ends with =commit= =FALSE=                  |
+The view shows time 0..1 (widened by keys outside it) and the value range set with =lrg_curve_edit_set_value_range()= (default 0..1, widened by keys outside it; =lrg_curve_edit_get_value_range()= returns what is shown).
+
+=LrgKeyframeCurve= stores an easing per key rather than Bézier tangents, so the editor offers easings where other tools offer tangent handles.
+
+** Gestures and the popup
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-gestures
+:END:
+Every change is bracketed by =edit-begin= / =edit-end=: a key drag (begin on the first movement, =curve-changed= every frame), and one-shot gestures for adding, removing and easing changes.
+
+In compact mode the popup is a second =LrgCurveEdit= in full mode (=lrg_curve_edit_get_popup_editor()=). Each change in it is mirrored into the compact editor, whose =curve-changed= fires live; the whole popup session is one gesture of the compact editor, from the first change until the popup closes (=lrg_curve_edit_open_popup()= opens it from code). In the property grid that makes one undo step per popup session; Escape while the popup is open (and nothing is being dragged) cancels the session's edit through the row.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-api
+:END:
+| Function                                       | Purpose                                     |
+|------------------------------------------------+---------------------------------------------|
+| =lrg_curve_edit_new()=                         | Create (compact, linear 0..1 ramp)          |
+| =lrg_curve_edit_get_curve()= / =lrg_curve_edit_set_curve()= | The curve (setting copies, no signal) |
+| =lrg_curve_edit_get_compact()= / =lrg_curve_edit_set_compact()= | Preview or in-place editor     |
+| =lrg_curve_edit_get_selected()= / =lrg_curve_edit_set_selected()= | Selected key, -1 for none    |
+| =lrg_curve_edit_set_value_range()= / =lrg_curve_edit_get_value_range()= | Value axis           |
+| =lrg_curve_edit_get_graph_rect()=              | World rectangle of the graph                |
+| =lrg_curve_edit_get_key_position()=            | World position of a key                     |
+| =lrg_curve_edit_open_popup()=                  | Open the popup editor (compact mode)        |
+| =lrg_curve_edit_get_popup_editor()=            | The open popup's editor, or =NULL=          |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-properties
+:END:
+| Property   | Type               | Default | Meaning                          |
+|------------+--------------------+---------+----------------------------------|
+| =curve=    | =LrgKeyframeCurve= | ramp    | The edited curve (copied on set) |
+| =compact=  | =gboolean=         | TRUE    | Preview with a popup editor      |
+| =selected= | =gint=             | -1      | Selected key                     |
+
+| Signal          | Arguments         | Emitted                                  |
+|-----------------+-------------------+------------------------------------------|
+| =edit-begin=    |                   | A gesture starts                         |
+| =curve-changed= |                   | Keys changed (inside begin / end)        |
+| =edit-end=      | =gboolean commit= | The gesture ended; =FALSE= after cancel  |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-parts
+:END:
+| Part     | State                   | Built-in look                                                    |
+|----------+-------------------------+------------------------------------------------------------------|
+| =box=    | compact                 | =INPUT=, =BORDER= border (=ACCENT= when hovered or open)          |
+| =box=    | full                    | =POPUP= card with =POPUP_RADIUS= and the theme shadow            |
+| =box=    | =disabled=              | 45 % opacity                                                     |
+| =fill=   | resting                 | The curve line in =ACCENT= (1.5 compact, 2 full)                 |
+| =track=  | resting                 | Grid lines in =TRACK=                                            |
+| =handle= | resting                 | Key dots: =HANDLE= fill with an =ACCENT= ring; selected filled =ACCENT= |
+| =label=  | resting                 | Footer text in =TEXT_MUTED=, =FONT_SIZE_SMALL=                   |
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-yaml
+:END:
+=compact= and =selected= are plain properties, so the loader can create it as =LrgCurveEdit=; the curve is set from code.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: curve-edit-see-also
+:END:
+[[file:../property-grid.org][Property grid]], [[file:gradient-edit.org][LrgGradientEdit]], [[file:timeline-view.org][LrgTimelineView]]

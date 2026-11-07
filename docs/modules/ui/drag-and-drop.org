@@ -1,0 +1,501 @@
+#+title: Drag and Drop
+#+description: The src/ui drag and drop API: LrgDragPayload, LrgDragSource, LrgDropTarget and the canvas session that runs between them, with payload type conventions, actions, worked examples and pitfalls
+#+authors: Zach Podbielniak
+#+categories: libregnum ui dnd
+#+created: 2026-11-06T00:00:00-05:00
+#+updated: 2026-11-06T00:00:00-05:00
+#+version: 1.0
+
+* Drag and Drop
+:PROPERTIES:
+:CUSTOM_ID: dnd
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][UI]]* > Drag and drop
+#+end_quote
+
+Drag and drop in the retained UI toolkit works like GTK 4: a widget becomes draggable by attaching an =LrgDragSource= controller, a widget accepts drops by attaching an =LrgDropTarget= controller, and what travels between them is an =LrgDragPayload= (a content type, a =GValue=, the allowed actions and a preview). The =LrgCanvas= owns the session: it notices the press, waits for the drag threshold, asks the source for a payload, hit-tests drop targets under the pointer on every move, paints the preview chip and the target highlight on top of everything, and delivers the drop on release. Everything is driven by =lrg_canvas_process_input()=, so the whole flow works headless in tests and with any input stack.
+
+The editor uses it for hierarchy rows (="application/x-lrg-node"=), asset tiles (="application/x-lrg-asset"=), drops onto viewports, inspector fields and tree rows; games use the same API for inventory slots, equipment, card hands and shop grids.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: dnd-overview
+:END:
+#+begin_src C
+/* Source: a row that drags its node */
+static LrgDragPayload *
+on_prepare (LrgDragSource *source, gfloat x, gfloat y, gpointer user_data)
+{
+	MyNode         *node = user_data;
+	LrgDragPayload *payload;
+
+	payload = lrg_drag_payload_new_object ("application/x-lrg-node", node,
+	                                       LRG_DRAG_ACTION_MOVE | LRG_DRAG_ACTION_LINK);
+	lrg_drag_payload_set_label (payload, my_node_get_name (node));
+	lrg_drag_payload_set_icon (payload, LRG_ICON_FILE);
+	return payload;   /* NULL would mean "no drag from here" */
+}
+
+LrgDragSource *source = lrg_drag_source_new ();
+
+g_signal_connect (source, "prepare", G_CALLBACK (on_prepare), node);
+lrg_widget_add_drag_source (row, source);          /* the row owns it */
+
+/* Target: a panel that takes nodes */
+static gboolean
+on_drop (LrgDropTarget *target, LrgDragPayload *payload, gfloat x, gfloat y, gpointer user_data)
+{
+	MyNode *node = lrg_drag_payload_get_object (payload);
+
+	my_scene_reparent (user_data, node, lrg_drop_target_get_current_action (target));
+	return TRUE;      /* FALSE reports the drop as refused */
+}
+
+const gchar   *types[] = { "application/x-lrg-node", NULL };
+LrgDropTarget *target = lrg_drop_target_new (types, LRG_DRAG_ACTION_ALL);
+
+g_signal_connect (target, "drop", G_CALLBACK (on_drop), scene);
+lrg_widget_add_drop_target (panel, target);
+#+end_src
+
+That is all a basic drag needs. The canvas paints a chip with "Player" under the pointer, outlines =panel= in the accent colour while a drop would land there, and calls =on_drop= on release.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: dnd-concepts
+:END:
+
+*** Payload
+:PROPERTIES:
+:CUSTOM_ID: dnd-payload
+:END:
+=LrgDragPayload= is a refcounted boxed type (=lrg_drag_payload_ref()= / =lrg_drag_payload_unref()=, =g_autoptr(LrgDragPayload)=). It carries:
+
+| Field | Set with | Read with | Notes |
+|-------+----------+-----------+-------|
+| Content type | constructor | =lrg_drag_payload_get_content_type()=, =lrg_drag_payload_matches()= | MIME-like id, see [[#dnd-types][payload types]] |
+| Value | constructor | =lrg_drag_payload_get_value()=, =_get_string()=, =_get_object()=, =_get_pointer()= | Any =GValue= (copied in) |
+| Allowed actions | constructor, =lrg_drag_payload_set_actions()= | =lrg_drag_payload_get_actions()= | What the source lets a drop do |
+| Source widget | =lrg_drag_payload_set_source()= (the canvas fills it in) | =lrg_drag_payload_get_source()= | Held weakly |
+| Preview label | =lrg_drag_payload_set_label()= | =lrg_drag_payload_get_label()= | Defaults to the string for string payloads, else the content type is shown |
+| Preview icon | =lrg_drag_payload_set_icon()= | =lrg_drag_payload_get_icon()= | An =LrgIcon=, =LRG_ICON_NONE= for none |
+
+Constructors:
+
+| Constructor | Value |
+|-------------+-------|
+| =lrg_drag_payload_new (type, value, actions)= | A copy of any =GValue= (or none) |
+| =lrg_drag_payload_new_string (type, string, actions)= | A =G_TYPE_STRING=; the label defaults to the string (asset paths, ids) |
+| =lrg_drag_payload_new_object (type, object, actions)= | A =GObject= reference, typed as the object's class (nodes, list items) |
+| =lrg_drag_payload_new_pointer (type, pointer, destroy, actions)= | A raw pointer freed by =destroy= with the payload (C only; inventory structs, drag bookkeeping) |
+
+*** Drag source
+:PROPERTIES:
+:CUSTOM_ID: dnd-source
+:END:
+=LrgDragSource= is a =GObject= controller. =lrg_widget_add_drag_source()= attaches it (the widget takes ownership, transfer full, like =gtk_widget_add_controller()=); a widget may have several. A press on the widget *or any descendant* arms it, so a row's label or icon needs no source of its own. Properties: =threshold= (default =LRG_DRAG_DEFAULT_THRESHOLD=, 4 canvas units), =button= (left), =payload= (a fixed payload for sources that always drag the same thing), plus read-only =widget= and =dragging=.
+
+*** Drop target
+:PROPERTIES:
+:CUSTOM_ID: dnd-target
+:END:
+=LrgDropTarget= is a =GObject= controller attached with =lrg_widget_add_drop_target()=. It lists the content types it takes (=NULL= for anything, ="major/*"= and ="*"= are wildcards) and the actions it supports. While a matching, accepted drag hovers it, =current-drop= holds the payload and =current-action= the action a drop would perform, so a widget can paint its own feedback in =paint()=. Set =paint-highlight= to =FALSE= when it does; otherwise the canvas outlines the widget in the accent colour.
+
+*** Session
+:PROPERTIES:
+:CUSTOM_ID: dnd-session
+:END:
+The canvas runs one session at a time:
+
+1. *Press.* A press of a source's button on a widget arms the sources of that widget and its ancestors, innermost first. The press is delivered normally (buttons arm, lists select): nothing is decided yet.
+2. *Threshold.* Each move with the button held measures the distance from the press. When it passes a source's =threshold=, that source's =::prepare= runs with the press position. A payload starts the drag; =NULL= lets the next (outer) source try when its threshold passes. When every armed source declined, the press stays an ordinary press.
+3. *Start.* The pressed widget loses the pointer: it gets =MOUSE_BUTTON_UP= for every held button at a position far outside every widget, so it ends its press without a click, and its =PRESSED= state is cleared. The source gets =::drag-begin=, then the canvas =::drag-begin=.
+4. *Moves.* Every move (and every change of the modifier keys) hit-tests: from the widget under the pointer up to the canvas, the first target whose types and actions match and whose =::accept= agrees wins. A new target gets =::enter= then =::motion=; the old one =::leave=. =::motion= settles the action.
+5. *Release.* If the current target settled on an action, =::drop= runs; then =::leave=; then the source's =::drag-end (payload, dropped, action)= and the canvas =::drag-end=.
+6. *Cancel.* Escape (or the frame's =cancel= flag, gamepad B) cancels: =::leave= and =::drag-end= with =dropped= =FALSE=. The drag eats that Escape: neither the focused widget nor the canvas =::cancel= sees it. A frame where the drag button is no longer held but no release arrived (the window lost the button) also cancels. So does =lrg_canvas_cancel_drag()=.
+
+While a drag runs, pointer moves and presses go to the session only. No widget receives =MOUSE_MOVE=, =MOUSE_BUTTON_DOWN= or =MOUSE_BUTTON_UP=, so nothing clicks, no context menu opens and no popup closes. Hover state, wheel scrolling and keys other than Escape keep working, so a list under the pointer can be scrolled mid-drag.
+
+** Payload types
+:PROPERTIES:
+:CUSTOM_ID: dnd-types
+:END:
+Content types are MIME-like strings compared exactly (case-sensitive). Use registered MIME types for plain data and an =application/x-<project>-<kind>= type for your own objects. The convention for libregnum and its editor (new editor panels must use these ids so their drags interoperate):
+
+| Content type | Value | Producers and consumers |
+|--------------+-------+---------|
+| =application/x-lrg-node= | the =LrgNode= (object payload) | Hierarchy rows, node-reference inspector fields, viewports (reparent / instance) |
+| =application/x-lrg-asset= | the project-relative asset path (string payload) | Asset browser tiles; inspector asset fields, viewports (instantiate), code editor (insert path) |
+| =application/x-lrg-asset-list= | a =GStrv= of paths | Multi-selection asset drags |
+| =application/x-lrg-prefab= | the prefab path (string) | Asset browser prefab tiles (instance on drop, LINK = linked prefab) |
+| =text/plain= | a string | Any text: labels, console lines, text inputs |
+| =text/uri-list= | newline-separated URIs (string) | Files from outside the canvas (when an app forwards OS drops) |
+
+A target can take a family with a wildcard (="application/*"=) or anything with ="*"= or a =NULL= type list. Prefer exact types: a target that takes anything has to inspect every payload it is offered.
+
+** Actions and modifiers
+:PROPERTIES:
+:CUSTOM_ID: dnd-actions
+:END:
+=LrgDragAction= is a flags type (=lrg_drag_action_get_type()=, =LRG_TYPE_DRAG_ACTION=): =LRG_DRAG_ACTION_COPY=, =LRG_DRAG_ACTION_MOVE=, =LRG_DRAG_ACTION_LINK= and =LRG_DRAG_ACTION_ALL= (=LRG_DRAG_ACTION_NONE= means refused). The payload lists the actions the source allows, the target the actions it supports; the session works with their intersection. If it is empty the target never matches.
+
+On every move the session computes a *proposed* action with =lrg_drag_action_from_modifiers()=:
+
+| Held | Requests |
+|------+----------|
+| Ctrl | COPY |
+| Shift | MOVE |
+| Alt, or Ctrl+Shift | LINK |
+| nothing | the target's =preferred-action=, else MOVE, COPY, LINK (the first one allowed) |
+
+A requested action that is not allowed falls back to the no-modifier rule, so Shift over a COPY-only target still copies. The proposal is handed to =::motion= (read it with =lrg_drop_target_get_proposed_action()=); the handler's return value is final. Return =LRG_DRAG_ACTION_NONE= to refuse the drop at this spot (a full slot, the row being dragged onto itself): the chip fades and loses its accent outline, the default highlight disappears and a release there is not a drop. A handler may only return actions both sides allow; anything else counts as =NONE=. Several bits are narrowed to one.
+
+The chip shows the action as a badge: a plus for COPY, an arrow for LINK, none for MOVE.
+
+** Coordinates, RTL and headless use
+:PROPERTIES:
+:CUSTOM_ID: dnd-coordinates
+:END:
+- Every =x=, =y= in the signals is in canvas (world) coordinates, like =lrg_ui_event_get_x()=. Subtract =lrg_widget_get_world_x()= / =_y()= for widget-local positions. =::prepare= gets the *press* position (which row was grabbed), the target signals the current pointer.
+- Hit-testing uses the same rules as clicks (=lrg_canvas_widget_at_point()=): overlays first, then popups, a modal popup's veil swallows the rest, hidden, disabled and pointer-transparent widgets are skipped. A drop target on the canvas itself catches drops on empty canvas space (unless a modal popup is open).
+- Right-to-left: hit-testing is direction-free; the chip sits below-left of the pointer instead of below-right when the source widget (or, for source-less drags, the canvas default direction) is RTL, with its icon on the right.
+- Headless: build =LrgCanvasInput= frames and call =lrg_canvas_process_input()=. Set =buttons_down= on the move frames of a drag: a frame without the drag button held and without its release cancels the drag (the "lost button" rule). =lrg_canvas_input_poll()= fills it in for real input.
+
+** Preview and highlight
+:PROPERTIES:
+:CUSTOM_ID: dnd-preview
+:END:
+The canvas records both after the overlay layer in =lrg_canvas_record()=, so they are above popups, toasts and dialogs:
+
+- *Target highlight*: while the current target settled on an action and its =paint-highlight= is =TRUE=: an accent wash (12% alpha) over the target widget's rect and a 2-unit accent outline around it, with the theme corner radius.
+- *Preview chip*: a pill in the theme's =POPUP= colour with a soft =SHADOW=, the payload icon and label (small font, =TEXT= colour), outlined in =ACCENT= while a drop would be accepted (=BORDER= otherwise), plus the action badge. It follows the pointer with snappy springs, pops in with a scale/fade spring when the drag starts and fades to 80% while no target would take it. It disappears immediately when the drag ends.
+
+The springs are stepped by =lrg_canvas_update()=, which reports itself busy while they move.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: dnd-api
+:END:
+
+*** LrgDragAction
+:PROPERTIES:
+:CUSTOM_ID: dnd-api-action
+:END:
+| Symbol | Purpose |
+|--------+---------|
+| =LrgDragAction= (=LRG_DRAG_ACTION_NONE=, =_COPY=, =_MOVE=, =_LINK=) | Flags; =lrg_drag_action_get_type()= / =LRG_TYPE_DRAG_ACTION= |
+| =LRG_DRAG_ACTION_ALL= | COPY, MOVE and LINK |
+| =lrg_drag_action_from_modifiers (modifiers, allowed, preferred)= | The modifier rule above; one action from =allowed= or =NONE= |
+
+*** LrgDragPayload
+:PROPERTIES:
+:CUSTOM_ID: dnd-api-payload
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_drag_payload_get_type()= / =LRG_TYPE_DRAG_PAYLOAD= | The boxed type (copy = ref) |
+| =lrg_drag_payload_new (type, value, actions)= | Generic payload, =value= copied (nullable) |
+| =lrg_drag_payload_new_string (type, string, actions)= | String payload, label = string |
+| =lrg_drag_payload_new_object (type, object, actions)= | Object payload (holds a ref) |
+| =lrg_drag_payload_new_pointer (type, pointer, destroy, actions)= | Pointer payload; =destroy (pointer)= on the last unref |
+| =lrg_drag_payload_ref (self)= / =lrg_drag_payload_unref (self)= | Reference counting |
+| =lrg_drag_payload_get_content_type (self)= | The type |
+| =lrg_drag_payload_matches (self, pattern)= | Exact, ="major/*"= or ="*"= |
+| =lrg_drag_payload_get_value (self)= | The =GValue= (unset when created without one) |
+| =lrg_drag_payload_get_string (self)= / =_get_object (self)= / =_get_pointer (self)= | Typed accessors, =NULL= on another type |
+| =lrg_drag_payload_get_actions (self)= / =lrg_drag_payload_set_actions (self, actions)= | Allowed actions |
+| =lrg_drag_payload_get_source (self)= / =lrg_drag_payload_set_source (self, widget)= | The source widget (weak) |
+| =lrg_drag_payload_get_label (self)= / =lrg_drag_payload_set_label (self, label)= | Chip text |
+| =lrg_drag_payload_get_icon (self)= / =lrg_drag_payload_set_icon (self, icon)= | Chip icon |
+
+*** LrgDragSource
+:PROPERTIES:
+:CUSTOM_ID: dnd-api-source
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_drag_source_get_type()= / =LRG_TYPE_DRAG_SOURCE= | Final =GObject= type |
+| =lrg_drag_source_new ()= | Left button, default threshold |
+| =lrg_drag_source_get_threshold (self)= / =lrg_drag_source_set_threshold (self, units)= | Distance before a press becomes a drag (0: the first move) |
+| =lrg_drag_source_get_button (self)= / =lrg_drag_source_set_button (self, button)= | =GrlMouseButton= that starts drags |
+| =lrg_drag_source_get_payload (self)= / =lrg_drag_source_set_payload (self, payload)= | Fixed payload returned by the default =::prepare= |
+| =lrg_drag_source_get_widget (self)= | The widget it is attached to |
+| =lrg_drag_source_get_dragging (self)= | =TRUE= between =::drag-begin= and =::drag-end= |
+| =lrg_widget_add_drag_source (widget, source)= | Attach (transfer full) |
+| =lrg_widget_remove_drag_source (widget, source)= | Detach (a running drag still ends normally) |
+| =lrg_widget_list_drag_sources (widget)= | The attached sources (free the list, not the items) |
+
+| Property | Type | Default | Notes |
+|----------+------+---------+-------|
+| =threshold= | float | 4.0 | canvas units |
+| =button= | =GrlMouseButton= | left | |
+| =payload= | =LrgDragPayload= | =NULL= | fixed payload |
+| =widget= | =LrgWidget= | | read-only |
+| =dragging= | boolean | =FALSE= | read-only, notifies |
+
+| Signal | Signature | When |
+|--------+-----------+------|
+| =prepare= | =LrgDragPayload * (source, x, y)= | Threshold passed; return a new payload (transfer full) or =NULL=. First non-=NULL= handler wins; the default handler returns =payload= |
+| =drag-begin= | =void (source, payload)= | The drag started (after the press was cancelled) |
+| =drag-end= | =void (source, payload, gboolean dropped, LrgDragAction action)= | The drag finished; =action= is =NONE= unless dropped |
+
+*** LrgDropTarget
+:PROPERTIES:
+:CUSTOM_ID: dnd-api-target
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_drop_target_get_type()= / =LRG_TYPE_DROP_TARGET= | Final =GObject= type |
+| =lrg_drop_target_new (types, actions)= | =types=: =NULL=-terminated array or =NULL= for any |
+| =lrg_drop_target_get_types (self)= / =lrg_drop_target_set_types (self, types)= | Accepted types |
+| =lrg_drop_target_get_actions (self)= / =lrg_drop_target_set_actions (self, actions)= | Supported actions |
+| =lrg_drop_target_get_preferred_action (self)= / =lrg_drop_target_set_preferred_action (self, action)= | Action without modifiers |
+| =lrg_drop_target_get_paint_highlight (self)= / =lrg_drop_target_set_paint_highlight (self, paint)= | Default canvas highlight on/off |
+| =lrg_drop_target_get_current_drop (self)= | Hovering payload or =NULL= |
+| =lrg_drop_target_get_current_action (self)= | Action settled by the last =::motion= |
+| =lrg_drop_target_get_proposed_action (self)= | The session's proposal for the current move |
+| =lrg_drop_target_get_widget (self)= | The widget it is attached to |
+| =lrg_drop_target_matches (self, payload)= | Types and actions match (no =::accept=) |
+| =lrg_widget_add_drop_target (widget, target)= | Attach (transfer full) |
+| =lrg_widget_remove_drop_target (widget, target)= | Detach (a hovering drag gets =::leave= at its next move) |
+| =lrg_widget_list_drop_targets (widget)= | The attached targets |
+
+| Property | Type | Default | Notes |
+|----------+------+---------+-------|
+| =types= | =GStrv= | =NULL= (any) | |
+| =actions= | =LrgDragAction= | ALL | |
+| =preferred-action= | =LrgDragAction= | =NONE= (built-in order) | |
+| =paint-highlight= | boolean | =TRUE= | |
+| =current-drop= | =LrgDragPayload= | =NULL= | read-only, notifies on enter / leave |
+| =current-action= | =LrgDragAction= | =NONE= | read-only, notifies |
+| =widget= | =LrgWidget= | | read-only |
+
+| Signal | Signature | When |
+|--------+-----------+------|
+| =accept= | =gboolean (target, payload)= | A matching drag first reaches the target. =FALSE= vetoes (the search continues upwards). Asked again each move while vetoed; not re-asked for the current target |
+| =enter= | =void (target, payload, x, y)= | An accepted drag moved onto the target; =current-drop= is set |
+| =motion= | =LrgDragAction (target, payload, x, y)= | After =enter=, on every move and modifier change. Return the action (default: the proposal) |
+| =leave= | =void (target)= | Left, cancelled, or right after =drop=; =current-drop= is cleared afterwards |
+| =drop= | =gboolean (target, payload, x, y)= | Release with an action settled; return =TRUE= when performed (default =FALSE=) |
+
+The return values of =accept= and =motion= come from the first handler connected with =g_signal_connect()=; the built-in defaults run last. A handler connected with =g_signal_connect_after()= therefore never decides.
+
+*** LrgCanvas
+:PROPERTIES:
+:CUSTOM_ID: dnd-api-canvas
+:END:
+| Function / signal | Purpose |
+|-------------------+---------|
+| =lrg_canvas_begin_drag (canvas, source_widget, payload, x, y)= | Start a drag from code (keyboard pick-up, long press). Cancels a held press. With the left button held the release drops, otherwise the next left click drops. =FALSE= if a drag is running |
+| =lrg_canvas_is_dragging (canvas)= | A session is running |
+| =lrg_canvas_get_drag_payload (canvas)= | The payload, or =NULL= |
+| =lrg_canvas_get_drop_target (canvas)= | The accepted target under the pointer, or =NULL= |
+| =lrg_canvas_get_drag_action (canvas)= | What a drop now would do |
+| =lrg_canvas_cancel_drag (canvas)= | Cancel (=::leave=, =::drag-end= with =dropped= =FALSE=) |
+| =LrgCanvas::drag-begin (payload)= | After the source's =::drag-begin=: reveal drop zones |
+| =LrgCanvas::drag-end (payload, dropped, action)= | After the source's =::drag-end= |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: dnd-examples
+:END:
+=examples/ui-dnd.c= is a runnable version of the first two (=ui-dnd --demo= plays a scripted drag; =--screenshot PATH --frames N= captures it).
+
+*** Reordering a list
+:PROPERTIES:
+:CUSTOM_ID: dnd-example-list
+:END:
+One widget paints all rows and owns one source and one target. =::prepare= picks the row from the press position; =::motion= records the gap for an insertion line; =::drop= performs the move. The source removes the row after a MOVE into *another* list, so the target marks a reorder it completed itself.
+
+#+begin_src C
+typedef struct { ItemList *from; guint index; gboolean handled; } DragInfo;
+
+static LrgDragPayload *
+list_prepare (LrgDragSource *source, gfloat x, gfloat y, ItemList *self)
+{
+	gint            row = list_row_at (self, y);   /* y is the press position */
+	DragInfo       *info;
+	LrgDragPayload *payload;
+
+	if (row < 0)
+		return NULL;                   /* pressed the header: no drag */
+	info = g_new0 (DragInfo, 1);
+	info->from = self;
+	info->index = (guint) row;
+	payload = lrg_drag_payload_new_pointer ("application/x-demo-item", info, g_free,
+	                                        LRG_DRAG_ACTION_COPY | LRG_DRAG_ACTION_MOVE);
+	lrg_drag_payload_set_label (payload, g_ptr_array_index (self->items, row));
+	return payload;
+}
+
+static LrgDragAction
+list_motion (LrgDropTarget *target, LrgDragPayload *payload, gfloat x, gfloat y, ItemList *self)
+{
+	self->insert_at = list_insert_at (self, y);    /* paint() draws the line there */
+	return lrg_drop_target_get_proposed_action (target);
+}
+
+static gboolean
+list_drop (LrgDropTarget *target, LrgDragPayload *payload, gfloat x, gfloat y, ItemList *self)
+{
+	DragInfo *info = lrg_drag_payload_get_pointer (payload);
+	guint     at = list_insert_at (self, y);
+
+	if (info->from == self && lrg_drop_target_get_current_action (target) == LRG_DRAG_ACTION_MOVE)
+	{
+		gchar *item = g_ptr_array_steal_index (self->items, info->index);
+
+		g_ptr_array_insert (self->items, (gint) (at > info->index ? at - 1 : at), item);
+		info->handled = TRUE;          /* the source must not remove it again */
+	}
+	else
+	{
+		g_ptr_array_insert (self->items, (gint) at,
+		                    g_strdup (g_ptr_array_index (info->from->items, info->index)));
+	}
+	return TRUE;
+}
+
+static void
+list_drag_end (LrgDragSource *source, LrgDragPayload *payload, gboolean dropped,
+               LrgDragAction action, ItemList *self)
+{
+	DragInfo *info = lrg_drag_payload_get_pointer (payload);
+
+	if (dropped && action == LRG_DRAG_ACTION_MOVE && !info->handled)
+		g_ptr_array_remove_index (self->items, info->index);
+}
+
+/* The list paints its own insertion line from current-drop */
+lrg_drop_target_set_paint_highlight (target, FALSE);
+#+end_src
+
+In =paint()=, draw the insertion line when =lrg_drop_target_get_current_drop (target)= is non-=NULL= and =lrg_drop_target_get_current_action (target)= is not =NONE=.
+
+*** An inventory grid
+:PROPERTIES:
+:CUSTOM_ID: dnd-example-inventory
+:END:
+Every slot is its own widget with a source and a target. Empty slots never start a drag; an occupied slot only takes a MOVE from another slot (a swap) and refuses everything else in =::motion=, so the player sees "no" before releasing.
+
+#+begin_src C
+static LrgDragPayload *
+slot_prepare (LrgDragSource *source, gfloat x, gfloat y, Slot *self)
+{
+	return self->item != NULL ? make_item_payload (self) : NULL;
+}
+
+static LrgDragAction
+slot_motion (LrgDropTarget *target, LrgDragPayload *payload, gfloat x, gfloat y, Slot *self)
+{
+	DragInfo      *info = lrg_drag_payload_get_pointer (payload);
+	LrgDragAction  proposed = lrg_drop_target_get_proposed_action (target);
+
+	if (info->from_slot == self)
+		return LRG_DRAG_ACTION_NONE;                /* onto itself */
+	if (self->item == NULL)
+		return proposed;                            /* empty: anything goes */
+	if (info->from_slot != NULL && proposed == LRG_DRAG_ACTION_MOVE)
+		return LRG_DRAG_ACTION_MOVE;                /* occupied: swap */
+	return LRG_DRAG_ACTION_NONE;                    /* occupied: refuse */
+}
+
+static gboolean
+slot_drop (LrgDropTarget *target, LrgDragPayload *payload, gfloat x, gfloat y, Slot *self)
+{
+	DragInfo *info = lrg_drag_payload_get_pointer (payload);
+
+	if (self->item != NULL)                         /* swap */
+	{
+		gchar *mine = g_steal_pointer (&self->item);
+
+		g_free (info->from_slot->item);
+		info->from_slot->item = mine;
+		info->handled = TRUE;
+	}
+	g_free (self->item);
+	self->item = g_strdup (info->text);
+	return TRUE;
+}
+#+end_src
+
+A slot that paints its own ring (accent when =current-action= is set, danger when =current-drop= is set but the action is =NONE=) turns =paint-highlight= off. Gamepad or keyboard inventories call =lrg_canvas_begin_drag()= on "pick up" and let the next click (or a synthetic press) drop.
+
+*** Dropping an asset onto an inspector field
+:PROPERTIES:
+:CUSTOM_ID: dnd-example-asset-field
+:END:
+A reference field links by default, so a plain drop assigns a reference instead of moving anything:
+
+#+begin_src C
+const gchar   *types[] = { "application/x-lrg-asset", NULL };
+LrgDropTarget *target = lrg_drop_target_new (types, LRG_DRAG_ACTION_LINK | LRG_DRAG_ACTION_COPY);
+
+lrg_drop_target_set_preferred_action (target, LRG_DRAG_ACTION_LINK);
+g_signal_connect (target, "accept", G_CALLBACK (accept_textures_only), field);
+g_signal_connect (target, "drop", G_CALLBACK (assign_asset_path), field);
+lrg_widget_add_drop_target (LRG_WIDGET (field), target);
+
+static gboolean
+accept_textures_only (LrgDropTarget *target, LrgDragPayload *payload, gpointer field)
+{
+	return g_str_has_suffix (lrg_drag_payload_get_string (payload), ".png");
+}
+#+end_src
+
+The asset tile's payload allows =COPY | LINK=; the hierarchy's =application/x-lrg-node= payload allows =MOVE | LINK= so dropping a row on another row reparents it (MOVE) and on a node-reference field links it.
+
+*** Headless test
+:PROPERTIES:
+:CUSTOM_ID: dnd-example-test
+:END:
+#+begin_src C
+static void
+frame (LrgCanvas *canvas, gfloat x, gfloat y, guint down, guint pressed, guint released)
+{
+	LrgCanvasInput input;
+
+	lrg_canvas_input_init (&input);
+	input.pointer_x = x;
+	input.pointer_y = y;
+	input.buttons_down = down;           /* keep the button held on move frames */
+	input.buttons_pressed = pressed;
+	input.buttons_released = released;
+	input.delta_time = 1.0f / 60.0f;
+	lrg_canvas_process_input (canvas, &input);
+}
+
+const guint left = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+
+frame (canvas, sx, sy, left, left, 0);       /* press on the source */
+frame (canvas, tx, ty, left, 0, 0);          /* past the threshold, over the target */
+g_assert_true (lrg_canvas_is_dragging (canvas));
+frame (canvas, tx, ty, 0, 0, left);          /* release: drop */
+#+end_src
+
+=tests/test-ui-dnd.c= covers thresholds, =NULL= payloads, type matching and vetoes, event order, drop results, Escape, lost buttons, programmatic drags, modifiers, nested targets, click suppression, the painted preview, RTL and a drag between two dock panels.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: dnd-pitfalls
+:END:
+- *Return a new reference from =::prepare=.* The signal takes ownership. Returning a payload you keep (without =lrg_drag_payload_ref()=) frees it under you; for a payload that never changes, use =lrg_drag_source_set_payload()= instead of a handler.
+- *Remove after a MOVE in =::drag-end=, not in =::drop=*, unless the target finished the move itself (a reorder in one container, a swap): then flag it in the payload (a pointer payload's struct) so the source does not remove twice. Indexes captured in =::prepare= stay valid only if nothing else changed the model during the drag.
+- *Never drop without an action.* =::drop= only runs when =::motion= settled on an action; a =NONE= from =::motion= is the way to refuse a spot.
+- *=g_signal_connect_after()= handlers do not decide* =accept= / =motion=: the built-in default (accept everything, take the proposal) already answered.
+- *Widgets that act on release* get a release far outside their bounds when a drag takes over (=lrg_canvas_is_dragging()= is already =TRUE=). Treat it like "pressed and dragged off": no click, no commit. A widget that selected on press keeps that selection, which is usually what you want (the dragged row stays selected).
+- *Hand-built input frames must keep =buttons_down= set* while dragging; a frame without it and without a release counts as a lost button and cancels.
+- *Do not rebuild a source widget from =::drag-begin=*: the press was just cancelled on it. Rebuilding rows after the drop (in =::drop= or =::drag-end=) is fine: the session holds its own references until it is done.
+- *Escape is consumed while dragging.* A dialog that closes on Escape stays open when Escape cancels a drag inside it; the next Escape closes it.
+- *A drop target on a container also covers its children.* A child with its own matching target wins; give a child a target that vetoes in =::accept= to let the parent handle it, or make the child pointer-transparent.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: dnd-see-also
+:END:
+- [[file:input-and-focus.org][Input and focus]]: pointer capture, bubbling and the frame model the session builds on.
+- [[file:canvas-api.org][Canvas API]]: =lrg_canvas_process_input()=, the overlay layer, popups.
+- [[file:ui-event.org][UI events]]: event types and coordinates.
+- [[file:widget.org][Widgets]]: =paint()=, state flags and springs for custom drop feedback.
+- =examples/ui-dnd.c= and =tests/test-ui-dnd.c=.

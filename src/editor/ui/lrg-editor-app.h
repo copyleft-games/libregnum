@@ -7,18 +7,24 @@
  * The libregnum editor application.
  *
  * LrgEditorApp is the full editor built from libregnum itself: an
- * #LrgEditor document runtime presented through the engine's
- * immediate-mode GUI (#LrgGuiContext) in a dockable layout with a 3D/2D
- * viewport, hierarchy, inspector, asset browser, console, undo history
- * and problems panels, menus, a toolbar, a command palette, quick open,
- * preferences and project settings, play-in-editor, autosave and crash
- * recovery, live reload of files edited elsewhere, an IPC server for
- * Emacs and other tools, and $EDITOR / Emacs integration for code.
+ * #LrgEditor document runtime presented through the retained UI toolkit
+ * (an #LrgCanvas holding an #LrgEditorWindow: menu bar, toolbar, an
+ * #LrgDockArea of panels, status bar and toasts) with a 3D/2D viewport,
+ * hierarchy, inspector, asset browser, console and the other panels,
+ * play-in-editor, autosave and crash recovery, live reload of files
+ * edited elsewhere, an IPC server for Emacs and other tools, and
+ * $EDITOR / Emacs integration for code.
+ *
+ * The editor's state that tools and tests care about lives in headless
+ * objects: #LrgEditorViewState (cameras, layout, dialog, timeline
+ * playhead...), #LrgEditorViewportNav (viewport navigation) and
+ * #LrgEditorPlaySession (play-in-editor).
  *
  * Typical use is the `lrgeditor` program (lrg_editor_app_run()). The
  * app can also be driven frame by frame without a window
- * (lrg_editor_app_frame()), which is how it is tested, and run as a
- * window-less IPC server (lrg_editor_app_run_headless()).
+ * (lrg_editor_app_process_frame() with a synthetic #LrgCanvasInput),
+ * which is how it is tested, and run as a window-less IPC server
+ * (lrg_editor_app_run_headless()).
  */
 
 #pragma once
@@ -31,6 +37,12 @@
 #include "../../lrg-version.h"
 #include "../../lrg-types.h"
 #include "../../gui/lrg-gui-context.h"
+#include "../../ui/lrg-canvas.h"
+#include "../../ui/lrg-canvas-input.h"
+#include "../../ui/lrg-dock-area.h"
+#include "../lrg-editor-view-state.h"
+#include "../lrg-editor-viewport-nav.h"
+#include "../lrg-editor-play-session.h"
 
 G_BEGIN_DECLS
 
@@ -38,6 +50,9 @@ G_BEGIN_DECLS
 
 LRG_AVAILABLE_IN_ALL
 G_DECLARE_FINAL_TYPE (LrgEditorApp, lrg_editor_app, LRG, EDITOR_APP, GObject)
+
+/* Declared in lrg-editor-window.h, which includes this header. */
+typedef struct _LrgEditorWindow LrgEditorWindow;
 
 /**
  * lrg_editor_app_new:
@@ -102,10 +117,93 @@ LrgExternalEditor * lrg_editor_app_get_external_editor (LrgEditorApp *self);
  * lrg_editor_app_get_gui:
  * @self: an #LrgEditorApp
  *
- * Returns: (transfer none): the GUI context
+ * The immediate-mode GUI context of the 0.8.0 editor. The editor is drawn
+ * with the retained UI toolkit since 0.8.1 and has no such context.
+ *
+ * Returns: (transfer none) (nullable): always %NULL
+ *
+ * Deprecated: 0.8.1: Use lrg_editor_app_get_canvas() instead.
+ */
+LRG_DEPRECATED_IN_0_8_1_FOR (lrg_editor_app_get_canvas)
+LrgGuiContext * lrg_editor_app_get_gui (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_canvas:
+ * @self: an #LrgEditorApp
+ *
+ * The canvas the editor window lives on. It exists from construction,
+ * also without a window, so tests can drive it with
+ * lrg_editor_app_process_frame() and inspect its widgets.
+ *
+ * Returns: (transfer none): the canvas
  */
 LRG_AVAILABLE_IN_ALL
-LrgGuiContext * lrg_editor_app_get_gui (LrgEditorApp *self);
+LrgCanvas * lrg_editor_app_get_canvas (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_window:
+ * @self: an #LrgEditorApp
+ *
+ * Returns: (transfer none): the editor window widget (menu bar, toolbar,
+ *   dock, status bar)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorWindow * lrg_editor_app_get_window (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_dock:
+ * @self: an #LrgEditorApp
+ *
+ * Returns: (transfer none): the dock area holding the panels
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDockArea * lrg_editor_app_get_dock (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_view_state:
+ * @self: an #LrgEditorApp
+ *
+ * Returns: (transfer none): the headless view model (cameras, layout,
+ *   render modes, dialog, timeline playhead, tile tool...)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorViewState * lrg_editor_app_get_view_state (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_viewport_nav:
+ * @self: an #LrgEditorApp
+ *
+ * Returns: (transfer none): the viewport navigation state machine
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorViewportNav * lrg_editor_app_get_viewport_nav (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_get_play_session:
+ * @self: an #LrgEditorApp
+ *
+ * Returns: (transfer none): the play-in-editor session
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorPlaySession * lrg_editor_app_get_play_session (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_add_panel:
+ * @self: an #LrgEditorApp
+ * @panel: (transfer none): a panel with a unique id (lrg_dock_panel_get_id())
+ * @where: (nullable): "left", "right", "bottom", "top", "center", or
+ *   "tab:<panel-id>" to add it as a tab next to another panel; %NULL is
+ *   "center"
+ *
+ * Docks a custom panel in the editor window and lists it in
+ * View > Panels, so it can be closed and reopened like the built-in
+ * ones. A saved layout that mentions its id places it on the next
+ * lrg_editor_app_load_settings().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_app_add_panel (LrgEditorApp *self,
+                               LrgDockPanel *panel,
+                               const gchar  *where);
 
 /**
  * lrg_editor_app_get_project_dir:
@@ -214,17 +312,39 @@ gboolean lrg_editor_app_start_server (LrgEditorApp  *self,
                                       GError       **error);
 
 /**
- * lrg_editor_app_frame:
+ * lrg_editor_app_process_frame:
  * @self: an #LrgEditorApp
- * @input: this frame's input
+ * @input: this frame's input, in canvas coordinates
  * @width: window width in pixels
  * @height: window height in pixels
  *
- * Builds one frame of UI and processes its input and timers, without
- * drawing anything (no window needed). lrg_editor_app_run() calls this and
- * then renders.
+ * Runs one frame without drawing anything (no window needed): sizes the
+ * canvas and window, dispatches @input to the widgets (shortcuts, menus,
+ * the viewport), then ticks navigation, play mode, timeline playback,
+ * thumbnails, autosave and validation, and advances the canvas clock by
+ * @input->delta_time. lrg_editor_app_run() calls this and then renders
+ * the canvas.
  */
 LRG_AVAILABLE_IN_ALL
+void lrg_editor_app_process_frame (LrgEditorApp         *self,
+                                   const LrgCanvasInput *input,
+                                   gint                  width,
+                                   gint                  height);
+
+/**
+ * lrg_editor_app_frame:
+ * @self: an #LrgEditorApp
+ * @input: this frame's input, in the 0.8.0 immediate-mode format
+ * @width: window width in pixels
+ * @height: window height in pixels
+ *
+ * Translates @input into an #LrgCanvasInput (button presses and releases
+ * and key releases by comparing with the previous call) and runs
+ * lrg_editor_app_process_frame().
+ *
+ * Deprecated: 0.8.1: Use lrg_editor_app_process_frame() instead.
+ */
+LRG_DEPRECATED_IN_0_8_1_FOR (lrg_editor_app_process_frame)
 void lrg_editor_app_frame (LrgEditorApp      *self,
                            const LrgGuiInput *input,
                            gfloat             width,

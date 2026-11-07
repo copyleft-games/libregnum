@@ -1273,6 +1273,17 @@ lrg_menu_bar_get_open_index (LrgMenuBar *self)
 	return self->open_index;
 }
 
+const gchar *
+lrg_menu_bar_get_open_title (LrgMenuBar *self)
+{
+	g_return_val_if_fail (LRG_IS_MENU_BAR (self), NULL);
+
+	/* Titles store their label with the mnemonic marker already removed */
+	if (self->open_index < 0)
+		return NULL;
+	return lrg_menu_bar_get_title (self, (guint) self->open_index);
+}
+
 gint
 lrg_menu_bar_get_highlighted (LrgMenuBar *self)
 {

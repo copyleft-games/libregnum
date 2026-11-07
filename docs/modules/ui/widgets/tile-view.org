@@ -59,7 +59,18 @@ lrg_tile_view_set_factory (tiles, create_tile, bind_tile, NULL, NULL);
 :PROPERTIES:
 :CUSTOM_ID: tile-view-selection
 :END:
-=none=, =single= (default) or =multiple= (Ctrl + click toggles). =lrg_tile_view_select()=, =lrg_tile_view_unselect_all()=, =lrg_tile_view_get_selected()=, =lrg_tile_view_is_selected()=, =lrg_tile_view_get_n_selected()=, =lrg_tile_view_get_cursor()=; =LRG_TILE_VIEW_INVALID_POSITION= means none. Clicks in the gaps between cards hit nothing. A second click on the same tile within 0.4 s of canvas time, or Enter / Space / gamepad A on the cursor tile, emits =tile-activated=.
+=none=, =single= (default) or =multiple= (Ctrl + click toggles, Shift + click selects the range from the anchor in model order, row by row). =lrg_tile_view_select()=, =lrg_tile_view_unselect_all()=, =lrg_tile_view_get_selected()=, =lrg_tile_view_is_selected()=, =lrg_tile_view_get_n_selected()=, =lrg_tile_view_get_cursor()=; =LRG_TILE_VIEW_INVALID_POSITION= means none. Clicks in the gaps between cards hit nothing. A second click on the same tile within 0.4 s of canvas time, or Enter / Space / gamepad A on the cursor tile, emits =tile-activated=.
+
+- =lrg_tile_view_select_full (tiles, position, LrgSelectMode mode)= applies a gesture from code (REPLACE / TOGGLE / EXTEND, see [[file:tree-view.org::#tree-view-multi-selection][LrgTreeView]]); the cursor moves without scrolling. TOGGLE and EXTEND need =multiple= mode.
+- =lrg_tile_view_get_selected_positions()= returns a new =GArray= of =guint= in ascending order; =lrg_tile_view_get_anchor()= the anchor (set by click, Ctrl + click, plain keys and =lrg_tile_view_select()=).
+
+** Geometry
+:PROPERTIES:
+:CUSTOM_ID: tile-view-geometry
+:END:
+For drop targets and tests, in canvas (world) coordinates:
+- =lrg_tile_view_get_item_at (tiles, x, y)=: the tile under a point with the same hit test as clicks (the gaps between cards and the margins miss), or =LRG_TILE_VIEW_INVALID_POSITION=. The editor's asset browser uses it to find the folder a dragged asset is dropped on.
+- =lrg_tile_view_get_tile_rect (tiles, position, &x, &y, &w, &h)=: the resting card (without the hover lift) at the displayed scroll offset; =FALSE= past the model.
 
 ** Properties and signals
 :PROPERTIES:
@@ -102,6 +113,7 @@ The most lifted card paints last so its shadow falls over its neighbours. Tile w
 | Input                  | Action                                                       |
 |------------------------+--------------------------------------------------------------|
 | Left / Right           | Previous / next tile (wrapping across rows)                  |
+| Shift + any movement key | Extend the selection from the anchor (multiple mode)       |
 | Up / Down              | Same column one row up / down; Down into a short last row lands on its last tile |
 | Page Up / Page Down    | By a page of rows                                            |
 | Home / End             | First / last tile                                            |
@@ -179,6 +191,8 @@ lrg_tile_view_scroll_to (tiles, 0, FALSE);
 - =lrg_tile_view_scroll_to=, =lrg_tile_view_get_scroll_offset=
 - =lrg_tile_view_get_tile_widget=, =lrg_tile_view_get_n_tiles=
 - =LRG_TILE_VIEW_INVALID_POSITION=
+- =lrg_tile_view_select_full (self, position, LrgSelectMode mode)=, =lrg_tile_view_get_selected_positions= (transfer full), =lrg_tile_view_get_anchor=
+- =lrg_tile_view_get_item_at=, =lrg_tile_view_get_tile_rect=
 
 ** Related
 :PROPERTIES:

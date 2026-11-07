@@ -1,0 +1,399 @@
+* Property grid
+:PROPERTIES:
+:CUSTOM_ID: property-grid
+:END:
+=LrgPropertyGrid= is a reflected property editor: give it one or more /property sources/ and it builds a row per property, with an editor chosen from the property's value type and an optional /hint/. It is the toolkit piece behind the editor's inspector, the theme editor and the data editors, and it works for any game tool that wants to edit =GObject= properties.
+
+What it does, in one list:
+- *Reflection.* =LrgPropertySource= is a small interface (list, get, set, state, reset, a =property-changed= signal). =LrgObjectPropertySource= implements it over any =GObject='s =GParamSpec= list, following =notify=.
+- *Editors by type and hint.* Numbers get a scrubbable =LrgSpinBox=, booleans a check box, strings a text field, enums a combo box, flags a check box list, colours a swatch with a colour-picker popup, vectors an =LrgVectorEdit=, curves an =LrgCurveEdit=, gradients an =LrgGradientEdit=, references a drop-down with pick and clear buttons and a drop target, arrays an expander of element rows. Hints ("color", "angle", "asset:texture", ...) refine the choice; a registry lets applications add their own.
+- *Multi-edit.* Several sources at once show the intersection of their properties; values they disagree on show as /mixed/ (an em dash) until an edit writes the new value to all of them. Vectors are mixed per axis and edited per axis.
+- *Undo hooks.* Every change is a /gesture/ with an id: =edit-begin=, any number of =edit-value= (repeating while scrubbing) and one =edit-end= (commit or cancel). One drag is one undo step. In =DIRECT= mode the grid writes the sources itself; in =DELEGATE= mode it only emits and the application applies through its undo stack.
+- *Structure.* Rows are grouped into =LrgExpander= sections (their open state remembered per group), with an optional filter field, a label column width, a lock, a context menu per row (Reset / Copy / Paste) and state markers (overridden, animated, invalid).
+- *Stable rows.* Selecting another object with the same schema reuses every row and editor: no rebuild, no flicker, focus stays.
+
+** Quick start
+:PROPERTIES:
+:CUSTOM_ID: property-grid-quick-start
+:END:
+#+begin_src C
+/* Edit one object, the grid applying edits itself */
+LrgPropertyGrid *grid = lrg_property_grid_new ();
+LrgScrollBox    *scroll = lrg_scroll_box_new ();
+
+lrg_scroll_box_set_child (scroll, LRG_WIDGET (grid));
+lrg_property_grid_set_object (grid, G_OBJECT (enemy));
+
+/* Several objects, with an undo stack doing the writing */
+g_autoptr(GPtrArray) sources = g_ptr_array_new_with_free_func (g_object_unref);
+
+g_ptr_array_add (sources, lrg_object_property_source_new (G_OBJECT (grunt)));
+g_ptr_array_add (sources, lrg_object_property_source_new (G_OBJECT (ogre)));
+lrg_property_grid_set_apply_mode (grid, LRG_PROPERTY_APPLY_DELEGATE);
+lrg_property_grid_set_sources (grid, sources);
+g_signal_connect (grid, "edit-begin", G_CALLBACK (on_edit_begin), app);
+g_signal_connect (grid, "edit-value", G_CALLBACK (on_edit_value), app);
+g_signal_connect (grid, "edit-end", G_CALLBACK (on_edit_end), app);
+#+end_src
+The grid does not scroll itself: put it in an =LrgScrollBox= when the properties may not fit. =examples/ui-property-grid.c= is a complete program: three "enemy definitions" with every property kind, multi-select, DIRECT vs DELEGATE and a small undo stack.
+
+** Property sources
+:PROPERTIES:
+:CUSTOM_ID: property-grid-sources
+:END:
+*** The interface
+:PROPERTIES:
+:CUSTOM_ID: property-grid-source-interface
+:END:
+=LrgPropertySource= (=LrgPropertySourceInterface=) has three required and two optional methods:
+| Method            | Required | Contract                                                                                         |
+|-------------------+----------+--------------------------------------------------------------------------------------------------|
+| =list_properties= | yes      | A =GPtrArray= of =LrgPropertyInfo= in display order (the array frees its infos)                  |
+| =get_value=       | yes      | Initialise the =GValue= to the property's type and store the value; =FALSE= for unknown names     |
+| =set_value=       | yes      | Store the value; emit =property-changed= when it changed                                          |
+| =get_state=       | no       | =LrgPropertyState= flags; the default reports =DEFAULT= when the value equals the pspec default   |
+| =reset=           | no       | Back to the default; the default implementation stores the pspec default                          |
+The wrappers check arguments and dispatch: =lrg_property_source_list_properties()=, =lrg_property_source_find_property()= (a ref'd info, or =NULL=), =lrg_property_source_get_value()= (pass an uninitialised =G_VALUE_INIT= value), =lrg_property_source_set_value()= (a value of another, transformable type is converted), =lrg_property_source_get_state()= and =lrg_property_source_reset()=.
+
+The signal =property-changed= (=gchar *name=) is /detailed/ by the name, so =property-changed::speed= fires only for "speed". Implementations emit it with =lrg_property_source_emit_changed()= whenever a value changes, whoever changed it (an undo, a script, an animation); emitting it with =NULL= means "anything may have changed, including the list" and makes the grid re-read the schema.
+
+*** LrgPropertyInfo
+:PROPERTIES:
+:CUSTOM_ID: property-grid-info
+:END:
+=LrgPropertyInfo= is a reference-counted boxed description of one property. =lrg_property_info_new()= derives everything from a =GParamSpec=:
+| Field     | Accessors                                                                 | Derived from                                                                       |
+|-----------+---------------------------------------------------------------------------+------------------------------------------------------------------------------------|
+| name      | =lrg_property_info_get_name()=                                            | the pspec name; the key for get/set                                                |
+| label     | =lrg_property_info_get_label()= / =lrg_property_info_set_label()=         | the nick when it differs from the name, else "max-hp" becomes "Max hp"             |
+| group     | =lrg_property_info_get_group()= / =lrg_property_info_set_group()=         | qdata =lrg_property_group_quark()=, else a blurb prefix "[group:Combat]"            |
+| pspec     | =lrg_property_info_get_pspec()=, =lrg_property_info_get_value_type()=     | value type, range, default                                                         |
+| hint      | =lrg_property_info_get_hint()= / =lrg_property_info_set_hint()=           | qdata =lrg_property_hint_quark()=, else a blurb prefix "[hint:color]"               |
+| read-only | =lrg_property_info_get_read_only()= / =lrg_property_info_set_read_only()= | not writable, or construct-only                                                    |
+| tooltip   | =lrg_property_info_get_tooltip()= / =lrg_property_info_set_tooltip()=     | the blurb without its prefixes                                                     |
+Reference counting: =lrg_property_info_ref()=, =lrg_property_info_unref()= (=g_autoptr(LrgPropertyInfo)= works). Custom sources can build infos from synthetic pspecs and adjust labels and groups with the setters.
+
+*** LrgObjectPropertySource
+:PROPERTIES:
+:CUSTOM_ID: property-grid-object-source
+:END:
+=lrg_object_property_source_new()= wraps any =GObject= (keeping a reference; =lrg_object_property_source_get_object()= returns it). It lists every readable property except construct-only ones, marks non-writable ones read-only, and turns =notify= into =property-changed=. Two filters keep noisy properties out:
+- =lrg_object_property_source_hide_property()= drops one name;
+- =lrg_object_property_source_set_owner_type()= keeps only properties declared by a type or its subclasses (for a widget subclass, pass the subclass type to hide the =LrgWidget= base properties).
+=lrg_property_grid_set_object()= is the one-call shortcut.
+
+** Hints
+:PROPERTIES:
+:CUSTOM_ID: property-grid-hints
+:END:
+A hint refines the editor. Set it in code with qdata (a static string, or =g_param_spec_set_qdata_full()= with =g_free=), or without code as a blurb prefix:
+#+begin_src C
+pspec = g_param_spec_double ("heading", NULL, "[hint:angle][group:Transform] Facing.", -G_PI, G_PI, 0.0, flags);
+g_param_spec_set_qdata (scale_pspec, lrg_property_hint_quark (), (gpointer) "vector3:uniform");
+g_param_spec_set_qdata (scale_pspec, lrg_property_group_quark (), (gpointer) "Transform");
+#+end_src
+| Hint                    | Value types                    | Editor                                                                        |
+|-------------------------+--------------------------------+-------------------------------------------------------------------------------|
+| =color=                 | =GrlColor=, string, uint       | Swatch + colour picker; strings hold "#rrggbbaa", uints 0xRRGGBBAA             |
+| =vector2/3/4=           | =GrlVector2/3/4=               | =LrgVectorEdit=; =vector3:uniform= adds the uniform-scale lock                 |
+| =angle=                 | numbers                        | Spin box in degrees for a value in radians; =angle:degrees= when already degrees |
+| =range:min,max[,step]=  | numbers, vectors, curves       | Overrides the pspec range (and the curve view range)                          |
+| =curve=                 | =LrgKeyframeCurve=             | =LrgCurveEdit= (also the default for the type)                                 |
+| =gradient=              | =LrgGradientStops=             | =LrgGradientEdit= (also the default for the type)                              |
+| =node-ref=              | string, object                 | Reference editor; drops of =application/x-lrg-node=                            |
+| =object-ref:GType=      | object, string                 | Reference editor; drops of nodes whose object is a =GType=                     |
+| =asset:kind=            | string                         | Reference editor; drops of =application/x-lrg-asset=                           |
+| =array:element-hint=    | =GStrv=, =GVariant= arrays     | Expander of element rows edited with =element-hint=                            |
+| =multiline=             | string                         | =LrgTextEditor=, 84 units tall                                                 |
+| =enum-strings:a,b,c=    | string                         | Combo box of the listed strings                                               |
+Helpers: =lrg_property_hint_split()= cuts a hint at its first ':' ("array:asset:texture" gives "array" and "asset:texture"), =lrg_property_hint_parse_range()= reads a range hint. A hint whose built-in editor cannot edit the value type (a "color" hint on a double) is ignored in favour of the type's editor.
+
+** Multi-edit and mixed values
+:PROPERTIES:
+:CUSTOM_ID: property-grid-multi-edit
+:END:
+=lrg_property_grid_set_sources()= takes an array of sources (=lrg_property_grid_set_source()= takes one). The rows are the first source's properties that /every/ source has with the same name and value type, in the first source's order; a property read-only in any source is read-only. =lrg_property_grid_get_n_sources()= and =lrg_property_grid_get_source()= give them back.
+
+A row is /mixed/ (=lrg_property_row_get_mixed()=) when any source's value differs from the first one's, compared with =lrg_property_values_equal()=: unlike =g_param_values_cmp()= it compares =GrlColor=, vectors, =LrgGradientStops=, =LrgKeyframeCurve=, string arrays and =GVariant= by content. Mixed rows show:
+| Editor                   | Mixed display                                   |
+|--------------------------+-------------------------------------------------|
+| Spin box                 | An em dash over the number (the step buttons stay usable; painted by the row) |
+| Check box                | Unchecked and inconsistent (=lrg_checkbox_set_inconsistent()=: the indeterminate dash in the box); a click checks it for every source |
+| Text field               | Empty, with an em dash placeholder              |
+| Combo boxes, references  | Nothing selected, em dash placeholder           |
+| Vector                   | An em dash in each axis that differs            |
+| Others                   | A veil with an em dash over the editor          |
+The first edit writes the new value to every source, after which the row is no longer mixed. Vectors are special: an edit only writes the components the gesture changed, so dragging X of three nodes moves them all in X and keeps each node's own Y and Z. =lrg_property_grid_get_value_for_source()= computes this per source (DIRECT mode applies it; DELEGATE handlers call it). Utility conversions =lrg_property_value_to_string()= and =lrg_property_value_from_string()= are what Copy and Paste use.
+
+** Gestures and undo
+:PROPERTIES:
+:CUSTOM_ID: property-grid-undo
+:END:
+*** Signals
+:PROPERTIES:
+:CUSTOM_ID: property-grid-signals
+:END:
+| Signal            | Arguments                                                          | Emitted                                                                 |
+|-------------------+--------------------------------------------------------------------+-------------------------------------------------------------------------|
+| =edit-begin=      | =gchar *name=, =guint gesture_id=                                  | A gesture starts                                                        |
+| =edit-value=      | =gchar *name=, =GValue *value=, =guint gesture_id=, =gboolean interactive= | Each value of the gesture; =interactive= is =TRUE= for drag frames |
+| =edit-end=        | =gchar *name=, =guint gesture_id=, =gboolean commit=               | The gesture ended; =commit= =FALSE= when cancelled                      |
+| =reset-requested= | =gchar *name=                                                      | "Reset to default" was chosen                                          |
+| =pick-requested=  | =gchar *name=, =gchar *hint=                                       | A reference row's pick button was pressed                               |
+Gesture ids increase by one per gesture and are the same across one gesture's emissions.
+
+*** What one gesture is
+:PROPERTIES:
+:CUSTOM_ID: property-grid-gestures
+:END:
+| Editor        | One gesture                                                                     |
+|---------------+---------------------------------------------------------------------------------|
+| Spin box      | A press (=scrub-begin= .. =scrub-end=): scrubbing, a click or a held step button, until release; nothing when it changes nothing |
+| Spin box      | One wheel notch, arrow key, Home/End (one-shot)                                |
+| Text field    | Typing, until Enter or focus leaves                                            |
+| Check box, combo, flag, reference pick/clear/drop | One change (one-shot)                      |
+| Colour        | The popup, from its first change until it closes                               |
+| Vector        | A scrub of one axis, or one typed value                                        |
+| Curve         | The popup editor session, until it closes                                       |
+| Gradient      | A handle drag; an added or deleted stop; a colour-picker session               |
+| Array         | Add, remove, move; an element's own gesture                                    |
+Escape (gamepad B) in the middle of a drag cancels it: =edit-end= has =commit= =FALSE=. In DIRECT mode the grid has already written back the values it captured at =edit-begin=. A gesture still open when the sources change is committed first.
+
+*** DIRECT and DELEGATE
+:PROPERTIES:
+:CUSTOM_ID: property-grid-apply-mode
+:END:
+=LrgPropertyGrid:apply-mode= (=lrg_property_grid_get_apply_mode()= / =lrg_property_grid_set_apply_mode()=, =LrgPropertyApplyMode=):
+- =LRG_PROPERTY_APPLY_DIRECT= (default): the grid calls =lrg_property_source_set_value()= on every source for every value, and emits the signals too, so an application can still record undo entries (capture "before" at =edit-begin=, "after" at =edit-end=).
+- =LRG_PROPERTY_APPLY_DELEGATE=: the grid only emits. The application applies the values (live, if it wants a preview while dragging), makes one undo command per gesture, and restores on cancel. The grid follows =property-changed= to show the result; until then the row shows the edited value.
+A minimal DELEGATE undo integration:
+#+begin_src C
+static void
+on_edit_begin (LrgPropertyGrid *grid, const gchar *name, guint id, gpointer data)
+{
+	editor_begin_group (data, name);            /* one undo step */
+}
+
+static void
+on_edit_value (LrgPropertyGrid *grid, const gchar *name, const GValue *value,
+               guint id, gboolean interactive, gpointer data)
+{
+	guint i;
+
+	for (i = 0; i < lrg_property_grid_get_n_sources (grid); i++)
+	{
+		g_auto(GValue) per = G_VALUE_INIT;
+
+		lrg_property_grid_get_value_for_source (grid, name, i, value, &per);
+		editor_set_property_merged (data, lrg_property_grid_get_source (grid, i), name, &per);
+	}
+}
+
+static void
+on_edit_end (LrgPropertyGrid *grid, const gchar *name, guint id, gboolean commit, gpointer data)
+{
+	if (commit)
+		editor_end_group (data);
+	else
+		editor_cancel_group (data);              /* roll back the previews */
+}
+#+end_src
+
+** Rows and custom editors
+:PROPERTIES:
+:CUSTOM_ID: property-grid-rows
+:END:
+*** LrgPropertyRow
+:PROPERTIES:
+:CUSTOM_ID: property-grid-row
+:END:
+Each property is an =LrgPropertyRow= (an =LrgContainer=): the row paints its label column and holds one editor widget. =lrg_property_grid_get_row()= finds it by name.
+| Function                                  | Purpose                                                         |
+|-------------------------------------------+-----------------------------------------------------------------|
+| =lrg_property_row_get_grid()=             | The grid                                                        |
+| =lrg_property_row_get_info()=             | The (first source's) =LrgPropertyInfo=                           |
+| =lrg_property_row_get_name()=             | Property name ("tags[2]" for an array element)                  |
+| =lrg_property_row_get_hint()=             | The hint                                                        |
+| =lrg_property_row_get_editor()=           | The editor widget                                               |
+| =lrg_property_row_get_value()=            | The value shown (first source, or the edit in flight)           |
+| =lrg_property_row_get_mixed()=            | Sources disagree                                                |
+| =lrg_property_row_get_state()=            | State flags                                                     |
+| =lrg_property_row_get_read_only()=        | Not editable                                                    |
+| =lrg_property_row_get_editing()=          | A gesture is open                                               |
+| =lrg_property_row_is_syncing()=           | Inside =sync=                                                   |
+| =lrg_property_row_set_shows_mixed()=      | The editor displays mixed itself (no veil)                      |
+| =lrg_property_row_begin_edit()=           | Open a gesture; returns its id                                  |
+| =lrg_property_row_edit_value()=           | A value inside the gesture                                      |
+| =lrg_property_row_end_edit()=             | Close it (commit or cancel)                                     |
+| =lrg_property_row_apply_value()=          | One-shot: begin, value, end                                     |
+The row's signal =sync= asks the editor to reload =lrg_property_row_get_value()= and =lrg_property_row_get_mixed()=; it fires after the row is built and on every refresh outside a gesture. Edit calls made while syncing are ignored, so editors that emit change signals when set programmatically are safe.
+
+*** Registering editors
+:PROPERTIES:
+:CUSTOM_ID: property-grid-registry
+:END:
+An =LrgPropertyEditorFactory= creates the editor for a row:
+#+begin_src C
+static void
+slider_sync (LrgSlider *slider, LrgPropertyRow *row)
+{
+	g_auto(GValue) v = G_VALUE_INIT;
+
+	if (lrg_property_row_get_value (row, &v))
+		lrg_slider_set_value (slider, g_value_get_double (&v));
+}
+
+static void
+on_slider_changed (LrgSlider *slider, gpointer user_data)
+{
+	g_auto(GValue) v = G_VALUE_INIT;
+
+	g_value_init (&v, G_TYPE_DOUBLE);
+	g_value_set_double (&v, lrg_slider_get_value (slider));
+	lrg_property_row_apply_value (LRG_PROPERTY_ROW (user_data), &v);
+}
+
+static LrgWidget *
+volume_editor (LrgPropertyRow *row, gpointer user_data)
+{
+	LrgSlider *slider = lrg_slider_new ();
+
+	g_signal_connect_object (slider, "value-changed", G_CALLBACK (on_slider_changed), row, 0);
+	g_signal_connect_object (row, "sync", G_CALLBACK (slider_sync), slider, G_CONNECT_SWAPPED);
+	return LRG_WIDGET (slider);
+}
+
+lrg_property_grid_register_editor ("volume", volume_editor, NULL, NULL);   /* every grid */
+lrg_property_grid_add_editor (grid, "GrlColor", my_color_editor, NULL, NULL); /* this grid */
+#+end_src
+A row looks up, in order: its full hint ("asset:texture"), its hint kind ("asset"), its value type name ("GrlColor"), then each parent type up to the fundamental type ("GEnum", "gint", "GObject"). At each key a per-grid editor (=lrg_property_grid_add_editor()=) beats a global one (=lrg_property_grid_register_editor()=, removable with =lrg_property_grid_unregister_editor()=), which beats the built-in one. Without any match the value is shown read-only as text. Registering after rows exist affects new rows; =lrg_property_grid_rebuild()= rebuilds all of them.
+
+*** Built-in editors
+:PROPERTIES:
+:CUSTOM_ID: property-grid-builtins
+:END:
+| Key(s)                                         | Editor                                                                    |
+|------------------------------------------------+---------------------------------------------------------------------------|
+| gchar, guchar, gint, guint, glong, gulong, gint64, guint64, gfloat, gdouble, =range= | =LrgSpinBox= (drag to scrub, wheel, arrows), pspec range, integers step 1, floats 0.1 |
+| =angle=                                        | Spin box in degrees                                                       |
+| gboolean                                       | =LrgCheckbox=                                                             |
+| gchararray                                     | =LrgTextInput= (also dispatches =multiline=, =enum-strings=, =color= and reference hints) |
+| GEnum                                          | =LrgComboBox= of the value nicks                                          |
+| GFlags                                         | A check box per single-bit value                                          |
+| =color=, GrlColor                              | =LrgColorPicker= in popup mode, with alpha                                |
+| =vector2/3/4=, GrlVector2/3/4                  | =LrgVectorEdit=                                                           |
+| =curve=, LrgKeyframeCurve                      | =LrgCurveEdit= (compact, popup editor)                                    |
+| =gradient=, LrgGradientStops                   | =LrgGradientEdit=                                                         |
+| =node-ref=, =object-ref=, =asset=, GObject     | Reference editor: drop-down (strings) or label (objects), pick, clear, drop target |
+| =array=, GStrv, GVariant                       | Expander of element rows with up / down / remove buttons and an add button |
+The numeric editor is the =LrgSpinBox= itself (=lrg_property_row_get_editor()= returns it). The grid listens to its =LrgSpinBox::scrub-begin= and =LrgSpinBox::scrub-end= signals: a press (scrubbing the number, a click on a step button or a held, repeating one) opens the row gesture lazily on its first =value-changed=, so a press that changes nothing records nothing, and =scrub-end= closes it with the spin box's =commit= (release and focus loss commit, CANCEL does not). On CANCEL the spin box puts its own value back before =scrub-end=; the grid skips that restoring =value-changed= and lets =edit-end= (=commit= =FALSE=) restore the sources. Changes outside a press (wheel, arrow keys, Page Up/Down, Home/End) are one-shot. Until 0.8.1 the grid wrapped the spin box in a private frame that watched the press, because the signals did not exist yet; code that dug the spin box out of that frame (=lrg_container_get_child (editor, 0)=) must use the editor directly.
+
+** References, picking and drops
+:PROPERTIES:
+:CUSTOM_ID: property-grid-references
+:END:
+Reference rows (=node-ref=, =object-ref:GType=, =asset:kind=, and object-typed properties) show:
+- for strings, a drop-down filled by =lrg_property_grid_set_reference_func()= (an =LrgPropertyReferenceFunc= returning candidate node names, GUIDs or asset paths for a name and hint), plus the current value;
+- for objects, a label naming the object's type;
+- a pick button that emits =pick-requested=; answer with =lrg_property_grid_set_reference_value()= (an eyedropper in the viewport, an asset dialog);
+- a clear button;
+- an =LrgDropTarget= (see the drag-and-drop page) for =application/x-lrg-node= (node and object references) or =application/x-lrg-asset= (assets). A payload is accepted when its value fits the property type (and, for =object-ref:GType=, the object is that type). The drop calls =lrg_property_grid_drop_reference()=, which applications may also call from their own drag code.
+A dropped node object cannot fill a /string/ node-ref by itself: the editor's node source should register its own =node-ref= editor, or drag a payload carrying the GUID string.
+
+** Arrays
+:PROPERTIES:
+:CUSTOM_ID: property-grid-arrays
+:END:
+=GStrv= properties and =GVariant= properties whose pspec type is an array of a basic type (=ab=, =ai=, =au=, =ax=, =at=, =ad=, =as=) are edited as lists. The hint after =array:= is the elements' hint (=array:asset:texture=, =array:enum-strings:gold,gem=). Each element is a real =LrgPropertyRow= (=lrg_property_row_get_element_row()=, =lrg_property_row_get_parent_row()=, =lrg_property_row_get_element_index()=) whose edits rebuild the array and edit the array property, so they take part in gestures and undo like anything else. =lrg_property_row_get_n_elements()=, =lrg_property_row_add_element()=, =lrg_property_row_remove_element()= and =lrg_property_row_move_element()= do what the buttons do, each as one edit.
+
+** Sections, filter, lock and layout
+:PROPERTIES:
+:CUSTOM_ID: property-grid-layout
+:END:
+| Property       | Type                   | Default | Meaning                                                            |
+|----------------+------------------------+---------+--------------------------------------------------------------------|
+| =locked=       | =gboolean=             | FALSE   | =set_sources()= is ignored (the inspector's lock)                  |
+| =show-filter=  | =gboolean=             | FALSE   | A filter field above the rows                                      |
+| =filter-text=  | =gchar *=              | ""      | Rows whose label or name lacks it (case-insensitive) are hidden    |
+| =label-width=  | =gfloat=               | 120     | Label column width, at most 60 % of a row                          |
+| =apply-mode=   | =LrgPropertyApplyMode= | DIRECT  | Who applies edits                                                  |
+Accessors: =lrg_property_grid_get_locked()= / =lrg_property_grid_set_locked()=, =lrg_property_grid_get_show_filter()= / =lrg_property_grid_set_show_filter()=, =lrg_property_grid_get_filter_text()= / =lrg_property_grid_set_filter_text()=, =lrg_property_grid_get_label_width()= / =lrg_property_grid_set_label_width()=. The filter field itself is =lrg_property_grid_get_filter_input()=.
+
+Ungrouped properties come first, then one =LrgExpander= per group in first-appearance order (=lrg_property_grid_get_section()=). A section with no visible row is hidden. =lrg_property_grid_get_group_expanded()= / =lrg_property_grid_set_group_expanded()= open and close sections; the state is remembered per group name across source changes, so a section closed on one node stays closed on the next.
+
+The grid lays its children out as a plain vertical stack at their preferred heights (spacing 4). Rows are =CONTROL_HEIGHT= plus 2 units of padding top and bottom, or taller for tall editors (arrays, flags, multi-line text).
+
+*** Refreshing
+:PROPERTIES:
+:CUSTOM_ID: property-grid-refresh
+:END:
+The grid listens to every source's =property-changed= and refreshes that row (rows inside a gesture keep showing the edit). =lrg_property_grid_refresh()= re-reads every row; =lrg_property_grid_rebuild()= throws the rows away and builds them again. =set_sources()= with the same schema (name, value type, hint and read-only flag per row) keeps every row and editor widget: nothing is added to or removed from the widget tree, so focus and scroll position stay.
+
+** Context menu, copy and paste
+:PROPERTIES:
+:CUSTOM_ID: property-grid-context-menu
+:END:
+Each row carries a context menu (=LrgWidget:context-menu=, opened by right click, Shift+F10 or the Menu key) with "Reset to default", "Copy value" and "Paste value", backed by actions =prop.reset=, =prop.copy= and =prop.paste= on the row (so =lrg_widget_activate_action (row, "prop.reset", NULL)= works too). Reset and paste are disabled on read-only rows, copy on mixed ones.
+- =lrg_property_grid_reset_property()= emits =reset-requested= and, in DIRECT mode, calls =lrg_property_source_reset()= on every source.
+- =lrg_property_grid_copy_value()= keeps the value in a process-wide clipboard and puts its text on the system clipboard when a window is open.
+- =lrg_property_grid_paste_value()= applies the copied value when the types match, otherwise parses the copied text (or the system clipboard's) with =lrg_property_value_from_string()=, as one edit.
+
+** State markers
+:PROPERTIES:
+:CUSTOM_ID: property-grid-states
+:END:
+=LrgPropertyState= flags come from =lrg_property_source_get_state()=; a row shows =OVERRIDDEN=, =ANIMATED= and =INVALID= when any source reports them and =DEFAULT= when all do (=lrg_property_row_get_state()=).
+| Flag         | Marker                                               |
+|--------------+------------------------------------------------------|
+| =OVERRIDDEN= | Accent bar at the left edge and a bolder label       |
+| =ANIMATED=   | A key diamond (=WARNING= colour) at the label's end   |
+| =INVALID=    | Label in the =DANGER= colour                         |
+| read-only    | Label in =TEXT_MUTED=, editor disabled               |
+| =DEFAULT=    | Nothing (available to custom editors)                |
+
+** Styling
+:PROPERTIES:
+:CUSTOM_ID: property-grid-styling
+:END:
+The grid and rows draw little themselves: the hover wash (=CONTROL_HOVER= at half strength), the label (=TEXT=, =FONT_SIZE=), the markers above and the mixed veil (=INPUT= with a =TEXT_MUTED= em dash). Everything else is the editors' own looks, so theme style rules for =LrgSpinBox=, =LrgCheckbox=, =LrgExpander= and the new editor widgets apply inside the grid. The grid has been checked in all five theme presets.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: property-grid-yaml
+:END:
+=LrgPropertyGrid= has real =GObject= properties for every setting (=locked=, =show-filter=, =filter-text=, =label-width=, =apply-mode=), so the loader can create it as =LrgPropertyGrid=; sources are code-only.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: property-grid-pitfalls
+:END:
+- Emit =property-changed= from custom sources, or the grid never sees changes made behind its back.
+- Boxed values compare by content only for the types =lrg_property_values_equal()= knows; other boxed types are mixed unless the pointers match.
+- Construct-only properties are not listed by =LrgObjectPropertySource=.
+- In DELEGATE mode, restore your previews on =edit-end= with =commit= =FALSE=: the grid does not.
+- =LrgKeyframeCurve= has per-key easings, not tangents: the curve editor edits easings.
+- Tooltips are kept in =LrgPropertyInfo= but not shown yet (the toolkit has no generic widget tooltip).
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: property-grid-types
+:END:
+| Type                   | Kind            | GType function                         |
+|------------------------+-----------------+----------------------------------------|
+| =LrgPropertySource=    | interface       | =lrg_property_source_get_type()=       |
+| =LrgObjectPropertySource= | final object | =lrg_object_property_source_get_type()= |
+| =LrgPropertyInfo=      | boxed (ref)     | =lrg_property_info_get_type()=         |
+| =LrgPropertyState=     | flags           | =lrg_property_state_get_type()=        |
+| =LrgPropertyGrid=      | final container | =lrg_property_grid_get_type()=         |
+| =LrgPropertyRow=       | final container | =lrg_property_row_get_type()=          |
+| =LrgPropertyApplyMode= | enum            | =lrg_property_apply_mode_get_type()=   |
+| =LrgGradientStops=     | boxed           | =lrg_gradient_stops_get_type()=        |
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: property-grid-see-also
+:END:
+- [[file:widgets/vector-edit.org][LrgVectorEdit]], [[file:widgets/curve-edit.org][LrgCurveEdit]], [[file:widgets/gradient-edit.org][LrgGradientEdit]]
+- [[file:widgets/spin-box.org][LrgSpinBox]], [[file:widgets/expander.org][LrgExpander]], [[file:widgets/color-picker.org][LrgColorPicker]]
+- [[file:drag-and-drop.org][Drag and drop]], [[file:actions.org][Actions]]
+- =examples/ui-property-grid.c=

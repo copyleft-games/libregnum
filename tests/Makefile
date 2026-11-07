@@ -248,8 +248,29 @@ TEST_SOURCES := \
 	test-editor-tools.c \
 	test-editor-server.c \
 	test-editor-app.c \
+	test-editor-app-hierarchy.c \
+	test-editor-app-inspector.c \
+	test-editor-app-viewport.c \
+	test-editor-app-assets.c \
+	test-editor-app-panels.c \
+	test-editor-app-dialogs.c \
+	test-editor-app-data-1.c \
+	test-editor-app-data-2.c \
 	test-editor-tilemap.c \
 	test-editor-timeline.c \
+	test-editor-settings-migrate.c \
+	test-editor-node-model.c \
+	test-editor-node-source.c \
+	test-ui-dnd.c \
+	test-ui-property-grid.c \
+	test-editor-actions.c \
+	test-editor-view-state.c \
+	test-editor-play-session.c \
+	test-editor-viewport-nav.c \
+	test-editor-asset-meta.c \
+	test-editor-vcs.c \
+	test-editor-prefab-link.c \
+	test-editor-document.c \
 	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \

@@ -42,6 +42,13 @@
 #define NATURAL_WIDTH (220.0f)
 #define NATURAL_ROWS  (8)
 
+/* Fraction of a row at its top / bottom that means BEFORE / AFTER */
+#define DROP_EDGE (0.25f)
+
+/* Drop insertion line thickness and the ring at its start */
+#define DROP_LINE  (2.0f)
+#define DROP_RING  (3.5f)
+
 typedef struct
 {
 	LrgWidget *widget;    /* owned */
@@ -70,6 +77,10 @@ struct _LrgListView
 	GHashTable            *selected;    /* set of GUINT_TO_POINTER (pos + 1) */
 	guint                  cursor;
 	guint                  anchor;
+
+	guint                  drop_row;    /* LRG_LIST_VIEW_INVALID_POSITION when hidden */
+	LrgDropPosition        drop_pos;
+	LrgSpring              drop_y;      /* line y in content space */
 
 	LrgScrollAxis          ay;          /* ay.bar owned */
 	LrgScrollFx            fx;
@@ -559,6 +570,7 @@ on_items_changed (GListModel  *model,
 	if (self->cursor != LRG_LIST_VIEW_INVALID_POSITION && self->cursor >= n)
 		self->cursor = n > 0 ? n - 1 : LRG_LIST_VIEW_INVALID_POSITION;
 	self->anchor = self->cursor;
+	self->drop_row = LRG_LIST_VIEW_INVALID_POSITION;
 
 	unbind_from (self, position);
 	update_extent (self);
@@ -722,6 +734,69 @@ paint_row_background (LrgListView  *self,
 	}
 }
 
+/* ==========================================================================
+ * Drop indicator
+ * ========================================================================== */
+
+/* drop_target_y: content-space y of the line for the current indicator */
+static gfloat
+drop_target_y (LrgListView *self)
+{
+	guint p = self->drop_row;
+
+	if (self->drop_pos == LRG_DROP_POSITION_AFTER)
+		p++;
+	return (gfloat) p * row_h (self);
+}
+
+/*
+ * paint_drop_indicator:
+ *
+ * INTO: accent tint and outline over the row. BEFORE / AFTER: an accent
+ * line at the spring's y with a small ring at its start.
+ */
+static void
+paint_drop_indicator (LrgListView  *self,
+                      LrgPaintList *list,
+                      gfloat        wx,
+                      gfloat        wy,
+                      gfloat        pad,
+                      gfloat        vw,
+                      gfloat        off,
+                      gfloat        rh)
+{
+	LrgWidget      *widget = LRG_WIDGET (self);
+	LrgTheme       *theme = lrg_widget_get_theme (widget);
+	const GrlColor *accent;
+
+	if (self->drop_row == LRG_LIST_VIEW_INVALID_POSITION || self->drop_row >= n_items (self))
+		return;
+	accent = lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+
+	if (self->drop_pos == LRG_DROP_POSITION_INTO)
+	{
+		LrgPartLook look;
+		GrlColor    tint;
+
+		lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_INDICATOR, LRG_WIDGET_STATE_NONE, &look);
+		lrg_paint_color_with_alpha (accent, 0.18f, &tint);
+		lrg_paint_list_rect_ex (list, wx + pad + ROW_INSET, wy + pad + (gfloat) self->drop_row * rh - off + 1.0f,
+		                        MAX (0.0f, vw - ROW_INSET * 2.0f), MAX (0.0f, rh - 2.0f),
+		                        &look.radii, &tint, NULL, DROP_LINE, accent);
+	}
+	else
+	{
+		gfloat ly = wy + pad + self->drop_y.value - off;
+		gfloat x0 = wx + pad + ROW_INSET + DROP_RING;
+		gfloat x1 = wx + pad + vw - ROW_INSET;
+
+		lrg_paint_list_line (list, x0 + DROP_RING, ly, MAX (x0 + DROP_RING, x1), ly, DROP_LINE, accent);
+		lrg_paint_list_circle (list, x0, ly, DROP_RING, accent);
+		lrg_paint_list_circle (list, x0, ly, DROP_RING - DROP_LINE * 0.75f,
+		                       lrg_theme_get_color (theme, LRG_THEME_COLOR_INPUT));
+	}
+}
+
 /*
  * lrg_list_view_step:
  *
@@ -749,6 +824,18 @@ lrg_list_view_step (LrgWidget *widget,
 	if (moving)
 		lrg_scroll_fx_poke (&self->fx);
 	sync_rows (self);
+
+	/* The drop line glides between rows */
+	if (self->drop_row != LRG_LIST_VIEW_INVALID_POSITION)
+	{
+		LrgMotion motion = lrg_widget_get_motion (widget);
+
+		lrg_spring_set_motion (&self->drop_y, motion);
+		if (motion == LRG_MOTION_NONE)
+			lrg_spring_snap (&self->drop_y, self->drop_y.target);
+		else
+			moving |= lrg_spring_step (&self->drop_y, delta_time);
+	}
 
 	keep = self->ay.dragging || (lrg_widget_get_state_flags (self->ay.bar) & LRG_WIDGET_STATE_HOVERED);
 	return lrg_scroll_fx_update (&self->fx, keep, delta_time) || moving;
@@ -794,6 +881,7 @@ lrg_list_view_paint (LrgWidget    *widget,
 		                      MAX (0.0f, vw - ROW_INSET * 2.0f), MAX (0.0f, rh - 2.0f));
 		lrg_widget_paint (r->widget, list);
 	}
+	paint_drop_indicator (self, list, wx, wy, pad, vw, off, rh);
 	lrg_paint_list_pop_clip (list);
 
 	/* 4. Overlay scrollbar */
@@ -1205,6 +1293,8 @@ lrg_list_view_init (LrgListView *self)
 	self->cursor = LRG_LIST_VIEW_INVALID_POSITION;
 	self->anchor = LRG_LIST_VIEW_INVALID_POSITION;
 	self->last_click_pos = LRG_LIST_VIEW_INVALID_POSITION;
+	self->drop_row = LRG_LIST_VIEW_INVALID_POSITION;
+	lrg_spring_init (&self->drop_y, 0.0f, LRG_MOTION_SMOOTH);
 	self->placed_width = -1.0f;
 	lrg_scroll_axis_init (&self->ay);
 	lrg_scroll_fx_init (&self->fx);
@@ -1252,6 +1342,7 @@ lrg_list_view_set_model (LrgListView *self,
 	g_hash_table_remove_all (self->selected);
 	self->cursor = LRG_LIST_VIEW_INVALID_POSITION;
 	self->anchor = LRG_LIST_VIEW_INVALID_POSITION;
+	self->drop_row = LRG_LIST_VIEW_INVALID_POSITION;
 	unbind_from (self, 0);
 	lrg_scroll_axis_scroll_to (&self->ay, 0.0f, FALSE);
 	lrg_widget_queue_layout (LRG_WIDGET (self));
@@ -1491,4 +1582,253 @@ lrg_list_view_get_n_rows (LrgListView *self)
 {
 	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), 0);
 	return self->rows->len;
+}
+
+/* ==========================================================================
+ * Editor support: multi-selection, geometry and drop helpers
+ * ========================================================================== */
+
+void
+lrg_list_view_select_full (LrgListView   *self,
+                           guint          position,
+                           LrgSelectMode  mode)
+{
+	g_return_if_fail (LRG_IS_LIST_VIEW (self));
+
+	if (position >= n_items (self))
+		return;
+
+	/* 1. Map the gesture onto the selection mode */
+	if (self->mode == LRG_SELECTION_MODE_NONE)
+	{
+		set_cursor (self, position, FALSE);
+		return;
+	}
+	if (self->mode == LRG_SELECTION_MODE_SINGLE)
+	{
+		if (mode == LRG_SELECT_MODE_TOGGLE && g_hash_table_contains (self->selected, KEY (position)))
+		{
+			g_hash_table_remove_all (self->selected);
+			self->anchor = position;
+			set_cursor (self, position, FALSE);
+			selection_changed (self);
+			return;
+		}
+		mode = LRG_SELECT_MODE_REPLACE;
+	}
+	if (mode == LRG_SELECT_MODE_EXTEND && (self->anchor == LRG_LIST_VIEW_INVALID_POSITION ||
+	                                       self->anchor >= n_items (self)))
+		mode = LRG_SELECT_MODE_REPLACE;
+
+	/* 2. Apply it */
+	switch (mode)
+	{
+	case LRG_SELECT_MODE_TOGGLE:
+		if (!g_hash_table_remove (self->selected, KEY (position)))
+			g_hash_table_add (self->selected, KEY (position));
+		self->anchor = position;
+		selection_changed (self);
+		break;
+	case LRG_SELECT_MODE_EXTEND:
+		select_range (self, self->anchor, position);
+		break;
+	case LRG_SELECT_MODE_REPLACE:
+	default:
+		self->anchor = position;
+		select_only (self, position);
+		break;
+	}
+	set_cursor (self, position, FALSE);
+}
+
+static gint
+compare_uint (gconstpointer a,
+              gconstpointer b)
+{
+	guint x = *(const guint *) a;
+	guint y = *(const guint *) b;
+
+	return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+GArray *
+lrg_list_view_get_selected_positions (LrgListView *self)
+{
+	GArray        *out;
+	GHashTableIter iter;
+	gpointer       key;
+
+	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), NULL);
+
+	out = g_array_sized_new (FALSE, FALSE, sizeof (guint), g_hash_table_size (self->selected));
+	g_hash_table_iter_init (&iter, self->selected);
+	while (g_hash_table_iter_next (&iter, &key, NULL))
+	{
+		guint p = GPOINTER_TO_UINT (key) - 1;
+
+		g_array_append_val (out, p);
+	}
+	g_array_sort (out, compare_uint);
+	return out;
+}
+
+guint
+lrg_list_view_get_anchor (LrgListView *self)
+{
+	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), LRG_LIST_VIEW_INVALID_POSITION);
+	return self->anchor;
+}
+
+gboolean
+lrg_list_view_get_row_rect (LrgListView *self,
+                            guint        position,
+                            gfloat      *x,
+                            gfloat      *y,
+                            gfloat      *width,
+                            gfloat      *height)
+{
+	gfloat pad;
+	gfloat vw;
+	gfloat vh;
+	gfloat rh;
+
+	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), FALSE);
+
+	if (position >= n_items (self))
+		return FALSE;
+	viewport (self, &pad, &vw, &vh);
+	rh = row_h (self);
+	if (x != NULL)
+		*x = lrg_widget_get_world_x (LRG_WIDGET (self)) + pad;
+	if (y != NULL)
+		*y = lrg_widget_get_world_y (LRG_WIDGET (self)) + pad + (gfloat) position * rh -
+		     lrg_scroll_axis_get_value (&self->ay);
+	if (width != NULL)
+		*width = vw;
+	if (height != NULL)
+		*height = rh;
+	return TRUE;
+}
+
+guint
+lrg_list_view_get_item_at (LrgListView *self,
+                           gfloat       x,
+                           gfloat       y)
+{
+	gfloat pad;
+	gfloat vw;
+	gfloat vh;
+	gfloat wx;
+
+	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), LRG_LIST_VIEW_INVALID_POSITION);
+
+	viewport (self, &pad, &vw, &vh);
+	wx = lrg_widget_get_world_x (LRG_WIDGET (self)) + pad;
+	if (x < wx || x >= wx + vw)
+		return LRG_LIST_VIEW_INVALID_POSITION;
+	return position_at (self, y);
+}
+
+gboolean
+lrg_list_view_get_drop_position (LrgListView     *self,
+                                 gfloat           y,
+                                 guint           *position,
+                                 LrgDropPosition *pos)
+{
+	guint           target = LRG_LIST_VIEW_INVALID_POSITION;
+	LrgDropPosition where = LRG_DROP_POSITION_INTO;
+	gfloat          pad;
+	gfloat          vw;
+	gfloat          vh;
+	gfloat          rel;
+	gfloat          rh;
+	gfloat          frac;
+	guint           n = n_items (self);
+	guint           p;
+
+	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), FALSE);
+
+	if (position != NULL)
+		*position = LRG_LIST_VIEW_INVALID_POSITION;
+	if (pos != NULL)
+		*pos = LRG_DROP_POSITION_INTO;
+
+	viewport (self, &pad, &vw, &vh);
+	rel = y - (lrg_widget_get_world_y (LRG_WIDGET (self)) + pad);
+	if (rel < 0.0f || rel >= vh)
+		return FALSE;
+	rel += lrg_scroll_axis_get_value (&self->ay);
+	rh = row_h (self);
+
+	if (n > 0)
+	{
+		p = rel > 0.0f ? (guint) floorf (rel / rh) : 0;
+		if (p >= n)
+		{
+			/* Below the last row */
+			target = n - 1;
+			where = LRG_DROP_POSITION_AFTER;
+		}
+		else
+		{
+			target = p;
+			frac = (rel - (gfloat) p * rh) / rh;
+			if (frac < DROP_EDGE)
+				where = LRG_DROP_POSITION_BEFORE;
+			else if (frac >= 1.0f - DROP_EDGE)
+				where = LRG_DROP_POSITION_AFTER;
+			else
+				where = LRG_DROP_POSITION_INTO;
+		}
+	}
+
+	if (position != NULL)
+		*position = target;
+	if (pos != NULL)
+		*pos = where;
+	return TRUE;
+}
+
+void
+lrg_list_view_set_drop_indicator (LrgListView     *self,
+                                  guint            position,
+                                  LrgDropPosition  pos)
+{
+	gboolean was_line;
+
+	g_return_if_fail (LRG_IS_LIST_VIEW (self));
+
+	if (position == LRG_LIST_VIEW_INVALID_POSITION || position >= n_items (self))
+	{
+		lrg_list_view_clear_drop_indicator (self);
+		return;
+	}
+	if (self->drop_row == position && self->drop_pos == pos)
+		return;
+
+	/* Glide from row to row; appear in place */
+	was_line = self->drop_row != LRG_LIST_VIEW_INVALID_POSITION && self->drop_pos != LRG_DROP_POSITION_INTO;
+	self->drop_row = position;
+	self->drop_pos = pos;
+	lrg_spring_set_target (&self->drop_y, drop_target_y (self));
+	if (!was_line || !smooth (self) || pos == LRG_DROP_POSITION_INTO)
+		lrg_spring_snap (&self->drop_y, self->drop_y.target);
+}
+
+void
+lrg_list_view_clear_drop_indicator (LrgListView *self)
+{
+	g_return_if_fail (LRG_IS_LIST_VIEW (self));
+	self->drop_row = LRG_LIST_VIEW_INVALID_POSITION;
+}
+
+guint
+lrg_list_view_get_drop_indicator (LrgListView     *self,
+                                  LrgDropPosition *pos)
+{
+	g_return_val_if_fail (LRG_IS_LIST_VIEW (self), LRG_LIST_VIEW_INVALID_POSITION);
+
+	if (pos != NULL)
+		*pos = self->drop_pos;
+	return self->drop_row;
 }

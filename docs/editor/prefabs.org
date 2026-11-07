@@ -20,6 +20,8 @@ no separate =LrgPrefab= class; a prefab is simply an =LrgNode= (with descendants
 stored in a =.rprefab= file. The =.rprefab= format is the same YAML schema as
 =.rlevel= (see [[file:yaml-format.org][.rlevel Format]]) with =type: prefab= at the top level.
 
+There are two kinds of instances. A plain instance (=lrg_prefab_instantiate()=) is an independent copy. A linked instance (=lrg_prefab_instantiate_linked()=, and everything the editor places since 0.8.1) remembers its source: when the prefab changes, the instance follows, except where the instance overrides a value. See [[#linked-instances][Linked Instances]].
+
 ** Cloning
 :PROPERTIES:
 :CUSTOM_ID: cloning
@@ -105,17 +107,201 @@ lrg_node_set_location_xyz (inst2, 3.0f, 1.5f, 2.0f);
 lrg_level_add_node (level2, inst2, NULL);
 #+end_src
 
+** Linked Instances
+:PROPERTIES:
+:CUSTOM_ID: linked-instances
+:END:
+A linked instance is still a full, expanded copy of the prefab's subtree in the level: the runtime and every 0.8.0 tool see ordinary nodes. What makes it linked is an =LrgPrefabLink= on its root (=LrgNode:prefab-link=), holding:
+
+- the source: the =.rprefab= path, plus the asset guid from the prefab's =.meta= sidecar when one exists (resolution uses the path when the guid is unknown);
+- the map: for every instance node that mirrors a source node, its guid maps to the source node's guid (the root included). Any node can read its back-reference with =lrg_node_get_prefab_source_guid()=;
+- the overrides: a set of keys naming the property paths where the instance deliberately differs from the source.
+
+Only the instance root stores a link. Non-root instance nodes get guids derived from the instance root guid and their source node guid (a name-based UUID), so a node that a sync re-creates, or a nested prefab that is re-resolved, comes back with the same guid every time; two instances of the same prefab never share guids because their roots differ.
+
+*** Editor Workflow
+:PROPERTIES:
+:CUSTOM_ID: editor-workflow
+:END:
+1. Place an instance: =lrg_editor_instantiate_prefab()= (IPC =prefab.instantiate=). It is linked.
+2. Edit it with the normal editor operations (gizmo, inspector, rename, add or delete children). Each edit marks the paths it touches as overridden, automatically and undoably.
+3. Edit the prefab: save a subtree with =lrg_editor_save_prefab()=, or let a file monitor call =lrg_editor_prefab_changed()= when the =.rprefab= changes on disk. Every dependent instance in the open level syncs, as one undo step.
+4. Per instance, the prefab bar offers Apply (=lrg_editor_prefab_apply()=, all keys or selected keys), Revert (=lrg_editor_prefab_revert()=, one key or all), Sync (=lrg_editor_prefab_sync()=), Unlink (=lrg_editor_prefab_unlink()=) and, for 0.8.0 instances, Relink (=lrg_editor_prefab_relink()=).
+
+#+begin_src C
+g_autoptr(GError) error = NULL;
+LrgNode *crate = lrg_editor_instantiate_prefab (editor, "prefabs/crate.rprefab", NULL, &error);
+LrgNode *lid   = lrg_node_find_by_path (crate, "Lid");
+const gfloat up[3] = { 0.0f, 2.0f, 0.0f };
+
+/* Marks "<lid-guid>:transform/location" on the crate's link. */
+lrg_editor_transform_node (editor, lid, up, NULL, NULL, FALSE);
+
+/* Push the lid position into crate.rprefab; other crates follow. */
+const gchar *keys[] = { NULL, NULL };
+g_autofree gchar *key = lrg_prefab_make_override_key (crate, lid, "transform/location");
+keys[0] = key;
+lrg_editor_prefab_apply (editor, crate, keys, &error);
+#+end_src
+
+*** Override Paths
+:PROPERTIES:
+:CUSTOM_ID: override-paths
+:END:
+A path names one value of one node, relative to that node. The override key stored in the link is the bare path for the instance root and =<instance-node-guid>:<path>= for any other node (=lrg_prefab_make_override_key()=).
+
+| Path | Value |
+|------+-------|
+| =name= | node name |
+| =visible=, =is_2d= | flags |
+| =transform/location=, =transform/rotation=, =transform/scale= | local TRS |
+| =visual= | the whole visual (one side has none) |
+| =visual/kind=, =visual/primitive=, =visual/asset= | visual fields |
+| =visual/material= | the whole material (one side has none) |
+| =visual/material/color=, =roughness=, =metallic=, =emission_color=, =emission_strength= | material fields |
+| =visual/params/<key>= | one visual param |
+| =visual/tilemap= | the tile grid |
+| =components/<Type>/<prop>= | one component property |
+| =components/+<Type>= / =components/-<Type>= | component added / removed in the instance |
+| =scripts/<script>/enabled=, =scripts/<script>/language= | script binding fields |
+| =scripts/+<script>= / =scripts/-<script>= | script added / removed in the instance |
+| =children/+<instance-guid>= | child added in the instance |
+| =children/-<source-guid>= | source child removed in the instance |
+
+Components are addressed by type name and scripts by script path; a second component of the same type is =<Type>#2=, and so on. Paths are hierarchical: a key covers every path below it (=visual= covers =visual/asset=, =components/+Ai= is the whole added component). =lrg_prefab_link_has_override()= tests coverage, =lrg_prefab_link_contains_override()= tests one exact key.
+
+*** Override Rules
+:PROPERTIES:
+:CUSTOM_ID: override-rules
+:END:
+- Automatic marking: every command the editor executes passes through =lrg_editor_command_mark_prefab_overrides()= before it is applied. Transforms, node property sets (=name=, =visible=, =is-2d=, =visual=), visual params, tile edits and inspector snapshot edits (visual, components, scripts) mark the paths that actually change; adding a node under an instance node marks =children/+=, deleting a mirrored node marks =children/-=, and deleting an instance-added node clears its =children/+= key. Reparenting counts as a removal plus an addition. The marks ride on the command, so undo clears exactly the keys that edit added, and a merged gizmo drag stays one undo step. The check costs one walk up the parent chain for nodes outside instances.
+- Ownership: the override goes to the outermost instance root that mirrors the node (=lrg_prefab_find_owner()=). In a level, editing a node of a nested prefab is an override of the level instance, not of the nested one.
+- Implicit root overrides: the instance root's name, location and rotation always belong to the instance. They are never marked, never reported by =lrg_prefab_compute_overrides()= and never synced. The root's scale is a normal path.
+- =locked= is editor state: it is never marked and never synced.
+- The 0.8.0 marker on the root (a =prefab-instance= visual when the source root has no visual, otherwise a =prefab:source= visual param) is maintained by the link code and ignored by diffs; it is stripped from the source on apply.
+- =lrg_editor_set_object_property()= calls on objects other than the node itself (a visual or a component object) are not traced back to a node and do not mark; the inspector's node-level setters do.
+
+*** Sync Semantics
+:PROPERTIES:
+:CUSTOM_ID: sync-semantics
+:END:
+=lrg_prefab_sync_instance()= walks the instance and the (resolved) prefab in parallel, starting from the mapped roots:
+
+1. For each mirrored node, the paths at which it differs from its source node are computed (=lrg_prefab_diff_node_state()=) and every path not covered by an override is copied from the source. Overridden paths keep the instance value.
+2. Source children are visited in source order. A source child without a counterpart is created (fresh derived guids, mapped, inserted after the counterpart of its previous sibling) unless =children/-<source-guid>= is overridden. If its counterpart sits under another parent (moved in the source), it is moved back, unless the instance moved it on purpose (=children/+= on its current parent).
+3. Instance children whose source node no longer exists anywhere are removed, unless the instance edited them (any override key inside their subtree, or a =children/+= key): those are kept and turned into instance-added children (unmapped, marked =children/+=).
+4. Instance-added children are never touched. Existing children are not reordered.
+5. Nested links below the root are refreshed from the source's nested links, rewritten to the instance's guids.
+
+Mapped nodes keep their guids and their objects, so selection, timelines and other references survive a sync. Sync returns whether anything changed; the editor records nothing for an instance that was already up to date, which is what keeps a file monitor that fires after an undo from creating new history.
+
+*** Compute, Apply, Revert, Unlink, Relink
+:PROPERTIES:
+:CUSTOM_ID: apply-revert
+:END:
+- =lrg_prefab_compute_overrides()= returns every key that describes a difference between the instance and the prefab; it does not change the link.
+- =lrg_prefab_apply_overrides_to_source()= copies the instance values at the given keys (or all keys) into the prefab, clones instance-added children into it (and maps them), deletes source children the instance removed, then drops the applied keys. Values that land inside a nested instance of the prefab are marked as overrides of that nested instance. The editor wrapper saves the prefab and syncs every dependent instance in the same undo group; undo also restores the previous file contents.
+- =lrg_prefab_revert_override()= restores the source value at a key (re-creating a removed child with its old derived guid, deleting an added one) and removes the key and every key below it. =lrg_prefab_revert_all()= reverts every key and then syncs.
+- =lrg_prefab_unlink()= removes the root's link; nested instances keep theirs and the 0.8.0 marker stays.
+- =lrg_prefab_relink()= links an unlinked instance (a 0.8.0 one) by structure: roots match, children match by name (first unused), leftovers match by order when both sides have the same number left. Whatever differs afterwards becomes the override set.
+
+*** Nesting
+:PROPERTIES:
+:CUSTOM_ID: nesting
+:END:
+A prefab may contain instances of other prefabs. Each nested instance keeps its own link (its source, its map, and the containing prefab's overrides of it), stored in the =.rprefab= with the =prefab:= block. =lrg_prefab_load_resolved()= / =lrg_prefab_resolve_nested()= sync every outermost nested instance against its own source file, recursively, so a prefab reflects edits of the prefabs it contains; the nested overrides set in the containing prefab are kept. =lrg_editor_prefab_changed()= syncs a level instance when its source is the changed file or nests it at any depth.
+
+#+begin_src C
+/* car.rprefab contains a wheel.rprefab instance. After editing wheel: */
+guint n = lrg_editor_prefab_changed (editor, "prefabs/wheel.rprefab");
+/* every car instance in the level picked up the new wheel */
+#+end_src
+
+*** Undo
+:PROPERTIES:
+:CUSTOM_ID: undo
+:END:
+| Operation | Command |
+|-----------+---------|
+| Edit through a setter | the edit's own command, carrying its override marks |
+| Explicit mark / unmark (=lrg_editor_prefab_set_override()=) | =LRG_EDITOR_CMD_PREFAB_OVERRIDE= |
+| Sync, revert, relink, unlink | =LRG_EDITOR_CMD_PREFAB_SYNC= (subtree snapshot) |
+| Prefab changed / saved | one group of =PREFAB_SYNC= commands, one per changed instance |
+| Apply | one group: =PREFAB_SYNC= for the instance, =LRG_EDITOR_CMD_PREFAB_FILE= for the file, then the dependents' syncs |
+
+=PREFAB_SYNC= snapshots every node's own state, link and child list before and after, holding references to the live nodes, so undo puts back removed nodes as the same objects and node-added/node-removed fire on the level. Writing a prefab with =lrg_editor_save_prefab()= is not itself undoable (only the syncs it triggers are); saving an instance onto its own source is treated as Apply All.
+
+*** Signals and IPC
+:PROPERTIES:
+:CUSTOM_ID: signals-and-ipc
+:END:
+=LrgEditor::prefab-synced (path, n_instances)= is emitted after =lrg_editor_prefab_changed()= (and therefore after saving or applying to a prefab). The IPC methods =prefab.overrides=, =prefab.apply=, =prefab.revert=, =prefab.sync=, =prefab.relink= and =prefab.unlink= drive the same API headless, and =prefab.save= goes through =lrg_editor_save_prefab()=, so saving over IPC also syncs linked instances (see [[file:ipc-protocol.org::#prefab-link-methods][IPC Protocol]]).
+
+*** Limits
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
+- Prefab variants (a prefab whose root is itself an instance) are not supported: a root link is dropped on save and ignored on load.
+- Nesting is resolved up to 8 levels; a prefab that contains itself is an error.
+- Sync does not reorder existing children, and child order is not an override.
+- Paths are stored as given; the editor does not rewrite links when a prefab is moved or renamed. The asset guid is recorded for that future resolver but is not used for lookup yet.
+- A node reparented across instances or between unrelated parents is tracked as removal plus addition, not as a move.
+- Components and scripts are matched by type name and script path; renaming a script path is a removal plus an addition.
+- Object-property edits made on a visual, material or component object directly (not through the node setters) are not marked.
+- The runtime (=lrg_level_instantiate()=) never resolves prefabs: it instantiates the expanded subtree stored in the level.
+
 ** Notes
 :PROPERTIES:
 :CUSTOM_ID: notes
 :END:
 - =lrg_prefab_clone()= and =lrg_prefab_instantiate()= both assign fresh GUIDs.
-  After placement the instance is independent: future changes to the source
-  prefab file are not reflected in placed instances.
+  An instance from =lrg_prefab_instantiate()= is independent: later changes to
+  the source prefab file are not reflected in it. =lrg_prefab_clone()= keeps any
+  links inside the cloned subtree (rewritten to the new guids), which is how
+  duplicating or pasting a linked instance yields another linked instance.
+- =lrg_prefab_save()= keeps node guids (since 0.8.1), so linked instances keep
+  mapping onto the source nodes across saves.
 - The =PREFAB_INSTANCE= visual kind (=LRG_NODE_VISUAL_PREFAB_INSTANCE=) stores the
-  asset reference to the =.rprefab= file and is used by the editor to show a
-  prefab placeholder. At instantiation time, the editor resolves it to a real
-  node subtree.
+  asset reference to the =.rprefab= file and marks an instance root whose source
+  root has no visual. It is kept on linked instances for compatibility with
+  0.8.0 tools and is what Relink reads.
+
+** API index
+:PROPERTIES:
+:CUSTOM_ID: prefabs-api-index
+:END:
+
+Every public function of the prefab headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-prefab.h=
+:PROPERTIES:
+:CUSTOM_ID: prefabs-api-lrg-prefab
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_prefab_link_new ()= | Creates an empty link (no map entries, no overrides). |
+| =lrg_prefab_link_copy ()= | Deep-copies the link (source, map and overrides). |
+| =lrg_prefab_link_equal ()= | Compares source, asset guid, map and overrides. |
+| =lrg_prefab_link_get_source_path ()= | Returns the source `.rprefab` path. |
+| =lrg_prefab_link_set_source_path ()= | Sets the source path. |
+| =lrg_prefab_link_get_source_guid ()= | Gets the asset guid of the source prefab (from its `.meta` sidecar). |
+| =lrg_prefab_link_set_source_guid ()= | Sets the asset guid of the source prefab. |
+| =lrg_prefab_link_map_set ()= | Records that /instance_guid/ mirrors /source_guid/, replacing any earlier entry for either guid. |
+| =lrg_prefab_link_map_remove ()= | Forgets the mapping of /instance_guid/. |
+| =lrg_prefab_link_map_lookup ()= | Returns the source node guid mirrored by /instance_guid/, or =NULL= when the node was added in the instance. |
+| =lrg_prefab_link_map_lookup_instance ()= | Reverse lookup of the map. |
+| =lrg_prefab_link_get_map_size ()= | Returns the number of mapped instance nodes. |
+| =lrg_prefab_link_get_mapped_guids ()= | Returns the mapped instance node guids, sorted. |
+| =lrg_prefab_link_clear_map ()= | Removes every map entry. |
+| =lrg_prefab_link_add_override ()= | Adds /key/ to the override set. |
+| =lrg_prefab_link_remove_override ()= | Removes exactly /key/ from the override set. |
+| =lrg_prefab_link_get_overrides ()= | Returns the override keys, sorted. |
+| =lrg_prefab_link_get_n_overrides ()= | Returns the number of override keys. |
+| =lrg_prefab_link_clear_overrides ()= | Removes every override key. |
+| =lrg_prefab_regenerate_guids ()= | Gives every node of /root/ a fresh random guid and rewrites every prefab link inside the subtree to the new guids (used when pasting). |
+| =lrg_prefab_mark_override ()= | Marks /path/ of /node/ overridden on the owning instance root. |
+| =lrg_prefab_get_marker_source ()= | Reads the 0.8.0 source marker of a prefab instance: the `prefab:source` visual param, or the asset of a =LRG_NODE_VISUAL_PREFAB_INSTANCE= visual. |
 
 ** See Also
 :PROPERTIES:
@@ -123,4 +309,5 @@ lrg_level_add_node (level2, inst2, NULL);
 :END:
 - [[file:level-model.org][Level Model]] — =LrgNode= structure
 - [[file:yaml-format.org][.rlevel Format]] — shared schema for =.rprefab=
-- [[file:projects-and-assets.org][Projects and Assets]] — =LrgAssetType= classifies =.rprefab= files
+- [[file:projects-and-assets.org][Projects and Assets]] — =LrgAssetType= classifies =.rprefab= files; =.meta= sidecars hold asset guids
+- [[file:editor-runtime.org][Editor Runtime]] — commands, groups and undo

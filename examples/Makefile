@@ -145,11 +145,11 @@ endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
-EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio
+EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid
 
 # Editor standalone (only built when BUILD_EDITOR_UI=1)
 ifeq ($(BUILD_EDITOR_UI),1)
-EXAMPLES += editor-standalone
+EXAMPLES += editor-standalone editor-custom-panel
 endif
 
 # Standalone parametric-CAD viewer (only built when CAD=1).  CAD_LIBS is
@@ -254,6 +254,13 @@ $(EXAMPLES_BUILDDIR)/ui-showcase$(EXE_EXT): ui-showcase.c | $(EXAMPLES_BUILDDIR)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/ui-studio$(EXE_EXT): ui-studio.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/ui-dnd$(EXE_EXT): ui-dnd.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+$(EXAMPLES_BUILDDIR)/ui-property-grid$(EXE_EXT): ui-property-grid.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
@@ -430,6 +437,10 @@ $(FPS_GAME_MODULE): game-fps-demo.c
 	@$(CC) $(GM_CFLAGS) -o $@ $< $(GM_LDFLAGS) $(GM_LIBS)
 
 $(EXAMPLES_BUILDDIR)/editor-standalone$(EXE_EXT): editor-standalone.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/editor-custom-panel$(EXE_EXT): editor-custom-panel.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

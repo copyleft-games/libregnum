@@ -18,6 +18,7 @@
 #include "lrg-node-visual.h"
 #include "lrg-node-tilemap.h"
 #include "lrg-timeline.h"
+#include "lrg-prefab.h"
 #include <string.h>
 
 struct _LrgEditorCommand
@@ -52,7 +53,38 @@ struct _LrgEditorCommand
 
 	LrgTimeline *tl_before; /* timeline: owned copies (nullable) */
 	LrgTimeline *tl_after;
+
+	struct _TreeSnap *tree_before; /* prefab-sync: subtree snapshots (owned) */
+	struct _TreeSnap *tree_after;
+
+	gchar    *file_before;  /* prefab-file: contents (owned, nullable) */
+	gchar    *file_after;
+
+	GPtrArray *marks;       /* OverrideMark*: override-set changes (nullable) */
 };
+
+/*
+ * TreeSnap:
+ *
+ * One node of a prefab-sync snapshot: the live node (referenced, so a node
+ * the sync removed survives for undo), a detached copy of its own state,
+ * a copy of its prefab link, and the snapshots of its children in order.
+ */
+typedef struct _TreeSnap
+{
+	LrgNode       *node;
+	LrgNode       *state;
+	LrgPrefabLink *link;
+	GPtrArray     *children;  /* TreeSnap* */
+} TreeSnap;
+
+/* An override-set change carried by any command (see add_override_mark). */
+typedef struct
+{
+	LrgNode  *owner;
+	gchar    *key;
+	gboolean  remove;
+} OverrideMark;
 
 typedef struct
 {
@@ -63,6 +95,30 @@ typedef struct
 } TileChange;
 
 G_DEFINE_FINAL_TYPE (LrgEditorCommand, lrg_editor_command, G_TYPE_OBJECT)
+
+static void
+tree_snap_free (gpointer data)
+{
+	TreeSnap *snap = data;
+
+	if (snap == NULL)
+		return;
+	g_clear_object (&snap->node);
+	g_clear_object (&snap->state);
+	g_clear_object (&snap->link);
+	g_clear_pointer (&snap->children, g_ptr_array_unref);
+	g_free (snap);
+}
+
+static void
+override_mark_free (gpointer data)
+{
+	OverrideMark *mark = data;
+
+	g_clear_object (&mark->owner);
+	g_free (mark->key);
+	g_free (mark);
+}
 
 /* Process-wide serial source.  Commands normally live on the thread that
  * owns the editor; the mutex keeps serials unique even when tests create
@@ -104,6 +160,11 @@ lrg_editor_command_finalize (GObject *object)
 	g_clear_pointer (&self->tiles, g_array_unref);
 	g_clear_object (&self->tl_before);
 	g_clear_object (&self->tl_after);
+	g_clear_pointer (&self->tree_before, tree_snap_free);
+	g_clear_pointer (&self->tree_after, tree_snap_free);
+	g_clear_pointer (&self->file_before, g_free);
+	g_clear_pointer (&self->file_after, g_free);
+	g_clear_pointer (&self->marks, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_editor_command_parent_class)->finalize (object);
 }
@@ -435,6 +496,425 @@ lrg_editor_command_new_timeline (LrgLevel    *level,
 	return self;
 }
 
+/* --------------------------------------------------------------------------
+ * Linked prefabs
+ * -------------------------------------------------------------------------- */
+
+LrgEditorCommand *
+lrg_editor_command_new_prefab_override (LrgNode     *owner,
+                                        const gchar *key,
+                                        gboolean     add)
+{
+	LrgEditorCommand *self;
+
+	g_return_val_if_fail (LRG_IS_NODE (owner), NULL);
+	g_return_val_if_fail (key != NULL, NULL);
+
+	/* The whole effect is the mark; apply/undo handle marks generically. */
+	self = g_object_new (LRG_TYPE_EDITOR_COMMAND, NULL);
+	self->kind = LRG_EDITOR_CMD_PREFAB_OVERRIDE;
+	self->node = g_object_ref (owner);
+	self->prop_name = g_strdup (key);
+	lrg_editor_command_add_override_mark (self, owner, key, !add);
+	return self;
+}
+
+static TreeSnap *
+tree_snap_capture (LrgNode *node)
+{
+	TreeSnap      *snap = g_new0 (TreeSnap, 1);
+	LrgPrefabLink *link = lrg_node_get_prefab_link (node);
+	GPtrArray     *children = lrg_node_get_children (node);
+	guint          i;
+
+	snap->node = g_object_ref (node);
+	snap->state = lrg_node_new (NULL);
+	lrg_node_copy_state (snap->state, node);
+	snap->link = (link != NULL) ? lrg_prefab_link_copy (link) : NULL;
+	snap->children = g_ptr_array_new_with_free_func (tree_snap_free);
+	for (i = 0; i < children->len; i++)
+		g_ptr_array_add (snap->children, tree_snap_capture (g_ptr_array_index (children, i)));
+
+	return snap;
+}
+
+/* TRUE when @node is the node of one of @snap's child snapshots. */
+static gboolean
+snap_has_child (TreeSnap *snap,
+                LrgNode  *node)
+{
+	guint i;
+
+	for (i = 0; i < snap->children->len; i++)
+		if (((TreeSnap *) g_ptr_array_index (snap->children, i))->node == node)
+			return TRUE;
+
+	return FALSE;
+}
+
+static gpointer
+ref_node (gconstpointer src,
+          gpointer      data)
+{
+	return g_object_ref ((gpointer) src);
+}
+
+/*
+ * tree_snap_restore:
+ *
+ * Puts the live subtree back into the snapshot's shape: own state and link
+ * of every node, then the exact child list (removing extra children and
+ * re-inserting missing ones through @level so its signals fire).
+ */
+static void
+tree_snap_restore (LrgLevel *level,
+                   TreeSnap *snap)
+{
+	g_autoptr(GPtrArray) current = NULL;
+	guint                i;
+
+	if (!lrg_node_state_equal (snap->node, snap->state))
+		lrg_node_copy_state (snap->node, snap->state);
+	if (!lrg_prefab_link_equal (lrg_node_get_prefab_link (snap->node), snap->link))
+	{
+		g_autoptr(LrgPrefabLink) copy = (snap->link != NULL) ? lrg_prefab_link_copy (snap->link) : NULL;
+
+		lrg_node_set_prefab_link (snap->node, copy);
+	}
+
+	/* Children that should not be here. g_ptr_array_copy() keeps the
+	 * source's free func (unref), so take a reference per element. */
+	current = g_ptr_array_copy (lrg_node_get_children (snap->node), ref_node, NULL);
+	for (i = 0; i < current->len; i++)
+	{
+		LrgNode *c = g_ptr_array_index (current, i);
+
+		if (snap_has_child (snap, c))
+			continue;
+		if (level != NULL)
+			lrg_level_remove_node (level, c);
+		else
+			lrg_node_remove_child (snap->node, c);
+	}
+
+	/* Then each snapshot child at its index. */
+	for (i = 0; i < snap->children->len; i++)
+	{
+		TreeSnap *cs = g_ptr_array_index (snap->children, i);
+		gint      idx = lrg_node_get_child_index (snap->node, cs->node);
+
+		if (idx == (gint) i)
+			continue;
+
+		g_object_ref (cs->node);
+		if (idx >= 0)
+		{
+			lrg_node_remove_child (snap->node, cs->node);
+			lrg_node_insert_child (snap->node, cs->node, (gint) i);
+		}
+		else
+		{
+			LrgNode *elsewhere = lrg_node_get_parent (cs->node);
+
+			if (elsewhere != NULL)
+				lrg_node_remove_child (elsewhere, cs->node);
+			if (level != NULL)
+				lrg_level_insert_node (level, cs->node, snap->node, (gint) i);
+			else
+				lrg_node_insert_child (snap->node, cs->node, (gint) i);
+		}
+		g_object_unref (cs->node);
+	}
+
+	for (i = 0; i < snap->children->len; i++)
+		tree_snap_restore (level, g_ptr_array_index (snap->children, i));
+}
+
+LrgEditorCommand *
+lrg_editor_command_new_prefab_sync (LrgLevel    *level,
+                                    LrgNode     *root,
+                                    const gchar *label)
+{
+	LrgEditorCommand *self;
+
+	g_return_val_if_fail (level == NULL || LRG_IS_LEVEL (level), NULL);
+	g_return_val_if_fail (LRG_IS_NODE (root), NULL);
+
+	self = g_object_new (LRG_TYPE_EDITOR_COMMAND, NULL);
+	self->kind = LRG_EDITOR_CMD_PREFAB_SYNC;
+	self->level = (level != NULL) ? g_object_ref (level) : NULL;
+	self->node = g_object_ref (root);
+	self->label = g_strdup (label);
+	self->tree_before = tree_snap_capture (root);
+	return self;
+}
+
+void
+lrg_editor_command_prefab_sync_capture (LrgEditorCommand *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR_COMMAND (self));
+	g_return_if_fail (self->kind == LRG_EDITOR_CMD_PREFAB_SYNC);
+
+	g_clear_pointer (&self->tree_after, tree_snap_free);
+	self->tree_after = tree_snap_capture (self->node);
+}
+
+LrgEditorCommand *
+lrg_editor_command_new_prefab_file (const gchar *path,
+                                    const gchar *before,
+                                    const gchar *after)
+{
+	LrgEditorCommand *self;
+
+	g_return_val_if_fail (path != NULL, NULL);
+	g_return_val_if_fail (after != NULL, NULL);
+
+	self = g_object_new (LRG_TYPE_EDITOR_COMMAND, NULL);
+	self->kind = LRG_EDITOR_CMD_PREFAB_FILE;
+	self->prop_name = g_strdup (path);
+	self->file_before = g_strdup (before);
+	self->file_after = g_strdup (after);
+	return self;
+}
+
+static void
+write_prefab_file (const gchar *path,
+                   const gchar *contents)
+{
+	g_autoptr(GError) error = NULL;
+
+	if (contents == NULL)
+		return;
+	if (!g_file_set_contents (path, contents, -1, &error))
+		g_warning ("Could not write prefab %s: %s", path, error->message);
+}
+
+void
+lrg_editor_command_add_override_mark (LrgEditorCommand *self,
+                                      LrgNode          *owner,
+                                      const gchar      *key,
+                                      gboolean          remove)
+{
+	OverrideMark *mark;
+
+	g_return_if_fail (LRG_IS_EDITOR_COMMAND (self));
+	g_return_if_fail (LRG_IS_NODE (owner));
+	g_return_if_fail (key != NULL);
+
+	if (self->marks == NULL)
+		self->marks = g_ptr_array_new_with_free_func (override_mark_free);
+
+	mark = g_new0 (OverrideMark, 1);
+	mark->owner = g_object_ref (owner);
+	mark->key = g_strdup (key);
+	mark->remove = remove;
+	g_ptr_array_add (self->marks, mark);
+}
+
+guint
+lrg_editor_command_get_n_override_marks (LrgEditorCommand *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_COMMAND (self), 0);
+
+	return (self->marks != NULL) ? self->marks->len : 0;
+}
+
+/* Applies (or, for @undo, reverts in reverse order) the override marks. */
+static void
+apply_marks (LrgEditorCommand *self,
+             gboolean          undo)
+{
+	guint i;
+
+	if (self->marks == NULL)
+		return;
+
+	for (i = 0; i < self->marks->len; i++)
+	{
+		OverrideMark  *m = g_ptr_array_index (self->marks, undo ? self->marks->len - 1 - i : i);
+		LrgPrefabLink *link = lrg_node_get_prefab_link (m->owner);
+		gboolean       add = (m->remove == undo);
+
+		if (link == NULL)
+			continue;
+		if (add)
+			lrg_prefab_link_add_override (link, m->key);
+		else
+			lrg_prefab_link_remove_override (link, m->key);
+	}
+}
+
+/* --------------------------------------------------------------------------
+ * Automatic override marks
+ * -------------------------------------------------------------------------- */
+
+/* Cheap reject: is any ancestor (or @node) a linked instance root? */
+static gboolean
+in_linked_tree (LrgNode *node)
+{
+	for (; node != NULL; node = lrg_node_get_parent (node))
+		if (lrg_node_get_prefab_link (node) != NULL)
+			return TRUE;
+
+	return FALSE;
+}
+
+/* Marks @path of @node overridden unless already covered. Root-implicit
+ * paths (name, location, rotation of the instance root) are skipped. */
+static guint
+mark_path (LrgEditorCommand *self,
+           LrgNode          *node,
+           const gchar      *path)
+{
+	LrgNode          *owner = lrg_prefab_find_owner (node);
+	g_autofree gchar *key = NULL;
+
+	if (owner == NULL)
+		return 0;
+	if (owner == node &&
+	    (g_strcmp0 (path, "name") == 0 ||
+	     g_strcmp0 (path, "transform/location") == 0 ||
+	     g_strcmp0 (path, "transform/rotation") == 0))
+		return 0;
+
+	key = lrg_prefab_make_override_key (owner, node, path);
+	if (lrg_prefab_link_has_override (lrg_node_get_prefab_link (owner), key))
+		return 0;
+
+	lrg_editor_command_add_override_mark (self, owner, key, FALSE);
+	return 1;
+}
+
+/* A node leaves @parent: removal of a mirrored node, or un-adding. */
+static guint
+mark_leave (LrgEditorCommand *self,
+            LrgNode          *node,
+            LrgNode          *parent)
+{
+	LrgNode          *owner;
+	LrgPrefabLink    *link;
+	const gchar      *sg;
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *key = NULL;
+
+	if (parent == NULL || !in_linked_tree (parent))
+		return 0;
+	owner = lrg_prefab_find_owner (parent);
+	if (owner == NULL)
+		return 0;
+
+	link = lrg_node_get_prefab_link (owner);
+	sg = lrg_prefab_link_map_lookup (link, lrg_node_get_guid (node));
+	if (sg != NULL && node != owner)
+		return mark_path (self, parent, (path = g_strconcat ("children/-", sg, NULL)));
+
+	/* An instance-added child going away takes its "+" key with it. */
+	path = g_strconcat ("children/+", lrg_node_get_guid (node), NULL);
+	key = lrg_prefab_make_override_key (owner, parent, path);
+	if (lrg_prefab_link_contains_override (link, key))
+	{
+		lrg_editor_command_add_override_mark (self, owner, key, TRUE);
+		return 1;
+	}
+
+	return 0;
+}
+
+/* A node arrives under @parent. */
+static guint
+mark_arrive (LrgEditorCommand *self,
+             LrgNode          *node,
+             LrgNode          *parent)
+{
+	g_autofree gchar *path = NULL;
+
+	if (parent == NULL || !in_linked_tree (parent))
+		return 0;
+
+	path = g_strconcat ("children/+", lrg_node_get_guid (node), NULL);
+	return mark_path (self, parent, path);
+}
+
+static const gchar *const trs_paths[3] = {
+	"transform/location", "transform/rotation", "transform/scale"
+};
+
+guint
+lrg_editor_command_mark_prefab_overrides (LrgEditorCommand *self)
+{
+	guint count = 0;
+	guint i;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_COMMAND (self), 0);
+
+	switch (self->kind)
+	{
+	case LRG_EDITOR_CMD_GROUP:
+		for (i = 0; i < self->children->len; i++)
+			count += lrg_editor_command_mark_prefab_overrides (g_ptr_array_index (self->children, i));
+		return count;
+	case LRG_EDITOR_CMD_ADD_NODE:
+		return mark_arrive (self, self->node, self->parent_a);
+	case LRG_EDITOR_CMD_DELETE_NODE:
+		return mark_leave (self, self->node, self->parent_a);
+	case LRG_EDITOR_CMD_REPARENT:
+		if (self->parent_a == self->parent_b)
+			return 0;
+		count = mark_leave (self, self->node, self->parent_a);
+		return count + mark_arrive (self, self->node, self->parent_b);
+	default:
+		break;
+	}
+
+	if (self->node == NULL || !in_linked_tree (self->node))
+		return 0;
+
+	switch (self->kind)
+	{
+	case LRG_EDITOR_CMD_TRANSFORM:
+		for (i = 0; i < 3; i++)
+			if (memcmp (self->before + i * 3, self->after + i * 3, 3 * sizeof (gfloat)) != 0)
+				count += mark_path (self, self->node, trs_paths[i]);
+		break;
+	case LRG_EDITOR_CMD_SET_PROPERTY:
+		if (g_strcmp0 (self->prop_name, "name") == 0 ||
+		    g_strcmp0 (self->prop_name, "visible") == 0 ||
+		    g_strcmp0 (self->prop_name, "visual") == 0)
+			count += mark_path (self, self->node, self->prop_name);
+		else if (g_strcmp0 (self->prop_name, "is-2d") == 0 ||
+		         g_strcmp0 (self->prop_name, "is_2d") == 0)
+			count += mark_path (self, self->node, "is_2d");
+		break;
+	case LRG_EDITOR_CMD_SET_VISUAL_PARAM:
+		{
+			g_autofree gchar *path = g_strconcat ("visual/params/", self->prop_name, NULL);
+
+			count += mark_path (self, self->node, path);
+		}
+		break;
+	case LRG_EDITOR_CMD_TILES:
+		count += mark_path (self, self->node, "visual/tilemap");
+		break;
+	case LRG_EDITOR_CMD_NODE_STATE:
+		{
+			LrgNode      *owner = lrg_prefab_find_owner (self->node);
+			g_auto(GStrv) paths = NULL;
+
+			if (owner == NULL)
+				break;
+			paths = lrg_prefab_diff_node_state (self->snap_after, self->snap_before,
+			                                    owner == self->node);
+			for (i = 0; paths != NULL && paths[i] != NULL; i++)
+				count += mark_path (self, self->node, paths[i]);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return count;
+}
+
 /* ==========================================================================
  * Accessors
  * ========================================================================== */
@@ -623,9 +1103,21 @@ lrg_editor_command_apply (LrgEditorCommand *self)
 	case LRG_EDITOR_CMD_TIMELINE:
 		swap_timeline (self->level, self->tl_before, self->tl_after);
 		break;
+	case LRG_EDITOR_CMD_PREFAB_SYNC:
+		/* First execution: the subtree already holds the result. */
+		if (self->tree_after == NULL)
+			self->tree_after = tree_snap_capture (self->node);
+		else
+			tree_snap_restore (self->level, self->tree_after);
+		break;
+	case LRG_EDITOR_CMD_PREFAB_FILE:
+		write_prefab_file (self->prop_name, self->file_after);
+		break;
 	default:
 		break;
 	}
+
+	apply_marks (self, FALSE);
 }
 
 void
@@ -634,6 +1126,9 @@ lrg_editor_command_undo (LrgEditorCommand *self)
 	guint i;
 
 	g_return_if_fail (LRG_IS_EDITOR_COMMAND (self));
+
+	/* Marks were applied last, so they are undone first. */
+	apply_marks (self, TRUE);
 
 	switch (self->kind)
 	{
@@ -670,6 +1165,14 @@ lrg_editor_command_undo (LrgEditorCommand *self)
 	case LRG_EDITOR_CMD_TIMELINE:
 		swap_timeline (self->level, self->tl_after, self->tl_before);
 		break;
+	case LRG_EDITOR_CMD_PREFAB_SYNC:
+		if (self->tree_after == NULL)
+			self->tree_after = tree_snap_capture (self->node);
+		tree_snap_restore (self->level, self->tree_before);
+		break;
+	case LRG_EDITOR_CMD_PREFAB_FILE:
+		write_prefab_file (self->prop_name, self->file_before);
+		break;
 	default:
 		break;
 	}
@@ -680,6 +1183,7 @@ lrg_editor_command_merge (LrgEditorCommand *self,
                           LrgEditorCommand *other)
 {
 	gboolean merged = FALSE;
+	guint    i;
 
 	g_return_val_if_fail (LRG_IS_EDITOR_COMMAND (self), FALSE);
 	g_return_val_if_fail (LRG_IS_EDITOR_COMMAND (other), FALSE);
@@ -733,7 +1237,20 @@ lrg_editor_command_merge (LrgEditorCommand *self,
 	}
 
 	if (merged)
+	{
 		self->serial = next_serial ();
+
+		/* Keep the override-set changes of both halves. */
+		if (other->marks != NULL)
+		{
+			for (i = 0; i < other->marks->len; i++)
+			{
+				OverrideMark *m = g_ptr_array_index (other->marks, i);
+
+				lrg_editor_command_add_override_mark (self, m->owner, m->key, m->remove);
+			}
+		}
+	}
 
 	return merged;
 }
@@ -782,6 +1299,20 @@ lrg_editor_command_describe (LrgEditorCommand *self)
 	case LRG_EDITOR_CMD_TIMELINE:
 		return g_strdup_printf ("Edit timeline %s",
 		                        lrg_timeline_get_name (self->tl_after != NULL ? self->tl_after : self->tl_before));
+	case LRG_EDITOR_CMD_PREFAB_OVERRIDE:
+		return g_strdup_printf ("%s %s",
+		                        (self->marks != NULL && self->marks->len > 0 &&
+		                         ((OverrideMark *) g_ptr_array_index (self->marks, 0))->remove)
+		                        ? "Clear override" : "Override",
+		                        self->prop_name);
+	case LRG_EDITOR_CMD_PREFAB_SYNC:
+		return g_strdup_printf ("Sync prefab %s", node_name (self->node));
+	case LRG_EDITOR_CMD_PREFAB_FILE:
+		{
+			g_autofree gchar *base = g_path_get_basename (self->prop_name);
+
+			return g_strdup_printf ("Write %s", base);
+		}
 	default:
 		return g_strdup ("Command");
 	}

@@ -238,6 +238,13 @@ void lrg_canvas_input_add_text (LrgCanvasInput *self,
  * process-wide pointer transform installed with
  * lrg_canvas_set_default_pointer_transform().
  *
+ * On desktop builds the first poll on a window chains GLFW mouse
+ * button and key callbacks in front of raylib's (see
+ * lrg_canvas_input_set_latch_enabled()), and every poll merges what
+ * they saw since the previous poll (lrg_canvas_input_apply_latch()), so
+ * a click whose press and release fall between two frames, and the
+ * modifiers of a chord typed within one frame, are not lost.
+ *
  * Requires an open window.
  */
 LRG_AVAILABLE_IN_ALL
@@ -278,6 +285,108 @@ void lrg_canvas_input_set_poll_touch (gboolean enabled);
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_canvas_input_get_poll_touch (void);
+
+/* ==========================================================================
+ * Event latch
+ *
+ * graylib samples buttons and modifiers once per frame, so a press and a
+ * release that both land between two polls (a touchpad tap, a synthetic
+ * click, a fast click on a slow frame) are never seen, and a chord typed
+ * faster than a frame (Ctrl down, S, Ctrl up) loses its Ctrl. The latch
+ * remembers what the platform's event callbacks reported between two
+ * polls and lrg_canvas_input_poll() merges it into the frame.
+ * ========================================================================== */
+
+/**
+ * lrg_canvas_input_latch_button:
+ * @button: a #GrlMouseButton (left, right or middle)
+ * @pressed: %TRUE for a press event, %FALSE for a release event
+ *
+ * Records a mouse button event as the platform reported it, for the
+ * next lrg_canvas_input_apply_latch(). lrg_canvas_input_poll() feeds the
+ * latch itself from GLFW callbacks on desktop builds; other input
+ * backends (SDL, a remote session, tests) call this from their event
+ * handlers. Other buttons are ignored.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_latch_button (GrlMouseButton button,
+                                    gboolean       pressed);
+
+/**
+ * lrg_canvas_input_latch_key:
+ * @key: the key
+ * @pressed: %TRUE for a press event, %FALSE for a release event
+ * @modifiers: the modifiers the platform reported with the event
+ *
+ * Records a key event for the next lrg_canvas_input_apply_latch(): the
+ * press itself (added to the frame when the key queue missed it), the
+ * modifiers held when it was pressed, and its release.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_latch_key (GrlKey            key,
+                                 gboolean          pressed,
+                                 LrgInputModifiers modifiers);
+
+/**
+ * lrg_canvas_input_apply_latch:
+ * @self: a frame that was just filled from the devices (or by hand)
+ *
+ * Merges what the latch recorded since the last call into @self and
+ * empties the latch:
+ *
+ * - a latched button press missing from @buttons_pressed becomes a
+ *   press edge, plus a release edge when the button is no longer in
+ *   @buttons_down (pressed and released within the frame);
+ * - latched key presses missing from @keys are appended;
+ * - when @self carries key presses, the modifiers latched with them are
+ *   added to @modifiers (a chord typed faster than a frame);
+ * - a key that was pressed and released within the frame (its last
+ *   latched event is a release) gets a release in @keys_released.
+ *
+ * lrg_canvas_input_poll() calls this; call it yourself after building
+ * a frame from another source that a latch was fed for.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_apply_latch (LrgCanvasInput *self);
+
+/**
+ * lrg_canvas_input_clear_latch:
+ *
+ * Forgets everything latched since the last poll (for example after a
+ * modal pause or when focus left the window).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_clear_latch (void);
+
+/**
+ * lrg_canvas_input_set_latch_enabled:
+ * @enabled: whether lrg_canvas_input_poll() installs the GLFW event
+ *   callbacks and applies the latch (default %TRUE)
+ *
+ * The callbacks are chained in front of raylib's own, which still run.
+ * Turning the latch off restores raylib's callbacks.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_set_latch_enabled (gboolean enabled);
+
+/**
+ * lrg_canvas_input_get_latch_enabled:
+ *
+ * Returns: %TRUE if lrg_canvas_input_poll() latches events
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_canvas_input_get_latch_enabled (void);
+
+/**
+ * lrg_canvas_input_detach_latch:
+ *
+ * Restores raylib's GLFW callbacks on the current window and forgets
+ * it. Call before CloseWindow() when the program may open another
+ * window later (the next lrg_canvas_input_poll() on a new window
+ * installs the latch again). Harmless when nothing is installed.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_canvas_input_detach_latch (void);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgCanvasInput, lrg_canvas_input_free)
 

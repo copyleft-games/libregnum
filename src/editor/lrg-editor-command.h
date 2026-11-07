@@ -43,6 +43,13 @@ G_BEGIN_DECLS
  *   tile grid (a paint dab, rectangle or flood fill)
  * @LRG_EDITOR_CMD_TIMELINE: add, remove or replace one of the level's
  *   timelines from before/after copies (keyframe edits)
+ * @LRG_EDITOR_CMD_PREFAB_OVERRIDE: add or remove one override key on a
+ *   linked prefab instance root (since 0.8.1)
+ * @LRG_EDITOR_CMD_PREFAB_SYNC: restore a whole prefab instance subtree
+ *   (states, links, children) from before/after snapshots; behind sync,
+ *   apply, revert, relink and unlink (since 0.8.1)
+ * @LRG_EDITOR_CMD_PREFAB_FILE: rewrite a prefab file between two contents
+ *   (apply-to-source; since 0.8.1)
  *
  * The kind of mutation an #LrgEditorCommand represents.
  *
@@ -59,7 +66,10 @@ typedef enum
     LRG_EDITOR_CMD_GROUP,
     LRG_EDITOR_CMD_NODE_STATE,
     LRG_EDITOR_CMD_TILES,
-    LRG_EDITOR_CMD_TIMELINE
+    LRG_EDITOR_CMD_TIMELINE,
+    LRG_EDITOR_CMD_PREFAB_OVERRIDE,
+    LRG_EDITOR_CMD_PREFAB_SYNC,
+    LRG_EDITOR_CMD_PREFAB_FILE
 } LrgEditorCommandKind;
 
 #define LRG_TYPE_EDITOR_COMMAND (lrg_editor_command_get_type ())
@@ -298,6 +308,130 @@ void lrg_editor_command_tiles_add (LrgEditorCommand *self,
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_editor_command_tiles_get_n_changes (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_new_prefab_override:
+ * @owner: a linked prefab instance root
+ * @key: an override key of @owner's link
+ * @add: %TRUE to add @key, %FALSE to remove it
+ *
+ * Creates a command that adds (or removes) one override key. Undo does the
+ * opposite.
+ *
+ * Returns: (transfer full): a new command
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_prefab_override (LrgNode     *owner,
+                                                           const gchar *key,
+                                                           gboolean     add);
+
+/**
+ * lrg_editor_command_new_prefab_sync:
+ * @level: (nullable): the level holding @root, for node-added/-removed
+ *   signals on undo and redo
+ * @root: the subtree to track (a prefab instance root)
+ * @label: (nullable): history label
+ *
+ * Creates a subtree snapshot command and captures the "before" state of
+ * @root now: every node's own state, prefab link and child list (the live
+ * node objects are referenced, so nodes removed later come back on undo).
+ * Mutate the subtree, then execute the command: applying it the first time
+ * captures the "after" state (or call
+ * lrg_editor_command_prefab_sync_capture() explicitly).
+ *
+ * Returns: (transfer full): a new command
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_prefab_sync (LrgLevel    *level,
+                                                       LrgNode     *root,
+                                                       const gchar *label);
+
+/**
+ * lrg_editor_command_prefab_sync_capture:
+ * @self: a %LRG_EDITOR_CMD_PREFAB_SYNC command
+ *
+ * Captures the current state of the tracked subtree as the "after" state.
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_command_prefab_sync_capture (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_new_prefab_file:
+ * @path: the prefab file
+ * @before: (nullable): the file contents before, %NULL to leave the file
+ *   alone on undo
+ * @after: the file contents after
+ *
+ * Creates a command that writes @after to @path when applied and @before
+ * when undone. Write failures are logged with g_warning().
+ *
+ * Returns: (transfer full): a new command
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorCommand * lrg_editor_command_new_prefab_file (const gchar *path,
+                                                       const gchar *before,
+                                                       const gchar *after);
+
+/**
+ * lrg_editor_command_add_override_mark:
+ * @self: an #LrgEditorCommand
+ * @owner: a linked prefab instance root
+ * @key: an override key of @owner's link
+ * @remove: %TRUE when the command removes @key, %FALSE when it adds it
+ *
+ * Attaches an override-set change to @self: applying the command adds
+ * (or removes) @key, undoing it does the opposite. Merging commands keeps
+ * the marks of both. #LrgEditor attaches marks automatically (see
+ * lrg_editor_command_mark_prefab_overrides()).
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_command_add_override_mark (LrgEditorCommand *self,
+                                           LrgNode          *owner,
+                                           const gchar      *key,
+                                           gboolean          remove);
+
+/**
+ * lrg_editor_command_mark_prefab_overrides:
+ * @self: a command about to be executed (not yet applied)
+ *
+ * Derives the prefab override keys a not-yet-applied command will create
+ * when it edits a node of a linked prefab instance, and attaches them as
+ * marks: transforms, node property sets (`name`, `visible`, `is-2d`,
+ * `visual`), visual params, tile edits, snapshot (inspector) edits, and
+ * structural edits (`children/+<guid>` when a node is added under an
+ * instance node, `children/-<source-guid>` when a mirrored node is
+ * removed). Keys already covered are skipped, so marks only record real
+ * changes of the override set. Groups recurse into their children.
+ * Nodes outside linked instances cost one walk up the parent chain.
+ *
+ * Returns: the number of marks attached
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_command_mark_prefab_overrides (LrgEditorCommand *self);
+
+/**
+ * lrg_editor_command_get_n_override_marks:
+ * @self: an #LrgEditorCommand
+ *
+ * Returns: the number of override marks attached to @self (not counting
+ *   group children)
+ *
+ * Since: 0.8.1
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_command_get_n_override_marks (LrgEditorCommand *self);
 
 /**
  * lrg_editor_command_new_timeline:

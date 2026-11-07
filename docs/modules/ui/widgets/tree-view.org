@@ -80,11 +80,116 @@ lrg_tree_view_set_factory (tree, create_row, bind_row, NULL, NULL);
 - Rows: =lrg_tree_view_get_n_visible()= (flattened count), =lrg_tree_view_get_item (tree, position)=, =lrg_tree_view_get_depth (tree, position)=, =lrg_tree_view_get_position (tree, item)= (=LRG_TREE_VIEW_INVALID_POSITION= when hidden).
 - Realized widgets: =lrg_tree_view_get_row_widget (tree, position)=, =lrg_tree_view_get_n_rows()=.
 
+** Revealing an item
+:PROPERTIES:
+:CUSTOM_ID: tree-view-reveal
+:END:
+=lrg_tree_view_reveal (tree, item)= makes an item visible wherever it is: it expands every collapsed ancestor, root first (each emits =row-expanded=), then scrolls by the smallest amount that shows the row, gliding with the scroll spring unless the theme motion is off. It returns =TRUE= when the item has a row afterwards. Selection and cursor are left alone, so "select in hierarchy" is reveal plus =lrg_tree_view_select_item_full (tree, item, LRG_SELECT_MODE_REPLACE)=.
+
+The ancestors come from the parent function set with =lrg_tree_view_set_parent_func (tree, func, user_data, destroy)= (=LrgTreeViewParentFunc= returns the parent of an item, transfer none, =NULL= for a root item). Without one, reveal searches the hierarchy depth first, asking the children function for every branch it walks: fine for small trees, costly for big ones, so editors with a node graph should set the parent function.
+
+#+begin_src C
+static GObject *
+node_parent (LrgTreeView *tree,
+             GObject     *item,
+             gpointer     user_data)
+{
+	return (GObject *) lrg_node_get_parent (LRG_NODE (item));
+}
+
+lrg_tree_view_set_parent_func (tree, node_parent, NULL, NULL);
+lrg_tree_view_reveal (tree, G_OBJECT (picked));
+lrg_tree_view_select_item_full (tree, G_OBJECT (picked), LRG_SELECT_MODE_REPLACE);
+#+end_src
+
 ** Selection and activation
 :PROPERTIES:
 :CUSTOM_ID: tree-view-selection
 :END:
-=none=, =single= (default) or =multiple= (Ctrl + click toggles). =lrg_tree_view_select_item()=, =lrg_tree_view_unselect_all()=, =lrg_tree_view_get_selected_item()=, =lrg_tree_view_is_item_selected()=, =lrg_tree_view_get_n_selected()=, =lrg_tree_view_get_cursor_item()=. A click on the arrow column toggles the item (without selecting); a click elsewhere selects; a second click on the same item within 0.4 s of canvas time, or Enter / Space / gamepad A, emits =row-activated= with the item.
+=none=, =single= (default) or =multiple= (Ctrl + click toggles, Shift + click selects a range). =lrg_tree_view_select_item()=, =lrg_tree_view_unselect_all()=, =lrg_tree_view_get_selected_item()=, =lrg_tree_view_is_item_selected()=, =lrg_tree_view_get_n_selected()=, =lrg_tree_view_get_cursor_item()=. A click on the arrow column toggles the item (without selecting); a click elsewhere selects; a second click on the same item within 0.4 s of canvas time, or Enter / Space / gamepad A, emits =row-activated= with the item.
+
+*** Multi-selection
+:PROPERTIES:
+:CUSTOM_ID: tree-view-multi-selection
+:END:
+Every selection gesture goes through one function, =lrg_tree_view_select_item_full (tree, item, LrgSelectMode mode)=, which also moves the cursor to the item (without scrolling):
+
+| =LrgSelectMode=           | Gesture                    | Effect                                                      | Anchor        |
+|---------------------------+----------------------------+-------------------------------------------------------------+---------------|
+| =LRG_SELECT_MODE_REPLACE= | click, plain arrow keys    | The selection becomes exactly the item                      | the item      |
+| =LRG_SELECT_MODE_TOGGLE=  | Ctrl + click               | The item is added or removed; the rest stays                | the item      |
+| =LRG_SELECT_MODE_EXTEND=  | Shift + click, Shift + arrows / Page / Home / End | The selection becomes every row between the anchor and the item (flattened order) | unchanged |
+
+- TOGGLE and EXTEND need =multiple= mode. In =single= mode they act as REPLACE, except that TOGGLE on the selected item clears the selection. In =none= mode only the cursor moves.
+- EXTEND without a visible anchor (none yet, or hidden in a collapsed branch) acts as REPLACE.
+- A range contains only rows: selected items hidden in collapsed branches drop out of it.
+- =lrg_tree_view_get_selected_items()= returns a new =GPtrArray= (transfer container) with the rows first, in row order, then the selected items hidden inside collapsed branches (they stay selected and reappear selected). =lrg_tree_view_get_anchor_item()= gives the anchor.
+- =lrg_tree_view_select_item()= keeps its old behaviour (replace in single mode, add in multiple mode, the anchor is not touched) for compatibility; new code should use =select_item_full=.
+
+=selection-changed= is emitted once per gesture or call that changed the set of selected items: one click, one Shift + click whatever the size of the range, one keyboard move, =unselect_all=, a mode change that drops items, a new model. It is not emitted when the set is unchanged (clicking the only selected item, moving the cursor onto it) nor for cursor-only moves. It has no arguments: read the set with =get_selected_items= (the editor maps it to its node selection in one undoable step).
+
+** Inline rename
+:PROPERTIES:
+:CUSTOM_ID: tree-view-rename
+:END:
+=lrg_tree_view_start_editing (tree, item)= (or F2 on the cursor row) shows an =LrgTextInput= (style class =tree-view-editor=) over the row's label: from the left edge of the first =LrgLabel= in the row widget (depth first; the whole row after the arrow when there is none) to the right edge of the row, filled with the label's text (or the item's =string= / =text= / =name= / =label= / =title= property), all selected, with the keyboard focus. Icons the factory puts before the label stay visible. The view never renames anything itself:
+
+| Event                                  | Result                                                                 |
+|----------------------------------------+------------------------------------------------------------------------|
+| Enter                                  | =edit-label (item, new_text)=; a handler returning =TRUE= accepts and the editor closes; =FALSE= (or no handler) refuses and the editor stays open with its text selected |
+| Escape                                 | =edit-cancelled (item)=, editor closes                                 |
+| Focus moves away (click elsewhere, Tab) | Like Enter; a refused text then cancels                                |
+| =lrg_tree_view_stop_editing (tree, cancel)= | =FALSE= commits like Enter, =TRUE= cancels                        |
+| Collapsing an ancestor, removing the item, a new model, another =start_editing= | =edit-cancelled= |
+
+While editing, the input owns its keys: arrows move the text cursor, not the tree cursor. Scrolling the row out of the viewport hides the input until it comes back. =lrg_tree_view_get_editing_item()= and =lrg_tree_view_get_editor()= expose the state. The keyboard focus returns to the tree when an edit ends. Slow double click to rename is not implemented; bind F2 or a context menu entry.
+
+#+begin_src C
+static gboolean
+on_edit_label (LrgTreeView *tree,
+               GObject     *item,
+               const gchar *new_text,
+               gpointer     user_data)
+{
+	if (*new_text == '\0')
+		return FALSE;   /* keep editing */
+	my_scene_rename (user_data, item, new_text);   /* one undo step */
+	return TRUE;
+}
+
+g_signal_connect (tree, "edit-label", G_CALLBACK (on_edit_label), scene);
+#+end_src
+
+** Drag-and-drop geometry
+:PROPERTIES:
+:CUSTOM_ID: tree-view-dnd
+:END:
+The tree does not run drag sessions (see [[file:../drag-and-drop.org][drag and drop]]); it answers the geometry questions a drop target asks and paints where a drop would land. All coordinates are canvas (world) coordinates, the space of the pointer in =LrgCanvasInput= and of the drop-target =motion= signal.
+
+- =lrg_tree_view_get_row_rect (tree, item, &x, &y, &w, &h)=: the full-width row rectangle at the displayed scroll offset (possibly outside the viewport); =FALSE= when the item has no row.
+- =lrg_tree_view_get_item_at (tree, x, y)=: the item under a point, =NULL= outside the viewport or below the last row.
+- =lrg_tree_view_get_drop_position (tree, y, &item, &pos)=: the target row and an =LrgDropPosition=. The top quarter of a row is =BEFORE=, the bottom quarter =AFTER=, the middle =INTO=. =AFTER= an expanded parent is reported as =BEFORE= its first child (that is where the payload would go). Below the last row the target is the last root item, =AFTER=. An empty tree gives =NULL=, =INTO= (into the root). Returns =FALSE= outside the viewport.
+- =lrg_tree_view_set_drop_indicator (tree, item, pos)= / =lrg_tree_view_clear_drop_indicator()= / =lrg_tree_view_get_drop_indicator (tree, &pos)=: =BEFORE= and =AFTER= draw an =ACCENT= insertion line, 2 px, starting at the target's arrow column (its depth reads at a glance) with a small ring; =AFTER= sits below the target's last visible descendant, where its next sibling would go. The line glides between rows with a spring (snaps when motion is off, or when it first appears). =INTO= tints the row with =ACCENT= at 18 % and outlines it.
+
+=LrgDropPosition= (=BEFORE=, =INTO=, =AFTER=, GType =LRG_TYPE_DROP_POSITION=) and =LrgSelectMode= (GType =LRG_TYPE_SELECT_MODE=) are declared in =lrg-tree-view.h= and shared with [[file:list-view.org][LrgListView]] and [[file:tile-view.org][LrgTileView]].
+
+#+begin_src C
+static gboolean
+on_drop_motion (LrgDropTarget *target, gfloat x, gfloat y, gpointer user_data)
+{
+	LrgTreeView     *tree = user_data;
+	GObject         *item;
+	LrgDropPosition  pos;
+
+	if (!lrg_tree_view_get_drop_position (tree, y, &item, &pos))
+		return FALSE;
+	if (item != NULL && pos == LRG_DROP_POSITION_INTO && !is_container (item))
+		pos = LRG_DROP_POSITION_AFTER;
+	lrg_tree_view_set_drop_indicator (tree, item, pos);
+	return TRUE;
+}
+#+end_src
+(The exact drop-target signal signatures are documented on the drag-and-drop page.)
 
 ** Properties and signals
 :PROPERTIES:
@@ -100,7 +205,9 @@ Inherited: =padding= (default 4).
 
 | Signal              | Arguments        | Emitted                                  |
 |---------------------+------------------+------------------------------------------|
-| =selection-changed= | none             | Items were selected or unselected        |
+| =selection-changed= | none             | The set of selected items changed (once per gesture or call; see [[#tree-view-multi-selection][Multi-selection]]) |
+| =edit-label=        | =GObject *item=, =const gchar *new_text= | Inline rename committed; return =TRUE= to accept (accumulator: the first =TRUE= wins) |
+| =edit-cancelled=    | =GObject *item=  | Inline rename abandoned                  |
 | =row-activated=     | =GObject *item=  | Double click, or Enter / Space / gamepad A |
 | =row-expanded=      | =GObject *item=  | After an item opened                     |
 | =row-collapsed=     | =GObject *item=  | After an item closed                     |
@@ -129,6 +236,9 @@ Inherited: =padding= (default 4).
 | Input                  | Action                                                    |
 |------------------------+-----------------------------------------------------------|
 | Up / Down              | Previous / next visible row                               |
+| Shift + Up / Down / Page / Home / End | Extend the selection from the anchor (multiple mode) |
+| F2                     | Rename the cursor item inline                             |
+| Escape (while renaming) | Cancel the rename                                        |
 | Page Up / Page Down    | By a page of rows                                         |
 | Home / End             | First / last visible row                                  |
 | Right                  | Expand a collapsed parent; on an expanded one, go to its first child |
@@ -190,6 +300,8 @@ g_message ("offset %.0f", lrg_tree_view_get_scroll_offset (tree));
 - An empty child model that is not a =GListStore= is treated as a leaf; a =GListStore= child model shows its arrow once it gets items.
 - Changing the root model or the children function resets expansion, selection and caches.
 - Hierarchies deeper than 256 levels are cut off (cycle guard).
+- Reveal without a parent function walks (and caches the children of) every branch before the item: give large trees a parent function.
+- The drop indicator follows its item: when the tree changes under a drag it moves with the row, and it is not painted while the item has no row.
 
 ** API Reference
 :PROPERTIES:
@@ -207,6 +319,13 @@ g_message ("offset %.0f", lrg_tree_view_get_scroll_offset (tree));
 - =lrg_tree_view_scroll_to=, =lrg_tree_view_get_scroll_offset=
 - =lrg_tree_view_get_row_widget=, =lrg_tree_view_get_n_rows=
 - =LRG_TREE_VIEW_INVALID_POSITION=
+- =lrg_tree_view_set_parent_func (self, LrgTreeViewParentFunc func, user_data, destroy)=, =lrg_tree_view_reveal (self, item)=
+- =lrg_tree_view_select_item_full (self, item, LrgSelectMode mode)=, =lrg_tree_view_get_selected_items= (transfer container), =lrg_tree_view_get_anchor_item=
+- =lrg_tree_view_start_editing=, =lrg_tree_view_stop_editing (self, cancel)=, =lrg_tree_view_get_editing_item=, =lrg_tree_view_get_editor=
+- =lrg_tree_view_get_row_rect=, =lrg_tree_view_get_item_at=, =lrg_tree_view_get_drop_position=, =lrg_tree_view_set_drop_indicator=, =lrg_tree_view_clear_drop_indicator=, =lrg_tree_view_get_drop_indicator=
+- =LrgDropPosition= (=LRG_DROP_POSITION_BEFORE=, =LRG_DROP_POSITION_INTO=, =LRG_DROP_POSITION_AFTER=; =lrg_drop_position_get_type=, =LRG_TYPE_DROP_POSITION=)
+- =LrgSelectMode= (=LRG_SELECT_MODE_REPLACE=, =LRG_SELECT_MODE_TOGGLE=, =LRG_SELECT_MODE_EXTEND=; =lrg_select_mode_get_type=, =LRG_TYPE_SELECT_MODE=)
+- =LrgTreeViewParentFunc=
 
 ** Related
 :PROPERTIES:

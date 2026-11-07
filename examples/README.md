@@ -69,6 +69,7 @@ cd examples
 | `ui-studio` | Tool app from YAML: menu bar, dock, 3D viewport animated by a timeline and by block scripts, node graph and timeline looks, file dialogs, save notifications, script editor and console | [docs](../docs/examples/ui-studio.org) |
 | `ui-theme-editor` | Live theme editor with palette generation and contrast checks | [docs](../docs/examples/ui-theme-editor.org) |
 | `game-ui-menu` | Gamepad-navigable game menu over a live scene, themed from YAML | [docs](../docs/examples/ui-game-menu.org) |
+| `editor-custom-panel` | Embeds the libregnum editor and extends it: a "Level Stats" dock panel that follows `LrgEditor::changed`, and an action with a shortcut and a Tools menu entry (built with `BUILD_EDITOR_UI=1`) | [docs](../docs/examples/editor-custom-panel.org) |
 
 ### Asset Rendering
 

@@ -2339,6 +2339,29 @@ lrg_menu_get_entry_rect (LrgMenu *self,
 	return TRUE;
 }
 
+gboolean
+lrg_menu_get_item_rect (LrgMenu *self,
+                        guint    index,
+                        gfloat  *x,
+                        gfloat  *y,
+                        gfloat  *width,
+                        gfloat  *height)
+{
+	g_return_val_if_fail (LRG_IS_MENU (self), FALSE);
+
+	/* Same geometry as the entry rect: rows are entries */
+	return lrg_menu_get_entry_rect (self, index, x, y, width, height);
+}
+
+gfloat
+lrg_menu_get_row_height (LrgMenu *self)
+{
+	g_return_val_if_fail (LRG_IS_MENU (self), 0.0f);
+
+	/* Item rows are ROW_HEIGHT tall (see layout_rows()) */
+	return lrg_theme_get_metric (lrg_widget_get_theme (LRG_WIDGET (self)), LRG_THEME_METRIC_ROW_HEIGHT);
+}
+
 gint
 lrg_menu_get_highlighted (LrgMenu *self)
 {

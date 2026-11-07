@@ -192,6 +192,13 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-notification.h \
 	src/ui/lrg-header-bar.h \
 	src/ui/lrg-pagination.h \
+	src/ui/lrg-drag.h \
+	src/ui/lrg-drop-target.h \
+	src/ui/lrg-property-source.h \
+	src/ui/lrg-property-grid.h \
+	src/ui/lrg-vector-edit.h \
+	src/ui/lrg-curve-edit.h \
+	src/ui/lrg-gradient-edit.h \
 	src/tilemap/lrg-tileset.h \
 	src/tilemap/lrg-tilemap-layer.h \
 	src/tilemap/lrg-tilemap.h \
@@ -892,6 +899,13 @@ SOURCES := \
 	src/ui/lrg-notification.c \
 	src/ui/lrg-header-bar.c \
 	src/ui/lrg-pagination.c \
+	src/ui/lrg-drag.c \
+	src/ui/lrg-drop-target.c \
+	src/ui/lrg-property-source.c \
+	src/ui/lrg-property-grid.c \
+	src/ui/lrg-vector-edit.c \
+	src/ui/lrg-curve-edit.c \
+	src/ui/lrg-gradient-edit.c \
 	src/tilemap/lrg-tileset.c \
 	src/tilemap/lrg-tilemap-layer.c \
 	src/tilemap/lrg-tilemap.c \
@@ -1564,6 +1578,16 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-validate.h \
 	src/editor/lrg-asset-database.h \
 	src/editor/lrg-project.h \
+	src/editor/lrg-editor-shortcut-legacy.h \
+	src/editor/lrg-editor-view-state.h \
+	src/editor/lrg-editor-play-session.h \
+	src/editor/lrg-editor-viewport-nav.h \
+	src/editor/lrg-asset-meta.h \
+	src/editor/lrg-editor-vcs.h \
+	src/editor/lrg-editor-document.h \
+	src/editor/lrg-editor-settings-migrate.h \
+	src/editor/lrg-editor-node-model.h \
+	src/editor/lrg-editor-node-source.h \
 	src/editor/lrg-prefab.h
 SOURCES += \
 	src/editor/lrg-component-desc.c \
@@ -1594,23 +1618,74 @@ SOURCES += \
 	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
 	src/editor/lrg-project.c \
+	src/editor/lrg-editor-view-state.c \
+	src/editor/lrg-editor-play-session.c \
+	src/editor/lrg-editor-viewport-nav.c \
+	src/editor/lrg-asset-meta.c \
+	src/editor/lrg-editor-vcs.c \
+	src/editor/lrg-editor-document.c \
+	src/editor/lrg-editor-settings-migrate.c \
+	src/editor/lrg-editor-node-model.c \
+	src/editor/lrg-editor-node-source.c \
 	src/editor/lrg-prefab.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
+	src/editor/ui/data/lrg-editor-data-editor.h \
+	src/editor/ui/data/lrg-editor-input-map-editor.h \
+	src/editor/ui/data/lrg-editor-locale-editor.h \
+	src/editor/ui/data/lrg-editor-sound-bank-editor.h \
+	src/editor/ui/data/lrg-editor-theme-editor.h \
+	src/editor/ui/data/lrg-editor-hud-layout-editor.h \
+	src/editor/ui/data/lrg-editor-ui-layout-editor.h \
+	src/editor/ui/data/lrg-editor-dialog-tree-editor.h \
+	src/editor/ui/data/lrg-editor-dungeon-editor.h \
+	src/editor/ui/lrg-editor-window.h \
+	src/editor/ui/lrg-editor-legacy-input.h \
+	src/editor/ui/lrg-editor-hierarchy-panel.h \
+	src/editor/ui/lrg-editor-inspector-panel.h \
+	src/editor/ui/lrg-editor-viewport-panel.h \
+	src/editor/ui/lrg-editor-viewport-split.h \
+	src/editor/ui/lrg-editor-scene-renderer.h \
+	src/editor/ui/lrg-editor-gizmo-paint.h \
+	src/editor/ui/lrg-editor-assets-panel.h \
+	src/editor/ui/lrg-editor-console-panel.h \
+	src/editor/ui/lrg-editor-tiles-panel.h \
+	src/editor/ui/lrg-editor-timeline-panel.h \
+	src/editor/ui/lrg-editor-profiler-panel.h \
+	src/editor/ui/lrg-editor-code-panel.h \
+	src/editor/ui/lrg-editor-palette.h \
+	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
 SOURCES += \
 	src/editor/ui/lrg-editor-app.c \
+	src/editor/ui/data/lrg-editor-data-editor.c \
+	src/editor/ui/data/lrg-editor-input-map-editor.c \
+	src/editor/ui/data/lrg-editor-locale-editor.c \
+	src/editor/ui/data/lrg-editor-sound-bank-editor.c \
+	src/editor/ui/data/lrg-editor-theme-editor.c \
+	src/editor/ui/data/lrg-editor-hud-layout-editor.c \
+	src/editor/ui/data/lrg-editor-ui-layout-editor.c \
+	src/editor/ui/data/lrg-editor-dialog-tree-editor.c \
+	src/editor/ui/data/lrg-editor-dungeon-editor.c \
+	src/editor/ui/lrg-editor-window.c \
+	src/editor/ui/lrg-editor-legacy-input.c \
+	src/editor/ui/lrg-editor-hierarchy-panel.c \
+	src/editor/ui/lrg-editor-inspector-panel.c \
+	src/editor/ui/lrg-editor-viewport-panel.c \
+	src/editor/ui/lrg-editor-viewport-split.c \
+	src/editor/ui/lrg-editor-scene-renderer.c \
+	src/editor/ui/lrg-editor-gizmo-paint.c \
+	src/editor/ui/lrg-editor-assets-panel.c \
+	src/editor/ui/lrg-editor-console-panel.c \
+	src/editor/ui/lrg-editor-tiles-panel.c \
+	src/editor/ui/lrg-editor-timeline-panel.c \
+	src/editor/ui/lrg-editor-profiler-panel.c \
+	src/editor/ui/lrg-editor-code-panel.c \
+	src/editor/ui/lrg-editor-palette.c \
+	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \
-	src/editor/ui/lrg-editor-panel-hierarchy.c \
-	src/editor/ui/lrg-editor-panel-inspector.c \
-	src/editor/ui/lrg-editor-panel-viewport.c \
-	src/editor/ui/lrg-editor-panel-assets.c \
-	src/editor/ui/lrg-editor-panel-console.c \
-	src/editor/ui/lrg-editor-render.c \
 	src/editor/ui/lrg-editor-dialogs.c \
 	src/editor/ui/lrg-editor-play.c \
-	src/editor/ui/lrg-editor-panel-tiles.c \
-	src/editor/ui/lrg-editor-panel-timeline.c \
 	src/editor/ui/lrg-editor-thumbnails.c
 endif
 endif
@@ -2266,7 +2341,8 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
-DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h
+DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h \
+	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h)
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)
@@ -2331,6 +2407,8 @@ ifeq ($(BUILD_EDITOR_UI),1)
 	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
 	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/emacs/site-lisp
 	$(INSTALL_DATA) editors/emacs/libregnum.el $(DESTDIR)$(DATADIR)/emacs/site-lisp/
+	@$(MKDIR_P) $(DESTDIR)$(DATADIR)/libregnum/editor/themes
+	$(INSTALL_DATA) data/editor/themes/catppuccin-macchiato.yaml data/editor/themes/catppuccin-frappe.yaml $(DESTDIR)$(DATADIR)/libregnum/editor/themes/
 endif
 endif
 ifeq ($(BUILD_EDITOR),1)
@@ -2373,6 +2451,7 @@ uninstall:
 	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgeditor$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
+	$(RM) $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-macchiato.yaml $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-frappe.yaml
 	$(RM) $(DESTDIR)$(BINDIR)/lrgeditorctl$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/bash-completion/completions/lrgeditorctl
 ifeq ($(BUILD_GIR),1)

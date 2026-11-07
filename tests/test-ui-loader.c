@@ -2859,6 +2859,177 @@ test_wave3_examples (void)
 	lrg_widget_layout (LRG_WIDGET (canvas));
 }
 
+/* ==========================================================================
+ * Source tracking (UI designer: widget <-> YAML pointer)
+ * ========================================================================== */
+
+static const gchar *SOURCES_YAML =
+	"components:\n"
+	"  Card:\n"
+	"    params: {title: '?'}\n"
+	"    body:\n"
+	"      type: vbox\n"
+	"      children:\n"
+	"        - {type: label, id: card-title, text: '${title}'}\n"
+	"        - {slot: true}\n"
+	"type: vbox\n"
+	"id: top\n"
+	"children:\n"
+	"  - {type: label, id: first, text: one}\n"
+	"  - type: hbox\n"
+	"    id: row\n"
+	"    children:\n"
+	"      - {type: button, id: go, text: Go}\n"
+	"  - type: Card\n"
+	"    id: card\n"
+	"    title: Hello\n"
+	"    children:\n"
+	"      - {type: label, id: filled, text: slot}\n"
+	"  - repeat: 2\n"
+	"    body: {type: label, text: 'r${i}'}\n"
+	"  - {type: label, id: 'a~b', text: x}\n";
+
+static void
+test_source_paths (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgWidget) root = NULL;
+	g_autoptr(LrgWidget) untracked = NULL;
+	LrgWidget *rep;
+	guint line = 0;
+	guint column = 0;
+
+	/* Off by default: no pointers, but positions are still known */
+	g_assert_false (lrg_ui_loader_get_track_sources (loader));
+	untracked = load_ok (loader, "{type: vbox, children: [{type: label, id: u, text: u}]}");
+	g_assert_null (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "u")));
+	g_assert_true (lrg_ui_loader_get_source_location (loader, lrg_ui_loader_get_widget (loader, "u"),
+	                                                  &line, &column));
+	g_assert_cmpuint (line, ==, 1);
+	g_assert_cmpuint (column, >, 1);
+	g_assert_null (lrg_ui_loader_get_widget_for_path (loader, "/children/0"));
+
+	lrg_ui_loader_set_track_sources (loader, TRUE);
+	g_assert_true (lrg_ui_loader_get_track_sources (loader));
+	root = load_ok (loader, SOURCES_YAML);
+
+	/* Plain widgets: their own pointer; the root written at the top is "" */
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, root), ==, "");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "first")),
+	                 ==, "/children/0");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "go")),
+	                 ==, "/children/1/children/0");
+
+	/* A component's root and its body report the use site; slot
+	 * children given at the use site keep their own pointer */
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "card")),
+	                 ==, "/children/2");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "card-title")),
+	                 ==, "/children/2");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "filled")),
+	                 ==, "/children/2/children/0");
+
+	/* Generated widgets share their template's pointer */
+	rep = lrg_container_get_child (LRG_CONTAINER (root), 4);
+	g_assert_cmpstr (lrg_label_get_text (LRG_LABEL (rep)), ==, "r1");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, rep), ==, "/children/3/body");
+
+	/* Back from pointers to widgets: the outermost widget wins */
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "") == root);
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "/") == root);
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "/children/1/children/0") ==
+	               lrg_ui_loader_get_widget (loader, "go"));
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "/children/2") ==
+	               lrg_ui_loader_get_widget (loader, "card"));
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "/children/3/body") ==
+	               lrg_container_get_child (LRG_CONTAINER (root), 3));
+	g_assert_null (lrg_ui_loader_get_widget_for_path (loader, "/children/99"));
+	g_assert_null (lrg_ui_loader_get_widget_for_path (loader, "/components/Card/body"));
+
+	/* Line and column: the use site for components, 1-based */
+	g_assert_true (lrg_ui_loader_get_source_location (loader, lrg_ui_loader_get_widget (loader, "go"),
+	                                                  &line, &column));
+	g_assert_cmpuint (line, ==, 16);
+	g_assert_cmpuint (column, ==, 9);
+	g_assert_true (lrg_ui_loader_get_source_location (loader, lrg_ui_loader_get_widget (loader, "card-title"),
+	                                                  &line, NULL));
+	g_assert_cmpuint (line, ==, 17);
+	g_assert_true (lrg_ui_loader_get_source_location (loader, lrg_ui_loader_get_widget (loader, "filled"),
+	                                                  &line, NULL));
+	g_assert_cmpuint (line, ==, 21);
+
+	/* A widget no loader built */
+	{
+		g_autoptr(LrgLabel) stray = lrg_label_new ("x");
+
+		g_assert_null (lrg_ui_loader_get_source_path (loader, LRG_WIDGET (stray)));
+		g_assert_false (lrg_ui_loader_get_source_location (loader, LRG_WIDGET (stray), NULL, NULL));
+	}
+}
+
+/* Includes report the include entry; a hot reload moves the pointers */
+static void
+test_source_paths_reload (void)
+{
+	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
+	g_autoptr(LrgVBox) host = lrg_vbox_new ();
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *part = NULL;
+	g_autofree gchar *path = NULL;
+	LrgWidget *root;
+	LrgWidget *go;
+	LrgWidget *inc;
+
+	lrg_ui_loader_set_track_sources (loader, TRUE);
+	dir = g_dir_make_tmp ("lrg-ui-sources-XXXXXX", &error);
+	g_assert_no_error (error);
+	part = write_temp (dir, "part.yaml", "type: hbox\nid: inc\nchildren: [{type: label, id: inner, text: in}]\n");
+	path = g_build_filename (dir, "screen.yaml", NULL);
+	write_stamped (path,
+		"type: vbox\n"
+		"children:\n"
+		"  - {type: button, id: go, text: Go}\n"
+		"  - {include: part.yaml}\n", 1000000000);
+
+	root = lrg_ui_loader_watch_file (loader, path, LRG_CONTAINER (host), &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (root);
+	go = lrg_ui_loader_get_widget (loader, "go");
+	inc = lrg_ui_loader_get_widget (loader, "inc");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, go), ==, "/children/0");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, inc), ==, "/children/1");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, lrg_ui_loader_get_widget (loader, "inner")),
+	                 ==, "/children/1");
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "/children/1") == inc);
+
+	/* A label is inserted first: reused widgets get their new pointers */
+	write_stamped (path,
+		"type: vbox\n"
+		"children:\n"
+		"  - {type: label, id: added, text: new}\n"
+		"  - {type: button, id: go, text: Go}\n"
+		"  - {include: part.yaml}\n", 1000000010);
+	g_assert_true (lrg_ui_loader_poll (loader));
+	g_assert_true (lrg_ui_loader_get_widget (loader, "go") == go);
+	g_assert_true (lrg_ui_loader_get_widget (loader, "inc") == inc);
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, go), ==, "/children/1");
+	g_assert_cmpstr (lrg_ui_loader_get_source_path (loader, inc), ==, "/children/2");
+	g_assert_true (lrg_ui_loader_get_widget_for_path (loader, "/children/0") ==
+	               lrg_ui_loader_get_widget (loader, "added"));
+	{
+		guint line = 0;
+
+		g_assert_true (lrg_ui_loader_get_source_location (loader, go, &line, NULL));
+		g_assert_cmpuint (line, ==, 4);
+	}
+
+	g_assert_true (lrg_ui_loader_unwatch_file (loader, path));
+	g_unlink (path);
+	g_unlink (part);
+	g_rmdir (dir);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -2895,6 +3066,8 @@ main (int   argc,
 	g_test_add_func ("/ui-loader/wave3/reload-files", test_reload_wave3_files);
 	g_test_add_func ("/ui-loader/wave3/errors", test_wave3_errors);
 	g_test_add_func ("/ui-loader/wave3/examples", test_wave3_examples);
+	g_test_add_func ("/ui-loader/sources/paths", test_source_paths);
+	g_test_add_func ("/ui-loader/sources/reload", test_source_paths_reload);
 
 	return g_test_run ();
 }

@@ -62,14 +62,16 @@ Cells that already hold the painted id are skipped, so re-painting records nothi
 :PROPERTIES:
 :CUSTOM_ID: tiles-panel
 :END:
-View > Panels > Tiles (docked as a tab next to the inspector; Tilemap > Tiles Panel). For the selected tilemap node it shows:
+View > Panels > Tiles (docked as a tab next to the inspector; Tilemap > Tiles Panel). Since 0.8.1 it is =LrgEditorTilesPanel= on the retained toolkit (widget details and API: [[file:editor-app.org::#editor-panel-tiles][Editor Application > Tiles panel]]). For the selected tilemap node it shows, in a scrolling column:
 
-- the paint-mode toggle and the five tools;
-- brush size (also =[= / =]=) and the current tile id;
-- grid settings: width, height, tileset slicing (drags merge into one undo step);
-- the tileset path; drop an image from the Assets panel on it to set it;
-- layers, top first: visibility checkbox, click to make a layer current, + Layer / - Layer (undoable);
-- the palette: the tileset image sliced into its tiles, click one to paint with it. Without an image (or headless) it shows numbered colour swatches with the same colours the viewport uses for untextured tiles.
+- the node name and the paint-mode toggle (=B=);
+- the five tools as chips (the checked one is the view state's =tile-tool=; picking one turns paint mode on), brush size (also =[= / =]=) and the current tile id;
+- grid settings: Create Grid for a node that has none, else width, height and the tileset slicing (each change is one undo step);
+- the tileset: a drop zone that takes an image dragged from the Assets panel (payload =application/x-lrg-asset=); it lights up while a matching drag hovers it and stores project paths relative to the project;
+- layers, top first: an eye to show / hide (undoable), click a name to make it current, + / - Layer (undoable), and a name field with Rename (undoable, also =tilemap.rename-layer=);
+- the palette: the tileset image sliced into its tiles, click one to paint with it (eraser and eyedropper switch back to the brush), hovered and current tiles highlighted. Without an image (or headless) it shows 8 x 4 numbered colour swatches with the same colours the viewport uses for untextured tiles.
+
+The panel and the viewport share the view state's =tile-tool= / =tile-mode= and the app's =LrgEditorTilePainter=, so =tilemap.tool= over IPC, the actions and the panel always show the same tool, tile, layer and brush.
 
 The viewport shows the grid outline always, cell lines while painting the node, the brush footprint under the pointer, a rectangle preview, and a "Tiles: tool tile layer brush" readout. Tiles render as textured quads from the tileset in the node's XY plane (layers stack bottom first); 2D mode (=Ctrl+Shift+2=) is the natural way to paint.
 
@@ -158,9 +160,15 @@ Levels hold named timelines that keyframe node properties. The Timeline panel (V
 :PROPERTIES:
 :CUSTOM_ID: timeline-panel
 :END:
-- Toolbar: timeline chooser, name field + New, Delete, Play/Pause (=K=), Stop, Key (=I=: insert transform keys for every selected node at the playhead, as one undo step), Delete Key, the easing used for new keys (changing it also re-eases the selected key), Loop, Autoplay, length, and the playhead time.
-- Lanes: one row per track ("Node channel"; missing nodes in red) with a ruler; diamonds are keys. Click a diamond to select it, drag it to retime it (snaps to 10 ms, one undo step per drag). Click or drag anywhere else on the lanes to scrub.
+Since 0.8.1 the panel is =LrgEditorTimelinePanel= on an =LrgTimelineView= (widget details and API: [[file:editor-app.org::#editor-panel-timeline][Editor Application > Timeline panel]]).
+
+- Toolbar: timeline picker, name field + New (Enter), Rename, Delete; Loop and Autoplay toggles; the length.
+- Transport: previous key, Play/Pause (=K=), Stop, next key; Key (=I=: insert transform keys for every selected node at the playhead, as one undo step); Delete Keys; the easing used for new keys (changing it also re-eases every selected key, one undo step); the playhead time.
+- Tracks: one group per node (its own colour; missing nodes show "(missing GUID)"), one row per animated channel inside it, collapsible. Keys are diamonds when linear and circles when eased. Click selects a key (Shift / Ctrl add), drag a rubber band to select several, drag selected keys to retime them (snapped to 10 ms, one undo step for the whole drag, however many keys), Delete removes them. Right click offers Insert Keyframe, Delete Selected Keys and a Key Easing menu (Linear, Ease In / Out / In Out by family).
+- Ruler: click or drag to scrub (a non-destructive preview, see below).
 - =Alt+Left= / =Alt+Right= jump the playhead to the previous / next key of any track.
+
+Every edit goes through the undoable =lrg_editor_timeline_*= API and every scrub / play through the view state's timeline properties, so the panel, the =timeline.*= IPC methods, =lrgeditorctl timeline= and Emacs always agree.
 
 ** Preview semantics
 :PROPERTIES:
@@ -205,7 +213,7 @@ timelines:
 - =lrgeditorctl timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|play [NAME]|stop|seek TIME [NAME]|state]=.
 - MCP: =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=.
 - Emacs: =libregnum-timeline-key= (=C-c L k=; with =C-u= one channel and value), =libregnum-timeline-ease=, =libregnum-timeline-play= (=C-c L a=), =libregnum-timeline-seek=, =libregnum-timeline-stop= (=C-c L A=).
-- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=.
+- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.rename=, =timeline.delete=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=.
 
 * Asset thumbnails
 :PROPERTIES:
@@ -240,12 +248,122 @@ The Assets panel's grid view (the Grid/List button, or View > Asset Thumbnails) 
 - IPC (app): =asset.thumbnail {path, wait}= returns =path=, =thumbnail= (or null), =pending= and =cache=; with =wait= it generates synchronously (models need a windowed editor).
 - =lrgeditorctl thumbnail PATH= prints the PNG path; MCP =get_thumbnail=; Emacs =libregnum-thumbnail= (=C-c L h=) opens it.
 
+* API index
+:PROPERTIES:
+:CUSTOM_ID: editor-tools-api-index
+:END:
+
+Every public function of the tilemap and timeline headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+** =lrg-node-tilemap.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-tools-api-lrg-node-tilemap
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_node_tilemap_new ()= | Creates an empty grid with a single layer named "base" and a 16x16 pixel tileset slicing. |
+| =lrg_node_tilemap_get_width ()= | Returns the grid width in cells. |
+| =lrg_node_tilemap_get_height ()= | Returns the grid height in cells. |
+| =lrg_node_tilemap_resize ()= | Resizes every layer, keeping the cells that stay in range (anchored at the top-left cell) and clearing new ones. |
+| =lrg_node_tilemap_get_tile_width ()= | Returns the width of one tileset tile in pixels. |
+| =lrg_node_tilemap_get_tile_height ()= | Returns the height of one tileset tile in pixels. |
+| =lrg_node_tilemap_set_tile_size ()= | Sets how the tileset image is sliced into tiles. |
+| =lrg_node_tilemap_get_n_layers ()= | Returns the number of layers (bottom first). |
+| =lrg_node_tilemap_add_layer ()= | Appends an empty, visible layer on top. |
+| =lrg_node_tilemap_remove_layer ()= | Removes a layer. The last remaining layer cannot be removed. |
+| =lrg_node_tilemap_find_layer ()= | Returns the index of the first layer called /name/, or -1. |
+| =lrg_node_tilemap_get_layer_name ()= | Returns the layer name, or =NULL= for a bad index. |
+| =lrg_node_tilemap_set_layer_name ()= | Renames a layer. |
+| =lrg_node_tilemap_get_layer_visible ()= | Returns whether the layer is drawn. |
+| =lrg_node_tilemap_set_layer_visible ()= | Shows or hides a layer. |
+| =lrg_node_tilemap_in_bounds ()= | Returns whether (/x/, /y/) is inside the grid. |
+| =lrg_node_tilemap_get_tile ()= | Returns the tile id, or 0 (empty) outside the grid or for a bad layer. |
+| =lrg_node_tilemap_set_tile ()= | Sets one cell. Out-of-range cells are ignored. |
+| =lrg_node_tilemap_get_layer_tiles ()= | Gets a layer's cells in row-major order (row 0 first). |
+| =lrg_node_tilemap_set_layer_tiles ()= | Replaces all cells of a layer. |
+| =lrg_node_tilemap_count_tiles ()= | Returns the number of non-empty cells in /layer/. |
+| =lrg_node_tilemap_copy ()= | Returns a deep copy. |
+| =lrg_node_tilemap_equal ()= | Returns whether both are =NULL= or hold the same size, slicing and layers. |
+
+** =lrg-editor-tile-painter.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-tools-api-lrg-editor-tile-painter
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_tile_painter_new ()= | Returns a new painter (tile 1, layer 0, brush 1). |
+| =lrg_editor_tile_painter_get_tile ()= | Returns the tile id painted by the brush, rectangle and fill tools. |
+| =lrg_editor_tile_painter_set_tile ()= | Sets the current tile. |
+| =lrg_editor_tile_painter_get_layer ()= | Returns the layer edits go to (clamped to the node's layers on use). |
+| =lrg_editor_tile_painter_set_layer ()= | Sets the layer edits go to. |
+| =lrg_editor_tile_painter_get_brush_size ()= | Returns the square brush size in cells. |
+| =lrg_editor_tile_painter_set_brush_size ()= | Sets the square brush size; even sizes extend right/down of the cell. |
+| =lrg_editor_tile_painter_ensure_tilemap ()= | Returns the node's tile grid, first giving it an empty =LRG_EDITOR_TILEMAP_DEFAULT_SIZE= grid (one undoable step) if it has none. |
+| =lrg_editor_tile_painter_begin_stroke ()= | Starts a stroke; everything until =lrg_editor_tile_painter_end_stroke()= is one undo step. |
+| =lrg_editor_tile_painter_stroke_to ()= | Stamps the brush along the line from the previous sample (or just at (/x/, /y/) for the first sample). |
+| =lrg_editor_tile_painter_end_stroke ()= | Ends the stroke and records it. |
+| =lrg_editor_tile_painter_is_stroking ()= | Returns whether a stroke is in progress. |
+| =lrg_editor_tile_painter_paint_cells ()= | Sets a list of cells as one undo step (no brush footprint). |
+| =lrg_editor_tile_painter_paint_rect ()= | Fills a rectangle (clipped to the grid) as one undo step. |
+| =lrg_editor_tile_painter_fill ()= | Flood-fills the 4-connected region holding the seed's tile id as one undo step. |
+| =lrg_editor_tile_painter_pick ()= | Eyedropper: makes the tile at (/x/, /y/) on the current layer the current tile (an empty cell leaves it unchanged). |
+| =lrg_editor_tile_painter_get_tile_size ()= | Returns the world size of one cell (the visual's "tile_size" param, 1.0 by default). |
+
+** =lrg-timeline.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-tools-api-lrg-timeline
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_timeline_channel_write ()= | Writes a channel directly (not undoable; used for playback). |
+| =lrg_timeline_track_new ()= | Returns a new, empty track. |
+| =lrg_timeline_track_get_node_guid ()= | Returns the animated node's GUID. |
+| =lrg_timeline_track_get_channel ()= | Returns the animated channel. |
+| =lrg_timeline_track_get_curve ()= | Returns the keyframe curve (key times in seconds). |
+| =lrg_timeline_track_get_n_keys ()= | Returns the number of keys. |
+| =lrg_timeline_track_get_key ()= | Returns whether /index/ exists. |
+| =lrg_timeline_track_set_key ()= | Adds a key, replacing any key within half a millisecond of /time/. |
+| =lrg_timeline_track_find_key ()= | Returns the index of the key nearest /time/ within /tolerance/, or -1. |
+| =lrg_timeline_track_remove_key ()= | Returns whether a key was removed. |
+| =lrg_timeline_track_sample ()= | Samples the curve (clamped to the first/last key). |
+| =lrg_timeline_track_copy ()= | Returns a deep copy. |
+| =lrg_timeline_track_equal ()= | Returns whether both target the same channel with identical keys. |
+| =lrg_timeline_new ()= | Creates an empty two-second, non-looping timeline. |
+| =lrg_timeline_get_name ()= | Returns the name. |
+| =lrg_timeline_set_name ()= | Renames the timeline. |
+| =lrg_timeline_get_length ()= | Returns the playback length in seconds. |
+| =lrg_timeline_set_length ()= | Sets the playback length (keys past it are kept but never reached). |
+| =lrg_timeline_get_loop ()= | Returns whether playback wraps at the end. |
+| =lrg_timeline_set_loop ()= | Sets looping. |
+| =lrg_timeline_get_autoplay ()= | Returns whether the timeline starts playing when the level runs (play-in-editor). |
+| =lrg_timeline_set_autoplay ()= | Sets autoplay. |
+| =lrg_timeline_get_n_tracks ()= | Returns the number of tracks. |
+| =lrg_timeline_get_track ()= | Returns the track, or =NULL=. |
+| =lrg_timeline_find_track ()= | Returns the index of the track animating /channel/ of /node_guid/, or -1. |
+| =lrg_timeline_ensure_track ()= | Returns the track for (/node_guid/, /channel/), appending an empty one when there is none. |
+| =lrg_timeline_remove_track ()= | Returns whether a track was removed. |
+| =lrg_timeline_add_track ()= | Appends /track/ (a reference is taken). |
+| =lrg_timeline_copy ()= | Returns a deep copy. |
+| =lrg_timeline_equal ()= | Returns whether both are =NULL= or hold the same settings and tracks. |
+
+** =lrg-editor-timeline.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-tools-api-lrg-editor-timeline
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_timeline_channel_is_valid ()= | Returns whether /channel/ names an animatable channel. |
+
 * Limits
 :PROPERTIES:
 :CUSTOM_ID: tools-limits
 :END:
 - Tilemaps: one tileset per node; no auto-tiling/terrain rules, no per-tile flips or rotation, no collision editing in the panel (the runtime =LrgTileset= properties are not authored here). =lrg_level_instantiate()= does not create runtime tilemaps; games convert with =lrg_node_tilemap_to_runtime()=.
-- Timelines: scalar channels only (colour is four tracks); no Bézier tangents (easing per segment instead); the timeline panel shows one row per track without per-node folding; play-in-editor animates the authoring nodes, not the runtime entities.
+- Timelines: scalar channels only (colour is four tracks); no Bézier tangents (easing per segment instead); play-in-editor animates the authoring nodes, not the runtime entities.
 - Thumbnails: no thumbnails for audio, fonts, scripts, tilesets (=.tileset=/=.tsx=) or CAD parts; a request still in flight when its file is invalidated may deliver the old image once (the next change or Rebuild Thumbnails fixes it).
 
 * Source map
@@ -262,9 +380,11 @@ The Assets panel's grid view (the Grid/List button, or View > Asset Thumbnails) 
 | =src/editor/lrg-editor-command.[ch]= | =LRG_EDITOR_CMD_TILES=, =LRG_EDITOR_CMD_TIMELINE= |
 | =src/editor/lrg-level-serializer.c= | =visual.tilemap= and =timelines:= YAML |
 | =src/editor/lrg-editor-server-tools.c= | =tilemap.*= and =timeline.*= IPC methods |
-| =src/editor/ui/lrg-editor-panel-tiles.c= | Tiles panel, viewport tile tool and overlay |
-| =src/editor/ui/lrg-editor-panel-timeline.c= | Timeline panel, preview, play-in-editor hooks |
+| =src/editor/ui/lrg-editor-tiles-panel.[ch]= | Tiles panel (=LrgEditorTilesPanel=) |
+| =src/editor/ui/lrg-editor-timeline-panel.[ch]= | Timeline panel (=LrgEditorTimelinePanel=) |
+| =src/editor/ui/lrg-editor-play.c= | timeline preview and play-in-editor hooks, tile target |
 | =src/editor/ui/lrg-editor-thumbnails.c= | per-project cache, uploads, invalidation |
 | =src/editor/ui/lrg-editor-render.c= | tilemap rendering, model thumbnail renders, asset forgetting |
 | =tests/test-editor-tilemap.c=, =test-editor-timeline.c=, =test-thumbnail-cache.c= | headless unit tests |
+| =tests/test-editor-app-panels.c= | Tiles and Timeline panels driven through the canvas |
 | =tests/test-editor-server.c=, =test-editor-app.c=, =editor-x11-smoke.sh=, =editorctl-smoke.sh= | IPC, app, real-input and CLI tests |

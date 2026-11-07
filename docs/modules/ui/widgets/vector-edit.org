@@ -1,0 +1,123 @@
+* Vector edit
+:PROPERTIES:
+:CUSTOM_ID: vector-edit
+:END:
+=LrgVectorEdit= edits a vector of 1 to 4 numbers (=LRG_VECTOR_EDIT_MAX_COMPONENTS=) as a row of fields, one per axis, each with a coloured axis tab: X red, Y green, Z blue, W amber. Drag a field sideways to scrub it, or click it to type a number. An optional lock button scales all axes together (uniform scale). It is the property grid's editor for =GrlVector2=, =GrlVector3= and =GrlVector4=, and works on its own anywhere a position, size or colour needs per-axis numbers.
+
+The whole vector is one widget (it paints its fields itself), so it is one focus stop and one pointer capture: a scrub that leaves the field sideways keeps going.
+
+** Creation
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-creation
+:END:
+#+begin_src C
+LrgVectorEdit *scale = lrg_vector_edit_new (3);
+gfloat         one[3] = { 1.0f, 1.0f, 1.0f };
+
+lrg_vector_edit_set_values (scale, one, 3);
+lrg_vector_edit_set_range (scale, 0.0, 100.0);
+lrg_vector_edit_set_step (scale, 0.01);
+lrg_vector_edit_set_show_uniform (scale, TRUE);
+g_signal_connect (scale, "value-changed", G_CALLBACK (on_scale_changed), node);
+#+end_src
+
+** Behaviour
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-behaviour
+:END:
+| Input                              | Action                                                                       |
+|------------------------------------+------------------------------------------------------------------------------|
+| Drag a field sideways              | Scrub: =step= per 2 units of travel (after 3 units of slack)                 |
+| Shift / Ctrl while scrubbing       | Ten times slower / faster                                                    |
+| Click a field without dragging     | Type into it: digits, '.', '-', '+', 'e'; the first key replaces the value   |
+| Enter                              | Apply the typed number                                                       |
+| Tab while typing                   | Apply and type into the next axis                                            |
+| Escape while typing                | Abandon the typed text                                                       |
+| Escape (CANCEL) while scrubbing    | Put every axis back, end the gesture with =commit= =FALSE=                   |
+| Click elsewhere / focus leaves     | Apply the typed number                                                       |
+| ACTIVATE (Enter / Space / A)       | Start typing into X                                                          |
+| Click the lock button              | Toggle =uniform=                                                             |
+With =uniform= on, changing one axis scales the others by the same ratio (or shifts them by the same amount when the axis started at 0). Values are clamped to the range and tidied to 6 decimals.
+
+*** Gestures
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-gestures
+:END:
+Every change is bracketed: =edit-begin= on the first scrub movement (or just before a typed value is applied), =value-changed= on every frame, =edit-end= on release or after the typed value. A property grid turns that into one undo step per drag.
+
+*** Mixed axes
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-mixed
+:END:
+=lrg_vector_edit_set_axis_mixed()= shows an em dash in an axis (several edited objects disagree there); =lrg_vector_edit_get_axis_mixed()= reads it. Editing the axis clears it. Scrubbing a mixed axis starts from 0.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-api
+:END:
+| Function                                     | Purpose                                              |
+|----------------------------------------------+------------------------------------------------------|
+| =lrg_vector_edit_new()=                      | Create with 1-4 components                           |
+| =lrg_vector_edit_get_n_components()= / =lrg_vector_edit_set_n_components()= | Axis count             |
+| =lrg_vector_edit_get_component()= / =lrg_vector_edit_set_component()=       | One axis (no signal)   |
+| =lrg_vector_edit_get_values()= / =lrg_vector_edit_set_values()=             | All axes (no signal)   |
+| =lrg_vector_edit_set_range()=                | Limits for every axis (default unlimited)            |
+| =lrg_vector_edit_get_step()= / =lrg_vector_edit_set_step()=                 | Scrub speed            |
+| =lrg_vector_edit_get_digits()= / =lrg_vector_edit_set_digits()=             | Decimals shown         |
+| =lrg_vector_edit_get_uniform()= / =lrg_vector_edit_set_uniform()=           | Uniform lock           |
+| =lrg_vector_edit_get_show_uniform()= / =lrg_vector_edit_set_show_uniform()= | Lock button shown      |
+| =lrg_vector_edit_get_axis_mixed()= / =lrg_vector_edit_set_axis_mixed()=     | Em dash per axis       |
+| =lrg_vector_edit_get_editing_axis()=         | Axis being typed into, or -1                         |
+| =lrg_vector_edit_get_field_rect()=           | World rectangle of an axis field (tests, tutorials)  |
+| =lrg_vector_edit_get_lock_rect()=            | World rectangle of the lock button                   |
+
+** Properties and signals
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-properties
+:END:
+| Property       | Type       | Default | Meaning                          |
+|----------------+------------+---------+----------------------------------|
+| =n-components= | =guint=    | 3       | Axes shown, 1-4                  |
+| =step=         | =gdouble=  | 0.05    | Change per 2 units of scrubbing  |
+| =digits=       | =guint=    | 3       | Decimals shown                   |
+| =uniform=      | =gboolean= | FALSE   | Scale every axis together        |
+| =show-uniform= | =gboolean= | FALSE   | Show the lock button             |
+
+| Signal          | Arguments         | Emitted                                       |
+|-----------------+-------------------+-----------------------------------------------|
+| =edit-begin=    |                   | A scrub moved / a typed value will apply      |
+| =value-changed= |                   | Components changed (inside begin / end)       |
+| =edit-end=      | =gboolean commit= | The gesture ended; =FALSE= after a cancel     |
+
+** Parts and states
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-parts
+:END:
+| Part    | State       | Built-in look                                                  |
+|---------+-------------+----------------------------------------------------------------|
+| =box=   | resting     | Each field: =INPUT= with a =BORDER= border, =CORNER_RADIUS=    |
+| =box=   | (active)    | The scrubbed, typed or hovered field's border turns =ACCENT=   |
+| =box=   | =disabled=  | 45 % opacity for the whole widget                              |
+| =label= | resting     | Value text in =TEXT=, =FONT_SIZE=; =ACCENT= while active       |
+| =knob=  | resting     | Lock button: =CONTROL= with a =TEXT_MUTED= lock icon           |
+| =knob=  | =checked=   | =ACCENT= with a =TEXT_ON_ACCENT= icon                          |
+The axis tab colours are fixed (red, green, blue, amber) so axes read the same in every theme; they carry white letters.
+
+** YAML
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-yaml
+:END:
+Every setting is a =GObject= property, so the loader can create it as =LrgVectorEdit=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-pitfalls
+:END:
+- =set_values= / =set_component= do not emit signals; only user edits do.
+- Typing swallows the keys of the characters it takes, so canvas shortcuts on printable keys do not fire while typing.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: vector-edit-see-also
+:END:
+[[file:../property-grid.org][Property grid]], [[file:spin-box.org][LrgSpinBox]]

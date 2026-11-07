@@ -80,6 +80,7 @@ struct _LrgTileView
 	LrgSelectionMode       mode;
 	GHashTable            *selected;     /* set of GUINT_TO_POINTER (pos + 1) */
 	guint                  cursor;
+	guint                  anchor;       /* start of Shift ranges, or invalid */
 
 	guint                  hover;        /* tile under the pointer, or invalid */
 	guint                  pressed;      /* tile being pressed, or invalid */
@@ -493,16 +494,46 @@ select_only (LrgTileView *self,
 	selection_changed (self);
 }
 
+/* select_range: the selection becomes positions [a, b] (multiple mode) */
+static void
+select_range (LrgTileView *self,
+              guint        a,
+              guint        b)
+{
+	guint lo = MIN (a, b);
+	guint hi = MAX (a, b);
+	guint p;
+
+	g_hash_table_remove_all (self->selected);
+	for (p = lo; p <= hi && p < n_items (self); p++)
+		g_hash_table_add (self->selected, KEY (p));
+	selection_changed (self);
+}
+
+/*
+ * move_cursor_to:
+ *
+ * Keyboard movement: the cursor goes to @position and the selection
+ * follows (Shift, @extend, selects the range from the anchor in
+ * multiple mode, in model order).
+ */
 static void
 move_cursor_to (LrgTileView *self,
-                guint        position)
+                guint        position,
+                gboolean     extend)
 {
 	guint n = n_items (self);
 
 	if (n == 0)
 		return;
 	position = MIN (position, n - 1);
-	select_only (self, position);
+	if (extend && self->mode == LRG_SELECTION_MODE_MULTIPLE && self->anchor != INVALID && self->anchor < n)
+		select_range (self, self->anchor, position);
+	else
+	{
+		self->anchor = position;
+		select_only (self, position);
+	}
 	self->cursor = position;
 	lrg_tile_view_scroll_to (self, position, TRUE);
 }
@@ -552,6 +583,7 @@ on_items_changed (GListModel  *model,
 	}
 	if (self->cursor != INVALID && self->cursor >= n)
 		self->cursor = n > 0 ? n - 1 : INVALID;
+	self->anchor = self->cursor;
 
 	unbind_from (self, position);
 	update_extent (self);
@@ -869,19 +901,33 @@ position_at (LrgTileView *self,
 	return p < n_items (self) ? p : INVALID;
 }
 
+/*
+ * click_tile:
+ *
+ * Plain click selects only the tile; in multiple mode Ctrl toggles it
+ * and Shift selects the range from the anchor (in model order). A
+ * second click within DOUBLE_CLICK_TIME activates it.
+ */
 static void
 click_tile (LrgTileView       *self,
             guint              p,
             LrgInputModifiers  mods)
 {
-	if (self->mode == LRG_SELECTION_MODE_MULTIPLE && (mods & LRG_INPUT_MODIFIER_CTRL))
+	if (self->mode == LRG_SELECTION_MODE_MULTIPLE && (mods & LRG_INPUT_MODIFIER_SHIFT) &&
+	    self->anchor != INVALID && self->anchor < n_items (self))
+		select_range (self, self->anchor, p);
+	else if (self->mode == LRG_SELECTION_MODE_MULTIPLE && (mods & LRG_INPUT_MODIFIER_CTRL))
 	{
 		if (!g_hash_table_remove (self->selected, KEY (p)))
 			g_hash_table_add (self->selected, KEY (p));
+		self->anchor = p;
 		selection_changed (self);
 	}
 	else
+	{
+		self->anchor = p;
 		select_only (self, p);
+	}
 	self->cursor = p;
 
 	if (self->click_armed && self->last_click_pos == p && self->clock - self->last_click_time <= DOUBLE_CLICK_TIME)
@@ -903,14 +949,16 @@ click_tile (LrgTileView       *self,
  * are consumed at the edges so focus stays in the grid.
  */
 static gboolean
-handle_key (LrgTileView *self,
-            GrlKey       key)
+handle_key (LrgTileView       *self,
+            GrlKey             key,
+            LrgInputModifiers  mods)
 {
 	guint    n = n_items (self);
 	guint    cols = columns (self);
 	guint    cur = self->cursor;
 	guint    page = rows_per_page (self) * cols;
 	gboolean none = cur == INVALID;
+	gboolean ext = (mods & LRG_INPUT_MODIFIER_SHIFT) != 0;
 
 	if (n == 0)
 		return key == GRL_KEY_UP || key == GRL_KEY_DOWN || key == GRL_KEY_LEFT || key == GRL_KEY_RIGHT;
@@ -918,36 +966,36 @@ handle_key (LrgTileView *self,
 	switch (key)
 	{
 	case GRL_KEY_LEFT:
-		move_cursor_to (self, none ? 0 : (cur > 0 ? cur - 1 : 0));
+		move_cursor_to (self, none ? 0 : (cur > 0 ? cur - 1 : 0), ext);
 		return TRUE;
 	case GRL_KEY_RIGHT:
-		move_cursor_to (self, none ? 0 : MIN (cur + 1, n - 1));
+		move_cursor_to (self, none ? 0 : MIN (cur + 1, n - 1), ext);
 		return TRUE;
 	case GRL_KEY_UP:
-		move_cursor_to (self, none ? 0 : (cur >= cols ? cur - cols : cur));
+		move_cursor_to (self, none ? 0 : (cur >= cols ? cur - cols : cur), ext);
 		return TRUE;
 	case GRL_KEY_DOWN:
 		/* The last row may be short: land on its last tile */
 		if (none)
-			move_cursor_to (self, 0);
+			move_cursor_to (self, 0, ext);
 		else if (cur + cols < n)
-			move_cursor_to (self, cur + cols);
+			move_cursor_to (self, cur + cols, ext);
 		else if (cur / cols < (n - 1) / cols)
-			move_cursor_to (self, n - 1);
+			move_cursor_to (self, n - 1, ext);
 		else
-			move_cursor_to (self, cur);
+			move_cursor_to (self, cur, ext);
 		return TRUE;
 	case GRL_KEY_HOME:
-		move_cursor_to (self, 0);
+		move_cursor_to (self, 0, ext);
 		return TRUE;
 	case GRL_KEY_END:
-		move_cursor_to (self, n - 1);
+		move_cursor_to (self, n - 1, ext);
 		return TRUE;
 	case GRL_KEY_PAGE_UP:
-		move_cursor_to (self, none ? 0 : (cur > page ? cur - page : cur % cols));
+		move_cursor_to (self, none ? 0 : (cur > page ? cur - page : cur % cols), ext);
 		return TRUE;
 	case GRL_KEY_PAGE_DOWN:
-		move_cursor_to (self, none ? 0 : MIN (cur + page, n - 1));
+		move_cursor_to (self, none ? 0 : MIN (cur + page, n - 1), ext);
 		return TRUE;
 	default:
 		return FALSE;
@@ -1046,7 +1094,7 @@ lrg_tile_view_handle_event (LrgWidget        *widget,
 
 	case LRG_UI_EVENT_KEY_DOWN:
 		update_extent (self);
-		return handle_key (self, lrg_ui_event_get_key (event));
+		return handle_key (self, lrg_ui_event_get_key (event), lrg_ui_event_get_modifiers (event));
 
 	case LRG_UI_EVENT_ACTIVATE:
 		if (self->cursor == INVALID || self->cursor >= n_items (self))
@@ -1292,6 +1340,7 @@ lrg_tile_view_init (LrgTileView *self)
 	self->spacing = 8.0f;
 	self->mode = LRG_SELECTION_MODE_SINGLE;
 	self->cursor = INVALID;
+	self->anchor = INVALID;
 	self->hover = INVALID;
 	self->pressed = INVALID;
 	self->last_click_pos = INVALID;
@@ -1338,6 +1387,7 @@ lrg_tile_view_set_model (LrgTileView *self,
 	had_selection = g_hash_table_size (self->selected) > 0;
 	g_hash_table_remove_all (self->selected);
 	self->cursor = INVALID;
+	self->anchor = INVALID;
 	self->hover = INVALID;
 	unbind_from (self, 0);
 	lrg_scroll_axis_scroll_to (&self->ay, 0.0f, FALSE);
@@ -1485,6 +1535,7 @@ lrg_tile_view_select (LrgTileView *self,
 		selection_changed (self);
 	}
 	self->cursor = position;
+	self->anchor = position;
 }
 
 void
@@ -1603,4 +1654,138 @@ lrg_tile_view_get_n_tiles (LrgTileView *self)
 {
 	g_return_val_if_fail (LRG_IS_TILE_VIEW (self), 0);
 	return self->tiles->len;
+}
+
+/* ==========================================================================
+ * Editor support: multi-selection and geometry
+ * ========================================================================== */
+
+void
+lrg_tile_view_select_full (LrgTileView   *self,
+                           guint          position,
+                           LrgSelectMode  mode)
+{
+	g_return_if_fail (LRG_IS_TILE_VIEW (self));
+
+	if (position >= n_items (self))
+		return;
+
+	/* 1. Map the gesture onto the selection mode */
+	if (self->mode == LRG_SELECTION_MODE_NONE)
+	{
+		self->cursor = position;
+		return;
+	}
+	if (self->mode == LRG_SELECTION_MODE_SINGLE)
+	{
+		if (mode == LRG_SELECT_MODE_TOGGLE && g_hash_table_contains (self->selected, KEY (position)))
+		{
+			g_hash_table_remove_all (self->selected);
+			self->anchor = position;
+			self->cursor = position;
+			selection_changed (self);
+			return;
+		}
+		mode = LRG_SELECT_MODE_REPLACE;
+	}
+	if (mode == LRG_SELECT_MODE_EXTEND && (self->anchor == INVALID || self->anchor >= n_items (self)))
+		mode = LRG_SELECT_MODE_REPLACE;
+
+	/* 2. Apply it */
+	switch (mode)
+	{
+	case LRG_SELECT_MODE_TOGGLE:
+		if (!g_hash_table_remove (self->selected, KEY (position)))
+			g_hash_table_add (self->selected, KEY (position));
+		self->anchor = position;
+		selection_changed (self);
+		break;
+	case LRG_SELECT_MODE_EXTEND:
+		select_range (self, self->anchor, position);
+		break;
+	case LRG_SELECT_MODE_REPLACE:
+	default:
+		self->anchor = position;
+		select_only (self, position);
+		break;
+	}
+	self->cursor = position;
+}
+
+static gint
+compare_uint (gconstpointer a,
+              gconstpointer b)
+{
+	guint x = *(const guint *) a;
+	guint y = *(const guint *) b;
+
+	return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+GArray *
+lrg_tile_view_get_selected_positions (LrgTileView *self)
+{
+	GArray        *out;
+	GHashTableIter iter;
+	gpointer       key;
+
+	g_return_val_if_fail (LRG_IS_TILE_VIEW (self), NULL);
+
+	out = g_array_sized_new (FALSE, FALSE, sizeof (guint), g_hash_table_size (self->selected));
+	g_hash_table_iter_init (&iter, self->selected);
+	while (g_hash_table_iter_next (&iter, &key, NULL))
+	{
+		guint p = GPOINTER_TO_UINT (key) - 1;
+
+		g_array_append_val (out, p);
+	}
+	g_array_sort (out, compare_uint);
+	return out;
+}
+
+guint
+lrg_tile_view_get_anchor (LrgTileView *self)
+{
+	g_return_val_if_fail (LRG_IS_TILE_VIEW (self), INVALID);
+	return self->anchor;
+}
+
+guint
+lrg_tile_view_get_item_at (LrgTileView *self,
+                           gfloat       x,
+                           gfloat       y)
+{
+	g_return_val_if_fail (LRG_IS_TILE_VIEW (self), INVALID);
+
+	/* The same hit test as clicks: gaps between tiles miss */
+	if (!lrg_widget_contains_point (LRG_WIDGET (self), x, y))
+		return INVALID;
+	return position_at (self, x, y);
+}
+
+gboolean
+lrg_tile_view_get_tile_rect (LrgTileView *self,
+                             guint        position,
+                             gfloat      *x,
+                             gfloat      *y,
+                             gfloat      *width,
+                             gfloat      *height)
+{
+	gfloat tx;
+	gfloat ty;
+
+	g_return_val_if_fail (LRG_IS_TILE_VIEW (self), FALSE);
+
+	if (position >= n_items (self))
+		return FALSE;
+	tile_rect (self, position, &tx, &ty);
+	if (x != NULL)
+		*x = lrg_widget_get_world_x (LRG_WIDGET (self)) + tx;
+	if (y != NULL)
+		*y = lrg_widget_get_world_y (LRG_WIDGET (self)) + ty - lrg_scroll_axis_get_value (&self->ay);
+	if (width != NULL)
+		*width = self->tile_width;
+	if (height != NULL)
+		*height = self->tile_height;
+	return TRUE;
 }

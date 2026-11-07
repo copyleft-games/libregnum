@@ -23,6 +23,7 @@
 #include "lrg-ui-actions.h"
 #include "lrg-menu.h"
 #include "../paint/lrg-paint-renderer.h"
+#include "../paint/lrg-paint-icons.h"
 #include "../tween/lrg-spring.h"
 #include "../lrg-log.h"
 
@@ -72,6 +73,22 @@ typedef struct
 	LrgSpring  veil;      /* modal backdrop fade, 0..1 */
 	LrgSpring  close;     /* 1 while open, 0 when gone (closing ghosts) */
 } PopupEntry;
+
+/* A drag source armed by a press, waiting for its threshold */
+typedef struct
+{
+	LrgWidget     *widget;   /* owned: the widget the source is attached to */
+	LrgDragSource *source;   /* owned */
+	gboolean       tried;    /* ::prepare already ran (and returned NULL) */
+} PendingDrag;
+
+/* Preview chip placement relative to the pointer */
+#define DRAG_CHIP_OFFSET_X (14.0f)
+#define DRAG_CHIP_OFFSET_Y (10.0f)
+
+/* Where a cancelled press is released: far outside every widget, so
+ * the pressed widget ends its press without a click */
+#define DRAG_CANCEL_POS (-1.0e6f)
 
 struct _LrgCanvas
 {
@@ -124,6 +141,36 @@ struct _LrgCanvas
 	GArray             *shortcuts;          /* Shortcut */
 	LrgWidgetDirection  default_direction;
 
+	/* Last frame's held buttons and modifiers (programmatic drags) */
+	guint              buttons_down;
+	LrgInputModifiers  modifiers;
+
+	/*
+	 * Drag and drop session. Pending: a press armed the drag sources of
+	 * the pressed widget and its ancestors (innermost first) and waits
+	 * for a threshold. Active: drag_payload is set; the pointer belongs
+	 * to the session (no capture), drop_target is the accepted target
+	 * under the pointer.
+	 */
+	GPtrArray         *drag_pending;        /* PendingDrag* */
+	gfloat             drag_press_x;
+	gfloat             drag_press_y;
+	LrgDragPayload    *drag_payload;        /* owned while dragging */
+	LrgDragSource     *drag_source;         /* owned, nullable */
+	LrgWidget         *drag_source_widget;  /* owned, nullable */
+	LrgDropTarget     *drop_target;         /* owned, nullable */
+	LrgDragAction      drag_action;
+	guint              drag_button;         /* button mask whose release drops */
+	gboolean           drag_click_drop;     /* no button held: next press drops */
+	gboolean           drag_ending;         /* drop / leave / end running */
+	guint              drag_swallow;        /* releases to swallow after a click drop */
+	gfloat             drag_x;
+	gfloat             drag_y;
+	LrgInputModifiers  drag_mods;
+	LrgSpring          chip_x;
+	LrgSpring          chip_y;
+	LrgSpring          chip_appear;
+
 	/* Phase timings for the UI inspector, measured only while enabled */
 	gboolean      timing_enabled;
 	gint64        step_us;
@@ -149,6 +196,8 @@ enum
 	SIGNAL_CANCEL,
 	SIGNAL_POPUP_DISMISSED,
 	SIGNAL_QUIT_REQUESTED,
+	SIGNAL_DRAG_BEGIN,
+	SIGNAL_DRAG_END,
 	N_SIGNALS
 };
 
@@ -180,6 +229,16 @@ key_hook_free (gpointer data)
 
 	g_weak_ref_clear (&h->owner);
 	g_free (h);
+}
+
+static void
+pending_drag_free (gpointer data)
+{
+	PendingDrag *p = data;
+
+	g_clear_object (&p->widget);
+	g_clear_object (&p->source);
+	g_free (p);
 }
 
 static void
@@ -308,6 +367,12 @@ lrg_canvas_dispose (GObject *object)
 	if (self->key_hooks != NULL)
 		g_ptr_array_set_size (self->key_hooks, 0);
 	g_clear_object (&self->pan_target);
+	if (self->drag_pending != NULL)
+		g_ptr_array_set_size (self->drag_pending, 0);
+	g_clear_pointer (&self->drag_payload, lrg_drag_payload_unref);
+	g_clear_object (&self->drag_source);
+	g_clear_object (&self->drag_source_widget);
+	g_clear_object (&self->drop_target);
 	if (self->popups != NULL)
 		g_array_set_size (self->popups, 0);
 	if (self->closing != NULL)
@@ -335,6 +400,7 @@ lrg_canvas_finalize (GObject *object)
 	g_clear_pointer (&self->overlays, g_ptr_array_unref);
 	g_clear_pointer (&self->shortcuts, g_array_unref);
 	g_clear_pointer (&self->key_hooks, g_ptr_array_unref);
+	g_clear_pointer (&self->drag_pending, g_ptr_array_unref);
 	g_clear_object (&self->paint);
 
 	G_OBJECT_CLASS (lrg_canvas_parent_class)->finalize (object);
@@ -514,6 +580,36 @@ lrg_canvas_class_init (LrgCanvasClass *klass)
 	signals[SIGNAL_POPUP_DISMISSED] =
 		g_signal_new ("popup-dismissed", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL, G_TYPE_NONE, 1, LRG_TYPE_WIDGET);
+
+	/**
+	 * LrgCanvas::drag-begin:
+	 * @canvas: the canvas
+	 * @payload: the payload being dragged
+	 *
+	 * Emitted when a drag and drop session starts, after the source's
+	 * #LrgDragSource::drag-begin. Use it to reveal drop zones that are
+	 * hidden otherwise.
+	 */
+	signals[SIGNAL_DRAG_BEGIN] =
+		g_signal_new ("drag-begin", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 1,
+		              LRG_TYPE_DRAG_PAYLOAD | G_SIGNAL_TYPE_STATIC_SCOPE);
+
+	/**
+	 * LrgCanvas::drag-end:
+	 * @canvas: the canvas
+	 * @payload: the payload that was dragged
+	 * @dropped: %TRUE when a target took the drop
+	 * @action: the action performed, %LRG_DRAG_ACTION_NONE if none
+	 *
+	 * Emitted when a drag and drop session ends, after the source's
+	 * #LrgDragSource::drag-end.
+	 */
+	signals[SIGNAL_DRAG_END] =
+		g_signal_new ("drag-end", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 3,
+		              LRG_TYPE_DRAG_PAYLOAD | G_SIGNAL_TYPE_STATIC_SCOPE,
+		              G_TYPE_BOOLEAN, LRG_TYPE_DRAG_ACTION);
 }
 
 static void
@@ -533,6 +629,10 @@ lrg_canvas_init (LrgCanvas *self)
 	g_array_set_clear_func (self->shortcuts, shortcut_clear);
 	self->key_hooks = g_ptr_array_new_with_free_func (key_hook_free);
 	self->default_direction = LRG_WIDGET_DIRECTION_LTR;
+	self->drag_pending = g_ptr_array_new_with_free_func (pending_drag_free);
+	lrg_spring_init (&self->chip_x, 0.0f, LRG_MOTION_SNAPPY);
+	lrg_spring_init (&self->chip_y, 0.0f, LRG_MOTION_SNAPPY);
+	lrg_spring_init (&self->chip_appear, 0.0f, LRG_MOTION_SNAPPY);
 
 	/* Built-in actions every UI can bind to: "app.quit", "ui.show" ... */
 	{
@@ -1064,6 +1164,679 @@ pointer_target (LrgCanvas *self,
 			return hit;
 	}
 	return self->capture;
+}
+
+/* ==========================================================================
+ * Drag and drop session
+ *
+ * A left (or the source's) press over a widget arms the drag sources
+ * of that widget and its ancestors (drag_arm). Normal press delivery
+ * goes on meanwhile. Once the pointer has moved past a source's
+ * threshold, its ::prepare is asked for a payload (innermost source
+ * first); the first payload starts the drag (start_drag): the pressed
+ * widget gets a cancelled release, the session takes over the pointer,
+ * every move hit-tests drop targets (drag_update) and the release
+ * drops (drag_finish). Escape, the cancel flag or a lost button
+ * cancel. The preview chip and target highlight are painted on top of
+ * everything by paint_drag().
+ * ========================================================================== */
+
+static void drag_finish (LrgCanvas *self,
+                         gboolean   try_drop);
+
+/* drag_clear_pending: forget the sources a press armed */
+static void
+drag_clear_pending (LrgCanvas *self)
+{
+	if (self->drag_pending != NULL)
+		g_ptr_array_set_size (self->drag_pending, 0);
+}
+
+/*
+ * drag_arm:
+ *
+ * A press of the buttons in @pressed at (@x, @y) on @hit: collect the
+ * drag sources of @hit and its ancestors that start drags with one of
+ * those buttons, innermost first.
+ */
+static void
+drag_arm (LrgCanvas *self,
+          LrgWidget *hit,
+          guint      pressed,
+          gfloat     x,
+          gfloat     y)
+{
+	LrgWidget *w;
+
+	drag_clear_pending (self);
+	for (w = hit; w != NULL && w != LRG_WIDGET (self); w = (LrgWidget *) lrg_widget_get_parent (w))
+	{
+		GPtrArray *sources = _lrg_widget_peek_drag_sources (w);
+		guint      i;
+
+		for (i = 0; sources != NULL && i < sources->len; i++)
+		{
+			LrgDragSource *src = g_ptr_array_index (sources, i);
+			PendingDrag   *p;
+
+			if ((pressed & LRG_CANVAS_BUTTON_MASK (lrg_drag_source_get_button (src))) == 0)
+				continue;
+			p = g_new0 (PendingDrag, 1);
+			p->widget = g_object_ref (w);
+			p->source = g_object_ref (src);
+			g_ptr_array_add (self->drag_pending, p);
+		}
+	}
+	self->drag_press_x = x;
+	self->drag_press_y = y;
+}
+
+/*
+ * cancel_press:
+ *
+ * The drag takes the pointer away from the pressed widget. It gets a
+ * release of every captured button far outside its bounds (bubbling,
+ * like the press did), which every widget treats as "pressed, then
+ * dragged off": no click, no activation. lrg_canvas_is_dragging() is
+ * already TRUE when it arrives, for widgets that want to tell.
+ */
+static void
+cancel_press (LrgCanvas *self)
+{
+	static const GrlMouseButton buttons[] = {
+		GRL_MOUSE_BUTTON_LEFT,
+		GRL_MOUSE_BUTTON_RIGHT,
+		GRL_MOUSE_BUTTON_MIDDLE
+	};
+	g_autoptr(LrgWidget) pressed = NULL;
+	guint                held;
+	guint                i;
+
+	if (self->capture == NULL)
+		return;
+
+	pressed = g_object_ref (self->capture);
+	held = self->capture_buttons;
+	clear_capture (self);
+	lrg_widget_unset_state_flags (pressed, LRG_WIDGET_STATE_PRESSED);
+
+	for (i = 0; i < G_N_ELEMENTS (buttons); i++)
+	{
+		g_autoptr(LrgUIEvent) ev = NULL;
+
+		if ((held & LRG_CANVAS_BUTTON_MASK (buttons[i])) == 0)
+			continue;
+		ev = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_UP, (gint) buttons[i],
+		                                    DRAG_CANCEL_POS, DRAG_CANCEL_POS);
+		lrg_ui_event_set_modifiers (ev, self->modifiers);
+		dispatch_event (self, pressed, ev);
+	}
+}
+
+/*
+ * find_drop_target:
+ *
+ * The drop target for a drop at (@x, @y): walk up from the widget
+ * under the pointer (the canvas itself when nothing is there and no
+ * modal popup swallows the point) and take the first target whose
+ * types and actions match and whose ::accept agrees. The current
+ * target is not asked again. Hidden and disabled widgets are never
+ * hit, so their targets are skipped.
+ */
+static LrgDropTarget *
+find_drop_target (LrgCanvas *self,
+                  gfloat     x,
+                  gfloat     y)
+{
+	LrgWidget *start;
+	LrgWidget *w;
+
+	start = lrg_canvas_widget_at_point (self, x, y);
+	if (start == NULL)
+	{
+		if (top_modal_index (self) >= 0 || !lrg_widget_contains_point (LRG_WIDGET (self), x, y))
+			return NULL;
+		start = LRG_WIDGET (self);
+	}
+
+	for (w = start; w != NULL; w = (LrgWidget *) lrg_widget_get_parent (w))
+	{
+		GPtrArray *targets = _lrg_widget_peek_drop_targets (w);
+		guint      i;
+
+		for (i = 0; targets != NULL && i < targets->len; i++)
+		{
+			LrgDropTarget *t = g_ptr_array_index (targets, i);
+
+			if (t == self->drop_target)
+				return t;
+			if (!lrg_drop_target_matches (t, self->drag_payload))
+				continue;
+			if (_lrg_drop_target_accept (t, self->drag_payload))
+				return t;
+
+			/* A handler may have cancelled the drag */
+			if (self->drag_payload == NULL)
+				return NULL;
+		}
+		if (w == LRG_WIDGET (self))
+			break;
+	}
+	return NULL;
+}
+
+/*
+ * drag_update:
+ *
+ * The pointer (or the modifiers) changed during a drag: move the chip,
+ * find the target, send leave / enter on a change and motion to the
+ * current one, which settles the action.
+ */
+static void
+drag_update (LrgCanvas         *self,
+             gfloat             x,
+             gfloat             y,
+             LrgInputModifiers  mods)
+{
+	g_autoptr(LrgDragPayload) payload = NULL;
+	LrgDropTarget            *found;
+
+	if (self->drag_payload == NULL || self->drag_ending)
+		return;
+
+	payload = lrg_drag_payload_ref (self->drag_payload);
+	self->drag_x = x;
+	self->drag_y = y;
+	self->drag_mods = mods;
+	lrg_spring_set_target (&self->chip_x, x);
+	lrg_spring_set_target (&self->chip_y, y);
+
+	found = find_drop_target (self, x, y);
+	if (self->drag_payload != payload)
+		return;   /* cancelled from ::accept */
+
+	/* Target change: leave the old one, enter the new one */
+	if (found != self->drop_target)
+	{
+		g_autoptr(LrgDropTarget) old = g_steal_pointer (&self->drop_target);
+
+		self->drag_action = LRG_DRAG_ACTION_NONE;
+		if (old != NULL)
+			_lrg_drop_target_leave (old);
+		if (self->drag_payload != payload)
+			return;
+		if (found != NULL)
+		{
+			self->drop_target = g_object_ref (found);
+			_lrg_drop_target_enter (found, payload, x, y);
+			if (self->drag_payload != payload)
+				return;
+		}
+	}
+
+	/* Motion settles the action for a drop here */
+	if (self->drop_target != NULL)
+	{
+		g_autoptr(LrgDropTarget) t = g_object_ref (self->drop_target);
+		LrgDragAction            allowed;
+		LrgDragAction            proposed;
+		LrgDragAction            action;
+
+		allowed = (LrgDragAction) (lrg_drag_payload_get_actions (payload) &
+		                           lrg_drop_target_get_actions (t));
+		proposed = lrg_drag_action_from_modifiers (mods, allowed,
+		                                           lrg_drop_target_get_preferred_action (t));
+		action = (LrgDragAction) _lrg_drop_target_motion (t, payload, x, y, (guint) proposed);
+		if (self->drag_payload == payload && self->drop_target == t)
+			self->drag_action = action;
+	}
+	else
+	{
+		self->drag_action = LRG_DRAG_ACTION_NONE;
+	}
+}
+
+/*
+ * start_drag:
+ * @payload: (transfer full): the payload
+ *
+ * Starts the session: cancel the press, take the pointer, show the
+ * chip, announce the drag, then look for a target under the pointer.
+ */
+static void
+start_drag (LrgCanvas      *self,
+            LrgWidget      *source_widget,
+            LrgDragSource  *source,
+            LrgDragPayload *payload,
+            gfloat          x,
+            gfloat          y,
+            guint           button_mask,
+            gboolean        click_drop)
+{
+	g_autoptr(LrgDragPayload) keep = lrg_drag_payload_ref (payload);
+
+	drag_clear_pending (self);
+
+	self->drag_payload = payload;
+	if (source_widget != NULL && lrg_drag_payload_get_source (payload) == NULL)
+		lrg_drag_payload_set_source (payload, source_widget);
+	g_set_object (&self->drag_source, source);
+	g_set_object (&self->drag_source_widget, source_widget);
+	self->drag_action = LRG_DRAG_ACTION_NONE;
+	self->drag_button = button_mask;
+	self->drag_click_drop = click_drop;
+	self->drag_swallow = 0;
+	self->drag_x = x;
+	self->drag_y = y;
+	self->drag_mods = self->modifiers;
+
+	/* The chip appears at the pointer and follows it with a spring */
+	lrg_spring_set_motion (&self->chip_x, LRG_MOTION_SNAPPY);
+	lrg_spring_set_motion (&self->chip_y, LRG_MOTION_SNAPPY);
+	lrg_spring_snap (&self->chip_x, x);
+	lrg_spring_snap (&self->chip_y, y);
+	lrg_spring_snap (&self->chip_appear, 0.0f);
+	lrg_spring_set_target (&self->chip_appear, 1.0f);
+
+	/* The pressed widget lets go without a click */
+	cancel_press (self);
+
+	g_debug ("drag of %s started at (%.1f, %.1f)",
+	         lrg_drag_payload_get_content_type (payload), x, y);
+
+	if (source != NULL)
+		_lrg_drag_source_begin (source, payload);
+	if (self->drag_payload == keep)
+		g_signal_emit (self, signals[SIGNAL_DRAG_BEGIN], 0, payload);
+	if (self->drag_payload == keep)
+		drag_update (self, x, y, self->modifiers);
+}
+
+/*
+ * drag_check_threshold:
+ *
+ * The pointer moved while sources are armed. Each source whose
+ * threshold is crossed is asked for a payload, innermost first; the
+ * first payload starts the drag.
+ */
+static void
+drag_check_threshold (LrgCanvas *self,
+                      gfloat     x,
+                      gfloat     y)
+{
+	gfloat dist;
+	guint  i;
+	guint  untried = 0;
+
+	/* The press ended (or never captured): nothing to drag */
+	if (self->capture == NULL)
+	{
+		drag_clear_pending (self);
+		return;
+	}
+
+	dist = hypotf (x - self->drag_press_x, y - self->drag_press_y);
+	for (i = 0; i < self->drag_pending->len; i++)
+	{
+		PendingDrag            *p = g_ptr_array_index (self->drag_pending, i);
+		g_autoptr(LrgWidget)     widget = NULL;
+		g_autoptr(LrgDragSource) source = NULL;
+		LrgDragPayload          *payload;
+
+		if (p->tried)
+			continue;
+		if (dist <= lrg_drag_source_get_threshold (p->source) ||
+		    lrg_drag_source_get_widget (p->source) != p->widget)
+		{
+			untried++;
+			continue;
+		}
+
+		p->tried = TRUE;
+		widget = g_object_ref (p->widget);
+		source = g_object_ref (p->source);
+		payload = _lrg_drag_source_prepare (source, self->drag_press_x, self->drag_press_y);
+		if (payload != NULL)
+		{
+			start_drag (self, widget, source, payload, x, y,
+			            LRG_CANVAS_BUTTON_MASK (lrg_drag_source_get_button (source)), FALSE);
+			return;
+		}
+
+		/* A handler may have released the press or cleared the list */
+		if (self->drag_pending->len == 0 || self->capture == NULL)
+		{
+			drag_clear_pending (self);
+			return;
+		}
+	}
+
+	/* Every source declined: the press is an ordinary press */
+	if (untried == 0)
+		drag_clear_pending (self);
+}
+
+/*
+ * drag_finish:
+ *
+ * Ends the session. With @try_drop and an accepted target that settled
+ * on an action, ::drop runs; the target then gets ::leave, the source
+ * ::drag-end and the canvas ::drag-end. Re-entrant calls (a ::drop
+ * handler cancelling) are ignored.
+ */
+static void
+drag_finish (LrgCanvas *self,
+             gboolean   try_drop)
+{
+	g_autoptr(LrgDragPayload) payload = NULL;
+	g_autoptr(LrgDragSource)  source = NULL;
+	g_autoptr(LrgWidget)      source_widget = NULL;
+	g_autoptr(LrgDropTarget)  target = NULL;
+	gboolean                  dropped = FALSE;
+	LrgDragAction             action = LRG_DRAG_ACTION_NONE;
+
+	if (self->drag_payload == NULL || self->drag_ending)
+		return;
+
+	self->drag_ending = TRUE;
+	payload = lrg_drag_payload_ref (self->drag_payload);
+	target = self->drop_target != NULL ? g_object_ref (self->drop_target) : NULL;
+
+	/* Drop, then leave, while the session still looks active */
+	if (try_drop && target != NULL && self->drag_action != LRG_DRAG_ACTION_NONE)
+	{
+		action = self->drag_action;
+		dropped = _lrg_drop_target_drop (target, payload, self->drag_x, self->drag_y);
+		if (!dropped)
+			action = LRG_DRAG_ACTION_NONE;
+	}
+	if (target != NULL)
+		_lrg_drop_target_leave (target);
+
+	g_debug ("drag of %s ended: %s", lrg_drag_payload_get_content_type (payload),
+	         dropped ? "dropped" : "cancelled");
+
+	/* Tear the session down before telling the source */
+	source = g_steal_pointer (&self->drag_source);
+	source_widget = g_steal_pointer (&self->drag_source_widget);
+	g_clear_object (&self->drop_target);
+	g_clear_pointer (&self->drag_payload, lrg_drag_payload_unref);
+	self->drag_action = LRG_DRAG_ACTION_NONE;
+	self->drag_button = 0;
+	self->drag_click_drop = FALSE;
+	lrg_spring_snap (&self->chip_appear, 0.0f);
+	self->drag_ending = FALSE;
+
+	if (source != NULL)
+		_lrg_drag_source_end (source, payload, dropped, (guint) action);
+	g_signal_emit (self, signals[SIGNAL_DRAG_END], 0, payload, dropped, action);
+}
+
+/*
+ * drag_filter_frame:
+ *
+ * Runs first in every frame of a drag: Escape and the cancel flag are
+ * taken out of the frame (nobody else sees them) and cancel the drag;
+ * so does the drag button no longer being held without a release.
+ */
+static void
+drag_filter_frame (LrgCanvas      *self,
+                   LrgCanvasInput *frame)
+{
+	gboolean escape = frame->cancel;
+	guint    i;
+	guint    n = 0;
+	guint    repeat = 0;
+
+	for (i = 0; i < frame->n_keys; i++)
+	{
+		if (frame->keys[i] == GRL_KEY_ESCAPE)
+		{
+			escape = TRUE;
+			continue;
+		}
+		if (frame->keys_repeat & (1u << i))
+			repeat |= 1u << n;
+		frame->keys[n++] = frame->keys[i];
+	}
+	frame->n_keys = n;
+	frame->keys_repeat = repeat;
+	frame->cancel = FALSE;
+
+	if (escape)
+	{
+		lrg_canvas_cancel_drag (self);
+		return;
+	}
+
+	if (!self->drag_click_drop &&
+	    (frame->buttons_down & self->drag_button) == 0 &&
+	    (frame->buttons_released & self->drag_button) == 0)
+	{
+		g_debug ("drag button lost without a release: cancelling the drag");
+		lrg_canvas_cancel_drag (self);
+	}
+}
+
+/*
+ * paint_drag:
+ *
+ * The default target highlight (an accent wash and outline over the
+ * target widget) and the preview chip: a POPUP-coloured pill with a
+ * soft shadow, the payload's icon and label and an action badge (+ for
+ * COPY, an arrow for LINK). The chip sits below-right of the pointer
+ * (below-left in RTL), fades a little while no target would take it,
+ * and pops in with the appear spring.
+ */
+static void
+paint_drag (LrgCanvas *self)
+{
+	LrgWidget      *root = LRG_WIDGET (self);
+	LrgTheme       *theme = lrg_widget_get_theme (root);
+	GrlFont        *font;
+	const GrlColor *accent;
+	const gchar    *label;
+	LrgIcon         icon;
+	LrgIcon         badge = LRG_ICON_NONE;
+	gfloat          font_size;
+	gfloat          pad_x;
+	gfloat          pad_y;
+	gfloat          spacing;
+	gfloat          radius;
+	gfloat          text_w = 0.0f;
+	gfloat          text_h = 0.0f;
+	gfloat          icon_size;
+	gfloat          chip_w;
+	gfloat          chip_h;
+	gfloat          cx;
+	gfloat          cy;
+	gfloat          appear;
+	gboolean        rtl;
+	guint           mark;
+
+	if (self->drag_payload == NULL)
+		return;
+
+	accent = lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	radius = lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS);
+
+	/* Target highlight, unless the target paints its own */
+	if (self->drop_target != NULL && self->drag_action != LRG_DRAG_ACTION_NONE &&
+	    lrg_drop_target_get_paint_highlight (self->drop_target))
+	{
+		LrgWidget *tw = lrg_drop_target_get_widget (self->drop_target);
+
+		if (tw != NULL && visible_chain (tw))
+		{
+			gfloat   x = lrg_widget_get_world_x (tw);
+			gfloat   y = lrg_widget_get_world_y (tw);
+			gfloat   w = lrg_widget_get_width (tw);
+			gfloat   h = lrg_widget_get_height (tw);
+			GrlColor wash;
+
+			lrg_paint_color_with_alpha (accent, 0.12f, &wash);
+			lrg_paint_list_rect (self->paint, x, y, w, h, radius, &wash);
+			lrg_paint_list_border (self->paint, x - 1.0f, y - 1.0f, w + 2.0f, h + 2.0f,
+			                       radius + 1.0f, 2.0f, accent);
+		}
+	}
+
+	/* Chip metrics from the theme */
+	font = lrg_theme_get_ui_font (theme);
+	font_size = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	pad_x = lrg_theme_get_metric (theme, LRG_THEME_METRIC_PADDING_X);
+	pad_y = lrg_theme_get_metric (theme, LRG_THEME_METRIC_PADDING_Y) * 0.5f;
+	spacing = lrg_theme_get_metric (theme, LRG_THEME_METRIC_SPACING);
+	label = lrg_drag_payload_get_label (self->drag_payload);
+	if (label == NULL || *label == '\0')
+		label = lrg_drag_payload_get_content_type (self->drag_payload);
+	icon = lrg_drag_payload_get_icon (self->drag_payload);
+
+	lrg_paint_measure_text (font, label, font_size, 1.0f, &text_w, &text_h);
+	icon_size = font_size;
+	chip_h = MAX (text_h, icon_size) + pad_y * 2.0f;
+	chip_w = text_w + pad_x * 2.0f + (icon != LRG_ICON_NONE ? icon_size + spacing : 0.0f);
+
+	rtl = self->drag_source_widget != NULL ? lrg_widget_is_rtl (self->drag_source_widget)
+	                                       : self->default_direction == LRG_WIDGET_DIRECTION_RTL;
+	cx = rtl ? self->chip_x.value - DRAG_CHIP_OFFSET_X - chip_w : self->chip_x.value + DRAG_CHIP_OFFSET_X;
+	cy = self->chip_y.value + DRAG_CHIP_OFFSET_Y;
+
+	if (self->drag_action == LRG_DRAG_ACTION_COPY)
+		badge = LRG_ICON_PLUS;
+	else if (self->drag_action == LRG_DRAG_ACTION_LINK)
+		badge = LRG_ICON_ARROW_RIGHT;
+
+	appear = CLAMP (self->chip_appear.value, 0.0f, 1.0f);
+	mark = lrg_paint_list_begin_group (self->paint);
+
+	/* Shadow, body and outline */
+	lrg_paint_list_shadow (self->paint, cx, cy, chip_w, chip_h, chip_h * 0.5f,
+	                       lrg_theme_get_metric (theme, LRG_THEME_METRIC_SHADOW_BLUR) * 0.75f, 0.0f,
+	                       0.0f, lrg_theme_get_metric (theme, LRG_THEME_METRIC_SHADOW_OFFSET_Y),
+	                       lrg_theme_get_color (theme, LRG_THEME_COLOR_SHADOW));
+	{
+		LrgCornerRadii radii;
+
+		radii.top_left = radii.top_right = radii.bottom_right = radii.bottom_left = chip_h * 0.5f;
+		lrg_paint_list_rect_ex (self->paint, cx, cy, chip_w, chip_h, &radii,
+		                        lrg_theme_get_color (theme, LRG_THEME_COLOR_POPUP), NULL,
+		                        self->drag_action != LRG_DRAG_ACTION_NONE ? 1.5f : 1.0f,
+		                        self->drag_action != LRG_DRAG_ACTION_NONE
+		                        ? accent : lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+	}
+
+	/* Icon then label (mirrored in RTL) */
+	{
+		gfloat x = rtl ? cx + chip_w - pad_x : cx + pad_x;
+
+		if (icon != LRG_ICON_NONE)
+		{
+			gfloat ix = rtl ? x - icon_size : x;
+
+			lrg_paint_list_icon (self->paint, icon, ix, cy + (chip_h - icon_size) * 0.5f, icon_size,
+			                     0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+			x = rtl ? ix - spacing : ix + icon_size + spacing;
+		}
+		lrg_paint_list_text (self->paint, font, label, rtl ? x - text_w : x,
+		                     cy + (chip_h - text_h) * 0.5f, font_size, 1.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+	}
+
+	/* Action badge on the chip's outer top corner */
+	if (badge != LRG_ICON_NONE)
+	{
+		gfloat r = font_size * 0.55f;
+		gfloat bx = rtl ? cx : cx + chip_w;
+		gfloat by = cy;
+
+		lrg_paint_list_circle (self->paint, bx, by, r, accent);
+		lrg_paint_list_icon (self->paint, badge, bx - r, by - r, r * 2.0f, 0.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_ON_ACCENT));
+	}
+
+	lrg_paint_list_transform_group (self->paint, mark, 0.85f + 0.15f * appear,
+	                                self->chip_x.value, self->chip_y.value, 0.0f, 0.0f,
+	                                appear * (self->drop_target != NULL ? 1.0f : 0.8f));
+}
+
+/* ==========================================================================
+ * Drag and drop: public API
+ * ========================================================================== */
+
+gboolean
+lrg_canvas_begin_drag (LrgCanvas      *self,
+                       LrgWidget      *source_widget,
+                       LrgDragPayload *payload,
+                       gfloat          x,
+                       gfloat          y)
+{
+	LrgDragSource *source = NULL;
+	GPtrArray     *sources;
+	const guint    left = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+	gboolean       held;
+
+	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
+	g_return_val_if_fail (source_widget == NULL || LRG_IS_WIDGET (source_widget), FALSE);
+	g_return_val_if_fail (payload != NULL, FALSE);
+
+	if (self->drag_payload != NULL || self->drag_ending)
+		return FALSE;
+
+	/* The source widget's first drag source hears begin / end */
+	if (source_widget != NULL)
+	{
+		sources = _lrg_widget_peek_drag_sources (source_widget);
+		if (sources != NULL && sources->len > 0)
+			source = g_ptr_array_index (sources, 0);
+	}
+
+	/* Held left button: release drops; otherwise click to drop */
+	held = (self->capture != NULL && (self->capture_buttons & left) != 0) ||
+	       (self->buttons_down & left) != 0;
+	start_drag (self, source_widget, source, lrg_drag_payload_ref (payload), x, y,
+	            left, !held);
+	return TRUE;
+}
+
+gboolean
+lrg_canvas_is_dragging (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), FALSE);
+
+	return self->drag_payload != NULL;
+}
+
+LrgDragPayload *
+lrg_canvas_get_drag_payload (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
+
+	return self->drag_payload;
+}
+
+LrgDropTarget *
+lrg_canvas_get_drop_target (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), NULL);
+
+	return self->drop_target;
+}
+
+LrgDragAction
+lrg_canvas_get_drag_action (LrgCanvas *self)
+{
+	g_return_val_if_fail (LRG_IS_CANVAS (self), LRG_DRAG_ACTION_NONE);
+
+	return self->drag_payload != NULL ? self->drag_action : LRG_DRAG_ACTION_NONE;
+}
+
+void
+lrg_canvas_cancel_drag (LrgCanvas *self)
+{
+	g_return_if_fail (LRG_IS_CANVAS (self));
+
+	drag_finish (self, FALSE);
 }
 
 /* ==========================================================================
@@ -1800,6 +2573,14 @@ lrg_canvas_process_input (LrgCanvas            *self,
 	if (frame.n_touches > 0 || self->touch_state != TOUCH_IDLE)
 		recognise_touch (self, &frame);
 
+	/* Remembered for drags started from code during this frame */
+	self->buttons_down = frame.buttons_down;
+	self->modifiers = frame.modifiers;
+
+	/* A drag eats Escape / cancel (and ends on them or a lost button) */
+	if (self->drag_payload != NULL)
+		drag_filter_frame (self, &frame);
+
 	/* Focus on a widget that was hidden or disabled since is dropped,
 	 * so keys stop reaching it (and bubbling to its ancestors) */
 	if (self->focused_widget != NULL &&
@@ -1824,8 +2605,16 @@ lrg_canvas_process_input (LrgCanvas            *self,
 
 	update_hover (self, hit);
 
-	/* Movement */
-	if (mx != self->last_mouse_x || my != self->last_mouse_y)
+	/* Movement during a drag belongs to the session alone (modifier
+	 * changes count as movement: they can change the action) */
+	if (self->drag_payload != NULL)
+	{
+		if (mx != self->last_mouse_x || my != self->last_mouse_y || input->modifiers != self->drag_mods)
+			drag_update (self, mx, my, input->modifiers);
+		self->last_mouse_x = mx;
+		self->last_mouse_y = my;
+	}
+	else if (mx != self->last_mouse_x || my != self->last_mouse_y)
 	{
 		g_autoptr(LrgUIEvent) event = lrg_ui_event_new_mouse_move (mx, my);
 
@@ -1844,10 +2633,26 @@ lrg_canvas_process_input (LrgCanvas            *self,
 			else
 				lrg_widget_unset_state_flags (self->capture, LRG_WIDGET_STATE_PRESSED);
 		}
+
+		/* Armed drag sources: past a threshold the press becomes a drag */
+		if (self->drag_pending->len > 0)
+			drag_check_threshold (self, mx, my);
 	}
 
-	/* Presses */
-	if (input->buttons_pressed != 0)
+	/* Presses during a drag never reach widgets; with click-to-drop
+	 * the left press drops (and its release is swallowed too) */
+	if (input->buttons_pressed != 0 && self->drag_payload != NULL)
+	{
+		const guint left = LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_LEFT);
+
+		if (self->drag_click_drop && (input->buttons_pressed & left))
+		{
+			drag_finish (self, TRUE);
+			if ((input->buttons_released & left) == 0)
+				self->drag_swallow |= left;
+		}
+	}
+	else if (input->buttons_pressed != 0)
 	{
 		gint inside_popup = popup_index_of (self, hit);
 
@@ -1896,15 +2701,26 @@ lrg_canvas_process_input (LrgCanvas            *self,
 		/* An unhandled right press opens the nearest context menu */
 		if ((unhandled & LRG_CANVAS_BUTTON_MASK (GRL_MOUSE_BUTTON_RIGHT)) && hit != NULL)
 			open_context_menu (self, hit, FALSE, mx, my);
+
+		/* Arm the drag sources of the pressed widget and its ancestors
+		 * (not when a press handler started a drag itself) */
+		if (self->drag_payload == NULL && self->capture != NULL)
+			drag_arm (self, self->capture, input->buttons_pressed, mx, my);
 	}
 
-	/* Releases go to the capture, which then lets go */
-	if (input->buttons_released != 0)
+	/* Releases during a drag: the drag button drops, all are swallowed */
+	if (input->buttons_released != 0 && self->drag_payload != NULL)
+	{
+		if (input->buttons_released & self->drag_button)
+			drag_finish (self, TRUE);
+	}
+	else if ((input->buttons_released & ~self->drag_swallow) != 0)
 	{
 		g_autoptr(LrgWidget) released = self->capture != NULL ? g_object_ref (self->capture) : NULL;
 
 		dispatch_button (self, pointer_target (self, hit),
-		                 LRG_UI_EVENT_MOUSE_BUTTON_UP, input->buttons_released, input);
+		                 LRG_UI_EVENT_MOUSE_BUTTON_UP, input->buttons_released & ~self->drag_swallow,
+		                 input);
 
 		if (released != NULL && self->capture == released)
 		{
@@ -1914,7 +2730,12 @@ lrg_canvas_process_input (LrgCanvas            *self,
 			if (self->capture_buttons == 0)
 				clear_capture (self);
 		}
+
+		/* The press is over: its armed sources go with it */
+		if (self->capture == NULL)
+			drag_clear_pending (self);
 	}
+	self->drag_swallow &= ~input->buttons_released;
 
 	/* Wheel */
 	if (input->wheel_x != 0.0f || input->wheel_y != 0.0f)
@@ -2357,6 +3178,14 @@ lrg_canvas_update (LrgCanvas *self,
 	for (i = 0; i < self->overlays->len; i++)
 		busy |= lrg_widget_step (g_ptr_array_index (self->overlays, i), delta_time);
 
+	/* The drag preview chip follows the pointer */
+	if (self->drag_payload != NULL)
+	{
+		busy |= lrg_spring_step (&self->chip_x, delta_time);
+		busy |= lrg_spring_step (&self->chip_y, delta_time);
+		busy |= lrg_spring_step (&self->chip_appear, delta_time);
+	}
+
 	/* Closing ghosts: run down, then release */
 	for (i = 0; i < self->closing->len;)
 	{
@@ -2512,6 +3341,9 @@ lrg_canvas_record (LrgCanvas *self)
 	/* The overlay layer, above popups and veils */
 	for (i = 0; i < self->overlays->len; i++)
 		lrg_widget_paint (g_ptr_array_index (self->overlays, i), self->paint);
+
+	/* Drag and drop: target highlight and preview chip, above all */
+	paint_drag (self);
 
 	if (self->timing_enabled)
 		self->record_us = g_get_monotonic_time () - start;

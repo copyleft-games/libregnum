@@ -23,7 +23,20 @@ Document: `hello`, `ping`, `methods`, `editor.info`, `level.new|open|save|reload
 
 Tools (headless): `tilemap.get|configure|paint|rect|fill|pick` (tilemap nodes: `cells [[x,y]...]` or a brush stroke through `points`, `tile` 1-based into the tileset, 0/`erase` erases, `layer` index or name), `timeline.list|get|add|remove|set|key|unkey|move-key|ease|sample` (channels `location.x|y|z`, `rotation.x|y|z` radians, `scale.x|y|z`, `color.r|g|b|a`, `roughness`, `metallic`, `param.NAME`; `easing` = LrgEasingType nick). Every edit is one undo step.
 
-Application: `action.list|run`, `view.get|set|focus|screenshot`, `play.start|stop|pause|step|state`, `run.start|stop`, `project.info|open`, `asset.list`, `asset.thumbnail {path, wait}`, `level.validate|import`, `ui.notify|state`, `tilemap.tool`, `timeline.play|stop|seek|state` (preview; never saved), `editor.quit`.
+Application: `action.list|run`, `view.get|set|focus|screenshot` (all take `viewport` 0..3, default the active one), `play.start|stop|pause|step|state`, `run.start|stop`, `project.info|open`, `asset.list`, `asset.thumbnail {path, wait}`, `level.validate|import`, `ui.notify {message, level: info|success|warning|error}` (0-3 accepted for old clients), `ui.state`, `tilemap.tool`, `timeline.play|stop|seek|state` (preview; never saved), `editor.quit`. The `view.*`, `play.*`, `timeline.*` and `tilemap.tool` methods act on the headless view model, so they work with `lrgeditor --headless`.
+
+Added in 0.8.1 (protocol version still 1; no 0.8.0 method or reply changed; 130 methods in all, `methods` lists them):
+
+- Headless, on every server: `asset.meta.get|set {path, settings?, guid?}` (`.meta` sidecar: guid, importer, settings; `set` is all or nothing), `vcs.status {path?}` (`repository`, `branch`, `files [{path status letter}]`), `prefab.overrides|apply|revert|relink|unlink {node, keys?, path?}` and `prefab.sync {path?}` (linked prefab instances; override keys like `transform/scale` or `<guid>:path`).
+- Viewport split: `view.layout {layout?: single|split-h|split-v|quad}`, `view.render_mode {viewport?, mode?: lit|unlit|wireframe|normals|lighting-only}`, `view.overlay {viewport?, name?, enabled?}` (grid, gizmos, icons, bounds, stats, scene-lighting, shadows, sky, post).
+- Hierarchy panel: `hierarchy.reveal|rename {node|guid, name?, select?}`, `hierarchy.filter {text}`, `hierarchy.state`.
+- Inspector panel: `inspector.list|get|set|reset|revert_override|apply_override {node|nodes, section: header|transform|visual|component|scripts, component?, name, value?}` (`set` on several nodes is one undo step), `inspector.state`.
+- Assets panel: `asset.reveal|rename|move|duplicate|trash {path, name?, dest?}`, `asset.orphans {trash?}` (the `.meta` follows its asset).
+- Code panel: `code.open {path, line?}`, `code.list`, `code.save {path?}`, `palette.open {mode?: commands|files, query?}`, `preferences.open {page?}`.
+- Data editors: `data.open|list|get|set|edit|undo|redo|validate|save|reload|close|reveal {path?, at?, value?|yaml?, op?}` on input maps, locales, sound banks, themes, HUD and UI layouts, dialog trees and dungeons (`path` omitted = the focused data editor).
+- Profiler panel: `profiler.sample {frames?, enable?}`.
+
+`ui.state` keeps every 0.8.0 field (`menu`, `menubar` rects, `frame_height`, `dialog`, `palette`, `nav`, `viewport`, `viewport_hovered`, `window`, `fps`, `input`) and adds `viewports [{index rect render_mode mode_2d}]`, `active_viewport`, `layout`, `panels` and `focus`. The full table with parameters, results and errors is the method index in `docs/editor/ipc-protocol.org`.
 
 ## Events
 

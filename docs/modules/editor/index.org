@@ -71,7 +71,7 @@ See [[file:../../editor/editor-runtime.org][Editor Runtime]] for usage of all of
 | =LrgEditorLog= | Final | Ring buffer of captured GLib log records for the console and IPC |
 | =LrgEditorLogRecord= | Boxed struct | One captured log message |
 | =LrgEditorServer= | Final | JSON-lines IPC server on a Unix socket exposing an =LrgEditor= |
-| =LrgEditorApp= | Final | The full editor application (=lrgeditor=), drawn with =LrgGuiContext= |
+| =LrgEditorApp= | Final | The full editor application (=lrgeditor=); since 0.8.1 drawn with the retained UI toolkit (=LrgCanvas=) |
 
 ** Editor Runtime Functions
 :PROPERTIES:
@@ -120,6 +120,8 @@ See [[file:../../editor/editor-runtime.org][Editor Runtime]] for usage of all of
 | =LrgProject= | Final | =project.ryaml= manifest; asset dirs; game output |
 | =LrgAssetDatabase= | Final | Recursive asset scanner + classifier |
 | =LrgAssetEntry= | Final | Single classified asset record (path, name, type, guid) |
+| =LrgAssetMeta= | Final | A =<file>.meta= sidecar: stable GUID, importer and import settings (0.8.1) |
+| =LrgEditorVcs= | Final | Debounced async =git status= of the project for badges and the branch name (0.8.1) |
 
 New =LrgProject= functions: =lrg_project_get_run_command= / =lrg_project_set_run_command= (=Run Game= template with ={project}=, ={level}=, ={module}=), =lrg_project_get_scripts_dir= / =lrg_project_set_scripts_dir=, =lrg_project_clear_asset_dirs=, =lrg_project_resolve=, =lrg_project_relativize=.
 
@@ -133,6 +135,54 @@ New =LrgProject= functions: =lrg_project_get_run_command= / =lrg_project_set_run
 | =lrg_prefab_instantiate= | Produce a placeable copy of a prefab |
 | =lrg_prefab_save= | Save a node subtree as a =.rprefab= file |
 | =lrg_prefab_load= | Load a prefab from a =.rprefab= file |
+| =lrg_prefab_instantiate_linked=, =lrg_prefab_sync_instance=, =lrg_prefab_compute_overrides=, =lrg_prefab_find_owner= | Linked instances (0.8.1): =LrgPrefabLink= on the instance root, overrides kept across syncs; see [[file:../../editor/prefabs.org::#linked-instances][Linked instances]] |
+
+** View Model Types (0.8.1)
+:PROPERTIES:
+:CUSTOM_ID: view-model-types
+:END:
+Headless, no UI includes; see [[file:../../editor/view-model.org][View Model]].
+
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgEditorViewState= | Final | Up to four viewport cameras, layout, active viewport, render modes, overlays, dialog, palette, timeline playhead, inspector lock, play state, tile tool |
+| =LrgEditorViewCamera= | Boxed struct | One viewport camera and the pure camera commands (axis views, orbit steps, zoom, ortho, 2D, focus, frame) |
+| =LrgEditorViewportNav= | Final | Fly / orbit / pan / box / zoom / gizmo navigation state machine with default, blender and trackpad schemes |
+| =LrgEditorPlaySession= | Final | Play-in-editor: private =LrgWorld=, snapshot and restore, pause and step, live object model, apply to level |
+| =LrgEditorNodeModel= | Final | =GListModel= of a level's node tree for tree views |
+| =LrgEditorNodeSource= | Final | =LrgPropertySource= over one or more nodes (sections, multi-edit, prefab override state); see [[file:../../editor/level-model.org::#node-property-source][Node property source]] |
+
+** Document Types (0.8.1)
+:PROPERTIES:
+:CUSTOM_ID: document-types
+:END:
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgEditorDocument= | Final | A YAML data file (input map, locale, sound bank, theme, HUD or UI layout, dialog tree, dungeon) edited through YAML paths with undo, validation through the engine loaders; see [[file:../../editor/data-editors.org][Data Editors]] |
+| =LrgEditorDataSource= | Final | =LrgPropertySource= over fields of an =LrgEditorDocument= |
+| =LrgPrefabLink= | Final | A linked instance's source, GUID map and override set |
+
+** Application Widgets (0.8.1)
+:PROPERTIES:
+:CUSTOM_ID: application-widgets
+:END:
+All in =src/editor/ui/=, built on the retained UI toolkit; see [[file:../../editor/editor-app.org][Editor Application]].
+
+| Type | Kind | Description |
+|------+------+-------------|
+| =LrgEditorWindow= | Final | Menu bar, toolbar, dock area, status bar, toasts |
+| =LrgEditorViewportSplit= / =LrgEditorViewportPanel= | Final | Up to four viewports, header, overlays, camera preview, drops |
+| =LrgEditorSceneRenderer= | Final | Draws a level with the engine's lights, shadows, sky and preview post stack |
+| =LrgEditorHierarchyPanel= | Final | Node tree, multi-select, rename, drag and drop, Live tab |
+| =LrgEditorInspectorPanel= | Final | Property grids per section, prefab bar, lock, live values |
+| =LrgEditorAssetsPanel= | Final | Grid / list, thumbnails, git badges, import settings |
+| =LrgEditorConsolePanel=, =LrgEditorHistoryPanel=, =LrgEditorProblemsPanel= | Final | Log and commands, undo history, validation |
+| =LrgEditorTimelinePanel=, =LrgEditorTilesPanel=, =LrgEditorProfilerPanel= | Final | Keyframes, tilemap settings, frame graph and sections |
+| =LrgEditorCodePanel= | Final | Tabs of =LrgTextEditor= |
+| =LrgEditorPalette= | Final | Command palette and quick open |
+| =LrgEditorPreferences= | Final | The preferences dialog |
+| =LrgEditorDataEditor= | Derivable | Base panel of the data editors (Save, Revert, Validate, issues) |
+| =LrgEditorInputMapEditor=, =LrgEditorLocaleEditor=, =LrgEditorSoundBankEditor=, =LrgEditorThemeEditor=, =LrgEditorHudLayoutEditor=, =LrgEditorUiLayoutEditor=, =LrgEditorDialogTreeEditor=, =LrgEditorDungeonEditor= | Final | The eight data editors; see [[file:../../editor/data-editors.org::#data-editors-panel-base][Data editor panels]] |
 
 ** Enumerations
 :PROPERTIES:
@@ -224,7 +274,14 @@ gboolean     lrg_node_foreach           (LrgNode *, LrgNodeForeachFunc func, gpo
 :PROPERTIES:
 :CUSTOM_ID: see-also
 :END:
-- [[file:../../editor/overview.org][Editor Overview]] — architecture and dual-frontend model
+- [[file:../../editor/overview.org][Editor Overview]] — architecture, dual-frontend model and a tour of the 0.8.1 editor
+- [[file:../../editor/view-model.org][View Model]] — =LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=
+- [[file:../../editor/data-editors.org][Data Editors]] — =LrgEditorDocument= and the eight data editor panels
+- [[file:../../editor/editor-tools.org][Editor Tools]] — tilemaps, timelines, thumbnails
+- [[file:../../editor/lrgeditorctl.org][lrgeditorctl and MCP]]
+- [[file:../../editor/gap-analysis.org][Gap Analysis]] — editor and engine against Godot 4, Unity 6 and Unreal 5, and the roadmap
+- [[file:../../guides/editor-migration-0-8-1.org][Migrating to the 0.8.1 editor]]
+- [[file:../ui/index.org][UI Module]] — the toolkit the editor is built on ([[file:../ui/drag-and-drop.org][drag and drop]], [[file:../ui/property-grid.org][property grid]])
 - [[file:../../editor/level-model.org][Level Model]] — types in depth
 - [[file:../../editor/yaml-format.org][.rlevel Format]] — YAML schema
 - [[file:../../editor/editor-runtime.org][Editor Runtime]] — LrgEditor / commands / host

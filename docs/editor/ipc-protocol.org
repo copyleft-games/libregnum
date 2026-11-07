@@ -3,8 +3,8 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum editor ipc
 #+created: 2026-10-24T22:30:00-04:00
-#+updated: 2026-10-29T23:30:00-04:00
-#+version: 1.0
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 1.1
 
 * Editor IPC Protocol
 :PROPERTIES:
@@ -16,7 +16,7 @@
 
 The editor exposes its document and its UI over a local socket, so anything can drive it: the first-party Emacs package, shell scripts, test harnesses, build tools, other editors. Protocol version 1 (=LRG_EDITOR_SERVER_PROTOCOL_VERSION=).
 
-The server is =LrgEditorServer= (=src/editor/lrg-editor-server.h=); =LrgEditorApp= registers additional methods (actions, view, play, run, project, assets) on top of the document methods.
+The server is =LrgEditorServer= (=src/editor/lrg-editor-server.h=). It serves the document methods on its own, so they work in any embedding and with =lrgeditor --headless=. =LrgEditorApp= registers the application methods (actions, view, play, run, project, assets) on top, and since 0.8.1 the panels of the rebuilt editor register their own methods when they are constructed (hierarchy, inspector, viewport split, assets, code, palette, preferences, data editors, profiler). The [[#method-index][method index]] lists all 130 methods of 0.8.1 and where each is documented; =methods= returns the same list at run time. Protocol version 1 is unchanged in 0.8.1: every addition is a new method or a new reply field, and no 0.8.0 method changed its parameters or replies.
 
 For the command line, =lrgeditorctl= wraps every method below (see [[file:lrgeditorctl.org][lrgeditorctl and MCP]]); AI agents get the same operations as MCP tools.
 
@@ -91,6 +91,149 @@ Start with =hello=:
 | =run=       | (none)                                                                     | An external game run started or ended  |
 | =open-file= | =file=, =line=, =col=                                                      | Sent only to one =open-file= client    |
 
+0.8.1 adds no events: panels that need to follow the editor poll a =*.state= method or subscribe to =changed= and =selection=.
+
+** Method index
+:PROPERTIES:
+:CUSTOM_ID: method-index
+:END:
+Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Registered by/ says which object adds it: =server= methods exist on every =LrgEditorServer= (headless, no app), =app= methods on every =LrgEditorApp= (also =--headless=), and the panel methods once that panel has been constructed (the default window builds all of them; a custom embedding that leaves a panel out does not get its methods, and a method whose panel was destroyed fails with =failed=). The parameters, results and errors are in the linked section; every section ends with a link to the feature documentation that explains the behaviour in depth.
+
+| Method | Since | Registered by | Section |
+|-+-+-+-|
+| =hello= | 0.8.0 | server | [[#document-methods][Document]] |
+| =ping= | 0.8.0 | server | [[#document-methods][Document]] |
+| =methods= | 0.8.0 | server | [[#document-methods][Document]] |
+| =editor.info= | 0.8.0 | server | [[#document-methods][Document]] |
+| =level.new= | 0.8.0 | server | [[#document-methods][Document]] |
+| =level.open= | 0.8.0 | server | [[#document-methods][Document]] |
+| =level.save= | 0.8.0 | server | [[#document-methods][Document]] |
+| =level.reload= | 0.8.0 | server | [[#document-methods][Document]] |
+| =level.serialize= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.tree= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.list= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.get= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.find= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.set= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.create= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.delete= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.duplicate= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.move= | 0.8.0 | server | [[#document-methods][Document]] |
+| =node.rename= | 0.8.0 | server | [[#document-methods][Document]] |
+| =component.add= | 0.8.0 | server | [[#document-methods][Document]] |
+| =component.remove= | 0.8.0 | server | [[#document-methods][Document]] |
+| =component.set= | 0.8.0 | server | [[#document-methods][Document]] |
+| =script.add= | 0.8.0 | server | [[#document-methods][Document]] |
+| =script.remove= | 0.8.0 | server | [[#document-methods][Document]] |
+| =script.open= | 0.8.0 | server | [[#document-methods][Document]] |
+| =file.open= | 0.8.0 | server | [[#document-methods][Document]] |
+| =selection.get= | 0.8.0 | server | [[#document-methods][Document]] |
+| =selection.set= | 0.8.0 | server | [[#document-methods][Document]] |
+| =selection.clear= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.undo= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.redo= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.history= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.jump= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.copy= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.cut= | 0.8.0 | server | [[#document-methods][Document]] |
+| =edit.paste= | 0.8.0 | server | [[#document-methods][Document]] |
+| =tool.set= | 0.8.0 | server | [[#document-methods][Document]] |
+| =prefab.instantiate= | 0.8.0 | server | [[#document-methods][Document]] |
+| =prefab.save= | 0.8.0 | server | [[#document-methods][Document]] |
+| =log.tail= | 0.8.0 | server | [[#document-methods][Document]] |
+| =tilemap.get= | 0.8.0 | server | [[#tilemap-methods][Tilemap]] |
+| =tilemap.configure= | 0.8.0 | server | [[#tilemap-methods][Tilemap]] |
+| =tilemap.paint= | 0.8.0 | server | [[#tilemap-methods][Tilemap]] |
+| =tilemap.rect= | 0.8.0 | server | [[#tilemap-methods][Tilemap]] |
+| =tilemap.fill= | 0.8.0 | server | [[#tilemap-methods][Tilemap]] |
+| =tilemap.pick= | 0.8.0 | server | [[#tilemap-methods][Tilemap]] |
+| =timeline.list= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.get= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.add= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.remove= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.set= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.key= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.unkey= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.move-key= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.ease= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =timeline.sample= | 0.8.0 | server | [[#timeline-methods][Timeline]] |
+| =asset.meta.get= | 0.8.1 | server | [[#asset-meta-methods][Asset sidecar]] |
+| =asset.meta.set= | 0.8.1 | server | [[#asset-meta-methods][Asset sidecar]] |
+| =vcs.status= | 0.8.1 | server | [[#vcs-methods][Version control]] |
+| =prefab.overrides= | 0.8.1 | server | [[#prefab-link-methods][Linked prefab]] |
+| =prefab.apply= | 0.8.1 | server | [[#prefab-link-methods][Linked prefab]] |
+| =prefab.revert= | 0.8.1 | server | [[#prefab-link-methods][Linked prefab]] |
+| =prefab.sync= | 0.8.1 | server | [[#prefab-link-methods][Linked prefab]] |
+| =prefab.relink= | 0.8.1 | server | [[#prefab-link-methods][Linked prefab]] |
+| =prefab.unlink= | 0.8.1 | server | [[#prefab-link-methods][Linked prefab]] |
+| =action.list= | 0.8.0 | app | [[#app-methods][Application]] |
+| =action.run= | 0.8.0 | app | [[#app-methods][Application]] |
+| =view.get= | 0.8.0 | app | [[#app-methods][Application]] |
+| =view.set= | 0.8.0 | app | [[#app-methods][Application]] |
+| =view.focus= | 0.8.0 | app | [[#app-methods][Application]] |
+| =view.screenshot= | 0.8.0 | app | [[#app-methods][Application]] |
+| =play.start= | 0.8.0 | app | [[#app-methods][Application]] |
+| =play.stop= | 0.8.0 | app | [[#app-methods][Application]] |
+| =play.pause= | 0.8.0 | app | [[#app-methods][Application]] |
+| =play.step= | 0.8.0 | app | [[#app-methods][Application]] |
+| =play.state= | 0.8.0 | app | [[#app-methods][Application]] |
+| =run.start= | 0.8.0 | app | [[#app-methods][Application]] |
+| =run.stop= | 0.8.0 | app | [[#app-methods][Application]] |
+| =project.info= | 0.8.0 | app | [[#app-methods][Application]] |
+| =project.open= | 0.8.0 | app | [[#app-methods][Application]] |
+| =asset.list= | 0.8.0 | app | [[#app-methods][Application]] |
+| =level.validate= | 0.8.0 | app | [[#app-methods][Application]] |
+| =level.import= | 0.8.0 | app | [[#app-methods][Application]] |
+| =ui.notify= | 0.8.0 | app | [[#app-methods][Application]] |
+| =ui.state= | 0.8.0 | app | [[#app-methods][Application]] |
+| =editor.quit= | 0.8.0 | app | [[#app-methods][Application]] |
+| =tilemap.tool= | 0.8.0 | app | [[#app-methods][Application]] |
+| =timeline.play= | 0.8.0 | app | [[#app-methods][Application]] |
+| =timeline.seek= | 0.8.0 | app | [[#app-methods][Application]] |
+| =timeline.stop= | 0.8.0 | app | [[#app-methods][Application]] |
+| =timeline.state= | 0.8.0 | app | [[#app-methods][Application]] |
+| =asset.thumbnail= | 0.8.0 | app | [[#app-methods][Application]] |
+| =view.layout= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
+| =view.render_mode= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
+| =view.overlay= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
+| =hierarchy.reveal= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
+| =hierarchy.rename= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
+| =hierarchy.filter= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
+| =hierarchy.state= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
+| =inspector.list= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =inspector.get= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =inspector.set= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =inspector.reset= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =inspector.revert_override= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =inspector.apply_override= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =inspector.state= | 0.8.1 | inspector panel | [[#inspector-methods][Inspector]] |
+| =asset.reveal= | 0.8.1 | assets panel | [[#asset-file-methods][Asset file]] |
+| =asset.rename= | 0.8.1 | assets panel | [[#asset-file-methods][Asset file]] |
+| =asset.move= | 0.8.1 | assets panel | [[#asset-file-methods][Asset file]] |
+| =asset.duplicate= | 0.8.1 | assets panel | [[#asset-file-methods][Asset file]] |
+| =asset.trash= | 0.8.1 | assets panel | [[#asset-file-methods][Asset file]] |
+| =asset.orphans= | 0.8.1 | assets panel | [[#asset-file-methods][Asset file]] |
+| =code.open= | 0.8.1 | code panel | [[#code-methods][Code, palette, preferences]] |
+| =code.list= | 0.8.1 | code panel | [[#code-methods][Code, palette, preferences]] |
+| =code.save= | 0.8.1 | code panel | [[#code-methods][Code, palette, preferences]] |
+| =palette.open= | 0.8.1 | code panel | [[#code-methods][Code, palette, preferences]] |
+| =preferences.open= | 0.8.1 | code panel | [[#code-methods][Code, palette, preferences]] |
+| =data.open= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.list= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.get= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.set= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.edit= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.undo= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.redo= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.validate= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.save= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.reload= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.close= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =data.reveal= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =profiler.sample= | 0.8.1 | profiler panel | [[#profiler-methods][Profiler]] |
+
+Errors are the codes of the [[#messages][message table]] everywhere: a missing or mistyped parameter is =invalid-params=, an unknown node, file, path or panel item =not-found=, and an operation that could not be carried out =failed= with the reason in =message=. The sections below name the cases that are specific to a method.
+
 ** Document methods
 :PROPERTIES:
 :CUSTOM_ID: document-methods
@@ -134,7 +277,7 @@ Every editing method goes through the editor's undo stack.
 | =edit.copy= / =edit.cut= / =edit.paste= |                                         | clipboard text / =true= / pasted nodes       |
 | =tool.set=           | =tool= (=select translate rotate scale=), =space= (=world local=), =snap= | editor info          |
 | =prefab.instantiate= | =path=, =parent=                                           | the instance                                 |
-| =prefab.save=        | =node=, =path=                                             | the path                                     |
+| =prefab.save=        | =node=, =path=                                             | the path; linked instances of =path= in the level are synced (one undo group), and saving an instance over its own source applies its overrides instead |
 | =log.tail=           | =count=                                                    | recent log records                           |
 
 ** Tilemap methods
@@ -171,6 +314,51 @@ Keyframed animation stored in the level (see [[file:editor-tools.org::#animation
 | =timeline.ease=     | =name=, =node=, =time=, =easing=, =channel=                            | =changed= |
 | =timeline.sample=   | =name=, =time= (wrapped or clamped to the clip)                        | =time=, =values [{node channel value}]= (nothing is written) |
 
+** Asset sidecar methods
+:PROPERTIES:
+:CUSTOM_ID: asset-meta-methods
+:END:
+Read and edit an asset's =.meta= sidecar (see [[file:projects-and-assets.org][Projects and Assets]]). Headless: they work on a plain =LrgEditorServer=. =path= is the asset (or its =.meta= file), absolute or relative to the project directory (=lrg_editor_server_set_project_dir()=, else the current directory). The reply describes the sidecar as =lrg_asset_meta_to_variant()= does: =guid=, =importer= and =settings= (an object with every known setting of the importer at its effective value, defaults included, plus any unknown keys), plus =path= (the absolute asset path) and =exists= (whether the =.meta= file is on disk).
+
+| Method           | Params                                                                 | Result |
+|------------------+------------------------------------------------------------------------+--------|
+| =asset.meta.get= | =path=                                                                 | =guid importer settings path exists=; without a sidecar, the one the asset database would create in memory (importer from the extension, the 0.8.0 legacy guid of the project-relative path); nothing is written |
+| =asset.meta.set= | =path=, =settings= (={key: value or null}=, null resets to the default), =guid= (optional, replaces the identifier); at least one of the two | same as =asset.meta.get= with =exists: true= |
+
+=asset.meta.set= is all or nothing: every value is validated with =lrg_asset_meta_set_setting_variant()= (booleans, integral numbers, choices such as =filter= =point bilinear trilinear=, numeric ranges such as =max-size= 0..16384) and the sidecar is written only when all of them are accepted; one bad key or value is =invalid-params= and the file is left untouched. A sidecar that cannot be parsed (for instance mid merge conflict) is =failed= and is never overwritten. A missing asset is =not-found=. The write goes straight to =<path>.meta= and is not on the undo stack (like a file save).
+
+** Version control methods
+:PROPERTIES:
+:CUSTOM_ID: vcs-methods
+:END:
+Git status of the project directory through =LrgEditorVcs= (=lrg_editor_vcs_refresh_sync()=, so the answer is always fresh). Headless; the server keeps one tracker and replaces it when the project directory changes.
+
+| Method       | Params                                                   | Result |
+|--------------+----------------------------------------------------------+--------|
+| =vcs.status= |                                                          | =repository= (bool), =branch= (string, ="HEAD"= when detached, null outside a repository), =files [{path status letter}]= sorted by path: every path git reports that is not clean (untracked or ignored folders appear once with a trailing =/=) |
+| =vcs.status= | =path= (a file or folder, project relative or absolute)  | ={path status letter}= for that path; a folder reports its aggregated badge status |
+
+=status= is an =LrgEditorVcsStatus= nick (=unmodified modified added deleted renamed untracked ignored conflicted=) and =letter= the one-letter badge (=M A D R U I !=, a space for unmodified). Outside a git work tree the reply is ={"repository": false, "branch": null, "files": []}=, not an error; a git failure inside a repository is =failed=.
+
+** Linked prefab methods
+:PROPERTIES:
+:CUSTOM_ID: prefab-link-methods
+:END:
+Overrides and links of prefab instances (see [[file:prefabs.org][Prefabs]]). Headless; every mutation is undoable. =node= may be an instance root or any node inside an instance: a node that carries a link is used as is (a nested instance root acts on its own link), otherwise the instance that governs it (=lrg_prefab_find_owner()=). Override keys are the =LrgPrefabLink= keys: a property path for the root (=visible=, =transform/scale=, =components/Health/max=), =<guid>:path= for other nodes, =children/+<guid>= and =children/-<source-guid>= for added and removed children.
+
+The instance description returned by several methods is ={node name source source_guid linked overrides}=: =node= is the instance root's guid, =source= the prefab path (for an unlinked node the 0.8.0 marker, i.e. what =prefab.relink= would use, or null), =source_guid= the prefab's asset guid or null, =linked= a boolean and =overrides= the sorted key list (empty when unlinked).
+
+| Method             | Params                                                                 | Result |
+|--------------------+------------------------------------------------------------------------+--------|
+| =prefab.overrides= | =node=                                                                 | instance description; an unlinked node is not an error (=linked: false=) |
+| =prefab.apply=     | =node=, =keys= (optional array; default every override)                | instance description plus =applied= (keys written to the prefab) and =synced= (instances that changed when the dependents were synced) |
+| =prefab.revert=    | =node=, =keys= (optional array; default every override, then a full sync) | instance description (the remaining overrides) |
+| =prefab.sync=      | =path= (optional prefab file)                                          | =synced= (instances that changed), =prefabs= (sources synced); without =path= every prefab used by an outermost linked instance in the level |
+| =prefab.relink=    | =node=, =path= (optional; default the node's 0.8.0 marker)             | instance description |
+| =prefab.unlink=    | =node=                                                                 | =node=, =linked: false=, =unlinked= (whether there was a link to break) |
+
+=prefab.apply= writes the source file, saves it and syncs every other dependent instance as one undo group (undo restores the file too). =prefab.revert= with several keys is one undo step. =prefab.sync= with a =path= also syncs instances of prefabs that nest it; instances that are already current record nothing, so a second sync reports 0. Errors: a missing =node= or a =keys= value that is not an array of strings is =invalid-params=; an unknown node, a key that is not in the instance's override set (checked before anything changes) or a missing prefab file is =not-found=; acting on a node that is not part of a linked instance (=apply=, =revert=), or a prefab that cannot be loaded or saved, is =failed= with the reason.
+
 ** Application methods
 :PROPERTIES:
 :CUSTOM_ID: app-methods
@@ -181,10 +369,10 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 |-------------------+-----------------------------------------------------+-----------------------------------------------------|
 | =action.list=     |                                                     | =[{id label category shortcut enabled checked}]=    |
 | =action.run=      | =id=                                                | =true=; =not-found= if unknown or disabled          |
-| =view.get=        |                                                     | camera =position target fovy orthographic ortho_height mode_2d= |
-| =view.set=        | any of =position=, =target= (arrays), =orthographic=, =ortho_height=, =mode_2d= | the view          |
-| =view.focus=      | =node= (optional: frame the selection or all)       | the view                                            |
-| =view.screenshot= | =path= (.png), =window= (whole window, written after the next frame) | the path; fails headless         |
+| =view.get=        | =viewport= (optional index 0..3; default the active viewport) | camera =position target fovy orthographic ortho_height mode_2d viewport= |
+| =view.set=        | any of =position=, =target= (arrays), =orthographic=, =ortho_height=, =mode_2d=; =viewport= | the view (=mode_2d= resets the camera first, the other values then apply) |
+| =view.focus=      | =node= (optional: frame the selection or all), =viewport= | the view                                       |
+| =view.screenshot= | =path= (.png), =window= (whole window, written after the next frame) | the path; the viewport image is read back from its render texture; fails headless |
 | =play.start= / =play.stop= / =play.pause= / =play.step= / =play.state= |        | =playing paused time running=                       |
 | =run.start= / =run.stop= |                                              | play state                                          |
 | =project.info=    |                                                     | =root name default_level game_output run_command scripts_dir asset_dirs= |
@@ -192,8 +380,8 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =asset.list=      | =type= (=level prefab texture model audio script ...=) | =[{path type}]=                                  |
 | =level.validate=  |                                                     | =[{severity code node path message file}]=          |
 | =level.import=    | =path= (Blender scene YAML)                         | =true=                                              |
-| =ui.notify=       | =message=, =level= (0 info, 1 success, 2 warning, 3 error) | =true=; shows a toast                        |
-| =ui.state=        |                                                     | =menu= (open top-level menu or null), =dialog=, =palette=, =nav= (=none fly orbit pan box zoom gizmo=), =viewport_hovered=, =window=, =fps=, =frame_height=, =menubar= (header rects by label), =viewport= (rect), =input= (=x y buttons [left right middle] mods=) as last seen |
+| =ui.notify=       | =message=, =level= (the string =info= (default), =success=, =warning= or =error=, any case; for 0.8.0 clients a number =0=-=3= selects the same levels, larger numbers clamp to =error=; anything else is =info=) | =true=; shows a toast |
+| =ui.state=        |                                                     | see [[#ui-state][ui.state]] |
 | =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
 | =tilemap.tool=    | any of =tool= (=brush eraser rect fill pick=), =tile=, =layer=, =brush=, =mode= (paint mode on/off) | =tool mode tile layer brush target hover= (=[x, y]= cell under the pointer or null) |
 | =timeline.play=   | =name= (else the panel's timeline), =from=, =playing= (default true) | =name time playing previewing=        |
@@ -202,7 +390,146 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =timeline.state=  |                                                     | =name time playing previewing=                      |
 | =asset.thumbnail= | =path= (project relative or absolute), =wait= (generate now) | =path thumbnail pending cache=; textures, levels, prefabs; models need a window |
 
-The app also overrides =level.save= so a timeline preview is put back before writing (the pose is never saved).
+The app also overrides =level.save= so a timeline preview is put back before writing (the pose is never saved). The =view.*=, =play.*=, =timeline.*= and =tilemap.tool= methods act on the headless view model (=LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=, see [[file:view-model.org][View Model]]), so they work the same with =lrgeditor --headless=. =view.*= take an optional =viewport= index (0..3; omitted or -1 is the active viewport).
+
+*** ui.state
+:PROPERTIES:
+:CUSTOM_ID: ui-state
+:END:
+What the UI is doing and the last input it saw, for tools, tests (=tests/editor-x11-smoke.sh= clicks the =menubar= rectangles) and diagnosing "my clicks do nothing". Since 0.8.1 the values come from the retained UI (=LrgMenuBar=, =LrgMenu=, the viewport widget) and the headless view model, with the 0.8.0 field names and meanings unchanged; the fields marked 0.8.1 are new.
+
+| Field              | Since | Meaning |
+|--------------------+-------+---------|
+| =menu=             | 0.8.0 | Label of the open top-level menu (=lrg_menu_bar_get_open_title()=), or null |
+| =menubar=          | 0.8.0 | ={"File": [x, y, w, h], "Edit": ..., ...}= title rectangles in window pixels (=lrg_menu_bar_get_title_rect()=), labels without mnemonic markers |
+| =frame_height=     | 0.8.0 | Height of a menu row (=lrg_menu_get_row_height()=): the first item of an open menu is about one row under its title |
+| =dialog=           | 0.8.0 | Open modal dialog id or null: =confirm=, =file=, =new-project=, =new-script=, =recover=, =about=, =shortcuts=, =project-settings=, and since 0.8.1 =preferences=, =goto-line= and =code-reload= (code panel), =data-revert= and =data-close= (data editors) |
+| =palette=          | 0.8.0 | Command palette or quick open showing |
+| =nav=              | 0.8.0 | Navigation in progress: =none fly orbit pan box zoom gizmo= (=lrg_editor_nav_mode_to_string()=) |
+| =viewport=         | 0.8.0 | =[x, y, w, h]= of the first viewport's image (viewport 0) in window pixels; =viewports= has every viewport |
+| =viewport_hovered= | 0.8.0 | The pointer is over the viewport |
+| =window=           | 0.8.0 | The editor has a window (false headless) |
+| =fps=              | 0.8.0 | Smoothed frame rate |
+| =input=            | 0.8.0 | =x y buttons [left right middle] mods= of the last frame (=mods= is an =LrgInputModifiers= mask since 0.8.1: Shift 1, Ctrl 2, Alt 4, Super 8) |
+| =viewports=        | 0.8.1 | One entry per viewport of the layout: =index rect render_mode mode_2d=; =rect= is that viewport's image in window pixels (zeros for a viewport the layout hides) |
+| =active_viewport=  | 0.8.1 | Index of the viewport keys and =view.*= without =viewport= act on |
+| =layout=           | 0.8.1 | Viewport layout: =single split-h split-v quad= |
+| =panels=           | 0.8.1 | Ids of the docked panels |
+| =focus=            | 0.8.1 | Name (or type) of the widget with keyboard focus, or null |
+
+** Viewport layout methods
+:PROPERTIES:
+:CUSTOM_ID: viewport-methods
+:END:
+Registered by the viewport split (=LrgEditorViewportSplit=); they act on the headless view model, so they also work =--headless=. =viewport= is an index 0..3; omitted or -1 is the active viewport. Every parameter except =viewport= is optional: without it the method only reports.
+
+| Method             | Params                                                                 | Result                                                   | Errors |
+|--------------------+------------------------------------------------------------------------+----------------------------------------------------------+--------|
+| =view.layout=      | =layout= (=single=, =split-h=, =split-v=, =quad=)                      | ={layout, viewports, active_viewport}=                   | an unknown layout is =invalid-params= |
+| =view.render_mode= | =viewport=, =mode= (=lit=, =unlit=, =wireframe=, =normals=, =lighting-only=) | ={viewport, mode}=                                 | an unknown mode or a viewport index out of range is =invalid-params= |
+| =view.overlay=     | =viewport=, =name= (=grid=, =gizmos=, =icons=, =bounds=, =stats=, =scene-lighting=, =shadows=, =sky=, =post=), =enabled= (omitted toggles) | ={viewport, overlays: {grid: true, ...}}= | an unknown overlay nick or a bad index is =invalid-params= |
+
+The 0.8.0 =view.get=, =view.set=, =view.focus= and =view.screenshot= take the same =viewport= parameter (see [[#app-methods][Application methods]]). Details: [[file:editor-app.org::#editor-viewport-ipc][Viewport panel IPC]], [[file:view-model.org][View Model]].
+
+** Hierarchy methods
+:PROPERTIES:
+:CUSTOM_ID: hierarchy-methods
+:END:
+Registered by the hierarchy panel. =guid= or =node= (a GUID or a name path) picks the node.
+
+| Method             | Params                                               | Result | Errors |
+|--------------------+------------------------------------------------------+--------+--------|
+| =hierarchy.reveal= | =guid= or =node=, =select= (default =true=)          | ={guid, row, rect, revealed}=; shows the panel, clears a filter that hides the node, expands its ancestors and scrolls to it | no node parameter is =invalid-params=, an unknown node =not-found= |
+| =hierarchy.rename= | =guid= or =node=, =name= (optional)                  | ={guid, name, editing}=; with =name= renames now (one undo step), without it opens the inline rename field | as =hierarchy.reveal= |
+| =hierarchy.filter= | =text= (absent or ="" clears)                        | the number of matching nodes | a non-string =text= is =invalid-params= |
+| =hierarchy.state=  |                                                      | ={page, live, filter, matches, editing, tree, tab-scene, tab-live, rows: [{guid, row, rect, name, depth, expanded, selected}]}=; the tab rectangles only while playing | =failed= once the panel is gone |
+
+Details: [[file:editor-app.org::#editor-panel-hierarchy-ipc][Hierarchy panel IPC]].
+
+** Inspector methods
+:PROPERTIES:
+:CUSTOM_ID: inspector-methods
+:END:
+Registered by the inspector panel. They build their own node sources (=LrgEditorNodeSource=), so they work for any node and =--headless=. The target is =nodes= (array of GUIDs or paths) or =node=; without either, the nodes the inspector shows (or the selection). =section= is =header=, =transform=, =visual=, =component= (with =component=, a component key) or =scripts=. A /row/ is ={name, label, group, hint, type, read_only, value, mixed, state, override_path?}=.
+
+| Method                      | Params                                         | Result | Errors |
+|-----------------------------+------------------------------------------------+--------+--------|
+| =inspector.list=            | target, =section?=, =component?=               | ={nodes, section, component?, rows}=, or without a section ={nodes, sections: [{section, component?, rows}]}= | an unknown section is =invalid-params=; unknown nodes or a component not on every node =not-found= |
+| =inspector.get=             | target, =section=, =component?=, =name=        | one row | a missing =section= or =name= is =invalid-params=, an unknown property =not-found= |
+| =inspector.set=             | target, =section=, =component?=, =name=, =value= | the row after the edit; one undo step across all nodes | as =inspector.get=; a value of the wrong type or a read-only row is =invalid-params= |
+| =inspector.reset=           | target, =section=, =component?=, =name=        | the row; an overridden prefab property reverts to the prefab, others go to their default (one step) | as =inspector.get= |
+| =inspector.revert_override= | target, =section=, =component?=, =name=        | the row plus =count= | as =inspector.get=; nothing overridden is =failed= |
+| =inspector.apply_override=  | target, =section=, =component?=, =name=        | the row plus =count= (writes and saves the prefab) | as =inspector.get=; a prefab that cannot be saved is =failed= |
+| =inspector.state=           |                                                | ={nodes, locked, lock, live, live_type?, components, prefab}= | none |
+
+Value forms (vectors as arrays, enums and flags as nicks, colours as ="#rrggbbaa"=) and examples: [[file:editor-app.org::#editor-panel-inspector-ipc][Inspector panel IPC]].
+
+** Asset file methods
+:PROPERTIES:
+:CUSTOM_ID: asset-file-methods
+:END:
+Registered by the assets panel; thin wrappers on =LrgAssetDatabase= that keep the =.meta= sidecar with its asset. =path= is project relative or absolute and must lie inside the project. Each method rescans, re-lists the panel and queues a git refresh.
+
+| Method            | Params                                   | Result | Errors |
+|-------------------+------------------------------------------+--------+--------|
+| =asset.reveal=    | =path=                                   | ={path, relative, is_dir, guid, directory, index}=; shows the panel, the folder and the selected item | a missing =path= is =invalid-params=; outside the project or missing =not-found= |
+| =asset.rename=    | =path=, =name=                           | ={path, relative, is_dir, guid}= of the new name (GUID kept) | a name that exists or is invalid is =invalid-params= |
+| =asset.move=      | =path=, =dest= (a folder; ="" is the root) | the new ={path, relative, is_dir, guid}= | as =asset.rename= |
+| =asset.duplicate= | =path=                                   | the copy's ={path, relative, is_dir, guid}= (fresh GUID) | as =asset.reveal= |
+| =asset.trash=     | =path=                                   | ={path, trashed}=; moves the file and its sidecar to the desktop trash, no prompt | as =asset.reveal=; a trash failure is =failed= |
+| =asset.orphans=   | =trash= (optional boolean)               | ={orphans}= (sidecars whose asset is gone), with =trash: true= also =trashed= | =failed= on a trash failure |
+
+Details: [[file:editor-app.org::#editor-panel-assets-ipc][Assets panel IPC]], [[file:projects-and-assets.org][Projects and Assets]].
+
+** Code editor, palette and preferences methods
+:PROPERTIES:
+:CUSTOM_ID: code-methods
+:END:
+Registered by the code panel (which also creates the command palette).
+
+| Method             | Params                                                    | Result | Errors |
+|--------------------+-----------------------------------------------------------+--------+--------|
+| =code.open=        | =path= (absolute or project relative), =line= (1-based, optional) | the tab ={path, tab, active, dirty, line, column, lines, language}= | a missing file is =not-found=, a binary or unreadable one =failed= |
+| =code.list=        |                                                           | the open tabs in tab order | none |
+| =code.save=        | =path= (optional; default the active tab)                 | the tab | a file that is not open is =not-found=; a write error =failed= |
+| =palette.open=     | =mode= (=commands= (default) or =files=), =query=         | ={open, results, scanning}=; =open= is false while a dialog is up | an unknown mode is =invalid-params= |
+| =preferences.open= | =page= (optional page id, e.g. =keybindings=)             | the page id | an unknown page is =invalid-params= |
+
+=code.open= always opens in the internal code panel, whatever =script-editor= says. Details: [[file:editor-app.org::#editor-panel-code-ipc][Code editor IPC]], [[file:editor-app.org::#editor-panel-palette][Command palette]], [[file:editor-app.org::#editor-panel-preferences][Preferences]].
+
+** Data editor methods
+:PROPERTIES:
+:CUSTOM_ID: data-methods
+:END:
+Registered by =lrg_editor_data_editor_install()= (the assets panel calls it, so a default window always has them). =path= is a data file (input map, locale, sound bank, theme, HUD layout, UI layout, dialog tree, dungeon); omitted, it is the focused data editor. Most methods reply with the /editor status/: ={path, panel, format, editor, dirty, read_only, focused, changed_on_disk, issues, errors, undo_label, redo_label, state?}=.
+
+| Method                    | Params                                                         | Result |
+|---------------------------+----------------------------------------------------------------+--------|
+| =data.open=               | =path=                                                         | status; opens and docks the matching editor |
+| =data.list=               |                                                                | array of statuses |
+| =data.get=                | =path?=, =at= (YAML path, default root), =as?= (="yaml"=)      | ={at, kind, value, keys, length, yaml, line}= (=value= for scalars, =keys= for mappings, =length= for sequences, =yaml= for collections or with =as=) |
+| =data.set=                | =path?=, =at=, =value= (JSON) or =yaml=, =gesture?=            | status + =ok= |
+| =data.edit=               | =path?=, =op= (=insert=, =move=, =add_key=, =rename_key=, =remove=), =at=, op arguments | status + =ok= |
+| =data.undo= / =data.redo= | =path?=                                                        | status + =ok= (whether anything changed) |
+| =data.validate=           | =path?=                                                        | ={ok, errors, issues: [{severity, path, line, column, message}]}= |
+| =data.save=               | =path?=, =save_as?=                                            | status + =ok= |
+| =data.reload=             | =path?=                                                        | status + =ok= |
+| =data.close=              | =path?=, =force?=                                              | ={closed}= (=false= while the unsaved prompt is up) |
+| =data.reveal=             | =path?=, =at=, =line?=                                         | status, after doing what clicking an issue does |
+
+Errors: no such editor or YAML node is =not-found=, a bad path or argument =invalid-params=, a load, parse or write failure =failed=. Details: [[file:data-editors.org::#data-editors-panel-base-ipc][Data editor IPC]].
+
+** Profiler method
+:PROPERTIES:
+:CUSTOM_ID: profiler-methods
+:END:
+Registered by the profiler panel.
+
+| Method            | Params                                                       | Result |
+|-------------------+--------------------------------------------------------------+--------|
+| =profiler.sample= | =frames= (recent frame times, default 60), =enable= (=true= pins the profiler on, =false= unpins it) | ={enabled, pinned, paused, frame_ms, frames, sections: [{name, last_ms, avg_ms, min_ms, max_ms, count}]}= |
+
+No method-specific errors. Details: [[file:editor-app.org::#editor-panel-profiler][Profiler panel]].
 
 ** Examples
 :PROPERTIES:
