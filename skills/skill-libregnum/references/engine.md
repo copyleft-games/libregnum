@@ -133,3 +133,9 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - Per frame: `lrg_skeleton_calculate_world_poses` then `lrg_skinned_mesh_apply_skeleton(mesh, skeleton)`. Inverse binds live on the skeleton. `LrgMorphTargets` (in lrg-skinned-mesh.h) blends lazily on the CPU; on the GPU path set_morph_targets makes vertex buffers dynamic.
 - Retargeting: `LrgBoneMap` (`.rbonemap`; explicit pairs + name rules: prefix strip, case, separators/camel case, left/right -> `.l`/`.r`) and `LrgRetargeter` (skeleton-space rest alignment; translation NONE/ROOT/ALL; automatic scale from hip heights; `retarget_clip` bakes linear channels; `retarget_skeleton` is live). Skeletons need bone indices 0..n-1.
 - Traps: graylib's raylib is built without `ImageDraw`. Cross-check new import paths against `lrg_gltf_geometry_pose` (pattern in test-gltf-animation).
+
+### Sequences (0.9.0 M4)
+- `LrgSequence` (`.rseq`) is played by `LrgSequencePlayer` into an `LrgWorld3D`, or by `LrgSequenceComponent` (registry `sequence`, props `sequence-path`, `autoplay`, `play-mode`, `rate`). Tracks bind entities by node GUID; a player binding override, or `"self"` on the component, retargets them.
+- Call `lrg_sequence_player_advance(p, dt)` each frame. `scrub()` fires events (reverse order with `reverse=TRUE`) and starts no sounds; `set_time()` fires nothing.
+- Traps: rotation channels are Euler radians (no slerp); unkeyed channels are untouched and `stop()` does not restore poses; bone tracks are bind-pose offsets and need `lrg_sequence_player_bind_skeleton()`; an animation clip is used if `animation-sample` is handled, else if registered with `add_clip`/`load_clips`; camera cuts need an `LrgCameraComponent` on the target and `stop()` hands the camera back (NULL); property tracks key numeric, boolean (switches at 0.5) and enum (rounded) properties only.
+- Play a level timeline at runtime: `lrg_sequence_new_from_timeline(tl, fps)`.

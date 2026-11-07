@@ -124,3 +124,8 @@ Runtime: lrg_environment_load_sources(env, asset_manager, level_dir, &err); lrg_
 - `kind: mesh-asset` whose `<asset>.meta` has `lod-levels > 1` -> LrgLodComponent (engine must be started).
 ### Environment at runtime
 `lrg_level_instantiate_3d()` / `lrg_level_load_world3d()` put a COPY of `environment:` on the world (`lrg_world3d_get_environment`) with sky images loaded, and the `post_stack:` `.rpost` on `lrg_world3d_get_post_stack`. Relative refs resolve: base dir (level file dir) -> asset manager search paths -> project root -> cwd. Missing sky/post = g_warning, not an error. Edit the world's environment at runtime, not the level's.
+
+### Timeline Bézier keys and bone tracks (0.9.0)
+- Timeline keys may add `tangent` plus `slope` (user) or `in`/`out` (broken) to make a Bézier key; the segment starting at a Bézier key ignores `easing`.
+- Channel `bone.BONE.location|rotation|scale.x|y|z` holds a bind-pose offset (bone names may contain dots).
+- Component desc `type: sequence` with params `sequence_path`, `autoplay`, `play_mode`, `rate`.

@@ -31,7 +31,8 @@ typedef enum
 	CH_COLOR,
 	CH_ROUGHNESS,
 	CH_METALLIC,
-	CH_PARAM
+	CH_PARAM,
+	CH_BONE
 } ChannelKind;
 
 /* Splits a channel name into its kind and component (axis index or the
@@ -76,7 +77,125 @@ parse_channel (const gchar  *channel,
 		*param = channel + 6;
 		return CH_PARAM;
 	}
+	if (lrg_timeline_channel_get_bone (channel, NULL, NULL))
+		return CH_BONE;
 	return CH_INVALID;
+}
+
+gboolean
+lrg_timeline_channel_get_bone (const gchar                  *channel,
+                               gchar                       **out_bone,
+                               LrgSequenceTransformChannel  *out_channel)
+{
+	const gchar                *last, *group;
+	LrgSequenceTransformChannel ch;
+
+	if (channel == NULL || !g_str_has_prefix (channel, "bone."))
+		return FALSE;
+
+	/* The last two dot-separated parts are the transform component
+	 * ("rotation.y"); everything between "bone." and them is the bone
+	 * name, which may itself contain dots. */
+	last = strrchr (channel, '.');
+	if (last == NULL || last <= channel + 5)
+		return FALSE;
+	group = last;
+	while (group > channel + 5 && group[-1] != '.')
+		group--;
+	if (group <= channel + 6 || !lrg_sequence_transform_channel_from_string (group, &ch))
+		return FALSE;
+	if (out_bone != NULL)
+		*out_bone = g_strndup (channel + 5, (gsize) (group - 1 - (channel + 5)));
+	if (out_channel != NULL)
+		*out_channel = ch;
+	return TRUE;
+}
+
+/* ==========================================================================
+ * Bone offsets on authoring nodes (runtime side table, never saved)
+ * ========================================================================== */
+
+#define BONE_TABLE_KEY "lrg-timeline-bone-offsets"
+
+static const gfloat identity_offset[LRG_SEQUENCE_N_CHANNELS] = { 0, 0, 0, 0, 0, 0, 1, 1, 1 };
+
+/* The node's bone -> gfloat[9] table, created when @create. */
+static GHashTable *
+bone_table (LrgNode  *node,
+            gboolean  create)
+{
+	GHashTable *table = g_object_get_data (G_OBJECT (node), BONE_TABLE_KEY);
+
+	if (table == NULL && create)
+	{
+		table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+		g_object_set_data_full (G_OBJECT (node), BONE_TABLE_KEY, table, (GDestroyNotify) g_hash_table_unref);
+	}
+	return table;
+}
+
+gboolean
+lrg_timeline_get_bone_offset (LrgNode     *node,
+                              const gchar *bone,
+                              gfloat      *out_offset)
+{
+	GHashTable *table;
+	gfloat     *off;
+
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+	g_return_val_if_fail (bone != NULL, FALSE);
+	g_return_val_if_fail (out_offset != NULL, FALSE);
+
+	table = bone_table (node, FALSE);
+	off = (table != NULL) ? g_hash_table_lookup (table, bone) : NULL;
+	memcpy (out_offset, off != NULL ? off : identity_offset, sizeof (identity_offset));
+	return off != NULL;
+}
+
+void
+lrg_timeline_clear_bone_offsets (LrgNode *node)
+{
+	g_return_if_fail (LRG_IS_NODE (node));
+	g_object_set_data (G_OBJECT (node), BONE_TABLE_KEY, NULL);
+}
+
+static gboolean
+bone_channel_read (LrgNode     *node,
+                   const gchar *channel,
+                   gfloat      *out_value)
+{
+	g_autofree gchar           *bone = NULL;
+	LrgSequenceTransformChannel ch;
+	gfloat                      off[LRG_SEQUENCE_N_CHANNELS];
+
+	if (!lrg_timeline_channel_get_bone (channel, &bone, &ch))
+		return FALSE;
+	lrg_timeline_get_bone_offset (node, bone, off);
+	*out_value = off[ch];
+	return TRUE;
+}
+
+static gboolean
+bone_channel_write (LrgNode     *node,
+                    const gchar *channel,
+                    gfloat       value)
+{
+	g_autofree gchar           *bone = NULL;
+	LrgSequenceTransformChannel ch;
+	GHashTable                 *table;
+	gfloat                     *off;
+
+	if (!lrg_timeline_channel_get_bone (channel, &bone, &ch))
+		return FALSE;
+	table = bone_table (node, TRUE);
+	off = g_hash_table_lookup (table, bone);
+	if (off == NULL)
+	{
+		off = g_memdup2 (identity_offset, sizeof (identity_offset));
+		g_hash_table_insert (table, g_steal_pointer (&bone), off);
+	}
+	off[ch] = value;
+	return TRUE;
 }
 
 gboolean
@@ -122,6 +241,8 @@ lrg_timeline_channel_read (LrgNode     *node,
 	case CH_SCALE:
 		*out_value = vec_get (lrg_node_get_scale (node), comp);
 		return TRUE;
+	case CH_BONE:
+		return bone_channel_read (node, channel, out_value);
 	default:
 		break;
 	}
@@ -183,6 +304,8 @@ lrg_timeline_channel_write (LrgNode     *node,
 	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
 
 	kind = parse_channel (channel, &comp, &param);
+	if (kind == CH_BONE)
+		return bone_channel_write (node, channel, value);
 	if (kind == CH_LOCATION || kind == CH_ROTATION || kind == CH_SCALE)
 	{
 		v = (kind == CH_LOCATION) ? lrg_node_get_location (node)
@@ -239,8 +362,23 @@ struct _LrgTimelineTrack
 
 	gchar            *node_guid;
 	gchar            *channel;
-	LrgKeyframeCurve *curve;
+	LrgKeyframeCurve *curve;     /* times, values, easings */
+	GArray           *tangents;  /* TangentEntry: Bézier handles by key time */
 };
+
+/*
+ * Bézier handles of a key, matched to the curve's key by time (within
+ * KEY_EPSILON). Keeping them beside the curve instead of inside it keeps
+ * LrgKeyframeCurve (and code that edits it directly) unchanged; an entry
+ * whose key is gone simply never matches and is pruned on the next edit.
+ */
+typedef struct
+{
+	gfloat                 time;
+	LrgSequenceTangentMode mode;
+	gfloat                 in_tangent;
+	gfloat                 out_tangent;
+} TangentEntry;
 
 G_DEFINE_FINAL_TYPE (LrgTimelineTrack, lrg_timeline_track, G_TYPE_OBJECT)
 
@@ -252,6 +390,7 @@ lrg_timeline_track_finalize (GObject *object)
 	g_clear_pointer (&self->node_guid, g_free);
 	g_clear_pointer (&self->channel, g_free);
 	g_clear_object (&self->curve);
+	g_clear_pointer (&self->tangents, g_array_unref);
 
 	G_OBJECT_CLASS (lrg_timeline_track_parent_class)->finalize (object);
 }
@@ -266,6 +405,50 @@ static void
 lrg_timeline_track_init (LrgTimelineTrack *self)
 {
 	self->curve = lrg_keyframe_curve_new ();
+	self->tangents = g_array_new (FALSE, TRUE, sizeof (TangentEntry));
+}
+
+/* The tangent entry of the key at @time, or NULL for an eased key. */
+static TangentEntry *
+tangent_at (LrgTimelineTrack *self,
+            gfloat            time)
+{
+	guint i;
+
+	for (i = 0; i < self->tangents->len; i++)
+	{
+		TangentEntry *e = &g_array_index (self->tangents, TangentEntry, i);
+
+		if (fabsf (e->time - time) <= KEY_EPSILON)
+			return e;
+	}
+	return NULL;
+}
+
+/* Drops entries whose key no longer exists (e.g. after the curve was
+ * cleared directly). */
+static void
+prune_tangents (LrgTimelineTrack *self)
+{
+	guint i = self->tangents->len;
+
+	while (i-- > 0)
+	{
+		gfloat t = g_array_index (self->tangents, TangentEntry, i).time;
+
+		if (lrg_timeline_track_find_key (self, t, KEY_EPSILON) < 0)
+			g_array_remove_index (self->tangents, i);
+	}
+}
+
+static gfloat
+key_time (LrgTimelineTrack *self,
+          guint             index)
+{
+	gfloat t = 0.0f;
+
+	lrg_keyframe_curve_get_key (self->curve, index, &t, NULL, NULL);
+	return t;
 }
 
 LrgTimelineTrack *
@@ -359,7 +542,115 @@ lrg_timeline_track_remove_key (LrgTimelineTrack *self,
 
 	if (!lrg_keyframe_curve_get_key (self->curve, index, &t, NULL, NULL))
 		return FALSE;
-	return lrg_keyframe_curve_remove_key (self->curve, t);
+	if (!lrg_keyframe_curve_remove_key (self->curve, t))
+		return FALSE;
+	prune_tangents (self);
+	return TRUE;
+}
+
+gboolean
+lrg_timeline_track_set_key_tangents (LrgTimelineTrack       *self,
+                                     guint                   index,
+                                     LrgSequenceTangentMode  mode,
+                                     gfloat                  in_tangent,
+                                     gfloat                  out_tangent)
+{
+	TangentEntry *e;
+	TangentEntry  fresh;
+	gfloat        t;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_TRACK (self), FALSE);
+	g_return_val_if_fail ((guint) mode <= LRG_SEQUENCE_TANGENT_CONSTANT, FALSE);
+
+	if (index >= lrg_keyframe_curve_get_key_count (self->curve))
+		return FALSE;
+	t = key_time (self, index);
+	e = tangent_at (self, t);
+	if (e == NULL)
+	{
+		fresh.time = t;
+		g_array_append_val (self->tangents, fresh);
+		e = &g_array_index (self->tangents, TangentEntry, self->tangents->len - 1);
+	}
+	e->time = t;
+	e->mode = mode;
+	e->in_tangent = isfinite (in_tangent) ? in_tangent : 0.0f;
+	e->out_tangent = (mode == LRG_SEQUENCE_TANGENT_BROKEN && isfinite (out_tangent)) ? out_tangent : e->in_tangent;
+	return TRUE;
+}
+
+gboolean
+lrg_timeline_track_get_key_tangents (LrgTimelineTrack       *self,
+                                     guint                   index,
+                                     LrgSequenceTangentMode *out_mode,
+                                     gfloat                 *out_in,
+                                     gfloat                 *out_out)
+{
+	TangentEntry *e;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_TRACK (self), FALSE);
+
+	if (index >= lrg_keyframe_curve_get_key_count (self->curve))
+		return FALSE;
+	e = tangent_at (self, key_time (self, index));
+	if (e == NULL)
+		return FALSE;
+	if (out_mode != NULL)
+		*out_mode = e->mode;
+	if (out_in != NULL)
+		*out_in = e->in_tangent;
+	if (out_out != NULL)
+		*out_out = e->out_tangent;
+	return TRUE;
+}
+
+gboolean
+lrg_timeline_track_clear_key_tangents (LrgTimelineTrack *self,
+                                       guint             index)
+{
+	guint i;
+	gfloat t;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_TRACK (self), FALSE);
+
+	if (index >= lrg_keyframe_curve_get_key_count (self->curve))
+		return FALSE;
+	t = key_time (self, index);
+	for (i = 0; i < self->tangents->len; i++)
+	{
+		if (fabsf (g_array_index (self->tangents, TangentEntry, i).time - t) <= KEY_EPSILON)
+		{
+			g_array_remove_index (self->tangents, i);
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+gint
+lrg_timeline_track_move_key (LrgTimelineTrack *self,
+                             guint             index,
+                             gfloat            time)
+{
+	gfloat                 t = 0.0f, v = 0.0f, tin = 0.0f, tout = 0.0f;
+	LrgEasingType          easing = LRG_EASING_LINEAR;
+	LrgSequenceTangentMode mode = LRG_SEQUENCE_TANGENT_AUTO;
+	gboolean               bezier;
+
+	g_return_val_if_fail (LRG_IS_TIMELINE_TRACK (self), -1);
+
+	if (!isfinite (time) || !lrg_keyframe_curve_get_key (self->curve, index, &t, &v, &easing))
+		return -1;
+	bezier = lrg_timeline_track_get_key_tangents (self, index, &mode, &tin, &tout);
+	lrg_timeline_track_remove_key (self, index);
+	time = MAX (time, 0.0f);
+	lrg_timeline_track_set_key (self, time, v, easing);
+	index = (guint) lrg_timeline_track_find_key (self, time, KEY_EPSILON);
+	if (bezier)
+		lrg_timeline_track_set_key_tangents (self, index, mode, tin, tout);
+	else
+		lrg_timeline_track_clear_key_tangents (self, index);
+	return (gint) index;
 }
 
 void
@@ -376,10 +667,56 @@ lrg_timeline_track_set_key (LrgTimelineTrack *self,
 	/* Snap onto a key that is practically at the same time, so keying a
 	 * frame twice from float UI times never makes near-duplicates. */
 	time = MAX (time, 0.0f);
+	prune_tangents (self);
 	existing = lrg_timeline_track_find_key (self, time, KEY_EPSILON);
 	if (existing >= 0)
-		lrg_timeline_track_remove_key (self, (guint) existing);
+	{
+		TangentEntry *e = tangent_at (self, key_time (self, (guint) existing));
+
+		/* Re-keying keeps the Bézier handles: retarget the entry onto the
+		 * new (snapped) time before the old key goes. */
+		if (e != NULL)
+			e->time = time;
+		lrg_keyframe_curve_remove_key (self->curve, key_time (self, (guint) existing));
+	}
 	lrg_keyframe_curve_add_key (self->curve, time, value, easing);
+	prune_tangents (self);
+}
+
+/* Resolved slope of key @i on one side, for a Bézier key entry @e. */
+static gfloat
+timeline_slope (LrgTimelineTrack   *self,
+                guint               i,
+                const TangentEntry *e,
+                gboolean            outgoing)
+{
+	guint  n = lrg_keyframe_curve_get_key_count (self->curve);
+	gfloat t = 0.0f, v = 0.0f, tp = 0.0f, vp = 0.0f, tn = 0.0f, vn = 0.0f;
+
+	lrg_keyframe_curve_get_key (self->curve, i, &t, &v, NULL);
+	if (i > 0)
+		lrg_keyframe_curve_get_key (self->curve, i - 1, &tp, &vp, NULL);
+	if (i + 1 < n)
+		lrg_keyframe_curve_get_key (self->curve, i + 1, &tn, &vn, NULL);
+
+	switch (e->mode)
+	{
+	case LRG_SEQUENCE_TANGENT_USER:
+		return e->in_tangent;
+	case LRG_SEQUENCE_TANGENT_BROKEN:
+		return outgoing ? e->out_tangent : e->in_tangent;
+	case LRG_SEQUENCE_TANGENT_LINEAR:
+		if (outgoing && i + 1 < n && tn > t)
+			return (vn - v) / (tn - t);
+		if (!outgoing && i > 0 && t > tp)
+			return (v - vp) / (t - tp);
+		return 0.0f;
+	case LRG_SEQUENCE_TANGENT_CONSTANT:
+		return 0.0f;
+	case LRG_SEQUENCE_TANGENT_AUTO:
+	default:
+		return lrg_sequence_curve_auto_slope (i > 0, tp, vp, t, v, i + 1 < n, tn, vn);
+	}
 }
 
 gboolean
@@ -387,12 +724,57 @@ lrg_timeline_track_sample (LrgTimelineTrack *self,
                            gfloat            time,
                            gfloat           *out_value)
 {
+	guint               n, lo, hi;
+	const TangentEntry *e0, *e1;
+	gfloat              t0 = 0.0f, v0 = 0.0f, t1 = 0.0f, v1 = 0.0f, m1;
+
 	g_return_val_if_fail (LRG_IS_TIMELINE_TRACK (self), FALSE);
 	g_return_val_if_fail (out_value != NULL, FALSE);
 
-	if (lrg_keyframe_curve_get_key_count (self->curve) == 0 || !isfinite (time))
+	n = lrg_keyframe_curve_get_key_count (self->curve);
+	if (n == 0 || !isfinite (time))
 		return FALSE;
-	*out_value = lrg_keyframe_curve_sample (self->curve, time);
+
+	/* Outside the keys, or no Bézier keys at all: the eased curve. */
+	if (self->tangents->len == 0 || n < 2 || time <= key_time (self, 0) || time >= key_time (self, n - 1))
+	{
+		*out_value = lrg_keyframe_curve_sample (self->curve, time);
+		return TRUE;
+	}
+
+	/* Segment [lo, lo + 1] holding @time (binary search). */
+	lo = 0;
+	hi = n - 1;
+	while (hi - lo > 1)
+	{
+		guint mid = (lo + hi) / 2;
+
+		if (key_time (self, mid) <= time)
+			lo = mid;
+		else
+			hi = mid;
+	}
+
+	e0 = tangent_at (self, key_time (self, lo));
+	if (e0 == NULL)
+	{
+		/* An eased segment: the keyframe curve's easing. */
+		*out_value = lrg_keyframe_curve_sample (self->curve, time);
+		return TRUE;
+	}
+	lrg_keyframe_curve_get_key (self->curve, lo, &t0, &v0, NULL);
+	lrg_keyframe_curve_get_key (self->curve, lo + 1, &t1, &v1, NULL);
+	if (e0->mode == LRG_SEQUENCE_TANGENT_CONSTANT)
+	{
+		*out_value = v0;
+		return TRUE;
+	}
+
+	/* The end key contributes its incoming handle when it is a Bézier
+	 * key, else the straight secant. */
+	e1 = tangent_at (self, t1);
+	m1 = (e1 != NULL) ? timeline_slope (self, lo + 1, e1, FALSE) : ((t1 > t0) ? (v1 - v0) / (t1 - t0) : 0.0f);
+	*out_value = lrg_sequence_curve_hermite (t0, v0, timeline_slope (self, lo, e0, TRUE), t1, v1, m1, time);
 	return TRUE;
 }
 
@@ -406,6 +788,8 @@ lrg_timeline_track_copy (LrgTimelineTrack *self)
 	copy = lrg_timeline_track_new (self->node_guid, self->channel);
 	g_object_unref (copy->curve);
 	copy->curve = lrg_keyframe_curve_copy (self->curve);
+	if (self->tangents->len > 0)
+		g_array_append_vals (copy->tangents, self->tangents->data, self->tangents->len);
 	return copy;
 }
 
@@ -426,11 +810,19 @@ lrg_timeline_track_equal (LrgTimelineTrack *a,
 	for (i = 0; i < n; i++)
 	{
 		gfloat        ta, va, tb, vb;
-		LrgEasingType ea, eb;
+		LrgEasingType          ea, eb;
+		LrgSequenceTangentMode ma = LRG_SEQUENCE_TANGENT_AUTO, mb = LRG_SEQUENCE_TANGENT_AUTO;
+		gfloat                 ia = 0.0f, oa = 0.0f, ib = 0.0f, ob = 0.0f;
+		gboolean               za, zb;
 
 		lrg_keyframe_curve_get_key (a->curve, i, &ta, &va, &ea);
 		lrg_keyframe_curve_get_key (b->curve, i, &tb, &vb, &eb);
+
 		if (ta != tb || va != vb || ea != eb)
+			return FALSE;
+		za = lrg_timeline_track_get_key_tangents (a, i, &ma, &ia, &oa);
+		zb = lrg_timeline_track_get_key_tangents (b, i, &mb, &ib, &ob);
+		if (za != zb || (za && (ma != mb || ia != ib || oa != ob)))
 			return FALSE;
 	}
 	return TRUE;

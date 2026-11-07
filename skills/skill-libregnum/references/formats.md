@@ -58,3 +58,8 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 ## Bone maps (.rbonemap, 0.9.0): LrgBoneMap
 - Load `lrg_bone_map_new_from_file/_data`; save `lrg_bone_map_save_to_file` / `lrg_bone_map_to_data` (byte-stable, pairs sorted).
 - Keys: `version: 1`, `rules: {ignore_case, normalize_separators, normalize_sides, strip_prefixes: [..]}` (booleans default true), `bones: {source_bone: target_bone}` (explicit pairs win over rules; one source per target). Errors in `LRG_RETARGET_ERROR` (PARSE, VERSION, IO).
+
+## Sequences (.rseq, 0.9.0): LrgSequence
+- Header `type: sequence`, `version: 1`, `name`, `length`, `fps`, `play_mode` (once|loop|ping-pong), `bindings: [{guid, name}]`, `tracks: [...]`; every track has `kind`, `name`, `binding`, `muted`.
+- Kinds: `transform` (optional `bone`, `channels: {location.x: [keys], ...}`), `property` (`component` GType name, `property`, `keys`), `camera-cut` (`sections: [{start, camera}]`), `audio` (`sections: [{start, duration, sound: "bank:sound"|path, volume}]`), `event` (`events: [{time, name, payload}]`), `animation` (`sections: [{start, duration, clip, offset, rate, loop, weight}]`), `subsequence` (`sections: [{start, duration, sequence: name|relative.rseq, offset, rate, loop}]`, depth <= 8).
+- Keys `{time, value, tangent: auto|user|broken|linear|constant, slope | in/out}`; auto is the default and omitted. Byte-stable writer; errors LRG_SEQUENCE_ERROR_{IO,PARSE,INVALID,VERSION}.

@@ -18,6 +18,17 @@
  *  - "color.r|g|b|a" (the visual's material colour, 0..1)
  *  - "roughness", "metallic" (the visual's material)
  *  - "param.NAME" (a numeric entry of the visual's param bag)
+ *  - "bone.BONE.location|rotation|scale.x|y|z" (since 0.9.0): an offset
+ *    from the bind pose of bone BONE of the node's skinned mesh (location
+ *    added, Euler rotation in radians applied after the bind rotation,
+ *    scale multiplied; see lrg_sequence_compose_bone_offset()). Bone names
+ *    may contain dots. On an #LrgNode the offsets live in a runtime side
+ *    table (lrg_timeline_get_bone_offset()), never in the saved document.
+ *
+ * Since 0.9.0 a key may also be a Bézier key
+ * (lrg_timeline_track_set_key_tangents()): the segment that starts at it
+ * is a cubic Bézier shaped by #LrgSequenceTangentMode handles instead of
+ * the key's easing.
  *
  * Timelines are plain data: sampling and applying them is pure and
  * headless. Editing them in the editor goes through undoable commands
@@ -35,6 +46,7 @@
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
 #include "../tween/lrg-keyframe-curve.h"
+#include "../animation/lrg-sequence.h"
 
 G_BEGIN_DECLS
 
@@ -94,6 +106,50 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_timeline_channel_write (LrgNode     *node,
                                      const gchar *channel,
                                      gfloat       value);
+
+/**
+ * lrg_timeline_channel_get_bone:
+ * @channel: a channel name
+ * @out_bone: (out) (optional) (transfer full): the bone name
+ * @out_channel: (out) (optional): the transform component
+ *
+ * Splits a bone channel ("bone.BONE.rotation.y") into its bone name and
+ * transform component.
+ *
+ * Returns: whether @channel is a bone channel
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_channel_get_bone (const gchar                  *channel,
+                                        gchar                       **out_bone,
+                                        LrgSequenceTransformChannel  *out_channel);
+
+/**
+ * lrg_timeline_get_bone_offset:
+ * @node: an #LrgNode
+ * @bone: a bone name
+ * @out_offset: (out caller-allocates) (array fixed-size=9): location xyz,
+ *   Euler rotation xyz, scale xyz
+ *
+ * Reads the bind-pose offset bone channels wrote onto @node (playback and
+ * preview only; not saved). Without one, @out_offset is the identity
+ * offset (zeros, unit scale). A viewport poses the node's skinned mesh
+ * with lrg_sequence_compose_bone_offset().
+ *
+ * Returns: whether @node holds an offset for @bone
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_get_bone_offset (LrgNode     *node,
+                                       const gchar *bone,
+                                       gfloat      *out_offset);
+
+/**
+ * lrg_timeline_clear_bone_offsets:
+ * @node: an #LrgNode
+ *
+ * Forgets every bone offset written onto @node (back to the bind pose).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_timeline_clear_bone_offsets (LrgNode *node);
 
 /* ==========================================================================
  * LrgTimelineTrack
@@ -179,6 +235,76 @@ void lrg_timeline_track_set_key (LrgTimelineTrack *self,
                                  LrgEasingType     easing);
 
 /**
+ * lrg_timeline_track_set_key_tangents:
+ * @self: an #LrgTimelineTrack
+ * @index: key index
+ * @mode: tangent mode
+ * @in_tangent: incoming slope (value per second; user/broken modes)
+ * @out_tangent: outgoing slope (broken mode; else @in_tangent is used)
+ *
+ * Makes a key a Bézier key: the segment from it to the next key follows
+ * the cubic Bézier of the two keys' handles (the next key contributes its
+ * incoming slope when it is a Bézier key, else the straight secant), and
+ * its easing is ignored. Constant keys hold their value. Re-keying the
+ * same time with lrg_timeline_track_set_key() keeps the handles.
+ *
+ * Returns: whether @index exists
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_track_set_key_tangents (LrgTimelineTrack       *self,
+                                              guint                   index,
+                                              LrgSequenceTangentMode  mode,
+                                              gfloat                  in_tangent,
+                                              gfloat                  out_tangent);
+
+/**
+ * lrg_timeline_track_get_key_tangents:
+ * @self: an #LrgTimelineTrack
+ * @index: key index
+ * @out_mode: (out) (optional): tangent mode
+ * @out_in: (out) (optional): incoming user slope
+ * @out_out: (out) (optional): outgoing user slope
+ *
+ * Returns: %TRUE when the key is a Bézier key, %FALSE when it is an eased
+ *   key (or @index does not exist)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_track_get_key_tangents (LrgTimelineTrack       *self,
+                                              guint                   index,
+                                              LrgSequenceTangentMode *out_mode,
+                                              gfloat                 *out_in,
+                                              gfloat                 *out_out);
+
+/**
+ * lrg_timeline_track_clear_key_tangents:
+ * @self: an #LrgTimelineTrack
+ * @index: key index
+ *
+ * Turns a Bézier key back into an eased key.
+ *
+ * Returns: whether the key was a Bézier key
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_timeline_track_clear_key_tangents (LrgTimelineTrack *self,
+                                                guint             index);
+
+/**
+ * lrg_timeline_track_move_key:
+ * @self: an #LrgTimelineTrack
+ * @index: key index
+ * @time: new time in seconds (>= 0)
+ *
+ * Moves a key, keeping its value, easing and Bézier handles (a key
+ * already at @time is replaced).
+ *
+ * Returns: the key's new index, or -1 if @index does not exist
+ */
+LRG_AVAILABLE_IN_ALL
+gint lrg_timeline_track_move_key (LrgTimelineTrack *self,
+                                  guint             index,
+                                  gfloat            time);
+
+/**
  * lrg_timeline_track_find_key:
  * @self: an #LrgTimelineTrack
  * @time: a time in seconds
@@ -208,7 +334,8 @@ gboolean lrg_timeline_track_remove_key (LrgTimelineTrack *self,
  * @time: time in seconds
  * @out_value: (out): the sampled value
  *
- * Samples the curve (clamped to the first/last key).
+ * Samples the curve (clamped to the first/last key). Segments starting
+ * at a Bézier key follow its handles; the others use the key's easing.
  *
  * Returns: %FALSE when the track has no keys
  */

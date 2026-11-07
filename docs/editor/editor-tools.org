@@ -122,7 +122,7 @@ Levels hold named timelines that keyframe node properties. The Timeline panel (V
 :PROPERTIES:
 :CUSTOM_ID: timeline-model
 :END:
-- =LrgTimeline= (=src/editor/lrg-timeline.h=): =name= (unique in the level), =length= in seconds (default 2), =loop=, =autoplay=, and tracks. =lrg_timeline_wrap_time()= wraps (loop) or clamps a running time; =lrg_timeline_apply()= samples every track and writes the values onto the nodes.
+- =LrgTimeline= (=src/level/lrg-timeline.h=): =name= (unique in the level), =length= in seconds (default 2), =loop=, =autoplay=, and tracks. =lrg_timeline_wrap_time()= wraps (loop) or clamps a running time; =lrg_timeline_apply()= samples every track and writes the values onto the nodes.
 - =LrgTimelineTrack=: one channel of one node (by GUID) on an =LrgKeyframeCurve= (=src/tween=) with key times in seconds. Each key has an =LrgEasingType= that shapes the segment to the next key (=lrg_easing_interpolate()=); sampling clamps before the first and after the last key. Keys within half a millisecond replace each other.
 - Channels (=lrg_timeline_channel_read/write()=):
 
@@ -134,8 +134,52 @@ Levels hold named timelines that keyframe node properties. The Timeline panel (V
 | =color.r= =color.g= =color.b= =color.a= | the visual's material colour (0..1; the material is created on first write) |
 | =roughness=, =metallic= | the visual's material |
 | =param.NAME= | a numeric entry of the visual's param bag (light intensity, camera fov, CAD parameters, ...) |
+| =bone.BONE.location.x= ... =bone.BONE.scale.z= (0.9.0) | an offset from the bind pose of bone =BONE= of the node's skinned mesh (see [[#timeline-bone-tracks][Bone tracks]]) |
+
+- Bézier keys (0.9.0): any key can be made a Bézier key with =lrg_timeline_track_set_key_tangents()=; see [[#timeline-bezier][Bézier tangents]].
 
 - =LrgLevel= owns the timelines (=lrg_level_get_n_timelines()=, =lrg_level_find_timeline()=, =lrg_level_insert_timeline()=, =lrg_level_remove_timeline()=).
+
+** Bézier tangents
+:PROPERTIES:
+:CUSTOM_ID: timeline-bezier
+:END:
+Since 0.9.0 a timeline key is either an /eased/ key (the 0.8 behaviour: its =LrgEasingType= shapes the segment to the next key) or a /Bézier/ key. A Bézier key carries an =LrgSequenceTangentMode= and user slopes in value units per second, exactly like the keys of a sequence curve ([[file:../modules/animation/sequence.org::#sequence-curves][Sequence curves]]):
+
+| Mode | Handles |
+|------+---------|
+| =auto= | smooth, from the neighbours (clamped Catmull-Rom; flat at the ends and at extrema) |
+| =user= | one slope on both sides (aligned handles) |
+| =broken= | independent in and out slopes |
+| =linear= | pointing straight at the neighbouring key |
+| =constant= | the value holds until the next key (step) |
+
+The segment that /starts/ at a Bézier key is the cubic =lrg_sequence_curve_hermite()= between the two keys: the start key gives its outgoing slope, the end key gives its incoming slope when it is a Bézier key too, else the straight secant. The segment after an eased key keeps its easing, so files and tools from 0.8 behave exactly as before. A constant key holds its value.
+
+| Function | Does |
+|----------+------|
+| =lrg_timeline_track_set_key_tangents()= | makes key /index/ a Bézier key with a mode and slopes (=out= only used by =broken=) |
+| =lrg_timeline_track_get_key_tangents()= | =TRUE= with the mode and slopes for a Bézier key, =FALSE= for an eased key |
+| =lrg_timeline_track_clear_key_tangents()= | turns a Bézier key back into an eased key |
+| =lrg_timeline_track_move_key()= | retimes a key keeping value, easing and handles |
+
+The handles live beside the =LrgKeyframeCurve= (matched to keys by time), so =lrg_timeline_track_get_curve()= still returns the eased curve. Re-keying a key's time with =lrg_timeline_track_set_key()= keeps its handles; removing the key, or clearing the curve directly, drops them. =lrg_timeline_track_equal()= and =lrg_timeline_track_copy()= include them.
+
+Pitfall: the 0.8.1 editor commands move keys with remove + set, so =lrg_editor_timeline_move_key()= currently resets a moved key to eased. The sequencer/curve-editor wave switches them to =lrg_timeline_track_move_key()=.
+
+** Bone tracks
+:PROPERTIES:
+:CUSTOM_ID: timeline-bone-tracks
+:END:
+A channel =bone.BONE.GROUP.AXIS= (GROUP =location=, =rotation= or =scale=; AXIS =x=, =y=, =z=) animates one bone of a skinned node. The bone name is everything between =bone.= and the last two parts, so it may contain dots (=bone.upper.arm.L.rotation.z=); =lrg_timeline_channel_get_bone()= splits a channel. Values are /offsets from the bind pose/: location is added, the Euler rotation (radians) is applied after the bind rotation, scale multiplies (=lrg_sequence_compose_bone_offset()=). A zero offset with unit scale is the bind pose, so an unkeyed bone and a preview restore both give the rest pose.
+
+On an authoring =LrgNode= the offsets go into a runtime side table, never into the document: =lrg_timeline_channel_write()= stores them, =lrg_timeline_channel_read()= and =lrg_timeline_get_bone_offset()= read them back (identity when none), =lrg_timeline_clear_bone_offsets()= forgets them. The editor viewport poses the node's skinned mesh from that table (sequencer wave). At runtime, =lrg_sequence_new_from_timeline()= turns bone channels into bone transform tracks of an =LrgSequence= that an =LrgSequencePlayer= applies to a bound =LrgSkeleton=.
+
+** Playing a timeline on the 3D runtime
+:PROPERTIES:
+:CUSTOM_ID: timeline-runtime
+:END:
+=lrg_timeline_apply()= poses authoring nodes. To play a level timeline on =LrgWorld3D= entities (which share their node's GUID) convert it: =lrg_sequence_new_from_timeline (timeline, fps)= makes one transform track per node (and per bone) from the location/rotation/scale and bone channels, keeps Bézier handles, turns linear keys into =linear= keys and bakes other easings into linear keys at /fps/; colour, roughness, metallic and param channels are skipped. Play the result with an =LrgSequencePlayer= or an =LrgSequenceComponent= ([[file:../modules/animation/sequence.org][Sequences]]).
 
 ** Undoable editing
 :PROPERTIES:
@@ -186,7 +230,7 @@ When play starts, every timeline with =autoplay= is sampled at the play clock af
 :PROPERTIES:
 :CUSTOM_ID: timeline-yaml
 :END:
-An optional top-level =timelines:= sequence; files without timelines keep their old shape and old readers ignore it. =easing= is the =LrgEasingType= nick and is omitted for =linear=.
+An optional top-level =timelines:= sequence; files without timelines keep their old shape and old readers ignore it. =easing= is the =LrgEasingType= nick and is omitted for =linear=. Since 0.9.0 a Bézier key adds =tangent= (the =LrgSequenceTangentMode= nick) plus =slope= (=user=) or =in= and =out= (=broken=); readers before 0.9.0 ignore these keys and play the key eased. Bone channels need no new keys.
 
 #+begin_src yaml
 timelines:
@@ -203,6 +247,21 @@ timelines:
             easing: ease-out-bounce
           - time: 1.0
             value: 3.0
+      - node: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+        channel: bone.spine.rotation.z     # bind-pose offset of bone "spine"
+        keys:
+          - time: 0.0
+            value: 0.0
+            tangent: user                  # Bézier key, aligned handles
+            slope: 1.5                     # radians per second
+          - time: 0.5
+            value: 0.4
+            tangent: broken
+            in: -0.5
+            out: 2.0
+          - time: 1.0
+            value: 0.0
+            tangent: constant              # hold (last key: no effect)
 #+end_src
 
 ** IPC, CLI, MCP, Emacs
@@ -319,6 +378,13 @@ Every public function of the tilemap and timeline headers that the sections abov
 | Function | Summary |
 |-+-|
 | =lrg_timeline_channel_write ()= | Writes a channel directly (not undoable; used for playback). |
+| =lrg_timeline_channel_get_bone ()= | Splits a bone channel into bone name and transform component (0.9.0). |
+| =lrg_timeline_get_bone_offset ()= | Reads the bind-pose offset bone channels wrote onto a node (0.9.0). |
+| =lrg_timeline_clear_bone_offsets ()= | Forgets a node's bone offsets (0.9.0). |
+| =lrg_timeline_track_set_key_tangents ()= | Makes a key a Bézier key (0.9.0). |
+| =lrg_timeline_track_get_key_tangents ()= | Returns a Bézier key's mode and slopes, =FALSE= for eased keys (0.9.0). |
+| =lrg_timeline_track_clear_key_tangents ()= | Turns a Bézier key back into an eased key (0.9.0). |
+| =lrg_timeline_track_move_key ()= | Retimes a key keeping value, easing and handles (0.9.0). |
 | =lrg_timeline_track_new ()= | Returns a new, empty track. |
 | =lrg_timeline_track_get_node_guid ()= | Returns the animated node's GUID. |
 | =lrg_timeline_track_get_channel ()= | Returns the animated channel. |

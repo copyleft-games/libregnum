@@ -51,6 +51,8 @@
 #include "../world3d/components/lrg-decal-component.h"
 #include "../world3d/components/lrg-lod-component.h"
 #include "../world3d/components/lrg-reflection-probe-component.h"
+#include "../world3d/components/lrg-sequence-component.h"
+#include "../ecs/components/lrg-skeleton2d-component.h"
 #include "../particles/lrg-particle-system.h"
 #include "../particles/lrg-particle-emitter.h"
 #include "../particles/lrg-particle-force.h"
@@ -489,6 +491,8 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "decal",                     lrg_decal_component_get_type },
     { "lod",                       lrg_lod_component_get_type },
     { "reflection-probe",          lrg_reflection_probe_component_get_type },
+    { "sequence",                  lrg_sequence_component_get_type },
+    { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */
     { "scene",                     lrg_scene_get_type },

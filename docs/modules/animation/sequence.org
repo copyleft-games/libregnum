@@ -1,0 +1,542 @@
+#+title: Sequences (.rseq)
+#+description: LrgSequence, LrgSequencePlayer and LrgSequenceComponent: cinematic sequences with Bézier curves, camera cuts, audio, events, animation clips and sub-sequences on LrgWorld3D entities
+
+* Sequences
+:PROPERTIES:
+:CUSTOM_ID: sequence
+:END:
+A /sequence/ is a cinematic or scripted animation asset (Unreal Sequencer, Unity Timeline, Godot AnimationPlayer with method/audio tracks): a length, a frame rate, a set of entity bindings and a list of tracks that move entities, change component properties, cut between cameras, start sounds, emit events, play animation clips on skeletons and nest other sequences. Sequences are saved as =.rseq= YAML, played by =LrgSequencePlayer= into an =LrgWorld3D=, and attached to entities with =LrgSequenceComponent=. Since 0.9.0.
+
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Animation]]* > Sequences
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: sequence-overview
+:END:
+| Piece | Header | What it is |
+|-------+--------+------------|
+| =LrgSequence= | =animation/lrg-sequence.h= | The asset: name, length, fps, default play mode, bindings, tracks; =.rseq= load/save; level timeline conversion |
+| =LrgSequenceTrack= | =animation/lrg-sequence.h= | One track of seven kinds (=LrgSequenceTrackKind=) |
+| =LrgSequenceCurve=, =LrgSequenceKey= | =animation/lrg-sequence.h= | Scalar Bézier curve with per-key tangent modes |
+| =LrgSequenceSection= | =animation/lrg-sequence.h= | A timed block (camera cut, sound, event, clip, sub-sequence) |
+| =LrgSequencePlayer= | =animation/lrg-sequence-player.h= | Playhead, play/pause/stop/scrub/loop/ping-pong, evaluation into a world, signals |
+| =LrgSequenceComponent= | =world3d/components/lrg-sequence-component.h= | Plays a sequence from an =LrgEntity3D= (registry name =sequence=) |
+
+The sequence is pure data and headless; the player touches only the world it is given (entity transforms, component properties, the world's active camera, audio source components, skeletons it was handed). Level timelines (=LrgTimeline=, [[file:../../editor/editor-tools.org::#animation-timeline][Animation timeline]]) remain the quick in-level keyframing tool; =lrg_sequence_new_from_timeline()= converts one into a sequence to play it on the 3D runtime.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: sequence-concepts
+:END:
+*** Bindings
+:PROPERTIES:
+:CUSTOM_ID: sequence-bindings
+:END:
+Tracks name the entity they drive by GUID (=lrg_sequence_track_set_binding()=). =lrg_level_instantiate_3d()= gives each =LrgEntity3D= the GUID of its level node, so a sequence authored against a level finds its entities with =lrg_world3d_find_by_guid()=. The sequence's binding list (=lrg_sequence_add_binding()=) records the GUIDs it uses with a display name for the editor; it does not affect playback.
+
+The player resolves a binding through, in order: a /binding override/ (=lrg_sequence_player_set_binding_override()=, held weakly), then the world's GUID map. Overrides let one sequence drive any entity: a binding does not have to be a GUID, so a track bound to ="hero"= can be pointed at a spawned actor at runtime. =LrgSequenceComponent= overrides ="self"= with its own entity, so a prefab can carry a sequence that animates itself.
+
+*** Track kinds
+:PROPERTIES:
+:CUSTOM_ID: sequence-track-kinds
+:END:
+| Kind | Holds | Evaluation |
+|------+-------+------------|
+| =transform= | up to nine curves (=location.x= ... =scale.z=, rotation as Euler XYZ radians) | writes the keyed channels onto the entity's local transform; unkeyed channels keep their value |
+| =transform= with =bone= | the same nine curves as bind-pose offsets | offsets the named bone of the binding's skeleton (after animation clips) |
+| =property= | one curve, a component type name and a property name | writes a numeric, boolean (>= 0.5) or enum (rounded) =GObject= property of the entity or of its first component of that type |
+| =camera-cut= | sections naming a camera entity | the world's active camera becomes that entity's =LrgCameraComponent= camera |
+| =audio= | sections naming a sound | crossing a section start while playing emits =audio-cue= and starts the sound on the entity's =LrgAudioSourceComponent= |
+| =event= | sections with a name and payload | crossing one emits =event= |
+| =animation= | sections naming a clip | the clip is sampled at its local time onto the binding's skeleton (or handed to an =animation-sample= handler) |
+| =subsequence= | sections naming a sequence | the nested sequence is evaluated at its local time (events inside it fire too) |
+
+Tracks evaluate in order, so a later track wins when two drive the same value. Muted tracks (=lrg_sequence_track_set_muted()=) are skipped.
+
+*** Sections
+:PROPERTIES:
+:CUSTOM_ID: sequence-sections
+:END:
+An =LrgSequenceSection= is a timed block. Its =name= is what it refers to (camera GUID, sound, event name, clip name, sequence name or path). =duration= 0 means open-ended: a camera cut or animation/sub-sequence section lasts until the next section of the same track starts (else the end of the sequence), a sound plays until it ends, an event is a point. =offset= and =rate= map sequence time to clip or sub-sequence time: =local = offset + (t - start) * rate=, wrapped when =loop= is set, else clamped to the inner length. =weight= is the clip's blend weight or the sound's volume. =lrg_sequence_track_get_section_end()= and =lrg_sequence_track_find_section_at()= expose the rules (the last section wins where sections overlap).
+
+*** Curves and Bézier tangents
+:PROPERTIES:
+:CUSTOM_ID: sequence-curves
+:END:
+An =LrgSequenceCurve= holds =LrgSequenceKey= s sorted by time. Each key has a value, a tangent mode and user slopes (value units per second). The segment between two keys is a cubic Bézier whose inner control points sit one third of the segment duration along the keys' slopes, i.e. the cubic Hermite =lrg_sequence_curve_hermite()=; time is the parameter, so there is no curve-inversion step. Before the first key the curve holds the first value, after the last key the last value.
+
+| Mode | In slope | Out slope |
+|------+----------+-----------|
+| =auto= | =lrg_sequence_curve_auto_slope()=: (v_next - v_prev) / (t_next - t_prev), 0 at the ends and at local extrema, limited to 3 x the smaller neighbouring secant | same |
+| =user= | the key's =in_tangent= | the same (aligned handles) |
+| =broken= | =in_tangent= | =out_tangent= |
+| =linear= | secant to the previous key | secant to the next key |
+| =constant= | 0 | the value holds until the next key (step) |
+
+The limited auto slope is the Fritsch-Carlson condition: a monotone run of auto keys never overshoots. Handle /weights/ (Unity's weighted tangents, Unreal's tangent weights) are not supported: the handle length is always a third of the segment.
+
+=lrg_sequence_curve_get_slopes()= returns the slopes evaluation uses (auto and linear resolved), which is what a curve editor draws as handles: the out handle of key /i/ at =(t_i + dt/3, v_i + out * dt/3)=, the in handle at =(t_i - dt/3, v_i - in * dt/3)=, /dt/ being the neighbouring segment's duration.
+
+*** Playback, crossing and events
+:PROPERTIES:
+:CUSTOM_ID: sequence-playback
+:END:
+The player owns a playhead (=time=), a =rate= (negative plays backwards), a play mode (=once=, =loop=, =ping-pong=, taken from the sequence and overridable) and a direction (ping-pong flips it at each end).
+
+- =lrg_sequence_player_advance (player, dt)= moves the playhead by =dt * |rate|= in the current direction, splitting the step at every end it reaches: =once= stops there and emits =finished=, =loop= wraps to the other end and emits =looped=, =ping-pong= turns around and emits =looped=. Everything crossed on the way fires: events (=event= signal) and sound starts. Then the sequence is evaluated at the new time.
+- =lrg_sequence_player_scrub (player, t)= is a user dragging the playhead: events between the old and new time fire (in reverse order with =reverse= = =TRUE= when moving backwards), sounds do not start, then the sequence is evaluated.
+- =lrg_sequence_player_set_time (player, t)= jumps without events and evaluates.
+
+The crossing rule: a move from /a/ to /b/ covers =(a, b]= forwards and =[b, a)= backwards, so each pass over a point fires it exactly once, including the turn-around of ping-pong (an event at the end fires on arrival, not again on departure). Right after =play()= from a rewound player, =stop()=, =set_time()= or a loop wrap, the start point itself is included, so an event at 0 fires when playback starts. Events inside a sub-sequence fire when the parent playhead crosses their mapped time; their =time= argument is in the parent's time.
+
+*** Camera cuts
+:PROPERTIES:
+:CUSTOM_ID: sequence-camera-cuts
+:END:
+After evaluation the player looks at the camera the camera cut tracks ask for (the last cut track evaluated wins). When it changes, the player calls =lrg_world3d_set_active_camera()= with that entity's =LrgCameraComponent= camera and emits =camera-cut= with the entity. Before the first cut, or when the bound entity has no camera component, the player hands the camera back (=lrg_world3d_set_active_camera (world, NULL)=: priority order) and emits =camera-cut= with =NULL=; =stop()= does the same. =lrg_sequence_player_get_camera_binding()= tells which binding the player made active.
+
+*** Animation clips and bones
+:PROPERTIES:
+:CUSTOM_ID: sequence-animation
+:END:
+Animation and bone tracks pose an =LrgSkeleton=. For every active animation section the player emits =animation-sample= (entity, binding, clip name, clip time, weight). A handler returning =TRUE= takes over; that is the hand-off to =LrgAnimatorComponent3D= or any other animation driver. Otherwise the player uses its own default path: the clip registered under that name (=lrg_sequence_player_add_clip()=, or every clip of a glTF file with =lrg_sequence_player_load_clips()=, which uses =lrg_gltf_load_clips()=) is sampled track by track (=lrg_animation_clip_sample_track()=) onto the bones of the same name of the skeleton bound to the track's binding (=lrg_sequence_player_bind_skeleton()=), replacing the pose at weight 1 and blending (=lrg_skeleton_blend_pose()=) below it.
+
+Bone transform tracks run after all clips. Their values are offsets from the bone's bind pose (=lrg_sequence_compose_bone_offset()=: location added, Euler rotation applied after the bind rotation, scale multiplied); only the keyed groups (location, rotation, scale) replace the current local pose, so a rotation-only bone track layers over a clip's translation. Every skeleton touched gets =lrg_skeleton_calculate_world_poses()= once per evaluation; uploading the palette to the mesh (=lrg_skinned_mesh_apply_skeleton()=) is the caller's job (or the animator component's).
+
+*** Sub-sequences
+:PROPERTIES:
+:CUSTOM_ID: sequence-subsequences
+:END:
+A sub-sequence section's =name= is looked up as a name registered with =lrg_sequence_player_add_sequence()=, else loaded as a =.rseq= path (relative paths resolve against the parent's base directory, =lrg_sequence_get_base_dir()=, which =lrg_sequence_new_from_file()= sets to the file's directory). Files are loaded once per player; a file that fails to load is warned about once and skipped. The nested sequence shares the player's bindings, overrides, skeletons and clips. Nesting stops at =LRG_SEQUENCE_MAX_DEPTH= (8), and a sequence never evaluates itself.
+
+** Format (.rseq)
+:PROPERTIES:
+:CUSTOM_ID: sequence-format
+:END:
+YAML, written by =lrg_sequence_to_data()= / =lrg_sequence_save_to_file()= and read by =lrg_sequence_new_from_data()= / =lrg_sequence_new_from_file()=. Floats are written with the fewest digits (6 to 9 significant) that read back to the same =gfloat=, and keys are written in a fixed order, so saving a loaded file reproduces it byte for byte. Default values are omitted. Unknown keys are ignored; a newer =version= than =LRG_SEQUENCE_FORMAT_VERSION= (1) is an error.
+
+#+begin_src yaml
+type: sequence                  # optional; any other value is an error
+version: 1                      # LRG_SEQUENCE_FORMAT_VERSION
+name: intro                     # optional
+length: 8                       # seconds (> 0; default 5)
+fps: 24                         # snapping/display rate (default 30)
+play_mode: once                 # once | loop | ping-pong
+bindings:                       # documentation for the editor; tracks use the GUIDs
+  - guid: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+    name: Hero
+  - guid: 9d2e01aa-0f4c-4a8e-8f1d-5b9c7d3e2a10
+    name: Camera A
+tracks:
+  - kind: transform             # entity transform
+    name: Hero walk
+    binding: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+    channels:                   # any of location.x|y|z, rotation.x|y|z, scale.x|y|z
+      location.x:
+        - time: 0               # seconds
+          value: 0
+                                # tangent omitted = auto
+        - time: 2
+          value: 4
+          tangent: broken       # auto | user | broken | linear | constant
+          in: 1.5               # broken: incoming slope (value per second)
+          out: 0
+        - time: 3
+          value: 4
+          tangent: user
+          slope: 0              # user: one slope for both sides
+      rotation.y:
+        - time: 0
+          value: 1.5708         # radians
+          tangent: constant
+  - kind: transform             # bone track: bind-pose offsets
+    name: Hero head turn
+    binding: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+    bone: head                  # bone name in the binding's skeleton
+    muted: true                 # omitted when false
+    channels:
+      rotation.y:
+        - time: 1
+          value: 0
+        - time: 2
+          value: 0.6
+  - kind: property
+    binding: 9d2e01aa-0f4c-4a8e-8f1d-5b9c7d3e2a10
+    component: LrgCameraComponent   # GType name; omitted = the entity's own property
+    property: fov
+    keys:
+      - time: 0
+        value: 60
+        tangent: linear
+      - time: 8
+        value: 35
+        tangent: linear
+  - kind: camera-cut
+    sections:
+      - start: 0
+        camera: 9d2e01aa-0f4c-4a8e-8f1d-5b9c7d3e2a10
+      - start: 4.5
+        camera: self              # a binding override name works too
+  - kind: audio
+    binding: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+    sections:
+      - start: 0.5
+        sound: sfx:footstep       # "bank:sound" or a file path
+        volume: 0.8               # omitted when 1
+      - start: 2
+        duration: 3               # stop after 3 s (omitted = play to the end)
+        sound: music/theme.ogg
+  - kind: event
+    events:                       # note: "events", not "sections"
+      - time: 1
+        name: door-open
+        payload: slow             # optional free text
+  - kind: animation
+    binding: 3f0c9a52-6d0e-4c1b-9a51-0b0f5f3c2e11
+    sections:
+      - start: 0
+        duration: 4               # omitted = until the next section
+        clip: Walk                # LrgAnimationClip name
+        offset: 0.25              # clip time at start (omitted when 0)
+        rate: 1.2                 # omitted when 1
+        loop: true                # omitted when false
+        weight: 1                 # omitted when 1
+  - kind: subsequence
+    sections:
+      - start: 6
+        sequence: shots/outro.rseq  # registered name or path (relative to this file)
+        offset: 0
+        rate: 1
+#+end_src
+
+| Key | Where | Type | Default | Meaning |
+|-----+-------+------+---------+---------|
+| =kind= | track | nick | required | =LrgSequenceTrackKind= nick |
+| =name= | track | string | none | display name |
+| =binding= | track | string | none | entity GUID or override name |
+| =muted= | track | bool | false | skipped by the player |
+| =bone= | transform track | string | none | bone track |
+| =channels= | transform track | mapping | empty | channel name -> key list |
+| =component=, =property=, =keys= | property track | string, string, key list | none | the animated property |
+| =sections= | camera-cut/audio/animation/subsequence | list | empty | sections |
+| =events= | event track | list | empty | =time=, =name=, =payload= |
+| =time=, =value= | key | float | 0 | key |
+| =tangent= | key | nick | =auto= | =LrgSequenceTangentMode= |
+| =slope= / =in=, =out= | key | float | 0 | user / broken slopes |
+| =start=, =duration= | section | float | 0 | timing |
+| =camera= / =sound= / =clip= / =sequence= | section | string | required | what the section refers to |
+| =volume= / =weight= | section | float | 1 | sound volume / clip blend weight |
+| =offset=, =rate=, =loop= | clip and sub-sequence sections | float, float, bool | 0, 1, false | local time mapping |
+
+Errors (=LRG_SEQUENCE_ERROR=): =LRG_SEQUENCE_ERROR_IO= (read/write), =LRG_SEQUENCE_ERROR_PARSE= (not YAML), =LRG_SEQUENCE_ERROR_INVALID= (not a mapping, wrong =type=, unknown track =kind=), =LRG_SEQUENCE_ERROR_VERSION=. Sections without their name key and keys that are not mappings are skipped.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: sequence-api
+:END:
+*** Enumerations and boxed types
+:PROPERTIES:
+:CUSTOM_ID: sequence-api-types
+:END:
+| Symbol | Summary |
+|--------+---------|
+| =LrgSequenceTrackKind=, =lrg_sequence_track_kind_get_type()= | track kinds (nicks are the YAML names) |
+| =LrgSequenceTangentMode=, =lrg_sequence_tangent_mode_get_type()= | key tangent modes |
+| =LrgSequencePlayMode=, =lrg_sequence_play_mode_get_type()= | =once=, =loop=, =ping-pong= |
+| =LrgSequenceTransformChannel=, =lrg_sequence_transform_channel_get_type()=, =LRG_SEQUENCE_N_CHANNELS= | the nine transform channels |
+| =lrg_sequence_transform_channel_to_string()= / =lrg_sequence_transform_channel_from_string()= | ="location.x"= <-> enum |
+| =LrgSequenceError=, =LRG_SEQUENCE_ERROR=, =lrg_sequence_error_quark()= | error domain |
+| =LRG_SEQUENCE_FORMAT_VERSION= | format version written |
+| =LrgSequenceKey=, =lrg_sequence_key_get_type()=, =lrg_sequence_key_copy()=, =lrg_sequence_key_free()= | a curve key (public struct) |
+| =LrgSequenceSection=, =lrg_sequence_section_get_type()=, =lrg_sequence_section_new()=, =lrg_sequence_section_copy()=, =lrg_sequence_section_free()= | a section (public struct; new sets rate 1, weight 1) |
+
+*** LrgSequenceCurve
+:PROPERTIES:
+:CUSTOM_ID: sequence-api-curve
+:END:
+| Function | Summary |
+|----------+---------|
+| =lrg_sequence_curve_new()= | empty curve |
+| =lrg_sequence_curve_get_n_keys()= / =lrg_sequence_curve_get_key()= | read keys in time order |
+| =lrg_sequence_curve_set_key()= | add or update a key (keeps the user slopes of a key re-set at the same time); returns its index |
+| =lrg_sequence_curve_insert_key()= | add a full key with handles |
+| =lrg_sequence_curve_set_key_tangents()= | set a key's mode and slopes |
+| =lrg_sequence_curve_move_key()= | retime a key keeping value and handles |
+| =lrg_sequence_curve_remove_key()=, =lrg_sequence_curve_clear()= | remove |
+| =lrg_sequence_curve_find_key()= | nearest key within a tolerance |
+| =lrg_sequence_curve_get_slopes()= | resolved slopes (for drawing handles) |
+| =lrg_sequence_curve_evaluate()= | sample (O(log n)) |
+| =lrg_sequence_curve_get_time_range()= | first/last key time |
+| =lrg_sequence_curve_copy()=, =lrg_sequence_curve_equal()= | copy, compare |
+| =lrg_sequence_curve_hermite()= | one segment (shared with level timelines) |
+| =lrg_sequence_curve_auto_slope()= | the =auto= slope rule |
+
+*** LrgSequenceTrack
+:PROPERTIES:
+:CUSTOM_ID: sequence-api-track
+:END:
+| Function | Summary |
+|----------+---------|
+| =lrg_sequence_track_new()= | new track of a kind |
+| =lrg_sequence_track_get_kind()= | kind |
+| =lrg_sequence_track_get_name()= / =lrg_sequence_track_set_name()= | display name |
+| =lrg_sequence_track_get_binding()= / =lrg_sequence_track_set_binding()= | entity GUID or override name |
+| =lrg_sequence_track_get_muted()= / =lrg_sequence_track_set_muted()= | mute |
+| =lrg_sequence_track_get_bone()= / =lrg_sequence_track_set_bone()= | bone track |
+| =lrg_sequence_track_get_channel_curve()=, =lrg_sequence_track_ensure_channel_curve()=, =lrg_sequence_track_remove_channel_curve()= | transform channels |
+| =lrg_sequence_track_get_component_type()= / =lrg_sequence_track_set_component_type()= | property track target component |
+| =lrg_sequence_track_get_property_name()= / =lrg_sequence_track_set_property_name()= | property track property |
+| =lrg_sequence_track_get_curve()= | property track curve |
+| =lrg_sequence_track_add_section()=, =lrg_sequence_track_get_n_sections()=, =lrg_sequence_track_get_section()=, =lrg_sequence_track_remove_section()= | sections (start-ordered) |
+| =lrg_sequence_track_get_section_end()=, =lrg_sequence_track_find_section_at()= | open-ended section rules |
+| =lrg_sequence_track_add_event()=, =lrg_sequence_track_add_camera_cut()=, =lrg_sequence_track_add_audio()=, =lrg_sequence_track_add_clip()=, =lrg_sequence_track_add_subsequence()= | typed section helpers |
+| =lrg_sequence_track_copy()=, =lrg_sequence_track_equal()= | copy, compare |
+
+*** LrgSequence
+:PROPERTIES:
+:CUSTOM_ID: sequence-api-sequence
+:END:
+| Function | Summary |
+|----------+---------|
+| =lrg_sequence_new()= | empty 5 s, 30 fps, once |
+| =lrg_sequence_new_from_data()=, =lrg_sequence_new_from_file()= | load |
+| =lrg_sequence_to_data()=, =lrg_sequence_save_to_file()= | save (byte stable) |
+| =lrg_sequence_new_from_timeline()= | convert a level =LrgTimeline= |
+| =lrg_sequence_get_base_dir()= / =lrg_sequence_set_base_dir()= | where relative sub-sequence paths resolve |
+| =lrg_sequence_get_name()= / =lrg_sequence_set_name()= | name |
+| =lrg_sequence_get_length()= / =lrg_sequence_set_length()= | length |
+| =lrg_sequence_get_fps()= / =lrg_sequence_set_fps()=, =lrg_sequence_frame_to_time()=, =lrg_sequence_time_to_frame()= | frame rate and conversion |
+| =lrg_sequence_get_play_mode()= / =lrg_sequence_set_play_mode()= | default play mode |
+| =lrg_sequence_add_binding()=, =lrg_sequence_remove_binding()=, =lrg_sequence_get_n_bindings()=, =lrg_sequence_get_binding()=, =lrg_sequence_get_binding_name()= | bindings |
+| =lrg_sequence_add_track()=, =lrg_sequence_get_n_tracks()=, =lrg_sequence_get_track()=, =lrg_sequence_find_track()=, =lrg_sequence_remove_track()= | tracks |
+| =lrg_sequence_copy()=, =lrg_sequence_equal()= | copy, compare |
+| =lrg_sequence_compose_bone_offset()= | bind pose + offset -> local pose |
+
+*** LrgSequencePlayer
+:PROPERTIES:
+:CUSTOM_ID: sequence-api-player
+:END:
+| Function | Summary |
+|----------+---------|
+| =lrg_sequence_player_new()= | stopped player at 0 |
+| =lrg_sequence_player_get_sequence()= / =lrg_sequence_player_set_sequence()= | the sequence (setting stops, rewinds, takes its play mode) |
+| =lrg_sequence_player_get_world()= / =lrg_sequence_player_set_world()= | the world (weak) |
+| =lrg_sequence_player_play()=, =lrg_sequence_player_pause()=, =lrg_sequence_player_stop()=, =lrg_sequence_player_is_playing()= | transport |
+| =lrg_sequence_player_advance()= | per-frame step |
+| =lrg_sequence_player_scrub()= | move with events, no sounds |
+| =lrg_sequence_player_get_time()= / =lrg_sequence_player_set_time()= | jump without events |
+| =lrg_sequence_player_evaluate()= | apply the current time |
+| =lrg_sequence_player_get_rate()= / =lrg_sequence_player_set_rate()= | rate |
+| =lrg_sequence_player_get_play_mode()= / =lrg_sequence_player_set_play_mode()=, =lrg_sequence_player_get_direction()= | play mode, ping-pong direction |
+| =lrg_sequence_player_set_binding_override()=, =lrg_sequence_player_resolve_binding()= | bindings |
+| =lrg_sequence_player_bind_skeleton()=, =lrg_sequence_player_get_skeleton()= | skeletons for animation and bone tracks |
+| =lrg_sequence_player_add_clip()=, =lrg_sequence_player_load_clips()=, =lrg_sequence_player_get_clip()= | clips by name |
+| =lrg_sequence_player_add_sequence()= | named sub-sequences |
+| =lrg_sequence_player_get_camera_binding()= | camera the player made active |
+| =LRG_SEQUENCE_MAX_DEPTH= | sub-sequence nesting limit |
+
+Properties: =sequence=, =world=, =time=, =playing= (read-only), =rate=, =play-mode=, =direction= (read-only). Signals:
+
+| Signal | Arguments | When |
+|--------+-----------+------|
+| =event= | track, name, payload, time, reverse | an event is crossed |
+| =camera-cut= | camera entity or =NULL= | the active camera changes (or is handed back) |
+| =audio-cue= | track, entity, sound, volume | playback crosses a sound start (before the sound starts) |
+| =animation-sample= | entity, binding, clip, clip time, weight -> handled | each active animation section, each evaluation |
+| =finished= | | a once player reaches its end |
+| =looped= | | a loop wraps or a ping-pong turns |
+
+*** LrgSequenceComponent
+:PROPERTIES:
+:CUSTOM_ID: sequence-api-component
+:END:
+| Function | Summary |
+|----------+---------|
+| =lrg_sequence_component_new()=, =lrg_sequence_component_new_with_sequence()= | create (autoplay on) |
+| =lrg_sequence_component_get_player()= | the owned player |
+| =lrg_sequence_component_get_sequence()= / =lrg_sequence_component_set_sequence()= | sequence in code |
+| =lrg_sequence_component_get_sequence_path()= / =lrg_sequence_component_set_sequence_path()= | =.rseq= file, loaded on entering a world |
+| =lrg_sequence_component_get_autoplay()= / =lrg_sequence_component_set_autoplay()= | start on entering a world |
+| =lrg_sequence_component_play()=, =lrg_sequence_component_stop()= | shortcuts |
+
+Properties (and level component params): =sequence=, =sequence-path=, =autoplay=, =play-mode= (overrides the asset's once set), =rate=. Lifecycle: attached to an entity -> ="self"= override; world entered -> player world set, path loaded, autoplay; =update= -> =lrg_sequence_player_advance()=; world exited -> stop.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: sequence-examples
+:END:
+*** Build, save and play a sequence
+:PROPERTIES:
+:CUSTOM_ID: sequence-example-build
+:END:
+#+begin_src C
+static void
+on_event (LrgSequencePlayer *player,
+          LrgSequenceTrack  *track,
+          const gchar       *name,
+          const gchar       *payload,
+          gfloat             time,
+          gboolean           reverse,
+          gpointer           user_data)
+{
+	/* gameplay hook: open a door, spawn an effect, ... */
+	g_message ("%s (%s) at %.2f%s", name, payload != NULL ? payload : "", time, reverse ? " backwards" : "");
+}
+
+static LrgSequencePlayer *
+play_intro (LrgWorld3D *world)
+{
+	g_autoptr(LrgSequence)      seq = lrg_sequence_new ();
+	g_autoptr(LrgSequenceTrack) move = lrg_sequence_track_new (LRG_SEQUENCE_TRACK_TRANSFORM, "Hero walk");
+	g_autoptr(LrgSequenceTrack) cuts = lrg_sequence_track_new (LRG_SEQUENCE_TRACK_CAMERA_CUT, "Cuts");
+	g_autoptr(LrgSequenceTrack) cues = lrg_sequence_track_new (LRG_SEQUENCE_TRACK_EVENT, "Cues");
+	g_autoptr(GError)           error = NULL;
+	LrgSequenceCurve           *x;
+	LrgSequencePlayer          *player;
+	guint                       k;
+
+	lrg_sequence_set_length (seq, 6.0f);
+
+	/* Hero walks 0 -> 4 m along X, easing in, arriving with a set slope */
+	lrg_sequence_track_set_binding (move, HERO_GUID);
+	x = lrg_sequence_track_ensure_channel_curve (move, LRG_SEQUENCE_CHANNEL_LOCATION_X);
+	lrg_sequence_curve_set_key (x, 0.0f, 0.0f, LRG_SEQUENCE_TANGENT_AUTO);
+	k = lrg_sequence_curve_set_key (x, 4.0f, 4.0f, LRG_SEQUENCE_TANGENT_BROKEN);
+	lrg_sequence_curve_set_key_tangents (x, k, LRG_SEQUENCE_TANGENT_BROKEN, 1.5f, 0.0f);
+	lrg_sequence_add_track (seq, move);
+
+	lrg_sequence_track_add_camera_cut (cuts, 0.0f, WIDE_CAM_GUID);
+	lrg_sequence_track_add_camera_cut (cuts, 3.0f, CLOSE_CAM_GUID);
+	lrg_sequence_add_track (seq, cuts);
+
+	lrg_sequence_track_add_event (cues, 4.0f, "door-open", NULL);
+	lrg_sequence_add_track (seq, cues);
+
+	if (!lrg_sequence_save_to_file (seq, "cinematics/intro.rseq", &error))
+		g_warning ("%s", error->message);
+
+	player = lrg_sequence_player_new (seq);
+	lrg_sequence_player_set_world (player, world);
+	g_signal_connect (player, "event", G_CALLBACK (on_event), NULL);
+	lrg_sequence_player_play (player);
+	return player;   /* call lrg_sequence_player_advance (player, dt) every frame */
+}
+#+end_src
+
+*** From a level, through a component
+:PROPERTIES:
+:CUSTOM_ID: sequence-example-component
+:END:
+#+begin_src C
+/* The level's "Director" node carries a component desc
+ *   type: sequence, params: {sequence_path: cinematics/intro.rseq, autoplay: true}
+ * so lrg_level_instantiate_3d() creates it; or in code: */
+LrgEntity3D                     *director = lrg_world3d_find_by_name (world, "Director");
+g_autoptr(LrgSequenceComponent)  comp = lrg_sequence_component_new ();
+
+lrg_sequence_component_set_sequence_path (comp, "cinematics/intro.rseq");
+lrg_entity3d_add_component (director, LRG_COMPONENT (comp));
+
+/* lrg_world3d_update() advances it from now on */
+g_signal_connect (lrg_sequence_component_get_player (comp), "finished", G_CALLBACK (on_intro_done), game);
+#+end_src
+
+*** Animation clips on a skinned character
+:PROPERTIES:
+:CUSTOM_ID: sequence-example-animation
+:END:
+#+begin_src C
+g_autoptr(GError)      error = NULL;
+g_autoptr(LrgSkeleton) skeleton = lrg_gltf_load_skeleton ("models/hero.glb", 0, &error);
+
+lrg_sequence_player_bind_skeleton (player, HERO_GUID, skeleton);
+if (lrg_sequence_player_load_clips (player, "models/hero.glb", &error) < 0)
+	g_warning ("%s", error->message);
+
+/* each frame, after advance: upload the pose */
+lrg_sequence_player_advance (player, dt);
+lrg_skinned_mesh_apply_skeleton (mesh, skeleton);
+#+end_src
+
+To let an animator component play the clips instead (crossfades, layers, root motion), connect =animation-sample=, forward the clip and time to it and return =TRUE=.
+
+*** Play a level timeline on the runtime world
+:PROPERTIES:
+:CUSTOM_ID: sequence-example-timeline
+:END:
+#+begin_src C
+g_autoptr(LrgWorld3D)  world = lrg_world3d_new ();
+g_autoptr(GError)      error = NULL;
+LrgTimeline           *tl;
+g_autoptr(LrgSequence) seq = NULL;
+LrgSequencePlayer     *player;
+
+/* entities get their node's GUID, which the timeline tracks use */
+if (!lrg_level_instantiate_3d (level, world, NULL, &error))
+	g_warning ("%s", error->message);
+
+tl = lrg_level_get_timeline (level, (guint) lrg_level_find_timeline (level, "Bounce"));
+seq = lrg_sequence_new_from_timeline (tl, 30.0f);
+player = lrg_sequence_player_new (seq);
+lrg_sequence_player_set_world (player, world);
+lrg_sequence_player_play (player);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: sequence-performance
+:END:
+Measured on the 0.9.0 worktree (x86_64, release build, =-O2=), headless:
+
+| Case | Time |
+|------+------|
+| =lrg_sequence_curve_evaluate()=, 100 auto keys | 57 ns per call |
+| =lrg_sequence_player_advance()= at 60 Hz: 100 entities x 9 keyed channels x 10 keys, plus an event track of 1000 events | 118 µs per frame |
+| =lrg_sequence_to_data()= of that sequence (311 KB of YAML) | 54 ms |
+| =lrg_sequence_new_from_data()= of the same text | 77 ms |
+
+(single core pinned with =taskset=; bench source: a 70-line loop over the public API.) Load and save are dominated by YAML; do them at level load, not per frame.
+
+- Curve evaluation is a binary search plus one Hermite: O(log k) for k keys, no allocation.
+- Evaluation resolves each binding through a hash lookup (=lrg_world3d_find_by_guid()=) per track per evaluation; property tracks look up the =GParamSpec= each time. Both are cheap next to rendering; cache nothing yourself.
+- Crossing (events, sounds) allocates one small array per =advance= / =scrub=; event tracks with thousands of events are scanned linearly per crossed range.
+- Sub-sequence files load once per player (first evaluation that reaches them), on the calling thread: register large sub-sequences with =lrg_sequence_player_add_sequence()= ahead of time to avoid a hitch.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: sequence-pitfalls
+:END:
+- Rotation channels are Euler XYZ radians on the entity (=lrg_entity3d_set_rotation_euler()=); interpolating Euler angles is not a slerp. Key in small steps or add keys where a turn crosses ±π.
+- Unkeyed channels are left alone, so a sequence does not reset entities: =stop()= does not restore poses. Save and restore state yourself if a cinematic must not leave things moved (the editor's preview will do this for you).
+- Scrubbing never starts sounds; =advance()= with a negative rate does not either (sounds start only when crossed forwards).
+- Events fire on crossings, not on evaluations: =set_time()= does not fire the event you land on (it fires when you move away), and a once player that is already at its end fires nothing when advanced.
+- Events inside a looping sub-sequence section fire for its first pass only (the crossed range is mapped without wrapping).
+- =camera-cut= targets need an =LrgCameraComponent=; an entity without one makes the player hand the camera back.
+- Property tracks write through =g_object_set_property()=: the value is clamped by the =GParamSpec= range, booleans switch at 0.5 and enums round. Non-numeric properties (strings, objects, boxed colours) cannot be keyed; key each scalar property instead.
+- Bone tracks and the default clip path need =lrg_sequence_player_bind_skeleton()=; with no skeleton and no =animation-sample= handler they do nothing.
+- Handle weights are not supported; very long segments with steep user slopes overshoot as a plain cubic would.
+- The asset's play mode is a default: =lrg_sequence_player_set_play_mode()= and the component's =play-mode= override it per player.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: sequence-editor
+:END:
+The sequencer panel arrives in the next 0.9.0 wave; the engine side already exposes what it needs:
+
+- *Sequencer panel* on =LrgTimelineView=: one row per track grouped by binding (=lrg_sequence_get_binding_name()= gives the label), sections drawn from =lrg_sequence_track_get_section()= and =lrg_sequence_track_get_section_end()=, keys from =lrg_sequence_curve_get_key()=. Edits will go through undoable commands that copy the sequence (=lrg_sequence_copy()=, =lrg_sequence_equal()= for no-op detection), like level timelines.
+- *Curve editor* (=LrgCurveEdit=): handles come from =lrg_sequence_curve_get_slopes()= and are written with =lrg_sequence_curve_set_key_tangents()=; dragging keys uses =lrg_sequence_curve_move_key()=.
+- *Preview*: the panel drives an =LrgSequencePlayer= on the play-in-editor world with =lrg_sequence_player_scrub()= (events show in the log, sounds stay silent) and restores entity state when the preview ends; =camera-cut= switches the viewport camera when "pilot cut camera" is on.
+- *Binding*: dragging an entity onto the panel adds =lrg_sequence_add_binding()= with its GUID and name; a "self" binding is offered when the sequence is opened from an entity's =LrgSequenceComponent=.
+- *Level timelines*: the timeline panel gains Bézier key handles (=lrg_timeline_track_set_key_tangents()=) and bone channels, and a "Convert to sequence" action (=lrg_sequence_new_from_timeline()=).
+- IPC/MCP methods (=sequence.*=) and Emacs commands come with the panel.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: sequence-see-also
+:END:
+- [[file:../../editor/editor-tools.org::#animation-timeline][Level timelines]] (Bézier keys, bone channels)
+- [[file:../../guides/animation-pipeline.org::#sequencer][Animation pipeline: sequencer]]
+- [[file:clip.org][Animation clips]], [[file:skeleton.org][Skeleton]]
+- [[file:../world3d/components.org][3D components]], [[file:../world3d/world3d.org][LrgWorld3D]]
