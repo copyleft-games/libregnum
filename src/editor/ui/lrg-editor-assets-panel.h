@@ -281,4 +281,23 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_assets_panel_show_import_settings (LrgEditorAssetsPanel *self,
                                                        const gchar          *path);
 
+/**
+ * lrg_editor_assets_panel_create_variant:
+ * @self: an #LrgEditorAssetsPanel
+ * @path: a `.rprefab` or `.rmat` file (absolute or project-relative)
+ * @error: return location for a #GError
+ *
+ * The entry menu's Create Variant: a prefab gets a variant through
+ * lrg_editor_create_prefab_variant() (undoable), a material an instance
+ * file through lrg_editor_material_editor_create_variant(); both are
+ * written next to @path as `<stem>_variant` (numbered when taken).
+ *
+ * Returns: (transfer full) (nullable): the new file's path, or %NULL
+ *   with @error set
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_assets_panel_create_variant (LrgEditorAssetsPanel  *self,
+                                                const gchar           *path,
+                                                GError               **error);
+
 G_END_DECLS

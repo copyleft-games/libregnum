@@ -31,6 +31,27 @@
  * object data "lrg-editor-dialog" on the app and its id goes into
  * LrgEditorViewState:dialog, which disables the editor's shortcuts and
  * lets editor_dialog_close_all() close it.
+ *
+ * Shaders (0.9.0). `.rshader` documents (and the engine's other YAML
+ * assets: .rmat, .rshadergraph, .rpost) open with YAML highlighting,
+ * GLSL stages (.glsl .vert .frag .vs .fs) with GLSL. Saving a shader
+ * document or a stage compiles every `.rshader` of the folder that uses
+ * it (LrgShaderAsset: GL when a window exists, otherwise only the
+ * document is checked) and keeps the diagnostics, mapped to the stage
+ * file and line (an inline stage maps into the .rshader below its key):
+ *
+ *  - a diagnostics strip under the editor lists the active file's
+ *    messages; clicking one jumps to its line;
+ *  - the problems panel shows them as "shader-error" / "shader-warning"
+ *    problems (re-added from step() whenever the app replaces its
+ *    problem array after a level validation);
+ *  - opening a file at line 0 or 1 jumps to its first error.
+ *
+ * After a save the material preview's cached shader assets reload
+ * (editor_mat_preview_file_changed), so open material editors, the
+ * shader graph preview and thumbnails show the new code at once; a
+ * failing compile keeps the last good program there. The shader.* IPC
+ * methods drive the same machinery.
  */
 
 #include "config.h"
@@ -39,6 +60,13 @@
 #include "lrg-editor-code-panel.h"
 #include "lrg-editor-palette.h"
 #include "lrg-editor-preferences.h"
+#define LRG_EDITOR_PANEL_INTERNAL
+#include "data/lrg-editor-material-editor.h"
+#include "../../ui/lrg-custom-widget.h"
+#include "../../paint/lrg-paint-list.h"
+#include "../../paint/lrg-paint-icons.h"
+#include "../../graphics/lrg-shader-asset.h"
+#include <raylib.h>
 #include "../../ui/lrg-tab-view.h"
 #include "../../ui/lrg-text-editor.h"
 #include "../../ui/lrg-text-input.h"
@@ -55,6 +83,10 @@
 #define PANEL_KEY         "lrg-editor-code-panel"
 #define PALETTE_KEY       "lrg-editor-palette"
 #define MAX_FILE_SIZE     (8 * 1024 * 1024)
+#define DIAG_ROW_H        (20.0f)
+#define DIAG_MAX_ROWS     (6)
+#define SHADER_CODE_ERROR "shader-error"
+#define SHADER_CODE_WARN  "shader-warning"
 #define DIRTY_MARK        " \xe2\x80\xa2"        /* " •" */
 #define MOD_MASK          (LRG_INPUT_MODIFIER_SHIFT | LRG_INPUT_MODIFIER_CTRL | \
                            LRG_INPUT_MODIFIER_ALT | LRG_INPUT_MODIFIER_SUPER)
@@ -69,6 +101,28 @@ enum
 };
 
 typedef struct _CodeDoc CodeDoc;
+
+/* One shader diagnostic, mapped to a file of the project. */
+typedef struct
+{
+	gchar    *file;      /* absolute */
+	guint     line;      /* 1-based, 0 unknown */
+	guint     column;
+	gboolean  error;
+	gchar    *message;
+	gchar    *text;      /* "file:line:col: error: message" */
+} CodeDiag;
+
+static void
+code_diag_free (gpointer data)
+{
+	CodeDiag *d = data;
+
+	g_free (d->file);
+	g_free (d->message);
+	g_free (d->text);
+	g_free (d);
+}
 
 struct _CodeDoc
 {
@@ -93,6 +147,12 @@ struct _LrgEditorCodePanel
 	GPtrArray          *docs;      /* CodeDoc*, same order as the tabs */
 	GSimpleActionGroup *group;     /* "code" on the canvas */
 	gboolean            syncing;   /* updating labels: ignore change signals */
+
+	/* shaders */
+	GHashTable         *diags;     /* .rshader abs path -> GPtrArray of CodeDiag */
+	LrgWidget          *diag_view; /* the strip under the editor */
+	gpointer            problems_seen;
+	guint               problems_len;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorCodePanel, lrg_editor_code_panel, LRG_TYPE_CONTAINER)
@@ -497,6 +557,375 @@ lrg_editor_code_panel_check_disk (LrgEditorCodePanel *self)
 }
 
 /* ==========================================================================
+ * Shaders: compile on save, diagnostics, problems
+ * ========================================================================== */
+
+static gboolean
+is_shader_document (const gchar *path)
+{
+	g_autofree gchar *lower = g_ascii_strdown (path, -1);
+
+	return g_str_has_suffix (lower, ".rshader");
+}
+
+static gboolean
+is_shader_stage (const gchar *path)
+{
+	g_autofree gchar *lower = g_ascii_strdown (path, -1);
+
+	return g_str_has_suffix (lower, ".glsl") || g_str_has_suffix (lower, ".vert") ||
+	       g_str_has_suffix (lower, ".frag") || g_str_has_suffix (lower, ".vs") || g_str_has_suffix (lower, ".fs");
+}
+
+/* YAML highlighting for the engine's YAML assets without a .yaml name. */
+static LrgSyntax *
+syntax_for (const gchar *path)
+{
+	g_autofree gchar *lower = g_ascii_strdown (path, -1);
+
+	if (g_str_has_suffix (lower, ".rshader") || g_str_has_suffix (lower, ".rmat") ||
+	    g_str_has_suffix (lower, ".rshadergraph") || g_str_has_suffix (lower, ".rpost"))
+		return lrg_syntax_get_for_name ("yaml");
+	return lrg_syntax_get_for_filename (path);
+}
+
+/* The 1-based line of "<key>:" at the start of a line of @path, 0 when
+ * absent (inline stages start on the next line). */
+static guint
+key_line (const gchar *path,
+          const gchar *key)
+{
+	g_autofree gchar *text = NULL;
+	g_auto(GStrv)     lines = NULL;
+	g_autofree gchar *prefix = g_strconcat (key, ":", NULL);
+	guint             i;
+
+	if (!g_file_get_contents (path, &text, NULL, NULL))
+		return 0;
+	lines = g_strsplit (text, "\n", -1);
+	for (i = 0; lines[i] != NULL; i++)
+		if (g_str_has_prefix (lines[i], prefix))
+			return i + 1;
+	return 0;
+}
+
+/* A driver diagnostic of @rshader mapped to a project file and line. */
+static CodeDiag *
+map_diagnostic (const gchar               *rshader,
+                const LrgShaderDiagnostic *d)
+{
+	CodeDiag         *c = g_new0 (CodeDiag, 1);
+	const gchar      *src = lrg_shader_diagnostic_get_source (d);
+	g_autofree gchar *dir = g_path_get_dirname (rshader);
+	g_autofree gchar *rel = NULL;
+
+	c->line = lrg_shader_diagnostic_get_line (d);
+	c->column = lrg_shader_diagnostic_get_column (d);
+	c->error = lrg_shader_diagnostic_is_error (d);
+	c->message = g_strdup (lrg_shader_diagnostic_get_message (d));
+	if (src == NULL || lrg_shader_diagnostic_is_in_preamble (d))
+		c->file = g_strdup (rshader);
+	else if (g_str_has_suffix (src, "#fragment") || g_str_has_suffix (src, "#vertex"))
+	{
+		/* inline stage: lines count from the line after its key */
+		guint base = key_line (rshader, g_str_has_suffix (src, "#fragment") ? "fragment" : "vertex");
+
+		c->file = g_strdup (rshader);
+		if (c->line > 0)
+			c->line += base;
+	}
+	else
+		c->file = g_canonicalize_filename (src, dir);
+	rel = g_path_get_basename (c->file);
+	if (c->line > 0 && c->column > 0)
+		c->text = g_strdup_printf ("%s:%u:%u: %s: %s", rel, c->line, c->column, c->error ? "error" : "warning",
+		                           c->message);
+	else if (c->line > 0)
+		c->text = g_strdup_printf ("%s:%u: %s: %s", rel, c->line, c->error ? "error" : "warning", c->message);
+	else
+		c->text = g_strdup_printf ("%s: %s: %s", rel, c->error ? "error" : "warning", c->message);
+	return c;
+}
+
+/*
+ * compile_document:
+ *
+ * Loads and (with a window) compiles one .rshader; returns its mapped
+ * diagnostics (empty when it is fine). Without a window only loading is
+ * checked: a YAML or stage-file problem is still an error.
+ */
+static GPtrArray *
+compile_document (const gchar *rshader)
+{
+	GPtrArray                *out = g_ptr_array_new_with_free_func (code_diag_free);
+	g_autoptr(LrgShaderAsset) asset = NULL;
+	g_autoptr(GError)         error = NULL;
+	GPtrArray                *diags;
+	guint                     i;
+
+	asset = lrg_shader_asset_new_from_file (rshader, &error);
+	if (asset == NULL)
+	{
+		CodeDiag *c = g_new0 (CodeDiag, 1);
+		g_autofree gchar *base = g_path_get_basename (rshader);
+
+		c->file = g_strdup (rshader);
+		c->error = TRUE;
+		c->message = g_strdup (error->message);
+		c->text = g_strdup_printf ("%s: error: %s", base, error->message);
+		g_ptr_array_add (out, c);
+		return out;
+	}
+	if (!IsWindowReady ())
+		return out;
+	lrg_shader_asset_compile (asset, NULL);
+	diags = lrg_shader_asset_get_diagnostics (asset);
+	for (i = 0; diags != NULL && i < diags->len; i++)
+		g_ptr_array_add (out, map_diagnostic (rshader, g_ptr_array_index (diags, i)));
+	lrg_shader_asset_release (asset);
+	return out;
+}
+
+/* The .rshader documents a save of @path concerns: itself, or the
+ * documents of its folder whose stages are @path. */
+static GPtrArray *
+documents_for (const gchar *path)
+{
+	GPtrArray        *out = g_ptr_array_new_with_free_func (g_free);
+	g_autofree gchar *dir = NULL;
+	g_autoptr(GDir)   d = NULL;
+	const gchar      *name;
+
+	if (is_shader_document (path))
+	{
+		g_ptr_array_add (out, g_strdup (path));
+		return out;
+	}
+	if (!is_shader_stage (path))
+		return out;
+	dir = g_path_get_dirname (path);
+	d = g_dir_open (dir, 0, NULL);
+	while (d != NULL && (name = g_dir_read_name (d)) != NULL)
+	{
+		g_autofree gchar         *doc = NULL;
+		g_autoptr(LrgShaderAsset) asset = NULL;
+		guint                     s;
+
+		if (!is_shader_document (name))
+			continue;
+		doc = g_build_filename (dir, name, NULL);
+		asset = lrg_shader_asset_new_from_file (doc, NULL);
+		for (s = 0; asset != NULL && s < 2; s++)
+		{
+			const gchar      *sp = lrg_shader_asset_get_source_path (asset, (LrgShaderStage) s);
+			g_autofree gchar *abs = sp != NULL ? g_canonicalize_filename (sp, dir) : NULL;
+
+			if (g_strcmp0 (abs, path) == 0)
+			{
+				g_ptr_array_add (out, g_strdup (doc));
+				break;
+			}
+		}
+	}
+	return out;
+}
+
+/* Diagnostics of the active file (borrowed CodeDiag pointers). */
+static GPtrArray *
+active_diags (LrgEditorCodePanel *self)
+{
+	GPtrArray     *out = g_ptr_array_new ();
+	CodeDoc       *doc = find_doc (self, NULL, NULL);
+	GHashTableIter iter;
+	gpointer       value;
+
+	if (doc == NULL || self->diags == NULL)
+		return out;
+	g_hash_table_iter_init (&iter, self->diags);
+	while (g_hash_table_iter_next (&iter, NULL, &value))
+	{
+		GPtrArray *list = value;
+		guint      i;
+
+		for (i = 0; i < list->len; i++)
+			if (g_strcmp0 (((CodeDiag *) g_ptr_array_index (list, i))->file, doc->path) == 0)
+				g_ptr_array_add (out, g_ptr_array_index (list, i));
+	}
+	return out;
+}
+
+static guint
+active_diag_count (LrgEditorCodePanel *self)
+{
+	g_autoptr(GPtrArray) list = active_diags (self);
+
+	return list->len;
+}
+
+/* Puts the shader diagnostics into the app's problem list (a new array,
+ * so the problems panel notices). */
+static void
+sync_problems (LrgEditorCodePanel *self)
+{
+	LrgEditorApp  *app = self->app;
+	GPtrArray     *fresh;
+	GHashTableIter iter;
+	gpointer       value;
+	guint          i;
+
+	if (app == NULL || app->problems == NULL)
+		return;
+	fresh = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_editor_problem_free);
+	for (i = 0; i < app->problems->len; i++)
+	{
+		LrgEditorProblem *p = g_ptr_array_index (app->problems, i);
+
+		if (p->code == NULL || !g_str_has_prefix (p->code, "shader-"))
+			g_ptr_array_add (fresh, lrg_editor_problem_copy (p));
+	}
+	g_hash_table_iter_init (&iter, self->diags);
+	while (g_hash_table_iter_next (&iter, NULL, &value))
+	{
+		GPtrArray *list = value;
+		guint      k;
+
+		for (k = 0; k < list->len; k++)
+		{
+			CodeDiag         *d = g_ptr_array_index (list, k);
+			LrgEditorProblem *p = g_new0 (LrgEditorProblem, 1);
+
+			p->severity = d->error ? LRG_EDITOR_PROBLEM_ERROR : LRG_EDITOR_PROBLEM_WARNING;
+			p->code = g_strdup (d->error ? SHADER_CODE_ERROR : SHADER_CODE_WARN);
+			p->message = g_strdup (d->text);
+			p->file = editor_app_relative_path (app, d->file);
+			g_ptr_array_add (fresh, p);
+		}
+	}
+	g_ptr_array_unref (app->problems);
+	app->problems = fresh;
+	self->problems_seen = fresh;
+	self->problems_len = fresh->len;
+}
+
+/* Whether the app's problem array is the one we last filled. */
+static void
+check_problems (LrgEditorCodePanel *self)
+{
+	if (self->app == NULL || self->app->problems == NULL || g_hash_table_size (self->diags) == 0)
+		return;
+	if (self->app->problems != self->problems_seen || self->app->problems->len != self->problems_len)
+		sync_problems (self);
+}
+
+/*
+ * shader_check:
+ *
+ * After a save (or shader.compile): compiles the documents @path
+ * concerns, stores their diagnostics, reloads the preview's copies and
+ * updates the strip and the problems. Returns the number of errors.
+ */
+static guint
+shader_check (LrgEditorCodePanel *self,
+              const gchar        *path)
+{
+	g_autoptr(GPtrArray) docs = documents_for (path);
+	guint                i, errors = 0, k;
+
+	if (self->app != NULL)
+		editor_mat_preview_file_changed (self->app, path);
+	for (i = 0; i < docs->len; i++)
+	{
+		const gchar *doc = g_ptr_array_index (docs, i);
+		GPtrArray   *diags = compile_document (doc);
+
+		for (k = 0; k < diags->len; k++)
+			if (((CodeDiag *) g_ptr_array_index (diags, k))->error)
+				errors++;
+		if (diags->len == 0)
+		{
+			g_ptr_array_unref (diags);
+			g_hash_table_remove (self->diags, doc);
+		}
+		else
+			g_hash_table_replace (self->diags, g_strdup (doc), diags);
+		if (self->app != NULL && g_strcmp0 (doc, path) != 0)
+			editor_mat_preview_file_changed (self->app, doc);
+	}
+	sync_problems (self);
+	lrg_widget_queue_layout (LRG_WIDGET (self));
+	if (self->app != NULL && docs->len > 0)
+	{
+		if (errors > 0)
+			editor_app_notify (self->app, EDITOR_NOTIFY_ERROR, "Shader: %u error(s)", errors);
+		else
+			editor_app_set_status (self->app, IsWindowReady () ? "Shader compiled" : "Shader checked");
+	}
+	return errors;
+}
+
+/* --- the diagnostics strip ------------------------------------------------ */
+
+static void
+diag_paint (LrgCustomWidget *widget,
+            LrgPaintList    *list,
+            gfloat           x,
+            gfloat           y,
+            gfloat           width,
+            gfloat           height,
+            gpointer         user_data)
+{
+	LrgEditorCodePanel   *self = LRG_EDITOR_CODE_PANEL (user_data);
+	LrgTheme             *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont              *font = lrg_theme_get_ui_font (theme);
+	gfloat                fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	g_autoptr(GPtrArray)  rows = active_diags (self);
+	GrlColor              wash;
+	guint                 i;
+
+	lrg_paint_list_rect (list, x, y, width, height, 0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_SURFACE));
+	lrg_paint_list_rect (list, x, y, width, 1.0f, 0.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+	lrg_paint_list_push_clip (list, x, y, width, height);
+	for (i = 0; i < rows->len && i < DIAG_MAX_ROWS; i++)
+	{
+		CodeDiag       *d = g_ptr_array_index (rows, i);
+		const GrlColor *c = lrg_theme_get_color (theme, d->error ? LRG_THEME_COLOR_DANGER : LRG_THEME_COLOR_WARNING);
+		gfloat          ry = y + 3.0f + (gfloat) i * DIAG_ROW_H;
+		gfloat          icon = fs + 2.0f;
+
+		if (i % 2 == 1)
+		{
+			lrg_paint_color_with_alpha (c, 0.06f, &wash);
+			lrg_paint_list_rect (list, x, ry, width, DIAG_ROW_H, 0.0f, &wash);
+		}
+		lrg_paint_list_rect (list, x, ry + 2.0f, 3.0f, DIAG_ROW_H - 4.0f, 1.5f, c);
+		lrg_paint_list_icon (list, d->error ? LRG_ICON_CROSS : LRG_ICON_WARNING, x + 10.0f,
+		                     ry + (DIAG_ROW_H - icon) * 0.5f, icon, 0.0f, c);
+		lrg_paint_list_text (list, font, d->text, x + 16.0f + icon, ry + (DIAG_ROW_H - fs) * 0.5f, fs, 0.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT));
+	}
+	lrg_paint_list_pop_clip (list);
+}
+
+static void code_panel_goto_diag (LrgEditorCodePanel *self, guint index);
+
+static gboolean
+diag_event (LrgCustomWidget  *widget,
+            const LrgUIEvent *event,
+            gpointer          user_data)
+{
+	LrgEditorCodePanel *self = LRG_EDITOR_CODE_PANEL (user_data);
+	gfloat              y;
+
+	if (lrg_ui_event_get_event_type (event) != LRG_UI_EVENT_MOUSE_BUTTON_DOWN)
+		return FALSE;
+	y = lrg_ui_event_get_y (event) - lrg_widget_get_world_y (LRG_WIDGET (widget)) - 3.0f;
+	if (y < 0.0f)
+		return TRUE;
+	code_panel_goto_diag (self, (guint) (y / DIAG_ROW_H));
+	return TRUE;
+}
+
+/* ==========================================================================
  * Status and layout
  * ========================================================================== */
 
@@ -542,7 +971,20 @@ lrg_editor_code_panel_layout_children (LrgContainer *container)
 		return;
 	lrg_widget_get_preferred_size (LRG_WIDGET (self->toolbar), &tw, &th);
 	lrg_widget_place_in_slot (LRG_WIDGET (self->toolbar), 0.0f, 0.0f, w, th);
-	lrg_widget_place_in_slot (LRG_WIDGET (self->tabs), 0.0f, th, w, MAX (h - th, 0.0f));
+	{
+		/* the diagnostics strip of the active file at the bottom */
+		guint  rows = self->diag_view != NULL ? MIN (active_diag_count (self), (guint) DIAG_MAX_ROWS) : 0;
+		gfloat dh = rows > 0 ? (gfloat) rows * DIAG_ROW_H + 6.0f : 0.0f;
+
+		dh = MIN (dh, MAX (h - th, 0.0f) * 0.45f);
+		if (self->diag_view != NULL)
+		{
+			lrg_widget_set_visible (self->diag_view, rows > 0);
+			if (rows > 0)
+				lrg_widget_place_in_slot (self->diag_view, 0.0f, h - dh, w, dh);
+		}
+		lrg_widget_place_in_slot (LRG_WIDGET (self->tabs), 0.0f, th, w, MAX (h - th - dh, 0.0f));
+	}
 	lrg_widget_place_in_slot (LRG_WIDGET (self->empty), 0.0f, th, w, MAX (h - th, 0.0f));
 }
 
@@ -1093,6 +1535,253 @@ m_palette_open (LrgEditorServer  *server,
 	return n;
 }
 
+/* --- shader.* ------------------------------------------------------------- */
+
+static void
+code_panel_goto_diag (LrgEditorCodePanel *self,
+                      guint               index)
+{
+	g_autoptr(GPtrArray) rows = active_diags (self);
+	CodeDiag            *d;
+	LrgTextEditor       *editor;
+	g_autofree gchar    *file = NULL;
+
+	if (index >= rows->len)
+		return;
+	d = g_ptr_array_index (rows, index);
+	file = g_strdup (d->file);
+	if (!lrg_editor_code_panel_open (self, file, (gint) MAX (d->line, 1u), NULL))
+		return;
+	editor = lrg_editor_code_panel_get_editor (self, file);
+	if (editor != NULL && d->line > 0)
+		lrg_text_editor_set_cursor (editor, d->line - 1, d->column > 0 ? d->column - 1 : 0);
+}
+
+/* Diagnostics of the documents @path concerns, as JSON. */
+static JsonNode *
+diags_json (LrgEditorCodePanel *self,
+            const gchar        *path,
+            gboolean            ok)
+{
+	g_autoptr(GPtrArray) docs = documents_for (path);
+	JsonObject          *o = json_object_new ();
+	JsonArray           *a = json_array_new ();
+	JsonNode            *n = json_node_new (JSON_NODE_OBJECT);
+	guint                i, k;
+
+	for (i = 0; i < docs->len; i++)
+	{
+		GPtrArray *list = g_hash_table_lookup (self->diags, g_ptr_array_index (docs, i));
+
+		for (k = 0; list != NULL && k < list->len; k++)
+		{
+			CodeDiag   *d = g_ptr_array_index (list, k);
+			JsonObject *e = json_object_new ();
+
+			json_object_set_string_member (e, "document", g_ptr_array_index (docs, i));
+			json_object_set_string_member (e, "file", d->file);
+			json_object_set_int_member (e, "line", d->line);
+			json_object_set_int_member (e, "column", d->column);
+			json_object_set_boolean_member (e, "error", d->error);
+			json_object_set_string_member (e, "message", d->message);
+			json_array_add_object_element (a, e);
+		}
+	}
+	json_object_set_boolean_member (o, "ok", ok);
+	json_object_set_boolean_member (o, "compiled", IsWindowReady ());
+	json_object_set_array_member (o, "diagnostics", a);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static gchar *
+ipc_shader_path (LrgEditorApp  *app,
+                 JsonObject    *params,
+                 GError       **error)
+{
+	const gchar      *path = param_string (params, "path");
+	g_autofree gchar *abs = NULL;
+
+	if (path == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'path'");
+		return NULL;
+	}
+	abs = editor_app_project_path (app, path);
+	if (!g_file_test (abs, G_FILE_TEST_IS_REGULAR))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "%s does not exist", abs);
+		return NULL;
+	}
+	return g_canonicalize_filename (abs, NULL);
+}
+
+static JsonNode *
+m_shader_create (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	LrgEditorApp      *app = LRG_EDITOR_APP (user_data);
+	const gchar       *path = param_string (params, "path");
+	gboolean           lit = TRUE;
+	g_autofree gchar  *abs = NULL;
+	g_autofree gchar  *frag = NULL;
+	g_autoptr(GError)  err = NULL;
+	JsonObject        *o;
+	JsonNode          *n;
+
+	if (path == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'path'");
+		return NULL;
+	}
+	if (json_object_has_member (params, "lit"))
+		lit = json_object_get_boolean_member (params, "lit");
+	if (!lrg_editor_material_editor_create_shader (app, path, lit, &err))
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED, err->message);
+		return NULL;
+	}
+	abs = editor_app_project_path (app, path);
+	{
+		g_autofree gchar *dir = g_path_get_dirname (abs);
+		g_autofree gchar *base = g_path_get_basename (abs);
+		gchar            *dot = strrchr (base, '.');
+
+		if (dot != NULL)
+			*dot = '\0';
+		frag = g_strdup_printf ("%s" G_DIR_SEPARATOR_S "%s.frag", dir, base);
+	}
+	o = json_object_new ();
+	json_object_set_string_member (o, "path", abs);
+	json_object_set_string_member (o, "fragment", frag);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_shader_compile (LrgEditorServer  *server,
+                  JsonObject       *params,
+                  gpointer          user_data,
+                  GError          **error)
+{
+	LrgEditorApp       *app = LRG_EDITOR_APP (user_data);
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	g_autofree gchar   *abs = NULL;
+	guint               errors;
+
+	if (self == NULL || (abs = ipc_shader_path (app, params, error)) == NULL)
+		return NULL;
+	errors = shader_check (self, abs);
+	return diags_json (self, abs, errors == 0);
+}
+
+static JsonNode *
+m_shader_diagnostics (LrgEditorServer  *server,
+                      JsonObject       *params,
+                      gpointer          user_data,
+                      GError          **error)
+{
+	LrgEditorApp       *app = LRG_EDITOR_APP (user_data);
+	LrgEditorCodePanel *self = ipc_panel (user_data, error);
+	g_autofree gchar   *abs = NULL;
+	g_autoptr(GPtrArray) docs = NULL;
+	gboolean            ok = TRUE;
+	guint               i, k;
+
+	if (self == NULL || (abs = ipc_shader_path (app, params, error)) == NULL)
+		return NULL;
+	docs = documents_for (abs);
+	for (i = 0; i < docs->len; i++)
+	{
+		GPtrArray *list = g_hash_table_lookup (self->diags, g_ptr_array_index (docs, i));
+
+		for (k = 0; list != NULL && k < list->len; k++)
+			if (((CodeDiag *) g_ptr_array_index (list, k))->error)
+				ok = FALSE;
+	}
+	return diags_json (self, abs, ok);
+}
+
+static JsonNode *
+m_shader_uniforms (LrgEditorServer  *server,
+                   JsonObject       *params,
+                   gpointer          user_data,
+                   GError          **error)
+{
+	LrgEditorApp              *app = LRG_EDITOR_APP (user_data);
+	g_autofree gchar          *abs = NULL;
+	g_autoptr(LrgShaderAsset)  asset = NULL;
+	g_autoptr(GError)          err = NULL;
+	GEnumClass                *klass;
+	JsonObject                *o;
+	JsonArray                 *a;
+	JsonNode                  *n;
+	guint                      i;
+
+	if ((abs = ipc_shader_path (app, params, error)) == NULL)
+		return NULL;
+	asset = lrg_shader_asset_new_from_file (abs, &err);
+	if (asset == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED, err->message);
+		return NULL;
+	}
+	klass = g_type_class_ref (LRG_TYPE_SHADER_UNIFORM_TYPE);
+	a = json_array_new ();
+	for (i = 0; i < lrg_shader_asset_get_n_uniforms (asset); i++)
+	{
+		const LrgShaderUniform *u = lrg_shader_asset_get_uniform_at (asset, i);
+		LrgShaderUniformType    type = lrg_shader_uniform_get_uniform_type (u);
+		GEnumValue             *ev = g_enum_get_value (klass, (gint) type);
+		JsonObject             *e = json_object_new ();
+		gfloat                  def[4], lo, hi;
+		guint                   c, nc = lrg_shader_uniform_type_get_components (type);
+
+		json_object_set_string_member (e, "name", lrg_shader_uniform_get_name (u));
+		json_object_set_string_member (e, "type", ev != NULL ? ev->value_nick : "float");
+		if (type == LRG_SHADER_UNIFORM_SAMPLER2D)
+			json_object_set_string_member (e, "default", lrg_shader_uniform_get_default_texture (u));
+		else
+		{
+			JsonArray *d = json_array_new ();
+
+			lrg_shader_uniform_get_default (u, def);
+			for (c = 0; c < MAX (nc, 1u) && c < 4; c++)
+				json_array_add_double_element (d, def[c]);
+			json_object_set_array_member (e, "default", d);
+		}
+		if (lrg_shader_uniform_get_range (u, &lo, &hi))
+		{
+			json_object_set_double_member (e, "min", lo);
+			json_object_set_double_member (e, "max", hi);
+		}
+		if (lrg_shader_uniform_get_hint (u) != NULL)
+			json_object_set_string_member (e, "hint", lrg_shader_uniform_get_hint (u));
+		json_array_add_object_element (a, e);
+	}
+	g_type_class_unref (klass);
+	o = json_object_new ();
+	json_object_set_array_member (o, "uniforms", a);
+	n = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (n, o);
+	return n;
+}
+
+static JsonNode *
+m_shader_reload (LrgEditorServer  *server,
+                 JsonObject       *params,
+                 gpointer          user_data,
+                 GError          **error)
+{
+	/* the same as a save: reload the preview's copies, recompile, report */
+	return m_shader_compile (server, params, user_data, error);
+}
+
 /* ==========================================================================
  * GObject
  * ========================================================================== */
@@ -1113,6 +1802,8 @@ lrg_editor_code_panel_dispose (GObject *object)
 	g_clear_weak_pointer (&self->app);
 	if (self->docs != NULL)
 		g_ptr_array_set_size (self->docs, 0);
+	if (self->diag_view != NULL)
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->diag_view), NULL, NULL, NULL);
 	g_clear_object (&self->group);
 	G_OBJECT_CLASS (lrg_editor_code_panel_parent_class)->dispose (object);
 }
@@ -1123,7 +1814,22 @@ lrg_editor_code_panel_finalize (GObject *object)
 	LrgEditorCodePanel *self = LRG_EDITOR_CODE_PANEL (object);
 
 	g_clear_pointer (&self->docs, g_ptr_array_unref);
+	g_clear_pointer (&self->diags, g_hash_table_unref);
 	G_OBJECT_CLASS (lrg_editor_code_panel_parent_class)->finalize (object);
+}
+
+/* Keeps the shader problems in the app's list after level validations
+ * replaced it. */
+static gboolean
+lrg_editor_code_panel_step (LrgWidget *widget,
+                            gfloat     delta_time)
+{
+	LrgEditorCodePanel *self = LRG_EDITOR_CODE_PANEL (widget);
+	LrgWidgetClass     *parent = LRG_WIDGET_CLASS (lrg_editor_code_panel_parent_class);
+	gboolean            busy = parent->step != NULL ? parent->step (widget, delta_time) : FALSE;
+
+	check_problems (self);
+	return busy;
 }
 
 static void
@@ -1136,6 +1842,7 @@ lrg_editor_code_panel_class_init (LrgEditorCodePanelClass *klass)
 	object_class->finalize = lrg_editor_code_panel_finalize;
 	widget_class->measure = lrg_editor_code_panel_measure;
 	widget_class->handle_event = lrg_editor_code_panel_handle_event;
+	widget_class->step = lrg_editor_code_panel_step;
 	LRG_CONTAINER_CLASS (klass)->layout_children = lrg_editor_code_panel_layout_children;
 }
 
@@ -1199,6 +1906,19 @@ lrg_editor_code_panel_init (LrgEditorCodePanel *self)
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->empty));
 	g_object_unref (self->empty);
 	lrg_widget_set_visible (LRG_WIDGET (self->tabs), FALSE);
+
+	/* Shader diagnostics of the active file */
+	self->diags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_ptr_array_unref);
+	{
+		static const LrgCustomWidgetFuncs funcs = { NULL, diag_paint, NULL, diag_event, { NULL } };
+
+		self->diag_view = LRG_WIDGET (lrg_custom_widget_new ());
+		lrg_widget_set_name (self->diag_view, "code-diagnostics");
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->diag_view), &funcs, self, NULL);
+		lrg_widget_set_visible (self->diag_view, FALSE);
+		lrg_container_add_child (LRG_CONTAINER (self), self->diag_view);
+		g_object_unref (self->diag_view);
+	}
 }
 
 /* Registers the panel's actions and methods, plus the palette and the
@@ -1242,6 +1962,11 @@ install (LrgEditorCodePanel *self,
 	lrg_editor_server_register_method (app->server, "code.save", m_code_save, app, NULL);
 	lrg_editor_server_register_method (app->server, "preferences.open", m_preferences_open, app, NULL);
 	lrg_editor_server_register_method (app->server, "palette.open", m_palette_open, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.create", m_shader_create, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.compile", m_shader_compile, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.diagnostics", m_shader_diagnostics, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.uniforms", m_shader_uniforms, app, NULL);
+	lrg_editor_server_register_method (app->server, "shader.reload", m_shader_reload, app, NULL);
 
 	/* The command palette lives on the canvas popup layer; one per app */
 	if (g_object_get_data (G_OBJECT (app), PALETTE_KEY) == NULL)
@@ -1327,7 +2052,7 @@ lrg_editor_code_panel_open (LrgEditorCodePanel  *self,
 	lrg_text_editor_set_show_line_numbers (editor, TRUE);
 	lrg_text_editor_set_highlight_current_line (editor, TRUE);
 	lrg_text_editor_set_auto_indent (editor, TRUE);
-	syntax = lrg_syntax_get_for_filename (abs);
+	syntax = syntax_for (abs);
 	if (syntax != NULL)
 		lrg_text_editor_set_syntax (editor, syntax);
 
@@ -1358,6 +2083,19 @@ lrg_editor_code_panel_open (LrgEditorCodePanel  *self,
 	lrg_text_editor_set_cursor (editor, (guint) MAX (line - 1, 0), 0);
 	if (line > 1)
 		lrg_text_editor_scroll_to_line (editor, (guint) MAX (line - 4, 0), FALSE);
+	else
+	{
+		/* a shader file with errors opens at the first one */
+		g_autoptr(GPtrArray) diags = active_diags (self);
+
+		if (diags->len > 0 && ((CodeDiag *) g_ptr_array_index (diags, 0))->line > 0)
+		{
+			CodeDiag *d = g_ptr_array_index (diags, 0);
+
+			lrg_text_editor_set_cursor (editor, d->line - 1, d->column > 0 ? d->column - 1 : 0);
+			lrg_text_editor_scroll_to_line (editor, d->line > 4 ? d->line - 4 : 0, FALSE);
+		}
+	}
 	update_status (self);
 	present (self);
 	if (self->app != NULL)
@@ -1384,6 +2122,8 @@ lrg_editor_code_panel_save (LrgEditorCodePanel  *self,
 		return FALSE;
 	if (self->app != NULL)
 		editor_app_set_status (self->app, "Saved %s", doc->path);
+	if (is_shader_document (doc->path) || is_shader_stage (doc->path))
+		shader_check (self, doc->path);
 	return TRUE;
 }
 
@@ -1400,8 +2140,12 @@ lrg_editor_code_panel_save_all (LrgEditorCodePanel  *self,
 	{
 		CodeDoc *doc = g_ptr_array_index (self->docs, i);
 
-		if (doc->dirty && !doc_save (doc, ok ? error : NULL))
+		if (!doc->dirty)
+			continue;
+		if (!doc_save (doc, ok ? error : NULL))
 			ok = FALSE;
+		else if (is_shader_document (doc->path) || is_shader_stage (doc->path))
+			shader_check (self, doc->path);
 	}
 	return ok;
 }

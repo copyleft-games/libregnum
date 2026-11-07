@@ -44,11 +44,24 @@
  *   EditorAssetsButton     a flat icon button of the toolbar
  *   EditorAssetMetaSource  LrgPropertySource over an asset's .meta
  *                          import settings (the Import Settings dialog)
+ *
+ * Rendering assets (0.9.0). Materials (.rmat), shaders (.rshader and
+ * their .glsl/.vert/.frag stages) and shader graphs (.rshadergraph) are
+ * not asset types of the database; the panel recognises them by
+ * extension (glyphs, type names, double-click). Material tiles show the
+ * material on a lit sphere, rendered through the material editor's
+ * preview (one per frame, from step(), outside drawing) and re-rendered
+ * when the file's modification time changes. The background menu
+ * creates new materials, shaders and shader graphs; the entry menu has
+ * Create Variant for prefabs and materials.
  */
 
 #include "config.h"
 
+#define LRG_EDITOR_PANEL_INTERNAL
 #include "data/lrg-editor-data-editor.h"
+#include "data/lrg-editor-material-editor.h"
+#include "lrg-editor-shader-graph-editor.h"
 #include "lrg-editor-assets-panel.h"
 #include "lrg-editor-app-private.h"
 #include "../lrg-asset-meta.h"
@@ -68,6 +81,7 @@
 #include "../../text/lrg-font-manager.h"
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
+#include <raylib.h>
 #include <math.h>
 #include <string.h>
 
@@ -280,6 +294,9 @@ struct _LrgEditorAssetsPanel
 	/* Drag and drop */
 	gchar              *drop_hover;      /* folder a drop would move into */
 	GPtrArray          *dragging;        /* paths being dragged */
+
+	/* Material thumbnails: abs path -> MatThumb* */
+	GHashTable         *mat_thumbs;
 
 	/* Dialogs */
 	LrgDialog          *trash_dialog;    /* weak */
@@ -509,6 +526,74 @@ type_name (LrgAssetType type,
 	case LRG_ASSET_TYPE_SCENE:   return "Scene";
 	case LRG_ASSET_TYPE_CAD:     return "CAD";
 	default:                     return "File";
+	}
+}
+
+/* Rendering assets the database does not type, by extension. */
+typedef enum
+{
+	SPECIAL_NONE,
+	SPECIAL_MATERIAL,
+	SPECIAL_SHADER,
+	SPECIAL_SHADER_STAGE,
+	SPECIAL_SHADER_GRAPH
+} SpecialKind;
+
+static SpecialKind
+special_kind (const gchar *path)
+{
+	g_autofree gchar *lower = NULL;
+
+	if (path == NULL)
+		return SPECIAL_NONE;
+	lower = g_ascii_strdown (path, -1);
+	if (g_str_has_suffix (lower, ".rmat"))
+		return SPECIAL_MATERIAL;
+	if (g_str_has_suffix (lower, ".rshader"))
+		return SPECIAL_SHADER;
+	if (g_str_has_suffix (lower, ".rshadergraph"))
+		return SPECIAL_SHADER_GRAPH;
+	if (g_str_has_suffix (lower, ".glsl") || g_str_has_suffix (lower, ".vert") || g_str_has_suffix (lower, ".frag") ||
+	    g_str_has_suffix (lower, ".vs") || g_str_has_suffix (lower, ".fs"))
+		return SPECIAL_SHADER_STAGE;
+	return SPECIAL_NONE;
+}
+
+static const gchar *
+special_glyph (SpecialKind kind)
+{
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:     return "Mt";
+	case SPECIAL_SHADER:       return "Sh";
+	case SPECIAL_SHADER_STAGE: return "GL";
+	case SPECIAL_SHADER_GRAPH: return "SG";
+	default:                   return NULL;
+	}
+}
+
+static const gchar *
+special_name (SpecialKind kind)
+{
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:     return "Material";
+	case SPECIAL_SHADER:       return "Shader";
+	case SPECIAL_SHADER_STAGE: return "Shader stage";
+	case SPECIAL_SHADER_GRAPH: return "Shader graph";
+	default:                   return NULL;
+	}
+}
+
+static LrgThemeColor
+special_role (SpecialKind kind)
+{
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:     return LRG_THEME_COLOR_WARNING;
+	case SPECIAL_SHADER:
+	case SPECIAL_SHADER_STAGE: return LRG_THEME_COLOR_SUCCESS;
+	default:                   return LRG_THEME_COLOR_ACCENT;
 	}
 }
 
@@ -751,8 +836,10 @@ paint_type_glyph (LrgWidget       *widget,
                   gfloat           size,
                   gboolean         pending)
 {
-	const GrlColor *c = color_of (widget, type_role (item->type, item->is_dir));
-	const gchar    *glyph = type_glyph (item->type);
+	SpecialKind     special = item->is_dir ? SPECIAL_NONE : special_kind (item->path);
+	const GrlColor *c = color_of (widget, special != SPECIAL_NONE ? special_role (special)
+	                                                             : type_role (item->type, item->is_dir));
+	const gchar    *glyph = special != SPECIAL_NONE ? special_glyph (special) : type_glyph (item->type);
 	GrlColor        fill;
 
 	if (pending)
@@ -781,6 +868,94 @@ paint_type_glyph (LrgWidget       *widget,
 	}
 	if (pending)
 		lrg_paint_list_pop_opacity (list);
+}
+
+/* ==========================================================================
+ * Material thumbnails
+ * ========================================================================== */
+
+#define MAT_THUMB_SIZE (128)
+
+typedef struct
+{
+	GrlTexture *tex;
+	gint64      mtime;      /* of the file when rendered; -1: queued */
+	gboolean    failed;
+} MatThumb;
+
+static void
+mat_thumb_free (gpointer data)
+{
+	MatThumb *t = data;
+
+	/* a texture whose context is gone is dropped without unloading */
+	if (t->tex != NULL && !IsWindowReady ())
+		(void) g_steal_pointer (&t->tex);
+	g_clear_object (&t->tex);
+	g_free (t);
+}
+
+static gint64
+file_mtime (const gchar *path)
+{
+	GStatBuf st;
+
+	return g_stat (path, &st) == 0 ? (gint64) st.st_mtime : -1;
+}
+
+/*
+ * material_thumbnail:
+ *
+ * The rendered sphere of a material, or NULL. A missing or stale one is
+ * queued (step() renders one per frame with a window); *pending says
+ * whether one is coming so the tile shows a dimmed glyph meanwhile.
+ */
+static GObject *
+material_thumbnail (LrgEditorAssetsPanel *self,
+                    const gchar          *path,
+                    gboolean             *pending)
+{
+	MatThumb *t = g_hash_table_lookup (self->mat_thumbs, path);
+
+	*pending = FALSE;
+	if (t == NULL)
+	{
+		t = g_new0 (MatThumb, 1);
+		t->mtime = -1;
+		g_hash_table_insert (self->mat_thumbs, g_strdup (path), t);
+	}
+	if (t->failed)
+		return NULL;
+	*pending = t->tex == NULL || t->mtime != file_mtime (path);
+	return t->tex != NULL ? G_OBJECT (t->tex) : NULL;
+}
+
+/* Renders the first stale material thumbnail (one per frame). */
+static void
+pump_material_thumbnails (LrgEditorAssetsPanel *self)
+{
+	GHashTableIter iter;
+	gpointer       key, value;
+
+	if (self->app == NULL || !IsWindowReady ())
+		return;
+	g_hash_table_iter_init (&iter, self->mat_thumbs);
+	while (g_hash_table_iter_next (&iter, &key, &value))
+	{
+		MatThumb             *t = value;
+		gint64                now = file_mtime (key);
+		g_autoptr(GrlImage)   img = NULL;
+
+		if (t->failed || (t->tex != NULL && t->mtime == now))
+			continue;
+		t->mtime = now;
+		img = lrg_editor_material_editor_render_thumbnail (self->app, key, MAT_THUMB_SIZE);
+		g_clear_object (&t->tex);
+		if (img != NULL)
+			t->tex = grl_texture_new_from_image (img);
+		t->failed = (t->tex == NULL);
+		return;
+	}
 }
 
 /* The grid tile: preview, name, git badge, drop highlight. */
@@ -813,7 +988,9 @@ paint_grid_tile (EditorAssetTile *self,
 		gboolean pending = FALSE;
 		GObject *tex = NULL;
 
-		if (!item->is_dir && self->panel->app != NULL)
+		if (!item->is_dir && self->panel->app != NULL && special_kind (item->path) == SPECIAL_MATERIAL)
+			tex = material_thumbnail (self->panel, item->path, &pending);
+		else if (!item->is_dir && self->panel->app != NULL)
 			tex = editor_thumbnail_texture (self->panel->app, item->path, &pending);
 		if (tex != NULL)
 		{
@@ -1206,6 +1383,26 @@ setting_range (const gchar *key,
 		*min = 0.0001;
 		*max = 10000.0;
 	}
+	else if (g_strcmp0 (key, "lod-levels") == 0)
+	{
+		*min = 1.0;
+		*max = 8.0;
+	}
+	else if (g_strcmp0 (key, "lod-max-error") == 0)
+	{
+		*min = 0.0;
+		*max = 1.0;
+	}
+	else if (g_strcmp0 (key, "lod-hysteresis") == 0)
+	{
+		*min = 0.0;
+		*max = 0.9;
+	}
+	else if (g_strcmp0 (key, "lod-fade-duration") == 0)
+	{
+		*min = 0.0;
+		*max = 10.0;
+	}
 	else
 	{
 		*min = -1.0e9;
@@ -1225,6 +1422,20 @@ setting_label (const gchar *key)
 		return "Code points";
 	if (g_strcmp0 (key, "up-axis") == 0)
 		return "Up axis";
+	if (g_strcmp0 (key, "lod-levels") == 0)
+		return "LOD levels";
+	if (g_strcmp0 (key, "lod-ratios") == 0)
+		return "LOD ratios";
+	if (g_strcmp0 (key, "lod-screen-sizes") == 0)
+		return "LOD screen sizes";
+	if (g_strcmp0 (key, "lod-max-error") == 0)
+		return "LOD max error";
+	if (g_strcmp0 (key, "lod-lock-border") == 0)
+		return "LOD lock border";
+	if (g_strcmp0 (key, "lod-hysteresis") == 0)
+		return "LOD hysteresis";
+	if (g_strcmp0 (key, "lod-fade-duration") == 0)
+		return "LOD fade (s)";
 	return NULL;
 }
 
@@ -1955,6 +2166,10 @@ open_entry (LrgEditorAssetsPanel *self,
 	 * a file that does not parse falls through to the usual handling */
 	if (lrg_editor_data_editor_can_open (path) && lrg_editor_data_editor_open (self->app, path, NULL) != NULL)
 		return;
+	/* shader documents and stages: the code panel compiles them on save */
+	if ((special_kind (path) == SPECIAL_SHADER || special_kind (path) == SPECIAL_SHADER_STAGE) &&
+	    open_in_code_panel (self, path))
+		return;
 	mode = lrg_editor_settings_get_script_editor (self->app->settings);
 	if (lrg_asset_database_classify (path) == LRG_ASSET_TYPE_SCRIPT && g_strcmp0 (mode, "internal") == 0 &&
 	    open_in_code_panel (self, path))
@@ -2261,6 +2476,76 @@ new_level (LrgEditorAssetsPanel *self)
 		lrg_editor_assets_panel_begin_rename (self, path);
 		return;
 	}
+}
+
+/* A free "<stem>.<ext>", "<stem>2.<ext>", ... in the current folder. */
+static gchar *
+free_name (LrgEditorAssetsPanel *self,
+           const gchar          *stem,
+           const gchar          *ext)
+{
+	guint n;
+
+	for (n = 1; n < 1000; n++)
+	{
+		g_autofree gchar *name = (n == 1) ? g_strdup_printf ("%s.%s", stem, ext)
+		                                  : g_strdup_printf ("%s%u.%s", stem, n, ext);
+		gchar            *path = g_build_filename (self->dir, name, NULL);
+		g_autofree gchar *frag = NULL;
+
+		/* a shader also needs its .frag free */
+		if (g_strcmp0 (ext, "rshader") == 0)
+		{
+			g_autofree gchar *fname = (n == 1) ? g_strdup_printf ("%s.frag", stem)
+			                                   : g_strdup_printf ("%s%u.frag", stem, n);
+
+			frag = g_build_filename (self->dir, fname, NULL);
+		}
+		if (!g_file_test (path, G_FILE_TEST_EXISTS) && (frag == NULL || !g_file_test (frag, G_FILE_TEST_EXISTS)))
+			return path;
+		g_free (path);
+	}
+	return NULL;
+}
+
+/* New Material / Shader / Shader Graph: write it, list it, rename it. */
+static void
+new_render_asset (LrgEditorAssetsPanel *self,
+                  SpecialKind           kind)
+{
+	g_autofree gchar *path = NULL;
+	g_autoptr(GError) error = NULL;
+	gboolean          ok = FALSE;
+
+	if (self->dir == NULL)
+		return;
+	switch (kind)
+	{
+	case SPECIAL_MATERIAL:
+		path = free_name (self, "new_material", "rmat");
+		ok = path != NULL && lrg_editor_material_editor_create (self->app, path, NULL, NULL, &error);
+		break;
+	case SPECIAL_SHADER:
+		path = free_name (self, "new_shader", "rshader");
+		ok = path != NULL && lrg_editor_material_editor_create_shader (self->app, path, TRUE, &error);
+		break;
+	case SPECIAL_SHADER_GRAPH:
+		path = free_name (self, "new_shader_graph", "rshadergraph");
+		ok = path != NULL && lrg_editor_shader_graph_editor_create (self->app, path, "pbr", &error);
+		break;
+	default:
+		return;
+	}
+	if (!ok)
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create the file: %s",
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	refresh_listing (self);
+	lrg_editor_assets_panel_begin_rename (self, path);
 }
 
 /* Opens the desktop file manager on a folder. */
@@ -2686,6 +2971,45 @@ act_new_script (GSimpleAction *a, GVariant *p, gpointer user_data)
 }
 
 static void
+act_new_material (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_render_asset (user_data, SPECIAL_MATERIAL);
+}
+
+static void
+act_new_shader (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_render_asset (user_data, SPECIAL_SHADER);
+}
+
+static void
+act_new_shader_graph (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	new_render_asset (user_data, SPECIAL_SHADER_GRAPH);
+}
+
+static void
+act_create_variant (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+	g_autoptr(GError)     error = NULL;
+	g_autofree gchar     *variant = NULL;
+
+	if (path == NULL)
+		return;
+	variant = lrg_editor_assets_panel_create_variant (self, path, &error);
+	if (variant == NULL)
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create a variant: %s", error->message);
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	lrg_editor_assets_panel_begin_rename (self, variant);
+}
+
+static void
 act_refresh (GSimpleAction *a, GVariant *p, gpointer user_data)
 {
 	lrg_editor_assets_panel_refresh (user_data);
@@ -2728,6 +3052,10 @@ static const GActionEntry action_entries[] = {
 	{ "new-folder", act_new_folder, NULL, NULL, NULL, { 0 } },
 	{ "new-level", act_new_level, NULL, NULL, NULL, { 0 } },
 	{ "new-script", act_new_script, NULL, NULL, NULL, { 0 } },
+	{ "new-material", act_new_material, NULL, NULL, NULL, { 0 } },
+	{ "new-shader", act_new_shader, NULL, NULL, NULL, { 0 } },
+	{ "new-shader-graph", act_new_shader_graph, NULL, NULL, NULL, { 0 } },
+	{ "create-variant", act_create_variant, NULL, NULL, NULL, { 0 } },
 	{ "refresh", act_refresh, NULL, NULL, NULL, { 0 } },
 	{ "clean-orphans", act_clean_orphans, NULL, NULL, NULL, { 0 } },
 	{ "grid-view", act_grid_view, NULL, "false", NULL, { 0 } },
@@ -2784,6 +3112,8 @@ build_entry_menu (LrgEditorAssetsPanel *self)
 	menu_add (edit, "Rename", "assets.rename", "F2");
 	if (!is_dir)
 		menu_add (edit, "Duplicate", "assets.duplicate", NULL);
+	if (type == LRG_ASSET_TYPE_PREFAB || (!is_dir && special_kind (first) == SPECIAL_MATERIAL))
+		menu_add (edit, "Create Variant", "assets.create-variant", NULL);
 	menu_add (edit, "Move to Trash", "assets.trash", "Delete");
 
 	menu_add (copy, "Copy Path", "assets.copy-path", NULL);
@@ -2803,6 +3133,7 @@ build_background_menu (LrgEditorAssetsPanel *self)
 {
 	GMenu            *menu = g_menu_new ();
 	g_autoptr(GMenu)  create = g_menu_new ();
+	g_autoptr(GMenu)  render = g_menu_new ();
 	g_autoptr(GMenu)  view = g_menu_new ();
 	LrgAssetDatabase *db = (self->root != NULL) ? get_db (self) : NULL;
 	GPtrArray        *orphans = (db != NULL) ? lrg_asset_database_get_orphaned_metas (db) : NULL;
@@ -2810,6 +3141,9 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	menu_add (create, "New Folder", "assets.new-folder", NULL);
 	menu_add (create, "New Level", "assets.new-level", NULL);
 	menu_add (create, "New Script\xe2\x80\xa6", "assets.new-script", NULL);
+	menu_add (render, "New Material", "assets.new-material", NULL);
+	menu_add (render, "New Shader", "assets.new-shader", NULL);
+	menu_add (render, "New Shader Graph", "assets.new-shader-graph", NULL);
 
 	menu_add (view, "Refresh", "assets.refresh", NULL);
 	menu_add (view, "Show in File Manager", "assets.show-in-file-manager", NULL);
@@ -2822,6 +3156,7 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	}
 
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (create));
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (render));
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (view));
 	return G_MENU_MODEL (menu);
 }
@@ -3259,7 +3594,9 @@ cell_type (LrgTable  *table,
 {
 	EditorAssetItem *it = EDITOR_ASSET_ITEM (item);
 
-	return g_strdup (type_name (it->type, it->is_dir));
+	SpecialKind      special = it->is_dir ? SPECIAL_NONE : special_kind (it->path);
+
+	return g_strdup (special != SPECIAL_NONE ? special_name (special) : type_name (it->type, it->is_dir));
 }
 
 static gchar *
@@ -3558,6 +3895,7 @@ lrg_editor_assets_panel_step (LrgWidget *widget,
 	sync_app (self);
 	if (self->dirty)
 		refresh_listing (self);
+	pump_material_thumbnails (self);
 
 	if (self->renaming != NULL)
 	{
@@ -4153,6 +4491,7 @@ lrg_editor_assets_panel_finalize (GObject *object)
 	g_clear_pointer (&self->context, g_ptr_array_unref);
 	g_clear_pointer (&self->dragging, g_ptr_array_unref);
 	g_clear_pointer (&self->trash_paths, g_ptr_array_unref);
+	g_clear_pointer (&self->mat_thumbs, g_hash_table_unref);
 	G_OBJECT_CLASS (lrg_editor_assets_panel_parent_class)->finalize (object);
 }
 
@@ -4222,6 +4561,7 @@ lrg_editor_assets_panel_init (LrgEditorAssetsPanel *self)
 
 	self->grid = TRUE;
 	self->type_filter = LRG_ASSET_TYPE_UNKNOWN;
+	self->mat_thumbs = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, mat_thumb_free);
 	self->filter = g_strdup ("");
 	self->all = g_ptr_array_new_with_free_func (g_object_unref);
 	self->store = g_list_store_new (EDITOR_TYPE_ASSET_ITEM);
@@ -4335,6 +4675,8 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 	self = g_object_new (LRG_TYPE_EDITOR_ASSETS_PANEL, NULL);
 	g_set_weak_pointer (&self->app, app);
 	lrg_editor_data_editor_install (app);     /* data.open for open_entry() */
+	lrg_editor_material_editor_install (app); /* material.* */
+	lrg_editor_shader_graph_editor_install (app); /* shadergraph.* */
 	register_with_app (self);
 	sync_app (self);
 	update_context_menu (self, TRUE);
@@ -4670,4 +5012,40 @@ lrg_editor_assets_panel_show_import_settings (LrgEditorAssetsPanel *self,
 	lrg_dialog_present (dialog, LRG_CANVAS (root));
 	g_object_unref (dialog);
 	return TRUE;
+}
+
+gchar *
+lrg_editor_assets_panel_create_variant (LrgEditorAssetsPanel  *self,
+                                        const gchar           *path,
+                                        GError               **error)
+{
+	g_autofree gchar *abs = NULL;
+	gchar            *variant = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_ASSETS_PANEL (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	if (self->app == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "The panel has no editor");
+		return NULL;
+	}
+	abs = editor_app_project_path (self->app, path);
+	if (special_kind (abs) == SPECIAL_MATERIAL)
+		variant = lrg_editor_material_editor_create_variant (self->app, abs, NULL, error);
+	else if (lrg_asset_database_classify (abs) == LRG_ASSET_TYPE_PREFAB)
+	{
+		/* an undoable editor command: undo removes the file again */
+		variant = lrg_editor_prefab_suggest_variant_path (abs);
+		if (!lrg_editor_create_prefab_variant (self->app->editor, abs, variant, error))
+			g_clear_pointer (&variant, g_free);
+	}
+	else
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "%s is neither a prefab nor a material", abs);
+	if (variant != NULL)
+	{
+		refresh_listing (self);
+		editor_app_set_status (self->app, "Created %s", variant);
+	}
+	return variant;
 }

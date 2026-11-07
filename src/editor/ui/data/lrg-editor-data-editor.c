@@ -44,6 +44,9 @@
 #include "lrg-editor-ui-layout-editor.h"
 #include "lrg-editor-dialog-tree-editor.h"
 #include "lrg-editor-dungeon-editor.h"
+#include "lrg-editor-material-editor.h"
+#include "lrg-editor-post-stack-editor.h"
+#include "../lrg-editor-shader-graph-editor.h"
 #include "../lrg-editor-app-private.h"
 #include "../lrg-editor-console-panel.h"
 #include "../../../ui/lrg-label.h"
@@ -220,6 +223,9 @@ registry_ensure (void)
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT, LRG_TYPE_EDITOR_UI_LAYOUT_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE, LRG_TYPE_EDITOR_DIALOG_TREE_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON, LRG_TYPE_EDITOR_DUNGEON_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL, LRG_TYPE_EDITOR_MATERIAL_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK, LRG_TYPE_EDITOR_POST_STACK_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH, LRG_TYPE_EDITOR_SHADER_GRAPH_EDITOR);
 }
 
 void
@@ -262,8 +268,12 @@ lrg_editor_data_editor_can_open (const gchar *path)
 	g_return_val_if_fail (path != NULL, FALSE);
 
 	/* data files are .yaml / .yml (levels, prefabs and projects have
-	 * their own extensions and editors) */
-	if (!g_str_has_suffix (path, ".yaml") && !g_str_has_suffix (path, ".yml"))
+	 * their own extensions and editors), plus the engine assets edited
+	 * on documents: .rmat materials, .rpost post stacks, .rshadergraph
+	 * shader graphs */
+	if (!g_str_has_suffix (path, ".yaml") && !g_str_has_suffix (path, ".yml") &&
+	    !g_str_has_suffix (path, ".rmat") && !g_str_has_suffix (path, ".rpost") &&
+	    !g_str_has_suffix (path, ".rshadergraph"))
 		return FALSE;
 	format = detect_file_format (path);
 	return format != LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN &&
@@ -379,6 +389,12 @@ format_icon (LrgEditorDocumentFormat format)
 		return LRG_ICON_USER;
 	case LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON:
 		return LRG_ICON_HOME;
+	case LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL:
+		return LRG_ICON_STAR_HALF;
+	case LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK:
+		return LRG_ICON_EYE;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
+		return LRG_ICON_MENU;
 	default:
 		return LRG_ICON_FILE;
 	}
@@ -406,6 +422,12 @@ format_label (LrgEditorDocumentFormat format)
 		return "Dungeon";
 	case LRG_EDITOR_DOCUMENT_FORMAT_THEME:
 		return "Theme";
+	case LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL:
+		return "Material";
+	case LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK:
+		return "Post stack";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
+		return "Shader graph";
 	default:
 		return "Data";
 	}

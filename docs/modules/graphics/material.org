@@ -430,7 +430,7 @@ Signal =changed= (no arguments): any value, texture, uniform, name or parent cha
 
 The batch, terrain and skinned mesh draw with the material by calling =lrg_material_apply()= on their shader, filling the raylib maps with =lrg_material_fill_raylib_maps()= (base colour times their tint), =lrg_material_apply_state()= around the draw, and =lrg_material_reset_uniforms()= after it. Without a lit shader (raylib's default program) only the albedo map, base colour and render state apply.
 
-The components never draw: a component holding an =LrgMaterial= submits render items whose =material= is the =LrgMaterial=, whose =color= is its base colour (the skinned model multiplies the component colour in), and whose flags follow the material (=LRG_RENDER_ITEM_FLAG_TRANSPARENT= / =LRG_RENDER_ITEM_FLAG_CUTOUT= from the resolved render queue, =LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED= for cull =none=, =LRG_RENDER_ITEM_FLAG_UNLIT= for the unlit model). Submesh materials split a resolved model into one item per mesh (=mesh_index= = i). The world renderer binds item materials (wave 2b of 0.9.0).
+The components never draw: a component holding an =LrgMaterial= submits render items whose =material= is the =LrgMaterial=, whose =color= is its base colour (the skinned model multiplies the component colour in), and whose flags follow the material (=LRG_RENDER_ITEM_FLAG_TRANSPARENT= / =LRG_RENDER_ITEM_FLAG_CUTOUT= from the resolved render queue, =LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED= for cull =none=, =LRG_RENDER_ITEM_FLAG_UNLIT= for the unlit model). Submesh materials split a resolved model into one item per mesh (=mesh_index= = i). The world renderer binds item materials per draw.
 
 *** LrgMaterial3D
 :PROPERTIES:
@@ -590,7 +590,7 @@ render_state:
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The material editor (sphere/cube preview, slot pickers, drag a material onto a mesh) arrives in wave 2b of 0.9.0. Until then the workflow is format level:
+The [[file:../../editor/material-editor.org][material editor]] opens any =.rmat= from the assets panel (double-click, or New Material / Create Variant in its menus): a live lit preview (sphere, cube, plane), a property grid for every key with texture drag and drop, override markers and Revert on instances, and a uniform inspector for custom shading. Drag a material from the assets panel onto a mesh in the viewport to assign it (an undoable =material-ref= edit); =lrgeditorctl material ...= and the =material_*= MCP tools do the same. Without the editor the workflow is format level:
 
 1. Create =materials/<name>.rmat= in the project's asset directory (any text editor or =lrgeditorctl= file tools); copy the annotated example above. Textures are paths relative to the =.rmat= file's directory or to the project search paths, or =guid:= references taken from the textures' =.meta= sidecars.
 2. The editor's asset database indexes the file like any asset (it gets a =.meta= with a guid when the editor imports it), so it can be referenced as =guid:...=.

@@ -77,6 +77,9 @@ lrg_editor_document_format_get_type (void)
 			{ LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE, "LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE", "dialog-tree" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON, "LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON", "dungeon" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_THEME, "LRG_EDITOR_DOCUMENT_FORMAT_THEME", "theme" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL, "LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL", "material" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK, "LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK", "post-stack" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH, "LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH", "shader-graph" },
 			{ 0, NULL, NULL }
 		};
 		GType id;
@@ -1805,6 +1808,12 @@ skeleton_for (LrgEditorDocumentFormat format)
 		return "version: 1\ngenerator: bsp\nwidth: 64\nheight: 48\nseed: 0\n";
 	case LRG_EDITOR_DOCUMENT_FORMAT_THEME:
 		return "preset: midnight\nname: untitled\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL:
+		return "version: 1\nname: material\nshading_model: lit\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK:
+		return "version: 1\neffects: []\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
+		return "version: 1\nname: graph\nnodes: []\nlinks: []\n";
 	case LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN:
 	default:
 		return "{}\n";
@@ -2055,6 +2064,19 @@ lrg_editor_document_detect_format (const gchar *filename,
 		{ "ui", LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT }
 	};
 	guint i;
+
+	/* --- 0. the engine asset extensions decide on their own --- */
+	if (filename != NULL)
+	{
+		g_autofree gchar *lower = g_ascii_strdown (filename, -1);
+
+		if (g_str_has_suffix (lower, ".rmat"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL;
+		if (g_str_has_suffix (lower, ".rpost"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK;
+		if (g_str_has_suffix (lower, ".rshadergraph"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH;
+	}
 
 	/* --- 1. a double extension is an explicit statement --- */
 	if (filename != NULL)

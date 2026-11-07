@@ -43,6 +43,12 @@ G_BEGIN_DECLS
  * @LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE: an #LrgDialogTree definition (`id:`, `nodes:`)
  * @LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON: an #LrgProcgenDungeon recipe (`generator:`)
  * @LRG_EDITOR_DOCUMENT_FORMAT_THEME: an #LrgTheme file (`preset:`, `colors:`, ...)
+ * @LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL: an #LrgMaterial asset (a `.rmat`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK: an #LrgPostStack (a `.rpost`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH: an #LrgShaderGraph (a
+ *   `.rshadergraph` file; recognised by its extension only). Since 0.9.0.
  *
  * The engine format a document holds. It picks the validator, the
  * skeleton of a new document and the editor panel that opens the file.
@@ -57,7 +63,10 @@ typedef enum
 	LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT,
 	LRG_EDITOR_DOCUMENT_FORMAT_DIALOG_TREE,
 	LRG_EDITOR_DOCUMENT_FORMAT_DUNGEON,
-	LRG_EDITOR_DOCUMENT_FORMAT_THEME
+	LRG_EDITOR_DOCUMENT_FORMAT_THEME,
+	LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL,
+	LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK,
+	LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH
 } LrgEditorDocumentFormat;
 
 #define LRG_TYPE_EDITOR_DOCUMENT_FORMAT (lrg_editor_document_format_get_type ())
@@ -362,7 +371,9 @@ LrgEditorDocument * lrg_editor_document_new_from_data (const gchar              
  * @data: (nullable): the file's YAML text, or %NULL
  * @length: length of @data, or -1 if nul-terminated
  *
- * Guesses the format. A double extension wins (`*.input.yaml`,
+ * Guesses the format. The engine asset extensions `.rmat` (material) and
+ * `.rpost` (post stack) and `.rshadergraph` (shader graph) decide on
+ * their own. Then a double extension wins (`*.input.yaml`,
  * `*.locale.yaml`, `*.bank.yaml`, `*.hud.yaml`, `*.ui.yaml`,
  * `*.dialog.yaml`, `*.dungeon.yaml`, `*.theme.yaml`), then the content
  * (the keys each loader requires), then the parent directory name
