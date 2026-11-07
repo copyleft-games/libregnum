@@ -1,0 +1,372 @@
+* LrgPhysicsShape - Collision Shapes for 3D Bodies
+:PROPERTIES:
+:CUSTOM_ID: physics-shape
+:END:
+=LrgPhysicsShape= (=src/physics/lrg-physics-shape.h=) is the immutable geometry of a 3D rigid body in =LrgDynamicsWorld=: spheres, capsules, cylinders, boxes, convex hulls, triangle meshes, heightfields, compounds and planes. A shape is built once, then shared by reference between any number of bodies. It answers mass properties, local and world bounds, the support function used by GJK/EPA, ray casts in its local frame, and a debug triangle soup for drawing. Collision between two shapes lives in [[file:collide.org][lrg-collide]]. The name =LrgShape= is taken by the 2D drawing shapes in =src/shapes=, hence =LrgPhysicsShape=.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgPhysicsShape= - *Final GObject class*, =LRG_TYPE_PHYSICS_SHAPE=, GIR =Libregnum.PhysicsShape=
+- =LrgPhysicsShapeKind= - enum, =LRG_TYPE_PHYSICS_SHAPE_KIND= (=lrg_physics_shape_kind_get_type()=)
+- =LrgPhysicsShapeError= - enum in the =LRG_PHYSICS_SHAPE_ERROR= domain (=lrg_physics_shape_error_quark()=, =lrg_physics_shape_error_get_type()=)
+- =LrgRayHit= - boxed plain struct, =LRG_TYPE_RAY_HIT= (=lrg_ray_hit_get_type()=)
+- *Header* - =physics/lrg-physics-shape.h= (through =<libregnum.h>=)
+
+#+begin_src C
+typedef struct {
+    gfloat fraction;   /* hit at origin + fraction * dir (casts: time of impact 0..1) */
+    gfloat point[3];   /* local for shape queries, world for lrg_collide_* and world queries */
+    gfloat normal[3];  /* unit, out of the hit surface */
+    guint  body;       /* filled by LrgDynamicsWorld queries, else LRG_PHYSICS_NO_BODY */
+    gint   child;      /* top-level compound child, or -1 */
+    guint  sub_shape;  /* mesh/heightfield triangle, or LRG_PHYSICS_NO_SUB_SHAPE */
+    guint  material;   /* per-triangle material id of a mesh hit */
+    guint  user_id;    /* per-triangle user id of a mesh hit */
+} LrgRayHit;
+#+end_src
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Frames and conventions
+:PROPERTIES:
+:CUSTOM_ID: frames
+:END:
+- Every shape is described in its *local frame*. Y is up. Primitives are centred on the local origin; capsules and cylinders lie along local Y.
+- A body places its shape with a *rigid transform*: a column-major 4x4 matrix in the =lrg-math3d.h= layout (=m[col * 4 + row]=) holding a rotation and a translation. Shapes do not support scale. Bake scale into the dimensions or into mesh vertices instead.
+- Quaternions are =(x, y, z, w)=, like raylib and =lrg_math3d_quat_*()=.
+- All arithmetic inside collision runs in double precision in a frame shifted to the first shape's position, so worlds far from the origin keep their accuracy. The public API stays in =gfloat=.
+
+*** Immutability and sharing
+:PROPERTIES:
+:CUSTOM_ID: immutability
+:END:
+A shape never changes after construction. The one exception is a compound, which takes children through =lrg_physics_shape_compound_add_child()= until it is handed to a body. Because shapes are immutable, one =LrgPhysicsShape= can back a thousand bodies (a crate shape shared by every crate). Keep a reference with =g_object_ref()=; the dynamics world holds its own.
+
+*** Convex cores and convex radius
+:PROPERTIES:
+:CUSTOM_ID: convex-radius
+:END:
+GJK is cheap and exact while the shapes are apart, and EPA (penetration depth) is the slow, fragile part. Like Jolt, the narrowphase therefore splits rounded shapes into a *core* and a *convex radius*. A sphere is a point plus its radius, a capsule is a segment plus its radius, and a hull is the hull plus its optional =radius=. Two shapes whose cores are apart (the common resting case) need only GJK; EPA runs only when the cores themselves overlap. Boxes and cylinders have no convex radius. Box pairs and sphere-box pairs use closed forms instead.
+
+*** Static-only kinds
+:PROPERTIES:
+:CUSTOM_ID: static-only
+:END:
+Triangle meshes, heightfields and planes have no volume and no mass. =lrg_physics_shape_get_mass_properties()= returns =FALSE= for them, and the narrowphase never collides two of them with each other. Use them for static or kinematic bodies.
+
+** Shape kinds
+:PROPERTIES:
+:CUSTOM_ID: kinds
+:END:
+| Kind (=LrgPhysicsShapeKind=)           | Constructor                                     | Geometry                                                                  | Convex | Mass |
+|----------------------------------------+-------------------------------------------------+---------------------------------------------------------------------------+--------+------|
+| =LRG_PHYSICS_SHAPE_KIND_SPHERE=        | =lrg_physics_shape_new_sphere (r)=              | sphere of radius r                                                        | yes    | yes  |
+| =LRG_PHYSICS_SHAPE_KIND_CAPSULE=       | =lrg_physics_shape_new_capsule (r, half_h)=     | segment from -half_h to +half_h on Y, plus radius r                        | yes    | yes  |
+| =LRG_PHYSICS_SHAPE_KIND_CYLINDER=      | =lrg_physics_shape_new_cylinder (r, half_h)=    | flat-capped cylinder along Y                                              | yes    | yes  |
+| =LRG_PHYSICS_SHAPE_KIND_BOX=           | =lrg_physics_shape_new_box (hx, hy, hz)=        | box of half extents                                                       | yes    | yes  |
+| =LRG_PHYSICS_SHAPE_KIND_CONVEX_HULL=   | =lrg_physics_shape_new_convex_hull()=           | quickhull of a point cloud, polygon faces, optional convex radius          | yes    | yes  |
+| =LRG_PHYSICS_SHAPE_KIND_TRIANGLE_MESH= | =lrg_physics_shape_new_triangle_mesh[_full]()=  | indexed triangles, AABB tree, material/user id and active edges per triangle | no     | no   |
+| =LRG_PHYSICS_SHAPE_KIND_HEIGHTFIELD=   | =lrg_physics_shape_new_heightfield()=           | height grid with scale, holes                                             | no     | no   |
+| =LRG_PHYSICS_SHAPE_KIND_COMPOUND=      | =lrg_physics_shape_new_compound()=              | children with local translation and rotation (may nest)                   | no     | sum  |
+| =LRG_PHYSICS_SHAPE_KIND_PLANE=         | =lrg_physics_shape_new_plane (n, d)=            | infinite half space, solid where n . p < d                                | no     | no   |
+
+*** Primitives
+:PROPERTIES:
+:CUSTOM_ID: primitives
+:END:
+The primitive constructors never fail. A non-finite or non-positive size is clamped to 0.001 (a capsule's half height may be 0, which gives a sphere). The capsule's total height is =2 * (half_height + radius)=. To stand a character capsule 1.8 m tall with radius 0.3, use =half_height = 0.6=.
+
+*** Convex hull
+:PROPERTIES:
+:CUSTOM_ID: convex-hull
+:END:
+=lrg_physics_shape_new_convex_hull (points, n_floats, radius, &error)= takes 3 floats per point and runs quickhull in double precision:
+
+1. *Initial simplex.* Take the most distant pair among the six axis-extreme points, then the point furthest from that line, then the point furthest from that plane. If there is no such point within a relative epsilon of 1e-6, the build fails with =LRG_PHYSICS_SHAPE_ERROR_DEGENERATE=.
+2. *Conflict lists.* Every remaining point goes to the face it is furthest above. Points above no face are inside and are dropped.
+3. *Expansion.* Always take the lowest-index face that still has outside points (deterministic), then its furthest point (the eye). Remove every face the eye sees, find the horizon (directed edges whose twin is not removed), fan new faces from the horizon to the eye, and reassign the orphaned points.
+4. *Face merging.* Merge adjacent triangles whose normals agree within 1e-6 and whose vertices lie within ten epsilons of the shared plane, then walk each group's boundary into one counter-clockwise polygon. A group whose boundary is not a single loop, or whose merged plane does not hold all of its vertices, stays as separate triangles. A cube gives 8 vertices and 6 quads, which is what the face-clipping manifold needs for stable 4-point contacts.
+5. *Mass properties.* Integrate a fan of tetrahedra from the vertex centroid, using the second-moment form S = V/20 (aa' + bb' + cc' + (a+b+c)(a+b+c)'), then shift to the centre of mass.
+
+The hull keeps the input frame: the centre of mass is reported by =get_mass_properties()= and is not moved to the origin. =radius= rounds the hull (a Minkowski sum with a sphere). Its support, faces, bounds and ray casts include the radius; its mass does not.
+
+*** Triangle mesh
+:PROPERTIES:
+:CUSTOM_ID: triangle-mesh
+:END:
+=lrg_physics_shape_new_triangle_mesh_full (vertices, n_floats, indices, n_indices, materials, user_ids, n_triangles, active_edge_angle, &error)=:
+
+- Zero-area triangles are dropped. Triangle ids reported by queries index the *kept* triangles in input order.
+- =materials= / =user_ids= are optional per-triangle arrays of length =n_indices / 3=. They come back in =LrgRayHit.material= / =user_id= and =LrgContactManifold.material_a= / =material_b=, for footstep sounds, surface friction tables and gameplay tags.
+- *Active edges.* Vertices with identical positions are welded to build edge adjacency. An edge is *active* when it is a boundary or non-manifold edge, or a convex edge sharper than =active_edge_angle= (default =LRG_PHYSICS_DEFAULT_ACTIVE_EDGE_ANGLE=, 5 degrees). Concave edges and near-flat internal edges are *inactive*. The narrowphase never produces a sideways normal on an inactive edge, so a box sliding across a triangulated floor does not catch on the internal diagonals ("ghost collisions"). The bits are bit 0 for v0-v1, bit 1 for v1-v2 and bit 2 for v2-v0, readable through =lrg_physics_shape_get_triangle()=.
+- *AABB tree.* Built top-down by a median split on the longest axis, with leaves of up to 4 triangles and deterministic tie-breaks. Queries (contacts, rays, casts) walk the tree.
+- Triangles are two-sided. A ray from below hits with a normal facing the ray.
+
+*** Heightfield
+:PROPERTIES:
+:CUSTOM_ID: heightfield
+:END:
+=lrg_physics_shape_new_heightfield (heights, n_heights, n_x, n_z, scale_x, scale_y, scale_z, &error)=:
+
+- Samples are row-major, =index = z * n_x + x=. Sample (x, z) sits at local =(x * scale_x, h * scale_y, z * scale_z)=, so the grid starts at the local origin and grows towards +X/+Z. Centre it with the body transform, or with a compound child offset of =(-(n_x - 1) * sx / 2, 0, -(n_z - 1) * sz / 2)=.
+- =LRG_PHYSICS_HEIGHTFIELD_HOLE= (=G_MAXFLOAT=) marks a hole. Every cell that touches a hole sample has no triangles.
+- Each cell splits along the diagonal (x, z)-(x+1, z+1). Triangle id = =(z * (n_x - 1) + x) * 2 + half=, with half 0 = (p00, p11, p10) and half 1 = (p00, p01, p11). Both halves are wound so their normals point up.
+- Internal edges get the same active-edge test as meshes, against the neighbouring triangle in the grid.
+- Ray casts walk the grid cells along the ray with a 2D DDA, so a long ray over a big terrain only visits the cells under it.
+
+*** Compound
+:PROPERTIES:
+:CUSTOM_ID: compound
+:END:
+=lrg_physics_shape_new_compound()= followed by =lrg_physics_shape_compound_add_child (compound, child, position[3], rotation[4] or NULL)= for each child. The function returns the child index, or -1 for a plane child, a self-reference, a non-finite value or a non-compound. Children may be any other kind, compounds included. Mass properties are the sum of the children's, with each child's tensor rotated (R I R') and moved to the common centre of mass (parallel axis theorem). Children without mass (meshes) are skipped. Contacts and hits report the *top-level* child index in =child= / =child_a= / =child_b=.
+
+*** Plane
+:PROPERTIES:
+:CUSTOM_ID: plane
+:END:
+=lrg_physics_shape_new_plane (normal, distance)= normalises the normal (a zero normal becomes +Y). The surface is =n . p = distance= and the solid side is below it. Bounds and the debug mesh use a square of =LRG_PHYSICS_PLANE_HALF_EXTENT= (1000) half size, but contacts and rays treat the plane as infinite.
+
+** Mass properties
+:PROPERTIES:
+:CUSTOM_ID: mass-properties
+:END:
+=lrg_physics_shape_get_mass_properties (shape, density, &mass, com[3], inertia[9])= returns uniform-density properties. =inertia= is the tensor about the centre of mass, in local axes, column-major 3x3 (symmetric).
+
+| Shape    | Mass                        | Inertia (diagonal)                                                                                     |
+|----------+-----------------------------+--------------------------------------------------------------------------------------------------------|
+| sphere   | rho 4/3 pi r^3              | 2/5 m r^2                                                                                              |
+| box      | rho 8 hx hy hz              | m/3 (hy^2 + hz^2), m/3 (hx^2 + hz^2), m/3 (hx^2 + hy^2)                                                |
+| cylinder | rho pi r^2 H (H = 2 half_h) | Ix = Iz = m (3 r^2 + H^2) / 12, Iy = m r^2 / 2                                                         |
+| capsule  | mc + ms                     | Iy = mc r^2/2 + ms 2r^2/5; Ix = mc (H^2/12 + r^2/4) + ms (2r^2/5 + H^2/4 + 3Hr/8)                       |
+| hull     | rho V                       | full tensor by tetrahedron integration                                                                 |
+| compound | sum                         | rotated + parallel-axis sum                                                                            |
+
+=lrg_physics_shape_get_volume()= returns the matching volume (0 for static-only kinds; a hull's convex radius is not included). =lrg_physics_shape_get_inner_radius()= is the radius of the largest centred sphere inside the shape. Continuous collision uses it to decide that a body moved "too far" in one step: half the smallest box extent, the capsule radius, the hull's closest face from its centre of mass plus its radius, and the largest child's inner radius for a compound.
+
+** Bounds, support and faces
+:PROPERTIES:
+:CUSTOM_ID: bounds-support
+:END:
+- =lrg_physics_shape_get_local_bounds (shape, min, max)= gives the tight local AABB.
+- =lrg_physics_shape_get_world_bounds (shape, xf, min, max)= gives a world AABB. It is exact for spheres and capsules (the segment ends plus the radius); for everything else it is the rotated local box, using the =|R|= half-size trick. The broadphase feeds on it.
+- =lrg_physics_shape_support (shape, dir, out)= gives the local point furthest along =dir=, convex radius included. It returns =FALSE= for non-convex kinds.
+- Hull introspection for editor gizmos: =lrg_physics_shape_get_hull_vertices()=, =lrg_physics_shape_get_hull_face_count()=, =lrg_physics_shape_get_hull_face()= (vertex indices counter-clockwise from outside plus the plane).
+- Mesh and heightfield introspection: =lrg_physics_shape_get_triangle_count()=, =lrg_physics_shape_get_triangle()= (corners, material, user id, active-edge bits; =FALSE= for a hole), =lrg_physics_shape_get_heightfield_size()=, =lrg_physics_shape_get_heightfield_height()=.
+- Description getters: =lrg_physics_shape_get_kind()=, =lrg_physics_shape_is_convex()=, =lrg_physics_shape_get_radius()=, =lrg_physics_shape_get_half_height()=, =lrg_physics_shape_get_half_extents()=, =lrg_physics_shape_get_plane()=, =lrg_physics_shape_get_child_count()=, =lrg_physics_shape_get_child()=.
+
+** Ray casts
+:PROPERTIES:
+:CUSTOM_ID: ray-casts
+:END:
+=lrg_physics_shape_cast_ray (shape, origin, dir, max_fraction, &hit)= casts =origin + t * dir= for =t= in =[0, max_fraction]= in the shape's local frame. =dir= need not be unit length: the fraction is measured in units of =dir=, so =dir = end - start= with =max_fraction = 1= is a segment test. For a world-space ray use =lrg_collide_ray()= from [[file:collide.org][lrg-collide]].
+
+| Shape       | Method                                                                     |
+|-------------+----------------------------------------------------------------------------|
+| sphere      | quadratic                                                                  |
+| capsule     | side cylinder clipped to the segment, plus both end spheres                |
+| cylinder    | side cylinder and both cap discs                                           |
+| box         | slab test; the normal is the entered face                                  |
+| hull        | Cyrus-Beck clipping against the face planes; with a radius, sphere-tracing the GJK distance to the core from the inflated-plane entry |
+| mesh        | AABB tree traversal, two-sided Moller-Trumbore                             |
+| heightfield | 2D DDA over the cells under the ray                                        |
+| compound    | each child in its frame, closest hit wins, =child= set                     |
+| plane       | one division                                                               |
+
+A ray that starts inside a solid convex shape, or below a plane, hits at =t = 0= with normal =-dir=. =lrg_ray_hit_new()=, =lrg_ray_hit_copy()=, =lrg_ray_hit_free()= and =lrg_ray_hit_reset()= manage heap copies; on the stack, just call =lrg_ray_hit_reset()=.
+
+** Debug mesh
+:PROPERTIES:
+:CUSTOM_ID: debug-mesh
+:END:
+=lrg_physics_shape_build_debug_mesh (shape, segments)= returns a =GArray= of =gfloat=: a triangle soup in local space, 9 floats per triangle, counter-clockwise from outside. Round shapes use =segments= around the circle. Compound children are transformed into the compound frame, and a plane becomes one large square. =lrg_dynamics_world_debug_draw()= and the editor's collider gizmos draw this, transformed by the body's matrix.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_physics_shape_new_sphere (radius)= | sphere |
+| =lrg_physics_shape_new_capsule (radius, half_height)= | capsule along Y |
+| =lrg_physics_shape_new_cylinder (radius, half_height)= | cylinder along Y |
+| =lrg_physics_shape_new_box (half_x, half_y, half_z)= | box |
+| =lrg_physics_shape_new_convex_hull (points, n_floats, radius, error)= | quickhull, nullable + =GError= |
+| =lrg_physics_shape_new_triangle_mesh (vertices, n_floats, indices, n_indices, error)= | mesh, material 0, default edge angle |
+| =lrg_physics_shape_new_triangle_mesh_full (..., materials, user_ids, n_triangles, active_edge_angle, error)= | mesh with per-triangle data |
+| =lrg_physics_shape_new_heightfield (heights, n_heights, n_x, n_z, sx, sy, sz, error)= | heightfield |
+| =lrg_physics_shape_new_compound ()= | empty compound |
+| =lrg_physics_shape_compound_add_child (self, child, position, rotation)= | append a child, returns its index |
+| =lrg_physics_shape_new_plane (normal, distance)= | half space |
+| =lrg_physics_shape_get_kind (self)= | kind |
+| =lrg_physics_shape_is_convex (self)= | has a support function |
+| =lrg_physics_shape_get_radius (self)= | sphere/capsule/cylinder radius, hull convex radius |
+| =lrg_physics_shape_get_half_height (self)= | capsule/cylinder half height |
+| =lrg_physics_shape_get_half_extents (self, out)= | box half extents (bounds half size otherwise) |
+| =lrg_physics_shape_get_plane (self, normal, distance)= | plane parameters |
+| =lrg_physics_shape_get_hull_vertices (self, n_floats)= | hull vertices |
+| =lrg_physics_shape_get_hull_face_count (self)= | hull face count |
+| =lrg_physics_shape_get_hull_face (self, index, n_indices, plane)= | one hull polygon |
+| =lrg_physics_shape_get_triangle_count (self)= | mesh/heightfield triangle count |
+| =lrg_physics_shape_get_triangle (self, index, vertices, material, user_id, active_edges)= | one triangle |
+| =lrg_physics_shape_get_heightfield_size (self, n_x, n_z, scale)= | grid size and scale |
+| =lrg_physics_shape_get_heightfield_height (self, x, z)= | scaled sample height |
+| =lrg_physics_shape_get_child_count (self)= | compound children |
+| =lrg_physics_shape_get_child (self, index, position, rotation)= | one child |
+| =lrg_physics_shape_get_volume (self)= | volume |
+| =lrg_physics_shape_get_mass_properties (self, density, mass, com, inertia)= | mass, centre, inertia tensor |
+| =lrg_physics_shape_get_local_bounds (self, min, max)= | local AABB |
+| =lrg_physics_shape_get_world_bounds (self, xf, min, max)= | world AABB |
+| =lrg_physics_shape_get_inner_radius (self)= | CCD threshold radius |
+| =lrg_physics_shape_support (self, dir, out)= | support point |
+| =lrg_physics_shape_cast_ray (self, origin, dir, max_fraction, hit)= | local ray cast |
+| =lrg_physics_shape_build_debug_mesh (self, segments)= | triangle soup |
+| =lrg_physics_shape_kind_get_type ()=, =lrg_physics_shape_error_get_type ()=, =lrg_physics_shape_error_quark ()= | enum types, error quark |
+| =lrg_ray_hit_get_type ()=, =lrg_ray_hit_new ()=, =lrg_ray_hit_copy (hit)=, =lrg_ray_hit_free (hit)=, =lrg_ray_hit_reset (hit)= | =LrgRayHit= boxed |
+
+Constants: =LRG_PHYSICS_HEIGHTFIELD_HOLE=, =LRG_PHYSICS_PLANE_HALF_EXTENT=, =LRG_PHYSICS_NO_BODY=, =LRG_PHYSICS_NO_SUB_SHAPE=, =LRG_PHYSICS_DEFAULT_ACTIVE_EDGE_ANGLE=. Errors: =LRG_PHYSICS_SHAPE_ERROR_INVALID= (bad arrays, non-finite values), =LRG_PHYSICS_SHAPE_ERROR_DEGENERATE= (coplanar hull, mesh without area).
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A crate, its mass, and a ray
+:PROPERTIES:
+:CUSTOM_ID: example-crate
+:END:
+#+begin_src C
+g_autoptr(LrgPhysicsShape) crate = NULL;
+gfloat mass;
+gfloat com[3];
+gfloat inertia[9];
+gfloat origin[3] = { 0.0f, 5.0f, 0.0f };
+gfloat dir[3] = { 0.0f, -1.0f, 0.0f };
+LrgRayHit hit;
+
+crate = lrg_physics_shape_new_box (0.5f, 0.5f, 0.5f);
+/* 1 m cube of wood (600 kg/m^3): 600 kg, Ixx = 600/3 * 0.5 = 100 */
+lrg_physics_shape_get_mass_properties (crate, 600.0f, &mass, com, inertia);
+
+if (lrg_physics_shape_cast_ray (crate, origin, dir, 10.0f, &hit))
+	g_print ("hit at t=%.2f normal (%g %g %g)\n", hit.fraction,
+	         hit.normal[0], hit.normal[1], hit.normal[2]);   /* t = 4.5, +Y */
+#+end_src
+
+*** A convex hull from a model's vertices
+:PROPERTIES:
+:CUSTOM_ID: example-hull
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgPhysicsShape) rock = NULL;
+
+/* positions: 3 floats per vertex, e.g. from a GrlMesh */
+rock = lrg_physics_shape_new_convex_hull (positions, n_vertices * 3, 0.02f, &error);
+if (rock == NULL)
+{
+	g_warning ("rock collider: %s", error->message);
+	return;
+}
+g_print ("%u faces\n", lrg_physics_shape_get_hull_face_count (rock));
+#+end_src
+
+*** Terrain from a heightmap, centred
+:PROPERTIES:
+:CUSTOM_ID: example-terrain
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgPhysicsShape) grid = NULL;
+g_autoptr(LrgPhysicsShape) terrain = NULL;
+gfloat offset[3];
+
+/* 257 x 257 samples, 1 m apart, heights in [0, 1] times 40 m */
+grid = lrg_physics_shape_new_heightfield (heights, 257 * 257, 257, 257,
+                                          1.0f, 40.0f, 1.0f, &error);
+offset[0] = -128.0f;
+offset[1] = 0.0f;
+offset[2] = -128.0f;
+terrain = lrg_physics_shape_new_compound ();
+lrg_physics_shape_compound_add_child (terrain, grid, offset, NULL);
+#+end_src
+
+*** A level mesh with surface materials
+:PROPERTIES:
+:CUSTOM_ID: example-mesh
+:END:
+#+begin_src C
+enum { SURF_STONE = 1, SURF_WOOD = 2 };
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgPhysicsShape) level = NULL;
+
+level = lrg_physics_shape_new_triangle_mesh_full (verts, n_verts * 3,
+                                                  idx, n_tris * 3,
+                                                  surface_per_tri, NULL, n_tris,
+                                                  LRG_PHYSICS_DEFAULT_ACTIVE_EDGE_ANGLE,
+                                                  &error);
+/* a ray hit or a contact reports hit.material == SURF_WOOD on the bridge */
+#+end_src
+
+*** A dumbbell compound
+:PROPERTIES:
+:CUSTOM_ID: example-compound
+:END:
+#+begin_src C
+g_autoptr(LrgPhysicsShape) ball = lrg_physics_shape_new_sphere (0.2f);
+g_autoptr(LrgPhysicsShape) bar = lrg_physics_shape_new_capsule (0.04f, 0.4f);
+g_autoptr(LrgPhysicsShape) bell = lrg_physics_shape_new_compound ();
+gfloat left[3] = { -0.5f, 0.0f, 0.0f };
+gfloat right[3] = { 0.5f, 0.0f, 0.0f };
+gfloat centre[3] = { 0.0f, 0.0f, 0.0f };
+gfloat axis_z[3] = { 0.0f, 0.0f, 1.0f };
+gfloat lying[4];
+
+lrg_math3d_quat_from_axis_angle (axis_z, G_PI_2, lying);   /* capsule along X */
+lrg_physics_shape_compound_add_child (bell, ball, left, NULL);
+lrg_physics_shape_compound_add_child (bell, ball, right, NULL);
+lrg_physics_shape_compound_add_child (bell, bar, centre, lying);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Construction (release build, one P-core): 1000 random points in a box hull in under 1 ms; 1000 points that all end up on the hull (a sphere cloud) take about 18 ms. A mesh's AABB tree builds in O(n log n). Build shapes at load time and share them.
+- Hull support is a linear scan over the hull vertices. Hulls of a few dozen vertices are what you want for dynamic bodies; simplify render meshes before hulling them.
+- Mesh queries cost a tree walk plus one convex-triangle test per nearby triangle. Heightfield queries touch only the cells under the query box.
+- See [[file:collide.org::#performance][collide performance]] for the per-pair timings.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *No scale.* Transforms must be rigid. A scaled matrix gives wrong support points and wrong contacts. Build a new shape with the scaled dimensions instead.
+- *Capsule height.* =half_height= is half the *segment*, not half the total height.
+- *Hull centre.* A hull's centre of mass is wherever the points put it. Bodies should place the shape so the centre of mass from =get_mass_properties()= is the body origin, or offset it with a compound.
+- *Heightfield origin.* The grid starts at local (0, 0, 0), not at its centre.
+- *Mesh welding.* Active edges need shared edges. Two triangles whose shared vertices differ by a rounding error are treated as unconnected, so their edge stays active and can catch. Export meshes with welded vertices.
+- *Compounds are frozen once used.* Do not add children after a body uses the compound: bodies and the broadphase cache its bounds.
+- *Planes are infinite.* Their 1000-unit bounds exist only for the broadphase and drawing.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor wave builds on this API. Collider gizmos draw =lrg_physics_shape_build_debug_mesh()=. The body/shape inspector shows =lrg_physics_shape_get_kind()= with the dimension getters, the mass from =get_mass_properties()= at the body's density, and hull face counts. "Generate convex hull from model" calls =lrg_physics_shape_new_convex_hull()= on the model's vertex positions and reports =LRG_PHYSICS_SHAPE_ERROR_DEGENERATE= for flat meshes. Mesh colliders show triangles with inactive edges hidden. The =.rlevel= physics block (see [[file:dynamics.org][dynamics]]) stores the shape kind and dimensions, and the runtime rebuilds the shape with these constructors.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-shape.c= covers several areas. Mass: closed forms for sphere, box, cylinder and capsule; a cube hull against the box; and two half boxes as a compound against a whole box. Quickhull: random clouds of 4 to 1000 points, in a box and on a sphere, with every input point inside every face, planar faces, every directed edge paired with its twin, and V - E + F = 2; it also checks interior and face-centre points and the degenerate and invalid errors. Rays: every kind against hand-computed hits, including the rounded-hull corner, a sloped heightfield, two-sided mesh hits with materials, a rotated world ray and a compound child. Debug meshes: every kind. Accessors and bounds: rotated world bounds, support and the boxed types.
+
+** Third-party notice
+:PROPERTIES:
+:CUSTOM_ID: notice
+:END:
+The active-edge rule (=ActiveEdges::IsEdgeActive=) and the supporting-face conventions follow Jolt Physics (MIT, Copyright 2021 Jorrit Rouwe). The notice is in the source header.
+
+See also: [[file:collide.org][lrg-collide]] (contacts, casts), [[file:dynamics.org][LrgDynamicsWorld]], [[file:broadphase.org][LrgBroadphase]], [[file:physics-layers.org][LrgPhysicsLayers]].

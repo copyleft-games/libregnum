@@ -13,6 +13,8 @@ The Physics module consists of three main components:
 - *LrgPhysicsWorld*: The main physics simulation environment
 - *LrgRigidBody*: Individual physical objects with mass, velocity, and collision shapes
 - *[[file:broadphase.org][LrgBroadphase]]*: 3D dynamic AABB tree (fat leaves, SAH + AVL rotations, layer-filtered sorted pairs, ray/box/sphere/frustum/swept-box queries)
+- *[[file:physics-shape.org][LrgPhysicsShape]]*: immutable 3D collision shapes (sphere, capsule, cylinder, box, quickhull convex hull, triangle mesh with BVH and active edges, heightfield with holes, compound, plane): mass properties, bounds, support, ray casts, debug meshes
+- *[[file:collide.org][lrg-collide]]*: 3D narrowphase (GJK/EPA, box SAT, face-clipped 4-point manifolds with feature ids, convex vs mesh/heightfield with internal-edge removal, closest points, overlap, world rays, conservative-advancement shape casts for CCD)
 - *[[file:physics-layers.org][LrgPhysicsLayers]]*: 32 named collision layers, symmetric collide matrix, per-body layer + mask, the project.ryaml physics: block
 - *LrgCollisionInfo*: Detailed information about collisions between bodies
 - *[[file:wall-set.org][LrgWallSet]]*: Static XZ box collision world for authoritative servers (swept square agents, wall sliding, line of sight, camera raycasts, interior volumes, grid broadphase)
