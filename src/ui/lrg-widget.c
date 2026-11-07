@@ -14,6 +14,7 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_UI
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "lrg-widget.h"
@@ -2400,11 +2401,13 @@ lrg_widget_find_action_group (LrgWidget   *self,
 	return NULL;
 }
 
-/* compare_prefix: sort callback over an array of gchar* */
-static gint
-compare_prefix (gconstpointer a,
-                gconstpointer b,
-                gpointer      user_data)
+/* compare_prefix: qsort() callback over an array of gchar*. Plain
+ * qsort() rather than g_sort_array(), which needs GLib 2.82 (Ubuntu
+ * 24.04, the AppImage base, ships 2.80), and g_qsort_with_data(), which
+ * 2.82 deprecates */
+static int
+compare_prefix (const void *a,
+                const void *b)
 {
 	return g_strcmp0 (*(const gchar * const *) a, *(const gchar * const *) b);
 }
@@ -2431,7 +2434,7 @@ lrg_widget_list_action_prefixes (LrgWidget *self)
 
 		/* Sorted per widget so the listing is stable */
 		keys = g_hash_table_get_keys_as_array (priv->action_groups, &n);
-		g_sort_array (keys, n, sizeof (gpointer), compare_prefix, NULL);
+		qsort (keys, n, sizeof (gpointer), compare_prefix);
 		for (i = 0; i < n; i++)
 		{
 			guint k;

@@ -4,6 +4,8 @@
 :END:
 This guide explains how to build Libregnum from source.
 
+The oldest toolchain it must build on is Ubuntu 24.04 (GLib 2.80, GCC 13): librewow's AppImage is built there, and warnings are errors. GCC 13 rejects =alloca= and =g_newa()= under =-Wstack-protector=. Do not use GLib API newer than 2.80 (=g_sort_array()= is 2.82; use =qsort()=) unless it is behind =GLIB_CHECK_VERSION=. Ubuntu installs =gio/gunix*.h= in a separate directory, so code including them needs =pkg-config --cflags gio-unix-2.0=.
+
 ** Prerequisites
 :PROPERTIES:
 :CUSTOM_ID: prerequisites

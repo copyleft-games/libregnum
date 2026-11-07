@@ -2193,7 +2193,7 @@ EDITOR_MCP_SOURCES := src/editorctl/lrgeditorctl-mcp.c src/editorctl/lrgeditorct
 
 ifeq ($(EDITOR_MCP),1)
 EDITOR_MCP_CFLAGS := -I$(EDITOR_MCP_DIR)/src -Isrc/editorctl \
-	$(shell $(PKG_CONFIG) --cflags libsoup-3.0 libdex-1)
+	$(shell $(PKG_CONFIG) --cflags libsoup-3.0 libdex-1 gio-unix-2.0)
 EDITOR_MCP_LIBS := $(EDITOR_MCP_STATIC) $(shell $(PKG_CONFIG) --libs libsoup-3.0 libdex-1 gio-unix-2.0 json-glib-1.0)
 EDITOR_MCP_DEP := $(EDITOR_MCP_STATIC)
 else
