@@ -401,6 +401,7 @@ PUBLIC_HEADERS := \
 	src/world3d/components/lrg-skinned-model-component.h \
 	src/world3d/components/lrg-decal-component.h \
 	src/world3d/components/lrg-lod-component.h \
+	src/world3d/components/lrg-reflection-probe-component.h \
 	src/world3d/lrg-portal-system.h \
 	src/scene/lrg-material3d.h \
 	src/scene/lrg-scene-object.h \
@@ -1144,6 +1145,7 @@ SOURCES := \
 	src/world3d/components/lrg-skinned-model-component.c \
 	src/world3d/components/lrg-decal-component.c \
 	src/world3d/components/lrg-lod-component.c \
+	src/world3d/components/lrg-reflection-probe-component.c \
 	src/world3d/lrg-portal-system.c \
 	src/scene/lrg-material3d.c \
 	src/scene/lrg-scene-object.c \
@@ -1751,6 +1753,10 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-timeline-panel.h \
 	src/editor/ui/lrg-editor-profiler-panel.h \
 	src/editor/ui/lrg-editor-code-panel.h \
+	src/editor/ui/lrg-editor-shader-graph-editor.h \
+	src/editor/ui/lrg-editor-environment-panel.h \
+	src/editor/ui/data/lrg-editor-material-editor.h \
+	src/editor/ui/data/lrg-editor-post-stack-editor.h \
 	src/editor/ui/lrg-editor-palette.h \
 	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
@@ -1779,6 +1785,10 @@ SOURCES += \
 	src/editor/ui/lrg-editor-timeline-panel.c \
 	src/editor/ui/lrg-editor-profiler-panel.c \
 	src/editor/ui/lrg-editor-code-panel.c \
+	src/editor/ui/lrg-editor-shader-graph-editor.c \
+	src/editor/ui/lrg-editor-environment-panel.c \
+	src/editor/ui/data/lrg-editor-material-editor.c \
+	src/editor/ui/data/lrg-editor-post-stack-editor.c \
 	src/editor/ui/lrg-editor-palette.c \
 	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \

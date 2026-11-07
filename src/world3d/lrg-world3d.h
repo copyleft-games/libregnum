@@ -37,6 +37,8 @@
 #include "../lrg-enums.h"
 #include "lrg-bounding-box3d.h"
 #include "lrg-entity3d.h"
+#include "../lighting/lrg-environment.h"
+#include "../postprocess/lrg-post-stack.h"
 
 G_BEGIN_DECLS
 
@@ -1147,5 +1149,49 @@ void lrg_world3d_set_audio_listener (LrgWorld3D  *self,
  */
 LRG_AVAILABLE_IN_ALL
 LrgEntity3D * lrg_world3d_get_audio_listener (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_set_environment:
+ * @self: a #LrgWorld3D
+ * @environment: (nullable): the world's environment (sky, IBL, fog), or %NULL
+ *
+ * Sets the environment renderers use for this world when they have no
+ * environment of their own.  lrg_level_instantiate_3d() sets the level's
+ * `environment:` block here.  The world holds a reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_set_environment (LrgWorld3D     *self,
+                                  LrgEnvironment *environment);
+
+/**
+ * lrg_world3d_get_environment:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the world's environment
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEnvironment * lrg_world3d_get_environment (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_set_post_stack:
+ * @self: a #LrgWorld3D
+ * @stack: (nullable): the world's post stack, or %NULL
+ *
+ * Sets the post stack renderers build onto their post processor for this
+ * world (the level environment's `post_stack:`).  The world holds a
+ * reference.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_set_post_stack (LrgWorld3D   *self,
+                                 LrgPostStack *stack);
+
+/**
+ * lrg_world3d_get_post_stack:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the world's post stack
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPostStack * lrg_world3d_get_post_stack (LrgWorld3D *self);
 
 G_END_DECLS

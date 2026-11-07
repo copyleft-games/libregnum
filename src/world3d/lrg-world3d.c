@@ -787,6 +787,10 @@ struct _LrgWorld3D
 	GPtrArray   *cameras;          /* CameraEntry* (owned) */
 	LrgCamera   *active_camera;    /* owned ref or NULL */
 	LrgEntity3D *audio_listener;   /* weak */
+
+	/* Look (0.9.0 M2): used by renderers without their own */
+	LrgEnvironment *environment;   /* owned ref or NULL */
+	LrgPostStack   *post_stack;    /* owned ref or NULL */
 };
 
 G_DEFINE_FINAL_TYPE (LrgWorld3D, lrg_world3d, G_TYPE_OBJECT)
@@ -1021,6 +1025,8 @@ lrg_world3d_dispose (GObject *object)
 		g_ptr_array_set_size (self->cameras, 0);
 	g_clear_object (&self->active_camera);
 	g_clear_object (&self->octree);
+	g_clear_object (&self->environment);
+	g_clear_object (&self->post_stack);
 
 	G_OBJECT_CLASS (lrg_world3d_parent_class)->dispose (object);
 }
@@ -2222,4 +2228,42 @@ lrg_world3d_get_audio_listener (LrgWorld3D *self)
 {
 	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
 	return self->audio_listener;
+}
+
+/* ------------------------------------------------------------------ look */
+
+void
+lrg_world3d_set_environment (LrgWorld3D     *self,
+                             LrgEnvironment *environment)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (environment == NULL || LRG_IS_ENVIRONMENT (environment));
+
+	g_set_object (&self->environment, environment);
+}
+
+LrgEnvironment *
+lrg_world3d_get_environment (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+
+	return self->environment;
+}
+
+void
+lrg_world3d_set_post_stack (LrgWorld3D   *self,
+                            LrgPostStack *stack)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (stack == NULL || LRG_IS_POST_STACK (stack));
+
+	g_set_object (&self->post_stack, stack);
+}
+
+LrgPostStack *
+lrg_world3d_get_post_stack (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+
+	return self->post_stack;
 }

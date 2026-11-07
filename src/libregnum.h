@@ -440,6 +440,7 @@
 #include "world3d/components/lrg-skinned-model-component.h"
 #include "world3d/components/lrg-decal-component.h"
 #include "world3d/components/lrg-lod-component.h"
+#include "world3d/components/lrg-reflection-probe-component.h"
 #include "world3d/lrg-portal-system.h"
 
 /* Scene module */
@@ -526,6 +527,10 @@
 #include "editor/ui/lrg-editor-timeline-panel.h"
 #include "editor/ui/lrg-editor-profiler-panel.h"
 #include "editor/ui/lrg-editor-code-panel.h"
+#include "editor/ui/lrg-editor-shader-graph-editor.h"
+#include "editor/ui/lrg-editor-environment-panel.h"
+#include "editor/ui/data/lrg-editor-material-editor.h"
+#include "editor/ui/data/lrg-editor-post-stack-editor.h"
 #include "editor/ui/lrg-editor-palette.h"
 #include "editor/ui/lrg-editor-preferences.h"
 #endif

@@ -91,6 +91,8 @@ TEST_SOURCES := \
 	test-mesh-simplify.c \
 	test-lod.c \
 	test-post-stack.c \
+	test-render-pipeline.c \
+	test-level-look.c \
 	test-runtime-prefab.c \
 	test-runtime-import-settings.c \
 	test-asset-dependencies.c \
@@ -274,6 +276,8 @@ TEST_SOURCES := \
 	test-editor-app-hierarchy.c \
 	test-editor-app-inspector.c \
 	test-editor-app-viewport.c \
+	test-editor-app-material.c \
+	test-editor-app-environment.c \
 	test-editor-app-assets.c \
 	test-editor-app-panels.c \
 	test-editor-app-dialogs.c \
