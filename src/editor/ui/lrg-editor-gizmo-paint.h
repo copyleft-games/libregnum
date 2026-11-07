@@ -32,6 +32,7 @@
 #include "../lrg-editor-gizmo.h"
 #include "../lrg-editor-view-state.h"
 #include "../../graphics/lrg-lod-group.h"
+#include "../../physics/lrg-dynamics.h"
 
 G_BEGIN_DECLS
 
@@ -469,5 +470,242 @@ LRG_AVAILABLE_IN_ALL
 gfloat lrg_editor_lod_node_screen_size (const LrgEditorView *view,
                                         LrgNode             *node,
                                         LrgLodGroup         *group);
+
+/* ==========================================================================
+ * Physics gizmos (0.9.0 M5): collider shapes, joints, 2D colliders
+ * ========================================================================== */
+
+/**
+ * LrgEditorPhysicsHandle:
+ * @LRG_EDITOR_PHYSICS_HANDLE_NONE: no handle
+ * @LRG_EDITOR_PHYSICS_HANDLE_HALF_X: a box shape's half extent along its
+ *   local X ("half-extent-x"), on the +X face
+ * @LRG_EDITOR_PHYSICS_HANDLE_HALF_Y: a box's half extent along Y
+ *   ("half-extent-y")
+ * @LRG_EDITOR_PHYSICS_HANDLE_HALF_Z: a box's half extent along Z
+ *   ("half-extent-z")
+ * @LRG_EDITOR_PHYSICS_HANDLE_RADIUS: a sphere's, capsule's or cylinder's
+ *   radius ("radius"), on the shape's local +X
+ * @LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT: a capsule's or cylinder's half
+ *   height ("half-height"), on the shape's local +Y (a capsule's handle
+ *   sits on the cap's tip)
+ * @LRG_EDITOR_PHYSICS_HANDLE_ANCHOR: a joint's anchor ("anchor-x/y/z"),
+ *   dragged on the camera-facing plane through it
+ * @LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D: a 2D `collider` component's box
+ *   width ("width"), on its right edge
+ * @LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D: a 2D box's height ("height"), on
+ *   its top edge
+ * @LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D: a 2D circle's radius ("radius")
+ *
+ * The draggable handles of the physics gizmo of the selected node. A
+ * handle belongs to one shape or joint of the node's `physics:` block
+ * (its index), or to the node's 2D `collider` component description.
+ */
+typedef enum
+{
+	LRG_EDITOR_PHYSICS_HANDLE_NONE,
+	LRG_EDITOR_PHYSICS_HANDLE_HALF_X,
+	LRG_EDITOR_PHYSICS_HANDLE_HALF_Y,
+	LRG_EDITOR_PHYSICS_HANDLE_HALF_Z,
+	LRG_EDITOR_PHYSICS_HANDLE_RADIUS,
+	LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT,
+	LRG_EDITOR_PHYSICS_HANDLE_ANCHOR,
+	LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D,
+	LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D,
+	LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D
+} LrgEditorPhysicsHandle;
+
+/**
+ * lrg_editor_physics_handle_get_type:
+ *
+ * Returns: the #GType of #LrgEditorPhysicsHandle
+ */
+LRG_AVAILABLE_IN_ALL
+GType lrg_editor_physics_handle_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_EDITOR_PHYSICS_HANDLE (lrg_editor_physics_handle_get_type ())
+
+/**
+ * lrg_editor_physics_handle_get_field:
+ * @handle: a handle
+ *
+ * Returns: (nullable): the field @handle edits: a property name of
+ *   #LrgNodePhysicsShape ("half-extent-x", "radius", "half-height"), of
+ *   #LrgNodePhysicsJoint ("anchor") or a 2D collider key ("width",
+ *   "height", "radius"); %NULL for %LRG_EDITOR_PHYSICS_HANDLE_NONE
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_physics_handle_get_field (LrgEditorPhysicsHandle handle);
+
+/**
+ * lrg_editor_physics_has_gizmo:
+ * @node: (nullable): a node
+ *
+ * Whether @node shows a physics gizmo when selected: a `physics:` block
+ * with at least one shape or joint, or (2D) a `collider` component
+ * description.
+ *
+ * Returns: %TRUE when @node has a physics gizmo
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_physics_has_gizmo (LrgNode *node);
+
+/**
+ * lrg_editor_physics_get_shape_frame:
+ * @node: a node with a `physics:` block
+ * @index: a shape index
+ * @out_matrix: (out caller-allocates) (array fixed-size=16): the shape's
+ *   world frame without scale (the node's world position and rotation,
+ *   then the shape offset scaled by the node's world scale, then the
+ *   shape rotation): what the runtime collider uses
+ * @out_scale: (out caller-allocates) (optional) (array fixed-size=3): the
+ *   node's absolute world scale, which the runtime bakes into the shape
+ *   dimensions
+ *
+ * Returns: %FALSE when @node has no shape @index
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_physics_get_shape_frame (LrgNode *node,
+                                             guint    index,
+                                             gfloat  *out_matrix,
+                                             gfloat  *out_scale);
+
+/**
+ * lrg_editor_physics_get_handle_position:
+ * @view: the camera, sized to the viewport image
+ * @node: a node with a physics gizmo
+ * @handle: one of its handles
+ * @index: the shape or joint index the handle belongs to (ignored for the
+ *   2D handles)
+ * @out: (out caller-allocates) (array fixed-size=3): the handle's world
+ *   position
+ *
+ * Returns: %FALSE when @node has no such handle
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_physics_get_handle_position (const LrgEditorView    *view,
+                                                 LrgNode                *node,
+                                                 LrgEditorPhysicsHandle  handle,
+                                                 guint                   index,
+                                                 gfloat                 *out);
+
+/**
+ * lrg_editor_physics_hit_test:
+ * @view: the camera, sized to the viewport image
+ * @node: (nullable): the selected node
+ * @x: pointer x in viewport pixels
+ * @y: pointer y in viewport pixels
+ * @out_index: (out) (optional): the shape or joint index of the handle
+ *
+ * The physics handle within %LRG_EDITOR_GIZMO_PICK_PIXELS (plus a little)
+ * of the pointer, the nearest one when several are.
+ *
+ * Returns: the handle, or %LRG_EDITOR_PHYSICS_HANDLE_NONE
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorPhysicsHandle lrg_editor_physics_hit_test (const LrgEditorView *view,
+                                                    LrgNode             *node,
+                                                    gfloat               x,
+                                                    gfloat               y,
+                                                    guint               *out_index);
+
+/**
+ * lrg_editor_physics_drag_value:
+ * @view: the camera, sized to the viewport image
+ * @node: the node being edited
+ * @handle: the dragged handle
+ * @index: its shape or joint index
+ * @x: pointer x in viewport pixels
+ * @y: pointer y in viewport pixels
+ * @out_value: (out caller-allocates) (array fixed-size=3): the value the
+ *   pointer asks for: [0] for a dimension (the distance along the handle's
+ *   axis divided by the node's world scale on that axis, clamped to
+ *   0.01), all three for an anchor (in the node's local space)
+ *
+ * The value of lrg_editor_physics_handle_get_field() (@handle) that puts
+ * the handle under the pointer.
+ *
+ * Returns: %FALSE when the pointer ray is parallel to the handle's axis
+ *   or plane, or @node has no such handle
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_physics_drag_value (const LrgEditorView    *view,
+                                        LrgNode                *node,
+                                        LrgEditorPhysicsHandle  handle,
+                                        guint                   index,
+                                        gfloat                  x,
+                                        gfloat                  y,
+                                        gfloat                 *out_value);
+
+/**
+ * lrg_editor_gizmo_paint_physics_shapes:
+ * @list: the paint list
+ * @view: the camera, sized to the viewport image
+ * @level: (nullable): the level joint targets are looked up in (a line
+ *   from the anchor to the target node); %NULL draws no target lines
+ * @node: a node
+ * @flags: what to paint (#LrgDynamicsDebugFlags): %LRG_DYNAMICS_DEBUG_SHAPES
+ *   the shapes, %LRG_DYNAMICS_DEBUG_AABBS their world bounding boxes,
+ *   %LRG_DYNAMICS_DEBUG_CONSTRAINTS the joints (anchor, axis, limits, a
+ *   line to the target), %LRG_DYNAMICS_DEBUG_CENTER_OF_MASS the body
+ *   origin axes
+ * @emphasis: 0..1: 1 for the selected node (crisp lines), lower values
+ *   fade the lines (other nodes in the authoring overlay)
+ * @origin_x: canvas x of viewport pixel 0
+ * @origin_y: canvas y of viewport pixel 0
+ * @scale: canvas units per viewport pixel
+ *
+ * Paints the authored `physics:` block of @node (or its 2D `collider`
+ * description) as wireframes projected through @view, coloured like the
+ * runtime debug draw: green dynamic, blue kinematic, grey static, yellow
+ * triggers. Box, sphere, capsule, cylinder and plane shapes have their
+ * exact outline; convex and mesh shapes show the node's bounds dashed.
+ *
+ * Returns: the number of shapes and joints painted
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_gizmo_paint_physics_shapes (LrgPaintList          *list,
+                                             const LrgEditorView   *view,
+                                             LrgLevel              *level,
+                                             LrgNode               *node,
+                                             LrgDynamicsDebugFlags  flags,
+                                             gfloat                 emphasis,
+                                             gfloat                 origin_x,
+                                             gfloat                 origin_y,
+                                             gfloat                 scale);
+
+/**
+ * lrg_editor_gizmo_paint_physics:
+ * @list: the paint list
+ * @theme: the theme (chips)
+ * @view: the camera, sized to the viewport image
+ * @level: (nullable): the level joint targets are looked up in
+ * @node: the selected node
+ * @hot: the hovered or dragged handle, or %LRG_EDITOR_PHYSICS_HANDLE_NONE
+ * @hot_index: the shape or joint index of @hot
+ * @selected_shape: the shape selected in the Physics panel (drawn
+ *   brighter), or -1
+ * @dragging: whether @hot is being dragged (a value chip follows it)
+ * @origin_x: canvas x of viewport pixel 0
+ * @origin_y: canvas y of viewport pixel 0
+ * @scale: canvas units per viewport pixel
+ *
+ * Paints the physics gizmo of the selected node: every shape and joint
+ * (lrg_editor_gizmo_paint_physics_shapes()), joint limit arcs and cones,
+ * then the handles as dots (yellow when @hot) and, over the hot handle, a
+ * chip with its field and value.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_gizmo_paint_physics (LrgPaintList           *list,
+                                     LrgTheme               *theme,
+                                     const LrgEditorView    *view,
+                                     LrgLevel               *level,
+                                     LrgNode                *node,
+                                     LrgEditorPhysicsHandle  hot,
+                                     guint                   hot_index,
+                                     gint                    selected_shape,
+                                     gboolean                dragging,
+                                     gfloat                  origin_x,
+                                     gfloat                  origin_y,
+                                     gfloat                  scale);
 
 G_END_DECLS

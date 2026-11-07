@@ -41,6 +41,9 @@
 #include "../../ui/lrg-viewport.h"
 #include "../lrg-node.h"
 #include "lrg-editor-app.h"
+#include "lrg-editor-gizmo-paint.h"
+#include "../../physics/lrg-dynamics.h"
+#include "../../debug/lrg-debug-draw.h"
 
 G_BEGIN_DECLS
 
@@ -288,5 +291,83 @@ LRG_AVAILABLE_IN_ALL
 void lrg_editor_viewport_panel_get_anim_overlay_counts (LrgEditorViewportPanel *self,
                                                         guint                  *n_bones,
                                                         guint                  *n_targets);
+
+/**
+ * lrg_editor_viewport_panel_set_physics_overlay:
+ * @self: an #LrgEditorViewportPanel
+ * @flags: what the Physics overlay draws (#LrgDynamicsDebugFlags), 0 for
+ *   nothing
+ *
+ * The "Physics" section of the overlays menu. While authoring the
+ * viewport paints every node's authored `physics:` block (and 2D
+ * `collider` descriptions): %LRG_DYNAMICS_DEBUG_SHAPES the shapes,
+ * %LRG_DYNAMICS_DEBUG_AABBS their bounds, %LRG_DYNAMICS_DEBUG_CONSTRAINTS
+ * the joints and %LRG_DYNAMICS_DEBUG_CENTER_OF_MASS the body origins.
+ * While a 3D level plays it draws the play world's physics through
+ * lrg_world3d_debug_draw_physics() with all the flags (contacts,
+ * sleeping, velocities, broadphase included) inside the 3D pass. The
+ * selected node's collider and joint gizmo is independent of this (the
+ * Gizmos overlay). A view setting, not saved. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_physics_overlay (LrgEditorViewportPanel *self,
+                                                    LrgDynamicsDebugFlags   flags);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_overlay:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the Physics overlay flags (#LrgDynamicsDebugFlags)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDynamicsDebugFlags lrg_editor_viewport_panel_get_physics_overlay (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_record_physics:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Records the play world's physics into the panel's debug draw batch
+ * (what the next 3D pass draws) with the Physics overlay flags. The
+ * render does this every frame; tests and tools call it to inspect the
+ * batch without a GPU.
+ *
+ * Returns: the number of primitives recorded (0 when not playing a 3D
+ *   level, without a physics world or with the overlay off)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_viewport_panel_record_physics (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_debug_draw:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: (transfer none): the debug draw batch the Physics overlay
+ *   records the play world into
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDebugDraw * lrg_editor_viewport_panel_get_physics_debug_draw (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_painted:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the shapes and joints the last overlay paint drew for the
+ *   authoring Physics overlay and the selected node's physics gizmo
+ *   (tests, tooling)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_viewport_panel_get_physics_painted (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_physics_handle:
+ * @self: an #LrgEditorViewportPanel
+ * @index: (out) (optional): the handle's shape or joint index
+ *
+ * Returns: the physics gizmo handle being dragged, else the hovered one,
+ *   else %LRG_EDITOR_PHYSICS_HANDLE_NONE
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEditorPhysicsHandle lrg_editor_viewport_panel_get_physics_handle (LrgEditorViewportPanel *self,
+                                                                     guint                  *index);
 
 G_END_DECLS

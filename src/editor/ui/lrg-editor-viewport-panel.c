@@ -82,6 +82,10 @@
 #include "../../world3d/lrg-entity3d.h"
 #include "../../world3d/components/lrg-animator-component3d.h"
 #include "../../world3d/components/lrg-skinned-model-component.h"
+#include "../../world3d/lrg-world3d.h"
+#include "../../world3d/lrg-world3d-renderer.h"
+#include "../../level/lrg-component-desc.h"
+#include "lrg-editor-physics-panel.h"
 #include <math.h>
 #include <string.h>
 
@@ -241,6 +245,21 @@ struct _LrgEditorViewportPanel
 	GHashTable          *rest_skeletons; /* abs model path -> LrgSkeleton (bind pose) */
 	guint                anim_bones;     /* painted by the last overlay pass */
 	guint                anim_targets;
+
+	/* Physics (0.9.0 M5): the selected node's collider / joint gizmo and
+	 * the Physics overlay */
+	LrgEditorPhysicsHandle phys_hot;      /* hovered handle */
+	guint                phys_hot_index;
+	LrgEditorPhysicsHandle phys_handle;   /* dragged handle, NONE when idle */
+	guint                phys_index;
+	LrgNode             *phys_node;       /* weak: the node being resized */
+	LrgNode             *phys_before;     /* owned: its state before the drag */
+	LrgDynamicsDebugFlags physics_flags;  /* the Physics overlay */
+	LrgDebugDraw        *phys_debug;      /* owned: the play world, recorded per frame */
+	gboolean             phys_draw_now;   /* set around this panel's render */
+	GObject             *phys_runtime;    /* the runtime renderer we hook */
+	gulong               phys_overlay_id;
+	guint                phys_painted;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorViewportPanel, lrg_editor_viewport_panel, LRG_TYPE_CONTAINER)
@@ -248,6 +267,11 @@ G_DEFINE_FINAL_TYPE (LrgEditorViewportPanel, lrg_editor_viewport_panel, LRG_TYPE
 static void sync_header (LrgEditorViewportPanel *self);
 static LrgNode *volume_node (LrgEditorViewportPanel *self);
 static void register_methods (LrgEditorApp *app);
+static void sync_anim_action (LrgEditorViewportPanel *self, const gchar *name, gboolean value);
+static LrgNode *physics_node (LrgEditorViewportPanel *self);
+static void physics_hook_runtime (LrgEditorViewportPanel *self);
+static guint paint_physics_tree (LrgPaintList *list, const LrgEditorView *view, LrgLevel *level, LrgNode *node,
+                                 LrgNode *skip, LrgDynamicsDebugFlags flags, gfloat ox, gfloat oy, gfloat scale);
 
 /* This panel's camera as an LrgEditorView (picking and gizmo math). */
 static void
@@ -310,8 +334,15 @@ render_scene (LrgViewport      *viewport,
 	active = is_active (self);
 	lrg_editor_view_state_set_viewport_size (self->app->view, (gint) self->index, width, height);
 	lrg_editor_scene_renderer_set_playing (self->app->renderer, lrg_editor_play_session_is_playing (self->app->play));
+
+	/* The play world's physics, drawn from the runtime renderer's
+	 * overlay hook inside this render's 3D pass */
+	physics_hook_runtime (self);
+	self->phys_draw_now = lrg_editor_viewport_panel_record_physics (self) > 0;
 	lrg_editor_scene_renderer_render (self->app->renderer, self->app->view, (gint) self->index,
 	                                  active ? self->app->nav : NULL, active, width, height);
+	self->phys_draw_now = FALSE;
+	lrg_debug_draw_end_frame (self->phys_debug);
 }
 
 /* The picture in picture: the scene through the selected camera node,
@@ -725,6 +756,36 @@ overlay_paint (LrgCustomWidget *widget,
 				lod = lrg_editor_scene_renderer_get_lod_group (app->renderer, lrg_node_visual_get_asset (visual));
 			if (lod != NULL)
 				lrg_editor_gizmo_paint_lod_bounds (list, theme, &view, primary, lod, ox, oy, scale);
+		}
+	}
+
+	/* Physics: every authored body (the Physics overlay, authoring only)
+	 * and the selected node's collider / joint gizmo with its handles */
+	self->phys_painted = 0;
+	{
+		LrgLevel *level = lrg_editor_get_level (app->editor);
+		LrgNode  *pnode = physics_node (self);
+
+		if (self->physics_flags != 0 && level != NULL && lrg_level_get_root (level) != NULL &&
+		    !lrg_editor_play_session_is_playing (app->play))
+			self->phys_painted += paint_physics_tree (list, &view, level, lrg_level_get_root (level), pnode,
+			                                          self->physics_flags, ox, oy, scale);
+		if (pnode != NULL)
+		{
+			LrgEditorPhysicsPanel *pp = lrg_editor_physics_panel_find (app);
+			LrgNodePhysics        *phys = lrg_node_get_physics (pnode);
+			gboolean               dragging = self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE;
+
+			lrg_editor_gizmo_paint_physics (list, theme, &view, level, pnode,
+			                                dragging ? self->phys_handle : self->phys_hot,
+			                                dragging ? self->phys_index : self->phys_hot_index,
+			                                (pp != NULL && lrg_editor_physics_panel_get_node (pp) == pnode)
+			                                ? lrg_editor_physics_panel_get_selected_shape (pp) : -1,
+			                                dragging, ox, oy, scale);
+			self->phys_painted += (phys != NULL ? lrg_node_physics_get_shapes (phys)->len +
+			                                      lrg_node_physics_get_joints (phys)->len : 0u) +
+			                      (lrg_node_find_component (pnode, "collider") != NULL && lrg_node_get_is_2d (pnode)
+			                       ? 1u : 0u);
 		}
 	}
 
@@ -1241,6 +1302,299 @@ volume_finish (LrgEditorViewportPanel *self,
 	mark_dirty (self);
 }
 
+/* ==========================================================================
+ * Physics gizmo drags (collider dimensions, joint anchors, 2D colliders)
+ * ========================================================================== */
+
+/* The node whose physics gizmo shows: the primary selection, unlocked,
+ * with the gizmos overlay on, outside tile painting and play. */
+static LrgNode *
+physics_node (LrgEditorViewportPanel *self)
+{
+	LrgEditorApp       *app = self->app;
+	LrgEditorSelection *sel;
+	LrgNode            *node;
+
+	if (app == NULL || lrg_editor_view_state_get_tile_mode (app->view) ||
+	    !(lrg_editor_view_state_get_overlays (app->view, (gint) self->index) & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) ||
+	    lrg_editor_play_session_is_playing (app->play))
+		return NULL;
+	sel = lrg_editor_get_selection (app->editor);
+	node = (sel != NULL) ? lrg_editor_selection_get_primary (sel) : NULL;
+	if (node == NULL || lrg_node_get_locked (node) || !lrg_editor_physics_has_gizmo (node))
+		return NULL;
+	return node;
+}
+
+static gboolean
+physics_press (LrgEditorViewportPanel *self,
+               gfloat                  u,
+               gfloat                  v)
+{
+	LrgNode               *node = physics_node (self);
+	LrgEditorView          view;
+	LrgEditorPhysicsHandle h;
+	guint                  index = 0;
+
+	if (node == NULL)
+		return FALSE;
+	current_view (self, &view);
+	h = lrg_editor_physics_hit_test (&view, node, u, v, &index);
+	if (h == LRG_EDITOR_PHYSICS_HANDLE_NONE)
+		return FALSE;
+	self->phys_handle = h;
+	self->phys_index = index;
+	self->phys_hot = h;
+	self->phys_hot_index = index;
+	g_set_weak_pointer (&self->phys_node, node);
+	g_clear_object (&self->phys_before);
+	self->phys_before = lrg_editor_snapshot_node (node);
+	/* the Physics panel follows the grabbed shape */
+	if (h != LRG_EDITOR_PHYSICS_HANDLE_ANCHOR && h < LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D &&
+	    lrg_editor_physics_panel_find (self->app) != NULL)
+		lrg_editor_physics_panel_set_selected_shape (lrg_editor_physics_panel_find (self->app), (gint) index);
+	mark_dirty (self);
+	return TRUE;
+}
+
+/* Writes the value under the pointer into the node, live. The snapshot
+ * taken at the press holds deep copies, so the live block can change in
+ * place until the release commits one step. */
+static void
+physics_drag (LrgEditorViewportPanel *self,
+              gfloat                  u,
+              gfloat                  v)
+{
+	LrgEditorView        view;
+	gfloat               value[3];
+	LrgNodePhysics      *phys;
+	LrgNodePhysicsShape *shape = NULL;
+	LrgNodePhysicsJoint *joint = NULL;
+	gint                 k;
+
+	if (self->phys_node == NULL || self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_NONE)
+		return;
+	current_view (self, &view);
+	if (!lrg_editor_physics_drag_value (&view, self->phys_node, self->phys_handle, self->phys_index, u, v, value))
+		return;
+	/* Ctrl snaps to centimetres (anchors to decimetres) */
+	if (self->mods & LRG_INPUT_MODIFIER_CTRL)
+		for (k = 0; k < 3; k++)
+			value[k] = (self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_ANCHOR) ? roundf (value[k] * 10.0f) / 10.0f
+			                                                                   : MAX (roundf (value[k] * 100.0f) / 100.0f, 0.01f);
+	phys = lrg_node_get_physics (self->phys_node);
+	if (phys != NULL && self->phys_index < lrg_node_physics_get_shapes (phys)->len)
+		shape = g_ptr_array_index (lrg_node_physics_get_shapes (phys), self->phys_index);
+	if (phys != NULL && self->phys_index < lrg_node_physics_get_joints (phys)->len)
+		joint = g_ptr_array_index (lrg_node_physics_get_joints (phys), self->phys_index);
+
+	switch (self->phys_handle)
+	{
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_X:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Y:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Z:
+		if (shape != NULL)
+		{
+			gfloat he[3];
+
+			lrg_node_physics_shape_get_half_extents (shape, he);
+			he[self->phys_handle - LRG_EDITOR_PHYSICS_HANDLE_HALF_X] = value[0];
+			lrg_node_physics_shape_set_half_extents (shape, he[0], he[1], he[2]);
+		}
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS:
+		if (shape != NULL)
+			lrg_node_physics_shape_set_radius (shape, value[0]);
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT:
+		if (shape != NULL)
+			lrg_node_physics_shape_set_half_height (shape, value[0]);
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_ANCHOR:
+		if (joint != NULL)
+			lrg_node_physics_joint_set_anchor (joint, value[0], value[1], value[2]);
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D:
+		{
+			LrgComponentDesc *desc = lrg_node_find_component (self->phys_node, "collider");
+
+			if (desc != NULL)
+				lrg_component_desc_set_double (desc, lrg_editor_physics_handle_get_field (self->phys_handle),
+				                               (gdouble) value[0]);
+		}
+		break;
+	case LRG_EDITOR_PHYSICS_HANDLE_NONE:
+	default:
+		break;
+	}
+	if (lrg_editor_get_level (self->app->editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->phys_node);
+	mark_dirty (self);
+}
+
+/* Ends the drag: one undo step, or the old state back on cancel. */
+static void
+physics_finish (LrgEditorViewportPanel *self,
+                gboolean                commit)
+{
+	if (self->phys_node != NULL && self->phys_before != NULL)
+	{
+		if (commit)
+		{
+			g_autofree gchar *label = g_strdup_printf ("Resize %s",
+			                                           lrg_editor_physics_handle_get_field (self->phys_handle));
+
+			lrg_editor_commit_node_state (self->app->editor, self->phys_node, self->phys_before, label, FALSE);
+		}
+		else
+		{
+			lrg_node_copy_state (self->phys_node, self->phys_before);
+			if (lrg_editor_get_level (self->app->editor) != NULL)
+				lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->phys_node);
+			editor_app_set_status (self->app, "Resize cancelled");
+		}
+	}
+	self->phys_handle = LRG_EDITOR_PHYSICS_HANDLE_NONE;
+	g_clear_weak_pointer (&self->phys_node);
+	g_clear_object (&self->phys_before);
+	mark_dirty (self);
+}
+
+/* Walks the level and paints every node's authored physics. */
+static guint
+paint_physics_tree (LrgPaintList        *list,
+                    const LrgEditorView *view,
+                    LrgLevel            *level,
+                    LrgNode             *node,
+                    LrgNode             *skip,
+                    LrgDynamicsDebugFlags flags,
+                    gfloat               ox,
+                    gfloat               oy,
+                    gfloat               scale)
+{
+	GPtrArray *kids = lrg_node_get_children (node);
+	guint      n = 0, i;
+
+	if (node != skip && lrg_node_get_visible (node) &&
+	    (lrg_node_get_physics (node) != NULL || lrg_node_find_component (node, "collider") != NULL))
+		n += lrg_editor_gizmo_paint_physics_shapes (list, view, level, node, flags, 0.55f, ox, oy, scale);
+	for (i = 0; kids != NULL && i < kids->len; i++)
+		n += paint_physics_tree (list, view, level, g_ptr_array_index (kids, i), skip, flags, ox, oy, scale);
+	return n;
+}
+
+/* The play world's physics -> the debug draw batch. */
+guint
+lrg_editor_viewport_panel_record_physics (LrgEditorViewportPanel *self)
+{
+	LrgWorld3D *world;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), 0);
+
+	lrg_debug_draw_clear (self->phys_debug);
+	if (self->app == NULL || self->physics_flags == 0 || !lrg_editor_play_session_is_playing (self->app->play))
+		return 0;
+	world = lrg_editor_play_session_get_world3d (self->app->play);
+	if (world == NULL || lrg_world3d_get_physics (world) == NULL)
+		return 0;
+	lrg_world3d_debug_draw_physics (world, self->phys_debug, self->physics_flags);
+	return lrg_debug_draw_get_count (self->phys_debug);
+}
+
+/* The runtime renderer's "draw-overlay" hook: inside the 3D pass of this
+ * panel's render, draw the recorded physics. */
+static void
+on_runtime_draw_overlay (GObject  *runtime,
+                         gpointer  view,
+                         gpointer  user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+
+	if (self->phys_draw_now)
+		lrg_debug_draw_draw_3d (self->phys_debug);
+}
+
+/* Hooks the shared runtime renderer once (it lives as long as the app's
+ * scene renderer). */
+static void
+physics_hook_runtime (LrgEditorViewportPanel *self)
+{
+	LrgWorld3DRenderer *runtime;
+
+	if (self->app == NULL || self->app->renderer == NULL)
+		return;
+	runtime = lrg_editor_scene_renderer_get_runtime_renderer (self->app->renderer);
+	if (runtime == NULL || G_OBJECT (runtime) == self->phys_runtime)
+		return;
+	if (self->phys_runtime != NULL)
+		g_clear_signal_handler (&self->phys_overlay_id, self->phys_runtime);
+	g_set_weak_pointer (&self->phys_runtime, G_OBJECT (runtime));
+	self->phys_overlay_id = g_signal_connect (runtime, "draw-overlay", G_CALLBACK (on_runtime_draw_overlay), self);
+}
+
+void
+lrg_editor_viewport_panel_set_physics_overlay (LrgEditorViewportPanel *self,
+                                               LrgDynamicsDebugFlags   flags)
+{
+	static const gchar * const nicks[] = {
+		"shapes", "aabbs", "contacts", "joints", "sleeping", "com", "velocity", "broadphase"
+	};
+	guint i;
+
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+
+	self->physics_flags = flags & LRG_DYNAMICS_DEBUG_ALL;
+	for (i = 0; i < G_N_ELEMENTS (nicks); i++)
+	{
+		g_autofree gchar *name = g_strconcat ("physics-", nicks[i], NULL);
+
+		sync_anim_action (self, name, (self->physics_flags & (1u << i)) != 0);
+	}
+	mark_dirty (self);
+	if (self->overlay != NULL)
+		lrg_widget_queue_layout (LRG_WIDGET (self->overlay));
+}
+
+LrgDynamicsDebugFlags
+lrg_editor_viewport_panel_get_physics_overlay (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), LRG_DYNAMICS_DEBUG_NONE);
+	return self->physics_flags;
+}
+
+LrgDebugDraw *
+lrg_editor_viewport_panel_get_physics_debug_draw (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), NULL);
+	return self->phys_debug;
+}
+
+guint
+lrg_editor_viewport_panel_get_physics_painted (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), 0);
+	return self->phys_painted;
+}
+
+LrgEditorPhysicsHandle
+lrg_editor_viewport_panel_get_physics_handle (LrgEditorViewportPanel *self,
+                                              guint                  *index)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), LRG_EDITOR_PHYSICS_HANDLE_NONE);
+
+	if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		if (index != NULL)
+			*index = self->phys_index;
+		return self->phys_handle;
+	}
+	if (index != NULL)
+		*index = self->phys_hot_index;
+	return self->phys_hot;
+}
+
 static void
 on_pointer_press (LrgViewport       *viewport,
                   gint               button,
@@ -1261,11 +1615,17 @@ on_pointer_press (LrgViewport       *viewport,
 	activate (self);
 	take_focus (self);
 
-	/* Any other button cancels a volume resize */
+	/* Any other button cancels a volume or collider resize */
 	if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
 	{
 		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
 			volume_finish (self, FALSE);
+		return;
+	}
+	if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
+			physics_finish (self, FALSE);
 		return;
 	}
 
@@ -1295,6 +1655,8 @@ on_pointer_press (LrgViewport       *viewport,
 	 * win over the transform gizmo at the centre */
 	if (volume_press (self, u, v))
 		return;
+	if (physics_press (self, u, v))
+		return;
 	current_view (self, &view);
 	if (lrg_editor_gizmo_begin_drag (app->gizmo, &view, u, v))
 		self->gizmo_drag = TRUE;
@@ -1320,7 +1682,8 @@ on_pointer_move (LrgViewport *viewport,
 	self->pointer_v = v;
 	self->hovered = TRUE;
 	idle = lrg_editor_viewport_nav_get_mode (app->nav) == LRG_EDITOR_NAV_MODE_NONE && !self->gizmo_drag &&
-	       !self->tile_drag && self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_NONE;
+	       !self->tile_drag && self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_NONE &&
+	       self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_NONE;
 
 	/* Hovering with no gesture running makes this the active viewport,
 	 * so shortcuts and the keyboard act where the pointer is */
@@ -1350,6 +1713,11 @@ on_pointer_move (LrgViewport *viewport,
 		volume_drag (self, u, v);
 		return;
 	}
+	if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		physics_drag (self, u, v);
+		return;
+	}
 	current_view (self, &view);
 	if (self->gizmo_drag)
 		lrg_editor_gizmo_drag (app->gizmo, &view, u, v, (self->mods & LRG_INPUT_MODIFIER_CTRL) != 0);
@@ -1363,6 +1731,19 @@ on_pointer_move (LrgViewport *viewport,
 		{
 			self->vol_hot = hot;
 			mark_dirty (self);
+		}
+		{
+			LrgNode               *pnode = physics_node (self);
+			guint                  pindex = 0;
+			LrgEditorPhysicsHandle phot = (pnode != NULL) ? lrg_editor_physics_hit_test (&view, pnode, u, v, &pindex)
+			                                              : LRG_EDITOR_PHYSICS_HANDLE_NONE;
+
+			if (phot != self->phys_hot || pindex != self->phys_hot_index)
+			{
+				self->phys_hot = phot;
+				self->phys_hot_index = pindex;
+				mark_dirty (self);
+			}
 		}
 		lrg_editor_gizmo_update_hover (app->gizmo, &view, u, v);
 	}
@@ -1401,6 +1782,12 @@ on_pointer_release (LrgViewport       *viewport,
 	{
 		volume_drag (self, u, v);
 		volume_finish (self, TRUE);
+		return;
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+	{
+		physics_drag (self, u, v);
+		physics_finish (self, TRUE);
 		return;
 	}
 	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->gizmo_drag)
@@ -1449,6 +1836,11 @@ on_key (LrgViewport       *viewport,
 		if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
 		{
 			volume_finish (self, FALSE);
+			return TRUE;
+		}
+		if (self->phys_handle != LRG_EDITOR_PHYSICS_HANDLE_NONE)
+		{
+			physics_finish (self, FALSE);
 			return TRUE;
 		}
 		if (self->gizmo_drag)
@@ -1901,6 +2293,18 @@ on_anim_overlay_action (GSimpleAction *action,
 		lrg_editor_viewport_panel_set_show_ik_targets (self, !self->show_ik);
 }
 
+/* vp.physics-<flag>: toggles one Physics overlay flag. */
+static void
+on_physics_overlay_action (GSimpleAction *action,
+                           GVariant      *parameter,
+                           gpointer       user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+	guint                   flag = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (action), "lrg-physics-flag"));
+
+	lrg_editor_viewport_panel_set_physics_overlay (self, self->physics_flags ^ flag);
+}
+
 static void
 open_overlay_menu (LrgEditorViewportPanel *self)
 {
@@ -1926,6 +2330,19 @@ open_overlay_menu (LrgEditorViewportPanel *self)
 			g_menu_append (anim, "Bones", "vp.anim-bones");
 			g_menu_append (anim, "IK Targets", "vp.anim-ik");
 			g_menu_append_section (menu, "Animation", G_MENU_MODEL (anim));
+		}
+		{
+			g_autoptr(GMenu) phys = g_menu_new ();
+
+			g_menu_append (phys, "Collision Shapes", "vp.physics-shapes");
+			g_menu_append (phys, "Joints", "vp.physics-joints");
+			g_menu_append (phys, "Bounding Boxes", "vp.physics-aabbs");
+			g_menu_append (phys, "Contacts (playing)", "vp.physics-contacts");
+			g_menu_append (phys, "Sleeping Bodies (playing)", "vp.physics-sleeping");
+			g_menu_append (phys, "Centres of Mass", "vp.physics-com");
+			g_menu_append (phys, "Velocities (playing)", "vp.physics-velocity");
+			g_menu_append (phys, "Broadphase Tree (playing)", "vp.physics-broadphase");
+			g_menu_append_section (menu, "Physics", G_MENU_MODEL (phys));
 		}
 		self->overlay_menu = g_object_ref_sink (lrg_menu_new_from_model (G_MENU_MODEL (menu)));
 	}
@@ -2290,6 +2707,23 @@ build_header (LrgEditorViewportPanel *self)
 		g_signal_connect (ik, "activate", G_CALLBACK (on_anim_overlay_action), self);
 		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (bones));
 		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (ik));
+	}
+	/* Physics overlay flags: one toggle per LrgDynamicsDebugFlags bit */
+	{
+		static const gchar * const nicks[] = {
+			"shapes", "aabbs", "contacts", "joints", "sleeping", "com", "velocity", "broadphase"
+		};
+
+		for (i = 0; i < G_N_ELEMENTS (nicks); i++)
+		{
+			g_autofree gchar         *aname = g_strconcat ("physics-", nicks[i], NULL);
+			g_autoptr(GSimpleAction)  action = g_simple_action_new_stateful (aname, NULL,
+			                                                                  g_variant_new_boolean (FALSE));
+
+			g_object_set_data (G_OBJECT (action), "lrg-physics-flag", GUINT_TO_POINTER (1u << i));
+			g_signal_connect (action, "activate", G_CALLBACK (on_physics_overlay_action), self);
+			g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (action));
+		}
 	}
 	lrg_widget_insert_action_group (LRG_WIDGET (self), "vp", G_ACTION_GROUP (self->actions));
 }
@@ -2738,6 +3172,10 @@ lrg_editor_viewport_panel_dispose (GObject *object)
 		lrg_menu_close (self->overlay_menu);
 	g_clear_object (&self->overlay_menu);
 	g_clear_weak_pointer (&self->vol_node);
+	g_clear_weak_pointer (&self->phys_node);
+	if (self->phys_runtime != NULL)
+		g_clear_signal_handler (&self->phys_overlay_id, self->phys_runtime);
+	g_clear_weak_pointer (&self->phys_runtime);
 	g_clear_object (&self->layers_menu);
 	g_clear_object (&self->actions);
 	self->drop = NULL;   /* owned by the widget */
@@ -2755,6 +3193,8 @@ lrg_editor_viewport_panel_finalize (GObject *object)
 	g_clear_pointer (&self->rest_skeletons, g_hash_table_unref);
 	g_clear_pointer (&self->drop_label, g_free);
 	g_clear_object (&self->vol_before);
+	g_clear_object (&self->phys_before);
+	g_clear_object (&self->phys_debug);
 
 	G_OBJECT_CLASS (lrg_editor_viewport_panel_parent_class)->finalize (object);
 }
@@ -2786,6 +3226,7 @@ lrg_editor_viewport_panel_init (LrgEditorViewportPanel *self)
 	self->missing_dirty = TRUE;
 	self->cull_mask = LRG_RENDER_LAYERS_MASK_ALL;
 	self->show_ik = TRUE;
+	self->phys_debug = lrg_debug_draw_new ();
 	lrg_spring_init (&self->active_spring, 0.0f, LRG_MOTION_SMOOTH);
 }
 
@@ -2981,6 +3422,118 @@ m_view_render_mode (LrgEditorServer  *server,
 	return vp_obj_node (o);
 }
 
+/* physics.overlay {viewport?, flags?, enable?, disable?} -> {flags} */
+static const gchar * const physics_flag_nicks[] = {
+	"shapes", "aabbs", "contacts", "joints", "sleeping", "com", "velocity", "broadphase"
+};
+
+static gboolean
+physics_flags_from_json (JsonArray              *array,
+                         LrgDynamicsDebugFlags  *out,
+                         GError                **error)
+{
+	guint i, k;
+
+	*out = 0;
+	for (i = 0; array != NULL && i < json_array_get_length (array); i++)
+	{
+		const gchar *nick = json_array_get_string_element (array, i);
+		gboolean     found = FALSE;
+
+		if (g_strcmp0 (nick, "all") == 0)
+		{
+			*out = LRG_DYNAMICS_DEBUG_ALL;
+			continue;
+		}
+		if (g_strcmp0 (nick, "none") == 0)
+			continue;
+		for (k = 0; k < G_N_ELEMENTS (physics_flag_nicks); k++)
+			if (g_strcmp0 (nick, physics_flag_nicks[k]) == 0 ||
+			    (k == 3 && g_strcmp0 (nick, "constraints") == 0) ||
+			    (k == 5 && g_strcmp0 (nick, "center-of-mass") == 0))
+			{
+				*out |= (1u << k);
+				found = TRUE;
+			}
+		if (!found)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown physics overlay flag '%s' (shapes, aabbs, contacts, joints, sleeping, com, "
+			             "velocity, broadphase, all, none)", nick != NULL ? nick : "(not a string)");
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+static JsonNode *
+m_physics_overlay (LrgEditorServer  *server,
+                   JsonObject       *params,
+                   gpointer          user_data,
+                   GError          **error)
+{
+	LrgEditorApp           *app = LRG_EDITOR_APP (user_data);
+	LrgEditorViewportPanel *panels[LRG_EDITOR_VIEW_MAX_VIEWPORTS];
+	LrgEditorViewportPanel *first = NULL;
+	guint                   n = 0, i;
+	JsonObject             *o;
+	JsonArray              *a;
+	JsonNode               *result;
+
+	/* The panels addressed: one viewport, or all of them */
+	for (i = 0; i < LRG_EDITOR_VIEW_MAX_VIEWPORTS; i++)
+	{
+		LrgEditorViewportPanel *p = (app->viewport_split != NULL)
+		                            ? lrg_editor_viewport_split_get_panel (app->viewport_split, i)
+		                            : (i == 0 ? app->viewport_panel : NULL);
+
+		if (p == NULL)
+			continue;
+		if (params != NULL && json_object_has_member (params, "viewport") &&
+		    json_object_get_int_member (params, "viewport") != (gint64) i)
+			continue;
+		panels[n++] = p;
+	}
+	if (n == 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No such viewport");
+		return NULL;
+	}
+	first = panels[0];
+
+	/* flags replaces; enable / disable change bits */
+	if (params != NULL && (json_object_has_member (params, "flags") || json_object_has_member (params, "enable") ||
+	                       json_object_has_member (params, "disable")))
+	{
+		LrgDynamicsDebugFlags set = 0, on = 0, off = 0;
+		gboolean              replace = json_object_has_member (params, "flags");
+
+		if ((replace && !physics_flags_from_json (json_object_get_array_member (params, "flags"), &set, error)) ||
+		    (json_object_has_member (params, "enable") &&
+		     !physics_flags_from_json (json_object_get_array_member (params, "enable"), &on, error)) ||
+		    (json_object_has_member (params, "disable") &&
+		     !physics_flags_from_json (json_object_get_array_member (params, "disable"), &off, error)))
+			return NULL;
+		for (i = 0; i < n; i++)
+		{
+			LrgDynamicsDebugFlags f = replace ? set : lrg_editor_viewport_panel_get_physics_overlay (panels[i]);
+
+			lrg_editor_viewport_panel_set_physics_overlay (panels[i], (f | on) & ~off);
+		}
+	}
+
+	o = json_object_new ();
+	a = json_array_new ();
+	for (i = 0; i < G_N_ELEMENTS (physics_flag_nicks); i++)
+		if (lrg_editor_viewport_panel_get_physics_overlay (first) & (1u << i))
+			json_array_add_string_element (a, physics_flag_nicks[i]);
+	json_object_set_array_member (o, "flags", a);
+	json_object_set_int_member (o, "recorded", lrg_editor_viewport_panel_record_physics (first));
+	result = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (result, o);
+	return result;
+}
+
 static void
 register_methods (LrgEditorApp *app)
 {
@@ -2988,6 +3541,7 @@ register_methods (LrgEditorApp *app)
 		return;
 	lrg_editor_server_register_method (app->server, "view.layers", m_view_layers, app, NULL);
 	lrg_editor_server_register_method (app->server, "view.render_mode", m_view_render_mode, app, NULL);
+	lrg_editor_server_register_method (app->server, "physics.overlay", m_physics_overlay, app, NULL);
 }
 
 LrgEditorViewportPanel *

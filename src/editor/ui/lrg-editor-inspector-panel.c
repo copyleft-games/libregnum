@@ -1502,6 +1502,12 @@ struct _LrgEditorInspectorPanel
 	LrgButton            *new_script;
 	LrgButton            *attach_script;
 
+	/* Physics summary (0.9.0 M5): one line about the node's body, a
+	 * button to the Physics panel */
+	LrgExpander          *phys_section;
+	LrgLabel             *phys_summary;
+	LrgButton            *phys_add;
+
 	/* LOD preview (0.9.0): mesh-asset nodes whose model has LOD levels */
 	LrgExpander          *lod_section;
 	LrgWidget            *lod_levels;   /* custom: screen-size meter and level rows */
@@ -3446,6 +3452,115 @@ build_lod_section (LrgEditorInspectorPanel *self)
 }
 
 /* ==========================================================================
+ * Physics summary (0.9.0 M5)
+ *
+ * For one inspected node (not while a live object is inspected): a short
+ * summary of its `physics:` block ("Dynamic body, 20 kg, layer debris /
+ * 2 shapes: box, sphere (trigger) / 1 joint: hinge") with "Edit in
+ * Physics Panel", or "No physics body" with "Add Body". The full editor is
+ * the Physics panel (lrg-editor-physics-panel.c); both buttons go through
+ * its actions, so the inspector does not depend on the panel being
+ * docked.
+ * ========================================================================== */
+
+static gchar *
+physics_summary (LrgNode *node)
+{
+	LrgNodePhysics       *phys = lrg_node_get_physics (node);
+	GString              *s;
+	g_autoptr(GEnumClass) kinds = NULL;
+	g_autoptr(GEnumClass) shape_kinds = NULL;
+	g_autoptr(GEnumClass) joint_kinds = NULL;
+	GPtrArray            *shapes, *joints;
+	guint                 i;
+
+	if (phys == NULL)
+		return g_strdup ("No physics body");
+	kinds = g_type_class_ref (LRG_TYPE_DYNAMICS_BODY_KIND);
+	shape_kinds = g_type_class_ref (LRG_TYPE_COLLIDER3D_KIND);
+	joint_kinds = g_type_class_ref (LRG_TYPE_JOINT_KIND);
+	s = g_string_new (NULL);
+	g_string_append_printf (s, "%s body", g_enum_get_value (kinds, (gint) lrg_node_physics_get_body_kind (phys))->value_nick);
+	if (lrg_node_physics_get_body_kind (phys) == LRG_DYNAMICS_BODY_DYNAMIC)
+		g_string_append_printf (s, ", %.3g kg", (gdouble) lrg_node_physics_get_mass (phys));
+	if (lrg_node_physics_get_layer (phys) != NULL)
+		g_string_append_printf (s, ", layer %s", lrg_node_physics_get_layer (phys));
+	shapes = lrg_node_physics_get_shapes (phys);
+	g_string_append_printf (s, "\n%u shape%s", shapes->len, shapes->len == 1 ? "" : "s");
+	for (i = 0; i < shapes->len; i++)
+	{
+		LrgNodePhysicsShape *shape = g_ptr_array_index (shapes, i);
+
+		g_string_append_printf (s, "%s%s%s", i == 0 ? ": " : ", ",
+		                        g_enum_get_value (shape_kinds, (gint) lrg_node_physics_shape_get_kind (shape))->value_nick,
+		                        lrg_node_physics_shape_get_trigger (shape) ? " (trigger)" : "");
+	}
+	joints = lrg_node_physics_get_joints (phys);
+	if (joints->len > 0)
+	{
+		g_string_append_printf (s, "\n%u joint%s", joints->len, joints->len == 1 ? "" : "s");
+		for (i = 0; i < joints->len; i++)
+			g_string_append_printf (s, "%s%s", i == 0 ? ": " : ", ",
+			                        g_enum_get_value (joint_kinds, (gint) lrg_node_physics_joint_get_kind (
+			                                              g_ptr_array_index (joints, i)))->value_nick);
+	}
+	return g_string_free (s, FALSE);
+}
+
+/* Shows / updates the Physics section for what is inspected now. */
+static void
+update_physics (LrgEditorInspectorPanel *self)
+{
+	LrgNode          *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	g_autofree gchar *text = NULL;
+	gboolean          show = node != NULL && self->live_object == NULL && !lrg_node_get_is_2d (node);
+
+	lrg_widget_set_visible (LRG_WIDGET (self->phys_section), show);
+	if (!show)
+		return;
+	text = physics_summary (node);
+	lrg_label_set_text (self->phys_summary, text);
+	lrg_button_set_text (self->phys_add, lrg_node_get_physics (node) != NULL ? "Edit in Physics Panel" : "Add Body");
+}
+
+static void
+on_physics_button (LrgButton *button,
+                   gpointer   user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	LrgNode                 *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	LrgEditorActions        *actions;
+
+	if (self->app == NULL || node == NULL)
+		return;
+	actions = lrg_editor_app_get_actions (self->app);
+	if (lrg_node_get_physics (node) == NULL && lrg_editor_actions_has (actions, "physics.add-body"))
+		lrg_editor_actions_activate (actions, "physics.add-body");
+	if (lrg_editor_actions_has (actions, "physics.show"))
+		lrg_editor_actions_activate (actions, "physics.show");
+	update_physics (self);
+}
+
+static LrgExpander *
+build_physics_section (LrgEditorInspectorPanel *self)
+{
+	LrgVBox     *box = lrg_vbox_new ();
+	LrgExpander *section;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	self->phys_summary = add_owned (box, lrg_label_new (""));
+	lrg_widget_set_name (LRG_WIDGET (self->phys_summary), "inspector-physics-summary");
+	lrg_widget_add_class (LRG_WIDGET (self->phys_summary), "dim");
+	self->phys_add = add_owned (box, make_button ("Add Body", "inspector-physics-open", NULL,
+	                                              G_CALLBACK (on_physics_button), self));
+	lrg_widget_set_halign (LRG_WIDGET (self->phys_add), LRG_ALIGN_START);
+	section = make_section ("inspector-section-physics", "Physics", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	return section;
+}
+
+/* ==========================================================================
  * Animator (0.9.0)
  *
  * For one inspected node with an `animator3d` component (or the live
@@ -4021,6 +4136,7 @@ refresh_all (LrgEditorInspectorPanel *self)
 		update_script_rows (self);
 	self->prefab_rows = prefab;
 	update_lod (self);
+	update_physics (self);
 	update_animator (self);
 
 	/* 3. Chrome */
@@ -4088,6 +4204,7 @@ on_editor_changed (LrgEditor *editor,
 		return;
 	}
 	update_title (self, self->live_object);
+	update_physics (self);
 
 	/* A grid rebuilds its own rows when a source's schema changes (a new
 	 * visual kind): give new rows of prefab instances their menus */
@@ -4558,6 +4675,9 @@ build_body (LrgEditorInspectorPanel *self)
 		                                                         LRG_WIDGET (self->grids[i])));
 		g_object_unref (self->grids[i]);
 	}
+
+	/* Physics summary, linking to the Physics panel */
+	self->phys_section = add_owned (self->body, build_physics_section (self));
 
 	/* LOD preview, shown for mesh assets with levels */
 	self->lod_section = add_owned (self->body, build_lod_section (self));

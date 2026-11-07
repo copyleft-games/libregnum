@@ -30,6 +30,8 @@
 #include "../lrg-node.h"
 #include "../lrg-node-visual.h"
 #include "../lrg-node-tilemap.h"
+#include "../../level/lrg-level.h"
+#include "../../level/lrg-component-desc.h"
 #include "../../paint/lrg-paint-fx.h"
 #include <math.h>
 #include <string.h>
@@ -1628,4 +1630,1203 @@ lrg_editor_gizmo_paint_lod_bounds (LrgPaintList        *list,
 		                        lrg_lod_group_get_level_triangle_count (group, (guint) level), (gdouble) size * 100.0,
 		                        (gdouble) lrg_lod_group_get_level_screen_size (group, (guint) level) * 100.0);
 	lrg_editor_gizmo_paint_chip (list, theme, text, cx - rpx, cy + rpx + 6.0f, FALSE, &ring);
+}
+
+/* ==========================================================================
+ * Physics gizmos (0.9.0 M5)
+ *
+ * The authored `physics:` block of a node (LrgNodePhysics) drawn the way
+ * the runtime builds it: the collider frame is the node's world position
+ * and rotation (no scale), then the shape offset multiplied by the node's
+ * world scale, then the shape rotation; dimensions are multiplied by the
+ * scale (spheres by the largest axis, capsule and cylinder radii by the
+ * larger of X and Z), exactly like lrg_collider_component3d_build_shape().
+ *
+ * Every outline is produced once as world-space segments by emit_*()
+ * through a SegSink; painting maps them through the view, the AABB
+ * overlay accumulates them, so what is drawn, what is boxed and where the
+ * handles sit all come from the same geometry.  2D levels describe
+ * colliders as a `collider` component (shape box|circle, width, height,
+ * radius, offset_x, offset_y in node units) on the node's XY plane.
+ * ========================================================================== */
+
+#define PHYS_SEGMENTS (32)
+#define PHYS_MIN_DIM  (0.01f)
+
+GType
+lrg_editor_physics_handle_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_EDITOR_PHYSICS_HANDLE_NONE, "LRG_EDITOR_PHYSICS_HANDLE_NONE", "none" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_HALF_X, "LRG_EDITOR_PHYSICS_HANDLE_HALF_X", "half-x" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_HALF_Y, "LRG_EDITOR_PHYSICS_HANDLE_HALF_Y", "half-y" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_HALF_Z, "LRG_EDITOR_PHYSICS_HANDLE_HALF_Z", "half-z" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_RADIUS, "LRG_EDITOR_PHYSICS_HANDLE_RADIUS", "radius" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT, "LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT", "half-height" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_ANCHOR, "LRG_EDITOR_PHYSICS_HANDLE_ANCHOR", "anchor" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D, "LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D", "width-2d" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D, "LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D", "height-2d" },
+			{ LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D, "LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D", "radius-2d" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgEditorPhysicsHandle"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+const gchar *
+lrg_editor_physics_handle_get_field (LrgEditorPhysicsHandle handle)
+{
+	static const gchar * const fields[] = {
+		NULL, "half-extent-x", "half-extent-y", "half-extent-z", "radius", "half-height", "anchor",
+		"width", "height", "radius"
+	};
+
+	if ((guint) handle >= G_N_ELEMENTS (fields))
+		return NULL;
+	return fields[handle];
+}
+
+/* --- the authored data --- */
+
+static LrgNodePhysicsShape *
+phys_shape (LrgNode *node,
+            guint    index)
+{
+	LrgNodePhysics *phys = lrg_node_get_physics (node);
+	GPtrArray      *shapes = (phys != NULL) ? lrg_node_physics_get_shapes (phys) : NULL;
+
+	return (shapes != NULL && index < shapes->len) ? g_ptr_array_index (shapes, index) : NULL;
+}
+
+static LrgNodePhysicsJoint *
+phys_joint (LrgNode *node,
+            guint    index)
+{
+	LrgNodePhysics *phys = lrg_node_get_physics (node);
+	GPtrArray      *joints = (phys != NULL) ? lrg_node_physics_get_joints (phys) : NULL;
+
+	return (joints != NULL && index < joints->len) ? g_ptr_array_index (joints, index) : NULL;
+}
+
+/* The node's 2D `collider` component description, or NULL. */
+static LrgComponentDesc *
+collider_2d (LrgNode *node)
+{
+	if (node == NULL || !lrg_node_get_is_2d (node))
+		return NULL;
+	return lrg_node_find_component (node, "collider");
+}
+
+/* A number from a component description (ints and floats both). */
+static gfloat
+desc_number (LrgComponentDesc *desc,
+             const gchar      *key,
+             gfloat            fallback)
+{
+	const GValue  *v = lrg_component_desc_get_value (desc, key);
+	g_auto(GValue) d = G_VALUE_INIT;
+
+	if (v == NULL)
+		return fallback;
+	g_value_init (&d, G_TYPE_DOUBLE);
+	if (!g_value_type_transformable (G_VALUE_TYPE (v), G_TYPE_DOUBLE) || !g_value_transform (v, &d))
+		return fallback;
+	return (gfloat) g_value_get_double (&d);
+}
+
+static gboolean
+collider_2d_is_circle (LrgComponentDesc *desc)
+{
+	const GValue *v = lrg_component_desc_get_value (desc, "shape");
+
+	return v != NULL && G_VALUE_HOLDS_STRING (v) && g_strcmp0 (g_value_get_string (v), "circle") == 0;
+}
+
+gboolean
+lrg_editor_physics_has_gizmo (LrgNode *node)
+{
+	LrgNodePhysics *phys;
+
+	g_return_val_if_fail (node == NULL || LRG_IS_NODE (node), FALSE);
+
+	if (node == NULL)
+		return FALSE;
+	if (collider_2d (node) != NULL)
+		return TRUE;
+	phys = lrg_node_get_physics (node);
+	return phys != NULL &&
+	       (lrg_node_physics_get_shapes (phys)->len > 0 || lrg_node_physics_get_joints (phys)->len > 0);
+}
+
+/* --- frames --- */
+
+/* The node's world matrix split into an unscaled pose and the scale. */
+static void
+node_pose (LrgNode *node,
+           gfloat  *pose,
+           gfloat  *scale)
+{
+	gfloat       world[16], loc[3], rot[3], scl[3];
+	const gfloat one[3] = { 1.0f, 1.0f, 1.0f };
+
+	lrg_editor_node_get_world_matrix (node, world);
+	if (!lrg_editor_math_decompose (world, loc, rot, scl))
+	{
+		memcpy (pose, world, sizeof (gfloat) * 16);
+		scale[0] = scale[1] = scale[2] = 1.0f;
+		return;
+	}
+	lrg_editor_math_compose (loc, rot, one, pose);
+	scale[0] = fabsf (scl[0]);
+	scale[1] = fabsf (scl[1]);
+	scale[2] = fabsf (scl[2]);
+}
+
+gboolean
+lrg_editor_physics_get_shape_frame (LrgNode *node,
+                                    guint    index,
+                                    gfloat  *out_matrix,
+                                    gfloat  *out_scale)
+{
+	LrgNodePhysicsShape *shape;
+	gfloat               pose[16], local[16], scale[3], off[3], rot[3];
+	const gfloat         one[3] = { 1.0f, 1.0f, 1.0f };
+	gint                 k;
+
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+	g_return_val_if_fail (out_matrix != NULL, FALSE);
+
+	shape = phys_shape (node, index);
+	if (shape == NULL)
+		return FALSE;
+	node_pose (node, pose, scale);
+	lrg_node_physics_shape_get_offset (shape, off);
+	lrg_node_physics_shape_get_rotation (shape, rot);
+	for (k = 0; k < 3; k++)
+	{
+		off[k] *= scale[k];
+		rot[k] *= (gfloat) (G_PI / 180.0);
+	}
+	lrg_editor_math_compose (off, rot, one, local);
+	lrg_editor_math_multiply (pose, local, out_matrix);
+	if (out_scale != NULL)
+		memcpy (out_scale, scale, sizeof (gfloat) * 3);
+	return TRUE;
+}
+
+/* A shape in world terms: frame origin, unit axes, scaled dimensions. */
+typedef struct
+{
+	LrgCollider3DKind kind;
+	gfloat            origin[3];
+	gfloat            axes[3][3];
+	gfloat            half[3];     /* box */
+	gfloat            radius;
+	gfloat            half_height;
+	gfloat            scale[3];    /* the node's world scale */
+	gboolean          trigger;
+} PhysShape;
+
+static gboolean
+phys_shape_get (LrgNode   *node,
+                guint      index,
+                PhysShape *ps)
+{
+	LrgNodePhysicsShape *shape = phys_shape (node, index);
+	gfloat               m[16], he[3], radial;
+	gint                 k;
+
+	if (shape == NULL || !lrg_editor_physics_get_shape_frame (node, index, m, ps->scale))
+		return FALSE;
+	ps->kind = lrg_node_physics_shape_get_kind (shape);
+	ps->trigger = lrg_node_physics_shape_get_trigger (shape);
+	for (k = 0; k < 3; k++)
+	{
+		ps->origin[k] = m[12 + k];
+		ps->axes[k][0] = m[k * 4];
+		ps->axes[k][1] = m[k * 4 + 1];
+		ps->axes[k][2] = m[k * 4 + 2];
+		v3_normalize (ps->axes[k]);
+	}
+	lrg_node_physics_shape_get_half_extents (shape, he);
+	for (k = 0; k < 3; k++)
+		ps->half[k] = he[k] * ps->scale[k];
+	radial = MAX (ps->scale[0], ps->scale[2]);
+	if (ps->kind == LRG_COLLIDER3D_SPHERE)
+		ps->radius = lrg_node_physics_shape_get_radius (shape) * MAX (radial, ps->scale[1]);
+	else
+		ps->radius = lrg_node_physics_shape_get_radius (shape) * radial;
+	ps->half_height = lrg_node_physics_shape_get_half_height (shape) * ps->scale[1];
+	return TRUE;
+}
+
+/* The 2D collider in world terms: centre, unit X / Y axes with the length
+ * of one local unit, and its local dimensions. */
+typedef struct
+{
+	gboolean circle;
+	gfloat   center[3];
+	gfloat   axes[2][3];
+	gfloat   axis_len[2];
+	gfloat   width;
+	gfloat   height;
+	gfloat   radius;
+} Phys2D;
+
+static gboolean
+phys_2d_get (LrgNode *node,
+             Phys2D  *p)
+{
+	LrgComponentDesc *desc = collider_2d (node);
+	gfloat            world[16], local[3];
+	gint              k;
+
+	if (desc == NULL)
+		return FALSE;
+	lrg_editor_node_get_world_matrix (node, world);
+	p->circle = collider_2d_is_circle (desc);
+	p->width = MAX (desc_number (desc, "width", 1.0f), PHYS_MIN_DIM);
+	p->height = MAX (desc_number (desc, "height", 1.0f), PHYS_MIN_DIM);
+	p->radius = MAX (desc_number (desc, "radius", 0.5f), PHYS_MIN_DIM);
+	local[0] = desc_number (desc, "offset_x", 0.0f);
+	local[1] = desc_number (desc, "offset_y", 0.0f);
+	local[2] = 0.0f;
+	lrg_editor_math_transform_point (world, local, p->center);
+	for (k = 0; k < 2; k++)
+	{
+		p->axes[k][0] = world[k * 4];
+		p->axes[k][1] = world[k * 4 + 1];
+		p->axes[k][2] = world[k * 4 + 2];
+		p->axis_len[k] = MAX (v3_normalize (p->axes[k]), 1e-6f);
+	}
+	return TRUE;
+}
+
+/* --- segments --- */
+
+typedef void (*SegFunc) (const gfloat *a, const gfloat *b, gboolean faint, gpointer data);
+
+static void
+emit_circle (SegFunc       f,
+             gpointer      data,
+             const gfloat *c,
+             const gfloat *u,
+             const gfloat *w,
+             gfloat        r,
+             gfloat        a0,
+             gfloat        a1,
+             gboolean      faint)
+{
+	gfloat prev[3];
+	gint   s;
+
+	for (s = 0; s <= PHYS_SEGMENTS; s++)
+	{
+		gfloat a = a0 + (a1 - a0) * (gfloat) s / (gfloat) PHYS_SEGMENTS;
+		gfloat p[3];
+		gint   k;
+
+		for (k = 0; k < 3; k++)
+			p[k] = c[k] + (u[k] * cosf (a) + w[k] * sinf (a)) * r;
+		if (s > 0)
+			f (prev, p, faint, data);
+		memcpy (prev, p, sizeof prev);
+	}
+}
+
+static void
+emit_box (SegFunc       f,
+          gpointer      data,
+          const gfloat *c,
+          gfloat        axes[3][3],
+          const gfloat *half,
+          gboolean      faint)
+{
+	gfloat corner[8][3];
+	gint   i, k, e;
+
+	for (i = 0; i < 8; i++)
+		for (k = 0; k < 3; k++)
+			corner[i][k] = c[k] + axes[0][k] * half[0] * ((i & 1) ? 1.0f : -1.0f) +
+			               axes[1][k] * half[1] * ((i & 2) ? 1.0f : -1.0f) +
+			               axes[2][k] * half[2] * ((i & 4) ? 1.0f : -1.0f);
+	for (i = 0; i < 8; i++)
+		for (e = 0; e < 3; e++)
+			if (!(i & (1 << e)))
+				f (corner[i], corner[i | (1 << e)], faint, data);
+}
+
+/* The outline of shape @index of @node; FALSE without that shape. */
+static gboolean
+emit_shape (LrgNode  *node,
+            guint     index,
+            SegFunc   f,
+            gpointer  data)
+{
+	PhysShape ps;
+	gfloat    top[3], bottom[3], a[3], b[3];
+	gfloat   *x, *y, *z;
+	gint      i, k;
+
+	if (!phys_shape_get (node, index, &ps))
+		return FALSE;
+	x = ps.axes[0];
+	y = ps.axes[1];
+	z = ps.axes[2];
+
+	switch (ps.kind)
+	{
+	case LRG_COLLIDER3D_BOX:
+		emit_box (f, data, ps.origin, ps.axes, ps.half, FALSE);
+		break;
+	case LRG_COLLIDER3D_SPHERE:
+		emit_circle (f, data, ps.origin, x, z, ps.radius, 0.0f, 2.0f * (gfloat) G_PI, FALSE);
+		emit_circle (f, data, ps.origin, x, y, ps.radius, 0.0f, 2.0f * (gfloat) G_PI, FALSE);
+		emit_circle (f, data, ps.origin, z, y, ps.radius, 0.0f, 2.0f * (gfloat) G_PI, TRUE);
+		break;
+	case LRG_COLLIDER3D_CAPSULE:
+	case LRG_COLLIDER3D_CYLINDER:
+		v3_mad (ps.origin, y, ps.half_height, top);
+		v3_mad (ps.origin, y, -ps.half_height, bottom);
+		emit_circle (f, data, top, x, z, ps.radius, 0.0f, 2.0f * (gfloat) G_PI, FALSE);
+		emit_circle (f, data, bottom, x, z, ps.radius, 0.0f, 2.0f * (gfloat) G_PI, FALSE);
+		for (i = 0; i < 4; i++)
+		{
+			gfloat ang = (gfloat) i * 0.5f * (gfloat) G_PI;
+
+			for (k = 0; k < 3; k++)
+			{
+				gfloat d = (x[k] * cosf (ang) + z[k] * sinf (ang)) * ps.radius;
+
+				a[k] = top[k] + d;
+				b[k] = bottom[k] + d;
+			}
+			f (a, b, FALSE, data);
+		}
+		if (ps.kind == LRG_COLLIDER3D_CAPSULE)
+		{
+			/* half circles over each cap, in the XY and ZY planes */
+			emit_circle (f, data, top, x, y, ps.radius, 0.0f, (gfloat) G_PI, FALSE);
+			emit_circle (f, data, top, z, y, ps.radius, 0.0f, (gfloat) G_PI, FALSE);
+			emit_circle (f, data, bottom, x, y, ps.radius, (gfloat) G_PI, 2.0f * (gfloat) G_PI, FALSE);
+			emit_circle (f, data, bottom, z, y, ps.radius, (gfloat) G_PI, 2.0f * (gfloat) G_PI, FALSE);
+		}
+		break;
+	case LRG_COLLIDER3D_PLANE:
+		{
+			/* a 4 m square on the collider's XZ plane and its +Y normal */
+			const gfloat half[3] = { 2.0f, 0.0f, 2.0f };
+			gfloat       c[4][3];
+
+			for (i = 0; i < 4; i++)
+				for (k = 0; k < 3; k++)
+					c[i][k] = ps.origin[k] + x[k] * half[0] * ((i == 0 || i == 3) ? -1.0f : 1.0f) +
+					          z[k] * half[2] * ((i < 2) ? -1.0f : 1.0f);
+			for (i = 0; i < 4; i++)
+				f (c[i], c[(i + 1) % 4], FALSE, data);
+			f (c[0], c[2], TRUE, data);
+			f (c[1], c[3], TRUE, data);
+			v3_mad (ps.origin, y, 0.75f, a);
+			f (ps.origin, a, FALSE, data);
+		}
+		break;
+	case LRG_COLLIDER3D_CONVEX:
+	case LRG_COLLIDER3D_MESH:
+	default:
+		{
+			/* the node's own geometry: its bounds, faint */
+			gfloat world[16], mn[3], mx[3], mid[3], axes[3][3], half[3];
+
+			lrg_editor_node_get_world_matrix (node, world);
+			lrg_editor_node_get_local_bounds (node, mn, mx);
+			for (k = 0; k < 3; k++)
+				mid[k] = (mn[k] + mx[k]) * 0.5f;
+			lrg_editor_math_transform_point (world, mid, a);
+			for (k = 0; k < 3; k++)
+			{
+				gfloat len;
+
+				axes[k][0] = world[k * 4];
+				axes[k][1] = world[k * 4 + 1];
+				axes[k][2] = world[k * 4 + 2];
+				len = v3_normalize (axes[k]);
+				half[k] = (mx[k] - mn[k]) * 0.5f * len;
+			}
+			emit_box (f, data, a, axes, half, TRUE);
+		}
+		break;
+	}
+	return TRUE;
+}
+
+/* The outline of the 2D collider. */
+static gboolean
+emit_2d (LrgNode  *node,
+         SegFunc   f,
+         gpointer  data)
+{
+	Phys2D p;
+	gfloat u[3], w[3];
+	gint   k;
+
+	if (!phys_2d_get (node, &p))
+		return FALSE;
+	for (k = 0; k < 3; k++)
+	{
+		u[k] = p.axes[0][k] * p.axis_len[0];
+		w[k] = p.axes[1][k] * p.axis_len[1];
+	}
+	if (p.circle)
+		emit_circle (f, data, p.center, u, w, p.radius, 0.0f, 2.0f * (gfloat) G_PI, FALSE);
+	else
+	{
+		gfloat axes[3][3], half[3];
+
+		memcpy (axes[0], p.axes[0], sizeof axes[0]);
+		memcpy (axes[1], p.axes[1], sizeof axes[1]);
+		v3_cross (p.axes[0], p.axes[1], axes[2]);
+		v3_normalize (axes[2]);
+		half[0] = p.width * 0.5f * p.axis_len[0];
+		half[1] = p.height * 0.5f * p.axis_len[1];
+		half[2] = 0.0f;
+		emit_box (f, data, p.center, axes, half, FALSE);
+	}
+	return TRUE;
+}
+
+/* --- joints --- */
+
+typedef struct
+{
+	LrgJointKind kind;
+	gfloat       anchor[3];   /* world */
+	gfloat       axis[3];     /* world, unit */
+	gboolean     limits;
+	gfloat       lmin;
+	gfloat       lmax;
+	gfloat       size;        /* drawing size: 0.5 m */
+} PhysJoint;
+
+static gboolean
+phys_joint_get (LrgNode   *node,
+                guint      index,
+                PhysJoint *pj)
+{
+	LrgNodePhysicsJoint *joint = phys_joint (node, index);
+	gfloat               world[16], a[3], ax[3];
+
+	if (joint == NULL)
+		return FALSE;
+	lrg_editor_node_get_world_matrix (node, world);
+	pj->kind = lrg_node_physics_joint_get_kind (joint);
+	lrg_node_physics_joint_get_anchor (joint, a);
+	lrg_node_physics_joint_get_axis (joint, ax);
+	lrg_editor_math_transform_point (world, a, pj->anchor);
+	lrg_editor_math_transform_direction (world, ax, pj->axis);
+	if (v3_normalize (pj->axis) < 1e-6f)
+	{
+		pj->axis[0] = 1.0f;
+		pj->axis[1] = 0.0f;
+		pj->axis[2] = 0.0f;
+	}
+	pj->limits = lrg_node_physics_joint_get_limits (joint, &pj->lmin, &pj->lmax);
+	pj->size = 0.5f;
+	return TRUE;
+}
+
+static gboolean
+emit_joint (LrgNode  *node,
+            guint     index,
+            SegFunc   f,
+            gpointer  data)
+{
+	PhysJoint pj;
+	gfloat    tip[3], u[3], w[3];
+
+	if (!phys_joint_get (node, index, &pj))
+		return FALSE;
+	perpendiculars (pj.axis, u, w);
+
+	/* the axis through the anchor */
+	v3_mad (pj.anchor, pj.axis, pj.size, tip);
+	f (pj.anchor, tip, FALSE, data);
+
+	switch (pj.kind)
+	{
+	case LRG_JOINT_HINGE:
+		/* the allowed swing: an arc around the axis from min to max, or
+		 * a full faint ring when free */
+		if (pj.limits)
+		{
+			gfloat a0[3], a1[3];
+			gint   k;
+
+			emit_circle (f, data, pj.anchor, u, w, pj.size * 0.8f, pj.lmin, pj.lmax, FALSE);
+			for (k = 0; k < 3; k++)
+			{
+				a0[k] = pj.anchor[k] + (u[k] * cosf (pj.lmin) + w[k] * sinf (pj.lmin)) * pj.size * 0.8f;
+				a1[k] = pj.anchor[k] + (u[k] * cosf (pj.lmax) + w[k] * sinf (pj.lmax)) * pj.size * 0.8f;
+			}
+			f (pj.anchor, a0, TRUE, data);
+			f (pj.anchor, a1, TRUE, data);
+		}
+		else
+			emit_circle (f, data, pj.anchor, u, w, pj.size * 0.8f, 0.0f, 2.0f * (gfloat) G_PI, TRUE);
+		break;
+	case LRG_JOINT_CONE:
+	case LRG_JOINT_SWING_TWIST:
+		{
+			/* the swing cone: half angle = the upper limit (45 deg when off) */
+			gfloat half = pj.limits ? CLAMP (fabsf (pj.lmax), 0.01f, (gfloat) G_PI * 0.49f) : (gfloat) G_PI / 4.0f;
+			gfloat len = pj.size * cosf (half);
+			gfloat r = pj.size * sinf (half);
+			gfloat base[3], rim[3];
+			gint   i, k;
+
+			v3_mad (pj.anchor, pj.axis, len, base);
+			emit_circle (f, data, base, u, w, r, 0.0f, 2.0f * (gfloat) G_PI, !pj.limits);
+			for (i = 0; i < 4; i++)
+			{
+				gfloat ang = (gfloat) i * 0.5f * (gfloat) G_PI;
+
+				for (k = 0; k < 3; k++)
+					rim[k] = base[k] + (u[k] * cosf (ang) + w[k] * sinf (ang)) * r;
+				f (pj.anchor, rim, TRUE, data);
+			}
+		}
+		break;
+	case LRG_JOINT_SLIDER:
+	case LRG_JOINT_DISTANCE:
+		if (pj.limits)
+		{
+			gfloat a[3], b[3], ta[3], tb[3];
+
+			/* the travel range along the axis with end ticks */
+			v3_mad (pj.anchor, pj.axis, pj.lmin, a);
+			v3_mad (pj.anchor, pj.axis, pj.lmax, b);
+			f (a, b, FALSE, data);
+			v3_mad (a, u, 0.08f, ta);
+			v3_mad (a, u, -0.08f, tb);
+			f (ta, tb, FALSE, data);
+			v3_mad (b, u, 0.08f, ta);
+			v3_mad (b, u, -0.08f, tb);
+			f (ta, tb, FALSE, data);
+		}
+		break;
+	default:
+		break;
+	}
+	return TRUE;
+}
+
+/* --- public geometry --- */
+
+/* The world position of a handle; FALSE when the node lacks it. */
+static gboolean
+handle_world (const LrgEditorView    *view,
+              LrgNode                *node,
+              LrgEditorPhysicsHandle  handle,
+              guint                   index,
+              gfloat                 *out)
+{
+	PhysShape ps;
+	PhysJoint pj;
+	Phys2D    p2;
+
+	switch (handle)
+	{
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_X:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Y:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Z:
+		{
+			gint k = (gint) (handle - LRG_EDITOR_PHYSICS_HANDLE_HALF_X);
+
+			if (!phys_shape_get (node, index, &ps) || ps.kind != LRG_COLLIDER3D_BOX)
+				return FALSE;
+			v3_mad (ps.origin, ps.axes[k], ps.half[k], out);
+			return TRUE;
+		}
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS:
+		if (!phys_shape_get (node, index, &ps) ||
+		    (ps.kind != LRG_COLLIDER3D_SPHERE && ps.kind != LRG_COLLIDER3D_CAPSULE &&
+		     ps.kind != LRG_COLLIDER3D_CYLINDER))
+			return FALSE;
+		v3_mad (ps.origin, ps.axes[0], ps.radius, out);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT:
+		if (!phys_shape_get (node, index, &ps) ||
+		    (ps.kind != LRG_COLLIDER3D_CAPSULE && ps.kind != LRG_COLLIDER3D_CYLINDER))
+			return FALSE;
+		v3_mad (ps.origin, ps.axes[1],
+		        ps.half_height + (ps.kind == LRG_COLLIDER3D_CAPSULE ? ps.radius : 0.0f), out);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_ANCHOR:
+		if (!phys_joint_get (node, index, &pj))
+			return FALSE;
+		memcpy (out, pj.anchor, sizeof pj.anchor);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D:
+		if (!phys_2d_get (node, &p2) || p2.circle)
+			return FALSE;
+		v3_mad (p2.center, p2.axes[0], p2.width * 0.5f * p2.axis_len[0], out);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D:
+		if (!phys_2d_get (node, &p2) || p2.circle)
+			return FALSE;
+		v3_mad (p2.center, p2.axes[1], p2.height * 0.5f * p2.axis_len[1], out);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D:
+		if (!phys_2d_get (node, &p2) || !p2.circle)
+			return FALSE;
+		v3_mad (p2.center, p2.axes[0], p2.radius * p2.axis_len[0], out);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_NONE:
+	default:
+		return FALSE;
+	}
+}
+
+gboolean
+lrg_editor_physics_get_handle_position (const LrgEditorView    *view,
+                                        LrgNode                *node,
+                                        LrgEditorPhysicsHandle  handle,
+                                        guint                   index,
+                                        gfloat                 *out)
+{
+	g_return_val_if_fail (view != NULL, FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+	g_return_val_if_fail (out != NULL, FALSE);
+
+	return handle_world (view, node, handle, index, out);
+}
+
+/* Calls @f for every (handle, index) the node has. */
+typedef void (*HandleFunc) (LrgEditorPhysicsHandle handle, guint index, const gfloat *p, gpointer data);
+
+static void
+foreach_handle (const LrgEditorView *view,
+                LrgNode             *node,
+                HandleFunc           f,
+                gpointer             data)
+{
+	LrgNodePhysics *phys = lrg_node_get_physics (node);
+	guint           i, h;
+	gfloat          p[3];
+
+	if (collider_2d (node) != NULL)
+	{
+		for (h = LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D; h <= LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D; h++)
+			if (handle_world (view, node, (LrgEditorPhysicsHandle) h, 0, p))
+				f ((LrgEditorPhysicsHandle) h, 0, p, data);
+	}
+	if (phys == NULL)
+		return;
+	for (i = 0; i < lrg_node_physics_get_shapes (phys)->len; i++)
+		for (h = LRG_EDITOR_PHYSICS_HANDLE_HALF_X; h <= LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT; h++)
+			if (handle_world (view, node, (LrgEditorPhysicsHandle) h, i, p))
+				f ((LrgEditorPhysicsHandle) h, i, p, data);
+	for (i = 0; i < lrg_node_physics_get_joints (phys)->len; i++)
+		if (handle_world (view, node, LRG_EDITOR_PHYSICS_HANDLE_ANCHOR, i, p))
+			f (LRG_EDITOR_PHYSICS_HANDLE_ANCHOR, i, p, data);
+}
+
+typedef struct
+{
+	const LrgEditorView    *view;
+	gfloat                  x;
+	gfloat                  y;
+	gfloat                  best_d;
+	LrgEditorPhysicsHandle  best;
+	guint                   best_index;
+} HitData;
+
+static void
+hit_one (LrgEditorPhysicsHandle  handle,
+         guint                   index,
+         const gfloat           *p,
+         gpointer                data)
+{
+	HitData *hd = data;
+	gfloat   u, v, d;
+
+	if (!lrg_editor_view_project (hd->view, p, &u, &v, NULL))
+		return;
+	d = hypotf (u - hd->x, v - hd->y);
+	if (d < hd->best_d)
+	{
+		hd->best_d = d;
+		hd->best = handle;
+		hd->best_index = index;
+	}
+}
+
+LrgEditorPhysicsHandle
+lrg_editor_physics_hit_test (const LrgEditorView *view,
+                             LrgNode             *node,
+                             gfloat               x,
+                             gfloat               y,
+                             guint               *out_index)
+{
+	HitData hd;
+
+	g_return_val_if_fail (view != NULL, LRG_EDITOR_PHYSICS_HANDLE_NONE);
+	g_return_val_if_fail (node == NULL || LRG_IS_NODE (node), LRG_EDITOR_PHYSICS_HANDLE_NONE);
+
+	if (out_index != NULL)
+		*out_index = 0;
+	if (node == NULL || !lrg_editor_physics_has_gizmo (node))
+		return LRG_EDITOR_PHYSICS_HANDLE_NONE;
+	memset (&hd, 0, sizeof hd);
+	hd.view = view;
+	hd.x = x;
+	hd.y = y;
+	hd.best_d = LRG_EDITOR_GIZMO_PICK_PIXELS + 3.0f;
+	hd.best = LRG_EDITOR_PHYSICS_HANDLE_NONE;
+	foreach_handle (view, node, hit_one, &hd);
+	if (out_index != NULL)
+		*out_index = hd.best_index;
+	return hd.best;
+}
+
+gboolean
+lrg_editor_physics_drag_value (const LrgEditorView    *view,
+                               LrgNode                *node,
+                               LrgEditorPhysicsHandle  handle,
+                               guint                   index,
+                               gfloat                  x,
+                               gfloat                  y,
+                               gfloat                 *out_value)
+{
+	gfloat    ro[3], rd[3], t;
+	PhysShape ps;
+	Phys2D    p2;
+
+	g_return_val_if_fail (view != NULL, FALSE);
+	g_return_val_if_fail (LRG_IS_NODE (node), FALSE);
+	g_return_val_if_fail (out_value != NULL, FALSE);
+
+	lrg_editor_view_get_ray (view, x, y, ro, rd);
+	out_value[0] = out_value[1] = out_value[2] = 0.0f;
+
+	switch (handle)
+	{
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_X:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Y:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Z:
+		{
+			gint k = (gint) (handle - LRG_EDITOR_PHYSICS_HANDLE_HALF_X);
+
+			if (!phys_shape_get (node, index, &ps) || ps.kind != LRG_COLLIDER3D_BOX ||
+			    !closest_on_axis (ps.origin, ps.axes[k], ro, rd, &t))
+				return FALSE;
+			/* the box stays centred on its offset: the half extent is the
+			 * reach along the axis, in node units */
+			out_value[0] = MAX (fabsf (t) / MAX (ps.scale[k], 1e-6f), PHYS_MIN_DIM);
+			return TRUE;
+		}
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS:
+		{
+			gfloat s;
+
+			if (!phys_shape_get (node, index, &ps) || !closest_on_axis (ps.origin, ps.axes[0], ro, rd, &t))
+				return FALSE;
+			s = MAX (ps.scale[0], ps.scale[2]);
+			if (ps.kind == LRG_COLLIDER3D_SPHERE)
+				s = MAX (s, ps.scale[1]);
+			out_value[0] = MAX (fabsf (t) / MAX (s, 1e-6f), PHYS_MIN_DIM);
+			return TRUE;
+		}
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT:
+		if (!phys_shape_get (node, index, &ps) || !closest_on_axis (ps.origin, ps.axes[1], ro, rd, &t))
+			return FALSE;
+		/* a capsule's handle sits on the cap's tip: take the radius off */
+		if (ps.kind == LRG_COLLIDER3D_CAPSULE)
+			out_value[0] = MAX ((fabsf (t) - ps.radius) / MAX (ps.scale[1], 1e-6f), 0.0f);
+		else
+			out_value[0] = MAX (fabsf (t) / MAX (ps.scale[1], 1e-6f), PHYS_MIN_DIM);
+		return TRUE;
+	case LRG_EDITOR_PHYSICS_HANDLE_ANCHOR:
+		{
+			/* the camera-facing plane through the anchor */
+			PhysJoint pj;
+			gfloat    n[3], den, s, hit[3], world[16], inv[16];
+
+			if (!phys_joint_get (node, index, &pj))
+				return FALSE;
+			n[0] = view->target[0] - view->position[0];
+			n[1] = view->target[1] - view->position[1];
+			n[2] = view->target[2] - view->position[2];
+			v3_normalize (n);
+			den = v3_dot (rd, n);
+			if (fabsf (den) < 1e-6f)
+				return FALSE;
+			s = (v3_dot (pj.anchor, n) - v3_dot (ro, n)) / den;
+			v3_mad (ro, rd, s, hit);
+			lrg_editor_node_get_world_matrix (node, world);
+			if (!lrg_editor_math_invert (world, inv))
+				return FALSE;
+			lrg_editor_math_transform_point (inv, hit, out_value);
+			return TRUE;
+		}
+	case LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D:
+		{
+			gint k = (handle == LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D) ? 1 : 0;
+
+			if (!phys_2d_get (node, &p2) || !closest_on_axis (p2.center, p2.axes[k], ro, rd, &t))
+				return FALSE;
+			t = fabsf (t) / p2.axis_len[k];
+			out_value[0] = MAX (handle == LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D ? t : 2.0f * t, PHYS_MIN_DIM);
+			return TRUE;
+		}
+	case LRG_EDITOR_PHYSICS_HANDLE_NONE:
+	default:
+		return FALSE;
+	}
+}
+
+/* --- painting --- */
+
+/* The runtime debug draw's colours (lrg_dynamics_world_debug_draw()). */
+static GrlColor
+body_kind_color (LrgNode *node,
+                 gboolean trigger)
+{
+	LrgNodePhysics *phys = lrg_node_get_physics (node);
+
+	if (trigger)
+		return rgba (240, 220, 60, 255);
+	if (phys == NULL)
+		return rgba (80, 220, 110, 255);
+	switch (lrg_node_physics_get_body_kind (phys))
+	{
+	case LRG_DYNAMICS_BODY_STATIC:
+		return rgba (150, 150, 150, 255);
+	case LRG_DYNAMICS_BODY_KINEMATIC:
+		return rgba (80, 140, 255, 255);
+	case LRG_DYNAMICS_BODY_DYNAMIC:
+	default:
+		return rgba (80, 220, 110, 255);
+	}
+}
+
+typedef struct
+{
+	LrgPaintList *list;
+	Mapper        m;
+	GrlColor      color;
+	gfloat        width;
+	/* AABB accumulation */
+	gboolean      any;
+	gfloat        mn[3];
+	gfloat        mx[3];
+} PaintData;
+
+static void
+paint_seg (const gfloat *a,
+           const gfloat *b,
+           gboolean      faint,
+           gpointer      data)
+{
+	PaintData *pd = data;
+	GrlColor   c = faint ? fade (pd->color, 0.45f) : pd->color;
+
+	world_line (pd->list, &pd->m, a, b, faint ? pd->width * 0.6f : pd->width, &c);
+}
+
+static void
+aabb_seg (const gfloat *a,
+          const gfloat *b,
+          gboolean      faint,
+          gpointer      data)
+{
+	PaintData *pd = data;
+	gint       k;
+
+	for (k = 0; k < 3; k++)
+	{
+		gfloat lo = MIN (a[k], b[k]);
+		gfloat hi = MAX (a[k], b[k]);
+
+		if (!pd->any || lo < pd->mn[k])
+			pd->mn[k] = lo;
+		if (!pd->any || hi > pd->mx[k])
+			pd->mx[k] = hi;
+	}
+	pd->any = TRUE;
+}
+
+guint
+lrg_editor_gizmo_paint_physics_shapes (LrgPaintList          *list,
+                                       const LrgEditorView   *view,
+                                       LrgLevel              *level,
+                                       LrgNode               *node,
+                                       LrgDynamicsDebugFlags  flags,
+                                       gfloat                 emphasis,
+                                       gfloat                 origin_x,
+                                       gfloat                 origin_y,
+                                       gfloat                 scale)
+{
+	LrgNodePhysics *phys;
+	PaintData       pd;
+	guint           n = 0, i;
+
+	g_return_val_if_fail (LRG_IS_PAINT_LIST (list), 0);
+	g_return_val_if_fail (view != NULL, 0);
+	g_return_val_if_fail (LRG_IS_NODE (node), 0);
+
+	memset (&pd, 0, sizeof pd);
+	pd.list = list;
+	pd.m.view = view;
+	pd.m.ox = origin_x;
+	pd.m.oy = origin_y;
+	pd.m.scale = scale;
+	emphasis = CLAMP (emphasis, 0.05f, 1.0f);
+	pd.width = 1.0f + emphasis;
+	phys = lrg_node_get_physics (node);
+
+	/* Shapes (and their AABBs) */
+	if (flags & (LRG_DYNAMICS_DEBUG_SHAPES | LRG_DYNAMICS_DEBUG_AABBS))
+	{
+		if (collider_2d (node) != NULL)
+		{
+			pd.color = fade (body_kind_color (node, FALSE), 0.35f + 0.65f * emphasis);
+			if (flags & LRG_DYNAMICS_DEBUG_SHAPES)
+				emit_2d (node, paint_seg, &pd);
+			if (flags & LRG_DYNAMICS_DEBUG_AABBS)
+				emit_2d (node, aabb_seg, &pd);
+			n++;
+		}
+		for (i = 0; phys != NULL && i < lrg_node_physics_get_shapes (phys)->len; i++)
+		{
+			LrgNodePhysicsShape *shape = phys_shape (node, i);
+
+			pd.color = fade (body_kind_color (node, lrg_node_physics_shape_get_trigger (shape)),
+			                 0.35f + 0.65f * emphasis);
+			if (flags & LRG_DYNAMICS_DEBUG_SHAPES)
+				emit_shape (node, i, paint_seg, &pd);
+			if ((flags & LRG_DYNAMICS_DEBUG_AABBS) && lrg_node_physics_shape_get_kind (shape) != LRG_COLLIDER3D_PLANE)
+				emit_shape (node, i, aabb_seg, &pd);
+			n++;
+		}
+		if ((flags & LRG_DYNAMICS_DEBUG_AABBS) && pd.any)
+		{
+			gfloat axes[3][3] = { { 1.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } };
+			gfloat c[3], half[3];
+			gint   k;
+
+			for (k = 0; k < 3; k++)
+			{
+				c[k] = (pd.mn[k] + pd.mx[k]) * 0.5f;
+				half[k] = (pd.mx[k] - pd.mn[k]) * 0.5f;
+			}
+			pd.color = fade (rgba (0xf9, 0xe2, 0xaf, 0xff), 0.3f + 0.5f * emphasis);
+			pd.width = 1.0f;
+			emit_box (paint_seg, &pd, c, axes, half, FALSE);
+			pd.width = 1.0f + emphasis;
+		}
+	}
+
+	/* Joints: orange-pink, with a faint line to the target node */
+	if ((flags & LRG_DYNAMICS_DEBUG_CONSTRAINTS) && phys != NULL)
+	{
+		for (i = 0; i < lrg_node_physics_get_joints (phys)->len; i++)
+		{
+			LrgNodePhysicsJoint *joint = phys_joint (node, i);
+			const gchar         *target = lrg_node_physics_joint_get_target (joint);
+			PhysJoint            pj;
+
+			pd.color = fade (rgba (0xfa, 0xb3, 0x87, 0xff), 0.35f + 0.65f * emphasis);
+			emit_joint (node, i, paint_seg, &pd);
+			n++;
+			if (target != NULL && phys_joint_get (node, i, &pj))
+			{
+				LrgNode *other = (level != NULL) ? lrg_level_find_node (level, target) : NULL;
+
+				if (other != NULL)
+				{
+					gfloat op[3];
+
+					lrg_editor_node_get_world_position (other, op);
+					paint_seg (pj.anchor, op, TRUE, &pd);
+				}
+			}
+		}
+	}
+
+	/* Body origin: short X Y Z axes */
+	if ((flags & LRG_DYNAMICS_DEBUG_CENTER_OF_MASS) && phys != NULL)
+	{
+		gfloat pose[16], s[3], o[3], tip[3], ax[3];
+		gint   k;
+
+		node_pose (node, pose, s);
+		o[0] = pose[12];
+		o[1] = pose[13];
+		o[2] = pose[14];
+		for (k = 0; k < 3; k++)
+		{
+			GrlColor c = fade (axis_color (k), 0.4f + 0.6f * emphasis);
+
+			ax[0] = pose[k * 4];
+			ax[1] = pose[k * 4 + 1];
+			ax[2] = pose[k * 4 + 2];
+			v3_mad (o, ax, 0.25f, tip);
+			world_line (list, &pd.m, o, tip, 2.0f, &c);
+		}
+	}
+	return n;
+}
+
+typedef struct
+{
+	LrgPaintList           *list;
+	Mapper                  m;
+	LrgEditorPhysicsHandle  hot;
+	guint                   hot_index;
+	gfloat                  hot_pos[3];
+	gboolean                hot_found;
+	GrlColor                shape_col;
+	GrlColor                joint_col;
+} HandlePaint;
+
+static void
+paint_one_handle (LrgEditorPhysicsHandle  handle,
+                  guint                   index,
+                  const gfloat           *p,
+                  gpointer                data)
+{
+	HandlePaint *hp = data;
+	gboolean     hot = (handle == hp->hot && index == hp->hot_index);
+
+	paint_handle (hp->list, &hp->m, p, hot,
+	              handle == LRG_EDITOR_PHYSICS_HANDLE_ANCHOR ? &hp->joint_col : &hp->shape_col);
+	if (hot)
+	{
+		memcpy (hp->hot_pos, p, sizeof hp->hot_pos);
+		hp->hot_found = TRUE;
+	}
+}
+
+/* The text of the hot handle's chip: field and value. */
+static gchar *
+handle_text (LrgNode                *node,
+             LrgEditorPhysicsHandle  handle,
+             guint                   index)
+{
+	LrgNodePhysicsShape *shape = phys_shape (node, index);
+	LrgNodePhysicsJoint *joint = phys_joint (node, index);
+	LrgComponentDesc    *desc = collider_2d (node);
+	gfloat               v[3];
+
+	switch (handle)
+	{
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_X:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Y:
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_Z:
+		if (shape == NULL)
+			return NULL;
+		lrg_node_physics_shape_get_half_extents (shape, v);
+		return g_strdup_printf ("shape %u  %s %.3f", index, lrg_editor_physics_handle_get_field (handle),
+		                        (gdouble) v[handle - LRG_EDITOR_PHYSICS_HANDLE_HALF_X]);
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS:
+		return shape != NULL ? g_strdup_printf ("shape %u  radius %.3f", index,
+		                                        (gdouble) lrg_node_physics_shape_get_radius (shape)) : NULL;
+	case LRG_EDITOR_PHYSICS_HANDLE_HALF_HEIGHT:
+		return shape != NULL ? g_strdup_printf ("shape %u  half-height %.3f", index,
+		                                        (gdouble) lrg_node_physics_shape_get_half_height (shape)) : NULL;
+	case LRG_EDITOR_PHYSICS_HANDLE_ANCHOR:
+		if (joint == NULL)
+			return NULL;
+		lrg_node_physics_joint_get_anchor (joint, v);
+		return g_strdup_printf ("joint %u  anchor %.2f %.2f %.2f", index, (gdouble) v[0], (gdouble) v[1],
+		                        (gdouble) v[2]);
+	case LRG_EDITOR_PHYSICS_HANDLE_WIDTH_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_HEIGHT_2D:
+	case LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D:
+		if (desc == NULL)
+			return NULL;
+		return g_strdup_printf ("collider  %s %.2f", lrg_editor_physics_handle_get_field (handle),
+		                        (gdouble) desc_number (desc, lrg_editor_physics_handle_get_field (handle),
+		                                               handle == LRG_EDITOR_PHYSICS_HANDLE_RADIUS_2D ? 0.5f : 1.0f));
+	case LRG_EDITOR_PHYSICS_HANDLE_NONE:
+	default:
+		return NULL;
+	}
+}
+
+void
+lrg_editor_gizmo_paint_physics (LrgPaintList           *list,
+                                LrgTheme               *theme,
+                                const LrgEditorView    *view,
+                                LrgLevel               *level,
+                                LrgNode                *node,
+                                LrgEditorPhysicsHandle  hot,
+                                guint                   hot_index,
+                                gint                    selected_shape,
+                                gboolean                dragging,
+                                gfloat                  origin_x,
+                                gfloat                  origin_y,
+                                gfloat                  scale)
+{
+	HandlePaint hp;
+
+	g_return_if_fail (LRG_IS_PAINT_LIST (list));
+	g_return_if_fail (view != NULL);
+	g_return_if_fail (LRG_IS_NODE (node));
+
+	if (!lrg_editor_physics_has_gizmo (node))
+		return;
+
+	/* The shapes and joints, crisp; the panel's selected shape on top */
+	lrg_editor_gizmo_paint_physics_shapes (list, view, level, node,
+	                                       LRG_DYNAMICS_DEBUG_SHAPES | LRG_DYNAMICS_DEBUG_CONSTRAINTS, 0.75f,
+	                                       origin_x, origin_y, scale);
+	if (selected_shape >= 0 && phys_shape (node, (guint) selected_shape) != NULL)
+	{
+		PaintData pd;
+
+		memset (&pd, 0, sizeof pd);
+		pd.list = list;
+		pd.m.view = view;
+		pd.m.ox = origin_x;
+		pd.m.oy = origin_y;
+		pd.m.scale = scale;
+		pd.color = highlight_color ();
+		pd.color.a = 0xd0;
+		pd.width = 2.2f;
+		emit_shape (node, (guint) selected_shape, paint_seg, &pd);
+	}
+
+	/* Handles */
+	memset (&hp, 0, sizeof hp);
+	hp.list = list;
+	hp.m.view = view;
+	hp.m.ox = origin_x;
+	hp.m.oy = origin_y;
+	hp.m.scale = scale;
+	hp.hot = hot;
+	hp.hot_index = hot_index;
+	hp.shape_col = body_kind_color (node, FALSE);
+	hp.joint_col = rgba (0xfa, 0xb3, 0x87, 0xff);
+	foreach_handle (view, node, paint_one_handle, &hp);
+
+	/* The hot handle names its field; a dragged one is accented */
+	if (hot != LRG_EDITOR_PHYSICS_HANDLE_NONE && hp.hot_found)
+	{
+		g_autofree gchar *text = handle_text (node, hot, hot_index);
+		gfloat            x, y;
+
+		if (text != NULL && map_point (&hp.m, hp.hot_pos, &x, &y))
+			lrg_editor_gizmo_paint_chip (list, theme, text, x + 10.0f, y + 8.0f, FALSE,
+			                             dragging ? &hp.shape_col : NULL);
+	}
 }

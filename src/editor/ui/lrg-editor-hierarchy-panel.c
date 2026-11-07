@@ -510,6 +510,41 @@ hierarchy_row_paint (LrgWidget    *widget,
 		mx -= h * 0.3f;
 		lrg_paint_list_circle (list, mx + h * 0.1f, y + h * 0.5f, h * 0.1f, theme_color (widget, LRG_THEME_COLOR_SUCCESS));
 	}
+	if (lrg_node_get_physics (node) != NULL)
+	{
+		/* Physics body (0.9.0 M5): a small ball resting on a ground
+		 * line, coloured like the physics debug draw (green dynamic,
+		 * blue kinematic, grey static) */
+		LrgNodePhysics *phys = lrg_node_get_physics (node);
+		GrlColor        c;
+		gfloat          cy = y + h * 0.5f;
+		gfloat          r = h * 0.14f;
+		gfloat          lw = MAX (1.0f, h * 0.06f);
+
+		switch (lrg_node_physics_get_body_kind (phys))
+		{
+		case LRG_DYNAMICS_BODY_STATIC:
+			c.r = 150; c.g = 150; c.b = 150; c.a = 255;
+			break;
+		case LRG_DYNAMICS_BODY_KINEMATIC:
+			c.r = 80; c.g = 140; c.b = 255; c.a = 255;
+			break;
+		case LRG_DYNAMICS_BODY_DYNAMIC:
+		default:
+			c.r = 80; c.g = 220; c.b = 110; c.a = 255;
+			break;
+		}
+		mx -= h * 0.5f;
+		lrg_paint_list_circle (list, mx + h * 0.25f, cy - r * 0.6f, r, &c);
+		lrg_paint_list_line (list, mx + h * 0.02f, cy + r * 0.9f, mx + h * 0.48f, cy + r * 0.9f, lw, &c);
+		if (lrg_node_physics_get_joints (phys)->len > 0)
+		{
+			/* a joint: a short link to the left */
+			lrg_paint_list_line (list, mx - h * 0.12f, cy - r * 0.6f, mx + h * 0.25f - r, cy - r * 0.6f, lw, &c);
+			lrg_paint_list_circle (list, mx - h * 0.12f, cy - r * 0.6f, r * 0.5f, &c);
+			mx -= h * 0.2f;
+		}
+	}
 
 	/* Eye toggle: filled pupil when visible, ring when hidden; brighter
 	 * under the pointer */
@@ -2068,6 +2103,18 @@ m_state (LrgEditorServer  *server,
 		json_builder_add_string_value (b, lrg_node_get_name (node));
 		json_builder_set_member_name (b, "depth");
 		json_builder_add_int_value (b, lrg_tree_view_get_depth (self->tree, i));
+		/* the physics badge: body kind nick, null without a body */
+		json_builder_set_member_name (b, "physics");
+		if (lrg_node_get_physics (node) != NULL)
+		{
+			g_autoptr(GEnumClass) kinds = g_type_class_ref (LRG_TYPE_DYNAMICS_BODY_KIND);
+			GEnumValue           *ev = g_enum_get_value (kinds,
+			                                             (gint) lrg_node_physics_get_body_kind (lrg_node_get_physics (node)));
+
+			json_builder_add_string_value (b, ev != NULL ? ev->value_nick : "unknown");
+		}
+		else
+			json_builder_add_null_value (b);
 		json_builder_set_member_name (b, "expanded");
 		json_builder_add_boolean_value (b, lrg_tree_view_is_expanded (self->tree, G_OBJECT (node)));
 		json_builder_set_member_name (b, "selected");
