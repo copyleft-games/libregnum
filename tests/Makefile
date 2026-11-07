@@ -293,6 +293,8 @@ TEST_SOURCES := \
 	test-editor-app-material.c \
 	test-editor-app-environment.c \
 	test-editor-app-bake.c \
+	test-editor-app-physics.c \
+	test-editor-app-physasset.c \
 	test-editor-app-anim.c \
 	test-editor-app-sequencer.c \
 	test-editor-app-rig.c \

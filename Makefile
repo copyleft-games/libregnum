@@ -1820,6 +1820,8 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-shader-graph-editor.h \
 	src/editor/ui/lrg-editor-environment-panel.h \
 	src/editor/ui/lrg-editor-bake-panel.h \
+	src/editor/ui/lrg-editor-physics-panel.h \
+	src/editor/ui/data/lrg-editor-physics-asset-editor.h \
 	src/editor/ui/lrg-editor-sequencer-panel.h \
 	src/editor/ui/data/lrg-editor-anim-graph-editor.h \
 	src/editor/ui/data/lrg-editor-bone-map-editor.h \
@@ -1858,6 +1860,8 @@ SOURCES += \
 	src/editor/ui/lrg-editor-shader-graph-editor.c \
 	src/editor/ui/lrg-editor-environment-panel.c \
 	src/editor/ui/lrg-editor-bake-panel.c \
+	src/editor/ui/lrg-editor-physics-panel.c \
+	src/editor/ui/data/lrg-editor-physics-asset-editor.c \
 	src/editor/ui/lrg-editor-sequencer-panel.c \
 	src/editor/ui/data/lrg-editor-anim-graph-editor.c \
 	src/editor/ui/data/lrg-editor-bone-map-editor.c \

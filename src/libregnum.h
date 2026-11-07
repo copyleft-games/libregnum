@@ -552,6 +552,8 @@
 #include "editor/ui/lrg-editor-shader-graph-editor.h"
 #include "editor/ui/lrg-editor-environment-panel.h"
 #include "editor/ui/lrg-editor-bake-panel.h"
+#include "editor/ui/lrg-editor-physics-panel.h"
+#include "editor/ui/data/lrg-editor-physics-asset-editor.h"
 #include "editor/ui/lrg-editor-sequencer-panel.h"
 #include "editor/ui/data/lrg-editor-anim-graph-editor.h"
 #include "editor/ui/data/lrg-editor-bone-map-editor.h"
