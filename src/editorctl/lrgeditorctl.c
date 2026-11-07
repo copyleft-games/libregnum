@@ -117,6 +117,8 @@ static const gchar *description =
 	"  inspector list|get|set|reset|state|apply-override|revert-override [NODE] [NAME] [key=value...]\n"
 	"  hierarchy reveal|rename NODE [NEW_NAME] | hierarchy filter TEXT | hierarchy state\n"
 	"  asset reveal|duplicate|trash PATH | asset rename PATH NAME | asset move PATH DEST | asset orphans\n"
+	"  source list | source ls SOURCE [FOLDER] | source search SOURCE PATTERN [limit=N]\n"
+	"  source export SOURCE PATH [DEST] | source import|place SOURCE PATH   asset sources (game modules)\n"
 	"  profiler [frames=N] [enable=true]  profiler section timings\n"
 	"  data list | data open PATH       data editors (input map, locale, sound bank, theme, layouts, ...)\n"
 	"  data get [PATH] [AT] | data set [PATH] AT VALUE | data edit [PATH] OP AT [key=value...]\n"
@@ -148,6 +150,7 @@ static const gchar *description =
 	"  lrgeditorctl thumbnail assets/crate.png\n"
 	"  lrgeditorctl meta set assets/crate.png filter=point max-size=512\n"
 	"  lrgeditorctl prefab apply Props/Crate keys=transform.location\n"
+	"  lrgeditorctl source ls librewow World/Azeroth; lrgeditorctl source import librewow World/tree.m2\n"
 	"  lrgeditorctl code open scripts/door.lua:12\n"
 	"  lrgeditorctl view layout quad\n"
 	"  lrgeditorctl data open data/input.yaml\n"
@@ -1847,6 +1850,115 @@ cmd_asset (gchar  **args,
 	return passthrough (method, keys, args + 1, error);
 }
 
+/* ==========================================================================
+ * 0.8.2 verbs: asset sources
+ * ========================================================================== */
+
+/*
+ * source list | source ls SOURCE [FOLDER] | source search SOURCE PATTERN
+ * [limit=N] | source export SOURCE PATH [DEST] | source import SOURCE
+ * PATH | source place SOURCE PATH
+ *
+ * The source.* methods. Virtual paths are passed as they are (they never
+ * name local files); DEST is a local folder, made absolute against the
+ * current directory because the editor may run elsewhere. Listings print
+ * as tables by default.
+ */
+static gboolean
+cmd_source (gchar  **args,
+            GError **error)
+{
+	static const LrgCtlColumn source_columns[] = {
+		{ "ID", "id", FALSE }, { "TITLE", "title", FALSE }, { "SEARCH", "search", FALSE }
+	};
+	static const LrgCtlColumn entry_columns[] = {
+		{ "NAME", "name", FALSE }, { "TYPE", "type", FALSE }, { "SIZE", "size", FALSE },
+		{ "PATH", "path", TRUE }, { "DESCRIPTION", "description", TRUE }
+	};
+	static const gchar * const ls_keys[] = { "folder", NULL };
+	static const gchar * const search_keys[] = { "pattern", NULL };
+	static const gchar * const path_keys[] = { "path", NULL };
+	static const gchar * const export_keys[] = { "path", "dest", NULL };
+	const gchar * const        *keys = NULL;
+	const gchar                *sub = args[0];
+	g_autoptr(JsonObject)       p = json_object_new ();
+	g_autoptr(GPtrArray)        assigns = g_ptr_array_new ();
+	g_autoptr(JsonNode)         r = NULL;
+	g_autofree gchar           *method = NULL;
+	gboolean                    table;
+	JsonObject                 *o;
+	guint                       k = 0;
+	guint                       i;
+
+	if (g_strcmp0 (sub, "list") == 0 || sub == NULL)
+	{
+		r = call ("source.list", NULL, error);
+		if (r == NULL)
+			return FALSE;
+		if ((output == LRG_CTL_FORMAT_DEFAULT || output == LRG_CTL_FORMAT_TABLE || output == LRG_CTL_FORMAT_WIDE) &&
+		    JSON_NODE_HOLDS_ARRAY (r))
+			lrg_ctl_print_table (json_node_get_array (r), source_columns, G_N_ELEMENTS (source_columns), output,
+			                     "id");
+		else
+			lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+
+	if (g_strcmp0 (sub, "ls") == 0)
+		keys = ls_keys;
+	else if (g_strcmp0 (sub, "search") == 0)
+		keys = search_keys;
+	else if (g_strcmp0 (sub, "import") == 0 || g_strcmp0 (sub, "place") == 0)
+		keys = path_keys;
+	else if (g_strcmp0 (sub, "export") == 0)
+		keys = export_keys;
+	if (keys == NULL || args[1] == NULL ||
+	    (keys != ls_keys && (args[2] == NULL || strchr (args[2], '=') != NULL)))
+		return usage_error (error, "source list | source ls SOURCE [FOLDER] | source search SOURCE PATTERN "
+		                    "[limit=N] | source export SOURCE PATH [DEST] | source import|place SOURCE PATH");
+
+	/* SOURCE, then the positionals in key order, then key=value */
+	json_object_set_string_member (p, "source", args[1]);
+	for (i = 2; args[i] != NULL; i++)
+	{
+		if (strchr (args[i], '=') == NULL && keys[k] != NULL)
+		{
+			if (g_strcmp0 (keys[k], "dest") == 0)
+			{
+				g_autofree gchar *abs = g_canonicalize_filename (args[i], NULL);
+
+				json_object_set_string_member (p, keys[k], abs);
+			}
+			else
+				json_object_set_string_member (p, keys[k], args[i]);
+			k++;
+		}
+		else
+			g_ptr_array_add (assigns, args[i]);
+	}
+	g_ptr_array_add (assigns, NULL);
+	if (!lrg_ctl_parse_assignments ((gchar * const *) assigns->pdata, p, error))
+		return FALSE;
+
+	method = g_strconcat ("source.", sub, NULL);
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+
+	/* ls / search: a table of the entries unless -o asks otherwise */
+	o = JSON_NODE_HOLDS_OBJECT (r) ? json_node_get_object (r) : NULL;
+	table = (output == LRG_CTL_FORMAT_DEFAULT || output == LRG_CTL_FORMAT_TABLE || output == LRG_CTL_FORMAT_WIDE);
+	if (table && o != NULL && json_object_has_member (o, "entries") &&
+	    JSON_NODE_HOLDS_ARRAY (json_object_get_member (o, "entries")))
+	{
+		lrg_ctl_print_table (json_object_get_array_member (o, "entries"), entry_columns,
+		                     G_N_ELEMENTS (entry_columns), output, "path");
+		return TRUE;
+	}
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
 /* profiler [frames=N] [enable=true|false]: section timings */
 static gboolean
 cmd_profiler (gchar  **args,
@@ -2112,7 +2224,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -2141,6 +2253,7 @@ static const gchar *completion_script =
 	"\t\tinspector) mapfile -t COMPREPLY < <(compgen -W 'list get set reset state apply-override revert-override' -- \"${cur}\") ;;\n"
 	"\t\thierarchy) mapfile -t COMPREPLY < <(compgen -W 'reveal rename filter state' -- \"${cur}\") ;;\n"
 	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans' -- \"${cur}\") ;;\n"
+	"\t\tsource|sources) mapfile -t COMPREPLY < <(compgen -W 'list ls search export import place' -- \"${cur}\") ;;\n"
 	"\t\tdata) mapfile -t COMPREPLY < <(compgen -W 'list open get set edit undo redo validate save reload close reveal' -- \"${cur}\") ;;\n"
 	"\t\tpalette) mapfile -t COMPREPLY < <(compgen -W 'commands files' -- \"${cur}\") ;;\n"
 	"\t\tcall) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get methods -o json 2>/dev/null | tr -d '[]\\\",')\" -- \"${cur}\") ;;\n"
@@ -2182,6 +2295,8 @@ dispatch (gchar  **argv,
 		return cmd_hierarchy (rest, error);
 	if (g_strcmp0 (verb, "asset") == 0)
 		return cmd_asset (rest, error);
+	if (g_strcmp0 (verb, "source") == 0 || g_strcmp0 (verb, "sources") == 0)
+		return cmd_source (rest, error);
 	if (g_strcmp0 (verb, "profiler") == 0)
 		return cmd_profiler (rest, error);
 	if (g_strcmp0 (verb, "data") == 0)
