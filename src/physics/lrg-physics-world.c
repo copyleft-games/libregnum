@@ -1244,3 +1244,140 @@ lrg_physics_world_sim_stateful_init (LrgSimStatefulInterface *iface)
     iface->save_state = lrg_physics_world_save_state;
     iface->load_state = lrg_physics_world_load_state;
 }
+
+/* ==========================================================================
+ * Debug drawing (0.9.0)
+ * ========================================================================== */
+
+/* The body colour of the 3D world's debug draw for a 2D body. */
+static void
+debug_body_color (LrgRigidBody *body,
+                  gboolean      dim,
+                  GrlColor     *out)
+{
+	if (lrg_rigid_body_get_is_trigger (body))
+	{
+		out->r = 240; out->g = 220; out->b = 60;
+	}
+	else
+	{
+		switch (lrg_rigid_body_get_body_type (body))
+		{
+		case LRG_RIGID_BODY_DYNAMIC:
+			out->r = 80; out->g = 220; out->b = 100;
+			break;
+		case LRG_RIGID_BODY_KINEMATIC:
+			out->r = 90; out->g = 150; out->b = 250;
+			break;
+		case LRG_RIGID_BODY_STATIC:
+		default:
+			out->r = 160; out->g = 160; out->b = 170;
+			break;
+		}
+	}
+	out->a = dim ? 110 : 255;
+}
+
+void
+lrg_physics_world_debug_draw (LrgPhysicsWorld       *self,
+                              LrgDebugDraw          *draw,
+                              LrgDynamicsDebugFlags  flags)
+{
+	GPtrArray *bodies;
+	guint      prev_category;
+	guint      i;
+
+	g_return_if_fail (LRG_IS_PHYSICS_WORLD (self));
+	g_return_if_fail (LRG_IS_DEBUG_DRAW (draw));
+
+	bodies = lrg_physics_world_get_bodies (self);
+	if (bodies == NULL || flags == LRG_DYNAMICS_DEBUG_NONE)
+		return;
+
+	prev_category = lrg_debug_draw_get_category (draw);
+	lrg_debug_draw_set_category (draw, LRG_DEBUG_CATEGORY_PHYSICS);
+
+	for (i = 0; i < bodies->len; i++)
+	{
+		LrgRigidBody *body = g_ptr_array_index (bodies, i);
+		gboolean      sleeping = lrg_rigid_body_is_sleeping (body);
+		GrlColor      color;
+		GrlVector2    centre;
+		gfloat        x, y, w, h, angle, c, s;
+
+		lrg_rigid_body_get_position (body, &x, &y);
+		lrg_rigid_body_get_shape_bounds (body, &w, &h);
+		angle = lrg_rigid_body_get_rotation (body);
+		c = cosf (angle);
+		s = sinf (angle);
+		centre.x = x;
+		centre.y = y;
+		debug_body_color (body, sleeping && (flags & LRG_DYNAMICS_DEBUG_SLEEPING) != 0, &color);
+
+		/* Shapes: a rotated box outline, or a circle with a radius tick. */
+		if ((flags & LRG_DYNAMICS_DEBUG_SHAPES) != 0)
+		{
+			if (lrg_rigid_body_get_shape_type (body) == LRG_COLLISION_SHAPE_CIRCLE)
+			{
+				gfloat     r = w * 0.5f;
+				GrlVector2 tip;
+
+				tip.x = x + c * r;
+				tip.y = y + s * r;
+				lrg_debug_draw_circle_2d (draw, &centre, r, &color, 0.0f);
+				lrg_debug_draw_line_2d (draw, &centre, &tip, &color, 0.0f);
+			}
+			else
+			{
+				static const gfloat sx[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
+				static const gfloat sy[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
+				GrlVector2          corner[4];
+				guint               k;
+
+				for (k = 0; k < 4; k++)
+				{
+					gfloat lx = sx[k] * w * 0.5f;
+					gfloat ly = sy[k] * h * 0.5f;
+
+					corner[k].x = x + c * lx - s * ly;
+					corner[k].y = y + s * lx + c * ly;
+				}
+				for (k = 0; k < 4; k++)
+					lrg_debug_draw_line_2d (draw, &corner[k], &corner[(k + 1) % 4], &color, 0.0f);
+			}
+		}
+		else if (sleeping && (flags & LRG_DYNAMICS_DEBUG_SLEEPING) != 0)
+			lrg_debug_draw_circle_2d (draw, &centre, 2.0f, &color, 0.0f);
+
+		/* The collision AABB (what the 2D world actually tests). */
+		if ((flags & LRG_DYNAMICS_DEBUG_AABBS) != 0)
+		{
+			GrlColor box = { 230, 120, 230, 160 };
+
+			lrg_debug_draw_rect_2d (draw, x - w * 0.5f, y - h * 0.5f, w, h, &box, 0.0f);
+		}
+
+		if ((flags & LRG_DYNAMICS_DEBUG_CENTER_OF_MASS) != 0)
+		{
+			GrlColor dot = { 255, 255, 255, 255 };
+
+			lrg_debug_draw_circle_2d (draw, &centre, 1.5f, &dot, 0.0f);
+		}
+
+		/* Velocity: where the body gets in a tenth of a second. */
+		if ((flags & LRG_DYNAMICS_DEBUG_VELOCITY) != 0 &&
+		    lrg_rigid_body_get_body_type (body) != LRG_RIGID_BODY_STATIC)
+		{
+			GrlColor   vc = { 250, 140, 60, 255 };
+			GrlVector2 tip;
+			gfloat     vx, vy;
+
+			lrg_rigid_body_get_velocity (body, &vx, &vy);
+			tip.x = x + vx * 0.1f;
+			tip.y = y + vy * 0.1f;
+			lrg_debug_draw_line_2d (draw, &centre, &tip, &vc, 0.0f);
+		}
+	}
+
+	lrg_debug_draw_set_category (draw, prev_category);
+}

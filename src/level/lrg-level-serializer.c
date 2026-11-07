@@ -11,6 +11,7 @@
 #include "lrg-level.h"
 #include "lrg-node.h"
 #include "lrg-node-visual.h"
+#include "lrg-node-physics.h"
 #include "lrg-node-tilemap.h"
 #include "lrg-timeline.h"
 #include "lrg-component-desc.h"
@@ -902,6 +903,367 @@ build_prefab_mapping (LrgPrefabLink *link,
 	return map;
 }
 
+/* ==========================================================================
+ * The node `physics:` block (0.9.0 M5)
+ *
+ * physics:
+ *   body: dynamic                  # static | kinematic | dynamic
+ *   mass: 2                        # kg (dynamic bodies)
+ *   layer: debris                  # omitted for the default layer
+ *   friction: 0.5
+ *   restitution: 0
+ *   linear_damping: 0.05
+ *   angular_damping: 0.05
+ *   gravity_factor: 1
+ *   ccd: true                      # omitted when off
+ *   shapes:
+ *     - kind: box                  # sphere|capsule|cylinder|box|convex|mesh|plane
+ *       half_extents: [0.5, 0.5, 0.5]   # box only
+ *       radius: 0.5                # sphere / capsule / cylinder
+ *       half_height: 0.5           # capsule / cylinder
+ *       mesh: models/rock.glb      # convex / mesh; omitted = the node's model
+ *       offset: [0, 0.5, 0]        # omitted when zero
+ *       rotation: [0, 0, 90]       # degrees; omitted when zero
+ *       trigger: true              # omitted when false
+ *       friction: 0.9              # omitted = the body's
+ *       restitution: 0.5           # omitted = the body's
+ *       layer: triggers            # omitted = the body's
+ *   joints:
+ *     - kind: hinge                # fixed|point|hinge|slider|distance|cone|swing-twist|six-dof
+ *       target: <node guid>        # omitted = the world
+ *       anchor: [0, 1, 0]          # node-local; omitted when zero
+ *       axis: [0, 0, 1]            # node-local; omitted when +Y
+ *       limits: [-1.57, 1.57]      # omitted when off
+ *       spring: [4, 0.7]           # Hz, damping; omitted when 0 Hz
+ *       motor: [3.14, 50]          # velocity, max force; omitted when off
+ *       break_force: 500           # omitted when 0
+ *
+ * Every key is written in this order and only when it differs from its
+ * default where noted, so a load / save round trip is byte stable.
+ * ========================================================================== */
+
+static YamlSequence *
+build_float3_sequence (const gfloat *v)
+{
+	YamlSequence *seq = yaml_sequence_new ();
+	guint         k;
+
+	for (k = 0; k < 3; k++)
+		yaml_sequence_add_double_element (seq, (gdouble) v[k]);
+	return seq;
+}
+
+static YamlSequence *
+build_float2_sequence (gfloat a,
+                       gfloat b)
+{
+	YamlSequence *seq = yaml_sequence_new ();
+
+	yaml_sequence_add_double_element (seq, (gdouble) a);
+	yaml_sequence_add_double_element (seq, (gdouble) b);
+	return seq;
+}
+
+static gboolean
+float3_is (const gfloat *v,
+           gfloat        x,
+           gfloat        y,
+           gfloat        z)
+{
+	return v[0] == x && v[1] == y && v[2] == z;
+}
+
+static void
+set_float3_member (YamlMapping  *map,
+                   const gchar  *key,
+                   const gfloat *v)
+{
+	g_autoptr(YamlSequence) seq = build_float3_sequence (v);
+
+	yaml_mapping_set_sequence_member (map, key, seq);
+}
+
+static YamlMapping *
+build_physics_shape_mapping (LrgNodePhysicsShape *shape)
+{
+	YamlMapping       *map = yaml_mapping_new ();
+	LrgCollider3DKind  kind = lrg_node_physics_shape_get_kind (shape);
+	gfloat             v[3];
+
+	yaml_mapping_set_string_member (map, "kind", enum_to_nick (LRG_TYPE_COLLIDER3D_KIND, kind));
+	switch (kind)
+	{
+	case LRG_COLLIDER3D_BOX:
+		lrg_node_physics_shape_get_half_extents (shape, v);
+		set_float3_member (map, "half_extents", v);
+		break;
+	case LRG_COLLIDER3D_SPHERE:
+		yaml_mapping_set_double_member (map, "radius", (gdouble) lrg_node_physics_shape_get_radius (shape));
+		break;
+	case LRG_COLLIDER3D_CAPSULE:
+	case LRG_COLLIDER3D_CYLINDER:
+		yaml_mapping_set_double_member (map, "radius", (gdouble) lrg_node_physics_shape_get_radius (shape));
+		yaml_mapping_set_double_member (map, "half_height",
+		                                (gdouble) lrg_node_physics_shape_get_half_height (shape));
+		break;
+	case LRG_COLLIDER3D_CONVEX:
+	case LRG_COLLIDER3D_MESH:
+		if (lrg_node_physics_shape_get_mesh (shape) != NULL)
+			yaml_mapping_set_string_member (map, "mesh", lrg_node_physics_shape_get_mesh (shape));
+		break;
+	case LRG_COLLIDER3D_PLANE:
+	default:
+		break;
+	}
+
+	lrg_node_physics_shape_get_offset (shape, v);
+	if (!float3_is (v, 0.0f, 0.0f, 0.0f))
+		set_float3_member (map, "offset", v);
+	lrg_node_physics_shape_get_rotation (shape, v);
+	if (!float3_is (v, 0.0f, 0.0f, 0.0f))
+		set_float3_member (map, "rotation", v);
+	if (lrg_node_physics_shape_get_trigger (shape))
+		yaml_mapping_set_boolean_member (map, "trigger", TRUE);
+	if (lrg_node_physics_shape_get_friction (shape) >= 0.0f)
+		yaml_mapping_set_double_member (map, "friction", (gdouble) lrg_node_physics_shape_get_friction (shape));
+	if (lrg_node_physics_shape_get_restitution (shape) >= 0.0f)
+		yaml_mapping_set_double_member (map, "restitution",
+		                                (gdouble) lrg_node_physics_shape_get_restitution (shape));
+	if (lrg_node_physics_shape_get_layer (shape) != NULL)
+		yaml_mapping_set_string_member (map, "layer", lrg_node_physics_shape_get_layer (shape));
+	return map;
+}
+
+static YamlMapping *
+build_physics_joint_mapping (LrgNodePhysicsJoint *joint)
+{
+	YamlMapping *map = yaml_mapping_new ();
+	gfloat       v[3];
+	gfloat       a;
+	gfloat       b;
+
+	yaml_mapping_set_string_member (map, "kind", enum_to_nick (LRG_TYPE_JOINT_KIND,
+	                                                           lrg_node_physics_joint_get_kind (joint)));
+	if (lrg_node_physics_joint_get_target (joint) != NULL)
+		yaml_mapping_set_string_member (map, "target", lrg_node_physics_joint_get_target (joint));
+	lrg_node_physics_joint_get_anchor (joint, v);
+	if (!float3_is (v, 0.0f, 0.0f, 0.0f))
+		set_float3_member (map, "anchor", v);
+	lrg_node_physics_joint_get_axis (joint, v);
+	if (!float3_is (v, 0.0f, 1.0f, 0.0f))
+		set_float3_member (map, "axis", v);
+	if (lrg_node_physics_joint_get_limits (joint, &a, &b))
+	{
+		g_autoptr(YamlSequence) seq = build_float2_sequence (a, b);
+
+		yaml_mapping_set_sequence_member (map, "limits", seq);
+	}
+	lrg_node_physics_joint_get_spring (joint, &a, &b);
+	if (a > 0.0f)
+	{
+		g_autoptr(YamlSequence) seq = build_float2_sequence (a, b);
+
+		yaml_mapping_set_sequence_member (map, "spring", seq);
+	}
+	lrg_node_physics_joint_get_motor (joint, &a, &b);
+	if (b > 0.0f)
+	{
+		g_autoptr(YamlSequence) seq = build_float2_sequence (a, b);
+
+		yaml_mapping_set_sequence_member (map, "motor", seq);
+	}
+	if (lrg_node_physics_joint_get_break_force (joint) > 0.0f)
+		yaml_mapping_set_double_member (map, "break_force",
+		                                (gdouble) lrg_node_physics_joint_get_break_force (joint));
+	return map;
+}
+
+static YamlMapping *
+build_physics_mapping (LrgNodePhysics *physics)
+{
+	YamlMapping *map = yaml_mapping_new ();
+	GPtrArray   *shapes = lrg_node_physics_get_shapes (physics);
+	GPtrArray   *joints = lrg_node_physics_get_joints (physics);
+	gfloat       lin;
+	gfloat       ang;
+	guint        i;
+
+	yaml_mapping_set_string_member (map, "body", enum_to_nick (LRG_TYPE_DYNAMICS_BODY_KIND,
+	                                                           lrg_node_physics_get_body_kind (physics)));
+	yaml_mapping_set_double_member (map, "mass", (gdouble) lrg_node_physics_get_mass (physics));
+	if (lrg_node_physics_get_layer (physics) != NULL)
+		yaml_mapping_set_string_member (map, "layer", lrg_node_physics_get_layer (physics));
+	yaml_mapping_set_double_member (map, "friction", (gdouble) lrg_node_physics_get_friction (physics));
+	yaml_mapping_set_double_member (map, "restitution", (gdouble) lrg_node_physics_get_restitution (physics));
+	lrg_node_physics_get_damping (physics, &lin, &ang);
+	yaml_mapping_set_double_member (map, "linear_damping", (gdouble) lin);
+	yaml_mapping_set_double_member (map, "angular_damping", (gdouble) ang);
+	yaml_mapping_set_double_member (map, "gravity_factor", (gdouble) lrg_node_physics_get_gravity_factor (physics));
+	if (lrg_node_physics_get_ccd (physics))
+		yaml_mapping_set_boolean_member (map, "ccd", TRUE);
+
+	if (shapes->len > 0)
+	{
+		g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+
+		for (i = 0; i < shapes->len; i++)
+		{
+			g_autoptr(YamlMapping) m = build_physics_shape_mapping (g_ptr_array_index (shapes, i));
+
+			yaml_sequence_add_mapping_element (seq, m);
+		}
+		yaml_mapping_set_sequence_member (map, "shapes", seq);
+	}
+	if (joints->len > 0)
+	{
+		g_autoptr(YamlSequence) seq = yaml_sequence_new ();
+
+		for (i = 0; i < joints->len; i++)
+		{
+			g_autoptr(YamlMapping) m = build_physics_joint_mapping (g_ptr_array_index (joints, i));
+
+			yaml_sequence_add_mapping_element (seq, m);
+		}
+		yaml_mapping_set_sequence_member (map, "joints", seq);
+	}
+	return map;
+}
+
+/* A number member, or @def when absent. */
+static gfloat
+phys_float (YamlMapping *map,
+            const gchar *key,
+            gfloat       def)
+{
+	return yaml_mapping_has_member (map, key) ? (gfloat) yaml_mapping_get_double_member (map, key) : def;
+}
+
+/* A sequence member of 2 or 3 numbers, or NULL. */
+static YamlSequence *
+phys_seq (YamlMapping *map,
+          const gchar *key)
+{
+	YamlNode *node = yaml_mapping_get_member (map, key);
+
+	if (node == NULL || yaml_node_get_node_type (node) != YAML_NODE_SEQUENCE)
+		return NULL;
+	return yaml_node_get_sequence (node);
+}
+
+static LrgNodePhysicsShape *
+parse_physics_shape (YamlMapping *map)
+{
+	LrgNodePhysicsShape *shape;
+	YamlSequence        *seq;
+
+	shape = lrg_node_physics_shape_new (nick_to_enum (LRG_TYPE_COLLIDER3D_KIND,
+	                                                  yaml_mapping_get_string_member (map, "kind"),
+	                                                  LRG_COLLIDER3D_BOX));
+	if ((seq = phys_seq (map, "half_extents")) != NULL)
+		lrg_node_physics_shape_set_half_extents (shape, (gfloat) seq_get_double (seq, 0, 0.5),
+		                                         (gfloat) seq_get_double (seq, 1, 0.5),
+		                                         (gfloat) seq_get_double (seq, 2, 0.5));
+	lrg_node_physics_shape_set_radius (shape, phys_float (map, "radius", 0.5f));
+	lrg_node_physics_shape_set_half_height (shape, phys_float (map, "half_height", 0.5f));
+	if (yaml_mapping_has_member (map, "mesh"))
+		lrg_node_physics_shape_set_mesh (shape, yaml_mapping_get_string_member (map, "mesh"));
+	if ((seq = phys_seq (map, "offset")) != NULL)
+		lrg_node_physics_shape_set_offset (shape, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                   (gfloat) seq_get_double (seq, 1, 0.0),
+		                                   (gfloat) seq_get_double (seq, 2, 0.0));
+	if ((seq = phys_seq (map, "rotation")) != NULL)
+		lrg_node_physics_shape_set_rotation (shape, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                     (gfloat) seq_get_double (seq, 1, 0.0),
+		                                     (gfloat) seq_get_double (seq, 2, 0.0));
+	if (yaml_mapping_has_member (map, "trigger"))
+		lrg_node_physics_shape_set_trigger (shape, yaml_mapping_get_boolean_member (map, "trigger"));
+	lrg_node_physics_shape_set_friction (shape, phys_float (map, "friction", -1.0f));
+	lrg_node_physics_shape_set_restitution (shape, phys_float (map, "restitution", -1.0f));
+	if (yaml_mapping_has_member (map, "layer"))
+		lrg_node_physics_shape_set_layer (shape, yaml_mapping_get_string_member (map, "layer"));
+	return shape;
+}
+
+static LrgNodePhysicsJoint *
+parse_physics_joint (YamlMapping *map)
+{
+	LrgNodePhysicsJoint *joint;
+	YamlSequence        *seq;
+
+	joint = lrg_node_physics_joint_new (nick_to_enum (LRG_TYPE_JOINT_KIND,
+	                                                  yaml_mapping_get_string_member (map, "kind"),
+	                                                  LRG_JOINT_POINT));
+	if (yaml_mapping_has_member (map, "target"))
+		lrg_node_physics_joint_set_target (joint, yaml_mapping_get_string_member (map, "target"));
+	if ((seq = phys_seq (map, "anchor")) != NULL)
+		lrg_node_physics_joint_set_anchor (joint, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                   (gfloat) seq_get_double (seq, 1, 0.0),
+		                                   (gfloat) seq_get_double (seq, 2, 0.0));
+	if ((seq = phys_seq (map, "axis")) != NULL)
+		lrg_node_physics_joint_set_axis (joint, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                 (gfloat) seq_get_double (seq, 1, 1.0),
+		                                 (gfloat) seq_get_double (seq, 2, 0.0));
+	if ((seq = phys_seq (map, "limits")) != NULL)
+		lrg_node_physics_joint_set_limits (joint, TRUE, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                   (gfloat) seq_get_double (seq, 1, 0.0));
+	if ((seq = phys_seq (map, "spring")) != NULL)
+		lrg_node_physics_joint_set_spring (joint, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                   (gfloat) seq_get_double (seq, 1, 1.0));
+	if ((seq = phys_seq (map, "motor")) != NULL)
+		lrg_node_physics_joint_set_motor (joint, (gfloat) seq_get_double (seq, 0, 0.0),
+		                                  (gfloat) seq_get_double (seq, 1, 0.0));
+	lrg_node_physics_joint_set_break_force (joint, phys_float (map, "break_force", 0.0f));
+	return joint;
+}
+
+static LrgNodePhysics *
+parse_physics (YamlMapping *map)
+{
+	LrgNodePhysics *physics;
+	YamlSequence   *seq;
+	guint           i;
+
+	physics = lrg_node_physics_new (nick_to_enum (LRG_TYPE_DYNAMICS_BODY_KIND,
+	                                              yaml_mapping_get_string_member (map, "body"),
+	                                              LRG_DYNAMICS_BODY_STATIC));
+	lrg_node_physics_set_mass (physics, phys_float (map, "mass", 1.0f));
+	if (yaml_mapping_has_member (map, "layer"))
+		lrg_node_physics_set_layer (physics, yaml_mapping_get_string_member (map, "layer"));
+	lrg_node_physics_set_friction (physics, phys_float (map, "friction", 0.5f));
+	lrg_node_physics_set_restitution (physics, phys_float (map, "restitution", 0.0f));
+	lrg_node_physics_set_damping (physics, phys_float (map, "linear_damping", 0.05f),
+	                              phys_float (map, "angular_damping", 0.05f));
+	lrg_node_physics_set_gravity_factor (physics, phys_float (map, "gravity_factor", 1.0f));
+	if (yaml_mapping_has_member (map, "ccd"))
+		lrg_node_physics_set_ccd (physics, yaml_mapping_get_boolean_member (map, "ccd"));
+
+	if ((seq = phys_seq (map, "shapes")) != NULL)
+		for (i = 0; i < yaml_sequence_get_length (seq); i++)
+		{
+			YamlNode *n = yaml_sequence_get_element (seq, i);
+
+			if (n != NULL && yaml_node_get_node_type (n) == YAML_NODE_MAPPING)
+			{
+				g_autoptr(LrgNodePhysicsShape) shape = parse_physics_shape (yaml_node_get_mapping (n));
+
+				lrg_node_physics_add_shape (physics, shape);
+			}
+		}
+	if ((seq = phys_seq (map, "joints")) != NULL)
+		for (i = 0; i < yaml_sequence_get_length (seq); i++)
+		{
+			YamlNode *n = yaml_sequence_get_element (seq, i);
+
+			if (n != NULL && yaml_node_get_node_type (n) == YAML_NODE_MAPPING)
+			{
+				g_autoptr(LrgNodePhysicsJoint) joint = parse_physics_joint (yaml_node_get_mapping (n));
+
+				lrg_node_physics_add_joint (physics, joint);
+			}
+		}
+	return physics;
+}
+
 /*
  * WriteRef: while writing the sparse tree of a reference-stored instance,
  * the instance's (full) link, used to tell recorded mapped nodes from
@@ -966,6 +1328,13 @@ build_node_state (LrgNode     *node,
 	{
 		g_autoptr(YamlMapping) visual_map = build_visual_mapping (visual);
 		yaml_mapping_set_mapping_member (map, "visual", visual_map);
+	}
+
+	if (lrg_node_get_physics (node) != NULL)
+	{
+		g_autoptr(YamlMapping) physics_map = build_physics_mapping (lrg_node_get_physics (node));
+
+		yaml_mapping_set_mapping_member (map, "physics", physics_map);
 	}
 
 	components = lrg_node_get_components (node);
@@ -1688,6 +2057,7 @@ parse_node (YamlMapping *map,
 	YamlNode *transform_node;
 	YamlNode *visual_node;
 	YamlNode *components_node;
+	YamlNode *physics_node;
 	YamlNode *scripts_node;
 	YamlNode *children_node;
 	YamlNode *prefab_node;
@@ -1745,6 +2115,14 @@ parse_node (YamlMapping *map,
 	{
 		g_autoptr(LrgNodeVisual) visual = parse_visual (yaml_node_get_mapping (visual_node));
 		lrg_node_set_visual (node, visual);
+	}
+
+	physics_node = yaml_mapping_get_member (map, "physics");
+	if (physics_node != NULL && yaml_node_get_node_type (physics_node) == YAML_NODE_MAPPING)
+	{
+		g_autoptr(LrgNodePhysics) physics = parse_physics (yaml_node_get_mapping (physics_node));
+
+		lrg_node_set_physics (node, physics);
 	}
 
 	components_node = yaml_mapping_get_member (map, "components");

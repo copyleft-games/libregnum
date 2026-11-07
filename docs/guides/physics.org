@@ -347,7 +347,7 @@ lrg_node_set_physics (door, phys);
 
 - =lrg_level_instantiate_3d()= attaches a physics world (=lrg_world3d_ensure_physics()=) when the level has bodies; set the project's layer table on it (=lrg_dynamics_world_set_layers()=) before stepping.
 - Joint targets are node GUIDs: a joint to a node instantiated later is built once that entity exists.
-- Undo snapshots (=lrg_node_copy_state()=), =lrg_node_state_equal()= and prefabs carry the block (deep copies).
+- Undo snapshots (=lrg_node_copy_state()=), =lrg_node_state_equal()= and prefabs carry the block (deep copies). Joints between nodes of one prefab point at the instance's nodes after instantiation, and an instance's edited block is a prefab override (=physics=) that survives a sync.
 - The block saves byte stable: keys in a fixed order, defaults left out where the format says so.
 
 ** Characters

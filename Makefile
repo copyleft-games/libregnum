@@ -1693,6 +1693,7 @@ PUBLIC_HEADERS += \
 	src/level/lrg-component-desc.h \
 	src/level/lrg-script-binding.h \
 	src/level/lrg-node-visual.h \
+	src/level/lrg-node-physics.h \
 	src/level/lrg-node-tilemap.h \
 	src/level/lrg-timeline.h \
 	src/level/lrg-node.h \
@@ -1704,6 +1705,7 @@ SOURCES += \
 	src/level/lrg-component-desc.c \
 	src/level/lrg-script-binding.c \
 	src/level/lrg-node-visual.c \
+	src/level/lrg-node-physics.c \
 	src/level/lrg-node-tilemap.c \
 	src/level/lrg-timeline.c \
 	src/level/lrg-node.c \

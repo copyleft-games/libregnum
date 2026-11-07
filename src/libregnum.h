@@ -485,6 +485,7 @@
 #include "level/lrg-component-desc.h"
 #include "level/lrg-script-binding.h"
 #include "level/lrg-node-visual.h"
+#include "level/lrg-node-physics.h"
 #include "level/lrg-node-tilemap.h"
 #include "level/lrg-timeline.h"
 #include "level/lrg-node.h"

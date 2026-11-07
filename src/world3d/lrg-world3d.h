@@ -41,6 +41,7 @@
 #include "../lighting/lrg-lightmap3d.h"
 #include "../lighting/lrg-probe-grid.h"
 #include "../postprocess/lrg-post-stack.h"
+#include "../physics/lrg-dynamics.h"
 
 G_BEGIN_DECLS
 
@@ -1281,5 +1282,110 @@ GPtrArray * lrg_world3d_get_probe_grids (LrgWorld3D *self);
 LRG_AVAILABLE_IN_ALL
 LrgProbeGrid * lrg_world3d_find_probe_grid (LrgWorld3D   *self,
                                             const gfloat *position);
+
+/* ==========================================================================
+ * Physics (0.9.0 M5)
+ * ========================================================================== */
+
+/**
+ * lrg_world3d_set_physics:
+ * @self: a #LrgWorld3D
+ * @physics: (nullable): the physics world, %NULL to detach
+ *
+ * Attaches the #LrgDynamicsWorld the world's #LrgRigidBodyComponent,
+ * #LrgColliderComponent3D and #LrgJointComponent components create their
+ * bodies and joints in (the world holds a reference).  Replacing or
+ * detaching it removes every body the components made from the old one; the
+ * components rebuild in the new one on the next fixed update.
+ *
+ * While attached, every fixed update of lrg_world3d_fixed_update() runs:
+ * the components' fixed_update() (game logic), entity-to-body sync
+ * (static / kinematic bodies and teleports), one physics step of
+ * #LrgWorld3D:fixed-step, body-to-entity sync (dynamic bodies, triggers,
+ * contact signals), then the transform-changed flush.  After the substeps
+ * the rendered transforms of interpolated bodies are blended by
+ * lrg_world3d_get_fixed_alpha().
+ *
+ * The physics world's step limits are set to one substep of
+ * #LrgWorld3D:fixed-step (and kept in step when the fixed step changes), so
+ * do not step it yourself while it is attached.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_set_physics (LrgWorld3D       *self,
+                              LrgDynamicsWorld *physics);
+
+/**
+ * lrg_world3d_get_physics:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the attached physics world
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDynamicsWorld * lrg_world3d_get_physics (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_ensure_physics:
+ * @self: a #LrgWorld3D
+ *
+ * Returns the attached physics world, attaching a new one first when there
+ * is none (gravity (0, -9.81, 0), the default layer table).
+ *
+ * Returns: (transfer none): the physics world
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDynamicsWorld * lrg_world3d_ensure_physics (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_get_physics_interpolation:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: %TRUE when rendered transforms of dynamic bodies are interpolated
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_get_physics_interpolation (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_set_physics_interpolation:
+ * @self: a #LrgWorld3D
+ * @interpolate: blend the entities of dynamic bodies between the last two
+ *   physics states (default %TRUE); bodies opt out with
+ *   #LrgRigidBodyComponent:interpolate
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_set_physics_interpolation (LrgWorld3D *self,
+                                            gboolean    interpolate);
+
+/**
+ * lrg_world3d_find_body_entity:
+ * @self: a #LrgWorld3D
+ * @body_id: a body id of the attached physics world
+ *
+ * Maps a body (a raycast or contact result) back to its entity.
+ *
+ * Returns: (transfer none) (nullable): the entity whose component owns the
+ *   body, %NULL for bodies made outside the components
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEntity3D * lrg_world3d_find_body_entity (LrgWorld3D *self,
+                                            guint       body_id);
+
+/**
+ * lrg_world3d_debug_draw_physics:
+ * @self: a #LrgWorld3D
+ * @draw: the debug draw batch to record into
+ * @flags: what to draw (#LrgDynamicsDebugFlags)
+ *
+ * Records the attached physics world (lrg_dynamics_world_debug_draw()) for
+ * one frame; does nothing without one.  Toggle categories with the flags
+ * (shapes, AABBs, contacts, constraints, sleeping, centres of mass,
+ * velocities, broadphase) and the whole layer with
+ * lrg_debug_draw_set_category_enabled (draw, LRG_DEBUG_CATEGORY_PHYSICS, on).
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_debug_draw_physics (LrgWorld3D            *self,
+                                     LrgDebugDraw          *draw,
+                                     LrgDynamicsDebugFlags  flags);
 
 G_END_DECLS

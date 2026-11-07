@@ -29,6 +29,7 @@
 #include "lrg-prefab.h"
 #include "lrg-node.h"
 #include "lrg-node-visual.h"
+#include "lrg-node-physics.h"
 #include "lrg-node-tilemap.h"
 #include "lrg-component-desc.h"
 #include "lrg-script-binding.h"
@@ -597,6 +598,117 @@ canonical_path (const gchar *path)
  * Subtree cloning with guid remapping
  * ========================================================================== */
 
+/* ==========================================================================
+ * Joint targets (0.9.0 M5)
+ *
+ * A node's physics block names its joint targets by node GUID.  Inside a
+ * prefab instance those GUIDs must be the instance's: every path that
+ * gives nodes new GUIDs (clone, regenerate, linked instantiate, sync,
+ * reference expansion) rewrites the targets it knows a new GUID for, and
+ * diffing / applying to the source translates them back through the link.
+ * ========================================================================== */
+
+typedef const gchar * (*GuidMapFunc) (gpointer     data,
+                                      const gchar *guid);
+
+static const gchar *
+guid_map_table (gpointer     data,
+                const gchar *guid)
+{
+	return g_hash_table_lookup ((GHashTable *) data, guid);
+}
+
+/* source guid -> instance guid */
+static const gchar *
+guid_map_to_instance (gpointer     data,
+                      const gchar *guid)
+{
+	return lrg_prefab_link_map_lookup_instance ((LrgPrefabLink *) data, guid);
+}
+
+/* instance guid -> source guid */
+static const gchar *
+guid_map_to_source (gpointer     data,
+                    const gchar *guid)
+{
+	return lrg_prefab_link_map_lookup ((LrgPrefabLink *) data, guid);
+}
+
+/* Rewrites the joint targets of @phys that @map knows; others are kept. */
+static void
+physics_remap_targets (LrgNodePhysics *phys,
+                       GuidMapFunc     map,
+                       gpointer        data)
+{
+	GPtrArray *joints;
+	guint      i;
+
+	if (phys == NULL)
+		return;
+	joints = lrg_node_physics_get_joints (phys);
+	for (i = 0; i < joints->len; i++)
+	{
+		LrgNodePhysicsJoint *j = g_ptr_array_index (joints, i);
+		const gchar         *target = lrg_node_physics_joint_get_target (j);
+		const gchar         *to = target != NULL ? map (data, target) : NULL;
+
+		if (to != NULL && g_strcmp0 (to, target) != 0)
+		{
+			g_autofree gchar *copy = g_strdup (to);   /* @to may live in a table we touch */
+
+			lrg_node_physics_joint_set_target (j, copy);
+		}
+	}
+}
+
+typedef struct
+{
+	GuidMapFunc map;
+	gpointer    data;
+} RemapJoints;
+
+static gboolean
+remap_joints_visit (LrgNode  *node,
+                    gpointer  user_data)
+{
+	RemapJoints *r = user_data;
+
+	physics_remap_targets (lrg_node_get_physics (node), r->map, r->data);
+	return TRUE;
+}
+
+/* Rewrites the joint targets of every node under @root through @map. */
+static void
+remap_joint_targets (LrgNode     *root,
+                     GuidMapFunc  map,
+                     gpointer     data)
+{
+	RemapJoints r;
+
+	r.map = map;
+	r.data = data;
+	lrg_node_foreach (root, remap_joints_visit, &r);
+}
+
+/* TRUE when the physics blocks differ, @inst's targets read through @link
+ * (instance -> source) when given. */
+static gboolean
+physics_differs (LrgNode       *inst,
+                 LrgNode       *src,
+                 LrgPrefabLink *link)
+{
+	LrgNodePhysics            *a = lrg_node_get_physics (inst);
+	g_autoptr(LrgNodePhysics)  mapped = NULL;
+
+	if (link != NULL && a != NULL)
+	{
+		mapped = lrg_node_physics_copy (a);
+		physics_remap_targets (mapped, guid_map_to_source, link);
+		a = mapped;
+	}
+	return !lrg_node_physics_equal (a, lrg_node_get_physics (src));
+}
+
 /* How clone_tree() picks the guid of each copy. */
 typedef enum
 {
@@ -752,6 +864,7 @@ lrg_prefab_clone (LrgNode *node)
 	table = new_guid_table ();
 	dst = clone_tree (node, GUID_RANDOM, NULL, table);
 	copy_links (node, dst, table, FALSE);
+	remap_joint_targets (dst, guid_map_table, table);
 
 	return dst;
 }
@@ -823,6 +936,7 @@ lrg_prefab_regenerate_guids (LrgNode *root)
 	table = new_guid_table ();
 	lrg_node_foreach (root, regen_guid, table);
 	lrg_node_foreach (root, regen_link, table);
+	remap_joint_targets (root, guid_map_table, table);
 }
 
 /* ==========================================================================
@@ -1279,10 +1393,11 @@ effective_visual (LrgNode  *node,
 
 /* Appends to @out (owned strings) the paths at which @inst and @src differ. */
 static void
-diff_state (LrgNode   *inst,
-            LrgNode   *src,
-            gboolean   is_root,
-            GPtrArray *out)
+diff_state (LrgNode       *inst,
+            LrgNode       *src,
+            gboolean       is_root,
+            LrgPrefabLink *link,
+            GPtrArray     *out)
 {
 	if (!is_root && g_strcmp0 (lrg_node_get_name (inst), lrg_node_get_name (src)) != 0)
 		add_path (out, "name");
@@ -1301,6 +1416,10 @@ diff_state (LrgNode   *inst,
 	diff_visual (effective_visual (inst, is_root), effective_visual (src, is_root), out);
 	diff_components (inst, src, out);
 	diff_scripts (inst, src, out);
+
+	/* the physics block is one override path (0.9.0) */
+	if (physics_differs (inst, src, link))
+		add_path (out, "physics");
 }
 
 GStrv
@@ -1314,7 +1433,7 @@ lrg_prefab_diff_node_state (LrgNode  *instance,
 	g_return_val_if_fail (LRG_IS_NODE (source), NULL);
 
 	out = g_ptr_array_new ();
-	diff_state (instance, source, is_instance_root, out);
+	diff_state (instance, source, is_instance_root, NULL, out);
 	g_ptr_array_add (out, NULL);
 	return (GStrv) g_ptr_array_free (out, FALSE);
 }
@@ -1328,6 +1447,7 @@ typedef struct
 	gboolean     to_source;    /* @dst is the source (apply); else the instance */
 	gboolean     root;         /* the pair is (instance root, source root) */
 	const gchar *marker_path;  /* syncing an instance root: its source path */
+	LrgPrefabLink *link;       /* nullable: the owner's link, for guid-valued paths */
 } CopyCtx;
 
 static LrgMaterial3D *
@@ -1655,6 +1775,17 @@ copy_path (LrgNode       *dst,
 		copy_component_path (dst, src, path + strlen ("components/"));
 	else if (g_str_has_prefix (path, "scripts/"))
 		copy_script_path (dst, src, path + strlen ("scripts/"));
+	else if (g_strcmp0 (path, "physics") == 0)
+	{
+		LrgNodePhysics            *p = lrg_node_get_physics (src);
+		g_autoptr(LrgNodePhysics)  copy = (p != NULL) ? lrg_node_physics_copy (p) : NULL;
+
+		/* joint targets change sides through the link */
+		if (copy != NULL && ctx->link != NULL)
+			physics_remap_targets (copy, ctx->to_source ? guid_map_to_source : guid_map_to_instance,
+			                       ctx->link);
+		lrg_node_set_physics (dst, copy);
+	}
 	else
 		return FALSE;
 
@@ -2017,8 +2148,9 @@ sync_node (Walk    *w,
 	ctx.to_source = FALSE;
 	ctx.root = is_root;
 	ctx.marker_path = lrg_prefab_link_get_source_path (w->link);
+	ctx.link = w->link;
 
-	diff_state (inst, src, is_root, paths);
+	diff_state (inst, src, is_root, w->link, paths);
 	for (i = 0; i < paths->len; i++)
 	{
 		const gchar *path = g_ptr_array_index (paths, i);
@@ -2056,6 +2188,9 @@ lrg_prefab_sync_instance (LrgNode *instance,
 	/* The root pair is always mapped (instantiate / relink do it). */
 	lrg_prefab_link_map_set (w.link, lrg_node_get_guid (instance), lrg_node_get_guid (prefab));
 	sync_node (&w, instance, prefab);
+
+	/* nodes created from the source carry source joint targets */
+	remap_joint_targets (instance, guid_map_to_instance, w.link);
 
 	return w.changed;
 }
@@ -2097,6 +2232,7 @@ lrg_prefab_instantiate_linked (LrgNode     *prefab,
 		lrg_node_add_child (inst, child);
 	}
 
+	remap_joint_targets (inst, guid_map_to_instance, link);
 	ensure_marker (inst, source_path);
 	return inst;
 }
@@ -2115,7 +2251,7 @@ compute_node (Walk       *w,
 	GPtrArray           *children;
 	guint                i;
 
-	diff_state (inst, src, inst == w->owner, paths);
+	diff_state (inst, src, inst == w->owner, w->link, paths);
 	for (i = 0; i < paths->len; i++)
 		g_hash_table_add (out, walk_key (w, inst, g_ptr_array_index (paths, i)));
 
@@ -2286,6 +2422,7 @@ apply_one (Walk        *w,
 		ctx.to_source = TRUE;
 		ctx.root = (node == w->owner);
 		ctx.marker_path = NULL;
+		ctx.link = w->link;
 		if (!copy_path (sn, node, path, &ctx))
 			return FALSE;
 
@@ -2408,6 +2545,7 @@ lrg_prefab_revert_override (LrgNode     *instance,
 		ctx.to_source = FALSE;
 		ctx.root = (node == w.owner);
 		ctx.marker_path = lrg_prefab_link_get_source_path (w.link);
+		ctx.link = w.link;
 		if (sn != NULL)
 			copy_path (node, sn, path, &ctx);
 	}
@@ -3417,6 +3555,7 @@ lrg_prefab_instantiate_reference (LrgNode  *reference,
 	/* 4. Overridden values, copied from the recorded nodes. */
 	ctx.to_source = FALSE;
 	ctx.marker_path = lrg_prefab_link_get_source_path (in_link);
+	ctx.link = NULL;   /* the map is complete only at the end: localized there */
 	for (i = 0; keys != NULL && keys[i] != NULL; i++)
 	{
 		g_autofree gchar *guid = NULL;
@@ -3452,7 +3591,10 @@ lrg_prefab_instantiate_reference (LrgNode  *reference,
 		}
 	}
 
-	/* 6. The 0.8.0 source marker, as every linked instance root has. */
+	/* 6. Joint targets copied from the source name source nodes. */
+	remap_joint_targets (full, guid_map_to_instance, out_link);
+
+	/* 7. The 0.8.0 source marker, as every linked instance root has. */
 	ensure_marker (full, lrg_prefab_link_get_source_path (in_link));
 	return full;
 }

@@ -181,6 +181,55 @@ lrg_world3d_add_probe_grid (world, hall);
 
 The description of a light carries its bake mode: =LrgLight3DDesc.bake_mode= (=LrgLightMode=, realtime by default, taken from a former reserved slot), filled by =lrg_light_component_fill_desc()= from =bake-mode= and applied by =lrg_light_set_add_light_desc()=.
 
+*** Physics (0.9.0 M5)
+:PROPERTIES:
+:CUSTOM_ID: physics
+:END:
+A world can carry an [[file:../physics/dynamics.org][LrgDynamicsWorld]] (=lrg_world3d_set_physics()=, a reference held; =lrg_world3d_ensure_physics()= attaches a new one with gravity (0, -9.81, 0) and the default layer table when there is none; =lrg_level_instantiate_3d()= calls it for levels with a =physics:= block). The physics components ([[file:components.org::#physics-components][rigid body, collider, joint]]) register with the world as *physics clients* while they are in it, and the world drives them from =lrg_world3d_fixed_update()=:
+
+#+begin_example
+ for every fixed substep:
+     components' fixed_update (step)        game logic: forces, kinematic moves, teleports
+     flush transform-changed
+     physics clients, pre_step              bodies first, colliders, then joints:
+                                            build / rebuild bodies, entity -> body
+                                            (static: teleport if moved, kinematic:
+                                            move_kinematic over the step, dynamic:
+                                            teleport if game code moved it)
+     lrg_dynamics_world_step (step)         one substep: contacts, joints, CCD, sleep
+     physics clients, post_step             body -> entity (dynamic), trigger enter/exit,
+                                            collision enter/exit, joint broken signals
+     flush transform-changed
+ after the substeps (every call, even with 0 substeps):
+     physics clients, interpolate (alpha)   dynamic entities = blend (previous, current,
+                                            lrg_world3d_get_fixed_alpha ())
+#+end_example
+
+Ordering is client priority (bodies, stand-alone colliders, joints), then registration order, so a world built in the same order steps bit-identically. The physics world's step limits are set to one substep of =fixed-step= (and follow changes of =fixed-step=): do not step it yourself while it is attached, and do not call =lrg_world3d_fixed_update()= and the physics world's step for the same time.
+
+*Game code moving an entity* is detected by the entity's world version: every write the components make is followed by remembering the new version, so any other change (=lrg_entity3d_set_position()= from a script, the editor gizmo) is a teleport for dynamic and static bodies. Kinematic bodies are moved every step with the velocity that reaches the entity's pose, so they push dynamic bodies; an unmoved kinematic entity stops its body.
+
+*Interpolation:* with =physics-interpolation= (default =TRUE=) and a component's =interpolate= (default =TRUE=), the entity of a dynamic body is drawn between the last two physics states; game logic in the next =fixed_update= sees the blended pose, the body keeps its own. Turn it off to render the physics pose exactly (fixed-rate games, replays).
+
+*Mapping bodies back:* =lrg_world3d_find_body_entity (world, body_id)= returns the entity a component's body belongs to (raycast hits, contact listings), =NULL= for bodies made outside the components.
+
+*Debug draw:* =lrg_world3d_debug_draw_physics (world, draw, flags)= records the attached physics world into an #LrgDebugDraw (=lrg_dynamics_world_debug_draw()=; =LrgDynamicsDebugFlags=: shapes, AABBs, contacts, constraints, sleeping, centres of mass, velocities, broadphase), on =LRG_DEBUG_CATEGORY_PHYSICS=. Give the draw to #LrgWorld3DRenderer (=lrg_world3d_renderer_set_debug_draw()= with =LRG_WORLD3D_RENDER_FLAG_DEBUG_DRAW=) and toggle the category with =lrg_debug_draw_set_category_enabled()=.
+
+#+begin_src C
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+LrgDynamicsWorld     *physics = lrg_world3d_ensure_physics (world);
+
+lrg_dynamics_world_set_layers (physics, project_layers);   /* the project's layer matrix */
+/* ... add entities with LrgRigidBodyComponent / LrgColliderComponent3D ... */
+
+while (running)
+{
+	lrg_world3d_step (world, GetFrameTime ());   /* physics runs in the fixed updates */
+	lrg_world3d_debug_draw_physics (world, dd, show_shapes ? LRG_DYNAMICS_DEBUG_SHAPES : 0);
+	/* render */
+}
+#+end_src
+
 *** Spatial index
 :PROPERTIES:
 :CUSTOM_ID: spatial-index
@@ -299,6 +348,11 @@ Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[
 | =lrg_world3d_set_lightmap()= / =lrg_world3d_get_lightmap()= | the baked lightmap (ref held, nullable), see [[#baked-lighting][Baked lighting]] (0.9.0) |
 | =lrg_world3d_add_probe_grid()= / =lrg_world3d_remove_probe_grid()= / =lrg_world3d_clear_probe_grids()= / =lrg_world3d_get_probe_grids()= | the probe grids (refs held) (0.9.0) |
 | =lrg_world3d_find_probe_grid()= | the grid lighting a point (transfer none, nullable) (0.9.0) |
+| =lrg_world3d_set_physics()= / =lrg_world3d_get_physics()= | the attached #LrgDynamicsWorld (ref held, nullable), see [[#physics][Physics]] (0.9.0) |
+| =lrg_world3d_ensure_physics()= | attach a default physics world if none; transfer none |
+| =lrg_world3d_set_physics_interpolation()= / =lrg_world3d_get_physics_interpolation()= | render blend of dynamic bodies |
+| =lrg_world3d_find_body_entity (world, body_id)= | the entity owning a body (transfer none, nullable) |
+| =lrg_world3d_debug_draw_physics (world, draw, flags)= | physics debug draw for one frame |
 
 *** Properties and signals
 :PROPERTIES:
@@ -313,6 +367,8 @@ Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[
 | =frustum-culling= | boolean       | rw     | =TRUE=  |
 | =active-camera=   | =LrgCamera=   | rw     | =NULL=  |
 | =audio-listener=  | =LrgEntity3D= | rw     | =NULL=  |
+| =physics=         | =LrgDynamicsWorld= | rw | =NULL=  |
+| =physics-interpolation= | boolean | rw     | =TRUE=  |
 
 | signal           | arguments       | when                                                        |
 |------------------+-----------------+-------------------------------------------------------------|
@@ -440,6 +496,7 @@ near = lrg_world3d_query_sphere (world, at, 5.0f);
 - =collect_render= is O(visible entities); frustum culling is per item against six planes. Reusing a list keeps its arrays allocated; items are stored by value (no per-item allocation).
 - Spatial refresh cost is proportional to the size of dirty subtrees, not the world; static entities never re-index after their first query.
 - GUID lookups are hash lookups; name and tag lookups walk the tree.
+- Physics adds three client hook calls per physics component per fixed substep plus one interpolation call per frame; the physics step itself dominates (see [[file:../physics/dynamics.org][LrgDynamicsWorld]]).
 
 ** Pitfalls
 :PROPERTIES:
@@ -451,6 +508,8 @@ near = lrg_world3d_query_sphere (world, at, 5.0f);
 - =lrg_world3d_get_lights()= returns pointers into the registry: do not keep them across register/unregister calls.
 - Signal handlers on =transform-changed= that move other entities are handled in the same flush (bounded to 16 rounds).
 - The world's environment is shared by reference: changing it (exposure, fog) changes every renderer drawing the world; give a renderer its own environment for a different look in one view.
+- A dynamic body's entity should be top-level or under static parents: a moving parent changes its world transform, which the world takes for a teleport.
+- Do not step an attached physics world yourself; the world steps it once per fixed update.
 - =LrgCamera3D= exposes no clip planes, so frustum culling uses near 0.05 / far 10000; disable =frustum-culling= for unusual cameras.
 
 ** Using it from the editor

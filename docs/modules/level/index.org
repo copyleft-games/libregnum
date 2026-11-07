@@ -18,6 +18,7 @@
 | =LrgLevel= | =level/lrg-level.h= | The document: name, default 2D/3D view, an implicit root =LrgNode= and the timelines |
 | =LrgNode= | =level/lrg-node.h= | A node: guid, name, flags, Euler TRS, children, visual, components, scripts, prefab link; derivable with the =instantiate= (2D) and =instantiate_3d= vfuncs |
 | =LrgNodeVisual= | =level/lrg-node-visual.h= | Tagged visual payload: primitive, mesh, sprite, light, camera, audio emitter, tilemap, prefab instance, CAD part, plus a param bag |
+| =LrgNodePhysics=, =LrgNodePhysicsShape=, =LrgNodePhysicsJoint= | =level/lrg-node-physics.h= | The node's =physics:= block: body, shapes, joints (0.9.0, see [[file:node-physics.org][Node Physics]]) |
 | =LrgNodeTilemap= | =level/lrg-node-tilemap.h= | Layered tile grid carried by a tilemap visual; =lrg_node_tilemap_to_runtime()= builds an =LrgTilemap= |
 | =LrgTimeline=, =LrgTimelineTrack= | =level/lrg-timeline.h= | Keyframed node-channel animation stored in the level |
 | =LrgComponentDesc= | =level/lrg-component-desc.h= | A serializable component: registry type name + property bag |

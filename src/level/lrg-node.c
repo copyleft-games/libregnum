@@ -33,6 +33,7 @@ typedef struct
 	gboolean       is_2d;
 
 	LrgNodeVisual *visual;     /* owned, nullable */
+	LrgNodePhysics *physics;   /* owned, nullable (0.9.0) */
 	GPtrArray     *components; /* owned LrgComponentDesc* */
 	GPtrArray     *scripts;    /* owned LrgScriptBinding* */
 
@@ -52,6 +53,7 @@ enum
 	PROP_LOCKED,
 	PROP_IS_2D,
 	PROP_VISUAL,
+	PROP_PHYSICS,
 	PROP_PREFAB_LINK,
 	N_PROPS
 };
@@ -91,6 +93,7 @@ lrg_node_finalize (GObject *object)
 	g_clear_pointer (&priv->scale, grl_vector3_free);
 	g_clear_pointer (&priv->children, g_ptr_array_unref);
 	g_clear_object (&priv->visual);
+	g_clear_object (&priv->physics);
 	g_clear_pointer (&priv->components, g_ptr_array_unref);
 	g_clear_pointer (&priv->scripts, g_ptr_array_unref);
 	g_clear_object (&priv->prefab_link);
@@ -127,6 +130,9 @@ lrg_node_get_property (GObject    *object,
 		break;
 	case PROP_VISUAL:
 		g_value_set_object (value, priv->visual);
+		break;
+	case PROP_PHYSICS:
+		g_value_set_object (value, priv->physics);
 		break;
 	case PROP_PREFAB_LINK:
 		g_value_set_object (value, priv->prefab_link);
@@ -169,6 +175,9 @@ lrg_node_set_property (GObject      *object,
 		break;
 	case PROP_IS_2D:
 		priv->is_2d = g_value_get_boolean (value);
+		break;
+	case PROP_PHYSICS:
+		lrg_node_set_physics (LRG_NODE (object), g_value_get_object (value));
 		break;
 	case PROP_VISUAL:
 		g_set_object (&priv->visual, g_value_get_object (value));
@@ -278,6 +287,20 @@ lrg_node_class_init (LrgNodeClass *klass)
 		                     LRG_TYPE_NODE_VISUAL,
 		                     G_PARAM_READWRITE |
 		                     G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgNode:physics:
+	 *
+	 * The node's `physics:` block (#LrgNodePhysics), or %NULL for no body.
+	 */
+	properties[PROP_PHYSICS] =
+		g_param_spec_object ("physics",
+		                     "Physics",
+		                     "Physics body description",
+		                     LRG_TYPE_NODE_PHYSICS,
+		                     G_PARAM_READWRITE |
+		                     G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
 
 	/**
 	 * LrgNode:prefab-link:
@@ -667,6 +690,28 @@ lrg_node_find_by_guid (LrgNode     *self,
 /* ==========================================================================
  * Visual
  * ========================================================================== */
+
+LrgNodePhysics *
+lrg_node_get_physics (LrgNode *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
+
+	return NODE_PRIV (self)->physics;
+}
+
+void
+lrg_node_set_physics (LrgNode        *self,
+                      LrgNodePhysics *physics)
+{
+	LrgNodePrivate *priv;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+	g_return_if_fail (physics == NULL || LRG_IS_NODE_PHYSICS (physics));
+
+	priv = NODE_PRIV (self);
+	if (g_set_object (&priv->physics, physics))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PHYSICS]);
+}
 
 LrgNodeVisual *
 lrg_node_get_visual (LrgNode *self)
@@ -1095,6 +1140,11 @@ lrg_node_copy_state (LrgNode *self,
 	if (src->visual != NULL)
 		dst->visual = lrg_node_visual_copy (src->visual);
 
+	/* Physics block: deep copy too. */
+	g_clear_object (&dst->physics);
+	if (src->physics != NULL)
+		dst->physics = lrg_node_physics_copy (src->physics);
+
 	g_ptr_array_set_size (dst->components, 0);
 	for (i = 0; i < src->components->len; i++)
 		g_ptr_array_add (dst->components,
@@ -1110,6 +1160,7 @@ lrg_node_copy_state (LrgNode *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCKED]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_2D]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VISUAL]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PHYSICS]);
 }
 
 static gboolean
@@ -1145,6 +1196,9 @@ lrg_node_state_equal (LrgNode *self,
 		return FALSE;
 
 	if (!lrg_node_visual_equal (a->visual, b->visual))
+		return FALSE;
+
+	if (!lrg_node_physics_equal (a->physics, b->physics))
 		return FALSE;
 
 	if (a->components->len != b->components->len ||

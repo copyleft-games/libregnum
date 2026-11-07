@@ -17,6 +17,7 @@
 #include "lrg-world3d.h"
 #include "lrg-entity3d.h"
 #include "lrg-octree.h"
+#include "lrg-world3d-physics-private.h"
 #include "../core/lrg-math3d.h"
 #include "../ecs/lrg-component.h"
 #include "../graphics/lrg-camera.h"
@@ -793,7 +794,25 @@ struct _LrgWorld3D
 	LrgPostStack   *post_stack;    /* owned ref or NULL */
 	LrgLightmap3D  *lightmap;      /* owned ref or NULL (0.9.0 M3) */
 	GPtrArray      *probe_grids;   /* LrgProbeGrid, owned refs (0.9.0 M3) */
+
+	/* Physics (0.9.0 M5) */
+	LrgDynamicsWorld *physics;         /* owned ref or NULL */
+	GPtrArray        *physics_clients; /* PhysicsClient* (owned), sorted */
+	guint64           physics_serial;  /* registration counter */
+	GHashTable       *body_entities;   /* body id -> LrgEntity3D* (weak) */
+	gboolean          physics_interpolation;
+	gboolean          physics_syncing;
+	GHashTable       *contact_index;   /* body id -> GArray of guint, lazily per substep */
 };
+
+/* One registered physics component (see lrg-world3d-physics-private.h). */
+typedef struct
+{
+	GObject                     *client;    /* weak: unregisters itself */
+	gint                         priority;
+	guint64                      serial;
+	const LrgPhysicsClientClass *klass;
+} PhysicsClient;
 
 G_DEFINE_FINAL_TYPE (LrgWorld3D, lrg_world3d, G_TYPE_OBJECT)
 
@@ -807,6 +826,8 @@ enum
 	PROP_FRUSTUM_CULLING,
 	PROP_ACTIVE_CAMERA,
 	PROP_AUDIO_LISTENER,
+	PROP_PHYSICS,
+	PROP_PHYSICS_INTERPOLATION,
 	N_PROPS
 };
 
@@ -1031,6 +1052,8 @@ lrg_world3d_dispose (GObject *object)
 	g_clear_object (&self->post_stack);
 	g_clear_object (&self->lightmap);
 	g_clear_pointer (&self->probe_grids, g_ptr_array_unref);
+	/* the tree left above, so every client has unregistered already */
+	g_clear_object (&self->physics);
 
 	G_OBJECT_CLASS (lrg_world3d_parent_class)->dispose (object);
 }
@@ -1048,6 +1071,9 @@ lrg_world3d_finalize (GObject *object)
 	g_clear_pointer (&self->transform_queue, g_ptr_array_unref);
 	g_clear_pointer (&self->lights, g_ptr_array_unref);
 	g_clear_pointer (&self->cameras, g_ptr_array_unref);
+	g_clear_pointer (&self->physics_clients, g_ptr_array_unref);
+	g_clear_pointer (&self->body_entities, g_hash_table_unref);
+	g_clear_pointer (&self->contact_index, g_hash_table_unref);
 
 	G_OBJECT_CLASS (lrg_world3d_parent_class)->finalize (object);
 }
@@ -1085,6 +1111,12 @@ lrg_world3d_get_property (GObject    *object,
 	case PROP_AUDIO_LISTENER:
 		g_value_set_object (value, self->audio_listener);
 		break;
+	case PROP_PHYSICS:
+		g_value_set_object (value, self->physics);
+		break;
+	case PROP_PHYSICS_INTERPOLATION:
+		g_value_set_boolean (value, self->physics_interpolation);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -1119,6 +1151,12 @@ lrg_world3d_set_property (GObject      *object,
 		break;
 	case PROP_AUDIO_LISTENER:
 		lrg_world3d_set_audio_listener (self, (LrgEntity3D *)g_value_get_object (value));
+		break;
+	case PROP_PHYSICS:
+		lrg_world3d_set_physics (self, (LrgDynamicsWorld *)g_value_get_object (value));
+		break;
+	case PROP_PHYSICS_INTERPOLATION:
+		lrg_world3d_set_physics_interpolation (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1212,6 +1250,29 @@ lrg_world3d_class_init (LrgWorld3DClass *klass)
 		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
 		                     G_PARAM_EXPLICIT_NOTIFY);
 
+	/**
+	 * LrgWorld3D:physics:
+	 *
+	 * The attached #LrgDynamicsWorld (see lrg_world3d_set_physics()).
+	 */
+	properties[PROP_PHYSICS] =
+		g_param_spec_object ("physics", "Physics", "The attached physics world",
+		                     LRG_TYPE_DYNAMICS_WORLD,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgWorld3D:physics-interpolation:
+	 *
+	 * Whether entities of dynamic bodies are rendered blended between the
+	 * last two physics states.
+	 */
+	properties[PROP_PHYSICS_INTERPOLATION] =
+		g_param_spec_boolean ("physics-interpolation", "Physics interpolation",
+		                      "Blend dynamic bodies between physics states", TRUE,
+		                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS |
+		                      G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
 	/**
@@ -1254,6 +1315,9 @@ lrg_world3d_init (LrgWorld3D *self)
 	self->fixed_step = 1.0f / 60.0f;
 	self->max_substeps = 8;
 	self->frustum_culling = TRUE;
+	self->physics_clients = g_ptr_array_new_with_free_func (g_free);
+	self->body_entities = g_hash_table_new (g_direct_hash, g_direct_equal);
+	self->physics_interpolation = TRUE;
 
 	bounds = lrg_bounding_box3d_new (-WORLD_DEFAULT_HALF_EXTENT, -WORLD_DEFAULT_HALF_EXTENT,
 	                                 -WORLD_DEFAULT_HALF_EXTENT, WORLD_DEFAULT_HALF_EXTENT,
@@ -1452,6 +1516,407 @@ lrg_world3d_get_components_of_type (LrgWorld3D *self,
 }
 
 /* --------------------------------------------------------------------------
+ * Physics bridge (0.9.0 M5): see lrg-world3d-physics-private.h
+ * -------------------------------------------------------------------------- */
+
+/* Clients run by priority, then registration order. */
+static gint
+physics_client_compare (gconstpointer a,
+                        gconstpointer b)
+{
+	const PhysicsClient *ca = *(const PhysicsClient * const *)a;
+	const PhysicsClient *cb = *(const PhysicsClient * const *)b;
+
+	if (ca->priority != cb->priority)
+		return ca->priority < cb->priority ? -1 : 1;
+	if (ca->serial != cb->serial)
+		return ca->serial < cb->serial ? -1 : 1;
+	return 0;
+}
+
+static gint
+physics_find_client (LrgWorld3D *self,
+                     GObject    *client)
+{
+	guint i;
+
+	for (i = 0; i < self->physics_clients->len; i++)
+		if (((PhysicsClient *)g_ptr_array_index (self->physics_clients, i))->client == client)
+			return (gint)i;
+	return -1;
+}
+
+void
+_lrg_world3d_physics_add_client (LrgWorld3D                  *self,
+                                 GObject                     *client,
+                                 gint                         priority,
+                                 const LrgPhysicsClientClass *klass)
+{
+	PhysicsClient *entry;
+
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (G_IS_OBJECT (client));
+	g_return_if_fail (klass != NULL);
+
+	if (physics_find_client (self, client) >= 0)
+		return;
+	entry = g_new0 (PhysicsClient, 1);
+	entry->client = client;
+	entry->priority = priority;
+	entry->serial = self->physics_serial++;
+	entry->klass = klass;
+	g_ptr_array_add (self->physics_clients, entry);
+	g_ptr_array_sort (self->physics_clients, physics_client_compare);
+
+	/* A client joining a world that already simulates builds lazily on
+	 * the next pre_step; it only learns the physics world here. */
+	if (self->physics != NULL && klass->physics_changed != NULL)
+		klass->physics_changed (client, NULL, self->physics);
+}
+
+void
+_lrg_world3d_physics_remove_client (LrgWorld3D *self,
+                                    GObject    *client)
+{
+	gint index;
+
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+
+	index = physics_find_client (self, client);
+	if (index < 0)
+		return;
+	g_ptr_array_remove_index (self->physics_clients, (guint)index);
+}
+
+void
+_lrg_world3d_physics_map_body (LrgWorld3D  *self,
+                               guint        body_id,
+                               LrgEntity3D *entity)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_hash_table_replace (self->body_entities, GUINT_TO_POINTER (body_id), entity);
+}
+
+void
+_lrg_world3d_physics_unmap_body (LrgWorld3D *self,
+                                 guint       body_id)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_hash_table_remove (self->body_entities, GUINT_TO_POINTER (body_id));
+}
+
+static gint
+compare_guint (gconstpointer a,
+               gconstpointer b)
+{
+	guint x = *(const guint *)a;
+	guint y = *(const guint *)b;
+
+	return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/* Adds @other to the touching list of @body. */
+static void
+contact_index_add (GHashTable *index,
+                   guint       body,
+                   guint       other)
+{
+	GArray *list = g_hash_table_lookup (index, GUINT_TO_POINTER (body));
+
+	if (list == NULL)
+	{
+		list = g_array_new (FALSE, FALSE, sizeof (guint));
+		g_hash_table_insert (index, GUINT_TO_POINTER (body), list);
+	}
+	g_array_append_val (list, other);
+}
+
+void
+_lrg_world3d_physics_body_contacts (LrgWorld3D *self,
+                                    guint       body_id,
+                                    GArray     *out)
+{
+	GArray *list;
+
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (out != NULL);
+
+	if (self->physics == NULL)
+		return;
+
+	/* Build the body -> touching bodies index once per substep from the
+	 * contact list of the last step (speculative manifolds excluded). */
+	if (self->contact_index == NULL)
+	{
+		GHashTableIter iter;
+		gpointer       value;
+		guint          n = lrg_dynamics_world_get_contact_count (self->physics);
+		guint          i;
+
+		self->contact_index = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
+		                                             (GDestroyNotify)g_array_unref);
+		for (i = 0; i < n; i++)
+		{
+			LrgDynamicsContact c;
+
+			if (!lrg_dynamics_world_get_contact_info (self->physics, i, &c, NULL) || c.depth < 0.0f)
+				continue;
+			contact_index_add (self->contact_index, c.body_a, c.body_b);
+			contact_index_add (self->contact_index, c.body_b, c.body_a);
+		}
+		g_hash_table_iter_init (&iter, self->contact_index);
+		while (g_hash_table_iter_next (&iter, NULL, &value))
+			g_array_sort ((GArray *)value, compare_guint);
+	}
+
+	list = g_hash_table_lookup (self->contact_index, GUINT_TO_POINTER (body_id));
+	if (list != NULL && list->len > 0)
+		g_array_append_vals (out, list->data, list->len);
+}
+
+gboolean
+_lrg_world3d_physics_is_syncing (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), FALSE);
+	return self->physics_syncing;
+}
+
+/*
+ * snapshot_clients:
+ *
+ * The client list with references, so a hook may add or remove clients
+ * (destroy an entity on a trigger) while the list is walked.  A client
+ * removed before its turn is skipped by the membership check.
+ */
+static GPtrArray *
+snapshot_clients (LrgWorld3D *self)
+{
+	GPtrArray *out = g_ptr_array_new_full (self->physics_clients->len, NULL);
+	guint      i;
+
+	for (i = 0; i < self->physics_clients->len; i++)
+	{
+		PhysicsClient *c = g_ptr_array_index (self->physics_clients, i);
+		PhysicsClient *copy = g_new (PhysicsClient, 1);
+
+		*copy = *c;
+		g_object_ref (copy->client);
+		g_ptr_array_add (out, copy);
+	}
+	return out;
+}
+
+static void
+free_snapshot (GPtrArray *snap)
+{
+	guint i;
+
+	for (i = 0; i < snap->len; i++)
+	{
+		PhysicsClient *c = g_ptr_array_index (snap, i);
+
+		g_object_unref (c->client);
+		g_free (c);
+	}
+	g_ptr_array_unref (snap);
+}
+
+typedef enum
+{
+	HOOK_PRE,
+	HOOK_POST,
+	HOOK_INTERPOLATE
+} PhysicsHook;
+
+static void
+run_physics_hook (LrgWorld3D  *self,
+                  PhysicsHook  hook,
+                  gfloat       value)
+{
+	GPtrArray *snap = snapshot_clients (self);
+	guint      i;
+
+	for (i = 0; i < snap->len; i++)
+	{
+		PhysicsClient *c = g_ptr_array_index (snap, i);
+
+		if (physics_find_client (self, c->client) < 0 || self->physics == NULL)
+			continue;
+		switch (hook)
+		{
+		case HOOK_PRE:
+			if (c->klass->pre_step != NULL)
+				c->klass->pre_step (c->client, self->physics, value);
+			break;
+		case HOOK_POST:
+			if (c->klass->post_step != NULL)
+				c->klass->post_step (c->client, self->physics, value);
+			break;
+		case HOOK_INTERPOLATE:
+			if (c->klass->interpolate != NULL)
+				c->klass->interpolate (c->client, self->physics, value);
+			break;
+		default:
+			break;
+		}
+	}
+	free_snapshot (snap);
+}
+
+/* One dynamics substep per world fixed update. */
+static void
+physics_apply_step_limits (LrgWorld3D *self)
+{
+	g_autoptr(GError) error = NULL;
+
+	if (self->physics == NULL)
+		return;
+	if (!lrg_dynamics_world_set_step_limits (self->physics, MIN (self->fixed_step, 0.1f), 1, &error))
+		lrg_warning (LRG_LOG_DOMAIN_WORLD3D, "physics step limits: %s", error->message);
+}
+
+/*
+ * physics_substep:
+ *
+ * entity -> body sync, one physics step, body -> entity sync and events.
+ * Entity writes of the post hook are flushed as transform-changed in the
+ * same fixed update.
+ */
+static void
+physics_substep (LrgWorld3D *self,
+                 gfloat      dt)
+{
+	g_autoptr(GError) error = NULL;
+
+	if (self->physics == NULL)
+		return;
+
+	run_physics_hook (self, HOOK_PRE, dt);
+	if (!lrg_dynamics_world_step (self->physics, dt, NULL, &error))
+		lrg_warning (LRG_LOG_DOMAIN_WORLD3D, "physics step: %s", error->message);
+	g_clear_pointer (&self->contact_index, g_hash_table_unref);
+	self->physics_syncing = TRUE;
+	run_physics_hook (self, HOOK_POST, dt);
+	self->physics_syncing = FALSE;
+	flush_transforms (self);
+}
+
+static void
+physics_interpolate (LrgWorld3D *self)
+{
+	gfloat alpha;
+
+	if (self->physics == NULL)
+		return;
+	alpha = self->physics_interpolation ? lrg_world3d_get_fixed_alpha (self) : 1.0f;
+	self->physics_syncing = TRUE;
+	run_physics_hook (self, HOOK_INTERPOLATE, alpha);
+	self->physics_syncing = FALSE;
+	flush_transforms (self);
+}
+
+void
+lrg_world3d_set_physics (LrgWorld3D       *self,
+                         LrgDynamicsWorld *physics)
+{
+	g_autoptr(LrgDynamicsWorld) old = NULL;
+	GPtrArray                  *snap;
+	guint                       i;
+
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (physics == NULL || LRG_IS_DYNAMICS_WORLD (physics));
+
+	if (self->physics == physics)
+		return;
+
+	old = g_steal_pointer (&self->physics);
+	if (physics != NULL)
+		self->physics = g_object_ref (physics);
+	g_hash_table_remove_all (self->body_entities);
+	g_clear_pointer (&self->contact_index, g_hash_table_unref);
+	physics_apply_step_limits (self);
+
+	/* Every client drops what it made in @old; new bodies come lazily. */
+	snap = snapshot_clients (self);
+	for (i = 0; i < snap->len; i++)
+	{
+		PhysicsClient *c = g_ptr_array_index (snap, i);
+
+		if (c->klass->physics_changed != NULL && physics_find_client (self, c->client) >= 0)
+			c->klass->physics_changed (c->client, old, self->physics);
+	}
+	free_snapshot (snap);
+
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PHYSICS]);
+}
+
+LrgDynamicsWorld *
+lrg_world3d_get_physics (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+	return self->physics;
+}
+
+LrgDynamicsWorld *
+lrg_world3d_ensure_physics (LrgWorld3D *self)
+{
+	g_autoptr(LrgDynamicsWorld) physics = NULL;
+	g_autoptr(LrgPhysicsLayers) layers = NULL;
+	static const gfloat         gravity[3] = { 0.0f, -9.81f, 0.0f };
+
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+
+	if (self->physics != NULL)
+		return self->physics;
+	layers = lrg_physics_layers_new_default ();
+	physics = lrg_dynamics_world_new ();
+	lrg_dynamics_world_set_gravity (physics, gravity, NULL);
+	lrg_dynamics_world_set_layers (physics, layers);
+	lrg_world3d_set_physics (self, physics);
+	return self->physics;
+}
+
+gboolean
+lrg_world3d_get_physics_interpolation (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), FALSE);
+	return self->physics_interpolation;
+}
+
+void
+lrg_world3d_set_physics_interpolation (LrgWorld3D *self,
+                                       gboolean    interpolate)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+
+	interpolate = !!interpolate;
+	if (self->physics_interpolation == interpolate)
+		return;
+	self->physics_interpolation = interpolate;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PHYSICS_INTERPOLATION]);
+}
+
+void
+lrg_world3d_debug_draw_physics (LrgWorld3D            *self,
+                                LrgDebugDraw          *draw,
+                                LrgDynamicsDebugFlags  flags)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (LRG_IS_DEBUG_DRAW (draw));
+
+	if (self->physics != NULL && flags != LRG_DYNAMICS_DEBUG_NONE)
+		lrg_dynamics_world_debug_draw (self->physics, draw, flags);
+}
+
+LrgEntity3D *
+lrg_world3d_find_body_entity (LrgWorld3D *self,
+                              guint       body_id)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+	return (LrgEntity3D *)g_hash_table_lookup (self->body_entities, GUINT_TO_POINTER (body_id));
+}
+
+/* --------------------------------------------------------------------------
  * Frame phases
  * -------------------------------------------------------------------------- */
 
@@ -1557,6 +2022,7 @@ lrg_world3d_fixed_update (LrgWorld3D *self,
 	{
 		run_phase (self->root, PHASE_FIXED, self->fixed_step);
 		flush_transforms (self);
+		physics_substep (self, self->fixed_step);
 		self->accumulator -= self->fixed_step;
 		self->fixed_time += (gdouble)self->fixed_step;
 		steps++;
@@ -1565,6 +2031,9 @@ lrg_world3d_fixed_update (LrgWorld3D *self,
 	/* Spiral-of-death guard: drop whole steps we could not run. */
 	if (self->accumulator >= self->fixed_step)
 		self->accumulator = fmodf (self->accumulator, self->fixed_step);
+
+	/* Rendered transforms of interpolated bodies, blended by the leftover. */
+	physics_interpolate (self);
 
 	g_object_unref (self);
 	return steps;
@@ -1613,6 +2082,7 @@ lrg_world3d_set_fixed_step (LrgWorld3D *self,
 	if (self->fixed_step == step)
 		return;
 	self->fixed_step = step;
+	physics_apply_step_limits (self);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_FIXED_STEP]);
 }
 

@@ -53,6 +53,9 @@
 #include "../world3d/components/lrg-lod-component.h"
 #include "../world3d/components/lrg-reflection-probe-component.h"
 #include "../world3d/components/lrg-sequence-component.h"
+#include "../world3d/components/lrg-rigid-body-component.h"
+#include "../world3d/components/lrg-collider-component3d.h"
+#include "../world3d/components/lrg-joint-component.h"
 #include "../ecs/components/lrg-skeleton2d-component.h"
 #include "../particles/lrg-particle-system.h"
 #include "../particles/lrg-particle-emitter.h"
@@ -494,6 +497,10 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "lod",                       lrg_lod_component_get_type },
     { "reflection-probe",          lrg_reflection_probe_component_get_type },
     { "sequence",                  lrg_sequence_component_get_type },
+    /* physics components (0.9.0 M5): "3d" because the 2D names are taken */
+    { "rigid-body3d",              lrg_rigid_body_component_get_type },
+    { "collider3d",                lrg_collider_component3d_get_type },
+    { "joint3d",                   lrg_joint_component_get_type },
     { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */
@@ -509,6 +516,7 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "wall-set",                  lrg_wall_set_get_type },
     { "collision-mesh",            lrg_collision_mesh_get_type },
     { "rope",                      lrg_rope_get_type },
+    { "dynamics-world",            lrg_dynamics_world_get_type },
 
     /* 2D triggers */
     { "trigger-rect",              lrg_trigger_rect_get_type },

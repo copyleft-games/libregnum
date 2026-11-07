@@ -129,6 +129,13 @@ Traps: the sequence has its own undo (`sequence.undo`), separate from Ctrl+Z; op
 7. `skel2d.save path=...`; check with `screenshot shot.png --window`. Play it in a game with LrgSkeleton2DComponent (`lrg_skeleton2d_component_load` + `_play`).
 Traps: a positive rotation turns clockwise on screen; rotation keys are not wrapped (350 -> 10 spins backwards); a draw-order key must name every slot; textures only show with a window (headless editors still edit everything).
 
+### Add physics to a level (0.9.0)
+1. Static geometry: a `physics:` block with `body: static` and `box`/`mesh` shapes (mesh without `mesh:` uses the node's model).
+2. Props: `body: dynamic`, a mass, and a box/convex/sphere shape; `trigger: true` for volumes.
+3. Joints go on the child node with `target:` = the other node's GUID.
+4. Layer names and `no_collide` pairs go in the `project.ryaml` root `physics:` block.
+5. In the game `lrg_level_load_world3d()` attaches physics; just step the world. (Editor gizmos, inspector and layer matrix arrive with the M5 editor tools; until then edit the block in the `.rlevel`.)
+
 ## Output Format
 
 - For editor work: report what changed as `node/PATH created|configured|deleted` lines (what `lrgeditorctl` prints), whether the level is saved or still dirty, and any problems from `get problems`.

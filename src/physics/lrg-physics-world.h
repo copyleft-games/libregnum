@@ -15,6 +15,7 @@
 #include "lrg-types.h"
 #include "lrg-rigid-body.h"
 #include "lrg-collision-info.h"
+#include "lrg-dynamics.h"
 
 G_BEGIN_DECLS
 
@@ -356,6 +357,30 @@ LRG_AVAILABLE_IN_ALL
 GPtrArray *         lrg_physics_world_query_point        (LrgPhysicsWorld *self,
                                                           gfloat           x,
                                                           gfloat           y);
+
+/**
+ * lrg_physics_world_debug_draw:
+ * @self: an #LrgPhysicsWorld
+ * @draw: the debug draw batch to record into (2D primitives)
+ * @flags: what to draw; the 2D world uses %LRG_DYNAMICS_DEBUG_SHAPES,
+ *   %LRG_DYNAMICS_DEBUG_AABBS, %LRG_DYNAMICS_DEBUG_SLEEPING,
+ *   %LRG_DYNAMICS_DEBUG_CENTER_OF_MASS and %LRG_DYNAMICS_DEBUG_VELOCITY
+ *   (the other bits are ignored)
+ *
+ * Records the 2D world's bodies into @draw for one frame on
+ * %LRG_DEBUG_CATEGORY_PHYSICS, in world (screen) units: box outlines
+ * rotated by the body rotation, circles with a radius tick showing the
+ * rotation, AABBs, centre dots and velocity lines.  Colours follow the 3D
+ * world: green dynamic, blue kinematic, grey static, yellow trigger; a
+ * sleeping body is dimmed with %LRG_DYNAMICS_DEBUG_SLEEPING.  Draw it with
+ * lrg_debug_draw_draw_2d() inside the 2D camera.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_physics_world_debug_draw (LrgPhysicsWorld       *self,
+                                   LrgDebugDraw          *draw,
+                                   LrgDynamicsDebugFlags  flags);
 
 G_END_DECLS
 

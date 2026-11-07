@@ -1371,6 +1371,54 @@ instantiate_node_3d (Instantiate3D *ctx,
                      LrgNode       *node,
                      LrgEntity3D   *parent);
 
+/*
+ * add_physics_components:
+ *
+ * The node's `physics:` block (0.9.0 M5) becomes an LrgRigidBodyComponent
+ * (the body settings), one LrgColliderComponent3D per shape and one
+ * LrgJointComponent per joint, in that order.  The world gets a physics
+ * world (lrg_world3d_ensure_physics()) when it has none, so a level with
+ * bodies simulates as soon as it is stepped.
+ */
+static void
+add_physics_components (Instantiate3D *ctx,
+                        LrgNode       *node,
+                        LrgEntity3D   *entity)
+{
+	LrgNodePhysics                  *physics = lrg_node_get_physics (node);
+	g_autoptr(LrgRigidBodyComponent) body = NULL;
+	GPtrArray                       *list;
+	guint                            i;
+
+	if (physics == NULL)
+		return;
+	lrg_world3d_ensure_physics (ctx->world);
+
+	body = lrg_rigid_body_component_new (lrg_node_physics_get_body_kind (physics));
+	lrg_node_physics_apply (physics, body);
+	lrg_entity3d_add_component (entity, LRG_COMPONENT (body));
+
+	list = lrg_node_physics_get_shapes (physics);
+	for (i = 0; i < list->len; i++)
+	{
+		LrgNodePhysicsShape              *desc = g_ptr_array_index (list, i);
+		g_autoptr(LrgColliderComponent3D) collider = lrg_collider_component3d_new (lrg_node_physics_shape_get_kind (desc));
+
+		lrg_node_physics_shape_apply (desc, collider);
+		lrg_entity3d_add_component (entity, LRG_COMPONENT (collider));
+	}
+
+	list = lrg_node_physics_get_joints (physics);
+	for (i = 0; i < list->len; i++)
+	{
+		LrgNodePhysicsJoint          *desc = g_ptr_array_index (list, i);
+		g_autoptr(LrgJointComponent)  joint = lrg_joint_component_new (lrg_node_physics_joint_get_kind (desc));
+
+		lrg_node_physics_joint_apply (desc, joint);
+		lrg_entity3d_add_component (entity, LRG_COMPONENT (joint));
+	}
+}
+
 /* --------------------------------------------------------------------------
  * Probe volumes (0.9.0 M3)
  * -------------------------------------------------------------------------- */
@@ -1499,6 +1547,7 @@ instantiate_node_3d (Instantiate3D *ctx,
 	 * game components can find the visual component in their attach. */
 	add_visual_component (ctx, node, entity);
 	add_probe_volume (ctx, node, entity);
+	add_physics_components (ctx, node, entity);
 	create_registry_components (ctx, node, entity);
 	create_script_components (node, entity);
 

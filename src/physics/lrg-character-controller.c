@@ -4,7 +4,10 @@
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Capsule move-and-slide on LrgCollisionMesh.
+ * Capsule move-and-slide on LrgCollisionMesh and, since 0.9.0, on the
+ * bodies of an LrgDynamicsWorld (shape casts and contact queries of the
+ * physics world, filtered by a layer mask).  Both sources may be set: each
+ * sweep takes the nearer hit, depenetration pushes out of both.
  *
  * Every sweep uses the capsule inflated by the skin width, so the real
  * capsule keeps that gap from geometry, and the mesh's contact rule (a
@@ -29,6 +32,9 @@
 #endif
 #include "physics/lrg-character-controller.h"
 #include "physics/lrg-collision-mesh-private.h"
+#include "physics/lrg-dynamics.h"
+#include "physics/lrg-collide.h"
+#include "core/lrg-math3d.h"
 
 /* Contacts handled per collide-and-slide pass. */
 #define SLIDE_ITERATIONS        (4)
@@ -38,6 +44,9 @@
 #define DEPENETRATE_ITERATIONS  (4)
 /* Extra progress a stepped move needs over the plain one. */
 #define STEP_MIN_GAIN           (1e-4)
+/* Physics bodies travel through the mesh code's instance ids with this
+ * bit set; lrg_character_controller_move() splits them back out. */
+#define BODY_INSTANCE_TAG       (G_GUINT64_CONSTANT (1) << 63)
 /* Terrain normal sampling offset (world units). */
 #define TERRAIN_NORMAL_DELTA    (0.25)
 
@@ -52,6 +61,12 @@ struct _LrgCharacterController
     gdouble           min_ground_y;  /* cos (max_slope) */
     gdouble           skin;
     LrgCollisionMesh *world;         /* owned, nullable */
+    LrgDynamicsWorld *physics;       /* owned, nullable (0.9.0) */
+    guint32           layer_mask;
+    guint             ignore_body;
+    LrgPhysicsShape  *query_shape;   /* cached capsule, rebuilt on resize */
+    gdouble           query_radius;
+    gdouble           query_half;
     LrgHeightFunc     height_func;
     gpointer          height_data;
     GDestroyNotify    height_destroy;
@@ -66,6 +81,8 @@ lrg_character_controller_dispose (GObject *object)
 
     self = LRG_CHARACTER_CONTROLLER (object);
     g_clear_object (&self->world);
+    g_clear_object (&self->physics);
+    g_clear_object (&self->query_shape);
     lrg_character_controller_set_height_func (self, NULL, NULL, NULL);
 
     G_OBJECT_CLASS (lrg_character_controller_parent_class)->dispose (object);
@@ -86,6 +103,8 @@ lrg_character_controller_init (LrgCharacterController *self)
     self->max_slope = LRG_CHARACTER_CONTROLLER_DEFAULT_MAX_SLOPE;
     self->min_ground_y = cos (self->max_slope * G_PI / 180.0);
     self->skin = LRG_CHARACTER_CONTROLLER_DEFAULT_SKIN_WIDTH;
+    self->layer_mask = LRG_PHYSICS_LAYERS_ALL;
+    self->ignore_body = LRG_PHYSICS_NO_BODY;
 }
 
 LrgCharacterController *
@@ -221,6 +240,58 @@ lrg_character_controller_get_world (LrgCharacterController *self)
 }
 
 void
+lrg_character_controller_set_physics (LrgCharacterController *self,
+                                      LrgDynamicsWorld       *physics,
+                                      guint32                 layer_mask)
+{
+    g_return_if_fail (LRG_IS_CHARACTER_CONTROLLER (self));
+    g_return_if_fail (physics == NULL || LRG_IS_DYNAMICS_WORLD (physics));
+
+    g_set_object (&self->physics, physics);
+    self->layer_mask = layer_mask;
+}
+
+LrgDynamicsWorld *
+lrg_character_controller_get_physics (LrgCharacterController *self)
+{
+    g_return_val_if_fail (LRG_IS_CHARACTER_CONTROLLER (self), NULL);
+
+    return self->physics;
+}
+
+guint32
+lrg_character_controller_get_layer_mask (LrgCharacterController *self)
+{
+    g_return_val_if_fail (LRG_IS_CHARACTER_CONTROLLER (self), 0);
+
+    return self->layer_mask;
+}
+
+void
+lrg_character_controller_set_ignore_body (LrgCharacterController *self,
+                                          guint                   body_id)
+{
+    g_return_if_fail (LRG_IS_CHARACTER_CONTROLLER (self));
+
+    self->ignore_body = body_id;
+}
+
+guint
+lrg_character_controller_get_ignore_body (LrgCharacterController *self)
+{
+    g_return_val_if_fail (LRG_IS_CHARACTER_CONTROLLER (self), LRG_PHYSICS_NO_BODY);
+
+    return self->ignore_body;
+}
+
+/* TRUE when the capsule collides with anything at all. */
+static gboolean
+has_geometry (LrgCharacterController *self)
+{
+    return self->world != NULL || self->physics != NULL;
+}
+
+void
 lrg_character_controller_set_height_func (LrgCharacterController *self,
                                           LrgHeightFunc           func,
                                           gpointer                user_data,
@@ -273,6 +344,203 @@ axis_points (LrgCharacterController *self,
     b[2] = pos[2];
 }
 
+/*
+ * capsule_shape:
+ *
+ * The physics query capsule for an axis of half length @half and radius
+ * @radius, cached while the size stays the same.
+ */
+static LrgPhysicsShape *
+capsule_shape (LrgCharacterController *self,
+               gdouble                 radius,
+               gdouble                 half)
+{
+    if (self->query_shape == NULL || self->query_radius != radius || self->query_half != half)
+    {
+        g_clear_object (&self->query_shape);
+        self->query_shape = lrg_physics_shape_new_capsule ((gfloat) radius, (gfloat) half);
+        self->query_radius = radius;
+        self->query_half = half;
+    }
+    return self->query_shape;
+}
+
+/*
+ * hit_face_normal:
+ *
+ * The face normal of a physics hit on the capsule's side: the triangle's
+ * normal for a triangle mesh or heightfield body, else the contact normal.
+ */
+static void
+hit_face_normal (LrgCharacterController *self,
+                 const LrgRayHit        *hit,
+                 gdouble                *face)
+{
+    LrgPhysicsShape *shape;
+    gfloat           tri[9];
+    gfloat           xf[16];
+    gfloat           w[9];
+    gdouble          e1[3];
+    gdouble          e2[3];
+    gdouble          n[3];
+    gdouble          len;
+    guint            k;
+
+    for (k = 0; k < 3; k++)
+        face[k] = hit->normal[k];
+
+    shape = lrg_dynamics_world_get_shape (self->physics, hit->body);
+    if (shape == NULL || hit->child >= 0 || hit->sub_shape == LRG_PHYSICS_NO_SUB_SHAPE)
+        return;
+    if (lrg_physics_shape_get_kind (shape) != LRG_PHYSICS_SHAPE_KIND_TRIANGLE_MESH &&
+        lrg_physics_shape_get_kind (shape) != LRG_PHYSICS_SHAPE_KIND_HEIGHTFIELD)
+        return;
+    if (!lrg_physics_shape_get_triangle (shape, hit->sub_shape, tri, NULL, NULL, NULL) ||
+        !lrg_dynamics_world_get_transform (self->physics, hit->body, xf, NULL))
+        return;
+    for (k = 0; k < 3; k++)
+        lrg_math3d_transform_point (xf, &tri[k * 3], &w[k * 3]);
+    for (k = 0; k < 3; k++)
+    {
+        e1[k] = w[3 + k] - w[k];
+        e2[k] = w[6 + k] - w[k];
+    }
+    n[0] = e1[1] * e2[2] - e1[2] * e2[1];
+    n[1] = e1[2] * e2[0] - e1[0] * e2[2];
+    n[2] = e1[0] * e2[1] - e1[1] * e2[0];
+    len = sqrt (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (len < 1e-12)
+        return;
+    /* the side the capsule is on: the same side as the contact normal */
+    if (n[0] * hit->normal[0] + n[1] * hit->normal[1] + n[2] * hit->normal[2] < 0.0)
+        len = -len;
+    for (k = 0; k < 3; k++)
+        face[k] = n[k] / len;
+}
+
+/*
+ * prefer_upward_face:
+ *
+ * A capsule dropping onto an edge (a step's nosing, a crease between a
+ * ramp and the floor) gets the face of one triangle at random.  Like the mesh path,
+ * prefer the most upward face at the contact: probe straight down a hair
+ * to either side of the contact point (towards and away from the capsule
+ * axis) and take the face that points up most.  This is what lets the
+ * rounded bottom resting on a step's nosing stand on the tread.
+ */
+static void
+prefer_upward_face (LrgCharacterController *self,
+                    const gdouble          *axis_bottom,
+                    const LrgRayHit        *hit,
+                    gdouble                *face)
+{
+    gfloat  down[3] = { 0.0f, -0.02f, 0.0f };
+    gdouble dx;
+    gdouble dz;
+    gdouble len;
+    gint    side;
+
+    if (hit->normal[1] <= 0.0f)
+        return;   /* a ceiling or a wall below the axis: no ground */
+    dx = axis_bottom[0] - hit->point[0];
+    dz = axis_bottom[2] - hit->point[2];
+    len = sqrt (dx * dx + dz * dz);
+    if (len < 1e-6)
+        return;   /* straight below the axis: the face is the one stood on */
+    dx /= len;
+    dz /= len;
+
+    for (side = -1; side <= 1; side += 2)
+    {
+        LrgRayHit probe;
+        gfloat    origin[3];
+
+        origin[0] = hit->point[0] + (gfloat) (dx * 0.01 * side);
+        origin[1] = hit->point[1] + 0.01f;
+        origin[2] = hit->point[2] + (gfloat) (dz * 0.01 * side);
+        lrg_ray_hit_reset (&probe);
+        if (lrg_dynamics_world_raycast (self->physics, origin, down, 1.0f, self->layer_mask,
+                                        self->ignore_body, &probe) &&
+            probe.normal[1] > face[1])
+        {
+            face[0] = probe.normal[0];
+            face[1] = probe.normal[1];
+            face[2] = probe.normal[2];
+        }
+    }
+}
+
+/*
+ * sweep_physics:
+ *
+ * The same sweep against the physics world: a shape cast of the
+ * skin-inflated capsule along @motion.
+ */
+static gboolean
+sweep_physics (LrgCharacterController *self,
+               const gdouble          *a,
+               const gdouble          *b,
+               const gdouble          *motion,
+               Contact                *contact)
+{
+    LrgPhysicsShape *shape;
+    LrgRayHit        hit;
+    gfloat           centre[3];
+    gfloat           dir[3];
+    guint            k;
+    guint            tries;
+
+    if (self->physics == NULL)
+        return FALSE;
+    /* Half the skin, not all of it: a shape cast reports only its first
+     * hit, and a capsule resting at the full skin from the floor would
+     * touch it at t = 0 and hide the wall it walks into.  Depenetration
+     * still keeps the full skin, so resting contacts stay apart by a
+     * quarter of the skin or more. */
+    shape = capsule_shape (self, self->radius + self->skin * 0.5, (b[1] - a[1]) * 0.5);
+    for (k = 0; k < 3; k++)
+    {
+        centre[k] = (gfloat) ((a[k] + b[k]) * 0.5);
+        dir[k] = (gfloat) motion[k];
+    }
+    /* A touching start (t = 0) only blocks motion going deeper, like the
+     * mesh's contact rule.  A cast reports one hit, so a touching floor
+     * would hide the wall ahead: lift the start off that surface by a
+     * quarter skin and cast again (a few times, for creases). */
+    for (tries = 0; ; tries++)
+    {
+        lrg_ray_hit_reset (&hit);
+        if (!lrg_dynamics_world_shape_cast (self->physics, shape, centre, NULL, dir, 1.0f,
+                                            self->layer_mask, self->ignore_body, &hit))
+            return FALSE;
+        /* "deeper" with a tolerance: a slide direction projected onto the
+         * contact plane comes back a rounding error into it */
+        if (hit.fraction > 0.0f ||
+            motion[0] * hit.normal[0] + motion[1] * hit.normal[1] + motion[2] * hit.normal[2] <
+            -1e-4 * sqrt (motion[0] * motion[0] + motion[1] * motion[1] + motion[2] * motion[2]))
+            break;
+        if (tries == 3)
+            return FALSE;
+        for (k = 0; k < 3; k++)
+            centre[k] += hit.normal[k] * (gfloat) (self->skin * 0.25);
+    }
+
+    contact->fraction = hit.fraction;
+    for (k = 0; k < 3; k++)
+    {
+        contact->normal[k] = hit.normal[k];
+        contact->point[k] = hit.point[k];
+    }
+    hit_face_normal (self, &hit, contact->face);
+    /* only for pure drops (landing, step down, ground probes): sideways
+     * the nosing must stay a wall so the step logic runs */
+    if (motion[1] < 0.0 && motion[0] == 0.0 && motion[2] == 0.0)
+        prefer_upward_face (self, a, &hit, contact->face);
+    /* bodies travel as tagged instance ids (see BODY_INSTANCE_TAG) */
+    contact->instance_id = BODY_INSTANCE_TAG | (guint64) hit.body;
+    return TRUE;
+}
+
 /* Sweeps the skin-inflated capsule; FALSE when unobstructed. */
 static gboolean
 sweep (LrgCharacterController *self,
@@ -284,19 +552,32 @@ sweep (LrgCharacterController *self,
     gdouble b[3];
     LrgCollisionHit hit;
     guint k;
+    Contact phys;
+    gboolean have_phys;
 
-    if (self->world == NULL)
-        return FALSE;
     axis_points (self, pos, self->height, a, b);
+    have_phys = sweep_physics (self, a, b, motion, &phys);
+    if (self->world == NULL)
+    {
+        if (have_phys)
+            *contact = phys;
+        return have_phys;
+    }
     if (!lrg_collision_mesh_sweep_segment (self->world, a, b, self->radius + self->skin,
                                            motion, &hit, &contact->fraction, contact->face))
-        return FALSE;
+    {
+        if (have_phys)
+            *contact = phys;
+        return have_phys;
+    }
     for (k = 0; k < 3; k++)
     {
         contact->normal[k] = hit.normal[k];
         contact->point[k] = hit.position[k];
     }
     contact->instance_id = hit.instance_id;
+    if (have_phys && phys.fraction < contact->fraction)
+        *contact = phys;
     return TRUE;
 }
 
@@ -362,6 +643,70 @@ penetration_visit (const LrgCollisionTri *tri,
     return TRUE;
 }
 
+/*
+ * physics_penetration:
+ *
+ * Folds the deepest penetration of the capsule (axis pd->a .. pd->b,
+ * radius pd->r) into the bodies of the physics world into @pd: the bodies
+ * whose shapes overlap the capsule are collided with it (every manifold,
+ * so triangle meshes work) and the deepest point wins.
+ */
+static void
+physics_penetration (LrgCharacterController *self,
+                     PenetrationData        *pd)
+{
+    LrgPhysicsShape   *capsule;
+    g_autoptr(GArray)  bodies = NULL;
+    g_autoptr(GArray)  manifolds = NULL;
+    gfloat             centre[3];
+    gfloat             xf_a[16];
+    static const gfloat identity_rot[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    static const gfloat unit_scale[3] = { 1.0f, 1.0f, 1.0f };
+    guint              i;
+    guint              k;
+
+    if (self->physics == NULL)
+        return;
+    capsule = capsule_shape (self, pd->r, (pd->b[1] - pd->a[1]) * 0.5);
+    for (k = 0; k < 3; k++)
+        centre[k] = (gfloat) ((pd->a[k] + pd->b[k]) * 0.5);
+    lrg_math3d_compose_quat (centre, identity_rot, unit_scale, xf_a);
+
+    bodies = lrg_dynamics_world_overlap_shape (self->physics, capsule, centre, NULL,
+                                               self->layer_mask, self->ignore_body);
+    manifolds = g_array_new (FALSE, FALSE, sizeof (LrgContactManifold));
+    for (i = 0; bodies != NULL && i < bodies->len; i++)
+    {
+        guint            body = g_array_index (bodies, guint, i);
+        LrgPhysicsShape *shape = lrg_dynamics_world_get_shape (self->physics, body);
+        gfloat           xf_b[16];
+        guint            m;
+
+        if (shape == NULL || !lrg_dynamics_world_get_transform (self->physics, body, xf_b, NULL))
+            continue;
+        g_array_set_size (manifolds, 0);
+        lrg_collide_shapes_all (capsule, xf_a, shape, xf_b, 0.0f, manifolds);
+        for (m = 0; m < manifolds->len; m++)
+        {
+            LrgContactManifold *cm = &g_array_index (manifolds, LrgContactManifold, m);
+            guint               p;
+
+            for (p = 0; p < cm->n_points; p++)
+            {
+                gdouble depth = cm->depths[p];
+
+                if (depth <= pd->depth)
+                    continue;
+                /* the normal goes from the capsule (A) to the body (B):
+                 * the capsule leaves along its opposite */
+                pd->depth = depth;
+                for (k = 0; k < 3; k++)
+                    pd->push[k] = -cm->normal[k];
+            }
+        }
+    }
+}
+
 /* Pushes pos out to the skin distance from geometry, deepest contact first. */
 static void
 depenetrate (LrgCharacterController *self,
@@ -369,7 +714,7 @@ depenetrate (LrgCharacterController *self,
 {
     guint iter;
 
-    if (self->world == NULL)
+    if (!has_geometry (self))
         return;
 
     for (iter = 0; iter < DEPENETRATE_ITERATIONS; iter++)
@@ -394,7 +739,9 @@ depenetrate (LrgCharacterController *self,
         /* closer than half the skin counts: a capsule resting deeper
          * than its skin would catch the edges of the face it rests on */
         pd.r = self->radius + self->skin * 0.5;
-        lrg_collision_mesh_query_box (self->world, qmin, qmax, penetration_visit, &pd);
+        if (self->world != NULL)
+            lrg_collision_mesh_query_box (self->world, qmin, qmax, penetration_visit, &pd);
+        physics_penetration (self, &pd);
         if (pd.depth <= 0.0)
             return;
 
@@ -637,6 +984,7 @@ lrg_character_controller_move (LrgCharacterController *self,
     g_return_val_if_fail (feet != NULL && motion != NULL && out_move != NULL, FALSE);
 
     memset (out_move, 0, sizeof (*out_move));
+    out_move->ground_body = LRG_PHYSICS_NO_BODY;
     out_move->ground_normal[1] = 1.0f;
     for (k = 0; k < 3; k++)
         out_move->position[k] = feet[k];
@@ -702,7 +1050,7 @@ lrg_character_controller_move (LrgCharacterController *self,
         memcpy (pos, a, sizeof (pos));
         hit_wall = ra.blocked;
 
-        if (ra.blocked && self->step_height > 0.0 && self->world != NULL)
+        if (ra.blocked && self->step_height > 0.0 && has_geometry (self))
         {
             gdouble b[3];
             gdouble up[3];
@@ -770,7 +1118,7 @@ lrg_character_controller_move (LrgCharacterController *self,
 
     /* 5a. snap down to ground within the step height */
     if (snap_to_ground && m[1] <= 0.0 && !grounded && self->step_height > 0.0 &&
-        self->world != NULL)
+        has_geometry (self))
     {
         gdouble down[3];
         Contact c;
@@ -814,7 +1162,7 @@ lrg_character_controller_move (LrgCharacterController *self,
     }
 
     /* 5c. ground probe: resting within the skin of a walkable face */
-    if (!grounded && m[1] <= 0.0 && self->world != NULL)
+    if (!grounded && m[1] <= 0.0 && has_geometry (self))
     {
         gdouble down[3];
         Contact c;
@@ -837,6 +1185,11 @@ lrg_character_controller_move (LrgCharacterController *self,
     }
     out_move->grounded = grounded;
     out_move->ground_instance_id = grounded ? ground_id : 0;
+    if (grounded && (ground_id & BODY_INSTANCE_TAG) != 0)
+    {
+        out_move->ground_body = (guint) (ground_id & ~BODY_INSTANCE_TAG);
+        out_move->ground_instance_id = 0;
+    }
     out_move->hit_wall = hit_wall;
     out_move->hit_ceiling = hit_ceiling;
     out_move->stepped = stepped;
@@ -853,7 +1206,7 @@ lrg_character_controller_can_stand (LrgCharacterController *self,
     g_return_val_if_fail (LRG_IS_CHARACTER_CONTROLLER (self), FALSE);
     g_return_val_if_fail (feet != NULL, FALSE);
 
-    if (self->world == NULL)
+    if (!has_geometry (self))
         return TRUE;
     if (!isfinite (height))
         return FALSE;
@@ -862,6 +1215,63 @@ lrg_character_controller_can_stand (LrgCharacterController *self,
     base[0] = feet[0];
     base[1] = feet[1];
     base[2] = feet[2];
-    return !lrg_collision_mesh_overlap_capsule (self->world, base, (gfloat) self->radius,
-                                                MAX (height, (gfloat) (2.0 * self->radius)));
+    if (self->world != NULL &&
+        lrg_collision_mesh_overlap_capsule (self->world, base, (gfloat) self->radius,
+                                            MAX (height, (gfloat) (2.0 * self->radius))))
+        return FALSE;
+    if (self->physics != NULL)
+    {
+        gdouble            h = MAX ((gdouble) height, 2.0 * self->radius);
+        gfloat             centre[3];
+        g_autoptr(GArray)  hits = NULL;
+        g_autoptr(LrgPhysicsShape) capsule = NULL;
+
+        centre[0] = feet[0];
+        centre[1] = (gfloat) (feet[1] + h * 0.5);
+        centre[2] = feet[2];
+        /* shrink by a hair: touching is standing room */
+        capsule = lrg_physics_shape_new_capsule ((gfloat) MAX (self->radius - 1e-4, 1e-4),
+                                                 (gfloat) MAX (h * 0.5 - self->radius, 0.0));
+        hits = lrg_dynamics_world_overlap_shape (self->physics, capsule, centre, NULL,
+                                                 self->layer_mask, self->ignore_body);
+        if (hits != NULL && hits->len > 0)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+void
+lrg_character_controller_debug_draw (LrgCharacterController *self,
+                                     LrgDebugDraw           *draw,
+                                     const gfloat           *feet,
+                                     gboolean                grounded)
+{
+    GrlVector3 a;
+    GrlVector3 b;
+    GrlColor   body;
+    GrlColor   skin = { 255, 255, 255, 70 };
+    gdouble    top;
+    guint      prev;
+
+    g_return_if_fail (LRG_IS_CHARACTER_CONTROLLER (self));
+    g_return_if_fail (LRG_IS_DEBUG_DRAW (draw));
+    g_return_if_fail (feet != NULL);
+
+    body.r = grounded ? 80 : 250;
+    body.g = grounded ? 220 : 150;
+    body.b = grounded ? 100 : 60;
+    body.a = 255;
+    top = MAX (self->height - self->radius, self->radius);
+    a.x = feet[0];
+    a.y = (gfloat) (feet[1] + self->radius);
+    a.z = feet[2];
+    b.x = feet[0];
+    b.y = (gfloat) (feet[1] + top);
+    b.z = feet[2];
+
+    prev = lrg_debug_draw_get_category (draw);
+    lrg_debug_draw_set_category (draw, LRG_DEBUG_CATEGORY_PHYSICS);
+    lrg_debug_draw_capsule (draw, &a, &b, (gfloat) self->radius, &body, 0.0f);
+    lrg_debug_draw_capsule (draw, &a, &b, (gfloat) (self->radius + self->skin), &skin, 0.0f);
+    lrg_debug_draw_set_category (draw, prev);
 }

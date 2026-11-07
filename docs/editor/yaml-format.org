@@ -240,6 +240,76 @@ components:
 serializer uses a heuristic: a YAML scalar without a decimal point is read back
 as =int64=.
 
+*** Physics Block (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: physics
+:END:
+A node with a =physics:= mapping is a physics body: =lrg_level_instantiate_3d()= gives its entity one =LrgRigidBodyComponent= (the body settings), one =LrgColliderComponent3D= per =shapes:= entry and one =LrgJointComponent= per =joints:= entry, and attaches a physics world to the =LrgWorld3D= when it has none. In memory the block is an =LrgNodePhysics= (=lrg_node_get_physics()=) holding =LrgNodePhysicsShape= and =LrgNodePhysicsJoint= objects; prefabs (=.rprefab=) use the same node format, so a prefab root or child can carry a body. The 2D instantiation (=lrg_level_instantiate()=) ignores the block.
+
+#+begin_src yaml
+physics:
+  body: dynamic                 # static | kinematic | dynamic  (LrgDynamicsBodyKind nick)
+  mass: 20                      # kg, dynamic bodies; inertia from the shapes
+  layer: debris                 # collision layer name or index; omitted = layer 0
+  friction: 0.5
+  restitution: 0.1
+  linear_damping: 0.05
+  angular_damping: 0.05
+  gravity_factor: 1
+  ccd: true                     # continuous collision; omitted when false
+  shapes:                       # in order; several make a compound
+    - kind: box                 # sphere | capsule | cylinder | box | convex | mesh | plane
+      half_extents: [0.5, 0.5, 0.5]   # box only
+    - kind: capsule
+      radius: 0.25              # sphere / capsule / cylinder
+      half_height: 0.4          # capsule: half the cap-centre distance; cylinder: half the height
+      offset: [0, 0.9, 0]       # node-local; omitted when zero
+      rotation: [0, 0, 90]      # node-local Euler degrees; omitted when zero
+    - kind: sphere
+      radius: 2
+      trigger: true             # a sensor with its own body; omitted when false
+      layer: triggers           # layer of a shape with its own body; omitted = the body's
+    - kind: mesh
+      mesh: models/rock.glb     # convex / mesh source; omitted = the node's own model
+      friction: 0.9             # per-shape material override; omitted = the body's
+      restitution: 0
+  joints:
+    - kind: hinge               # fixed | point | hinge | slider | distance | cone | swing-twist | six-dof
+      target: 8d1c...-guid      # GUID of the other node; omitted = the fixed world
+      anchor: [0.5, 0, 0]       # node-local pivot; omitted when zero
+      axis: [0, 1, 0]           # node-local axis; omitted when +Y
+      limits: [-1.57, 1.57]     # min, max; omitted when off
+      spring: [4, 0.7]          # frequency Hz, damping ratio; omitted when 0 Hz
+      motor: [3.14, 50]         # target velocity, max force; omitted when off
+      break_force: 500          # N; omitted when 0 (unbreakable)
+#+end_src
+
+| Key | Type | Default | Notes |
+|-----+------+---------+-------|
+| =body= | nick | =static= | static bodies never move; kinematic ones follow the entity and push; dynamic ones drive it |
+| =mass= | float | 1 | always written |
+| =layer= | string | (none) | resolved through the world's =LrgPhysicsLayers= (project =physics:= block); unknown names warn and use layer 0 |
+| =friction=, =restitution=, =linear_damping=, =angular_damping=, =gravity_factor= | float | 0.5, 0, 0.05, 0.05, 1 | always written |
+| =ccd= | bool | false | written only when true |
+| =shapes[].kind= | nick | =box= | =LrgCollider3DKind= |
+| =shapes[].half_extents= | [x, y, z] | 0.5 each | written for boxes |
+| =shapes[].radius=, =half_height= | float | 0.5 | written for the kinds that use them |
+| =shapes[].mesh= | string | (none) | path relative to the level, or =guid:= |
+| =shapes[].offset=, =rotation= | [x, y, z] | 0 | written when not zero |
+| =shapes[].trigger= | bool | false | |
+| =shapes[].friction=, =restitution= | float | (body's) | written when set (>= 0) |
+| =shapes[].layer= | string | (body's) | used by shapes with their own body (triggers) |
+| =joints[].kind= | nick | =point= | =LrgJointKind= |
+| =joints[].target= | GUID | (world) | |
+| =joints[].anchor= | [x, y, z] | 0 | |
+| =joints[].axis= | [x, y, z] | [0, 1, 0] | normalised on load |
+| =joints[].limits= | [min, max] | off | radians (hinge, cone, swing-twist) or metres (slider, distance) |
+| =joints[].spring= | [Hz, ratio] | off | soft limits / distance spring |
+| =joints[].motor= | [velocity, max force] | off | hinge and slider velocity motor |
+| =joints[].break_force= | float | 0 | |
+
+Keys are written in the order above and defaults are left out where noted, so a load / save round trip is byte stable. Joint targets are node GUIDs; a joint to a node instantiated later is resolved once that node's entity exists. In prefab instances, targets inside the prefab are rewritten to the instance's GUIDs, and the whole block is one override path (=physics=). See [[file:../modules/world3d/components.org::#physics-components][the physics components]] for what each key does at runtime and [[file:../guides/physics.org::#levels][the physics guide]] for authoring.
+
 *** Scripts
 :PROPERTIES:
 :CUSTOM_ID: scripts

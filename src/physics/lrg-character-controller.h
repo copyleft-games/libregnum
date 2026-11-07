@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * LrgCharacterController - an upright capsule that moves and slides
- * through an LrgCollisionMesh (and an optional terrain height field):
+ * through an LrgCollisionMesh, the bodies of an LrgDynamicsWorld (0.9.0)
+ * and an optional terrain height field:
  * wall sliding, step climbing, a slope limit and ground snapping, with
  * the semantics of Unity's CharacterController.Move(). Gravity, jumping
  * and speeds belong to the caller.
@@ -21,6 +22,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "lrg-collision-mesh.h"
+#include "lrg-dynamics.h"
 
 G_BEGIN_DECLS
 
@@ -77,6 +79,9 @@ typedef gboolean (*LrgHeightFunc) (gfloat    x,
  *   by a surface steeper than the slope limit
  * @hit_ceiling: the upward part of the move was blocked
  * @stepped: the move climbed onto a step
+ * @ground_body: the #LrgDynamicsWorld body stood on (a platform, a crate),
+ *   %LRG_PHYSICS_NO_BODY when the ground is the collision mesh, terrain or
+ *   air (0.9.0)
  *
  * Result of lrg_character_controller_move(). Plain value type.
  */
@@ -89,6 +94,7 @@ typedef struct
     gboolean hit_wall;
     gboolean hit_ceiling;
     gboolean stepped;
+    guint    ground_body;
 } LrgCharacterMove;
 
 LRG_AVAILABLE_IN_ALL
@@ -234,6 +240,79 @@ LrgCollisionMesh *
 lrg_character_controller_get_world (LrgCharacterController *self);
 
 /**
+ * lrg_character_controller_set_physics:
+ * @self: an #LrgCharacterController
+ * @physics: (nullable): the physics world whose bodies the capsule collides
+ *   with, %NULL for none
+ * @layer_mask: object layers that block the capsule
+ *   (%LRG_PHYSICS_LAYERS_ALL for every layer)
+ *
+ * Makes the capsule collide with the bodies of @physics (static level
+ * geometry, kinematic platforms, dynamic crates) through
+ * lrg_dynamics_world_shape_cast() and contact queries.  It can be combined
+ * with lrg_character_controller_set_world(): each sweep takes the nearer
+ * hit.  Sensors never block.  The controller does not push bodies; give the
+ * character a kinematic body of its own (and pass it to
+ * lrg_character_controller_set_ignore_body()) to push them.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_character_controller_set_physics (LrgCharacterController *self,
+                                      LrgDynamicsWorld       *physics,
+                                      guint32                 layer_mask);
+
+/**
+ * lrg_character_controller_get_physics:
+ * @self: an #LrgCharacterController
+ *
+ * Returns: (transfer none) (nullable): the physics world
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgDynamicsWorld *
+lrg_character_controller_get_physics (LrgCharacterController *self);
+
+/**
+ * lrg_character_controller_get_layer_mask:
+ * @self: an #LrgCharacterController
+ *
+ * Returns: the layer mask given to lrg_character_controller_set_physics()
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint32
+lrg_character_controller_get_layer_mask (LrgCharacterController *self);
+
+/**
+ * lrg_character_controller_set_ignore_body:
+ * @self: an #LrgCharacterController
+ * @body_id: a body the capsule never collides with (the character's own
+ *   kinematic body), %LRG_PHYSICS_NO_BODY for none
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_character_controller_set_ignore_body (LrgCharacterController *self,
+                                          guint                   body_id);
+
+/**
+ * lrg_character_controller_get_ignore_body:
+ * @self: an #LrgCharacterController
+ *
+ * Returns: the ignored body, %LRG_PHYSICS_NO_BODY when none
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_character_controller_get_ignore_body (LrgCharacterController *self);
+
+/**
  * lrg_character_controller_set_height_func:
  * @self: an #LrgCharacterController
  * @func: (scope notified) (closure user_data) (destroy destroy) (nullable):
@@ -273,7 +352,7 @@ lrg_character_controller_set_height_func (LrgCharacterController *self,
  *    and stopping on walkable ground;
  * 5. ground snapping, the terrain floor and the final ground probe.
  *
- * Without a world (and without a height function) the capsule moves by
+ * Without a world or physics world (and without a height function) the capsule moves by
  * exactly @motion and is never grounded. Non-finite input leaves the
  * capsule at @feet.
  *
@@ -302,5 +381,24 @@ gboolean
 lrg_character_controller_can_stand (LrgCharacterController *self,
                                     const gfloat           *feet,
                                     gfloat                  height);
+
+/**
+ * lrg_character_controller_debug_draw:
+ * @self: an #LrgCharacterController
+ * @draw: the debug draw batch to record into
+ * @feet: (array fixed-size=3): capsule bottom
+ * @grounded: whether the last move ended grounded (green, else orange)
+ *
+ * Records the capsule (and its skin as a thin outer capsule) for one frame
+ * on %LRG_DEBUG_CATEGORY_PHYSICS.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_character_controller_debug_draw (LrgCharacterController *self,
+                                     LrgDebugDraw           *draw,
+                                     const gfloat           *feet,
+                                     gboolean                grounded);
 
 G_END_DECLS

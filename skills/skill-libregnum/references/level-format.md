@@ -136,3 +136,24 @@ Runtime: lrg_environment_load_sources(env, asset_manager, level_dir, &err); lrg_
 
 ### 2D skeleton component (0.9.0)
 - component `skeleton2d` (LrgSkeleton2DComponent): params `skeleton_path`, `clip`, `speed`, `scale`, `flip_x`, `flip_y`, `default_mix`, `show_bones`.
+
+## physics: (node, 0.9.0)
+```yaml
+physics:
+  body: dynamic          # static|kinematic|dynamic
+  mass: 20
+  layer: debris          # optional (project.ryaml physics: layers)
+  friction: 0.5
+  restitution: 0
+  linear_damping: 0.05
+  angular_damping: 0.05
+  gravity_factor: 1
+  ccd: true              # optional
+  shapes:
+    - {kind: box, half_extents: [0.5,0.5,0.5]}
+    - {kind: sphere, radius: 2, trigger: true, layer: triggers}
+    - {kind: mesh}       # mesh: path, omitted = the node's model
+  joints:
+    - {kind: hinge, target: <node guid>, anchor: [-0.5,0,0], axis: [0,1,0], limits: [-1.57,1.57], motor: [3,50], break_force: 500}
+```
+- Shape keys also `offset`, `rotation` (degrees), `friction`/`restitution` overrides; joint keys also `spring [Hz, ratio]`. Instantiation adds the rigid body, one collider per shape, one joint per joint, and attaches a physics world; saving is byte-stable. C: `LrgNodePhysics` (`lrg_node_get/set_physics`). Prefabs carry the block: joint targets follow regenerated GUIDs and an edited block is the instance override `physics`.

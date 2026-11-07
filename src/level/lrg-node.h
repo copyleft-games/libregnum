@@ -29,6 +29,7 @@
 #include "../lrg-types.h"
 #include "lrg-prefab.h"
 #include "../world3d/lrg-entity3d.h"
+#include "lrg-node-physics.h"
 
 G_BEGIN_DECLS
 
@@ -411,6 +412,31 @@ LrgNodeVisual * lrg_node_get_visual (LrgNode *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_node_set_visual (LrgNode       *self,
                           LrgNodeVisual *visual);
+
+/**
+ * lrg_node_get_physics:
+ * @self: an #LrgNode
+ *
+ * The node's `physics:` block (body, shapes, joints), 0.9.0.
+ *
+ * Returns: (transfer none) (nullable): the physics description, %NULL when
+ *   the node has no body
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNodePhysics * lrg_node_get_physics (LrgNode *self);
+
+/**
+ * lrg_node_set_physics:
+ * @self: an #LrgNode
+ * @physics: (transfer none) (nullable): the physics description, %NULL to
+ *   remove the body
+ *
+ * Sets the node's physics block. A reference is taken on @physics; edit a
+ * copy (lrg_node_physics_copy()) when undo snapshots may share it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_physics (LrgNode        *self,
+                           LrgNodePhysics *physics);
 
 /* ==========================================================================
  * Components and Scripts

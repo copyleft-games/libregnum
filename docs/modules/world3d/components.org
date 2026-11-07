@@ -30,6 +30,9 @@ This page documents the ten built-in 3D components, which live in =src/world3d/c
 | =LrgSpawnComponent=          | a spawn point with type, team and tags                  | (none: gameplay data)       |
 | =LrgTriggerComponent=        | a box or sphere volume with enter/exit signals          | (none: gameplay data)       |
 | =LrgSkinnedModelComponent=   | an animated glTF model driven by an #LrgModelAnimator   | (none in 0.9 M1)            |
+| =LrgRigidBodyComponent=      | a physics body (0.9.0 M5)                                | the node's =physics:= block |
+| =LrgColliderComponent3D=     | one collision shape, or a trigger volume                 | =physics: shapes:=          |
+| =LrgJointComponent=          | a joint to another body or the world                     | =physics: joints:=          |
 
 Three rules hold for all of them:
 
@@ -52,7 +55,7 @@ Three rules hold for all of them:
 | Phase            | Components that use it                                                                 |
 |------------------+----------------------------------------------------------------------------------------|
 | =world_entered=  | light (registers), camera (registers by priority), listener (becomes the world's listener), audio source (autoplay) |
-| =fixed_update=   | trigger (overlap test, enter/exit signals)                                              |
+| =fixed_update=   | trigger (overlap test, enter/exit signals); the physics components run in the world's physics hooks right after it (build and sync bodies, step, write back, trigger / collision / broken signals) |
 | =update=         | skinned model (clip switch, time advance), animator (graph, IK, palette, root motion) |
 | =late_update=    | light (re-registers from the moved entity), camera (follows the entity), listener (feeds the audio manager), audio source (moves its voice, restarts loops) |
 | =collect_render= | mesh renderer, billboard, tilemap, skinned model                                       |
@@ -885,12 +888,235 @@ lrg_world3d_add_entity (world, room);      /* registers with the world's environ
 :END:
 Plays an =LrgSequence= (=.rseq=) from the entity (0.9.0, registry name =sequence=). It owns an =LrgSequencePlayer= (=lrg_sequence_component_get_player()=): on entering a world it gives the player the world, loads =sequence-path= when no sequence was set in code (=lrg_sequence_component_set_sequence()=) and starts it when =autoplay= is set; =update= advances it; leaving the world stops it. The track binding ="self"= resolves to the owning entity. Properties: =sequence=, =sequence-path=, =autoplay= (default =TRUE=), =play-mode= (overrides the asset's), =rate=. Full reference: [[file:../animation/sequence.org::#sequence-api-component][Sequences]].
 
+** Physics components (0.9.0 M5)
+:PROPERTIES:
+:CUSTOM_ID: physics-components
+:END:
+Three components put an entity into the world's [[file:../physics/dynamics.org][LrgDynamicsWorld]]: #LrgRigidBodyComponent (the body: kind, mass, material, damping, layer), #LrgColliderComponent3D (one shape each: primitive, convex hull or triangle mesh, offset, trigger flag) and #LrgJointComponent (a joint to another entity or the world). They do nothing until the world has a physics world: =lrg_world3d_set_physics()= or =lrg_world3d_ensure_physics()= (=lrg_level_instantiate_3d()= calls the latter for any level with a =physics:= block). The world steps it from =lrg_world3d_fixed_update()= and keeps entities and bodies in step (see [[file:world3d.org::#physics][LrgWorld3D physics]]).
+
+*** Who owns which body
+:PROPERTIES:
+:CUSTOM_ID: physics-ownership
+:END:
+| Entity has                              | Body                                                                                  |
+|-----------------------------------------+---------------------------------------------------------------------------------------|
+| rigid body + solid colliders            | one body of the rigid body's kind; its shape is the collider's, or a compound of all of them (attach order, each at its offset and rotation) |
+| solid colliders, no rigid body          | one *static* body made of all of them, owned by the first one (a wall, a floor, a level mesh) |
+| a trigger collider (with or without a rigid body) | its own *kinematic sensor* body following the entity; never part of the rigid body |
+| a rigid body without colliders          | no body (nothing to collide with) until a collider is added                           |
+| a joint component                       | an #LrgJoint between the entity's body and the target's body (or the world), built when both exist |
+
+Bodies are built lazily in the first fixed update after a change (a collider added, removed or edited, a setting changed, the entity's world scale changed) and rebuilt the same way, keeping the velocity. The entity's world scale is baked into the shape dimensions (non-uniform scale on spheres and capsules uses the largest radial axis). Disabling a component or deactivating its entity removes the body; re-enabling builds it again.
+
+*** LrgRigidBodyComponent
+:PROPERTIES:
+:CUSTOM_ID: rigid-body-component
+:END:
+Registry name =rigid-body3d=.
+
+| Property          | Type                  | Default   | Meaning                                                          |
+|-------------------+-----------------------+-----------+------------------------------------------------------------------|
+| =body-kind=       | =LrgDynamicsBodyKind= | =dynamic= | =static=: never moves; =kinematic=: follows the entity and pushes others; =dynamic=: simulated, drives the entity |
+| =mass=            | float                 | 1         | kg; the inertia comes from the shapes at uniform density scaled to it |
+| =friction=        | float                 | 0.5       | combined as sqrt (a * b) with the other body                     |
+| =restitution=     | float                 | 0         | bounciness; the larger of the pair wins                           |
+| =linear-damping=  | float                 | 0.05      | per second                                                       |
+| =angular-damping= | float                 | 0.05      | per second                                                       |
+| =gravity-factor=  | float                 | 1         | scale of the world gravity (0 floats)                            |
+| =ccd=             | bool                  | false     | continuous collision for fast dynamic bodies (bullets)           |
+| =layer=           | string                | NULL      | name (or index) in the physics world's #LrgPhysicsLayers; NULL is layer 0 |
+| =interpolate=     | bool                  | true      | render blended between the last two physics states               |
+
+*Signals:* =collision-entered (LrgRigidBodyComponent *self, LrgEntity3D *other)= after the step in which a body of =other= started touching this one (once per entity), =collision-exited= when the last contact ended or the body went away. Contacts are only tracked while a handler is connected.
+
+| Function                                                        | Notes                                                               |
+|-----------------------------------------------------------------+---------------------------------------------------------------------|
+| =lrg_rigid_body_component_new (kind)=                           | transfer full                                                       |
+| =lrg_rigid_body_component_get_body_kind= / =lrg_rigid_body_component_set_body_kind=      | rebuilds                                                            |
+| =lrg_rigid_body_component_get_mass= / =lrg_rigid_body_component_set_mass=                | clamped to 0.001                                                    |
+| =lrg_rigid_body_component_get_friction= / =lrg_rigid_body_component_set_friction=        |                                                                     |
+| =lrg_rigid_body_component_get_restitution= / =lrg_rigid_body_component_set_restitution=  | clamped 0..1                                                        |
+| =lrg_rigid_body_component_get_damping= / =lrg_rigid_body_component_set_damping (lin, ang)= |                                                                   |
+| =lrg_rigid_body_component_get_gravity_factor= / =lrg_rigid_body_component_set_gravity_factor= |                                                                |
+| =lrg_rigid_body_component_get_ccd= / =lrg_rigid_body_component_set_ccd=                  |                                                                     |
+| =lrg_rigid_body_component_get_layer= / =lrg_rigid_body_component_set_layer=              | unknown names fall back to layer 0 with a warning                   |
+| =lrg_rigid_body_component_get_interpolate= / =lrg_rigid_body_component_set_interpolate=  |                                                                     |
+| =lrg_rigid_body_component_get_body_id=                          | =LRG_PHYSICS_NO_BODY= while there is none                           |
+| =lrg_rigid_body_component_get_physics=                          | the #LrgDynamicsWorld, transfer none                                |
+| =lrg_rigid_body_component_rebuild=                              | rebuild on the next fixed update (automatic for component changes)  |
+| =lrg_rigid_body_component_get_linear_velocity= / =lrg_rigid_body_component_set_linear_velocity= | a velocity set before the body exists is applied when it is built |
+| =lrg_rigid_body_component_get_angular_velocity= / =lrg_rigid_body_component_set_angular_velocity= | rad/s, world axes                                          |
+| =lrg_rigid_body_component_apply_force (force)=                  | for the next step                                                   |
+| =lrg_rigid_body_component_apply_impulse (impulse, point)=       | =point= nullable: the centre of mass                                |
+| =lrg_rigid_body_component_apply_torque (torque)=                | for the next step                                                   |
+| =lrg_rigid_body_component_wake= / =lrg_rigid_body_component_is_sleeping=                 | no body counts as sleeping                                          |
+
+*** LrgColliderComponent3D
+:PROPERTIES:
+:CUSTOM_ID: collider-component3d
+:END:
+Registry name =collider3d=. One shape; put several on an entity for a compound.
+
+| Property                        | Type                | Default | Meaning                                                        |
+|---------------------------------+---------------------+---------+----------------------------------------------------------------|
+| =kind=                          | =LrgCollider3DKind= | =box=   | =sphere=, =capsule=, =cylinder=, =box=, =convex=, =mesh=, =plane= |
+| =half-extent-x= / =-y= / =-z=   | float               | 0.5     | box                                                            |
+| =radius=                        | float               | 0.5     | sphere, capsule, cylinder                                      |
+| =half-height=                   | float               | 0.5     | capsule: half the cap-centre distance; cylinder: half the height; both along local Y |
+| =offset-x= / =-y= / =-z=        | float               | 0       | shape position in the entity's frame                           |
+| =rotation-x= / =-y= / =-z=      | float               | 0       | shape rotation, Euler degrees (R = Rz Ry Rx, the node convention) |
+| =trigger=                       | bool                | false   | a sensor: reports overlaps, does not collide                   |
+| =friction=, =restitution=       | float               | -1      | overrides for a body of its own; negative uses the body's      |
+| =layer=                         | string              | NULL    | layer of a body of its own (trigger, static); merged colliders use the rigid body's |
+| =mesh=                          | string              | NULL    | model path for =convex= / =mesh=; NULL uses the entity's #LrgMeshRendererComponent model |
+
+Kinds: =convex= builds a quickhull from the mesh's vertices (any body kind); =mesh= builds a triangle mesh with its own BVH (static or kinematic only; a dynamic rigid body with one is made kinematic with a warning); =plane= is the infinite plane through the offset with normal local +Y (static). Geometry for =convex= / =mesh= comes from =lrg_collider_component3d_set_mesh_data()= first (procedural levels, tests), then =mesh= (loaded with a window only: raylib uploads on load), then the entity's model (CPU vertex data of every mesh, with the model transform).
+
+*Signals:* =trigger-entered (LrgColliderComponent3D *self, LrgEntity3D *other)= and =trigger-exited=, emitted after the physics step for trigger colliders, once per entity however many bodies it has; the trigger's own entity never counts. Static and kinematic sensors see dynamic and kinematic bodies.
+
+| Function                                                                    | Notes                                                |
+|-----------------------------------------------------------------------------+------------------------------------------------------|
+| =lrg_collider_component3d_new (kind)=, =lrg_collider_component3d_new_box (hx, hy, hz)=, =lrg_collider_component3d_new_sphere (r)=, =lrg_collider_component3d_new_capsule (r, half_height)= | transfer full |
+| =lrg_collider_component3d_get_kind= / =lrg_collider_component3d_set_kind=                                                     |                                                      |
+| =lrg_collider_component3d_get_half_extents (out[3])= / =lrg_collider_component3d_set_half_extents (hx, hy, hz)=               | clamped to 0.001                                     |
+| =lrg_collider_component3d_get_radius= / =lrg_collider_component3d_set_radius=, =lrg_collider_component3d_get_half_height= / =lrg_collider_component3d_set_half_height=          |                                                      |
+| =lrg_collider_component3d_get_offset (out[3])= / =lrg_collider_component3d_set_offset (x, y, z)=                              |                                                      |
+| =lrg_collider_component3d_get_rotation (out[3])= / =lrg_collider_component3d_set_rotation (x, y, z)=                          | degrees                                              |
+| =lrg_collider_component3d_get_trigger= / =lrg_collider_component3d_set_trigger=                                               |                                                      |
+| =lrg_collider_component3d_get_friction= / =lrg_collider_component3d_set_friction=, =lrg_collider_component3d_get_restitution= / =lrg_collider_component3d_set_restitution=      | negative: the body's                                 |
+| =lrg_collider_component3d_get_layer= / =lrg_collider_component3d_set_layer=, =lrg_collider_component3d_get_mesh= / =lrg_collider_component3d_set_mesh=                          |                                                      |
+| =lrg_collider_component3d_set_mesh_data (vertices, n_floats, indices, n_indices)=                    | entity-local xyz; =indices= NULL for a convex point cloud |
+| =lrg_collider_component3d_build_shape (scale)=                                                       | the #LrgPhysicsShape in the collider's frame, transfer full, NULL without geometry |
+| =lrg_collider_component3d_get_local_transform (scale, position[3], rotation[4])=                     | offset (scaled) and rotation quaternion              |
+| =lrg_collider_component3d_get_body_id=                                                               | the rigid body's, its own static or sensor body, or =LRG_PHYSICS_NO_BODY= |
+| =lrg_collider_component3d_get_n_overlaps=, =lrg_collider_component3d_is_overlapping (entity)=                                 | trigger state after the last step                    |
+| =lrg_collider3d_kind_get_type()=                                            | enum GType, nicks as listed                          |
+
+*** LrgJointComponent
+:PROPERTIES:
+:CUSTOM_ID: joint-component
+:END:
+Registry name =joint3d=. A joint between the entity's body (its rigid body, or the static body of its colliders) and a target entity's body, or the fixed world when there is no target. The target is an entity (=target=, weak) or a GUID (=target-guid=) looked up in the world every fixed update until it exists, so a level can list joints to nodes instantiated after it. The frame is authored in the entity's local space (=anchor=, =axis=) and turned into world space when the joint is built: the joint is at rest in the pose the bodies have at that moment.
+
+| Property                    | Type           | Default | Meaning                                                               |
+|-----------------------------+----------------+---------+-----------------------------------------------------------------------|
+| =kind=                      | =LrgJointKind= | =point= | =fixed=, =point=, =hinge=, =slider=, =distance=, =cone=, =swing-twist=, =six-dof= |
+| =target=                    | LrgEntity3D    | NULL    | the other entity                                                      |
+| =target-guid=               | string         | NULL    | its GUID; NULL with no =target= = the world                            |
+| =anchor-x= / =-y= / =-z=    | float          | 0       | pivot, entity-local                                                   |
+| =axis-x= / =-y= / =-z=      | float          | 0, 1, 0 | hinge / slider / twist axis, entity-local, unit                       |
+| =limits-enabled=            | bool           | false   |                                                                       |
+| =limit-min=, =limit-max=    | float          | 0       | see the table below                                                   |
+| =spring-frequency=, =spring-damping= | float | 0, 1    | soft limits (Hz, ratio); the distance joint's spring                  |
+| =motor-velocity=, =motor-max-force= | float  | 0, 0    | velocity motor on the hinge or slider axis; max force 0 = off         |
+| =break-force=               | float          | 0       | N; 0 never breaks                                                     |
+
+| Kind          | Limits                                         | Spring                 | Motor               |
+|---------------+------------------------------------------------+------------------------+---------------------|
+| =fixed=       | -                                              | -                      | -                   |
+| =point=       | -                                              | -                      | -                   |
+| =hinge=       | angle about the axis, radians                  | -                      | angular velocity    |
+| =slider=      | offset along the axis                          | soft translation limit | linear velocity     |
+| =distance=    | anchor distance range (min, max); the other anchor is the target's origin | spring / damper | - |
+| =cone=        | max = cone half angle (π without limits)       | -                      | -                   |
+| =swing-twist= | max = swing half angle (both axes), twist = ±abs(min) | -               | -                   |
+| =six-dof=     | configure the #LrgJoint itself (=lrg_joint_component_get_joint()=, =lrg_joint_set_axis_mode()=) | | |
+
+*Signal:* =broken (LrgJointComponent *self)= once, after the step in which the joint passed its break force. A broken joint stays broken (=get_joint()= returns NULL) until =lrg_joint_component_rebuild()=.
+
+| Function                                                           | Notes                                           |
+|--------------------------------------------------------------------+-------------------------------------------------|
+| =lrg_joint_component_new (kind)=                                   | to the world, anchor at the origin, axis +Y    |
+| =lrg_joint_component_get_kind= / =lrg_joint_component_set_kind=                                            | rebuilds                                        |
+| =lrg_joint_component_get_target= / =lrg_joint_component_set_target (entity)=                               | also sets =target-guid=                         |
+| =lrg_joint_component_get_target_guid= / =lrg_joint_component_set_target_guid (guid)=                       | resolved lazily                                 |
+| =lrg_joint_component_get_anchor (out[3])= / =lrg_joint_component_set_anchor (x, y, z)=                     |                                                 |
+| =lrg_joint_component_get_axis (out[3])= / =lrg_joint_component_set_axis (x, y, z)=                         | normalised; zero ignored                        |
+| =lrg_joint_component_get_limits (min, max)= (returns enabled) / =lrg_joint_component_set_limits (enabled, min, max)= |                                       |
+| =lrg_joint_component_get_spring= / =lrg_joint_component_set_spring (frequency, damping)=                   |                                                 |
+| =lrg_joint_component_get_motor= / =lrg_joint_component_set_motor (velocity, max_force)=                    |                                                 |
+| =lrg_joint_component_get_break_force= / =lrg_joint_component_set_break_force=                              |                                                 |
+| =lrg_joint_component_get_joint=                                                        | the live #LrgJoint (transfer none) or NULL      |
+| =lrg_joint_component_get_broken=, =lrg_joint_component_rebuild=                                            |                                                 |
+
+*** Example: a crate, a trigger and a door
+:PROPERTIES:
+:CUSTOM_ID: physics-components-example
+:END:
+#+begin_src C
+g_autoptr(LrgWorld3D) world = lrg_world3d_new ();
+LrgEntity3D *floor, *crate, *zone, *door;
+
+lrg_world3d_ensure_physics (world);   /* gravity -9.81 Y, default layers */
+
+/* a static floor: colliders without a rigid body */
+floor = lrg_entity3d_new_with_name ("floor");
+lrg_entity3d_set_position_xyz (floor, 0.0f, -0.5f, 0.0f);
+{
+	g_autoptr(LrgColliderComponent3D) slab = lrg_collider_component3d_new_box (20.0f, 0.5f, 20.0f);
+
+	lrg_entity3d_add_component (floor, LRG_COMPONENT (slab));
+}
+lrg_world3d_add_entity (world, floor);   /* the world takes a reference; unref yours when done */
+
+/* a dynamic crate */
+crate = lrg_entity3d_new_with_name ("crate");
+lrg_entity3d_set_position_xyz (crate, 0.0f, 4.0f, 0.0f);
+{
+	g_autoptr(LrgRigidBodyComponent) body = lrg_rigid_body_component_new (LRG_DYNAMICS_BODY_DYNAMIC);
+	g_autoptr(LrgColliderComponent3D) box = lrg_collider_component3d_new_box (0.5f, 0.5f, 0.5f);
+
+	lrg_rigid_body_component_set_mass (body, 20.0f);
+	lrg_rigid_body_component_set_layer (body, "debris");
+	lrg_entity3d_add_component (crate, LRG_COMPONENT (body));
+	lrg_entity3d_add_component (crate, LRG_COMPONENT (box));
+}
+lrg_world3d_add_entity (world, crate);
+
+/* a trigger volume */
+zone = lrg_entity3d_new_with_name ("zone");
+{
+	g_autoptr(LrgColliderComponent3D) volume = lrg_collider_component3d_new_box (2.0f, 1.0f, 2.0f);
+
+	lrg_collider_component3d_set_trigger (volume, TRUE);
+	g_signal_connect (volume, "trigger-entered", G_CALLBACK (on_zone_entered), game);
+	lrg_entity3d_add_component (zone, LRG_COMPONENT (volume));
+}
+lrg_world3d_add_entity (world, zone);
+
+/* a door hinged to the floor at its left edge, limited to +-90 degrees */
+door = lrg_entity3d_new_with_name ("door");
+lrg_entity3d_set_position_xyz (door, 3.0f, 1.0f, 0.0f);
+{
+	g_autoptr(LrgRigidBodyComponent) body = lrg_rigid_body_component_new (LRG_DYNAMICS_BODY_DYNAMIC);
+	g_autoptr(LrgColliderComponent3D) panel = lrg_collider_component3d_new_box (0.5f, 1.0f, 0.05f);
+	g_autoptr(LrgJointComponent) hinge = lrg_joint_component_new (LRG_JOINT_HINGE);
+
+	lrg_joint_component_set_target (hinge, floor);
+	lrg_joint_component_set_anchor (hinge, -0.5f, 0.0f, 0.0f);
+	lrg_joint_component_set_limits (hinge, TRUE, -G_PI_2, G_PI_2);
+	lrg_entity3d_add_component (door, LRG_COMPONENT (body));
+	lrg_entity3d_add_component (door, LRG_COMPONENT (panel));
+	lrg_entity3d_add_component (door, LRG_COMPONENT (hinge));
+}
+lrg_world3d_add_entity (world, door);
+
+/* the game loop: lrg_world3d_step() steps physics in its fixed updates */
+lrg_world3d_step (world, frame_time);
+#+end_src
+
+*** Character controllers in a 3D world
+:PROPERTIES:
+:CUSTOM_ID: physics-character
+:END:
+#LrgCharacterController is not a component: a game component owns one, points it at the world's physics (=lrg_character_controller_set_physics (cc, lrg_world3d_get_physics (world), mask)=) and moves its entity in =fixed_update=. A character that should push crates also carries a kinematic #LrgRigidBodyComponent with a capsule collider, and passes its body id to =lrg_character_controller_set_ignore_body()= so the controller does not collide with itself. See [[file:../physics/character-controller.org::#physics-world][the controller page]].
+
 ** Type functions
 :PROPERTIES:
 :CUSTOM_ID: type-functions
 :END:
 
-=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()= and =lrg_reflection_probe_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=).
+=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()=, =lrg_reflection_probe_component_get_type()=, =lrg_rigid_body_component_get_type()=, =lrg_collider_component3d_get_type()= and =lrg_joint_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=); =lrg_collider3d_kind_get_type()= registers #LrgCollider3DKind (=sphere=, =capsule=, =cylinder=, =box=, =convex=, =mesh=, =plane=).
 
 ** Using it from the editor
 :PROPERTIES:
@@ -911,6 +1137,8 @@ You do not add these components by hand in the editor (0.9 M1): each node visual
 | MESH_ASSET with =lod-levels= > 1 in its =.meta= | LOD | resolved asset (absolute) → =mesh-asset=, the engine's asset manager, material as above |
 | DECAL         | decal                      | asset → =albedo-path= (absolute when it resolves), =normal= → =normal-path=, =orm= → =orm-path=, material colour → =color-*=, =size_x= .. =size_z=, =opacity=, =fade_angle=, =fade_width=, =sort_order=, =normal_strength=, =blend= by name |
 | REFLECTION_PROBE | reflection probe        | =extents_x= .. =extents_z=, =blend_distance=, =intensity=, =box_projection=, =resolution= by name |
+
+Physics components come from the node's =physics:= block instead of the visual (0.9.0 M5): one #LrgRigidBodyComponent with the body settings, one #LrgColliderComponent3D per =shapes:= entry and one #LrgJointComponent per =joints:= entry, added after the visual component (see [[file:../../editor/yaml-format.org::#physics][the format]] and [[file:../../guides/physics.org::#levels][the physics guide]]). The collider gizmos, the body / shape / joint inspector and the layer matrix editor arrive in the next 0.9.0 wave; until then edit the block in the =.rlevel= or through #LrgNodePhysics.
 
 Because the map is shared with =lrg_level_visual_store_property()=, a component property changed while playing can be written back to the node visual it came from.
 
@@ -945,6 +1173,7 @@ nodes:
 - Tilemaps emit every non-empty cell each frame through the rlgl batch (4 vertices per tile per layer). Very large maps should be split across several entities so frustum culling drops off-screen chunks.
 - LOD components measure one sphere and run a few comparisons per view; generating a chain from =mesh-asset= simplifies the model once per level on the first draw (about 3 µs per source triangle per level, see [[file:../graphics/mesh-simplify.org::#performance][simplifier performance]]) and the result is shared by every component with the same model and sidecar.
 - Decal components cost nothing per camera (no render items); =sync_world()= is one matrix multiply per decal per frame, and the decal set's selection and upload are described in [[file:../graphics/decal.org::#performance][decal performance]].
+- Physics components cost one hook call each per fixed substep (a world-version compare for static bodies, a kinematic move, a pose read and two entity writes for dynamic bodies) plus the dynamics step itself; interpolation writes every dynamic entity once per frame. Contact signals build a body-to-contacts index once per substep, only when some body listens.
 - Skinned models sharing one animator re-pose the shared model per component only when the pose key changes (=lrg_model_animator_apply()=).
 
 ** Pitfalls
@@ -965,6 +1194,10 @@ nodes:
 - *Reflection probes reflect nothing until captured.* Call =lrg_world3d_renderer_capture_probes()= once after the window opens and the level is loaded (and again when =lrg_reflection_probe_component_count_pending()= says so); a probe whose world has no environment is not used at all.
 - *A probe is bound by where the camera is.* #LrgWorld3DRenderer selects probes once per view at the camera position, so make the box contain the places the camera goes (the blend distance fades it in at the edges); a box tightly around an object reflects nothing while the camera is outside.
 - *Probe boxes do not rotate.* The box is axis aligned in world space; rotating the probe's entity changes nothing.
+- *Dynamic bodies want top-level entities* (or static parents): the world writes their world pose every step; a moving parent changes the child's world transform, which reads as a teleport.
+- *Body ids are not 0-based sentinels:* the first body of a world has id 0; "no body" is =LRG_PHYSICS_NO_BODY= (which equals =LRG_DYNAMICS_WORLD_BODY=).
+- *Edit shapes through the components,* not through =lrg_dynamics_world_set_shape()=: the next rebuild replaces anything changed behind their back.
+- *Mesh colliders on dynamic bodies* become kinematic (a warning says so); use =convex= for moving rocks.
 - *Fixed billboards* are plane primitives: a renderer's plane must be the editor's unit XZ plane for the Rx(90°) turn to land in XY.
 
 ** See also

@@ -304,6 +304,31 @@ int main (void)
 }
 #+end_src
 
+** Debug drawing (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: debug-draw
+:END:
+=lrg_physics_world_debug_draw (world, draw, flags)= records every body of the 2D world into an [[file:../debug/debug-draw.org][LrgDebugDraw]] for one frame, on =LRG_DEBUG_CATEGORY_PHYSICS=, in world units. The flags are the 3D world's =LrgDynamicsDebugFlags= so one toggle set drives both worlds; the 2D world draws:
+
+| Flag                                | Drawn                                                                  |
+|-------------------------------------+------------------------------------------------------------------------|
+| =LRG_DYNAMICS_DEBUG_SHAPES=         | box outlines rotated by the body rotation; circles with a radius tick showing the rotation |
+| =LRG_DYNAMICS_DEBUG_AABBS=          | the axis-aligned box the 2D world actually collides (magenta)          |
+| =LRG_DYNAMICS_DEBUG_SLEEPING=       | sleeping bodies dimmed (or a dot without =SHAPES=)                      |
+| =LRG_DYNAMICS_DEBUG_CENTER_OF_MASS= | a dot at each body position                                            |
+| =LRG_DYNAMICS_DEBUG_VELOCITY=       | a line to where the body is in 0.1 s                                   |
+
+Other bits are ignored. Colours: green dynamic, blue kinematic, grey static, yellow trigger. The primitives are 2D (=lrg_debug_draw_line_2d()=, =lrg_debug_draw_circle_2d()=, =lrg_debug_draw_rect_2d()=): draw them with =lrg_debug_draw_draw_2d()= inside the game's 2D camera, or =lrg_debug_draw_flush (draw, camera2d)=.
+
+#+begin_src C
+/* every frame, after stepping */
+if (show_physics)
+	lrg_physics_world_debug_draw (world, draw, LRG_DYNAMICS_DEBUG_SHAPES | LRG_DYNAMICS_DEBUG_VELOCITY);
+lrg_debug_draw_flush (draw, LRG_CAMERA (camera2d));
+#+end_src
+
+Cost: four line primitives per box, two per circle, plus one per enabled extra; call it only while the overlay is on. In the editor the next 0.9.0 wave adds collider gizmos; until then this is the way to see 2D bodies.
+
 ** Memory Management
 :PROPERTIES:
 :CUSTOM_ID: memory-management
