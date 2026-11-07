@@ -1279,6 +1279,34 @@ test_format_theme (Fixture       *fixture,
 	issues = validate (doc, TRUE);
 }
 
+/* A UI layout naming a game handler validates with a warning: the
+ * editor does not have the game's functions */
+static void
+test_ui_layout_game_handler (void)
+{
+	g_autoptr(LrgEditorDocument) doc = NULL;
+	g_autoptr(GError)            error = NULL;
+	g_autoptr(GPtrArray)         issues = NULL;
+	gboolean                     warned = FALSE;
+	guint                        i;
+
+	doc = lrg_editor_document_new_from_data ("type: vbox\nchildren:\n"
+	                                         "  - {type: button, text: Resume, on: {clicked: on_resume}}\n"
+	                                         "  - {type: button, text: Quit, on: {clicked: on_quit}}\n",
+	                                         -1, LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT, &error);
+	g_assert_no_error (error);
+	issues = validate (doc, TRUE);
+	for (i = 0; i < issues->len; i++)
+	{
+		LrgEditorDocumentIssue *issue = g_ptr_array_index (issues, i);
+
+		g_assert_cmpint (issue->severity, !=, LRG_EDITOR_PROBLEM_ERROR);
+		if (strstr (issue->message, "on_resume") != NULL)
+			warned = TRUE;
+	}
+	g_assert_true (warned);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1295,6 +1323,7 @@ main (int   argc,
 	g_test_add ("/editor/document/dirty", Fixture, NULL, fixture_set_up, test_dirty_tracking,
 	            fixture_tear_down);
 	g_test_add_func ("/editor/document/values", test_values);
+	g_test_add_func ("/editor/document/ui-layout/game-handler", test_ui_layout_game_handler);
 	g_test_add ("/editor/document/save-preserves", Fixture, NULL, fixture_set_up, test_save_preserves,
 	            fixture_tear_down);
 	g_test_add ("/editor/document/reload-external", Fixture, NULL, fixture_set_up, test_reload_external,

@@ -4497,18 +4497,56 @@ validate_dialog_tree (Validation *v)
  * Validation: formats checked by their (strict) loaders alone
  * ========================================================================== */
 
+/* A stand-in for game handlers the editor cannot resolve */
+static void
+ui_layout_stub_handler (void)
+{
+}
+
+/*
+ * validate_ui_layout:
+ *
+ * Runs LrgUILoader on the document. Signal handlers name functions of
+ * the game, which the editor does not have: an unknown handler is a
+ * warning, not an error. The loader stops at the first one, so each is
+ * registered as a no-op stub and the load retried (bounded).
+ */
 static void
 validate_ui_layout (Validation *v)
 {
 	g_autoptr(LrgUILoader) loader = lrg_ui_loader_new ();
-	g_autoptr(GError) error = NULL;
-	LrgWidget *widget;
+	guint                  attempt;
 
-	widget = lrg_ui_loader_load_from_data (loader, v->text, (gssize) v->length, &error);
-	if (widget == NULL)
-		add_loader_error (v, error, NULL);
-	else
-		g_object_unref (widget);
+	for (attempt = 0; attempt < 64; attempt++)
+	{
+		g_autoptr(GError) error = NULL;
+		LrgWidget        *widget;
+		const gchar      *start;
+		const gchar      *end;
+		g_autofree gchar *name = NULL;
+
+		widget = lrg_ui_loader_load_from_data (loader, v->text, (gssize) v->length, &error);
+		if (widget != NULL)
+		{
+			g_object_unref (widget);
+			return;
+		}
+
+		/* "unknown handler 'NAME' for signal ..." */
+		start = g_error_matches (error, LRG_UI_LOADER_ERROR, LRG_UI_LOADER_ERROR_HANDLER)
+		        ? strstr (error->message, "unknown handler '") : NULL;
+		end = start != NULL ? strchr (start + strlen ("unknown handler '"), '\'') : NULL;
+		if (end == NULL)
+		{
+			add_loader_error (v, error, NULL);
+			return;
+		}
+		start += strlen ("unknown handler '");
+		name = g_strndup (start, (gsize) (end - start));
+		add_issue (v, LRG_EDITOR_PROBLEM_WARNING, NULL,
+		           "handler '%s' is provided by the game, not the editor", name);
+		lrg_ui_loader_add_handler (loader, name, G_CALLBACK (ui_layout_stub_handler), NULL);
+	}
 }
 
 static void
