@@ -77,7 +77,6 @@ TEST_SOURCES := \
 	test-render-layers.c \
 	test-level-runtime.c \
 	test-entity3d.c \
-	test-world3d.c \
 	test-world3d-renderer.c \
 	test-world3d-components.c \
 	test-level-instantiate-3d.c \

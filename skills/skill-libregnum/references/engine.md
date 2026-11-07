@@ -74,3 +74,12 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - `src/debug/lrg-debug-draw.*`: immediate-mode debug geometry (lines, boxes, spheres, capsules, cylinders, cones, frustums, grids, axes, labels, 2D shapes) with durations, depth-tested/on-top lists and 32 toggleable categories; headless-inspectable. Docs: docs/modules/debug/debug-draw.org. Render layers: docs/modules/graphics/render-layers.org.
 
 - Composite YAML loader + format writers: see references/formats.md.
+
+## 3D runtime (0.9.0): LrgWorld3D / LrgEntity3D
+
+- LrgWorld3D owns a root LrgEntity3D; add top-level entities with `lrg_world3d_add_entity()`. Entities: guid (set once), name, tags, active/visible/static, layer 0..31, local TRS (quaternion x,y,z,w + authored Euler kept by `set_rotation_euler`), ordered children and components.
+- Frame: `lrg_world3d_step (dt)` = fixed_update (fixed-step 1/60, max-substeps 8, excess dropped) -> update -> late_update; then per camera `lrg_world3d_collect_render (world, camera, list)` and hand the LrgRenderList to LrgWorld3DRenderer.
+- Components work for both 2D and 3D. 3D hooks (former `LrgComponentClass._reserved[0..7]`): attached_entity, detached_entity, fixed_update, late_update, collect_render, get_bounds, world_entered, world_exited. 2D attached/detached fire only for LrgGameObject owners; update fires for both. `lrg_component_get_entity()` / `get_owner_object()` / `get_world3d()`.
+- collect_render: `lrg_render_item_init_for_entity (&item, entity, self)`; set kind/handles/material/flags; `lrg_render_item_set_local_bounds()`; `if (lrg_render_list_accepts (list, &item)) lrg_render_list_add (list, &item)`. Handles are borrowed; user_data is owned by the list.
+- Lights: fill LrgLight3DDesc and `lrg_world3d_register_light (world, G_OBJECT (component), &d)` in world_entered/late_update; unregister in world_exited. Cameras: `lrg_world3d_register_camera (world, cam, priority)`; `lrg_world3d_get_active_camera()`.
+- Traps: remove_child/set_parent(NULL) drop the parent's ref; transform-changed is coalesced inside a world (emitted at phase flushes); call `lrg_world3d_invalidate_bounds()` when a component's bounds change without a move; never remove the root; LrgCamera3D frustum uses near 0.05 / far 10000. LrgComponentClass has no reserved slots left.

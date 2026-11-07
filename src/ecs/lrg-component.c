@@ -14,6 +14,8 @@
 #include "lrg-component.h"
 #include "lrg-component-private.h"
 #include "lrg-game-object.h"
+#include "../world3d/lrg-entity3d.h"
+#include "../world3d/lrg-world3d.h"
 #include "../lrg-log.h"
 
 /* ==========================================================================
@@ -23,6 +25,8 @@
 typedef struct
 {
     LrgGameObject *owner;    /* Weak reference to owning game object */
+    LrgEntity3D   *entity;   /* Weak reference to owning 3D entity (0.9.0);
+                              * at most one of owner/entity is set */
     gboolean       enabled;  /* Whether component receives updates */
 } LrgComponentPrivate;
 
@@ -33,6 +37,7 @@ enum
     PROP_0,
     PROP_OWNER,
     PROP_ENABLED,
+    PROP_ENTITY,
     N_PROPS
 };
 
@@ -74,6 +79,15 @@ _lrg_component_set_owner (LrgComponent  *self,
         }
     }
 
+    /* A component belongs to one owner kind at a time. */
+    if (owner != NULL && priv->entity != NULL)
+    {
+        lrg_warning (LRG_LOG_DOMAIN_ECS,
+                     "Component %s is attached to an LrgEntity3D; "
+                     "remove it there before adding it to a game object",
+                     G_OBJECT_TYPE_NAME (self));
+    }
+
     /* Update the owner reference */
     priv->owner = owner;
 
@@ -87,6 +101,49 @@ _lrg_component_set_owner (LrgComponent  *self,
     }
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_OWNER]);
+}
+
+/*
+ * _lrg_component_set_entity:
+ * @self: an #LrgComponent
+ * @entity: (nullable): the new owning entity
+ *
+ * Internal; called only by lrg-entity3d.c (which declares the prototype
+ * itself, so no private header is needed).  Stores the weak owner link and
+ * runs the attached_entity / detached_entity hooks: detached_entity runs
+ * while the old link is still set, attached_entity after the new one is.
+ */
+void _lrg_component_set_entity (LrgComponent *self,
+                                LrgEntity3D  *entity);
+
+void
+_lrg_component_set_entity (LrgComponent *self,
+                           LrgEntity3D  *entity)
+{
+    LrgComponentPrivate *priv;
+    LrgComponentClass   *klass;
+    LrgEntity3D         *old;
+
+    g_return_if_fail (LRG_IS_COMPONENT (self));
+
+    priv = lrg_component_get_instance_private (self);
+    klass = LRG_COMPONENT_GET_CLASS (self);
+    old = priv->entity;
+
+    if (old == entity)
+        return;
+
+    /* Leaving the old entity: hook first, then drop the link. */
+    if (old != NULL && klass->detached_entity != NULL)
+        klass->detached_entity (self, old);
+
+    priv->entity = entity;
+
+    /* Joining the new entity: link first, then the hook. */
+    if (entity != NULL && klass->attached_entity != NULL)
+        klass->attached_entity (self, entity);
+
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENTITY]);
 }
 
 /* ==========================================================================
@@ -109,6 +166,9 @@ lrg_component_get_property (GObject    *object,
         break;
     case PROP_ENABLED:
         g_value_set_boolean (value, priv->enabled);
+        break;
+    case PROP_ENTITY:
+        g_value_set_object (value, priv->entity);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -181,6 +241,22 @@ lrg_component_class_init (LrgComponentClass *klass)
                               G_PARAM_STATIC_STRINGS |
                               G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgComponent:entity:
+     *
+     * The #LrgEntity3D that owns this component (0.9.0), or %NULL when
+     * the component is unowned or owned by an #LrgGameObject.  Read-only;
+     * set by lrg_entity3d_add_component() / lrg_entity3d_remove_component().
+     */
+    properties[PROP_ENTITY] =
+        g_param_spec_object ("entity",
+                             "Entity",
+                             "The 3D entity that owns this component",
+                             LRG_TYPE_ENTITY3D,
+                             G_PARAM_READABLE |
+                             G_PARAM_STATIC_STRINGS |
+                             G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -190,6 +266,7 @@ lrg_component_init (LrgComponent *self)
     LrgComponentPrivate *priv = lrg_component_get_instance_private (self);
 
     priv->owner = NULL;
+    priv->entity = NULL;
     priv->enabled = TRUE;
 }
 
@@ -318,4 +395,117 @@ _lrg_component_update_unchecked (LrgComponent *self,
     {
         klass->update (self, delta);
     }
+}
+
+/* ==========================================================================
+ * Public API - 0.9.0 3D owner and hooks
+ * ========================================================================== */
+
+LrgEntity3D *
+lrg_component_get_entity (LrgComponent *self)
+{
+    LrgComponentPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_COMPONENT (self), NULL);
+
+    priv = lrg_component_get_instance_private (self);
+    return priv->entity;
+}
+
+GObject *
+lrg_component_get_owner_object (LrgComponent *self)
+{
+    LrgComponentPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_COMPONENT (self), NULL);
+
+    priv = lrg_component_get_instance_private (self);
+
+    /* Exactly one of the two weak links is set while owned. */
+    if (priv->entity != NULL)
+        return (GObject *)priv->entity;
+    return (GObject *)priv->owner;
+}
+
+LrgWorld3D *
+lrg_component_get_world3d (LrgComponent *self)
+{
+    LrgComponentPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_COMPONENT (self), NULL);
+
+    priv = lrg_component_get_instance_private (self);
+    if (priv->entity == NULL)
+        return NULL;
+    return lrg_entity3d_get_world (priv->entity);
+}
+
+void
+lrg_component_fixed_update (LrgComponent *self,
+                            gfloat        step)
+{
+    LrgComponentPrivate *priv;
+    LrgComponentClass   *klass;
+
+    g_return_if_fail (LRG_IS_COMPONENT (self));
+
+    priv = lrg_component_get_instance_private (self);
+    if (!priv->enabled)
+        return;
+
+    klass = LRG_COMPONENT_GET_CLASS (self);
+    if (klass->fixed_update != NULL)
+        klass->fixed_update (self, step);
+}
+
+void
+lrg_component_late_update (LrgComponent *self,
+                           gfloat        delta)
+{
+    LrgComponentPrivate *priv;
+    LrgComponentClass   *klass;
+
+    g_return_if_fail (LRG_IS_COMPONENT (self));
+
+    priv = lrg_component_get_instance_private (self);
+    if (!priv->enabled)
+        return;
+
+    klass = LRG_COMPONENT_GET_CLASS (self);
+    if (klass->late_update != NULL)
+        klass->late_update (self, delta);
+}
+
+void
+lrg_component_collect_render (LrgComponent  *self,
+                              LrgRenderList *list)
+{
+    LrgComponentPrivate *priv;
+    LrgComponentClass   *klass;
+
+    g_return_if_fail (LRG_IS_COMPONENT (self));
+    g_return_if_fail (list != NULL);
+
+    priv = lrg_component_get_instance_private (self);
+    if (!priv->enabled)
+        return;
+
+    klass = LRG_COMPONENT_GET_CLASS (self);
+    if (klass->collect_render != NULL)
+        klass->collect_render (self, list);
+}
+
+gboolean
+lrg_component_get_bounds (LrgComponent     *self,
+                          LrgBoundingBox3D *out_local)
+{
+    LrgComponentClass *klass;
+
+    g_return_val_if_fail (LRG_IS_COMPONENT (self), FALSE);
+    g_return_val_if_fail (out_local != NULL, FALSE);
+
+    klass = LRG_COMPONENT_GET_CLASS (self);
+    if (klass->get_bounds == NULL)
+        return FALSE;
+    return klass->get_bounds (self, out_local);
 }

@@ -204,6 +204,89 @@ Parameters:
 - =self= - the component
 - =delta= - time elapsed since last frame in seconds
 
+** 3D hooks (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: component-hooks-3d
+:END:
+Since 0.9.0 a component can be owned by an [[file:../world3d/entity3d.org][LrgEntity3D]] in an [[file:../world3d/world3d.org][LrgWorld3D]] instead of an =LrgGameObject=. The 3D hooks live in the eight pointer slots that were =_reserved[8]= in 0.8, so the class size and the offsets of =attached=, =detached= and =update= are unchanged: existing 2D subclasses (in-tree and out-of-tree) keep working without recompiling, and their new slots are =NULL= (no-ops).
+
+*** Slot map
+:PROPERTIES:
+:CUSTOM_ID: component-slot-map
+:END:
+| 0.8 slot        | 0.9.0 vfunc       | signature                                                       | called by                                                    |
+|-----------------+-------------------+-----------------------------------------------------------------+--------------------------------------------------------------|
+| =_reserved[0]=  | =attached_entity= | =void (LrgComponent *, LrgEntity3D *)=                          | =lrg_entity3d_add_component()=, after the owner link is set  |
+| =_reserved[1]=  | =detached_entity= | =void (LrgComponent *, LrgEntity3D *)=                          | =lrg_entity3d_remove_component()= / entity dispose, link still set |
+| =_reserved[2]=  | =fixed_update=    | =void (LrgComponent *, gfloat step)=                            | =lrg_world3d_fixed_update()= (enabled only)                  |
+| =_reserved[3]=  | =late_update=     | =void (LrgComponent *, gfloat delta)=                           | =lrg_world3d_late_update()= (enabled only)                   |
+| =_reserved[4]=  | =collect_render=  | =void (LrgComponent *, LrgRenderList *)=                        | =lrg_world3d_collect_render()= (enabled only)                |
+| =_reserved[5]=  | =get_bounds=      | =gboolean (LrgComponent *, LrgBoundingBox3D *out_local)=        | entity bounds, world octree (optional)                       |
+| =_reserved[6]=  | =world_entered=   | =void (LrgComponent *, LrgWorld3D *)=                           | entity joins a world, or component added to an entity in one |
+| =_reserved[7]=  | =world_exited=    | =void (LrgComponent *, LrgWorld3D *)=                           | entity leaves a world, or component removed while in one     |
+
+No reserved slots remain in =LrgComponentClass=; later additions use interfaces or signals.
+
+*** Which hooks fire for which owner
+:PROPERTIES:
+:CUSTOM_ID: component-owner-hooks
+:END:
+| hook                                   | =LrgGameObject= owner | =LrgEntity3D= owner |
+|----------------------------------------+-----------------------+---------------------|
+| =attached= / =detached=                | yes                   | no                  |
+| =attached_entity= / =detached_entity=  | no                    | yes                 |
+| =world_entered= / =world_exited=       | no                    | yes                 |
+| =update=                               | yes (owner/world)     | yes (=LrgWorld3D=)  |
+| =fixed_update= / =late_update= / =collect_render= | no         | yes (=LrgWorld3D=)  |
+
+A component has at most one owner at a time. =lrg_component_get_owner()= returns the game object (=NULL= for an entity owner, unchanged 0.8 behaviour); =lrg_component_get_entity()= returns the entity; =lrg_component_get_owner_object()= returns whichever is set as a =GObject=; =lrg_component_get_world3d()= is a shortcut for the owning entity's world. Adding a component that is attached to an entity to a game object logs a warning.
+
+*** Wrapper functions
+:PROPERTIES:
+:CUSTOM_ID: component-3d-wrappers
+:END:
+| function                                         | notes                                      |
+|--------------------------------------------------+--------------------------------------------|
+| =lrg_component_get_entity (self)=                | transfer none, nullable                    |
+| =lrg_component_get_owner_object (self)=          | transfer none, nullable                    |
+| =lrg_component_get_world3d (self)=               | transfer none, nullable                    |
+| =lrg_component_fixed_update (self, step)=        | calls the vfunc if enabled                 |
+| =lrg_component_late_update (self, delta)=        | calls the vfunc if enabled                 |
+| =lrg_component_collect_render (self, list)=      | calls the vfunc if enabled                 |
+| =lrg_component_get_bounds (self, out_local)=     | =FALSE= when the vfunc is unset            |
+
+*** Writing a 3D component
+:PROPERTIES:
+:CUSTOM_ID: component-3d-example
+:END:
+#+begin_src c
+static void
+spinner_fixed_update (LrgComponent *component,
+                      gfloat        step)
+{
+	MySpinner *self = MY_SPINNER (component);
+	LrgEntity3D *e = lrg_component_get_entity (component);
+	gfloat axis[3] = { 0.0f, 1.0f, 0.0f };
+	gfloat q[4];
+	gfloat dq[4];
+
+	lrg_entity3d_get_rotation (e, q);
+	lrg_math3d_quat_from_axis_angle (axis, self->speed * step, dq);
+	lrg_math3d_quat_multiply (dq, q, q);
+	lrg_entity3d_set_rotation (e, q);
+}
+
+static void
+my_spinner_class_init (MySpinnerClass *klass)
+{
+	LrgComponentClass *cc = LRG_COMPONENT_CLASS (klass);
+
+	cc->fixed_update = spinner_fixed_update;   /* deterministic rate */
+}
+#+end_src
+
+See [[file:../world3d/world3d.org::#render-list-contract][the render-list contract]] for =collect_render= and [[file:../world3d/world3d.org::#example-light][a light component]] for =world_entered= / =world_exited=.
+
 ** Properties
 :PROPERTIES:
 :CUSTOM_ID: properties-1
@@ -212,6 +295,7 @@ Parameters:
 |-----------+------------------+--------+---------+---------------------------------------------|
 | =enabled= | =gboolean=       | RW     | =TRUE=  | Whether the component receives update calls |
 | =owner=   | =LrgGameObject*= | RO     | =NULL=  | The game object that owns this component    |
+| =entity=  | =LrgEntity3D*=   | RO     | =NULL=  | The 3D entity that owns this component (0.9.0) |
 
 ** Implementation Notes
 :PROPERTIES:
