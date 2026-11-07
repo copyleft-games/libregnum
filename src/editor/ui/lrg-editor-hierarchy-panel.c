@@ -485,7 +485,7 @@ hierarchy_row_paint (LrgWidget    *widget,
 	LRG_WIDGET_CLASS (hierarchy_row_parent_class)->paint (widget, list);
 
 	/* Markers before the toggles: scripts (green dot), prefab link (chain),
-	 * overrides on a linked root (warning dot) */
+	 * overrides on a linked root (warning dot), the physics body and the nav-agent trail */
 	row_toggle_rect (self, 0, &tx, &ty, &ts);
 	mx = tx - 6.0f;
 	if (lrg_node_get_prefab_link (node) != NULL)
@@ -544,6 +544,24 @@ hierarchy_row_paint (LrgWidget    *widget,
 			lrg_paint_list_circle (list, mx - h * 0.12f, cy - r * 0.6f, r * 0.5f, &c);
 			mx -= h * 0.2f;
 		}
+	}
+	if (lrg_node_find_component (node, "nav-agent") != NULL)
+	{
+		/* Navigation agent (0.9.0 M6): a dotted trail ending in an
+		 * arrow head, cyan like the navigation overlay's links */
+		GrlColor c = { 60, 210, 230, 255 };
+		gfloat   cy = y + h * 0.5f;
+		gfloat   r = MAX (1.0f, h * 0.05f);
+		gfloat   lw = MAX (1.2f, h * 0.07f);
+		gfloat   tip;
+
+		mx -= h * 0.55f;
+		tip = mx + h * 0.48f;
+		lrg_paint_list_circle (list, mx + h * 0.04f, cy + h * 0.1f, r, &c);
+		lrg_paint_list_circle (list, mx + h * 0.16f, cy + h * 0.02f, r, &c);
+		lrg_paint_list_line (list, mx + h * 0.26f, cy - h * 0.04f, tip, cy - h * 0.04f, lw, &c);
+		lrg_paint_list_line (list, tip, cy - h * 0.04f, tip - h * 0.12f, cy - h * 0.16f, lw, &c);
+		lrg_paint_list_line (list, tip, cy - h * 0.04f, tip - h * 0.12f, cy + h * 0.08f, lw, &c);
 	}
 
 	/* Eye toggle: filled pupil when visible, ring when hidden; brighter
@@ -2115,6 +2133,9 @@ m_state (LrgEditorServer  *server,
 		}
 		else
 			json_builder_add_null_value (b);
+		/* the navigation badge: a nav-agent component (0.9.0 M6) */
+		json_builder_set_member_name (b, "nav_agent");
+		json_builder_add_boolean_value (b, lrg_node_find_component (node, "nav-agent") != NULL);
 		json_builder_set_member_name (b, "expanded");
 		json_builder_add_boolean_value (b, lrg_tree_view_is_expanded (self->tree, G_OBJECT (node)));
 		json_builder_set_member_name (b, "selected");
