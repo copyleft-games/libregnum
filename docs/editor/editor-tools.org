@@ -165,13 +165,13 @@ The segment that /starts/ at a Bézier key is the cubic =lrg_sequence_curve_herm
 
 The handles live beside the =LrgKeyframeCurve= (matched to keys by time), so =lrg_timeline_track_get_curve()= still returns the eased curve. Re-keying a key's time with =lrg_timeline_track_set_key()= keeps its handles; removing the key, or clearing the curve directly, drops them. =lrg_timeline_track_equal()= and =lrg_timeline_track_copy()= include them.
 
-Pitfall: the 0.8.1 editor commands move keys with remove + set, so =lrg_editor_timeline_move_key()= currently resets a moved key to eased. The sequencer/curve-editor wave switches them to =lrg_timeline_track_move_key()=.
+In the editor (0.9.0): =lrg_editor_timeline_move_key()= retimes keys with =lrg_timeline_track_move_key()=, so dragging a Bézier key in the Timeline panel keeps its handles (0.8.1 moved keys with remove + set and lost them); =lrg_editor_timeline_set_tangents()= / =lrg_editor_timeline_clear_tangents()= are the undoable way to change them, and =lrg_editor_timeline_set_easing()= turns a Bézier key back into an eased key (picking an easing means "ease this segment"). The panel's Tangent picker, the Key Tangents context menu and =timeline.tangent= over IPC use them ([[#timeline-panel][The Timeline panel]]).
 
 ** Bone tracks
 :PROPERTIES:
 :CUSTOM_ID: timeline-bone-tracks
 :END:
-A channel =bone.BONE.GROUP.AXIS= (GROUP =location=, =rotation= or =scale=; AXIS =x=, =y=, =z=) animates one bone of a skinned node. The bone name is everything between =bone.= and the last two parts, so it may contain dots (=bone.upper.arm.L.rotation.z=); =lrg_timeline_channel_get_bone()= splits a channel. Values are /offsets from the bind pose/: location is added, the Euler rotation (radians) is applied after the bind rotation, scale multiplies (=lrg_sequence_compose_bone_offset()=). A zero offset with unit scale is the bind pose, so an unkeyed bone and a preview restore both give the rest pose.
+A channel =bone.BONE.GROUP.AXIS= (GROUP =location=, =rotation= or =scale=; AXIS =x=, =y=, =z=) animates one bone of a skinned node. The bone name is everything between =bone.= and the last two parts, so it may contain dots (=bone.upper.arm.L.rotation.z=); =lrg_timeline_channel_get_bone()= splits a channel. Values are /offsets from the bind pose/: location is added, the Euler rotation (radians) is applied after the bind rotation, scale multiplies (=lrg_sequence_compose_bone_offset()=). A zero offset with unit scale is the bind pose, so an unkeyed bone and a preview restore both give the rest pose. In the Timeline panel, type a bone name into the Bone field and press Key Bone (or Enter): the nine offset channels of that bone are keyed on every selected node at the playhead, as one undo step; their rows read =head  rotation.y=.
 
 On an authoring =LrgNode= the offsets go into a runtime side table, never into the document: =lrg_timeline_channel_write()= stores them, =lrg_timeline_channel_read()= and =lrg_timeline_get_bone_offset()= read them back (identity when none), =lrg_timeline_clear_bone_offsets()= forgets them. The editor viewport poses the node's skinned mesh from that table (sequencer wave). At runtime, =lrg_sequence_new_from_timeline()= turns bone channels into bone transform tracks of an =LrgSequence= that an =LrgSequencePlayer= applies to a bound =LrgSkeleton=.
 
@@ -194,8 +194,10 @@ On an authoring =LrgNode= the offsets go into a runtime side table, never into t
 | =lrg_editor_timeline_set_key()= (creates the timeline when missing) | Set Keyframe |
 | =lrg_editor_timeline_key_node()= (current values; default the nine transform channels) | Insert Keyframe |
 | =lrg_editor_timeline_remove_key()= (empty tracks are dropped) | Delete Keyframe |
-| =lrg_editor_timeline_move_key()= (=merge= while dragging) | Move Keyframe |
-| =lrg_editor_timeline_set_easing()= | Set Easing |
+| =lrg_editor_timeline_move_key()= (=merge= while dragging; keeps value, easing and Bézier handles) | Move Keyframe |
+| =lrg_editor_timeline_set_easing()= (a Bézier key becomes eased) | Set Easing |
+| =lrg_editor_timeline_set_tangents()= (0.9.0; a mode and slopes; no step when nothing changes) | Set Tangents |
+| =lrg_editor_timeline_clear_tangents()= (0.9.0) | Clear Tangents |
 | =lrg_editor_timeline_remove_track()= | Delete Track |
 
 =lrg_editor_execute_merged()= (new on =LrgEditor=) folds a command into the previous compatible one, so a key drag is one undo step.
@@ -206,9 +208,9 @@ On an authoring =LrgNode= the offsets go into a runtime side table, never into t
 :END:
 Since 0.8.1 the panel is =LrgEditorTimelinePanel= on an =LrgTimelineView= (widget details and API: [[file:editor-app.org::#editor-panel-timeline][Editor Application > Timeline panel]]).
 
-- Toolbar: timeline picker, name field + New (Enter), Rename, Delete; Loop and Autoplay toggles; the length.
-- Transport: previous key, Play/Pause (=K=), Stop, next key; Key (=I=: insert transform keys for every selected node at the playhead, as one undo step); Delete Keys; the easing used for new keys (changing it also re-eases every selected key, one undo step); the playhead time.
-- Tracks: one group per node (its own colour; missing nodes show "(missing GUID)"), one row per animated channel inside it, collapsible. Keys are diamonds when linear and circles when eased. Click selects a key (Shift / Ctrl add), drag a rubber band to select several, drag selected keys to retime them (snapped to 10 ms, one undo step for the whole drag, however many keys), Delete removes them. Right click offers Insert Keyframe, Delete Selected Keys and a Key Easing menu (Linear, Ease In / Out / In Out by family).
+- Toolbar: timeline picker, name field + New (Enter), Rename, Delete; Loop and Autoplay toggles; the length; To Sequence (0.9.0: writes the timeline as =sequences/<name>.rseq= with =lrg_sequence_new_from_timeline()= and opens it in the [[file:sequencer.org][Sequencer]]; also =timeline.to-sequence= and the context menu's Convert to Sequence).
+- Transport: previous key, Play/Pause (=K=), Stop, next key; Key (=I=: insert transform keys for every selected node at the playhead, as one undo step); Delete Keys; the easing used for new keys (changing it also re-eases every selected key, one undo step); the Tangent picker (0.9.0: =Eased=, =Auto=, =User=, =Broken=, =Linear=, =Constant=; it shows the first selected key's mode and sets it on every selected key as one undo step, keeping the slopes the key is drawn with, so switching an auto key to user or broken does not change its shape); Curves (0.9.0: channel rows become curve lanes that draw values, eased segments and Bézier segments with their slopes); the Bone field and Key Bone (0.9.0, see [[#timeline-bone-tracks][Bone tracks]]); the playhead time.
+- Tracks: one group per node (its own colour; missing nodes show "(missing GUID)"), one row per animated channel inside it, collapsible. Keys are diamonds when linear (eased linear or Bézier =linear=), circles when eased or smooth Bézier, bars when Bézier =constant= (a step); node summary keys are squares. Click selects a key (Shift / Ctrl add), drag a rubber band to select several, drag selected keys to retime them (snapped to 10 ms, one undo step for the whole drag, however many keys), Delete removes them. Right click offers Insert Keyframe, Delete Selected Keys, a Key Easing menu (Linear, Ease In / Out / In Out by family), a Key Tangents menu (the six tangent rows) and Convert to Sequence.
 - Ruler: click or drag to scrub (a non-destructive preview, see below).
 - =Alt+Left= / =Alt+Right= jump the playhead to the previous / next key of any track.
 
@@ -268,11 +270,11 @@ timelines:
 :PROPERTIES:
 :CUSTOM_ID: timeline-automation
 :END:
-- IPC (headless): =timeline.list=, =timeline.get=, =timeline.add=, =timeline.remove=, =timeline.set=, =timeline.key=, =timeline.unkey=, =timeline.move-key=, =timeline.ease=, =timeline.sample= (pure). App only: =timeline.play=, =timeline.stop=, =timeline.seek=, =timeline.state=. See [[file:ipc-protocol.org::#timeline-methods][IPC Protocol]].
+- IPC (headless): =timeline.list=, =timeline.get=, =timeline.add=, =timeline.remove=, =timeline.set=, =timeline.key=, =timeline.unkey=, =timeline.move-key=, =timeline.ease=, =timeline.sample= (pure); =timeline.tangent= (0.9.0, registered by the Timeline panel: =name?=, =node=, =time=, =channel?=, =tangent= (=eased auto user broken linear constant=), =slope?= or =in?= / =out?= -> ={changed}=). App only: =timeline.play=, =timeline.stop=, =timeline.seek=, =timeline.state=. See [[file:ipc-protocol.org::#timeline-methods][IPC Protocol]].
 - =lrgeditorctl timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|play [NAME]|stop|seek TIME [NAME]|state]=.
 - MCP: =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=.
 - Emacs: =libregnum-timeline-key= (=C-c L k=; with =C-u= one channel and value), =libregnum-timeline-ease=, =libregnum-timeline-play= (=C-c L a=), =libregnum-timeline-seek=, =libregnum-timeline-stop= (=C-c L A=).
-- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.rename=, =timeline.delete=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=.
+- Actions: =timeline.key=, =timeline.play=, =timeline.stop=, =timeline.new=, =timeline.rename=, =timeline.delete=, =timeline.next-key=, =timeline.prev-key=, =timeline.delete-key=, =timeline.show-panel=, =timeline.to-sequence= (0.9.0).
 
 * Asset thumbnails
 :PROPERTIES:
@@ -422,14 +424,18 @@ Every public function of the tilemap and timeline headers that the sections abov
 
 | Function | Summary |
 |-+-|
-| =lrg_timeline_channel_is_valid ()= | Returns whether /channel/ names an animatable channel. |
+| =lrg_editor_timeline_add ()=, =lrg_editor_timeline_remove ()=, =lrg_editor_timeline_configure ()= | timelines (undoable) |
+| =lrg_editor_timeline_set_key ()=, =lrg_editor_timeline_key_node ()=, =lrg_editor_timeline_remove_key ()=, =lrg_editor_timeline_move_key ()= | keys (undoable; moves keep Bézier handles) |
+| =lrg_editor_timeline_set_easing ()= | easing of matching keys (clears Bézier handles) |
+| =lrg_editor_timeline_set_tangents ()=, =lrg_editor_timeline_clear_tangents ()= | Bézier tangent mode and slopes (0.9.0) |
+| =lrg_editor_timeline_remove_track ()= | drops tracks |
 
 * Limits
 :PROPERTIES:
 :CUSTOM_ID: tools-limits
 :END:
 - Tilemaps: one tileset per node; no auto-tiling/terrain rules, no per-tile flips or rotation, no collision editing in the panel (the runtime =LrgTileset= properties are not authored here). =lrg_level_instantiate()= does not create runtime tilemaps; games convert with =lrg_node_tilemap_to_runtime()=.
-- Timelines: scalar channels only (colour is four tracks); no Bézier tangents (easing per segment instead); play-in-editor animates the authoring nodes, not the runtime entities.
+- Timelines: scalar channels only (colour is four tracks); Bézier handles are edited through the tangent modes and slopes (picker, IPC), not dragged on the timeline rows (the [[file:sequencer.org][Sequencer]]'s curve editor drags handles); play-in-editor animates the authoring nodes, not the runtime entities (convert to a sequence to play on =LrgWorld3D=).
 - Thumbnails: no thumbnails for audio, fonts, scripts, tilesets (=.tileset=/=.tsx=) or CAD parts; a request still in flight when its file is invalidated may deliver the old image once (the next change or Rebuild Thumbnails fixes it).
 
 * Source map
@@ -447,10 +453,12 @@ Every public function of the tilemap and timeline headers that the sections abov
 | =src/editor/lrg-level-serializer.c= | =visual.tilemap= and =timelines:= YAML |
 | =src/editor/lrg-editor-server-tools.c= | =tilemap.*= and =timeline.*= IPC methods |
 | =src/editor/ui/lrg-editor-tiles-panel.[ch]= | Tiles panel (=LrgEditorTilesPanel=) |
-| =src/editor/ui/lrg-editor-timeline-panel.[ch]= | Timeline panel (=LrgEditorTimelinePanel=) |
+| =src/editor/ui/lrg-editor-timeline-panel.[ch]= | Timeline panel (=LrgEditorTimelinePanel=), =timeline.tangent= |
+| =src/editor/ui/lrg-editor-sequencer-panel.[ch]= | Sequencer panel for =.rseq= files (see [[file:sequencer.org][Sequencer]]) |
 | =src/editor/ui/lrg-editor-play.c= | timeline preview and play-in-editor hooks, tile target |
 | =src/editor/ui/lrg-editor-thumbnails.c= | per-project cache, uploads, invalidation |
 | =src/editor/ui/lrg-editor-render.c= | tilemap rendering, model thumbnail renders, asset forgetting |
 | =tests/test-editor-tilemap.c=, =test-editor-timeline.c=, =test-thumbnail-cache.c= | headless unit tests |
 | =tests/test-editor-app-panels.c= | Tiles and Timeline panels driven through the canvas |
+| =tests/test-editor-app-sequencer.c= | Sequencer panel; Timeline panel tangents, bone keys, curves |
 | =tests/test-editor-server.c=, =test-editor-app.c=, =editor-x11-smoke.sh=, =editorctl-smoke.sh= | IPC, app, real-input and CLI tests |

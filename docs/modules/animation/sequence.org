@@ -523,19 +523,20 @@ Measured on the 0.9.0 worktree (x86_64, release build, =-O2=), headless:
 :PROPERTIES:
 :CUSTOM_ID: sequence-editor
 :END:
-The sequencer panel arrives in the next 0.9.0 wave; the engine side already exposes what it needs:
+The editor's Sequencer panel ([[file:../../editor/sequencer.org][Sequencer]]) authors =.rseq= files against the open level:
 
-- *Sequencer panel* on =LrgTimelineView=: one row per track grouped by binding (=lrg_sequence_get_binding_name()= gives the label), sections drawn from =lrg_sequence_track_get_section()= and =lrg_sequence_track_get_section_end()=, keys from =lrg_sequence_curve_get_key()=. Edits will go through undoable commands that copy the sequence (=lrg_sequence_copy()=, =lrg_sequence_equal()= for no-op detection), like level timelines.
-- *Curve editor* (=LrgCurveEdit=): handles come from =lrg_sequence_curve_get_slopes()= and are written with =lrg_sequence_curve_set_key_tangents()=; dragging keys uses =lrg_sequence_curve_move_key()=.
-- *Preview*: the panel drives an =LrgSequencePlayer= on the play-in-editor world with =lrg_sequence_player_scrub()= (events show in the log, sounds stay silent) and restores entity state when the preview ends; =camera-cut= switches the viewport camera when "pilot cut camera" is on.
-- *Binding*: dragging an entity onto the panel adds =lrg_sequence_add_binding()= with its GUID and name; a "self" binding is offered when the sequence is opened from an entity's =LrgSequenceComponent=.
-- *Level timelines*: the timeline panel gains Bézier key handles (=lrg_timeline_track_set_key_tangents()=) and bone channels, and a "Convert to sequence" action (=lrg_sequence_new_from_timeline()=).
-- IPC/MCP methods (=sequence.*=) and Emacs commands come with the panel.
+- *Tracks by binding* on an =LrgTimelineView=: a group row per binding (=lrg_sequence_get_binding_name()= labels it), a row per track, a child row per keyed transform channel, sections as clips (=lrg_sequence_track_get_section_end()= gives open-ended sections their drawn length), events as bar keys and ruler flags. Edits are undoable inside the panel: each one commits an edited =lrg_sequence_copy()=, and =lrg_sequence_equal()= drops no-ops and computes the dirty flag.
+- *Curve editor*: the selected curve as =lrg_sequence_curve_evaluate()= draws it, with handles from =lrg_sequence_curve_get_slopes()=; dragging a handle writes =lrg_sequence_curve_set_key_tangents()= (=user=, or =broken= with Shift), dragging a key retimes it keeping its tangents (=lrg_sequence_curve_move_key()=).
+- *Preview*: a world-less =LrgSequencePlayer= owns the playhead (=lrg_sequence_player_scrub()=, =advance()=, loop and ping-pong) and reports events to the Console; the panel writes transform, bone and level-channel property tracks onto the bound level nodes and restores them when the preview ends, and "Pilot" flies the viewport through the camera cuts.
+- *Binding*: Bind adds the selected level nodes (GUID + name); + Track binds entity tracks to the selection.
+- *Level timelines*: the Timeline panel edits Bézier tangents (=lrg_editor_timeline_set_tangents()=), keys bone channels (Key Bone) and converts a timeline with To Sequence (=lrg_sequence_new_from_timeline()=).
+- IPC: =sequence.*= ([[file:../../editor/ipc-protocol.org::#sequence-methods][Sequence methods]]).
 
 ** See also
 :PROPERTIES:
 :CUSTOM_ID: sequence-see-also
 :END:
+- [[file:../../editor/sequencer.org][Sequencer]] (the editor panel)
 - [[file:../../editor/editor-tools.org::#animation-timeline][Level timelines]] (Bézier keys, bone channels)
 - [[file:../../guides/animation-pipeline.org::#sequencer][Animation pipeline: sequencer]]
 - [[file:clip.org][Animation clips]], [[file:skeleton.org][Skeleton]]

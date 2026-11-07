@@ -35,6 +35,7 @@
 #define LRG_EDITOR_PANEL_INTERNAL
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-console-panel.h"
+#include "lrg-editor-sequencer-panel.h"
 #include "lrg-editor-app-private.h"
 #include "../../ui/lrg-label.h"
 #include "../../ui/lrg-hbox.h"
@@ -62,11 +63,15 @@ static GParamSpec *properties[N_PROPS];
 /* A view keyframe and the model key it stands for */
 typedef struct
 {
-	gchar         *guid;
-	gchar         *channel;
-	gfloat         time;
-	gfloat         value;
-	LrgEasingType  easing;
+	gchar                  *guid;
+	gchar                  *channel;
+	gfloat                  time;
+	gfloat                  value;
+	LrgEasingType           easing;
+	gboolean                bezier;   /* a Bézier key (lrg_timeline_track_set_key_tangents) */
+	LrgSequenceTangentMode  mode;     /* its tangent mode when @bezier */
+	gfloat                  in_slope; /* resolved slopes (what the handles show) */
+	gfloat                  out_slope;
 } KeyRef;
 
 static void
@@ -126,6 +131,9 @@ struct _LrgEditorTimelinePanel
 	LrgSpinBox           *length;
 	LrgWidget            *play;
 	LrgComboBox          *easing;
+	LrgComboBox          *tangent;     /* Eased, Auto, User, Broken, Linear, Constant */
+	LrgWidget            *curves;      /* curve lanes on the channel rows */
+	LrgTextInput         *bone;        /* bone name for Key Bone */
 	LrgWidget            *time_label;
 	LrgTimelineView      *view;
 	LrgWidget            *hint;
@@ -175,6 +183,88 @@ group_color (guint     index,
 	out->g = c[1];
 	out->b = c[2];
 	out->a = 255;
+}
+
+/* "bone.head.rotation.y" -> "head  rotation.y"; other channels as is. */
+static gchar *
+channel_title (const gchar *channel)
+{
+	g_autofree gchar           *bone = NULL;
+	LrgSequenceTransformChannel ch;
+
+	if (lrg_timeline_channel_get_bone (channel, &bone, &ch))
+		return g_strdup_printf ("%s  %s", bone, lrg_sequence_transform_channel_to_string (ch));
+	return g_strdup (channel);
+}
+
+/*
+ * resolve_track:
+ *
+ * The slopes a level track's keys evaluate with, for drawing Bézier
+ * handles: the keys copied into an #LrgSequenceCurve (eased keys as
+ * linear keys, which is what a Bézier neighbour sees of them: the
+ * straight secant), so lrg_sequence_curve_get_slopes() resolves auto
+ * and linear tangents with the engine's own rules.
+ */
+static LrgSequenceCurve *
+resolve_track (LrgTimelineTrack *track)
+{
+	LrgSequenceCurve *curve = lrg_sequence_curve_new ();
+	guint             k;
+
+	for (k = 0; k < lrg_timeline_track_get_n_keys (track); k++)
+	{
+		LrgSequenceKey key;
+
+		memset (&key, 0, sizeof key);
+		lrg_timeline_track_get_key (track, k, &key.time, &key.value, NULL);
+		if (!lrg_timeline_track_get_key_tangents (track, k, &key.tangent_mode, &key.in_tangent, &key.out_tangent))
+			key.tangent_mode = LRG_SEQUENCE_TANGENT_LINEAR;
+		lrg_sequence_curve_insert_key (curve, &key);
+	}
+	return curve;
+}
+
+/* How the view draws the segment after a key. */
+static LrgTimelineViewInterpolation
+key_interpolation (const KeyRef *ref)
+{
+	if (ref->bezier)
+		return ref->mode == LRG_SEQUENCE_TANGENT_CONSTANT ? LRG_TIMELINE_VIEW_INTERPOLATION_STEP
+		                                                  : LRG_TIMELINE_VIEW_INTERPOLATION_BEZIER;
+	return ref->easing == LRG_EASING_LINEAR ? LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR
+	                                        : LRG_TIMELINE_VIEW_INTERPOLATION_EASE;
+}
+
+/* Diamonds for linear keys, dots for eased and smooth Bézier keys, bars
+ * for constant (stepped) keys; squares are the node summary keys. */
+static LrgCanvasKeyShape
+key_shape (const KeyRef *ref)
+{
+	if (ref->bezier)
+	{
+		switch (ref->mode)
+		{
+		case LRG_SEQUENCE_TANGENT_LINEAR:
+			return LRG_CANVAS_KEY_SHAPE_DIAMOND;
+		case LRG_SEQUENCE_TANGENT_CONSTANT:
+			return LRG_CANVAS_KEY_SHAPE_BAR;
+		default:
+			return LRG_CANVAS_KEY_SHAPE_CIRCLE;
+		}
+	}
+	return ref->easing == LRG_EASING_LINEAR ? LRG_CANVAS_KEY_SHAPE_DIAMOND : LRG_CANVAS_KEY_SHAPE_CIRCLE;
+}
+
+/* Tangent picker rows: index 0 is "Eased" (not a Bézier key), then the
+ * LrgSequenceTangentMode values in enum order. */
+static const gchar * const tangent_labels[] = { "Eased", "Auto", "User", "Broken", "Linear", "Constant" };
+static const gchar * const tangent_nicks[] = { "eased", "auto", "user", "broken", "linear", "constant" };
+
+static gint
+tangent_row (const KeyRef *ref)
+{
+	return ref->bezier ? (gint) ref->mode + 1 : 0;
 }
 
 static LrgTimeline *
@@ -316,6 +406,16 @@ publish_selected_key (LrgEditorTimelinePanel *self)
 	app->timeline_key_channel = k != NULL ? g_strdup (k->channel) : NULL;
 	app->timeline_key_time = k != NULL ? k->time : 0.0f;
 	app->timeline_key_valid = (k != NULL);
+
+	/* The tangent picker shows the first selected key's mode */
+	if (k != NULL && self->tangent != NULL && lrg_combo_box_get_selected (self->tangent) != tangent_row (k))
+	{
+		gboolean was = self->syncing;
+
+		self->syncing = TRUE;
+		lrg_combo_box_set_selected (self->tangent, tangent_row (k));
+		self->syncing = was;
+	}
 }
 
 /* Rebuilds every track and key of the view from the current timeline. */
@@ -396,16 +496,22 @@ rebuild (LrgEditorTimelinePanel *self)
 
 		for (i = 0; i < lrg_timeline_get_n_tracks (tl); i++)
 		{
-			LrgTimelineTrack     *t = lrg_timeline_get_track (tl, i);
-			const gchar          *channel = lrg_timeline_track_get_channel (t);
-			LrgTimelineViewTrack *row;
-			gdouble               lo = G_MAXDOUBLE, hi = -G_MAXDOUBLE;
+			LrgTimelineTrack            *t = lrg_timeline_get_track (tl, i);
+			const gchar                 *channel = lrg_timeline_track_get_channel (t);
+			g_autoptr(LrgSequenceCurve)  resolved = NULL;
+			g_autofree gchar            *title = NULL;
+			LrgTimelineViewTrack        *row;
+			gdouble                      lo = G_MAXDOUBLE, hi = -G_MAXDOUBLE;
 
 			if (g_strcmp0 (lrg_timeline_track_get_node_guid (t), guid) != 0)
 				continue;
-			row = lrg_timeline_view_add_track (self->view, channel, group);
+			title = channel_title (channel);
+			row = lrg_timeline_view_add_track (self->view, title, group);
 			lrg_timeline_view_track_set_color (row, &color);
+			if (self->curves != NULL && editor_chip_get_checked (self->curves))
+				lrg_timeline_view_track_set_curve_lane (row, TRUE);
 			g_hash_table_insert (self->tracks, track_key (guid, channel), row);
+			resolved = resolve_track (t);
 
 			for (k = 0; k < lrg_timeline_track_get_n_keys (t); k++)
 			{
@@ -413,15 +519,14 @@ rebuild (LrgEditorTimelinePanel *self)
 				guint   id;
 
 				lrg_timeline_track_get_key (t, k, &ref->time, &ref->value, &ref->easing);
+				ref->bezier = lrg_timeline_track_get_key_tangents (t, k, &ref->mode, NULL, NULL);
+				lrg_sequence_curve_get_slopes (resolved, k, &ref->in_slope, &ref->out_slope);
 				ref->guid = g_strdup (guid);
 				ref->channel = g_strdup (channel);
-				id = lrg_timeline_view_add_keyframe (self->view, row, ref->time, ref->value,
-				                                     ref->easing == LRG_EASING_LINEAR
-				                                     ? LRG_TIMELINE_VIEW_INTERPOLATION_LINEAR
-				                                     : LRG_TIMELINE_VIEW_INTERPOLATION_EASE);
-				lrg_timeline_view_set_keyframe_shape (self->view, id, ref->easing == LRG_EASING_LINEAR
-				                                                     ? LRG_CANVAS_KEY_SHAPE_DIAMOND
-				                                                     : LRG_CANVAS_KEY_SHAPE_CIRCLE);
+				id = lrg_timeline_view_add_keyframe (self->view, row, ref->time, ref->value, key_interpolation (ref));
+				if (ref->bezier)
+					lrg_timeline_view_set_keyframe_tangents (self->view, id, ref->in_slope, ref->out_slope);
+				lrg_timeline_view_set_keyframe_shape (self->view, id, key_shape (ref));
 				g_hash_table_insert (self->keys, GUINT_TO_POINTER (id), ref);
 				lo = MIN (lo, ref->value);
 				hi = MAX (hi, ref->value);
@@ -887,6 +992,148 @@ static void on_prev (LrgWidget *c, gpointer d)       { run_action (LRG_EDITOR_TI
 static void on_next (LrgWidget *c, gpointer d)       { run_action (LRG_EDITOR_TIMELINE_PANEL (d), "timeline.next-key"); }
 static void on_key (LrgWidget *c, gpointer d)        { run_action (LRG_EDITOR_TIMELINE_PANEL (d), "timeline.key"); }
 
+/* Tangent picker: row 0 makes the selected keys eased again, the others
+ * make them Bézier keys of that mode. */
+static void
+on_tangent (LrgComboBox *combo,
+            gpointer     user_data)
+{
+	LrgEditorTimelinePanel *self = LRG_EDITOR_TIMELINE_PANEL (user_data);
+	gint                    i = lrg_combo_box_get_selected (combo);
+
+	if (self->syncing || i < 0)
+		return;
+	lrg_editor_timeline_panel_set_key_tangents (self, i > 0, i > 0 ? (LrgSequenceTangentMode) (i - 1)
+	                                                                : LRG_SEQUENCE_TANGENT_AUTO);
+}
+
+/* The key context menu's "panel.tangent" (string target: a nick). */
+static void
+on_tangent_action (GSimpleAction *action,
+                   GVariant      *parameter,
+                   gpointer       user_data)
+{
+	LrgEditorTimelinePanel *self = LRG_EDITOR_TIMELINE_PANEL (user_data);
+	const gchar            *nick = g_variant_get_string (parameter, NULL);
+	guint                   i;
+
+	for (i = 0; i < G_N_ELEMENTS (tangent_nicks); i++)
+		if (g_strcmp0 (nick, tangent_nicks[i]) == 0)
+			lrg_editor_timeline_panel_set_key_tangents (self, i > 0, i > 0 ? (LrgSequenceTangentMode) (i - 1)
+			                                                                : LRG_SEQUENCE_TANGENT_AUTO);
+}
+
+/* Curves: channel rows become curve lanes that draw values and handles. */
+static void
+on_curves (LrgWidget *chip,
+           gpointer   user_data)
+{
+	LrgEditorTimelinePanel *self = LRG_EDITOR_TIMELINE_PANEL (user_data);
+
+	editor_chip_set_checked (chip, !editor_chip_get_checked (chip));
+	rebuild (self);
+}
+
+/*
+ * key_bone:
+ *
+ * Keys the nine offset channels of the bone named in the bone field
+ * ("bone.NAME.location.x" ...) on every selected node at the playhead,
+ * with their current offsets (identity when the bone was never posed),
+ * as one undo step. The timeline is created ("Timeline") when the level
+ * has none.
+ */
+static guint
+key_bone (LrgEditorTimelinePanel *self,
+          const gchar            *bone)
+{
+	GPtrArray        *nodes = lrg_editor_selection_get_nodes (lrg_editor_get_selection (self->editor));
+	LrgTimeline      *tl = current_timeline (self);
+	g_autofree gchar *name = g_strdup (tl != NULL ? lrg_timeline_get_name (tl) : "Timeline");
+	gchar            *channels[LRG_SEQUENCE_N_CHANNELS + 1];
+	guint             i, keys = 0;
+
+	if (self->app == NULL || bone == NULL || *bone == '\0' || nodes->len == 0)
+		return 0;
+	for (i = 0; i < LRG_SEQUENCE_N_CHANNELS; i++)
+		channels[i] = g_strdup_printf ("bone.%s.%s", bone,
+		                               lrg_sequence_transform_channel_to_string ((LrgSequenceTransformChannel) i));
+	channels[LRG_SEQUENCE_N_CHANNELS] = NULL;
+	if (tl == NULL)
+		lrg_editor_view_state_set_timeline_name (self->view_state, name);
+
+	lrg_editor_begin_group (self->editor, "Key Bone");
+	for (i = 0; i < nodes->len; i++)
+		keys += lrg_editor_timeline_key_node (self->editor, name, g_ptr_array_index (nodes, i),
+		                                      lrg_editor_view_state_get_timeline_time (self->view_state),
+		                                      (const gchar * const *) channels,
+		                                      (LrgEasingType) self->app->timeline_easing);
+	lrg_editor_end_group (self->editor);
+	for (i = 0; i < LRG_SEQUENCE_N_CHANNELS; i++)
+		g_free (channels[i]);
+	editor_app_set_status (self->app, "Keyed bone %s (%u channel(s))", bone, keys);
+	self->dirty = TRUE;
+	return keys;
+}
+
+static void
+on_key_bone (LrgWidget *chip,
+             gpointer   user_data)
+{
+	LrgEditorTimelinePanel *self = LRG_EDITOR_TIMELINE_PANEL (user_data);
+
+	key_bone (self, lrg_text_input_get_text (self->bone));
+}
+
+static void
+on_bone_submitted (LrgTextInput *input,
+                   gpointer      user_data)
+{
+	on_key_bone (NULL, user_data);
+}
+
+/* Convert to Sequence: the timeline as a .rseq next to the project's
+ * sequences (sequences/<name>.rseq), opened in the sequencer. */
+static void
+to_sequence (LrgEditorTimelinePanel *self)
+{
+	LrgTimeline       *tl = current_timeline (self);
+	g_autoptr(GError)  error = NULL;
+	g_autofree gchar  *file = NULL;
+	g_autofree gchar  *rel = NULL;
+	g_autofree gchar  *written = NULL;
+	gchar             *p;
+
+	if (tl == NULL || self->app == NULL)
+		return;
+	file = g_strdup_printf ("%s.rseq", lrg_timeline_get_name (tl));
+	for (p = file; *p != '\0'; p++)
+		if (*p == '/' || *p == ' ' || *p == '\\')
+			*p = '_';
+	rel = g_build_filename ("sequences", file, NULL);
+	written = lrg_editor_sequencer_panel_convert_timeline (self->app, lrg_timeline_get_name (tl), rel, 30.0f,
+	                                                       &error);
+	if (written == NULL)
+		editor_app_notify (self->app, EDITOR_NOTIFY_ERROR, "Convert to sequence: %s", error->message);
+	else
+		editor_app_notify (self->app, EDITOR_NOTIFY_SUCCESS, "Wrote %s", written);
+}
+
+static void
+on_to_sequence (LrgWidget *chip,
+                gpointer   user_data)
+{
+	to_sequence (LRG_EDITOR_TIMELINE_PANEL (user_data));
+}
+
+static void
+on_to_sequence_action (GSimpleAction *action,
+                       GVariant      *parameter,
+                       gpointer       user_data)
+{
+	to_sequence (LRG_EDITOR_TIMELINE_PANEL (user_data));
+}
+
 /* Deletes every selected key (one undo step). */
 static void
 delete_selected_keys (LrgEditorTimelinePanel *self)
@@ -982,6 +1229,22 @@ build_key_menu (void)
 		g_object_unref (sub);
 	}
 	g_menu_append_submenu (menu, "Key Easing", G_MENU_MODEL (easing));
+	{
+		GMenu *tangents = g_menu_new ();
+		GMenu *convert = g_menu_new ();
+
+		for (i = 0; i < G_N_ELEMENTS (tangent_nicks); i++)
+		{
+			g_autofree gchar *detailed = g_strdup_printf ("timeline-panel.tangent::%s", tangent_nicks[i]);
+
+			g_menu_append (tangents, tangent_labels[i], detailed);
+		}
+		g_menu_append_submenu (menu, "Key Tangents", G_MENU_MODEL (tangents));
+		g_menu_append (convert, "Convert to Sequence", "timeline-panel.to-sequence");
+		g_menu_append_section (menu, NULL, G_MENU_MODEL (convert));
+		g_object_unref (tangents);
+		g_object_unref (convert);
+	}
 	g_object_unref (edit);
 	g_object_unref (easing);
 	return G_MENU_MODEL (menu);
@@ -1210,6 +1473,8 @@ lrg_editor_timeline_panel_init (LrgEditorTimelinePanel *self)
 	lrg_widget_set_min_size (LRG_WIDGET (self->length), 84.0f, 0.0f);
 	g_signal_connect (self->length, "value-changed", G_CALLBACK (on_length), self);
 	add_to (row1, LRG_WIDGET (self->length));
+	add_separator (row1);
+	add_to (row1, editor_chip_new ("timeline-to-sequence", LRG_ICON_CLOCK, "To Sequence", on_to_sequence, self));
 	self->row1 = row1;
 	add_to (self->top, row1);
 
@@ -1236,6 +1501,25 @@ lrg_editor_timeline_panel_init (LrgEditorTimelinePanel *self)
 	lrg_widget_set_min_size (LRG_WIDGET (self->easing), 130.0f, 0.0f);
 	g_signal_connect (self->easing, "changed", G_CALLBACK (on_easing), self);
 	add_to (row2, LRG_WIDGET (self->easing));
+	self->tangent = lrg_combo_box_new ();
+	lrg_widget_set_name (LRG_WIDGET (self->tangent), "timeline-tangent");
+	for (i = 0; i < G_N_ELEMENTS (tangent_labels); i++)
+		lrg_combo_box_append (self->tangent, tangent_labels[i]);
+	lrg_combo_box_set_selected (self->tangent, 0);
+	lrg_widget_set_min_size (LRG_WIDGET (self->tangent), 96.0f, 0.0f);
+	lrg_widget_set_max_size (LRG_WIDGET (self->tangent), 120.0f, 0.0f);
+	g_signal_connect (self->tangent, "changed", G_CALLBACK (on_tangent), self);
+	add_to (row2, LRG_WIDGET (self->tangent));
+	self->curves = editor_chip_new ("timeline-curves", LRG_ICON_EYE, "Curves", on_curves, self);
+	add_to (row2, self->curves);
+	add_separator (row2);
+	self->bone = lrg_text_input_new_with_placeholder ("Bone");
+	lrg_widget_set_name (LRG_WIDGET (self->bone), "timeline-bone");
+	lrg_widget_set_min_size (LRG_WIDGET (self->bone), 72.0f, 0.0f);
+	lrg_widget_set_max_size (LRG_WIDGET (self->bone), 110.0f, 0.0f);
+	g_signal_connect (self->bone, "submitted", G_CALLBACK (on_bone_submitted), self);
+	add_to (row2, LRG_WIDGET (self->bone));
+	add_to (row2, editor_chip_new ("timeline-key-bone", LRG_ICON_PLUS, "Key Bone", on_key_bone, self));
 	chip = LRG_WIDGET (lrg_label_new (""));
 	lrg_widget_set_fill_weight (chip, 1.0f);
 	add_to (row2, chip);
@@ -1275,12 +1559,18 @@ lrg_editor_timeline_panel_init (LrgEditorTimelinePanel *self)
 		g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new ();
 		g_autoptr(GSimpleAction)      easing = g_simple_action_new ("easing", G_VARIANT_TYPE_STRING);
 		g_autoptr(GSimpleAction)      del = g_simple_action_new ("delete-keys", NULL);
+		g_autoptr(GSimpleAction)      tangent = g_simple_action_new ("tangent", G_VARIANT_TYPE_STRING);
+		g_autoptr(GSimpleAction)      convert = g_simple_action_new ("to-sequence", NULL);
 		g_autoptr(GMenuModel)         menu = build_key_menu ();
 
 		g_signal_connect (easing, "activate", G_CALLBACK (on_easing_action), self);
 		g_signal_connect (del, "activate", G_CALLBACK (on_delete_keys_action), self);
 		g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (easing));
 		g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (del));
+		g_signal_connect (tangent, "activate", G_CALLBACK (on_tangent_action), self);
+		g_signal_connect (convert, "activate", G_CALLBACK (on_to_sequence_action), self);
+		g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (tangent));
+		g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (convert));
 		lrg_widget_insert_action_group (LRG_WIDGET (self), "timeline-panel", G_ACTION_GROUP (group));
 		lrg_widget_set_context_menu (LRG_WIDGET (self->view), menu);
 	}
@@ -1331,6 +1621,131 @@ key_selected (gpointer data)
 	return current_timeline (self) != NULL && self->app != NULL && self->app->timeline_key_valid;
 }
 
+/* ==========================================================================
+ * IPC: timeline.tangent
+ * ========================================================================== */
+
+/*
+ * m_timeline_tangent:
+ *
+ * {name?, node, time, channel?, tangent, slope? | in?, out?}: makes the
+ * matching keys Bézier keys of @tangent (auto user broken linear
+ * constant) or eased keys again ("eased"). Without slopes a key keeps the
+ * slopes it is drawn with. Result: {changed}.
+ */
+static JsonNode *
+m_timeline_tangent (LrgEditorServer  *server,
+                    JsonObject       *params,
+                    gpointer          user_data,
+                    GError          **error)
+{
+	LrgEditorApp     *app = LRG_EDITOR_APP (user_data);
+	LrgEditor        *editor = lrg_editor_app_get_editor (app);
+	LrgTimeline      *tl;
+	LrgNode          *node;
+	const gchar      *nick, *channel = NULL;
+	g_autofree gchar *name = NULL;
+	gfloat            time;
+	guint             i, changed = 0;
+	gint              row = -1;
+	JsonObject       *o;
+	JsonNode         *out;
+
+	if (params == NULL || !json_object_has_member (params, "node") || !json_object_has_member (params, "time") ||
+	    !json_object_has_member (params, "tangent"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "timeline.tangent needs node, time and tangent");
+		return NULL;
+	}
+	nick = json_object_get_string_member (params, "tangent");
+	for (i = 0; nick != NULL && i < G_N_ELEMENTS (tangent_nicks); i++)
+		if (g_strcmp0 (nick, tangent_nicks[i]) == 0)
+			row = (gint) i;
+	if (row < 0)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "tangent must be eased, auto, user, broken, linear or constant");
+		return NULL;
+	}
+	name = g_strdup (json_object_has_member (params, "name") ? json_object_get_string_member (params, "name")
+	                 : lrg_editor_view_state_get_timeline_name (lrg_editor_app_get_view_state (app)));
+	tl = editor_timeline_current (app);
+	if (json_object_has_member (params, "name"))
+	{
+		gint idx = lrg_level_find_timeline (lrg_editor_get_level (editor), name);
+
+		tl = idx >= 0 ? lrg_level_get_timeline (lrg_editor_get_level (editor), (guint) idx) : NULL;
+	}
+	node = lrg_editor_find_node (editor, json_object_get_string_member (params, "node"));
+	if (tl == NULL || node == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No such %s",
+		             tl == NULL ? "timeline" : "node");
+		return NULL;
+	}
+	g_free (name);
+	name = g_strdup (lrg_timeline_get_name (tl));
+	time = (gfloat) json_object_get_double_member (params, "time");
+	if (json_object_has_member (params, "channel"))
+		channel = json_object_get_string_member (params, "channel");
+
+	if (row == 0)
+		changed = lrg_editor_timeline_clear_tangents (editor, name, node, channel, time);
+	else
+	{
+		gboolean has_slope = json_object_has_member (params, "slope") || json_object_has_member (params, "in");
+
+		lrg_editor_begin_group (editor, "Set Tangents");
+		for (i = 0; i < lrg_timeline_get_n_tracks (tl); i++)
+		{
+			LrgTimelineTrack            *t = lrg_timeline_get_track (tl, i);
+			g_autoptr(LrgSequenceCurve)  resolved = NULL;
+			g_autofree gchar            *ch = NULL;
+			gfloat                       in_s = 0.0f, out_s = 0.0f;
+			gint                         k;
+
+			if (g_strcmp0 (lrg_timeline_track_get_node_guid (t), lrg_node_get_guid (node)) != 0 ||
+			    (channel != NULL && g_strcmp0 (lrg_timeline_track_get_channel (t), channel) != 0) ||
+			    (k = lrg_timeline_track_find_key (t, time, 0.001f)) < 0)
+				continue;
+			resolved = resolve_track (t);
+			lrg_sequence_curve_get_slopes (resolved, (guint) k, &in_s, &out_s);
+			if (has_slope)
+			{
+				in_s = (gfloat) json_object_get_double_member_with_default (params, "in",
+				               json_object_get_double_member_with_default (params, "slope", 0.0));
+				out_s = (gfloat) json_object_get_double_member_with_default (params, "out", in_s);
+			}
+			/* the timeline is replaced by every edit: copy the channel first */
+			ch = g_strdup (lrg_timeline_track_get_channel (t));
+			changed += lrg_editor_timeline_set_tangents (editor, name, node, ch, time,
+			                                             (LrgSequenceTangentMode) (row - 1), in_s, out_s);
+			{
+				gint idx = lrg_level_find_timeline (lrg_editor_get_level (editor), name);
+
+				tl = idx >= 0 ? lrg_level_get_timeline (lrg_editor_get_level (editor), (guint) idx) : NULL;
+			}
+			if (tl == NULL)
+				break;
+		}
+		lrg_editor_end_group (editor);
+	}
+	o = json_object_new ();
+	json_object_set_int_member (o, "changed", changed);
+	out = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (out, o);
+	return out;
+}
+
+static gboolean
+can_convert (gpointer data)
+{
+	return current_timeline (LRG_EDITOR_TIMELINE_PANEL (data)) != NULL;
+}
+
+static void a_to_sequence (gpointer d) { to_sequence (LRG_EDITOR_TIMELINE_PANEL (d)); }
+
 LrgEditorTimelinePanel *
 lrg_editor_timeline_panel_new (LrgEditorApp *app)
 {
@@ -1353,6 +1768,10 @@ lrg_editor_timeline_panel_new (LrgEditorApp *app)
 	                        has_timeline, NULL, self);
 	lrg_editor_actions_add (actions, "timeline.delete-key", "Delete Keyframe", "Animation", NULL,
 	                        a_timeline_delete_key, key_selected, NULL, self);
+	lrg_editor_actions_add (actions, "timeline.to-sequence", "Convert Timeline to Sequence", "Animation", NULL,
+	                        a_to_sequence, can_convert, NULL, self);
+	if (app->server != NULL)
+		lrg_editor_server_register_method (app->server, "timeline.tangent", m_timeline_tangent, app, NULL);
 	{
 		g_autoptr(GEnumClass) klass = g_type_class_ref (LRG_TYPE_EASING_TYPE);
 		guint                 i;
@@ -1486,6 +1905,71 @@ lrg_editor_timeline_panel_set_key_easing (LrgEditorTimelinePanel *self,
 			    fabsf (member->time - ref->time) < TIME_EPSILON)
 				lrg_editor_timeline_set_easing (self->editor, name, node, member->channel, member->time, easing);
 		}
+	}
+	lrg_editor_end_group (self->editor);
+	rebuild (self);
+}
+
+void
+lrg_editor_timeline_panel_set_key_tangents (LrgEditorTimelinePanel *self,
+                                            gboolean                bezier,
+                                            LrgSequenceTangentMode  mode)
+{
+	g_autoptr(GArray)    ids = NULL;
+	g_autoptr(GPtrArray) targets = NULL;
+	g_autofree gchar    *name = NULL;
+	LrgTimeline         *tl;
+	guint                i;
+
+	g_return_if_fail (LRG_IS_EDITOR_TIMELINE_PANEL (self));
+
+	tl = current_timeline (self);
+	ids = lrg_timeline_view_get_selected_keyframes (self->view);
+	if (tl == NULL || ids == NULL || ids->len == 0)
+		return;
+
+	/* Channel keys to change: summaries expand to their node's keys */
+	targets = g_ptr_array_new ();
+	for (i = 0; i < ids->len; i++)
+	{
+		KeyRef        *ref = g_hash_table_lookup (self->keys, GUINT_TO_POINTER (g_array_index (ids, guint, i)));
+		GHashTableIter iter;
+		gpointer       v;
+
+		if (ref == NULL)
+			continue;
+		if (ref->channel != NULL)
+		{
+			g_ptr_array_add (targets, ref);
+			continue;
+		}
+		g_hash_table_iter_init (&iter, self->keys);
+		while (g_hash_table_iter_next (&iter, NULL, &v))
+		{
+			KeyRef *member = v;
+
+			if (member->channel != NULL && g_strcmp0 (member->guid, ref->guid) == 0 &&
+			    fabsf (member->time - ref->time) < TIME_EPSILON)
+				g_ptr_array_add (targets, member);
+		}
+	}
+
+	/* A copy: every edit replaces the level's timeline object */
+	name = g_strdup (lrg_timeline_get_name (tl));
+	lrg_editor_begin_group (self->editor, bezier ? "Set Tangents" : "Clear Tangents");
+	for (i = 0; i < targets->len; i++)
+	{
+		KeyRef  *ref = g_ptr_array_index (targets, i);
+		LrgNode *node = lrg_editor_find_node (self->editor, ref->guid);
+
+		if (node == NULL)
+			continue;
+		if (!bezier)
+			lrg_editor_timeline_clear_tangents (self->editor, name, node, ref->channel, ref->time);
+		else
+			/* keep the drawn shape: the resolved slopes become the user slopes */
+			lrg_editor_timeline_set_tangents (self->editor, name, node, ref->channel, ref->time, mode,
+			                                  ref->in_slope, ref->out_slope);
 	}
 	lrg_editor_end_group (self->editor);
 	rebuild (self);

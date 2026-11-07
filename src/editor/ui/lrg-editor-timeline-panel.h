@@ -31,6 +31,7 @@
 #include "../../lrg-version.h"
 #include "../../ui/lrg-container.h"
 #include "../../ui/lrg-timeline-view.h"
+#include "../../animation/lrg-sequence.h"
 #include "lrg-editor-app.h"
 
 G_BEGIN_DECLS
@@ -140,5 +141,25 @@ guint lrg_editor_timeline_panel_find_keyframe (LrgEditorTimelinePanel *self,
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_timeline_panel_set_key_easing (LrgEditorTimelinePanel *self,
                                                LrgEasingType           easing);
+
+/**
+ * lrg_editor_timeline_panel_set_key_tangents:
+ * @self: an #LrgEditorTimelinePanel
+ * @bezier: %TRUE to make the selected keys Bézier keys, %FALSE to make
+ *   them eased keys again
+ * @mode: the tangent mode when @bezier
+ *
+ * What the tangent picker and the key context menu's Key Tangents do:
+ * every selected key (a node summary key stands for all channel keys of
+ * its node at that time) becomes a Bézier key of @mode, as one undo step.
+ * The keys keep the slopes they are drawn with, so switching an auto key
+ * to user or broken does not change its shape until a handle is edited.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_timeline_panel_set_key_tangents (LrgEditorTimelinePanel *self,
+                                                 gboolean                bezier,
+                                                 LrgSequenceTangentMode  mode);
 
 G_END_DECLS
