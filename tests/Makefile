@@ -158,6 +158,15 @@ TEST_SOURCES := \
 	test-save.c \
 	test-save-migrator.c \
 	test-script-scheduler.c \
+	test-script-reload.c \
+	test-script-debugger.c \
+	test-dap-server.c \
+	test-vscript.c \
+	test-profiler-capture.c \
+	test-frame-capture.c \
+	test-memory-profiler.c \
+	test-net-stats.c \
+	test-ui-dock-overflow.c \
 	test-binding-catalog.c \
 	test-action-bar.c \
 	test-dialog.c \
@@ -312,6 +321,12 @@ TEST_SOURCES := \
 	test-editor-app-terrain.c \
 	test-editor-app-audio.c \
 	test-editor-app-2d.c \
+	test-lsp-client.c \
+	test-editor-app-debug.c \
+	test-editor-app-vscript.c \
+	test-editor-app-toolscript.c \
+	test-editor-app-frame.c \
+	test-editor-app-memnet.c \
 	test-editor-app-anim.c \
 	test-editor-app-sequencer.c \
 	test-editor-app-rig.c \

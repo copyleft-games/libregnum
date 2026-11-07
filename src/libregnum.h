@@ -419,6 +419,9 @@
 
 /* Debug module */
 #include "debug/lrg-profiler.h"
+#include "debug/lrg-gpu-timer.h"
+#include "debug/lrg-frame-capture.h"
+#include "debug/lrg-memory-profiler.h"
 #include "debug/lrg-debug-draw.h"
 #include "debug/lrg-debug-console.h"
 #include "debug/lrg-debug-overlay.h"
@@ -429,6 +432,7 @@
 #include "net/lrg-net-peer.h"
 #include "net/lrg-net-server.h"
 #include "net/lrg-net-client.h"
+#include "net/lrg-net-stats.h"
 
 /* Replay module: determinism, input replays, rollback */
 #include "replay/lrg-state-buffer.h"
@@ -540,6 +544,8 @@
 #include "editor/lrg-editor-viewport-nav.h"
 #include "editor/lrg-editor-vcs.h"
 #include "editor/lrg-editor-document.h"
+#include "editor/lrg-lsp-client.h"
+#include "editor/lrg-editor-script-api.h"
 #include "editor/lrg-asset-source.h"
 #ifdef LRG_BUILD_EDITOR_UI
 #include "editor/ui/lrg-editor-app.h"
@@ -575,12 +581,18 @@
 #include "editor/ui/lrg-editor-ai-debug-panel.h"
 #include "editor/ui/lrg-editor-terrain-panel.h"
 #include "editor/ui/lrg-editor-mixer-panel.h"
+#include "editor/ui/lrg-editor-debug-panel.h"
+#include "editor/ui/lrg-editor-frame-debugger.h"
+#include "editor/ui/lrg-editor-memory-panel.h"
+#include "editor/ui/lrg-editor-network-panel.h"
 #include "editor/ui/data/lrg-editor-bt-editor.h"
 #include "editor/ui/data/lrg-editor-fsm-editor.h"
 #include "editor/ui/data/lrg-editor-particle-editor.h"
 #include "editor/ui/data/lrg-editor-weather-editor.h"
 #include "editor/ui/data/lrg-editor-water-editor.h"
 #include "editor/ui/data/lrg-editor-mixer-editor.h"
+#include "editor/ui/data/lrg-editor-vscript-editor.h"
+#include "editor/ui/data/lrg-editor-blocks-editor.h"
 #include "editor/ui/data/lrg-editor-tileset-editor.h"
 #include "editor/ui/data/lrg-editor-sprite-editor.h"
 #include "editor/ui/lrg-editor-sequencer-panel.h"
@@ -633,6 +645,11 @@
 #include "scripting/lrg-script-host.h"
 #include "scripting/lrg-script-task.h"
 #include "scripting/lrg-script-scheduler.h"
+#include "scripting/lrg-script-debugger.h"
+#include "scripting/lrg-script-reloader.h"
+#include "scripting/lrg-dap-server.h"
+#include "scripting/lrg-scripting-graph.h"
+#include "scripting/lrg-vscript-program.h"
 #include "scripting/lrg-script-task-callback.h"
 #ifdef LRG_HAS_CRISPY
 #include "scripting/lrg-scripting-crispy.h"

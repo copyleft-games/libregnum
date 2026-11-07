@@ -342,6 +342,9 @@ PUBLIC_HEADERS := \
 	src/physics/lrg-cloth.h \
 	src/physics/lrg-fracture.h \
 	src/debug/lrg-profiler.h \
+	src/debug/lrg-gpu-timer.h \
+	src/debug/lrg-frame-capture.h \
+	src/debug/lrg-memory-profiler.h \
 	src/debug/lrg-debug-draw.h \
 	src/debug/lrg-debug-console.h \
 	src/debug/lrg-debug-overlay.h \
@@ -394,6 +397,7 @@ PUBLIC_HEADERS := \
 	src/net/lrg-net-peer.h \
 	src/net/lrg-net-server.h \
 	src/net/lrg-net-client.h \
+	src/net/lrg-net-stats.h \
 	src/replay/lrg-state-buffer.h \
 	src/replay/lrg-sim-stateful.h \
 	src/replay/lrg-input-snapshot.h \
@@ -455,6 +459,11 @@ PUBLIC_HEADERS := \
 	src/scripting/lrg-script-host.h \
 	src/scripting/lrg-script-task.h \
 	src/scripting/lrg-script-scheduler.h \
+	src/scripting/lrg-script-debugger.h \
+	src/scripting/lrg-script-reloader.h \
+	src/scripting/lrg-dap-server.h \
+	src/scripting/lrg-scripting-graph.h \
+	src/scripting/lrg-vscript-program.h \
 	src/scripting/lrg-script-task-callback.h \
 	src/settings/lrg-settings-group.h \
 	src/settings/lrg-graphics-settings.h \
@@ -1137,6 +1146,9 @@ SOURCES := \
 	src/physics/lrg-cloth.c \
 	src/physics/lrg-fracture.c \
 	src/debug/lrg-profiler.c \
+	src/debug/lrg-gpu-timer.c \
+	src/debug/lrg-frame-capture.c \
+	src/debug/lrg-memory-profiler.c \
 	src/debug/lrg-debug-draw.c \
 	src/debug/lrg-debug-console.c \
 	src/debug/lrg-debug-overlay.c \
@@ -1191,6 +1203,7 @@ SOURCES := \
 	src/net/lrg-net-peer.c \
 	src/net/lrg-net-server.c \
 	src/net/lrg-net-client.c \
+	src/net/lrg-net-stats.c \
 	src/replay/lrg-state-buffer.c \
 	src/replay/lrg-sim-stateful.c \
 	src/replay/lrg-input-snapshot.c \
@@ -1252,6 +1265,11 @@ SOURCES := \
 	src/scripting/lrg-script-host.c \
 	src/scripting/lrg-script-task.c \
 	src/scripting/lrg-script-scheduler.c \
+	src/scripting/lrg-script-debugger.c \
+	src/scripting/lrg-script-reloader.c \
+	src/scripting/lrg-dap-server.c \
+	src/scripting/lrg-scripting-graph.c \
+	src/scripting/lrg-vscript-program.c \
 	src/scripting/lrg-script-task-callback.c \
 	src/settings/lrg-settings-group.c \
 	src/settings/lrg-graphics-settings.c \
@@ -1805,6 +1823,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-viewport-nav.h \
 	src/editor/lrg-editor-vcs.h \
 	src/editor/lrg-editor-document.h \
+	src/editor/lrg-lsp-client.h \
+	src/editor/lrg-editor-script-api.h \
 	src/editor/lrg-editor-settings-migrate.h \
 	src/editor/lrg-editor-node-model.h \
 	src/editor/lrg-editor-node-source.h \
@@ -1834,6 +1854,8 @@ SOURCES += \
 	src/editor/lrg-editor-viewport-nav.c \
 	src/editor/lrg-editor-vcs.c \
 	src/editor/lrg-editor-document.c \
+	src/editor/lrg-lsp-client.c \
+	src/editor/lrg-editor-script-api.c \
 	src/editor/lrg-editor-settings-migrate.c \
 	src/editor/lrg-editor-node-model.c \
 	src/editor/lrg-editor-node-source.c \
@@ -1872,12 +1894,18 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-ai-debug-panel.h \
 	src/editor/ui/lrg-editor-terrain-panel.h \
 	src/editor/ui/lrg-editor-mixer-panel.h \
+	src/editor/ui/lrg-editor-debug-panel.h \
+	src/editor/ui/lrg-editor-frame-debugger.h \
+	src/editor/ui/lrg-editor-memory-panel.h \
+	src/editor/ui/lrg-editor-network-panel.h \
 	src/editor/ui/data/lrg-editor-bt-editor.h \
 	src/editor/ui/data/lrg-editor-fsm-editor.h \
 	src/editor/ui/data/lrg-editor-particle-editor.h \
 	src/editor/ui/data/lrg-editor-weather-editor.h \
 	src/editor/ui/data/lrg-editor-water-editor.h \
 	src/editor/ui/data/lrg-editor-mixer-editor.h \
+	src/editor/ui/data/lrg-editor-vscript-editor.h \
+	src/editor/ui/data/lrg-editor-blocks-editor.h \
 	src/editor/ui/data/lrg-editor-tileset-editor.h \
 	src/editor/ui/data/lrg-editor-sprite-editor.h \
 	src/editor/ui/lrg-editor-sequencer-panel.h \
@@ -1924,12 +1952,18 @@ SOURCES += \
 	src/editor/ui/lrg-editor-ai-debug-panel.c \
 	src/editor/ui/lrg-editor-terrain-panel.c \
 	src/editor/ui/lrg-editor-mixer-panel.c \
+	src/editor/ui/lrg-editor-debug-panel.c \
+	src/editor/ui/lrg-editor-frame-debugger.c \
+	src/editor/ui/lrg-editor-memory-panel.c \
+	src/editor/ui/lrg-editor-network-panel.c \
 	src/editor/ui/data/lrg-editor-bt-editor.c \
 	src/editor/ui/data/lrg-editor-fsm-editor.c \
 	src/editor/ui/data/lrg-editor-particle-editor.c \
 	src/editor/ui/data/lrg-editor-weather-editor.c \
 	src/editor/ui/data/lrg-editor-water-editor.c \
 	src/editor/ui/data/lrg-editor-mixer-editor.c \
+	src/editor/ui/data/lrg-editor-vscript-editor.c \
+	src/editor/ui/data/lrg-editor-blocks-editor.c \
 	src/editor/ui/data/lrg-editor-tileset-editor.c \
 	src/editor/ui/data/lrg-editor-sprite-editor.c \
 	src/editor/ui/lrg-editor-sequencer-panel.c \
@@ -2601,7 +2635,7 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
-DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h \
+DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-script-reloader.h src/scripting/lrg-dap-server.h src/scripting/lrg-scripting-graph.h src/scripting/lrg-vscript-program.h src/debug/lrg-gpu-timer.h src/debug/lrg-frame-capture.h src/debug/lrg-memory-profiler.h src/net/lrg-net-stats.h $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h \
 	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
