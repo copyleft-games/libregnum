@@ -503,7 +503,7 @@ lrg_editor_app_start_server (app, NULL, NULL);
 return lrg_editor_app_run (app);
 #+end_src
 
-Custom actions get a mirror =editor.<id>= action and their shortcut immediately, appear in the keybinding list, Help > Keyboard Shortcuts and =action.run=. See =examples/editor-standalone.c= (unchanged since 0.8.0).
+Custom actions get a mirror =editor.<id>= action and their shortcut immediately, appear in the keybinding list, Help > Keyboard Shortcuts, the command palette and =action.run=. A menu entry is up to the host: append an item naming =editor.<id>= to a submenu of =lrg_editor_window_get_menu_model()= (the menu bar follows the model). See =examples/editor-standalone.c= (the minimal embedding, unchanged since 0.8.0) and [[file:../examples/editor-custom-panel.org][Editor Custom Panel Example]] (=examples/editor-custom-panel.c=: a "Level Stats" panel docked with =lrg_editor_app_add_panel()= that refreshes on =LrgEditor::changed=, and an action with a shortcut, an enabled state and a Tools menu entry).
 
 *** API
 :PROPERTIES:

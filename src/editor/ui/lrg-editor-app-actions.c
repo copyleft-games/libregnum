@@ -1827,9 +1827,12 @@ m_ui_notify (LrgEditorServer  *server,
              gpointer          user_data,
              GError          **error)
 {
-	const gchar *msg = p_string (params, "message");
-	const gchar *lvl = p_string (params, "level");
-	gint         level = 0;
+	static const gchar * const names[] = { "info", "success", "warning", "error" };
+	const gchar               *msg = p_string (params, "message");
+	const gchar               *lvl = p_string (params, "level");
+	JsonNode                  *n;
+	gint                       level = 0;
+	gsize                      i;
 
 	if (msg == NULL)
 	{
@@ -1837,12 +1840,24 @@ m_ui_notify (LrgEditorServer  *server,
 		                     "Missing string parameter 'message'");
 		return NULL;
 	}
-	if (g_strcmp0 (lvl, "success") == 0)
-		level = 1;
-	else if (g_strcmp0 (lvl, "warning") == 0)
-		level = 2;
-	else if (g_strcmp0 (lvl, "error") == 0)
-		level = 3;
+
+	/* The level is a name (info, success, warning, error); for clients
+	 * from 0.8.0, whose lrgeditorctl sent a number, 0..3 map onto the
+	 * same names. Anything else falls back to info rather than failing:
+	 * a toast with the wrong colour beats a lost message. */
+	for (i = 0; lvl != NULL && i < G_N_ELEMENTS (names); i++)
+		if (g_ascii_strcasecmp (lvl, names[i]) == 0)
+			level = (gint) i;
+	n = (params != NULL && json_object_has_member (params, "level"))
+	    ? json_object_get_member (params, "level") : NULL;
+	if (lvl == NULL && n != NULL && JSON_NODE_HOLDS_VALUE (n) &&
+	    (json_node_get_value_type (n) == G_TYPE_INT64 || json_node_get_value_type (n) == G_TYPE_DOUBLE))
+	{
+		gint64 v = (json_node_get_value_type (n) == G_TYPE_INT64)
+		           ? json_node_get_int (n) : (gint64) json_node_get_double (n);
+
+		level = (gint) CLAMP (v, 0, (gint64) G_N_ELEMENTS (names) - 1);
+	}
 	editor_app_notify (APP (user_data), level, "%s", msg);
 	return bool_node (TRUE);
 }

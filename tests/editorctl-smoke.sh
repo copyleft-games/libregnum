@@ -18,7 +18,8 @@
 # Starts a headless lrgeditor on a fresh project and drives it with
 # lrgeditorctl: sessions, get/describe, create/set/rename/move/delete,
 # apply -f, edit (scripted $VISUAL), select, run, undo/redo, save,
-# validate, logs, call, events, the 0.8.1 verbs (meta, vcs, prefab, code)
+# validate, logs, call, events, the 0.8.1 verbs (meta, vcs, prefab, code,
+# data, palette, preferences, hierarchy filter, notify --level)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -176,6 +177,49 @@ check 'code list' "$(ctl code list)" 'smoke.lua'
 check 'code save' "$(ctl code save -o json)" '"dirty" : false'
 check 'methods include code.open' "$(ctl get methods -o json)" 'code.open'
 
+# 0.8.1 data editors. lrgeditor --headless installs the data.* methods
+# and runs the full document model (open, get/set/edit, undo, validate,
+# save, close); only drawing the panels needs a window.
+mkdir -p "${work}/game/data"
+printf 'actions:\n  jump:\n    bindings:\n      - { type: keyboard, key: SPACE }\n' >"${work}/game/data/input.yaml"
+check 'data open' "$(ctl data open "${work}/game/data/input.yaml")" 'format: input-map'
+check 'data list' "$(ctl data list)" 'input-map'
+check 'data get (focused editor)' "$(ctl data get /actions/jump/bindings/0/key)" 'value: SPACE'
+check 'data set' "$(ctl data set /actions/jump/bindings/0/key ENTER)" 'dirty: true'
+check 'data get by file' "$(ctl data get "${work}/game/data/input.yaml" /actions/jump/bindings/0/key -o json)" '"value" : "ENTER"'
+check 'data edit add_key' "$(ctl data edit add_key /actions key=fire 'yaml={bindings: []}')" 'Add /actions/fire'
+check 'data edit rename_key' "$(ctl data edit rename_key /actions old=fire new=shoot)" 'Rename /actions/shoot'
+check 'data undo' "$(ctl data undo -o json)" '"ok" : true'
+check 'data redo' "$(ctl data redo -o json)" '"ok" : true'
+check 'data validate' "$(ctl data validate -o json)" '"errors" : 0'
+check 'data reveal' "$(ctl data reveal /actions/jump)" 'format: input-map'
+check 'data save' "$(ctl data save -o json)" '"dirty" : false'
+check 'data saved file' "$(cat "${work}/game/data/input.yaml")" 'key: ENTER'
+check 'data reload' "$(ctl data reload -o json)" '"ok" : true'
+check 'data close' "$(ctl data close)" 'closed: true'
+check 'data list empty' "$(ctl data list -o json)" '[]'
+"${ctl}" data frobnicate >/dev/null 2>&1 && status=0 || status=$?
+check 'data usage error exits 2' "status=${status}" 'status=2'
+
+# notify --level takes a name or 0-3 (an error toast logs a warning).
+ctl notify smoke error toast --level error >/dev/null
+check 'notify --level error' "$(ctl logs --tail 1)" 'warning'
+ctl notify smoke numeric toast --level 3 >/dev/null
+check 'notify --level 3' "$(ctl logs --tail 1)" 'warning'
+"${ctl}" notify nope --level loud >/dev/null 2>&1 && status=0 || status=$?
+check 'notify bad level exits 2' "status=${status}" 'status=2'
+
+# Hierarchy filter, palette and preferences (the dialogs open headless
+# too; their state is in the view model).
+check 'hierarchy filter' "matches=$(ctl hierarchy filter Box -o json);" 'matches=1;'
+check 'hierarchy filter in state' "$(ctl hierarchy state -o json)" '"filter" : "Box"'
+ctl hierarchy filter >/dev/null
+check 'hierarchy filter clear' "$(ctl hierarchy state -o json)" '"filter" : null'
+check 'palette' "$(ctl palette commands undo -o json)" '"open" : true'
+check 'preferences' "$(ctl preferences keybindings)" 'preferences/keybindings opened'
+"${ctl}" preferences nope >/dev/null 2>&1 && status=0 || status=$?
+check 'preferences unknown page exits 1' "status=${status}" 'status=1'
+
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
 check 'saved file has the nodes' "$(cat "${work}/game/levels/main.rlevel")" 'Barrel'
@@ -205,7 +249,8 @@ else
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/list"}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_node","arguments":{"name":"AIBox","primitive":"torus","location":[0,1,0]}}}
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_node","arguments":{"node":"nope"}}}'
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_node","arguments":{"node":"nope"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"data_list","arguments":{}}}'
 	# Keep stdin open briefly, as real MCP clients do, so every reply is
 	# written before the session ends.
 	out="$({ printf '%s\n' "${mcp_in}"; sleep 2; } | timeout 20 "${ctl}" mcp 2>&1)"
@@ -214,6 +259,13 @@ else
 	check 'mcp tilemap tools' "${out}" '"name":"paint_tiles"'
 	check 'mcp 0.8.1 tools' "${out}" '"name":"set_asset_meta"'
 	check 'mcp code tools' "${out}" '"name":"code_open"'
+	check 'mcp data tools' "${out}" '"name":"data_set"'
+	check 'mcp palette and preferences tools' "${out}" '"name":"open_preferences"'
+	check 'mcp hierarchy_filter' "${out}" '"name":"hierarchy_filter"'
+	check 'mcp inspector_state is read-only and takes no params' \
+		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"inspector_state"[^]]*' | head -n 1)" \
+		'"properties":{}},"annotations":{"readOnlyHint":true'
+	check 'mcp data_list' "${out}" '"id":5,"result":{"content":[{"type":"text","text":"[]"}]}'
 	check 'mcp create_node' "$(ctl get nodes -o name)" 'node/AIBox'
 	check 'mcp tool error' "${out}" '"isError":true'
 fi

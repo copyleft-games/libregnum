@@ -20,6 +20,11 @@
 #define VEC3(desc) \
 	"{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":3,\"maxItems\":3,\"description\":\"" desc "\"}"
 
+#define DATA_PATH_ARG \
+	"\"path\":{\"type\":\"string\",\"description\":\"Data file, absolute or relative to the project; omit for the focused data editor\"}"
+#define DATA_AT_ARG \
+	"\"at\":{\"type\":\"string\",\"description\":\"YAML path, e.g. /actions/jump/bindings/0/key (default the root)\"}"
+
 typedef enum
 {
 	TOOL_PASS,        /* arguments -> method params */
@@ -148,8 +153,9 @@ static const ToolSpec tools[] = {
 	{ "ui_state", "ui.state", TOOL_PASS, TRUE, FALSE,
 	  "What the editor UI is doing: open menu, dialog, navigation mode, panel rects, last input seen.", "", NULL },
 	{ "notify", "ui.notify", TOOL_PASS, FALSE, FALSE,
-	  "Show a toast to the person using the editor. level: 0 info, 1 success, 2 warning, 3 error.",
-	  "\"message\":{\"type\":\"string\"},\"level\":{\"type\":\"integer\"}", "[\"message\"]" },
+	  "Show a toast to the person using the editor. level: info (default), success, warning or error.",
+	  "\"message\":{\"type\":\"string\"},\"level\":{\"type\":\"string\",\"enum\":[\"info\",\"success\",\"warning\",\"error\"]}",
+	  "[\"message\"]" },
 	{ "get_tilemap", "tilemap.get", TOOL_PASS, TRUE, FALSE,
 	  "A tilemap node's grid: width, height, tile_width/height (tileset px), tile_size (world units), tileset, layers [{index, name, visible, count, rows}]. Tile ids are 1-based into the tileset; 0 is empty. Row 0 is the top row; cells grow right/down from the node origin.",
 	  NODE_ARG ",\"layer\":{\"description\":\"Layer index or name (only that layer)\"},\"cells\":{\"type\":\"boolean\",\"description\":\"false omits the rows\"}",
@@ -255,15 +261,18 @@ static const ToolSpec tools[] = {
 	{ "inspector_revert_override", "inspector.revert_override", TOOL_PASS, FALSE, TRUE,
 	  "Revert one prefab override row of the inspector to the prefab's value.",
 	  NODE_ARG ",\"section\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"}", "[\"name\"]" },
-	{ "inspector_state", "inspector.state", TOOL_PASS, FALSE, FALSE,
-	  "The inspector panel's state (lock, shown nodes); lock=true/false pins it to the current nodes.",
-	  "\"lock\":{\"type\":\"boolean\"}", NULL },
+	{ "inspector_state", "inspector.state", TOOL_PASS, TRUE, FALSE,
+	  "The inspector panel's state: the nodes it shows, whether it is locked to them (and the lock mode), live play-mode inspection, component count and prefab link. Read-only; lock or unlock it with run_action id=inspector.toggle-lock.",
+	  "", NULL },
 	{ "hierarchy_reveal", "hierarchy.reveal", TOOL_PASS, FALSE, FALSE,
 	  "Expand the hierarchy down to a node, scroll it into view and (select, default true) select it.",
 	  NODE_ARG ",\"select\":{\"type\":\"boolean\"}", "[\"node\"]" },
 	{ "hierarchy_rename", "hierarchy.rename", TOOL_PASS, FALSE, FALSE,
 	  "Start inline rename of a node in the hierarchy, or with name rename it (undoable).",
 	  NODE_ARG ",\"name\":{\"type\":\"string\"}", "[\"node\"]" },
+	{ "hierarchy_filter", "hierarchy.filter", TOOL_PASS, FALSE, FALSE,
+	  "Filter the hierarchy panel to nodes whose name matches text (ancestors stay visible); empty or absent text clears the filter. Returns the number of matching nodes.",
+	  "\"text\":{\"type\":\"string\"}", NULL },
 	{ "hierarchy_state", "hierarchy.state", TOOL_PASS, TRUE, FALSE,
 	  "The hierarchy panel: page (scene/live), filter, matches, inline editing and the visible rows.", "", NULL },
 	{ "asset_reveal", "asset.reveal", TOOL_PASS, FALSE, FALSE,
@@ -292,6 +301,50 @@ static const ToolSpec tools[] = {
 	  "The code editor's open tabs: [{path, tab, active, dirty, line, column, lines, language}].", "", NULL },
 	{ "code_save", "code.save", TOOL_PASS, FALSE, FALSE,
 	  "Save a code editor tab to its file (the active tab without path).", "\"path\":{\"type\":\"string\"}", NULL },
+	{ "open_palette", "palette.open", TOOL_PASS, FALSE, FALSE,
+	  "Open the command palette (mode commands, the default) or the quick-open file finder (mode files) for the person, optionally pre-filled with query; returns {open, results, scanning} (open is false while a dialog is up).",
+	  "\"mode\":{\"type\":\"string\",\"enum\":[\"commands\",\"files\"]},\"query\":{\"type\":\"string\"}", NULL },
+	{ "open_preferences", "preferences.open", TOOL_PASS, FALSE, FALSE,
+	  "Open the preferences dialog, optionally on a page (e.g. keybindings); returns the page id.",
+	  "\"page\":{\"type\":\"string\"}", NULL },
+	/* 0.8.1: data editors (input maps, locales, sound banks, themes, HUD
+	 * and UI layouts, dialog trees, dungeons). path defaults to the
+	 * focused data editor; at is a YAML path such as /actions/jump. */
+	{ "data_open", "data.open", TOOL_PASS, FALSE, FALSE,
+	  "Open a data file (.yaml: input map, locale, sound bank, theme, HUD layout, UI layout, dialog tree, dungeon) in its data editor. Returns the editor status {path, panel, format, editor, dirty, read_only, focused, changed_on_disk, issues, errors, undo_label, redo_label, state}.",
+	  DATA_PATH_ARG, "[\"path\"]" },
+	{ "data_list", "data.list", TOOL_PASS, TRUE, FALSE,
+	  "The open data editors, as an array of editor statuses (path, format, dirty, issues, errors, undo/redo labels).", "", NULL },
+	{ "data_get", "data.get", TOOL_PASS, TRUE, FALSE,
+	  "Read a node of a data document: {at, kind, value, keys, length, yaml, line} (value for scalars, keys for mappings, length for sequences, yaml for collections or with as=yaml).",
+	  DATA_PATH_ARG "," DATA_AT_ARG ",\"as\":{\"type\":\"string\",\"enum\":[\"yaml\"]}", NULL },
+	{ "data_set", "data.set", TOOL_PASS, FALSE, FALSE,
+	  "Set a node of a data document (one undo step) to value (any JSON) or to yaml text; edits with the same gesture string merge into one undo step. Returns the status plus ok.",
+	  DATA_PATH_ARG "," DATA_AT_ARG ",\"value\":{},\"yaml\":{\"type\":\"string\"},\"gesture\":{\"type\":\"string\"}", "[\"at\"]" },
+	{ "data_edit", "data.edit", TOOL_PASS, FALSE, FALSE,
+	  "Structural edit of a data document (one undo step) at a YAML path: op insert (index?, yaml) into a sequence, move (from, to) within a sequence, add_key (key, yaml, position?) to a mapping, rename_key (old, new), remove (the node at).",
+	  DATA_PATH_ARG "," DATA_AT_ARG ",\"op\":{\"type\":\"string\",\"enum\":[\"insert\",\"move\",\"add_key\",\"rename_key\",\"remove\"]},"
+	  "\"index\":{\"type\":\"integer\"},\"yaml\":{\"type\":\"string\"},\"from\":{\"type\":\"integer\"},\"to\":{\"type\":\"integer\"},"
+	  "\"key\":{\"type\":\"string\"},\"position\":{\"type\":\"integer\"},\"old\":{\"type\":\"string\"},\"new\":{\"type\":\"string\"}",
+	  "[\"op\",\"at\"]" },
+	{ "data_undo", "data.undo", TOOL_PASS, FALSE, FALSE,
+	  "Undo the last edit of a data document (each file has its own history); ok says whether anything changed.", DATA_PATH_ARG, NULL },
+	{ "data_redo", "data.redo", TOOL_PASS, FALSE, FALSE,
+	  "Redo the last undone edit of a data document.", DATA_PATH_ARG, NULL },
+	{ "data_validate", "data.validate", TOOL_PASS, TRUE, FALSE,
+	  "Validate a data document with the engine's own loader: {ok, errors, issues [{severity, path, line, column, message}]}.",
+	  DATA_PATH_ARG, NULL },
+	{ "data_save", "data.save", TOOL_PASS, FALSE, FALSE,
+	  "Save a data document (keeps key order and comments); save_as writes it to a new file, which becomes its path.",
+	  DATA_PATH_ARG ",\"save_as\":{\"type\":\"string\"}", NULL },
+	{ "data_reload", "data.reload", TOOL_PASS, FALSE, TRUE,
+	  "Reload a data document from disk, discarding unsaved edits.", DATA_PATH_ARG, NULL },
+	{ "data_close", "data.close", TOOL_PASS, FALSE, TRUE,
+	  "Close a data editor. With unsaved changes the person is asked (closed is false while the prompt is up) unless force=true, which discards them.",
+	  DATA_PATH_ARG ",\"force\":{\"type\":\"boolean\"}", NULL },
+	{ "data_reveal", "data.reveal", TOOL_PASS, FALSE, FALSE,
+	  "Show a YAML path (or a line) in a data editor, exactly as clicking a validation issue does.",
+	  DATA_PATH_ARG "," DATA_AT_ARG ",\"line\":{\"type\":\"integer\"}", NULL },
 	{ "call_method", NULL, TOOL_RAW, FALSE, TRUE,
 	  "Escape hatch: call any editor IPC method (see docs/editor/ipc-protocol.org or the methods list) with raw params.",
 	  "\"method\":{\"type\":\"string\"},\"params\":{\"type\":\"object\"}", "[\"method\"]" },

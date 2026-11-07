@@ -149,7 +149,7 @@ EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-propert
 
 # Editor standalone (only built when BUILD_EDITOR_UI=1)
 ifeq ($(BUILD_EDITOR_UI),1)
-EXAMPLES += editor-standalone
+EXAMPLES += editor-standalone editor-custom-panel
 endif
 
 # Standalone parametric-CAD viewer (only built when CAD=1).  CAD_LIBS is
@@ -437,6 +437,10 @@ $(FPS_GAME_MODULE): game-fps-demo.c
 	@$(CC) $(GM_CFLAGS) -o $@ $< $(GM_LDFLAGS) $(GM_LIBS)
 
 $(EXAMPLES_BUILDDIR)/editor-standalone$(EXE_EXT): editor-standalone.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+$(EXAMPLES_BUILDDIR)/editor-custom-panel$(EXE_EXT): editor-custom-panel.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

@@ -117,8 +117,8 @@ Helpers: =lrg_property_hint_split()= cuts a hint at its first ':' ("array:asset:
 A row is /mixed/ (=lrg_property_row_get_mixed()=) when any source's value differs from the first one's, compared with =lrg_property_values_equal()=: unlike =g_param_values_cmp()= it compares =GrlColor=, vectors, =LrgGradientStops=, =LrgKeyframeCurve=, string arrays and =GVariant= by content. Mixed rows show:
 | Editor                   | Mixed display                                   |
 |--------------------------+-------------------------------------------------|
-| Spin box                 | An em dash over the number                      |
-| Check box                | Unchecked, with an em dash as its label         |
+| Spin box                 | An em dash over the number (the step buttons stay usable; painted by the row) |
+| Check box                | Unchecked and inconsistent (=lrg_checkbox_set_inconsistent()=: the indeterminate dash in the box); a click checks it for every source |
 | Text field               | Empty, with an em dash placeholder              |
 | Combo boxes, references  | Nothing selected, em dash placeholder           |
 | Vector                   | An em dash in each axis that differs            |
@@ -148,7 +148,7 @@ Gesture ids increase by one per gesture and are the same across one gesture's em
 :END:
 | Editor        | One gesture                                                                     |
 |---------------+---------------------------------------------------------------------------------|
-| Spin box      | A press: scrubbing or holding a step button, until release                     |
+| Spin box      | A press (=scrub-begin= .. =scrub-end=): scrubbing, a click or a held step button, until release; nothing when it changes nothing |
 | Spin box      | One wheel notch, arrow key, Home/End (one-shot)                                |
 | Text field    | Typing, until Enter or focus leaves                                            |
 | Check box, combo, flag, reference pick/clear/drop | One change (one-shot)                      |
@@ -286,7 +286,7 @@ A row looks up, in order: its full hint ("asset:texture"), its hint kind ("asset
 | =gradient=, LrgGradientStops                   | =LrgGradientEdit=                                                         |
 | =node-ref=, =object-ref=, =asset=, GObject     | Reference editor: drop-down (strings) or label (objects), pick, clear, drop target |
 | =array=, GStrv, GVariant                       | Expander of element rows with up / down / remove buttons and an add button |
-The numeric editor wraps the spin box in a private frame that observes the press, because =LrgSpinBox= has no scrub-begin / scrub-end signals of its own.
+The numeric editor is the =LrgSpinBox= itself (=lrg_property_row_get_editor()= returns it). The grid listens to its =LrgSpinBox::scrub-begin= and =LrgSpinBox::scrub-end= signals: a press (scrubbing the number, a click on a step button or a held, repeating one) opens the row gesture lazily on its first =value-changed=, so a press that changes nothing records nothing, and =scrub-end= closes it with the spin box's =commit= (release and focus loss commit, CANCEL does not). On CANCEL the spin box puts its own value back before =scrub-end=; the grid skips that restoring =value-changed= and lets =edit-end= (=commit= =FALSE=) restore the sources. Changes outside a press (wheel, arrow keys, Page Up/Down, Home/End) are one-shot. Until 0.8.1 the grid wrapped the spin box in a private frame that watched the press, because the signals did not exist yet; code that dug the spin box out of that frame (=lrg_container_get_child (editor, 0)=) must use the editor directly.
 
 ** References, picking and drops
 :PROPERTIES:

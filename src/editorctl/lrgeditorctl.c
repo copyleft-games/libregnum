@@ -47,7 +47,7 @@ static gboolean  opt_watch    = FALSE;
 static gint      opt_tail     = 50;
 static gboolean  opt_window   = FALSE;
 static gboolean  opt_force    = FALSE;
-static gint      opt_level    = 0;
+static gchar    *opt_level    = NULL;
 static gchar    *opt_type     = NULL;
 static gboolean  opt_license  = FALSE;
 static gboolean  opt_version  = FALSE;
@@ -75,7 +75,8 @@ static const GOptionEntry entries[] = {
 	{ "tail", 0, 0, G_OPTION_ARG_INT, &opt_tail, "Log records to show first (default 50)", "N" },
 	{ "window", 0, 0, G_OPTION_ARG_NONE, &opt_window, "Screenshot the whole window, not just the viewport", NULL },
 	{ "force", 0, 0, G_OPTION_ARG_NONE, &opt_force, "Discard unsaved changes (open, new, quit)", NULL },
-	{ "level", 'l', 0, G_OPTION_ARG_INT, &opt_level, "Toast level for notify: 0 info, 1 success, 2 warning, 3 error", "N" },
+	{ "level", 'l', 0, G_OPTION_ARG_STRING, &opt_level,
+	  "Toast level for notify: info, success, warning, error (or 0-3)", "LEVEL" },
 	{ "type", 't', 0, G_OPTION_ARG_STRING, &opt_type, "Asset type filter for get assets", "TYPE" },
 	{ "license", 0, 0, G_OPTION_ARG_NONE, &opt_license, "Print the license and exit", NULL },
 	{ "version", 'v', 0, G_OPTION_ARG_NONE, &opt_version, "Print the version and exit", NULL },
@@ -117,11 +118,16 @@ static const gchar *description =
 	"  hierarchy reveal|rename NODE [NEW_NAME] | hierarchy filter TEXT | hierarchy state\n"
 	"  asset reveal|duplicate|trash PATH | asset rename PATH NAME | asset move PATH DEST | asset orphans\n"
 	"  profiler [frames=N] [enable=true]  profiler section timings\n"
+	"  data list | data open PATH       data editors (input map, locale, sound bank, theme, layouts, ...)\n"
+	"  data get [PATH] [AT] | data set [PATH] AT VALUE | data edit [PATH] OP AT [key=value...]\n"
+	"  data undo|redo|validate|save|reload|close|reveal [PATH] [AT] [key=value...]  (close --force)\n"
+	"  palette [commands|files] [QUERY] open the command palette / quick-open\n"
+	"  preferences [PAGE]               open the preferences dialog (e.g. keybindings)\n"
 	"  view layout single|split-h|split-v|quad | view render-mode MODE | view overlay NAME on|off\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
-	"  notify MESSAGE [--level N]       toast in the editor\n"
+	"  notify MESSAGE [--level LEVEL]   toast in the editor: info, success, warning, error (or 0-3)\n"
 	"  quit [--force]\n"
 	"  mcp                              serve MCP on stdio (for AI agents)\n"
 	"  completion bash                  shell completion script\n"
@@ -144,6 +150,9 @@ static const gchar *description =
 	"  lrgeditorctl prefab apply Props/Crate keys=transform.location\n"
 	"  lrgeditorctl code open scripts/door.lua:12\n"
 	"  lrgeditorctl view layout quad\n"
+	"  lrgeditorctl data open data/input.yaml\n"
+	"  lrgeditorctl data set /actions/jump/bindings/0/key ENTER; lrgeditorctl data save\n"
+	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
 static const gchar *license_text =
@@ -361,6 +370,29 @@ canonical_resource (const gchar *r)
 	for (i = 0; r != NULL && i < G_N_ELEMENTS (table); i++)
 		if (g_strcmp0 (r, table[i][0]) == 0)
 			return table[i][1];
+	return NULL;
+}
+
+/*
+ * notify_level_name:
+ * @arg: a --level argument: a toast level name or its number
+ *
+ * Maps the --level argument of `notify` onto the name ui.notify takes:
+ * "info", "success", "warning" or "error" pass through (any case), and
+ * 0, 1, 2, 3 select them in that order. Returns %NULL for anything else.
+ */
+static const gchar *
+notify_level_name (const gchar *arg)
+{
+	static const gchar * const names[] = { "info", "success", "warning", "error" };
+	gint64                     n = -1;
+	gsize                      i;
+
+	for (i = 0; i < G_N_ELEMENTS (names); i++)
+		if (g_ascii_strcasecmp (arg, names[i]) == 0)
+			return names[i];
+	if (g_ascii_string_to_signed (arg, 10, 0, (gint64) G_N_ELEMENTS (names) - 1, &n, NULL))
+		return names[n];
 	return NULL;
 }
 
@@ -1846,6 +1878,200 @@ cmd_profiler (gchar  **args,
 	return TRUE;
 }
 
+/*
+ * data_is_file_arg:
+ * @arg: a positional argument of a `data` command
+ *
+ * Whether @arg names the data file rather than a YAML path. YAML paths
+ * start with '/' (/actions/jump), and so do absolute file names; an
+ * argument starting with '/' is a file only when it is a regular file
+ * here. Anything else (data/input.yaml, relative to the project) is the
+ * file.
+ */
+static gboolean
+data_is_file_arg (const gchar *arg)
+{
+	if (arg[0] != '/')
+		return TRUE;
+	return g_file_test (arg, G_FILE_TEST_IS_REGULAR);
+}
+
+/*
+ * data open PATH | data list | data get|set|edit|reveal [PATH] ... |
+ * data undo|redo|validate|save|reload|close [PATH] [key=value...]
+ *
+ * The data editors (input maps, locales, sound banks, themes, HUD and UI
+ * layouts, dialog trees, dungeons) over the data.* methods. The file is
+ * optional everywhere but open: without it the focused data editor is
+ * meant. The remaining positionals fill the command's keys in order:
+ *   get    AT
+ *   set    AT VALUE        (VALUE parsed like key=value values: JSON,
+ *                           numbers, booleans, null, else a string)
+ *   edit   OP AT           (op arguments as key=value)
+ *   reveal AT
+ * validate exits 1 when the document has errors, like `validate` does
+ * for the level; close takes --force.
+ */
+static gboolean
+cmd_data (gchar  **args,
+          GError **error)
+{
+	static const gchar * const plain[] = {
+		"open", "undo", "redo", "validate", "save", "reload", "close", NULL
+	};
+	static const gchar * const get_keys[] = { "at", NULL };
+	static const gchar * const set_keys[] = { "at", "value", NULL };
+	static const gchar * const edit_keys[] = { "op", "at", NULL };
+	static const LrgCtlColumn  columns[] = {
+		{ "FORMAT", "format", FALSE }, { "DIRTY", "dirty", FALSE }, { "ISSUES", "issues", FALSE },
+		{ "ERRORS", "errors", FALSE }, { "EDITOR", "editor", TRUE }, { "UNDO", "undo_label", TRUE },
+		{ "PATH", "path", FALSE }
+	};
+	const gchar * const       *keys = NULL;
+	const gchar               *sub = args[0];
+	g_autoptr(JsonObject)      p = json_object_new ();
+	g_autoptr(GPtrArray)       assigns = g_ptr_array_new ();
+	g_autoptr(JsonNode)        r = NULL;
+	g_autofree gchar          *method = NULL;
+	gboolean                   have_path = FALSE;
+	guint                      k = 0;
+	guint                      i;
+
+	if (sub == NULL || g_strcmp0 (sub, "list") == 0)
+	{
+		r = call ("data.list", NULL, error);
+		if (r == NULL)
+			return FALSE;
+		if (output == LRG_CTL_FORMAT_YAML || output == LRG_CTL_FORMAT_JSON)
+			lrg_ctl_print (r, output);
+		else
+			lrg_ctl_print_table (json_node_get_array (r), columns, G_N_ELEMENTS (columns), output, "path");
+		return TRUE;
+	}
+	if (g_strcmp0 (sub, "get") == 0 || g_strcmp0 (sub, "reveal") == 0)
+		keys = get_keys;
+	else if (g_strcmp0 (sub, "set") == 0)
+		keys = set_keys;
+	else if (g_strcmp0 (sub, "edit") == 0)
+		keys = edit_keys;
+	else if (!g_strv_contains (plain, sub))
+		return usage_error (error, "data open PATH | data list | data get [PATH] [AT] | data set [PATH] AT VALUE | "
+		                    "data edit [PATH] OP AT [key=value...] | data reveal [PATH] AT | "
+		                    "data undo|redo|validate|save|reload|close [PATH] [key=value...]");
+	if (g_strcmp0 (sub, "open") == 0 && args[1] == NULL)
+		return usage_error (error, "data open PATH");
+
+	/* Positionals: the file first (when it looks like one), then the
+	 * command's keys in order; key=value arguments pass straight through
+	 * (save_as=, force=, index=, yaml=, as=, gesture=, ...). */
+	for (i = 1; args[i] != NULL; i++)
+	{
+		gboolean assign = strchr (args[i], '=') != NULL;
+
+		/* set's VALUE may itself contain '=' ("a=b"): once AT is filled,
+		 * the next argument is the value whatever it holds */
+		if (keys == set_keys && k == 1 && !json_object_has_member (p, "value"))
+			assign = FALSE;
+		if (assign)
+		{
+			g_ptr_array_add (assigns, args[i]);
+			continue;
+		}
+		/* edit's first positional is the op unless it has a dot (op
+		 * names never do; file names do) */
+		if (!have_path && k == 0 && data_is_file_arg (args[i]) &&
+		    (keys != edit_keys || strchr (args[i], '.') != NULL))
+		{
+			g_autofree gchar *path = path_arg (args[i]);
+
+			json_object_set_string_member (p, "path", path);
+			have_path = TRUE;
+			continue;
+		}
+		if (keys == NULL || keys[k] == NULL)
+			return usage_error (error, "Unexpected argument '%s' for data %s", args[i], sub);
+		if (g_strcmp0 (keys[k], "value") == 0)
+			json_object_set_member (p, "value", lrg_ctl_parse_value (args[i]));
+		else
+			json_object_set_string_member (p, keys[k], args[i]);
+		k++;
+	}
+	g_ptr_array_add (assigns, NULL);
+	if (!lrg_ctl_parse_assignments ((gchar * const *) assigns->pdata, p, error))
+		return FALSE;
+	if (g_strcmp0 (sub, "set") == 0 && !json_object_has_member (p, "value") && !json_object_has_member (p, "yaml"))
+		return usage_error (error, "data set [PATH] AT VALUE (or yaml=TEXT)");
+	if (g_strcmp0 (sub, "edit") == 0 && !json_object_has_member (p, "op"))
+		return usage_error (error, "data edit [PATH] insert|move|add_key|rename_key|remove AT [key=value...]");
+	if (g_strcmp0 (sub, "close") == 0 && opt_force)
+		json_object_set_boolean_member (p, "force", TRUE);
+
+	method = g_strconcat ("data.", sub, NULL);
+	r = call (method, p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+
+	/* Exit status 1 when validation finds errors (for scripts and CI). */
+	if (g_strcmp0 (sub, "validate") == 0 && JSON_NODE_HOLDS_OBJECT (r) &&
+	    json_object_has_member (json_node_get_object (r), "errors") &&
+	    json_object_get_int_member (json_node_get_object (r), "errors") > 0)
+	{
+		g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "the data file has errors");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* palette [commands|files] [QUERY...]: open the command palette or the
+ * quick-open file finder in the editor, pre-filled with QUERY */
+static gboolean
+cmd_palette (gchar  **args,
+             GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	guint                 first = 0;
+
+	if (g_strcmp0 (args[0], "commands") == 0 || g_strcmp0 (args[0], "files") == 0)
+	{
+		json_object_set_string_member (p, "mode", args[0]);
+		first = 1;
+	}
+	if (args[first] != NULL)
+	{
+		g_autofree gchar *query = g_strjoinv (" ", args + first);
+
+		json_object_set_string_member (p, "query", query);
+	}
+	r = call ("palette.open", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
+/* preferences [PAGE]: open the preferences dialog (on PAGE) */
+static gboolean
+cmd_preferences (gchar  **args,
+                 GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+
+	if (args[0] != NULL)
+		json_object_set_string_member (p, "page", args[0]);
+	r = call ("preferences.open", p, error);
+	if (r == NULL)
+		return FALSE;
+	if (output == LRG_CTL_FORMAT_DEFAULT && JSON_NODE_HOLDS_VALUE (r) &&
+	    json_node_get_value_type (r) == G_TYPE_STRING)
+		printf ("preferences/%s opened\n", json_node_get_string (r));
+	else
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
 #ifdef LRG_EDITORCTL_HAVE_MCP
 static gboolean
 cmd_mcp (GError **error)
@@ -1880,12 +2106,13 @@ static const gchar *completion_script =
 	"\tverb=\"${COMP_WORDS[1]}\"\n"
 	"\tcase \"${prev}\" in\n"
 	"\t\t-o|--output) mapfile -t COMPREPLY < <(compgen -W 'yaml json table wide name' -- \"${cur}\"); return ;;\n"
+	"\t\t-l|--level) mapfile -t COMPREPLY < <(compgen -W 'info success warning error' -- \"${cur}\"); return ;;\n"
 	"\t\t-f|--filename) mapfile -t COMPREPLY < <(compgen -f -- \"${cur}\"); return ;;\n"
 	"\t\t-p|--parent) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get nodes -o name 2>/dev/null | sed 's|^node/||')\" -- \"${cur}\"); return ;;\n"
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -1914,6 +2141,8 @@ static const gchar *completion_script =
 	"\t\tinspector) mapfile -t COMPREPLY < <(compgen -W 'list get set reset state apply-override revert-override' -- \"${cur}\") ;;\n"
 	"\t\thierarchy) mapfile -t COMPREPLY < <(compgen -W 'reveal rename filter state' -- \"${cur}\") ;;\n"
 	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans' -- \"${cur}\") ;;\n"
+	"\t\tdata) mapfile -t COMPREPLY < <(compgen -W 'list open get set edit undo redo validate save reload close reveal' -- \"${cur}\") ;;\n"
+	"\t\tpalette) mapfile -t COMPREPLY < <(compgen -W 'commands files' -- \"${cur}\") ;;\n"
 	"\t\tcall) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get methods -o json 2>/dev/null | tr -d '[]\\\",')\" -- \"${cur}\") ;;\n"
 	"\t\tcompletion) mapfile -t COMPREPLY < <(compgen -W 'bash' -- \"${cur}\") ;;\n"
 	"\tesac\n"
@@ -1955,6 +2184,12 @@ dispatch (gchar  **argv,
 		return cmd_asset (rest, error);
 	if (g_strcmp0 (verb, "profiler") == 0)
 		return cmd_profiler (rest, error);
+	if (g_strcmp0 (verb, "data") == 0)
+		return cmd_data (rest, error);
+	if (g_strcmp0 (verb, "palette") == 0)
+		return cmd_palette (rest, error);
+	if (g_strcmp0 (verb, "preferences") == 0 || g_strcmp0 (verb, "prefs") == 0)
+		return cmd_preferences (rest, error);
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)
@@ -2096,11 +2331,18 @@ dispatch (gchar  **argv,
 		g_autoptr(JsonObject) p = json_object_new ();
 		g_autofree gchar     *msg = NULL;
 
+		const gchar          *level = NULL;
+
 		if (rest[0] == NULL)
-			return usage_error (error, "notify MESSAGE [--level N]");
+			return usage_error (error, "notify MESSAGE [--level info|success|warning|error]");
+		if (opt_level != NULL && (level = notify_level_name (opt_level)) == NULL)
+			return usage_error (error, "Unknown toast level '%s' (info, success, warning, error or 0-3)",
+			                    opt_level);
 		msg = g_strjoinv (" ", rest);
 		json_object_set_string_member (p, "message", msg);
-		json_object_set_int_member (p, "level", opt_level);
+		/* ui.notify takes the level by name; the app still accepts 0-3
+		 * from older clients, but the name is the documented form */
+		json_object_set_string_member (p, "level", level != NULL ? level : "info");
 		return simple_method ("ui.notify", p, NULL, error);
 	}
 	if (g_strcmp0 (verb, "quit") == 0)

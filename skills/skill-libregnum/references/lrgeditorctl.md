@@ -92,7 +92,7 @@ Round trip: `lrgeditorctl get node Props/Crate -o yaml > crate.yaml`, edit, `lrg
 | `tiles NODE [paint\|rect\|fill\|pick\|configure key=value...]` | Print a tilemap grid or paint it: `tiles Ground configure width=16 height=8`, `tiles Ground paint tile=3 'points=[[0,0],[7,0]]' brush=2`, `tiles Ground fill x=0 y=0 tile=1` |
 | `timeline [list\|get NAME\|add NAME\|rm NAME\|key NAME NODE key=value...\|play [NAME]\|stop\|seek TIME [NAME]\|state]` | Keyframes: `timeline key Door Props/Door time=1 channel=rotation.y value=1.57 easing=ease-in-out-sine` |
 | `thumbnail PATH` | Generate (if needed) and print an asset's cached thumbnail PNG |
-| `notify MESSAGE [--level 0-3]` | Toast in the editor (the level is currently ignored by the editor: always an info toast) |
+| `notify MESSAGE [--level LEVEL]` | Toast in the editor; LEVEL is `info` (default), `success`, `warning` or `error` (`0`-`3` also work; anything else exits 2) |
 | `meta get PATH`, `meta set PATH key=value... [guid=G]` | An asset's `.meta` sidecar (`asset.meta.*`): `meta set assets/crate.png filter=point max-size=512`; all or nothing, `null` resets a setting |
 | `vcs [PATH]` (alias `git`) | Git branch and files that are not clean (`-o wide` adds the badge letter); with PATH, that file's or folder's status |
 | `prefab overrides\|apply\|revert\|relink\|unlink NODE [keys=a,b] [path=P]`, `prefab sync [PATH]` | Linked prefab instances: `prefab apply Props/Crate keys=transform/scale` writes the override into the prefab and syncs the other instances |
@@ -102,7 +102,11 @@ Round trip: `lrgeditorctl get node Props/Crate -o yaml > crate.yaml`, edit, `lrg
 | `asset reveal\|duplicate\|trash PATH`, `asset rename PATH NAME`, `asset move PATH DEST`, `asset orphans [trash=true]` | Asset files with their `.meta` (GUIDs kept on rename and move) |
 | `code open PATH[:LINE]`, `code list`, `code save [PATH]` | The built-in code editor panel |
 | `profiler [frames=N] [enable=true\|false]` | Profiler sections as a table |
-| `call METHOD [key=value...]` or `call METHOD '{json}'` | Any IPC method (see `get methods`); the data editors have no verb yet: `call data.open path=data/intro.dialog`, `call data.validate`, `call data.set at=/title value=Gate`, `call data.save` |
+| `data list`, `data open PATH` | Data editors (input maps, locales, sound banks, themes, HUD/UI layouts, dialog trees, dungeons); `list` is a FORMAT/DIRTY/ISSUES/ERRORS/PATH table |
+| `data get [PATH] [AT]`, `data set [PATH] AT VALUE`, `data edit [PATH] OP AT [key=value...]` | Read and change a document by YAML path (`/actions/jump/bindings/0/key`); PATH is optional (default: the focused data editor) and is recognised as the file when it does not start with `/` or is an existing file. `data set /title Gate`; `data edit add_key /actions key=fire 'yaml={bindings: []}'`; ops: insert (index, yaml), move (from, to), add_key (key, yaml, position), rename_key (old, new), remove |
+| `data undo\|redo\|validate\|save\|reload\|close\|reveal [PATH] [AT] [key=value...]` | Per-file history; `validate` exits 1 on errors; `save save_as=FILE`; `close --force` discards unsaved edits; `reveal AT` shows the node like clicking an issue. All of them work against `lrgeditor --headless` |
+| `palette [commands\|files] [QUERY]`, `preferences [PAGE]` | Open the command palette / quick-open, or the preferences dialog (e.g. `preferences keybindings`) for the human |
+| `call METHOD [key=value...]` or `call METHOD '{json}'` | Any IPC method (see `get methods`) |
 | `quit [--force]` | Close the editor |
 | `mcp` | Serve MCP on stdio (see mcp.md) |
 | `completion bash` | `source <(lrgeditorctl completion bash)`; installed to `share/bash-completion/completions` |

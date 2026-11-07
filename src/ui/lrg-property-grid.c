@@ -613,56 +613,8 @@ read_source (LrgPropertyGrid *grid,
 }
 
 /* ==========================================================================
- * Private: a spin box whose presses the frame observes
+ * Mixed veil
  * ========================================================================== */
-
-#define LRG_TYPE_PROPERTY_SPIN_FRAME (lrg_property_spin_frame_get_type ())
-G_DECLARE_FINAL_TYPE (LrgPropertySpinFrame, lrg_property_spin_frame, LRG, PROPERTY_SPIN_FRAME, LrgContainer)
-
-/*
- * LrgPropertySpinFrame:
- *
- * LrgSpinBox handles its presses itself (captures, scrubs, steps),
- * and has no scrub-begin / scrub-end signals, so a grid could not tell
- * one drag from many edits. The frame takes the pointer instead (the
- * spin box is pointer-transparent and not focusable) and forwards every
- * event to it, watching the press and release on the way: changes
- * while the button is down form one gesture, other changes (wheel,
- * arrow keys, typing) are one-shot. CANCEL during a press ends the
- * gesture with commit FALSE and releases the spin box.
- */
-struct _LrgPropertySpinFrame
-{
-	LrgContainer    parent_instance;
-
-	LrgPropertyRow *row;       /* not owned */
-	LrgSpinBox     *spin;      /* child */
-	gdouble         scale;     /* spin value = property value * scale */
-	gboolean        pressed;
-	gboolean        began;
-	gboolean        cancelled;
-};
-
-G_DEFINE_FINAL_TYPE (LrgPropertySpinFrame, lrg_property_spin_frame, LRG_TYPE_CONTAINER)
-
-static void
-lrg_property_spin_frame_measure (LrgWidget *widget,
-                                 gfloat    *preferred_width,
-                                 gfloat    *preferred_height)
-{
-	LrgPropertySpinFrame *self = LRG_PROPERTY_SPIN_FRAME (widget);
-
-	lrg_widget_get_preferred_size (LRG_WIDGET (self->spin), preferred_width, preferred_height);
-}
-
-static void
-lrg_property_spin_frame_layout_children (LrgContainer *container)
-{
-	LrgPropertySpinFrame *self = LRG_PROPERTY_SPIN_FRAME (container);
-
-	lrg_widget_allocate (LRG_WIDGET (self->spin), 0.0f, 0.0f, lrg_widget_get_width (LRG_WIDGET (self)),
-	                     lrg_widget_get_height (LRG_WIDGET (self)));
-}
 
 /* paint_mixed_veil: input-coloured box with a centred em dash */
 static void
@@ -686,133 +638,6 @@ paint_mixed_veil (LrgWidget    *widget,
 	lrg_paint_measure_text (font, EM_DASH, size, 1.0f, &tw, &th);
 	lrg_paint_list_text (list, font, EM_DASH, roundf (x + (w - tw) * 0.5f), roundf (y + (h - th) * 0.5f), size,
 	                     1.0f, lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
-}
-
-static void
-lrg_property_spin_frame_paint (LrgWidget    *widget,
-                               LrgPaintList *list)
-{
-	LrgPropertySpinFrame *self = LRG_PROPERTY_SPIN_FRAME (widget);
-	gfloat                h = lrg_widget_get_height (widget);
-
-	lrg_widget_paint (LRG_WIDGET (self->spin), list);
-
-	/* Mixed: cover the number between the two step buttons */
-	if (self->row != NULL && self->row->mixed)
-		paint_mixed_veil (widget, list, lrg_widget_get_world_x (widget) + h,
-		                  lrg_widget_get_world_y (widget) + 3.0f,
-		                  lrg_widget_get_width (widget) - h * 2.0f, h - 6.0f);
-}
-
-/* frame_release_spin: end the spin box's own press (scrub or hold) */
-static void
-frame_release_spin (LrgPropertySpinFrame *self,
-                    gfloat                x,
-                    gfloat                y)
-{
-	g_autoptr(LrgUIEvent) up = lrg_ui_event_new_mouse_button (LRG_UI_EVENT_MOUSE_BUTTON_UP, 0, x, y);
-
-	lrg_ui_event_set_target (up, LRG_WIDGET (self->spin));
-	lrg_widget_handle_event (LRG_WIDGET (self->spin), up);
-}
-
-static gboolean
-lrg_property_spin_frame_handle_event (LrgWidget        *widget,
-                                      const LrgUIEvent *event)
-{
-	LrgPropertySpinFrame *self = LRG_PROPERTY_SPIN_FRAME (widget);
-	LrgUIEventType        type = lrg_ui_event_get_event_type (event);
-	gboolean              handled;
-
-	switch (type)
-	{
-	case LRG_UI_EVENT_MOUSE_BUTTON_DOWN:
-		if (lrg_ui_event_get_button (event) == 0)
-		{
-			self->pressed = TRUE;
-			self->began = FALSE;
-			self->cancelled = FALSE;
-		}
-		break;
-
-	case LRG_UI_EVENT_MOUSE_MOVE:
-		/* After a cancel the rest of the drag is ignored */
-		if (self->cancelled)
-			return TRUE;
-		break;
-
-	case LRG_UI_EVENT_MOUSE_BUTTON_UP:
-		if (lrg_ui_event_get_button (event) == 0 && self->pressed)
-		{
-			gboolean began = self->began && !self->cancelled;
-
-			handled = lrg_widget_handle_event (LRG_WIDGET (self->spin), event);
-			self->pressed = FALSE;
-			self->began = FALSE;
-			self->cancelled = FALSE;
-			if (began && self->row != NULL)
-				lrg_property_row_end_edit (self->row, TRUE);
-			return TRUE;
-		}
-		break;
-
-	case LRG_UI_EVENT_CANCEL:
-		if (self->pressed && self->began && !self->cancelled)
-		{
-			self->cancelled = TRUE;
-			frame_release_spin (self, lrg_ui_event_get_x (event), lrg_ui_event_get_y (event));
-			if (self->row != NULL)
-				lrg_property_row_end_edit (self->row, FALSE);
-			return TRUE;
-		}
-		return FALSE;
-
-	default:
-		break;
-	}
-
-	handled = lrg_widget_handle_event (LRG_WIDGET (self->spin), event);
-	return handled || type == LRG_UI_EVENT_MOUSE_BUTTON_DOWN;
-}
-
-/* on_frame_state_changed: the spin box looks hovered / pressed as the frame does */
-static void
-on_frame_state_changed (LrgWidget      *widget,
-                        LrgWidgetState  previous,
-                        gpointer        user_data)
-{
-	LrgPropertySpinFrame *self = LRG_PROPERTY_SPIN_FRAME (widget);
-	LrgWidgetState        mirror = LRG_WIDGET_STATE_HOVERED | LRG_WIDGET_STATE_PRESSED;
-	LrgWidgetState        now = lrg_widget_get_state_flags (widget) & mirror;
-
-	lrg_widget_unset_state_flags (LRG_WIDGET (self->spin), mirror & ~now);
-	if (now != 0)
-		lrg_widget_set_state_flags (LRG_WIDGET (self->spin), now);
-}
-
-static void
-lrg_property_spin_frame_class_init (LrgPropertySpinFrameClass *klass)
-{
-	LrgWidgetClass    *widget_class = LRG_WIDGET_CLASS (klass);
-	LrgContainerClass *container_class = LRG_CONTAINER_CLASS (klass);
-
-	widget_class->measure = lrg_property_spin_frame_measure;
-	widget_class->paint = lrg_property_spin_frame_paint;
-	widget_class->handle_event = lrg_property_spin_frame_handle_event;
-	container_class->layout_children = lrg_property_spin_frame_layout_children;
-}
-
-static void
-lrg_property_spin_frame_init (LrgPropertySpinFrame *self)
-{
-	self->scale = 1.0;
-	self->spin = lrg_spin_box_new ();
-	lrg_widget_set_pointer_transparent (LRG_WIDGET (self->spin), TRUE);
-	lrg_widget_set_focusable (LRG_WIDGET (self->spin), FALSE);
-	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->spin));
-	g_object_unref (self->spin);
-	lrg_widget_set_focusable (LRG_WIDGET (self), TRUE);
-	g_signal_connect (self, "state-changed", G_CALLBACK (on_frame_state_changed), NULL);
 }
 
 /* ==========================================================================
@@ -1431,7 +1256,18 @@ lrg_property_row_paint (LrgWidget    *widget,
 	if (self->editor != NULL)
 	{
 		lrg_widget_paint (self->editor, list);
-		if (self->mixed && !self->shows_mixed && lrg_widget_get_visible (self->editor))
+
+		/* A spin box has no mixed look of its own: cover the number
+		 * between its two square step buttons, leaving them usable */
+		if (self->mixed && LRG_IS_SPIN_BOX (self->editor) && lrg_widget_get_visible (self->editor))
+		{
+			gfloat eh = lrg_widget_get_height (self->editor);
+
+			paint_mixed_veil (widget, list, lrg_widget_get_world_x (self->editor) + eh,
+			                  lrg_widget_get_world_y (self->editor) + 3.0f,
+			                  lrg_widget_get_width (self->editor) - eh * 2.0f, eh - 6.0f);
+		}
+		else if (self->mixed && !self->shows_mixed && lrg_widget_get_visible (self->editor))
 			paint_mixed_veil (widget, list, lrg_widget_get_world_x (self->editor),
 			                  lrg_widget_get_world_y (self->editor),
 			                  MIN (lrg_widget_get_width (self->editor), 80.0f),
@@ -1862,70 +1698,139 @@ value_as_double (const GValue *value)
 	return g_value_get_double (&d);
 }
 
-static void
-spin_sync (LrgPropertySpinFrame *frame,
-           LrgPropertyRow       *row)
+/*
+ * SpinEdit:
+ *
+ * Per spin box state of a numeric row, attached to the spin box. The
+ * spin box announces its press gestures itself (LrgSpinBox::scrub-begin
+ * .. LrgSpinBox::scrub-end, also for a click or a held step button) and
+ * handles CANCEL (Escape) by putting the value back and ending the
+ * gesture with commit FALSE. The row's gesture is opened lazily on the
+ * first change inside a press, so a press that changes nothing records
+ * nothing; changes outside a press (wheel, arrow keys) are one-shot.
+ */
+typedef struct
 {
+	LrgPropertyRow *row;       /* not owned (the row owns the spin box) */
+	gdouble         scale;     /* spin value = property value * scale */
+	gboolean        pressed;   /* between scrub-begin and scrub-end */
+	gboolean        began;     /* the row's gesture is open */
+} SpinEdit;
+
+#define SPIN_EDIT_KEY "lrg-property-spin-edit"
+
+static SpinEdit *
+spin_edit (LrgSpinBox *spin)
+{
+	return g_object_get_data (G_OBJECT (spin), SPIN_EDIT_KEY);
+}
+
+static void
+spin_sync (LrgSpinBox     *spin,
+           LrgPropertyRow *row)
+{
+	SpinEdit      *edit = spin_edit (spin);
 	g_auto(GValue) v = G_VALUE_INIT;
 
 	if (lrg_property_row_get_value (row, &v))
-		lrg_spin_box_set_value (frame->spin, value_as_double (&v) * frame->scale);
+		lrg_spin_box_set_value (spin, value_as_double (&v) * edit->scale);
+}
+
+/* on_spin_scrub_begin: a press starts; the row gesture opens on the
+ * first change */
+static void
+on_spin_scrub_begin (LrgSpinBox *spin,
+                     gpointer    user_data)
+{
+	SpinEdit *edit = user_data;
+
+	edit->pressed = TRUE;
+	edit->began = FALSE;
+}
+
+/* on_spin_scrub_end: release or focus loss commits, CANCEL does not
+ * (the spin box has already put its value back) */
+static void
+on_spin_scrub_end (LrgSpinBox *spin,
+                   gboolean    commit,
+                   gpointer    user_data)
+{
+	SpinEdit *edit = user_data;
+	gboolean  began = edit->began;
+
+	edit->pressed = FALSE;
+	edit->began = FALSE;
+	if (began && edit->row != NULL)
+		lrg_property_row_end_edit (edit->row, commit);
 }
 
 static void
 on_spin_value_changed (LrgSpinBox *spin,
                        gpointer    user_data)
 {
-	LrgPropertySpinFrame *frame = LRG_PROPERTY_SPIN_FRAME (user_data);
-	g_auto(GValue)        v = G_VALUE_INIT;
+	SpinEdit      *edit = user_data;
+	g_auto(GValue) v = G_VALUE_INIT;
 
-	if (frame->row == NULL || lrg_property_row_is_syncing (frame->row) || frame->cancelled)
+	if (edit->row == NULL || lrg_property_row_is_syncing (edit->row))
+		return;
+
+	/* The cancel restore arrives after the spin box closed its gesture
+	 * but before scrub-end: the row's end_edit (commit FALSE) restores
+	 * the sources, so the restored value is not written as an edit */
+	if (edit->pressed && !lrg_spin_box_get_scrubbing (spin))
 		return;
 
 	g_value_init (&v, G_TYPE_DOUBLE);
-	g_value_set_double (&v, lrg_spin_box_get_value (spin) / frame->scale);
+	g_value_set_double (&v, lrg_spin_box_get_value (spin) / edit->scale);
 
-	/* While the button is down: one gesture; otherwise one-shot */
-	if (frame->pressed)
+	/* Inside a press: one gesture; otherwise one-shot */
+	if (edit->pressed)
 	{
-		if (!frame->began)
+		if (!edit->began)
 		{
-			frame->began = TRUE;
-			lrg_property_row_begin_edit (frame->row);
+			edit->began = TRUE;
+			lrg_property_row_begin_edit (edit->row);
 		}
-		lrg_property_row_edit_value (frame->row, &v, TRUE);
+		lrg_property_row_edit_value (edit->row, &v, TRUE);
 	}
 	else
-		lrg_property_row_apply_value (frame->row, &v);
+		lrg_property_row_apply_value (edit->row, &v);
 }
 
-/* make_spin: a spin frame for a numeric row; @scale converts for display */
+/* make_spin: a spin box for a numeric row; @scale converts for display */
 static LrgWidget *
 make_spin (LrgPropertyRow *row,
            gdouble         scale)
 {
-	LrgPropertySpinFrame *frame = g_object_new (LRG_TYPE_PROPERTY_SPIN_FRAME, NULL);
-	GParamSpec           *pspec = lrg_property_info_get_pspec (row->info);
-	const gchar          *hint = lrg_property_info_get_hint (row->info);
-	gdouble               min;
-	gdouble               max;
-	gdouble               step = 0.0;
-	gboolean              integer;
+	LrgSpinBox  *spin = lrg_spin_box_new ();
+	SpinEdit    *edit = g_new0 (SpinEdit, 1);
+	GParamSpec  *pspec = lrg_property_info_get_pspec (row->info);
+	const gchar *hint = lrg_property_info_get_hint (row->info);
+	gdouble      min;
+	gdouble      max;
+	gdouble      step = 0.0;
+	gboolean     integer;
 
-	frame->row = row;
-	frame->scale = scale;
+	edit->row = row;
+	edit->scale = scale;
+	g_object_set_data_full (G_OBJECT (spin), SPIN_EDIT_KEY, edit, g_free);
 	pspec_range (pspec, &min, &max, &integer);
 	lrg_property_hint_parse_range (hint, &min, &max, &step);
 	if (step <= 0.0)
 		step = integer ? 1.0 : (scale != 1.0 ? 1.0 : 0.1);
 
-	lrg_spin_box_set_range (frame->spin, min * scale, max * scale);
-	lrg_spin_box_set_step (frame->spin, step);
-	lrg_spin_box_set_digits (frame->spin, integer ? 0 : (step >= 1.0 ? 1 : step >= 0.1 ? 2 : 3));
+	lrg_spin_box_set_range (spin, min * scale, max * scale);
+	lrg_spin_box_set_step (spin, step);
+	lrg_spin_box_set_digits (spin, integer ? 0 : (step >= 1.0 ? 1 : step >= 0.1 ? 2 : 3));
+
+	/* The row paints the mixed veil over the number only (between the
+	 * step buttons), see lrg_property_row_paint() */
 	lrg_property_row_set_shows_mixed (row, TRUE);
-	g_signal_connect_object (frame->spin, "value-changed", G_CALLBACK (on_spin_value_changed), frame, 0);
-	g_signal_connect_object (row, "sync", G_CALLBACK (spin_sync), frame, G_CONNECT_SWAPPED);
-	return LRG_WIDGET (frame);
+	g_signal_connect (spin, "scrub-begin", G_CALLBACK (on_spin_scrub_begin), edit);
+	g_signal_connect (spin, "scrub-end", G_CALLBACK (on_spin_scrub_end), edit);
+	g_signal_connect (spin, "value-changed", G_CALLBACK (on_spin_value_changed), edit);
+	g_signal_connect_object (row, "sync", G_CALLBACK (spin_sync), spin, G_CONNECT_SWAPPED);
+	return LRG_WIDGET (spin);
 }
 
 static LrgWidget *
@@ -1952,10 +1857,11 @@ check_sync (LrgCheckbox    *check,
 {
 	g_auto(GValue) v = G_VALUE_INIT;
 
-	/* Mixed: unchecked with an em dash as the indeterminate mark */
-	lrg_checkbox_set_label (check, row->mixed ? EM_DASH : "");
+	/* Mixed: unchecked underneath, with the indeterminate dash. A click
+	 * clears it and checks the box, which writes TRUE to every source */
 	if (lrg_property_row_get_value (row, &v) && G_VALUE_HOLDS_BOOLEAN (&v))
 		lrg_checkbox_set_checked (check, !row->mixed && g_value_get_boolean (&v));
+	lrg_checkbox_set_inconsistent (check, row->mixed);
 }
 
 static void

@@ -345,6 +345,57 @@ test_app_ipc (Fixture       *f,
 	g_assert_nonnull (strstr (problems, "\"result\":[]"));
 }
 
+/* The level of the newest editor log record, via log.tail. */
+static gchar *
+last_log_level (LrgEditorServer *server)
+{
+	g_autofree gchar     *line = NULL;
+	g_autoptr(JsonParser) parser = json_parser_new ();
+	JsonArray            *records;
+
+	line = lrg_editor_server_dispatch (server, "{\"id\":9,\"method\":\"log.tail\",\"params\":{\"count\":1}}");
+	g_assert_true (json_parser_load_from_data (parser, line, -1, NULL));
+	records = json_object_get_array_member (json_node_get_object (json_parser_get_root (parser)), "result");
+	g_assert_cmpuint (json_array_get_length (records), ==, 1);
+	return g_strdup (json_object_get_string_member (json_array_get_object_element (records, 0), "level"));
+}
+
+/* ui.notify takes the level by name; 0.8.0 clients sent 0..3, which
+ * must still select the same levels (an error toast logs a warning). */
+static void
+test_app_ipc_notify_level (Fixture       *f,
+                           gconstpointer  data)
+{
+	LrgEditorServer  *server = lrg_editor_app_get_server (f->app);
+	static const struct
+	{
+		const gchar *level;     /* JSON value of "level" */
+		const gchar *expected;  /* resulting log record level */
+	} cases[] = {
+		{ "\"error\"", "warning" }, { "3", "warning" }, { "\"ERROR\"", "warning" },
+		{ "\"info\"", "message" }, { "1", "message" }, { "\"warning\"", "message" },
+		{ "99", "warning" }, { "\"bogus\"", "message" }
+	};
+	gsize i;
+
+	new_project (f);
+	efx_frames (f, 2);
+
+	for (i = 0; i < G_N_ELEMENTS (cases); i++)
+	{
+		g_autofree gchar *request = NULL;
+		g_autofree gchar *reply = NULL;
+		g_autofree gchar *level = NULL;
+
+		request = g_strdup_printf ("{\"id\":1,\"method\":\"ui.notify\",\"params\":"
+		                           "{\"message\":\"case %u\",\"level\":%s}}", (guint) i, cases[i].level);
+		reply = lrg_editor_server_dispatch (server, request);
+		g_assert_nonnull (strstr (reply, "\"result\":true"));
+		level = last_log_level (server);
+		g_assert_cmpstr (level, ==, cases[i].expected);
+	}
+}
+
 static void
 test_app_quit_confirm (Fixture       *f,
                        gconstpointer  data)
@@ -1601,6 +1652,7 @@ main (int   argc,
 	ADD ("save", test_app_save);
 	ADD ("live-reload", test_app_live_reload);
 	ADD ("ipc", test_app_ipc);
+	ADD ("ipc-notify-level", test_app_ipc_notify_level);
 	ADD ("quit", test_app_quit_confirm);
 	ADD ("menubar-click", test_app_menubar_click);
 	ADD ("viewport-rotate", test_app_viewport_rotate);

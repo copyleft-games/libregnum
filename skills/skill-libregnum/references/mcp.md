@@ -55,7 +55,7 @@ Use absolute paths for project directories in configs. With several editors runn
 | `list_assets` | asset.list | `{type?}` |
 | `project_info` | project.info | |
 | `ui_state` | ui.state | |
-| `notify` | ui.notify | toast for the human |
+| `notify` | ui.notify | toast for the human; `{message, level?: info\|success\|warning\|error}` |
 | `get_tilemap` / `configure_tilemap` | tilemap.get / tilemap.configure | grid of a `tilemap` node; width/height, tile px, tile_size, tileset, layers |
 | `paint_tiles` / `paint_tile_rect` / `fill_tiles` | tilemap.paint / rect / fill | `cells` or brush `points`; tile ids 1-based, 0 erases; one undo step each |
 | `list_timelines` / `get_timeline` | timeline.list / get | keyframe clips stored in the level |
@@ -71,13 +71,20 @@ Use absolute paths for project directories in configs. With several editors runn
 | `inspector_list` / `inspector_get` | inspector.list / get | read-only: sections and rows `{name, label, group, hint, value, mixed, state}` |
 | `inspector_set` / `inspector_reset` | inspector.set / reset | `{node\|nodes, section, component?, name, value}`; several nodes = one undo step |
 | `inspector_apply_override` / `inspector_revert_override` | inspector.apply_override / revert_override | destructive: one prefab override row |
-| `inspector_state` | inspector.state | lock, shown nodes, live object, prefab (it takes no parameters) |
+| `inspector_state` | inspector.state | read-only, no parameters: lock, shown nodes, live object, prefab (lock it with `run_action` `inspector.toggle-lock`) |
 | `hierarchy_reveal` / `hierarchy_rename` / `hierarchy_state` | hierarchy.* | reveal and select, inline or direct rename, visible rows |
+| `hierarchy_filter` | hierarchy.filter | `{text?}`: filter the panel (empty clears); returns the match count |
 | `asset_reveal` / `asset_rename` / `asset_move` / `asset_duplicate` | asset.* | the `.meta` follows its asset; duplicates get a new guid |
 | `asset_trash` / `asset_orphans` | asset.trash / orphans | destructive: to the desktop trash |
 | `profiler_sample` | profiler.sample | `{frames?, enable?}` |
 | `code_open` / `code_list` / `code_save` | code.* | the built-in code editor panel |
-| `call_method` | any | `{method, params}` escape hatch (e.g. `data.open`, `data.validate`, `palette.open`, which have no tool yet) |
+| `open_palette` / `open_preferences` | palette.open / preferences.open | `{mode?: commands\|files, query?}` / `{page?}`: open them for the human |
+| `data_open` / `data_list` | data.open / data.list | open a data file (input map, locale, sound bank, theme, HUD/UI layout, dialog tree, dungeon) in its editor; list is read-only |
+| `data_get` / `data_validate` | data.get / data.validate | read-only: `{path?, at?, as?}` node `{at, kind, value, keys, length, yaml, line}`; `{ok, errors, issues}` |
+| `data_set` / `data_edit` | data.set / data.edit | `{path?, at, value\|yaml, gesture?}`; `{path?, op, at, ...}` with op insert, move, add_key, rename_key, remove; one undo step each |
+| `data_undo` / `data_redo` / `data_save` / `data_reveal` | data.* | per-file history; `save_as`; reveal shows a YAML path or line |
+| `data_reload` / `data_close` | data.reload / data.close | destructive: reload and `close {force: true}` discard unsaved edits |
+| `call_method` | any | `{method, params}` escape hatch for any other IPC method |
 
 Results are JSON text (YAML text for `get_level_yaml`); failures come back as tool errors with the editor's message, e.g. `node.get: No node 'Hall/Tabel' (not-found)`.
 

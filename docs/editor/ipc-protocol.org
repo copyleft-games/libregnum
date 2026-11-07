@@ -380,7 +380,7 @@ Available when the server belongs to =lrgeditor= / =LrgEditorApp=:
 | =asset.list=      | =type= (=level prefab texture model audio script ...=) | =[{path type}]=                                  |
 | =level.validate=  |                                                     | =[{severity code node path message file}]=          |
 | =level.import=    | =path= (Blender scene YAML)                         | =true=                                              |
-| =ui.notify=       | =message=, =level= (the string =info= (default), =success=, =warning= or =error=; a number is ignored) | =true=; shows a toast |
+| =ui.notify=       | =message=, =level= (the string =info= (default), =success=, =warning= or =error=, any case; for 0.8.0 clients a number =0=-=3= selects the same levels, larger numbers clamp to =error=; anything else is =info=) | =true=; shows a toast |
 | =ui.state=        |                                                     | see [[#ui-state][ui.state]] |
 | =editor.quit=     | =force= (discard unsaved changes)                   | =true=                                              |
 | =tilemap.tool=    | any of =tool= (=brush eraser rect fill pick=), =tile=, =layer=, =brush=, =mode= (paint mode on/off) | =tool mode tile layer brush target hover= (=[x, y]= cell under the pointer or null) |

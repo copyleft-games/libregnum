@@ -952,6 +952,26 @@ test_scrub_spin (Fixture       *f,
 	g_assert_true (f->ids_consistent);
 	g_assert_cmpstr (f->last_name, ==, "health");
 
+	/* A press on the number that does not move changes nothing and
+	 * records no gesture */
+	reset_counts (f);
+	scrub (f, frame, 0, 0.0f);
+	g_assert_cmpint (f->a->health, ==, 110);
+	g_assert_cmpuint (f->begins, ==, 0);
+	g_assert_cmpuint (f->ends, ==, 0);
+
+	/* A click on the plus button (the right square) is one gesture */
+	{
+		gfloat bx = lrg_widget_get_world_x (frame) + lrg_widget_get_width (frame) -
+		            lrg_widget_get_height (frame) * 0.5f;
+		gfloat by = lrg_widget_get_world_y (frame) + lrg_widget_get_height (frame) * 0.5f;
+
+		click_at (f->canvas, bx, by);
+	}
+	g_assert_cmpint (f->a->health, ==, 111);
+	g_assert_cmpuint (f->begins, ==, 1);
+	g_assert_cmpuint (f->commits, ==, 1);
+
 	/* The angle row shows degrees, stores radians */
 	reset_counts (f);
 	frame = editor_of (f->grid, "heading");
@@ -987,8 +1007,8 @@ test_scrub_cancel (Fixture       *f,
 	release_at (f->canvas, x + 120.0f, y);
 	g_assert_cmpint (f->a->health, ==, 100);
 	g_assert_cmpuint (f->ends, ==, 1);
-	g_assert_cmpfloat (lrg_spin_box_get_value (LRG_SPIN_BOX (lrg_container_get_child (LRG_CONTAINER (frame), 0))),
-	                   ==, 100.0);
+	g_assert_cmpfloat (lrg_spin_box_get_value (LRG_SPIN_BOX (frame)), ==, 100.0);
+	g_assert_false (lrg_spin_box_get_scrubbing (LRG_SPIN_BOX (frame)));
 }
 
 static void
@@ -1044,9 +1064,14 @@ test_mixed (Fixture       *f,
 	g_assert_true (lrg_property_row_get_mixed (row));
 	g_assert_false (lrg_property_row_get_mixed (lrg_property_grid_get_row (f->grid, "speed")));
 
-	/* Mixed booleans: unchecked with an em dash */
-	g_assert_cmpstr (lrg_checkbox_get_label (LRG_CHECKBOX (editor_of (f->grid, "aggressive"))), ==,
-	                 "\xe2\x80\x94");
+	/* Mixed booleans: unchecked and inconsistent (the indeterminate
+	 * dash), no label */
+	g_assert_true (lrg_checkbox_get_inconsistent (LRG_CHECKBOX (editor_of (f->grid, "aggressive"))));
+	g_assert_false (lrg_checkbox_get_checked (LRG_CHECKBOX (editor_of (f->grid, "aggressive"))));
+	g_assert_cmpstr (lrg_checkbox_get_label (LRG_CHECKBOX (editor_of (f->grid, "aggressive"))), ==, "");
+
+	/* The numeric editor is the spin box itself */
+	g_assert_true (LRG_IS_SPIN_BOX (lrg_property_row_get_editor (row)));
 
 	/* The first edit writes the new value to both */
 	lrg_canvas_set_focused_widget (f->canvas, lrg_property_row_get_editor (row));
@@ -1054,6 +1079,13 @@ test_mixed (Fixture       *f,
 	g_assert_cmpint (f->a->health, ==, 101);
 	g_assert_cmpint (f->b->health, ==, 101);
 	g_assert_false (lrg_property_row_get_mixed (row));
+
+	/* A click on the mixed check box checks it for both */
+	lrg_checkbox_toggle (LRG_CHECKBOX (editor_of (f->grid, "aggressive")));
+	g_assert_true (f->a->aggressive);
+	g_assert_true (f->b->aggressive);
+	g_assert_false (lrg_property_row_get_mixed (lrg_property_grid_get_row (f->grid, "aggressive")));
+	g_assert_false (lrg_checkbox_get_inconsistent (LRG_CHECKBOX (editor_of (f->grid, "aggressive"))));
 
 	/* Properties not shared with the same type are left out */
 	g_assert_cmpuint (lrg_property_grid_get_n_sources (f->grid), ==, 2);
@@ -1099,8 +1131,7 @@ test_lock_and_reuse (Fixture       *f,
 	g_assert_true (lrg_property_grid_get_row (f->grid, "health") == row);
 	g_assert_true (lrg_property_row_get_editor (row) == editor);
 	g_assert_true (lrg_canvas_get_focused_widget (f->canvas) == editor);
-	g_assert_cmpfloat (lrg_spin_box_get_value (LRG_SPIN_BOX (lrg_container_get_child (LRG_CONTAINER (editor), 0))),
-	                   ==, 42.0);
+	g_assert_cmpfloat (lrg_spin_box_get_value (LRG_SPIN_BOX (editor)), ==, 42.0);
 
 	/* Locked: new sources are ignored */
 	lrg_property_grid_set_locked (f->grid, TRUE);

@@ -168,7 +168,7 @@ Every asset now has a =<file>.meta= sidecar with a stable GUID and importer sett
 
 [[file:images/assets-panel-grid-badges.png]]
 
-/The Assets panel: the branch pill, U (untracked) and M (modified) badges, an audio waveform thumbnail./
+/The Assets panel in grid view (catppuccin-mocha) on a git project: the branch pill, M (modified) badges on a script and a texture, U (untracked) on a new texture and a new model, and texture, model and script thumbnails./
 
 See [[file:projects-and-assets.org::#asset-sidecars][Asset sidecars]], [[file:projects-and-assets.org::#vcs-badges][Version control badges]] and [[file:editor-app.org::#editor-panel-assets][Assets panel]].
 
