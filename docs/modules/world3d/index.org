@@ -275,3 +275,4 @@ Boxed Types
 - [[../../reference/glossary.md][Glossary]] - Terminology and concepts
 - [[../../reference/signals.md][Signals]] - Level and system signals
 - [[../../reference/error-codes.md][Error Codes]] - World3D error domains
+- [[file:components.org][3D Components]] - mesh renderer, light, camera, audio source/listener, billboard, tilemap, spawn, trigger and skinned model components

@@ -1,0 +1,680 @@
+#+title: 3D Components
+#+description: The LrgEntity3D components of libregnum 0.9: mesh renderer, light, camera, audio source and listener, billboard, tilemap, spawn point, trigger and skinned model
+#+authors: Zach Podbielniak
+#+created: 2026-11-07
+#+version: 0.9.0
+
+* 3D Components
+:PROPERTIES:
+:CUSTOM_ID: world3d-components
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+
+libregnum 0.9 adds a runtime 3D world: an [[file:world3d.org][LrgWorld3D]] owning a tree of [[file:entity3d.org][LrgEntity3D]] entities. An entity is only a transform with a name, tags, a layer and flags; everything it does comes from its components, the same #LrgComponent base class the 2D ECS uses, with the 0.9 3D hooks (=attached_entity=, =fixed_update=, =late_update=, =collect_render=, =get_bounds=, =world_entered=, =world_exited=).
+
+This page documents the ten built-in 3D components, which live in =src/world3d/components/=:
+
+| Component                    | What it is                                              | Editor visual it comes from |
+|------------------------------+---------------------------------------------------------+-----------------------------|
+| =LrgMeshRendererComponent=   | a built-in primitive or a mesh asset with a material    | PRIMITIVE, MESH_ASSET       |
+| =LrgLightComponent=          | a directional, point or spot light                      | LIGHT                       |
+| =LrgCameraComponent=         | a camera with priority-based selection                  | CAMERA                      |
+| =LrgAudioSourceComponent=    | a positional sound emitter                              | AUDIO_EMITTER               |
+| =LrgAudioListenerComponent=  | the ears of the world                                   | (none: add it to the player or camera) |
+| =LrgBillboardComponent=      | a textured quad, camera facing or fixed                 | SPRITE                      |
+| =LrgTilemapComponent=        | a tile grid in the entity's XY plane                    | TILEMAP                     |
+| =LrgSpawnComponent=          | a spawn point with type, team and tags                  | (none: gameplay data)       |
+| =LrgTriggerComponent=        | a box or sphere volume with enter/exit signals          | (none: gameplay data)       |
+| =LrgSkinnedModelComponent=   | an animated glTF model driven by an #LrgModelAnimator   | (none in 0.9 M1)            |
+
+Three rules hold for all of them:
+
+1. *Everything is a GObject property.* Level instantiation (=lrg_level_instantiate_3d()=), the inspector and play-in-editor set components only through properties, so every tunable is one (scalars, enums, strings and objects; colours are split into =color-r= .. =color-a= floats so the inspector and the =.rlevel= param bags can edit them). Every property is =G_PARAM_EXPLICIT_NOTIFY=: =notify= fires only on real changes.
+2. *Nothing draws directly.* Drawing components implement =collect_render()= and submit #LrgRenderItem records into the #LrgRenderList that =lrg_world3d_collect_render()= builds per camera; a renderer ([[file:renderer.org][LrgWorld3DRenderer]], the editor viewport) replays the list for every pass. Lights register an #LrgLight3DDesc with the world instead.
+3. *Headless first.* No component needs a window or an audio device to be created, configured, simulated or collected. GPU resources (models, textures, tilesets) load lazily through an optional #LrgAssetManager and fail quietly (once, with a =g_debug=) without a graphics context; the renderer can resolve unresolved assets itself.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** The frame
+:PROPERTIES:
+:CUSTOM_ID: concepts-frame
+:END:
+
+=lrg_world3d_step()= runs =fixed_update= (0..n times), =update=, then =late_update=; rendering calls =collect_render= per camera afterwards. The components use the phases like this:
+
+| Phase            | Components that use it                                                                 |
+|------------------+----------------------------------------------------------------------------------------|
+| =world_entered=  | light (registers), camera (registers by priority), listener (becomes the world's listener), audio source (autoplay) |
+| =fixed_update=   | trigger (overlap test, enter/exit signals)                                              |
+| =update=         | skinned model (clip switch, time advance)                                              |
+| =late_update=    | light (re-registers from the moved entity), camera (follows the entity), listener (feeds the audio manager), audio source (moves its voice, restarts loops) |
+| =collect_render= | mesh renderer, billboard, tilemap, skinned model                                       |
+| =world_exited=   | light, camera, listener, audio source, trigger (unregister / stop / forget)            |
+
+A component added to an entity that is already in a world gets =world_entered= at once; one added before the entity joins gets it when the entity joins. Removing the component or the entity runs =world_exited=.
+
+*** Render items
+:PROPERTIES:
+:CUSTOM_ID: concepts-render-items
+:END:
+
+Each drawing component starts from =lrg_render_item_init_for_entity()= (the entity's world matrix and layer), fills the kind, parameters, material, colour and flags, sets world bounds with =lrg_render_item_set_local_bounds()= when it knows its local bounds, and adds the item when =lrg_render_list_accepts()= keeps it (layer in the camera's cull mask, inside the frustum or a shadow caster). The list files the item under OPAQUE, CUTOUT or TRANSPARENT from its flags, and also under SHADOW_CASTER with =LRG_RENDER_ITEM_FLAG_CAST_SHADOW=.
+
+Every component with a =layer= property uses -1 for "the entity's layer" and 0 .. 31 to override it.
+
+*** Lazy assets
+:PROPERTIES:
+:CUSTOM_ID: concepts-assets
+:END:
+
+Mesh assets, billboard textures, tileset images and skinned models are referenced by path or GUID. When the component has an =asset-manager=, it loads the asset on first use (the model or texture needs a graphics context; a failed load is not retried until the path or manager changes). Without one, the render item goes out with a =NULL= handle and the renderer resolves the path from the component: [[file:renderer.org][LrgWorld3DRenderer]] does this for mesh renderers through =lrg_world3d_renderer_get_model()= and its asset resolver. An explicit handle (=lrg_mesh_renderer_component_set_model()=, =lrg_billboard_component_set_texture()=, =lrg_tilemap_component_set_tileset()=, =lrg_skinned_model_component_set_animator()=) always wins.
+
+** Using the components from C
+:PROPERTIES:
+:CUSTOM_ID: worked-examples
+:END:
+
+*** A lit scene
+:PROPERTIES:
+:CUSTOM_ID: example-lit-scene
+:END:
+
+#+begin_src c
+g_autoptr(LrgWorld3D)         world = lrg_world3d_new ();
+g_autoptr(LrgWorld3DRenderer) renderer = lrg_world3d_renderer_new ();
+g_autoptr(LrgEntity3D)        crate = lrg_entity3d_new_with_name ("crate");
+g_autoptr(LrgEntity3D)        lamp = lrg_entity3d_new_with_name ("lamp");
+g_autoptr(LrgEntity3D)        eye = lrg_entity3d_new_with_name ("camera");
+LrgMeshRendererComponent     *mesh;
+LrgLightComponent            *light;
+LrgCameraComponent           *cam;
+
+/* A red 2 x 2 x 2 cube at the origin. */
+mesh = lrg_mesh_renderer_component_new_primitive (LRG_PRIMITIVE_CUBE);
+lrg_mesh_renderer_component_set_size (mesh, 2.0f, 2.0f, 2.0f);
+lrg_mesh_renderer_component_set_color (mesh, 1.0f, 0.1f, 0.1f, 1.0f);
+g_object_set (mesh, "roughness", 0.3f, "metallic", 0.0f, NULL);
+lrg_entity3d_add_component (crate, LRG_COMPONENT (mesh));
+g_object_unref (mesh);
+lrg_world3d_add_entity (world, crate);
+
+/* A warm point light above it. */
+light = lrg_light_component_new_with_kind (LRG_LIGHT3D_POINT);
+lrg_light_component_set_color (light, 1.0f, 0.9f, 0.7f);
+g_object_set (light, "intensity", 2.0f, "range", 15.0f, NULL);
+lrg_entity3d_set_position_xyz (lamp, 0.0f, 4.0f, 2.0f);
+lrg_entity3d_add_component (lamp, LRG_COMPONENT (light));
+g_object_unref (light);
+lrg_world3d_add_entity (world, lamp);
+
+/* The camera looks down its local -Z. */
+cam = lrg_camera_component_new ();
+lrg_camera_component_set_priority (cam, 10);
+lrg_entity3d_set_position_xyz (eye, 0.0f, 1.0f, 8.0f);
+lrg_entity3d_add_component (eye, LRG_COMPONENT (cam));
+g_object_unref (cam);
+lrg_world3d_add_entity (world, eye);
+
+while (!WindowShouldClose ())
+{
+	lrg_world3d_step (world, GetFrameTime ());
+	BeginDrawing ();
+	lrg_world3d_renderer_render (renderer, world, NULL, NULL, 0, 0);
+	EndDrawing ();
+}
+lrg_world3d_renderer_release (renderer);
+#+end_src
+
+*** Triggers and spawn points
+:PROPERTIES:
+:CUSTOM_ID: example-gameplay
+:END:
+
+#+begin_src c
+static void
+on_entered (LrgTriggerComponent *trigger,
+            LrgEntity3D         *who,
+            gpointer             user_data)
+{
+	g_message ("%s reached the exit", lrg_entity3d_get_name (who));
+}
+
+/* An exit zone: 4 x 3 x 4 box, only entities tagged "player" count. */
+LrgTriggerComponent *exit_zone = lrg_trigger_component_new_box (4.0f, 3.0f, 4.0f);
+
+lrg_trigger_component_set_filter_tag (exit_zone, "player");
+g_signal_connect (exit_zone, "entered", G_CALLBACK (on_entered), NULL);
+lrg_entity3d_add_component (zone_entity, LRG_COMPONENT (exit_zone));
+g_object_unref (exit_zone);
+
+/* Pick a start for team 1. */
+g_autoptr(GPtrArray) starts = lrg_spawn_component_find (world, "start", 1);
+
+if (starts->len > 0)
+{
+	g_autoptr(LrgSpawnPoint3D) sp =
+		lrg_spawn_component_to_spawn_point (g_ptr_array_index (starts, 0));
+	g_autoptr(GrlVector3) at = lrg_spawn_point3d_get_position (sp);
+
+	lrg_entity3d_set_position_xyz (player, at->x, at->y, at->z);
+	lrg_entity3d_add_tag (player, "player");
+}
+#+end_src
+
+*** Sound and an animated character
+:PROPERTIES:
+:CUSTOM_ID: example-audio-animation
+:END:
+
+#+begin_src c
+/* The camera hears; a radio plays a looping bank sound where it stands. */
+LrgAudioListenerComponent *ears = lrg_audio_listener_component_new ();
+LrgAudioSourceComponent   *radio = lrg_audio_source_component_new_with_sound ("sfx", "music");
+
+lrg_entity3d_add_component (eye, LRG_COMPONENT (ears));
+g_object_unref (ears);
+g_object_set (radio, "loop", TRUE, "autoplay", TRUE, "min-distance", 2.0f,
+              "max-distance", 25.0f, NULL);
+lrg_entity3d_add_component (radio_entity, LRG_COMPONENT (radio));
+g_object_unref (radio);
+
+/* A skinned glTF character playing its walk cycle. */
+g_autoptr(LrgAssetManager) assets = lrg_asset_manager_new ();
+LrgSkinnedModelComponent  *hero =
+	lrg_skinned_model_component_new_with_model ("models/hero.glb", "walk");
+
+lrg_skinned_model_component_set_asset_manager (hero, assets);
+g_object_set (hero, "crossfade", 0.2f, NULL);
+lrg_entity3d_add_component (hero_entity, LRG_COMPONENT (hero));
+g_object_unref (hero);
+
+/* Later: run, cutting over with the 0.2 s crossfade. */
+lrg_skinned_model_component_play (hero, "run", TRUE);
+#+end_src
+
+** LrgMeshRendererComponent
+:PROPERTIES:
+:CUSTOM_ID: mesh-renderer
+:END:
+
+Draws a built-in primitive (the #LrgPrimitiveType set the editor uses) or a mesh asset at the entity's world transform. Primitives are centred on the entity and sized like the editor viewport's unit meshes, so a level looks the same in the editor and in the game.
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: mesh-renderer-properties
+:END:
+
+| Property            | Type                 | Default  | Meaning                                                          |
+|---------------------+----------------------+----------+------------------------------------------------------------------|
+| =primitive=         | #LrgPrimitiveType    | CUBE     | built-in shape, used when no mesh asset is set                   |
+| =mesh-asset=        | string               | NULL     | mesh asset path or GUID; wins over =primitive=                   |
+| =model=             | GrlModel             | NULL     | explicit or resolved model                                       |
+| =asset-manager=     | #LrgAssetManager     | NULL     | resolves =mesh-asset= (optional)                                 |
+| =mesh-index=        | int                  | -1       | model mesh to draw, -1 for all                                   |
+| =size-x=, =size-y=, =size-z= | float       | 1        | cube size; plane/grid use x and z; rectangle x and y             |
+| =radius=            | float                | 0.5      | sphere, circle, cylinder and cone radius                         |
+| =height=            | float                | 1        | cylinder and cone height                                         |
+| =major-radius=      | float                | 0.375    | torus ring radius                                                |
+| =minor-radius=      | float                | 0.125    | torus tube radius                                                |
+| =color-r= .. =color-a= | float 0..1        | 1        | base colour; alpha below 1 makes the item transparent            |
+| =roughness=         | float 0..1           | 0.5      | PBR roughness                                                    |
+| =metallic=          | float 0..1           | 0        | PBR metalness                                                    |
+| =emission-r= .. =emission-b= | float 0..1  | 0        | emissive colour                                                  |
+| =emission-strength= | float                | 0        | emission multiplier                                              |
+| =material=          | GObject              | NULL     | material slot (#LrgMaterial3D now; =LrgMaterial= from 0.9 M2); replaces the scalar material |
+| =cast-shadows=      | boolean              | TRUE     | adds =LRG_RENDER_ITEM_FLAG_CAST_SHADOW=                          |
+| =receive-shadows=   | boolean              | TRUE     | adds =LRG_RENDER_ITEM_FLAG_RECEIVE_SHADOW=                       |
+| =transparent=       | boolean              | FALSE    | forces =LRG_RENDER_ITEM_FLAG_TRANSPARENT=                        |
+| =double-sided=      | boolean              | FALSE    | adds =LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED=                         |
+| =unlit=             | boolean              | FALSE    | adds =LRG_RENDER_ITEM_FLAG_UNLIT=                                |
+| =layer=             | int -1..31           | -1       | render layer override                                            |
+
+*** Render items
+:PROPERTIES:
+:CUSTOM_ID: mesh-renderer-items
+:END:
+
+One item per frame:
+
+| Case                 | kind      | Fields                                                                                  |
+|----------------------+-----------+-----------------------------------------------------------------------------------------|
+| primitive            | PRIMITIVE | =primitive=; =params=: cube (x, y, z), sphere/circle (radius), cylinder/cone (radius, height), torus (major, minor), plane/grid (x, z), rectangle (x, y) |
+| mesh asset or model  | MODEL     | =model= (resolved, or NULL for the renderer to resolve from =mesh-asset=), =mesh_index= |
+
+Both carry =material= (=lrg_mesh_renderer_component_get_effective_material()=: the slot, or an internal #LrgMaterial3D mirroring colour, roughness, metallic and emission), =color=, the flags of =lrg_mesh_renderer_component_get_flags()=, the layer, world bounds from the local bounds (unknown for an unresolved model) and a =sort_key= grouping equal shapes and models.
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: mesh-renderer-api
+:END:
+
+| Function | Description |
+|----------+-------------|
+| =lrg_mesh_renderer_component_new()= | a white unit cube |
+| =lrg_mesh_renderer_component_new_primitive(primitive)= | a built-in shape |
+| =lrg_mesh_renderer_component_new_mesh(mesh_asset)= | a mesh asset |
+| =lrg_mesh_renderer_component_get_primitive()= / =lrg_mesh_renderer_component_set_primitive()= | the shape |
+| =lrg_mesh_renderer_component_get_mesh_asset()= / =lrg_mesh_renderer_component_set_mesh_asset()= | the asset (setting drops a resolved model; nullable) |
+| =lrg_mesh_renderer_component_get_model()= / =lrg_mesh_renderer_component_set_model()= | the drawn #GrlModel (transfer none; set keeps a reference, NULL resolves the asset again) |
+| =lrg_mesh_renderer_component_get_asset_manager()= / =lrg_mesh_renderer_component_set_asset_manager()= | the resolving manager (nullable) |
+| =lrg_mesh_renderer_component_get_size()= / =lrg_mesh_renderer_component_set_size()= | the box size (=out= is a float[3]) |
+| =lrg_mesh_renderer_component_get_local_bounds()= | local AABB; FALSE for an unresolved mesh asset |
+| =lrg_mesh_renderer_component_get_color()= / =lrg_mesh_renderer_component_set_color()= | RGBA, clamped to 0..1 |
+| =lrg_mesh_renderer_component_set_emission()= | emissive colour and strength |
+| =lrg_mesh_renderer_component_get_material()= / =lrg_mesh_renderer_component_set_material()= | the material slot (transfer none / referenced) |
+| =lrg_mesh_renderer_component_get_effective_material()= | the slot or the internal scalar material, never NULL |
+| =lrg_mesh_renderer_component_get_cast_shadows()= / =lrg_mesh_renderer_component_set_cast_shadows()= | shadow casting |
+| =lrg_mesh_renderer_component_get_receive_shadows()= / =lrg_mesh_renderer_component_set_receive_shadows()= | shadow receiving |
+| =lrg_mesh_renderer_component_get_layer()= / =lrg_mesh_renderer_component_set_layer()= | layer override, clamped to -1..31 |
+| =lrg_mesh_renderer_component_get_flags()= | the #LrgRenderItemFlags of the items |
+
+** LrgLightComponent
+:PROPERTIES:
+:CUSTOM_ID: light
+:END:
+
+A light registered with the world as an #LrgLight3DDesc: at =world_entered=, after every property change (including enabling and disabling), and every =late_update= so it follows a moving entity. The position is the entity's world position and the direction its forward (local -Z), like the editor's light gizmo. It is unregistered at =world_exited= and on dispose.
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: light-properties
+:END:
+
+| Property       | Type             | Default  | #LrgLight3DDesc field                        |
+|----------------+------------------+----------+----------------------------------------------|
+| =kind=         | #LrgLight3DKind  | POINT    | =kind=                                        |
+| =color-r= .. =color-b= | float 0..1 | 1      | =color= (linear RGB)                          |
+| =intensity=    | float            | 1        | =intensity=                                   |
+| =range=        | float            | 10       | =range=                                       |
+| =inner-angle=  | float 0..89 deg  | 30       | =inner_angle= (half-angle, converted to radians) |
+| =outer-angle=  | float 0..89 deg  | 45       | =outer_angle= (half-angle, radians)           |
+| =cast-shadows= | boolean          | FALSE    | =cast_shadows=                                |
+| =layer-mask=   | uint             | all      | =layer_mask=                                  |
+| (component enabled, entity active) | | | =enabled=                                   |
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: light-api
+:END:
+
+| Function | Description |
+|----------+-------------|
+| =lrg_light_component_new()= / =lrg_light_component_new_with_kind()= | a white light |
+| =lrg_light_component_get_kind()= / =lrg_light_component_set_kind()= | directional, point, spot |
+| =lrg_light_component_get_color()= / =lrg_light_component_set_color()= | linear RGB |
+| =lrg_light_component_get_intensity()= / =lrg_light_component_set_intensity()= | multiplier (>= 0) |
+| =lrg_light_component_get_range()= / =lrg_light_component_set_range()= | reach of point and spot lights |
+| =lrg_light_component_set_spot_angles()= | inner and outer half-angles in degrees (outer clamped to >= inner) |
+| =lrg_light_component_get_cast_shadows()= / =lrg_light_component_set_cast_shadows()= | shadow maps |
+| =lrg_light_component_fill_desc()= | builds the #LrgLight3DDesc the world gets |
+| =lrg_light_component_sync()= | re-registers now |
+
+** LrgCameraComponent
+:PROPERTIES:
+:CUSTOM_ID: camera
+:END:
+
+Owns an #LrgCamera3D that renderers draw with. The camera's eye is the entity's world position, it looks down the entity's local -Z with the entity's local +Y up (written at =world_entered= and every =late_update=); projection, field of view and cull mask are written whenever a property changes. While =active= and enabled, the camera is registered with =lrg_world3d_register_camera()= at its =priority=, so =lrg_world3d_get_active_camera()= returns the highest-priority camera (earliest registered on ties) unless one is forced with =lrg_camera_component_make_current()=.
+
+#LrgCamera3D has no clip planes: renderers that need them find the component with =lrg_camera_component_from_camera()= and read =near= and =far=.
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: camera-properties
+:END:
+
+| Property       | Type        | Default | Meaning                                                    |
+|----------------+-------------+---------+------------------------------------------------------------|
+| =camera=       | #LrgCamera3D (read-only) | | the driven camera                                 |
+| =fov=          | float 1..179 | 60     | vertical field of view in degrees                          |
+| =near=         | float       | 0.1     | near clip distance                                         |
+| =far=          | float       | 1000    | far clip distance (kept above near)                        |
+| =orthographic= | boolean     | FALSE   | orthographic projection                                    |
+| =ortho-size=   | float       | 10      | visible height in world units when orthographic            |
+| =aspect=       | float 0..16 | 0       | aspect override, 0 for the target's                        |
+| =cull-mask=    | uint        | all     | render layers seen (copied to #LrgCamera:cull-mask)         |
+| =priority=     | int         | 0       | selection priority, higher wins                            |
+| =active=       | boolean     | TRUE    | registered with the world                                  |
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: camera-api
+:END:
+
+| Function | Description |
+|----------+-------------|
+| =lrg_camera_component_new()= | an active perspective camera |
+| =lrg_camera_component_get_camera()= | the #LrgCamera3D (transfer none) |
+| =lrg_camera_component_from_camera()= | the component owning a camera, or NULL |
+| =lrg_camera_component_get_fov()= / =lrg_camera_component_set_fov()= | field of view |
+| =lrg_camera_component_get_near()= / =lrg_camera_component_get_far()= / =lrg_camera_component_set_clip()= | clip planes |
+| =lrg_camera_component_get_orthographic()= / =lrg_camera_component_set_orthographic()= | projection |
+| =lrg_camera_component_get_priority()= / =lrg_camera_component_set_priority()= | priority (re-ranks at once) |
+| =lrg_camera_component_get_active()= / =lrg_camera_component_set_active()= | registration |
+| =lrg_camera_component_is_current()= | the world's active camera is this one |
+| =lrg_camera_component_make_current()= | force it (=lrg_world3d_set_active_camera()=) |
+| =lrg_camera_component_sync()= | write pose and projection now |
+
+** LrgAudioSourceComponent
+:PROPERTIES:
+:CUSTOM_ID: audio-source
+:END:
+
+A positional emitter. =lrg_audio_source_component_play()= starts an #LrgAudioManager voice (=lrg_audio_manager_play_sound_at()=) at the entity's world position with the component's volume and attenuation; =late_update= moves the voice with the entity (=lrg_audio_manager_set_voice_position()=) and restarts a looping sound when its voice ended. =autoplay= plays on world entry; leaving the world stops the voice.
+
+The sound is a bank entry (=bank= + =sound=) or, when no bank is set, a file (=sound-path=, the editor AUDIO_EMITTER's asset) loaded once into the =LRG_AUDIO_SOURCE_FILE_BANK= bank of the audio manager. Without an audio device, an unknown bank or a missing file, =play()= returns 0 and nothing else happens.
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: audio-source-properties
+:END:
+
+| Property        | Type     | Default                          | Meaning                                         |
+|-----------------+----------+----------------------------------+-------------------------------------------------|
+| =bank=          | string   | NULL                             | sound bank name                                 |
+| =sound=         | string   | NULL                             | sound in the bank                               |
+| =sound-path=    | string   | NULL                             | file played when no bank is set                 |
+| =volume=        | float 0..4 | 1                              | voice volume, read when a voice starts          |
+| =pitch=         | float    | 1                                | stored; 0.9 voices play at the sound's pitch    |
+| =min-distance=  | float    | =LRG_AUDIO_DEFAULT_MIN_DISTANCE= | full volume inside                              |
+| =max-distance=  | float    | =LRG_AUDIO_DEFAULT_MAX_DISTANCE= | silent beyond                                   |
+| =rolloff=       | float    | =LRG_AUDIO_DEFAULT_ROLLOFF=      | 0 linear, > 0 inverse distance                  |
+| =spatial-blend= | float 0..1 | 1                              | 0 flat, 1 positional                            |
+| =loop=          | boolean  | FALSE                            | restart when the sound ends                     |
+| =autoplay=      | boolean  | FALSE                            | play on world entry                             |
+| =audio-manager= | #LrgAudioManager | NULL                     | NULL for =lrg_audio_manager_get_default()=      |
+| =playing=       | boolean (read-only) |                       | the voice is audible                            |
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: audio-source-api
+:END:
+
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_source_component_new()= / =lrg_audio_source_component_new_with_sound()= | an emitter |
+| =lrg_audio_source_component_set_sound()=, =lrg_audio_source_component_get_bank()=, =lrg_audio_source_component_get_sound()= | the bank entry |
+| =lrg_audio_source_component_get_sound_path()= / =lrg_audio_source_component_set_sound_path()= | the file |
+| =lrg_audio_source_component_get_attenuation()= / =lrg_audio_source_component_set_attenuation()= | the #LrgAudioAttenuation curve |
+| =lrg_audio_source_component_play()= | start a voice; returns its id or 0 |
+| =lrg_audio_source_component_stop()= | stop the voice |
+| =lrg_audio_source_component_is_playing()= / =lrg_audio_source_component_get_voice()= | voice state |
+| =lrg_audio_source_component_get_audio_manager()= / =lrg_audio_source_component_set_audio_manager()= | the manager (setting stops the voice) |
+
+** LrgAudioListenerComponent
+:PROPERTIES:
+:CUSTOM_ID: audio-listener
+:END:
+
+The ears. On world entry its entity becomes the world's listener (=lrg_world3d_set_audio_listener()=); every =late_update= it feeds the entity's world position, forward (-Z) and up into =lrg_audio_manager_set_listener()=, which needs no audio device. Put it on the active camera's entity, or on the player for third-person games. A disabled listener stops feeding.
+
+| Property        | Type             | Default | Meaning                                    |
+|-----------------+------------------+---------+--------------------------------------------|
+| =audio-manager= | #LrgAudioManager | NULL    | NULL for =lrg_audio_manager_get_default()= |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_audio_listener_component_new()= | a listener for the default manager |
+| =lrg_audio_listener_component_get_audio_manager()= / =lrg_audio_listener_component_set_audio_manager()= | the manager |
+| =lrg_audio_listener_component_sync()= | push the pose now |
+
+** LrgBillboardComponent
+:PROPERTIES:
+:CUSTOM_ID: billboard
+:END:
+
+A textured quad at the entity. The =facing= (#LrgBillboardFacing, =lrg_billboard_facing_get_type()=) picks the item:
+
+| Facing      | Item                                                                                       |
+|-------------+--------------------------------------------------------------------------------------------|
+| =spherical= | BILLBOARD; =params= = (width, height, =LRG_BILLBOARD_MODE_SPHERICAL=)                      |
+| =axis-y=    | BILLBOARD; =params= = (width, height, =LRG_BILLBOARD_MODE_AXIS_Y=)                         |
+| =fixed=     | PRIMITIVE =LRG_PRIMITIVE_PLANE=, =params= = (width, height), world matrix = entity × Rx(90°): the quad lies in the entity's XY plane facing +Z, exactly as the editor draws SPRITE nodes |
+
+Items carry =texture= (the resolved #GrlTexture or NULL), the tint, =DOUBLE_SIDED= and =RECEIVE_SHADOW=, =CUTOUT= (or =TRANSPARENT= with a tint alpha below 1) and =CAST_SHADOW= when asked.
+
+| Property          | Type                | Default   | Meaning                                                   |
+|-------------------+---------------------+-----------+-----------------------------------------------------------|
+| =texture=         | GrlTexture          | NULL      | explicit or resolved texture                              |
+| =texture-path=    | string              | NULL      | image path or GUID (the SPRITE asset)                     |
+| =asset-manager=   | #LrgAssetManager    | NULL      | resolves =texture-path=                                   |
+| =width=, =height= | float               | 1         | quad size in world units                                  |
+| =pixels-per-unit= | float               | 0         | > 0: size = texture pixels / this                         |
+| =preserve-aspect= | boolean             | FALSE     | fit the texture aspect inside width × height              |
+| =facing=          | #LrgBillboardFacing | spherical | orientation                                               |
+| =color-r= .. =color-a= | float 0..1     | 1         | tint                                                      |
+| =cutout=          | boolean             | TRUE      | alpha test                                                |
+| =cast-shadows=    | boolean             | FALSE     | shadow caster                                             |
+| =layer=           | int -1..31          | -1        | layer override                                            |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_billboard_component_new()= / =lrg_billboard_component_new_with_texture_path()= | a billboard |
+| =lrg_billboard_component_get_texture()= / =lrg_billboard_component_set_texture()= | the texture |
+| =lrg_billboard_component_get_texture_path()= / =lrg_billboard_component_set_texture_path()= | the image |
+| =lrg_billboard_component_set_asset_manager()= | the resolving manager |
+| =lrg_billboard_component_set_size()= / =lrg_billboard_component_get_effective_size()= | the quad size |
+| =lrg_billboard_component_get_facing()= / =lrg_billboard_component_set_facing()= | orientation |
+| =lrg_billboard_component_set_color()= | tint |
+
+** LrgTilemapComponent
+:PROPERTIES:
+:CUSTOM_ID: tilemap
+:END:
+
+A tile grid in the entity's local XY plane: cell (x, y) spans x .. x+1 tiles right and y .. y+1 tiles down (-Y), layer N sits =LRG_TILEMAP_COMPONENT_LAYER_GAP= × N along local +Z. The cells come from an #LrgNodeTilemap (=node-tilemap=, the level data; preferred) or a runtime #LrgTilemap (=tilemap=). Tile id 0 is empty and id N draws tileset tile N - 1 (wrapping past the tileset's end, as the editor does); without a tileset every id draws as the editor's flat colour swatch.
+
+*Render items:* one =LRG_RENDER_ITEM_CUSTOM= item per visible layer, flagged =DOUBLE_SIDED | CUTOUT | RECEIVE_SHADOW= (plus =CAST_SHADOW= when asked), with the layer's offset world matrix and the grid's bounds. Its =draw_func= multiplies the item's world matrix itself and emits the layer's quads with rlgl; =user_data= holds a reference on the component and is released when the list is cleared.
+
+=lrg_tilemap_component_get_tilemap()= builds a runtime #LrgTilemap from the node tilemap with =lrg_node_tilemap_to_runtime()= once a tileset is known (for collision queries such as =lrg_tilemap_is_solid()=).
+
+| Property        | Type            | Default | Meaning                                                  |
+|-----------------+-----------------+---------+----------------------------------------------------------|
+| =node-tilemap=  | #LrgNodeTilemap | NULL    | level cells (referenced)                                 |
+| =tilemap=       | #LrgTilemap     | NULL    | runtime cells when no node tilemap                       |
+| =tileset=       | #LrgTileset     | NULL    | tile images                                              |
+| =tileset-path=  | string          | NULL    | tileset image, sliced by the node tilemap's tile pixels  |
+| =asset-manager= | #LrgAssetManager | NULL   | loads =tileset-path= (else the file, when a window exists) |
+| =tile-size=     | float           | 1       | world units per tile                                     |
+| =cast-shadows=  | boolean         | FALSE   | shadow caster                                            |
+| =layer=         | int -1..31      | -1      | render layer override                                    |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_tilemap_component_new()= | empty |
+| =lrg_tilemap_component_new_from_node_tilemap(grid, tile_size)= | from a copy of level data |
+| =lrg_tilemap_component_get_node_tilemap()= / =lrg_tilemap_component_set_node_tilemap()= | level cells |
+| =lrg_tilemap_component_get_tilemap()= / =lrg_tilemap_component_set_tilemap()= | runtime tilemap |
+| =lrg_tilemap_component_get_tileset()= / =lrg_tilemap_component_set_tileset()= | tileset |
+| =lrg_tilemap_component_get_tileset_path()= / =lrg_tilemap_component_set_tileset_path()= | tileset image |
+| =lrg_tilemap_component_set_asset_manager()= | loader |
+| =lrg_tilemap_component_get_tile_size()= / =lrg_tilemap_component_set_tile_size()= | tile size |
+| =lrg_tilemap_component_get_grid_size()= / =lrg_tilemap_component_get_n_layers()= | dimensions |
+| =lrg_tilemap_component_get_layer_cells()= | one layer's cells and visibility |
+| =lrg_tilemap_component_get_local_bounds()= | the grid's local AABB |
+
+** LrgSpawnComponent
+:PROPERTIES:
+:CUSTOM_ID: spawn
+:END:
+
+Gameplay data marking a spawn point; it draws nothing. Find points with =lrg_spawn_component_find()= (enabled components on active entities, filtered by tag and team, =LRG_SPAWN_COMPONENT_ANY_TEAM= for any) and read the entity's transform, or convert to the older boxed #LrgSpawnPoint3D with =lrg_spawn_component_to_spawn_point()= (id = entity name or GUID, world position, world rotation as Euler degrees, the "team" custom property).
+
+| Property      | Type           | Default | Meaning                                   |
+|---------------+----------------+---------+-------------------------------------------|
+| =spawn-type=  | #LrgSpawnType  | GENERIC | player, enemy, NPC, item, generic         |
+| =team=        | int >= 0       | 0       | team number                               |
+| =entity-type= | string         | NULL    | what to spawn (prefab path, type name...) |
+| =tags=        | strv           | empty   | filter tags (duplicates dropped)          |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_spawn_component_new()= / =lrg_spawn_component_new_with_type()= | a spawn point |
+| =lrg_spawn_component_get_spawn_type()= / =lrg_spawn_component_set_spawn_type()= | type |
+| =lrg_spawn_component_get_team()= / =lrg_spawn_component_set_team()= | team |
+| =lrg_spawn_component_get_entity_type()= / =lrg_spawn_component_set_entity_type()= | payload |
+| =lrg_spawn_component_get_tags()=, =lrg_spawn_component_set_tags()=, =lrg_spawn_component_add_tag()=, =lrg_spawn_component_has_tag()= | tags |
+| =lrg_spawn_component_matches()= | enabled and matching tag/team |
+| =lrg_spawn_component_to_spawn_point()= | an #LrgSpawnPoint3D (transfer full) |
+| =lrg_spawn_component_find()= | matching components in a world (transfer container) |
+
+** LrgTriggerComponent
+:PROPERTIES:
+:CUSTOM_ID: trigger
+:END:
+
+A volume around its entity (#LrgTriggerShape, =lrg_trigger_shape_get_type()=): a box of =size-x= × =size-y= × =size-z= that rotates and scales with the entity, or a sphere of =radius= times the entity's largest world scale. Every =fixed_update= it gathers candidates (entities with =filter-tag=, else entities with a component of type name =filter-component=, else every entity whose bounds touch the volume's world box), drops its own entity, inactive entities and those failing the component filter, and tests each candidate's *world position* against the volume. New occupants emit =entered=, departed ones (moved out, stopped matching, inactive, or left the world) emit =exited=. Signals are emitted after the bookkeeping, so handlers may move or remove entities. A =one-shot= trigger stops testing after its first entry until =lrg_trigger_component_reset()=.
+
+*Signals:* =entered (LrgTriggerComponent *self, LrgEntity3D *entity)= and =exited (LrgTriggerComponent *self, LrgEntity3D *entity)=, both =G_SIGNAL_RUN_LAST=.
+
+| Property           | Type             | Default | Meaning                                  |
+|--------------------+------------------+---------+------------------------------------------|
+| =shape=            | #LrgTriggerShape | box     | box or sphere                            |
+| =size-x=, =size-y=, =size-z= | float  | 1       | box size (local units)                   |
+| =radius=           | float            | 0.5     | sphere radius (local units)              |
+| =filter-tag=       | string           | NULL    | required entity tag                      |
+| =filter-component= | string           | NULL    | required component type name             |
+| =one-shot=         | boolean          | FALSE   | fire once                                |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_trigger_component_new()=, =lrg_trigger_component_new_box()=, =lrg_trigger_component_new_sphere()= | a trigger |
+| =lrg_trigger_component_get_shape()= / =lrg_trigger_component_set_shape()= | shape |
+| =lrg_trigger_component_set_size()= / =lrg_trigger_component_set_radius()= | extents |
+| =lrg_trigger_component_get_filter_tag()= / =lrg_trigger_component_set_filter_tag()= | tag filter |
+| =lrg_trigger_component_get_filter_component()= / =lrg_trigger_component_set_filter_component()= | component filter |
+| =lrg_trigger_component_contains_point()= | test a world point |
+| =lrg_trigger_component_is_inside()= / =lrg_trigger_component_get_n_inside()= | occupants |
+| =lrg_trigger_component_evaluate()= | run the test now |
+| =lrg_trigger_component_reset()= | forget occupants, re-arm |
+
+The trigger's local bounds (=get_bounds=) are its volume, so it is indexed in the world octree.
+
+** LrgSkinnedModelComponent
+:PROPERTIES:
+:CUSTOM_ID: skinned-model
+:END:
+
+An animated glTF model. The component holds an #LrgModelAnimator (created from =model-path= through =asset-manager=, or set explicitly; one animator and its model may be shared by many components) and its own #LrgModelAnimState. In =update= it applies a requested clip (=lrg_model_animator_find_clip()=: exact name, alias, or suffix such as "walk" for "Armature|Walk"; crossfaded by =crossfade= seconds) and advances time by delta × =speed= while =playing=.
+
+*Render item:* one MODEL item with the animator's model, the tint and the shadow flags. =collect_render= poses the shared model for this component (=lrg_skinned_model_component_apply_pose()=); a renderer drawing several components sharing one model should call it again right before each such item. No item is submitted without a model (headless animators have none). Animation graphs and blend trees arrive in 0.9 M4.
+
+| Property          | Type              | Default | Meaning                                 |
+|-------------------+-------------------+---------+-----------------------------------------|
+| =model-path=      | string            | NULL    | glTF/GLB path or GUID                   |
+| =asset-manager=   | #LrgAssetManager  | NULL    | loads the model and its clips           |
+| =animator=        | #LrgModelAnimator | NULL    | explicit or created animator            |
+| =clip=            | string            | NULL    | clip name or alias                      |
+| =speed=           | float             | 1       | playback rate (negative plays backwards) |
+| =loop=            | boolean           | TRUE    | wrap the clip                           |
+| =playing=         | boolean           | TRUE    | time advances                           |
+| =crossfade=       | float             | 0       | crossfade seconds on clip changes       |
+| =color-r= .. =color-a= | float 0..1   | 1       | tint                                    |
+| =cast-shadows=, =receive-shadows= | boolean | TRUE | shadow flags                          |
+| =layer=           | int -1..31        | -1      | layer override                          |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_skinned_model_component_new()= / =lrg_skinned_model_component_new_with_model()= | a skinned model |
+| =lrg_skinned_model_component_get_model_path()= / =lrg_skinned_model_component_set_model_path()= | the model |
+| =lrg_skinned_model_component_set_asset_manager()= | the loader |
+| =lrg_skinned_model_component_get_animator()= / =lrg_skinned_model_component_set_animator()= | the animator |
+| =lrg_skinned_model_component_get_clip()= / =lrg_skinned_model_component_set_clip()= | requested clip |
+| =lrg_skinned_model_component_play()= | switch clip and loop now; FALSE when not found |
+| =lrg_skinned_model_component_get_state()= | the #LrgModelAnimState (transfer none) |
+| =lrg_skinned_model_component_get_current_clip_name()= | the clip actually playing |
+| =lrg_skinned_model_component_is_finished()= | a non-looping clip ended |
+| =lrg_skinned_model_component_get_model()= | the drawn model |
+| =lrg_skinned_model_component_apply_pose()= | pose the shared model for this component |
+
+** Type functions
+:PROPERTIES:
+:CUSTOM_ID: type-functions
+:END:
+
+=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()= and =lrg_skinned_model_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+
+You do not add these components by hand in the editor (0.9 M1): each node visual becomes one component when a level is instantiated with =lrg_level_instantiate_3d()= (also what play-in-editor runs), and the visual's material and param bag map onto the component's properties. Params map by name with underscores turned into dashes (=cast_shadows= → =cast-shadows=), so any property above can be authored as a node param in the inspector or in the =.rlevel= file.
+
+| Visual        | Component                  | Mapping                                                                  |
+|---------------+----------------------------+--------------------------------------------------------------------------|
+| PRIMITIVE     | mesh renderer              | primitive, material colour → =color-*=, roughness, metallic             |
+| MESH_ASSET    | mesh renderer              | asset → =mesh-asset=, material as above                                  |
+| LIGHT         | light                      | =light_type= → =kind=, =spot_angle= → =outer-angle=, =intensity=, =range=, material colour → =color-*= |
+| CAMERA        | camera                     | =fov=, =near=, =far=                                                     |
+| AUDIO_EMITTER | audio source               | asset → =sound-path=, =volume=                                           |
+| SPRITE        | billboard                  | asset → =texture-path=, material colour → =color-*=, =pixels_per_unit=  |
+| TILEMAP       | tilemap                    | the painted grid (copied) → =node-tilemap=, asset → =tileset-path=, =tile_size= |
+
+Because the map is shared with =lrg_level_visual_store_property()=, a component property changed while playing can be written back to the node visual it came from.
+
+Example =.rlevel= node (annotated):
+
+#+begin_src yaml
+nodes:
+  - name: Lamp                  # -> entity name
+    transform:
+      location: [0.0, 4.0, 2.0] # entity position
+      rotation: [-0.8, 0.0, 0.0]  # Euler radians; local -Z is where the light points
+    visual:
+      kind: light               # -> LrgLightComponent
+      material:
+        color: [1.0, 0.9, 0.7, 1.0]  # -> color-r/g/b
+      params:
+        light_type: spot        # -> kind (enum nick)
+        intensity: 2.0          # -> intensity
+        range: 15.0             # -> range
+        spot_angle: 40.0        # -> outer-angle
+        cast_shadows: true      # -> cast-shadows (by name)
+#+end_src
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+
+- =collect_render= is per camera per frame: each drawing component builds one item on the stack (tilemaps one per visible layer) and copies it in; there is no per-frame allocation except the tilemap's small callback record.
+- Lights re-register every =late_update= (a hash lookup and a struct copy). Hundreds are fine; with thousands, prefer fewer, larger lights (the 0.9 light set holds a limited number of point lights anyway).
+- Trigger tests are O(candidates) per fixed step. Filter by tag or component on busy worlds; the unfiltered case uses the octree (=lrg_world3d_query_box()=), so keep entity bounds meaningful.
+- Tilemaps emit every non-empty cell each frame through the rlgl batch (4 vertices per tile per layer). Very large maps should be split across several entities so frustum culling drops off-screen chunks.
+- Skinned models sharing one animator re-pose the shared model per component only when the pose key changes (=lrg_model_animator_apply()=).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+
+- *Forward is -Z.* Lights, cameras and listeners point down the entity's local -Z; rotate the entity, not the component.
+- *Spot angles are half-angles in degrees.* =inner-angle= / =outer-angle= are measured from the axis; the #LrgLight3DDesc gets radians.
+- *A light on an entity made inactive* keeps its last registration until the next property change or a =late_update= (inactive entities get no updates); disable the component instead when switching lights off.
+- *Triggers test positions, not volumes.* A large entity whose origin is outside the trigger is outside. Give the entity a child marker or test bounds yourself.
+- *Pitch is stored, not applied* by the 0.9 audio manager's voices; volume changes apply on the next play.
+- *Asset loads need a graphics context.* With an asset manager but no window, the first load fails and is not retried until the path or manager changes; set the manager after the window opens (or let the renderer resolve assets).
+- *Tilemap custom items transform themselves.* A renderer must not push the item's world matrix before calling the =draw_func=.
+- *Fixed billboards* are plane primitives: a renderer's plane must be the editor's unit XZ plane for the Rx(90°) turn to land in XY.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+
+- [[file:world3d.org][LrgWorld3D]] (frame phases, render lists, light and camera registries, listener)
+- [[file:entity3d.org][LrgEntity3D]] (transforms, hierarchy, tags, layers)
+- [[file:renderer.org][LrgWorld3DRenderer]] (how render items are drawn)
+- [[file:../ecs/component.org][LrgComponent]] (the base class and its 0.9 hooks)
+- [[file:../graphics/render-layers.org][Render layers]], [[file:../graphics/model-animator.org][LrgModelAnimator]], [[file:../graphics/billboard-batch.org][LrgBillboardBatch]]
+- [[file:../audio/index.org][Audio]] (positional voices, attenuation, listener)
+- [[file:spawn-point3d.org][LrgSpawnPoint3D]], [[file:trigger3d.org][LrgTrigger3D]] (the older boxed level types)
+- [[file:../../guides/migration-0-8-to-0-9.org][0.8 → 0.9 migration]]

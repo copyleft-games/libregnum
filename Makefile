@@ -2411,7 +2411,8 @@ DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween
 	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
-	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h
+	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \
+	$(wildcard src/world3d/components/*.h)
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)
