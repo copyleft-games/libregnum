@@ -95,3 +95,11 @@ Results are JSON text (YAML text for `get_level_yaml`); failures come back as to
 - After a batch of edits: `validate_level`, then `screenshot` if the editor is windowed, then report and ask before `save_level` unless the user asked to save.
 - `play` start/stop is safe: stop restores the level and keeps edits made during play on the redo stack.
 - Never pass `force` to `open_level`/`new_level` without the user's explicit OK.
+
+## 0.9.0 tools (args pass through; path absolute or project-relative)
+Materials: material_open, material_create, material_create_variant, material_get (ro), material_set, material_revert (destructive), material_save, material_preview, material_assign, material_list (ro).
+Shaders: shader_create, shader_compile, shader_diagnostics (ro), shader_uniforms (ro), shader_reload.
+Shader graphs: shadergraph_open, _create, _node_types (ro), _get (ro), _add_node, _remove_node (destructive), _connect, _disconnect (destructive), _set_param, _set_input, _validate (ro), _glsl (ro), _save.
+Level look: environment_get (ro), environment_set{key,value|values}, environment_reset (destructive), environment_bake then poll environment_progress (ro), environment_show.
+Post stacks: post_effect_types (ro), post_open, post_create, post_get (ro), post_add, post_remove (destructive), post_move, post_set, post_save, post_preview, post_save_look, post_assign.
+LOD and views: lod_get (ro), lod_force{node,level (-1 auto)}, set_view_layers{viewport?,mask?,layer?,enabled?}; set_render_mode also takes overdraw, uv, light-complexity, ao, reflections.

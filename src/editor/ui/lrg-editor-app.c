@@ -25,6 +25,7 @@
 #include "lrg-editor-assets-panel.h"
 #include "lrg-editor-console-panel.h"
 #include "lrg-editor-tiles-panel.h"
+#include "lrg-editor-environment-panel.h"
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-profiler-panel.h"
 #include "lrg-editor-code-panel.h"
@@ -204,6 +205,7 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "profiler", "Profiler", "chart", LRG_WIDGET (lrg_editor_profiler_panel_new (self)), TRUE);
 	make_panel (self, "code", "Code", "code", LRG_WIDGET (lrg_editor_code_panel_new (self)), TRUE);
 	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
+	make_panel (self, "environment", "Environment", "star", LRG_WIDGET (lrg_editor_environment_panel_new (self)), TRUE);
 }
 
 static LrgDockPanel *
@@ -230,6 +232,7 @@ dock_default (LrgEditorApp *self,
 		{ "profiler", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "code", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "environment", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 	};
 	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
 	LrgDockPanel *p = panel (self, id);
@@ -262,7 +265,7 @@ editor_app_reset_layout (LrgEditorApp *self)
 {
 	static const gchar *order[] = {
 		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
-		"timeline", "profiler", "code", "tiles", NULL
+		"timeline", "profiler", "code", "tiles", "environment", NULL
 	};
 	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
 	GList         *docked = lrg_dock_area_get_panels (dock);
@@ -1356,12 +1359,17 @@ editor_create_items (guint *n_items)
 		{ "rectangle", "Rectangle (2D)", "Rectangle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_RECTANGLE_2D },
 		{ "circle", "Circle (2D)", "Circle", LRG_NODE_VISUAL_PRIMITIVE, LRG_PRIMITIVE_CIRCLE_2D },
 		{ "-", NULL, NULL, 0, 0 },
-		{ "light", "Light", "Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "light", "Point Light", "Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "spot-light", "Spot Light", "Spot Light", LRG_NODE_VISUAL_LIGHT, 0 },
+		{ "directional-light", "Directional Light", "Sun", LRG_NODE_VISUAL_LIGHT, 0 },
 		{ "camera", "Camera", "Camera", LRG_NODE_VISUAL_CAMERA, 0 },
 		{ "audio", "Audio Emitter", "Audio", LRG_NODE_VISUAL_AUDIO_EMITTER, 0 },
 		{ "sprite", "Sprite", "Sprite", LRG_NODE_VISUAL_SPRITE, 0 },
 		{ "mesh", "Mesh (asset)", "Mesh", LRG_NODE_VISUAL_MESH_ASSET, 0 },
 		{ "tilemap", "Tilemap", "Tilemap", LRG_NODE_VISUAL_TILEMAP, 0 },
+		{ "-", NULL, NULL, 0, 0 },
+		{ "decal", "Decal", "Decal", LRG_NODE_VISUAL_DECAL, 0 },
+		{ "reflection-probe", "Reflection Probe", "Reflection Probe", LRG_NODE_VISUAL_REFLECTION_PROBE, 0 },
 	};
 
 	*n_items = G_N_ELEMENTS (items);
@@ -1425,8 +1433,40 @@ editor_app_create_node_kind (LrgEditorApp *self,
 
 	items = editor_create_items (&n);
 	for (i = 0; i < n; i++)
-		if (items[i].name != NULL && g_strcmp0 (items[i].id, kind) == 0)
-			return editor_app_create_node (self, items[i].name, items[i].kind, items[i].primitive, parent);
+	{
+		LrgNode       *node;
+		LrgNodeVisual *visual;
+		gboolean       spot;
+
+		if (items[i].name == NULL || g_strcmp0 (items[i].id, kind) != 0)
+			continue;
+
+		node = editor_app_create_node (self, items[i].name, items[i].kind, items[i].primitive, parent);
+		visual = (node != NULL) ? lrg_node_get_visual (node) : NULL;
+
+		/* Light presets: a spot light and a sun are light nodes with a
+		 * light_type, tilted -90 degrees about X so their -Z axis points
+		 * down, and lifted 4 m.  The node was just inserted, so these
+		 * values belong to the object the create command restores. */
+		spot = g_strcmp0 (kind, "spot-light") == 0;
+		if (visual != NULL && (spot || g_strcmp0 (kind, "directional-light") == 0))
+		{
+			g_auto(GValue) type = G_VALUE_INIT;
+			GrlVector3    *loc = lrg_node_get_location (node);
+
+			g_value_init (&type, G_TYPE_STRING);
+			g_value_set_string (&type, spot ? "spot" : "directional");
+			lrg_node_visual_set_param (visual, "light_type", &type);
+			if (spot)
+			{
+				lrg_node_visual_set_param_double (visual, "spot_angle", 45.0);
+				lrg_node_visual_set_param_double (visual, "range", 12.0);
+			}
+			lrg_node_set_rotation_xyz (node, (gfloat)(-G_PI / 2.0), 0.0f, 0.0f);
+			lrg_node_set_location_xyz (node, loc->x, 4.0f, loc->z);
+		}
+		return node;
+	}
 	return NULL;
 }
 

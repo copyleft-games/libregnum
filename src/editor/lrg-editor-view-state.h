@@ -85,8 +85,20 @@ GType lrg_editor_viewport_layout_get_type (void) G_GNUC_CONST;
  * @LRG_EDITOR_RENDER_MODE_WIREFRAME: edges only
  * @LRG_EDITOR_RENDER_MODE_NORMALS: world normals as colours
  * @LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY: lighting on a white material
+ * @LRG_EDITOR_RENDER_MODE_OVERDRAW: debug view: additive heat map of how
+ *   many surfaces cover each pixel (blue = one, red = many)
+ * @LRG_EDITOR_RENDER_MODE_UV: debug view: the first texture coordinate set
+ *   as red/green with a checker, to spot stretching and missing UVs
+ * @LRG_EDITOR_RENDER_MODE_LIGHT_COMPLEXITY: debug view: how many clustered
+ *   lights touch each pixel, as a heat map
+ * @LRG_EDITOR_RENDER_MODE_AO: debug view: the ambient occlusion term
+ *   (SSAO times material occlusion) in greyscale
+ * @LRG_EDITOR_RENDER_MODE_REFLECTIONS: debug view: the specular image
+ *   based lighting (sky and reflection probes) on a mirror-like surface
  *
- * How a viewport draws the scene.
+ * How a viewport draws the scene. The values match
+ * #LrgWorld3DRenderMode one to one (the scene renderer casts between
+ * them); the last five are the debug view modes of 0.9.0.
  */
 typedef enum
 {
@@ -94,7 +106,12 @@ typedef enum
 	LRG_EDITOR_RENDER_MODE_UNLIT,
 	LRG_EDITOR_RENDER_MODE_WIREFRAME,
 	LRG_EDITOR_RENDER_MODE_NORMALS,
-	LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY
+	LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY,
+	LRG_EDITOR_RENDER_MODE_OVERDRAW,
+	LRG_EDITOR_RENDER_MODE_UV,
+	LRG_EDITOR_RENDER_MODE_LIGHT_COMPLEXITY,
+	LRG_EDITOR_RENDER_MODE_AO,
+	LRG_EDITOR_RENDER_MODE_REFLECTIONS
 } LrgEditorRenderMode;
 
 LRG_AVAILABLE_IN_ALL

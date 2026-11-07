@@ -131,3 +131,14 @@ lrgeditor --validate levels/arena.rlevel
 # React to saves
 lrgeditorctl events saved | while read -r line; do echo "saved: ${line}"; done
 ```
+
+## 0.9.0 rendering verbs
+Positionals fill named params in order; file args are sent absolute when they exist in cwd, else resolved against the project; VALUE/INDEX/FROM/TO/LEVEL/ENABLED parse like assignment values (JSON, numbers, true/false, null, a,b,c vectors, on/off); extra key=value pass through; output YAML (-o json). Bad sub-command: usage, exit 2.
+- material open|create|get|save PATH; material create PATH [parent=P] [shading_model=lit|unlit|custom] [shader=S]; material variant PATH [DEST]; material set PATH KEY VALUE; material revert PATH KEY; material preview PATH [sphere|cube|plane] [rotate=BOOL]; material assign NODE PATH; material list (alias mat)
+- shader create PATH [lit=BOOL] | shader compile|diagnostics|uniforms|reload PATH
+- shadergraph open|create|get|validate|glsl|save PATH; shadergraph types; shadergraph add PATH TYPE [id= x= y=]; remove PATH ID; connect PATH FROM FROM_PORT TO TO_PORT; disconnect PATH TO TO_PORT; param PATH ID KEY VALUE; input PATH ID PORT VALUE|null (alias sg)
+- env [get] | env set KEY VALUE | env reset | env bake [--wait] | env progress | env show
+- post types | post open|get|save|assign PATH | post create PATH [preset=default|empty] | post add PATH TYPE [index=N] | post remove PATH INDEX | post move PATH FROM TO | post set PATH INDEX KEY VALUE | post preview [PATH] on|off | post look PATH [viewport=N]
+- lod get NODE | lod force NODE LEVEL|auto
+- view layers [MASK|all|none|0xHEX] | view layers LAYER on|off [viewport=N]; view render-mode|mode MODE (10 modes)
+Examples: lrgeditorctl material set materials/steel.rmat metallic 1; lrgeditorctl env set fog.density 0.02 && lrgeditorctl env bake --wait; lrgeditorctl post add looks/night.rpost vignette; lrgeditorctl view mode light-complexity viewport=1

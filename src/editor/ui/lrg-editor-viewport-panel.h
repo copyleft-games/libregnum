@@ -193,4 +193,40 @@ LRG_AVAILABLE_IN_ALL
 void lrg_editor_viewport_panel_set_gpu_enabled (LrgEditorViewportPanel *self,
                                                 gboolean                enabled);
 
+/**
+ * lrg_editor_viewport_panel_set_layer_mask:
+ * @self: an #LrgEditorViewportPanel
+ * @mask: the render layers this viewport shows (bit N = layer N,
+ *   %LRG_RENDER_LAYERS_MASK_ALL for every layer)
+ *
+ * The per-viewport render-layer picker (the layers button of the header):
+ * hands @mask to the scene renderer as this viewport's cull mask
+ * (lrg_editor_scene_renderer_set_cull_mask()) and renders again. The mask
+ * is a view setting; it is not saved in the level. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_layer_mask (LrgEditorViewportPanel *self,
+                                               guint32                 mask);
+
+/**
+ * lrg_editor_viewport_panel_get_layer_mask:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the render layers this viewport shows (default all)
+ */
+LRG_AVAILABLE_IN_ALL
+guint32 lrg_editor_viewport_panel_get_layer_mask (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_queue_render:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Renders the scene again at the next frame. The panel follows the level,
+ * selection and view state by itself; call this after changing something
+ * else the image depends on (a post stack previewed on the runtime
+ * renderer, a baked environment). Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_queue_render (LrgEditorViewportPanel *self);
+
 G_END_DECLS

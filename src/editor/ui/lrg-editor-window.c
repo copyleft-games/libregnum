@@ -54,7 +54,7 @@ static const gchar * const menu_titles[] = {
 static const gchar * const panel_entries[][2] = {
 	{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
 	{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
-	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "timeline", "Timeline" },
+	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "environment", "Environment" }, { "timeline", "Timeline" },
 	{ "profiler", "Profiler" }, { "code", "Code" }
 };
 

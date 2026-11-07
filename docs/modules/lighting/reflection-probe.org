@@ -179,7 +179,7 @@ g_print ("%u probes, strongest %.2f\n", n,
 :PROPERTIES:
 :CUSTOM_ID: reflection-probe-editor
 :END:
-Wave 2b of 0.9.0 adds reflection-probe gizmos to the editor viewport (box handles for the extents, a sphere at the capture point showing the captured cubemap, the blend band drawn inset) and a "Capture probes" action that captures every probe of the level through the same draw path as the viewport. Until then, create and capture probes from code as above.
+In the editor, Create > Reflection Probe adds a =reflection-probe= node (params =extents_x/y/z= half sizes, default 5, =blend_distance=, =intensity=, =box_projection=, =resolution=, listed in the inspector with ranges). Selected, it shows its influence box with the blend band inset (dashed) and handles on the +X +Y +Z faces that resize the extents, one undo step per drag (see [[file:../../editor/environment.org::#volume-gizmos][Volume gizmos]]). The viewport recaptures a probe when it moves or its extents or resolution change, and the Environment panel's *Bake* recaptures every probe (=lrg_editor_scene_renderer_recapture_probes()=). The =reflections= view mode shows the specular image based lighting the probes contribute. At runtime the node becomes an =LrgReflectionProbeComponent=.
 
 ** See also
 :PROPERTIES:

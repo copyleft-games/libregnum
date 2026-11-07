@@ -1,0 +1,232 @@
+#+title: Level Look: Environment, Post Stacks, View Modes and Volume Gizmos
+#+description: The lrgeditor tools that light and grade a level in 0.9.0: the Environment panel (the level's environment block with live undo and baking), the .rpost post-stack editor with live preview and "save current look", the viewport's debug view modes and render-layer picker, material drag and drop, volume gizmos for lights, decals and reflection probes, the inspector's LOD preview, and their IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor rendering environment post-processing lod gizmo
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.9.0
+
+* Level Look
+:PROPERTIES:
+:CUSTOM_ID: level-look
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Level Look
+#+end_quote
+
+A level's look is two pieces of data the game loads with the level: the =environment:= block of the =.rlevel= (sky, image based lighting, ambient, fog, volumetric fog and the name of a post stack, held by the level as an =LrgEnvironment=, see [[file:../modules/lighting/environment.org][Environment]]) and a =.rpost= post stack (an ordered list of post effects with their parameters, =LrgPostStack=, see [[file:../modules/postprocess/post-stack.org][Post Stacks]]). The editor draws the level through the same =LrgWorld3DRenderer= a game uses, so what the viewport shows after an edit is what the game shows.
+
+This page describes the editor tools that edit the look and help inspect it:
+
+| Tool | Where | Edits | Source |
+|------+-------+-------+--------|
+| Environment panel | Tab next to the Inspector (View > Panels > Environment) | the level's =environment:= block, undoable with the level | =src/editor/ui/lrg-editor-environment-panel.{h,c}= |
+| Post-stack editor | A data-editor tab for each open =.rpost= | the =.rpost= file, undoable inside the tab | =src/editor/ui/data/lrg-editor-post-stack-editor.{h,c}= |
+| View modes and layers | Each viewport's header | nothing (view settings) | =src/editor/ui/lrg-editor-viewport-panel.c=, =src/editor/lrg-editor-view-state.h= |
+| Volume gizmos | The viewport, for the selected light, decal or probe | the node's visual params | =src/editor/ui/lrg-editor-gizmo-paint.{h,c}= |
+| Material drop | Drag a =.rmat= from Assets onto a mesh | the node's material reference | the viewport's drop handler, =lrg_editor_material_editor_assign_to_node()= |
+| LOD preview | Inspector, "LOD" section of a mesh-asset node | nothing (a preview) | =src/editor/ui/lrg-editor-inspector-panel.c= |
+
+** Environment panel
+:PROPERTIES:
+:CUSTOM_ID: environment-panel
+:END:
+The panel (=LrgEditorEnvironmentPanel=, created by the window with =lrg_editor_environment_panel_new()= and docked with the id =LRG_EDITOR_ENVIRONMENT_PANEL_ID=, "environment") follows the editor's current level. =lrg_editor_environment_panel_find()= returns an app's panel and =lrg_editor_environment_panel_get_environment()= the environment it edits (=NULL= when the level has no block).
+
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: environment-panel-layout
+:END:
+- *Header*: the title, a status pill and two chips. The pill reads /Baked/ (green: GPU maps exist and nothing that changes them was edited since), /Needs bake/ or /Not baked/ (yellow), /Baking/ (accent), /Bake failed/ (red) or /None/ (muted, no block). *Bake* starts a bake, the trash chip removes the block. In a narrow dock the chips drop their labels first.
+- *Progress bar*: shown while a bake runs (and after a failed one).
+- *Sky preview*: a small equirectangular panorama of the sky as the engine samples it (=lrg_environment_sample_sky()=), with the exposure applied and a soft tone map, a horizon line, compass ticks (S W N E; the centre looks down -Z) and a chip naming the source and the exposure. =lrg_editor_environment_panel_sample_preview()= returns the colour of one point of the strip, for tests and tools.
+- *Fields*: a property grid (=lrg_editor_environment_panel_get_grid()=) in collapsible sections:
+
+| Section | Rows (field names) | Notes |
+|---------+--------------------+-------|
+| Sky | =sky-source=, =sky-color=, =zenith=, =horizon=, =ground=, =sky-path=, =exposure=, =rotation= | Only the rows of the current source show: =sky-color= for =color=, =zenith= / =horizon= / =ground= for =gradient=, =sky-path= (a texture asset picker; equirect =.hdr= or a cubemap cross) for =equirect= and =cubemap=. Exposure is in stops (EV), rotation in degrees about +Y. |
+| Image Based Lighting | =ibl-enabled=, =diffuse-intensity=, =specular-intensity=, =resolution= | Off falls back to the flat ambient. Resolution is the cubemap edge of the baked maps. |
+| Ambient | =ambient-color=, =ambient-intensity= | Used when IBL is off or not baked. |
+| Fog | =fog-enabled=, =fog-type=, =fog-color=, =fog-density= or =fog-start= / =fog-end=, =fog-height-base=, =fog-height-falloff= | The details show only while fog is on; linear fog shows start and end, the other models density and height. |
+| Volumetric Fog | =volumetric-enabled=, =volumetric-density=, =volumetric-anisotropy=, =volumetric-steps=, =volumetric-max-distance=, =volumetric-intensity= | The details show only while it is on. |
+| Post Processing | =post-stack= | The level's =.rpost= (a project path or =guid:=). The post-stack editor's "Use for Level" sets it. |
+
+- *Empty state*: a level without a block shows a hint and an *Add Environment* chip (=lrg_editor_environment_panel_add_environment()=). The first field edit through IPC or code also creates the block, in the same undo step.
+
+*** Editing and undo
+:PROPERTIES:
+:CUSTOM_ID: environment-panel-undo
+:END:
+Every change is one command on the level's history: Ctrl+Z in the viewport undoes it, the level is marked dirty and the next save writes the block. A slider drag or a typing session in the grid is one step (the grid's gesture signals open a new undo target per gesture, so its values merge into one command while separate edits stay separate).
+
+- =lrg_editor_environment_panel_set_field()= sets one field by its row name; colours are =GrlColor=, enums take their nick ("equirect", "linear") or value, numbers and booleans convert.
+- =lrg_editor_environment_panel_apply_data()= replaces the whole block with YAML (or JSON) text as one step; "" removes the block. Unknown keys are kept.
+- =lrg_editor_environment_panel_remove_environment()= removes the block (undoable; undo brings back the same settings).
+- The live =LrgEnvironment= object is updated in place (field by field, only what differs), never replaced by an edit, so the renderer keeps its handle and a fog or ambient change does not mark the GPU maps dirty. Image sources reload only when the source or a path changes.
+
+*** Baking
+:PROPERTIES:
+:CUSTOM_ID: environment-panel-bake
+:END:
+The viewport bakes a dirty environment lazily before its next frame, so editing works without pressing anything. *Bake* (or =lrg_editor_environment_panel_bake()=, the =environment.bake= action and IPC method) makes the cost explicit and shows progress: a main-loop timer runs one phase per frame outside the frame's drawing (=lrg_editor_environment_panel_step_bake()= runs a phase by hand), so the bar paints between them:
+
+| Phase (=lrg_editor_environment_panel_get_bake_phase()=) | Progress | Work |
+|------+-----+------|
+| =starting= | 0.05 | the bar appears |
+| =environment= | 0.15 to 0.70 | =lrg_environment_bake()=: radiance cubemap, irradiance, prefiltered specular chain, BRDF table |
+| =probes= | 0.70 to 1.0 | =lrg_editor_scene_renderer_recapture_probes()= (and, while playing, =lrg_world3d_renderer_capture_probes()= on the play world) |
+| =done= / =failed= | 1.0 / unchanged | a toast with the time, or the error (=lrg_editor_environment_panel_get_bake_error()=) |
+
+=lrg_editor_environment_panel_get_baking()= and =lrg_editor_environment_panel_get_bake_progress()= report the state. A bake needs the editor window (GL); a headless editor answers with an error. Replacing the level ends a running bake.
+
+*** Actions
+:PROPERTIES:
+:CUSTOM_ID: environment-panel-actions
+:END:
+| Action | Label | Does |
+|--------+-------+------|
+| =environment.show= | Environment Panel | brings the panel to the front |
+| =environment.add= | Add Environment | adds a default block (enabled without one) |
+| =environment.remove= | Remove Environment | removes the block |
+| =environment.bake= | Bake Environment | starts a bake |
+
+** Post-stack editor
+:PROPERTIES:
+:CUSTOM_ID: post-stack-editor
+:END:
+=.rpost= files open in =LrgEditorPostStackEditor=, a data editor (see [[file:data-editors.org][Data Editors]]): the document format is =LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK= (detected from the =.rpost= extension) and the data editor registry maps it to this editor, so double-clicking a =.rpost= in Assets, =lrg_editor_data_editor_open()=, =data.open= or =post.open= open it. =lrg_editor_post_stack_editor_new()= makes one for a document without docking it. Its toolbar has the data editors' Save / Revert / Validate plus *Preview*, *Look* and *Use for Level*.
+
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: post-stack-editor-layout
+:END:
+- *Effects (left)*: one row per effect in chain order: an enable box, the effect (click to select; the badge is its weight; red when the type is not registered, muted when disabled), move up, move down and remove. *+ Add effect...* lists every registered effect type (=lrg_post_stack_list_effect_types()=) and inserts the pick after the selection.
+- *Grid (right)*: the stack's name, quality tier and HDR flag, then the selected effect's enabled flag, weight and every parameter of its type with the type's range and default (an =LrgEditorDataSource= over YAML paths). Base-class properties (=enabled=, =intensity=, =priority=) are the stack's enabled / weight / order and are not listed again.
+
+*** Editing
+:PROPERTIES:
+:CUSTOM_ID: post-stack-editor-editing
+:END:
+All edits are document commands (Ctrl+Z in the tab):
+
+| Function | Does |
+|----------+------|
+| =lrg_editor_post_stack_editor_get_n_effects()=, =lrg_editor_post_stack_editor_get_effect_type()= | read the chain |
+| =lrg_editor_post_stack_editor_get_selected()=, =lrg_editor_post_stack_editor_select()= | the effect the grid shows |
+| =lrg_editor_post_stack_editor_add_effect()= | inserts an effect (unknown types fail with =LRG_POST_STACK_ERROR_UNKNOWN_EFFECT=) |
+| =lrg_editor_post_stack_editor_remove_effect()=, =lrg_editor_post_stack_editor_move_effect()= | remove, reorder (the selection follows) |
+| =lrg_editor_post_stack_editor_set_value()= | sets =enabled=, =weight= or a parameter (=_= or =-=; enums as nicks; unknown names fail with =LRG_POST_STACK_ERROR_UNKNOWN_PARAM=) |
+| =lrg_editor_post_stack_editor_build_stack()= | parses the document as it stands (unsaved edits included) |
+
+Parameters are written snake_case under =params:= unless the file already spells the key with dashes. Validation adds an error for every unknown effect type and for whatever the engine loader refuses.
+
+*** Live preview and "save current look"
+:PROPERTIES:
+:CUSTOM_ID: post-stack-editor-preview
+:END:
+- *Preview* (on when the tab opens; =lrg_editor_post_stack_editor_set_preview()=, =lrg_editor_post_stack_editor_get_preview()=): the viewport renders through the edited stack, rebuilt after every edit. It is the renderer's own stack (=lrg_world3d_renderer_set_post_stack()=), which wins over the play world's and the level's look until the preview stops (toggle off, tab closed, another post-stack editor takes over: one previews at a time). Turning it on also switches on the active viewport's Post Processing overlay.
+- *Look* (=lrg_editor_post_stack_editor_save_current_look()=, action =post.save-look=): replaces the document's effects, quality and HDR flag with the look the viewport renders now (=lrg_editor_post_stack_capture_look()=: the stack in effect on the viewport's renderer, else its preview processor through =lrg_post_stack_new_from_processor()=), as one undo step. Save to keep it. =post.save_look= writes the current look to a new file instead.
+- *Use for Level*: sets the environment's =post-stack= field to this file (project-relative), undoable with the level.
+
+** View modes and render layers
+:PROPERTIES:
+:CUSTOM_ID: view-modes
+:END:
+Each viewport's render-mode combo lists every =LrgEditorRenderMode=, which matches =LrgWorld3DRenderMode= one to one (the renderer casts between them):
+
+| Mode | Nick | Shows |
+|------+------+-------|
+| Lit / Unlit / Wireframe / Normals / Lighting | =lit=, =unlit=, =wireframe=, =normals=, =lighting-only= | as in 0.8 |
+| Overdraw | =overdraw= | an additive heat map of how many surfaces cover each pixel (blue one, red many) |
+| UV Checker | =uv= | the first UV set as red/green with a checker: stretching and missing UVs |
+| Light Complexity | =light-complexity= | how many clustered lights touch each pixel |
+| Ambient Occlusion | =ao= | the occlusion term (SSAO times material AO) in grey |
+| Reflections | =reflections= | the specular IBL (sky and reflection probes) on a mirror-like surface |
+
+The layers button (three stacked diamonds, next to the overlays eye) opens the render-layer picker of that viewport: Show All, Hide All, the named layers (0 Default, 1 UI, 2 Editor Only, 3 Ignore Raycast, 4 Transparent FX, 5 Water, 6 Sky) and the rest under More Layers. The mask is handed to the renderer as the viewport's cull mask (=lrg_editor_scene_renderer_set_cull_mask()=); it is a view setting, not saved in the level. The button lights up while some layer is hidden. =lrg_editor_viewport_panel_set_layer_mask()= and =lrg_editor_viewport_panel_get_layer_mask()= do the same from code; =lrg_editor_viewport_panel_queue_render()= asks for a new image when something else the image depends on changed (the post-stack preview uses it).
+
+** Volume gizmos
+:PROPERTIES:
+:CUSTOM_ID: volume-gizmos
+:END:
+With the Gizmos overlay on, the primary selection shows its volume when it has one (=lrg_editor_volume_has_gizmo()=), drawn from the same params the renderer reads, with handles that resize it:
+
+| Node | Volume | Handles (=LrgEditorVolumeHandle=) | Param |
+|------+--------+---------------------------------------+-------|
+| Point light | a sphere (silhouette and two great circles) of radius =range= | =LRG_EDITOR_VOLUME_HANDLE_RANGE= on the silhouette's right edge | =range= |
+| Spot light | the outer cone (solid) and inner cone (dashed ring) along local -Z, length =range= | =..._RANGE= at the base centre, =..._CONE= on the outer rim, =..._INNER_CONE= on the inner rim (opposite side) | =range=, =spot_angle=, =spot_inner_angle= (full angles, degrees) |
+| Decal | the projection box (world matrix x =size_x/y/z=) and an arrow down local -Y | =..._SIZE_X=, =..._SIZE_Y=, =..._SIZE_Z= on the +X +Y +Z faces | =size_x=, =size_y=, =size_z= (local units) |
+| Reflection probe | the axis-aligned influence box (half sizes =extents_x/y/z=) and the inner blend box (=blend_distance= inset, dashed) | =..._EXTENT_X/Y/Z= on the +X +Y +Z faces | =extents_x=, =extents_y=, =extents_z= |
+
+Dragging a handle sets its param live (the box stays centred); the release records one undo step ("Resize range"), Escape or another button cancels and restores the old value, and Ctrl snaps to tenths (whole degrees for cones). A hovered handle shows a chip with its param and value. Handles win over the transform gizmo when both are under the pointer.
+
+The math is headless and public, so tools and tests use exactly what the viewport draws: =lrg_editor_volume_get_handle_position()= (a handle's world point), =lrg_editor_volume_hit_test()= (the handle under a viewport pixel), =lrg_editor_volume_drag_value()= (the param value that puts the handle under the pointer: closest point on the handle's axis, or the cone angle through the pointer on the base plane), =lrg_editor_volume_handle_get_param()= and =lrg_editor_volume_handle_get_type()=. =lrg_editor_gizmo_paint_volume()= paints a volume into an =LrgPaintList=.
+
+With the Bounds overlay on, a selected mesh-asset node with LOD levels shows its LOD bounding sphere (dashed ring) and a chip with the level drawn now (or the forced one), its triangle count and the screen size against the level's threshold (=lrg_editor_gizmo_paint_lod_bounds()=; =lrg_editor_lod_node_screen_size()= computes the screen size of a node's group through a view).
+
+** Inspector additions
+:PROPERTIES:
+:CUSTOM_ID: inspector-additions
+:END:
+- *Lights by kind*: the Visual section lists =light_type= as a point / spot / directional picker and shows the params of that kind: a point light has =range= and =spot_angle= (a positive angle still turns it into a spot) but no inner cone; a spot light adds =spot_inner_angle=; a directional light has neither range nor cones. =shadow_bias= is listed for every kind.
+- *Decals and reflection probes* list their params with ranges and tooltips (decal: =size_x/y/z=, =opacity=, =fade_angle=, =fade_width=, =sort_order=, =roughness=, =metallic=, the albedo texture as Asset and the =normal= / =orm= textures, colour; probe: =extents_x/y/z= (default 5), =blend_distance=, =intensity=, =box_projection= (0/1), =resolution= (default 128)).
+- *LOD preview*: for one selected mesh-asset node whose model has LOD levels in the viewport (=lrg_editor_scene_renderer_get_lod_group()=; the model must be loaded, which needs a window), a "LOD" section shows a meter of the node's screen size in the active viewport against every level's threshold, one row per level (triangles, threshold, simplification error) with the level drawn now highlighted, and a *Force level* picker (Auto, LOD 0, LOD 1...). Forcing is a preview: it sets the shared group's force level, so every instance of that asset shows it, and it resets when the node is no longer inspected. The action =inspector.show= brings the inspector tab to the front.
+
+** Hierarchy and the Create menu
+:PROPERTIES:
+:CUSTOM_ID: hierarchy-kinds
+:END:
+The Create menus (window, hierarchy "+", viewport context menu) offer Point Light, Spot Light (a 45 degree cone of range 12, tilted to look down, 4 units up), Directional Light ("Sun"), Decal and Reflection Probe. The hierarchy draws a glyph per kind: a lamp head with its beam for spot lights, a sun with parallel rays for directional ones, a rayed disc for point lights, a stamp with an arrow for decals and a mirror ball in a box for reflection probes.
+
+** Material drag and drop
+:PROPERTIES:
+:CUSTOM_ID: material-drop
+:END:
+Dropping a =.rmat= from the Assets panel onto the viewport picks the node under the pointer and assigns the material with =lrg_editor_material_editor_assign_to_node()= (one undoable command setting the visual's material reference, a =guid:= when the asset database knows one); the drop label reads "Assign steel.rmat". Nothing under the pointer, or a node that takes no material (only primitives and mesh assets do), leaves the level unchanged with a status message. See [[file:material-editor.org][Material Editor]].
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: level-look-ipc
+:END:
+The methods are listed with their parameters in [[file:ipc-protocol.org::#ipc-level-look][IPC Protocol > Level look]]; =lrgeditorctl env=, =post=, =lod= and =view layers= wrap them ([[file:lrgeditorctl.org::#verbs-0-9-0][lrgeditorctl]]), and the MCP server has a tool per method.
+
+#+begin_src sh
+lrgeditorctl env set sky.source gradient
+lrgeditorctl env set fog.density 0.02          # one undo step each
+lrgeditorctl call environment.set '{"key":"exposure","value":0.5}'   # a panel field name
+lrgeditorctl env bake --wait                    # needs the window
+lrgeditorctl post create looks/dusk.rpost       # bloom, tonemap, vignette, fxaa
+lrgeditorctl post add looks/dusk.rpost color-grade
+lrgeditorctl post set looks/dusk.rpost 1 exposure 0.3
+lrgeditorctl post assign looks/dusk.rpost       # the level uses it
+lrgeditorctl view mode overdraw viewport=1
+lrgeditorctl view layers water off
+lrgeditorctl lod force Rock 2
+#+end_src
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: level-look-testing
+:END:
+- =tests/test-editor-app-environment.c=: add/remove and undo, field edits (block created in the same step, live object kept, a grid gesture merged into one step, enums by nick, colours), rows by sky source and fog switches, the preview strip, =environment.*= IPC, the level round trip, the chips and actions; the post-stack editor (add / move / remove / params, undo, save, reload), the preview driving the viewport, Look, Use for Level and =post.*= IPC; under a display (=xrun.sh=) a bake through every phase.
+- =tests/test-editor-app-viewport.c= (=ed2-*= cases): the ten modes in the combo and =view.render_mode=, the layers button, actions and =view.layers= (names, indices, masks), volume handles (positions, hit tests, a canvas drag with undo, Escape, spot cones, decal and probe boxes) and the material drop.
+- =tests/test-editor-app-inspector.c= (=render-kinds=): light rows by kind, decal and probe params, the LOD section and =lod.*= without a GPU.
+- =tests/test-editor-app-hierarchy.c= (=create-render-kinds=): the Create kinds and their presets.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: level-look-pitfalls
+:END:
+- Baking needs the window; =environment.bake= in a headless editor fails. The renderer bakes lazily anyway, so headless tools only edit the block.
+- An equirect or cubemap sky without an image bakes the gradient with a warning; set =sky-path= right after switching the source.
+- The post-stack preview overrides the level's own look in the viewport. Close the tab (or turn Preview off) to see the level's =post_stack= again.
+- The LOD preview's forced level is shared by every instance of the asset and is not saved. To change what a game shows, edit the model's =.meta= LOD keys.
+- Render-layer masks are per viewport and not saved; a viewport that hides layer 0 hides almost everything.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: level-look-see-also
+:END:
+- [[file:../modules/lighting/environment.org][Environment]], [[file:../modules/lighting/reflection-probe.org][Reflection probes]], [[file:../modules/lighting/volumetric-fog.org][Volumetric fog]]
+- [[file:../modules/postprocess/post-stack.org][Post stacks]], [[file:../modules/graphics/lod-group.org][LOD groups]], [[file:../modules/graphics/decal.org][Decals]]
+- [[file:data-editors.org][Data Editors]], [[file:material-editor.org][Material Editor]], [[file:editor-app.org][Editor application]], [[file:view-model.org][View model]]

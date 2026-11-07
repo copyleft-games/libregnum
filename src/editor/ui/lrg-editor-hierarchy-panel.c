@@ -309,17 +309,74 @@ paint_kind_glyph (LrgWidget    *widget,
 	{
 	case LRG_NODE_VISUAL_LIGHT:
 		{
-			gint i;
+			const GValue *lt = lrg_node_visual_get_param (v, "light_type");
+			const gchar  *type = (lt != NULL && G_VALUE_HOLDS_STRING (lt)) ? g_value_get_string (lt) : NULL;
+			gint          i;
 
 			c = *theme_color (widget, LRG_THEME_COLOR_WARNING);
-			lrg_paint_list_circle (list, cx, cy, r * 0.55f, &c);
-			for (i = 0; i < 8; i++)
+			if (g_strcmp0 (type, "spot") == 0 ||
+			    (type == NULL && lrg_node_visual_get_param_double (v, "spot_angle", 0.0) > 0.0))
 			{
-				gfloat a = (gfloat) i * (gfloat) G_PI / 4.0f;
+				/* spot: a lamp head and its widening beam */
+				GrlColor beam = c;
 
-				lrg_paint_list_line (list, cx + cosf (a) * r * 0.85f, cy + sinf (a) * r * 0.85f,
-				                     cx + cosf (a) * r * 1.25f, cy + sinf (a) * r * 1.25f, t, &c);
+				beam.a = (guint8) (beam.a / 3);
+				lrg_paint_list_triangle (list, cx, cy - r * 0.55f, cx + r * 1.2f, cy + r * 1.15f,
+				                         cx - r * 1.2f, cy + r * 1.15f, &beam);
+				lrg_paint_list_circle (list, cx, cy - r * 0.6f, r * 0.5f, &c);
+				lrg_paint_list_line (list, cx, cy - r * 0.55f, cx + r * 1.2f, cy + r * 1.15f, t, &c);
+				lrg_paint_list_line (list, cx, cy - r * 0.55f, cx - r * 1.2f, cy + r * 1.15f, t, &c);
 			}
+			else if (g_strcmp0 (type, "directional") == 0)
+			{
+				/* sun: a disc with parallel rays falling down-left */
+				lrg_paint_list_circle (list, cx + r * 0.35f, cy - r * 0.35f, r * 0.6f, &c);
+				for (i = 0; i < 3; i++)
+				{
+					gfloat o = ((gfloat) i - 1.0f) * r * 0.55f;
+
+					lrg_paint_list_line (list, cx - r * 0.2f + o, cy + r * 0.1f - o * 0.2f,
+					                     cx - r * 1.0f + o, cy + r * 1.1f - o * 0.2f, t, &c);
+				}
+			}
+			else
+			{
+				lrg_paint_list_circle (list, cx, cy, r * 0.55f, &c);
+				for (i = 0; i < 8; i++)
+				{
+					gfloat a = (gfloat) i * (gfloat) G_PI / 4.0f;
+
+					lrg_paint_list_line (list, cx + cosf (a) * r * 0.85f, cy + sinf (a) * r * 0.85f,
+					                     cx + cosf (a) * r * 1.25f, cy + sinf (a) * r * 1.25f, t, &c);
+				}
+			}
+		}
+		break;
+	case LRG_NODE_VISUAL_DECAL:
+		{
+			/* a projector: a square stamp with an arrow pressing into it */
+			GrlColor fill;
+
+			c.r = 0xf5; c.g = 0xc2; c.b = 0xe7; c.a = 0xff;
+			fill = c;
+			fill.a = 0x50;
+			lrg_paint_list_rect (list, cx - r * 1.1f, cy + r * 0.2f, r * 2.2f, r * 0.9f, r * 0.2f, &fill);
+			lrg_paint_list_border (list, cx - r * 1.1f, cy + r * 0.2f, r * 2.2f, r * 0.9f, r * 0.2f, t, &c);
+			lrg_paint_list_line (list, cx, cy - r * 1.15f, cx, cy + r * 0.05f, t, &c);
+			lrg_paint_list_triangle (list, cx - r * 0.45f, cy - r * 0.35f, cx + r * 0.45f, cy - r * 0.35f,
+			                         cx, cy + r * 0.15f, &c);
+		}
+		break;
+	case LRG_NODE_VISUAL_REFLECTION_PROBE:
+		{
+			/* a mirror ball in a box */
+			GrlColor hi;
+
+			c.r = 0x89; c.g = 0xdc; c.b = 0xeb; c.a = 0xff;
+			hi.r = 0xff; hi.g = 0xff; hi.b = 0xff; hi.a = 0xd0;
+			lrg_paint_list_border (list, cx - r * 1.15f, cy - r * 1.15f, r * 2.3f, r * 2.3f, r * 0.25f, t * 0.8f, &c);
+			lrg_paint_list_circle (list, cx, cy, r * 0.75f, &c);
+			lrg_paint_list_circle (list, cx - r * 0.25f, cy - r * 0.25f, r * 0.22f, &hi);
 		}
 		break;
 	case LRG_NODE_VISUAL_CAMERA:

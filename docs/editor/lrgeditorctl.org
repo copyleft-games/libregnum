@@ -134,6 +134,11 @@ location: [2, 2, -3]
 | =profiler [frames=N] [enable=true\vert{}false]= | Profiler sections as a table (=profiler.sample=) |
 | =data list\vert{}open\vert{}get\vert{}set\vert{}edit\vert{}undo\vert{}redo\vert{}validate\vert{}save\vert{}reload\vert{}close\vert{}reveal [PATH] ...= | The data editors (=data.*=), see [[#verbs-data][Data editors]] |
 | =palette [commands\vert{}files] [QUERY]=   | Open the command palette or quick-open, pre-filled (=palette.open=) |
+| =material ...=, =shader ...=, =shadergraph ...= (aliases =mat=, =sg=) | Materials, user shaders and shader graphs (=material.*=, =shader.*=, =shadergraph.*=), see [[#verbs-0-9-0][0.9.0 verbs]] |
+| =env [get\vert{}set KEY VALUE\vert{}reset\vert{}bake [--wait]\vert{}progress\vert{}show]= (alias =environment=) | The level's =environment:= block (=environment.*=) |
+| =post types\vert{}open\vert{}create\vert{}get\vert{}add\vert{}remove\vert{}move\vert{}set\vert{}save\vert{}preview\vert{}look\vert{}assign ...= | =.rpost= post stacks (=post.*=) |
+| =lod get NODE=, =lod force NODE LEVEL\vert{}auto= | LOD preview of a mesh node (=lod.*=) |
+| =view layers [MASK\vert{}LAYER on\vert{}off] [viewport=N]= | A viewport's render-layer cull mask (=view.layers=) |
 | =preferences [PAGE]= (alias =prefs=)       | Open the preferences dialog, optionally on a page such as =keybindings= (=preferences.open=) |
 | =call METHOD [k=v...\vert{}JSON]=          | Any IPC method                                              |
 | =quit [--force]=                           |                                                             |
@@ -213,6 +218,68 @@ lrgeditorctl data validate && lrgeditorctl data save
 lrgeditorctl data close --force
 #+end_src
 
+** 0.9.0 verbs
+:PROPERTIES:
+:CUSTOM_ID: verbs-0-9-0
+:END:
+The rendering tools of 0.9.0 (materials, user shaders, shader graphs, the level environment, post stacks, LOD preview, render layers and the debug view modes) have a verb family each. They follow the [[#verbs-0-8-1][0.8.1 convention]] with one addition: a family is a table of sub-commands whose positional arguments fill named parameters in order. File arguments (=PATH=, =DEST=) go through the same path rule (sent absolute when they exist relative to the current directory, else resolved by the editor against the project, which is what a file about to be created needs), value arguments (=VALUE=, =INDEX=, =FROM=, =TO=, =LEVEL=, =ENABLED=) are parsed like assignment values (JSON, numbers, =true= / =false=, =null=, =a,b,c= number vectors, and =on= / =off= as booleans), everything else is a string. =key=value= arguments are passed through as extra parameters, the result prints as YAML (=-o json= for JSON), and a wrong sub-command prints the family's usage and exits 2.
+
+| Verb | Method | Notes |
+|------+--------+-------|
+| =material open PATH= | =material.open= | Opens the material editor tab |
+| =material create PATH [parent=P] [shading_model=lit\vert{}unlit\vert{}custom] [shader=S]= | =material.create= | |
+| =material variant PATH [DEST]= | =material.create_variant= | An instance whose parent is =PATH= |
+| =material get PATH= | =material.get= | Every parameter, texture slot, uniform and the instance's =overrides= |
+| =material set PATH KEY VALUE= | =material.set= | =KEY= is a =.rmat= key: =metallic=, =base_color= (=1,0.5,0.2,1=), =textures.albedo=, =uniforms.tint= ... |
+| =material revert PATH KEY= | =material.revert= | Drops an instance's override |
+| =material save PATH=, =material list= | =material.save=, =material.list= | |
+| =material preview PATH [SHAPE] [rotate=BOOL]= | =material.preview= | =SHAPE=: =sphere=, =cube=, =plane= |
+| =material assign NODE PATH [submesh=N]= | =material.assign= | Same as dropping the material on the node in the viewport (undoable) |
+| =shader create PATH [lit=BOOL]= | =shader.create= | A =.rshader= with a fragment stub |
+| =shader compile\vert{}diagnostics\vert{}uniforms\vert{}reload PATH= | =shader.*= | Compile needs a windowed editor (GL) |
+| =shadergraph open\vert{}create\vert{}get\vert{}validate\vert{}glsl\vert{}save PATH= | =shadergraph.*= | =create= takes =master=pbr\vert{}unlit= |
+| =shadergraph types= | =shadergraph.node_types= | The node library |
+| =shadergraph add PATH TYPE [id=I] [x=X] [y=Y]= | =shadergraph.add_node= | |
+| =shadergraph remove PATH ID= | =shadergraph.remove_node= | |
+| =shadergraph connect PATH FROM FROM_PORT TO TO_PORT=, =shadergraph disconnect PATH TO TO_PORT= | =shadergraph.connect=, =shadergraph.disconnect= | |
+| =shadergraph param PATH ID KEY VALUE=, =shadergraph input PATH ID PORT VALUE= | =shadergraph.set_param=, =shadergraph.set_input= | =VALUE= =null= clears an input constant |
+| =env= or =env get= | =environment.get= | ={present, environment, baked, needs_bake}= |
+| =env set KEY VALUE= | =environment.set= | =KEY= is a dotted path in the block (=fog.density=, =sky.source=, =sky.zenith=, =ibl.enabled=, =volumetric.steps=, =post_stack=); one undo step; =values={...}= sets several at once |
+| =env reset= | =environment.reset= | Removes the block (undoable) |
+| =env bake [--wait]= | =environment.bake= | Starts the IBL bake and probe capture (windowed editors). =--wait= polls =environment.progress= until it finishes (up to ten minutes, or =--timeout= seconds when longer) and exits 1 when the bake reports an error |
+| =env progress=, =env show= | =environment.progress=, =environment.show= | |
+| =post types= | =post.effect_types= | Effect types with their parameters |
+| =post open\vert{}get\vert{}save\vert{}assign PATH= | =post.*= | =assign= makes the stack the level's =environment.post_stack= |
+| =post create PATH [preset=default\vert{}empty]= | =post.create= | |
+| =post add PATH TYPE [index=N]=, =post remove PATH INDEX=, =post move PATH FROM TO= | =post.add=, =post.remove=, =post.move= | |
+| =post set PATH INDEX KEY VALUE= | =post.set= | =KEY= is =enabled=, =weight= or an effect parameter |
+| =post preview [PATH] on\vert{}off= | =post.preview= | Live preview of a stack in the viewports, or back to the level's look |
+| =post look PATH [viewport=N]= | =post.save_look= | "Save current look": what a viewport's post chain does now, as a =.rpost= |
+| =lod get NODE= | =lod.get= | Levels with triangle counts, screen sizes and errors, the current and the forced level |
+| =lod force NODE LEVEL= | =lod.force= | Preview only; =auto= (or =level=-1=) goes back to automatic selection. A bare =-1= would be read as an option, hence =auto= |
+| =view layers [MASK]=, =view layers LAYER on\vert{}off= | =view.layers= | =MASK= is a number, =0x= hex, =all= or =none=; =LAYER= an index 0..31 or a layer name (=default=, =ui=, =editor-only=, =ignore-raycast=, =transparent-fx=, =water=, =sky=); =viewport=N= picks a viewport |
+| =view render-mode MODE= (alias =view mode=) | =view.render_mode= | =MODE=: =lit=, =unlit=, =wireframe=, =normals=, =lighting-only= and the debug views =overdraw=, =uv=, =light-complexity=, =ao=, =reflections= |
+
+#+begin_src sh
+lrgeditorctl material create materials/steel.rmat
+lrgeditorctl material set materials/steel.rmat metallic 1
+lrgeditorctl material set materials/steel.rmat base_color 0.8,0.8,0.85,1
+lrgeditorctl material assign Props/Crate materials/steel.rmat
+lrgeditorctl shadergraph connect graphs/glow.rshadergraph time out mul a
+lrgeditorctl env set sky.source gradient
+lrgeditorctl env set fog.density 0.02
+lrgeditorctl env bake --wait
+lrgeditorctl post create looks/night.rpost preset=empty
+lrgeditorctl post add looks/night.rpost vignette
+lrgeditorctl post set looks/night.rpost 0 intensity 0.4
+lrgeditorctl post assign looks/night.rpost
+lrgeditorctl lod force Props/Statue 2; lrgeditorctl lod force Props/Statue auto
+lrgeditorctl view layers 0x5 viewport=1
+lrgeditorctl view mode light-complexity
+#+end_src
+
+=make test-editorctl= drives a few commands of each family; a family whose methods the editor under test does not register is reported as =SKIP=.
+
 ** MCP
 :PROPERTIES:
 :CUSTOM_ID: mcp
@@ -227,7 +294,7 @@ claude mcp add libregnum -- lrgeditorctl mcp
 claude mcp add libregnum-keep -- lrgeditor --mcp /home/me/games/keep
 #+end_src
 
-Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Added in 0.8.1 (one per new IPC method, arguments passed through): =get_asset_meta= (read-only), =set_asset_meta=, =vcs_status= (read-only), =prefab_overrides= (read-only), =prefab_apply= (destructive), =prefab_revert= (destructive), =prefab_sync=, =prefab_relink=, =prefab_unlink= (destructive), =set_viewport_layout=, =set_render_mode=, =set_overlay=, =inspector_list= and =inspector_get= (read-only), =inspector_set=, =inspector_reset=, =inspector_apply_override= and =inspector_revert_override= (destructive), =inspector_state= (read-only, no arguments; lock the inspector with =run_action= =inspector.toggle-lock=), =hierarchy_reveal=, =hierarchy_rename=, =hierarchy_filter=, =hierarchy_state= (read-only), =asset_reveal=, =asset_rename=, =asset_move=, =asset_duplicate=, =asset_trash= and =asset_orphans= (destructive), =profiler_sample=, =code_open=, =code_list= (read-only), =code_save=, =open_palette=, =open_preferences=, and the data editor tools =data_open=, =data_list=, =data_get= and =data_validate= (read-only), =data_set=, =data_edit=, =data_undo=, =data_redo=, =data_save=, =data_reveal=, =data_reload= and =data_close= (destructive: they can discard unsaved edits). =notify= takes =level= as a string (=info=, =success=, =warning=, =error=). Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
+Tools: =editor_info=, =list_sessions=, =get_tree=, =get_node=, =find_nodes=, =create_node= (with transform), =update_node=, =delete_node=, =duplicate_node=, =move_node=, =add_component=, =set_component=, =remove_component=, =add_script=, =remove_script=, =get_selection=, =set_selection=, =undo=, =redo=, =get_history=, =save_level=, =open_level=, =new_level=, =get_level_yaml=, =validate_level=, =list_actions=, =run_action=, =play=, =run_game=, =get_view=, =set_view=, =focus_view=, =screenshot= (returns a PNG image), =get_log=, =list_assets=, =project_info=, =ui_state=, =notify=, =get_tilemap=, =configure_tilemap=, =paint_tiles=, =paint_tile_rect=, =fill_tiles=, =list_timelines=, =get_timeline=, =set_keyframe=, =remove_keyframe=, =configure_timeline=, =preview_timeline=, =get_thumbnail=, =call_method= (see [[file:editor-tools.org][Editor Tools]]). Added in 0.8.1 (one per new IPC method, arguments passed through): =get_asset_meta= (read-only), =set_asset_meta=, =vcs_status= (read-only), =prefab_overrides= (read-only), =prefab_apply= (destructive), =prefab_revert= (destructive), =prefab_sync=, =prefab_relink=, =prefab_unlink= (destructive), =set_viewport_layout=, =set_render_mode=, =set_overlay=, =inspector_list= and =inspector_get= (read-only), =inspector_set=, =inspector_reset=, =inspector_apply_override= and =inspector_revert_override= (destructive), =inspector_state= (read-only, no arguments; lock the inspector with =run_action= =inspector.toggle-lock=), =hierarchy_reveal=, =hierarchy_rename=, =hierarchy_filter=, =hierarchy_state= (read-only), =asset_reveal=, =asset_rename=, =asset_move=, =asset_duplicate=, =asset_trash= and =asset_orphans= (destructive), =profiler_sample=, =code_open=, =code_list= (read-only), =code_save=, =open_palette=, =open_preferences=, and the data editor tools =data_open=, =data_list=, =data_get= and =data_validate= (read-only), =data_set=, =data_edit=, =data_undo=, =data_redo=, =data_save=, =data_reveal=, =data_reload= and =data_close= (destructive: they can discard unsaved edits). Added in 0.9.0 (one per new IPC method, arguments passed through): the material tools =material_open=, =material_create=, =material_create_variant=, =material_get= (read-only), =material_set=, =material_revert= (destructive), =material_save=, =material_preview=, =material_assign=, =material_list= (read-only); the shader tools =shader_create=, =shader_compile=, =shader_diagnostics= and =shader_uniforms= (read-only), =shader_reload=; the shader graph tools =shadergraph_open=, =shadergraph_create=, =shadergraph_node_types= and =shadergraph_get= (read-only), =shadergraph_add_node=, =shadergraph_remove_node= (destructive), =shadergraph_connect=, =shadergraph_disconnect= (destructive), =shadergraph_set_param=, =shadergraph_set_input=, =shadergraph_validate= and =shadergraph_glsl= (read-only), =shadergraph_save=; the level look tools =environment_get= (read-only), =environment_set=, =environment_reset= (destructive), =environment_bake=, =environment_progress= (read-only), =environment_show=; the post stack tools =post_effect_types= and =post_get= (read-only), =post_open=, =post_create=, =post_add=, =post_remove= (destructive), =post_move=, =post_set=, =post_save=, =post_preview=, =post_save_look=, =post_assign=; =lod_get= (read-only), =lod_force=; and =set_view_layers=. =set_render_mode= accepts the five debug view modes. =notify= takes =level= as a string (=info=, =success=, =warning=, =error=). Tools carry read-only/destructive hints; the server's instructions tell the model how nodes are addressed and the units used. =screenshot= is a deferred tool: inside the editor its reply is sent after the next frame is drawn, so it cannot stall the render loop.
 
 Adding a tool: append a row to the table in =src/editorctl/lrgeditorctl-mcp.c= (name, IPC method, kind, hints, description, JSON-schema properties); both servers pick it up.
 

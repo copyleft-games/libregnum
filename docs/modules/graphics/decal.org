@@ -410,7 +410,7 @@ if (lrg_decal_get_coverage (puddle, feet, up) > 0.5f)
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-In wave 2a decals are an engine API plus [[file:../world3d/components.org::#decal][LrgDecalComponent]], which already works in play-in-editor once the renderer integration lands. Wave 2b adds the editor side: a decal gizmo in the viewport (the projector box with an arrow along -Y, resizable with handles), a decal node visual and its inspector (textures, blend, channels, fades, order, layers), mapping that visual to an =LrgDecalComponent= on level instantiation, and a "Decal complexity" debug view of the per-cell counts. Until then add the component from code or a script.
+In the editor, Create > Decal adds a =decal= node: its Asset is the albedo texture and its colour the decal colour; the inspector lists =size_x/y/z=, =opacity=, =fade_angle=, =fade_width=, =sort_order=, =roughness=, =metallic= and the =normal= / =orm= textures with ranges and tooltips. Selected, it shows its projection box (the world matrix times the sizes) with an arrow down local -Y, and handles on the +X +Y +Z faces resize =size_x/y/z= (in local units, the box stays centred), one undo step per drag; see [[file:../../editor/environment.org::#volume-gizmos][Volume gizmos]]. The viewport draws decal nodes through the renderer's decal set, and level instantiation maps the node to an [[file:../world3d/components.org::#decal][LrgDecalComponent]].
 
 ** See also
 :PROPERTIES:

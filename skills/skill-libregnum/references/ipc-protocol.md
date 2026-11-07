@@ -49,3 +49,22 @@ sock="$(ls -t "${XDG_RUNTIME_DIR}"/libregnum/editor-*.sock | head -n 1)"
 printf '{"id":1,"method":"node.find","params":{"query":"Door"}}\n' \
 	| socat -t 2 - UNIX-CONNECT:"${sock}" | yq -p json '.result'
 ```
+
+## Materials and shaders (0.9.0)
+Registered by the assets panel (material.*, shadergraph.*) and the code panel (shader.*); full tables in docs/editor/ipc-protocol.org#material-methods.
+material.open {path} -> {path,panel}; material.create {path, parent?, shading_model?: lit|unlit|custom, shader?} -> {path}; material.create_variant {path, dest?} -> {path}; material.get {path} -> effective values + overrides[]; material.set {path,key,value} (dotted .rmat key; undoable) -> {path,key,dirty}; material.revert {path,key} -> {reverted}; material.save {path}; material.preview {path, shape?: sphere|cube|plane, rotate?}; material.assign {node, path} -> {node,material}; material.list {} -> {editors:[{path,dirty}]}
+shader.create {path, lit?=true} -> {path,fragment}; shader.compile {path} -> {ok, compiled, diagnostics:[{document,file,line,column,error,message}]}; shader.diagnostics {path}; shader.uniforms {path} -> {uniforms:[{name,type,default,min?,max?,hint?}]}; shader.reload {path}
+shadergraph.open|create {path, master?: pbr|unlit}|node_types|get|add_node {path,type,id?,x?,y?}|remove_node {path,id}|connect {path,from,from_port,to,to_port}|disconnect {path,to,to_port}|set_param {path,id,key,value}|set_input {path,id,port,value|null}|validate -> {ok,problems:[{code,node,port,message}]}|glsl -> {fragment}|save -> {path, shader}
+
+## Level look (0.9.0)
+environment.get {} -> {present, environment|null, baked, needs_bake}
+environment.set {key,value}|{values:{k:v}} (dotted: sky.source, sky.zenith [r,g,b], fog.enabled, fog.density, ibl.resolution, volumetric.steps, post_stack; or field names exposure, fog-density, sky-color) -> as get; undoable, creates the block
+environment.reset {} ; environment.bake {} -> {started} (window only) ; environment.progress {} -> {baking, phase idle|starting|environment|probes|done|failed, progress, error, baked, probes} ; environment.show {}
+post.effect_types {} -> {types:[{type, params:[{name,type,default,min?,max?}]}]}
+post.open {path} -> {path,panel}; post.create {path, preset?: default|empty} -> {path}; post.get {path} -> {path,name,quality,hdr,dirty,effects:[{index,type,enabled,weight,params}]}
+post.add {path,type,index?} -> {index}; post.remove {path,index}; post.move {path,from,to}; post.set {path,index,key,value} (key enabled|weight|param); post.save {path}
+post.preview {path?, enabled} -> {preview}; post.save_look {path, viewport?} -> {path, effects}; post.assign {path} -> {post_stack}
+lod.get {node} -> {node, asset, available, levels:[{level,triangles,screen_size,error}], screen_size?, current, forced}; lod.force {node, level (-1 auto)}
+view.layers {viewport?, mask? (n|"all"|"none"|"0x.."), layer? (0..31|name), enabled?} -> {viewport, mask, layers:[{index,name,enabled}]}
+view.render_mode {viewport?, mode?} -> {viewport, mode, modes[]}; modes lit unlit wireframe normals lighting-only overdraw uv light-complexity ao reflections
+Actions: environment.show/add/remove/bake, post.save-look, inspector.show

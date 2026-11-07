@@ -64,6 +64,9 @@
 #include "../../ui/lrg-drop-target.h"
 #include "../../paint/lrg-paint-icons.h"
 #include "../../tween/lrg-spring.h"
+#include "../../graphics/lrg-camera.h"
+#include "data/lrg-editor-material-editor.h"
+#include "data/lrg-editor-post-stack-editor.h"
 #include <math.h>
 #include <string.h>
 
@@ -93,8 +96,18 @@ static const gchar * const preset_labels[N_PRESETS] = {
 	"Perspective", "Orthographic", "Top", "Bottom", "Front", "Back", "Right", "Left", "2D"
 };
 
+/* Render modes of the header combo box, in LrgEditorRenderMode order.
+ * The combo lists as many as the enum has (the 0.9.0 debug views
+ * included); a mode without a label here shows its enum nick. */
 static const gchar * const mode_labels[] = {
-	"Lit", "Unlit", "Wireframe", "Normals", "Lighting"
+	"Lit", "Unlit", "Wireframe", "Normals", "Lighting",
+	"Overdraw", "UV", "Light Count", "AO", "Reflections"
+};
+
+/* Render layers with an engine name (lrg-camera.h); the rest are
+ * "Layer N". */
+static const gchar * const layer_names[] = {
+	"Default", "UI", "Editor Only", "Ignore Raycast", "Transparent FX", "Water", "Sky"
 };
 
 /* Overlay flags of the overlays menu: action suffix (the flag nick) and
@@ -116,10 +129,11 @@ static const struct
 	{ LRG_EDITOR_VIEW_OVERLAY_POST, "post", "Post Processing" },
 };
 
-/* The header's two icon toggles. */
+/* The header's icon toggles. */
 typedef enum
 {
 	ICON_OVERLAYS,
+	ICON_LAYERS,
 	ICON_PREVIEW,
 	ICON_MAXIMIZE
 } IconKind;
@@ -135,6 +149,9 @@ struct _LrgEditorViewportPanel
 	LrgComboBox         *preset_combo;
 	LrgComboBox         *mode_combo;
 	LrgCustomWidget     *overlay_button;
+	LrgCustomWidget     *layers_button;
+	LrgMenu             *layers_menu;
+	guint32              cull_mask;    /* render layers this viewport shows */
 	LrgHBox             *tools;        /* the icon buttons, right aligned */
 	LrgCustomWidget     *preview_button;
 	LrgCustomWidget     *max_button;
@@ -161,6 +178,12 @@ struct _LrgEditorViewportPanel
 	gfloat               pointer_v;
 	gboolean             hovered;
 	gboolean             gizmo_drag;   /* the left button drags the transform gizmo */
+
+	/* Volume gizmo (light range / cone, decal and probe boxes) */
+	LrgEditorVolumeHandle vol_hot;     /* hovered handle */
+	LrgEditorVolumeHandle vol_handle;  /* dragged handle, NONE when idle */
+	LrgNode             *vol_node;     /* weak: the node being resized */
+	LrgNode             *vol_before;   /* owned: its state before the drag */
 
 	/* Tile painting (paint mode, left button) */
 	gboolean             tile_drag;
@@ -201,6 +224,8 @@ struct _LrgEditorViewportPanel
 G_DEFINE_FINAL_TYPE (LrgEditorViewportPanel, lrg_editor_viewport_panel, LRG_TYPE_CONTAINER)
 
 static void sync_header (LrgEditorViewportPanel *self);
+static LrgNode *volume_node (LrgEditorViewportPanel *self);
+static void register_methods (LrgEditorApp *app);
 
 /* This panel's camera as an LrgEditorView (picking and gizmo math). */
 static void
@@ -428,6 +453,30 @@ overlay_paint (LrgCustomWidget *widget,
 			                                   self->tile_erase || lrg_editor_view_state_get_tile_tool (app->view) ==
 			                                                           LRG_EDITOR_TILE_TOOL_ERASER,
 			                                   ox, oy, scale);
+	}
+
+	/* Volumes of the selected light / decal / probe, and LOD bounds */
+	{
+		LrgNode *vnode = volume_node (self);
+
+		if (vnode != NULL)
+			lrg_editor_gizmo_paint_volume (list, theme, &view, vnode,
+			                               self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE ? self->vol_handle
+			                                                                                 : self->vol_hot,
+			                               self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE, ox, oy, scale);
+		if ((overlays & LRG_EDITOR_VIEW_OVERLAY_BOUNDS) && app->renderer != NULL)
+		{
+			LrgEditorSelection *sel = lrg_editor_get_selection (app->editor);
+			LrgNode            *primary = (sel != NULL) ? lrg_editor_selection_get_primary (sel) : NULL;
+			LrgNodeVisual      *visual = (primary != NULL) ? lrg_node_get_visual (primary) : NULL;
+			LrgLodGroup        *lod = NULL;
+
+			if (visual != NULL && lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_MESH_ASSET &&
+			    lrg_node_visual_get_asset (visual) != NULL)
+				lod = lrg_editor_scene_renderer_get_lod_group (app->renderer, lrg_node_visual_get_asset (visual));
+			if (lod != NULL)
+				lrg_editor_gizmo_paint_lod_bounds (list, theme, &view, primary, lod, ox, oy, scale);
+		}
 	}
 
 	/* The transform gizmo (every viewport shows it, through its camera) */
@@ -833,6 +882,113 @@ activate (LrgEditorViewportPanel *self)
 		lrg_editor_view_state_set_active_viewport (self->app->view, self->index);
 }
 
+/* ==========================================================================
+ * Volume gizmo drags
+ * ========================================================================== */
+
+/* The node whose volume gizmo shows: the primary selection, unlocked,
+ * with the gizmos overlay on and outside tile painting. */
+static LrgNode *
+volume_node (LrgEditorViewportPanel *self)
+{
+	LrgEditorApp       *app = self->app;
+	LrgEditorSelection *sel;
+	LrgNode            *node;
+
+	if (app == NULL || lrg_editor_view_state_get_tile_mode (app->view) ||
+	    !(lrg_editor_view_state_get_overlays (app->view, (gint) self->index) & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) ||
+	    lrg_editor_play_session_is_playing (app->play))
+		return NULL;
+	sel = lrg_editor_get_selection (app->editor);
+	node = (sel != NULL) ? lrg_editor_selection_get_primary (sel) : NULL;
+	if (node == NULL || lrg_node_get_locked (node) || !lrg_editor_volume_has_gizmo (node))
+		return NULL;
+	return node;
+}
+
+static gboolean
+volume_press (LrgEditorViewportPanel *self,
+              gfloat                  u,
+              gfloat                  v)
+{
+	LrgNode              *node = volume_node (self);
+	LrgEditorView         view;
+	LrgEditorVolumeHandle h;
+
+	if (node == NULL)
+		return FALSE;
+	current_view (self, &view);
+	h = lrg_editor_volume_hit_test (&view, node, u, v);
+	if (h == LRG_EDITOR_VOLUME_HANDLE_NONE)
+		return FALSE;
+	self->vol_handle = h;
+	self->vol_hot = h;
+	g_set_weak_pointer (&self->vol_node, node);
+	g_clear_object (&self->vol_before);
+	self->vol_before = lrg_editor_snapshot_node (node);
+	mark_dirty (self);
+	return TRUE;
+}
+
+/* Writes the value under the pointer into the node, live. */
+static void
+volume_drag (LrgEditorViewportPanel *self,
+             gfloat                  u,
+             gfloat                  v)
+{
+	LrgEditorView  view;
+	gdouble        value;
+	LrgNodeVisual *visual;
+	const gchar   *param = lrg_editor_volume_handle_get_param (self->vol_handle);
+
+	if (self->vol_node == NULL || param == NULL)
+		return;
+	current_view (self, &view);
+	if (!lrg_editor_volume_drag_value (&view, self->vol_node, self->vol_handle, u, v, &value))
+		return;
+	/* Ctrl snaps to tenths (whole degrees for cones) */
+	if (self->mods & LRG_INPUT_MODIFIER_CTRL)
+		value = (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_CONE ||
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE) ? round (value) : round (value * 10.0) / 10.0;
+	visual = lrg_node_get_visual (self->vol_node);
+	lrg_node_visual_set_param_double (visual, param, value);
+	/* a spot light without an explicit inner cone keeps the 0.8 ratio */
+	if (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_CONE &&
+	    lrg_node_visual_get_param_double (visual, "spot_inner_angle", 0.0) > value)
+		lrg_node_visual_set_param_double (visual, "spot_inner_angle", value);
+	if (lrg_editor_get_level (self->app->editor) != NULL)
+		lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->vol_node);
+	mark_dirty (self);
+}
+
+/* Ends the drag: one undo step, or the old state back on cancel. */
+static void
+volume_finish (LrgEditorViewportPanel *self,
+               gboolean                commit)
+{
+	if (self->vol_node != NULL && self->vol_before != NULL)
+	{
+		if (commit)
+		{
+			g_autofree gchar *label = g_strdup_printf ("Resize %s",
+			                                           lrg_editor_volume_handle_get_param (self->vol_handle));
+
+			lrg_editor_commit_node_state (self->app->editor, self->vol_node, self->vol_before, label, FALSE);
+		}
+		else
+		{
+			lrg_node_copy_state (self->vol_node, self->vol_before);
+			if (lrg_editor_get_level (self->app->editor) != NULL)
+				lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->vol_node);
+			editor_app_set_status (self->app, "Resize cancelled");
+		}
+	}
+	self->vol_handle = LRG_EDITOR_VOLUME_HANDLE_NONE;
+	g_clear_weak_pointer (&self->vol_node);
+	g_clear_object (&self->vol_before);
+	mark_dirty (self);
+}
+
 static void
 on_pointer_press (LrgViewport       *viewport,
                   gint               button,
@@ -852,6 +1008,14 @@ on_pointer_press (LrgViewport       *viewport,
 	g_object_set_data (G_OBJECT (app), NAV_OWNER_KEY, self);
 	activate (self);
 	take_focus (self);
+
+	/* Any other button cancels a volume resize */
+	if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+	{
+		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
+			volume_finish (self, FALSE);
+		return;
+	}
 
 	/* A right click (or any other button) cancels a gizmo drag */
 	if (self->gizmo_drag)
@@ -875,6 +1039,10 @@ on_pointer_press (LrgViewport       *viewport,
 	if (button != (gint) GRL_MOUSE_BUTTON_LEFT || (mods & LRG_INPUT_MODIFIER_ALT))
 		return;
 
+	/* Volume handles sit on the edges of lights, decals and probes and
+	 * win over the transform gizmo at the centre */
+	if (volume_press (self, u, v))
+		return;
 	current_view (self, &view);
 	if (lrg_editor_gizmo_begin_drag (app->gizmo, &view, u, v))
 		self->gizmo_drag = TRUE;
@@ -900,7 +1068,7 @@ on_pointer_move (LrgViewport *viewport,
 	self->pointer_v = v;
 	self->hovered = TRUE;
 	idle = lrg_editor_viewport_nav_get_mode (app->nav) == LRG_EDITOR_NAV_MODE_NONE && !self->gizmo_drag &&
-	       !self->tile_drag;
+	       !self->tile_drag && self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_NONE;
 
 	/* Hovering with no gesture running makes this the active viewport,
 	 * so shortcuts and the keyboard act where the pointer is */
@@ -925,11 +1093,27 @@ on_pointer_move (LrgViewport *viewport,
 	else
 		app->tile_hover_valid = FALSE;
 
+	if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+	{
+		volume_drag (self, u, v);
+		return;
+	}
 	current_view (self, &view);
 	if (self->gizmo_drag)
 		lrg_editor_gizmo_drag (app->gizmo, &view, u, v, (self->mods & LRG_INPUT_MODIFIER_CTRL) != 0);
 	else if (lrg_editor_viewport_nav_get_mode (app->nav) == LRG_EDITOR_NAV_MODE_NONE && !self->tile_drag)
+	{
+		LrgNode              *vnode = volume_node (self);
+		LrgEditorVolumeHandle hot = (vnode != NULL) ? lrg_editor_volume_hit_test (&view, vnode, u, v)
+		                                            : LRG_EDITOR_VOLUME_HANDLE_NONE;
+
+		if (hot != self->vol_hot)
+		{
+			self->vol_hot = hot;
+			mark_dirty (self);
+		}
 		lrg_editor_gizmo_update_hover (app->gizmo, &view, u, v);
+	}
 }
 
 static void
@@ -959,6 +1143,12 @@ on_pointer_release (LrgViewport       *viewport,
 				lrg_editor_tile_painter_stroke_to (app->tile_painter, app->tile_hover_x, app->tile_hover_y);
 		}
 		tile_finish (self, node, TRUE);
+		return;
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+	{
+		volume_drag (self, u, v);
+		volume_finish (self, TRUE);
 		return;
 	}
 	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->gizmo_drag)
@@ -1003,7 +1193,12 @@ on_key (LrgViewport       *viewport,
 	self->mods = mods;
 	if (key == GRL_KEY_ESCAPE)
 	{
-		/* A gizmo drag owns Escape */
+		/* A volume resize, then a gizmo drag own Escape */
+		if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
+		{
+			volume_finish (self, FALSE);
+			return TRUE;
+		}
 		if (self->gizmo_drag)
 		{
 			lrg_editor_gizmo_cancel_drag (app->gizmo);
@@ -1113,6 +1308,33 @@ lrg_editor_viewport_panel_drop_asset (LrgEditorViewportPanel *self,
 		at[0] = lrg_editor_snap_value (at[0], (gfloat) snap_t);
 		at[1] = lrg_editor_snap_value (at[1], (gfloat) snap_t);
 		at[2] = lrg_editor_snap_value (at[2], (gfloat) snap_t);
+	}
+
+	/* A material lands on the mesh under the pointer (ED1's undoable
+	 * assignment), never as a new node */
+	if (g_str_has_suffix (path, ".rmat"))
+	{
+		LrgEditorView view;
+		gfloat        o[3], d[3];
+		LrgNode      *hit;
+
+		current_view (self, &view);
+		lrg_editor_view_get_ray (&view, u, v, o, d);
+		hit = lrg_editor_pick (lrg_editor_get_level (app->editor), o, d, FALSE, NULL);
+		if (hit == NULL)
+		{
+			editor_app_set_status (app, "Drop %s onto a mesh to assign it", base);
+			return NULL;
+		}
+		if (!lrg_editor_material_editor_assign_to_node (app, lrg_node_get_guid (hit), path, &error))
+		{
+			editor_app_notify (app, EDITOR_NOTIFY_WARNING, "%s: %s", base, error->message);
+			return NULL;
+		}
+		lrg_editor_select (app->editor, hit, FALSE);
+		editor_app_set_status (app, "Assigned %s to %s", base, lrg_node_get_name (hit));
+		mark_dirty (self);
+		return hit;
 	}
 
 	/* One undo step for the whole placement */
@@ -1226,7 +1448,8 @@ drop_update (LrgEditorViewportPanel *self,
 			g_autofree gchar *base = g_path_get_basename (path);
 			LrgAssetType      kind = lrg_asset_database_classify (path);
 
-			self->drop_label = g_strdup_printf ("%s %s", kind == LRG_ASSET_TYPE_SCRIPT ? "Attach" :
+			self->drop_label = g_strdup_printf ("%s %s", g_str_has_suffix (path, ".rmat") ? "Assign" :
+			                                    kind == LRG_ASSET_TYPE_SCRIPT ? "Attach" :
 			                                    kind == LRG_ASSET_TYPE_PREFAB ? "Instance" :
 			                                    kind == LRG_ASSET_TYPE_LEVEL ? "Open" : "Place", base);
 		}
@@ -1377,6 +1600,15 @@ on_preset_changed (LrgComboBox *combo,
 	apply_preset (self, (ViewPreset) i);
 }
 
+/* How many render modes LrgEditorRenderMode has. */
+static guint
+n_render_modes (void)
+{
+	g_autoptr(GEnumClass) klass = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+
+	return klass->n_values;
+}
+
 static void
 on_mode_changed (LrgComboBox *combo,
                  gpointer     user_data)
@@ -1384,7 +1616,7 @@ on_mode_changed (LrgComboBox *combo,
 	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
 	gint                    i = lrg_combo_box_get_selected (combo);
 
-	if (self->syncing || i < 0 || i >= (gint) G_N_ELEMENTS (mode_labels))
+	if (self->syncing || i < 0 || i >= (gint) n_render_modes ())
 		return;
 	activate (self);
 	lrg_editor_view_state_set_render_mode (self->app->view, (gint) self->index, (LrgEditorRenderMode) i);
@@ -1427,6 +1659,76 @@ open_overlay_menu (LrgEditorViewportPanel *self)
 	lrg_menu_popup_at_widget (self->overlay_menu, LRG_WIDGET (self->overlay_button), LRG_POPUP_PLACEMENT_BELOW);
 }
 
+/* ==========================================================================
+ * Render layers
+ * ========================================================================== */
+
+static gchar *
+layer_label (guint layer)
+{
+	return layer < G_N_ELEMENTS (layer_names) ? g_strdup_printf ("%u  %s", layer, layer_names[layer])
+	                                          : g_strdup_printf ("%u  Layer %u", layer, layer);
+}
+
+/* vp.layer-<n>: toggles one layer of this viewport's cull mask. */
+static void
+on_layer_action (GSimpleAction *action,
+                 GVariant      *parameter,
+                 gpointer       user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+	guint                   layer = GPOINTER_TO_UINT (g_object_get_data (G_OBJECT (action), "lrg-layer"));
+
+	lrg_editor_viewport_panel_set_layer_mask (self, self->cull_mask ^ LRG_RENDER_LAYERS_BIT (layer));
+}
+
+static void
+on_layers_all (GSimpleAction *action,
+               GVariant      *parameter,
+               gpointer       user_data)
+{
+	lrg_editor_viewport_panel_set_layer_mask (LRG_EDITOR_VIEWPORT_PANEL (user_data), LRG_RENDER_LAYERS_MASK_ALL);
+}
+
+static void
+on_layers_none (GSimpleAction *action,
+                GVariant      *parameter,
+                gpointer       user_data)
+{
+	lrg_editor_viewport_panel_set_layer_mask (LRG_EDITOR_VIEWPORT_PANEL (user_data), LRG_RENDER_LAYERS_MASK_NONE);
+}
+
+/* The layers popup: All / None, the named layers, the rest in a
+ * submenu. */
+static void
+open_layers_menu (LrgEditorViewportPanel *self)
+{
+	activate (self);
+	if (self->layers_menu == NULL)
+	{
+		g_autoptr(GMenu) menu = g_menu_new ();
+		g_autoptr(GMenu) quick = g_menu_new ();
+		g_autoptr(GMenu) named = g_menu_new ();
+		g_autoptr(GMenu) more = g_menu_new ();
+		guint            i;
+
+		g_menu_append (quick, "Show All Layers", "vp.layers-all");
+		g_menu_append (quick, "Hide All Layers", "vp.layers-none");
+		for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+		{
+			g_autofree gchar *label = layer_label (i);
+			g_autofree gchar *detailed = g_strdup_printf ("vp.layer-%u", i);
+
+			g_menu_append (i < G_N_ELEMENTS (layer_names) ? named : more, label, detailed);
+		}
+		g_menu_append_section (menu, NULL, G_MENU_MODEL (quick));
+		g_menu_append_section (menu, "Render Layers", G_MENU_MODEL (named));
+		g_menu_append_submenu (named, "More Layers", G_MENU_MODEL (more));
+		self->layers_menu = g_object_ref_sink (lrg_menu_new_from_model (G_MENU_MODEL (menu)));
+	}
+	lrg_menu_popup_at_widget (self->layers_menu, LRG_WIDGET (self->layers_button), LRG_POPUP_PLACEMENT_BELOW);
+}
+
 /* The two icon toggles of the header, as custom widgets: hover/pressed
  * backgrounds from the theme, an accent fill while checked. */
 static gboolean
@@ -1437,6 +1739,9 @@ icon_checked (LrgEditorViewportPanel *self,
 
 	if (kind == ICON_OVERLAYS)
 		return self->overlay_menu != NULL && lrg_menu_get_open (self->overlay_menu);
+	if (kind == ICON_LAYERS)
+		return (self->layers_menu != NULL && lrg_menu_get_open (self->layers_menu)) ||
+		       self->cull_mask != LRG_RENDER_LAYERS_MASK_ALL;
 	if (kind == ICON_PREVIEW)
 		return self->preview_enabled;
 	split = find_split (self);
@@ -1494,6 +1799,29 @@ icon_paint (LrgCustomWidget *widget,
 
 		lrg_paint_list_icon (list, LRG_ICON_EYE, cx - box * 0.5f, cy - box * 0.5f, box, 0.0f, &ink);
 	}
+	else if (kind == ICON_LAYERS)
+	{
+		/* Three stacked diamonds (a layer stack); the top one is
+		 * filled, the lower ones are outlines peeking out below */
+		gint i;
+
+		for (i = 2; i >= 0; i--)
+		{
+			gfloat dy = cy - s * 0.45f + (gfloat) i * s * 0.45f;
+			gfloat w = s * 1.15f, h = s * 0.55f;
+
+			if (i == 0)
+			{
+				lrg_paint_list_triangle (list, cx - w, dy, cx, dy - h, cx + w, dy, &ink);
+				lrg_paint_list_triangle (list, cx - w, dy, cx + w, dy, cx, dy + h, &ink);
+			}
+			else
+			{
+				lrg_paint_list_line (list, cx - w, dy, cx, dy + h, 1.4f, &ink);
+				lrg_paint_list_line (list, cx, dy + h, cx + w, dy, 1.4f, &ink);
+			}
+		}
+	}
 	else if (kind == ICON_PREVIEW)
 	{
 		/* A camera: body plus lens triangle */
@@ -1550,6 +1878,8 @@ icon_event (LrgCustomWidget  *widget,
 		activate (self);
 		if (kind == ICON_OVERLAYS)
 			open_overlay_menu (self);
+		else if (kind == ICON_LAYERS)
+			open_layers_menu (self);
 		else if (kind == ICON_PREVIEW)
 			lrg_editor_viewport_panel_set_preview_enabled (self, !self->preview_enabled);
 		else
@@ -1623,8 +1953,16 @@ build_header (LrgEditorViewportPanel *self)
 
 	self->preset_combo = add_combo (self, preset_labels, N_PRESETS, "view-preset", 138.0f,
 	                                G_CALLBACK (on_preset_changed));
-	self->mode_combo = add_combo (self, mode_labels, G_N_ELEMENTS (mode_labels), "render-mode", 108.0f,
-	                              G_CALLBACK (on_mode_changed));
+	{
+		/* every LrgEditorRenderMode value, the debug views included */
+		g_autoptr(GEnumClass) modes = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+		g_autofree const gchar **labels = g_new0 (const gchar *, modes->n_values + 1);
+
+		for (i = 0; i < modes->n_values; i++)
+			labels[i] = (i < G_N_ELEMENTS (mode_labels)) ? mode_labels[i] : modes->values[i].value_nick;
+		self->mode_combo = add_combo (self, (const gchar * const *) labels, modes->n_values, "render-mode", 150.0f,
+		                              G_CALLBACK (on_mode_changed));
+	}
 
 	/* The icon toggles, right aligned in their own box */
 	self->tools = lrg_hbox_new ();
@@ -1634,6 +1972,7 @@ build_header (LrgEditorViewportPanel *self)
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->tools));
 	g_object_unref (self->tools);
 	self->overlay_button = add_icon_button (self, ICON_OVERLAYS, "overlays");
+	self->layers_button = add_icon_button (self, ICON_LAYERS, "layers");
 	self->preview_button = add_icon_button (self, ICON_PREVIEW, "preview-toggle");
 	self->max_button = add_icon_button (self, ICON_MAXIMIZE, "maximize");
 
@@ -1648,6 +1987,26 @@ build_header (LrgEditorViewportPanel *self)
 		g_object_set_data (G_OBJECT (action), "lrg-overlay-flag", GUINT_TO_POINTER (overlay_items[i].flag));
 		g_signal_connect (action, "activate", G_CALLBACK (on_overlay_action), self);
 		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (action));
+	}
+	/* Render layers: one stateful toggle per layer, plus All / None */
+	for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+	{
+		g_autofree gchar         *aname = g_strdup_printf ("layer-%u", i);
+		g_autoptr(GSimpleAction)  action = g_simple_action_new_stateful (aname, NULL,
+		                                                                  g_variant_new_boolean (TRUE));
+
+		g_object_set_data (G_OBJECT (action), "lrg-layer", GUINT_TO_POINTER (i));
+		g_signal_connect (action, "activate", G_CALLBACK (on_layer_action), self);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (action));
+	}
+	{
+		g_autoptr(GSimpleAction) all = g_simple_action_new ("layers-all", NULL);
+		g_autoptr(GSimpleAction) none = g_simple_action_new ("layers-none", NULL);
+
+		g_signal_connect (all, "activate", G_CALLBACK (on_layers_all), self);
+		g_signal_connect (none, "activate", G_CALLBACK (on_layers_none), self);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (all));
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (none));
 	}
 	lrg_widget_insert_action_group (LRG_WIDGET (self), "vp", G_ACTION_GROUP (self->actions));
 }
@@ -1679,6 +2038,14 @@ sync_header (LrgEditorViewportPanel *self)
 
 		g_simple_action_set_state (G_SIMPLE_ACTION (action),
 		                           g_variant_new_boolean ((overlays & overlay_items[i].flag) != 0));
+	}
+	for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+	{
+		g_autofree gchar *aname = g_strdup_printf ("layer-%u", i);
+		GAction          *action = g_action_map_lookup_action (G_ACTION_MAP (self->actions), aname);
+
+		g_simple_action_set_state (G_SIMPLE_ACTION (action),
+		                           g_variant_new_boolean ((self->cull_mask & LRG_RENDER_LAYERS_BIT (i)) != 0));
 	}
 	self->syncing = FALSE;
 }
@@ -1834,6 +2201,15 @@ editor_viewport_panel_tick (LrgEditorViewportPanel *self,
 	if (self->app == NULL)
 		return;
 	lrg_editor_viewport_nav_tick (self->app->nav, dt);
+
+	/* The split registers its 0.8.1 view.render_mode after the panels
+	 * exist; the first frame puts the 0.9.0 one (mode list, debug views)
+	 * back on top. */
+	if (g_object_get_data (G_OBJECT (self->app), "lrg-vp-ed2-methods") == NULL)
+	{
+		g_object_set_data (G_OBJECT (self->app), "lrg-vp-ed2-methods", GINT_TO_POINTER (1));
+		register_methods (self->app);
+	}
 }
 
 /* The rectangle of viewport 0 in canvas coordinates (ui.state "viewport"). */
@@ -2078,6 +2454,8 @@ lrg_editor_viewport_panel_dispose (GObject *object)
 	if (self->overlay_menu != NULL)
 		lrg_menu_close (self->overlay_menu);
 	g_clear_object (&self->overlay_menu);
+	g_clear_weak_pointer (&self->vol_node);
+	g_clear_object (&self->layers_menu);
 	g_clear_object (&self->actions);
 	self->drop = NULL;   /* owned by the widget */
 	self->preview_node = NULL;
@@ -2092,6 +2470,7 @@ lrg_editor_viewport_panel_finalize (GObject *object)
 
 	g_clear_pointer (&self->missing, g_ptr_array_unref);
 	g_clear_pointer (&self->drop_label, g_free);
+	g_clear_object (&self->vol_before);
 
 	G_OBJECT_CLASS (lrg_editor_viewport_panel_parent_class)->finalize (object);
 }
@@ -2121,6 +2500,7 @@ lrg_editor_viewport_panel_init (LrgEditorViewportPanel *self)
 	self->dirty = TRUE;
 	self->missing = g_ptr_array_new ();
 	self->missing_dirty = TRUE;
+	self->cull_mask = LRG_RENDER_LAYERS_MASK_ALL;
 	lrg_spring_init (&self->active_spring, 0.0f, LRG_MOTION_SMOOTH);
 }
 
@@ -2138,6 +2518,191 @@ new_render_viewport (const gchar          *name,
 	lrg_viewport_set_auto_clear (viewport, FALSE);
 	lrg_viewport_set_render_func (viewport, func, data, NULL);
 	return viewport;
+}
+
+
+/* ==========================================================================
+ * IPC: view.layers, view.render_mode (0.9.0 modes), post install
+ * ========================================================================== */
+
+static JsonNode *
+vp_obj_node (JsonObject *o)
+{
+	JsonNode *n = json_node_new (JSON_NODE_OBJECT);
+
+	json_node_take_object (n, o);
+	return n;
+}
+
+/* The panel of params.viewport (default: the active viewport). */
+static LrgEditorViewportPanel *
+ipc_viewport (LrgEditorApp  *app,
+              JsonObject    *params,
+              GError       **error)
+{
+	gint64                  index = lrg_editor_view_state_get_active_viewport (app->view);
+	LrgEditorViewportPanel *panel = NULL;
+
+	if (params != NULL && json_object_has_member (params, "viewport"))
+		index = json_object_get_int_member (params, "viewport");
+	if (index >= 0 && index < LRG_EDITOR_VIEW_MAX_VIEWPORTS && app->viewport_split != NULL)
+		panel = lrg_editor_viewport_split_get_panel (app->viewport_split, (guint) index);
+	if (panel == NULL)
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "No viewport %" G_GINT64_FORMAT, index);
+	return panel;
+}
+
+/* {"viewport": 0, "mask": 1} | {"layer": 2, "enabled": false} -> the mask */
+static JsonNode *
+m_view_layers (LrgEditorServer  *server,
+               JsonObject       *params,
+               gpointer          user_data,
+               GError          **error)
+{
+	LrgEditorApp           *app = LRG_EDITOR_APP (user_data);
+	LrgEditorViewportPanel *self = ipc_viewport (app, params, error);
+	JsonObject             *o;
+	JsonArray              *layers;
+	guint32                 mask;
+	guint                   i;
+
+	if (self == NULL)
+		return NULL;
+	mask = self->cull_mask;
+	if (params != NULL && json_object_has_member (params, "mask"))
+	{
+		JsonNode *mn = json_object_get_member (params, "mask");
+
+		/* a number, or "all" / "none" / "0x..." */
+		if (JSON_NODE_HOLDS_VALUE (mn) && json_node_get_value_type (mn) == G_TYPE_STRING)
+		{
+			const gchar *t = json_node_get_string (mn);
+
+			mask = g_strcmp0 (t, "all") == 0 ? LRG_RENDER_LAYERS_MASK_ALL
+			     : g_strcmp0 (t, "none") == 0 ? LRG_RENDER_LAYERS_MASK_NONE
+			     : (guint32) g_ascii_strtoull (t, NULL, 0);
+		}
+		else
+			mask = (guint32) json_object_get_int_member (params, "mask");
+	}
+	if (params != NULL && json_object_has_member (params, "layer"))
+	{
+		JsonNode *ln = json_object_get_member (params, "layer");
+		gint64    layer = -1;
+
+		/* a layer index, or its name ("water", "editor-only", "Layer 9") */
+		if (JSON_NODE_HOLDS_VALUE (ln) && json_node_get_value_type (ln) == G_TYPE_STRING)
+		{
+			const gchar *name = json_node_get_string (ln);
+
+			for (i = 0; i < LRG_RENDER_LAYERS_COUNT && layer < 0; i++)
+			{
+				g_autofree gchar *label = (i < G_N_ELEMENTS (layer_names)) ? g_strdup (layer_names[i])
+				                                                           : g_strdup_printf ("Layer %u", i);
+				g_autofree gchar *kebab = g_ascii_strdown (label, -1);
+
+				g_strdelimit (kebab, " _", '-');
+				if (g_ascii_strcasecmp (name, label) == 0 || g_ascii_strcasecmp (name, kebab) == 0)
+					layer = i;
+			}
+			if (layer < 0)
+				layer = g_ascii_strtoll (name, NULL, 10) + (g_ascii_isdigit (*name) ? 0 : LRG_RENDER_LAYERS_COUNT);
+		}
+		else
+			layer = json_object_get_int_member (params, "layer");
+
+		if (layer < 0 || layer >= LRG_RENDER_LAYERS_COUNT)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Layers are 0 .. %d", LRG_RENDER_LAYERS_COUNT - 1);
+			return NULL;
+		}
+		if (json_object_has_member (params, "enabled"))
+		{
+			if (json_object_get_boolean_member (params, "enabled"))
+				mask |= LRG_RENDER_LAYERS_BIT (layer);
+			else
+				mask &= ~LRG_RENDER_LAYERS_BIT (layer);
+		}
+		else
+			mask ^= LRG_RENDER_LAYERS_BIT (layer);
+	}
+	if (mask != self->cull_mask)
+		lrg_editor_viewport_panel_set_layer_mask (self, mask);
+
+	o = json_object_new ();
+	layers = json_array_new ();
+	json_object_set_int_member (o, "viewport", self->index);
+	json_object_set_int_member (o, "mask", self->cull_mask);
+	for (i = 0; i < LRG_RENDER_LAYERS_COUNT; i++)
+	{
+		JsonObject *l = json_object_new ();
+		g_autofree gchar *name = (i < G_N_ELEMENTS (layer_names)) ? g_strdup (layer_names[i])
+		                                                          : g_strdup_printf ("Layer %u", i);
+
+		json_object_set_int_member (l, "index", i);
+		json_object_set_string_member (l, "name", name);
+		json_object_set_boolean_member (l, "enabled", (self->cull_mask & LRG_RENDER_LAYERS_BIT (i)) != 0);
+		json_array_add_object_element (layers, l);
+	}
+	json_object_set_array_member (o, "layers", layers);
+	return vp_obj_node (o);
+}
+
+/* {"viewport": 1, "mode": "overdraw"} -> {"viewport", "mode", "modes": [...]} */
+static JsonNode *
+m_view_render_mode (LrgEditorServer  *server,
+                    JsonObject       *params,
+                    gpointer          user_data,
+                    GError          **error)
+{
+	LrgEditorApp          *app = LRG_EDITOR_APP (user_data);
+	g_autoptr(GEnumClass)  modes = g_type_class_ref (LRG_TYPE_EDITOR_RENDER_MODE);
+	LrgEditorViewportPanel *panel = ipc_viewport (app, params, error);
+	const gchar           *mode = NULL;
+	GEnumValue            *value;
+	JsonObject            *o;
+	JsonArray             *list;
+	guint                  i;
+
+	if (panel == NULL)
+		return NULL;
+	if (params != NULL && json_object_has_member (params, "mode"))
+		mode = json_object_get_string_member (params, "mode");
+	if (mode != NULL)
+	{
+		value = g_enum_get_value_by_nick (modes, mode);
+		if (value == NULL)
+		{
+			g_autoptr(GString) all = g_string_new ("");
+
+			for (i = 0; i < modes->n_values; i++)
+				g_string_append_printf (all, "%s%s", i > 0 ? ", " : "", modes->values[i].value_nick);
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown render mode '%s' (%s)", mode, all->str);
+			return NULL;
+		}
+		lrg_editor_view_state_set_render_mode (app->view, (gint) panel->index, (LrgEditorRenderMode) value->value);
+	}
+	value = g_enum_get_value (modes, lrg_editor_view_state_get_render_mode (app->view, (gint) panel->index));
+	o = json_object_new ();
+	list = json_array_new ();
+	json_object_set_int_member (o, "viewport", panel->index);
+	json_object_set_string_member (o, "mode", value != NULL ? value->value_nick : "lit");
+	for (i = 0; i < modes->n_values; i++)
+		json_array_add_string_element (list, modes->values[i].value_nick);
+	json_object_set_array_member (o, "modes", list);
+	return vp_obj_node (o);
+}
+
+static void
+register_methods (LrgEditorApp *app)
+{
+	if (app->server == NULL)
+		return;
+	lrg_editor_server_register_method (app->server, "view.layers", m_view_layers, app, NULL);
+	lrg_editor_server_register_method (app->server, "view.render_mode", m_view_render_mode, app, NULL);
 }
 
 LrgEditorViewportPanel *
@@ -2230,6 +2795,10 @@ lrg_editor_viewport_panel_new_for_index (LrgEditorApp *app,
 	if (app->renderer != NULL)
 		lrg_editor_scene_renderer_set_draw_overlays (app->renderer, FALSE);
 	lrg_editor_viewport_split_register_methods (app);
+	register_methods (app);
+	lrg_editor_post_stack_editor_install (app);
+	if (app->renderer != NULL)
+		lrg_editor_scene_renderer_set_cull_mask (app->renderer, index, self->cull_mask);
 	sync_header (self);
 	return self;
 }
@@ -2313,4 +2882,35 @@ lrg_editor_viewport_panel_set_gpu_enabled (LrgEditorViewportPanel *self,
 	lrg_viewport_set_mode (self->preview, mode);
 	if (enabled)
 		mark_dirty (self);
+}
+
+/* ==========================================================================
+ * Render layers, render queue (0.9.0)
+ * ========================================================================== */
+
+void
+lrg_editor_viewport_panel_set_layer_mask (LrgEditorViewportPanel *self,
+                                          guint32                 mask)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+
+	self->cull_mask = mask;
+	if (self->app != NULL && self->app->renderer != NULL)
+		lrg_editor_scene_renderer_set_cull_mask (self->app->renderer, self->index, mask);
+	sync_header (self);
+	mark_dirty (self);
+}
+
+guint32
+lrg_editor_viewport_panel_get_layer_mask (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), LRG_RENDER_LAYERS_MASK_ALL);
+	return self->cull_mask;
+}
+
+void
+lrg_editor_viewport_panel_queue_render (LrgEditorViewportPanel *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	mark_dirty (self);
 }

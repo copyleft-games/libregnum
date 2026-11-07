@@ -196,6 +196,27 @@ Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Regi
 | =view.layout= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
 | =view.render_mode= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
 | =view.overlay= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
+| =view.layers= | 0.9.0 | viewport panel | [[#ipc-level-look][Level look]] |
+| =environment.get= | 0.9.0 | environment panel | [[#ipc-level-look][Level look]] |
+| =environment.set= | 0.9.0 | environment panel | [[#ipc-level-look][Level look]] |
+| =environment.reset= | 0.9.0 | environment panel | [[#ipc-level-look][Level look]] |
+| =environment.bake= | 0.9.0 | environment panel | [[#ipc-level-look][Level look]] |
+| =environment.progress= | 0.9.0 | environment panel | [[#ipc-level-look][Level look]] |
+| =environment.show= | 0.9.0 | environment panel | [[#ipc-level-look][Level look]] |
+| =post.effect_types= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.open= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.create= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.get= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.add= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.remove= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.move= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.set= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.save= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.preview= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.save_look= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =post.assign= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
+| =lod.get= | 0.9.0 | inspector panel | [[#ipc-level-look][Level look]] |
+| =lod.force= | 0.9.0 | inspector panel | [[#ipc-level-look][Level look]] |
 | =hierarchy.reveal= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
 | =hierarchy.rename= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
 | =hierarchy.filter= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
@@ -230,6 +251,34 @@ Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Regi
 | =data.reload= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
 | =data.close= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
 | =data.reveal= | 0.8.1 | data editors | [[#data-methods][Data editor]] |
+| =material.open= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.create= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.create_variant= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.get= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.set= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.revert= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.save= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.preview= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.assign= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =material.list= | 0.9.0 | assets panel (material editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shader.create= | 0.9.0 | code panel | [[#material-methods][Material, shader, shader graph]] |
+| =shader.compile= | 0.9.0 | code panel | [[#material-methods][Material, shader, shader graph]] |
+| =shader.diagnostics= | 0.9.0 | code panel | [[#material-methods][Material, shader, shader graph]] |
+| =shader.uniforms= | 0.9.0 | code panel | [[#material-methods][Material, shader, shader graph]] |
+| =shader.reload= | 0.9.0 | code panel | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.open= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.create= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.node_types= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.get= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.add_node= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.remove_node= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.connect= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.disconnect= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.set_param= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.set_input= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.validate= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.glsl= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
+| =shadergraph.save= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
 | =profiler.sample= | 0.8.1 | profiler panel | [[#profiler-methods][Profiler]] |
 
 Errors are the codes of the [[#messages][message table]] everywhere: a missing or mistyped parameter is =invalid-params=, an unknown node, file, path or panel item =not-found=, and an operation that could not be carried out =failed= with the reason in =message=. The sections below name the cases that are specific to a method.
@@ -426,7 +475,7 @@ Registered by the viewport split (=LrgEditorViewportSplit=); they act on the hea
 | Method             | Params                                                                 | Result                                                   | Errors |
 |--------------------+------------------------------------------------------------------------+----------------------------------------------------------+--------|
 | =view.layout=      | =layout= (=single=, =split-h=, =split-v=, =quad=)                      | ={layout, viewports, active_viewport}=                   | an unknown layout is =invalid-params= |
-| =view.render_mode= | =viewport=, =mode= (=lit=, =unlit=, =wireframe=, =normals=, =lighting-only=) | ={viewport, mode}=                                 | an unknown mode or a viewport index out of range is =invalid-params= |
+| =view.render_mode= | =viewport=, =mode= (=lit=, =unlit=, =wireframe=, =normals=, =lighting-only=; since 0.9.0 also =overdraw=, =uv=, =light-complexity=, =ao=, =reflections=) | ={viewport, mode, modes: [nick...]}= (=modes= since 0.9.0; the viewport panel re-registers the method) | an unknown mode (the message lists the valid ones) or a viewport index out of range is =invalid-params= |
 | =view.overlay=     | =viewport=, =name= (=grid=, =gizmos=, =icons=, =bounds=, =stats=, =scene-lighting=, =shadows=, =sky=, =post=), =enabled= (omitted toggles) | ={viewport, overlays: {grid: true, ...}}= | an unknown overlay nick or a bad index is =invalid-params= |
 
 The 0.8.0 =view.get=, =view.set=, =view.focus= and =view.screenshot= take the same =viewport= parameter (see [[#app-methods][Application methods]]). Details: [[file:editor-app.org::#editor-viewport-ipc][Viewport panel IPC]], [[file:view-model.org][View Model]].
@@ -496,6 +545,75 @@ Registered by the code panel (which also creates the command palette).
 | =preferences.open= | =page= (optional page id, e.g. =keybindings=)             | the page id | an unknown page is =invalid-params= |
 
 =code.open= always opens in the internal code panel, whatever =script-editor= says. Details: [[file:editor-app.org::#editor-panel-code-ipc][Code editor IPC]], [[file:editor-app.org::#editor-panel-palette][Command palette]], [[file:editor-app.org::#editor-panel-preferences][Preferences]].
+
+** Material, shader and shader graph methods
+:PROPERTIES:
+:CUSTOM_ID: material-methods
+:END:
+Since 0.9.0. The =material.*= and =shadergraph.*= methods are registered when the Assets panel is created (=lrg_editor_material_editor_install()=, =lrg_editor_shader_graph_editor_install()=), the =shader.*= methods by the code panel. Paths are absolute or project relative. Editing methods open the file's editor tab when it is not open and are one undo step of that tab's document. Errors: a missing or mistyped parameter is =invalid-params=, a missing file, node or graph node =not-found=, anything else =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =material.open= | =path= | ={path, panel}= |
+| =material.create= | =path=, =parent?= (reference), =shading_model?= (=lit unlit custom=) | ={path}=; an existing file is =failed= |
+| =material.create_variant= | =path=, =dest?= | ={path}= of the new instance (=<stem>_variant.rmat= by default) |
+| =material.get= | =path= | effective values ={path, name, parent, shading_model, shader, base_color, metallic, roughness, occlusion_strength, normal_scale, emission_color, emission_strength, alpha_cutoff, height_scale, blend_mode, cull_mode, depth_test, depth_write, double_sided, render_queue, textures: {slot: ref}, uniforms: {name: value}, overrides: [key]}= |
+| =material.set= | =path=, =key= (dotted =.rmat= key, e.g. =metallic=, =base_color=, =textures.albedo=, =render_state.blend= or =blend=, =uniforms.tint=), =value= (JSON; written as YAML, numbers short) | ={path, key, dirty}= |
+| =material.revert= | =path=, =key= | ={path, key, reverted}=; the key is removed (an instance inherits it again) |
+| =material.save= | =path= | ={path}= |
+| =material.preview= | =path=, =shape?= (=sphere cube plane=), =rotate?= | ={path, shape, rotate}= |
+| =material.assign= | =node= (guid or name path), =path= (or =guid:=) | ={node, material}=; sets =LrgNodeVisual:material-ref= (undoable); a node without a primitive or mesh visual is =failed= |
+| =material.list= | | ={editors: [{path, dirty}]}= |
+| =shader.create= | =path= (=.rshader=), =lit?= (default true) | ={path, fragment}=: the document and its =.frag= stage |
+| =shader.compile= | =path= (a =.rshader= or a stage file; a stage compiles every =.rshader= of its folder using it) | ={ok, compiled, diagnostics: [{document, file, line, column, error, message}]}=; =compiled= is false without a window (only the document is checked); also refreshes the code panel strip, the problems and the preview's copies |
+| =shader.diagnostics= | =path= | as =shader.compile=, from the last compile or save |
+| =shader.uniforms= | =path= | ={uniforms: [{name, type, default, min?, max?, hint?}]}= |
+| =shader.reload= | =path= | as =shader.compile= (hot reload: the preview's copies reload, keep-last-good) |
+| =shadergraph.open= | =path= | ={path, panel}= |
+| =shadergraph.create= | =path=, =master?= (=pbr unlit=) | ={path}= |
+| =shadergraph.node_types= | | ={types: [{type, label, category, inputs, outputs}]}= |
+| =shadergraph.get= | =path= | ={path, name, nodes: [{id, type, x, y, params}], links: [{from, from_port, to, to_port}]}= |
+| =shadergraph.add_node= | =path=, =type=, =id?=, =x?=, =y?= | ={id}= |
+| =shadergraph.remove_node= | =path=, =id= | ={removed}= |
+| =shadergraph.connect= | =path=, =from=, =from_port=, =to=, =to_port= | ={ok}= |
+| =shadergraph.disconnect= | =path=, =to=, =to_port= | ={removed}= |
+| =shadergraph.set_param= | =path=, =id=, =key=, =value= (string, number, array or null) | ={ok}= |
+| =shadergraph.set_input= | =path=, =id=, =port=, =value= (number, array of 1..4, null) | ={ok}= |
+| =shadergraph.validate= | =path= | ={ok, problems: [{code, node, port, message}]}= |
+| =shadergraph.glsl= | =path= | ={fragment}= |
+| =shadergraph.save= | =path= | ={path, shader}= (the generated =.rshader=, null while invalid) |
+
+Details: [[file:material-editor.org][Material editor]], [[file:shader-graph-editor.org][Shader graph editor]], [[file:editor-app.org::#editor-panel-code-shaders][Code editor: shaders]].
+
+** Level look methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-level-look
+:END:
+Since 0.9.0. The =environment.*= methods are registered by the Environment panel, =post.*= by =lrg_editor_post_stack_editor_install()= (the environment and viewport panels call it), =lod.*= by the inspector and =view.layers= by the viewport panel. Paths are absolute or project relative. See [[file:environment.org][Level Look]] for the tools behind them. Errors: missing or mistyped parameters are =invalid-params=, a missing file or node =not-found=, anything else (no level, no window for a bake) =failed=.
+
+| Method | Params | Result | Notes |
+|--------+--------+--------+-------|
+| =environment.get= | | ={present, environment: {sky: {source, color, zenith, horizon, ground, path?, faces?, exposure, rotation}, ibl: {enabled, diffuse_intensity, specular_intensity, resolution}, ambient: {color, intensity}, fog: {enabled, type, color, density, start, end, height_base, height_falloff}, volumetric: {enabled, density, anisotropy, steps, max_distance, intensity}, post_stack?} or null, baked, needs_bake}= | the block as the =.rlevel= stores it; unknown keys included |
+| =environment.set= | =key= + =value=, or =values: {key: value, ...}= | as =environment.get= | =key= is a dotted path of the block (=fog.density=, =sky.source=, =sky.zenith= with =[r, g, b]=, =post_stack=) or a panel field name (=exposure=, =fog-density=, =sky-color= with =[r, g, b(, a)]=). One undo step per call; creates the block when there is none |
+| =environment.reset= | | ={present: false, ...}= | removes the block (undoable) |
+| =environment.bake= | | ={started: true}= | runs over the next frames; poll =environment.progress=. Without a window =failed= |
+| =environment.progress= | | ={baking, phase (idle starting environment probes done failed), progress (0..1), error (string or null), baked, probes}= | |
+| =environment.show= | | ={panel: "environment", shown}= | brings the panel to the front |
+| =post.effect_types= | | ={types: [{type, params: [{name, type, default, min?, max?}]}]}= | every registered effect type and its parameters |
+| =post.open= | =path= | ={path, panel}= | opens (or presents) the =.rpost= tab |
+| =post.create= | =path= (=.rpost= added when missing), =preset?= (=default=: bloom, tonemap, vignette, fxaa; =empty=) | ={path}= | an existing file is =failed= |
+| =post.get= | =path= | ={path, name, quality, hdr, dirty, effects: [{index, type, enabled, weight, params: {name: value}}]}= | reads the open document (unsaved edits included) |
+| =post.add= | =path=, =type=, =index?= | ={index}= | an unknown type is =invalid-params= |
+| =post.remove= | =path=, =index= | ={removed: true}= | |
+| =post.move= | =path=, =from=, =to= | ={index}= | |
+| =post.set= | =path=, =index=, =key= (=enabled=, =weight= or a parameter), =value= (scalar) | ={ok: true}= | one undo step of the tab |
+| =post.save= | =path= | ={path}= | |
+| =post.preview= | =path?=, =enabled= (default true) | ={preview: path or null}= | without =path=, =enabled: false= stops any preview; no parameters only reports |
+| =post.save_look= | =path=, =viewport?= | ={path, effects}= | writes the viewport's current look as a new =.rpost= |
+| =post.assign= | =path= (or "" to clear) | ={post_stack}= | sets the level environment's =post_stack= (undoable; creates the block) |
+| =lod.get= | =node= (guid or name path) | ={node, asset, available, levels: [{level, triangles, screen_size, error}], screen_size?, current, forced}= | selects the node; =available= is false without a window or LOD levels |
+| =lod.force= | =node=, =level= (-1 = automatic) | as =lod.get= | a preview on the shared group of the asset; =failed= when the node has no levels |
+| =view.layers= | =viewport?=, =mask?= (number, ="all"=, ="none"=, ="0x..."=), =layer?= (0..31 or a name such as =water=, =editor-only=), =enabled?= (omitted toggles) | ={viewport, mask, layers: [{index, name, enabled}]}= | per-viewport render-layer cull mask; not saved |
 
 ** Data editor methods
 :PROPERTIES:

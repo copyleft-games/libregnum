@@ -103,6 +103,10 @@ The window is an =LrgEditorWindow=: an =LrgMenuBar= (File, Edit, Create, Node, V
 | Profiler | =profiler= | 300-frame graph and a section table | [[file:editor-app.org::#editor-panel-profiler][Profiler panel]] |
 | Code | =code= | Tabs of =LrgTextEditor= with syntax colours | [[file:editor-app.org::#editor-panel-code][Code editor]] |
 | Data editors | per file | Input maps, locales, sound banks, themes, HUD and UI layouts, dialog trees, dungeons | [[file:data-editors.org::#data-editors-panel-base][Data editor panels]] |
+| Material editor | per =.rmat= | Live lit preview, PBR grid, instances with overrides, uniform inspector (0.9.0) | [[file:material-editor.org][Material Editor]] |
+| Environment | right (tab of the Inspector) | The level's sky, IBL, ambient, fog, volumetric fog and post stack, undoable, with a sky preview and a Bake progress bar (0.9.0) | [[file:environment.org::#environment-panel][Environment panel]] |
+| Post-stack editor | per =.rpost= | Effect chain, per-effect parameters, live viewport preview, save current look (0.9.0) | [[file:environment.org::#post-stack-editor][Post-stack editor]] |
+| Shader graph editor | per =.rshadergraph= | Node shaders on the graph canvas, validation, GLSL, preview (0.9.0) | [[file:shader-graph-editor.org][Shader Graph Editor]] |
 
 The command palette and quick open, Preferences, Project Settings and the other dialogs are described in [[file:editor-app.org::#editor-panel-palette][Command palette]], [[file:editor-app.org::#editor-panel-preferences][Preferences]] and [[file:editor-app.org::#editor-panel-dialogs][Dialogs]].
 
@@ -266,6 +270,9 @@ The Fedora packages the application needs beyond the base build are listed in [[
 - [[file:editor-app.org][The Editor Application]]: window, every panel, preferences, shortcuts, embedding
 - [[file:view-model.org][View Model]]: =LrgEditorViewState=, =LrgEditorViewportNav=, =LrgEditorPlaySession=
 - [[file:data-editors.org][Data Editors]]: =LrgEditorDocument= and the eight data editor panels
+- [[file:material-editor.org][Material Editor]]: =.rmat= materials, preview, instances, assignment
+- [[file:environment.org][Level Look]]: the Environment panel, the =.rpost= post-stack editor, debug view modes and render layers, volume gizmos, the LOD preview
+- [[file:shader-graph-editor.org][Shader Graph Editor]]: =.rshadergraph= node shaders
 - [[file:prefabs.org][Prefabs]]: reusable node subtrees and linked instances
 - [[file:projects-and-assets.org][Projects and Assets]]: =LrgProject=, =LrgAssetDatabase=, =.meta= sidecars, thumbnails, git status
 - [[file:editor-tools.org][Editor Tools]]: tilemap painting, the animation timeline, asset thumbnails

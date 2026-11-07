@@ -367,7 +367,7 @@ lrg_lod_set_global_bias (low_end_gpu ? 0.5f : 1.0f);
 :END:
 
 - *Import settings.* The =lod-*= keys appear today as rows of the model import settings in the asset inspector (they are known settings of the =model= importer) and are editable over IPC with =asset.meta.set= (which validates the lists).
-- *Wave 2b* adds the dedicated UI: a LOD preview in the viewport (force a level with =force-level=, show the current level, screen size and per-level triangle counts and errors from =lrg_lod_group_get_level_triangle_count()= / =lrg_lod_group_get_level_error()=), threshold handles that call =lrg_lod_group_apply_meta()= for live tuning, and the renderer wiring of =lodFade= ([[#renderer][Renderer integration]]).
+- *LOD preview.* The viewport draws mesh-asset nodes through the LOD group of their asset (=lrg_editor_scene_renderer_get_lod_group()=, built from the model and its =.meta=). Selecting such a node shows a "LOD" section in the inspector: a meter of the node's screen size in the active viewport against every level's threshold, one row per level with =lrg_lod_group_get_level_triangle_count()=, the threshold and =lrg_lod_group_get_level_error()=, the level drawn now highlighted, and a *Force level* picker (=lrg_lod_group_set_force_level()=, a preview shared by every instance of the asset, reset when the node is deselected). With the Bounds overlay on, the viewport draws the bounding sphere and a chip with the level, triangles and screen size. Over IPC: =lod.get= and =lod.force= (=lrgeditorctl lod get|force=). See [[file:../../editor/environment.org::#inspector-additions][Inspector additions]].
 
 ** See also
 :PROPERTIES:

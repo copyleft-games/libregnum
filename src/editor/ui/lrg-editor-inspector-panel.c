@@ -69,6 +69,13 @@
 #include "../../ui/lrg-expander.h"
 #include "../../ui/lrg-drop-target.h"
 #include "../../ui/lrg-ui-event.h"
+#include "../../ui/lrg-combo-box.h"
+#include "../../ui/lrg-custom-widget.h"
+#include "../../graphics/lrg-lod-group.h"
+#include "lrg-editor-scene-renderer.h"
+#include "lrg-editor-gizmo-paint.h"
+#include "lrg-editor-viewport-panel.h"
+#include "lrg-editor-viewport-split.h"
 #include "../../paint/lrg-paint-icons.h"
 #include "../../lrg-log.h"
 #include <json-glib/json-glib.h>
@@ -1488,6 +1495,15 @@ struct _LrgEditorInspectorPanel
 	gchar                *script_sig;   /* rows were built for this */
 	LrgButton            *new_script;
 	LrgButton            *attach_script;
+
+	/* LOD preview (0.9.0): mesh-asset nodes whose model has LOD levels */
+	LrgExpander          *lod_section;
+	LrgWidget            *lod_levels;   /* custom: screen-size meter and level rows */
+	LrgComboBox          *lod_force;
+	LrgLodGroup          *lod_group;    /* weak: the group shown (owned by the scene renderer) */
+	LrgNode              *lod_node;     /* weak: its node */
+	guint                 lod_n;        /* levels the force combo lists */
+	gboolean              lod_syncing;
 
 	/* Live inspection */
 	LrgVBox              *live_box;
@@ -3165,6 +3181,251 @@ set_mode_visibility (LrgEditorInspectorPanel *self,
 	lrg_widget_set_visible (LRG_WIDGET (self->add_row), nodes_mode);
 }
 
+/* ==========================================================================
+ * LOD preview (0.9.0)
+ *
+ * For one selected mesh-asset node whose model has LOD levels (the scene
+ * renderer's per-asset LrgLodGroup, built from the asset's .meta): a meter
+ * of the node's screen size in the active viewport against every level's
+ * threshold, one row per level (triangles, simplification error, the
+ * threshold) with the level drawn now highlighted, and a "Force level"
+ * picker. Forcing sets the shared group's force level, so every instance
+ * of the asset shows it; it is a preview, reset when the node is no
+ * longer inspected (lrg_lod_group_set_force_level (group, -1)).
+ * ========================================================================== */
+
+/* The group of @node, or NULL (no window, model not loaded, one level). */
+static LrgLodGroup *
+lod_group_for (LrgEditorInspectorPanel *self,
+               LrgNode                 *node)
+{
+	LrgNodeVisual *visual = (node != NULL) ? lrg_node_get_visual (node) : NULL;
+
+	if (self->app == NULL || self->app->renderer == NULL || visual == NULL ||
+	    lrg_node_visual_get_kind (visual) != LRG_NODE_VISUAL_MESH_ASSET || lrg_node_visual_get_asset (visual) == NULL)
+		return NULL;
+	return lrg_editor_scene_renderer_get_lod_group (self->app->renderer, lrg_node_visual_get_asset (visual));
+}
+
+static void
+lod_queue_viewports (LrgEditorInspectorPanel *self)
+{
+	guint i;
+
+	if (self->app == NULL || self->app->viewport_split == NULL)
+		return;
+	for (i = 0; i < LRG_EDITOR_VIEW_MAX_VIEWPORTS; i++)
+	{
+		LrgEditorViewportPanel *p = lrg_editor_viewport_split_get_panel (self->app->viewport_split, i);
+
+		if (p != NULL)
+			lrg_editor_viewport_panel_queue_render (p);
+	}
+}
+
+/* The current screen size of the inspected LOD node. */
+static gfloat
+lod_screen_size (LrgEditorInspectorPanel *self)
+{
+	LrgEditorView view;
+
+	if (self->lod_group == NULL || self->lod_node == NULL || self->view == NULL)
+		return 0.0f;
+	lrg_editor_view_state_get_view (self->view, -1, &view);
+	return lrg_editor_lod_node_screen_size (&view, self->lod_node, self->lod_group);
+}
+
+#define LOD_METER_H (34.0f)
+#define LOD_ROW_H   (22.0f)
+
+static void
+lod_levels_measure (LrgCustomWidget     *widget,
+                    gfloat               avail_width,
+                    gfloat               avail_height,
+                    LrgCustomWidgetSize *size,
+                    gpointer             user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	guint                    n = (self->lod_group != NULL) ? lrg_lod_group_get_n_levels (self->lod_group) : 0;
+
+	size->width = 160.0f;
+	size->height = LOD_METER_H + (gfloat) n * LOD_ROW_H + 4.0f;
+}
+
+/* Screen size 0..1 -> meter x (square root: small sizes get room). */
+static gfloat
+lod_meter_x (gfloat size,
+             gfloat x,
+             gfloat width)
+{
+	return x + width * sqrtf (CLAMP (size, 0.0f, 1.0f));
+}
+
+static void
+lod_levels_paint (LrgCustomWidget *widget,
+                  LrgPaintList    *list,
+                  gfloat           x,
+                  gfloat           y,
+                  gfloat           width,
+                  gfloat           height,
+                  gpointer         user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	LrgTheme                *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont                 *font = lrg_theme_get_ui_font (theme);
+	gfloat                   fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	gfloat                   radius = lrg_theme_get_metric (theme, LRG_THEME_METRIC_CORNER_RADIUS);
+	GrlColor                 track = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK);
+	GrlColor                 accent = *lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	GrlColor                 text = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	GrlColor                 muted = *lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	GrlColor                 sel = *lrg_theme_get_color (theme, LRG_THEME_COLOR_SELECTION);
+	GrlColor                 warn = *lrg_theme_get_color (theme, LRG_THEME_COLOR_WARNING);
+	gfloat                   size, mx;
+	gint                     current, forced;
+	guint                    n, i;
+	g_autofree gchar        *caption = NULL;
+
+	if (self->lod_group == NULL)
+		return;
+	n = lrg_lod_group_get_n_levels (self->lod_group);
+	size = lod_screen_size (self);
+	forced = lrg_lod_group_get_force_level (self->lod_group);
+	current = lrg_lod_group_select_level (self->lod_group, size, LRG_LOD_LEVEL_NONE);
+
+	/* The meter: track, threshold ticks, the node's size as a marker */
+	caption = g_strdup_printf ("Screen size %.1f%%", (gdouble) size * 100.0);
+	lrg_paint_list_text (list, font, caption, x, y, fs, 0.0f, &muted);
+	lrg_paint_list_rect (list, x, y + 18.0f, width, 8.0f, 4.0f, &track);
+	mx = lod_meter_x (size, x, width);
+	{
+		GrlColor fill = accent;
+
+		fill.a = 0x70;
+		lrg_paint_list_rect (list, x, y + 18.0f, MAX (mx - x, 8.0f), 8.0f, 4.0f, &fill);
+	}
+	for (i = 0; i < n; i++)
+	{
+		gfloat tx = lod_meter_x (lrg_lod_group_get_level_screen_size (self->lod_group, i), x, width);
+
+		lrg_paint_list_line (list, tx, y + 15.0f, tx, y + 29.0f, 1.5f, &text);
+	}
+	lrg_paint_list_circle (list, mx, y + 22.0f, 6.0f, &accent);
+
+	/* One row per level */
+	for (i = 0; i < n; i++)
+	{
+		gfloat            ry = y + LOD_METER_H + (gfloat) i * LOD_ROW_H;
+		gboolean          on = (gint) i == current;
+		g_autofree gchar *row = g_strdup_printf ("LOD %u   %d tris   >= %.0f%%   err %.4f", i,
+		                                         lrg_lod_group_get_level_triangle_count (self->lod_group, i),
+		                                         (gdouble) lrg_lod_group_get_level_screen_size (self->lod_group, i) *
+		                                         100.0,
+		                                         (gdouble) lrg_lod_group_get_level_error (self->lod_group, i));
+
+		if (on)
+			lrg_paint_list_rect (list, x - 2.0f, ry, width + 4.0f, LOD_ROW_H - 2.0f, radius, &sel);
+		lrg_paint_list_circle (list, x + 6.0f, ry + LOD_ROW_H * 0.5f - 1.0f, 3.5f,
+		                       on ? (forced >= 0 ? &warn : &accent) : &track);
+		lrg_paint_list_text (list, font, row, x + 16.0f, roundf (ry + (LOD_ROW_H - fs) * 0.5f - 1.0f), fs, 0.0f,
+		                     on ? &text : &muted);
+	}
+}
+
+/* Force picker: item 0 is "Auto", item k is level k - 1. */
+static void
+on_lod_force_changed (LrgComboBox *combo,
+                      gpointer     user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	gint                     i = lrg_combo_box_get_selected (combo);
+
+	if (self->lod_syncing || self->lod_group == NULL || i < 0)
+		return;
+	lrg_lod_group_set_force_level (self->lod_group, i - 1);
+	lod_queue_viewports (self);
+}
+
+/* Shows / hides the LOD section for what is inspected now. */
+static void
+update_lod (LrgEditorInspectorPanel *self)
+{
+	LrgNode     *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	LrgLodGroup *group = lod_group_for (self, node);
+	guint        n, i;
+
+	/* A preview force ends when its node is no longer inspected */
+	if (self->lod_group != NULL && self->lod_group != group)
+		lrg_lod_group_set_force_level (self->lod_group, -1);
+	g_set_weak_pointer (&self->lod_group, group);
+	g_set_weak_pointer (&self->lod_node, group != NULL ? node : NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->lod_section), group != NULL && self->live_object == NULL);
+	if (group == NULL)
+		return;
+
+	n = lrg_lod_group_get_n_levels (group);
+	self->lod_syncing = TRUE;
+	if (n != self->lod_n)
+	{
+		lrg_combo_box_remove_all (self->lod_force);
+		lrg_combo_box_append (self->lod_force, "Auto (screen size)");
+		for (i = 0; i < n; i++)
+		{
+			g_autofree gchar *label = g_strdup_printf ("LOD %u", i);
+
+			lrg_combo_box_append (self->lod_force, label);
+		}
+		self->lod_n = n;
+	}
+	lrg_combo_box_set_selected (self->lod_force, lrg_lod_group_get_force_level (group) + 1);
+	self->lod_syncing = FALSE;
+	lrg_widget_queue_layout (self->lod_levels);
+}
+
+static void
+on_lod_camera_changed (LrgEditorViewState *view,
+                       guint               index,
+                       gpointer            user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+
+	/* the meter follows the camera; the group itself appears once the
+	 * viewport has loaded the model */
+	if (self->lod_group == NULL && self->nodes->len == 1 && !self->refreshing)
+		update_lod (self);
+	else if (self->lod_group != NULL)
+		lrg_widget_queue_layout (self->lod_levels);
+}
+
+static LrgExpander *
+build_lod_section (LrgEditorInspectorPanel *self)
+{
+	static const LrgCustomWidgetFuncs funcs = { lod_levels_measure, lod_levels_paint, NULL, NULL, { NULL } };
+	LrgVBox                          *box = lrg_vbox_new ();
+	LrgHBox                          *row = lrg_hbox_new ();
+	LrgLabel                         *label = lrg_label_new ("Force level");
+	LrgExpander                      *section;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	self->lod_levels = LRG_WIDGET (lrg_custom_widget_new ());
+	lrg_widget_set_name (self->lod_levels, "inspector-lod-levels");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->lod_levels), &funcs, self, NULL);
+	add_owned (box, self->lod_levels);
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	lrg_widget_set_valign (LRG_WIDGET (label), LRG_ALIGN_CENTER);
+	add_owned (row, label);
+	self->lod_force = lrg_combo_box_new ();
+	lrg_widget_set_name (LRG_WIDGET (self->lod_force), "inspector-lod-force");
+	lrg_widget_set_fill_weight (LRG_WIDGET (self->lod_force), 1.0f);
+	g_signal_connect (self->lod_force, "changed", G_CALLBACK (on_lod_force_changed), self);
+	add_owned (row, self->lod_force);
+	add_owned (box, row);
+	section = make_section ("inspector-section-lod", "LOD", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	return section;
+}
+
 /*
  * refresh_all:
  *
@@ -3223,6 +3484,7 @@ refresh_all (LrgEditorInspectorPanel *self)
 	if (self->nodes->len > 0)
 		update_script_rows (self);
 	self->prefab_rows = prefab;
+	update_lod (self);
 
 	/* 3. Chrome */
 	update_prefab_bar (self, live != NULL);
@@ -3569,6 +3831,10 @@ lrg_editor_inspector_panel_dispose (GObject *object)
 		g_signal_handlers_disconnect_by_data (self->view, self);
 	if (self->play != NULL)
 		g_signal_handlers_disconnect_by_data (self->play, self);
+	if (self->lod_group != NULL)
+		lrg_lod_group_set_force_level (self->lod_group, -1);
+	g_clear_weak_pointer (&self->lod_group);
+	g_clear_weak_pointer (&self->lod_node);
 	g_clear_object (&self->level_source);
 	g_clear_object (&self->editor);
 	g_clear_object (&self->view);
@@ -3747,6 +4013,9 @@ build_body (LrgEditorInspectorPanel *self)
 		                                                         LRG_WIDGET (self->grids[i])));
 		g_object_unref (self->grids[i]);
 	}
+
+	/* LOD preview, shown for mesh assets with levels */
+	self->lod_section = add_owned (self->body, build_lod_section (self));
 
 	/* Components, then the Add Component button */
 	self->comp_box = add_owned (self->body, lrg_vbox_new ());
@@ -4559,6 +4828,140 @@ m_inspector_state (LrgEditorServer  *server,
 	return node;
 }
 
+/* --- lod.* (0.9.0) --- */
+
+/* The node of params.node (guid or name path), selected and inspected so
+ * the panel's LOD section follows it. */
+static LrgEditorInspectorPanel *
+lod_target (LrgEditorApp  *app,
+            JsonObject    *params,
+            LrgNode      **out_node,
+            GError       **error)
+{
+	LrgEditorInspectorPanel *self = inspector_of (app);
+	const gchar             *ref = (params != NULL && json_object_has_member (params, "node"))
+	                               ? json_object_get_string_member (params, "node") : NULL;
+	LrgNode                 *node;
+
+	if (self == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED, "No inspector panel");
+		return NULL;
+	}
+	if (ref == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS, "Missing \"node\"");
+		return NULL;
+	}
+	node = lrg_editor_find_node (lrg_editor_app_get_editor (app), ref);
+	if (node == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND, "No node '%s'", ref);
+		return NULL;
+	}
+	if (self->nodes->len != 1 || g_ptr_array_index (self->nodes, 0) != node)
+		lrg_editor_select (lrg_editor_app_get_editor (app), node, FALSE);
+	update_lod (self);
+	*out_node = node;
+	return self;
+}
+
+static JsonNode *
+lod_json (LrgEditorInspectorPanel *self,
+          LrgNode                 *node)
+{
+	JsonObject    *o = json_object_new ();
+	JsonArray     *levels = json_array_new ();
+	JsonNode      *n = json_node_new (JSON_NODE_OBJECT);
+	LrgNodeVisual *visual = lrg_node_get_visual (node);
+	guint          i;
+
+	json_object_set_string_member (o, "node", lrg_node_get_guid (node));
+	if (visual != NULL && lrg_node_visual_get_asset (visual) != NULL)
+		json_object_set_string_member (o, "asset", lrg_node_visual_get_asset (visual));
+	else
+		json_object_set_null_member (o, "asset");
+	json_object_set_boolean_member (o, "available", self->lod_group != NULL);
+	if (self->lod_group != NULL)
+	{
+		gfloat size = lod_screen_size (self);
+
+		for (i = 0; i < lrg_lod_group_get_n_levels (self->lod_group); i++)
+		{
+			JsonObject *l = json_object_new ();
+
+			json_object_set_int_member (l, "level", i);
+			json_object_set_int_member (l, "triangles", lrg_lod_group_get_level_triangle_count (self->lod_group, i));
+			json_object_set_double_member (l, "screen_size", lrg_lod_group_get_level_screen_size (self->lod_group, i));
+			json_object_set_double_member (l, "error", lrg_lod_group_get_level_error (self->lod_group, i));
+			json_array_add_object_element (levels, l);
+		}
+		json_object_set_double_member (o, "screen_size", size);
+		json_object_set_int_member (o, "current",
+		                            lrg_lod_group_select_level (self->lod_group, size, LRG_LOD_LEVEL_NONE));
+		json_object_set_int_member (o, "forced", lrg_lod_group_get_force_level (self->lod_group));
+	}
+	else
+	{
+		json_object_set_null_member (o, "current");
+		json_object_set_int_member (o, "forced", -1);
+	}
+	json_object_set_array_member (o, "levels", levels);
+	json_node_take_object (n, o);
+	return n;
+}
+
+/* {"node": guid} -> levels, current, forced, screen_size */
+static JsonNode *
+m_lod_get (LrgEditorServer  *server,
+           JsonObject       *params,
+           gpointer          user_data,
+           GError          **error)
+{
+	LrgNode                 *node = NULL;
+	LrgEditorInspectorPanel *self = lod_target (LRG_EDITOR_APP (user_data), params, &node, error);
+
+	return (self != NULL) ? lod_json (self, node) : NULL;
+}
+
+/* {"node": guid, "level": 1} (-1 = automatic) */
+static JsonNode *
+m_lod_force (LrgEditorServer  *server,
+             JsonObject       *params,
+             gpointer          user_data,
+             GError          **error)
+{
+	LrgNode                 *node = NULL;
+	LrgEditorInspectorPanel *self = lod_target (LRG_EDITOR_APP (user_data), params, &node, error);
+	gint64                   level;
+
+	if (self == NULL)
+		return NULL;
+	if (!json_object_has_member (params, "level"))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS, "Missing \"level\"");
+		return NULL;
+	}
+	if (self->lod_group == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_FAILED,
+		             "The node has no LOD levels here (a mesh asset with lod.levels > 1, drawn by a viewport)");
+		return NULL;
+	}
+	level = json_object_get_int_member (params, "level");
+	if (level < -1 || level >= (gint64) lrg_lod_group_get_n_levels (self->lod_group))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "Level %" G_GINT64_FORMAT " out of range (-1 .. %u)", level,
+		             lrg_lod_group_get_n_levels (self->lod_group) - 1);
+		return NULL;
+	}
+	lrg_lod_group_set_force_level (self->lod_group, (gint) level);
+	lod_queue_viewports (self);
+	update_lod (self);
+	return lod_json (self, node);
+}
+
 static void
 register_methods (LrgEditorApp *app)
 {
@@ -4573,6 +4976,8 @@ register_methods (LrgEditorApp *app)
 	lrg_editor_server_register_method (server, "inspector.revert_override", m_inspector_revert_override, app, NULL);
 	lrg_editor_server_register_method (server, "inspector.apply_override", m_inspector_apply_override, app, NULL);
 	lrg_editor_server_register_method (server, "inspector.state", m_inspector_state, app, NULL);
+	lrg_editor_server_register_method (server, "lod.get", m_lod_get, app, NULL);
+	lrg_editor_server_register_method (server, "lod.force", m_lod_force, app, NULL);
 }
 
 /* ==========================================================================
@@ -4616,6 +5021,14 @@ a_has_selection (gpointer data)
 	return lrg_editor_selection_get_count (lrg_editor_get_selection (lrg_editor_app_get_editor (app))) > 0;
 }
 
+/* inspector.show (0.9.0): brings the inspector tab to the front (it
+ * shares its dock stack with the environment and tiles panels) */
+static void
+a_show_inspector (gpointer data)
+{
+	editor_app_show_panel (LRG_EDITOR_APP (data), "inspector");
+}
+
 static void
 register_actions (LrgEditorApp *app)
 {
@@ -4625,6 +5038,8 @@ register_actions (LrgEditorApp *app)
 	                        a_lock_checked, app);
 	lrg_editor_actions_add (actions, "node.add-component", "Add Component…", "Node", NULL, a_add_component,
 	                        a_has_selection, NULL, app);
+	lrg_editor_actions_add (actions, "inspector.show", "Inspector Panel", "View", NULL, a_show_inspector, NULL, NULL,
+	                        app);
 }
 
 /* ==========================================================================
@@ -4652,6 +5067,7 @@ lrg_editor_inspector_panel_new (LrgEditorApp *app)
 	g_signal_connect (self->editor, "changed", G_CALLBACK (on_editor_changed), self);
 	g_signal_connect (self->editor, "level-replaced", G_CALLBACK (on_level_replaced), self);
 	g_signal_connect (self->view, "notify::inspector-lock", G_CALLBACK (on_view_lock_changed), self);
+	g_signal_connect (self->view, "camera-changed", G_CALLBACK (on_lod_camera_changed), self);
 	g_signal_connect (self->play, "started", G_CALLBACK (on_play_started), self);
 	g_signal_connect (self->play, "stopped", G_CALLBACK (on_play_stopped), self);
 	g_signal_connect (self->play, "ticked", G_CALLBACK (on_play_ticked), self);

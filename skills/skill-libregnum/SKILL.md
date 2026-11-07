@@ -77,6 +77,22 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 3. Game: `lrg_engine_startup()`, add the level dir as an asset search path, `lrg_level_load_world3d()`, set `LRG_WORLD3D_RENDER_FLAG_POST`, `lrg_world3d_renderer_bake_environment()`, `lrg_world3d_renderer_capture_probes(renderer, world)`; recapture when `lrg_reflection_probe_component_count_pending(world) > 0`.
 4. Play-in-editor applies the same look automatically. Reference: examples/pbr-showcase.c.
 
+### Edit a material
+1. Create one: `lrgeditorctl call material.create path=materials/crate.rmat shading_model=lit`, or a variant with `material.create_variant path=materials/crate.rmat`.
+2. Open and edit: `material.open path=...`, then `material.set path=... key=metallic value=0.8`. Keys are dotted `.rmat` keys: `base_color` ([r,g,b,a]), `textures.albedo` ("tex.png" or "guid:…"), `render_state.blend` or `blend`, `uniforms.<name>`. Each set is one undo step in the material's own history.
+3. On an instance, keys the file sets are overrides; `material.revert path=... key=...` makes a key inherit again. `material.get` returns effective values plus `overrides`.
+4. `material.save path=...`, then `material.assign node=<guid|name path> path=materials/crate.rmat` (sets the node's `material-ref`, undoable; only primitive and mesh nodes take materials).
+5. Custom shading: `shader.create path=shaders/fx.rshader` writes the document plus `fx.frag`; set `shading_model` custom and `shader` "../shaders/fx.rshader"; after editing the `.frag`, `shader.compile path=shaders/fx.frag` and fix the reported `file:line` errors.
+6. Node shaders: `shadergraph.create path=shaders/glow.rshadergraph`, add_node/connect/set_param/set_input, `shadergraph.validate`, `shadergraph.save` (writes glow.rshader for a custom material).
+
+### Light and look a level (0.9.0)
+1. Lights/volumes: the Create menu (and `lrgeditorctl create node Key --kind light`) has Point Light, Spot Light, Sun, Decal and Reflection Probe; spot `spot_angle` = full cone degrees, `range`; decal params `size_x/y/z`; probe `extents_x/y/z` (half sizes). The inspector edits lights by kind.
+2. Environment: `lrgeditorctl env set sky.source gradient`; `env set fog.density 0.02` (dotted block keys or panel field names; one undo step each); `env set post_stack looks/dusk.rpost`. `env bake --wait` needs the window (headless: edits only; the viewport bakes lazily anyway).
+3. Look: `post create looks/dusk.rpost` (bloom, tonemap, vignette, fxaa), `post add|move|set|remove`, `post save`, `post assign looks/dusk.rpost`. Opening a .rpost previews it in the viewport (renderer override > world > level); `post look PATH` saves what the viewport shows.
+4. Inspect: `view mode overdraw|uv|light-complexity|ao|reflections viewport=N`, `view layers water off`, `lod get NODE`, `lod force NODE 2|auto`.
+5. Verify: `screenshot shot.png --window`; the level file stores `environment:` (the game loads the same look).
+Traps: an equirect/cubemap sky without `sky.path` bakes the gradient with a warning; LOD force is a shared preview of every instance of the asset; render-layer masks are per viewport and not saved.
+
 ## Output Format
 
 - For editor work: report what changed as `node/PATH created|configured|deleted` lines (what `lrgeditorctl` prints), whether the level is saved or still dirty, and any problems from `get problems`.

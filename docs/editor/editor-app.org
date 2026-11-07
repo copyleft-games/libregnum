@@ -750,6 +750,27 @@ At construction the panel gives the shell's =view.asset-grid= (toggle, checked w
 
 Errors: a missing parameter is =invalid-params=, a path outside the project or that does not exist =not-found=, a name that exists or is invalid =invalid-params=, any other failure =failed=. Each method rescans, re-lists the panel and queues a git refresh.
 
+*** Rendering assets (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-assets-render
+:END:
+Materials, shaders and shader graphs are recognised by extension (the asset database types them as other files):
+
+| Files | Tile | Type column | Double click |
+|-------+------+-------------+--------------|
+| =.rmat= | the material on a lit sphere (rendered with the [[file:material-editor.org][material editor]]'s preview, one per frame while a window exists, again when the file changes); "Mt" glyph meanwhile | Material | the material editor |
+| =.rshader= | "Sh" glyph | Shader | the code panel (YAML), compiled on save |
+| =.glsl .vert .frag .vs .fs= | "GL" glyph | Shader stage | the code panel (GLSL), compiled on save |
+| =.rshadergraph= | "SG" glyph | Shader graph | the [[file:shader-graph-editor.org][shader graph editor]] |
+
+The background menu has a third section: *New Material* (=new_material.rmat=, a grey lit material), *New Shader* (=new_shader.rshader= plus =new_shader.frag=, a lit starter with three described uniforms) and *New Shader Graph* (=new_shader_graph.rshadergraph=, the PBR starter graph); each is created in the shown folder with a free name and renamed inline. Actions: =assets.new-material=, =assets.new-shader=, =assets.new-shader-graph=.
+
+The entry menu has *Create Variant* for prefabs and materials (=assets.create-variant=, =lrg_editor_assets_panel_create_variant()=): a prefab variant through =lrg_editor_create_prefab_variant()= (undoable: undo removes the file), a material instance through =lrg_editor_material_editor_create_variant()=, both as =<stem>_variant= next to the source, then renamed inline.
+
+The Import Settings dialog of a model shows the LOD keys of 0.9.0 with labels and ranges: LOD levels (1..8), LOD ratios, LOD screen sizes, LOD max error (0..1), LOD lock border, LOD hysteresis (0..0.9), LOD fade (s) (0..10).
+
+The panel's constructor also registers the =material.*= and =shadergraph.*= IPC methods ([[file:ipc-protocol.org::#material-methods][IPC protocol]]).
+
 *** API
 :PROPERTIES:
 :CUSTOM_ID: editor-panel-assets-api
@@ -769,6 +790,7 @@ Errors: a missing parameter is =invalid-params=, a path outside the project or t
 | ~lrg_editor_assets_panel_reveal (self, path)~ | Navigate to and select a file (=asset.reveal=) |
 | ~lrg_editor_assets_panel_begin_rename (self, path)~, ~get_renaming (self)~ | Inline rename (F2) |
 | ~lrg_editor_assets_panel_show_import_settings (self, path)~ | The Import Settings dialog |
+| ~lrg_editor_assets_panel_create_variant (self, path, error)~ | Create Variant of a prefab or material (0.9.0) |
 
 *** Implementation notes
 :PROPERTIES:
@@ -1338,12 +1360,13 @@ Each panel has a slim header strip: the two combo boxes on the left (=vpN-header
 :CUSTOM_ID: editor-viewport-rendering
 :END:
 - *Render on demand.* Viewports are =LrgViewport= widgets in render mode with =continuous= off. A panel marks itself dirty on =LrgEditorViewState::camera-changed= / =::viewport-changed= for its index, on the active viewport, layout, tile mode and timeline time changing, on =LrgEditor::changed= and =::level-replaced=, on the level's =node-added= / =node-removed= / =node-changed=, on selection changes, on play start/stop/pause and when =lrg_editor_scene_renderer_get_generation()= moves (an asset reloaded, the base directory or the grid settings changed). Its step (which runs before the viewport's) queues one render. It renders every frame only while playing, while the timeline plays, during a gizmo drag or tile stroke, and while the active viewport navigates (fly, orbit, pan, zoom, axis gizmo). =lrg_editor_viewport_panel_get_render_pending()= exposes the flag.
-- *Lights* (=lrg_editor_scene_renderer_sync_lights()=): every visible LIGHT node becomes an =LrgLight3DDesc= that =lrg_world3d_renderer_sync_lights()= puts into the light set, exactly as a game's light components do. A light whose =light_type= visual param is the string ="directional"= is the sun (the first one; it shines down the node's local -Z); every other light is a point light at the node's world position with =range= as radius (default 10), =intensity= as intensity (default 1) and the material colour (white without a material). The engine's 3D light set has no spot lights: lights with =spot_angle= > 0 (or =light_type: spot=) are previewed as point lights. A level without a directional light gets the default editor sun (travelling along (0.5, -0.75, -0.45), from the upper left of the default camera, so shadows fall into view) so the scene stays readable; turning the /Scene Lighting/ overlay off lights the scene with that sun only. Ambient is a fixed dark blue-grey.
+- *Lights* (=lrg_editor_scene_renderer_sync_lights()=): every visible LIGHT node becomes an =LrgLight3DDesc= that =lrg_world3d_renderer_sync_lights()= puts into the light set, exactly as a game's light components do. A light whose =light_type= visual param is the string ="directional"= is the sun (the first one; it shines down the node's local -Z); every other light is a point light at the node's world position with =range= as radius (default 10), =intensity= as intensity (default 1) and the material colour (white without a material), or a spot light (=light_type: spot= or =spot_angle= > 0) along local -Z with =spot_angle= as its full outer cone and =spot_inner_angle= as its full inner cone (degrees; 80 % of the outer half-angle without it); =cast_shadows: true= gives point and spot lights shadow maps. A level without a directional light gets the default editor sun (travelling along (0.5, -0.75, -0.45), from the upper left of the default camera, so shadows fall into view) so the scene stays readable; turning the /Scene Lighting/ overlay off lights the scene with that sun only. Ambient is a fixed dark blue-grey.
 - *Shadows*: with /Shadows/ on, in perspective viewports and the lit modes, an =LrgShadowRenderer= (3 cascades of 2048 texels reaching 60 units, 3 x 3 filter, strength 0.85) renders the directional light's cascades for that viewport's camera before the scene and hands them to the light set. Orthographic and 2D viewports draw without shadows. Point-light cube shadows are not used (no shadow priorities in the level format yet).
 - *Sky*: with /Sky/ on, perspective viewports draw an =LrgSkyDome= behind the scene with its sun along the directional light. Weather and day/night preview are not wired: a level has no environment block declaring them yet (see the gap analysis, "Lights"); when it does, the dome's time of day and =LrgWeatherManager= fog plug in here.
-- *Post processing* (preview only, never saved into the level): with /Post Processing/ on, each viewport (and the camera preview) has an =LrgPostProcessor= (=lrg_editor_scene_renderer_get_post_processor()=, made by =lrg_world3d_renderer_new_preview_post_processor()=) holding =LrgFxaa= (="fxaa"=), =LrgBloom= (="bloom"=, threshold 0.75, intensity 0.6), =LrgVignette= (="vignette"=, intensity 0.35) and =LrgColorGrade= (="color-grade"=, contrast 1.05, saturation 1.08). The shared renderer renders the scene into an offscreen image kept per processor, its =post.fs= pass applies FXAA, soft-knee bloom with a highlight shoulder and the vignette with those effects' parameters and enable flags, and =lrg_color_grade_draw_texture()= grades the result into the viewport. The engine's own =LrgPostProcessor= capture/render path and the FXAA, bloom and vignette =apply= methods are still stubs, which is why the shared renderer runs the passes itself.
+- *Post processing* (preview only, never saved into the level): with /Post Processing/ on, each viewport (and the camera preview) has an =LrgPostProcessor= (=lrg_editor_scene_renderer_get_post_processor()=, made by =lrg_world3d_renderer_new_preview_post_processor()=) holding, in order, =LrgBloom= (="bloom"=, threshold 0.75, intensity 0.6), =LrgTonemap= (="tonemap"=, filmic, +1 EV), =LrgVignette= (="vignette"=, intensity 0.35), =LrgFxaa= (="fxaa"=) and =LrgColorGrade= (="color-grade"=, contrast 1.05, saturation 1.08). The shared renderer draws the scene into a half-float image kept per processor and runs the effects with =lrg_post_processor_process()=. When the level's environment names a =post_stack:= (=.rpost=), that stack is the look instead (the renderer's fallback look, resolved and cached by path, reloaded after =forget_asset()=); a stack the post-stack editor previews overrides both.
+- *Level look* (0.9.0): while authoring, the level's =environment:= block (sky, image-based light, reflection probes, fog, volumetric fog) and its post stack are the shared renderer's fallback look (=lrg_world3d_renderer_set_fallback_look()=); during play the play world's own look is used. Decal nodes become decals of the renderer's decal set (=size_x= / =size_y= / =size_z= box over the node, the asset as albedo, the material colour, =opacity=, =fade_angle=, =fade_width=, =sort_order=, =roughness=, =metallic=), reflection-probe nodes become probes on the environment for the frame (=extents_x/y/z=, default 5; =blend_distance=, =intensity=, =box_projection=, =resolution=, default 128), captured when they move or resize and on =lrg_editor_scene_renderer_recapture_probes()=. Mesh-asset nodes whose =.meta= asks for two or more LOD levels draw the level the viewport camera selects, or the level the inspector forces on =lrg_editor_scene_renderer_get_lod_group()=. =material:= references (=.rmat=) draw through =lrg_world3d_renderer_get_material()=. Each viewport (and the preview slot) has a render-layer mask, =lrg_editor_scene_renderer_set_cull_mask()=.
 - *Render modes*: Lit (the light set's shader with shadows; falls back to the editor's =lit.fs= one-light shader without GLSL 330), Unlit (=unlit.fs=, texture times material colour), Wireframe (unlit in rlgl wire mode), Normals (=normals.fs=, world normals as colours) and Lighting Only (the light set's shader on white surfaces). Tilemaps and icon lines use rlgl's default shader in every mode.
-- *Shaders*: =data/editor/shaders/scene.vs.glsl=, =lit.fs.glsl=, =unlit.fs.glsl=, =normals.fs.glsl= and =post.fs.glsl= are the readable sources. They are the shared renderer's shaders since 0.9.0: the library embeds them as string literals generated byte for byte from those files (=lrg_world3d_renderer_get_shader_source()=; =lrg_editor_scene_renderer_get_shader_source()= returns the same strings), so an installed editor or game needs no data files; =/editor-app/viewport/shader-sources= fails when a =.glsl= and its literal drift apart. Edit the =.glsl=, then regenerate the literal block in =src/world3d/lrg-world3d-renderer.c= (each line becomes ="...\n"=).
+- *Shaders*: =data/editor/shaders/scene.vs.glsl=, =lit.fs.glsl=, =unlit.fs.glsl= and =normals.fs.glsl= are the readable sources (the 0.8 =post.fs= is gone: post effects run through =lrg_post_processor_process()=). They are the shared renderer's shaders since 0.9.0: the library embeds them as string literals generated byte for byte from those files (=lrg_world3d_renderer_get_shader_source()=; =lrg_editor_scene_renderer_get_shader_source()= returns the same strings), so an installed editor or game needs no data files; =/editor-app/viewport/shader-sources= fails when a =.glsl= and its literal drift apart. Edit the =.glsl=, then regenerate the literal block in =src/world3d/lrg-world3d-renderer.c= (each line becomes ="...\n"=).
 - *Missing assets*: mesh, sprite and tileset references that do not resolve (=lrg_editor_scene_renderer_is_asset_missing()=) are drawn as magenta wire boxes in the scene and get a magenta screen box with a "missing: file" tag in the overlay, in every render mode.
 
 *** Overlays painted on top
@@ -1410,6 +1433,9 @@ Registered by the split (and the lone panel) from =lrg-editor-viewport-split.c=;
 | =lrg_editor_scene_renderer_get_generation= / =is_asset_missing= | Change counter, missing references |
 | =lrg_editor_scene_renderer_camera_node_view= | The view through a camera node |
 | =lrg_editor_scene_renderer_get_shader_source= | The embedded GLSL |
+| =lrg_editor_scene_renderer_set_cull_mask= / =get_cull_mask= | A viewport's render-layer mask (0.9.0) |
+| =lrg_editor_scene_renderer_get_lod_group= | The LOD group mesh-asset nodes of an asset draw with (0.9.0) |
+| =lrg_editor_scene_renderer_recapture_probes= | Capture every reflection-probe node again (0.9.0) |
 | =lrg_editor_gizmo_paint_transform= / =format_delta= / =drag_readout= / =axes= / =box_select= / =chip= / =tile_hover= / =play_frame= / =missing_asset= / =active_outline= | The overlay painters |
 
 *** Testing
@@ -1557,6 +1583,17 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 
 =lrgeditorctl code open PATH[:LINE]=, =code list= and =code save [PATH]= wrap them; the MCP tools are =code_open=, =code_list= and =code_save=.
 
+*** Shaders (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-code-shaders
+:END:
+- *Highlighting*: =.rshader=, =.rmat=, =.rshadergraph= and =.rpost= open with the YAML syntax; GLSL stages (=.glsl .vert .frag .vs .fs=) with the GLSL syntax.
+- *Compile on save*: saving a =.rshader= compiles it; saving a stage file compiles every =.rshader= of its folder whose vertex or fragment stage is that file. With a window this is a real GL compile and link (=lrg_shader_asset_compile()=); headless (=--headless=, tests) the document is only loaded, which still catches YAML errors, unknown keys and missing stage files. A toast reports the error count, the status line "Shader compiled".
+- *Mapped diagnostics*: driver messages are mapped back to the user's file and line (=LrgShaderDiagnostic=): a stage file at its own line, an inline stage at the line of the =.rshader= below its =fragment:= / =vertex:= key, preamble messages at the =.rshader=. A strip under the editor (=code-diagnostics=, up to six rows) lists the active file's messages with an error or warning icon; clicking one jumps to its line and column. Opening a file that has errors (without an explicit line) puts the caret on the first one.
+- *Problems panel*: the diagnostics are problems with the codes =shader-error= / =shader-warning= and the project-relative file; they stay listed when a level validation replaces the problem list, and go away with a clean save.
+- *Hot reload*: after the save the material preview's copies of the shader reload (keep-last-good on failure), so open material editors, the shader graph preview and material thumbnails show the new code at once. Games get the same through =lrg_shader_asset_set_watch()=.
+- *IPC*: =shader.create=, =shader.compile=, =shader.diagnostics=, =shader.uniforms=, =shader.reload= ([[file:ipc-protocol.org::#material-methods][IPC protocol]]).
+
 *** API
 :PROPERTIES:
 :CUSTOM_ID: editor-panel-code-api
@@ -1594,6 +1631,12 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 :CUSTOM_ID: editor-panel-dialogs-testing
 :END:
 =tests/test-editor-app-dialogs.c= drives all of this headless through the canvas and the IPC: a theme card click re-themes the canvas (a preset and a shipped theme file), a settings row applies live and =editor.yaml= is saved on close; "+" on the Keybindings page captures Ctrl+J (a lone Ctrl keeps waiting) and the new shortcut toggles visibility after the dialog closes, a conflict is reported, Reset and the remove button work; Reset All keeps the layout; the palette runs "select all" picked by fuzzy search, "@camera" selects the camera, a disabled action does not run, arrows wrap; quick open waits for the scan, skips hidden folders, opens a level and (with =script-editor= internal) a script in the code panel; the project settings form saves =project.ryaml=; New Script creates, attaches and opens a Python script; the shortcut table filters by key name, follows rebinding and leads to the Keybindings page; About; the code panel opens with syntax and caret, marks dirty, saves with the panel-scoped Ctrl+S without saving the level, reloads a clean tab changed on disk, asks for a dirty one, asks before closing a dirty tab and opens through the =code.open= GIO action; =code.open= / =code.list= / =code.save= over IPC with their errors, and =node.open-scripts= routed by =script-editor=.
+
+** Environment panel and level look tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-environment
+:END:
+Since 0.9.0. The window creates the Environment panel (=lrg_editor_environment_panel_new()=, dock id "environment", a tab of the Inspector's stack; View > Panels > Environment) and the data editor registry opens =.rpost= files in the post-stack editor. The viewport header gains the debug view modes in its render-mode combo and a render-layer picker button; the viewport draws volume gizmos for the selected light, decal or reflection probe and accepts =.rmat= drops on meshes; the inspector gains light rows by kind, decal and probe params and a LOD preview section; the Create menus offer spot and directional lights, decals and reflection probes. All of it is described in [[file:environment.org][Level Look]].
 
 ** API index
 :PROPERTIES:
@@ -1653,6 +1696,9 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_viewport_panel_get_header ()= | The header bar: a view preset combo box ("view-preset"), a render mode combo box ("render-mode"), the overlays menu button ("overlays"), the camera preview toggle ("preview-toggle") and the maximise toggle ("maximize"); names are prefixed with "vpN-" for viewport N. |
 | =lrg_editor_viewport_panel_get_preview_node ()= | Returns the camera node the preview shows, or =NULL= when the preview is hidden. |
 | =lrg_editor_viewport_panel_get_preview_enabled ()= | Returns whether a selected camera shows its preview. |
+| =lrg_editor_viewport_panel_set_layer_mask ()= | The viewport's render-layer picker: sets which layers it draws (handed to =lrg_editor_scene_renderer_set_cull_mask()=); a view setting, not saved (0.9.0, see [[file:environment.org::#view-modes][View modes and render layers]]). |
+| =lrg_editor_viewport_panel_get_layer_mask ()= | Returns the viewport's render-layer mask (default all) (0.9.0). |
+| =lrg_editor_viewport_panel_queue_render ()= | Renders the scene again next frame, for changes the panel does not watch (a previewed post stack, a bake) (0.9.0). |
 
 *** =lrg-editor-viewport-split.h=
 :PROPERTIES:
@@ -1689,7 +1735,11 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_scene_renderer_forget_asset ()= | Drops the cached GPU copy of a model or texture so the next render loads it again (live reload). |
 | =lrg_editor_scene_renderer_render_model_thumbnail ()= | Renders a model from a 3/4 angle, framed by its bounding box and lit like the viewport, into a /size/ x /size/ image. |
 | =lrg_editor_scene_renderer_render_font_thumbnail ()= | Loads the font with the size and code points of its ".meta" sidecar (32 pixels and 32-126 without one) and draws the sample "Aa Bb 123" centred on a dark background into a /size/ x /size/ image. |
-| =lrg_editor_scene_renderer_release ()= | Frees every GPU resource (the runtime renderer's shaders, meshes, cached models and textures, post images; the thumbnail shader). |
+| =lrg_editor_scene_renderer_release ()= | Frees every GPU resource (the runtime renderer's shaders, meshes, cached models, textures and materials, post images; the thumbnail shader; LOD groups and probe captures). |
+| =lrg_editor_scene_renderer_set_cull_mask ()= | Sets which render layers one viewport (or the preview slot) draws; default every layer (0.9.0). |
+| =lrg_editor_scene_renderer_get_cull_mask ()= | Returns a viewport's render-layer mask (0.9.0). |
+| =lrg_editor_scene_renderer_get_lod_group ()= | The LOD group built from the cached model and its ".meta" for mesh-asset nodes of an asset; its forced level previews in every viewport (0.9.0). |
+| =lrg_editor_scene_renderer_recapture_probes ()= | Captures every reflection-probe node again before the next frame (0.9.0). |
 
 *** =lrg-editor-gizmo-paint.h=
 :PROPERTIES:
@@ -1707,6 +1757,15 @@ Every public function of the editor application widget headers that the sections
 | =lrg_editor_gizmo_paint_play_frame ()= | Paints the play-mode frame (a success-coloured, or warning-coloured while paused, border) and a pill label at the bottom centre with the play keys. |
 | =lrg_editor_gizmo_paint_missing_asset ()= | Paints a magenta box around the screen bounds of /node/ with a small "missing: file" tag, so broken references stand out in every render mode. |
 | =lrg_editor_gizmo_paint_active_outline ()= | Paints the accent outline of the active viewport of a split layout. |
+| =lrg_editor_volume_handle_get_type ()= | The =GType= of =LrgEditorVolumeHandle=, the handles of the volume gizmos (0.9.0, see [[file:environment.org::#volume-gizmos][Volume gizmos]]). |
+| =lrg_editor_volume_handle_get_param ()= | The visual param a volume handle edits ("range", "spot_angle", "size_x", "extents_y", ...). |
+| =lrg_editor_volume_has_gizmo ()= | Whether a node shows a volume gizmo (point and spot lights, decals, reflection probes). |
+| =lrg_editor_volume_get_handle_position ()= | A volume handle's world position, as the viewport draws it. |
+| =lrg_editor_volume_hit_test ()= | The volume handle under a viewport pixel. |
+| =lrg_editor_volume_drag_value ()= | The param value that puts a dragged handle under the pointer. |
+| =lrg_editor_gizmo_paint_volume ()= | Paints a node's volume (range sphere, cones, decal or probe box) and its handles. |
+| =lrg_editor_gizmo_paint_lod_bounds ()= | Paints a LOD'd node's bounding sphere and a chip with the drawn level, triangles and screen size. |
+| =lrg_editor_lod_node_screen_size ()= | The screen size of a node's LOD group through a view (the LOD threshold measure). |
 
 *** =lrg-editor-code-panel.h=
 :PROPERTIES:

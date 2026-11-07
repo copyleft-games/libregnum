@@ -72,6 +72,11 @@ lrg_editor_render_mode_get_type (void)
 			{ LRG_EDITOR_RENDER_MODE_WIREFRAME, "LRG_EDITOR_RENDER_MODE_WIREFRAME", "wireframe" },
 			{ LRG_EDITOR_RENDER_MODE_NORMALS, "LRG_EDITOR_RENDER_MODE_NORMALS", "normals" },
 			{ LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY, "LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY", "lighting-only" },
+			{ LRG_EDITOR_RENDER_MODE_OVERDRAW, "LRG_EDITOR_RENDER_MODE_OVERDRAW", "overdraw" },
+			{ LRG_EDITOR_RENDER_MODE_UV, "LRG_EDITOR_RENDER_MODE_UV", "uv" },
+			{ LRG_EDITOR_RENDER_MODE_LIGHT_COMPLEXITY, "LRG_EDITOR_RENDER_MODE_LIGHT_COMPLEXITY", "light-complexity" },
+			{ LRG_EDITOR_RENDER_MODE_AO, "LRG_EDITOR_RENDER_MODE_AO", "ao" },
+			{ LRG_EDITOR_RENDER_MODE_REFLECTIONS, "LRG_EDITOR_RENDER_MODE_REFLECTIONS", "reflections" },
 			{ 0, NULL, NULL }
 		};
 		GType id = g_enum_register_static (g_intern_static_string ("LrgEditorRenderMode"), values);
@@ -1683,7 +1688,7 @@ lrg_editor_view_state_set_render_mode (LrgEditorViewState  *self,
 	guint i;
 
 	g_return_if_fail (LRG_IS_EDITOR_VIEW_STATE (self));
-	g_return_if_fail (mode <= LRG_EDITOR_RENDER_MODE_LIGHTING_ONLY);
+	g_return_if_fail (mode <= LRG_EDITOR_RENDER_MODE_REFLECTIONS);
 
 	i = resolve_index (self, index);
 	if (self->viewports[i].render_mode == mode)

@@ -814,6 +814,62 @@ test_ipc (Fixture       *f,
 	g_assert_nonnull (strstr (reply, "not-found"));
 }
 
+/* 0.9.0 (ED2): the Create menu's light, decal and probe kinds, created
+ * through the panel's own action, with their presets. */
+static void
+test_create_render_kinds (Fixture       *f,
+                          gconstpointer  data)
+{
+	GActionGroup *group;
+	LrgLevel     *level;
+	static const struct { const gchar *id; LrgNodeVisualKind kind; const gchar *light_type; } kinds[] = {
+		{ "light", LRG_NODE_VISUAL_LIGHT, NULL },
+		{ "spot-light", LRG_NODE_VISUAL_LIGHT, "spot" },
+		{ "directional-light", LRG_NODE_VISUAL_LIGHT, "directional" },
+		{ "decal", LRG_NODE_VISUAL_DECAL, NULL },
+		{ "reflection-probe", LRG_NODE_VISUAL_REFLECTION_PROBE, NULL },
+	};
+	guint         i;
+
+	lrg_editor_new_level (f->editor, "kinds");
+	efx_frames (f, 2);
+	level = lrg_editor_get_level (f->editor);
+	group = lrg_widget_get_action_group (LRG_WIDGET (panel (f)), "hierarchy");
+	g_assert_nonnull (group);
+	for (i = 0; i < G_N_ELEMENTS (kinds); i++)
+	{
+		LrgNode       *node;
+		LrgNodeVisual *visual;
+		guint          before = lrg_level_count_nodes (level);
+
+		g_action_group_activate_action (group, "create", g_variant_new_string (kinds[i].id));
+		efx_frames (f, 2);
+		g_assert_cmpuint (lrg_level_count_nodes (level), ==, before + 1);
+		node = lrg_editor_selection_get_primary (sel (f));
+		g_assert_nonnull (node);
+		visual = lrg_node_get_visual (node);
+		g_assert_nonnull (visual);
+		g_assert_cmpint (lrg_node_visual_get_kind (visual), ==, kinds[i].kind);
+		if (kinds[i].light_type != NULL)
+		{
+			const GValue *lt = lrg_node_visual_get_param (visual, "light_type");
+
+			g_assert_nonnull (lt);
+			g_assert_cmpstr (g_value_get_string (lt), ==, kinds[i].light_type);
+		}
+		if (g_strcmp0 (kinds[i].id, "spot-light") == 0)
+			g_assert_cmpfloat (lrg_node_visual_get_param_double (visual, "spot_angle", 0.0), >, 0.0);
+	}
+
+	/* every new row paints (kind glyphs) without trouble */
+	g_assert_cmpuint (lrg_tree_view_get_n_visible (tree (f)), >=, G_N_ELEMENTS (kinds));
+	lrg_canvas_record (lrg_editor_app_get_canvas (f->app));
+
+	/* one undo removes the last one */
+	lrg_editor_undo (f->editor);
+	g_assert_cmpuint (lrg_level_count_nodes (level), ==, G_N_ELEMENTS (kinds) - 1);
+}
+
 #endif /* LRG_BUILD_EDITOR_UI */
 
 int
@@ -839,6 +895,7 @@ main (int   argc,
 	ADD ("toggles-filter", test_toggles_and_filter);
 	ADD ("live-tab", test_live_tab);
 	ADD ("ipc", test_ipc);
+	ADD ("create-render-kinds", test_create_render_kinds);
 #undef ADD
 #endif
 

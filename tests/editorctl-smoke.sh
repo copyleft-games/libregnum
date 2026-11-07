@@ -19,7 +19,9 @@
 # lrgeditorctl: sessions, get/describe, create/set/rename/move/delete,
 # apply -f, edit (scripted $VISUAL), select, run, undo/redo, save,
 # validate, logs, call, events, the 0.8.1 verbs (meta, vcs, prefab, code,
-# data, palette, preferences, hierarchy filter, notify --level)
+# data, palette, preferences, hierarchy filter, notify --level), the
+# 0.9.0 rendering verbs (material, shader, shadergraph, env, post, lod,
+# view layers; skipped until the editor registers their methods)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -220,6 +222,107 @@ check 'preferences' "$(ctl preferences keybindings)" 'preferences/keybindings op
 "${ctl}" preferences nope >/dev/null 2>&1 && status=0 || status=$?
 check 'preferences unknown page exits 1' "status=${status}" 'status=1'
 
+# 0.9.0 rendering verbs: materials, shaders, shader graphs (ED1) and the
+# level look, post stacks, LOD and render layers (ED2). A family whose
+# methods this editor build does not register yet is skipped.
+methods="$(ctl get methods -o json)"
+has_method () {
+	[[ "${methods}" == *"\"${1}\""* ]]
+}
+skip () {
+	echo "ok - SKIP ${1} (methods not registered by this editor build)"
+}
+mkdir -p "${work}/game/materials" "${work}/game/shaders" "${work}/game/graphs" "${work}/game/looks"
+"${ctl}" material frobnicate >/dev/null 2>&1 && status=0 || status=$?
+check 'material usage error exits 2' "status=${status}" 'status=2'
+"${ctl}" lod >/dev/null 2>&1 && status=0 || status=$?
+check 'lod usage error exits 2' "status=${status}" 'status=2'
+"${ctl}" view layers bogus >/dev/null 2>&1 && status=0 || status=$?
+check 'view layers bad mask exits 2' "status=${status}" 'status=2'
+
+if has_method material.create
+then
+	mat="${work}/game/materials/smoke.rmat"
+	check 'material create' "$(ctl material create "${mat}")" 'smoke.rmat'
+	check 'material set' "$(ctl material set "${mat}" metallic 1 -o json)" '"key" : "metallic"'
+	check 'material get' "$(ctl material get "${mat}" -o json)" '"metallic" : 1'
+	check 'material list' "$(ctl material list)" 'editors'
+	check 'material save' "$(ctl material save "${mat}")" 'smoke.rmat'
+	# material editors are data editors: close it so the MCP data_list
+	# check below sees no open editors
+	ctl data close "${mat}" --force >/dev/null
+else
+	skip 'material'
+fi
+if has_method shader.create
+then
+	check 'shader create' "$(ctl shader create "${work}/game/shaders/smoke.rshader")" 'smoke.rshader'
+	check 'shader uniforms' "$(ctl shader uniforms "${work}/game/shaders/smoke.rshader")" 'uniforms'
+else
+	skip 'shader'
+fi
+if has_method shadergraph.create
+then
+	graph="${work}/game/graphs/smoke.rshadergraph"
+	check 'shadergraph create' "$(ctl shadergraph create "${graph}")" 'smoke.rshadergraph'
+	check 'shadergraph types' "$(ctl shadergraph types)" 'category'
+	check 'shadergraph add' "$(ctl shadergraph add "${graph}" time -o json)" '"id"'
+	check 'shadergraph validate' "$(ctl shadergraph validate "${graph}" -o json)" '"ok"'
+	ctl data close "${graph}" --force >/dev/null
+else
+	skip 'shadergraph'
+fi
+if has_method environment.get
+then
+	check 'env set' "$(ctl env set fog.density 0.05 -o json)" '0.05'
+	check 'env get' "$(ctl env -o json)" '"present" : true'
+	check 'env set sky colour' "$(ctl env set sky.zenith 0.1,0.2,0.6 -o json)" '0.6'
+	check 'env progress' "$(ctl env progress -o json)" '"baking"'
+	check 'env reset' "$(ctl env reset -o json)" '"present" : false'
+	check 'env reset undo' "$(ctl undo && ctl env -o json)" '"present" : true'
+else
+	skip 'environment'
+fi
+if has_method post.create
+then
+	look="${work}/game/looks/smoke.rpost"
+	check 'post types' "$(ctl post types)" 'vignette'
+	check 'post create' "$(ctl post create "${look}" preset=empty)" 'smoke.rpost'
+	check 'post add' "$(ctl post add "${look}" vignette -o json)" '"index" : 0'
+	check 'post set' "$(ctl post set "${look}" 0 enabled false -o json)" 'true'
+	check 'post get' "$(ctl post get "${look}" -o json)" '"type" : "vignette"'
+	check 'post save' "$(ctl post save "${look}")" 'smoke.rpost'
+	check 'post file written' "$(cat "${look}")" 'vignette'
+	if has_method environment.get
+	then
+		check 'post assign' "$(ctl post assign "${look}")" 'smoke.rpost'
+	fi
+	# the post stack editor is a data editor: close it so the MCP
+	# data_list check below sees no open editors
+	ctl data close "${look}" --force >/dev/null
+else
+	skip 'post'
+fi
+if has_method lod.get
+then
+	"${ctl}" lod get Ground >/dev/null 2>&1 && status=0 || status=$?
+	# a primitive has no LOD levels: an editor error (1) or an empty
+	# answer (0) are both fine, a usage error (2) is not
+	check 'lod get reaches the editor' "$([[ "${status}" -ne 2 ]] && echo sent || echo usage)" 'sent'
+else
+	skip 'lod'
+fi
+if has_method view.layers
+then
+	check 'view layers mask' "$(ctl view layers 0x5 -o json)" '"mask" : 5'
+	check 'view layers one layer off' "$(ctl view layers 0 off -o json)" '"mask" : 4'
+	check 'view layers all' "$(ctl view layers all -o json)" '"mask" : 4294967295'
+	check 'view mode overdraw' "$(ctl view mode overdraw)" 'mode: overdraw'
+	ctl view mode lit >/dev/null
+else
+	skip 'view layers'
+fi
+
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
 check 'saved file has the nodes' "$(cat "${work}/game/levels/main.rlevel")" 'Barrel'
@@ -262,6 +365,11 @@ else
 	check 'mcp data tools' "${out}" '"name":"data_set"'
 	check 'mcp palette and preferences tools' "${out}" '"name":"open_preferences"'
 	check 'mcp hierarchy_filter' "${out}" '"name":"hierarchy_filter"'
+	check 'mcp material tools' "${out}" '"name":"material_set"'
+	check 'mcp shader graph tools' "${out}" '"name":"shadergraph_connect"'
+	check 'mcp environment tools' "${out}" '"name":"environment_set"'
+	check 'mcp post tools' "${out}" '"name":"post_save_look"'
+	check 'mcp lod and layer tools' "${out}" '"name":"set_view_layers"'
 	check 'mcp inspector_state is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"inspector_state"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'

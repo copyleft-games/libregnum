@@ -47,6 +47,7 @@ static gboolean  opt_watch    = FALSE;
 static gint      opt_tail     = 50;
 static gboolean  opt_window   = FALSE;
 static gboolean  opt_force    = FALSE;
+static gboolean  opt_wait     = FALSE;
 static gchar    *opt_level    = NULL;
 static gchar    *opt_type     = NULL;
 static gboolean  opt_license  = FALSE;
@@ -75,6 +76,7 @@ static const GOptionEntry entries[] = {
 	{ "tail", 0, 0, G_OPTION_ARG_INT, &opt_tail, "Log records to show first (default 50)", "N" },
 	{ "window", 0, 0, G_OPTION_ARG_NONE, &opt_window, "Screenshot the whole window, not just the viewport", NULL },
 	{ "force", 0, 0, G_OPTION_ARG_NONE, &opt_force, "Discard unsaved changes (open, new, quit)", NULL },
+	{ "wait", 0, 0, G_OPTION_ARG_NONE, &opt_wait, "Wait for a started job to finish (env bake)", NULL },
 	{ "level", 'l', 0, G_OPTION_ARG_STRING, &opt_level,
 	  "Toast level for notify: info, success, warning, error (or 0-3)", "LEVEL" },
 	{ "type", 't', 0, G_OPTION_ARG_STRING, &opt_type, "Asset type filter for get assets", "TYPE" },
@@ -124,6 +126,15 @@ static const gchar *description =
 	"  palette [commands|files] [QUERY] open the command palette / quick-open\n"
 	"  preferences [PAGE]               open the preferences dialog (e.g. keybindings)\n"
 	"  view layout single|split-h|split-v|quad | view render-mode MODE | view overlay NAME on|off\n"
+	"  view layers [MASK|LAYER on|off]  a viewport's render-layer mask (viewport=N)\n"
+	"                                   MODE: lit unlit wireframe normals lighting-only overdraw uv\n"
+	"                                   light-complexity ao reflections\n"
+	"  material open|create|variant|get|set|revert|save|preview|assign|list ...  .rmat materials\n"
+	"  shader create|compile|diagnostics|uniforms|reload PATH   .rshader user shaders\n"
+	"  shadergraph open|create|types|get|add|remove|connect|disconnect|param|input|validate|glsl|save ...\n"
+	"  env [get|set KEY VALUE|reset|bake [--wait]|progress|show]  the level environment block\n"
+	"  post types|open|create|get|add|remove|move|set|save|preview|look|assign ...  .rpost post stacks\n"
+	"  lod get NODE | lod force NODE LEVEL|auto   LOD preview of a mesh node\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
@@ -152,6 +163,16 @@ static const gchar *description =
 	"  lrgeditorctl view layout quad\n"
 	"  lrgeditorctl data open data/input.yaml\n"
 	"  lrgeditorctl data set /actions/jump/bindings/0/key ENTER; lrgeditorctl data save\n"
+	"  lrgeditorctl view mode light-complexity viewport=1\n"
+	"  lrgeditorctl view layers 0x5\n"
+	"  lrgeditorctl material create materials/steel.rmat shading_model=lit\n"
+	"  lrgeditorctl material set materials/steel.rmat metallic 1\n"
+	"  lrgeditorctl material assign Props/Crate materials/steel.rmat\n"
+	"  lrgeditorctl shader compile shaders/water.rshader\n"
+	"  lrgeditorctl shadergraph connect graphs/glow.rshadergraph time out mul a\n"
+	"  lrgeditorctl env set fog.density 0.02; lrgeditorctl env bake --wait\n"
+	"  lrgeditorctl post add looks/night.rpost vignette; lrgeditorctl post set looks/night.rpost 0 intensity 0.4\n"
+	"  lrgeditorctl lod force Props/Statue 2\n"
 	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
@@ -1179,6 +1200,8 @@ cmd_select (gchar  **args,
 	return call_ok ("selection.set", p, error);
 }
 
+static gboolean view_layers (gchar **args, GError **error);
+
 static gboolean
 cmd_view (gchar  **args,
           GError **error)
@@ -1221,7 +1244,10 @@ cmd_view (gchar  **args,
 
 		return passthrough ("view.layout", keys, args + 1, error);
 	}
-	if (g_strcmp0 (args[0], "render-mode") == 0 || g_strcmp0 (args[0], "render_mode") == 0)
+	if (g_strcmp0 (args[0], "layers") == 0)
+		return view_layers (args + 1, error);
+	if (g_strcmp0 (args[0], "render-mode") == 0 || g_strcmp0 (args[0], "render_mode") == 0 ||
+	    g_strcmp0 (args[0], "mode") == 0)
 	{
 		static const gchar * const keys[] = { "mode", NULL };
 
@@ -1265,7 +1291,7 @@ cmd_view (gchar  **args,
 			return call_ok ("action.run", p, error);
 		}
 	return usage_error (error, "view top|front|right|bottom|back|left|persp|all, view focus NAME, view set key=value, "
-	                    "view layout NAME, view render-mode MODE, view overlay NAME on|off");
+	                    "view layout NAME, view render-mode MODE, view overlay NAME on|off, view layers [MASK|LAYER on|off]");
 }
 
 static gboolean
@@ -2072,6 +2098,393 @@ cmd_preferences (gchar  **args,
 	return TRUE;
 }
 
+/* ==========================================================================
+ * 0.9.0 rendering verbs: material, shader, shadergraph, env, post, lod
+ * ========================================================================== */
+
+/*
+ * One sub-command of a verb family: "material get PATH" calls
+ * material.get with {path}. @keys names the positional parameters in
+ * order; a leading '@' marks a file path (sent through path_arg()), a
+ * leading '~' a typed value (parsed like an assignment value: JSON,
+ * numbers, booleans, null, number vectors; "on" / "off" are booleans).
+ * Anything else is sent as a string. key=value arguments pass through.
+ */
+typedef struct
+{
+	const gchar *verb;
+	const gchar *method;
+	const gchar *keys[6];
+} CtlVerb;
+
+/* A typed positional value: on/off as booleans, else lrg_ctl_parse_value(). */
+static JsonNode *
+typed_value (const gchar *text)
+{
+	JsonNode *node;
+
+	if (g_strcmp0 (text, "on") == 0 || g_strcmp0 (text, "off") == 0)
+	{
+		node = json_node_new (JSON_NODE_VALUE);
+		json_node_set_boolean (node, text[1] == 'n');
+		return node;
+	}
+	return lrg_ctl_parse_value (text);
+}
+
+/* The usage line of a family: "family verb KEY KEY | ...". */
+static gchar *
+family_usage (const gchar   *family,
+              const CtlVerb *table,
+              gsize          n)
+{
+	GString *s = g_string_new (NULL);
+	gsize    i;
+	guint    k;
+
+	for (i = 0; i < n; i++)
+	{
+		if (i > 0)
+			g_string_append (s, " | ");
+		g_string_append_printf (s, "%s %s", family, table[i].verb);
+		for (k = 0; table[i].keys[k] != NULL; k++)
+		{
+			const gchar      *key = table[i].keys[k];
+			g_autofree gchar *upper = NULL;
+
+			if (*key == '@' || *key == '~')
+				key++;
+			upper = g_ascii_strup (key, -1);
+			g_string_append_printf (s, " %s", upper);
+		}
+	}
+	g_string_append (s, " [key=value...]");
+	return g_string_free (s, FALSE);
+}
+
+/* Builds the params of @row from @args (positionals, then key=value). */
+static JsonObject *
+family_params (const CtlVerb  *row,
+               gchar         **args,
+               GError        **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		const gchar *key = row->keys[k];
+
+		if (strchr (args[i], '=') == NULL && key != NULL)
+		{
+			if (*key == '@')
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, key + 1, path);
+			}
+			else if (*key == '~')
+				json_object_set_member (p, key + 1, typed_value (args[i]));
+			else
+				json_object_set_string_member (p, key, args[i]);
+			k++;
+		}
+		else
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return NULL;
+		}
+	}
+	return g_steal_pointer (&p);
+}
+
+/* Runs "family VERB ..." from @table; the result prints as YAML by default. */
+static gboolean
+run_family (const gchar   *family,
+            const CtlVerb *table,
+            gsize          n,
+            gchar        **args,
+            GError       **error)
+{
+	g_autoptr(JsonObject) p = NULL;
+	g_autoptr(JsonNode)   r = NULL;
+	gsize                 i;
+
+	for (i = 0; args[0] != NULL && i < n; i++)
+	{
+		if (g_strcmp0 (args[0], table[i].verb) != 0)
+			continue;
+		p = family_params (&table[i], args + 1, error);
+		if (p == NULL)
+			return FALSE;
+		r = call (table[i].method, p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	{
+		g_autofree gchar *usage = family_usage (family, table, n);
+
+		return usage_error (error, "%s", usage);
+	}
+}
+
+/* material open|create|variant|get|set|revert|save|preview|assign|list */
+static gboolean
+cmd_material (gchar  **args,
+              GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "material.open", { "@path", NULL } },
+		{ "create", "material.create", { "@path", NULL } },
+		{ "variant", "material.create_variant", { "@path", "@dest", NULL } },
+		{ "get", "material.get", { "@path", NULL } },
+		{ "set", "material.set", { "@path", "key", "~value", NULL } },
+		{ "revert", "material.revert", { "@path", "key", NULL } },
+		{ "save", "material.save", { "@path", NULL } },
+		{ "preview", "material.preview", { "@path", "shape", NULL } },
+		{ "assign", "material.assign", { "node", "@path", NULL } },
+		{ "list", "material.list", { NULL } },
+	};
+
+	return run_family ("material", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* shader create|compile|diagnostics|uniforms|reload PATH */
+static gboolean
+cmd_shader (gchar  **args,
+            GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "create", "shader.create", { "@path", NULL } },
+		{ "compile", "shader.compile", { "@path", NULL } },
+		{ "diagnostics", "shader.diagnostics", { "@path", NULL } },
+		{ "uniforms", "shader.uniforms", { "@path", NULL } },
+		{ "reload", "shader.reload", { "@path", NULL } },
+	};
+
+	return run_family ("shader", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* shadergraph open|create|types|get|add|remove|connect|disconnect|param|input|validate|glsl|save */
+static gboolean
+cmd_shadergraph (gchar  **args,
+                 GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "shadergraph.open", { "@path", NULL } },
+		{ "create", "shadergraph.create", { "@path", NULL } },
+		{ "types", "shadergraph.node_types", { NULL } },
+		{ "get", "shadergraph.get", { "@path", NULL } },
+		{ "add", "shadergraph.add_node", { "@path", "type", NULL } },
+		{ "remove", "shadergraph.remove_node", { "@path", "id", NULL } },
+		{ "connect", "shadergraph.connect", { "@path", "from", "from_port", "to", "to_port", NULL } },
+		{ "disconnect", "shadergraph.disconnect", { "@path", "to", "to_port", NULL } },
+		{ "param", "shadergraph.set_param", { "@path", "id", "key", "~value", NULL } },
+		{ "input", "shadergraph.set_input", { "@path", "id", "port", "~value", NULL } },
+		{ "validate", "shadergraph.validate", { "@path", NULL } },
+		{ "glsl", "shadergraph.glsl", { "@path", NULL } },
+		{ "save", "shadergraph.save", { "@path", NULL } },
+	};
+
+	return run_family ("shadergraph", table, G_N_ELEMENTS (table), args, error);
+}
+
+/*
+ * env bake --wait: start the bake, then poll environment.progress until
+ * it is no longer baking (the bake runs over the editor's next frames).
+ * Exits 1 when the editor reports an error.
+ */
+static gboolean
+env_bake_wait (GError **error)
+{
+	g_autoptr(JsonNode) started = NULL;
+	gint64              deadline;
+
+	started = call ("environment.bake", NULL, error);
+	if (started == NULL)
+		return FALSE;
+	/* A bake under software GL can take a while: wait up to ten minutes
+	 * (or --timeout seconds when that is longer) */
+	deadline = g_get_monotonic_time () + (gint64) MAX (opt_timeout, 600) * G_USEC_PER_SEC;
+	while (g_get_monotonic_time () < deadline)
+	{
+		g_autoptr(JsonNode) r = call ("environment.progress", NULL, error);
+		JsonObject         *o;
+
+		if (r == NULL)
+			return FALSE;
+		o = JSON_NODE_HOLDS_OBJECT (r) ? json_node_get_object (r) : NULL;
+		if (o == NULL || !json_object_get_boolean_member_with_default (o, "baking", FALSE))
+		{
+			const gchar *err = str_member (o, "error");
+
+			if (err != NULL)
+			{
+				g_set_error (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "bake failed: %s", err);
+				return FALSE;
+			}
+			lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+			return TRUE;
+		}
+		g_usleep (100 * 1000);
+	}
+	g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "timed out waiting for the bake");
+	return FALSE;
+}
+
+/* env get|set KEY VALUE|reset|bake [--wait]|progress|show */
+static gboolean
+cmd_env (gchar  **args,
+         GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "environment.get", { NULL } },
+		{ "set", "environment.set", { "key", "~value", NULL } },
+		{ "reset", "environment.reset", { NULL } },
+		{ "bake", "environment.bake", { NULL } },
+		{ "progress", "environment.progress", { NULL } },
+		{ "show", "environment.show", { NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *get[] = { (gchar *) "get", NULL };
+
+		return run_family ("env", table, G_N_ELEMENTS (table), get, error);
+	}
+	if (g_strcmp0 (args[0], "bake") == 0 && opt_wait)
+		return env_bake_wait (error);
+	return run_family ("env", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* post types|open|create|get|add|remove|move|set|save|preview|look|assign */
+static gboolean
+cmd_post (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "types", "post.effect_types", { NULL } },
+		{ "open", "post.open", { "@path", NULL } },
+		{ "create", "post.create", { "@path", NULL } },
+		{ "get", "post.get", { "@path", NULL } },
+		{ "add", "post.add", { "@path", "type", NULL } },
+		{ "remove", "post.remove", { "@path", "~index", NULL } },
+		{ "move", "post.move", { "@path", "~from", "~to", NULL } },
+		{ "set", "post.set", { "@path", "~index", "key", "~value", NULL } },
+		{ "save", "post.save", { "@path", NULL } },
+		{ "preview", "post.preview", { "@path", "~enabled", NULL } },
+		{ "look", "post.save_look", { "@path", NULL } },
+		{ "assign", "post.assign", { "@path", NULL } },
+	};
+
+	/* post preview on|off: no path (the open editor's stack, or off) */
+	if (g_strcmp0 (args[0], "preview") == 0 &&
+	    (g_strcmp0 (args[1], "on") == 0 || g_strcmp0 (args[1], "off") == 0))
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		json_object_set_boolean_member (p, "enabled", g_strcmp0 (args[1], "on") == 0);
+		r = call ("post.preview", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	return run_family ("post", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* lod get NODE | lod force NODE LEVEL|auto */
+static gboolean
+cmd_lod (gchar  **args,
+         GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "lod.get", { "node", NULL } },
+		{ "force", "lod.force", { "node", "~level", NULL } },
+	};
+
+	/* "auto" is -1 (a bare -1 would be read as an option) */
+	if (g_strcmp0 (args[0], "force") == 0 && args[1] != NULL && g_strcmp0 (args[2], "auto") == 0)
+	{
+		gchar *fixed[] = { args[0], args[1], (gchar *) "-1", NULL };
+		guint  i;
+
+		for (i = 3; args[i] != NULL; i++)
+			if (strchr (args[i], '=') != NULL)
+				return usage_error (error, "lod force NODE auto takes no other arguments");
+		return run_family ("lod", table, G_N_ELEMENTS (table), fixed, error);
+	}
+	return run_family ("lod", table, G_N_ELEMENTS (table), args, error);
+}
+
+/*
+ * view layers [MASK | LAYER on|off] [viewport=N]: a viewport's render
+ * layer cull mask. MASK is a number (0x... hex too), "all" or "none";
+ * LAYER is an index 0..31 or a layer name.
+ */
+static gboolean
+view_layers (gchar  **args,
+             GError **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonNode)   r = NULL;
+	const gchar          *pos[2] = { NULL, NULL };
+	guint                 n = 0;
+	guint                 i;
+
+	for (i = 0; args[i] != NULL; i++)
+	{
+		if (strchr (args[i], '=') != NULL)
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return FALSE;
+		}
+		else if (n < 2)
+			pos[n++] = args[i];
+		else
+			return usage_error (error, "view layers [MASK | LAYER on|off] [viewport=N]");
+	}
+	if (n == 1)
+	{
+		guint64 mask = 0;
+
+		if (g_strcmp0 (pos[0], "all") == 0)
+			mask = 0xFFFFFFFFu;
+		else if (g_strcmp0 (pos[0], "none") == 0)
+			mask = 0;
+		else if (!g_ascii_string_to_unsigned (pos[0], g_str_has_prefix (pos[0], "0x") ? 16 : 10,
+		                                      0, 0xFFFFFFFFu, &mask, NULL) &&
+		         !(g_str_has_prefix (pos[0], "0x") &&
+		           g_ascii_string_to_unsigned (pos[0] + 2, 16, 0, 0xFFFFFFFFu, &mask, NULL)))
+			return usage_error (error, "view layers: '%s' is not a mask (a number, 0x hex, all or none)", pos[0]);
+		json_object_set_int_member (p, "mask", (gint64) mask);
+	}
+	else if (n == 2)
+	{
+		guint64 layer = 0;
+
+		if (g_ascii_string_to_unsigned (pos[0], 10, 0, 31, &layer, NULL))
+			json_object_set_int_member (p, "layer", (gint64) layer);
+		else
+			json_object_set_string_member (p, "layer", pos[0]);
+		json_object_set_boolean_member (p, "enabled", g_strcmp0 (pos[1], "on") == 0 ||
+		                                g_strcmp0 (pos[1], "true") == 0 || g_strcmp0 (pos[1], "1") == 0);
+	}
+	r = call ("view.layers", p, error);
+	if (r == NULL)
+		return FALSE;
+	lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+	return TRUE;
+}
+
 #ifdef LRG_EDITORCTL_HAVE_MCP
 static gboolean
 cmd_mcp (GError **error)
@@ -2112,7 +2525,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences material shader shadergraph env post lod' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -2134,7 +2547,19 @@ static const gchar *completion_script =
 	"\t\trun) mapfile -t COMPREPLY < <(compgen -W \"$(lrgeditorctl get actions -o name 2>/dev/null)\" -- \"${cur}\") ;;\n"
 	"\t\tplay) mapfile -t COMPREPLY < <(compgen -W 'start pause step stop state' -- \"${cur}\") ;;\n"
 	"\t\tgame) mapfile -t COMPREPLY < <(compgen -W 'start stop' -- \"${cur}\") ;;\n"
-	"\t\tview) mapfile -t COMPREPLY < <(compgen -W 'top front right bottom back left persp all focus set layout render-mode overlay' -- \"${cur}\") ;;\n"
+	"\t\tview)\n"
+	"\t\t\tif [[ ${COMP_CWORD} -eq 3 && ( ${prev} == render-mode || ${prev} == mode ) ]]\n"
+	"\t\t\tthen\n"
+	"\t\t\t\tmapfile -t COMPREPLY < <(compgen -W 'lit unlit wireframe normals lighting-only overdraw uv light-complexity ao reflections' -- \"${cur}\")\n"
+	"\t\t\telse\n"
+	"\t\t\t\tmapfile -t COMPREPLY < <(compgen -W 'top front right bottom back left persp all focus set layout render-mode mode overlay layers' -- \"${cur}\")\n"
+	"\t\t\tfi ;;\n"
+	"\t\tmaterial) mapfile -t COMPREPLY < <(compgen -W 'open create variant get set revert save preview assign list' -- \"${cur}\") ;;\n"
+	"\t\tshader) mapfile -t COMPREPLY < <(compgen -W 'create compile diagnostics uniforms reload' -- \"${cur}\") ;;\n"
+	"\t\tshadergraph) mapfile -t COMPREPLY < <(compgen -W 'open create types get add remove connect disconnect param input validate glsl save' -- \"${cur}\") ;;\n"
+	"\t\tenv) mapfile -t COMPREPLY < <(compgen -W 'get set reset bake progress show' -- \"${cur}\") ;;\n"
+	"\t\tpost) mapfile -t COMPREPLY < <(compgen -W 'types open create get add remove move set save preview look assign' -- \"${cur}\") ;;\n"
+	"\t\tlod) mapfile -t COMPREPLY < <(compgen -W 'get force' -- \"${cur}\") ;;\n"
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
 	"\t\tcode) mapfile -t COMPREPLY < <(compgen -W 'open list save' -- \"${cur}\") ;;\n"
@@ -2190,6 +2615,18 @@ dispatch (gchar  **argv,
 		return cmd_palette (rest, error);
 	if (g_strcmp0 (verb, "preferences") == 0 || g_strcmp0 (verb, "prefs") == 0)
 		return cmd_preferences (rest, error);
+	if (g_strcmp0 (verb, "material") == 0 || g_strcmp0 (verb, "mat") == 0)
+		return cmd_material (rest, error);
+	if (g_strcmp0 (verb, "shader") == 0)
+		return cmd_shader (rest, error);
+	if (g_strcmp0 (verb, "shadergraph") == 0 || g_strcmp0 (verb, "sg") == 0)
+		return cmd_shadergraph (rest, error);
+	if (g_strcmp0 (verb, "env") == 0 || g_strcmp0 (verb, "environment") == 0)
+		return cmd_env (rest, error);
+	if (g_strcmp0 (verb, "post") == 0)
+		return cmd_post (rest, error);
+	if (g_strcmp0 (verb, "lod") == 0)
+		return cmd_lod (rest, error);
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)

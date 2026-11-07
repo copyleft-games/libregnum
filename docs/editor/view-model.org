@@ -57,7 +57,7 @@ lrg_editor_view_state_focus_selection (view);                /* "F" in the activ
 :PROPERTIES:
 :CUSTOM_ID: render-modes
 :END:
-Each viewport has an =LrgEditorRenderMode= (=lit=, =unlit=, =wireframe=, =normals=, =lighting-only=) and an =LrgEditorViewOverlays= flag set (=grid=, =gizmos=, =icons=, =bounds=, =stats=, =scene-lighting=, =shadows=, =sky=, =post=). New viewports use =LRG_EDITOR_VIEW_OVERLAYS_DEFAULT= (everything except bounds and post). The old global toggles map onto the active viewport: =view.grid= toggles =GRID=, =view.icons= =ICONS=, =view.stats= =STATS=, and =view.wireframe= switches the render mode between =lit= and =wireframe=. A change emits =viewport-changed (index)=.
+Each viewport has an =LrgEditorRenderMode= (=lit=, =unlit=, =wireframe=, =normals=, =lighting-only=, and since 0.9.0 the debug views =overdraw=, =uv=, =light-complexity=, =ao= and =reflections=, which match =LrgWorld3DRenderMode= one to one; see [[file:environment.org::#view-modes][View modes]]) and an =LrgEditorViewOverlays= flag set (=grid=, =gizmos=, =icons=, =bounds=, =stats=, =scene-lighting=, =shadows=, =sky=, =post=). New viewports use =LRG_EDITOR_VIEW_OVERLAYS_DEFAULT= (everything except bounds and post). The old global toggles map onto the active viewport: =view.grid= toggles =GRID=, =view.icons= =ICONS=, =view.stats= =STATS=, and =view.wireframe= switches the render mode between =lit= and =wireframe=. A change emits =viewport-changed (index)=.
 
 *** UI state
 :PROPERTIES:
