@@ -276,4 +276,5 @@ Boxed Types
 - [[../../reference/signals.md][Signals]] - Level and system signals
 - [[../../reference/error-codes.md][Error Codes]] - World3D error domains
 - [[file:components.org][3D Components]] - mesh renderer, light, camera, audio source/listener, billboard, tilemap, spawn, trigger and skinned model components
+- [[file:particle-component.org][LrgParticleComponent]] - plays a =.rparticles= effect on an entity through the renderer's transparent pass (0.9.0)
 - *LrgWorld3DRenderer* - The shared 3D renderer (lights, shadow passes, sky, opaque/cutout/transparent, static batching, post, headless recording); games and the editor viewport draw through it ([[file:renderer.org][page]])

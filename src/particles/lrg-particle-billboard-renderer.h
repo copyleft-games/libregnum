@@ -185,6 +185,26 @@ lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
                                       GrlCamera3D                  *camera);
 
 /**
+ * lrg_particle_billboard_renderer_draw_view:
+ * @self: an #LrgParticleBillboardRenderer
+ * @system: the system to draw
+ * @eye: (array fixed-size=3): the camera position
+ * @up: (array fixed-size=3): the camera's up direction
+ *
+ * lrg_particle_billboard_renderer_draw() with an explicit eye and up
+ * vector instead of a camera: for drawing inside a renderer pass that
+ * has no #GrlCamera3D (an #LrgWorld3DRenderer custom draw).
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_particle_billboard_renderer_draw_view (LrgParticleBillboardRenderer *self,
+                                           LrgParticleSystem            *system,
+                                           const gfloat                 *eye,
+                                           const gfloat                 *up);
+
+/**
  * lrg_particle_billboard_renderer_release_gpu:
  * @self: an #LrgParticleBillboardRenderer
  *

@@ -107,3 +107,9 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 - .rwater: `version, name, shape (plane|lake|river), level, size, points ([x,z] lakes, [x,y,z,w] rivers), cell_size, foam[2], waves [{direction, amplitude, wavelength, speed, steepness}], wave_scale, colors {shallow, deep, foam}, optics {transparency, reflection, refraction, reflect_distance}`; unknown keys kept at the root only.
 - Both strict (`file: /key/path: problem`) and byte-stable.
 
+## Particle effects (.rparticles), 0.9.0
+- LrgParticleAsset (`particles/lrg-particle-asset.h`): `version: 1`, `name`, `seed`, `duration` (0 = endless), `loop`, `prewarm`, `local-space`, `emitters: [{name, max-particles, enabled, start-delay, renderer: {kind: none|billboard|ribbon|mesh, blend, layer, texture, columns/rows/fps, ribbon-mode trail|connect, width, width-curve, color-gradient, uv-mode stretch|tile|per-segment, max-points, min-distance, trail-lifetime, mesh, primitive, mesh-scale, align none|velocity|tumble, lit}, modules: [{type: <kind>, ...}]}]`.
+- Module kinds: spawn-rate, burst, shape, velocity, lifetime, size, color, rotation, size/color/alpha/rotation-over-life, gravity, wind, drag, turbulence, vortex, attractor, collision (plane|world), sub-emitter (trigger birth|death|collision -> emitter name).
+- Ranges are `n` or `[min, max]`; colours and gradients quoted (`'#rrggbb'`, `'0 #fff; 1 #0000'`); curves `"t v [easing]; ..."`.
+- Load with `lrg_particle_asset_new_from_file/_data`, play with `lrg_particle_effect_new` or LrgParticleComponent (`asset-path`). Unknown keys kept and listed by `get_unknown_keys()`; errors read `file: /key/path: msg`; byte-stable round trip.
+

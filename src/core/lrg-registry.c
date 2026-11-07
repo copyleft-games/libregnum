@@ -109,6 +109,9 @@
 #include "../world3d/components/lrg-terrain-component.h"
 #include "../world3d/components/lrg-foliage-component.h"
 #include "../world3d/components/lrg-water-component.h"
+#include "../world3d/components/lrg-particle-component.h"
+#include "../particles/lrg-particle-asset.h"
+#include "../core/lrg-color-gradient.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -542,6 +545,11 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "terrain3d",                  lrg_terrain_component_get_type },
     { "foliage3d",                  lrg_foliage_component_get_type },
     { "water3d",                    lrg_water_component_get_type },
+    { "particles",                  lrg_particle_component_get_type },
+    { "particle-asset",             lrg_particle_asset_get_type },
+    { "particle-asset-emitter",     lrg_particle_asset_emitter_get_type },
+    { "particle-render-settings",   lrg_particle_render_settings_get_type },
+    { "color-gradient",             lrg_color_gradient_get_type },
     { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */

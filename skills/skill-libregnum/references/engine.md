@@ -230,3 +230,10 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - Water: `.rwater` = LrgWaterBody (plane, lake polygon, river spline) drawn by LrgWaterComponent (`water3d`; body or body-path, world space at the entity position).
 - Gotchas: foliage casts no shadows and gets no SSAO; the bake is albedo only (layer .rmat kept, not bound); png16 heights are quantised; holes lose collision only where 2x2 or more; water ignores entity rotation/scale; chunk meshes need a window (headless items have no mesh).
 
+### Particles and VFX (0.9.0 M7)
+- Author `.rparticles` effects (LrgParticleAsset). An emitter is a module stack run by stage (spawn -> shape -> init -> force -> integrate -> collision -> over-life -> event) with a seeded PCG32 per system, so an effect is deterministic; `lrg_particle_effect_seek (fx, t, 1/60)` scrubs reproducibly.
+- Renderers: LrgParticleBillboardRenderer, LrgParticleRibbonRenderer (per-particle trails or one connecting ribbon; width curve, colour gradient, UV modes), LrgParticleMeshRenderer (one instanced draw).
+- LrgParticleComponent (registry `particles`, prop `asset-path`) on an LrgEntity3D follows the entity, uses physics raycasts for world collision and draws each emitter as a transparent CUSTOM render item in LrgWorld3DRenderer.
+- Custom modules subclass LrgParticleModule and register with `lrg_particle_module_register_kind()`. LrgColorGradient (core, registry `color-gradient`) is the runtime gradient; modules expose gradients as LrgGradientStops properties for the property grid.
+- Gotchas: the LrgParticle struct grew in 0.9.0 (ABI); play after pause resumes the module clock, play after stop restarts; colours and gradients in YAML must be quoted.
+

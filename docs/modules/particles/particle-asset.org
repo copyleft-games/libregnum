@@ -1,0 +1,600 @@
+#+title: Particle assets (.rparticles)
+#+description: The .rparticles particle effect format: emitters with module stacks, seeded randomness, renderers, the LrgParticleEffect runtime and the module API
+
+* Particle assets (=.rparticles=)
+:PROPERTIES:
+:CUSTOM_ID: particle-asset
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Particles]] > Particle assets
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+A particle effect (fire, a smoke trail, sparks that bounce and leave glints, debris that tumbles and kicks up dust) is authored as a =.rparticles= YAML file and played at runtime by an =LrgParticleEffect=. The file holds a list of /emitters/; each emitter is a /module stack/ (the behaviours: how many particles to spawn, where, how fast, how they change over their life, which forces push them, what they collide with, which other emitters they trigger) plus a =renderer:= block (billboards, ribbons and trails, or instanced meshes). Everything random draws from a seedable generator, so an effect plays back identically from its seed: the editor can scrub a timeline, tests can compare frames, and multiplayer clients see the same sparks.
+
+| Type | Header | Role |
+|------+--------+------|
+| =LrgParticleAsset= | =particles/lrg-particle-asset.h= | The document: name, seed, duration, loop, prewarm, local space, emitters; YAML load, save, validation |
+| =LrgParticleAssetEmitter= | same | One emitter: name, capacity, enabled, start delay, render settings, module stack |
+| =LrgParticleRenderSettings= | same | The emitter's =renderer:= block |
+| =LrgParticleModule= | =particles/lrg-particle-system.h= | Base class of the modules; the 20 built-in kinds are created by name with =lrg_particle_module_new()= |
+| =LrgParticleEffect= | =particles/lrg-particle-asset.h= | A playing instance: one =LrgParticleSystem= per emitter with copies of its modules, the renderers, sub-emitter wiring, seeking, live reload |
+| =LrgParticleRng= | =particles/lrg-particle-system.h= | The PCG32 generator every system owns |
+| =LrgParticleComponent= | =world3d/components/lrg-particle-component.h= | Plays an effect on an =LrgEntity3D= through =LrgWorld3DRenderer= (see [[file:../world3d/particle-component.org][the component page]]) |
+
+The renderers have their own pages: [[file:billboard-renderer.org][billboards]], [[file:ribbon-renderer.org][ribbons and trails]], [[file:mesh-renderer.org][mesh particles]]. Colour gradients are [[file:../core/color-gradient.org][LrgColorGradient]]; curves are =LrgKeyframeCurve=. The guide [[file:../../guides/vfx.org][Visual effects]] walks through building effects.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Asset, effect, system
+:PROPERTIES:
+:CUSTOM_ID: concepts-layers
+:END:
+The asset is data; nothing in it moves. =lrg_particle_effect_new()= (or =lrg_particle_asset_instantiate()=) builds a playing instance: for each emitter an =LrgParticleSystem= (named after the emitter, with the emitter's capacity, start delay and the asset's duration, loop and local-space settings) holding /copies/ of the emitter's modules, and a renderer object of the emitter's renderer kind. Any number of effects may play one asset; each has its own particles, clock and generator state. An effect can be stepped, paused, stopped, restarted, seeked and drawn; its systems are ordinary =LrgParticleSystem= objects, so code that already reads a system (=lrg_particle_system_foreach_active()=, the billboard renderer) works unchanged.
+
+*** The module stack
+:PROPERTIES:
+:CUSTOM_ID: concepts-modules
+:END:
+A module belongs to one /stage/ (=LrgParticleModuleStage=). Every step, a system runs:
+
+1. *Spawn* (=spawn-rate=, =burst=): the modules return how many particles to emit this step; the counts add up.
+2. For each new particle, starting at the system position with white colour, size 1, a one second life and the spawn direction set to the system's rotated +Y axis:
+   - *Shape* (=shape=): places it and sets the spawn direction;
+   - *Init* (=velocity=, =lifetime=, =size=, =color=, =rotation=): initial values;
+   - the results become the particle's /start values/ (=start_size=, =start_color_*=, =start_rotation_velocity=), and a /birth/ event is raised.
+3. For each live particle:
+   - *Force* (=gravity=, =wind=, =drag=, =turbulence=, =vortex=, =attractor=): change the velocity;
+   - integration: =position += velocity * dt=, =rotation += angular velocity * dt=, age and life advance (=lrg_particle_update()=);
+   - *Collision* (=collision=): tests the step's segment, responds, raises /collision/ events;
+   - *Over life* (=size-over-life=, =color-over-life=, =alpha-over-life=, =rotation-over-life=): values from the normalized age =t = age / max_life=, always computed from the start values (so they never compound);
+   - a particle whose life ran out (or that a module killed) raises a /death/ event and returns to the pool.
+4. *Event* modules (=sub-emitter=) receive the birth, death and collision events.
+
+Stages always run in that order, so the order of modules in the stack only matters among modules of the same stage (two force modules, two collision planes, two over-life modules writing alpha: the later one wins).
+
+*** Randomness and determinism
+:PROPERTIES:
+:CUSTOM_ID: concepts-determinism
+:END:
+Each system owns an =LrgParticleRng= (PCG32, XSH-RR), seeded with =splitmix64 (seed + (index + 1) * golden ratio)= from the asset seed (or =lrg_particle_effect_set_seed()=) and the emitter index, so emitters do not share sequences. Every random draw of every module comes from its system's generator in a fixed order (spawn order, then stack order), and a constant range (=[3, 3]=) draws nothing. Each particle also gets one random number at birth (=LrgParticle.random=) for stable per-particle variation (the mesh tumble axis, the wind gust phase). The result: the same asset, seed and sequence of step sizes always gives the same particles, bit for bit. =lrg_particle_effect_simulate()= and =lrg_particle_effect_seek()= use fixed steps, so a seek is independent of the frame rate. Sub-emitters spawn into their target using the target's generator for the shape and init stages and the parent's generator for the count and probability, in event order, which keeps that deterministic too.
+
+*** Time: duration, cycles, delay, prewarm
+:PROPERTIES:
+:CUSTOM_ID: concepts-time
+:END:
+- =duration= is the length of an /emission cycle/ in seconds (0: one endless cycle). =spawn-rate='s =rate-curve= is sampled over the cycle (0 .. 1), and =burst= fires at times inside the cycle.
+- =loop: true= starts a new cycle when one ends (bursts re-arm); =loop: false= stops emitting after one cycle while live particles finish. A non-looping effect emits =LrgParticleEffect::finished= when nothing is left.
+- An emitter's =start-delay= postpones its emission; its cycles count from the end of the delay.
+- =prewarm: true= (looping, finite duration) simulates one cycle at 30 Hz when the effect starts, so a campfire is already burning on the first frame.
+
+*** World and local space
+:PROPERTIES:
+:CUSTOM_ID: concepts-space
+:END:
+Particles are simulated in world space. With =local-space: true=, moving the effect (=lrg_particle_effect_set_position()=, which the component does from the entity) translates every live particle by the same offset, so a torch flame stays on the torch; without it, particles stay where they were emitted and moving the effect leaves a trail. Rotation orients shapes and directions (a cone points along the rotated +Y) but does not rotate live particles. The velocity module's =inherit= factor adds the effect's own movement per second to new particles.
+
+*** Sub-emitters
+:PROPERTIES:
+:CUSTOM_ID: concepts-sub-emitters
+:END:
+A =sub-emitter= module names another emitter of the same asset and a trigger (=birth=, =death=, =collision=). When its event happens, it spawns =count= particles into the target's system at the event point (the death position, or the collision point) through the target's shape and init modules (the target's shape is relative to the event point), and adds =inherit-velocity= times the parent's velocity to each. A target that only exists to be triggered has no spawn modules. Emitters cannot trigger themselves; chains (sparks to flashes to smoke) are fine. Validation rejects unknown targets.
+
+*** Unknown keys
+:PROPERTIES:
+:CUSTOM_ID: concepts-unknown-keys
+:END:
+Every key that is not a property of the object it appears in (the asset, an emitter, a renderer block, a module) is /kept/: written back after the known keys of the same mapping on save, and listed by =lrg_particle_asset_get_unknown_keys()= as key paths (=/emitters/0/modules/6/colour=) so the editor can warn about typos. Everything else is strict: wrong types, out-of-range values, unknown module kinds, unknown enum names and broken references are errors that name the key path.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+version: 1                    # int, required to be <= 1 (LRG_PARTICLE_ASSET_FORMAT_VERSION); always written
+name: Sparks                  # string, display name; default none
+seed: 42                      # unsigned 64-bit; default 0; emitter i is seeded from (seed, i)
+duration: 2                   # seconds per emission cycle, 0 .. 1e6; default 0 (endless)
+loop: false                   # repeat cycles; default true
+prewarm: false                # start as if one cycle had run (looping, finite duration); default false
+local-space: false            # live particles follow the effect's movement; default false
+emitters:                     # list, required (may be empty)
+- name: sparks                # string, required, unique; sub-emitters refer to it
+  max-particles: 200          # 1 .. 1000000; default 1000; the pool never grows
+  enabled: true               # simulated and drawn; default true
+  start-delay: 0              # seconds before emitting, >= 0; default 0
+  renderer:                   # optional; defaults: kind billboard, blend alpha
+    kind: ribbon              # none | billboard | ribbon | mesh
+    blend: additive           # alpha | additive | multiply
+    layer: 0                  # render layer 0 .. 31
+    texture: fx/spark.png     # asset reference (path or guid:); default: a generated soft texture
+    columns: 1                # billboard flipbook columns 1 .. 64
+    rows: 1                   # billboard flipbook rows 1 .. 64
+    fps: 0                    # flipbook frames per second; 0 plays the sheet once over the life
+    ribbon-mode: trail        # trail (per particle) | connect (one ribbon through all particles)
+    width: 0.05               # ribbon width at particle size 1; default 0.2
+    width-curve: 0 1; 1 0     # curve: width multiplier from head (0) to tail (1)
+    color-gradient: '0 #ffffffff; 1 #ff400000'   # gradient along the ribbon (quote it: '#' starts a YAML comment)
+    uv-mode: stretch          # stretch | tile | per-segment
+    uv-tile-length: 1         # world units per texture repeat (uv-mode tile)
+    max-points: 32            # most points per trail, 2 .. 1024
+    min-distance: 0.05        # spacing of trail points
+    trail-lifetime: 0.5       # seconds a trail point lives
+    mesh: props/rock.glb      # mesh renderer: the model whose first mesh is instanced
+    primitive: cube           # mesh renderer without a mesh: cube | sphere | cylinder | cone | plane
+    mesh-scale: [1, 0.6, 0.8] # mesh scale at particle size 1
+    align: tumble             # none | velocity | tumble
+    lit: true                 # half-Lambert shading of mesh particles
+  modules:                    # list in stack order; each needs `type:`
+  - type: burst
+    count: [20, 30]           # range: a number, or [min, max]
+  - type: shape
+    shape: cone
+    angle: 30
+  - type: velocity
+    speed: [4, 8]
+  - type: lifetime
+    lifetime: [0.4, 0.8]
+  - type: color
+    color: '#ffc040'          # colour: '#rgb', '#rrggbb', '#rrggbbaa' or [r, g, b(, a)] in 0 .. 1
+  - type: gravity             # all parameters at their defaults
+  - type: collision
+    bounce: 0.3
+    enabled: false            # every module: false keeps it in the stack but off
+  - type: sub-emitter
+    emitter: smoke
+    count: 2
+- name: smoke
+  modules:
+  - type: size-over-life
+    curve: 0 0.5; 1 2 ease-out-quad   # curve: "time value [easing]; ..." (or one number)
+#+end_src
+
+*** Value types
+:PROPERTIES:
+:CUSTOM_ID: format-values
+:END:
+| Type | Written as | Read from |
+|------+------------+-----------|
+| number | shortest exact decimal | any decimal; bounds checked |
+| whole number | integer | integer; bounds checked |
+| boolean | =true= / =false= | also =yes/no=, =on/off= |
+| enum | its nick (=cone=) | a nick; the error lists all nicks |
+| string | plain, quoted when needed | a scalar; =~=, =null= or empty for none |
+| range | a number when min = max, else =[min, max]= (block list) | a number, or two numbers with min <= max |
+| vector | =[x, y, z]= (block list) | three numbers |
+| colour | ='#rrggbb'= (='#rrggbbaa'= when not opaque) | ='#rgb'=, ='#rrggbb'=, ='#rrggbbaa'=, or =[r, g, b]= / =[r, g, b, a]= in 0 .. 1 |
+| gradient | ='offset #rrggbbaa; ...'= | the same, with an optional =linear:=, =step:= or =smooth:= prefix (see [[file:../core/color-gradient.org][LrgColorGradient]]) |
+| curve | =time value [easing]; ...= (easing omitted when linear) | the same, or one number (a constant); easings are =LrgEasingType= nicks (=ease-out-quad=, ...) |
+
+Values equal to their defaults are left out on save. Ranges, vectors and nullable values (=color-max=, gradients, curves, strings) are compared by content.
+
+*** Module reference
+:PROPERTIES:
+:CUSTOM_ID: format-modules
+:END:
+Every module has =enabled= (boolean, default true). Ranges are =[min, max]=; a new particle takes a uniform value from them. Angles are in degrees in the file and radians on the particle.
+
+**** Spawn stage
+:PROPERTIES:
+:CUSTOM_ID: module-spawn
+:END:
+| Kind | Key | Type | Default | Bounds | Meaning |
+|------+-----+------+---------+--------+---------|
+| =spawn-rate= | =rate= | number | 10 | 0 .. 1e6 | particles per second |
+| | =rate-curve= | curve | none | | multiplier over the emission cycle (0 .. 1) |
+| | =per-distance= | number | 0 | 0 .. 1e6 | extra particles per world unit the system moves |
+| =burst= | =time= | number | 0 | 0 .. 1e6 | seconds into the cycle of the first firing |
+| | =count= | range | 10 | 0 .. 1e6 | particles per firing (whole numbers, both ends inclusive) |
+| | =cycles= | whole | 1 | 0 .. 100000 | firings per cycle; 0 fires every =interval= forever |
+| | =interval= | number | 1 | 0 .. 1e6 | seconds between firings |
+| | =probability= | number | 1 | 0 .. 1 | chance that a firing happens |
+
+The rate accumulates fractional particles, so any rate works at any frame rate (a small slack keeps exact counts with float step sizes).
+
+**** Shape stage
+:PROPERTIES:
+:CUSTOM_ID: module-shape
+:END:
+| Key | Type | Default | Bounds | Meaning |
+|-----+------+---------+--------+---------|
+| =shape= | enum | =sphere= | =point=, =sphere=, =hemisphere=, =cone=, =box=, =circle=, =mesh= | the volume (=LrgParticleShape=) |
+| =radius= | number | 1 | 0 .. 1e6 | sphere, hemisphere, cone base, circle |
+| =thickness= | number | 1 | 0 .. 1 | emitting shell: 0 the surface, 1 the whole volume (uniform in volume or area) |
+| =angle= | number | 25 | 0 .. 90 | cone half angle |
+| =arc= | number | 360 | 0 .. 360 | azimuth used around Y (sphere, cone, circle) |
+| =size= | vector | [1, 1, 1] | | box size |
+| =offset= | vector | [0, 0, 0] | | shape centre relative to the system (rotated with it) |
+| =mesh= | string | none | | model whose first mesh's surface emits (=shape: mesh=) |
+| =randomize-direction= | number | 0 | 0 .. 1 | blend of the direction toward a random one |
+
+Directions: point and box +Y; sphere and hemisphere outward; cone along its side through the point (the tilt grows with the distance from the axis; a radius-0 cone spreads uniformly over the opening); circle outward in the plane; mesh the triangle normal. Mesh triangles are sampled by area; the effect fills them from =mesh= through its asset manager (GPU context needed), or set them with =lrg_particle_module_set_surface()=.
+
+**** Init stage
+:PROPERTIES:
+:CUSTOM_ID: module-init
+:END:
+| Kind | Key | Type | Default | Bounds | Meaning |
+|------+-----+------+---------+--------+---------|
+| =velocity= | =speed= | range | 1 | -1e6 .. 1e6 | initial speed |
+| | =direction= | vector | [0, 0, 0] | | a fixed direction in the system frame; zero uses the shape's |
+| | =spread= | number | 0 | 0 .. 180 | random cone around the direction (uniform over the cap) |
+| | =inherit= | number | 0 | -10 .. 10 | share of the emitter's own velocity added |
+| =lifetime= | =lifetime= | range | 1 | 0.001 .. 1e6 | seconds |
+| =size= | =size= | range | 1 | 0 .. 1e6 | initial size |
+| =color= | =color= | colour | white | | initial colour |
+| | =color-max= | colour | none | | with it: a random blend between =color= and =color-max= |
+| | =gradient= | gradient | none | | with it: a random sample of the gradient (wins over the colours) |
+| =rotation= | =rotation= | range | 0 | -1e6 .. 1e6 | initial rotation, degrees |
+| | =angular-velocity= | range | 0 | -1e6 .. 1e6 | spin, degrees per second |
+
+Without a lifetime module a particle lives one second; without a velocity module it does not move.
+
+**** Force stage
+:PROPERTIES:
+:CUSTOM_ID: module-force
+:END:
+| Kind | Key | Type | Default | Bounds | Meaning |
+|------+-----+------+---------+--------+---------|
+| =gravity= | =gravity= | vector | [0, -9.81, 0] | | acceleration, world space |
+| =wind= | =velocity= | vector | [2, 0, 0] | | the wind velocity particles approach |
+| | =strength= | number | 1 | 0 .. 1e6 | approach rate per second (=v += (wind - v) * min (1, strength dt)=) |
+| | =turbulence= | number | 0 | 0 .. 10 | gust amplitude as a share of the wind (a slow per-particle wave) |
+| =drag= | =drag= | number | 1 | 0 .. 1e6 | linear drag: =v *= exp (-drag dt)= |
+| =turbulence= | =amplitude= | number | 1 | 0 .. 1e6 | acceleration of a smooth 3D value-noise field |
+| | =frequency= | number | 1 | 0 .. 1e6 | noise features per world unit |
+| | =scroll-speed= | number | 0.5 | -1e6 .. 1e6 | how fast the field moves over time |
+| | =octaves= | whole | 1 | 1 .. 4 | each doubles the frequency and halves the amplitude |
+| =vortex= | =axis= | vector | [0, 1, 0] | | swirl axis (system frame) |
+| | =center= | vector | [0, 0, 0] | | a point on the axis, relative to the system |
+| | =strength= | number | 1 | -1e6 .. 1e6 | tangential acceleration (positive: counter-clockwise about the axis) |
+| | =pull= | number | 0 | -1e6 .. 1e6 | acceleration toward the axis |
+| =attractor= | =position= | vector | [0, 0, 0] | | relative to the system |
+| | =strength= | number | 5 | -1e6 .. 1e6 | acceleration toward it (negative repels) |
+| | =radius= | number | 0 | 0 .. 1e6 | range (0: everywhere) |
+| | =falloff= | number | 0 | 0 .. 4 | distance exponent: 0 constant, 2 inverse square |
+| | =kill-radius= | number | 0 | 0 .. 1e6 | particles closer than this die |
+
+**** Collision stage
+:PROPERTIES:
+:CUSTOM_ID: module-collision
+:END:
+| Key | Type | Default | Bounds | Meaning |
+|-----+------+---------+--------+---------|
+| =mode= | enum | =plane= | =plane=, =world= | =LrgParticleCollisionMode= |
+| =normal= | vector | [0, 1, 0] | | plane normal, world space |
+| =offset= | number | 0 | -1e6 .. 1e6 | the plane is the points with =dot (normal, p) = offset= |
+| =bounce= | number | 0.5 | 0 .. 2 | share of the normal speed kept, reflected |
+| =friction= | number | 0 | 0 .. 1 | share of the tangential speed lost per hit |
+| =lifetime-loss= | number | 0 | 0 .. 1 | share of the lifetime lost per hit |
+| =kill= | boolean | false | | die on the first hit |
+| =radius-scale= | number | 0 | 0 .. 10 | collision radius as a share of half the particle size |
+| =layer-mask= | whole | all | 0 .. 2^32 - 1 | physics layers the world raycast tests |
+
+A hit moves the particle back onto the surface, reflects and damps the velocity, counts =LrgParticle.collisions=, and raises a collision event at the contact point with the surface normal. Plane mode tests the particle's new position; world mode casts the step's segment (=previous position -> new position=) through the system's raycast function, which =LrgParticleComponent= connects to its world's physics (=lrg_dynamics_world_raycast()=). Without one, world collision does nothing.
+
+**** Over-life stage
+:PROPERTIES:
+:CUSTOM_ID: module-over-life
+:END:
+| Kind | Key | Type | Default | Meaning |
+|------+-----+------+---------+---------|
+| =size-over-life= | =curve= | curve | none (1) | size = start size x curve (t) x multiplier |
+| | =multiplier= | number | 1 | 0 .. 1e6 |
+| =color-over-life= | =gradient= | gradient | none | RGBA = start colour x gradient (t) |
+| =alpha-over-life= | =curve= | curve | none (1) | alpha = start alpha x curve (t) |
+| =rotation-over-life= | =curve= | curve | none (1) | angular velocity = start angular velocity x curve (t) |
+
+=t= is the normalized age, 0 at birth, 1 at death. =color-over-life= and =alpha-over-life= both write alpha; with both, the later module in the stack decides it. Gradients are sampled through =lrg_color_gradient_evaluate_fast()=.
+
+**** Event stage
+:PROPERTIES:
+:CUSTOM_ID: module-event
+:END:
+| Kind | Key | Type | Default | Bounds | Meaning |
+|------+-----+------+---------+--------+---------|
+| =sub-emitter= | =trigger= | enum | =death= | =birth=, =death=, =collision= | =LrgParticleEvent= that fires it |
+| | =emitter= | string | none | | the target emitter's name (required) |
+| | =count= | range | 1 | 0 .. 100000 | particles per event |
+| | =probability= | number | 1 | 0 .. 1 | chance per event |
+| | =inherit-velocity= | number | 0 | -10 .. 10 | share of the parent's velocity added to each child |
+
+*** GPU subset
+:PROPERTIES:
+:CUSTOM_ID: format-gpu
+:END:
+=lrg_particle_module_get_gpu_capable()= is %TRUE for modules whose behaviour is a pure function of the particle and the clock: every built-in except =sub-emitter=, =collision= in =world= mode and =shape= in =mesh= mode (custom kinds report %FALSE). The GPU particle path (see [[file:gpu-particles.org][GPU particles]]) checks it to decide whether an emitter can run on the GPU or falls back to the CPU.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Errors and enums
+:PROPERTIES:
+:CUSTOM_ID: api-enums
+:END:
+| Symbol | Meaning |
+|--------+---------|
+| =LRG_PARTICLE_ASSET_ERROR=, =lrg_particle_asset_error_quark()= | error domain |
+| =LrgParticleAssetError= | =PARSE= (not YAML, wrong shape), =VALUE= (out of range, unknown nick), =UNKNOWN_MODULE=, =VERSION= (newer file), =REFERENCE= (duplicate names, missing sub-emitter target), =IO= |
+| =LRG_PARTICLE_ASSET_FORMAT_VERSION= | 1 |
+| =LrgParticleShape=, =lrg_particle_shape_get_type()= | the shape module's shapes |
+| =LrgParticleCollisionMode=, =lrg_particle_collision_mode_get_type()= | =PLANE=, =WORLD= |
+| =LrgParticleRendererKind=, =lrg_particle_renderer_kind_get_type()= | =NONE=, =BILLBOARD=, =RIBBON=, =MESH= |
+
+*** Module kinds
+:PROPERTIES:
+:CUSTOM_ID: api-kinds
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_module_new (kind)= | a module of a registered kind with default parameters, or =NULL= (transfer full) |
+| =lrg_particle_module_register_kind (kind, type)= | registers a custom =LrgParticleModule= subclass under a =type:= name; its properties load and save like the built-ins' |
+| =lrg_particle_module_lookup_kind (kind)= | the registered =GType=, or =G_TYPE_INVALID= |
+| =lrg_particle_module_list_kinds ()= | every kind name (transfer full =GStrv=): the 20 built-ins in stage order, then custom kinds |
+| =lrg_particle_module_get_kind (module)= | the kind name of a module's type, or =NULL= |
+| =lrg_particle_module_get_gpu_capable (module)= | see [[#format-gpu][GPU subset]] |
+| =lrg_particle_module_set_surface (module, positions, n_floats, indices, n_indices)= | gives a =shape= module triangles for =shape: mesh= (positions x y z; indices nullable for a triangle list); %FALSE for other modules or no triangle with area. The surface travels with the module's copies |
+
+The base class and its vfuncs (=LrgParticleModule=, =LrgParticleModuleClass=, the context and the generator) are documented in [[file:system.org::#module-stack][LrgParticleSystem: module stack]].
+
+*** LrgParticleRenderSettings
+:PROPERTIES:
+:CUSTOM_ID: api-render-settings
+:END:
+A final GObject whose properties are exactly the =renderer:= keys of the [[#format-example][example]] (=kind=, =blend=, =layer=, =texture=, =columns=, =rows=, =fps=, =ribbon-mode=, =width=, =width-curve= (=LrgKeyframeCurve=), =color-gradient= (=LrgGradientStops=), =uv-mode=, =uv-tile-length=, =max-points=, =min-distance=, =trail-lifetime=, =mesh=, =primitive=, =mesh-scale= (=GrlVector3=), =align=, =lit=). Edit them with =g_object_set()= or the property grid.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_render_settings_new ()= | billboard, alpha blend, layer 0 |
+| =lrg_particle_render_settings_get_kind (self)=, =set_kind (self, kind)= | the renderer kind |
+| =lrg_particle_render_settings_get_blend (self)=, =set_blend (self, blend)= | =LrgParticleBlendMode= |
+| =lrg_particle_render_settings_get_texture (self)=, =set_texture (self, ref)= | the texture reference (nullable) |
+
+*** LrgParticleAssetEmitter
+:PROPERTIES:
+:CUSTOM_ID: api-emitter
+:END:
+Properties =name= (string), =max-particles= (uint 1 .. 1000000, default 1000), =enabled= (boolean), =start-delay= (float), =renderer= (read-only =LrgParticleRenderSettings=). Signal =changed= after any edit of the emitter, its render settings, a module's property or the stack.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_asset_emitter_new (name)= | an empty emitter (transfer full) |
+| =lrg_particle_asset_emitter_get_name=, =set_name= | the name (non-empty) |
+| =lrg_particle_asset_emitter_get_max_particles=, =set_max_particles= | capacity |
+| =lrg_particle_asset_emitter_get_enabled=, =set_enabled= | on/off (the editor's mute) |
+| =lrg_particle_asset_emitter_get_start_delay=, =set_start_delay= | seconds |
+| =lrg_particle_asset_emitter_get_renderer (self)= | the render settings (transfer none) |
+| =lrg_particle_asset_emitter_get_n_modules (self)=, =get_module (self, index)= | the stack |
+| =lrg_particle_asset_emitter_find_module (self, kind)= | the first module of a kind |
+| =lrg_particle_asset_emitter_add_module (self, kind)= | creates and appends a module, returns it (transfer none) |
+| =lrg_particle_asset_emitter_insert_module (self, module, index)= | inserts a module (-1 appends) |
+| =lrg_particle_asset_emitter_remove_module (self, index)=, =move_module (self, from, to)= | edits |
+
+*** LrgParticleAsset
+:PROPERTIES:
+:CUSTOM_ID: api-asset
+:END:
+Properties =name=, =seed= (uint64), =duration=, =loop=, =prewarm=, =local-space=. Signal =changed= after any edit anywhere in the document (effects with =auto-reload= follow it).
+
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_asset_new ()= | empty, looping, endless |
+| =lrg_particle_asset_new_from_file (path, error)= | load and validate (messages name the file's basename) |
+| =lrg_particle_asset_new_from_data (data, length, source, error)= | the same from text (the editor's validation path) |
+| =lrg_particle_asset_save_to_data (self, length, error)=, =save_to_file (self, path, error)= | byte-stable writer |
+| =lrg_particle_asset_validate (self, error)= | names unique and non-empty, sub-emitter targets exist and are not the emitter itself |
+| =lrg_particle_asset_get_unknown_keys (self)= | the kept unknown key paths (transfer full =GStrv=) |
+| =lrg_particle_asset_get_name=, =set_name=; =get_seed=, =set_seed=; =get_duration=, =set_duration=; =get_loop=, =set_loop= | settings |
+| =lrg_particle_asset_get_n_emitters=, =get_emitter (index)=, =find_emitter (name)= | emitters |
+| =lrg_particle_asset_add_emitter=, =remove_emitter (index)=, =move_emitter (from, to)= | edits; emitter order is draw order |
+| =lrg_particle_asset_instantiate (self)= | =lrg_particle_effect_new (self)= |
+
+*** LrgParticleEffect
+:PROPERTIES:
+:CUSTOM_ID: api-effect
+:END:
+Properties =asset= (construct-only) and =auto-reload= (boolean). Signal =finished= once when a playing effect has nothing alive (it pauses itself).
+
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_effect_new (asset)= | build an instance (stopped) |
+| =lrg_particle_effect_get_asset (self)= | the asset |
+| =lrg_particle_effect_get_n_systems=, =get_system (index)=, =find_system (name)= | the systems, one per emitter |
+| =lrg_particle_effect_get_renderer (self, index)= | the emitter's renderer object (billboard, ribbon, mesh) or =NULL= |
+| =lrg_particle_effect_play=, =pause=, =stop=, =restart=, =is_playing=, =is_alive= | playback; play after a stop starts over (with prewarm), after a pause resumes |
+| =lrg_particle_effect_update (self, dt)= | steps enabled systems in emitter order, then the trail recorders |
+| =lrg_particle_effect_simulate (self, seconds, step)= | fixed-step advance (plays a stopped effect) |
+| =lrg_particle_effect_seek (self, time, step)= | restart + simulate: deterministic scrubbing |
+| =lrg_particle_effect_get_time (self)= | seconds since the start |
+| =lrg_particle_effect_get_seed=, =set_seed= | the seed in use; an override for instances that should differ |
+| =lrg_particle_effect_set_position=, =get_position=, =set_rotation= | transform (rotation as a quaternion x y z w) |
+| =lrg_particle_effect_set_asset_manager (self, manager)= | resolves textures, meshes and shape meshes |
+| =lrg_particle_effect_set_raycast_func (self, func, data, destroy)= | the world raycast of collision modules in world mode (=LrgParticleRaycastFunc=) |
+| =lrg_particle_effect_reload (self)= | re-read the asset: same emitters keep particles, clock, trails and burst state; otherwise rebuild (restarting if playing) |
+| =lrg_particle_effect_get_auto_reload=, =set_auto_reload= | reload on every asset =changed= |
+| =lrg_particle_effect_get_active_count (self)= | live particles in all systems |
+| =lrg_particle_effect_get_bounds (self, min, max)=, =get_emitter_bounds (self, index, min, max)= | world boxes (an emitter's includes its fading trails) |
+| =lrg_particle_effect_draw (self, eye, up)=, =draw_camera (self, camera)=, =draw_emitter (self, index, eye, up)= | draw inside a 3D mode |
+| =lrg_particle_effect_release_gpu (self)= | free GPU objects before the context goes |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Play a file in a raylib loop
+:PROPERTIES:
+:CUSTOM_ID: example-loop
+:END:
+#+begin_src C
+g_autoptr(GError)            error = NULL;
+g_autoptr(LrgParticleAsset)  asset = lrg_particle_asset_new_from_file ("fx/campfire.rparticles", &error);
+g_autoptr(LrgParticleEffect) fire = NULL;
+
+if (asset == NULL)
+	g_error ("%s", error->message);   /* "campfire.rparticles: /emitters/0/modules/3/speed: ..." */
+fire = lrg_particle_effect_new (asset);
+lrg_particle_effect_set_asset_manager (fire, lrg_engine_get_asset_manager (lrg_engine_get_default ()));
+lrg_particle_effect_set_position (fire, 0.0f, 0.0f, 0.0f);
+lrg_particle_effect_play (fire);
+
+while (!WindowShouldClose ())
+{
+	lrg_particle_effect_update (fire, GetFrameTime ());
+	BeginDrawing ();
+	ClearBackground (BLACK);
+	BeginMode3D (camera);
+	/* ... opaque scene ... */
+	lrg_particle_effect_draw_camera (fire, grl_camera);
+	EndMode3D ();
+	EndDrawing ();
+}
+lrg_particle_effect_release_gpu (fire);
+#+end_src
+
+In an =LrgWorld3D=, put an =LrgParticleComponent= on an entity instead: it follows the entity, collides with the physics world and draws in the renderer's transparent pass.
+
+*** Build an effect in code
+:PROPERTIES:
+:CUSTOM_ID: example-code
+:END:
+#+begin_src C
+g_autoptr(LrgParticleAsset)        asset = lrg_particle_asset_new ();
+g_autoptr(LrgParticleAssetEmitter) sparks = lrg_particle_asset_emitter_new ("sparks");
+g_autoptr(LrgParticleAssetEmitter) flash = lrg_particle_asset_emitter_new ("flash");
+g_autoptr(GrlVector2)              speed = grl_vector2_new (4.0f, 8.0f);
+g_autoptr(GError)                  error = NULL;
+LrgParticleModule                 *m;
+
+lrg_particle_asset_set_seed (asset, 42);
+lrg_particle_asset_add_emitter (asset, sparks);
+lrg_particle_asset_add_emitter (asset, flash);
+
+m = lrg_particle_asset_emitter_add_module (sparks, "burst");
+g_object_set (m, "cycles", 0u, "interval", 0.8f, NULL);           /* forever, every 0.8 s */
+m = lrg_particle_asset_emitter_add_module (sparks, "shape");
+g_object_set (m, "shape", LRG_PARTICLE_SHAPE_HEMISPHERE, "radius", 0.1f, NULL);
+m = lrg_particle_asset_emitter_add_module (sparks, "velocity");
+g_object_set (m, "speed", speed, NULL);
+lrg_particle_asset_emitter_add_module (sparks, "gravity");
+m = lrg_particle_asset_emitter_add_module (sparks, "collision");
+g_object_set (m, "bounce", 0.4f, NULL);
+m = lrg_particle_asset_emitter_add_module (sparks, "sub-emitter");
+g_object_set (m, "trigger", LRG_PARTICLE_EVENT_COLLISION, "emitter", "flash", NULL);
+lrg_particle_render_settings_set_kind (lrg_particle_asset_emitter_get_renderer (sparks),
+                                       LRG_PARTICLE_RENDERER_RIBBON);
+
+if (!lrg_particle_asset_validate (asset, &error) ||
+    !lrg_particle_asset_save_to_file (asset, "fx/sparks.rparticles", &error))
+	g_warning ("%s", error->message);
+#+end_src
+
+*** A custom module
+:PROPERTIES:
+:CUSTOM_ID: example-custom-module
+:END:
+#+begin_src C
+/* Pulls particles toward the floor's height map: an over-life module */
+struct _MyHover { LrgParticleModule parent_instance; gfloat height; };
+G_DEFINE_FINAL_TYPE (MyHover, my_hover, LRG_TYPE_PARTICLE_MODULE)
+
+static void
+my_hover_update (LrgParticleModule *module, LrgParticleModuleContext *ctx, LrgParticle *p)
+{
+	MyHover *self = (MyHover *) module;
+
+	p->position_y += (self->height - p->position_y) * MIN (1.0f, 4.0f * ctx->dt);
+}
+
+static void
+my_hover_class_init (MyHoverClass *klass)
+{
+	LRG_PARTICLE_MODULE_CLASS (klass)->stage = LRG_PARTICLE_MODULE_STAGE_OVER_LIFE;
+	LRG_PARTICLE_MODULE_CLASS (klass)->update_particle = my_hover_update;
+	/* install a "height" float property with get/set_property: it becomes the YAML key */
+}
+
+/* once, before loading files that use it */
+lrg_particle_module_register_kind ("hover", my_hover_get_type ());
+#+end_src
+
+*** Scrub and live-edit (what the editor does)
+:PROPERTIES:
+:CUSTOM_ID: example-preview
+:END:
+#+begin_src C
+LrgParticleEffect *preview = lrg_particle_effect_new (asset);
+
+lrg_particle_effect_set_auto_reload (preview, TRUE);       /* every edit shows at once */
+lrg_particle_effect_seek (preview, timeline_seconds, 1.0f / 60.0f);
+/* an inspector edit: */
+g_object_set (lrg_particle_asset_emitter_find_module (emitter, "gravity"), "gravity", g, NULL);
+/* -> asset "changed" -> reload: same particles, new behaviour from the next step */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured on an i7-1280P pinned to one core (=taskset -c 2=), release build:
+
+| Case | Cost |
+|------+------|
+| 19 800 live particles, 11 modules (7 per particle per step: gravity, drag, plane collision, size curve, colour gradient, plus integration) | 5.8 ms per step (about 290 ns per particle) |
+| Billboard geometry for those 19 800 (sorted back to front) | 11.8 ms |
+| Mesh instance data for 19 800 | 2.3 ms |
+| 1 480 trails, 39 400 points, 37 000 quads | 6.2 ms build; 0.6 ms per step to simulate and record 1 000 particles |
+| Load + save of an 11-module asset | 0.5 ms |
+
+- Cost is linear in live particles times per-particle modules. Over-life gradients use the 256-entry table of =LrgColorGradient=; curves are a binary search per sample.
+- The pool never grows: =max-particles= bounds memory (about 120 bytes per particle) and work. Spawns beyond it are dropped.
+- Billboard sorting dominates drawing; prefer additive blending (order independent) for dense effects, and fewer, larger particles for smoke.
+- Ribbon bounds for culling are computed from the built strip, so ribbon emitters build twice per frame when drawn through the component; keep =max-points= modest.
+- Large particle counts belong on the GPU path (see [[file:gpu-particles.org][GPU particles]]) when the modules allow it.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Quote colours and gradients*: in YAML, a =#= after a space starts a comment, so =gradient: 0 #fff; 1 #000= reads as ="0"=. Write ='0 #ffffffff; 1 #00000000'= (the writer does).
+- *A module object belongs to one place*: an asset emitter's modules are copied into each effect; do not add one module to two systems (use =lrg_particle_module_copy()=).
+- *Edits reach a playing effect only after =lrg_particle_effect_reload()=* (or with =auto-reload=).
+- *Particles intersecting the ground are cut in half* by the depth test (dust spawned at a collision point): give the target's shape an =offset= above the surface.
+- *Over-life values come from start values*: setting =p->size= in a custom init module after the size module is fine (start values are taken after the init stage), changing it in a force module is overwritten by =size-over-life=.
+- *=color-over-life= and =alpha-over-life= both set alpha*: the later one wins.
+- *World collision needs a raycast function*: standalone effects have none (call =lrg_particle_effect_set_raycast_func()=); the component provides one.
+- *Determinism needs the same step sizes*: variable frame times give different (still valid) results; use =simulate()= / =seek()= for reproducible states.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+=.rparticles= files open as YAML documents (comments and unknown keys kept), and their validation runs =lrg_particle_asset_new_from_data()= on the text, so errors land on the right key. The particle editor with live preview (0.9.x editor wave) is built on the hooks above: the module stack UI edits module properties through the property grid (gradients get the gradient editor, curves the curve editor, vectors and colours their editors, ranges a vector2 editor); =lrg_particle_module_list_kinds()= fills the "add module" menu; =changed= signals plus =auto-reload= give the live preview; =seek()= drives the timeline; =get_unknown_keys()= feeds warnings; emitter =enabled= is the solo/mute switch; =get_active_count()= and per-system counts are the stats. In levels, attach the =particles= component to a node (=components: [{type: particles, props: {asset-path: fx/fire.rparticles}}]=).
+
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+The remaining public symbols of =particles/lrg-particle-asset.h=, by their full names (the tables above abbreviate getter and setter pairs): =lrg_particle_render_settings_set_blend ()=, =lrg_particle_render_settings_set_texture ()=, =lrg_particle_asset_emitter_set_name ()=, =lrg_particle_asset_emitter_set_max_particles ()=, =lrg_particle_asset_emitter_set_enabled ()=, =lrg_particle_asset_emitter_set_start_delay ()=, =lrg_particle_asset_emitter_get_module ()=, =lrg_particle_asset_emitter_move_module ()=, =lrg_particle_asset_set_name ()=, =lrg_particle_asset_get_seed ()=, =lrg_particle_asset_get_duration ()=, =lrg_particle_asset_set_duration ()=, =lrg_particle_asset_get_loop ()=, =lrg_particle_asset_set_loop ()=, =lrg_particle_asset_get_emitter ()=, =lrg_particle_asset_find_emitter ()=, =lrg_particle_asset_remove_emitter ()=, =lrg_particle_asset_move_emitter ()=, =lrg_particle_effect_get_system ()=, =lrg_particle_effect_pause ()=, =lrg_particle_effect_stop ()=, =lrg_particle_effect_restart ()=, =lrg_particle_effect_is_playing ()=, =lrg_particle_effect_get_position ()=, =lrg_particle_effect_set_rotation ()=, =lrg_particle_effect_draw_emitter ()=, =lrg_particle_effect_get_emitter_bounds ()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:system.org][LrgParticleSystem]] (module stack, generator, sub-emitter plumbing)
+- [[file:billboard-renderer.org][Billboards]], [[file:ribbon-renderer.org][ribbons and trails]], [[file:mesh-renderer.org][mesh particles]]
+- [[file:../world3d/particle-component.org][LrgParticleComponent]]
+- [[file:../core/color-gradient.org][LrgColorGradient]]
+- [[file:../../guides/vfx.org][Visual effects guide]]
+- [[file:../../guides/writing-a-data-format.org][Writing a data format]]

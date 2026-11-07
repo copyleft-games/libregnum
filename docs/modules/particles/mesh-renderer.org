@@ -1,0 +1,94 @@
+#+title: Mesh particles
+#+description: LrgParticleMeshRenderer: every particle as an instance of one mesh in a single instanced draw, with orientation modes and simple lighting
+
+* LrgParticleMeshRenderer
+:PROPERTIES:
+:CUSTOM_ID: mesh-renderer
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Particles]] > Mesh particles
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgParticleMeshRenderer= (=particles/lrg-particle-mesh-renderer.h=, 0.9.0) draws each live particle of a system as an instance of one mesh: debris, rocks, leaves, shell casings, gibs, confetti. All instances go out in one instanced draw call (GL 3.3 core instancing, no extension). The mesh is a model's first mesh, an uploaded =GrlMesh=, or a generated primitive; particles are oriented by their rotation (about Y, about their velocity, or tumbling about a per-particle axis), scaled by their size and tinted by their colour. =build()= produces the per-instance data headless; =draw()= uploads and draws it. The =mesh= renderer kind of a [[file:particle-asset.org][.rparticles]] emitter creates and configures one.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Instance data*: 20 floats per particle (=LRG_PARTICLE_MESH_FLOATS_PER_INSTANCE=): a column-major world matrix (translation = position; rotation by the align mode; column scale = renderer scale x particle size) and the RGBA colour.
+- *Align modes* (=LrgParticleMeshAlign=): =NONE= turns the mesh by =rotation= about world Y; =VELOCITY= points the mesh's +Y along the velocity and spins it by =rotation= about that axis (shards, arrows); =TUMBLE= turns it by =rotation= about an axis derived from the particle's random number (stable per particle), which with an =angular-velocity= range makes convincing debris.
+- *Drawing*: the instance buffer (a dynamic VBO that grows to the largest count seen) is attached to the mesh's vertex array at attribute locations 10 .. 13 (matrix columns) and 14 (colour) with divisor 1, the mesh is drawn instanced with a small GLSL 330 program reading rlgl's current view and projection matrices, then the attributes are disabled again so other users of the mesh are unaffected. The program multiplies the albedo texture (white without one) by the instance colour and, when =lit=, by =0.3 + 0.7 h^2= with =h= the half-Lambert term of the light direction (default slanted downward). Additive systems draw without depth writes; others write depth (mesh particles are usually solid).
+- *Primitives* (=LrgParticleMeshPrimitive=): raylib's generators: a unit cube, a sphere of diameter 1, a cylinder and a cone of diameter and height 1 (base on the origin), a unit XZ plane.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Symbol | Description |
+|--------+-------------|
+| =LrgParticleMeshAlign=, =lrg_particle_mesh_align_get_type()= | =NONE=, =VELOCITY=, =TUMBLE= (nicks =none=, =velocity=, =tumble=) |
+| =LrgParticleMeshPrimitive=, =lrg_particle_mesh_primitive_get_type()= | =CUBE=, =SPHERE=, =CYLINDER=, =CONE=, =PLANE= |
+| =LRG_PARTICLE_MESH_FLOATS_PER_INSTANCE= | 20 |
+| =lrg_particle_mesh_renderer_new ()= | cubes, tumbling, lit |
+| =lrg_particle_mesh_renderer_get_mesh=, =set_mesh= | property =mesh= (=GrlMesh=, nullable): an uploaded mesh |
+| =lrg_particle_mesh_renderer_set_model (self, model)= | instance a model's first mesh (wins over the mesh) |
+| =lrg_particle_mesh_renderer_get_primitive=, =set_primitive= | property =primitive= |
+| =lrg_particle_mesh_renderer_get_scale=, =set_scale (self, x, y, z)= | scale at particle size 1 |
+| =lrg_particle_mesh_renderer_get_align=, =set_align= | property =align= |
+| =lrg_particle_mesh_renderer_get_lit=, =set_lit= | property =lit= |
+| =lrg_particle_mesh_renderer_set_light_direction (self, x, y, z)= | direction light travels |
+| =lrg_particle_mesh_renderer_get_texture=, =set_texture= | property =texture= (=GrlTexture=, nullable) |
+| =lrg_particle_mesh_renderer_build (self, system, instances, max)= | fills instance data for the live particles (oldest first), returns the count |
+| =lrg_particle_mesh_renderer_draw (self, system)= | one instanced draw; nothing without a window or when the layer is hidden |
+| =lrg_particle_mesh_renderer_release_gpu (self)= | frees the shader, instance buffer and primitive |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgParticleMeshRenderer) debris = lrg_particle_mesh_renderer_new ();
+GrlModel                          *rock = lrg_asset_manager_load_model (manager, "props/rock.glb", NULL);
+
+lrg_particle_mesh_renderer_set_model (debris, rock);
+lrg_particle_mesh_renderer_set_scale (debris, 1.0f, 0.6f, 0.8f);
+lrg_particle_mesh_renderer_set_align (debris, LRG_PARTICLE_MESH_ALIGN_TUMBLE);
+
+BeginMode3D (camera);
+lrg_particle_mesh_renderer_draw (debris, system);
+EndMode3D ();
+#+end_src
+
+As an emitter's =renderer:= block: ={kind: mesh, mesh: props/rock.glb, mesh-scale: [1, 0.6, 0.8], align: tumble}=.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Building instance data for 19 800 particles takes 2.3 ms on one i7-1280P core (=taskset -c 2=); the draw is a single call whatever the count, so the GPU cost is the mesh's triangles times the instances. Keep debris meshes low-poly (a few dozen triangles).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Mesh particles are not lit by the scene's light set or shadowed: the simple shading only suggests form. For a handful of hero objects, spawn entities with mesh components instead.
+- The model must stay loaded while the renderer uses it (the asset manager keeps it).
+- Cylinder and cone primitives sit on their base; give a =shape= offset if they should be centred.
+
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+The remaining public symbols of =particles/lrg-particle-mesh-renderer.h=, by their full names (the tables above abbreviate getter and setter pairs): =lrg_particle_mesh_renderer_set_mesh ()=, =lrg_particle_mesh_renderer_set_primitive ()=, =lrg_particle_mesh_renderer_set_lit ()=, =lrg_particle_mesh_renderer_set_texture ()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:particle-asset.org][Particle assets]]
+- [[file:billboard-renderer.org][Billboards]], [[file:ribbon-renderer.org][ribbons and trails]]

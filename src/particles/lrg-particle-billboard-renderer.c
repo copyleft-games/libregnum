@@ -28,7 +28,7 @@
 #define RENDERER_EPSILON (1e-6f)
 
 /* Side of the generated soft dot texture in pixels. */
-#define RENDERER_DOT_SIZE (32)
+#define RENDERER_DOT_SIZE (64)
 
 /* One collected particle: what build() needs, plus its sort key. */
 typedef struct
@@ -427,6 +427,10 @@ ensure_dot (LrgParticleBillboardRenderer *self)
     self->dot = LoadTextureFromImage (image);
     UnloadImage (image);
     self->dot_loaded = self->dot.id != 0;
+
+    /* filtered, or large particles show the texel grid */
+    if (self->dot_loaded)
+        SetTextureFilter (self->dot, TEXTURE_FILTER_BILINEAR);
 }
 
 static gint
@@ -459,20 +463,10 @@ lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
     g_autoptr(GrlVector3) up_vector = NULL;
     gfloat    eye[3];
     gfloat    up[3];
-    guint     active;
-    guint     quads;
-    guint     texture_id;
-    guint     i;
 
     g_return_if_fail (LRG_IS_PARTICLE_BILLBOARD_RENDERER (self));
     g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (system));
     g_return_if_fail (GRL_IS_CAMERA3D (camera));
-
-    /* Nothing alive, or the system's render layer is outside the
-     * active cull mask. */
-    active = lrg_particle_system_get_active_count (system);
-    if (active == 0 || !lrg_particle_system_is_layer_visible (system))
-        return;
 
     position = grl_camera3d_get_position (camera);
     up_vector = grl_camera3d_get_up (camera);
@@ -482,6 +476,29 @@ lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
     up[0] = up_vector->x;
     up[1] = up_vector->y;
     up[2] = up_vector->z;
+    lrg_particle_billboard_renderer_draw_view (self, system, eye, up);
+}
+
+void
+lrg_particle_billboard_renderer_draw_view (LrgParticleBillboardRenderer *self,
+                                           LrgParticleSystem            *system,
+                                           const gfloat                 *eye,
+                                           const gfloat                 *up)
+{
+    guint     active;
+    guint     quads;
+    guint     texture_id;
+    guint     i;
+
+    g_return_if_fail (LRG_IS_PARTICLE_BILLBOARD_RENDERER (self));
+    g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (system));
+    g_return_if_fail (eye != NULL && up != NULL);
+
+    /* Nothing alive, or the system's render layer is outside the
+     * active cull mask. */
+    active = lrg_particle_system_get_active_count (system);
+    if (active == 0 || !lrg_particle_system_is_layer_visible (system))
+        return;
 
     g_array_set_size (self->scratch, (guint)active * LRG_PARTICLE_BILLBOARD_FLOATS_PER_QUAD);
     quads = lrg_particle_billboard_renderer_build (self, system, eye, up,
@@ -501,9 +518,12 @@ lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
 
     /* Transparent quads test against the scene's depth but do not write
      * it, so overlapping particles all blend.  BeginBlendMode() flushes
-     * the batch, so the mode applies to these quads only. */
+     * the batch, so the mode applies to these quads only.  Back faces
+     * are kept: the quads face the eye, but an LrgWorld3DRenderer pass
+     * may have culling configured either way. */
     rlDrawRenderBatchActive ();
     rlDisableDepthMask ();
+    rlDisableBackfaceCulling ();
     BeginBlendMode (raylib_blend_mode (lrg_particle_system_get_blend_mode (system)));
 
     rlSetTexture (texture_id);
@@ -528,6 +548,7 @@ lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
 
     EndBlendMode ();
     rlDrawRenderBatchActive ();
+    rlEnableBackfaceCulling ();
     rlEnableDepthMask ();
 }
 

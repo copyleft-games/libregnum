@@ -1,0 +1,102 @@
+#+title: LrgParticleComponent
+#+description: Plays a .rparticles effect on an LrgEntity3D: follows the entity, collides with the world's physics and draws through LrgWorld3DRenderer's transparent pass
+
+* LrgParticleComponent
+:PROPERTIES:
+:CUSTOM_ID: particle-component
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][3D world]] > [[file:components.org][Components]] > LrgParticleComponent
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgParticleComponent= (=world3d/components/lrg-particle-component.h=, 0.9.0; registry name =particles=) puts a [[file:../particles/particle-asset.org][particle effect]] on an =LrgEntity3D=. It loads the =.rparticles= file named by =asset-path= (or plays an =LrgParticleAsset= given directly), builds an =LrgParticleEffect=, keeps the effect at the entity's world position and rotation, steps it in the world's update phase, connects collision modules in =world= mode to the world's physics, and submits one transparent render item per emitter so =LrgWorld3DRenderer= draws the particles in its transparent pass, sorted against the scene and each other, culled by the camera and its render layers.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- *Loading*: =asset-path= resolves through the asset manager (=lrg_asset_manager_resolve_reference()=: search paths and =guid:= references), else as a file path, on the first update, =world_entered= or getter call. A file that does not load is logged once (with the loader's key-path message) and the component draws nothing; setting a new path tries again. The same manager resolves the effect's textures and meshes; without one the default engine's is used.
+- *Transform*: each update copies the entity's world position and rotation to the effect before stepping it (a moving entity leaves a trail in world space, carries its particles in local space).
+- *Rendering*: =collect_render()= adds, for each emitter with something to draw, an =LRG_RENDER_ITEM_CUSTOM= item flagged =TRANSPARENT | UNLIT | DOUBLE_SIDED= whose bounds are the emitter's live particles (and fading trails) and whose layer is the emitter's renderer layer (or the component's =layer= override). The renderer culls and sorts them back to front with the other transparent items and calls the draw callback inside its 3D pass; the callback reads the eye and up vector from rlgl's view matrix and draws the emitter with its renderer. Shadow passes skip particles. No renderer hook is needed.
+- *Physics*: with =world-collision= on, the effect's raycast function casts each particle step against the world's =LrgDynamicsWorld= (=lrg_dynamics_world_raycast()= with the module's =layer-mask=).
+- *Finishing*: a one-shot effect emits =finished= (forwarded from the effect) when nothing is left; a spawner can destroy the entity then.
+
+** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =asset= | =LrgParticleAsset= | none | the effect played (wins over the path) |
+| =asset-path= | string | none | =.rparticles= reference (the level and prefab key) |
+| =asset-manager= | =LrgAssetManager= | engine's | resolves references |
+| =effect= | =LrgParticleEffect= (read-only) | | the playing instance |
+| =auto-play= | boolean | true | play as soon as loaded |
+| =time-scale= | float 0 .. 100 | 1 | simulation speed |
+| =seed= | uint64 | 0 | overrides the asset seed when not 0 (copies that differ) |
+| =layer= | int -1 .. 31 | -1 | render layer of every emitter; -1 keeps each emitter's |
+| =world-collision= | boolean | true | world-mode collision casts against the physics world |
+| =playing= | boolean (read-only) | | whether the effect plays |
+
+Signal =finished= (no arguments).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_particle_component_new ()= | no effect yet |
+| =lrg_particle_component_new_with_asset (asset)= | plays =asset= |
+| =lrg_particle_component_get_asset (self)=, =set_asset (self, asset)= | the asset (loaded from the path on first use); a new asset builds a new effect |
+| =lrg_particle_component_get_asset_path (self)=, =set_asset_path (self, path)= | the reference |
+| =lrg_particle_component_set_asset_manager (self, manager)= | the manager |
+| =lrg_particle_component_get_effect (self)= | the effect (editor stats, seeking, live reload) |
+| =lrg_particle_component_play=, =pause=, =stop=, =restart= | playback |
+| =lrg_particle_component_get_auto_play=, =set_auto_play= | auto-play |
+| =lrg_particle_component_get_time_scale=, =set_time_scale= | speed |
+
+** Example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgEntity3D)          torch = lrg_entity3d_new_with_name ("Torch");
+g_autoptr(LrgParticleComponent) flame = lrg_particle_component_new ();
+
+lrg_particle_component_set_asset_path (flame, "fx/torch.rparticles");
+lrg_entity3d_set_position_xyz (torch, 2.0f, 1.5f, 0.0f);
+lrg_entity3d_add_component (torch, LRG_COMPONENT (flame));
+lrg_world3d_add_entity (world, torch);
+
+/* the usual loop: lrg_world3d_step (), lrg_world3d_renderer_render () */
+#+end_src
+
+In a level, a node's =components:= list takes =- type: particles= with =props: { asset-path: fx/torch.rparticles }= (registry name =particles=, once the lead adds the row).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Particles are drawn unlit (their colours are final) and do not cast shadows.
+- The item bounds follow the particles, so a far-flung effect is not culled while any particle is visible; an emitter with nothing alive submits nothing.
+- Changing the asset (or path) discards the playing effect; to edit live, edit the asset and call =lrg_particle_effect_reload()= on =get_effect()= (or set =auto-reload=).
+
+
+** Symbol index
+:PROPERTIES:
+:CUSTOM_ID: symbol-index
+:END:
+The remaining public symbols of =world3d/components/lrg-particle-component.h=, by their full names (the tables above abbreviate getter and setter pairs): =lrg_particle_component_pause ()=, =lrg_particle_component_stop ()=, =lrg_particle_component_restart ()=, =lrg_particle_component_set_auto_play ()=, =lrg_particle_component_set_time_scale ()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:../particles/particle-asset.org][Particle assets]]
+- [[file:components.org][3D components]], [[file:renderer.org][LrgWorld3DRenderer]]
+- [[file:../../guides/vfx.org][Visual effects guide]]
