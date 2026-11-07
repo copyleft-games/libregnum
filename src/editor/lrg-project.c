@@ -10,6 +10,7 @@
 #include "lrg-project.h"
 #include "lrg-asset-database.h"
 #include "../lrg-enums.h"
+#include "../physics/lrg-physics-layers.h"
 #include <yaml-glib.h>
 #include <string.h>
 
@@ -24,6 +25,11 @@ struct _LrgProject
 	gchar     *run_command;
 	gchar     *scripts_dir;
 	GPtrArray *asset_dirs;   /* gchar* */
+
+	/* physics: block: the layer table, plus the parsed block itself so
+	 * keys other than layers/no_collide (world settings) survive a save */
+	LrgPhysicsLayers *physics_layers;
+	YamlNode         *physics_node;
 
 	/* Keys this type does not model (e.g. 0.9.0 runtime settings such as
 	 * store_prefab_instances, or another tool's data), kept with their
@@ -49,6 +55,8 @@ lrg_project_finalize (GObject *object)
 	g_clear_pointer (&self->run_command, g_free);
 	g_clear_pointer (&self->scripts_dir, g_free);
 	g_clear_pointer (&self->asset_dirs, g_ptr_array_unref);
+	g_clear_object (&self->physics_layers);
+	g_clear_pointer (&self->physics_node, yaml_node_unref);
 	g_clear_pointer (&self->extra_keys, g_ptr_array_unref);
 	g_clear_pointer (&self->extra_nodes, g_ptr_array_unref);
 	g_clear_pointer (&self->extra_root_keys, g_ptr_array_unref);
@@ -67,6 +75,7 @@ static void
 lrg_project_init (LrgProject *self)
 {
 	self->asset_dirs = g_ptr_array_new_with_free_func (g_free);
+	self->physics_layers = lrg_physics_layers_new_default ();
 	self->extra_keys = g_ptr_array_new_with_free_func (g_free);
 	self->extra_nodes = g_ptr_array_new_with_free_func ((GDestroyNotify) yaml_node_unref);
 	self->extra_root_keys = g_ptr_array_new_with_free_func (g_free);
@@ -184,12 +193,30 @@ lrg_project_open (const gchar  *dir,
 		}
 	}
 
+	/* The physics: block (root level, or inside project:). A broken
+	 * block does not stop the project from opening: it is reported,
+	 * the table is left empty (everything collides), and the block is
+	 * kept so a save does not lose it */
+	{
+		YamlNode          *block = lrg_physics_layers_find_block (root);
+		g_autoptr(GError)  physics_error = NULL;
+
+		if (!lrg_physics_layers_load_yaml (self->physics_layers, block, &physics_error))
+		{
+			g_warning ("%s: physics block ignored: %s", path, physics_error->message);
+			lrg_physics_layers_reset (self->physics_layers);
+		}
+		if (block != NULL)
+			self->physics_node = yaml_node_ref (block);
+	}
+
 	/* Everything else survives a save */
 	{
 		static const gchar * const project_keys[] = {
-			"name", "default_level", "game_output", "run_command", "scripts_dir", "asset_dirs", NULL
+			"name", "default_level", "game_output", "run_command", "scripts_dir", "asset_dirs",
+			"physics", NULL
 		};
-		static const gchar * const root_keys[] = { "project", NULL };
+		static const gchar * const root_keys[] = { "project", "physics", NULL };
 
 		keep_unknown_members (proj_map, project_keys, self->extra_keys, self->extra_nodes);
 		keep_unknown_members (root_map, root_keys, self->extra_root_keys, self->extra_root_nodes);
@@ -236,6 +263,24 @@ lrg_project_save (LrgProject  *self,
 	write_kept_members (proj_map, self->extra_keys, self->extra_nodes);
 
 	yaml_mapping_set_mapping_member (root_map, "project", proj_map);
+
+	/* physics: is always written at the root, next to project: (an old
+	 * block nested in project: moves there); its other keys are kept */
+	{
+		g_autoptr(YamlNode)    physics_copy = NULL;
+		g_autoptr(YamlMapping) physics_map = NULL;
+
+		if (self->physics_node != NULL
+		    && yaml_node_get_node_type (self->physics_node) == YAML_NODE_MAPPING)
+		{
+			physics_copy = yaml_node_copy (self->physics_node);
+			physics_map = yaml_mapping_ref (yaml_node_get_mapping (physics_copy));
+		}
+		else
+			physics_map = yaml_mapping_new ();
+		lrg_physics_layers_write_yaml (self->physics_layers, physics_map);
+		yaml_mapping_set_mapping_member (root_map, "physics", physics_map);
+	}
 	write_kept_members (root_map, self->extra_root_keys, self->extra_root_nodes);
 	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
 	 * drop our reference. g_steal_pointer would leak it and the whole tree. */
@@ -421,4 +466,11 @@ lrg_project_relativize (LrgProject  *self,
 	if (g_strcmp0 (abs, root) == 0)
 		return g_strdup (".");
 	return g_strdup (path);
+}
+
+LrgPhysicsLayers *
+lrg_project_get_physics_layers (LrgProject *self)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	return self->physics_layers;
 }

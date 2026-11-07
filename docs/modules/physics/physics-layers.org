@@ -1,0 +1,281 @@
+#+title: Physics Layers - Collision Layers and the Collide Matrix
+#+description: LrgPhysicsLayers in libregnum 0.9.0: 32 named collision layers, a symmetric collide matrix, per-body layer and mask, and the physics: block of project.ryaml.
+
+* Physics Layers
+:PROPERTIES:
+:CUSTOM_ID: physics-layers
+:END:
+=LrgPhysicsLayers= (=src/physics/lrg-physics-layers.h=, 0.9.0) is the project-wide table that decides which bodies may collide. It holds up to 32 *named layers* (slots 0 to 31) and a *symmetric collide matrix* (does layer A collide with layer B?). Every body has one *object layer* and a *mask* of the layers it accepts. The table is project data: it is stored in the =physics:= block of =project.ryaml=, not in a separate file, and the world applies it to every pair its broadphase finds ([[file:broadphase.org][LrgBroadphase]]).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** The pair rule
+:PROPERTIES:
+:CUSTOM_ID: pair-rule
+:END:
+Two bodies A (layer =la=, mask =ma=) and B (layer =lb=, mask =mb=) may collide when all three hold:
+
+1. the matrix lets =la= and =lb= collide,
+2. =ma= has the bit of =lb= (=LRG_PHYSICS_LAYER_BIT (lb)=),
+3. =mb= has the bit of =la=.
+
+=lrg_physics_layers_should_collide (layers, la, ma, lb, mb)= is exactly this rule (and with a =NULL= table only the two mask tests apply). The matrix is the project's policy ("debris never hits characters"); the masks are per body exceptions ("this one trigger only sees the player"). A body that should follow the matrix alone uses the mask =LRG_PHYSICS_LAYERS_ALL=.
+
+The matrix is always symmetric: setting a cell also sets its mirror, so "A collides with B" and "B collides with A" cannot disagree. Rows are stored as 32-bit masks, so the test is one AND (=lrg_physics_layers_get_collide_mask()= returns a row).
+
+*** Names and indices
+:PROPERTIES:
+:CUSTOM_ID: names
+:END:
+A slot can be named or unnamed. Unnamed slots still work (by index) and collide with everything until you edit their row. Names are unique, non-empty, not ="all"= and not a number, so a reference in a file or a level (=lrg_physics_layers_resolve()=) is unambiguous: a decimal string is an index, anything else is a name. =lrg_physics_layers_get_count()= is one past the highest named slot, the number of rows an editor shows.
+
+*** The default layers
+:PROPERTIES:
+:CUSTOM_ID: defaults
+:END:
+=lrg_physics_layers_new_default()= / =lrg_physics_layers_reset_default()= name slots 0 to 8 after the =LrgPhysicsLayer= enum and clear nine cells of the matrix:
+
+| Index | Name (enum) | Meant for |
+|-------+-------------+-----------|
+| 0 | =default= (=LRG_PHYSICS_LAYER_DEFAULT=) | Anything not classified |
+| 1 | =static= (=LRG_PHYSICS_LAYER_STATIC=) | Level geometry |
+| 2 | =dynamic= (=LRG_PHYSICS_LAYER_DYNAMIC=) | Props and rigid bodies |
+| 3 | =kinematic= (=LRG_PHYSICS_LAYER_KINEMATIC=) | Moving platforms, doors |
+| 4 | =character= (=LRG_PHYSICS_LAYER_CHARACTER=) | Character controllers |
+| 5 | =trigger= (=LRG_PHYSICS_LAYER_TRIGGER=) | Sensors |
+| 6 | =debris= (=LRG_PHYSICS_LAYER_DEBRIS=) | Fracture chunks, gibs |
+| 7 | =ragdoll= (=LRG_PHYSICS_LAYER_RAGDOLL=) | Ragdoll bones |
+| 8 | =projectile= (=LRG_PHYSICS_LAYER_PROJECTILE=) | Bullets, thrown objects |
+
+Pairs that do *not* collide by default: static-static, static-kinematic, kinematic-kinematic (none of them can move the other), static-trigger, trigger-trigger, character-debris, trigger-debris, debris-debris (cheap rubble) and debris-projectile. Everything else, including the unnamed slots 9 to 31, collides. A plain =lrg_physics_layers_new()= has no names and a full matrix.
+
+** The physics: block of project.ryaml
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+The table lives in a root-level =physics:= mapping next to =project:=. The loader also accepts a =physics:= nested inside =project:=; =lrg_project_save()= always writes it at the root.
+
+#+begin_src yaml
+project:
+  name: Skyfall
+  default_level: levels/hub.rlevel
+  asset_dirs: [assets/]
+
+physics:
+  # Slot names. The position in the list is the layer index (0, 1, 2, ...).
+  # An empty string keeps a slot unnamed (here slot 9 is unnamed, 10 is "water").
+  layers: [default, static, dynamic, kinematic, character, trigger, debris, ragdoll, projectile, '', water]
+
+  # Pairs that do NOT collide. Every other pair collides (the matrix starts full).
+  # Each entry is [layer, layer]: names, or indices for unnamed slots.
+  # [a, a] turns off collisions inside one layer. Order inside a pair does not matter.
+  no_collide:
+    - [static, static]
+    - [static, kinematic]
+    - [static, trigger]
+    - [kinematic, kinematic]
+    - [character, debris]
+    - [trigger, trigger]
+    - [trigger, debris]
+    - [debris, debris]
+    - [debris, projectile]
+    - [debris, water]
+    - [20, 31]
+
+  # Other keys (world settings owned by LrgDynamicsWorld, e.g. gravity) may sit here too.
+  # LrgPhysicsLayers ignores them and lrg_project_save() keeps them.
+  gravity: [0, -9.81, 0]
+#+end_src
+
+| Key | Type | Default | Meaning |
+|-----+------+---------+---------|
+| =layers= | sequence of strings, at most 32 | none named | Slot names by position; =''= or =~= keeps a slot unnamed |
+| =no_collide= | sequence of two-element sequences | empty (all collide) | Matrix cells to clear; each side is a name or a decimal index 0 to 31 |
+
+Rules:
+
+- No =physics:= block (or an empty one) means no named layers and a full matrix (=lrg_physics_layers_new()= state). Projects the editor creates get the default layer set written out.
+- =no_collide= is resolved after =layers=, so it may use names declared in the same block.
+- The writer emits one =layers= entry per slot up to the highest named one and lists the cleared cells of the upper triangle in row-major order (names, or integers for unnamed slots). Writing a loaded table gives the same text.
+- Errors (=LRG_PHYSICS_LAYERS_ERROR=): =PARSE= (not YAML), =FORMAT= (wrong shape: =layers= not a sequence, a pair without two entries, a name that is a number or ="all"=, more than 32 layers), =UNKNOWN_LAYER= (a name not in =layers=, an index >= 32), =DUPLICATE= (a name used twice). A failed load leaves the table unchanged.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Constants and types
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Symbol | Meaning |
+|--------+---------|
+| =LRG_PHYSICS_LAYERS_MAX= | 32 slots |
+| =LRG_PHYSICS_LAYERS_ALL= | Mask with every bit (=0xFFFFFFFF=) |
+| =LRG_PHYSICS_LAYER_BIT (i)= | The mask bit of layer =i= |
+| =LrgPhysicsLayer= (=LRG_TYPE_PHYSICS_LAYER=, =lrg_physics_layer_get_type()=) | The default slot indices, see [[#defaults][the default layers]] |
+| =LrgPhysicsLayersError= (=LRG_TYPE_PHYSICS_LAYERS_ERROR=, =lrg_physics_layers_error_get_type()=), =LRG_PHYSICS_LAYERS_ERROR= (=lrg_physics_layers_error_quark()=) | Error codes =PARSE=, =FORMAT=, =UNKNOWN_LAYER=, =DUPLICATE=, =FULL= |
+| =LRG_TYPE_PHYSICS_LAYERS= | The =LrgPhysicsLayers= GObject (final) |
+
+*** Construction
+:PROPERTIES:
+:CUSTOM_ID: api-construction
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_physics_layers_new ()= | No names, every layer collides with every layer |
+| =lrg_physics_layers_new_default ()= | The default layer set and matrix |
+| =lrg_physics_layers_copy (layers)= | Independent copy |
+| =lrg_physics_layers_assign (layers, other)= | Copies =other= into =layers= (one =changed= emission if anything differs) |
+| =lrg_physics_layers_equal (a, b)= | Same names and matrix |
+| =lrg_physics_layers_reset (layers)= | Back to the =new()= state |
+| =lrg_physics_layers_reset_default (layers)= | Back to the default set |
+
+*** Names
+:PROPERTIES:
+:CUSTOM_ID: api-names
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_physics_layers_set_name (layers, index, name, &error)= | Names a slot; =NULL= or =""= unnames it |
+| =lrg_physics_layers_get_name (layers, index)= | Name or =NULL= |
+| =lrg_physics_layers_add (layers, name, &error)= | Names the lowest unnamed slot; returns the index or -1 (=FULL=, =DUPLICATE=, =FORMAT=) |
+| =lrg_physics_layers_find (layers, name)= | Index or -1 |
+| =lrg_physics_layers_resolve (layers, name_or_index, &error)= | A name or a decimal index to an index, or -1 |
+| =lrg_physics_layers_get_count (layers)= | One past the highest named slot |
+
+*** Matrix and masks
+:PROPERTIES:
+:CUSTOM_ID: api-matrix
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_physics_layers_set_collides (layers, a, b, collides)= | Sets a cell and its mirror |
+| =lrg_physics_layers_get_collides (layers, a, b)= | Reads a cell |
+| =lrg_physics_layers_get_collide_mask (layers, layer)= | The row of =layer= as a mask; also the right =layer_mask= for "what does my layer hit" queries |
+| =lrg_physics_layers_set_collide_mask (layers, layer, mask)= | Sets a row and its column |
+| =lrg_physics_layers_should_collide (layers, la, ma, lb, mb)= | The full [[#pair-rule][pair rule]]; =layers= may be =NULL= |
+| =lrg_physics_layers_mask_from_names (layers, names, &mask, &error)= | ={ "static", "dynamic", NULL }= to a mask; ="all"= gives =LRG_PHYSICS_LAYERS_ALL= |
+| =lrg_physics_layers_mask_to_names (layers, mask)= | A mask to names (indices for unnamed bits); the full mask gives ={ "all" }= |
+
+*** Load and save
+:PROPERTIES:
+:CUSTOM_ID: api-io
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_physics_layers_load_from_data (layers, data, length, &error)= | A whole =project.ryaml= (root or nested block), or the block's mapping alone |
+| =lrg_physics_layers_load_from_file (layers, path, &error)= | Same, from a file (usually =<project>/project.ryaml=) |
+| =lrg_physics_layers_to_data (layers, &error)= | A YAML document holding a =physics:= block |
+| =lrg_project_get_physics_layers (project)= | The editor project's table (transfer none); saved by =lrg_project_save()= |
+
+In-tree code (=LIBREGNUM_COMPILATION=, not in the GIR because it exposes yaml-glib types) also has =lrg_physics_layers_load_yaml (layers, node, &error)=, =lrg_physics_layers_write_yaml (layers, mapping)= (replaces =layers= and =no_collide= and keeps every other member), and =lrg_physics_layers_find_block (root)=.
+
+*** Signal
+:PROPERTIES:
+:CUSTOM_ID: api-signal
+:END:
+=LrgPhysicsLayers::changed= is emitted once per call that actually changed a name or a cell (a no-op edit does not emit). Worlds that cache rows and the editor's matrix view listen to it. =LrgBroadphase= reads the table live and needs no notification.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A game loading the project's matrix
+:PROPERTIES:
+:CUSTOM_ID: example-load
+:END:
+#+begin_src c
+g_autoptr(LrgPhysicsLayers) layers = lrg_physics_layers_new ();
+g_autoptr(GError)           error = NULL;
+g_autoptr(LrgBroadphase)    bp = lrg_broadphase_new ();
+gint                        enemy;
+
+if (!lrg_physics_layers_load_from_file (layers, "project.ryaml", &error))
+{
+	g_warning ("physics layers: %s", error->message);
+	lrg_physics_layers_reset_default (layers);
+}
+lrg_broadphase_set_layers (bp, layers);
+
+enemy = lrg_physics_layers_resolve (layers, "enemy", NULL);
+if (enemy < 0)
+	enemy = LRG_PHYSICS_LAYER_DYNAMIC;
+#+end_src
+
+*** Per-body masks
+:PROPERTIES:
+:CUSTOM_ID: example-masks
+:END:
+#+begin_src c
+/* a pressure plate: a trigger that only notices characters */
+const gchar * const sees[] = { "character", NULL };
+guint32 mask;
+
+lrg_physics_layers_mask_from_names (layers, sees, &mask, NULL);
+plate = lrg_broadphase_create_proxy (bp, plate_min, plate_max,
+                                     LRG_PHYSICS_LAYER_TRIGGER, mask,
+                                     LRG_BROADPHASE_PROXY_STATIC, plate_body);
+#+end_src
+
+*** Editing and saving the table
+:PROPERTIES:
+:CUSTOM_ID: example-edit
+:END:
+#+begin_src c
+LrgPhysicsLayers *layers = lrg_project_get_physics_layers (project);
+gint              water;
+
+water = lrg_physics_layers_add (layers, "water", &error);
+lrg_physics_layers_set_collides (layers, (guint) water, LRG_PHYSICS_LAYER_DEBRIS, FALSE);
+lrg_physics_layers_set_collides (layers, (guint) water, LRG_PHYSICS_LAYER_STATIC, FALSE);
+lrg_project_save (project, &error);    /* rewrites physics: with the new row */
+
+/* or stand-alone */
+g_autofree gchar *yaml = lrg_physics_layers_to_data (layers, NULL);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+The matrix is 32 x 32 bits (128 bytes). =lrg_physics_layers_should_collide()= is three ANDs plus the type check; the broadphase copies the 32 rows once per =lrg_broadphase_find_pairs()= and tests every pair with plain bit operations, so filtering costs nothing measurable next to the box tests.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Both masks must accept the other layer.* A body whose mask leaves out =static= falls through the floor even though the matrix says dynamic-static collides.
+- *Queries ignore the matrix.* =lrg_broadphase_query_*()= and the casts filter with the =layer_mask= you pass; use =lrg_physics_layers_get_collide_mask()= when a query should behave like a body of some layer.
+- *Unnamed slots collide with everything.* Using an index that has no name is legal, but it is not covered by any =no_collide= entry you wrote by name.
+- *Renaming does not move a row.* The matrix is by index; renaming slot 6 from =debris= to =rubble= keeps its row. References in levels by the old name stop resolving.
+- *A name cannot be a number or ="all"=* (those spell indices and the full mask in files).
+- *A broken physics: block does not stop a project from opening.* =lrg_project_open()= warns, uses an empty table and keeps the block text; fix the block before saving, or the save writes the empty table.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+In =tests/test-broadphase.c=:
+
+- =/physics-layers/basic=: names, duplicates, reserved names, out-of-range indices, resolve, symmetry of single cells and whole rows, the pair rule with and without a table, one =changed= per effective edit, masks from and to names,
+- =/physics-layers/default=: the default names match the =LrgPhysicsLayer= nicks and the default matrix,
+- =/physics-layers/round-trip=: a customised table (with an unnamed gap and an unnamed cell) survives =to_data= then =load_from_data=, and writing the loaded table gives the same text; =copy= and =assign=,
+- =/physics-layers/project-file=: root-level and nested blocks, the block alone, a file without a block, unknown keys ignored, a missing file,
+- =/physics-layers/load-errors=: every error code, and a failed load leaves the table untouched,
+- =/broadphase/pairs/layers= (the matrix applied by the broadphase).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The editor keeps the table on its =LrgProject= (=lrg_project_get_physics_layers()=). It is loaded with the project and written back by Project Settings saves. The layer matrix UI (a triangle of check boxes, next wave of 0.9.0) edits this object and listens to =changed=. Bodies and colliders pick their layer by name in the inspector, and the =.rlevel= physics block stores the name (or the index for an unnamed slot). Until that panel lands, edit the =physics:= block of =project.ryaml= by hand: the editor reads it on project open.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:broadphase.org][LrgBroadphase]]: applies the matrix to pairs
+- [[file:../../editor/projects-and-assets.org][Projects and assets]]: the rest of =project.ryaml=
+- [[file:index.org][Physics module index]]

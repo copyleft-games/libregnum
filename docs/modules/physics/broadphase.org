@@ -1,0 +1,337 @@
+#+title: LrgBroadphase - Dynamic AABB Tree
+#+description: The 3D physics broadphase of libregnum 0.9.0: a dynamic bounding volume hierarchy with fat leaves, area-driven rotations, layer-filtered pair finding and ray, box, sphere, frustum and swept-box queries.
+
+* LrgBroadphase - Dynamic AABB Tree
+:PROPERTIES:
+:CUSTOM_ID: broadphase
+:END:
+=LrgBroadphase= (=src/physics/lrg-broadphase.h=, 0.9.0) is the broadphase of the 3D physics engine. It keeps one *proxy* per body in a dynamic AABB tree (a bounding volume hierarchy whose leaves are the bodies' boxes) and answers two kinds of questions fast: "which pairs of bodies might touch?" (=lrg_broadphase_find_pairs()=) and "which bodies are inside / along this volume or ray?" (the query and cast functions). =LrgDynamicsWorld= owns one and feeds it every step; you can also use it on its own for gameplay queries, culling or any spatial index of boxes.
+
+It does not know about shapes: it works on axis-aligned boxes only. Exact collision of the shapes (GJK/EPA, manifolds) is the narrowphase's job ([[file:dynamics.org][LrgDynamicsWorld]] and =lrg_collide_shapes()=).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Proxies, tight and fat boxes
+:PROPERTIES:
+:CUSTOM_ID: proxies
+:END:
+A proxy carries:
+
+- a *tight AABB*, the body's current bounds as the caller last gave them,
+- a *fat AABB*, stored in the tree leaf: the tight box grown by the margin (=lrg_broadphase_set_margin()=, default =LRG_BROADPHASE_DEFAULT_MARGIN= = 0.1) on every side and stretched along the last displacement times the velocity factor (=lrg_broadphase_set_velocity_factor()=, default 2). Static proxies get no margin,
+- an *object layer* (0 to 31) and a *mask* of layers it accepts (see [[file:physics-layers.org][Physics Layers]]),
+- =LrgBroadphaseProxyFlags=: =LRG_BROADPHASE_PROXY_STATIC= (level geometry), =LRG_BROADPHASE_PROXY_SLEEPING= (a sleeping body) or =LRG_BROADPHASE_PROXY_NONE= (active),
+- a caller *user id* (the body id), handed back in every callback.
+
+Moving a proxy (=lrg_broadphase_move_proxy()=) only touches the tree when the new tight box leaves the fat box, or when the fat box has become much larger than needed (more than four margins around a freshly fattened box, so a body that stopped after a fast move gets a small leaf again). Otherwise a move is O(1): it only stores the new tight box. That is what makes a dynamic tree cheap for jittering and slowly moving bodies.
+
+The tree prunes with the fat boxes; every result (pairs and queries) is decided on the *tight* boxes, so results never contain a margin false positive.
+
+*** Pair rule
+:PROPERTIES:
+:CUSTOM_ID: pair-rule
+:END:
+=lrg_broadphase_find_pairs()= reports a pair (a, b) when all of these hold:
+
+1. both proxies are live and their tight AABBs overlap (closed intervals: touching faces count),
+2. at least one of them is *active* (neither static nor sleeping): two static, two sleeping or a static and a sleeping proxy never pair,
+3. the pair filter passes (=lrg_broadphase_layers_allow()=): the mask of a has the bit of b's layer, the mask of b has the bit of a's layer, and, when a layer matrix is set with =lrg_broadphase_set_layers()=, the matrix lets the two layers collide.
+
+Only active proxies query the tree, so the cost scales with the number of awake bodies, not with the size of the level. Each pair is reported once with =proxy_a < proxy_b=, and the list is sorted by (a, b): the order is a function of ids and boxes alone.
+
+*** The tree
+:PROPERTIES:
+:CUSTOM_ID: tree
+:END:
+Internal nodes always have two children and store the exact union of their children's boxes and their height (leaves have height 0).
+
+- *Insert* walks down from the root choosing, at each node, between "become this subtree's sibling" and "descend into the cheaper child", by the surface area heuristic (the area a new parent adds, plus the growth the descent causes in every ancestor). The walk stops as soon as stopping is cheapest.
+- *Rotations* on the way back up keep the tree tight. At each ancestor, the six possible swaps of a child with a grandchild (or of two grandchildren) are scored by the surface area they save and the best one is applied (area-driven rotations, Kopta et al. 2012). When the heights of two siblings drift apart by more than three, a height-driven (AVL) rotation runs instead, which bounds the height even for adversarial insertion orders, such as boxes inserted sorted along a line.
+- *Remove* replaces the parent by the sibling and refits and rotates upward.
+- =lrg_broadphase_rebuild()= rebuilds the whole tree top-down (median split along the longest axis of the leaf centers): use it once after loading a level's static geometry.
+
+The insertion cost and the incremental fat-leaf scheme follow the classic dynamic tree described by Erin Catto for Box2D (MIT); the code is written from the algorithm description. The active-body and object-layer rules follow the ideas of Jolt Physics' broadphase. No third-party source is translated in this file.
+
+*** Determinism
+:PROPERTIES:
+:CUSTOM_ID: determinism
+:END:
+Everything is a pure function of the call sequence:
+
+- ids are the lowest free slot,
+- node allocation is a deterministic free stack,
+- every tie in insertion and rotation is broken by a fixed order,
+- the rebuild sorts with the proxy id as tie-breaker,
+- the pair list is sorted.
+
+Two worlds fed the same creates, moves and destroys in the same order produce bit-identical trees, pairs and query orders (=tests/test-broadphase.c= hashes both).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+Corners and vectors are =const gfloat[3]= (x, y, z). Proxy ids are =guint=; =LRG_BROADPHASE_NULL_PROXY= (=G_MAXUINT=) names no proxy.
+
+*** Construction and settings
+:PROPERTIES:
+:CUSTOM_ID: api-settings
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_broadphase_new ()= | Empty tree; margin 0.1, velocity factor 2, no layer matrix |
+| =lrg_broadphase_set_margin (bp, margin)= / =lrg_broadphase_get_margin (bp)= | Fat margin (property =margin=); applies to leaves as they re-insert |
+| =lrg_broadphase_set_velocity_factor (bp, f)= / =lrg_broadphase_get_velocity_factor (bp)= | Stretch of the fat box along the displacement (property =velocity-factor=) |
+| =lrg_broadphase_set_layers (bp, layers)= / =lrg_broadphase_get_layers (bp)= | The =LrgPhysicsLayers= matrix every pair must pass, or =NULL= (property =layers=). Read live: edits apply on the next search |
+| =lrg_broadphase_clear (bp)= | Removes every proxy; ids restart at 0; counters zeroed |
+| =lrg_broadphase_rebuild (bp)= | Top-down rebuild of the whole tree; ids, boxes and flags are unchanged |
+
+*** Proxies
+:PROPERTIES:
+:CUSTOM_ID: api-proxies
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_broadphase_create_proxy (bp, min, max, layer, mask, flags, user_id)= | Inserts a proxy; returns its id, or =LRG_BROADPHASE_NULL_PROXY= for a non-finite or inverted box or a layer >= 32 |
+| =lrg_broadphase_destroy_proxy (bp, proxy)= | Removes it; =FALSE= for an unknown id |
+| =lrg_broadphase_move_proxy (bp, proxy, min, max, displacement)= | New tight box; =displacement= (nullable) stretches a re-inserted fat box. Returns =TRUE= when the leaf re-inserted |
+| =lrg_broadphase_is_proxy_valid (bp, proxy)= | Live? |
+| =lrg_broadphase_get_proxy_count (bp)= | Live proxies |
+| =lrg_broadphase_set_proxy_layer (bp, proxy, layer, mask)= | New filter data |
+| =lrg_broadphase_get_proxy_layer (bp, proxy)= / =lrg_broadphase_get_proxy_mask (bp, proxy)= | Filter data |
+| =lrg_broadphase_set_proxy_flags (bp, proxy, flags)= / =lrg_broadphase_get_proxy_flags (bp, proxy)= | =LrgBroadphaseProxyFlags= (static / sleeping / active) |
+| =lrg_broadphase_set_proxy_user_id (bp, proxy, id)= / =lrg_broadphase_get_proxy_user_id (bp, proxy)= | The caller id |
+| =lrg_broadphase_get_proxy_aabb (bp, proxy, out_min, out_max)= | Tight box |
+| =lrg_broadphase_get_fat_aabb (bp, proxy, out_min, out_max)= | Fat box stored in the tree |
+| =lrg_broadphase_layers_allow (bp, a, b)= | The pair filter (masks plus matrix), without the box or active tests |
+
+*** Pairs and queries
+:PROPERTIES:
+:CUSTOM_ID: api-queries
+:END:
+| Function | Callback | Description |
+|----------+----------+-------------|
+| =lrg_broadphase_find_pairs (bp, func, data)= | =LrgBroadphasePairFunc (proxy_a, user_a, proxy_b, user_b, data)= | All pairs by the [[#pair-rule][pair rule]], sorted; returns the count (=func= may be =NULL= to count) |
+| =lrg_broadphase_query_aabb (bp, min, max, layer_mask, func, data)= | =LrgBroadphaseQueryFunc (proxy, user_id, data)= returning =TRUE= to go on | Tight boxes overlapping the box |
+| =lrg_broadphase_query_sphere (bp, center, radius, layer_mask, func, data)= | same | Exact sphere-box distance test |
+| =lrg_broadphase_query_frustum (bp, planes[24], layer_mask, func, data)= | same | Six inward planes (a, b, c, d): inside when a*x + b*y + c*z + d >= 0. Conservative near frustum corners |
+| =lrg_broadphase_cast_ray (bp, origin, direction, max_distance, layer_mask, func, data)= | =LrgBroadphaseRayFunc (proxy, user_id, t_enter, data)= returning the new maximum | Slab test against tight boxes, pruned by the current maximum |
+| =lrg_broadphase_cast_aabb (bp, min, max, direction, max_distance, layer_mask, func, data)= | same | Swept box: the box's center cast against boxes grown by its half extents (Minkowski sum) |
+
+Queries report static and sleeping proxies too, and filter by =layer_mask= (bit i set = report layer i) only; the layer matrix is not applied to queries. Pass =lrg_physics_layers_get_collide_mask (layers, my_layer)= as the mask to query "what my layer collides with".
+
+The ray callback controls the search with its return value:
+
+- return the current maximum (or anything larger) to keep going,
+- return a smaller distance (the exact hit distance after a narrowphase test) to clip the rest of the cast: subtrees beyond it are skipped. This makes a closest-hit raycast visit few leaves,
+- return 0 or a negative value to stop. The cast then returns that value.
+
+Distances are in multiples of the direction's length; pass a unit direction to get world units.
+
+*** Inspection
+:PROPERTIES:
+:CUSTOM_ID: api-inspection
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_broadphase_foreach_node (bp, func, data)= | Pre-order walk, =LrgBroadphaseNodeFunc (depth, min, max, proxy, data)=; =proxy= is =LRG_BROADPHASE_NULL_PROXY= for internal nodes. For debug drawing |
+| =lrg_broadphase_get_height (bp)= | Tree height |
+| =lrg_broadphase_get_stats (bp, &stats)= | Fills =LrgBroadphaseStats= (boxed; =lrg_broadphase_stats_copy()= / =lrg_broadphase_stats_free()=) |
+| =lrg_broadphase_reset_counters (bp)= | Zeroes the move / reinsert / rotation counters |
+| =lrg_broadphase_validate (bp)= | Checks every invariant (links, heights, exact unions, leaf count, free list); for tests |
+
+=LrgBroadphaseStats= fields: =proxy_count=, =active_count=, =node_count= (=2n - 1=), =height=, =max_balance= (largest sibling height difference), =area_ratio= (sum of internal node surface areas over the root's: lower is a tighter tree), =moves=, =reinserts=, =rotations=, =pair_count= and =pair_tests= (tight box tests in the last pair search).
+
+Types: =LRG_TYPE_BROADPHASE=, =LRG_TYPE_BROADPHASE_PROXY_FLAGS= (=lrg_broadphase_proxy_flags_get_type()=), =LRG_TYPE_BROADPHASE_STATS= (=lrg_broadphase_stats_get_type()=).
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A frame of a physics step
+:PROPERTIES:
+:CUSTOM_ID: example-step
+:END:
+#+begin_src c
+typedef struct { LrgBroadphase *bp; /* ... bodies ... */ } World;
+
+static void
+on_pair (guint proxy_a, guint body_a, guint proxy_b, guint body_b, gpointer data)
+{
+	World *w = data;
+
+	/* run the narrowphase on bodies body_a and body_b */
+	narrowphase (w, body_a, body_b);
+}
+
+static void
+world_step (World *w, gfloat dt)
+{
+	guint i;
+
+	for (i = 0; i < w->n_bodies; i++)
+	{
+		Body   *b = &w->bodies[i];
+		gfloat  min[3], max[3], d[3];
+
+		if (b->kind == BODY_STATIC)
+			continue;
+		body_bounds (b, min, max);           /* tight AABB at the new pose */
+		d[0] = b->vel[0] * dt;               /* this step's motion */
+		d[1] = b->vel[1] * dt;
+		d[2] = b->vel[2] * dt;
+		lrg_broadphase_move_proxy (w->bp, b->proxy, min, max, d);
+		lrg_broadphase_set_proxy_flags (w->bp, b->proxy,
+		                                b->asleep ? LRG_BROADPHASE_PROXY_SLEEPING
+		                                          : LRG_BROADPHASE_PROXY_NONE);
+	}
+	lrg_broadphase_find_pairs (w->bp, on_pair, w);
+}
+#+end_src
+
+*** Bodies with layers
+:PROPERTIES:
+:CUSTOM_ID: example-layers
+:END:
+#+begin_src c
+g_autoptr(LrgBroadphase)    bp = lrg_broadphase_new ();
+g_autoptr(LrgPhysicsLayers) layers = lrg_physics_layers_new_default ();
+const gfloat floor_min[3] = { -50, -1, -50 }, floor_max[3] = { 50, 0, 50 };
+const gfloat crate_min[3] = { 0, 0, 0 }, crate_max[3] = { 1, 1, 1 };
+guint floor_proxy, crate_proxy;
+
+lrg_broadphase_set_layers (bp, layers);
+floor_proxy = lrg_broadphase_create_proxy (bp, floor_min, floor_max,
+                                           LRG_PHYSICS_LAYER_STATIC, LRG_PHYSICS_LAYERS_ALL,
+                                           LRG_BROADPHASE_PROXY_STATIC, 0);
+crate_proxy = lrg_broadphase_create_proxy (bp, crate_min, crate_max,
+                                           LRG_PHYSICS_LAYER_DYNAMIC, LRG_PHYSICS_LAYERS_ALL,
+                                           LRG_BROADPHASE_PROXY_NONE, 1);
+/* after loading all static geometry */
+lrg_broadphase_rebuild (bp);
+g_assert (lrg_broadphase_find_pairs (bp, NULL, NULL) == 1);
+#+end_src
+
+*** Closest-hit raycast
+:PROPERTIES:
+:CUSTOM_ID: example-raycast
+:END:
+#+begin_src c
+typedef struct { const gfloat *o, *d; gfloat best; guint body; } RayHit;
+
+static gfloat
+ray_candidate (guint proxy, guint body, gfloat t_enter, gpointer data)
+{
+	RayHit *h = data;
+	gfloat  t;
+
+	/* exact shape test; t_enter is only the box entry distance */
+	if (body_raycast (body, h->o, h->d, h->best, &t) && t < h->best)
+	{
+		h->best = t;
+		h->body = body;
+	}
+	return h->best;    /* clip: farther subtrees are skipped */
+}
+
+RayHit hit = { origin, unit_dir, 100.0f, G_MAXUINT };
+lrg_broadphase_cast_ray (bp, origin, unit_dir, 100.0f,
+                         lrg_physics_layers_get_collide_mask (layers, LRG_PHYSICS_LAYER_PROJECTILE),
+                         ray_candidate, &hit);
+#+end_src
+
+*** Frustum culling and debug drawing
+:PROPERTIES:
+:CUSTOM_ID: example-frustum
+:END:
+#+begin_src c
+static gboolean
+add_visible (guint proxy, guint body, gpointer data)
+{
+	g_array_append_val ((GArray *) data, body);
+	return TRUE;
+}
+
+static void
+draw_node (guint depth, const gfloat *min, const gfloat *max, guint proxy, gpointer data)
+{
+	/* leaves green, internal nodes fading with depth */
+	debug_draw_box (data, min, max, proxy != LRG_BROADPHASE_NULL_PROXY ? GREEN : grey (depth));
+}
+
+gfloat planes[24];   /* six inward planes from the camera's view-projection */
+extract_frustum_planes (view_proj, planes);
+lrg_broadphase_query_frustum (bp, planes, LRG_PHYSICS_LAYERS_ALL, add_visible, visible);
+lrg_broadphase_foreach_node (bp, draw_node, debug_draw);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured by =/broadphase/perf/10k= in =tests/test-broadphase.c=, pinned with =taskset -c 5= on an Intel i7-1280P (release build, =-O2=). The scene has 10,000 proxies with random sizes (0.2 m to 3 m) in a 200 m cube: 10% static, 10% sleeping, and 8,039 active. That is a stress case: every awake body moves up to 0.3 m per frame on every axis, so 45% of the moves re-insert with the default 0.1 m margin.
+
+| Measure | Result |
+|---------+--------|
+| Build: 10k =create_proxy= calls | 7.7 ms |
+| Update: 8k =move_proxy= calls per frame (3.6k re-inserts) plus the test's own bookkeeping | 4.9 ms per frame |
+| =find_pairs= with 8k active queries | 4.4 ms per frame (167 pairs, 302 tight tests) |
+| Tree after 60 frames | height 18, area ratio 74 |
+| 10k boxes inserted sorted along a line | height 14, max sibling imbalance 1 |
+| Rebuild of 5k leaves | height 13 (= ceil(log2 5000)) |
+| Steady move at 0.1 m per step with a displacement | 103 re-inserts in 1000 moves |
+| Jitter inside the margin | 0 re-inserts and 0 rotations in 1000 moves |
+
+How to keep it fast:
+
+- Mark sleeping bodies =LRG_BROADPHASE_PROXY_SLEEPING= and level geometry =LRG_BROADPHASE_PROXY_STATIC=: only active proxies query, so a level with 5,000 static proxies and 200 awake bodies runs 200 queries per step.
+- Pass the displacement to =lrg_broadphase_move_proxy()=: a steadily moving body then re-inserts about once every (margin + factor x step) / step steps instead of every step.
+- Raise the margin for scenes full of small jittering bodies. Lower it (or use =STATIC=) for large sparse ones.
+- Call =lrg_broadphase_rebuild()= once after bulk-loading static geometry.
+- A query allocates nothing for trees up to height 60 (its stack lives on the C stack); =find_pairs= reuses one internal pair array.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Do not create, destroy or move proxies inside a callback.* Node storage can move; collect what you want to change and apply it after the call returns. Running another query from inside a query callback is fine.
+- *Results use tight boxes, not fat ones.* If you want speculative contacts (pairs a little before touching), grow the tight box you pass to =move_proxy()= by the speculative distance yourself.
+- *Static and sleeping proxies never pair with each other.* A body you teleport into a sleeping pile must be active for that frame (or wake the pile).
+- *Queries ignore the layer matrix.* They only test =layer_mask= against each proxy's layer. Use =lrg_physics_layers_get_collide_mask()= for "what my layer hits".
+- *Flags are not inferred.* A proxy created with =STATIC= that you later move re-inserts like any other, but it still has no margin and still never pairs with sleeping proxies. Change the flags when a body changes kind.
+- *Frustum queries are conservative* at frustum corners (the standard plane test). Do an exact test after it if that matters.
+- The callback for =cast_ray= / =cast_aabb= receives *box* entry distances, not shape hits; always confirm with the narrowphase before clipping.
+- Ids are reused: after =lrg_broadphase_destroy_proxy()=, the next =create_proxy()= gets the lowest free id. Never keep a dead id.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+=tests/test-broadphase.c=:
+
+- pairs equal an O(n^2) brute force for 600 random moving boxes over 120 frames, with random layers, masks, static and sleeping flags, and proxies created and destroyed every frame. The list must be strictly increasing (sorted, no duplicates), user ids must match, and =validate()= must pass,
+- the static / sleeping rules, touching boxes, id reuse, invalid input and =clear()=,
+- layer filtering through the default matrix, live matrix edits, per-proxy masks and no matrix,
+- box, sphere, ray (every entry distance against an independent double-precision slab test, and closest-hit clipping), swept box and frustum queries against brute force,
+- the height bound for 10k sorted inserts, after removing half, and the minimum height after a rebuild,
+- the incremental move cost (no re-insert inside the margin, few re-inserts for steady motion, always for a teleport),
+- bit-identical pair lists and tree dumps for two identical runs,
+- the 10k performance numbers above.
+
+The layer tests live in the same file (see [[file:physics-layers.org#tests][Physics Layers]]).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The broadphase has no editor UI of its own. The physics debug draw of the 0.9.0 editor (next wave) draws its nodes through =lrg_broadphase_foreach_node()= ("Show broadphase tree") and reports =LrgBroadphaseStats= in the physics statistics overlay. The layers it filters with are edited in the project's layer matrix (see [[file:physics-layers.org#editor][Physics Layers: using it from the editor]]).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:physics-layers.org][Physics Layers]]: the layer table and collide matrix
+- [[file:dynamics.org][LrgDynamicsWorld]]: the world that owns a broadphase
+- [[file:collision-mesh.org][LrgCollisionMesh]]: the static binned-SAH BVH for triangle meshes
+- [[file:index.org][Physics module index]]

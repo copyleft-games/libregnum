@@ -21,6 +21,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../physics/lrg-physics-layers.h"
 
 G_BEGIN_DECLS
 
@@ -190,5 +191,22 @@ gchar * lrg_project_resolve (LrgProject  *self,
 LRG_AVAILABLE_IN_ALL
 gchar * lrg_project_relativize (LrgProject  *self,
                                 const gchar *path);
+
+/**
+ * lrg_project_get_physics_layers:
+ * @self: an #LrgProject
+ *
+ * The project's collision layers and collide matrix, read from the
+ * root `physics:` block of project.ryaml (a `physics:` inside
+ * `project:` is read too). A new project starts with the default layer
+ * set (lrg_physics_layers_reset_default()); an opened project without a
+ * block has no named layers and everything collides. Edit the returned
+ * object in place; lrg_project_save() writes it back, keeping any other
+ * keys of the block.
+ *
+ * Returns: (transfer none): the layer table
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsLayers * lrg_project_get_physics_layers (LrgProject *self);
 
 G_END_DECLS

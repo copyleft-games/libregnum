@@ -94,7 +94,9 @@ Two keys of the =project:= mapping are read by the runtime (0.9.0), not by =LrgP
 | =store_prefab_instances= | =expanded= (default) / =reference= | =LrgLevelSerializer= on save (it finds =project.ryaml= above the level file, or uses its =project-root=) | How linked prefab instances are stored in the project's levels; a level's own =store_prefab_instances= wins. See [[file:../modules/level/prefabs-runtime.org][Prefabs at Runtime]] |
 | =apply_import_settings= | =true= (default) / =false= | =LrgAssetManager= (=lrg_asset_manager_set_project_root()=) | Whether loaders apply =.meta= importer settings |
 
-Both keys also accept the hyphenated spelling (=store-prefab-instances=, =apply-import-settings=). Note that =lrg_project_save()= in 0.9.0 M1 rewrites the manifest from its known fields, so add these keys by hand (or re-add them after the Project Settings dialog saved).
+Both keys also accept the hyphenated spelling (=store-prefab-instances=, =apply-import-settings=). =lrg_project_save()= keeps keys it does not know (since 0.9.0), so these survive an editor save.
+
+The root-level =physics:= block (next to =project:=) holds the collision layers and collide matrix (=layers=, =no_collide=); see [[file:../modules/physics/physics-layers.org::#format][Physics Layers]]. =lrg_project_get_physics_layers()= exposes it and =lrg_project_save()= writes it, keeping other keys of the block.
 
 ** LrgAssetDatabase and LrgAssetEntry
 :PROPERTIES:
