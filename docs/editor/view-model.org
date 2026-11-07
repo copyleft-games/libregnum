@@ -203,18 +203,83 @@ lrg_editor_play_session_stop (session);                         /* Shift+F5 */
 :PROPERTIES:
 :CUSTOM_ID: play-lifecycle
 :END:
-- Start snapshots every node with a GUID (=lrg_node_copy_state()=), the undo count and the dirty flag, instantiates the level into a private =LrgWorld= with =lrg_level_instantiate()= and records what instantiation wrote into each entity, so only real simulation changes flow back.
-- A tick simulates =CLAMP (delta, 0, 0.1)= seconds, or exactly 1/60 s after =step()=, then writes moved positions (x/y), roll (from the entity rotation in degrees) and uniform scale back onto the nodes, refreshes the live object model and emits =ticked (delta)=.
+- Start snapshots every node with a GUID (=lrg_node_copy_state()=), the undo count and the dirty flag, then instantiates the level in the mode it asks for (see [[#play-3d][2D or 3D]]): a 2D level into a private =LrgWorld= with =lrg_level_instantiate()=, a 3D level into a private =LrgWorld3D= with =lrg_level_instantiate_3d()=. It records what instantiation wrote into each entity, so only real simulation changes flow back.
+- A tick simulates =CLAMP (delta, 0, 0.1)= seconds, or exactly 1/60 s after =step()=. In 2D it calls =lrg_world_update()= and writes moved positions (x/y), roll (from the entity rotation in degrees) and uniform scale back onto the nodes; in 3D it runs =lrg_world3d_fixed_update()=, =lrg_world3d_update()= and =lrg_world3d_late_update()= and writes the full TRS back (see [[#play-3d-sync-back][3D sync-back]]). Then it refreshes the live models and emits =ticked (delta)=.
 - Stop drops the world, undoes every command made while playing (they stay redoable), restores node state from the snapshot where the simulation changed it, re-applies "apply to level" values as one undo step, and marks the document clean again if it was clean at start and nothing was applied. Disposing a playing session stops it first.
 - End a timeline preview before =start()=: the session does not know about timelines, so a preview would leak into the snapshot.
+
+*** 2D or 3D
+:PROPERTIES:
+:CUSTOM_ID: play-3d
+:END:
+The level decides: =lrg_level_get_default_2d()= (the =default_view: 2d= / =3d= of the =.rlevel=, the /2D view/ row of the inspector's level section) picks the play world.
+
+| Level | World | Getter | Live objects | Instantiation |
+|-------+-------+--------+--------------+---------------|
+| =default_view: 2d= | =LrgWorld= | =lrg_editor_play_session_get_world()= | =LrgGameObject= (flat) | =lrg_level_instantiate()=: X/Y, registry components, scripts, GUID as tag |
+| =default_view: 3d= (the default of a new level) | =LrgWorld3D= | =lrg_editor_play_session_get_world3d()= | =LrgEntity3D= (tree) | =lrg_level_instantiate_3d()=: GUID, name, hierarchy, full TRS, visual components, registry components, scripts |
+
+=lrg_editor_play_session_get_is_3d()= tells which one runs, =lrg_editor_play_session_get_n_objects()= counts game objects or entities (the world root excluded). While a 3D world plays, the editor viewport draws it through the shared =LrgWorld3DRenderer= (=lrg_editor_scene_renderer_set_play_session()=), so what you see is what the game draws: the runtime entities, their components and the world's own lights.
+
+#+begin_src C
+/* What a tool does with whichever world plays */
+if (lrg_editor_play_session_get_is_3d (session))
+{
+	LrgWorld3D  *world = lrg_editor_play_session_get_world3d (session);
+	LrgEntity3D *door = lrg_world3d_find_by_guid (world, door_guid);   /* same GUID as the node */
+	gfloat       p[3];
+
+	lrg_entity3d_get_world_position (door, p);
+}
+else
+{
+	LrgGameObject *door = lrg_world_find_by_tag (lrg_editor_play_session_get_world (session), door_guid);
+	/* ... */
+}
+#+end_src
+
+*** 3D sync-back
+:PROPERTIES:
+:CUSTOM_ID: play-3d-sync-back
+:END:
+After start the session reads each entity's local position, rotation quaternion and scale as its /baseline/. After every tick it compares again and writes only what changed into the node, field by field:
+
+- *position and scale*: per axis. An axis the simulation did not move is not written, so a value another tool wrote into the node during play (a timeline channel, an inspector edit) is not clobbered by an unchanged entity axis.
+- *rotation*: only when the quaternion changed. An unchanged rotation leaves the node's authored Euler exactly as it was (a 370 degree spin stays 370 degrees). A changed one is read back with =lrg_entity3d_get_rotation_euler()=: the exact angles when the simulation set them through =lrg_entity3d_set_rotation_euler()=, otherwise the quaternion decomposed with =lrg_math3d_quat_to_euler()= (XYZ, R = Rz * Ry * Rx, the convention the node and =lrg_node_get_local_matrix()= use).
+- After a write the baseline advances to the written values, so an entity that moves back to where it started is written too.
+
+Stop restores every node the simulation changed from its snapshot, exactly as in 2D. =tests/test-editor-play-session.c= (the =/editor/play-session/3d/= cases) checks each rule.
 
 *** Live inspection
 :PROPERTIES:
 :CUSTOM_ID: live-inspection
 :END:
-=lrg_editor_play_session_get_objects()= is a =GListModel= of =LrgGameObject= in world order, the same object for the session's lifetime; it is filled on start, emptied on stop, and diffed after every tick so a spawned or destroyed object is one small =items-changed=. The GUID map works both ways: =get_object_for_node()=, =get_object_for_guid()=, =get_node_for_object()= and =get_guid_for_object()=. Objects that game code spawns have no node.
+=lrg_editor_play_session_get_live_model()= is the live tree for both modes: a =GListModel= of =GObject=, the same object for the session's lifetime, holding the game objects of a 2D world in world order or the top-level entities of a 3D world (the children of the world root). =lrg_editor_play_session_get_live_children (session, item)= returns a model of an entity's children (transfer full, =NULL= for game objects); pair the two as an =LrgTreeView= model and children function, as the hierarchy's Live tab does. Every model is filled on start, emptied on stop, and diffed after every tick (and =lrg_editor_play_session_sync_objects()=), so a spawned or destroyed object is one small =items-changed=.
 
-=lrg_editor_play_session_apply_to_level (session, object, component, property, &error)= copies a live component property into the matching =LrgComponentDesc= of the authoring node with =lrg_editor_set_component_value()=. The description is found by the component's registry type name and its position among the object's components of that type, which is how instantiation created them. The value keeps the type already stored under that key, or becomes one of the types the level loader produces (boolean, int64, double, string). Because Stop undoes play-time commands, the applied values are remembered and re-applied after the restore, all together as one undo step named "Apply Play Changes".
+#+begin_src C
+static GListModel *
+live_children (LrgTreeView *tree, GObject *item, gpointer user_data)
+{
+	return lrg_editor_play_session_get_live_children (LRG_EDITOR_PLAY_SESSION (user_data), item);
+}
+
+lrg_tree_view_set_children_func (live_view, live_children, session, NULL);
+lrg_tree_view_set_model (live_view, lrg_editor_play_session_get_live_model (session));
+#+end_src
+
+The GUID map works both ways and is typed =GObject= so it serves both modes: =lrg_editor_play_session_get_live_for_node()=, =lrg_editor_play_session_get_live_for_guid()=, =lrg_editor_play_session_get_node_for_live()= and =lrg_editor_play_session_get_guid_for_live()=. In 3D it is the world's own GUID map (=lrg_world3d_find_by_guid()=), restricted to GUIDs of the level's nodes. Objects and entities that game code spawns have no node.
+
+The 0.8.1 functions remain for 2D: =lrg_editor_play_session_get_objects()= (the flat =LrgGameObject= model, empty while a 3D world plays), =get_object_for_node()=, =get_object_for_guid()=, =get_node_for_object()= and =get_guid_for_object()= (=NULL= in 3D). They are deprecated in favour of the =*_live= functions.
+
+=lrg_editor_play_session_apply_live (session, object, component, property, &error)= is "Apply to Level" for both modes (=lrg_editor_play_session_apply_to_level()= is the deprecated 2D-only form):
+
+- A *registry component* (2D or 3D) maps to the matching =LrgComponentDesc= of the authoring node, written with =lrg_editor_set_component_value()=. The description is found by the component's registry type name and its position among the object's components of that type, which is how instantiation created them. The value keeps the type already stored under that key, or becomes one of the types the level loader produces (boolean, int64, double, string).
+- In 3D, the *visual's component* (the first component of the type =lrg_level_visual_get_component_type()= gives for the node's visual kind: mesh renderer, light, camera, audio source, billboard, tilemap) maps to the node's visual: =lrg_level_visual_store_property()= stores the property into the param bag, material, asset or primitive (the inverse of what =lrg_level_instantiate_3d()= reads) and =lrg_editor_set_visual()= replaces the visual as one command. A light's =intensity= becomes the =intensity= param, its =kind= the =light_type= param, =color-r= the material colour.
+- Anything else (scripts, components game code added) fails with =G_IO_ERROR_NOT_SUPPORTED=.
+
+Because Stop undoes play-time commands, the applied values are remembered and re-applied after the restore, all together as one undo step named "Apply Play Changes".
+
+The inspector's live view shows the object picked on the Live tab (or the one made from the inspected node): one grid per component, and for a 3D entity an "entity" section first with its name, active and visible flags, local position, rotation (degrees) and scale, and read-only world position. Live edits go straight into the play world (not undoable, dropped on Stop unless the sync-back writes them); component rows have "Apply to Level".
 
 *** Run Game
 :PROPERTIES:
@@ -244,7 +309,7 @@ Run Game (Ctrl+F5, =run.start=) still lives in the app: it saves through the app
 :END:
 - =tests/test-editor-view-state.c=: property notification, layouts and active-viewport clamping, per-viewport render modes and overlays, nav and tile-tool strings, camera conversion and string round trips, equivalence with the old =LrgEditorView= math, axis views with auto-perspective, 2D, focus selection and frame all, settings load/save.
 - =tests/test-editor-viewport-nav.c=: every navigation scenario of =test-editor-app.c= and =editor-x11-smoke.sh= as events (right-drag fly, right click menu, gizmo drag and click, KP_7/KP_4/KP_5, wheel, schemes), plus held-key flying over frames with Shift and wheel speed, focus loss, invert-y, box select and click, 2D and split layouts.
-- =tests/test-editor-play-session.c=: start / tick / stop with exact restore (transforms, names, undo and redo counts, dirty flag), pause and step timing, the GUID map, live-model =items-changed= for spawned and destroyed objects, apply-to-level as one undo step that survives Stop, the profiler section and stopping on dispose.
+- =tests/test-editor-play-session.c=: start / tick / stop with exact restore (transforms, names, undo and redo counts, dirty flag), pause and step timing, the GUID map, live-model =items-changed= for spawned and destroyed objects, apply-to-level as one undo step that survives Stop, the profiler section and stopping on dispose. The =/editor/play-session/3d/= cases play a 3D level: a test component moves an entity and the node follows exactly, untouched axes and the authored Euler are kept, quaternion rotations decompose with the node convention and Euler ones come back exactly, =step()= runs one fixed step, Stop restores, the GUID lookups, the live tree's child models, and apply-to-level for a registry component and a light (visual) component together as one undo step.
 
 ** API index
 :PROPERTIES:
@@ -371,7 +436,17 @@ Every public function of the view-model headers that the sections above do not w
 | =lrg_editor_play_session_is_playing ()= | Returns =TRUE= while playing or paused (play.state "playing"). |
 | =lrg_editor_play_session_is_paused ()= | Returns =TRUE= while paused (play.state "paused"). |
 | =lrg_editor_play_session_get_time ()= | Returns simulated seconds since start (play.state "time"). |
-| =lrg_editor_play_session_get_world ()= | Returns the play world, =NULL= when stopped. |
+| =lrg_editor_play_session_get_world ()= | Returns the 2D play world, =NULL= when stopped or playing in 3D. |
+| =lrg_editor_play_session_get_world3d ()= | Returns the 3D play world, =NULL= when stopped or playing in 2D. |
+| =lrg_editor_play_session_get_is_3d ()= | Returns =TRUE= while a 3D world plays. |
+| =lrg_editor_play_session_get_n_objects ()= | Returns the number of live game objects or entities. |
+| =lrg_editor_play_session_get_live_model ()= | Returns the live tree's top level (game objects or top-level entities). |
+| =lrg_editor_play_session_get_live_children ()= | Returns a model of an entity's children (transfer full), =NULL= for game objects. |
+| =lrg_editor_play_session_get_live_for_guid ()= | Returns the live object (game object or entity) made from the node with that GUID. |
+| =lrg_editor_play_session_get_live_for_node ()= | Returns the live object made from the node. |
+| =lrg_editor_play_session_get_guid_for_live ()= | Returns the GUID of the node a live object was made from. |
+| =lrg_editor_play_session_get_node_for_live ()= | Returns the node a live object was made from. |
+| =lrg_editor_play_session_apply_live ()= | "Apply to Level" for registry components (2D and 3D) and visual components (3D). |
 | =lrg_editor_play_session_sync_objects ()= | Rescans the world into the object model and the GUID map (ticks do this already; call it after changing the world from outside a tick). |
 | =lrg_editor_play_session_get_object_for_guid ()= | Returns the live object made from that node. |
 | =lrg_editor_play_session_get_guid_for_object ()= | Returns the GUID of the node /object/ was made from. |

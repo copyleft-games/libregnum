@@ -28,6 +28,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "lrg-prefab.h"
+#include "../world3d/lrg-entity3d.h"
 
 G_BEGIN_DECLS
 
@@ -53,6 +54,9 @@ G_DECLARE_DERIVABLE_TYPE (LrgNode, lrg_node, LRG, NODE, GObject)
  * @parent_class: the parent class
  * @instantiate: virtual method to build a runtime representation of this node
  *   onto a game object (called by lrg_level_instantiate())
+ * @instantiate_3d: virtual method to build a 3D runtime representation of
+ *   this node onto an #LrgEntity3D (called by lrg_level_instantiate_3d()).
+ *   Since: 0.9.0
  *
  * The class structure for #LrgNode.
  */
@@ -73,8 +77,28 @@ struct _LrgNodeClass
     void (*instantiate) (LrgNode       *self,
                          LrgGameObject *object);
 
+    /**
+     * LrgNodeClass::instantiate_3d:
+     * @self: the node
+     * @entity: the runtime #LrgEntity3D built for this node
+     * @world: the #LrgWorld3D being populated
+     *
+     * Called by lrg_level_instantiate_3d() after @entity got the node's
+     * GUID, name, transform, flags, the component for its visual kind,
+     * its registry components and its script components, and after it
+     * was added to @world under its parent, but before the node's
+     * children are instantiated. Custom node kinds add their own
+     * components or change the entity here. The default implementation
+     * does nothing, so there is nothing to chain up to.
+     *
+     * Since: 0.9.0
+     */
+    void (*instantiate_3d) (LrgNode     *self,
+                            LrgEntity3D *entity,
+                            LrgWorld3D  *world);
+
     /*< private >*/
-    gpointer _reserved[8];
+    gpointer _reserved[7];
 };
 
 /* ==========================================================================
@@ -679,5 +703,22 @@ const gchar * lrg_node_get_prefab_source_guid (LrgNode *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_node_instantiate (LrgNode       *self,
                            LrgGameObject *object);
+
+/**
+ * lrg_node_instantiate_3d:
+ * @self: an #LrgNode
+ * @entity: the runtime #LrgEntity3D built for this node
+ * @world: the #LrgWorld3D being populated
+ *
+ * Invokes the #LrgNodeClass.instantiate_3d virtual method (when the
+ * node's class sets one) so a custom node kind can add its own runtime
+ * pieces to @entity. Used by lrg_level_instantiate_3d().
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_instantiate_3d (LrgNode     *self,
+                              LrgEntity3D *entity,
+                              LrgWorld3D  *world);
 
 G_END_DECLS

@@ -739,7 +739,7 @@ test_live_tab (Fixture       *f,
 		efx_click (f, rx + rw * 0.3f, ry + rh * 0.5f);
 		g_assert_true (got[0] == first);
 		g_assert_true (lrg_editor_hierarchy_panel_get_live_selection (p) == first);
-		g_assert_true (LRG_IS_GAME_OBJECT (first));
+		g_assert_true (LRG_IS_ENTITY3D (first));
 	}
 
 	/* Stop: the tab goes away, the live selection is cleared */

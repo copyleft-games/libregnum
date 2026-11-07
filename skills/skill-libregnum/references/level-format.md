@@ -91,3 +91,12 @@ nodes:
 
 - A prefab variant is a `.rprefab` whose root carries a `prefab:` block pointing at its base; its overrides are its differences. `lrg_prefab_load_resolved()` applies the base chain (max 8 deep with nesting; cycles are errors). Editor: inspector prefab bar "Create Variant" (from an instance), `lrg_editor_create_prefab_variant()` (from an asset); the bar shows `base > variant`.
 - Asset references may be `guid:<uuid>` (the guid from the asset's `.meta`). `LrgAssetManager` resolves them through a GUID index of the project's `asset_dirs` (`lrg_asset_manager_set_project_root()`), matching the editor's asset database. Loaders apply `.meta` import settings (texture filter/wrap/mipmaps/max-size, model scale/up-axis/generate-normals, audio mode/volume/loop, font size/codepoints) unless `apply_import_settings: false`.
+
+## Visual params at runtime (0.9.0, used by lrg_level_instantiate_3d)
+
+- light: `light_type` (directional/point/spot), `intensity`, `range`, `spot_angle` (full cone), `cast_shadows`
+- camera: `fov`, `near`, `far`, `orthographic`, `ortho_size`, `priority`
+- audio emitter: `volume`, `pitch`, `loop`, `autoplay`, `min_distance`, `max_distance` / `radius`
+- sprite: `width`, `height`, `facing`, `preserve_aspect` (`pixels_per_unit` ignored)
+- tilemap: `tile_size`
+- primitive/mesh: `size_x..z`, `radius`, `cast_shadows`, `receive_shadows`, `unlit`, `double_sided`

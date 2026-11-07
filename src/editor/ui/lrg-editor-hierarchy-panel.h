@@ -18,7 +18,7 @@
  * the world transform), accept assets dropped from the asset browser and
  * have a context menu. A search field (Ctrl+F, the edit.find action)
  * filters by name or GUID. While play-in-editor runs, a "Live" tab lists
- * the game objects of the play world; selecting one emits
+ * the game objects (2D) or the 3D entity tree of the play world; selecting one emits
  * #LrgEditorHierarchyPanel::live-selected.
  *
  * The panel registers the hierarchy.reveal, hierarchy.rename,
@@ -83,7 +83,7 @@ LrgTreeView * lrg_editor_hierarchy_panel_get_tree_view (LrgEditorHierarchyPanel 
  * lrg_editor_hierarchy_panel_get_live_view:
  * @self: an #LrgEditorHierarchyPanel
  *
- * Returns: (transfer none): the list of live game objects shown on the
+ * Returns: (transfer none): the list of live game objects or 3D entities shown on the
  *   Live tab (widget name "hierarchy-live")
  */
 LRG_AVAILABLE_IN_ALL
@@ -209,7 +209,7 @@ const gchar * lrg_editor_hierarchy_panel_get_page (LrgEditorHierarchyPanel *self
  * @self: an #LrgEditorHierarchyPanel
  * @page: "scene" or "live" ("live" only while playing)
  *
- * Switches between the level tree and the live game objects.
+ * Switches between the level tree and the live game objects or 3D entity tree.
  *
  * Returns: %TRUE if @page is shown now
  */
@@ -225,7 +225,7 @@ gboolean lrg_editor_hierarchy_panel_set_page (LrgEditorHierarchyPanel *self,
  * #LrgEditorHierarchyPanel::live-selected emitted with %NULL) when play
  * stops.
  *
- * Returns: (transfer none) (nullable): the selected #LrgGameObject
+ * Returns: (transfer none) (nullable): the selected #LrgGameObject or #LrgEntity3D
  */
 LRG_AVAILABLE_IN_ALL
 GObject * lrg_editor_hierarchy_panel_get_live_selection (LrgEditorHierarchyPanel *self);

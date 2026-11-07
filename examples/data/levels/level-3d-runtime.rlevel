@@ -1,0 +1,159 @@
+# level-3d-runtime.rlevel - the level examples/level-3d-runtime.c plays.
+#
+# Copyright 2026 Zach Podbielniak
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Every node becomes an LrgEntity3D with the same GUID (lrg_level_instantiate_3d):
+# primitives and the mesh get an LrgMeshRendererComponent, lights an
+# LrgLightComponent, the camera an LrgCameraComponent, the emitter an
+# LrgAudioSourceComponent. "spinner" is a component type the example
+# registers in the engine registry. Asset paths are relative to this file's
+# directory (the example points the renderer's base directory here).
+type: level
+name: level-3d-runtime
+default_view: 3d
+nodes:
+  - name: Sun
+    guid: 7a000000-0000-4000-8000-000000000001
+    transform:
+      location: [6.0, 12.0, 6.0]
+      rotation: [-0.95, 0.65, 0.0]
+    visual:
+      kind: light
+      material:
+        color: [1.0, 0.93, 0.8, 1.0]
+      params:
+        light_type: directional
+        intensity: 1.6
+        cast_shadows: true
+
+  - name: Fill
+    guid: 7a000000-0000-4000-8000-000000000002
+    transform:
+      location: [-5.0, 3.0, 2.0]
+    visual:
+      kind: light
+      material:
+        color: [0.45, 0.6, 1.0, 1.0]
+      params:
+        intensity: 2.0
+        range: 14.0
+
+  - name: Camera
+    guid: 7a000000-0000-4000-8000-000000000003
+    transform:
+      location: [0.0, 4.5, 13.0]
+      rotation: [-0.28, 0.0, 0.0]
+    visual:
+      kind: camera
+      params:
+        fov: 55.0
+        near: 0.1
+        far: 200.0
+
+  - name: Ground
+    guid: 7a000000-0000-4000-8000-000000000004
+    transform:
+      scale: [30.0, 1.0, 30.0]
+    visual:
+      kind: primitive
+      primitive: plane
+      material:
+        color: [0.5, 0.58, 0.46, 1.0]
+        roughness: 0.9
+
+  - name: RedCube
+    guid: 7a000000-0000-4000-8000-000000000005
+    transform:
+      location: [-4.0, 1.0, 0.0]
+      rotation: [0.0, 0.5, 0.0]
+      scale: [2.0, 2.0, 2.0]
+    visual:
+      kind: primitive
+      primitive: cube
+      material:
+        color: [0.82, 0.18, 0.16, 1.0]
+        roughness: 0.55
+
+  - name: BlueSphere
+    guid: 7a000000-0000-4000-8000-000000000006
+    transform:
+      location: [4.0, 1.25, -1.0]
+      scale: [2.5, 2.5, 2.5]
+    visual:
+      kind: primitive
+      primitive: uv-sphere
+      material:
+        color: [0.2, 0.42, 0.9, 1.0]
+        roughness: 0.3
+        metallic: 0.2
+
+  # A group: the column and the spinning ring on top of it move together.
+  - name: Pedestal
+    guid: 7a000000-0000-4000-8000-000000000007
+    transform:
+      location: [0.0, 0.0, -3.0]
+    children:
+      - name: Column
+        guid: 7a000000-0000-4000-8000-000000000008
+        transform:
+          location: [0.0, 1.0, 0.0]
+          scale: [1.2, 2.0, 1.2]
+        visual:
+          kind: primitive
+          primitive: cylinder
+          material:
+            color: [0.75, 0.72, 0.66, 1.0]
+            roughness: 0.8
+      # The pivot spins about Y; the tilted ring under it wobbles around.
+      - name: RingPivot
+        guid: 7a000000-0000-4000-8000-00000000000c
+        transform:
+          location: [0.0, 3.3, 0.0]
+        components:
+          - type: spinner
+            props:
+              speed: 1.2
+        children:
+          - name: Ring
+            guid: 7a000000-0000-4000-8000-000000000009
+            transform:
+              rotation: [1.2, 0.0, 0.0]
+              scale: [1.6, 1.6, 1.6]
+            visual:
+              kind: primitive
+              primitive: torus
+              material:
+                color: [0.95, 0.72, 0.2, 1.0]
+                roughness: 0.25
+                metallic: 0.8
+
+  - name: Crystal
+    guid: 7a000000-0000-4000-8000-00000000000a
+    transform:
+      location: [1.8, 0.6, 2.5]
+      rotation: [0.0, 0.3, 0.0]
+    visual:
+      kind: mesh-asset
+      asset: assets/crystal.obj
+      material:
+        color: [0.55, 0.95, 0.85, 1.0]
+        roughness: 0.2
+    components:
+      - type: spinner
+        props:
+          speed: -0.6
+
+  - name: Hum
+    guid: 7a000000-0000-4000-8000-00000000000b
+    transform:
+      location: [0.0, 1.0, -3.0]
+    visual:
+      kind: audio-emitter
+      asset: assets/hum.wav
+      params:
+        loop: true
+        autoplay: true
+        volume: 0.5
+        min_distance: 2.0
+        max_distance: 25.0

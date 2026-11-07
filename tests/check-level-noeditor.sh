@@ -154,11 +154,15 @@ main () {
 	done
 	[[ ${failed} -eq 0 ]] || exit 1
 
-	# 3. a runtime-only program against that library
-	echo "== building and running test-level-runtime against it"
-	make -C "${root}/tests" "${make_vars[@]}" "${builddir}/tests/test-level-runtime"
-	LD_LIBRARY_PATH="${root}/${builddir}/lib:${root}/deps/graylib/build/lib:${root}/deps/yaml-glib/build${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-		"${root}/tests/${builddir}/tests/test-level-runtime"
+	# 3. runtime-only programs against that library
+	local t
+	for t in test-level-runtime test-level-instantiate-3d
+	do
+		echo "== building and running ${t} against it"
+		make -C "${root}/tests" "${make_vars[@]}" "${builddir}/tests/${t}"
+		LD_LIBRARY_PATH="${root}/${builddir}/lib:${root}/deps/graylib/build/lib:${root}/deps/yaml-glib/build${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
+			"${root}/tests/${builddir}/tests/${t}"
+	done
 
 	echo "== BUILD_EDITOR=0 provides the runtime level module"
 }

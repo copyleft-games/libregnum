@@ -125,7 +125,7 @@ void lrg_editor_inspector_panel_set_locked (LrgEditorInspectorPanel *self,
  * @self: an #LrgEditorInspectorPanel
  *
  * Returns: (transfer none) (nullable): the play-world object shown live
- *   (an #LrgGameObject), %NULL outside live inspection
+ *   (an #LrgGameObject or #LrgEntity3D), %NULL outside live inspection
  */
 LRG_AVAILABLE_IN_ALL
 GObject * lrg_editor_inspector_panel_get_live_object (LrgEditorInspectorPanel *self);
@@ -133,7 +133,7 @@ GObject * lrg_editor_inspector_panel_get_live_object (LrgEditorInspectorPanel *s
 /**
  * lrg_editor_inspector_panel_set_live_object:
  * @self: an #LrgEditorInspectorPanel
- * @object: (nullable): an #LrgGameObject of the running play session, or
+ * @object: (nullable): an #LrgGameObject or #LrgEntity3D of the running play session, or
  *   %NULL to follow the selection
  *
  * Shows @object's components live while play mode runs (what picking

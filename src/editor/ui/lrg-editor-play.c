@@ -53,11 +53,11 @@ on_play_started (LrgEditorPlaySession *session,
                  gpointer              user_data)
 {
 	LrgEditorApp *self = LRG_EDITOR_APP (user_data);
-	LrgWorld     *world = lrg_editor_play_session_get_world (session);
 
 	timeline_play_begin (self);
 	lrg_editor_log_append (self->log, G_LOG_LEVEL_MESSAGE, "play", "Play started");
-	editor_app_set_status (self, "Playing (%u objects)", world != NULL ? lrg_world_get_object_count (world) : 0u);
+	/* 2D game objects or 3D entities, whichever world is playing */
+	editor_app_set_status (self, "Playing (%u objects)", lrg_editor_play_session_get_n_objects (session));
 	sync_play_state (self);
 }
 

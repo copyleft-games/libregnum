@@ -32,7 +32,10 @@
  *   context menu     an LrgMenu over a GMenuModel built per popup from the
  *                    editor's actions ("editor.*") and the panel's own
  *                    group ("hierarchy.*", acting on the menu's node).
- *   live tab         a flat LrgTreeView over the play session's objects.
+ *   live tab         an LrgTreeView over the play session's live tree:
+ *                    the game objects of a 2D world (flat), the entity
+ *                    hierarchy of a 3D world (children through
+ *                    lrg_editor_play_session_get_live_children()).
  *   actions / IPC    node.rename and edit.find are replaced; the
  *                    hierarchy.* methods are registered. Both look the
  *                    panel up through the app, so they never outlive it.
@@ -55,6 +58,7 @@
 #include "../../paint/lrg-paint-list.h"
 #include "../../paint/lrg-paint-icons.h"
 #include "../../ecs/lrg-game-object.h"
+#include "../../world3d/lrg-entity3d.h"
 
 #define PANEL_KEY       "lrg-editor-hierarchy-panel"
 #define NODE_TYPE       "application/x-lrg-node"
@@ -634,7 +638,8 @@ tree_bind_row (LrgTreeView *tree,
 	hierarchy_row_set_node (HIERARCHY_ROW (row), LRG_NODE (item));
 }
 
-/* Live tab rows: a label with the authoring node's name. */
+/* Live tab rows: a label with the authoring node's name (an entity the
+ * simulation spawned shows its own name). */
 static LrgWidget *
 live_create_row (LrgTreeView *tree,
                  gpointer     user_data)
@@ -645,6 +650,17 @@ live_create_row (LrgTreeView *tree,
 	return LRG_WIDGET (label);
 }
 
+/* Live tab hierarchy: entity children in 3D, a flat list in 2D. */
+static GListModel *
+live_children (LrgTreeView *tree,
+               GObject     *item,
+               gpointer     user_data)
+{
+	LrgEditorHierarchyPanel *self = LRG_EDITOR_HIERARCHY_PANEL (user_data);
+
+	return lrg_editor_play_session_get_live_children (self->play, item);
+}
+
 static void
 live_bind_row (LrgTreeView *tree,
                LrgWidget   *row,
@@ -653,11 +669,13 @@ live_bind_row (LrgTreeView *tree,
                gpointer     user_data)
 {
 	LrgEditorHierarchyPanel *self = LRG_EDITOR_HIERARCHY_PANEL (user_data);
-	LrgNode                 *node = lrg_editor_play_session_get_node_for_object (self->play, LRG_GAME_OBJECT (item));
+	LrgNode                 *node = lrg_editor_play_session_get_node_for_live (self->play, item);
 	g_autofree gchar        *text = NULL;
 
 	if (node != NULL && lrg_node_get_name (node) != NULL)
 		text = g_strdup (lrg_node_get_name (node));
+	else if (LRG_IS_ENTITY3D (item) && lrg_entity3d_get_name (LRG_ENTITY3D (item)) != NULL)
+		text = g_strdup (lrg_entity3d_get_name (LRG_ENTITY3D (item)));
 	else
 		text = g_strdup_printf ("%s %p", G_OBJECT_TYPE_NAME (item), (gpointer) item);
 	lrg_label_set_text (LRG_LABEL (row), text);
@@ -2130,8 +2148,7 @@ lrg_editor_hierarchy_panel_paint (LrgWidget    *widget,
 	/* Info line: level name and count, or matches while filtering, or the
 	 * live object count */
 	if (self->show_live)
-		info = g_strdup_printf ("Live objects: %u",
-		                        g_list_model_get_n_items (lrg_editor_play_session_get_objects (self->play)));
+		info = g_strdup_printf ("Live objects: %u", lrg_editor_play_session_get_n_objects (self->play));
 	else if (lrg_editor_node_model_get_filter (self->model) != NULL)
 		info = g_strdup_printf ("%u match%s of %u nodes", lrg_editor_node_model_get_n_matches (self->model),
 		                        lrg_editor_node_model_get_n_matches (self->model) == 1 ? "" : "es",
@@ -2294,7 +2311,8 @@ lrg_editor_hierarchy_panel_class_init (LrgEditorHierarchyPanelClass *klass)
 	/**
 	 * LrgEditorHierarchyPanel::live-selected:
 	 * @self: the panel
-	 * @object: (nullable): the selected live #LrgGameObject, or %NULL
+	 * @object: (nullable): the selected live object (an #LrgGameObject
+	 *   of a 2D play world or an #LrgEntity3D of a 3D one), or %NULL
 	 *
 	 * Emitted when the selection on the Live tab changes, and with %NULL
 	 * when play stops. The inspector shows the object while it is set
@@ -2383,7 +2401,8 @@ lrg_editor_hierarchy_panel_new (LrgEditorApp *app)
 	self->live = lrg_tree_view_new ();
 	lrg_widget_set_name (LRG_WIDGET (self->live), "hierarchy-live");
 	lrg_tree_view_set_factory (self->live, live_create_row, live_bind_row, self, NULL);
-	lrg_tree_view_set_model (self->live, lrg_editor_play_session_get_objects (self->play));
+	lrg_tree_view_set_children_func (self->live, live_children, self, NULL);
+	lrg_tree_view_set_model (self->live, lrg_editor_play_session_get_live_model (self->play));
 	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (self->live));
 	g_object_unref (self->live);
 	g_signal_connect (self->live, "selection-changed", G_CALLBACK (on_live_selection_changed), self);

@@ -58,6 +58,8 @@
 #include "../../core/lrg-registry.h"
 #include "../../ecs/lrg-component.h"
 #include "../../ecs/lrg-game-object.h"
+#include "../../world3d/lrg-entity3d.h"
+#include "../../world3d/lrg-world3d.h"
 #include "../../ui/lrg-label.h"
 #include "../../ui/lrg-button.h"
 #include "../../ui/lrg-text-input.h"
@@ -680,6 +682,228 @@ insp_level_source_new (LrgEditorApp *app)
 }
 
 /* ==========================================================================
+ * Private: InspEntitySource, a live 3D entity's own state
+ * ========================================================================== */
+
+#define INSP_TYPE_ENTITY_SOURCE (insp_entity_source_get_type ())
+G_DECLARE_FINAL_TYPE (InspEntitySource, insp_entity_source, INSP, ENTITY_SOURCE, GObject)
+
+/*
+ * InspEntitySource:
+ *
+ * The "Entity" section of a live #LrgEntity3D during 3D play: name,
+ * active and visible flags, the local transform (position, Euler
+ * rotation in degrees, scale) and the read-only world position. Edits
+ * go straight into the play world like every live row (a DIRECT grid):
+ * they are not undoable and are dropped on Stop unless the simulation
+ * sync-back writes them into the node. The entity is held weakly, so a
+ * destroyed entity just reads as nothing.
+ */
+struct _InspEntitySource
+{
+	GObject      parent_instance;
+
+	LrgEntity3D *entity;   /* weak */
+	GPtrArray   *pspecs;   /* GParamSpec*, owned refs */
+};
+
+static void insp_entity_source_iface_init (LrgPropertySourceInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (InspEntitySource, insp_entity_source, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_PROPERTY_SOURCE, insp_entity_source_iface_init))
+
+#define INSP_RAD2DEG (180.0 / G_PI)
+#define INSP_DEG2RAD (G_PI / 180.0)
+
+static GPtrArray *
+insp_entity_source_list (LrgPropertySource *source)
+{
+	InspEntitySource *self = INSP_ENTITY_SOURCE (source);
+	GPtrArray        *infos = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_property_info_unref);
+	guint             i;
+
+	for (i = 0; i < self->pspecs->len; i++)
+		g_ptr_array_add (infos, lrg_property_info_new (g_ptr_array_index (self->pspecs, i)));
+	return infos;
+}
+
+/* A boxed GrlVector3 value from three floats (scaled by @k). */
+static void
+insp_vec3_value (GValue       *value,
+                 const gfloat *v,
+                 gdouble       k)
+{
+	g_value_init (value, GRL_TYPE_VECTOR3);
+	g_value_take_boxed (value, grl_vector3_new ((gfloat) (v[0] * k), (gfloat) (v[1] * k), (gfloat) (v[2] * k)));
+}
+
+static gboolean
+insp_entity_source_get (LrgPropertySource *source,
+                        const gchar       *name,
+                        GValue            *value)
+{
+	InspEntitySource *self = INSP_ENTITY_SOURCE (source);
+	gfloat            v[3];
+
+	if (self->entity == NULL)
+		return FALSE;
+
+	if (g_strcmp0 (name, "name") == 0)
+	{
+		g_value_init (value, G_TYPE_STRING);
+		g_value_set_string (value, lrg_entity3d_get_name (self->entity));
+	}
+	else if (g_strcmp0 (name, "active") == 0)
+	{
+		g_value_init (value, G_TYPE_BOOLEAN);
+		g_value_set_boolean (value, lrg_entity3d_get_active (self->entity));
+	}
+	else if (g_strcmp0 (name, "visible") == 0)
+	{
+		g_value_init (value, G_TYPE_BOOLEAN);
+		g_value_set_boolean (value, lrg_entity3d_get_visible (self->entity));
+	}
+	else if (g_strcmp0 (name, "position") == 0)
+	{
+		lrg_entity3d_get_position (self->entity, v);
+		insp_vec3_value (value, v, 1.0);
+	}
+	else if (g_strcmp0 (name, "rotation") == 0)
+	{
+		lrg_entity3d_get_rotation_euler (self->entity, v);
+		insp_vec3_value (value, v, INSP_RAD2DEG);
+	}
+	else if (g_strcmp0 (name, "scale") == 0)
+	{
+		lrg_entity3d_get_scale (self->entity, v);
+		insp_vec3_value (value, v, 1.0);
+	}
+	else if (g_strcmp0 (name, "world") == 0)
+	{
+		lrg_entity3d_get_world_position (self->entity, v);
+		insp_vec3_value (value, v, 1.0);
+	}
+	else
+		return FALSE;
+	return TRUE;
+}
+
+static gboolean
+insp_entity_source_set (LrgPropertySource *source,
+                        const gchar       *name,
+                        const GValue      *value)
+{
+	InspEntitySource *self = INSP_ENTITY_SOURCE (source);
+	GrlVector3       *vec;
+	gfloat            v[3];
+
+	if (self->entity == NULL)
+		return FALSE;
+
+	if (g_strcmp0 (name, "name") == 0 && G_VALUE_HOLDS_STRING (value))
+		lrg_entity3d_set_name (self->entity, g_value_get_string (value));
+	else if (g_strcmp0 (name, "active") == 0 && G_VALUE_HOLDS_BOOLEAN (value))
+		lrg_entity3d_set_active (self->entity, g_value_get_boolean (value));
+	else if (g_strcmp0 (name, "visible") == 0 && G_VALUE_HOLDS_BOOLEAN (value))
+		lrg_entity3d_set_visible (self->entity, g_value_get_boolean (value));
+	else if (G_VALUE_HOLDS (value, GRL_TYPE_VECTOR3) && (vec = g_value_get_boxed (value)) != NULL)
+	{
+		v[0] = vec->x;
+		v[1] = vec->y;
+		v[2] = vec->z;
+		if (g_strcmp0 (name, "position") == 0)
+			lrg_entity3d_set_position (self->entity, v);
+		else if (g_strcmp0 (name, "scale") == 0)
+			lrg_entity3d_set_scale (self->entity, v);
+		else if (g_strcmp0 (name, "rotation") == 0)
+		{
+			v[0] = (gfloat) (v[0] * INSP_DEG2RAD);
+			v[1] = (gfloat) (v[1] * INSP_DEG2RAD);
+			v[2] = (gfloat) (v[2] * INSP_DEG2RAD);
+			lrg_entity3d_set_rotation_euler (self->entity, v);
+		}
+		else
+			return FALSE;
+	}
+	else
+		return FALSE;
+
+	lrg_property_source_emit_changed (source, name);
+	return TRUE;
+}
+
+static LrgPropertyState
+insp_entity_source_get_state (LrgPropertySource *source,
+                              const gchar       *name)
+{
+	return LRG_PROPERTY_STATE_NONE;
+}
+
+static void
+insp_entity_source_iface_init (LrgPropertySourceInterface *iface)
+{
+	iface->list_properties = insp_entity_source_list;
+	iface->get_value = insp_entity_source_get;
+	iface->set_value = insp_entity_source_set;
+	iface->get_state = insp_entity_source_get_state;
+}
+
+static void
+insp_entity_source_dispose (GObject *object)
+{
+	g_clear_weak_pointer (&INSP_ENTITY_SOURCE (object)->entity);
+	G_OBJECT_CLASS (insp_entity_source_parent_class)->dispose (object);
+}
+
+static void
+insp_entity_source_finalize (GObject *object)
+{
+	g_ptr_array_unref (INSP_ENTITY_SOURCE (object)->pspecs);
+	G_OBJECT_CLASS (insp_entity_source_parent_class)->finalize (object);
+}
+
+static void
+insp_entity_source_class_init (InspEntitySourceClass *klass)
+{
+	G_OBJECT_CLASS (klass)->dispose = insp_entity_source_dispose;
+	G_OBJECT_CLASS (klass)->finalize = insp_entity_source_finalize;
+}
+
+static void
+insp_entity_source_init (InspEntitySource *self)
+{
+	GParamFlags rw = G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS;
+	GParamFlags ro = G_PARAM_READABLE | G_PARAM_STATIC_STRINGS;
+
+	self->pspecs = g_ptr_array_new_with_free_func ((GDestroyNotify) g_param_spec_unref);
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_string ("name", "Name", "The entity's name", NULL, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boolean ("active", "Active", "Takes part in updates", TRUE, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boolean ("visible", "Visible", "Collected for rendering", TRUE, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("position", "Position", "[hint:vector3] Local position", GRL_TYPE_VECTOR3, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("rotation", "Rotation", "[hint:vector3] Local Euler rotation, in degrees",
+		                    GRL_TYPE_VECTOR3, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("scale", "Scale", "[hint:vector3] Local scale", GRL_TYPE_VECTOR3, rw)));
+	g_ptr_array_add (self->pspecs, g_param_spec_ref_sink (
+		g_param_spec_boxed ("world", "World", "[hint:vector3] World-space position (read-only)",
+		                    GRL_TYPE_VECTOR3, ro)));
+}
+
+static InspEntitySource *
+insp_entity_source_new (LrgEntity3D *entity)
+{
+	InspEntitySource *self = g_object_new (INSP_TYPE_ENTITY_SOURCE, NULL);
+
+	g_set_weak_pointer (&self->entity, entity);
+	return self;
+}
+
+/* ==========================================================================
  * Private: InspPicker, a searchable list popup
  * ========================================================================== */
 
@@ -1212,7 +1436,8 @@ typedef struct
 	gchar           *key;
 	LrgExpander     *expander;  /* owned ref */
 	LrgPropertyGrid *grid;      /* borrowed */
-	LrgComponent    *component; /* owned ref while shown */
+	GObject         *target;    /* owned ref while shown: a component, or the
+	                             * entity for the "entity" section */
 } LiveSection;
 
 struct _LrgEditorInspectorPanel
@@ -1240,6 +1465,7 @@ struct _LrgEditorInspectorPanel
 	LrgButton            *prefab_revert;
 	LrgButton            *prefab_unlink;
 	LrgButton            *prefab_relink;
+	LrgButton            *prefab_variant;   /* Create Variant (0.9.0) */
 	LrgScrollBox         *scroll;
 	LrgVBox              *body;
 
@@ -2286,6 +2512,48 @@ update_script_rows (LrgEditorInspectorPanel *self)
  * ========================================================================== */
 
 /*
+ * prefab_chain_text:
+ *
+ * "base.rprefab > variant.rprefab" for a source that is a prefab variant
+ * (base first, then each variant down to @source), or NULL for a plain
+ * prefab or an unreadable chain. The chain is read from the files once
+ * per source and cached on the info label until the source changes.
+ */
+static const gchar *
+prefab_chain_text (LrgEditorInspectorPanel *self,
+                   const gchar             *source)
+{
+	const gchar         *cached_src = g_object_get_data (G_OBJECT (self->prefab_info), "insp-chain-src");
+	g_autofree gchar    *abs = NULL;
+	g_auto(GStrv)        chain = NULL;
+	g_autoptr(GString)   text = NULL;
+	gint                 i;
+
+	if (g_strcmp0 (cached_src, source) == 0)
+		return g_object_get_data (G_OBJECT (self->prefab_info), "insp-chain-text");
+
+	abs = (self->app != NULL) ? editor_app_project_path (self->app, source) : NULL;
+	chain = lrg_prefab_get_variant_chain (abs != NULL ? abs : source, NULL);
+	if (chain != NULL && g_strv_length (chain) > 1)
+	{
+		text = g_string_new (NULL);
+		for (i = (gint) g_strv_length (chain) - 1; i >= 0; i--)
+		{
+			g_autofree gchar *base = g_path_get_basename (chain[i]);
+
+			g_string_append (text, base);
+			if (i > 0)
+				g_string_append (text, " > ");
+		}
+	}
+
+	g_object_set_data_full (G_OBJECT (self->prefab_info), "insp-chain-src", g_strdup (source), g_free);
+	g_object_set_data_full (G_OBJECT (self->prefab_info), "insp-chain-text",
+	                        text != NULL ? g_string_free (g_steal_pointer (&text), FALSE) : NULL, g_free);
+	return g_object_get_data (G_OBJECT (self->prefab_info), "insp-chain-text");
+}
+
+/*
  * update_prefab_bar:
  *
  * For a node of a linked prefab instance (the first inspected node):
@@ -2321,9 +2589,17 @@ update_prefab_bar (LrgEditorInspectorPanel *self,
 
 	if (link != NULL)
 	{
+		const gchar *chain = prefab_chain_text (self, source);
+
+		/* Overrides are always relative to the nearest source: the
+		 * variant when the source is one, its base chain shown first. */
 		n = lrg_prefab_link_get_n_overrides (link);
-		info = n == 0 ? g_strdup ("Linked prefab instance, no overrides")
-		              : g_strdup_printf ("Linked prefab instance, %u override%s", n, n == 1 ? "" : "s");
+		if (chain != NULL)
+			info = n == 0 ? g_strdup_printf ("Variant chain %s, no overrides", chain)
+			              : g_strdup_printf ("Variant chain %s, %u override%s", chain, n, n == 1 ? "" : "s");
+		else
+			info = n == 0 ? g_strdup ("Linked prefab instance, no overrides")
+			              : g_strdup_printf ("Linked prefab instance, %u override%s", n, n == 1 ? "" : "s");
 		lrg_widget_set_enabled (LRG_WIDGET (self->prefab_select), node != owner || self->nodes->len > 1);
 		lrg_widget_set_enabled (LRG_WIDGET (self->prefab_apply), n > 0);
 		lrg_widget_set_enabled (LRG_WIDGET (self->prefab_revert), n > 0);
@@ -2336,6 +2612,8 @@ update_prefab_bar (LrgEditorInspectorPanel *self,
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_revert), link != NULL);
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_unlink), link != NULL);
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_relink), link == NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->prefab_variant), link != NULL);
+	lrg_widget_set_enabled (LRG_WIDGET (self->prefab_variant), link != NULL && node == owner);
 }
 
 /* prefab_owner: the instance root of the first inspected node */
@@ -2431,6 +2709,44 @@ on_prefab_relink_clicked (LrgButton *button,
 		                   error != NULL ? error->message : "unknown error");
 }
 
+/*
+ * on_prefab_variant_clicked:
+ *
+ * Create Variant from the inspected instance root: the variant goes next
+ * to the source as `<stem>_variant.rprefab` (resolved against the project
+ * root), the instance's overrides move into it and the instance is
+ * relinked to it; one undo step (lrg_editor_prefab_create_variant()).
+ */
+static void
+on_prefab_variant_clicked (LrgButton *button,
+                           gpointer   user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	g_autoptr(LrgNode)       owner = prefab_owner (self) != NULL ? g_object_ref (prefab_owner (self)) : NULL;
+	g_autoptr(GError)        error = NULL;
+	LrgPrefabLink           *link;
+	const gchar             *source;
+	g_autofree gchar        *abs = NULL;
+	g_autofree gchar        *variant = NULL;
+
+	if (owner == NULL || (link = lrg_node_get_prefab_link (owner)) == NULL)
+		return;
+	source = lrg_prefab_link_get_source_path (link);
+	if (source == NULL)
+		return;
+
+	abs = (self->app != NULL) ? editor_app_project_path (self->app, source) : NULL;
+	variant = lrg_editor_prefab_suggest_variant_path (abs != NULL ? abs : source);
+	if (variant == NULL)
+		return;
+
+	if (lrg_editor_prefab_create_variant (self->editor, owner, variant, &error))
+		status (self, "Created prefab variant");
+	else if (self->app != NULL)
+		editor_app_notify (self->app, EDITOR_NOTIFY_ERROR, "Create variant failed: %s",
+		                   error != NULL ? error->message : "unknown error");
+}
+
 /* ==========================================================================
  * Live inspection
  * ========================================================================== */
@@ -2441,7 +2757,7 @@ live_section_free (gpointer data)
 	LiveSection *sec = data;
 
 	g_free (sec->key);
-	g_clear_object (&sec->component);
+	g_clear_object (&sec->target);
 	g_clear_object (&sec->expander);
 	g_free (sec);
 }
@@ -2458,10 +2774,10 @@ on_live_apply (GSimpleAction *action,
 	const gchar             *name = g_variant_get_string (parameter, NULL);
 	g_autoptr(GError)        error = NULL;
 
-	if (self == NULL || sec == NULL || sec->component == NULL || !LRG_IS_GAME_OBJECT (self->live_object))
+	if (self == NULL || sec == NULL || !LRG_IS_COMPONENT (sec->target) || self->live_object == NULL)
 		return;
-	if (lrg_editor_play_session_apply_to_level (self->play, LRG_GAME_OBJECT (self->live_object), sec->component,
-	                                            name, &error))
+	if (lrg_editor_play_session_apply_live (self->play, self->live_object, LRG_COMPONENT (sec->target),
+	                                        name, &error))
 	{
 		if (self->app != NULL)
 			editor_app_set_status (self->app, "Applied %s to the level", name);
@@ -2526,35 +2842,70 @@ live_type_name (LrgComponent *component)
 	return name != NULL ? name : G_OBJECT_TYPE_NAME (component);
 }
 
+/* The components of a live object (2D game object or 3D entity), in
+ * attach order; the array does not own them. */
+static GPtrArray *
+live_object_components (GObject *object)
+{
+	GPtrArray *out = g_ptr_array_new ();
+	guint      i;
+
+	if (LRG_IS_GAME_OBJECT (object))
+	{
+		GList *list = lrg_game_object_get_components (LRG_GAME_OBJECT (object));
+		GList *l;
+
+		for (l = list; l != NULL; l = l->next)
+			g_ptr_array_add (out, l->data);
+		g_list_free (list);
+	}
+	else if (LRG_IS_ENTITY3D (object))
+	{
+		GPtrArray *comps = lrg_entity3d_get_components (LRG_ENTITY3D (object));
+
+		for (i = 0; comps != NULL && i < comps->len; i++)
+			g_ptr_array_add (out, g_ptr_array_index (comps, i));
+	}
+	return out;
+}
+
+/* The key of the live section showing a 3D entity's own state. */
+#define LIVE_ENTITY_KEY "entity"
+
 /*
  * update_live:
  *
  * One DIRECT grid per component of @object over an
  * LrgObjectPropertySource; the LrgComponent base properties other than
- * "enabled" are hidden. A grid's source is replaced only when its
- * component object changed.
+ * "enabled" are hidden. A 3D entity gets an "entity" section first (its
+ * name, flags and transform, InspEntitySource). A grid's source is
+ * replaced only when its target object changed.
  */
 static void
 update_live (LrgEditorInspectorPanel *self,
              GObject                 *object)
 {
 	g_autoptr(GPtrArray)  keys = g_ptr_array_new_with_free_func (g_free);
-	g_autoptr(GPtrArray)  comps = g_ptr_array_new ();
+	g_autoptr(GPtrArray)  targets = g_ptr_array_new ();
 	g_autoptr(GHashTable) counts = g_hash_table_new (g_str_hash, g_str_equal);
-	GList                *list = lrg_game_object_get_components (LRG_GAME_OBJECT (object));
-	GList                *l;
+	g_autoptr(GPtrArray)  list = live_object_components (object);
 	guint                 i;
 
-	for (l = list; l != NULL; l = l->next)
+	if (LRG_IS_ENTITY3D (object))
 	{
-		const gchar *type = live_type_name (l->data);
-		guint        n = GPOINTER_TO_UINT (g_hash_table_lookup (counts, type)) + 1;
+		g_ptr_array_add (keys, g_strdup (LIVE_ENTITY_KEY));
+		g_ptr_array_add (targets, object);
+	}
+	for (i = 0; i < list->len; i++)
+	{
+		LrgComponent *comp = g_ptr_array_index (list, i);
+		const gchar  *type = live_type_name (comp);
+		guint         n = GPOINTER_TO_UINT (g_hash_table_lookup (counts, type)) + 1;
 
 		g_hash_table_insert (counts, (gpointer) type, GUINT_TO_POINTER (n));
 		g_ptr_array_add (keys, n == 1 ? g_strdup (type) : g_strdup_printf ("%s#%u", type, n));
-		g_ptr_array_add (comps, l->data);
+		g_ptr_array_add (targets, comp);
 	}
-	g_list_free (list);
 
 	if (!strv_equal_array (self->live_keys, keys))
 	{
@@ -2573,14 +2924,27 @@ update_live (LrgEditorInspectorPanel *self,
 
 		if (!g_ptr_array_find_with_equal_func (keys, sec->key, g_str_equal, &at))
 		{
-			if (sec->component != NULL)
+			if (sec->target != NULL)
 			{
 				lrg_property_grid_set_sources (sec->grid, NULL);
-				g_clear_object (&sec->component);
+				g_clear_object (&sec->target);
 			}
 			continue;
 		}
-		if (sec->component != g_ptr_array_index (comps, at))
+		if (sec->target == g_ptr_array_index (targets, at))
+			continue;
+
+		g_set_object (&sec->target, g_ptr_array_index (targets, at));
+		if (LRG_IS_ENTITY3D (sec->target))
+		{
+			/* The entity's own state: no "Apply to Level" (the
+			 * sync-back already writes simulated transforms) */
+			g_autoptr(InspEntitySource) source = insp_entity_source_new (LRG_ENTITY3D (sec->target));
+
+			lrg_property_grid_set_source (sec->grid, LRG_PROPERTY_SOURCE (source));
+			update_row_menus (sec->grid, FALSE, FALSE);
+		}
+		else
 		{
 			g_autoptr(LrgObjectPropertySource) source = NULL;
 			GObjectClass                      *base = g_type_class_ref (LRG_TYPE_COMPONENT);
@@ -2588,8 +2952,7 @@ update_live (LrgEditorInspectorPanel *self,
 			guint                              n = 0;
 			guint                              k;
 
-			g_set_object (&sec->component, g_ptr_array_index (comps, at));
-			source = lrg_object_property_source_new (G_OBJECT (sec->component));
+			source = lrg_object_property_source_new (sec->target);
 			pspecs = g_object_class_list_properties (base, &n);
 			for (k = 0; k < n; k++)
 				if (g_strcmp0 (pspecs[k]->name, "enabled") != 0)
@@ -2612,10 +2975,10 @@ clear_live (LrgEditorInspectorPanel *self)
 	{
 		LiveSection *sec = g_ptr_array_index (self->live_pool, i);
 
-		if (sec->component != NULL)
+		if (sec->target != NULL)
 		{
 			lrg_property_grid_set_sources (sec->grid, NULL);
-			g_clear_object (&sec->component);
+			g_clear_object (&sec->target);
 		}
 	}
 	lrg_container_remove_all (LRG_CONTAINER (self->live_box));
@@ -2633,14 +2996,21 @@ clear_live (LrgEditorInspectorPanel *self)
 static GObject *
 compute_live_object (LrgEditorInspectorPanel *self)
 {
+	LrgWorld3D *world3d;
+
 	if (self->play == NULL || !lrg_editor_play_session_is_playing (self->play))
 		return NULL;
-	if (LRG_IS_GAME_OBJECT (self->live_explicit) &&
-	    lrg_editor_play_session_get_guid_for_object (self->play, LRG_GAME_OBJECT (self->live_explicit)) != NULL)
+
+	/* The Live tab's pick: a game object made from a node, or any entity
+	 * still in the 3D play world (spawned ones too) */
+	world3d = lrg_editor_play_session_get_world3d (self->play);
+	if (self->live_explicit != NULL &&
+	    (lrg_editor_play_session_get_guid_for_live (self->play, self->live_explicit) != NULL ||
+	     (world3d != NULL && LRG_IS_ENTITY3D (self->live_explicit) &&
+	      lrg_entity3d_get_world (LRG_ENTITY3D (self->live_explicit)) == world3d)))
 		return self->live_explicit;
 	if (self->nodes->len > 0)
-		return (GObject *) lrg_editor_play_session_get_object_for_node (self->play,
-		                                                               g_ptr_array_index (self->nodes, 0));
+		return lrg_editor_play_session_get_live_for_node (self->play, g_ptr_array_index (self->nodes, 0));
 	return NULL;
 }
 
@@ -2715,8 +3085,10 @@ structure_signature (LrgEditorInspectorPanel *self,
 	guint    i;
 
 	g_string_append_printf (sig, "L%d P%p|", self->locked, (gpointer) live);
-	if (live != NULL)
+	if (LRG_IS_GAME_OBJECT (live))
 		g_string_append_printf (sig, "c%u|", lrg_game_object_get_component_count (LRG_GAME_OBJECT (live)));
+	else if (LRG_IS_ENTITY3D (live))
+		g_string_append_printf (sig, "e%u|", lrg_entity3d_get_n_components (LRG_ENTITY3D (live)));
 	for (i = 0; i < self->nodes->len; i++)
 	{
 		LrgNode              *node = g_ptr_array_index (self->nodes, i);
@@ -2754,11 +3126,12 @@ update_title (LrgEditorInspectorPanel *self,
 
 	if (live != NULL)
 	{
-		const gchar *guid = lrg_editor_play_session_get_guid_for_object (self->play, LRG_GAME_OBJECT (live));
+		const gchar *guid = lrg_editor_play_session_get_guid_for_live (self->play, live);
 		LrgNode     *node = guid != NULL ? lrg_editor_find_node (self->editor, guid) : NULL;
+		const gchar *name = (node != NULL) ? lrg_node_get_name (node)
+		                  : LRG_IS_ENTITY3D (live) ? lrg_entity3d_get_name (LRG_ENTITY3D (live)) : NULL;
 
-		text = g_strdup_printf ("%s (live)", node != NULL && lrg_node_get_name (node) != NULL
-		                                     ? lrg_node_get_name (node) : G_OBJECT_TYPE_NAME (live));
+		text = g_strdup_printf ("%s (live)", name != NULL ? name : G_OBJECT_TYPE_NAME (live));
 	}
 	else if (self->nodes->len == 0)
 		text = g_strdup ("Level");
@@ -3063,7 +3436,7 @@ on_play_ticked (LrgEditorPlaySession *session,
 	{
 		LiveSection *sec = g_ptr_array_index (self->live_pool, i);
 
-		if (sec->component != NULL)
+		if (sec->target != NULL)
 			lrg_property_grid_refresh (sec->grid);
 	}
 }
@@ -3309,11 +3682,14 @@ build_chrome (LrgEditorInspectorPanel *self)
 	                                                   G_CALLBACK (on_prefab_apply_clicked), self));
 	self->prefab_revert = add_owned (row2, make_button ("Revert All", "inspector-prefab-revert", NULL,
 	                                                    G_CALLBACK (on_prefab_revert_clicked), self));
+	self->prefab_variant = add_owned (row2, make_button ("Create Variant", "inspector-prefab-variant", NULL,
+	                                                     G_CALLBACK (on_prefab_variant_clicked), self));
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_select), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_unlink), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_relink), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_apply), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_revert), 1.0f);
+	lrg_widget_set_fill_weight (LRG_WIDGET (self->prefab_variant), 1.0f);
 	lrg_widget_set_visible (LRG_WIDGET (self->prefab_bar), FALSE);
 }
 
@@ -4389,7 +4765,7 @@ lrg_editor_inspector_panel_set_live_object (LrgEditorInspectorPanel *self,
                                             GObject                 *object)
 {
 	g_return_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self));
-	g_return_if_fail (object == NULL || LRG_IS_GAME_OBJECT (object));
+	g_return_if_fail (object == NULL || LRG_IS_GAME_OBJECT (object) || LRG_IS_ENTITY3D (object));
 
 	g_set_weak_pointer (&self->live_explicit, object);
 	refresh_all (self);

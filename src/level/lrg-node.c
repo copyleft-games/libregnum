@@ -14,6 +14,7 @@
 #include "lrg-script-binding.h"
 #include "lrg-prefab.h"
 #include "../core/lrg-math3d.h"
+#include "../world3d/lrg-world3d.h"
 
 typedef struct
 {
@@ -193,6 +194,7 @@ lrg_node_class_init (LrgNodeClass *klass)
 	/* Default instantiate vfunc is a no-op; lrg_level_instantiate() applies
 	 * component descriptions and script bindings via the engine registry. */
 	klass->instantiate = NULL;
+	klass->instantiate_3d = NULL;
 
 	/**
 	 * LrgNode:name:
@@ -791,6 +793,27 @@ lrg_node_instantiate (LrgNode       *self,
 	klass = LRG_NODE_GET_CLASS (self);
 	if (klass->instantiate != NULL)
 		klass->instantiate (self, object);
+}
+
+/*
+ * lrg_node_instantiate_3d:
+ *
+ * Dispatches to the class's instantiate_3d hook; plain nodes have none.
+ */
+void
+lrg_node_instantiate_3d (LrgNode     *self,
+                         LrgEntity3D *entity,
+                         LrgWorld3D  *world)
+{
+	LrgNodeClass *klass;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+	g_return_if_fail (LRG_IS_ENTITY3D (entity));
+	g_return_if_fail (world == NULL || LRG_IS_WORLD3D (world));
+
+	klass = LRG_NODE_GET_CLASS (self);
+	if (klass->instantiate_3d != NULL)
+		klass->instantiate_3d (self, entity, world);
 }
 
 /* ==========================================================================

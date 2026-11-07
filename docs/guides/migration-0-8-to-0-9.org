@@ -112,3 +112,11 @@ The =Libregnum-1= namespace keeps every type and function name. New in M0: names
 - [[file:../modules/level/index.org][Runtime Level Module]]
 - [[file:../modules/core/math3d.org][3D Math (lrg-math3d)]]
 - [[file:editor-migration-0-8-1.org][Migrating to the 0.8.1 Editor]]
+
+** Play-in-editor objects
+:PROPERTIES:
+:CUSTOM_ID: migration-play-objects
+:END:
+| Change | Effect | What to do | See |
+|--------+--------+------------+-----|
+| 3D-default levels now play in =LrgWorld3D= | editor plugins reading play objects as =LrgGameObject= get =NULL= for 3D levels | use =lrg_editor_play_session_get_live_*= / =apply_live=, or mark the level 2D | [[file:../editor/view-model.org::#play-3d][view model]] |

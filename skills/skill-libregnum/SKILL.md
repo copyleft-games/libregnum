@@ -138,3 +138,7 @@ lrgeditorctl validate && lrgeditorctl save
 - Do not hand-edit an `.rlevel` file while an editor has the same level open with unsaved changes; use `lrgeditorctl` (or save first; the editor reloads clean levels changed on disk).
 - On immutable hosts do not install packages with `dnf` or run `bootc usr-overlay`; list the Fedora packages instead.
 - When changing libregnum code: zero warnings, no `//` comments, no silencing warnings, docs in org-mode under `docs/`, commit only when asked.
+
+## Play-in-editor (0.9.0)
+
+Play uses 3D when the level's `default_view` is `3d` (the default) and 2D otherwise. During 3D play the viewport draws the runtime world (the same renderer games use). The hierarchy Live tab shows the entity tree; the inspector shows the entity's transform and components, and "Apply to Level" writes component values back. Simulated transforms sync back field by field and are restored on Stop.

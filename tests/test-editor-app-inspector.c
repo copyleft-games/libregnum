@@ -783,6 +783,8 @@ test_live (EditorAppFixture *f,
 	g_auto(GValue)           v = G_VALUE_INIT;
 	g_auto(GValue)           shown = G_VALUE_INIT;
 
+	/* LrgGameObject live inspection: play this level in 2D */
+	lrg_level_set_default_2d (lrg_editor_get_level (f->editor), TRUE);
 	add_health (node, TEST_KIND_MAGIC, 30.0);
 	select_nodes (f, node, NULL, NULL);
 	g_assert_true (lrg_editor_app_activate_action (f->app, "play.start"));
