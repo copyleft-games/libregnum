@@ -80,6 +80,10 @@ lrg_editor_document_format_get_type (void)
 			{ LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL, "LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL", "material" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK, "LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK", "post-stack" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH, "LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH", "shader-graph" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH, "LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH", "anim-graph" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP, "LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP", "bone-map" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE, "LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE", "sequence" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D, "LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D", "skeleton2d" },
 			{ 0, NULL, NULL }
 		};
 		GType id;
@@ -1814,6 +1818,19 @@ skeleton_for (LrgEditorDocumentFormat format)
 		return "version: 1\neffects: []\n";
 	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
 		return "version: 1\nname: graph\nnodes: []\nlinks: []\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH:
+		/* one base layer with an empty idle state: loads, plays the bind pose */
+		return "version: 1\nname: graph\nlayers:\n  - name: base\n    default: idle\n"
+		       "    states:\n      - name: idle\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP:
+		/* the default rules written out so the form shows them */
+		return "version: 1\nrules:\n  ignore_case: true\n  normalize_separators: true\n"
+		       "  normalize_sides: true\nbones: {}\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE:
+		return "type: sequence\nversion: 1\nname: sequence\nlength: 5\nfps: 30\ntracks: []\n";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
+		/* a single root bone to hang the first slot on */
+		return "rskel2d: 1\nname: skeleton\nbones:\n  - name: root\n    length: 50\n";
 	case LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN:
 	default:
 		return "{}\n";
@@ -2027,6 +2044,15 @@ detect_from_tree (YamlNode *root)
 	if (root_has (map, "colors") || root_has (map, "metrics") || root_has (map, "preset") ||
 	    root_has (map, "accent") || root_has (map, "styles") || root_has (map, "motion"))
 		return LRG_EDITOR_DOCUMENT_FORMAT_THEME;
+	/* the 2D skeleton format's version key names the format */
+	if (root_has (map, "rskel2d"))
+		return LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D;
+	/* `type: sequence` is the sequence format's own marker; any other
+	 * `type:` is a UI layout node */
+	node = yaml_mapping_get_member (map, "type");
+	if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SCALAR &&
+	    g_strcmp0 (yaml_node_get_scalar (node), "sequence") == 0)
+		return LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE;
 	if (root_has (map, "type"))
 		return LRG_EDITOR_DOCUMENT_FORMAT_UI_LAYOUT;
 
@@ -2076,6 +2102,14 @@ lrg_editor_document_detect_format (const gchar *filename,
 			return LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK;
 		if (g_str_has_suffix (lower, ".rshadergraph"))
 			return LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH;
+		if (g_str_has_suffix (lower, ".ranim"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH;
+		if (g_str_has_suffix (lower, ".rbonemap"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP;
+		if (g_str_has_suffix (lower, ".rseq"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE;
+		if (g_str_has_suffix (lower, ".rskel2d"))
+			return LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D;
 	}
 
 	/* --- 1. a double extension is an explicit statement --- */

@@ -242,10 +242,12 @@ In =tests/test-gltf-animation.c=, two chains imported from GLB fixtures: a sourc
 :PROPERTIES:
 :CUSTOM_ID: using-it-from-the-editor
 :END:
-The bone map editor arrives with the next wave's animation tools:
-- open a =.rbonemap= (or create one from two =.glb= files); the panel shows the source and target skeleton trees (=lrg_gltf_animation_create_skeleton()=) side by side with lines for =lrg_retargeter_get_mapping()=;
-- *Auto map* calls =lrg_bone_map_auto_fill()=; dragging a source bone onto a target bone calls =lrg_bone_map_set()=; the rules (prefixes, case, sides) are edited in a side form bound to the properties; the panel refreshes on =LrgBoneMap::changed=;
-- a preview viewport plays a source clip retargeted live (=lrg_retargeter_retarget_skeleton()=) on the target mesh; *Bake* writes the baked clips (=lrg_retargeter_retarget_clip()=).
+The editor's bone map editor ([[file:../../editor/animation-editor.org::#bone-map-editor][Animation tools: bone map editor]]) opens =.rbonemap= files:
+- source and target skeleton pickers (any glTF of the project; =lrg_gltf_animation_create_skeleton()= of skin 0), remembered under an =editor:= key the loader ignores;
+- the target skeleton as a tree with the source bone driving each bone (=lrg_bone_map_resolve()=): an explicit pair, a rule match or nothing (an unmapped warning); picking a source writes a pair (=lrg_bone_map_set()= semantics, one driver per target bone);
+- the rules (prefixes, case, separators, sides) in a form, *Auto map* (=lrg_bone_map_auto_fill()=) as one undo step;
+- a live retarget preview: the source model plays a clip, the target follows through =lrg_retargeter_retarget_skeleton()= every frame;
+- the =bonemap.*= IPC methods ([[file:../../editor/ipc-protocol.org::#ipc-animation][IPC: animation methods]]).
 
 ** See also
 :PROPERTIES:

@@ -49,6 +49,14 @@ G_BEGIN_DECLS
  *   file; recognised by its extension only). Since 0.9.0.
  * @LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH: an #LrgShaderGraph (a
  *   `.rshadergraph` file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH: an #LrgAnimGraph (a `.ranim`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP: an #LrgBoneMap (a `.rbonemap`
+ *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE: an #LrgSequence (a `.rseq` file,
+ *   or a mapping with `type: sequence`). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D: an #LrgSkeleton2D (a `.rskel2d`
+ *   file, or a mapping with an `rskel2d:` version key). Since 0.9.0.
  *
  * The engine format a document holds. It picks the validator, the
  * skeleton of a new document and the editor panel that opens the file.
@@ -66,7 +74,11 @@ typedef enum
 	LRG_EDITOR_DOCUMENT_FORMAT_THEME,
 	LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL,
 	LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK,
-	LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH
+	LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH,
+	LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH,
+	LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP,
+	LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE,
+	LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D
 } LrgEditorDocumentFormat;
 
 #define LRG_TYPE_EDITOR_DOCUMENT_FORMAT (lrg_editor_document_format_get_type ())
@@ -84,8 +96,9 @@ GType lrg_editor_document_format_get_type (void) G_GNUC_CONST;
  * @format: a format
  *
  * The format's nick, as used by IPC: "unknown", "input-map", "locale",
- * "sound-bank", "hud-layout", "ui-layout", "dialog-tree", "dungeon" or
- * "theme".
+ * "sound-bank", "hud-layout", "ui-layout", "dialog-tree", "dungeon",
+ * "theme", "material", "post-stack", "shader-graph", "anim-graph",
+ * "bone-map", "sequence" or "skeleton2d".
  *
  * Returns: (transfer none): the nick
  */

@@ -46,6 +46,9 @@
 #include "lrg-editor-dungeon-editor.h"
 #include "lrg-editor-material-editor.h"
 #include "lrg-editor-post-stack-editor.h"
+#include "lrg-editor-anim-graph-editor.h"
+#include "lrg-editor-bone-map-editor.h"
+#include "lrg-editor-skeleton2d-editor.h"
 #include "../lrg-editor-shader-graph-editor.h"
 #include "../lrg-editor-app-private.h"
 #include "../lrg-editor-console-panel.h"
@@ -226,6 +229,11 @@ registry_ensure (void)
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL, LRG_TYPE_EDITOR_MATERIAL_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK, LRG_TYPE_EDITOR_POST_STACK_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH, LRG_TYPE_EDITOR_SHADER_GRAPH_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH, LRG_TYPE_EDITOR_ANIM_GRAPH_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP, LRG_TYPE_EDITOR_BONE_MAP_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D, LRG_TYPE_EDITOR_SKELETON2D_EDITOR);
+	/* .rseq files are opened by the docked sequencer panel, not a data
+	 * editor: LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE has no builtin here */
 }
 
 void
@@ -270,10 +278,13 @@ lrg_editor_data_editor_can_open (const gchar *path)
 	/* data files are .yaml / .yml (levels, prefabs and projects have
 	 * their own extensions and editors), plus the engine assets edited
 	 * on documents: .rmat materials, .rpost post stacks, .rshadergraph
-	 * shader graphs */
+	 * shader graphs, .ranim animation graphs, .rbonemap bone maps,
+	 * .rseq sequences and .rskel2d 2D skeletons */
 	if (!g_str_has_suffix (path, ".yaml") && !g_str_has_suffix (path, ".yml") &&
 	    !g_str_has_suffix (path, ".rmat") && !g_str_has_suffix (path, ".rpost") &&
-	    !g_str_has_suffix (path, ".rshadergraph"))
+	    !g_str_has_suffix (path, ".rshadergraph") && !g_str_has_suffix (path, ".ranim") &&
+	    !g_str_has_suffix (path, ".rbonemap") && !g_str_has_suffix (path, ".rseq") &&
+	    !g_str_has_suffix (path, ".rskel2d"))
 		return FALSE;
 	format = detect_file_format (path);
 	return format != LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN &&
@@ -395,6 +406,14 @@ format_icon (LrgEditorDocumentFormat format)
 		return LRG_ICON_EYE;
 	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
 		return LRG_ICON_MENU;
+	case LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH:
+		return LRG_ICON_REFRESH;
+	case LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP:
+		return LRG_ICON_ARROW_RIGHT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE:
+		return LRG_ICON_CLOCK;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
+		return LRG_ICON_EDIT;
 	default:
 		return LRG_ICON_FILE;
 	}
@@ -428,6 +447,14 @@ format_label (LrgEditorDocumentFormat format)
 		return "Post stack";
 	case LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH:
 		return "Shader graph";
+	case LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH:
+		return "Animation graph";
+	case LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP:
+		return "Bone map";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE:
+		return "Sequence";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D:
+		return "2D skeleton";
 	default:
 		return "Data";
 	}

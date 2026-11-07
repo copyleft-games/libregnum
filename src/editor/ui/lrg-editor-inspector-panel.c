@@ -72,6 +72,12 @@
 #include "../../ui/lrg-combo-box.h"
 #include "../../ui/lrg-custom-widget.h"
 #include "../../graphics/lrg-lod-group.h"
+#include "../../animation/lrg-anim-graph.h"
+#include "../../animation/lrg-animation-layer.h"
+#include "../../animation/lrg-animation-state-machine.h"
+#include "../../animation/lrg-ik-chain.h"
+#include "../../world3d/components/lrg-animator-component3d.h"
+#include "data/lrg-editor-anim-graph-editor.h"
 #include "lrg-editor-scene-renderer.h"
 #include "lrg-editor-gizmo-paint.h"
 #include "lrg-editor-viewport-panel.h"
@@ -1504,6 +1510,19 @@ struct _LrgEditorInspectorPanel
 	LrgNode              *lod_node;     /* weak: its node */
 	guint                 lod_n;        /* levels the force combo lists */
 	gboolean              lod_syncing;
+
+	/* Animator (0.9.0): nodes with an animator3d component */
+	LrgExpander          *anim_section;
+	LrgLabel             *anim_label;
+	LrgButton            *anim_open;
+	LrgWidget            *anim_list;     /* custom: parameters, layers, IK goals */
+	gchar                *anim_path;     /* absolute graph path shown */
+	LrgAnimGraph         *anim_file_graph; /* loaded from anim_path (authoring view) */
+	gchar                *anim_error;
+	GPtrArray            *anim_hits;     /* AnimHit* of the last paint */
+	gchar                *anim_drag;     /* parameter being dragged */
+	gfloat                anim_drag_x;
+	gfloat                anim_drag_value;
 
 	/* Live inspection */
 	LrgVBox              *live_box;
@@ -3426,6 +3445,523 @@ build_lod_section (LrgEditorInspectorPanel *self)
 	return section;
 }
 
+/* ==========================================================================
+ * Animator (0.9.0)
+ *
+ * For one inspected node with an `animator3d` component (or the live
+ * entity of such a node while playing): the graph file with an Open
+ * button, then a painted list of the graph's parameters (defaults from the
+ * file, live values while playing: click a bool to toggle it, click a
+ * trigger to fire it, drag a number sideways to change it), its layers
+ * (current state, a weight bar you click to set the weight while playing)
+ * and its IK goals (kind, chain, weight; the last solved target while
+ * playing). The viewport draws the goals' targets (IK Targets overlay).
+ * ========================================================================== */
+
+#define ANIM_ROW_H (22.0f)
+
+typedef enum
+{
+	ANIM_HIT_NONE,
+	ANIM_HIT_PARAM,
+	ANIM_HIT_LAYER
+} AnimHitKind;
+
+typedef struct
+{
+	AnimHitKind kind;
+	gchar      *name;
+	gfloat      x, y, w, h;
+} AnimHit;
+
+static void
+anim_hit_free (gpointer data)
+{
+	AnimHit *h = data;
+
+	g_free (h->name);
+	g_free (h);
+}
+
+/* The animator3d description of @node, or NULL. */
+static LrgComponentDesc *
+animator_desc (LrgNode *node)
+{
+	GPtrArray *comps = node != NULL ? lrg_node_get_components (node) : NULL;
+	guint      i;
+
+	for (i = 0; comps != NULL && i < comps->len; i++)
+	{
+		LrgComponentDesc *desc = g_ptr_array_index (comps, i);
+		const gchar      *type = lrg_component_desc_get_type_name (desc);
+		GType             t = type != NULL ? g_type_from_name (type) : G_TYPE_INVALID;
+
+		if (g_strcmp0 (type, "animator3d") == 0 ||
+		    (t != G_TYPE_INVALID && g_type_is_a (t, LRG_TYPE_ANIMATOR_COMPONENT3D)))
+			return desc;
+	}
+	return NULL;
+}
+
+static const gchar *
+desc_graph_path (LrgComponentDesc *desc)
+{
+	static const gchar * const keys[] = { "graph-path", "graph_path" };
+	guint                      i;
+
+	for (i = 0; desc != NULL && i < G_N_ELEMENTS (keys); i++)
+	{
+		const GValue *v = lrg_component_desc_get_value (desc, keys[i]);
+
+		if (v != NULL && G_VALUE_HOLDS_STRING (v))
+			return g_value_get_string (v);
+	}
+	return NULL;
+}
+
+/* The live animator of what is inspected, or NULL. */
+static LrgAnimatorComponent3D *
+live_animator (LrgEditorInspectorPanel *self)
+{
+	GObject *live = self->live_object;
+
+	if (live == NULL && self->nodes->len == 1 && self->play != NULL && lrg_editor_play_session_is_playing (self->play))
+		live = lrg_editor_play_session_get_live_for_node (self->play, g_ptr_array_index (self->nodes, 0));
+	if (live == NULL || !LRG_IS_ENTITY3D (live))
+		return NULL;
+	return (LrgAnimatorComponent3D *) lrg_entity3d_get_component (LRG_ENTITY3D (live), LRG_TYPE_ANIMATOR_COMPONENT3D);
+}
+
+/* The graph the section describes: the live one, else the file's. */
+static LrgAnimGraph *
+anim_section_graph (LrgEditorInspectorPanel *self)
+{
+	LrgAnimatorComponent3D *anim = live_animator (self);
+
+	if (anim != NULL && lrg_animator_component3d_get_graph (anim) != NULL)
+		return lrg_animator_component3d_get_graph (anim);
+	return self->anim_file_graph;
+}
+
+static const gchar *
+param_type_name (LrgAnimParameterType type)
+{
+	switch (type)
+	{
+	case LRG_ANIM_PARAMETER_FLOAT:   return "float";
+	case LRG_ANIM_PARAMETER_INT:     return "int";
+	case LRG_ANIM_PARAMETER_BOOL:    return "bool";
+	case LRG_ANIM_PARAMETER_TRIGGER: return "trigger";
+	default:                         return "?";
+	}
+}
+
+/* The rows as text (painted, and returned by the public getter). */
+static GPtrArray *
+anim_rows (LrgEditorInspectorPanel *self)
+{
+	GPtrArray              *rows = g_ptr_array_new_with_free_func (g_free);
+	LrgAnimGraph           *graph = anim_section_graph (self);
+	LrgAnimatorComponent3D *anim = live_animator (self);
+	guint                   i, n;
+
+	if (graph == NULL)
+	{
+		g_ptr_array_add (rows, g_strdup (self->anim_error != NULL ? self->anim_error : "no graph"));
+		return rows;
+	}
+	n = lrg_anim_graph_get_parameter_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		const gchar         *name = lrg_anim_graph_get_parameter_name (graph, i);
+		LrgAnimParameterType type = lrg_anim_graph_get_parameter_type (graph, name);
+		g_autofree gchar    *value = NULL;
+
+		if (type == LRG_ANIM_PARAMETER_FLOAT)
+			value = g_strdup_printf ("%.3g", (gdouble) lrg_anim_graph_get_float (graph, name));
+		else if (type == LRG_ANIM_PARAMETER_INT)
+			value = g_strdup_printf ("%d", lrg_anim_graph_get_int (graph, name));
+		else
+			value = g_strdup (lrg_anim_graph_get_bool (graph, name) ? "true" : "false");
+		g_ptr_array_add (rows, g_strdup_printf ("param %s %s %s", name, param_type_name (type), value));
+	}
+	n = lrg_anim_graph_get_layer_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		LrgAnimationLayer        *layer = lrg_anim_graph_get_layer (graph, i);
+		LrgAnimationStateMachine *m = lrg_animation_layer_get_state_machine (layer);
+		const gchar              *state = anim != NULL && m != NULL ? lrg_animation_state_machine_get_current_state_name (m)
+		                                  : m != NULL ? lrg_animation_state_machine_get_default_state (m) : NULL;
+
+		g_ptr_array_add (rows, g_strdup_printf ("layer %s %.2f %s", lrg_animation_layer_get_name (layer),
+		                                        (gdouble) lrg_animation_layer_get_weight (layer),
+		                                        state != NULL ? state : "-"));
+	}
+	n = lrg_anim_graph_get_ik_goal_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		LrgIKGoal        *goal = lrg_anim_graph_get_ik_goal (graph, i);
+		g_auto(GStrv)     bones = lrg_ik_goal_get_bones (goal);
+		g_autofree gchar *chain = bones != NULL ? g_strjoinv (">", bones) : g_strdup ("");
+		GEnumClass       *klass = g_type_class_ref (LRG_TYPE_IK_GOAL_KIND);
+		GEnumValue       *ev = g_enum_get_value (klass, (gint) lrg_ik_goal_get_kind (goal));
+		gfloat            t[3];
+		g_autofree gchar *target = (anim != NULL && lrg_ik_goal_get_last_target (goal, t))
+		                           ? g_strdup_printf (" @ %.2f %.2f %.2f", t[0], t[1], t[2]) : g_strdup ("");
+
+		g_ptr_array_add (rows, g_strdup_printf ("ik %s %s %s %.2f%s%s", lrg_ik_goal_get_name (goal),
+		                                        ev != NULL ? ev->value_nick : "?", chain,
+		                                        (gdouble) lrg_ik_goal_get_weight (goal),
+		                                        lrg_ik_goal_get_enabled (goal) ? "" : " off", target));
+		g_type_class_unref (klass);
+	}
+	return rows;
+}
+
+static void
+anim_list_measure (LrgCustomWidget     *widget,
+                   gfloat               avail_width,
+                   gfloat               avail_height,
+                   LrgCustomWidgetSize *size,
+                   gpointer             user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+	LrgAnimGraph            *graph = anim_section_graph (self);
+	guint                    rows = 1;
+
+	if (graph != NULL)
+		rows = 3 + lrg_anim_graph_get_parameter_count (graph) + lrg_anim_graph_get_layer_count (graph) +
+		       lrg_anim_graph_get_ik_goal_count (graph);
+	size->width = MAX (avail_width, 160.0f);
+	size->height = (gfloat) rows * ANIM_ROW_H + 4.0f;
+}
+
+static void
+anim_heading (LrgPaintList *list,
+              LrgTheme     *theme,
+              const gchar  *text,
+              gfloat        x,
+              gfloat       *y)
+{
+	gfloat fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+
+	lrg_paint_list_text (list, lrg_theme_get_ui_font (theme), text, x, *y + 4.0f, fs, 0.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
+	*y += ANIM_ROW_H;
+}
+
+static void
+anim_list_paint (LrgCustomWidget *widget,
+                 LrgPaintList    *list,
+                 gfloat           x,
+                 gfloat           y,
+                 gfloat           width,
+                 gfloat           height,
+                 gpointer         user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+	LrgTheme                *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont                 *font = lrg_theme_get_ui_font (theme);
+	gfloat                   fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE);
+	const GrlColor          *ink = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	const GrlColor          *muted = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	const GrlColor          *accent = lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT);
+	const GrlColor          *success = lrg_theme_get_color (theme, LRG_THEME_COLOR_SUCCESS);
+	LrgAnimGraph            *graph = anim_section_graph (self);
+	gboolean                 live = live_animator (self) != NULL;
+	gfloat                   cy = y + 2.0f;
+	gfloat                   vx = x + width * 0.45f;
+	GrlColor                 track;
+	guint                    i, n;
+
+	g_ptr_array_set_size (self->anim_hits, 0);
+	lrg_paint_color_with_alpha (lrg_theme_get_color (theme, LRG_THEME_COLOR_TRACK), 0.8f, &track);
+	if (graph == NULL)
+	{
+		lrg_paint_list_text (list, font, self->anim_error != NULL ? self->anim_error : "No graph: set graph-path",
+		                     x + 4.0f, cy + 3.0f, fs, 0.0f, muted);
+		return;
+	}
+
+	/* --- parameters --- */
+	anim_heading (list, theme, live ? "PARAMETERS  (live)" : "PARAMETERS  (defaults)", x + 4.0f, &cy);
+	n = lrg_anim_graph_get_parameter_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		const gchar          *name = lrg_anim_graph_get_parameter_name (graph, i);
+		LrgAnimParameterType  type = lrg_anim_graph_get_parameter_type (graph, name);
+		g_autofree gchar     *value = NULL;
+		AnimHit              *hit;
+
+		lrg_paint_list_text (list, font, name, x + 12.0f, cy + 3.0f, fs, 0.0f, ink);
+		if (type == LRG_ANIM_PARAMETER_BOOL || type == LRG_ANIM_PARAMETER_TRIGGER)
+		{
+			gboolean on = lrg_anim_graph_get_bool (graph, name);
+
+			/* a pill: filled when true (a raised trigger) */
+			lrg_paint_list_rect (list, vx, cy + 4.0f, 30.0f, ANIM_ROW_H - 8.0f, (ANIM_ROW_H - 8.0f) * 0.5f,
+			                     on ? success : &track);
+			lrg_paint_list_text (list, font, type == LRG_ANIM_PARAMETER_TRIGGER ? "fire" : (on ? "on" : "off"),
+			                     vx + 38.0f, cy + 3.0f, fs, 0.0f, muted);
+		}
+		else
+		{
+			value = type == LRG_ANIM_PARAMETER_FLOAT
+			        ? g_strdup_printf ("%.3f", (gdouble) lrg_anim_graph_get_float (graph, name))
+			        : g_strdup_printf ("%d", lrg_anim_graph_get_int (graph, name));
+			lrg_paint_list_rect (list, vx, cy + 2.0f, x + width - vx - 8.0f, ANIM_ROW_H - 4.0f, 4.0f, &track);
+			lrg_paint_list_text (list, font, value, vx + 6.0f, cy + 3.0f, fs, 0.0f, live ? accent : ink);
+		}
+		hit = g_new0 (AnimHit, 1);
+		hit->kind = ANIM_HIT_PARAM;
+		hit->name = g_strdup (name);
+		hit->x = vx;
+		hit->y = cy;
+		hit->w = x + width - vx;
+		hit->h = ANIM_ROW_H;
+		g_ptr_array_add (self->anim_hits, hit);
+		cy += ANIM_ROW_H;
+	}
+
+	/* --- layers --- */
+	anim_heading (list, theme, "LAYERS", x + 4.0f, &cy);
+	n = lrg_anim_graph_get_layer_count (graph);
+	for (i = 0; i < n; i++)
+	{
+		LrgAnimationLayer        *layer = lrg_anim_graph_get_layer (graph, i);
+		LrgAnimationStateMachine *m = lrg_animation_layer_get_state_machine (layer);
+		const gchar              *state = m != NULL ? (live ? lrg_animation_state_machine_get_current_state_name (m)
+		                                                    : lrg_animation_state_machine_get_default_state (m))
+		                                            : NULL;
+		g_autofree gchar         *label = g_strdup_printf ("%s  \xc2\xb7  %s", lrg_animation_layer_get_name (layer),
+		                                                   state != NULL ? state : "-");
+		gfloat                    bw = x + width - vx - 8.0f;
+		AnimHit                  *hit;
+
+		lrg_paint_list_text (list, font, label, x + 12.0f, cy + 3.0f, fs, 0.0f, ink);
+		lrg_paint_list_rect (list, vx, cy + 7.0f, bw, ANIM_ROW_H - 14.0f, 3.0f, &track);
+		lrg_paint_list_rect (list, vx, cy + 7.0f, bw * CLAMP (lrg_animation_layer_get_weight (layer), 0.0f, 1.0f),
+		                     ANIM_ROW_H - 14.0f, 3.0f, accent);
+		hit = g_new0 (AnimHit, 1);
+		hit->kind = ANIM_HIT_LAYER;
+		hit->name = g_strdup (lrg_animation_layer_get_name (layer));
+		hit->x = vx;
+		hit->y = cy;
+		hit->w = bw;
+		hit->h = ANIM_ROW_H;
+		g_ptr_array_add (self->anim_hits, hit);
+		cy += ANIM_ROW_H;
+	}
+
+	/* --- IK goals --- */
+	anim_heading (list, theme, "IK GOALS", x + 4.0f, &cy);
+	n = lrg_anim_graph_get_ik_goal_count (graph);
+	if (n == 0)
+		lrg_paint_list_text (list, font, "none", x + 12.0f, cy + 3.0f, fs, 0.0f, muted);
+	for (i = 0; i < n; i++)
+	{
+		LrgIKGoal        *goal = lrg_anim_graph_get_ik_goal (graph, i);
+		g_auto(GStrv)     bones = lrg_ik_goal_get_bones (goal);
+		g_autofree gchar *chain = bones != NULL ? g_strjoinv (" \xe2\x80\xba ", bones) : g_strdup ("");
+		g_autofree gchar *label = g_strdup_printf ("%s  %s", lrg_ik_goal_get_name (goal), chain);
+		gfloat            t[3];
+		g_autofree gchar *right = (live && lrg_ik_goal_get_last_target (goal, t))
+		                          ? g_strdup_printf ("\xe2\x97\x8e %.2f %.2f %.2f", t[0], t[1], t[2])
+		                          : g_strdup_printf ("w %.2f", (gdouble) lrg_ik_goal_get_weight (goal));
+
+		lrg_paint_list_push_clip (list, x, cy, vx - x - 4.0f, ANIM_ROW_H);
+		lrg_paint_list_text (list, font, label, x + 12.0f, cy + 3.0f, fs, 0.0f,
+		                     lrg_ik_goal_get_enabled (goal) ? ink : muted);
+		lrg_paint_list_pop_clip (list);
+		lrg_paint_list_text (list, font, right, vx, cy + 3.0f, fs, 0.0f, live ? accent : muted);
+		cy += ANIM_ROW_H;
+	}
+}
+
+/* Keeps redrawing while the play world runs (live values). */
+static gboolean
+anim_list_step (LrgCustomWidget *widget,
+                gfloat           delta_time,
+                gpointer         user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+
+	return lrg_widget_get_visible (LRG_WIDGET (self->anim_section)) && live_animator (self) != NULL;
+}
+
+static AnimHit *
+anim_hit_at (LrgEditorInspectorPanel *self,
+             gfloat                   x,
+             gfloat                   y)
+{
+	guint i;
+
+	for (i = 0; i < self->anim_hits->len; i++)
+	{
+		AnimHit *h = g_ptr_array_index (self->anim_hits, i);
+
+		if (x >= h->x && x < h->x + h->w && y >= h->y && y < h->y + h->h)
+			return h;
+	}
+	return NULL;
+}
+
+/* Live edits: bool toggle, trigger fire, number drag, layer weight. */
+static gboolean
+anim_list_event (LrgCustomWidget  *widget,
+                 const LrgUIEvent *event,
+                 gpointer          user_data)
+{
+	LrgEditorInspectorPanel *self = user_data;
+	LrgAnimatorComponent3D  *anim = live_animator (self);
+	LrgAnimGraph            *graph = anim != NULL ? lrg_animator_component3d_get_graph (anim) : NULL;
+	LrgUIEventType           type = lrg_ui_event_get_event_type (event);
+	gfloat                   x = lrg_ui_event_get_x (event);
+	gfloat                   y = lrg_ui_event_get_y (event);
+	AnimHit                 *hit;
+
+	if (graph == NULL)
+		return FALSE;
+	if (type == LRG_UI_EVENT_MOUSE_BUTTON_UP)
+	{
+		g_clear_pointer (&self->anim_drag, g_free);
+		return FALSE;
+	}
+	if (type == LRG_UI_EVENT_MOUSE_MOVE && self->anim_drag != NULL)
+	{
+		/* numbers follow the pointer: 0.01 per canvas unit */
+		gfloat d = (x - self->anim_drag_x) * 0.01f;
+
+		if (lrg_anim_graph_get_parameter_type (graph, self->anim_drag) == LRG_ANIM_PARAMETER_INT)
+			lrg_animator_component3d_set_int (anim, self->anim_drag, (gint) rint (self->anim_drag_value + d * 10.0f));
+		else
+			lrg_animator_component3d_set_float (anim, self->anim_drag, self->anim_drag_value + d);
+		return TRUE;
+	}
+	if (type != LRG_UI_EVENT_MOUSE_BUTTON_DOWN || (hit = anim_hit_at (self, x, y)) == NULL)
+		return FALSE;
+	if (hit->kind == ANIM_HIT_LAYER)
+	{
+		lrg_animator_component3d_set_layer_weight (anim, hit->name, CLAMP ((x - hit->x) / MAX (hit->w, 1.0f), 0.0f, 1.0f));
+		return TRUE;
+	}
+	switch (lrg_anim_graph_get_parameter_type (graph, hit->name))
+	{
+	case LRG_ANIM_PARAMETER_BOOL:
+		lrg_animator_component3d_set_bool (anim, hit->name, !lrg_anim_graph_get_bool (graph, hit->name));
+		break;
+	case LRG_ANIM_PARAMETER_TRIGGER:
+		lrg_animator_component3d_set_trigger (anim, hit->name);
+		break;
+	case LRG_ANIM_PARAMETER_INT:
+		self->anim_drag = g_strdup (hit->name);
+		self->anim_drag_x = x;
+		self->anim_drag_value = (gfloat) lrg_anim_graph_get_int (graph, hit->name);
+		break;
+	default:
+		self->anim_drag = g_strdup (hit->name);
+		self->anim_drag_x = x;
+		self->anim_drag_value = lrg_anim_graph_get_float (graph, hit->name);
+		break;
+	}
+	return TRUE;
+}
+
+static void
+on_anim_open_clicked (LrgButton *button,
+                      gpointer   user_data)
+{
+	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (user_data);
+	g_autoptr(GError)        error = NULL;
+
+	if (self->app == NULL || self->anim_path == NULL)
+		return;
+	if (lrg_editor_anim_graph_editor_open (self->app, self->anim_path, &error) == NULL)
+		status (self, error->message);
+}
+
+/* Shows / hides and refills the animator section. */
+static void
+update_animator (LrgEditorInspectorPanel *self)
+{
+	LrgNode          *node = (self->nodes->len == 1) ? g_ptr_array_index (self->nodes, 0) : NULL;
+	LrgComponentDesc *desc = animator_desc (node);
+	const gchar      *rel = desc_graph_path (desc);
+	g_autofree gchar *abs = NULL;
+	gboolean          show;
+
+	if (rel != NULL && self->app != NULL)
+		abs = g_path_is_absolute (rel) ? g_strdup (rel) : editor_app_project_path (self->app, rel);
+	show = desc != NULL || (self->live_object != NULL && live_animator (self) != NULL);
+	lrg_widget_set_visible (LRG_WIDGET (self->anim_section), show);
+	if (!show)
+		return;
+	if (g_strcmp0 (abs, self->anim_path) != 0)
+	{
+		g_autoptr(GError) error = NULL;
+
+		g_free (self->anim_path);
+		self->anim_path = g_steal_pointer (&abs);
+		g_clear_object (&self->anim_file_graph);
+		g_clear_pointer (&self->anim_error, g_free);
+		if (self->anim_path != NULL)
+		{
+			self->anim_file_graph = lrg_anim_graph_new_from_file (self->anim_path, &error);
+			if (self->anim_file_graph == NULL)
+				self->anim_error = g_strdup (error->message);
+		}
+	}
+	{
+		g_autofree gchar *text = g_strdup_printf ("Graph  %s", rel != NULL ? rel : "(none: set graph-path)");
+
+		lrg_label_set_text (self->anim_label, text);
+	}
+	lrg_widget_set_enabled (LRG_WIDGET (self->anim_open), self->anim_path != NULL);
+	lrg_widget_queue_layout (self->anim_list);
+}
+
+static LrgExpander *
+build_anim_section (LrgEditorInspectorPanel *self)
+{
+	static const LrgCustomWidgetFuncs funcs = { anim_list_measure, anim_list_paint, anim_list_step, anim_list_event,
+	                                            { NULL } };
+	LrgVBox                          *box = lrg_vbox_new ();
+	LrgHBox                          *row = lrg_hbox_new ();
+	LrgExpander                      *section;
+
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	lrg_container_set_spacing (LRG_CONTAINER (row), 6.0f);
+	self->anim_label = add_owned (row, lrg_label_new (""));
+	lrg_widget_set_name (LRG_WIDGET (self->anim_label), "inspector-animator-graph");
+	lrg_widget_set_fill_weight (LRG_WIDGET (self->anim_label), 1.0f);
+	lrg_widget_set_valign (LRG_WIDGET (self->anim_label), LRG_ALIGN_CENTER);
+	self->anim_open = add_owned (row, make_button ("Open Graph", "inspector-animator-open", NULL,
+	                                               G_CALLBACK (on_anim_open_clicked), self));
+	add_owned (box, row);
+	self->anim_list = LRG_WIDGET (lrg_custom_widget_new ());
+	lrg_widget_set_name (self->anim_list, "inspector-animator-list");
+	lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->anim_list), &funcs, self, NULL);
+	add_owned (box, self->anim_list);
+	section = make_section ("inspector-section-animator", "Animator", LRG_WIDGET (box));
+	g_object_unref (box);
+	lrg_widget_set_visible (LRG_WIDGET (section), FALSE);
+	self->anim_hits = g_ptr_array_new_with_free_func (anim_hit_free);
+	return section;
+}
+
+GStrv
+lrg_editor_inspector_panel_get_animator_rows (LrgEditorInspectorPanel *self)
+{
+	g_autoptr(GPtrArray) rows = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self), NULL);
+	if (!lrg_widget_get_visible (LRG_WIDGET (self->anim_section)))
+		return g_new0 (gchar *, 1);
+	rows = anim_rows (self);
+	g_ptr_array_add (rows, NULL);
+	return (GStrv) g_ptr_array_steal (rows, NULL);
+}
+
 /*
  * refresh_all:
  *
@@ -3485,6 +4021,7 @@ refresh_all (LrgEditorInspectorPanel *self)
 		update_script_rows (self);
 	self->prefab_rows = prefab;
 	update_lod (self);
+	update_animator (self);
 
 	/* 3. Chrome */
 	update_prefab_bar (self, live != NULL);
@@ -3809,6 +4346,9 @@ lrg_editor_inspector_panel_dispose (GObject *object)
 	LrgEditorInspectorPanel *self = LRG_EDITOR_INSPECTOR_PANEL (object);
 	guint                    i;
 
+	if (self->anim_list != NULL)
+		lrg_custom_widget_set_funcs (LRG_CUSTOM_WIDGET (self->anim_list), NULL, NULL, NULL);
+
 	/* Grids hold node sources; drop them before the pools go */
 	for (i = 0; i < N_FIXED; i++)
 		if (self->grids[i] != NULL)
@@ -3863,6 +4403,11 @@ lrg_editor_inspector_panel_finalize (GObject *object)
 	g_strfreev (self->live_keys);
 	g_free (self->script_sig);
 	g_free (self->structure);
+	g_clear_object (&self->anim_file_graph);
+	g_clear_pointer (&self->anim_hits, g_ptr_array_unref);
+	g_free (self->anim_path);
+	g_free (self->anim_error);
+	g_free (self->anim_drag);
 	G_OBJECT_CLASS (lrg_editor_inspector_panel_parent_class)->finalize (object);
 }
 
@@ -4016,6 +4561,9 @@ build_body (LrgEditorInspectorPanel *self)
 
 	/* LOD preview, shown for mesh assets with levels */
 	self->lod_section = add_owned (self->body, build_lod_section (self));
+
+	/* Animator: parameters, layers and IK goals of an animator3d node */
+	self->anim_section = add_owned (self->body, build_anim_section (self));
 
 	/* Components, then the Add Component button */
 	self->comp_box = add_owned (self->body, lrg_vbox_new ());

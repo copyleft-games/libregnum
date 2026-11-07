@@ -186,4 +186,19 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_inspector_panel_attach_script (LrgEditorInspectorPanel *self,
                                                    const gchar             *path);
 
+/**
+ * lrg_editor_inspector_panel_get_animator_rows:
+ * @self: an #LrgEditorInspectorPanel
+ *
+ * The rows of the Animator section (shown for one node with an
+ * `animator3d` component, or its live entity while playing), as text:
+ * `param <name> <type> <value>` (defaults from the graph file, live values
+ * while playing), `layer <name> <weight> <state>` and
+ * `ik <name> <kind> <bone>...<bone> <weight>[ off][ @ x y z]`. Since 0.9.0.
+ *
+ * Returns: (transfer full): the rows; empty when the section is hidden
+ */
+LRG_AVAILABLE_IN_ALL
+GStrv lrg_editor_inspector_panel_get_animator_rows (LrgEditorInspectorPanel *self);
+
 G_END_DECLS

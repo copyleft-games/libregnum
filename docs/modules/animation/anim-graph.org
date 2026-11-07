@@ -401,12 +401,14 @@ Measured with =tests/test-anim-graph -m perf -p /anim-graph/perf= pinned to one 
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The 0.9.0 editor wave adds (next milestone wave; the engine hooks listed here exist now):
-- a *state machine graph* panel per layer: states as nodes (positions kept as unknown keys such as =editor_pos=), transitions as arrows; live highlighting through =LrgAnimationStateMachine::transition-started=, =lrg_animation_state_machine_get_active_transition()= and =lrg_animation_state_machine_get_transition_progress()=; re-wiring with =lrg_animation_transition_set_source()= / =set_target()=;
-- a *blend space* editor: children plotted at their thresholds/positions, the weights previewed with =lrg_blend_tree_compute_weights()= / =lrg_blend_tree_get_child_weight()=;
-- a *parameters* panel bound to =lrg_anim_graph_set_*()=;
-- *IK gizmos* drawn from =lrg_ik_goal_get_last_target()= and the goals' bones;
-- clip slots with missing clips flagged from =lrg_anim_graph_get_missing_clips()=, validation from =lrg_anim_graph_validate()= / =lrg_anim_graph_validate_skeleton()=.
+The editor's animation graph editor ([[file:../../editor/animation-editor.org::#anim-graph-editor][Animation tools: graph editor]]) opens =.ranim= files:
+- one =LrgNodeGraph= canvas per machine (layer chips and breadcrumbs into nested machines); states are cards (positions kept as the unknown keys =editor_pos= / =editor_any_pos=), transitions are wires, any-state transitions leave an "Any State" card; re-wiring and deleting are document edits, one undo step each;
+- an inspector for states, blend trees (with a blend-space view built on =lrg_blend_tree_compute_weights()= / =lrg_blend_tree_get_child_weight()=, draggable to set the parameters) and transitions with a conditions editor;
+- a parameters column with live values (=lrg_anim_graph_set_*()= on the preview graph) and the clip slots, missing ones flagged from =lrg_anim_graph_get_missing_clips()=;
+- a live preview of a skinned model posed by =lrg_anim_graph_update()= / =lrg_anim_graph_evaluate()=, with the active state and the running transition (=lrg_animation_state_machine_get_active_transition()=, =lrg_animation_state_machine_get_transition_progress()=) highlighted;
+- validation from the loader, =lrg_anim_graph_get_missing_clips()= and =lrg_anim_graph_validate_skeleton()= against the preview model;
+- the inspector's Animator section and the viewport's IK Targets overlay (=lrg_ik_goal_get_last_target()=) for animators in the play world;
+- the =anim.*= IPC methods ([[file:../../editor/ipc-protocol.org::#ipc-animation][IPC: animation methods]]).
 
 ** See also
 :PROPERTIES:

@@ -300,4 +300,31 @@ gchar * lrg_editor_assets_panel_create_variant (LrgEditorAssetsPanel  *self,
                                                 const gchar           *path,
                                                 GError               **error);
 
+/**
+ * lrg_editor_assets_panel_preview_clips:
+ * @self: an #LrgEditorAssetsPanel
+ * @path: a glTF model (`.glb` / `.gltf`), absolute or project-relative
+ * @clip: (nullable): the animation to play first, %NULL for the first one
+ *
+ * Opens the Animations dialog of @path (the entry menu's "Preview
+ * Animations..."): the model on a turntable playing a clip, a clip list,
+ * a scrub bar, a track summary and one slider per morph target.
+ *
+ * Returns: %TRUE if the dialog opened (the model loaded)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_assets_panel_preview_clips (LrgEditorAssetsPanel *self,
+                                                const gchar          *path,
+                                                const gchar          *clip);
+
+/**
+ * lrg_editor_assets_panel_get_clip_preview_model:
+ * @self: an #LrgEditorAssetsPanel
+ *
+ * Returns: (nullable): the absolute path of the model the open Animations
+ *   dialog shows, %NULL when it is closed
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_assets_panel_get_clip_preview_model (LrgEditorAssetsPanel *self);
+
 G_END_DECLS

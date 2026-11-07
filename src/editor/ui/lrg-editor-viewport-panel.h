@@ -229,4 +229,64 @@ guint32 lrg_editor_viewport_panel_get_layer_mask (LrgEditorViewportPanel *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_viewport_panel_queue_render (LrgEditorViewportPanel *self);
 
+/**
+ * lrg_editor_viewport_panel_set_show_bones:
+ * @self: an #LrgEditorViewportPanel
+ * @show: whether to draw skeletons
+ *
+ * The "Bones" overlay (overlays menu, Animation section): the selected
+ * nodes' skeletons as joint dots and bone lines, animated while playing
+ * (the entity's animator or skinned model), else the bind pose of the
+ * node's glTF model. Off by default; a view setting, not saved. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_show_bones (LrgEditorViewportPanel *self,
+                                               gboolean                show);
+
+/**
+ * lrg_editor_viewport_panel_get_show_bones:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: whether the Bones overlay is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_viewport_panel_get_show_bones (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_set_show_ik_targets:
+ * @self: an #LrgEditorViewportPanel
+ * @show: whether to draw IK targets
+ *
+ * The "IK Targets" overlay: while playing, every enabled IK goal of a
+ * selected node's #LrgAnimatorComponent3D draws its last solved target
+ * (lrg_ik_goal_get_last_target()) as a ring labelled with the goal name,
+ * with a line from the effector bone. On by default. Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_set_show_ik_targets (LrgEditorViewportPanel *self,
+                                                    gboolean                show);
+
+/**
+ * lrg_editor_viewport_panel_get_show_ik_targets:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: whether the IK Targets overlay is on
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_viewport_panel_get_show_ik_targets (LrgEditorViewportPanel *self);
+
+/**
+ * lrg_editor_viewport_panel_get_anim_overlay_counts:
+ * @self: an #LrgEditorViewportPanel
+ * @n_bones: (out) (optional): joints the last overlay pass drew
+ * @n_targets: (out) (optional): IK targets the last overlay pass drew
+ *
+ * What the animation overlays drew in the last paint (tests, tooling).
+ * Since 0.9.0.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_viewport_panel_get_anim_overlay_counts (LrgEditorViewportPanel *self,
+                                                        guint                  *n_bones,
+                                                        guint                  *n_targets);
+
 G_END_DECLS

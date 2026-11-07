@@ -264,10 +264,9 @@ lrg_skinned_mesh_draw (face, &head_matrix);
 :PROPERTIES:
 :CUSTOM_ID: using-it-from-the-editor
 :END:
-The editor tools for animation arrive in the next 0.9.0 wave; they are built on this API:
-- *Clip preview in the asset browser* - selecting a =.glb= lists =lrg_gltf_animation_get_clip_name()= entries; a preview viewport plays a clip on =create_skinned_mesh()= with a scrub bar (=lrg_animation_clip_sample_track()= at the scrubbed time) and shows each track's channels (=lrg_animation_clip_get_track_channel()=: interpolation, key times for the curve view).
-- *Bone map panel* - two skeleton trees (=create_skeleton()= of two files) with =LrgBoneMap= pairs, auto-map (=lrg_bone_map_auto_fill()=) and save to =.rbonemap=; see [[file:retargeter.org#using-it-from-the-editor][Retargeting]].
-- *Morph target sliders* - the inspector of a skinned model lists =lrg_morph_targets_get_target_name()= with a weight slider each (=lrg_skinned_mesh_set_morph_weight()=).
+- *Clip preview in the Assets panel* - "Preview Animations..." on a =.glb= / =.gltf= opens a dialog with the model (=lrg_gltf_animation_create_skinned_mesh()=) on a turntable playing a clip (=lrg_anim_pose_sample_clip()=), the clip list, a scrub bar, a track summary and one slider per morph target (=lrg_morph_targets_get_target_name()=, =lrg_skinned_mesh_set_morph_weight()=); the =clip.*= IPC methods read clips, tracks, channels and events without UI. See [[file:../../editor/animation-editor.org::#assets-animation][Animation tools: clip preview]].
+- *Bone map editor* - two skeletons (=create_skeleton()= of two files) with =LrgBoneMap= pairs, auto map and a live retarget preview; see [[file:retargeter.org#using-it-from-the-editor][Retargeting]].
+- *New Animation Graph from Model* - a =.ranim= with one clip slot and one state per animation of the file.
 
 ** See also
 :PROPERTIES:

@@ -45,6 +45,15 @@
  * active camera; only the panel that took the press ("nav owner") reacts
  * to its gesture signals, so a split layout picks and box-selects once.
  *
+ * Animation overlays (0.9.0): with "Bones" on (the overlays menu or
+ * lrg_editor_viewport_panel_set_show_bones()) the selected nodes' skeletons
+ * are drawn as joint dots and bone lines: the live, animated skeleton of
+ * the play world's entity while playing (its LrgAnimatorComponent3D's or
+ * LrgSkinnedModelComponent's), else the bind pose of the node's glTF
+ * model. With "IK Targets" on (the default) every IK goal of a selected
+ * animator draws its last solved target as a ring with its name and a
+ * line from the effector bone. Both are painted in the 2D overlay pass.
+ *
  * Everything works headless: LrgViewport maps pointer positions with the
  * size its texture is heading for, so tests drive the viewport through
  * lrg_canvas_process_input() without a GL context.
@@ -67,6 +76,12 @@
 #include "../../graphics/lrg-camera.h"
 #include "data/lrg-editor-material-editor.h"
 #include "data/lrg-editor-post-stack-editor.h"
+#include "../../animation/lrg-gltf-animation.h"
+#include "../../animation/lrg-anim-graph.h"
+#include "../../animation/lrg-bone.h"
+#include "../../world3d/lrg-entity3d.h"
+#include "../../world3d/components/lrg-animator-component3d.h"
+#include "../../world3d/components/lrg-skinned-model-component.h"
 #include <math.h>
 #include <string.h>
 
@@ -219,6 +234,13 @@ struct _LrgEditorViewportPanel
 
 	/* Active-viewport outline */
 	LrgSpring            active_spring;
+
+	/* Animation overlays (0.9.0) */
+	gboolean             show_bones;
+	gboolean             show_ik;
+	GHashTable          *rest_skeletons; /* abs model path -> LrgSkeleton (bind pose) */
+	guint                anim_bones;     /* painted by the last overlay pass */
+	guint                anim_targets;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorViewportPanel, lrg_editor_viewport_panel, LRG_TYPE_CONTAINER)
@@ -408,6 +430,233 @@ content_mapping (LrgEditorViewportPanel *self,
 	return TRUE;
 }
 
+/* ==========================================================================
+ * Animation overlays: bones and IK targets
+ * ========================================================================== */
+
+/* m (column-major) * p */
+static void
+xform_point (const gfloat *m,
+             const gfloat *p,
+             gfloat       *out)
+{
+	guint r;
+
+	for (r = 0; r < 3; r++)
+		out[r] = m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r];
+}
+
+/* Projects a world point to canvas coordinates. */
+static gboolean
+to_canvas (const LrgEditorView *view,
+           const gfloat        *world,
+           gfloat               ox,
+           gfloat               oy,
+           gfloat               scale,
+           gfloat              *cx,
+           gfloat              *cy)
+{
+	gfloat u, v;
+
+	if (!lrg_editor_view_project (view, world, &u, &v, NULL))
+		return FALSE;
+	*cx = ox + u * scale;
+	*cy = oy + v * scale;
+	return TRUE;
+}
+
+static void
+unref_nullable (gpointer object)
+{
+	if (object != NULL)
+		g_object_unref (object);
+}
+
+/* The bind-pose skeleton of a glTF model, loaded once per path. */
+static LrgSkeleton *
+rest_skeleton (LrgEditorViewportPanel *self,
+               const gchar            *asset)
+{
+	g_autofree gchar *abs = NULL;
+	LrgSkeleton      *skeleton;
+
+	if (asset == NULL || self->app == NULL ||
+	    (!g_str_has_suffix (asset, ".glb") && !g_str_has_suffix (asset, ".gltf")))
+		return NULL;
+	abs = editor_app_project_path (self->app, asset);
+	if (self->rest_skeletons == NULL)
+		self->rest_skeletons = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, unref_nullable);
+	if (g_hash_table_contains (self->rest_skeletons, abs))
+		return g_hash_table_lookup (self->rest_skeletons, abs);
+	skeleton = g_file_test (abs, G_FILE_TEST_IS_REGULAR) ? lrg_gltf_load_skeleton (abs, 0, NULL) : NULL;
+	if (skeleton != NULL)
+		lrg_skeleton_calculate_world_poses (skeleton);
+	/* a failed load is remembered too (NULL value): no retry per frame */
+	g_hash_table_insert (self->rest_skeletons, g_strdup (abs), skeleton);
+	return skeleton;
+}
+
+/* Joint dots and bone lines of @skeleton placed by @matrix. */
+static void
+paint_skeleton (LrgEditorViewportPanel *self,
+                LrgPaintList           *list,
+                LrgTheme               *theme,
+                const LrgEditorView    *view,
+                LrgSkeleton            *skeleton,
+                const gfloat           *matrix,
+                gfloat                  ox,
+                gfloat                  oy,
+                gfloat                  scale)
+{
+	const GrlColor *line = lrg_theme_get_color (theme, LRG_THEME_COLOR_WARNING);
+	const GrlColor *dot = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	guint           n = lrg_skeleton_get_bone_count (skeleton);
+	guint           i;
+
+	for (i = 0; i < n; i++)
+	{
+		LrgBone           *bone = lrg_skeleton_get_bone (skeleton, (gint) i);
+		const LrgBonePose *w = lrg_bone_get_world_pose (bone);
+		gint               parent = lrg_bone_get_parent_index (bone);
+		gfloat             local[3] = { w->position_x, w->position_y, w->position_z };
+		gfloat             world[3];
+		gfloat             x, y;
+
+		xform_point (matrix, local, world);
+		if (!to_canvas (view, world, ox, oy, scale, &x, &y))
+			continue;
+		if (parent >= 0 && (guint) parent < n)
+		{
+			const LrgBonePose *pw = lrg_bone_get_world_pose (lrg_skeleton_get_bone (skeleton, parent));
+			gfloat             pl[3] = { pw->position_x, pw->position_y, pw->position_z };
+			gfloat             pwld[3];
+			gfloat             px, py;
+
+			xform_point (matrix, pl, pwld);
+			if (to_canvas (view, pwld, ox, oy, scale, &px, &py))
+				lrg_paint_list_line (list, px, py, x, y, 2.0f, line);
+		}
+		lrg_paint_list_circle (list, x, y, 3.0f, dot);
+		self->anim_bones++;
+	}
+}
+
+/* The IK goals of a running animator: target rings, effector lines. */
+static void
+paint_ik_targets (LrgEditorViewportPanel *self,
+                  LrgPaintList           *list,
+                  LrgTheme               *theme,
+                  const LrgEditorView    *view,
+                  LrgAnimatorComponent3D *animator,
+                  const gfloat           *matrix,
+                  gfloat                  ox,
+                  gfloat                  oy,
+                  gfloat                  scale)
+{
+	LrgAnimGraph   *graph = lrg_animator_component3d_get_graph (animator);
+	LrgSkeleton    *skeleton = lrg_animator_component3d_get_skeleton (animator);
+	const GrlColor *ring = lrg_theme_get_color (theme, LRG_THEME_COLOR_LINK);
+	guint           i, n = graph != NULL ? lrg_anim_graph_get_ik_goal_count (graph) : 0;
+
+	for (i = 0; i < n; i++)
+	{
+		LrgIKGoal *goal = lrg_anim_graph_get_ik_goal (graph, i);
+		gfloat     target[3];
+		gfloat     x, y;
+
+		if (!lrg_ik_goal_get_enabled (goal) ||
+		    (!lrg_ik_goal_get_last_target (goal, target) && !lrg_ik_goal_get_target (goal, target)))
+			continue;
+		if (!to_canvas (view, target, ox, oy, scale, &x, &y))
+			continue;
+		/* the effector (or the chain's last bone) reaching for it */
+		if (skeleton != NULL)
+		{
+			g_auto(GStrv)  bones = lrg_ik_goal_get_bones (goal);
+			const gchar   *eff = lrg_ik_goal_get_effector (goal);
+			LrgBone       *bone = NULL;
+
+			if (eff == NULL && bones != NULL && bones[0] != NULL)
+				eff = bones[g_strv_length (bones) - 1];
+			bone = eff != NULL ? lrg_skeleton_get_bone_by_name (skeleton, eff) : NULL;
+			if (bone != NULL)
+			{
+				const LrgBonePose *w = lrg_bone_get_world_pose (bone);
+				gfloat             local[3] = { w->position_x, w->position_y, w->position_z };
+				gfloat             world[3];
+				gfloat             ex, ey;
+
+				xform_point (matrix, local, world);
+				if (to_canvas (view, world, ox, oy, scale, &ex, &ey))
+					lrg_paint_list_line (list, ex, ey, x, y, 1.5f, ring);
+			}
+		}
+		lrg_paint_list_border (list, x - 8.0f, y - 8.0f, 16.0f, 16.0f, 8.0f, 2.0f, ring);
+		lrg_paint_list_circle (list, x, y, 2.5f, ring);
+		lrg_editor_gizmo_paint_chip (list, theme, lrg_ik_goal_get_name (goal), x + 12.0f, y - 10.0f, FALSE, ring);
+		self->anim_targets++;
+	}
+}
+
+static void
+paint_anim_overlay (LrgEditorViewportPanel *self,
+                    LrgPaintList           *list,
+                    LrgTheme               *theme,
+                    const LrgEditorView    *view,
+                    gfloat                  ox,
+                    gfloat                  oy,
+                    gfloat                  scale)
+{
+	LrgEditorApp       *app = self->app;
+	LrgEditorSelection *sel;
+	GPtrArray          *nodes;
+	gboolean            playing;
+	guint               k;
+
+	self->anim_bones = 0;
+	self->anim_targets = 0;
+	if ((!self->show_bones && !self->show_ik) || app == NULL ||
+	    (sel = lrg_editor_get_selection (app->editor)) == NULL)
+		return;
+	playing = lrg_editor_play_session_is_playing (app->play);
+	nodes = lrg_editor_selection_get_nodes (sel);
+	for (k = 0; nodes != NULL && k < nodes->len; k++)
+	{
+		LrgNode       *node = g_ptr_array_index (nodes, k);
+		GObject       *live = playing ? lrg_editor_play_session_get_live_for_node (app->play, node) : NULL;
+		LrgNodeVisual *visual = lrg_node_get_visual (node);
+
+		if (live != NULL && LRG_IS_ENTITY3D (live))
+		{
+			LrgEntity3D            *entity = LRG_ENTITY3D (live);
+			LrgComponent           *ac = lrg_entity3d_get_component (entity, LRG_TYPE_ANIMATOR_COMPONENT3D);
+			LrgComponent           *sc = lrg_entity3d_get_component (entity, LRG_TYPE_SKINNED_MODEL_COMPONENT);
+			LrgSkeleton            *skeleton = NULL;
+			const gfloat           *m = lrg_entity3d_peek_world_matrix (entity);
+
+			if (ac != NULL)
+				skeleton = lrg_animator_component3d_get_skeleton (LRG_ANIMATOR_COMPONENT3D (ac));
+			if (skeleton == NULL && sc != NULL)
+				skeleton = lrg_skinned_model_component_get_skeleton (LRG_SKINNED_MODEL_COMPONENT (sc));
+			if (self->show_bones && skeleton != NULL)
+				paint_skeleton (self, list, theme, view, skeleton, m, ox, oy, scale);
+			if (self->show_ik && ac != NULL)
+				paint_ik_targets (self, list, theme, view, LRG_ANIMATOR_COMPONENT3D (ac), m, ox, oy, scale);
+		}
+		else if (self->show_bones && visual != NULL &&
+		         lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_MESH_ASSET)
+		{
+			LrgSkeleton *skeleton = rest_skeleton (self, lrg_node_visual_get_asset (visual));
+			gfloat       m[16];
+
+			if (skeleton == NULL)
+				continue;
+			lrg_editor_node_get_world_matrix (node, m);
+			paint_skeleton (self, list, theme, view, skeleton, m, ox, oy, scale);
+		}
+	}
+}
+
 static void
 overlay_paint (LrgCustomWidget *widget,
                LrgPaintList    *list,
@@ -478,6 +727,9 @@ overlay_paint (LrgCustomWidget *widget,
 				lrg_editor_gizmo_paint_lod_bounds (list, theme, &view, primary, lod, ox, oy, scale);
 		}
 	}
+
+	/* Skeletons and IK targets of the selected animated nodes */
+	paint_anim_overlay (self, list, theme, &view, ox, oy, scale);
 
 	/* The transform gizmo (every viewport shows it, through its camera) */
 	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) && !lrg_editor_view_state_get_tile_mode (app->view))
@@ -1635,6 +1887,20 @@ on_overlay_action (GSimpleAction *action,
 	lrg_editor_view_state_toggle_overlay (self->app->view, (gint) self->index, flag);
 }
 
+/* vp.anim-bones / vp.anim-ik */
+static void
+on_anim_overlay_action (GSimpleAction *action,
+                        GVariant      *parameter,
+                        gpointer       user_data)
+{
+	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (user_data);
+
+	if (g_strcmp0 (g_action_get_name (G_ACTION (action)), "anim-bones") == 0)
+		lrg_editor_viewport_panel_set_show_bones (self, !self->show_bones);
+	else
+		lrg_editor_viewport_panel_set_show_ik_targets (self, !self->show_ik);
+}
+
 static void
 open_overlay_menu (LrgEditorViewportPanel *self)
 {
@@ -1654,6 +1920,13 @@ open_overlay_menu (LrgEditorViewportPanel *self)
 		}
 		g_menu_append_section (menu, "Overlays", G_MENU_MODEL (view));
 		g_menu_append_section (menu, "Rendering", G_MENU_MODEL (render));
+		{
+			g_autoptr(GMenu) anim = g_menu_new ();
+
+			g_menu_append (anim, "Bones", "vp.anim-bones");
+			g_menu_append (anim, "IK Targets", "vp.anim-ik");
+			g_menu_append_section (menu, "Animation", G_MENU_MODEL (anim));
+		}
 		self->overlay_menu = g_object_ref_sink (lrg_menu_new_from_model (G_MENU_MODEL (menu)));
 	}
 	lrg_menu_popup_at_widget (self->overlay_menu, LRG_WIDGET (self->overlay_button), LRG_POPUP_PLACEMENT_BELOW);
@@ -2007,6 +2280,16 @@ build_header (LrgEditorViewportPanel *self)
 		g_signal_connect (none, "activate", G_CALLBACK (on_layers_none), self);
 		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (all));
 		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (none));
+	}
+	/* Animation overlays: per panel, not saved */
+	{
+		g_autoptr(GSimpleAction) bones = g_simple_action_new_stateful ("anim-bones", NULL, g_variant_new_boolean (FALSE));
+		g_autoptr(GSimpleAction) ik = g_simple_action_new_stateful ("anim-ik", NULL, g_variant_new_boolean (TRUE));
+
+		g_signal_connect (bones, "activate", G_CALLBACK (on_anim_overlay_action), self);
+		g_signal_connect (ik, "activate", G_CALLBACK (on_anim_overlay_action), self);
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (bones));
+		g_action_map_add_action (G_ACTION_MAP (self->actions), G_ACTION (ik));
 	}
 	lrg_widget_insert_action_group (LRG_WIDGET (self), "vp", G_ACTION_GROUP (self->actions));
 }
@@ -2469,6 +2752,7 @@ lrg_editor_viewport_panel_finalize (GObject *object)
 	LrgEditorViewportPanel *self = LRG_EDITOR_VIEWPORT_PANEL (object);
 
 	g_clear_pointer (&self->missing, g_ptr_array_unref);
+	g_clear_pointer (&self->rest_skeletons, g_hash_table_unref);
 	g_clear_pointer (&self->drop_label, g_free);
 	g_clear_object (&self->vol_before);
 
@@ -2501,6 +2785,7 @@ lrg_editor_viewport_panel_init (LrgEditorViewportPanel *self)
 	self->missing = g_ptr_array_new ();
 	self->missing_dirty = TRUE;
 	self->cull_mask = LRG_RENDER_LAYERS_MASK_ALL;
+	self->show_ik = TRUE;
 	lrg_spring_init (&self->active_spring, 0.0f, LRG_MOTION_SMOOTH);
 }
 
@@ -2913,4 +3198,64 @@ lrg_editor_viewport_panel_queue_render (LrgEditorViewportPanel *self)
 {
 	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
 	mark_dirty (self);
+}
+
+/* Mirrors a flag into its stateful vp.* action (the menu's check mark). */
+static void
+sync_anim_action (LrgEditorViewportPanel *self,
+                  const gchar            *name,
+                  gboolean                value)
+{
+	GAction *action = self->actions != NULL ? g_action_map_lookup_action (G_ACTION_MAP (self->actions), name) : NULL;
+
+	if (action != NULL)
+		g_simple_action_set_state (G_SIMPLE_ACTION (action), g_variant_new_boolean (value));
+}
+
+void
+lrg_editor_viewport_panel_set_show_bones (LrgEditorViewportPanel *self,
+                                          gboolean                show)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	self->show_bones = show;
+	sync_anim_action (self, "anim-bones", show);
+	if (self->overlay != NULL)
+		lrg_widget_queue_layout (LRG_WIDGET (self->overlay));
+}
+
+gboolean
+lrg_editor_viewport_panel_get_show_bones (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), FALSE);
+	return self->show_bones;
+}
+
+void
+lrg_editor_viewport_panel_set_show_ik_targets (LrgEditorViewportPanel *self,
+                                               gboolean                show)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	self->show_ik = show;
+	sync_anim_action (self, "anim-ik", show);
+	if (self->overlay != NULL)
+		lrg_widget_queue_layout (LRG_WIDGET (self->overlay));
+}
+
+gboolean
+lrg_editor_viewport_panel_get_show_ik_targets (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), FALSE);
+	return self->show_ik;
+}
+
+void
+lrg_editor_viewport_panel_get_anim_overlay_counts (LrgEditorViewportPanel *self,
+                                                   guint                  *n_bones,
+                                                   guint                  *n_targets)
+{
+	g_return_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self));
+	if (n_bones != NULL)
+		*n_bones = self->anim_bones;
+	if (n_targets != NULL)
+		*n_targets = self->anim_targets;
 }
