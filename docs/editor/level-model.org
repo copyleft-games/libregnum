@@ -463,3 +463,70 @@ A source follows =LrgEditor::changed=, =LrgEditor::level-replaced= and =LrgLevel
 | =lrg_editor_node_source_begin_gesture()=, =lrg_editor_node_source_end_gesture()=, =lrg_editor_node_source_in_gesture()= | Preview, then one command or an exact restore |
 | =lrg_editor_node_source_refresh()=                                       | Re-check and emit changes now                                        |
 | =lrg_editor_node_source_connect_grid()=, =lrg_editor_node_source_disconnect_grid()= | Route a grid's DELEGATE edits through the undo stack      |
+
+** API index
+:PROPERTIES:
+:CUSTOM_ID: level-model-api-index
+:END:
+
+Every public function of the level-model headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-level.h=
+:PROPERTIES:
+:CUSTOM_ID: level-model-api-lrg-level
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_level_insert_node ()= | Inserts /node/ under /parent/ at /index/ and emits =LrgLevel=::node-added. |
+| =lrg_level_count_nodes ()= | Returns the number of nodes in the level, excluding the implicit root. |
+| =lrg_level_get_timeline ()= | Returns the timeline, or =NULL=. |
+
+*** =lrg-level-serializer.h=
+:PROPERTIES:
+:CUSTOM_ID: level-model-api-lrg-level-serializer
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_level_serializer_load_from_data ()= | Loads a level from in-memory `.rlevel` YAML data. |
+| =lrg_level_serializer_save_to_data ()= | Serializes a level to a newly allocated `.rlevel` YAML string. |
+
+*** =lrg-node-visual.h=
+:PROPERTIES:
+:CUSTOM_ID: level-model-api-lrg-node-visual
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_node_visual_get_kind ()= | Gets the visual kind. |
+| =lrg_node_visual_get_primitive ()= | Gets the primitive type (meaningful for =LRG_NODE_VISUAL_PRIMITIVE=). |
+| =lrg_node_visual_get_asset ()= | Gets the asset reference (path or guid) for asset-backed kinds. |
+| =lrg_node_visual_get_material ()= | Gets the material, if any (used by primitive and mesh kinds). |
+| =lrg_node_visual_remove_param ()= | Removes a stored kind-specific parameter. |
+| =lrg_node_visual_set_tilemap ()= | Sets (refs) the tile grid. Copies and equality of the visual include it. |
+| =lrg_node_visual_copy ()= | Creates a deep copy: kind, primitive, asset, a copied material and a copied parameter bag. |
+| =lrg_node_visual_equal ()= | Deep comparison of two visual payloads. Two =NULL= payloads are equal. |
+
+*** =lrg-component-desc.h=
+:PROPERTIES:
+:CUSTOM_ID: level-model-api-lrg-component-desc
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_component_desc_set_type_name ()= | Sets the registry type name of the component. |
+| =lrg_component_desc_remove ()= | Removes the stored value for /name/. |
+| =lrg_component_desc_get_sorted_keys ()= | Like =lrg_component_desc_get_keys()= but sorted alphabetically, which gives inspectors and serializers a stable order. |
+| =lrg_component_desc_copy ()= | Returns a deep copy of /self/. |
+| =lrg_component_desc_equal ()= | Returns =TRUE= if both have the same type name and property values. |
+
+*** =lrg-script-binding.h=
+:PROPERTIES:
+:CUSTOM_ID: level-model-api-lrg-script-binding
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_script_binding_copy ()= | Returns a copy of /self/. |
+| =lrg_script_binding_equal ()= | Returns =TRUE= if both bind the same script, language and enabled state. |

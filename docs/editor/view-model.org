@@ -245,3 +245,133 @@ Run Game (Ctrl+F5, =run.start=) still lives in the app: it saves through the app
 - =tests/test-editor-view-state.c=: property notification, layouts and active-viewport clamping, per-viewport render modes and overlays, nav and tile-tool strings, camera conversion and string round trips, equivalence with the old =LrgEditorView= math, axis views with auto-perspective, 2D, focus selection and frame all, settings load/save.
 - =tests/test-editor-viewport-nav.c=: every navigation scenario of =test-editor-app.c= and =editor-x11-smoke.sh= as events (right-drag fly, right click menu, gizmo drag and click, KP_7/KP_4/KP_5, wheel, schemes), plus held-key flying over frames with Shift and wheel speed, focus loss, invert-y, box select and click, 2D and split layouts.
 - =tests/test-editor-play-session.c=: start / tick / stop with exact restore (transforms, names, undo and redo counts, dirty flag), pause and step timing, the GUID map, live-model =items-changed= for spawned and destroyed objects, apply-to-level as one undo step that survives Stop, the profiler section and stopping on dispose.
+
+** API index
+:PROPERTIES:
+:CUSTOM_ID: view-model-api-index
+:END:
+
+Every public function of the view-model headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-editor-view-state.h=
+:PROPERTIES:
+:CUSTOM_ID: view-model-api-lrg-editor-view-state
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_viewport_layout_get_type ()= | The =GType= of =LrgEditorViewportLayout=. |
+| =lrg_editor_render_mode_get_type ()= | The =GType= of =LrgEditorRenderMode=. |
+| =lrg_editor_view_overlays_get_type ()= | The =GType= of =LrgEditorViewOverlays=. |
+| =lrg_editor_nav_mode_get_type ()= | The =GType= of =LrgEditorNavMode=. |
+| =lrg_editor_play_state_get_type ()= | The =GType= of =LrgEditorPlayState=. |
+| =lrg_editor_axis_view_get_type ()= | The =GType= of =LrgEditorAxisView=. |
+| =lrg_editor_tile_tool_get_type ()= | The =GType= of =LrgEditorTileTool=. |
+| =lrg_editor_view_camera_get_type ()= | The =GType= of =LrgEditorViewCamera=. |
+| =lrg_editor_view_camera_new ()= | A perspective camera at (8, 6, 8) looking at the origin, 50 degree field of view, 1x1 pixels. |
+| =lrg_editor_view_camera_copy ()= | Returns a heap copy of /camera/. |
+| =lrg_editor_view_camera_free ()= | Frees a camera from =lrg_editor_view_camera_new()= or =lrg_editor_view_camera_copy()= (=NULL= is ignored). |
+| =lrg_editor_view_camera_equal ()= | Returns =TRUE= if every field of /a/ and /b/ is identical. |
+| =lrg_editor_view_camera_set_size ()= | Records the viewport size the camera projects into. |
+| =lrg_editor_view_camera_from_view ()= | Copies the pose and projection of /view/ into /camera/. The 2D flag is kept; the axis view is cleared unless the new pose still looks along the same axis. |
+| =lrg_editor_view_camera_align ()= | Looks along an axis at the current distance. Outside 2D mode the camera turns orthographic until the next orbit (auto-perspective). |
+| =lrg_editor_view_camera_pan ()= | Moves camera and target so the point under the pointer follows it. |
+| =lrg_editor_view_camera_dolly ()= | Moves toward or away from the target (scales the orthographic height in orthographic mode). |
+| =lrg_editor_view_camera_frame_nodes ()= | Returns =FALSE= (camera unchanged) if /nodes/ is empty. |
+| =lrg_editor_view_camera_from_string ()= | Restores a camera, keeping its viewport size. |
+| =lrg_editor_view_state_get_editor ()= | The editor owns the transform tool (=lrg_editor_get_tool()=), snapping and the transform space; the view state never duplicates them. |
+| =lrg_editor_view_state_get_layout ()= | Returns the viewport layout. |
+| =lrg_editor_view_state_get_layout_name ()= | Returns the layout nick ("single", "split-h", "split-v", "quad"). |
+| =lrg_editor_view_state_get_viewport_count ()= | Returns how many viewports the layout shows (1, 2 or 4). |
+| =lrg_editor_view_state_get_active_viewport ()= | Returns the index of the viewport keyboard and IPC view commands act on. |
+| =lrg_editor_view_state_set_camera ()= | Replaces a camera and emits =LrgEditorViewState=::camera-changed when it differs. |
+| =lrg_editor_view_state_camera_changed ()= | Emits =LrgEditorViewState=::camera-changed (and notify::camera for the active viewport) after a camera was changed in place. |
+| =lrg_editor_view_state_get_view ()= | Fills an =LrgEditorView= (camera, size, projection) for picking in viewport /index/ (-1 for the active one). |
+| =lrg_editor_view_state_get_fov ()= | Returns the field of view (degrees) cameras reset to. |
+| =lrg_editor_view_state_set_fov ()= | Sets the reset field of view (from the camera-fov setting). |
+| =lrg_editor_view_state_get_fly_speed ()= | Returns the fly speed in world units per second. |
+| =lrg_editor_view_state_set_fly_speed ()= | Sets the fly-navigation speed. |
+| =lrg_editor_view_state_reset_camera ()= | Resets the active camera (Reset Camera). |
+| =lrg_editor_view_state_reset_for_level ()= | Puts every camera into the level's default mode (=lrg_level_get_default_2d()=) and resets it, as loading a level does. |
+| =lrg_editor_view_state_frame_all ()= | view.frame-all in the active viewport. Needs =LrgEditorViewState=:editor. |
+| =lrg_editor_view_state_orbit_step ()= | view.orbit-* in the active viewport. |
+| =lrg_editor_view_state_zoom_step ()= | One keyboard zoom step on the active camera (=view.zoom-in= / =view.zoom-out=). |
+| =lrg_editor_view_state_toggle_ortho ()= | view.perspective (KP_5) in the active viewport. |
+| =lrg_editor_view_state_toggle_2d ()= | view.toggle-2d in the active viewport. |
+| =lrg_editor_view_state_get_render_mode ()= | Returns the viewport's render mode. |
+| =lrg_editor_view_state_get_overlays ()= | Returns the viewport's overlays. |
+| =lrg_editor_view_state_set_overlays ()= | Sets the overlay flags of viewport /index/ (-1 for the active one). |
+| =lrg_editor_view_state_has_overlay ()= | Returns =TRUE= if every flag of /overlay/ is on. |
+| =lrg_editor_view_state_set_nav_mode ()= | Sets the current navigation mode (none, fly, orbit, pan, ...). |
+| =lrg_editor_view_state_get_dialog ()= | Returns the id of the open modal dialog ("preferences", "project-settings", "file", "confirm", "new-project", "new-script", "about", "shortcuts", "recover"), or =NULL=. |
+| =lrg_editor_view_state_set_dialog ()= | Sets the id of the open dialog (=NULL= when none is open); reported by =ui.state=. |
+| =lrg_editor_view_state_get_palette_open ()= | Returns whether the command palette (or quick open) is showing. |
+| =lrg_editor_view_state_set_palette_open ()= | Sets whether the command palette is open. |
+| =lrg_editor_view_state_get_timeline_name ()= | Returns the timeline the panel shows. |
+| =lrg_editor_view_state_set_timeline_name ()= | Sets the name of the timeline shown in the Timeline panel. |
+| =lrg_editor_view_state_get_timeline_time ()= | Returns the timeline playhead in seconds. |
+| =lrg_editor_view_state_set_timeline_time ()= | Sets the timeline playhead in seconds. |
+| =lrg_editor_view_state_get_timeline_playing ()= | Returns whether the timeline plays in the editor. |
+| =lrg_editor_view_state_set_timeline_playing ()= | Sets whether the timeline preview plays. |
+| =lrg_editor_view_state_get_timeline_previewing ()= | Returns whether nodes show sampled timeline values. |
+| =lrg_editor_view_state_set_timeline_previewing ()= | Sets whether the timeline preview drives the scene. |
+| =lrg_editor_view_state_get_inspector_lock ()= | Returns GUID of the node the inspector is locked to, or =NULL= when it follows the selection. |
+| =lrg_editor_view_state_set_inspector_lock ()= | Sets whether the inspector is locked to its current nodes. |
+| =lrg_editor_view_state_get_status ()= | Returns the status line text. |
+| =lrg_editor_view_state_set_status ()= | Sets the status bar text. |
+| =lrg_editor_view_state_get_play_state ()= | Returns the play-in-editor state. |
+| =lrg_editor_view_state_set_play_state ()= | Sets the play state (stopped, playing, paused). |
+| =lrg_editor_view_state_get_tile_tool ()= | Returns the tile palette tool. |
+| =lrg_editor_view_state_set_tile_tool ()= | Sets the tile tool (=tilemap.tool=). |
+| =lrg_editor_view_state_get_tile_mode ()= | Returns whether the viewport's left button paints tiles. |
+| =lrg_editor_view_state_set_tile_mode ()= | Sets whether the viewport is in tile-painting mode. |
+| =lrg_editor_tile_tool_to_string ()= | Returns the tool's name ("brush", ...), or "?". |
+| =lrg_editor_view_state_cameras_from_string ()= | Restores the cameras that parse; the rest are left alone. |
+
+*** =lrg-editor-viewport-nav.h=
+:PROPERTIES:
+:CUSTOM_ID: view-model-api-lrg-editor-viewport-nav
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_nav_scheme_get_type ()= | The =GType= of =LrgEditorNavScheme=. |
+| =lrg_editor_viewport_nav_get_view_state ()= | Returns the view state navigation acts on. |
+| =lrg_editor_viewport_nav_get_camera ()= | Returns the camera navigation moves (the view state's active camera). |
+| =lrg_editor_viewport_nav_get_scheme ()= | Returns the navigation scheme. |
+| =lrg_editor_viewport_nav_set_scheme ()= | Sets the navigation scheme (default, blender or trackpad). |
+| =lrg_editor_viewport_nav_get_invert_y ()= | Returns whether vertical look and orbit are inverted. |
+| =lrg_editor_viewport_nav_set_invert_y ()= | Sets whether vertical orbit and fly look are inverted. |
+| =lrg_editor_viewport_nav_get_orbit_speed ()= | Returns look and orbit sensitivity in degrees per pixel. |
+| =lrg_editor_viewport_nav_set_orbit_speed ()= | Sets the orbit speed multiplier. |
+| =lrg_editor_viewport_nav_get_mode ()= | Returns the navigation in progress. |
+| =lrg_editor_viewport_nav_pointer_move ()= | Applies look, orbit, pan or zoom drags, turns an armed left press into a box past the click slop and tracks the hovered orientation gizmo end. |
+| =lrg_editor_viewport_nav_pointer_release ()= | Ends navigation. A right press without motion emits =LrgEditorViewportNav=::context-menu, a click on an orientation gizmo axis end aligns the view, an armed left press emits click or box-select. |
+| =lrg_editor_viewport_nav_scroll ()= | While flying the wheel changes the fly speed (x1.2 per notch, 0.1..500). |
+| =lrg_editor_viewport_nav_key_down ()= | Records a held key (WASD/QE and Shift drive flying in =lrg_editor_viewport_nav_tick()=). |
+| =lrg_editor_viewport_nav_key_up ()= | Returns =TRUE= while flying for the fly keys. |
+| =lrg_editor_viewport_nav_is_key_held ()= | Returns whether /key/ is held as far as navigation knows. |
+| =lrg_editor_viewport_nav_cancel ()= | Ends navigation and box selection without side effects; held keys are kept. |
+| =lrg_editor_viewport_nav_get_axis_hot ()= | Returns the hovered orientation gizmo end (0..2 = +X +Y +Z, 3..5 = -X -Y -Z), =LRG_EDITOR_NAV_AXIS_HOT_DISC= over its disc, or -1. |
+| =lrg_editor_viewport_nav_get_gizmo_center ()= | Returns =FALSE= when the active camera is 2D (no orientation gizmo). |
+
+*** =lrg-editor-play-session.h=
+:PROPERTIES:
+:CUSTOM_ID: view-model-api-lrg-editor-play-session
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_play_session_get_editor ()= | Returns the editor. |
+| =lrg_editor_play_session_get_engine ()= | Returns the engine whose registry builds components, or =NULL= for the default engine. |
+| =lrg_editor_play_session_set_engine ()= | Sets the engine whose component registry builds the play world; =NULL= uses =lrg_engine_get_default()=. |
+| =lrg_editor_play_session_get_profiler ()= | Returns the profiler ticks are timed with. |
+| =lrg_editor_play_session_set_paused ()= | Does nothing while stopped. Emits =LrgEditorPlaySession=::paused on a change. |
+| =lrg_editor_play_session_get_state ()= | Returns stopped, playing or paused. |
+| =lrg_editor_play_session_is_playing ()= | Returns =TRUE= while playing or paused (play.state "playing"). |
+| =lrg_editor_play_session_is_paused ()= | Returns =TRUE= while paused (play.state "paused"). |
+| =lrg_editor_play_session_get_time ()= | Returns simulated seconds since start (play.state "time"). |
+| =lrg_editor_play_session_get_world ()= | Returns the play world, =NULL= when stopped. |
+| =lrg_editor_play_session_sync_objects ()= | Rescans the world into the object model and the GUID map (ticks do this already; call it after changing the world from outside a tick). |
+| =lrg_editor_play_session_get_object_for_guid ()= | Returns the live object made from that node. |
+| =lrg_editor_play_session_get_guid_for_object ()= | Returns the GUID of the node /object/ was made from. |

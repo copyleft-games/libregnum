@@ -1,8 +1,22 @@
 # Libregnum Roadmap
 
-Last updated: 2026-11-06
+Last updated: 2026-11-07
 
 ## Recently Shipped
+
+### v0.8.1: lrgeditor on the retained UI toolkit (`src/editor/`, `src/editor/ui/`, `src/ui/`)
+
+A tool release: the engine runtime is unchanged and `src/gui/` stays untouched.
+
+- **Editor rebuilt on `src/ui`**: `LrgEditorWindow` (menu bar, toolbar, `LrgDockArea`, status bar, toasts) and one widget per panel (hierarchy, inspector, viewport, assets, console, history, problems, tiles, timeline, profiler, code, palette, preferences, dialogs); menus and shortcuts are GIO actions with GTK accelerators; 0.8.0 `editor.yaml` files are migrated with a backup; `lrg_editor_app_frame()` / `get_gui()` are deprecated but still work. See `docs/editor/overview.org` and `docs/guides/editor-migration-0-8-1.org`.
+- **Toolkit additions**: drag and drop (`LrgDragPayload`, `LrgDragSource`, `LrgDropTarget`, canvas sessions), the reflected `LrgPropertyGrid` over `LrgPropertySource` (hints, multi-edit with mixed values, one undo step per drag), `LrgVectorEdit`, `LrgCurveEdit`, `LrgGradientEdit`, tree view multi-select / reveal / inline rename, view drop positions, menu geometry hooks and loader source paths.
+- **Headless view model**: `LrgEditorViewState`, `LrgEditorViewportNav` and `LrgEditorPlaySession`, so `view.*`, `play.*`, `timeline.*` and `tilemap.tool` work `--headless`.
+- **Viewport**: single, split and quad layouts with per-viewport cameras, render modes (lit, unlit, wireframe, normals, lighting only) and overlays; engine lighting (`LrgLightSet`, cascaded shadows, sky dome, preview post stack); camera picture-in-picture; live inspection and a profiler panel while playing.
+- **Inspector and prefabs**: property-grid inspector with multi-node editing, lock and add-component picker; linked prefab instances with override paths, Apply / Revert, sync on save as one undo group, and Relink for 0.8.0 levels.
+- **Assets and code**: `.meta` sidecars with stable GUIDs (0.8.0 GUIDs kept) and importer settings, git status badges and branch (`LrgEditorVcs`), audio waveform, font and script thumbnails, and a built-in code panel (`script-editor: internal|external|emacs`).
+- **Data editors**: `LrgEditorDocument` (YAML-path edits with undo, unknown keys kept, validation through the engine loaders) behind editors for input maps, locales, sound banks, themes, HUD layouts, UI layouts, dialog trees and procgen dungeons.
+- **Automation**: 130 IPC methods (47 new: `view.layout`, `inspector.*`, `hierarchy.*`, `asset.*`, `asset.meta.*`, `vcs.status`, `prefab.*`, `code.*`, `data.*`, `profiler.sample`, ...), matching `lrgeditorctl` verbs and 32 new MCP tools; the protocol version and every 0.8.0 reply are unchanged.
+- **Gap analysis**: `docs/editor/gap-analysis.org` compares the editor and engine with Godot 4, Unity 6 and Unreal 5 area by area; its engine roadmap is summarised under [Next: engine gaps](#next-engine-gaps).
 
 ### v0.8.0: UI framework overhaul (`src/paint/`, `src/ui/`, `src/gui/`)
 
@@ -307,6 +321,22 @@ implementations and should no longer be treated as absent:
 Presence of an implementation does not imply every platform/rendering path has
 been validated. Headless tests skip cases requiring a display or hardware.
 
+## Next: engine gaps
+
+The 0.8.1 gap analysis ([`docs/editor/gap-analysis.org`](docs/editor/gap-analysis.org), section "Recommended roadmap") found that most remaining gaps are engine work rather than editor work. In order of dependency, then of how much each unlocks:
+
+1. **3D runtime scene model** (0.9.x, XL): play-in-editor, timelines, live inspection, lights, audio emitters and runtime prefabs all stop at a 2D game object today.
+2. **Composite YAML loader and format writers** (0.9.x, M + S): YAML formats for particles, animation state machines and blend trees, behaviour trees, post stacks, lights, terrain, physics bodies and nav bake settings; `save_to_file` writers for locales, dialog trees and sound banks so the data editors save through the engine.
+3. **Material assets, user shaders, PBR, cubemap sky and image-based lighting** (0.9.x, L).
+4. **Debug draw, physics debug draw and nav agents with avoidance** (0.9.x, S + M).
+5. **Animation wiring** (0.9.x, L): state machine and blend trees driving skinned glTF meshes.
+6. **Runtime import settings and runtime prefab references** (0.9.x, M): close the places where the editor previews what the game does not do yet.
+7. **Script hot reload, memory profiler and GPU timings** (0.9.x, M).
+8. **Export and packaging pipeline** (0.10, L).
+9. **3D physics** (0.10, XL), after a maintainer decision on the approach.
+10. **Lightmap baker and SH probes, LOD, decals, sub-levels and streaming, a script debugger** (0.10).
+11. **Visual scripting runtime, GPU particles, retargeting, a sequencer** (1.0 or later).
+
 ## Remaining Concrete Gaps
 
 ### Follow-ups from v0.6.0
@@ -320,9 +350,9 @@ been validated. Headless tests skip cases requiring a display or hardware.
   `LrgStateBuffer` overlaps the io module's byte reader/writer.
 - Procgen WFC is the simple tiled model only (no NxN overlapping patterns,
   at most 64 tiles).
-- Editor: no thumbnails for audio, fonts, scripts, tilesets or CAD; no tile
-  autotiling, flips or collision editing; timelines pose editor nodes, not
-  runtime entities, during play-in-editor.
+- Editor: no thumbnails for tilesets or CAD (audio, fonts and scripts landed
+  in 0.8.1); no tile autotiling, flips or collision editing; timelines pose
+  editor nodes, not runtime entities, during play-in-editor.
 - Audio: setup calls, pushed streams and non-background music still take
   raylib's audio lock on the calling thread. The ALSA-first device open forces
   the backend by briefly pointing `PULSE_SERVER` at a missing socket because

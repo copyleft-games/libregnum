@@ -266,6 +266,43 @@ guint n = lrg_editor_prefab_changed (editor, "prefabs/wheel.rprefab");
   root has no visual. It is kept on linked instances for compatibility with
   0.8.0 tools and is what Relink reads.
 
+** API index
+:PROPERTIES:
+:CUSTOM_ID: prefabs-api-index
+:END:
+
+Every public function of the prefab headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-prefab.h=
+:PROPERTIES:
+:CUSTOM_ID: prefabs-api-lrg-prefab
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_prefab_link_new ()= | Creates an empty link (no map entries, no overrides). |
+| =lrg_prefab_link_copy ()= | Deep-copies the link (source, map and overrides). |
+| =lrg_prefab_link_equal ()= | Compares source, asset guid, map and overrides. |
+| =lrg_prefab_link_get_source_path ()= | Returns the source `.rprefab` path. |
+| =lrg_prefab_link_set_source_path ()= | Sets the source path. |
+| =lrg_prefab_link_get_source_guid ()= | Gets the asset guid of the source prefab (from its `.meta` sidecar). |
+| =lrg_prefab_link_set_source_guid ()= | Sets the asset guid of the source prefab. |
+| =lrg_prefab_link_map_set ()= | Records that /instance_guid/ mirrors /source_guid/, replacing any earlier entry for either guid. |
+| =lrg_prefab_link_map_remove ()= | Forgets the mapping of /instance_guid/. |
+| =lrg_prefab_link_map_lookup ()= | Returns the source node guid mirrored by /instance_guid/, or =NULL= when the node was added in the instance. |
+| =lrg_prefab_link_map_lookup_instance ()= | Reverse lookup of the map. |
+| =lrg_prefab_link_get_map_size ()= | Returns the number of mapped instance nodes. |
+| =lrg_prefab_link_get_mapped_guids ()= | Returns the mapped instance node guids, sorted. |
+| =lrg_prefab_link_clear_map ()= | Removes every map entry. |
+| =lrg_prefab_link_add_override ()= | Adds /key/ to the override set. |
+| =lrg_prefab_link_remove_override ()= | Removes exactly /key/ from the override set. |
+| =lrg_prefab_link_get_overrides ()= | Returns the override keys, sorted. |
+| =lrg_prefab_link_get_n_overrides ()= | Returns the number of override keys. |
+| =lrg_prefab_link_clear_overrides ()= | Removes every override key. |
+| =lrg_prefab_regenerate_guids ()= | Gives every node of /root/ a fresh random guid and rewrites every prefab link inside the subtree to the new guids (used when pasting). |
+| =lrg_prefab_mark_override ()= | Marks /path/ of /node/ overridden on the owning instance root. |
+| =lrg_prefab_get_marker_source ()= | Reads the 0.8.0 source marker of a prefab instance: the `prefab:source` visual param, or the asset of a =LRG_NODE_VISUAL_PREFAB_INSTANCE= visual. |
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also

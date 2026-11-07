@@ -385,6 +385,134 @@ The editor's Assets panel is the user-facing side of everything above; its widge
 :END:
 The panel registers =asset.reveal= ={path}=, =asset.rename= ={path, name}=, =asset.move= ={path, dest}=, =asset.duplicate= ={path}=, =asset.trash= ={path}= and =asset.orphans= ={trash?}=, thin wrappers on the database functions above that also refresh the panel and git status; results and errors are listed in [[file:editor-app.org::#editor-panel-assets-ipc][Editor Application: Actions and IPC]]. Together with =asset.list=, =asset.meta.get= / =asset.meta.set= and =asset.thumbnail= they cover the asset workflow from Emacs or =lrgeditorctl=.
 
+** API index
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets-api-index
+:END:
+
+Every public function of the projects, asset database, sidecar, thumbnail and version-control headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-asset-database.h=
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets-api-lrg-asset-database
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_asset_entry_new ()= | Returns a new =LrgAssetEntry=. |
+| =lrg_asset_database_get_write_meta ()= | Returns whether scans write missing sidecars to disk. |
+
+*** =lrg-asset-meta.h=
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets-api-lrg-asset-meta
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_asset_texture_filter_get_type ()= | The =GType= of =LrgAssetTextureFilter=. |
+| =lrg_asset_texture_wrap_get_type ()= | The =GType= of =LrgAssetTextureWrap=. |
+| =lrg_asset_up_axis_get_type ()= | The =GType= of =LrgAssetUpAxis=. |
+| =lrg_asset_audio_mode_get_type ()= | The =GType= of =LrgAssetAudioMode=. |
+| =lrg_asset_meta_new_from_file ()= | Loads a sidecar. A missing file fails with =G_IO_ERROR_NOT_FOUND=; an empty file loads as an empty sidecar without a guid. |
+| =lrg_asset_meta_new_from_data ()= | Parses a sidecar from memory. |
+| =lrg_asset_meta_copy ()= | Deep-copies the sidecar, unknown keys included. The guid is copied too: call =lrg_asset_meta_regenerate_guid()= for a duplicated asset. |
+| =lrg_asset_meta_path_for_asset ()= | Returns "/asset_path/.meta". |
+| =lrg_asset_meta_is_meta_path ()= | Returns whether /path/ names a sidecar (ends in ".meta"). |
+| =lrg_asset_meta_to_data ()= | Serializes the sidecar as YAML text (unknown keys included). |
+| =lrg_asset_meta_is_dirty ()= | Returns whether the sidecar changed since it was loaded or saved. |
+| =lrg_asset_meta_set_dirty ()= | Marks the sidecar as needing (or not needing) a write. |
+| =lrg_asset_meta_get_guid ()= | Returns the guid, or =NULL= if the file had none. |
+| =lrg_asset_meta_set_guid ()= | Sets the guid. |
+| =lrg_asset_meta_regenerate_guid ()= | Replaces the guid with a fresh random UUID v4 (used for duplicates). |
+| =lrg_asset_meta_get_importer ()= | Returns the importer name ("generic" when unset). |
+| =lrg_asset_meta_set_importer ()= | Sets the importer. Existing settings are kept (a later switch back finds them again). |
+| =lrg_asset_meta_get_setting_int ()= | Returns the integer value of /key/. |
+| =lrg_asset_meta_get_setting_double ()= | Returns the floating-point value of /key/. |
+| =lrg_asset_meta_get_setting_boolean ()= | Returns the boolean value of /key/ ("true"/"yes"/"on"/"1" are true). |
+| =lrg_asset_meta_set_setting_string ()= | Stores a string setting (no validation; see =lrg_asset_meta_set_setting_variant()= for the validating path). |
+| =lrg_asset_meta_set_setting_int ()= | Stores an integer setting. |
+| =lrg_asset_meta_set_setting_double ()= | Stores a floating-point setting. |
+| =lrg_asset_meta_set_setting_boolean ()= | Stores a boolean setting. |
+| =lrg_asset_meta_get_settings_variant ()= | Returns an "a{sv}" of the settings, keys sorted. |
+| =lrg_asset_meta_get_texture_filter ()= | Returns the "filter" setting (default bilinear). |
+| =lrg_asset_meta_get_texture_mipmaps ()= | Returns the "mipmaps" setting (default =FALSE=). |
+| =lrg_asset_meta_set_texture_mipmaps ()= | Sets the "mipmaps" setting. |
+| =lrg_asset_meta_get_texture_wrap ()= | Returns the "wrap" setting (default repeat). |
+| =lrg_asset_meta_set_texture_wrap ()= | Sets the "wrap" setting. |
+| =lrg_asset_meta_get_texture_srgb ()= | Returns the "srgb" setting (default =TRUE=). |
+| =lrg_asset_meta_set_texture_srgb ()= | Sets the "srgb" setting. |
+| =lrg_asset_meta_get_texture_max_size ()= | Returns the "max-size" setting: the longest edge after import in pixels, 0 for no limit (default 0). |
+| =lrg_asset_meta_set_texture_max_size ()= | Sets the "max-size" setting. |
+| =lrg_asset_meta_get_model_scale ()= | Returns the "scale" setting (default 1.0). |
+| =lrg_asset_meta_set_model_scale ()= | Sets the "scale" setting. |
+| =lrg_asset_meta_get_model_up_axis ()= | Returns the "up-axis" setting (default y). |
+| =lrg_asset_meta_set_model_up_axis ()= | Sets the "up-axis" setting. |
+| =lrg_asset_meta_get_model_generate_normals ()= | Returns the "generate-normals" setting (default =FALSE=). |
+| =lrg_asset_meta_set_model_generate_normals ()= | Sets the "generate-normals" setting. |
+| =lrg_asset_meta_get_model_import_animations ()= | Returns the "import-animations" setting (default =TRUE=). |
+| =lrg_asset_meta_set_model_import_animations ()= | Sets the "import-animations" setting. |
+| =lrg_asset_meta_get_audio_mode ()= | Returns the "mode" setting (default sample). |
+| =lrg_asset_meta_set_audio_mode ()= | Sets the "mode" setting. |
+| =lrg_asset_meta_get_audio_loop ()= | Returns the "loop" setting (default =FALSE=). |
+| =lrg_asset_meta_set_audio_loop ()= | Sets the "loop" setting. |
+| =lrg_asset_meta_get_audio_volume ()= | Returns the "volume" setting (default 1.0). |
+| =lrg_asset_meta_set_audio_volume ()= | Sets the "volume" setting. |
+| =lrg_asset_meta_get_font_size ()= | Returns the "size" setting: the rasterized size in pixels (default 32). |
+| =lrg_asset_meta_set_font_size ()= | Sets the "size" setting. |
+| =lrg_asset_meta_get_font_codepoints ()= | Returns the "codepoints" setting: comma-separated code points and inclusive ranges, decimal or 0x-hex, e.g. "32-126,0xA0-0xFF" (default "32-126"). |
+| =lrg_asset_meta_set_font_codepoints ()= | Sets the "codepoints" setting. |
+
+*** =lrg-project.h=
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets-api-lrg-project
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_project_get_root ()= | Returns the project root directory (the directory that holds =project.ryaml=). |
+| =lrg_project_get_name ()= | Returns the project name. |
+| =lrg_project_get_default_level ()= | Returns the project's default level path (relative to the root), or =NULL=. |
+| =lrg_project_get_game_output ()= | Returns the project's game output path, or =NULL=. |
+
+*** =lrg-thumbnail-cache.h=
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets-api-lrg-thumbnail-cache
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_thumbnail_kind_get_type ()= | The =GType= of =LrgThumbnailKind=. |
+| =lrg_thumbnail_cache_new ()= | Creates a cache. The directory is created on the first store. |
+| =lrg_thumbnail_cache_get_dir ()= | Returns the cache directory. |
+| =lrg_thumbnail_cache_get_size ()= | Returns the longest thumbnail edge in pixels. |
+| =lrg_thumbnail_cache_set_size ()= | Sets the thumbnail size for future generations. |
+| =lrg_thumbnail_cache_get_entry_path ()= | Returns where the thumbnail of the file's current version lives (whether or not it exists yet), or =NULL= if the file cannot be read. |
+| =lrg_thumbnail_cache_lookup ()= | Returns the cached thumbnail of the file's current version, or =NULL= on a miss. |
+| =lrg_thumbnail_cache_is_supported ()= | Returns whether a thumbnail can be made for /path/ (textures, levels, prefabs and audio always; models and fonts only with a renderer set for their kind). |
+| =lrg_thumbnail_cache_render_cpu ()= | Renders a thumbnail without a GL context (safe on any thread): textures are downscaled to their sidecar's max-size (when set) and returned for fitting, levels and prefabs become a top-down schematic of their nodes, audio becomes a waveform (see =lrg_thumbnail_cache_render_waveform()=). |
+| =lrg_thumbnail_cache_store ()= | Writes /image/ as the thumbnail of /path/'s current version (atomically) and removes thumbnails of older versions. |
+| =lrg_thumbnail_cache_generate ()= | Returns the cached thumbnail, generating it synchronously on a miss (GPU kinds call the renderer, so call this on the GL thread for them). |
+| =lrg_thumbnail_cache_get_n_pending ()= | Returns the number of requests not yet reported. |
+
+*** =lrg-editor-vcs.h=
+:PROPERTIES:
+:CUSTOM_ID: projects-and-assets-api-lrg-editor-vcs
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_vcs_status_get_type ()= | The =GType= of =LrgEditorVcsStatus=. |
+| =lrg_editor_vcs_get_project_dir ()= | Returns the project directory. |
+| =lrg_editor_vcs_status_to_string ()= | Returns the status nick ("modified", "untracked", ...). |
+| =lrg_editor_vcs_parse_porcelain ()= | Parses porcelain v1 -z output. Exposed for tests and tools; the tracker uses it internally. |
+| =lrg_editor_vcs_get_debounce_ms ()= | Returns the refresh debounce delay in milliseconds. |
+| =lrg_editor_vcs_set_debounce_ms ()= | Sets the refresh debounce delay. |
+| =lrg_editor_vcs_is_refreshing ()= | Returns whether a refresh is scheduled or git is running. |
+| =lrg_editor_vcs_get_refresh_count ()= | Returns how many refreshes (git status runs) have completed. |
+| =lrg_editor_vcs_get_is_repo ()= | Returns whether the project is inside a git work tree (as of the last refresh). |
+| =lrg_editor_vcs_get_repo_root ()= | Returns the work tree's top-level directory, =NULL= outside a repository. |
+| =lrg_editor_vcs_get_statuses ()= | Returns every path git reported, relative to the project directory. |
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also

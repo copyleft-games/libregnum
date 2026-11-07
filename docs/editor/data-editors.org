@@ -1028,6 +1028,107 @@ The four editors share an internal property source, =EditorDataFields= (declared
 
 =tests/test-editor-app-data-2.c= drives the four editors through the canvas of a headless app: HUD drags (re-anchoring, one undo step, a locked piece that does not move, save then =LrgHudLayout= reading the placement back), corner resizes keeping the anchor, the anchor row keeping the rectangle, toolbar add/remove; UI preview clicks selecting the YAML path and caret line, outline clicks, caret moves, pick/interact, typed text applied after the debounce, broken YAML keeping the preview and the document, a loader error written and marked, undo restoring the text; dialog wires dragged between ports, card drags, missing targets and their issues, grid rename with references, Add Response, Delete on cards, the play test through Continue and End; dungeon preview hashes against the engine, Randomize and its undo, form rows (width, generator switch), a rejected recipe and Add Spawn; and a paint pass over all four.
 
+** API index
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-index
+:END:
+
+Every public function of the data editor panel headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-editor-data-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-lrg-editor-data-editor
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_data_editor_get_app ()= | Returns the application (weak). |
+| =lrg_editor_data_editor_get_document ()= | Returns the edited document. |
+| =lrg_editor_data_editor_get_path ()= | Returns the absolute path of the document. |
+| =lrg_editor_data_editor_get_panel_id ()= | Returns the dock panel id, "data:" followed by the absolute path. |
+| =lrg_editor_data_editor_get_title ()= | Returns the tab title: the file name plus " •" while dirty. |
+| =lrg_editor_data_editor_get_dirty ()= | Returns whether the editor has unsaved changes (see =LrgEditorDataEditorClass=.get_dirty). |
+| =lrg_editor_data_editor_get_content ()= | Returns the content widget. |
+| =lrg_editor_data_editor_save ()= | Saves (=LrgEditorDataEditorClass=.save) and validates again. |
+| =lrg_editor_data_editor_revert ()= | Throws away unsaved changes and reloads the file (no prompt; the Revert button asks first when the document is dirty). |
+| =lrg_editor_data_editor_validate ()= | Validates the document (the document's checks, then =LrgEditorDataEditorClass=.validate) and refreshes the issues list and the issue chip. |
+| =lrg_editor_data_editor_reveal ()= | Emits =LrgEditorDataEditor=::reveal. |
+| =lrg_editor_data_editor_undo ()= | Undoes the last edit of the document (not of the level), see =LrgEditorDataEditorClass=.undo. |
+| =lrg_editor_data_editor_redo ()= | Redoes the last undone edit of the document. |
+| =lrg_editor_data_editor_get_banner_visible ()= | Returns whether the "changed on disk" banner is showing. |
+| =lrg_editor_data_editor_keep_mine ()= | The banner's Keep button: hides the banner and keeps the edits (the next save overwrites the file). |
+| =lrg_editor_data_editor_get_state ()= | Returns the subclass's view state line, see =LrgEditorDataEditorClass=.get_state. |
+| =lrg_editor_data_source_new ()= | Creates an =LrgPropertySource= whose properties are YAML paths of the editor's document. |
+| =lrg_editor_data_source_clear ()= | Removes every field. |
+| =lrg_editor_data_source_get_n_fields ()= | Returns the number of fields. |
+| =lrg_editor_data_source_get_field_path ()= | Returns the YAML path of /name/. |
+| =lrg_editor_data_source_find_field ()= | Returns the name of the field showing /path/ or its closest ancestor among the fields. |
+| =lrg_editor_data_source_set_write_func ()= | Installs a hook that sees (and may rewrite) every value before it is written. |
+| =lrg_editor_data_source_set_read_func ()= | Installs a hook that may supply field values. A field the hook answers is reported as =LRG_PROPERTY_STATE_NONE=. |
+
+*** =lrg-editor-input-map-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-lrg-editor-input-map-editor
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_input_map_editor_new ()= | Creates the editor; =lrg_editor_data_editor_open()= is the usual way. |
+| =lrg_editor_input_map_editor_select ()= | Selects an action (and one of its bindings) and shows it in the grid. |
+| =lrg_editor_input_map_editor_get_selected_action ()= | Returns the selected action. |
+| =lrg_editor_input_map_editor_get_selected_slot ()= | Returns the selected binding index, -1 when the action itself is selected. |
+| =lrg_editor_input_map_editor_add_action ()= | Appends an action with no bindings and selects it. |
+| =lrg_editor_input_map_editor_remove_selected ()= | Removes the selected binding, or the selected action when no binding is selected. |
+| =lrg_editor_input_map_editor_cancel_capture ()= | Leaves capture mode without changing anything. |
+| =lrg_editor_input_map_editor_get_capturing ()= | Returns whether the editor waits for a key or button. |
+| =lrg_editor_input_map_editor_describe_binding ()= | Returns the chip text of the binding ("Ctrl+S", "Mouse Left", "Pad A", "Left Stick X+"). |
+| =lrg_editor_input_map_editor_get_chip_rect ()= | Where a binding chip is drawn (for tests and automation). |
+
+*** =lrg-editor-locale-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-lrg-editor-locale-editor
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_locale_editor_new ()= | Returns a new =LrgEditorLocaleEditor=. |
+| =lrg_editor_locale_editor_get_n_languages ()= | Returns the number of language columns (the reference first). |
+| =lrg_editor_locale_editor_get_language ()= | Returns the language code of column /index/ ("en"). |
+| =lrg_editor_locale_editor_get_language_document ()= | Returns the document of /code/. |
+| =lrg_editor_locale_editor_get_keys ()= | The rows of the grid: every key of every language, the reference's order first; plural entries give one row per form, written "key[form]". |
+| =lrg_editor_locale_editor_get_text ()= | Returns the text, =NULL= when the language lacks /key/. |
+| =lrg_editor_locale_editor_is_missing ()= | Returns whether the reference has /key/ and /code/ does not (the cells shown highlighted). |
+| =lrg_editor_locale_editor_set_text ()= | Writes one cell as one undoable command of that language's document. |
+| =lrg_editor_locale_editor_select ()= | Selects a cell and loads it into the edit bar. |
+| =lrg_editor_locale_editor_get_selected_key ()= | Returns the selected row key. |
+| =lrg_editor_locale_editor_get_selected_language ()= | Returns the selected language code. |
+| =lrg_editor_locale_editor_get_cell_rect ()= | Returns =FALSE= when the cell is not on screen. |
+
+*** =lrg-editor-sound-bank-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-lrg-editor-sound-bank-editor
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_sound_bank_editor_new ()= | Returns a new =LrgEditorSoundBankEditor=. |
+| =lrg_editor_sound_bank_editor_select ()= | Returns =FALSE= when there is no sound /name/. |
+| =lrg_editor_sound_bank_editor_get_selected ()= | Returns the selected sound. |
+| =lrg_editor_sound_bank_editor_add_sound ()= | Adds a sound (a free name is chosen when /name/ is taken) and selects it. |
+| =lrg_editor_sound_bank_editor_add_asset ()= | What dropping an asset on the sound list does: adds it as a sound named after the file, with its path made relative to the bank's sound folder. |
+| =lrg_editor_sound_bank_editor_remove_selected ()= | Returns =TRUE= when a sound was removed. |
+
+*** =lrg-editor-theme-editor.h=
+:PROPERTIES:
+:CUSTOM_ID: data-editors-api-lrg-editor-theme-editor
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_theme_editor_new ()= | Returns a new =LrgEditorThemeEditor=. |
+| =lrg_editor_theme_editor_get_preview_theme ()= | The theme built from the document as it is now (the last version that loaded, while the current one has an error). |
+| =lrg_editor_theme_editor_get_gallery ()= | Returns the widget gallery drawn with the preview theme. |
+
 ** Tests
 :PROPERTIES:
 :CUSTOM_ID: data-editors-tests

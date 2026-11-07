@@ -1215,6 +1215,118 @@ The editor application composes these runtime services; each is usable on its ow
 
 Related bridges: =lrg_level_import_scene_file()= (=lrg-scene-import.h=) loads a Blender scene YAML and converts it with =lrg_level_from_scene()=, and =lrg_level_instantiate()= tags every runtime =LrgGameObject= with its node's GUID, so play-in-editor maps objects back to authoring nodes with =lrg_world_find_by_tag()=. Projects gained =lrg_project_get_run_command()= / =set_run_command()= (=Run Game= template with ={project}=, ={level}=, ={module}=), =get_scripts_dir()= / =set_scripts_dir()=, =clear_asset_dirs()=, and =lrg_project_resolve()= / =lrg_project_relativize()= for root-relative asset paths; see [[file:projects-and-assets.org][Projects and Assets]].
 
+** API index
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-index
+:END:
+
+Every public function of the editor-runtime headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-editor-command.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-command
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_command_new_tiles ()= | Creates an empty tile-change command; add cells with =lrg_editor_command_tiles_add()=. |
+| =lrg_editor_command_tiles_add ()= | Records one cell change. Add each cell once per command. |
+| =lrg_editor_command_tiles_get_n_changes ()= | Returns the number of recorded cell changes. |
+| =lrg_editor_command_new_prefab_override ()= | Creates a command that adds (or removes) one override key. Undo does the opposite. |
+| =lrg_editor_command_new_prefab_sync ()= | Creates a subtree snapshot command and captures the "before" state of /root/ now: every node's own state, prefab link and child list (the live node objects are referenced, so nodes removed later come back on undo). |
+| =lrg_editor_command_prefab_sync_capture ()= | Captures the current state of the tracked subtree as the "after" state. |
+| =lrg_editor_command_new_prefab_file ()= | Creates a command that writes /after/ to /path/ when applied and /before/ when undone. |
+| =lrg_editor_command_add_override_mark ()= | Attaches an override-set change to /self/: applying the command adds (or removes) /key/, undoing it does the opposite. |
+| =lrg_editor_command_get_n_override_marks ()= | Returns the number of override marks attached to /self/ (not counting group children). |
+| =lrg_editor_command_new_timeline ()= | Creates a command that swaps one of /level/'s timelines between two states. |
+
+*** =lrg-editor-host.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-host
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_host_get_engine ()= | Returns the =LrgEngine= the host renders with (the =get_engine= vfunc). |
+| =lrg_editor_host_get_render_size ()= | Stores the render target size in pixels in /width/ and /height/ (the =get_render_size= vfunc). |
+| =lrg_editor_host_clear ()= | Clears the render target to /color/ (the =clear= vfunc). |
+| =lrg_editor_host_get_frame_delta ()= | Returns the seconds since the previous frame (the =get_frame_delta= vfunc). |
+| =lrg_editor_host_get_input_source ()= | Returns the =GObject= the host reads input from, or =NULL= (the =get_input_source= vfunc). |
+| =lrg_editor_host_get_viewport_camera ()= | Returns the camera the host renders the viewport with, or =NULL= (the =get_viewport_camera= vfunc). |
+| =lrg_editor_host_is_2d_mode ()= | Returns whether the host shows the level in 2D (the =is_2d_mode= vfunc). |
+
+*** =lrg-editor-log.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-log
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_log_record_get_type ()= | The =GType= of =LrgEditorLogRecord=. |
+
+*** =lrg-editor-math.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-math
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_view_get_type ()= | The =GType= of =LrgEditorView=. |
+
+*** =lrg-editor-node-model.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-node-model
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_node_model_get_editor ()= | Returns the editor the model follows. |
+| =lrg_editor_node_model_get_level ()= | Returns the level presented. |
+| =lrg_editor_node_model_set_level ()= | Presents another level. Every store is dropped and a new =LrgEditorNodeModel=:root-model is made (views must call =lrg_tree_view_set_model()= again; =lrg_editor_node_model_bind_tree_view()= does that for the views it bound). |
+| =lrg_editor_node_model_get_position ()= | Returns the store currently showing /node/, or =NULL= when /node/ is filtered out, detached or its parent's children were never asked for. |
+| =lrg_editor_node_model_get_filter ()= | Returns the filter text, =NULL= when none. |
+| =lrg_editor_node_model_is_shown ()= | Returns =TRUE= if /node/ passes the filter (a match or an ancestor of one); always =TRUE= for attached nodes without a filter. |
+
+*** =lrg-editor-selection.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-selection
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_selection_new ()= | Returns a new, empty =LrgEditorSelection=. |
+
+*** =lrg-editor-server.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-server
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_server_error_quark ()= | The =GQuark= of the =LRG_EDITOR_SERVER_ERROR= domain (=LrgEditorServerError= codes). |
+
+*** =lrg-editor-settings.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-settings
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_settings_set_settings_version ()= | Sets the format version; the migration sets =LRG_EDITOR_SETTINGS_VERSION= after rewriting a 0.8.0 file. |
+| =lrg_editor_settings_get_ui_layout ()= | Returns the saved =LrgDockArea= YAML (=LrgEditorSettings=:ui-layout). |
+| =lrg_editor_settings_get_script_editor ()= | Returns "internal", "external" or "emacs" (=LrgEditorSettings=:script-editor). |
+| =lrg_editor_settings_get_viewport_layout ()= | Returns "single", "split-h", "split-v" or "quad" (=LrgEditorSettings=:viewport-layout). |
+| =lrg_editor_settings_get_viewport_cameras ()= | Returns the saved viewport cameras (=LrgEditorSettings=:viewport-cameras), "" when none are saved. |
+
+*** =lrg-editor-validate.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-runtime-api-lrg-editor-validate
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_problem_get_type ()= | The =GType= of =LrgEditorProblem=. |
+
 ** See Also
 :PROPERTIES:
 :CUSTOM_ID: see-also

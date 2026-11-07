@@ -58,9 +58,10 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
    - Rename / move / duplicate / delete: `rename node P NEW`, `move node P --parent Q [--keep-world]`, `duplicate node P`, `delete node P`.
    - Many nodes at once: write YAML documents (`node:` plus fields; missing nodes are created under the parent in the path) and `lrgeditorctl apply -f file.yaml`.
    - Anything else (components, scripts, prefabs, play mode, camera): `lrgeditorctl run ACTION`, `play`, `view`, or `call METHOD key=value`.
+   - Editor 0.8.1 additions: `inspector set NODE NAME section=... value=...` edits a property exactly as the inspector would (several nodes in one undo step); `prefab overrides|apply|revert|sync` manages linked prefab instances (apply overwrites the prefab file: ask first); `meta get|set PATH` reads and changes an asset's `.meta` import settings; `asset rename|move|duplicate|trash PATH` keeps sidecars and GUIDs with their assets (never move asset files with `mv` while an editor runs); data files (input maps, locales, dialog trees, ...) are edited with `call data.open|get|set|validate|save path=...`.
    - Units: metres; `rotation_degrees` is Euler XYZ in degrees (`rotation` is radians); primitives are 1 m unit shapes, so size them with `scale`.
 
-5. **Verify.** `lrgeditorctl get node PATH`, `get problems` / `validate` (exit 1 on errors). With a windowed editor, `lrgeditorctl screenshot /tmp/v.png [--window]` and look at it (MCP: the `screenshot` tool returns the image). `lrgeditorctl undo` reverts a mistake.
+5. **Verify.** `lrgeditorctl get node PATH`, `get problems` / `validate` (exit 1 on errors). With a windowed editor, `lrgeditorctl screenshot /tmp/v.png [--window]` and look at it (MCP: the `screenshot` tool returns the image); `view layout quad` shows perspective, top, front and right at once and `view render-mode wireframe viewport=1` helps with overlaps. `lrgeditorctl undo` reverts a mistake.
 
 6. **Save when the user wants the change kept.** `lrgeditorctl save` writes the `.rlevel`. Do not save over a level the user did not ask you to change; if unsure, leave it dirty and say so. Never discard unsaved work (`--force` on open/new/quit) unless asked.
 

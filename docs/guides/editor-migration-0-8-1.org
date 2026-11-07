@@ -1,0 +1,57 @@
+#+title: Migrating to the 0.8.1 Editor
+#+description: What changes for code that embeds lrgeditor, for editor.yaml, for levels with prefab instances, for projects without .meta sidecars and for IPC clients when moving from libregnum 0.8.0 to 0.8.1
+#+authors: Zach Podbielniak
+#+categories: libregnum editor guide migration
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 1.0
+
+* Migrating to the 0.8.1 Editor
+:PROPERTIES:
+:CUSTOM_ID: editor-migration
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *Guides* > Editor 0.8.1 migration
+#+end_quote
+
+libregnum 0.8.1 rebuilds =lrgeditor= on the retained UI toolkit (=src/ui=) instead of the immediate-mode =src/gui=. The engine runtime is unchanged and =src/gui= stays in the engine untouched. Existing projects, levels, settings files, embeddings and IPC clients keep working; this guide is the checklist of what changes and links to the section that covers each item in depth. Nothing here needs to be done before upgrading: every item has a compatibility path.
+
+** Checklist
+:PROPERTIES:
+:CUSTOM_ID: editor-migration-checklist
+:END:
+| You have | What happens in 0.8.1 | What to do | Details |
+|----------+-----------------------+------------+---------|
+| Code calling =lrg_editor_app_frame()= with an =LrgGuiInput= | Still works: the frame is translated to an =LrgCanvasInput=; deprecation warning | Build an =LrgCanvasInput= and call =lrg_editor_app_process_frame()=; render with =lrg_canvas_render()= | [[file:../editor/editor-app.org::#embedding-migration][Migrating from LrgGui embedding]] |
+| Code calling =lrg_editor_app_get_gui()= | Returns =NULL= | Inspect widgets through =lrg_editor_app_get_canvas()= (=lrg_widget_find()=, =lrg_canvas_record()=) or =ui.state= | [[file:../editor/editor-app.org::#embedding-api][Embedding API]] |
+| Custom panels drawn into an =LrgGuiDock= | No longer drawn | Wrap the widget in an =LrgDockPanel= and call =lrg_editor_app_add_panel()= | [[file:../editor/editor-app.org::#embedding][Embedding and automation]] |
+| Shortcuts as =LrgGuiKey= (=lrg_editor_actions_get_shortcut()=, =find_by_shortcut()=, =lrg_editor_shortcut_parse()= / =format()=) | Deprecated, moved to =lrg-editor-shortcut-legacy.h=, still working | Use GTK accelerator strings (=<Ctrl><Shift>z=) and =LrgEditorActions= as a =GActionGroup= | [[file:../editor/editor-app.org::#keybindings-legacy][The 0.8.0 syntax]], [[file:../editor/editor-app.org::#keybindings-gaction][Actions as a GActionGroup]] |
+| An =editor.yaml= written by 0.8.0 | Migrated on first start (=settings-version= 2): dock layout to =ui-layout=, keybindings to accelerators, theme names to presets; a =editor.yaml.v0.8.0.bak= backup is written first and the old =layout= key is kept for a downgrade | Nothing | [[file:../editor/editor-app.org::#settings-migration][Settings migration]] |
+| Levels with prefab instances | Load unlinked (the 0.8.0 marker is kept); the runtime ignores the new =prefab:= block either way | Select an instance and press Relink in the inspector (or =prefab.relink=) to get linked behaviour | [[file:../editor/prefabs.org::#apply-revert][Compute, Apply, Revert, Unlink, Relink]], [[file:../editor/yaml-format.org][.rlevel format]] |
+| A project without =.meta= sidecars | Sidecars are created on the first scan with the GUID 0.8.0 derived from the path, so references keep resolving | Commit the new =.meta= files; rename and move assets from the Assets panel (or =asset.*=) so sidecars follow | [[file:../editor/projects-and-assets.org::#guid-stability][GUID stability and migration]] |
+| IPC clients, =lrgeditorctl= scripts, MCP configurations | Protocol version 1 is unchanged; 0.8.0 methods keep their parameters and replies; =ui.state= keeps every 0.8.0 field | Optional: use the new methods (=view.layout=, =inspector.*=, =data.*=, ...) and =ui.state= fields | [[file:../editor/ipc-protocol.org::#method-index][IPC method index]], [[file:../editor/ipc-protocol.org::#ui-state][ui.state]], [[file:../editor/lrgeditorctl.org::#verbs-0-8-1][0.8.1 verbs]] |
+| Tests that click the 0.8.0 editor by coordinates | Menu, viewport and frame-height rectangles come from =ui.state= as before | Prefer widget names (=lrg_widget_find()=) and the headless fixture =tests/editor-app-fixture.h= | [[file:../editor/editor-app.org::#embedding-migration][Migrating from LrgGui embedding]] |
+
+** Deprecated symbols
+:PROPERTIES:
+:CUSTOM_ID: editor-migration-deprecated
+:END:
+All are marked =LRG_DEPRECATED_IN_0_8_1= (or =_FOR=) and keep working in 0.8.x.
+
+| Symbol | Replacement |
+|--------+-------------|
+| =lrg_editor_app_frame()= | =lrg_editor_app_process_frame()= |
+| =lrg_editor_app_get_gui()= | =lrg_editor_app_get_canvas()= |
+| =lrg_editor_actions_get_shortcut()= | =lrg_editor_actions_get_accels()= |
+| =lrg_editor_actions_get_default_shortcut()= | =lrg_editor_actions_get_default_accels()= |
+| =lrg_editor_actions_find_by_shortcut()= | =lrg_editor_actions_find_by_accel()= |
+| =lrg_editor_shortcut_parse()= | =lrg_editor_shortcut_to_accel()= |
+| =lrg_editor_shortcut_format()= | =lrg_accel_name()= (and =lrg_editor_accel_to_label()= for display) |
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: editor-migration-see-also
+:END:
+- [[file:../editor/overview.org][Editor Module Overview]]: a tour of the 0.8.1 editor
+- [[file:../editor/tutorial.org][Editor Tutorial]]: a first session with screenshots
+- [[file:ui-migration.org][UI Migration]]: porting UI code written before the paint rework

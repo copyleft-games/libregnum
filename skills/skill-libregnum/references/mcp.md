@@ -62,7 +62,22 @@ Use absolute paths for project directories in configs. With several editors runn
 | `set_keyframe` / `remove_keyframe` / `configure_timeline` | timeline.key / unkey / set | channel + value, or the node's transform; easing nicks |
 | `preview_timeline` | timeline.seek | pose the level at a time (not saved) |
 | `get_thumbnail` | asset.thumbnail | cached PNG path of a texture/model/level/prefab |
-| `call_method` | any | `{method, params}` escape hatch |
+| `get_asset_meta` / `set_asset_meta` | asset.meta.get / set | `.meta` sidecar: guid, importer, settings; set is all or nothing |
+| `vcs_status` | vcs.status | git branch and files that are not clean; `{path?}` |
+| `prefab_overrides` | prefab.overrides | read-only: source, linked, override keys |
+| `prefab_apply` / `prefab_revert` | prefab.apply / revert | destructive: `{node, keys?}`; apply overwrites the prefab file and syncs other instances |
+| `prefab_sync` / `prefab_relink` / `prefab_unlink` | prefab.sync / relink / unlink | unlink is destructive (undoable) |
+| `set_viewport_layout` / `set_render_mode` / `set_overlay` | view.layout / render_mode / overlay | without the value they report the current state |
+| `inspector_list` / `inspector_get` | inspector.list / get | read-only: sections and rows `{name, label, group, hint, value, mixed, state}` |
+| `inspector_set` / `inspector_reset` | inspector.set / reset | `{node\|nodes, section, component?, name, value}`; several nodes = one undo step |
+| `inspector_apply_override` / `inspector_revert_override` | inspector.apply_override / revert_override | destructive: one prefab override row |
+| `inspector_state` | inspector.state | lock, shown nodes, live object, prefab (it takes no parameters) |
+| `hierarchy_reveal` / `hierarchy_rename` / `hierarchy_state` | hierarchy.* | reveal and select, inline or direct rename, visible rows |
+| `asset_reveal` / `asset_rename` / `asset_move` / `asset_duplicate` | asset.* | the `.meta` follows its asset; duplicates get a new guid |
+| `asset_trash` / `asset_orphans` | asset.trash / orphans | destructive: to the desktop trash |
+| `profiler_sample` | profiler.sample | `{frames?, enable?}` |
+| `code_open` / `code_list` / `code_save` | code.* | the built-in code editor panel |
+| `call_method` | any | `{method, params}` escape hatch (e.g. `data.open`, `data.validate`, `palette.open`, which have no tool yet) |
 
 Results are JSON text (YAML text for `get_level_yaml`); failures come back as tool errors with the editor's message, e.g. `node.get: No node 'Hall/Tabel' (not-found)`.
 

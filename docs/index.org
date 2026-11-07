@@ -65,16 +65,20 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 :PROPERTIES:
 :CUSTOM_ID: editor-and-level-authoring
 :END:
-- *[[file:editor/overview.org][Editor Module]]* - Level/Scene/World three-layer model; bake and instantiate
-- *[[file:editor/editor-app.org][Editor Application]]* - =lrgeditor=, the level/scene/world editor built from libregnum
+- *[[file:editor/overview.org][Editor Module]]* - Level/Scene/World three-layer model; bake and instantiate; a tour of the 0.8.1 editor
+- *[[file:editor/tutorial.org][Editor Tutorial]]* - a first session in =lrgeditor= with screenshots, then the same level from C
+- *[[file:editor/editor-app.org][Editor Application]]* - =lrgeditor=, the level/scene/world editor built from libregnum on the retained UI toolkit
+- *[[file:editor/view-model.org][View Model]]* - headless =LrgEditorViewState=, =LrgEditorViewportNav= and =LrgEditorPlaySession=
+- *[[file:editor/data-editors.org][Data Editors]]* - =LrgEditorDocument= and the input map, locale, sound bank, theme, HUD, UI layout, dialog tree and dungeon editors
+- *[[file:editor/gap-analysis.org][Gap Analysis]]* - the editor and engine against Godot 4, Unity 6 and Unreal 5, with the engine roadmap
 - *[[file:editor/editor-tools.org][Editor Tools]]* - tilemap painting, keyframe timelines, asset thumbnails
 - *[[file:editor/emacs.org][Emacs Integration]]* - =libregnum.el=; [[file:editor/external-editor.org][External code editor]]; [[file:editor/ipc-protocol.org][IPC protocol]]
 - *[[file:editor/lrgeditorctl.org][lrgeditorctl and MCP]]* - =lrgeditorctl= (kubectl-style CLI for running editors) and the editor MCP server
-- *Level Model* - =LrgLevel=, =LrgNode=, =LrgNodeVisual= authoring types
-- *=.rlevel= Format* - YAML serialization schema for levels and prefabs
-- *Prefabs* - Reusable saved node subtrees (=.rprefab=)
-- *Editor Runtime* - =LrgEditor=, undo/redo commands, =LrgEditorHost= embedding
-- *Projects and Assets* - =LrgProject= manifest, =LrgAssetDatabase= scanner
+- *[[file:editor/level-model.org][Level Model]]* - =LrgLevel=, =LrgNode=, =LrgNodeVisual= authoring types
+- *[[file:editor/yaml-format.org][=.rlevel= Format]]* - YAML serialization schema for levels and prefabs
+- *[[file:editor/prefabs.org][Prefabs]]* - Reusable saved node subtrees (=.rprefab=) and linked instances with overrides
+- *[[file:editor/editor-runtime.org][Editor Runtime]]* - =LrgEditor=, undo/redo commands, =LrgEditorHost= embedding
+- *[[file:editor/projects-and-assets.org][Projects and Assets]]* - =LrgProject= manifest, =LrgAssetDatabase= scanner, =.meta= sidecars, git status
 - *Scripting Manager* - =LrgScriptingManager=, =LrgScriptComponent=, Crispy C backend
 - *Build flags* - =BUILD_EDITOR=1= for the editor subsystem; =CRISPY=1= for compiled-C scripts
 
@@ -216,6 +220,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:guides/extending-ui.org][Extending UI]] - Custom paint-based UI widgets (complete rotary knob walkthrough)
 - [[file:guides/theming.org][Theming]] - Theme YAML files, presets, accents, scoped and runtime themes, contrast
 - [[file:guides/ui-migration.org][UI Migration]] - Porting pre-paint-rework UI code and custom widgets
+- [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls
 
@@ -234,6 +239,8 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 - [[file:modules/ui/ui-event.org][LrgUIEvent]] - Event types and accessors
 - [[file:modules/ui/canvas-api.org][LrgCanvas API]] - Every LrgCanvas and LrgCanvasInput function: rendering, input frames, focus, popups
 - [[file:modules/ui/widget-api-reference.org][Widget API reference]] - Every public function of every widget class, one section per widget
+- [[file:modules/ui/drag-and-drop.org][Drag and Drop]] - =LrgDragPayload=, drag sources, drop targets, canvas sessions and view drop positions
+- [[file:modules/ui/property-grid.org][Property Grid]] - =LrgPropertySource=, reflected property editing, hints, multi-edit, one undo step per drag; editors [[file:modules/ui/widgets/vector-edit.org][LrgVectorEdit]], [[file:modules/ui/widgets/curve-edit.org][LrgCurveEdit]], [[file:modules/ui/widgets/gradient-edit.org][LrgGradientEdit]]
 - [[file:modules/ui/inspector.org][UI Inspector]] - Tree snapshots, paths, pick mode, highlight overlay, timings and the =lrg_ui_*= MCP tools
 - [[file:modules/ui/actions.org][Actions and Shortcuts]] - Widget-scoped GIO actions, the built-in =app= / =ui= groups, keyboard shortcuts, accelerators, right-to-left layout
 - Menus: [[file:modules/ui/widgets/menu.org][LrgMenu]] (popup and context menus from a =GMenuModel=), [[file:modules/ui/widgets/menu-bar.org][LrgMenuBar]]

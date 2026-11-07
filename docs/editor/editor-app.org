@@ -86,7 +86,7 @@ What the established editors offer and where it lives here.
 
 | Feature (Unity / Godot / Unreal)                     | lrgeditor                                                                 |
 |------------------------------------------------------+----------------------------------------------------------------------------|
-| Dockable panels, saved layout                        | =LrgGuiDock=: drag tabs to split/merge; layout saved in =editor.yaml=; View > Reset Layout |
+| Dockable panels, saved layout                        | =LrgDockArea=: drag tabs to split/merge; layout saved under =ui-layout= in =editor.yaml=; View > Reset Layout |
 | Scene view: fly, orbit, pan, zoom, frame             | Right-drag fly + WASDQE, Alt+drag orbit, middle pan, wheel zoom, F / Home   |
 | Ortho views, 2D mode                                 | Numpad 7/1/3 (+Ctrl opposite), Num5 ortho, Ctrl+Shift+2 2D mode            |
 | Move / rotate / scale gizmos, local/world, snapping  | Q/W/E/R, T space, Y snap, Ctrl inverts snapping during a drag, Esc cancels |
@@ -108,7 +108,16 @@ What the established editors offer and where it lives here.
 | Editor scripting / automation                        | JSON-lines IPC: every action, node edit, play control, screenshots         |
 | Tilemap painting (brush, rect, fill, eyedropper)     | Tiles panel + B in the viewport; strokes undo as one step ([[file:editor-tools.org::#tilemap-painting][Editor Tools]]) |
 | Animation timeline, keyframes, easing                | Timeline panel: I keys the selection, K plays, drag keys; autoplay in play mode |
-| Asset thumbnails                                     | Grid view: textures, models, levels, prefabs; cached in =.cache/thumbnails= |
+| Asset thumbnails                                     | Grid view: textures, models, levels, prefabs, audio waveforms, font samples, script tiles; cached in =.cache/thumbnails= |
+| Split and quad viewports, render modes               | Up to four viewports with their own camera, Lit / Unlit / Wireframe / Normals / Lighting Only, overlays, camera preview ([[#editor-panel-viewport][Viewport panel]]) |
+| Engine lighting in the scene view                    | =LrgLightSet=, cascaded shadows, sky dome, preview post stack                |
+| Inspector multi-edit, mixed values                   | One property grid per section; one undo step per drag across every selected node ([[#editor-panel-inspector][Inspector panel]]) |
+| Nested / linked prefabs with overrides               | Linked instances, override markers, Apply / Revert, sync on save ([[file:prefabs.org::#linked-instances][Prefabs]]) |
+| Live inspection while playing                        | Hierarchy Live tab, live component values, Apply to Level                    |
+| Profiler                                             | Profiler panel: frame graph and section table ([[#editor-panel-profiler][Profiler panel]]) |
+| Built-in script editor                               | Code panel with syntax colours, go to line, reload on change ([[#editor-panel-code][Code editor]]) |
+| Asset import settings, stable GUIDs, VCS status      | =.meta= sidecars, Import Settings dialog, git badges and branch ([[#editor-panel-assets][Assets panel]]) |
+| Data / resource editors                              | Input maps, locales, sound banks, themes, HUD and UI layouts, dialog trees, dungeons ([[file:data-editors.org][Data Editors]]) |
 
 ** Window layout
 :PROPERTIES:
@@ -127,7 +136,7 @@ What the established editors offer and where it lives here.
 #+end_example
 
 - *Menu bar*: every menu item is an action, showing its current shortcut and enabled/checked state. Alt + the first letter (Alt+F, Alt+E, Alt+C, Alt+N, Alt+V, Alt+P, Alt+T, Alt+H) opens a menu from the keyboard; Escape closes it.
-- *Toolbar*: tools, space, snap with spin boxes for the increments, 2D/3D, play controls, run game, and the viewport layout picker (=single=, =split-h=, =split-v=, =quad=; drawing split viewports arrives with the viewport panel work, the layout is already stored in the view state).
+- *Toolbar*: tools, space, snap with spin boxes for the increments, 2D/3D, play controls, run game, and the viewport layout picker (=single=, =split-h=, =split-v=, =quad=, see [[#editor-viewport-layouts][Layouts and the active viewport]]).
 - *Status bar*: document and dirty marker, play state, a "changed on disk: Reload / Keep mine" prompt, the last status message, selection and node counts, log counters (click to open the console), IPC state ("emacs" when libregnum.el is connected), frame rate.
 - *Toasts*: transient notifications in the bottom right (info, success, warning, error).
 
@@ -1577,3 +1586,157 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 :CUSTOM_ID: editor-panel-dialogs-testing
 :END:
 =tests/test-editor-app-dialogs.c= drives all of this headless through the canvas and the IPC: a theme card click re-themes the canvas (a preset and a shipped theme file), a settings row applies live and =editor.yaml= is saved on close; "+" on the Keybindings page captures Ctrl+J (a lone Ctrl keeps waiting) and the new shortcut toggles visibility after the dialog closes, a conflict is reported, Reset and the remove button work; Reset All keeps the layout; the palette runs "select all" picked by fuzzy search, "@camera" selects the camera, a disabled action does not run, arrows wrap; quick open waits for the scan, skips hidden folders, opens a level and (with =script-editor= internal) a script in the code panel; the project settings form saves =project.ryaml=; New Script creates, attaches and opens a Python script; the shortcut table filters by key name, follows rebinding and leads to the Keybindings page; About; the code panel opens with syntax and caret, marks dirty, saves with the panel-scoped Ctrl+S without saving the level, reloads a clean tab changed on disk, asks for a dirty one, asks before closing a dirty tab and opens through the =code.open= GIO action; =code.open= / =code.list= / =code.save= over IPC with their errors, and =node.open-scripts= routed by =script-editor=.
+
+** API index
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-index
+:END:
+
+Every public function of the editor application widget headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-editor-window.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-window
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_window_new ()= | Creates the window: menus from /app/'s actions, the toolbar, an empty dock area and the status bar. |
+| =lrg_editor_window_get_app ()= | Returns the application. |
+| =lrg_editor_window_get_dock ()= | Returns the dock area. |
+| =lrg_editor_window_get_toasts ()= | Returns the toast queue (a canvas overlay once the window is on a canvas). |
+| =lrg_editor_window_get_widget ()= | Looks up one of the window's own widgets, for tests and tools that click them by their rectangle. |
+
+*** =lrg-editor-hierarchy-panel.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-hierarchy-panel
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_hierarchy_panel_get_app ()= | Returns the application, =NULL= once it is gone. |
+| =lrg_editor_hierarchy_panel_get_live_view ()= | Returns the list of live game objects shown on the Live tab (widget name "hierarchy-live"). |
+| =lrg_editor_hierarchy_panel_get_context_menu ()= | The context menu widget (open after a right click on a row or on the empty area, or after =lrg_editor_hierarchy_panel_popup_context_menu()=). |
+| =lrg_editor_hierarchy_panel_set_page ()= | Switches between the level tree and the live game objects. |
+
+*** =lrg-editor-assets-panel.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-assets-panel
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_assets_panel_set_directory ()= | Shows /dir/. Folders outside the project root are refused, so the breadcrumb always starts at the project. |
+| =lrg_editor_assets_panel_set_grid_view ()= | Switches between the views; the selection is kept. The "view.asset-grid" action toggles the same state. |
+| =lrg_editor_assets_panel_set_filter ()= | Shows only the entries whose name matches /filter/ (folders included). |
+| =lrg_editor_assets_panel_set_type_filter ()= | Shows only files of /type/. Folders stay visible so the filter works while browsing (they are hidden only when a name filter is set too and they do not match it). |
+| =lrg_editor_assets_panel_get_entry_path ()= | Returns the absolute path of the entry, =NULL= when /index/ is out of range. |
+| =lrg_editor_assets_panel_find_entry ()= | Returns the display index of /path/, or -1 when it is not shown. |
+| =lrg_editor_assets_panel_get_renaming ()= | Returns the absolute path being renamed inline, or =NULL=. |
+
+*** =lrg-editor-viewport-panel.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-viewport-panel
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_viewport_panel_new_for_index ()= | A panel showing camera /index/ of the app's view state, with that viewport's render mode and overlays. |
+| =lrg_editor_viewport_panel_get_header ()= | The header bar: a view preset combo box ("view-preset"), a render mode combo box ("render-mode"), the overlays menu button ("overlays"), the camera preview toggle ("preview-toggle") and the maximise toggle ("maximize"); names are prefixed with "vpN-" for viewport N. |
+| =lrg_editor_viewport_panel_get_preview_node ()= | Returns the camera node the preview shows, or =NULL= when the preview is hidden. |
+| =lrg_editor_viewport_panel_get_preview_enabled ()= | Returns whether a selected camera shows its preview. |
+
+*** =lrg-editor-viewport-split.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-viewport-split
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_viewport_split_get_n_visible ()= | Returns how many panels are on screen (1, 2 or 4; 1 while maximised). |
+| =lrg_editor_viewport_split_get_active_panel ()= | Returns the panel of the view state's active viewport. |
+| =lrg_editor_viewport_split_get_maximized ()= | Returns the maximised viewport, or -1. |
+
+*** =lrg-editor-scene-renderer.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-scene-renderer
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_scene_renderer_get_editor ()= | Returns the editor this renderer draws. |
+| =lrg_editor_scene_renderer_set_settings ()= | Binds the settings whose "grid-size" and "grid-extent" shape the viewport grid. |
+| =lrg_editor_scene_renderer_set_base_dir ()= | Changing the directory forgets the per-asset-string lookups, so nodes resolve their assets again on the next render. |
+| =lrg_editor_scene_renderer_get_base_dir ()= | Returns the asset base directory. |
+| =lrg_editor_scene_renderer_set_gizmo ()= | Sets the transform gizmo drawn over the active viewport. The renderer only reads it (origin, axes, size, hovered and active handle). |
+| =lrg_editor_scene_renderer_set_playing ()= | While playing the background turns a darker blue so play mode is visible at a glance. |
+| =lrg_editor_scene_renderer_get_playing ()= | Returns whether the play-mode background is used. |
+| =lrg_editor_scene_renderer_get_draw_overlays ()= | Returns whether the 2D overlays are drawn into the image. |
+| =lrg_editor_scene_renderer_has_scene_sun ()= | Returns =TRUE= when the last =lrg_editor_scene_renderer_sync_lights()= took the directional light from the level, =FALSE= when it used the default editor sun. |
+| =lrg_editor_scene_renderer_get_sky_dome ()= | The sky drawn behind perspective viewports with overlay =LRG_EDITOR_VIEW_OVERLAY_SKY=. |
+| =lrg_editor_scene_renderer_get_drawn ()= | Returns the number of draw calls (nodes, model meshes, tilemap layers) issued by the last render. |
+| =lrg_editor_scene_renderer_forget_asset ()= | Drops the cached GPU copy of a model or texture so the next render loads it again (live reload). |
+| =lrg_editor_scene_renderer_render_model_thumbnail ()= | Renders a model from a 3/4 angle, framed by its bounding box and lit like the viewport, into a /size/ x /size/ image. |
+| =lrg_editor_scene_renderer_render_font_thumbnail ()= | Loads the font with the size and code points of its ".meta" sidecar (32 pixels and 32-126 without one) and draws the sample "Aa Bb 123" centred on a dark background into a /size/ x /size/ image. |
+| =lrg_editor_scene_renderer_release ()= | Frees every GPU resource (shader, meshes, cached models and textures). |
+
+*** =lrg-editor-gizmo-paint.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-gizmo-paint
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_gizmo_paint_format_delta ()= | The drag readout text: "Move  dx 1.25  dy 0  dz -0.5", "Rotate  45.0 deg" or "Scale  x1.50 y1.50 z1.50". |
+| =lrg_editor_gizmo_paint_drag_readout ()= | Paints =lrg_editor_gizmo_paint_format_delta()= on a small rounded chip just below and right of the pointer while a gizmo drag runs. |
+| =lrg_editor_gizmo_paint_axes ()= | Paints the orientation gizmo with the geometry of =lrg_editor_viewport_nav_get_gizmo_end()=: a translucent disc, the +X +Y +Z ends as labelled discs on lines and the negative ends as smaller discs, far ends first. |
+| =lrg_editor_gizmo_paint_box_select ()= | Paints the box-select rectangle: a translucent accent fill with a crisp accent border. |
+| =lrg_editor_gizmo_paint_chip ()= | Paints a text chip on a glass background with a soft shadow (the stats overlay, hints). |
+| =lrg_editor_gizmo_paint_tile_hover ()= | Outlines the hovered cell of a tilemap (projected through /view/) and tints it faintly. |
+| =lrg_editor_gizmo_paint_play_frame ()= | Paints the play-mode frame (a success-coloured, or warning-coloured while paused, border) and a pill label at the bottom centre with the play keys. |
+| =lrg_editor_gizmo_paint_missing_asset ()= | Paints a magenta box around the screen bounds of /node/ with a small "missing: file" tag, so broken references stand out in every render mode. |
+| =lrg_editor_gizmo_paint_active_outline ()= | Paints the accent outline of the active viewport of a split layout. |
+
+*** =lrg-editor-code-panel.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-code-panel
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_code_panel_new ()= | Creates the panel and registers its actions and IPC methods on /app/ (see the section description). |
+| =lrg_editor_code_panel_get_app ()= | Returns the application, =NULL= once it is gone. |
+| =lrg_editor_code_panel_save_all ()= | Saves every dirty tab. |
+| =lrg_editor_code_panel_close ()= | Closes a tab. A dirty tab is not closed unless /force/ is set: the "Save changes?" dialog (ui.state dialog "confirm") opens instead and its answer decides. |
+| =lrg_editor_code_panel_get_path ()= | Returns the absolute path of the file in tab /index/, or =NULL= when out of range. |
+| =lrg_editor_code_panel_get_active_path ()= | Returns the active tab's file, =NULL= when no file is open. |
+| =lrg_editor_code_panel_get_editor ()= | Returns the text editor of that tab. |
+| =lrg_editor_code_panel_is_dirty ()= | Returns =TRUE= if that tab (or, for =NULL=, any tab) has unsaved changes. |
+
+*** =lrg-editor-palette.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-palette
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_palette_mode_get_type ()= | The =GType= of =LrgEditorPaletteMode=. |
+| =lrg_editor_palette_new ()= | Creates a palette for /app/ and points the "tools.palette" and "tools.quick-open" actions at it. |
+| =lrg_editor_palette_get_app ()= | Returns the application, =NULL= once it is gone. |
+| =lrg_editor_palette_get_open ()= | Returns =TRUE= while the palette shows. |
+| =lrg_editor_palette_get_mode ()= | Returns what the palette searches. |
+| =lrg_editor_palette_set_query ()= | Replaces the query text (as typing would) and re-ranks the results. |
+| =lrg_editor_palette_get_result ()= | Returns what result /index/ stands for: an action id, a project-relative file path or a node GUID; =NULL= when out of range. |
+| =lrg_editor_palette_set_selected ()= | Highlights a result and scrolls it into view. |
+| =lrg_editor_palette_activate ()= | Runs the highlighted result as Enter does: closes the palette, then runs the action, selects the node or opens the file. |
+| =lrg_editor_palette_get_n_files ()= | Returns the number of project files the last scan found. |
+
+*** =lrg-editor-preferences.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-preferences
+:END:
+
+| Function | Summary |
+|-+-|
+| =lrg_editor_preferences_get_app ()= | Returns the application, =NULL= once it is gone. |
+| =lrg_editor_preferences_set_page ()= | Returns =TRUE= if /page/ exists. |
