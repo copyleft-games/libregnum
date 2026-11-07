@@ -24,6 +24,7 @@
 #endif
 #include "graphics/lrg-static-batch.h"
 #include "graphics/lrg-draw-cull-private.h"
+#include "graphics/lrg-camera.h"
 
 /* Transforms with a smaller |determinant| are treated as singular. */
 #define BATCH_SINGULAR_EPSILON (1e-12)
@@ -1545,6 +1546,13 @@ lrg_static_batch_draw (LrgStaticBatch *self,
      * as they are: the camera's in the main pass, the light's in a
      * shadow pass. A chunk wholly outside draws no pixel. */
     cull = lrg_draw_cull_frustum_current (&frustum);
+
+    /* Chunk layers are render layers: the caller's mask is narrowed by
+     * the active cull mask (the begun camera's, or a shadow pass's
+     * caster mask), so a layer hidden there draws nothing. */
+    layer_mask &= lrg_render_layers_get_active_mask ();
+    if (layer_mask == 0)
+        return;
     for (i = 0; i < self->chunks->len; i++)
     {
         Chunk *chunk = g_ptr_array_index (self->chunks, i);
@@ -1567,6 +1575,7 @@ lrg_static_batch_draw_chunk (LrgStaticBatch *self,
     g_return_if_fail (LRG_IS_STATIC_BATCH (self));
 
     entry = chunk_at (self, chunk);
-    if (entry != NULL)
+    /* A chunk on a layer outside the active cull mask is skipped. */
+    if (entry != NULL && lrg_render_layers_is_visible (entry->layer))
         draw_one (self, entry);
 }

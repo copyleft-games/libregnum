@@ -14,6 +14,7 @@ The Debug module consists of four main systems:
 - *LrgDebugOverlay*: On-screen HUD displaying performance metrics
 - *LrgInspector*: Runtime inspection of game objects and components
 - *LrgProfiler*: Performance profiling of code sections
+- *[[file:debug-draw.org][LrgDebugDraw]]*: Immediate-mode 3D/2D debug geometry (lines, boxes, spheres, capsules, frustums, labels) with durations, depth lists and toggleable categories
 
 With =MCP=1=, all four singletons are also reachable by an AI agent through the MCP debug tools (=lrg_debug_profiler_*=, =lrg_debug_overlay_get= / =_set=, =lrg_debug_console_execute= / =_get_output=, =lrg_debug_inspect=); see [[file:../mcp/tools.org::#debug-tools-lrgmcpdebugtools][MCP Tools]].
 
@@ -210,6 +211,7 @@ g_list_free (objects);
 - =/var/home/zach/Source/Projects/libregnum/src/debug/lrg-debug-overlay.h= - On-screen overlay
 - =/var/home/zach/Source/Projects/libregnum/src/debug/lrg-inspector.h= - Object inspection
 - =/var/home/zach/Source/Projects/libregnum/src/debug/lrg-profiler.h= - Performance profiling
+- =src/debug/lrg-debug-draw.h= - Immediate-mode debug geometry
 
 ** See Also
 :PROPERTIES:
@@ -219,3 +221,4 @@ g_list_free (objects);
 - [[./debug-overlay.md][LrgDebugOverlay Documentation]]
 - [[./inspector.md][LrgInspector Documentation]]
 - [[./profiler.md][LrgProfiler Documentation]]
+- [[file:debug-draw.org][LrgDebugDraw Documentation]]

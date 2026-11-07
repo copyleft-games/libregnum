@@ -172,7 +172,9 @@ lrg_particle_billboard_renderer_build (LrgParticleBillboardRenderer *self,
  *
  * Draws the system's active particles through rlgl's batch with the
  * system's blend mode (additive, alpha or multiply), depth testing on and
- * depth writes off.  Presentation only: needs a window.
+ * depth writes off.  Presentation only: needs a window.  Nothing is
+ * drawn when the system's #LrgParticleSystem:layer is outside
+ * lrg_render_layers_get_active_mask().
  *
  * Since: 1.0
  */

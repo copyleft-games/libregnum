@@ -495,7 +495,9 @@ lrg_terrain_unload (LrgTerrain *self);
  * @self: an #LrgTerrain
  *
  * Draws every uploaded chunk, translated by (chunk corner - origin).
- * Must be called inside a 3D mode. Chunks not yet uploaded are skipped.
+ * Must be called inside a 3D mode. Chunks not yet uploaded are skipped,
+ * and so are chunks whose render layer (lrg_terrain_get_chunk_layer())
+ * is outside lrg_render_layers_get_active_mask().
  */
 LRG_AVAILABLE_IN_ALL
 void
@@ -508,12 +510,70 @@ lrg_terrain_draw (LrgTerrain *self);
  * @cz: chunk Z coordinate
  *
  * Draws one uploaded chunk (for callers that cull with
- * lrg_terrain_get_chunk_bounds()).
+ * lrg_terrain_get_chunk_bounds()).  Nothing is drawn when the chunk's
+ * render layer is outside lrg_render_layers_get_active_mask().
  */
 LRG_AVAILABLE_IN_ALL
 void
 lrg_terrain_draw_chunk (LrgTerrain *self,
                         gint        cx,
                         gint        cz);
+
+/**
+ * lrg_terrain_set_layer:
+ * @self: an #LrgTerrain
+ * @layer: a render layer 0 .. 31 (see lrg_render_layers_get_name())
+ *
+ * The render layer of every chunk without an override of its own
+ * (0, "default", until set).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_terrain_set_layer (LrgTerrain *self,
+                       guint       layer);
+
+/**
+ * lrg_terrain_get_layer:
+ * @self: an #LrgTerrain
+ *
+ * Returns: the terrain's render layer
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_terrain_get_layer (LrgTerrain *self);
+
+/**
+ * lrg_terrain_set_chunk_layer:
+ * @self: an #LrgTerrain
+ * @cx: chunk X coordinate
+ * @cz: chunk Z coordinate
+ * @layer: a render layer 0 .. 31, or -1 to use the terrain's layer
+ *
+ * Puts one chunk on its own render layer (e.g. hide a cave entrance
+ * chunk from a minimap camera).  The override is kept by coordinates:
+ * it applies to a chunk loaded there later and survives
+ * lrg_terrain_set_chunk() replacing the data.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_terrain_set_chunk_layer (LrgTerrain *self,
+                             gint        cx,
+                             gint        cz,
+                             gint        layer);
+
+/**
+ * lrg_terrain_get_chunk_layer:
+ * @self: an #LrgTerrain
+ * @cx: chunk X coordinate
+ * @cz: chunk Z coordinate
+ *
+ * Returns: the chunk's effective render layer (its override, else the
+ *   terrain's)
+ */
+LRG_AVAILABLE_IN_ALL
+guint
+lrg_terrain_get_chunk_layer (LrgTerrain *self,
+                             gint        cx,
+                             gint        cz);
 
 G_END_DECLS

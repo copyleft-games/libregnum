@@ -120,3 +120,31 @@ lrg_static_batch_set_shader (world, lrg_light_set_get_shader (lights));
 :CUSTOM_ID: tests
 :END:
 =tests/test-shadow-renderer.c=: the matrix helpers, the split scheme, every slice corner inside its cascade with a floating origin, texel snapping, the cube faces against the shader's lookup, the point plan (priority, budget, reach, removal). =tests/test-light-set.c= =/light-set/shader-shadows=: the sun and a point light behind an occluder darken the floor under it in a hidden window, the open floor stays lit, strength 0 removes the shadow.
+
+** Render layers
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+=lrg_shadow_renderer_set_caster_mask()= / =lrg_shadow_renderer_get_caster_mask()= choose which render layers cast (all by default). =lrg_shadow_renderer_begin_pass()= installs the caster mask as the active mask and =lrg_shadow_renderer_end_pass()= restores the previous one, so layer-aware casters (static batch chunks, terrain chunks, billboard batches) on other layers draw nothing in the pass. Changing the mask drops the pass cache. See [[file:../graphics/render-layers.org][Render layers]].
+
+** Further API
+:PROPERTIES:
+:CUSTOM_ID: further-api
+:END:
+Accessors and helpers not covered above (the header holds the full GIR documentation):
+
+- =lrg_shadow_pass_kind_get_type()= - the GType of =LrgShadowPassKind=
+- =lrg_shadow_renderer_get_cascade()= - a planned cascade's near and far view distances and light view-projection; FALSE out of range
+- =lrg_shadow_renderer_get_cascade_count()= - Returns: cascades planned by the last update (0: no directional shadow)
+- =lrg_shadow_renderer_get_light_slot()= - Returns: the shadow slot of @light, or LRG_SHADOW_NO_SLOT
+- =lrg_shadow_renderer_get_point_count()= - Returns: point lights with a cube after the last update
+- =lrg_shadow_renderer_get_point_light()= - Returns: the light set's id of the light in @slot, or G_MAXUINT
+- =lrg_shadow_renderer_get_points()= - reads the point-light cube face size and light budget
+- =lrg_shadow_renderer_get_refresh()= - Returns: the cache's refresh in frames, 0 when off
+- =lrg_shadow_renderer_get_strength()= - Returns: the shadow strength
+- =lrg_shadow_renderer_get_sun()= - reads the cascade size (0 when off), cascade count and reach
+- =lrg_shadow_renderer_is_ready()= - TRUE when every pass of the last update was rendered or is current, so a light set may sample the atlases
+- =lrg_shadow_renderer_release_gpu()= - Frees the atlases and the caster shader (call before the window closes); they are made again on the next pass.
+- =lrg_shadow_renderer_set_bias()= - depth bias and normal offset (in shadow texels) against shadow acne
+- =lrg_shadow_renderer_set_filter()= - percentage-closer filter radius in texels, 0 (one tap) .. 2 (5 x 5 taps)
+- =lrg_shadow_renderer_set_strength()= - how much light a shadow removes, 0 .. 1

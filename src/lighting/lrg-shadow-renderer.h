@@ -550,6 +550,31 @@ void
 lrg_shadow_renderer_end_pass (LrgShadowRenderer *self);
 
 /**
+ * lrg_shadow_renderer_set_caster_mask:
+ * @self: an #LrgShadowRenderer
+ * @mask: bit N lets render layer N cast shadows
+ *
+ * The render layers that cast shadows (every layer by default).  A
+ * change drops the pass cache, since the cached tiles hold the old
+ * casters.  Casters drawn by hand inside a pass should test
+ * lrg_render_layers_is_visible() with their layer.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_shadow_renderer_set_caster_mask (LrgShadowRenderer *self,
+                                     guint32            mask);
+
+/**
+ * lrg_shadow_renderer_get_caster_mask:
+ * @self: an #LrgShadowRenderer
+ *
+ * Returns: the render layers that cast shadows
+ */
+LRG_AVAILABLE_IN_ALL
+guint32
+lrg_shadow_renderer_get_caster_mask (LrgShadowRenderer *self);
+
+/**
  * lrg_shadow_renderer_get_caster_shader:
  * @self: an #LrgShadowRenderer
  *

@@ -175,3 +175,17 @@ grl_camera3d_end (camera);
 if (lrg_terrain_height_at (ground, player_x, player_z, &y))
     player_y = y;
 #+end_src
+
+** Render layers
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+=lrg_terrain_set_layer()= sets the terrain's render layer (0 by default); =lrg_terrain_set_chunk_layer()= overrides it per chunk (=-1= clears; kept by coordinates across =set_chunk()= replacements) and =lrg_terrain_get_chunk_layer()= reads the effective layer. =lrg_terrain_draw()= and =lrg_terrain_draw_chunk()= skip chunks outside the active cull mask. See [[file:render-layers.org][Render layers]].
+
+** Further API
+:PROPERTIES:
+:CUSTOM_ID: further-api
+:END:
+Accessors and helpers not covered above (the header holds the full GIR documentation):
+
+- =lrg_terrain_get_texture_repeat()= - Returns: cells covered by one texture repeat

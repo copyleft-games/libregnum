@@ -7,6 +7,7 @@
 
 #include "config.h"
 #include "lrg-particle-system.h"
+#include "../graphics/lrg-camera.h"
 
 /**
  * SECTION:lrg-particle-system
@@ -61,6 +62,7 @@ typedef struct
     /* Rendering */
     LrgParticleRenderMode render_mode;
     LrgParticleBlendMode  blend_mode;
+    guint                 layer;           /* render layer 0 .. 31 */
 
     /* World transform */
     gfloat               position_x;
@@ -81,6 +83,7 @@ enum
     PROP_TIME_SCALE,
     PROP_RENDER_MODE,
     PROP_BLEND_MODE,
+    PROP_LAYER,
     N_PROPS
 };
 
@@ -292,6 +295,9 @@ lrg_particle_system_get_property (GObject    *object,
     case PROP_BLEND_MODE:
         g_value_set_enum (value, priv->blend_mode);
         break;
+    case PROP_LAYER:
+        g_value_set_uint (value, priv->layer);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -328,6 +334,9 @@ lrg_particle_system_set_property (GObject      *object,
         break;
     case PROP_BLEND_MODE:
         lrg_particle_system_set_blend_mode (self, g_value_get_enum (value));
+        break;
+    case PROP_LAYER:
+        lrg_particle_system_set_layer (self, g_value_get_uint (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -445,6 +454,23 @@ lrg_particle_system_class_init (LrgParticleSystemClass *klass)
                            G_PARAM_STATIC_STRINGS |
                            G_PARAM_EXPLICIT_NOTIFY);
 
+    /**
+     * LrgParticleSystem:layer:
+     *
+     * The render layer (0 .. 31, see lrg_render_layers_get_name()) the
+     * system draws on.  lrg_particle_system_draw() and
+     * lrg_particle_billboard_renderer_draw() draw nothing while it is
+     * outside lrg_render_layers_get_active_mask().
+     */
+    properties[PROP_LAYER] =
+        g_param_spec_uint ("layer",
+                           "Layer",
+                           "Render layer the system draws on",
+                           0, LRG_RENDER_LAYERS_COUNT - 1, 0,
+                           G_PARAM_READWRITE |
+                           G_PARAM_STATIC_STRINGS |
+                           G_PARAM_EXPLICIT_NOTIFY);
+
     g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
@@ -500,6 +526,11 @@ lrg_particle_system_draw (LrgParticleSystem *self)
     g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (self));
 
     klass = LRG_PARTICLE_SYSTEM_GET_CLASS (self);
+
+    /* A system on a render layer outside the active cull mask (the
+     * begun camera's) draws nothing. */
+    if (!lrg_particle_system_is_layer_visible (self))
+        return;
 
     if (klass->draw != NULL)
         klass->draw (self);
@@ -918,6 +949,45 @@ lrg_particle_system_set_blend_mode (LrgParticleSystem    *self,
     priv->blend_mode = mode;
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_BLEND_MODE]);
+}
+
+void
+lrg_particle_system_set_layer (LrgParticleSystem *self,
+                               guint              layer)
+{
+    LrgParticleSystemPrivate *priv;
+
+    g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (self));
+    g_return_if_fail (layer < LRG_RENDER_LAYERS_COUNT);
+
+    priv = lrg_particle_system_get_instance_private (self);
+
+    if (priv->layer == layer)
+        return;
+
+    priv->layer = layer;
+
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LAYER]);
+}
+
+guint
+lrg_particle_system_get_layer (LrgParticleSystem *self)
+{
+    LrgParticleSystemPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_PARTICLE_SYSTEM (self), 0);
+
+    priv = lrg_particle_system_get_instance_private (self);
+
+    return priv->layer;
+}
+
+gboolean
+lrg_particle_system_is_layer_visible (LrgParticleSystem *self)
+{
+    g_return_val_if_fail (LRG_IS_PARTICLE_SYSTEM (self), FALSE);
+
+    return lrg_render_layers_is_visible (lrg_particle_system_get_layer (self));
 }
 
 void

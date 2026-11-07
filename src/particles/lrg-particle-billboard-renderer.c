@@ -468,8 +468,10 @@ lrg_particle_billboard_renderer_draw (LrgParticleBillboardRenderer *self,
     g_return_if_fail (LRG_IS_PARTICLE_SYSTEM (system));
     g_return_if_fail (GRL_IS_CAMERA3D (camera));
 
+    /* Nothing alive, or the system's render layer is outside the
+     * active cull mask. */
     active = lrg_particle_system_get_active_count (system);
-    if (active == 0)
+    if (active == 0 || !lrg_particle_system_is_layer_visible (system))
         return;
 
     position = grl_camera3d_get_position (camera);

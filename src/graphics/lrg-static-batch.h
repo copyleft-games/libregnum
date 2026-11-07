@@ -631,6 +631,11 @@ lrg_static_batch_unload (LrgStaticBatch *self);
  * Draws every uploaded chunk whose layer is selected, in chunk order, with
  * its material texture, its layer tint and the batch shader. Must be
  * called inside a 3D mode. Chunks not yet uploaded are skipped.
+ *
+ * Chunk layers are render layers (see lrg_render_layers_get_name()):
+ * @layer_mask is ANDed with lrg_render_layers_get_active_mask(), so a
+ * chunk whose layer the begun camera's #LrgCamera:cull-mask (or a
+ * shadow pass's caster mask) leaves out is not drawn.
  */
 LRG_AVAILABLE_IN_ALL
 void
@@ -643,7 +648,8 @@ lrg_static_batch_draw (LrgStaticBatch *self,
  * @chunk: chunk index
  *
  * Draws one uploaded chunk (for callers that cull with
- * lrg_static_batch_get_chunk_bounds()).
+ * lrg_static_batch_get_chunk_bounds()).  Nothing is drawn when the
+ * chunk's layer is outside lrg_render_layers_get_active_mask().
  */
 LRG_AVAILABLE_IN_ALL
 void

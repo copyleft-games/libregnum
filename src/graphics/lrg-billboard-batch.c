@@ -44,6 +44,7 @@
 #include "graphics/lrg-billboard-batch.h"
 #include "graphics/lrg-light-set-private.h"
 #include "graphics/lrg-draw-cull-private.h"
+#include "graphics/lrg-camera.h"
 #include "lighting/lrg-shadow-renderer.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "weather/lrg-ground-overlay-private.h"
@@ -149,6 +150,7 @@ struct _LrgBillboardBatch
     LrgLightSetFogLocations fog_locs;
     LrgLightSet      *light_set;    /* own lights, NULL: the bound set */
     gboolean          lit;
+    guint             layer;        /* render layer 0 .. 31 */
 
     /* wind sway: direction (x, z), lean and gust per metre of height,
      * gust frequency (radians per second) and the clock */
@@ -472,6 +474,22 @@ LrgBillboardBatch *
 lrg_billboard_batch_new (void)
 {
     return g_object_new (LRG_TYPE_BILLBOARD_BATCH, NULL);
+}
+
+void
+lrg_billboard_batch_set_layer (LrgBillboardBatch *self,
+                               guint              layer)
+{
+    g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
+    g_return_if_fail (layer < LRG_RENDER_LAYERS_COUNT);
+    self->layer = layer;
+}
+
+guint
+lrg_billboard_batch_get_layer (LrgBillboardBatch *self)
+{
+    g_return_val_if_fail (LRG_IS_BILLBOARD_BATCH (self), 0);
+    return self->layer;
 }
 
 void
@@ -1847,7 +1865,9 @@ lrg_billboard_batch_draw (LrgBillboardBatch *self,
     g_return_if_fail (LRG_IS_BILLBOARD_BATCH (self));
     g_return_if_fail (camera_position != NULL);
 
-    if (self->billboards->len == 0)
+    /* Nothing to draw, or the batch's render layer is outside the
+     * active cull mask (the begun camera's #LrgCamera:cull-mask). */
+    if (self->billboards->len == 0 || !lrg_render_layers_is_visible (self->layer))
         return;
 
     camera[0] = camera_position->x;
@@ -2035,7 +2055,10 @@ lrg_billboard_batch_draw_shadow (LrgBillboardBatch *self,
     g_return_if_fail (LRG_IS_SHADOW_RENDERER (renderer));
     g_return_if_fail (camera_position != NULL);
 
+    /* A batch whose layer is outside the active mask (narrowed to the
+     * renderer's caster mask by begin_pass) casts no shadow. */
     if (self->billboards->len == 0 || !IsWindowReady ()
+        || !lrg_render_layers_is_visible (self->layer)
         || !lrg_shadow_renderer_get_pass_state (renderer, &mode, light, direction))
         return;
 

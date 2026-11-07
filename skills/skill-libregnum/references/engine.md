@@ -49,6 +49,8 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 
 ## Traps
 
+- **Render layers vs LrgRenderLayer.** `LRG_RENDER_LAYERS_*` / `lrg_render_layers_*` (graphics/lrg-camera.h) are the 32 visibility layers filtered by a camera's `cull-mask`; `LrgRenderLayer` (`LRG_RENDER_LAYER_UI`, lrg-enums.h) is LrgRenderer's draw order. Drawables (static batch chunks, billboard batches, terrain chunks, particle systems) test the *active mask*, which only `lrg_camera_begin()` / `lrg_shadow_renderer_begin_pass()` install: render code using raw `BeginMode3D()` must bracket with `lrg_render_layers_set_active_mask()`, and hand-drawn meshes must test `lrg_render_layers_is_visible()` themselves.
+- **Debug draw needs a flush every frame.** Record into `lrg_debug_draw_get_default()` (or a world/viewport instance), call `lrg_debug_draw_tick (dd, delta)` in update and `lrg_debug_draw_flush (dd, camera)` (or `_flush_matrices`) in render; one-frame primitives otherwise pile up to a 262144 cap. Call `draw_3d()` at the top level of the 3D mode, never inside `rlPushMatrix()`. Use `set_thickness()`, not `rlSetLineWidth()` (GL 3.3 core only guarantees 1-px lines). Subsystems record on their `LrgDebugCategory` and test `lrg_debug_draw_is_category_enabled()` first.
 - **raylib `bool` under gnu89.** `<raylib.h>` without `<stdbool.h>` makes `bool` an int-sized enum while raylib returns a one-byte `_Bool`, so callers read garbage (the editor's mouse buttons read as always held; `RayCollision.hit` read padding). The build force-includes `stdbool.h` and `libregnum.h` includes it first. If you see `typedef enum bool` in effect anywhere, that file is broken.
 - **raylib `Matrix` layout.** Fields are named by column-major storage index but declared in row order: convert by field name, never `memcpy` a `float[16]`. `raymath.h` is not gnu89-clean; do not include it.
 - **`g_ptr_array_copy (src, NULL, NULL)`** inherits `src`'s free function: freeing the copy unrefs live objects. Pass a ref-copy function.
@@ -66,3 +68,7 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - New user-facing command: add an action in `src/editor/ui/lrg-editor-app-actions.c` (id, label, category, default shortcut, callbacks). It appears in menus via the palette, gets a rebindable shortcut, and is callable as `lrgeditorctl run ID` and the `run_action` MCP tool.
 - New IPC method: `lrg_editor_server_register_method()` (document methods in `lrg-editor-server.c`, app methods in `lrg-editor-app-actions.c`); document it in `docs/editor/ipc-protocol.org`; if agents should use it directly, add a row to the tool table in `src/editorctl/lrgeditorctl-mcp.c`.
 - Any edit to the document goes through `LrgEditor` (commands, or `lrg_editor_snapshot_node()` + `lrg_editor_commit_node_state()`), never by poking nodes directly, so it is undoable and emits `changed`.
+
+## Debug and visibility
+
+- `src/debug/lrg-debug-draw.*`: immediate-mode debug geometry (lines, boxes, spheres, capsules, cylinders, cones, frustums, grids, axes, labels, 2D shapes) with durations, depth-tested/on-top lists and 32 toggleable categories; headless-inspectable. Docs: docs/modules/debug/debug-draw.org. Render layers: docs/modules/graphics/render-layers.org.

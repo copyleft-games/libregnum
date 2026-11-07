@@ -290,3 +290,9 @@ my_particle_system_class_init (MyParticleSystemClass *klass)
     system_class->on_particle_death = my_particle_system_on_particle_death;
 }
 #+end_src
+
+** Render layers
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+The =layer= property (=lrg_particle_system_set_layer()= / =lrg_particle_system_get_layer()=, 0 by default) puts a system on a render layer. =lrg_particle_system_draw()= and =lrg_particle_billboard_renderer_draw()= draw nothing while =lrg_particle_system_is_layer_visible()= is =FALSE= (the layer is outside the active cull mask); custom renderers should test it too. See [[file:../graphics/render-layers.org][Render layers]].

@@ -146,3 +146,23 @@ lrg_static_batch_upload (town, &error);
 lrg_static_batch_draw (town, player_inside ? (1u << LAYER_GROUND) | (1u << LAYER_WALLS)
                                            : LRG_STATIC_BATCH_ALL_LAYERS);
 #+end_src
+
+** Render layers
+:PROPERTIES:
+:CUSTOM_ID: render-layers
+:END:
+Chunk layers (0 .. 31) are render layers: =lrg_static_batch_draw()= ANDs its =layer_mask= with =lrg_render_layers_get_active_mask()= (the begun camera's =cull-mask=, or a shadow pass's caster mask), and =lrg_static_batch_draw_chunk()= skips a chunk whose layer is masked out. Passing =LRG_STATIC_BATCH_ALL_LAYERS= inside a camera therefore draws exactly what the camera's mask selects. See [[file:render-layers.org][Render layers]].
+
+** Further API
+:PROPERTIES:
+:CUSTOM_ID: further-api
+:END:
+Accessors and helpers not covered above (the header holds the full GIR documentation):
+
+- =lrg_static_batch_get_chunk_texcoords()= - a chunk's auxiliary UV stream (channel 1 .. 7) as a borrowed view, valid until the channel is replaced, the batch is cleared or finalized (merging more geometry may invalidate primary-channel views); NULL with =*n_coordinates= = 0 for a missing chunk or channel
+- =lrg_static_batch_get_material_emission_color()= - reads a material's own emission colour times its strength; returns whether it has one
+- =lrg_static_batch_get_material_map_flags()= - bit mask of the extra maps a material has: 1 normal, 2 metallic-gloss, 4 height
+- =lrg_static_batch_set_chunk_texcoords()= - copies an auxiliary UV stream for a chunk (after merging, before upload); GPU locations 5 (channel 1) and 8 .. 13 (channels 2 .. 7); invalidates the upload, keeps CPU geometry
+- =lrg_static_batch_set_material_emission_color()= - gives a material its own emission colour and strength (NULL unsets), used by LrgLightSet's shader instead of the shared emission colour
+- =lrg_static_batch_set_material_height()= - binds a height map (red, 0.5 = surface) as MATERIAL_MAP_HEIGHT for parallax in LrgLightSet's shader; NULL unsets
+- =lrg_static_batch_set_material_metallic()= - binds a metallic-gloss map (metallic in red, smoothness in alpha) as MATERIAL_MAP_METALNESS; NULL unsets

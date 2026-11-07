@@ -398,6 +398,39 @@ void                    lrg_particle_system_set_blend_mode      (LrgParticleSyst
                                                                  LrgParticleBlendMode mode);
 
 /**
+ * lrg_particle_system_set_layer:
+ * @self: A #LrgParticleSystem
+ * @layer: A render layer 0 .. 31 (see lrg_render_layers_get_name())
+ *
+ * Sets #LrgParticleSystem:layer, the render layer the system draws on.
+ */
+LRG_AVAILABLE_IN_ALL
+void                    lrg_particle_system_set_layer           (LrgParticleSystem   *self,
+                                                                 guint                layer);
+
+/**
+ * lrg_particle_system_get_layer:
+ * @self: A #LrgParticleSystem
+ *
+ * Returns: The system's render layer (0, "default", until set)
+ */
+LRG_AVAILABLE_IN_ALL
+guint                   lrg_particle_system_get_layer           (LrgParticleSystem   *self);
+
+/**
+ * lrg_particle_system_is_layer_visible:
+ * @self: A #LrgParticleSystem
+ *
+ * Whether the system's layer is in lrg_render_layers_get_active_mask():
+ * what lrg_particle_system_draw() and custom particle renderers test
+ * before drawing.
+ *
+ * Returns: %TRUE when the system would draw
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean                lrg_particle_system_is_layer_visible    (LrgParticleSystem   *self);
+
+/**
  * lrg_particle_system_get_position:
  * @self: A #LrgParticleSystem
  * @x: (out) (nullable): X position

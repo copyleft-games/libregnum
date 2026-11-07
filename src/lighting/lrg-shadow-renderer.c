@@ -35,6 +35,7 @@
 #define LIBREGNUM_COMPILATION
 #endif
 #include "lighting/lrg-shadow-renderer.h"
+#include "graphics/lrg-camera.h"
 #include "lighting/lrg-shadow-renderer-private.h"
 #include "graphics/lrg-light-set-private.h"
 #include "core/lrg-prewarm.h"
@@ -107,6 +108,11 @@ struct _LrgShadowRenderer
     gint       pass_mode;       /* 0 cascade, 1 cube face */
     gfloat     pass_light[4];   /* cube: position, radius */
     gfloat     pass_dir[3];     /* cascade: the way the light travels */
+
+    /* render layers: which layers cast, and the active mask a pass
+     * replaced (restored by end_pass) */
+    guint32    caster_mask;
+    guint32    saved_mask;
 };
 
 static void lrg_shadow_renderer_prewarmable_init (LrgPrewarmableInterface *iface);
@@ -460,6 +466,8 @@ lrg_shadow_renderer_init (LrgShadowRenderer *self)
     self->normal_offset = 1.5f;
     self->filter = 1;
     self->strength = 1.0f;
+    self->caster_mask = LRG_RENDER_LAYERS_MASK_ALL;
+    self->saved_mask = LRG_RENDER_LAYERS_MASK_ALL;
 
     /* build the GPU resources behind a loading screen, not on the
      * first draw (see lrg_prewarm_track()) */
@@ -1184,6 +1192,10 @@ lrg_shadow_renderer_begin_pass (LrgShadowRenderer *self,
     handle = grl_shader_get_handle (self->caster);
     SetShaderValue (*handle, self->loc_mode, &mode, SHADER_UNIFORM_INT);
     SetShaderValue (*handle, self->loc_light, light, SHADER_UNIFORM_VEC4);
+
+    /* only layers in the caster mask cast: every layer-aware drawable
+     * drawn in the pass consults the active mask */
+    self->saved_mask = lrg_render_layers_set_active_mask (self->caster_mask);
     self->in_pass = TRUE;
     self->pass = pass;
     return TRUE;
@@ -1220,6 +1232,7 @@ lrg_shadow_renderer_end_pass (LrgShadowRenderer *self)
     rlDisableDepthTest ();
     /* the screen, its viewport and 2D matrices, as after a texture mode */
     EndTextureMode ();
+    lrg_render_layers_set_active_mask (self->saved_mask);
     self->in_pass = FALSE;
     lrg_shadow_renderer_mark_rendered (self, self->pass);
 }
@@ -1298,6 +1311,28 @@ lrg_shadow_renderer_pass_is_current (LrgShadowRenderer *self,
     if (pass >= lrg_shadow_renderer_get_pass_count (self) || pass >= MAX_PASSES)
         return FALSE;
     return (self->current & (G_GUINT64_CONSTANT (1) << pass)) != 0;
+}
+
+void
+lrg_shadow_renderer_set_caster_mask (LrgShadowRenderer *self,
+                                     guint32            mask)
+{
+    g_return_if_fail (LRG_IS_SHADOW_RENDERER (self));
+
+    if (self->caster_mask == mask)
+        return;
+    self->caster_mask = mask;
+    /* the cached tiles were rendered with other casters */
+    drop_cache (self);
+    if (self->in_pass)
+        lrg_render_layers_set_active_mask (mask);
+}
+
+guint32
+lrg_shadow_renderer_get_caster_mask (LrgShadowRenderer *self)
+{
+    g_return_val_if_fail (LRG_IS_SHADOW_RENDERER (self), LRG_RENDER_LAYERS_MASK_ALL);
+    return self->caster_mask;
 }
 
 void

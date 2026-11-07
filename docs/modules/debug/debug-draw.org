@@ -1,0 +1,475 @@
+* LrgDebugDraw - Immediate-Mode Debug Geometry
+:PROPERTIES:
+:CUSTOM_ID: lrgdebugdraw
+:END:
+=LrgDebugDraw= is the engine's shared debug-geometry batch: any code (gameplay, physics, navigation, lights, audio, AI, the editor) records shapes into it with one call per shape, and the frame's render code draws everything in a handful of GL draw calls. It is the API the physics debug draw, nav-agent debug draw and the editor's light-range / camera-frustum / collider gizmos build on.
+
+- Lines, polylines, arrows, axis-aligned and oriented boxes, spheres, capsules, cylinders, cones, frustums (from a view-projection or an =LrgCamera3D=), grids, transform axes, circles, points and screen-facing 3D text labels; plus 2D lines, rectangles, circles and text.
+- Per primitive: colour, line thickness, a duration (one frame, or N seconds ticked by delta time), a depth-tested or always-on-top list, a solid flag (filled with alpha) and a category.
+- Categories (physics, navigation, lights, audio, ai, animation, camera, particles, editor, user …) are 32 toggles, so the editor can show one switch per channel.
+- A process-wide default instance (=lrg_debug_draw_get_default()=) plus any number of private instances (one per world or per editor viewport).
+- Recording never needs a graphics context; tests inspect what was recorded and the CPU tessellation. Drawing without a context is a no-op.
+
+** Types
+:PROPERTIES:
+:CUSTOM_ID: types
+:END:
+- =LrgDebugDraw= - *Final GObject class*, =LRG_TYPE_DEBUG_DRAW=, GIR =Libregnum.DebugDraw=
+- =LrgDebugShape= - *Enum*, =LRG_TYPE_DEBUG_SHAPE= (=lrg_debug_shape_get_type()=): the kind of a recorded primitive
+- =LrgDebugCategory= - *Enum*, =LRG_TYPE_DEBUG_CATEGORY= (=lrg_debug_category_get_type()=): built-in channels
+- *Header* - =debug/lrg-debug-draw.h= (via =<libregnum.h>=)
+
+| Shape                          | Nick           | Recorded by                          | Control points (=get_primitive_point()=) |
+|--------------------------------+----------------+--------------------------------------+------------------------------------------|
+| =LRG_DEBUG_SHAPE_LINE=         | =line=         | =lrg_debug_draw_line()=              | 0 from, 1 to                             |
+| =LRG_DEBUG_SHAPE_POLYLINE=     | =polyline=     | =lrg_debug_draw_polyline()=          | every point                              |
+| =LRG_DEBUG_SHAPE_ARROW=        | =arrow=        | =lrg_debug_draw_arrow()=             | 0 tail, 1 tip                            |
+| =LRG_DEBUG_SHAPE_BOX=          | =box=          | =lrg_debug_draw_box()=               | 0 min, 1 max                             |
+| =LRG_DEBUG_SHAPE_ORIENTED_BOX= | =oriented-box= | =lrg_debug_draw_oriented_box()=      | 0 centre                                 |
+| =LRG_DEBUG_SHAPE_SPHERE=       | =sphere=       | =lrg_debug_draw_sphere()=            | 0 centre                                 |
+| =LRG_DEBUG_SHAPE_CAPSULE=      | =capsule=      | =lrg_debug_draw_capsule()=           | 0 a, 1 b                                 |
+| =LRG_DEBUG_SHAPE_CYLINDER=     | =cylinder=     | =lrg_debug_draw_cylinder()=          | 0 a, 1 b                                 |
+| =LRG_DEBUG_SHAPE_CONE=         | =cone=         | =lrg_debug_draw_cone()=              | 0 apex, 1 base centre                    |
+| =LRG_DEBUG_SHAPE_FRUSTUM=      | =frustum=      | =lrg_debug_draw_frustum()=, =lrg_debug_draw_camera_frustum()= | 0 near-plane centre |
+| =LRG_DEBUG_SHAPE_GRID=         | =grid=         | =lrg_debug_draw_grid()=              | 0 centre                                 |
+| =LRG_DEBUG_SHAPE_AXES=         | =axes=         | =lrg_debug_draw_axes()=              | 0 origin                                 |
+| =LRG_DEBUG_SHAPE_CIRCLE=       | =circle=       | =lrg_debug_draw_circle()=            | 0 centre                                 |
+| =LRG_DEBUG_SHAPE_POINT=        | =point=        | =lrg_debug_draw_point()=             | 0 position                               |
+| =LRG_DEBUG_SHAPE_TEXT=         | =text=         | =lrg_debug_draw_text()=              | 0 anchor                                 |
+| =LRG_DEBUG_SHAPE_LINE_2D=      | =line-2d=      | =lrg_debug_draw_line_2d()=           | 0 from, 1 to (z = 0)                     |
+| =LRG_DEBUG_SHAPE_RECT_2D=      | =rect-2d=      | =lrg_debug_draw_rect_2d()=           | 0 (x, y), 1 (width, height)              |
+| =LRG_DEBUG_SHAPE_CIRCLE_2D=    | =circle-2d=    | =lrg_debug_draw_circle_2d()=         | 0 centre                                 |
+| =LRG_DEBUG_SHAPE_TEXT_2D=      | =text-2d=      | =lrg_debug_draw_text_2d()=           | 0 top-left                               |
+
+| Category                         | Value | Name         | Used for                                         |
+|----------------------------------+-------+--------------+--------------------------------------------------|
+| =LRG_DEBUG_CATEGORY_GENERAL=     | 0     | =general=    | default pen category                             |
+| =LRG_DEBUG_CATEGORY_PHYSICS=     | 1     | =physics=    | collision shapes, contacts, character controller |
+| =LRG_DEBUG_CATEGORY_NAVIGATION=  | 2     | =navigation= | nav mesh, paths, agents, avoidance               |
+| =LRG_DEBUG_CATEGORY_LIGHTS=      | 3     | =lights=     | light ranges, spot cones, shadow cascades        |
+| =LRG_DEBUG_CATEGORY_AUDIO=       | 4     | =audio=      | emitter ranges, listener                         |
+| =LRG_DEBUG_CATEGORY_AI=          | 5     | =ai=         | perception cones, behaviour state labels         |
+| =LRG_DEBUG_CATEGORY_ANIMATION=   | 6     | =animation=  | skeletons, root motion                           |
+| =LRG_DEBUG_CATEGORY_CAMERA=      | 7     | =camera=     | camera frustums and rigs                         |
+| =LRG_DEBUG_CATEGORY_PARTICLES=   | 8     | =particles=  | emitter shapes, bounds                           |
+| =LRG_DEBUG_CATEGORY_EDITOR=      | 9     | =editor=     | editor-only helpers                              |
+| =LRG_DEBUG_CATEGORY_USER=        | 16    | =user=       | first category free for games (16 .. 31)         |
+
+| Constant                       | Value        | Meaning                        |
+|--------------------------------+--------------+--------------------------------|
+| =LRG_DEBUG_CATEGORY_COUNT=     | 32           | categories are indices 0 .. 31 |
+| =LRG_DEBUG_CATEGORY_MASK_ALL=  | =0xFFFFFFFF= | every category on (default)    |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Recording, tessellation and drawing
+:PROPERTIES:
+:CUSTOM_ID: recording-tessellation-and-drawing
+:END:
+A recording call stores one primitive (shape, control points, the current pen, colour, lifetime) in an array: no GL, no allocation beyond the array growth (polylines and text copy their data). Before a draw (or an inspection query) the visible primitives are tessellated on the CPU into flat lists: segments and triangles for the depth-tested list, segments and triangles for the always-on-top list, 3D labels, and the 2D segments, triangles and texts. The tessellation is cached and only rebuilt after something changed.
+
+=lrg_debug_draw_draw_3d()= submits each 3D list as at most one =GL_LINES= run and one =GL_TRIANGLES= run through rlgl's batch: a frame of debug geometry costs at most four runs whatever the number of shapes (rlgl splits a run only when its vertex buffer fills, 8192 quads' worth). =lrg_debug_draw_get_draw_calls()= reports the runs of the last draw.
+
+*** The pen
+:PROPERTIES:
+:CUSTOM_ID: the-pen
+:END:
+State applied to the primitives recorded next, so recording calls stay short: category (=set_category()=), depth test (=set_depth_test()=), thickness (=set_thickness()=), solid (=set_solid()=), segments per circle (=set_segments()=) and text size (=set_text_size()=). =lrg_debug_draw_push()= / =lrg_debug_draw_pop()= save and restore it (16 levels), so a subsystem can switch to its category and colours without disturbing the caller.
+
+*** Durations
+:PROPERTIES:
+:CUSTOM_ID: durations
+:END:
+Every recording call takes a =duration= in seconds:
+- =0= (or negative): *one frame*. The primitive is drawn by the next draw and removed by =lrg_debug_draw_end_frame()= (which =lrg_debug_draw_flush()= calls after drawing). Ticks never remove it.
+- => 0=: *timed*. =lrg_debug_draw_tick()= subtracts the frame's delta; the primitive is removed once its time is used up. Use this for events (a raycast hit, a contact) that should stay visible for a moment.
+
+The usual frame is: =tick (delta)= in update, record during update/fixed update, =flush (camera)= in render.
+
+*** Depth-tested and always-on-top lists
+:PROPERTIES:
+:CUSTOM_ID: depth-tested-and-always-on-top-lists
+:END:
+With the pen's depth test on (default), primitives are hidden by scene geometry already in the depth buffer. With it off they go to the always-on-top list, drawn after the depth-tested list with =GL_DEPTH_TEST= disabled. 3D labels are always on top.
+
+*** Solid shapes
+:PROPERTIES:
+:CUSTOM_ID: solid-shapes
+:END:
+With the pen's solid flag, boxes, oriented boxes, spheres, capsules, cylinders, cones, circles and 2D rectangles/circles are filled with triangles instead of outlined. A list holding any colour with alpha below 255 is drawn with depth writes off, so translucent volumes (a trigger, a light radius) do not hide what lies behind them. Back-face culling is off for debug triangles. Lines, arrows, grids, axes, frustums, points and text ignore the flag.
+
+*** Line thickness and GL 3.3 core
+:PROPERTIES:
+:CUSTOM_ID: line-thickness-and-gl-3-3-core
+:END:
+A GL 3.3 core (forward-compatible) context only guarantees a line width of 1: =glLineWidth()= above 1 is an error there, and drivers that accept it draw inconsistently. =LrgDebugDraw= therefore never calls =glLineWidth()=:
+- thickness =<= 1=: GL lines (one pixel);
+- thickness => 1=: each segment becomes a camera-facing quad, two triangles, widened at each end to cover =thickness= pixels at that end's depth (=2 * depth / (projection[5] * target height)= world units per pixel in perspective, =2 / (projection[5] * height)= in orthographic). Wide lines therefore keep their pixel width at any distance and work on every driver.
+
+Thickness is clamped to 0.5 .. 64 pixels. 2D wide lines are quads perpendicular on screen.
+
+*** Categories
+:PROPERTIES:
+:CUSTOM_ID: categories
+:END:
+=LrgDebugDraw:category-mask= holds one bit per category. A primitive recorded on a disabled category is dropped at once (so a switched-off channel costs one bit test per call); timed primitives recorded earlier stay but are not drawn until the category comes back (they keep ticking). Expensive producers test =lrg_debug_draw_is_category_enabled()= before walking their data. =LrgDebugDraw:enabled= = =FALSE= turns the whole batch off and clears it.
+
+*** Default and per-world instances
+:PROPERTIES:
+:CUSTOM_ID: default-and-per-world-instances
+:END:
+=lrg_debug_draw_get_default()= is created on first use and lives for the process: code without a better place records there. A world (=LrgWorld3D= from 0.9.0 M1, a physics world, a level) or an editor viewport can own its own instance from =lrg_debug_draw_new()= so its geometry is flushed with its own camera and cleared with it.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+#+begin_src C
+/* Enums and category names */
+GType        lrg_debug_shape_get_type        (void);
+GType        lrg_debug_category_get_type     (void);
+const gchar *lrg_debug_category_get_name     (guint category);       /* NULL: unnamed index */
+gint         lrg_debug_category_from_name    (const gchar *name);    /* -1: unknown */
+
+/* Construction */
+LrgDebugDraw *lrg_debug_draw_new             (void);                 /* transfer full */
+LrgDebugDraw *lrg_debug_draw_get_default     (void);                 /* transfer none, process-wide */
+
+/* Switches (properties "enabled" and "category-mask") */
+void     lrg_debug_draw_set_enabled           (LrgDebugDraw *self, gboolean enabled);
+gboolean lrg_debug_draw_get_enabled           (LrgDebugDraw *self);
+void     lrg_debug_draw_set_category_mask     (LrgDebugDraw *self, guint32 mask);
+guint32  lrg_debug_draw_get_category_mask     (LrgDebugDraw *self);
+void     lrg_debug_draw_set_category_enabled  (LrgDebugDraw *self, guint category, gboolean enabled);
+gboolean lrg_debug_draw_is_category_enabled   (LrgDebugDraw *self, guint category);
+
+/* Pen */
+void     lrg_debug_draw_set_category   (LrgDebugDraw *self, guint category);   /* default GENERAL */
+guint    lrg_debug_draw_get_category   (LrgDebugDraw *self);
+void     lrg_debug_draw_set_depth_test (LrgDebugDraw *self, gboolean depth_test); /* default TRUE */
+gboolean lrg_debug_draw_get_depth_test (LrgDebugDraw *self);
+void     lrg_debug_draw_set_thickness  (LrgDebugDraw *self, gfloat thickness);  /* pixels, 0.5 .. 64 */
+gfloat   lrg_debug_draw_get_thickness  (LrgDebugDraw *self);
+void     lrg_debug_draw_set_solid      (LrgDebugDraw *self, gboolean solid);
+gboolean lrg_debug_draw_get_solid      (LrgDebugDraw *self);
+void     lrg_debug_draw_set_segments   (LrgDebugDraw *self, guint segments);    /* 4 .. 128, default 16 */
+guint    lrg_debug_draw_get_segments   (LrgDebugDraw *self);
+void     lrg_debug_draw_set_text_size  (LrgDebugDraw *self, guint size);        /* 4 .. 256, default 16 */
+guint    lrg_debug_draw_get_text_size  (LrgDebugDraw *self);
+void     lrg_debug_draw_push           (LrgDebugDraw *self);
+void     lrg_debug_draw_pop            (LrgDebugDraw *self);
+
+/* 3D primitives: color NULL = white, duration <= 0 = one frame */
+void lrg_debug_draw_line           (LrgDebugDraw *self, const GrlVector3 *from, const GrlVector3 *to,
+                                    const GrlColor *color, gfloat duration);
+void lrg_debug_draw_polyline       (LrgDebugDraw *self, const GrlVector3 *points, guint n_points,
+                                    gboolean closed, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_arrow          (LrgDebugDraw *self, const GrlVector3 *from, const GrlVector3 *to,
+                                    gfloat head_size, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_box            (LrgDebugDraw *self, const GrlVector3 *min, const GrlVector3 *max,
+                                    const GrlColor *color, gfloat duration);
+void lrg_debug_draw_oriented_box   (LrgDebugDraw *self, const gfloat transform[16],
+                                    const GrlVector3 *half_extents, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_sphere         (LrgDebugDraw *self, const GrlVector3 *center, gfloat radius,
+                                    const GrlColor *color, gfloat duration);
+void lrg_debug_draw_capsule        (LrgDebugDraw *self, const GrlVector3 *a, const GrlVector3 *b,
+                                    gfloat radius, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_cylinder       (LrgDebugDraw *self, const GrlVector3 *a, const GrlVector3 *b,
+                                    gfloat radius, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_cone           (LrgDebugDraw *self, const GrlVector3 *apex, const GrlVector3 *base,
+                                    gfloat radius, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_frustum        (LrgDebugDraw *self, const gfloat view_projection[16],
+                                    const GrlColor *color, gfloat duration);
+void lrg_debug_draw_camera_frustum (LrgDebugDraw *self, LrgCamera3D *camera, gfloat aspect,
+                                    gfloat near_plane, gfloat far_plane,
+                                    const GrlColor *color, gfloat duration);
+void lrg_debug_draw_grid           (LrgDebugDraw *self, const GrlVector3 *center, gfloat spacing,
+                                    guint cells, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_axes           (LrgDebugDraw *self, const gfloat transform[16], gfloat size,
+                                    gfloat duration);
+void lrg_debug_draw_circle         (LrgDebugDraw *self, const GrlVector3 *center, const GrlVector3 *normal,
+                                    gfloat radius, const GrlColor *color, gfloat duration);
+void lrg_debug_draw_point          (LrgDebugDraw *self, const GrlVector3 *position, gfloat size,
+                                    const GrlColor *color, gfloat duration);
+void lrg_debug_draw_text           (LrgDebugDraw *self, const GrlVector3 *position, const gchar *text,
+                                    const GrlColor *color, gfloat duration);
+
+/* 2D primitives (screen space or a 2D camera's space) */
+void lrg_debug_draw_line_2d   (LrgDebugDraw *self, const GrlVector2 *from, const GrlVector2 *to,
+                               const GrlColor *color, gfloat duration);
+void lrg_debug_draw_rect_2d   (LrgDebugDraw *self, gfloat x, gfloat y, gfloat width, gfloat height,
+                               const GrlColor *color, gfloat duration);
+void lrg_debug_draw_circle_2d (LrgDebugDraw *self, const GrlVector2 *center, gfloat radius,
+                               const GrlColor *color, gfloat duration);
+void lrg_debug_draw_text_2d   (LrgDebugDraw *self, const GrlVector2 *position, const gchar *text,
+                               const GrlColor *color, gfloat duration);
+
+/* Lifetime */
+void lrg_debug_draw_tick           (LrgDebugDraw *self, gfloat delta);
+void lrg_debug_draw_end_frame      (LrgDebugDraw *self);
+void lrg_debug_draw_clear          (LrgDebugDraw *self);
+void lrg_debug_draw_clear_category (LrgDebugDraw *self, guint category);
+
+/* Drawing (no-ops without a graphics context) */
+void lrg_debug_draw_draw_3d        (LrgDebugDraw *self);   /* inside an open 3D mode */
+void lrg_debug_draw_draw_labels    (LrgDebugDraw *self);   /* after the 3D mode */
+void lrg_debug_draw_draw_2d        (LrgDebugDraw *self);   /* screen or 2D camera */
+void lrg_debug_draw_flush          (LrgDebugDraw *self, LrgCamera *camera);   /* nullable */
+void lrg_debug_draw_flush_matrices (LrgDebugDraw *self, const gfloat view[16], const gfloat projection[16]);
+
+/* Inspection (headless) */
+guint         lrg_debug_draw_get_count                 (LrgDebugDraw *self);
+LrgDebugShape lrg_debug_draw_get_shape                 (LrgDebugDraw *self, guint index);
+guint         lrg_debug_draw_get_primitive_category    (LrgDebugDraw *self, guint index);
+gboolean      lrg_debug_draw_get_primitive_depth_test  (LrgDebugDraw *self, guint index);
+gboolean      lrg_debug_draw_get_primitive_solid       (LrgDebugDraw *self, guint index);
+gfloat        lrg_debug_draw_get_primitive_thickness   (LrgDebugDraw *self, guint index);
+gfloat        lrg_debug_draw_get_primitive_remaining   (LrgDebugDraw *self, guint index);
+gboolean      lrg_debug_draw_get_primitive_color       (LrgDebugDraw *self, guint index, GrlColor *out_color);
+gboolean      lrg_debug_draw_get_primitive_point       (LrgDebugDraw *self, guint index, guint which,
+                                                        GrlVector3 *out_point);
+const gchar  *lrg_debug_draw_get_primitive_text        (LrgDebugDraw *self, guint index);
+guint         lrg_debug_draw_get_line_count            (LrgDebugDraw *self, gboolean depth_tested);
+guint         lrg_debug_draw_get_triangle_count        (LrgDebugDraw *self, gboolean depth_tested);
+guint         lrg_debug_draw_get_label_count           (LrgDebugDraw *self);
+guint         lrg_debug_draw_get_draw_calls            (LrgDebugDraw *self);
+#+end_src
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+| Property        | Type       | Default      | Access     | Meaning                                                    |
+|-----------------+------------+--------------+------------+------------------------------------------------------------|
+| =enabled=       | =gboolean= | =TRUE=       | read-write | record and draw; =FALSE= drops every call and clears        |
+| =category-mask= | =guint=    | =0xFFFFFFFF= | read-write | bit N enables category N                                    |
+
+Both are =G_PARAM_EXPLICIT_NOTIFY=: =notify= fires only on a real change.
+
+*** Recording functions in detail
+:PROPERTIES:
+:CUSTOM_ID: recording-functions-in-detail
+:END:
+- =lrg_debug_draw_line()=: one segment.
+- =lrg_debug_draw_polyline()=: copies =n_points= points (fewer than 2: ignored); =closed= adds the segment from the last point back to the first.
+- =lrg_debug_draw_arrow()=: the shaft plus four barbs at =to=, each =head_size= long and half as wide; =head_size <= 0= uses a fifth of the arrow's length.
+- =lrg_debug_draw_box()=: an axis-aligned box from =min= to =max= (12 edges, or 12 triangles solid).
+- =lrg_debug_draw_oriented_box()=: a box of =half_extents= centred on the origin of a column-major =transform= (rotation, translation and scale all apply), e.g. an =LrgEntity3D= world matrix and its collider's extents.
+- =lrg_debug_draw_sphere()=: wire = three great circles (XY, XZ, YZ planes); solid = two latitude/longitude domes.
+- =lrg_debug_draw_capsule()=: hemisphere centres =a= and =b= and the radius (a physics capsule's segment). Wire = both equators, four side lines and two half circles per cap; solid = a band plus two domes.
+- =lrg_debug_draw_cylinder()=: cap centres =a=, =b= (wire: both rims and four side lines; solid: band and two discs).
+- =lrg_debug_draw_cone()=: =apex= and =base= centre (a spot light from its position to its range along its direction, with the radius =range * tan (outer angle)=).
+- =lrg_debug_draw_frustum()=: the 12 edges of the volume a column-major *projection x view* matrix maps onto the clip cube; a singular matrix is ignored.
+- =lrg_debug_draw_camera_frustum()=: builds that matrix from an =LrgCamera3D='s position, target, up, field of view and projection (orthographic cameras use =fovy= as the view height, as raylib does). =aspect <= 0= uses =LrgCamera3D:aspect=, else 16:9; =near_plane <= 0= / =far_plane <= near_plane= use rlgl's cull distances (0.05 / 4000 by default).
+- =lrg_debug_draw_grid()=: =cells= x =cells= squares of =spacing= in the XZ plane through =center= (=cells + 1= lines each way).
+- =lrg_debug_draw_axes()=: the transform's X, Y and Z columns (normalised, so scale does not matter) =size= long from its origin, in red, green and blue. Takes no colour.
+- =lrg_debug_draw_circle()=: around a normal (zero normal: +Y).
+- =lrg_debug_draw_point()=: a three-axis cross of =size= (GL points are not sized reliably on GL 3.3 core).
+- =lrg_debug_draw_text()=: a label centred over a 3D anchor at the pen's text size, projected with the matrices of the last 3D draw; anchors behind the camera are skipped.
+- 2D calls record in whatever 2D space the 2D draw runs in: screen pixels for =flush (NULL)= or after a 3D flush, the 2D camera's world for =flush (camera2d)=.
+
+*** Drawing functions in detail
+:PROPERTIES:
+:CUSTOM_ID: drawing-functions-in-detail
+:END:
+- =lrg_debug_draw_draw_3d()=: call inside an open 3D mode (=BeginMode3D()=, =lrg_camera_begin()=, an editor viewport's camera), at its top level: rlgl moves a modelview pushed with =rlPushMatrix()= into a CPU-side transform the batch cannot read back, which would break wide lines and labels. Draws the depth-tested list, then the always-on-top list, then turns the depth test back on (a 3D mode runs with it on). Captures the modelview, projection and target size for the labels.
+- =lrg_debug_draw_draw_labels()=: after the 3D mode, projects the labels with the captured matrices and draws them with raylib's default font. Nothing before the first =draw_3d()=.
+- =lrg_debug_draw_draw_2d()=: the 2D segments, triangles and texts in the current 2D space.
+- =lrg_debug_draw_flush()=: the whole frame for a camera. An =LrgCamera3D=: =lrg_camera_begin()=, =draw_3d()=, =lrg_camera_end()=, =draw_labels()=, =draw_2d()= in screen space. Any other camera (=LrgCamera2D= and subclasses): =draw_2d()= inside it, nothing 3D. =NULL=: =draw_2d()= in screen space. Then =end_frame()=; headless only the frame ends.
+- =lrg_debug_draw_flush_matrices()=: as =flush()= with a 3D camera, from a column-major view and projection matrix (loads them as =BeginMode3D()= would and restores 2D afterwards). Call outside any 3D mode, e.g. inside =BeginTextureMode()= for an editor viewport.
+- One batch drawn into several viewports: call =draw_3d()= / =draw_labels()= per viewport and =end_frame()= once.
+
+*** Inspection
+:PROPERTIES:
+:CUSTOM_ID: inspection
+:END:
+Primitives are indexed in recording order (removals keep the order). Out-of-range indices return zero values / =FALSE= / =NULL=. =lrg_debug_draw_get_primitive_remaining()= is 0 for one-frame primitives. =lrg_debug_draw_get_line_count()= / =lrg_debug_draw_get_triangle_count()= tessellate the visible primitives exactly as the next draw will and count one list (wide lines are counted as segments, before they become quads); =lrg_debug_draw_get_label_count()= counts visible 3D labels. Expected sizes with the default 16 segments: line 1, arrow 5, box 12 (solid 12 triangles), sphere 48 (solid 224 triangles), capsule 68, cylinder 36, cone 20 (solid 32 triangles), frustum 12, grid of /n/ cells 2(n+1), axes 3, circle 16, point 3.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: worked-examples
+:END:
+*** A game frame
+:PROPERTIES:
+:CUSTOM_ID: a-game-frame
+:END:
+#+begin_src C
+static void
+game_frame (GrlWindow   *window,
+            LrgCamera3D *camera,
+            gfloat       delta)
+{
+	LrgDebugDraw *dd;
+	GrlVector3    origin = { 0.0f, 0.0f, 0.0f };
+	GrlVector3    target = { 2.0f, 1.0f, 0.0f };
+	GrlColor      yellow = { 253, 249, 0, 255 };
+
+	dd = lrg_debug_draw_get_default ();
+
+	/* update: age timed primitives, then record this frame's */
+	lrg_debug_draw_tick (dd, delta);
+	lrg_debug_draw_grid (dd, &origin, 1.0f, 20, &(GrlColor){ 80, 80, 80, 255 }, 0.0f);
+	lrg_debug_draw_arrow (dd, &origin, &target, 0.0f, &yellow, 0.0f);
+	lrg_debug_draw_text (dd, &target, "target", &yellow, 0.0f);
+
+	/* render: after the scene, so depth-tested lines sit in it */
+	grl_window_begin_drawing (window);
+	/* ... draw the scene with camera ... */
+	lrg_debug_draw_flush (dd, LRG_CAMERA (camera));
+	grl_window_end_drawing (window);
+}
+#+end_src
+
+*** A subsystem with its own category and pen
+:PROPERTIES:
+:CUSTOM_ID: a-subsystem-with-its-own-category-and-pen
+:END:
+#+begin_src C
+/* physics_debug_draw:
+ * Draws every body of a physics world on the physics channel, solid and
+ * translucent, plus contacts that stay visible half a second. */
+static void
+physics_debug_draw (LrgDebugDraw *dd,
+                    MyBody       *bodies,
+                    guint         n_bodies,
+                    MyContact    *contacts,
+                    guint         n_contacts)
+{
+	GrlColor body = { 0, 200, 255, 60 };
+	GrlColor hit = { 255, 40, 40, 255 };
+	guint    i;
+
+	/* skip the whole walk when the channel is off */
+	if (!lrg_debug_draw_is_category_enabled (dd, LRG_DEBUG_CATEGORY_PHYSICS))
+		return;
+
+	lrg_debug_draw_push (dd);
+	lrg_debug_draw_set_category (dd, LRG_DEBUG_CATEGORY_PHYSICS);
+	lrg_debug_draw_set_solid (dd, TRUE);
+	for (i = 0; i < n_bodies; i++)
+		lrg_debug_draw_capsule (dd, &bodies[i].a, &bodies[i].b, bodies[i].radius, &body, 0.0f);
+
+	/* contacts: wire, on top, timed */
+	lrg_debug_draw_set_solid (dd, FALSE);
+	lrg_debug_draw_set_depth_test (dd, FALSE);
+	lrg_debug_draw_set_thickness (dd, 3.0f);
+	for (i = 0; i < n_contacts; i++)
+		lrg_debug_draw_arrow (dd, &contacts[i].point, &contacts[i].normal_tip, 0.1f, &hit, 0.5f);
+	lrg_debug_draw_pop (dd);
+}
+#+end_src
+
+*** Several viewports, one batch
+:PROPERTIES:
+:CUSTOM_ID: several-viewports-one-batch
+:END:
+#+begin_src C
+static void
+draw_viewports (LrgDebugDraw    *dd,
+                RenderTexture2D *targets,
+                const gfloat   (*views)[16],
+                const gfloat   (*projections)[16],
+                guint            n)
+{
+	guint i;
+
+	for (i = 0; i < n; i++)
+	{
+		BeginTextureMode (targets[i]);
+		/* ... the viewport's scene ... */
+		rlMatrixMode (RL_PROJECTION);
+		rlPushMatrix ();
+		rlLoadIdentity ();
+		rlMultMatrixf (projections[i]);
+		rlMatrixMode (RL_MODELVIEW);
+		rlLoadIdentity ();
+		rlMultMatrixf (views[i]);
+		rlEnableDepthTest ();
+		lrg_debug_draw_draw_3d (dd);
+		rlDrawRenderBatchActive ();
+		rlMatrixMode (RL_PROJECTION);
+		rlPopMatrix ();
+		rlMatrixMode (RL_MODELVIEW);
+		rlLoadIdentity ();
+		lrg_debug_draw_draw_labels (dd);
+		EndTextureMode ();
+	}
+	/* one-frame primitives go once every viewport has them */
+	lrg_debug_draw_end_frame (dd);
+}
+#+end_src
+
+*** A headless test
+:PROPERTIES:
+:CUSTOM_ID: a-headless-test
+:END:
+#+begin_src C
+static void
+test_contact_marker (void)
+{
+	g_autoptr(LrgDebugDraw) dd = lrg_debug_draw_new ();
+	GrlVector3 p = { 1.0f, 0.0f, 0.0f };
+	GrlVector3 got;
+
+	lrg_debug_draw_point (dd, &p, 0.2f, NULL, 0.5f);
+	g_assert_cmpuint (lrg_debug_draw_get_count (dd), ==, 1);
+	g_assert_cmpint (lrg_debug_draw_get_shape (dd, 0), ==, LRG_DEBUG_SHAPE_POINT);
+	g_assert_true (lrg_debug_draw_get_primitive_point (dd, 0, 0, &got));
+	g_assert_cmpuint (lrg_debug_draw_get_line_count (dd, TRUE), ==, 3);
+	lrg_debug_draw_tick (dd, 0.6f);
+	g_assert_cmpuint (lrg_debug_draw_get_count (dd), ==, 0);
+}
+#+end_src
+
+** How engine systems use it
+:PROPERTIES:
+:CUSTOM_ID: how-engine-systems-use-it
+:END:
+The 0.9.0 plan routes every engine debug visualisation through this API so the editor needs one overlay and one set of toggles:
+- *Physics* (=LrgDynamicsWorld=, =LrgCollisionMesh=, character controller): each world gets an optional =LrgDebugDraw= (the default instance when unset) and a =debug_draw()= pass on =LRG_DEBUG_CATEGORY_PHYSICS=: spheres, capsules, oriented boxes and triangle meshes as solid translucent shapes, contacts as timed arrows along the normal, the controller's capsule and ground probe.
+- *Navigation* (=LrgNavAgent=, nav meshes): polygons as closed polylines, paths as polylines with arrows, agents as circles with velocity arrows and avoidance radii, on =LRG_DEBUG_CATEGORY_NAVIGATION=.
+- *Lights* (=LrgLightSet=, =LrgShadowRenderer=): point light ranges as wire spheres, spot lights as cones, the directional light as an arrow, shadow cascades as frustums (=lrg_debug_draw_frustum()= with each cascade's view-projection), on =LRG_DEBUG_CATEGORY_LIGHTS=.
+- *Audio*: emitter min/max distances as spheres, the listener as axes, on =LRG_DEBUG_CATEGORY_AUDIO=.
+- *Cameras*: =lrg_debug_draw_camera_frustum()= for every non-active camera, on =LRG_DEBUG_CATEGORY_CAMERA=.
+- *AI*: perception cones and state labels (=lrg_debug_draw_text()=) on =LRG_DEBUG_CATEGORY_AI=.
+
+Producers always test =lrg_debug_draw_is_category_enabled()= first so disabled channels cost nothing.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+The editor viewport owns an =LrgDebugDraw= that it flushes after the scene with the viewport's view and projection (=lrg_debug_draw_flush_matrices()=), and its overlay menu exposes one toggle per category (=lrg_debug_draw_set_category_enabled()=, mirrored by the =category-mask= property, so the toggles survive in the viewport settings as one integer). Play-in-editor sessions draw the running game's default instance in the same pass, so gameplay debug lines show in the editor viewport. Editor-only gizmos (light ranges, camera frustums, collider shapes of selected nodes) record on =LRG_DEBUG_CATEGORY_EDITOR= and the subsystem categories; the IPC/MCP surface for the toggles lands with the M5 viewport-overlay work.
+
+** Performance notes
+:PROPERTIES:
+:CUSTOM_ID: performance-notes
+:END:
+- Recording is an array append (~150 bytes per primitive); disabled categories return after one bit test.
+- Tessellation runs once per change, not per draw; a static set of timed primitives drawn in several viewports is tessellated once. Every tick that removes something, every recording and every =end_frame()= marks it dirty.
+- A frame costs at most four rlgl runs for 3D and two for 2D, plus one =DrawText()= per label. Wide lines cost two triangles per segment; wire spheres cost 3 x segments segments, so lower =set_segments()= for thousands of spheres.
+- A soft cap of 262144 recorded primitives protects against code that records every frame into a batch nobody flushes: further calls are dropped with one warning.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Nobody flushes*: one-frame primitives pile up until the cap. Call =flush()= (or =end_frame()=) every frame for every instance you record into.
+- *Tick and duration*: timed primitives only expire through =tick()=; a paused game that stops ticking keeps them on screen (usually what you want while paused).
+- *Inside =rlPushMatrix()=*: call =draw_3d()= at the top level of the 3D mode (see above).
+- *Line width*: do not call =rlSetLineWidth()= around the batch expecting wide lines; use =set_thickness()=.
+- *2D space*: 2D primitives drawn by =flush (camera3d)= are in screen pixels; use a separate =flush (camera2d)= (or another instance) for 2D world-space shapes.
+- *Labels before 3D*: =draw_labels()= needs a previous =draw_3d()= for its matrices.
+- *Render layers*: debug geometry ignores the camera's cull mask; hide it per viewport with the categories or =enabled=.
+- =LrgDebugShape= / =LrgDebugCategory= live in this header, not =lrg-enums.h=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:index.org][Debug module]] - console, overlay, inspector, profiler
+- [[file:../graphics/render-layers.org][Render layers]] - camera cull masks for scene drawables
+- [[file:../lighting/shadow-renderer.org][LrgShadowRenderer]] - cascade matrices for =lrg_debug_draw_frustum()=
+- [[file:../graphics/index.org][Graphics module]] - =LrgCamera3D= for =lrg_debug_draw_camera_frustum()=

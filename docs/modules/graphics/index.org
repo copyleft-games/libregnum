@@ -28,6 +28,7 @@ The Graphics module provides:
 - *[[file:camera-thirdperson.org][LrgCameraThirdPerson]]* - Third-person camera with orbit and collision avoidance
 - *[[file:camera-zoom.org][LrgCameraZoom]]* - Spring-arm zoom from the farthest third-person distance into first person
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
+- *[[file:render-layers.org][Render layers]]* - Camera cull masks and per-drawable visibility layers
 - *[[file:static-batch.org][LrgStaticBatch]]* - Static geometry and copied auxiliary UV streams; [[file:aux-uv-contract.org][integration contract and verification]]
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
@@ -732,6 +733,7 @@ Helpers for games that render many glTF characters and props with raylib:
 - *[[file:gltf-geometry.org][LrgGltfGeometry]]* - Headless glTF/GLB static geometry: scene-space triangle primitives with normals, UVs, colours and indices, materials (name, base colour, alpha mode, image), embedded and external images decoded to GrlImage, strict validation
 - *[[file:static-batch.org][LrgStaticBatch]]* - CPU merge of static meshes into 16-bit-index chunks per (material, layer) with bounds, then GPU upload and layer-masked drawing
 - *[[file:billboard-batch.org][LrgBillboardBatch]]* - camera-facing textured quads (axis-locked or spherical), batched per material with an alpha-cutout shader; headless corner math for picking; per-quad CPU lighting from an LrgLightSet (own or bound), emissive quads
+- *[[file:render-layers.org][Render layers]]* - 32 named layers, a =cull-mask= on every camera, honoured by static batch chunks, billboard batches, terrain chunks, particle systems and shadow casters (=lrg_render_layers_*=, =lrg_camera_set_cull_mask()=)
 - *[[file:terrain.org][LrgTerrain]]* - chunked heightfield terrain for streamed worlds: per-cell materials with 8 UV orientations, bilinear height queries, cross-chunk normals, floating origin, headless inspectable meshes
 - *[[file:sky-dome.org][LrgSkyDome]]* - camera-centred sky: zenith/horizon/ground gradient, textured horizon band (one panorama or two halves), sun disc and halo, time-of-day keyframes and sun arc; headless geometry
 - *[[file:world-look.org][World look]]* - =LrgTerrainDetail= landform noise, =LrgWaterSurface= Gerstner water with screen-space reflection, refraction and foam, =LrgGrassField= instanced grass, =LrgTreeMesh= procedural low-poly trees, =LrgHorizonRing= distant-terrain ring; headless geometry and math
