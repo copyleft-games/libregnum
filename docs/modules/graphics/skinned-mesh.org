@@ -81,6 +81,12 @@ Every bone starts with an identity inverse bind and the palette starts as identi
 
 The built-in fragment shader multiplies the texture, tint and vertex colour, discards fragments below the alpha cutoff (hair, fur) and shades with a fixed key light. A custom shader (=set_shader()=) starts from =get_vertex_shader_source()= and keeps those attribute and uniform names. The built-in program is shared by every mesh and released with the last upload.
 
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+=lrg_skinned_mesh_set_material (mesh, material)= draws the mesh with an [[file:material.org][LrgMaterial]] (referenced; %NULL goes back to the texture, tint and alpha-cutoff setters; =lrg_skinned_mesh_get_material()= reads it): =lrg_material_apply()= on the mesh's shader, the material's maps for =DrawMesh()= (its albedo map replaces =lrg_skinned_mesh_set_texture()= when it has one), its base colour times the tint, its alpha cutoff, and its render state around the draw.
+
 ** Example
 :PROPERTIES:
 :CUSTOM_ID: example

@@ -59,6 +59,7 @@ struct _LrgSkinnedMesh
     guint16    *indices;
 
     GrlTexture *texture;
+    LrgMaterial *material;      /* nullable, wins over texture/tint/cutoff */
     GrlShader  *shader;
     Color       tint;
     gfloat      alpha_cutoff;
@@ -268,6 +269,7 @@ lrg_skinned_mesh_finalize (GObject *object)
     g_free (self->palette);
     g_free (self->normal_palette);
     g_clear_object (&self->texture);
+    g_clear_object (&self->material);
     g_clear_object (&self->shader);
 
     G_OBJECT_CLASS (lrg_skinned_mesh_parent_class)->finalize (object);
@@ -712,6 +714,22 @@ lrg_skinned_mesh_set_alpha_cutoff (LrgSkinnedMesh *self,
 }
 
 void
+lrg_skinned_mesh_set_material (LrgSkinnedMesh *self,
+                               LrgMaterial    *material)
+{
+    g_return_if_fail (LRG_IS_SKINNED_MESH (self));
+    g_return_if_fail (material == NULL || LRG_IS_MATERIAL (material));
+    g_set_object (&self->material, material);
+}
+
+LrgMaterial *
+lrg_skinned_mesh_get_material (LrgSkinnedMesh *self)
+{
+    g_return_val_if_fail (LRG_IS_SKINNED_MESH (self), NULL);
+    return self->material;
+}
+
+void
 lrg_skinned_mesh_set_shader (LrgSkinnedMesh *self,
                              GrlShader      *shader)
 {
@@ -908,6 +926,20 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
         maps[MATERIAL_MAP_ALBEDO].texture.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
     }
     maps[MATERIAL_MAP_ALBEDO].color = self->tint;
+    if (self->material != NULL)
+    {
+        /* the material's maps on the same units lrg_material_apply()
+         * binds, its base colour times the tint */
+        Color c;
+
+        lrg_material_fill_raylib_maps (self->material, maps);
+        c = maps[MATERIAL_MAP_ALBEDO].color;
+        maps[MATERIAL_MAP_ALBEDO].color.r = (unsigned char)((c.r * self->tint.r) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.g = (unsigned char)((c.g * self->tint.g) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.b = (unsigned char)((c.b * self->tint.b) / 255);
+        maps[MATERIAL_MAP_ALBEDO].color.a = (unsigned char)((c.a * self->tint.a) / 255);
+        lrg_material_apply (self->material, material.shader.id);
+    }
     material.maps = maps;
 
     /* the uniforms DrawMesh() does not set: the palette, the skinning
@@ -926,7 +958,7 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
     if (loc >= 0)
         rlSetUniform (loc, &use_skinning, RL_SHADER_UNIFORM_INT, 1);
     loc = self->loc_alpha_cutoff;
-    if (loc >= 0)
+    if (loc >= 0 && self->material == NULL)
         rlSetUniform (loc, &self->alpha_cutoff, RL_SHADER_UNIFORM_FLOAT, 1);
     if (self->gpu)
     {
@@ -953,7 +985,15 @@ lrg_skinned_mesh_draw (LrgSkinnedMesh  *self,
         mat4_identity (identity);
         model = to_raylib_matrix (identity);
     }
-    DrawMesh (mesh, material, model);
+    if (self->material != NULL)
+    {
+        lrg_material_apply_state (self->material);
+        DrawMesh (mesh, material, model);
+        lrg_material_restore_state (self->material);
+        lrg_material_reset_uniforms (material.shader.id);
+    }
+    else
+        DrawMesh (mesh, material, model);
 }
 
 /* ------------------------------------------------------------------------ */

@@ -147,6 +147,12 @@ lrg_static_batch_draw (town, player_inside ? (1u << LAYER_GROUND) | (1u << LAYER
                                            : LRG_STATIC_BATCH_ALL_LAYERS);
 #+end_src
 
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+=lrg_static_batch_set_material (batch, material_id, material)= binds an [[file:material.org][LrgMaterial]] to a material id (the batch keeps a reference, %NULL unbinds; =lrg_static_batch_get_material()= reads it back). Chunks of that id then draw with =lrg_material_apply()= on the batch shader, the material's maps (the same units), its base colour times the layer tint, and =lrg_material_apply_state()= / =lrg_material_restore_state()= around the draw, followed by =lrg_material_reset_uniforms()=. The material replaces the per-id texture, emission, normal, metallic and height setters for that id. Without a batch shader only the albedo map, base colour and render state apply.
+
 ** Render layers
 :PROPERTIES:
 :CUSTOM_ID: render-layers

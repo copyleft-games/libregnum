@@ -203,6 +203,7 @@ GrlTexture *texture = lrg_asset_manager_load_texture (manager, "sprites/player.p
 #+end_src
 
 Materials are assets too: =lrg_asset_manager_load_material (manager, "materials/crate.rmat", &error)= returns a cached [[file:modules/graphics/material.org][LrgMaterial]] (=.rmat=: shading model, PBR parameters, texture slots, render state, instances).
+User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][LrgShaderAsset]]) and node graphs compile to them ([[file:modules/graphics/shader-graph.org][LrgShaderGraph]], =.rshadergraph=).
 
 ** Documentation Structure
 :PROPERTIES:

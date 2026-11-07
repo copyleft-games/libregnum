@@ -491,3 +491,25 @@ lrg_material3d_equal (LrgMaterial3D *a,
 	               sizeof a->emission_color) == 0 &&
 	       a->emission_strength == b->emission_strength;
 }
+
+LrgMaterial *
+lrg_material3d_to_material (LrgMaterial3D *self)
+{
+	LrgMaterial *material;
+
+	g_return_val_if_fail (LRG_IS_MATERIAL3D (self), NULL);
+
+	/* Every authored value becomes an explicit (saved) value, so the
+	 * result also round-trips through a .rmat file unchanged. */
+	material = lrg_material_new ();
+	lrg_material_set_base_color (material, self->color[0], self->color[1], self->color[2],
+	                             self->color[3]);
+	lrg_material_set_metallic (material, self->metallic);
+	lrg_material_set_roughness (material, self->roughness);
+	lrg_material_set_emission_color (material, self->emission_color[0], self->emission_color[1],
+	                                 self->emission_color[2]);
+	lrg_material_set_emission_strength (material, self->emission_strength);
+	if (self->color[3] < 1.0f)
+		lrg_material_set_blend_mode (material, LRG_MATERIAL_BLEND_ALPHA);
+	return material;
+}

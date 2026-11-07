@@ -21,6 +21,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -417,6 +418,41 @@ lrg_static_batch_get_chunk_texcoords(
 	guint channel,
 	guint *n_coordinates
 );
+
+/**
+ * lrg_static_batch_set_material:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ * @asset: (nullable): the #LrgMaterial chunks of @material draw with,
+ *   %NULL to unset
+ *
+ * Binds a runtime material to a material id (the batch keeps a
+ * reference). Chunks of @material then draw with lrg_material_apply()
+ * (base colour times the layer tint, texture slots, PBR parameters,
+ * emission) and lrg_material_apply_state() around the draw, instead of
+ * the per-id texture/emission/map setters, which it replaces for that
+ * id. Without a batch shader (lrg_static_batch_set_shader()) only the
+ * albedo map, base colour and render state apply (raylib's default
+ * shader has no PBR uniforms).
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_static_batch_set_material (LrgStaticBatch *self,
+                               guint           material,
+                               LrgMaterial    *asset);
+
+/**
+ * lrg_static_batch_get_material:
+ * @self: an #LrgStaticBatch
+ * @material: material id
+ *
+ * Returns: (transfer none) (nullable): the #LrgMaterial bound to
+ *   @material
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial *
+lrg_static_batch_get_material (LrgStaticBatch *self,
+                               guint           material);
 
 /**
  * lrg_static_batch_set_material_texture:

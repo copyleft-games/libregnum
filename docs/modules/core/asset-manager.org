@@ -377,6 +377,12 @@ path = lrg_asset_manager_resolve_guid (assets, "11111111-2222-4333-8444-55555555
 g_assert (lrg_asset_manager_load_texture (assets, path, &error) == tex);
 #+end_src
 
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+Since 0.9.0 =.rmat= files are an asset type. =lrg_asset_manager_load_material (self, name, error)= resolves =name= (=guid:=, search-path name or absolute path) with =lrg_asset_manager_resolve_reference()=, loads it with =lrg_material_new_from_file()= with the manager as the material's asset manager, and caches it under the canonical path (transfer none): every spelling and the guid share one =LrgMaterial=, and instances naming it as =parent:= share it too. Loading is headless; the material's textures load on first use through =lrg_asset_manager_load_texture()=, so their import settings apply. =lrg_asset_manager_load_asset()= dispatches =.rmat= here; =lrg_asset_manager_unload()=, =lrg_asset_manager_unload_all()= and =lrg_asset_manager_is_cached()= cover the cache; =lrg_asset_manager_get_material_cache_size()= counts it. A missing file fails with =LRG_ASSET_MANAGER_ERROR_NOT_FOUND=, a bad one with the =LRG_MATERIAL_ERROR= of the loader. Materials hold the manager weakly. See [[file:../graphics/material.org][LrgMaterial]].
+
 * Runtime import settings
 :PROPERTIES:
 :CUSTOM_ID: import-settings
@@ -396,6 +402,7 @@ Settings apply only when the asset has a sidecar and the =apply-import-settings=
 | model | =up-axis= (=y=, =z=) | =z= adds a -90 degree rotation about X so the file's +Z becomes +Y |
 | model | =generate-normals= | Smooth (indexed meshes) or flat (unindexed) area-weighted normals recomputed on the CPU; the GPU normal buffer is updated or created |
 | model | =import-animations= | Not used by the loaders (animation clips load on request with =lrg_asset_manager_load_model_animations()=) |
+| model | =lod-levels=, =lod-ratios=, =lod-screen-sizes=, =lod-max-error=, =lod-lock-border=, =lod-hysteresis=, =lod-fade-duration= | Not applied by =lrg_asset_manager_load_model()= (it returns the full model, which level 0 of the chain shares); =LrgLodComponent= with =mesh-asset= + =asset-manager= reads them through =lrg_asset_manager_get_asset_meta()= and builds the chain with =lrg_lod_group_new_from_model_with_meta()= (see [[file:../graphics/lod-group.org::#meta-keys][LOD import keys]]) |
 | audio | =mode= (=stream=, =sample=) | =lrg_asset_manager_load_audio()= and =lrg_asset_manager_load_asset()= return a =GrlMusic= for =stream=, a =GrlSound= for =sample=, whatever the extension |
 | audio | =volume= | =grl_sound_set_volume()= / =grl_music_set_volume()= |
 | audio | =loop= | =grl_music_set_looping()= for streams; raylib sounds cannot loop, so players of samples read it from the sidecar |

@@ -30,10 +30,13 @@ The Graphics module provides:
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
 - *[[file:render-layers.org][Render layers]]* - Camera cull masks and per-drawable visibility layers
 - *[[file:material.org][LrgMaterial]]* - Material assets (=.rmat=): shading model, PBR parameters, texture slots, render state, instances, the lit shader uniform contract
+- *[[file:shader-asset.org][LrgShaderAsset]]* - user shaders (=.rshader=): GLSL 330 stages with the lit library, described uniforms, line-mapped compile errors, hot reload
+- *[[file:shader-graph.org][LrgShaderGraph]]* - node shader graphs (=.rshadergraph=): typed node library, validation, deterministic GLSL generation
 - *[[file:static-batch.org][LrgStaticBatch]]* - Static geometry and copied auxiliary UV streams; [[file:aux-uv-contract.org][integration contract and verification]]
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
 - *[[file:skinned-mesh.org][LrgSkinnedMesh]]* - Skinned meshes posed by a bone matrix palette: GPU skinning with a CPU reference and fallback
+- *[[file:hdr-image.org][LrgHdrImage]]* - Radiance RGBE (=.hdr=) reader and writer to linear float RGB (flat and run-length scanlines, EXPOSURE, both vertical orientations); equirect panorama sampling for the environment's skies
 - *[[file:dds-image.org][LrgDdsImage]]* - Read DirectDraw Surface files and decode DXT1/3/5, BC7 and uncompressed levels to RGBA8 on the CPU (bare BC7 blocks too)
 - *[[file:sky-bodies.org][LrgSkyBodies]]* - Sun disc, moons with phases and a turning star field drawn over the sky dome
 - *[[file:texture-sampling.org][Texture sampling]]* - Point, mipmapped point, bilinear and trilinear sampling (=lrg_texture_set_sampling()=)

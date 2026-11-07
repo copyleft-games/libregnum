@@ -23,6 +23,7 @@
 #include "../lrg-version.h"
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
+#include "lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -428,6 +429,38 @@ void
 lrg_terrain_set_material_texture (LrgTerrain *self,
                                   guint       material,
                                   GrlTexture *texture);
+
+/**
+ * lrg_terrain_set_material:
+ * @self: an #LrgTerrain
+ * @material: material id
+ * @asset: (nullable): the #LrgMaterial meshes of @material draw with,
+ *   %NULL to unset
+ *
+ * Binds a runtime material to a terrain material id (the terrain keeps a
+ * reference). Meshes of @material then draw with lrg_material_apply()
+ * (its base colour times the terrain tint, texture slots, PBR
+ * parameters, emission) and its render state, on both the shared-page
+ * and the raylib mesh path; its albedo map replaces
+ * lrg_terrain_set_material_texture() for that id.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_terrain_set_material (LrgTerrain  *self,
+                          guint        material,
+                          LrgMaterial *asset);
+
+/**
+ * lrg_terrain_get_material:
+ * @self: an #LrgTerrain
+ * @material: material id
+ *
+ * Returns: (transfer none) (nullable): the #LrgMaterial bound to @material
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial *
+lrg_terrain_get_material (LrgTerrain *self,
+                          guint       material);
 
 /**
  * lrg_terrain_set_tint:

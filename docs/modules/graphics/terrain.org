@@ -176,6 +176,12 @@ if (lrg_terrain_height_at (ground, player_x, player_z, &y))
     player_y = y;
 #+end_src
 
+** Materials
+:PROPERTIES:
+:CUSTOM_ID: materials
+:END:
+=lrg_terrain_set_material (terrain, material_id, material)= binds an [[file:material.org][LrgMaterial]] to a terrain material id (referenced; %NULL unbinds; =lrg_terrain_get_material()= reads it). Meshes of that id draw with the material's uniforms, maps and render state on both draw paths, with its base colour times the terrain tint; its albedo map replaces =lrg_terrain_set_material_texture()= for that id. On the shared-page path the render state is set first (it flushes rlgl), then the program is enabled again and the page rebound for that mesh; meshes without a material keep the single-bind fast path.
+
 ** Render layers
 :PROPERTIES:
 :CUSTOM_ID: render-layers

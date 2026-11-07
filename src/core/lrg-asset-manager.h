@@ -27,6 +27,7 @@
 #include "../lrg-types.h"
 #include "../lrg-enums.h"
 #include "lrg-asset-meta.h"
+#include "../graphics/lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -279,7 +280,8 @@ LrgDataLoader * lrg_asset_manager_get_data_loader (LrgAssetManager *self);
  * png/jpg/jpeg/bmp/tga/gif/qoi/dds/ktx/pkm/pvr/astc become textures;
  * ttf/otf/fnt become fonts at size 32; wav becomes a sound;
  * ogg/mp3/flac/xm/mod become streaming music; glb/gltf/obj/iqm/m3d/vox
- * become cached models (lrg_asset_manager_load_model()); yaml/yml become
+ * become cached models (lrg_asset_manager_load_model()); rmat becomes a
+ * cached #LrgMaterial (lrg_asset_manager_load_material()); yaml/yml become
  * validated GObject definitions. Other extensions return %G_IO_ERROR_NOT_SUPPORTED.
  * Call the specific load functions to choose another font size/audio mode.
  * Texture/font loading requires a graphics context, audio an audio device;
@@ -652,6 +654,46 @@ guint lrg_asset_manager_get_model_cache_size (LrgAssetManager *self);
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_asset_manager_get_animation_cache_size (LrgAssetManager *self);
+
+/**
+ * lrg_asset_manager_load_material:
+ * @self: an #LrgAssetManager
+ * @name: a `.rmat` reference: `guid:<uuid>`, a name relative to a search
+ *   path, or an absolute path
+ * @error: (nullable): return location for error
+ *
+ * Loads a material asset (lrg_material_new_from_file() with @self as its
+ * asset manager) and caches it under the canonical path, so every
+ * reference to one file (path spellings and guid) shares one
+ * #LrgMaterial, and instances naming it as `parent:` share it too.
+ * Loading is headless: textures load on first use through
+ * lrg_asset_manager_load_texture() (import settings apply).
+ *
+ * Errors: %LRG_ASSET_MANAGER_ERROR_NOT_FOUND when nothing matches @name,
+ * otherwise the #LrgMaterialError of the loader.
+ *
+ * Returns: (transfer none) (nullable): the cached #LrgMaterial, or %NULL
+ *   on error
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial * lrg_asset_manager_load_material (LrgAssetManager  *self,
+                                               const gchar      *name,
+                                               GError          **error);
+
+/**
+ * lrg_asset_manager_get_material_cache_size:
+ * @self: an #LrgAssetManager
+ *
+ * Gets the number of cached materials.
+ *
+ * Returns: The material cache size
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_asset_manager_get_material_cache_size (LrgAssetManager *self);
 
 /* ==========================================================================
  * Projects and guid references (since 0.9.0)

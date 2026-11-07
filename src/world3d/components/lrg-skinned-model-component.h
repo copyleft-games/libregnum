@@ -23,6 +23,7 @@
 #include "../../ecs/lrg-component.h"
 #include "../../graphics/lrg-model-animator.h"
 #include "../lrg-world3d.h"
+#include "../../graphics/lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -203,5 +204,66 @@ GrlModel * lrg_skinned_model_component_get_model (LrgSkinnedModelComponent *self
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_skinned_model_component_apply_pose (LrgSkinnedModelComponent *self);
+/**
+ * lrg_skinned_model_component_get_material:
+ * @self: an #LrgSkinnedModelComponent
+ *
+ * Returns: (transfer none) (nullable): the material every mesh draws with
+ *   (unless a submesh material is set), or %NULL for the model's own
+ *   materials
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial * lrg_skinned_model_component_get_material (LrgSkinnedModelComponent *self);
+
+/**
+ * lrg_skinned_model_component_set_material:
+ * @self: an #LrgSkinnedModelComponent
+ * @material: (nullable): a runtime material (the component keeps a
+ *   reference), %NULL for the model's own materials
+ *
+ * Sets #LrgSkinnedModelComponent:material. The item then carries
+ * @material, its base colour (times the component colour) and the
+ * transparent / cutout / double-sided / unlit flags it implies.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_model_component_set_material (LrgSkinnedModelComponent *self,
+                                               LrgMaterial              *material);
+
+/**
+ * lrg_skinned_model_component_set_submesh_material:
+ * @self: an #LrgSkinnedModelComponent
+ * @index: the model mesh index
+ * @material: (nullable): the material of that mesh, %NULL to use
+ *   #LrgSkinnedModelComponent:material
+ *
+ * Gives one mesh of the model its own material. With any submesh
+ * material set, collect_render() submits one posed item per mesh
+ * (mesh_index = i) instead of one for the whole model.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_model_component_set_submesh_material (LrgSkinnedModelComponent *self,
+                                                       guint                     index,
+                                                       LrgMaterial              *material);
+
+/**
+ * lrg_skinned_model_component_get_submesh_material:
+ * @self: an #LrgSkinnedModelComponent
+ * @index: the model mesh index
+ *
+ * Returns: (transfer none) (nullable): the material of mesh @index, or
+ *   %NULL when it uses #LrgSkinnedModelComponent:material
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial * lrg_skinned_model_component_get_submesh_material (LrgSkinnedModelComponent *self,
+                                                                guint                     index);
+
+/**
+ * lrg_skinned_model_component_get_n_submesh_materials:
+ * @self: an #LrgSkinnedModelComponent
+ *
+ * Returns: one past the highest mesh index with a submesh material
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_skinned_model_component_get_n_submesh_materials (LrgSkinnedModelComponent *self);
 
 G_END_DECLS

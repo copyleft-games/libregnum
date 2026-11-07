@@ -58,6 +58,7 @@ nodes:
 | =default_view= | string | Yes | ="3d"= or ="2d"= (controls IDE viewport hint) |
 | =nodes= | sequence | Yes | Root-level node sequence (children of the implicit root) |
 | =timelines= | sequence | No | Keyframed animation clips (see [[#timelines][Timelines]]); omitted when the level has none |
+| =environment= | mapping | No | Sky, image-based lighting, ambient, fog, volumetric fog and post stack of the level (0.9.0, see [[#environment][Environment]]); omitted when the level has none |
 
 ** Node Fields
 :PROPERTIES:
@@ -121,6 +122,17 @@ visual:
         rows:              # one string per row, space-separated tile ids
           - "1 1 2 0 ..."  # 0 = empty, N = tileset tile N-1
 #+end_src
+
+Since 0.9.0 the inline =material:= block also takes =emission: [r, g, b]= and =emission_strength:=, and =material:= may instead be a scalar reference to a material asset, stored as =LrgNodeVisual:material-ref= (=lrg_node_visual_get_material_ref()= / =lrg_node_visual_set_material_ref()=):
+
+#+begin_src yaml
+visual:
+  kind: mesh-asset
+  asset: guid:a1b2c3d4-...
+  material: guid:3f0c9a1e-...   # or materials/crate.rmat
+#+end_src
+
+Instantiation loads it with =lrg_asset_manager_load_material()= into the mesh renderer's =material= slot. See [[file:../modules/graphics/material.org::#level-references][Material level references]] and the [[file:../modules/graphics/material.org::#rmat-format][.rmat format]].
 
 For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the world size of one cell. Rows are padded/truncated to =width= on load. See [[file:editor-tools.org::#tilemap-painting][Tilemap painting]].
 
@@ -328,6 +340,76 @@ timelines:
             easing: ease-in-out-sine
           - time: 1.5
             value: 1.5708
+#+end_src
+
+** Environment
+:PROPERTIES:
+:CUSTOM_ID: environment
+:END:
+Optional, additive (0.9.0; older readers ignore it, and a level without the block is written back without it). The block is an [[file:../modules/lighting/environment.org][LrgEnvironment]]: =lrg_level_get_environment()= returns it after loading, =lrg_level_ensure_environment()= creates a default one to edit. Every sub-block and key is optional: missing keys take the defaults of =lrg_environment_new()=. Unknown keys, at the top of the block and inside each sub-block, are kept and written back in place, so files from newer versions survive a round trip. A malformed block (an unknown =sky.source= or =fog.type=) fails the whole load with =LRG_LEVEL_ERROR_PARSE=.
+
+#+begin_src yaml
+environment:
+  sky:
+    source: equirect        # color | gradient | sky_dome | cubemap | equirect
+    color: [0.5, 0.6, 0.8]  # color source; sRGB 0..1 like every engine colour (> 1 = brighter)
+    zenith: [0.35, 0.5, 0.75]   # gradient / sky_dome: straight up
+    horizon: [0.7, 0.72, 0.75]  #   at the horizon
+    ground: [0.3, 0.28, 0.25]   #   straight down
+    path: skies/noon.hdr    # equirect panorama, or a cubemap cross; path or guid:<uuid>
+    faces: [px.png, nx.png, py.png, ny.png, pz.png, nz.png]  # cubemap from six images (+X -X +Y -Y +Z -Z)
+    exposure: 0.0           # stops: everything is multiplied by 2^exposure
+    rotation: 0.0           # degrees about +Y, counter-clockwise from above (ignored for sky_dome)
+  ibl:
+    enabled: true           # false: the lit shader uses the flat ambient colour
+    diffuse_intensity: 1.0
+    specular_intensity: 1.0
+    resolution: 128         # cubemap edge, power of two 16..1024
+  ambient:
+    color: [0.2, 0.2, 0.2]  # flat ambient (sRGB), used without IBL
+    intensity: 1.0
+  fog:
+    enabled: false
+    type: exponential       # uniform | linear | exponential | height (LrgFogType nicks)
+    color: [0.7, 0.75, 0.8, 1.0]  # sRGB + the cap of the fog amount in alpha
+    density: 0.02           # exponential / uniform / height
+    start: 10.0             # linear
+    end: 100.0              # linear
+    height_base: 0.0        # height fog (and volumetric fog) full below this height
+    height_falloff: 0.1     #   thinning per unit above it
+  volumetric:
+    enabled: false          # the screen-space LrgVolumetricFog pass
+    density: 0.02
+    anisotropy: 0.6         # Henyey-Greenstein g, -0.95..0.95
+    steps: 32               # 4..128
+    max_distance: 100.0
+    intensity: 1.0
+  post_stack: post/day.rpost  # path or guid: of the .rpost stack (LrgPostStack)
+#+end_src
+
+| Key | Type | Default | Meaning |
+|-----+------+---------+---------|
+| =sky.source= | string | =gradient= | =LrgEnvironmentSkySource= nick (=_= and =-= both accepted) |
+| =sky.color= | [r, g, b] | 0.5 grey | colour of the =color= source |
+| =sky.zenith= / =horizon= / =ground= | [r, g, b] | blue-grey / light grey / brown-grey | gradient colours; also the colours of the dome built for a =sky_dome= source |
+| =sky.path= | string | none | equirect panorama (=.hdr= read linear, other images sRGB) or the cross of a =cubemap= source; resolved by =lrg_environment_load_sources()= |
+| =sky.faces= | 6 strings | none | cubemap faces when there is no cross |
+| =sky.exposure= | float | 0 | exposure in stops |
+| =sky.rotation= | float | 0 | rotation in degrees about +Y |
+| =ibl.enabled= | bool | true | image-based lighting wanted |
+| =ibl.diffuse_intensity= / =specular_intensity= | float | 1 | multipliers |
+| =ibl.resolution= | int | 128 | radiance / prefiltered cubemap edge |
+| =ambient.color= / =intensity= | [r, g, b] / float | 0.2 grey / 1 | flat ambient |
+| =fog.*= | | off | distance fog handed to =lrg_light_set_set_fog()= |
+| =volumetric.*= | | off | parameters of =LrgVolumetricFog= |
+| =post_stack= | string | none | the level's post-processing stack |
+
+A level that only wants a coloured sky and a dimmer ambient writes just those keys:
+
+#+begin_src yaml
+environment:
+  sky: { source: color, color: [0.1, 0.1, 0.15] }
+  ambient: { color: [0.05, 0.05, 0.08] }
 #+end_src
 
 ** Notes

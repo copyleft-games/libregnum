@@ -38,6 +38,8 @@ struct _LrgSkinnedModelComponent
 	gboolean           cast_shadows;
 	gboolean           receive_shadows;
 	gint               layer;
+	LrgMaterial       *material;      /* nullable */
+	GPtrArray         *submesh;       /* LrgMaterial* or NULL per mesh index */
 };
 
 G_DEFINE_FINAL_TYPE (LrgSkinnedModelComponent, lrg_skinned_model_component, LRG_TYPE_COMPONENT)
@@ -60,6 +62,7 @@ enum
 	PROP_CAST_SHADOWS,
 	PROP_RECEIVE_SHADOWS,
 	PROP_LAYER,
+	PROP_MATERIAL,
 	N_PROPS
 };
 
@@ -166,6 +169,63 @@ lrg_skinned_model_component_get_bounds (LrgComponent     *component,
 	return TRUE;
 }
 
+/* Free function of the submesh array, whose holes are NULL. */
+static void
+unref_nullable (gpointer object)
+{
+	if (object != NULL)
+		g_object_unref (object);
+}
+
+/* Colour, material and material flags of one item: the component colour
+ * (times the material's base colour) and, with a material, the flags its
+ * render queue, cull mode and shading model imply. */
+static void
+item_set_material (LrgSkinnedModelComponent *self,
+                   LrgRenderItem            *item,
+                   LrgMaterial              *material)
+{
+	guint flags = (guint) item->flags;
+	guint k;
+
+	memcpy (item->color, self->color, sizeof item->color);
+	item->material = material;
+	if (material == NULL)
+	{
+		if (self->color[3] < 1.0f)
+			flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		item->flags = (LrgRenderItemFlags) flags;
+		return;
+	}
+	{
+		gfloat base[4];
+
+		lrg_material_get_base_color (material, base);
+		for (k = 0; k < 4; k++)
+			item->color[k] *= base[k];
+	}
+	switch (lrg_material_resolve_render_queue (material))
+	{
+	case LRG_MATERIAL_RENDER_QUEUE_TRANSPARENT:
+		flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		break;
+	case LRG_MATERIAL_RENDER_QUEUE_CUTOUT:
+		flags |= LRG_RENDER_ITEM_FLAG_CUTOUT;
+		break;
+	case LRG_MATERIAL_RENDER_QUEUE_AUTO:
+	case LRG_MATERIAL_RENDER_QUEUE_OPAQUE:
+	default:
+		if (self->color[3] < 1.0f)
+			flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		break;
+	}
+	if (lrg_material_get_cull_mode (material) == LRG_MATERIAL_CULL_NONE)
+		flags |= LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED;
+	if (lrg_material_get_shading_model (material) == LRG_SHADING_MODEL_UNLIT)
+		flags |= LRG_RENDER_ITEM_FLAG_UNLIT;
+	item->flags = (LrgRenderItemFlags) flags;
+}
+
 /* One MODEL item with the animator's model, posed for this component. */
 static void
 lrg_skinned_model_component_collect_render (LrgComponent  *component,
@@ -190,20 +250,38 @@ lrg_skinned_model_component_collect_render (LrgComponent  *component,
 	item.kind = LRG_RENDER_ITEM_MODEL;
 	item.model = model;
 	item.mesh_index = -1;
-	memcpy (item.color, self->color, sizeof item.color);
 	if (self->cast_shadows)
 		flags |= LRG_RENDER_ITEM_FLAG_CAST_SHADOW;
 	if (self->receive_shadows)
 		flags |= LRG_RENDER_ITEM_FLAG_RECEIVE_SHADOW;
-	if (self->color[3] < 1.0f)
-		flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
 	item.flags = (LrgRenderItemFlags) flags;
+	item_set_material (self, &item, self->material);
 	if (self->layer >= 0)
 		item.layer = (guint) self->layer;
 	item.sort_key = ((guint64) LRG_RENDER_ITEM_MODEL << 56) |
 	                ((guint64) (guintptr) model & G_GUINT64_CONSTANT (0x00ffffffffffffff));
 	if (lrg_skinned_model_component_get_bounds (component, &local))
 		lrg_render_item_set_local_bounds (&item, &local);
+
+	/* Submesh materials: one posed item per mesh. */
+	if (self->submesh != NULL && self->submesh->len > 0)
+	{
+		gint n = grl_model_get_mesh_count (model);
+		gint i;
+
+		for (i = 0; i < n; i++)
+		{
+			LrgRenderItem sub = item;
+			LrgMaterial  *m = lrg_skinned_model_component_get_submesh_material (self, (guint) i);
+
+			sub.mesh_index = i;
+			sub.flags = (LrgRenderItemFlags) flags;
+			item_set_material (self, &sub, m != NULL ? m : self->material);
+			if (lrg_render_list_accepts (list, &sub))
+				lrg_render_list_add (list, &sub);
+		}
+		return;
+	}
 
 	if (lrg_render_list_accepts (list, &item))
 		lrg_render_list_add (list, &item);
@@ -219,6 +297,8 @@ lrg_skinned_model_component_dispose (GObject *object)
 	LrgSkinnedModelComponent *self = LRG_SKINNED_MODEL_COMPONENT (object);
 
 	g_clear_object (&self->animator);
+	g_clear_object (&self->material);
+	g_clear_pointer (&self->submesh, g_ptr_array_unref);
 	g_clear_object (&self->asset_manager);
 
 	G_OBJECT_CLASS (lrg_skinned_model_component_parent_class)->dispose (object);
@@ -288,6 +368,7 @@ lrg_skinned_model_component_get_property (GObject    *object,
 	case PROP_CAST_SHADOWS:    g_value_set_boolean (value, self->cast_shadows); break;
 	case PROP_RECEIVE_SHADOWS: g_value_set_boolean (value, self->receive_shadows); break;
 	case PROP_LAYER:           g_value_set_int (value, self->layer); break;
+	case PROP_MATERIAL:        g_value_set_object (value, self->material); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -345,6 +426,9 @@ lrg_skinned_model_component_set_property (GObject      *object,
 			self->layer = g_value_get_int (value);
 			g_object_notify_by_pspec (object, pspec);
 		}
+		break;
+	case PROP_MATERIAL:
+		lrg_skinned_model_component_set_material (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -478,6 +562,15 @@ lrg_skinned_model_component_class_init (LrgSkinnedModelComponentClass *klass)
 	 */
 	properties[PROP_LAYER] = g_param_spec_int ("layer", NULL, "Render layer (-1 entity)", -1, 31,
 	                                           -1, rw);
+
+	/**
+	 * LrgSkinnedModelComponent:material:
+	 *
+	 * The #LrgMaterial the model draws with (unless a mesh has a submesh
+	 * material), or %NULL for the model's own materials.
+	 */
+	properties[PROP_MATERIAL] = g_param_spec_object ("material", NULL, "Material",
+	                                                 LRG_TYPE_MATERIAL, rw);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -659,4 +752,64 @@ lrg_skinned_model_component_apply_pose (LrgSkinnedModelComponent *self)
 	if (self->animator == NULL)
 		return FALSE;
 	return lrg_model_animator_apply (self->animator, &self->state);
+}
+
+LrgMaterial *
+lrg_skinned_model_component_get_material (LrgSkinnedModelComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), NULL);
+	return self->material;
+}
+
+void
+lrg_skinned_model_component_set_material (LrgSkinnedModelComponent *self,
+                                          LrgMaterial              *material)
+{
+	g_return_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self));
+	g_return_if_fail (material == NULL || LRG_IS_MATERIAL (material));
+
+	if (g_set_object (&self->material, material))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MATERIAL]);
+}
+
+void
+lrg_skinned_model_component_set_submesh_material (LrgSkinnedModelComponent *self,
+                                                  guint                     index,
+                                                  LrgMaterial              *material)
+{
+	g_return_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self));
+	g_return_if_fail (material == NULL || LRG_IS_MATERIAL (material));
+	g_return_if_fail (index < 4096);
+
+	if (self->submesh == NULL)
+	{
+		if (material == NULL)
+			return;
+		self->submesh = g_ptr_array_new_with_free_func (unref_nullable);
+	}
+	while (self->submesh->len <= index)
+		g_ptr_array_add (self->submesh, NULL);
+	unref_nullable (g_ptr_array_index (self->submesh, index));
+	g_ptr_array_index (self->submesh, index) = material != NULL ? g_object_ref (material) : NULL;
+	/* trailing empty entries do not count */
+	while (self->submesh->len > 0 && g_ptr_array_index (self->submesh, self->submesh->len - 1) == NULL)
+		g_ptr_array_set_size (self->submesh, self->submesh->len - 1);
+}
+
+LrgMaterial *
+lrg_skinned_model_component_get_submesh_material (LrgSkinnedModelComponent *self,
+                                                  guint                     index)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), NULL);
+
+	if (self->submesh == NULL || index >= self->submesh->len)
+		return NULL;
+	return g_ptr_array_index (self->submesh, index);
+}
+
+guint
+lrg_skinned_model_component_get_n_submesh_materials (LrgSkinnedModelComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), 0);
+	return self->submesh != NULL ? self->submesh->len : 0;
 }

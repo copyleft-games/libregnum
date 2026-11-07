@@ -64,6 +64,8 @@ A material is an [[file:../modules/graphics/material.org][LrgMaterial]] (=.rmat=
 
 Static batches, terrain, skinned meshes and the mesh-renderer component take a material (=set_material()=) and call =lrg_material_apply()= around their draws.  A draw without a material gets the defaults: a dielectric of roughness 0.5.
 
+Materials are assets. Write a =.rmat= (see [[file:../modules/graphics/material.org::#rmat-format][the format]]), load it with =lrg_asset_manager_load_material()= (cached and shared; textures load lazily through the asset manager so =.meta= import settings apply), and make variants as instances: =parent: crate.rmat= (or =guid:=) plus only the keys you change, or =lrg_material_new_instance()= in code. Editing the parent updates every instance; =lrg_material_revert()= drops an override. Reference a material from a level node with =material: guid:…=; instantiation puts it in the mesh renderer's =material= slot, and its render queue (blend mode) decides whether the item lands in the opaque, cutout or transparent list. When you draw with a material yourself: =lrg_material_apply_state()=, then =lrg_material_apply (material, shader_id)=, then your =DrawMesh()= with =lrg_material_fill_raylib_maps()=, then =lrg_material_restore_state()= and =lrg_material_reset_uniforms (shader_id)= before draws without a material.
+
 ** Lighting
 :PROPERTIES:
 :CUSTOM_ID: lighting

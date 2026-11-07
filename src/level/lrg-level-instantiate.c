@@ -350,6 +350,7 @@ typedef struct
 {
 	LrgWorld3D  *world;
 	LrgRegistry *registry;    /* nullable */
+	LrgAssetManager *assets;  /* nullable: material references load through it */
 	GHashTable  *used_guids;  /* GUIDs given out by this call (set) */
 } Instantiate3D;
 
@@ -502,6 +503,7 @@ typedef enum
 	MAP_COLOR,        /* material colour channel @index (0..3) */
 	MAP_ROUGHNESS,    /* material roughness */
 	MAP_METALLIC,     /* material metallic */
+	MAP_EMISSION,     /* material emission channel @index (0..2), 3 = strength */
 	MAP_ASSET,        /* the visual's asset path / GUID */
 	MAP_PRIMITIVE,    /* the visual's LrgPrimitiveType */
 	MAP_IGNORE        /* @key is a param the runtime ignores (as the editor does) */
@@ -526,6 +528,10 @@ static const VisualMap visual_map[] = {
 	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_COLOR,     NULL, 3, "color-a", 1.0 },
 	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_ROUGHNESS, NULL, 0, "roughness", 1.0 },
 	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_METALLIC,  NULL, 0, "metallic", 1.0 },
+	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_EMISSION,  NULL, 0, "emission-r", 1.0 },
+	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_EMISSION,  NULL, 1, "emission-g", 1.0 },
+	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_EMISSION,  NULL, 2, "emission-b", 1.0 },
+	{ LRG_NODE_VISUAL_PRIMITIVE,  MAP_EMISSION,  NULL, 3, "emission-strength", 1.0 },
 	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_ASSET,     NULL, 0, "mesh-asset", 1.0 },
 	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_COLOR,     NULL, 0, "color-r", 1.0 },
 	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_COLOR,     NULL, 1, "color-g", 1.0 },
@@ -533,11 +539,17 @@ static const VisualMap visual_map[] = {
 	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_COLOR,     NULL, 3, "color-a", 1.0 },
 	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_ROUGHNESS, NULL, 0, "roughness", 1.0 },
 	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_METALLIC,  NULL, 0, "metallic", 1.0 },
+	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_EMISSION,  NULL, 0, "emission-r", 1.0 },
+	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_EMISSION,  NULL, 1, "emission-g", 1.0 },
+	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_EMISSION,  NULL, 2, "emission-b", 1.0 },
+	{ LRG_NODE_VISUAL_MESH_ASSET, MAP_EMISSION,  NULL, 3, "emission-strength", 1.0 },
 
 	/* light -> LrgLightComponent */
 	{ LRG_NODE_VISUAL_LIGHT,      MAP_PARAM,     "light_type", 0, "kind", 1.0 },
 	/* the editor's spot_angle is the full cone, outer-angle a half-angle */
 	{ LRG_NODE_VISUAL_LIGHT,      MAP_PARAM,     "spot_angle", 0, "outer-angle", 0.5 },
+	/* the editor's spot_inner_angle is the full inner cone, inner-angle a half-angle */
+	{ LRG_NODE_VISUAL_LIGHT,      MAP_PARAM,     "spot_inner_angle", 0, "inner-angle", 0.5 },
 	{ LRG_NODE_VISUAL_LIGHT,      MAP_COLOR,     NULL, 0, "color-r", 1.0 },
 	{ LRG_NODE_VISUAL_LIGHT,      MAP_COLOR,     NULL, 1, "color-g", 1.0 },
 	{ LRG_NODE_VISUAL_LIGHT,      MAP_COLOR,     NULL, 2, "color-b", 1.0 },
@@ -737,6 +749,16 @@ apply_explicit_rows (LrgNodeVisual *visual,
 			if (material != NULL)
 				set_float_property (comp, row->property, lrg_material3d_get_metallic (material));
 			break;
+		case MAP_EMISSION:
+			if (material != NULL)
+			{
+				gfloat e[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+				lrg_material3d_get_emission_color (material, &e[0], &e[1], &e[2], NULL);
+				e[3] = lrg_material3d_get_emission_strength (material);
+				set_float_property (comp, row->property, e[row->index]);
+			}
+			break;
 		case MAP_PARAM:
 		case MAP_IGNORE:
 		default:
@@ -861,13 +883,82 @@ default_sprite (GObject *comp)
 	}
 }
 
+/*
+ * resolve_material_ref:
+ *
+ * The material a visual's `material: guid:/path` reference names, loaded
+ * through @manager's cache (shared by every node naming it) or, without
+ * a manager, from an absolute or current-directory path. NULL (with a
+ * debug message) when it does not resolve: the node then draws with its
+ * scalar material like before.
+ *
+ * Returns: (transfer full) (nullable): the material
+ */
+static LrgMaterial *
+resolve_material_ref (const gchar     *ref,
+                      LrgAssetManager *manager)
+{
+	g_autoptr(GError) error = NULL;
+	LrgMaterial      *material = NULL;
+
+	if (manager != NULL)
+	{
+		LrgMaterial *cached = lrg_asset_manager_load_material (manager, ref, &error);
+
+		if (cached != NULL)
+			return g_object_ref (cached);
+	}
+	else if (!g_str_has_prefix (ref, LRG_ASSET_GUID_PREFIX))
+		material = lrg_material_new_from_file (ref, NULL, &error);
+	if (material == NULL)
+		g_debug ("lrg_level_instantiate_3d: material '%s' not loaded: %s", ref,
+		         error != NULL ? error->message : "no asset manager for a guid reference");
+	return material;
+}
+
+/* Fills the component's "material" slot from the visual's reference. */
+static void
+apply_material_ref (LrgNodeVisual   *visual,
+                    GObject         *comp,
+                    LrgAssetManager *manager)
+{
+	const gchar            *ref = lrg_node_visual_get_material_ref (visual);
+	GParamSpec             *pspec;
+	g_autoptr(LrgMaterial)  material = NULL;
+
+	if (ref == NULL)
+		return;
+	pspec = component_property (G_OBJECT_GET_CLASS (comp), "material");
+	if (pspec == NULL || !g_type_is_a (LRG_TYPE_MATERIAL, G_PARAM_SPEC_VALUE_TYPE (pspec)))
+		return;
+	material = resolve_material_ref (ref, manager);
+	if (material != NULL)
+		g_object_set (comp, "material", material, NULL);
+}
+
+static LrgComponent *
+create_visual_component (LrgNodeVisual   *visual,
+                         LrgAssetManager *manager);
+
 LrgComponent *
 lrg_level_visual_create_component (LrgNodeVisual *visual)
 {
-	GType    type;
-	GObject *comp;
+	LrgEngine *engine;
 
 	g_return_val_if_fail (LRG_IS_NODE_VISUAL (visual), NULL);
+
+	engine = lrg_engine_get_default ();
+	return create_visual_component (visual, engine != NULL ? lrg_engine_get_asset_manager (engine)
+	                                                       : NULL);
+}
+
+/* lrg_level_visual_create_component() with an explicit asset manager. */
+static LrgComponent *
+create_visual_component (LrgNodeVisual   *visual,
+                         LrgAssetManager *manager)
+{
+	GType    type;
+	GObject *comp;
 
 	type = lrg_level_visual_get_component_type (lrg_node_visual_get_kind (visual));
 	if (type == G_TYPE_INVALID || !g_type_is_a (type, LRG_TYPE_COMPONENT))
@@ -880,6 +971,7 @@ lrg_level_visual_create_component (LrgNodeVisual *visual)
 		default_sprite (comp);
 	apply_explicit_rows (visual, comp);
 	apply_params (visual, comp);
+	apply_material_ref (visual, comp, manager);
 	if (lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_TILEMAP)
 		configure_tilemap (visual, comp);
 	return LRG_COMPONENT (comp);
@@ -1037,6 +1129,7 @@ lrg_level_visual_store_property (LrgNodeVisual *visual,
 	case MAP_COLOR:
 	case MAP_ROUGHNESS:
 	case MAP_METALLIC:
+	case MAP_EMISSION:
 		{
 			LrgMaterial3D            *material = lrg_node_visual_get_material (visual);
 			g_autoptr(LrgMaterial3D)  copy = NULL;
@@ -1054,6 +1147,19 @@ lrg_level_visual_store_property (LrgNodeVisual *visual,
 			}
 			else if (row->source == MAP_ROUGHNESS)
 				lrg_material3d_set_roughness (copy, f);
+			else if (row->source == MAP_EMISSION)
+			{
+				gfloat e[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+				lrg_material3d_get_emission_color (copy, &e[0], &e[1], &e[2], &e[3]);
+				if (row->index == 3)
+					lrg_material3d_set_emission_strength (copy, f);
+				else
+				{
+					e[row->index] = f;
+					lrg_material3d_set_emission_color (copy, e[0], e[1], e[2], e[3]);
+				}
+			}
 			else
 				lrg_material3d_set_metallic (copy, f);
 			lrg_node_visual_set_material (visual, copy);
@@ -1068,15 +1174,16 @@ lrg_level_visual_store_property (LrgNodeVisual *visual,
 
 /* Attaches the component made from the node's visual, if any. */
 static void
-add_visual_component (LrgNode     *node,
-                      LrgEntity3D *entity)
+add_visual_component (Instantiate3D *ctx,
+                      LrgNode       *node,
+                      LrgEntity3D   *entity)
 {
 	LrgNodeVisual           *visual = lrg_node_get_visual (node);
 	g_autoptr(LrgComponent)  comp = NULL;
 
 	if (visual == NULL)
 		return;
-	comp = lrg_level_visual_create_component (visual);
+	comp = create_visual_component (visual, ctx->assets);
 	if (comp != NULL)
 		lrg_entity3d_add_component (entity, comp);
 }
@@ -1132,7 +1239,7 @@ instantiate_node_3d (Instantiate3D *ctx,
 	/* Components: the visual's first (renderers, lights, cameras), then
 	 * the authored registry components and the scripts, in that order, so
 	 * game components can find the visual component in their attach. */
-	add_visual_component (node, entity);
+	add_visual_component (ctx, node, entity);
 	create_registry_components (ctx, node, entity);
 	create_script_components (node, entity);
 
@@ -1150,12 +1257,16 @@ instantiate_3d_init (Instantiate3D *ctx,
 {
 	ctx->world = world;
 	ctx->registry = NULL;
+	ctx->assets = NULL;
 	ctx->used_guids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
 	if (engine == NULL)
 		engine = lrg_engine_get_default ();
 	if (engine != NULL)
+	{
 		ctx->registry = lrg_engine_get_registry (engine);
+		ctx->assets = lrg_engine_get_asset_manager (engine);
+	}
 }
 
 /*

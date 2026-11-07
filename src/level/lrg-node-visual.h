@@ -145,6 +145,32 @@ LRG_AVAILABLE_IN_ALL
 void lrg_node_visual_set_material (LrgNodeVisual *self,
                                    LrgMaterial3D *material);
 
+/**
+ * lrg_node_visual_get_material_ref:
+ * @self: an #LrgNodeVisual
+ *
+ * Gets the material asset reference: a `.rmat` path or `guid:<uuid>`
+ * (`material: guid:...` in a level file). Instantiation loads it through
+ * the engine's asset manager (lrg_asset_manager_load_material()) and puts
+ * it in the component's material slot; it wins over the inline
+ * #LrgNodeVisual:material for drawing.
+ *
+ * Returns: (transfer none) (nullable): the reference
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_visual_get_material_ref (LrgNodeVisual *self);
+
+/**
+ * lrg_node_visual_set_material_ref:
+ * @self: an #LrgNodeVisual
+ * @ref: (nullable): a `.rmat` path or `guid:` reference, %NULL for none
+ *
+ * Sets #LrgNodeVisual:material-ref.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_visual_set_material_ref (LrgNodeVisual *self,
+                                       const gchar   *ref);
+
 /* ==========================================================================
  * Kind-specific Parameters
  * ========================================================================== */

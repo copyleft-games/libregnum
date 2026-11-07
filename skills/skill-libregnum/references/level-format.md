@@ -99,4 +99,5 @@ nodes:
 - audio emitter: `volume`, `pitch`, `loop`, `autoplay`, `min_distance`, `max_distance` / `radius`
 - sprite: `width`, `height`, `facing`, `preserve_aspect` (`pixels_per_unit` ignored)
 - tilemap: `tile_size`
+- `visual.material` is either the inline block (`color`, `roughness`, `metallic`, since 0.9.0 `emission: [r,g,b]` + `emission_strength`) mapped to the mesh renderer's scalar properties, or a scalar reference to a `.rmat` asset (`material: guid:3f0c…` or `material: materials/crate.rmat`, `LrgNodeVisual:material-ref`), loaded through the engine's asset manager into the component's `material` slot (shared by every node naming it). An unresolvable reference falls back to the scalar material with a debug message.
 - primitive/mesh: `size_x..z`, `radius`, `cast_shadows`, `receive_shadows`, `unlit`, `double_sided`

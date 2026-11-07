@@ -22,6 +22,7 @@
 #include "../../lrg-enums.h"
 #include "../../ecs/lrg-component.h"
 #include "../lrg-world3d.h"
+#include "../../graphics/lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -256,8 +257,8 @@ void lrg_mesh_renderer_component_set_emission (LrgMeshRendererComponent *self,
  * lrg_mesh_renderer_component_get_material:
  * @self: an #LrgMeshRendererComponent
  *
- * Gets the material slot: an explicit material object (an #LrgMaterial3D
- * today, an LrgMaterial from 0.9 M2) that replaces the scalar colour,
+ * Gets the material slot: an explicit material object (an #LrgMaterial,
+ * or a legacy #LrgMaterial3D) that replaces the scalar colour,
  * roughness, metallic and emission properties.
  *
  * Returns: (transfer none) (nullable): the material slot
@@ -271,7 +272,11 @@ GObject * lrg_mesh_renderer_component_get_material (LrgMeshRendererComponent *se
  * @material: (nullable): a material object, %NULL to use the scalar
  *   material properties
  *
- * Fills the material slot (the component keeps a reference).
+ * Fills the material slot (the component keeps a reference). With an
+ * #LrgMaterial the items carry its base colour as their colour, and its
+ * render queue, cull mode and shading model decide the transparent,
+ * cutout, double-sided and unlit flags (see
+ * lrg_mesh_renderer_component_get_flags()).
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_mesh_renderer_component_set_material (LrgMeshRendererComponent *self,
@@ -289,6 +294,55 @@ void lrg_mesh_renderer_component_set_material (LrgMeshRendererComponent *self,
  */
 LRG_AVAILABLE_IN_ALL
 GObject * lrg_mesh_renderer_component_get_effective_material (LrgMeshRendererComponent *self);
+
+/**
+ * lrg_mesh_renderer_component_set_submesh_material:
+ * @self: an #LrgMeshRendererComponent
+ * @index: the model mesh index (raylib mesh order, see #LrgGltfInfo)
+ * @material: (nullable): the material of that mesh, %NULL to fall back to
+ *   the material slot
+ *
+ * Gives one mesh of a mesh asset its own material. When any submesh
+ * material is set and the model is resolved, the component submits one
+ * item per mesh (mesh_index = i) instead of one for the whole model,
+ * each with its submesh material or the effective material. Primitives
+ * ignore submesh materials.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_mesh_renderer_component_set_submesh_material (LrgMeshRendererComponent *self,
+                                                       guint                     index,
+                                                       LrgMaterial              *material);
+
+/**
+ * lrg_mesh_renderer_component_get_submesh_material:
+ * @self: an #LrgMeshRendererComponent
+ * @index: the model mesh index
+ *
+ * Returns: (transfer none) (nullable): the material of mesh @index, or
+ *   %NULL when it uses the material slot
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial * lrg_mesh_renderer_component_get_submesh_material (LrgMeshRendererComponent *self,
+                                                                guint                     index);
+
+/**
+ * lrg_mesh_renderer_component_get_n_submesh_materials:
+ * @self: an #LrgMeshRendererComponent
+ *
+ * Returns: one past the highest mesh index with a submesh material (0
+ *   when none is set)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_mesh_renderer_component_get_n_submesh_materials (LrgMeshRendererComponent *self);
+
+/**
+ * lrg_mesh_renderer_component_clear_submesh_materials:
+ * @self: an #LrgMeshRendererComponent
+ *
+ * Drops every submesh material (one item for the whole model again).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_mesh_renderer_component_clear_submesh_materials (LrgMeshRendererComponent *self);
 
 /* ==========================================================================
  * Render state
@@ -360,7 +414,13 @@ void lrg_mesh_renderer_component_set_layer (LrgMeshRendererComponent *self,
  *
  * Computes the #LrgRenderItemFlags the items carry from the shadow,
  * transparency, double-sided and unlit properties (an alpha below 1 adds
- * %LRG_RENDER_ITEM_FLAG_TRANSPARENT).
+ * %LRG_RENDER_ITEM_FLAG_TRANSPARENT). When the material slot holds an
+ * #LrgMaterial, its resolved render queue adds
+ * %LRG_RENDER_ITEM_FLAG_TRANSPARENT or %LRG_RENDER_ITEM_FLAG_CUTOUT, a
+ * %LRG_MATERIAL_CULL_NONE cull mode adds
+ * %LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED and %LRG_SHADING_MODEL_UNLIT adds
+ * %LRG_RENDER_ITEM_FLAG_UNLIT (the component's colour alpha is then not
+ * consulted).
  *
  * Returns: the render flags
  */

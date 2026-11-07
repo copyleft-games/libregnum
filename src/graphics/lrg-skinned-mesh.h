@@ -24,6 +24,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -325,6 +326,35 @@ LRG_AVAILABLE_IN_ALL
 void
 lrg_skinned_mesh_set_alpha_cutoff (LrgSkinnedMesh *self,
                                    gfloat          cutoff);
+
+/**
+ * lrg_skinned_mesh_set_material:
+ * @self: an #LrgSkinnedMesh
+ * @material: (nullable): a runtime material (referenced), or %NULL to draw
+ *   with the texture, tint and alpha cutoff setters again
+ *
+ * Draws the mesh with @material: lrg_material_apply() on the mesh's
+ * shader before the draw (base colour times the tint, texture slots,
+ * PBR parameters, emission, alpha cutoff), the same maps given to
+ * DrawMesh(), and lrg_material_apply_state() /
+ * lrg_material_restore_state() around it. The material's albedo map
+ * replaces lrg_skinned_mesh_set_texture() when it has one.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_skinned_mesh_set_material (LrgSkinnedMesh *self,
+                               LrgMaterial    *material);
+
+/**
+ * lrg_skinned_mesh_get_material:
+ * @self: an #LrgSkinnedMesh
+ *
+ * Returns: (transfer none) (nullable): the material set with
+ *   lrg_skinned_mesh_set_material()
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial *
+lrg_skinned_mesh_get_material (LrgSkinnedMesh *self);
 
 /**
  * lrg_skinned_mesh_set_shader:

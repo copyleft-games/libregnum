@@ -142,6 +142,7 @@ struct _LrgTerrain
     Color       tint;
     GHashTable *chunks;     /* &chunk->key -> TerrainChunk* */
     GHashTable *textures;   /* GUINT_TO_POINTER (material) -> MaterialTexture* */
+    GHashTable *assets;     /* GUINT_TO_POINTER (material) -> LrgMaterial* (0.9.0) */
     GrlShader  *shader;
     TerrainPath path;
     GArray     *pages;      /* TerrainPage */
@@ -669,6 +670,7 @@ lrg_terrain_finalize (GObject *object)
     g_clear_pointer (&self->draw_members, g_array_unref);
     g_clear_pointer (&self->draw_visible, g_array_unref);
     g_clear_pointer (&self->textures, g_hash_table_unref);
+    g_clear_pointer (&self->assets, g_hash_table_unref);
     g_clear_pointer (&self->chunk_layers, g_hash_table_unref);
     g_clear_object (&self->shader);
 
@@ -691,6 +693,7 @@ lrg_terrain_init (LrgTerrain *self)
     self->chunks = g_hash_table_new_full (g_int64_hash, g_int64_equal, NULL, chunk_free);
     self->textures = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL,
                                             material_texture_free);
+    self->assets = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_object_unref);
     self->pages = g_array_new (FALSE, FALSE, sizeof (TerrainPage));
     self->free_slots = g_array_new (FALSE, FALSE, sizeof (guint));
     self->draw_list = g_array_new (FALSE, FALSE, sizeof (DrawEntry));
@@ -1168,6 +1171,28 @@ lrg_terrain_set_material_texture (LrgTerrain *self,
 }
 
 void
+lrg_terrain_set_material (LrgTerrain  *self,
+                          guint        material,
+                          LrgMaterial *asset)
+{
+    g_return_if_fail (LRG_IS_TERRAIN (self));
+    g_return_if_fail (asset == NULL || LRG_IS_MATERIAL (asset));
+
+    if (asset == NULL)
+        g_hash_table_remove (self->assets, GUINT_TO_POINTER (material));
+    else
+        g_hash_table_replace (self->assets, GUINT_TO_POINTER (material), g_object_ref (asset));
+}
+
+LrgMaterial *
+lrg_terrain_get_material (LrgTerrain *self,
+                          guint       material)
+{
+    g_return_val_if_fail (LRG_IS_TERRAIN (self), NULL);
+    return g_hash_table_lookup (self->assets, GUINT_TO_POINTER (material));
+}
+
+void
 lrg_terrain_set_tint (LrgTerrain     *self,
                       const GrlColor *tint)
 {
@@ -1581,6 +1606,7 @@ draw_chunk (LrgTerrain   *self,
     {
         TerrainMesh     *tm = g_ptr_array_index (chunk->meshes, m);
         MaterialTexture *entry;
+        LrgMaterial     *asset;
         Mesh             mesh;
 
         if (!tm->uploaded)
@@ -1605,6 +1631,26 @@ draw_chunk (LrgTerrain   *self,
         }
         maps[MATERIAL_MAP_ALBEDO].color = self->tint;
         material.maps = maps;
+
+        /* a bound LrgMaterial: its uniforms, maps (same units) and state */
+        asset = g_hash_table_lookup (self->assets, GUINT_TO_POINTER (tm->material));
+        if (asset != NULL)
+        {
+            Color c;
+
+            lrg_material_apply (asset, material.shader.id);
+            lrg_material_fill_raylib_maps (asset, maps);
+            c = maps[MATERIAL_MAP_ALBEDO].color;
+            maps[MATERIAL_MAP_ALBEDO].color.r = (unsigned char)((c.r * self->tint.r) / 255);
+            maps[MATERIAL_MAP_ALBEDO].color.g = (unsigned char)((c.g * self->tint.g) / 255);
+            maps[MATERIAL_MAP_ALBEDO].color.b = (unsigned char)((c.b * self->tint.b) / 255);
+            maps[MATERIAL_MAP_ALBEDO].color.a = (unsigned char)((c.a * self->tint.a) / 255);
+            lrg_material_apply_state (asset);
+            DrawMesh (mesh, material, transform);
+            lrg_material_restore_state (asset);
+            lrg_material_reset_uniforms (material.shader.id);
+            continue;
+        }
 
         DrawMesh (mesh, material, transform);
     }
@@ -1793,6 +1839,65 @@ shared_begin (LrgTerrain *self,
     d->page = G_MAXUINT;
 }
 
+/* shared_set_color:
+ * colDiffuse = @rgb times the terrain tint (what shared_begin() sets for
+ * plain meshes when @rgb is white). */
+static void
+shared_set_color (LrgTerrain   *self,
+                  SharedDraw   *d,
+                  const gfloat *rgba)
+{
+    gfloat values[4];
+
+    if (d->shader.locs[SHADER_LOC_COLOR_DIFFUSE] == -1)
+        return;
+    values[0] = rgba[0] * (gfloat)self->tint.r / 255.0f;
+    values[1] = rgba[1] * (gfloat)self->tint.g / 255.0f;
+    values[2] = rgba[2] * (gfloat)self->tint.b / 255.0f;
+    values[3] = rgba[3] * (gfloat)self->tint.a / 255.0f;
+    rlSetUniform (d->shader.locs[SHADER_LOC_COLOR_DIFFUSE], values, SHADER_UNIFORM_VEC4, 1);
+}
+
+/* shared_material_begin:
+ * Binds an LrgMaterial for one shared-page mesh: its render state, then
+ * its uniforms and maps (unit 0 included) and its colour times the tint.
+ * lrg_material_apply_state() flushes the rlgl batch, which may unbind
+ * the program and the vertex array: the state goes first, the program is
+ * enabled again by lrg_material_apply() and the page is rebound. */
+static void
+shared_material_begin (LrgTerrain  *self,
+                       SharedDraw  *d,
+                       LrgMaterial *asset)
+{
+    gfloat color[4];
+
+    lrg_material_apply_state (asset);
+    lrg_material_apply (asset, d->shader.id);
+    rlEnableShader (d->shader.id);
+    lrg_material_get_base_color (asset, color);
+    shared_set_color (self, d, color);
+    d->textured = FALSE;
+    d->texture = 0;
+    d->page = G_MAXUINT;
+}
+
+/* shared_material_end:
+ * Back to the plain-mesh state: default state and uniforms, the tint as
+ * colDiffuse; slot 0 is rebound by the next plain mesh. */
+static void
+shared_material_end (LrgTerrain  *self,
+                     SharedDraw  *d,
+                     LrgMaterial *asset)
+{
+    static const gfloat white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+    lrg_material_restore_state (asset);
+    lrg_material_reset_uniforms (d->shader.id);
+    rlEnableShader (d->shader.id);
+    shared_set_color (self, d, white);
+    d->page = G_MAXUINT;
+}
+
 /* shared_chunk:
  * Draws @chunk's uploaded meshes: the chunk's model, normal and MVP
  * matrices (computed as DrawMesh() does), then per mesh its texture
@@ -1817,6 +1922,7 @@ shared_chunk (LrgTerrain   *self,
     {
         TerrainMesh     *tm = g_ptr_array_index (chunk->meshes, m);
         MaterialTexture *entry;
+        LrgMaterial     *asset;
         guint            texture;
         guint            page;
         gsize            index;
@@ -1850,10 +1956,20 @@ shared_chunk (LrgTerrain   *self,
             matrices = TRUE;
         }
 
+        /* a bound LrgMaterial binds its own maps and uniforms (unit 0
+         * included: force a rebind for the next plain mesh) */
+        asset = g_hash_table_lookup (self->assets, GUINT_TO_POINTER (tm->material));
+        if (asset != NULL)
+            shared_material_begin (self, d, asset);
+
         /* the albedo map on slot 0 (raylib's white texture without one) */
         entry = g_hash_table_lookup (self->textures, GUINT_TO_POINTER (tm->material));
         texture = entry != NULL ? entry->texture.id : rlGetTextureIdDefault ();
-        if (texture == 0)
+        if (asset != NULL)
+        {
+            /* lrg_material_apply() bound the material's albedo */
+        }
+        else if (texture == 0)
         {
             /* DrawMesh() binds nothing for a zero id: what is bound then
              * is what the previous mesh's unbinding left, nothing */
@@ -1891,6 +2007,8 @@ shared_chunk (LrgTerrain   *self,
             draw_elements_base_vertex (TERRAIN_GL_TRIANGLES, (gint)tm->indices->len,
                                        TERRAIN_GL_UNSIGNED_SHORT,
                                        (const void *)(index * sizeof (guint16)), base);
+            if (asset != NULL)
+                shared_material_end (self, d, asset);
             continue;
         }
         for (eye = 0; eye < 2; eye++)
@@ -1904,6 +2022,8 @@ shared_chunk (LrgTerrain   *self,
                                        TERRAIN_GL_UNSIGNED_SHORT,
                                        (const void *)(index * sizeof (guint16)), base);
         }
+        if (asset != NULL)
+            shared_material_end (self, d, asset);
     }
 }
 

@@ -22,6 +22,7 @@
 #include <graylib.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../graphics/lrg-material.h"
 
 G_BEGIN_DECLS
 
@@ -246,5 +247,20 @@ LrgMaterial3D * lrg_material3d_copy (LrgMaterial3D *self);
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_material3d_equal (LrgMaterial3D *a,
                                LrgMaterial3D *b);
+
+/**
+ * lrg_material3d_to_material:
+ * @self: an #LrgMaterial3D
+ *
+ * Converts the authoring material into a runtime #LrgMaterial: base
+ * colour, metallic, roughness, emission colour (RGB) and emission
+ * strength are set explicitly on the result; an alpha below 1 makes it
+ * %LRG_MATERIAL_BLEND_ALPHA. Everything else keeps the #LrgMaterial
+ * defaults (lit, back-face culling, no textures).
+ *
+ * Returns: (transfer full): a new #LrgMaterial
+ */
+LRG_AVAILABLE_IN_ALL
+LrgMaterial * lrg_material3d_to_material (LrgMaterial3D *self);
 
 G_END_DECLS

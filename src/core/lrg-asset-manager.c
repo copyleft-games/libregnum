@@ -36,6 +36,7 @@ typedef struct
     GHashTable *music_cache;     /* gchar* -> GrlMusic* */
     GHashTable *model_cache;     /* canonical path -> ModelAsset* */
     GHashTable *animation_cache; /* canonical path -> GPtrArray<GrlModelAnimation> */
+    GHashTable *material_cache;  /* canonical path -> LrgMaterial* (0.9.0) */
 
     /* Since 0.9.0: project awareness, the guid index, import settings. */
     gchar      *project_root;    /* canonical, nullable */
@@ -835,6 +836,7 @@ lrg_asset_manager_finalize (GObject *object)
     g_clear_pointer (&priv->music_cache, g_hash_table_unref);
     g_clear_pointer (&priv->model_cache, g_hash_table_unref);
     g_clear_pointer (&priv->animation_cache, g_hash_table_unref);
+    g_clear_pointer (&priv->material_cache, g_hash_table_unref);
     g_clear_pointer (&priv->project_root, g_free);
     g_clear_pointer (&priv->asset_dirs, g_ptr_array_unref);
     g_clear_pointer (&priv->guid_to_path, g_hash_table_unref);
@@ -988,6 +990,8 @@ lrg_asset_manager_init (LrgAssetManager *self)
                                                g_free, model_asset_free);
     priv->animation_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
                                                    g_free, (GDestroyNotify)g_ptr_array_unref);
+    priv->material_cache = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                                  g_free, g_object_unref);
     priv->asset_dirs = g_ptr_array_new_with_free_func (g_free);
     priv->guid_to_path = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
     priv->path_to_guid = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
@@ -1690,6 +1694,9 @@ lrg_asset_manager_load_asset (LrgAssetManager  *self,
         g_str_equal (lower, ".obj") || g_str_equal (lower, ".iqm") ||
         g_str_equal (lower, ".m3d") || g_str_equal (lower, ".vox"))
         return (GObject *)lrg_asset_manager_load_model (self, norm, error);
+    /* Material assets (0.9.0) load headlessly. */
+    if (g_str_equal (lower, ".rmat"))
+        return (GObject *)lrg_asset_manager_load_material (self, norm, error);
     g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                  "Unsupported asset extension: %s", name);
     return NULL;
@@ -1972,6 +1979,8 @@ lrg_asset_manager_unload (LrgAssetManager *self,
             removed = TRUE;
         if (key != NULL && g_hash_table_remove (priv->animation_cache, key))
             removed = TRUE;
+        if (key != NULL && g_hash_table_remove (priv->material_cache, key))
+            removed = TRUE;
     }
 
     /* For fonts, we need to check keys that start with name: */
@@ -2036,6 +2045,7 @@ lrg_asset_manager_unload_all (LrgAssetManager *self)
     g_hash_table_remove_all (priv->music_cache);
     g_hash_table_remove_all (priv->model_cache);
     g_hash_table_remove_all (priv->animation_cache);
+    g_hash_table_remove_all (priv->material_cache);
 
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Unloaded all cached assets");
 }
@@ -2092,7 +2102,8 @@ lrg_asset_manager_is_cached (LrgAssetManager *self,
         g_autofree gchar *key = model_cache_key (self, name);
 
         if (key != NULL && (g_hash_table_contains (priv->model_cache, key) ||
-                            g_hash_table_contains (priv->animation_cache, key)))
+                            g_hash_table_contains (priv->animation_cache, key) ||
+                            g_hash_table_contains (priv->material_cache, key)))
             return TRUE;
     }
 
@@ -2350,6 +2361,61 @@ lrg_asset_manager_load_model_animations (LrgAssetManager  *self,
     g_hash_table_insert (priv->animation_cache, g_strdup (key), clips);
     lrg_debug (LRG_LOG_DOMAIN_CORE, "Loaded %u animation clips from %s", clips->len, key);
     return clips;
+}
+
+/*
+ * lrg_asset_manager_load_material:
+ *
+ * Materials are keyed by the canonical file the reference resolves to.
+ * The material keeps a weak pointer back to the manager, so the cache
+ * does not create a reference cycle.
+ */
+LrgMaterial *
+lrg_asset_manager_load_material (LrgAssetManager  *self,
+                                 const gchar      *name,
+                                 GError          **error)
+{
+    LrgAssetManagerPrivate *priv;
+    g_autofree gchar       *key = NULL;
+    LrgMaterial            *material;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+    g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+
+    key = lrg_asset_manager_resolve_reference (self, name);
+    if (key == NULL && g_path_is_absolute (name) && g_file_test (name, G_FILE_TEST_IS_REGULAR))
+        key = g_canonicalize_filename (name, NULL);
+    if (key == NULL)
+    {
+        g_set_error (error, LRG_ASSET_MANAGER_ERROR, LRG_ASSET_MANAGER_ERROR_NOT_FOUND,
+                     "Material not found: %s", name);
+        return NULL;
+    }
+
+    material = g_hash_table_lookup (priv->material_cache, key);
+    if (material != NULL)
+        return material;
+
+    material = lrg_material_new_from_file (key, self, error);
+    if (material == NULL)
+        return NULL;
+    g_hash_table_insert (priv->material_cache, g_strdup (key), material);
+    lrg_debug (LRG_LOG_DOMAIN_CORE, "Loaded material '%s' from %s", name, key);
+    return material;
+}
+
+guint
+lrg_asset_manager_get_material_cache_size (LrgAssetManager *self)
+{
+    LrgAssetManagerPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_ASSET_MANAGER (self), 0);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+    return g_hash_table_size (priv->material_cache);
 }
 
 guint

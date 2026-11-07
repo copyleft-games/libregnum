@@ -44,6 +44,7 @@ struct _LrgMeshRendererComponent
 	gfloat            emission_strength;
 	GObject          *material;        /* the slot (nullable) */
 	LrgMaterial3D    *scalar_material; /* synced from the scalars */
+	GPtrArray        *submesh;         /* LrgMaterial* or NULL per mesh index */
 
 	/* Render state */
 	gboolean          cast_shadows;
@@ -170,6 +171,81 @@ make_sort_key (LrgRenderItemKind kind,
 	return ((guint64) kind << 56) | (detail & G_GUINT64_CONSTANT (0x00ffffffffffffff));
 }
 
+/* Free function of the submesh array, whose holes are NULL. */
+static void
+unref_nullable (gpointer object)
+{
+	if (object != NULL)
+		g_object_unref (object);
+}
+
+/* The flags an LrgMaterial adds (queue, culling, shading model). */
+static guint
+material_flags (LrgMaterial *material)
+{
+	guint flags = 0;
+
+	switch (lrg_material_resolve_render_queue (material))
+	{
+	case LRG_MATERIAL_RENDER_QUEUE_TRANSPARENT:
+		flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		break;
+	case LRG_MATERIAL_RENDER_QUEUE_CUTOUT:
+		flags |= LRG_RENDER_ITEM_FLAG_CUTOUT;
+		break;
+	case LRG_MATERIAL_RENDER_QUEUE_AUTO:
+	case LRG_MATERIAL_RENDER_QUEUE_OPAQUE:
+	default:
+		break;
+	}
+	if (lrg_material_get_cull_mode (material) == LRG_MATERIAL_CULL_NONE)
+		flags |= LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED;
+	if (lrg_material_get_shading_model (material) == LRG_SHADING_MODEL_UNLIT)
+		flags |= LRG_RENDER_ITEM_FLAG_UNLIT;
+	return flags;
+}
+
+/* Colour and flags of an item drawn with @material: an LrgMaterial's
+ * base colour and flags, otherwise the component's colour and flags. */
+static void
+item_set_material (LrgMeshRendererComponent *self,
+                   LrgRenderItem            *item,
+                   GObject                  *material)
+{
+	guint flags;
+
+	if (material != NULL && LRG_IS_MATERIAL (material))
+	{
+		lrg_material_get_base_color (LRG_MATERIAL (material), item->color);
+		flags = (guint) lrg_mesh_renderer_component_get_flags (self) &
+		        ~(guint) (LRG_RENDER_ITEM_FLAG_TRANSPARENT | LRG_RENDER_ITEM_FLAG_CUTOUT);
+		/* the component's own switches still add */
+		if (self->transparent)
+			flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		item->flags = (LrgRenderItemFlags) (flags | material_flags (LRG_MATERIAL (material)));
+		return;
+	}
+	memcpy (item->color, self->color, sizeof item->color);
+	flags = (guint) lrg_mesh_renderer_component_get_flags (self);
+	if (self->material != NULL && LRG_IS_MATERIAL (self->material))
+	{
+		/* a legacy submesh material under an LrgMaterial slot: the
+		 * component's own flags without the slot's */
+		flags = 0;
+		if (self->cast_shadows)
+			flags |= LRG_RENDER_ITEM_FLAG_CAST_SHADOW;
+		if (self->receive_shadows)
+			flags |= LRG_RENDER_ITEM_FLAG_RECEIVE_SHADOW;
+		if (self->transparent || self->color[3] < 1.0f)
+			flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		if (self->double_sided)
+			flags |= LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED;
+		if (self->unlit)
+			flags |= LRG_RENDER_ITEM_FLAG_UNLIT;
+	}
+	item->flags = (LrgRenderItemFlags) flags;
+}
+
 /* ==========================================================================
  * LrgComponent vfuncs
  * ========================================================================== */
@@ -253,13 +329,33 @@ lrg_mesh_renderer_component_collect_render (LrgComponent  *component,
 
 	/* Material, colour, state and layer */
 	item.material = lrg_mesh_renderer_component_get_effective_material (self);
-	memcpy (item.color, self->color, sizeof item.color);
-	item.flags = lrg_mesh_renderer_component_get_flags (self);
+	item_set_material (self, &item, item.material);
 	if (self->layer >= 0)
 		item.layer = (guint) self->layer;
 
 	if (lrg_mesh_renderer_component_get_local_bounds (self, &local))
 		lrg_render_item_set_local_bounds (&item, &local);
+
+	/* Submesh materials: one item per mesh of a resolved model. */
+	if (item.kind == LRG_RENDER_ITEM_MODEL && self->model != NULL && self->mesh_index < 0 &&
+	    lrg_mesh_renderer_component_get_n_submesh_materials (self) > 0)
+	{
+		gint n = grl_model_get_mesh_count (self->model);
+		gint i;
+
+		for (i = 0; i < n; i++)
+		{
+			LrgRenderItem sub = item;
+			LrgMaterial  *m = lrg_mesh_renderer_component_get_submesh_material (self, (guint) i);
+
+			sub.mesh_index = i;
+			sub.material = m != NULL ? G_OBJECT (m) : item.material;
+			item_set_material (self, &sub, sub.material);
+			if (lrg_render_list_accepts (list, &sub))
+				lrg_render_list_add (list, &sub);
+		}
+		return;
+	}
 
 	if (lrg_render_list_accepts (list, &item))
 		lrg_render_list_add (list, &item);
@@ -278,6 +374,7 @@ lrg_mesh_renderer_component_dispose (GObject *object)
 	g_clear_object (&self->asset_manager);
 	g_clear_object (&self->material);
 	g_clear_object (&self->scalar_material);
+	g_clear_pointer (&self->submesh, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_mesh_renderer_component_parent_class)->dispose (object);
 }
@@ -672,8 +769,8 @@ lrg_mesh_renderer_component_class_init (LrgMeshRendererComponentClass *klass)
 	/**
 	 * LrgMeshRendererComponent:material:
 	 *
-	 * The material slot: an explicit material object (#LrgMaterial3D now,
-	 * LrgMaterial from 0.9 M2) replacing the scalar material properties.
+	 * The material slot: an explicit material object (an #LrgMaterial, or
+	 * a legacy #LrgMaterial3D) replacing the scalar material properties.
 	 */
 	properties[PROP_MATERIAL] =
 		g_param_spec_object ("material", NULL, "Material slot", G_TYPE_OBJECT, rw);
@@ -1087,5 +1184,62 @@ lrg_mesh_renderer_component_get_flags (LrgMeshRendererComponent *self)
 		flags |= LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED;
 	if (self->unlit)
 		flags |= LRG_RENDER_ITEM_FLAG_UNLIT;
+	if (self->material != NULL && LRG_IS_MATERIAL (self->material))
+	{
+		/* the material decides transparency, not the scalar alpha */
+		flags &= ~(guint) LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		if (self->transparent)
+			flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+		flags |= material_flags (LRG_MATERIAL (self->material));
+	}
 	return (LrgRenderItemFlags) flags;
+}
+
+void
+lrg_mesh_renderer_component_set_submesh_material (LrgMeshRendererComponent *self,
+                                                  guint                     index,
+                                                  LrgMaterial              *material)
+{
+	g_return_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self));
+	g_return_if_fail (material == NULL || LRG_IS_MATERIAL (material));
+	g_return_if_fail (index < 4096);
+
+	if (self->submesh == NULL)
+	{
+		if (material == NULL)
+			return;
+		self->submesh = g_ptr_array_new_with_free_func (unref_nullable);
+	}
+	while (self->submesh->len <= index)
+		g_ptr_array_add (self->submesh, NULL);
+	unref_nullable (g_ptr_array_index (self->submesh, index));
+	g_ptr_array_index (self->submesh, index) = material != NULL ? g_object_ref (material) : NULL;
+	/* trailing empty entries do not count */
+	while (self->submesh->len > 0 && g_ptr_array_index (self->submesh, self->submesh->len - 1) == NULL)
+		g_ptr_array_set_size (self->submesh, self->submesh->len - 1);
+}
+
+LrgMaterial *
+lrg_mesh_renderer_component_get_submesh_material (LrgMeshRendererComponent *self,
+                                                  guint                     index)
+{
+	g_return_val_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self), NULL);
+
+	if (self->submesh == NULL || index >= self->submesh->len)
+		return NULL;
+	return g_ptr_array_index (self->submesh, index);
+}
+
+guint
+lrg_mesh_renderer_component_get_n_submesh_materials (LrgMeshRendererComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self), 0);
+	return self->submesh != NULL ? self->submesh->len : 0;
+}
+
+void
+lrg_mesh_renderer_component_clear_submesh_materials (LrgMeshRendererComponent *self)
+{
+	g_return_if_fail (LRG_IS_MESH_RENDERER_COMPONENT (self));
+	g_clear_pointer (&self->submesh, g_ptr_array_unref);
 }

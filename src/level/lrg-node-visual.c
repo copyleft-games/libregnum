@@ -25,6 +25,7 @@ struct _LrgNodeVisual
 	LrgPrimitiveType   primitive;
 	gchar             *asset;
 	LrgMaterial3D     *material;
+	gchar             *material_ref; /* .rmat path or guid:, nullable */
 	GHashTable        *params;   /* gchar* -> GValue* */
 	LrgNodeTilemap    *tilemap;  /* tile grid (tilemap kind), nullable */
 };
@@ -38,6 +39,7 @@ enum
 	PROP_PRIMITIVE,
 	PROP_ASSET,
 	PROP_MATERIAL,
+	PROP_MATERIAL_REF,
 	N_PROPS
 };
 
@@ -67,6 +69,7 @@ lrg_node_visual_finalize (GObject *object)
 
 	g_clear_pointer (&self->asset, g_free);
 	g_clear_object (&self->material);
+	g_clear_pointer (&self->material_ref, g_free);
 	g_clear_pointer (&self->params, g_hash_table_unref);
 	g_clear_object (&self->tilemap);
 
@@ -94,6 +97,9 @@ lrg_node_visual_get_property (GObject    *object,
 		break;
 	case PROP_MATERIAL:
 		g_value_set_object (value, self->material);
+		break;
+	case PROP_MATERIAL_REF:
+		g_value_set_string (value, self->material_ref);
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -123,6 +129,9 @@ lrg_node_visual_set_property (GObject      *object,
 		break;
 	case PROP_MATERIAL:
 		g_set_object (&self->material, g_value_get_object (value));
+		break;
+	case PROP_MATERIAL_REF:
+		lrg_node_visual_set_material_ref (self, g_value_get_string (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -193,6 +202,22 @@ lrg_node_visual_class_init (LrgNodeVisualClass *klass)
 		                     LRG_TYPE_MATERIAL3D,
 		                     G_PARAM_READWRITE |
 		                     G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgNodeVisual:material-ref:
+	 *
+	 * A material asset reference (`.rmat` path or `guid:`) for primitive
+	 * and mesh kinds; instantiation loads it into the component's
+	 * material slot.
+	 */
+	properties[PROP_MATERIAL_REF] =
+		g_param_spec_string ("material-ref",
+		                     "Material reference",
+		                     "Material asset reference (path or guid)",
+		                     NULL,
+		                     G_PARAM_READWRITE |
+		                     G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
@@ -523,6 +548,7 @@ lrg_node_visual_copy (LrgNodeVisual *self)
 	copy->asset = g_strdup (self->asset);
 	if (self->material != NULL)
 		copy->material = lrg_material3d_copy (self->material);
+	copy->material_ref = g_strdup (self->material_ref);
 
 	/* Param bag: copy every typed value. */
 	g_hash_table_iter_init (&iter, self->params);
@@ -566,6 +592,44 @@ lrg_node_visual_equal (LrgNodeVisual *a,
 	       a->primitive == b->primitive &&
 	       g_strcmp0 (a->asset, b->asset) == 0 &&
 	       lrg_material3d_equal (a->material, b->material) &&
+	       g_strcmp0 (a->material_ref, b->material_ref) == 0 &&
 	       lrg_editor_param_tables_equal (a->params, b->params) &&
 	       lrg_node_tilemap_equal (a->tilemap, b->tilemap);
+}
+
+/*
+ * lrg_node_visual_get_material_ref:
+ * @self: an #LrgNodeVisual
+ *
+ * Gets the material asset reference.
+ *
+ * Returns: (transfer none) (nullable): the reference
+ */
+const gchar *
+lrg_node_visual_get_material_ref (LrgNodeVisual *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_VISUAL (self), NULL);
+	return self->material_ref;
+}
+
+/*
+ * lrg_node_visual_set_material_ref:
+ * @self: an #LrgNodeVisual
+ * @ref: (nullable): a `.rmat` path or `guid:` reference
+ *
+ * Sets the material asset reference (an empty string clears it).
+ */
+void
+lrg_node_visual_set_material_ref (LrgNodeVisual *self,
+                                  const gchar   *ref)
+{
+	g_return_if_fail (LRG_IS_NODE_VISUAL (self));
+
+	if (ref != NULL && *ref == '\0')
+		ref = NULL;
+	if (g_strcmp0 (self->material_ref, ref) == 0)
+		return;
+	g_free (self->material_ref);
+	self->material_ref = g_strdup (ref);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_MATERIAL_REF]);
 }
