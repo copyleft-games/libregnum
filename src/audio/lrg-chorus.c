@@ -184,6 +184,130 @@ lrg_chorus_finalize (GObject *object)
     G_OBJECT_CLASS (lrg_chorus_parent_class)->finalize (object);
 }
 
+/* ==========================================================================
+ * Properties (the .rmixer format, snapshots and inspectors set parameters
+ * by name; each one goes through its setter, so the clamps are the same)
+ * ========================================================================== */
+
+enum
+{
+    PROP_0,
+    PROP_DELAY,
+    PROP_RATE,
+    PROP_DEPTH,
+    PROP_FEEDBACK,
+    PROP_DRY,
+    PROP_TAP_WET_0,
+    PROP_TAP_WET_1,
+    PROP_TAP_WET_2,
+    N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void
+lrg_chorus_get_property (GObject    *object,
+                         guint       prop_id,
+                         GValue     *value,
+                         GParamSpec *pspec)
+{
+    LrgChorus *self = (LrgChorus *)object;
+
+    switch (prop_id)
+    {
+    case PROP_DELAY:
+        g_value_set_float (value, self->delay);
+        break;
+    case PROP_RATE:
+        g_value_set_float (value, self->rate);
+        break;
+    case PROP_DEPTH:
+        g_value_set_float (value, self->depth);
+        break;
+    case PROP_FEEDBACK:
+        g_value_set_float (value, self->feedback);
+        break;
+    case PROP_DRY:
+        g_value_set_float (value, self->dry);
+        break;
+    case PROP_TAP_WET_0:
+        g_value_set_float (value, self->wet[0]);
+        break;
+    case PROP_TAP_WET_1:
+        g_value_set_float (value, self->wet[1]);
+        break;
+    case PROP_TAP_WET_2:
+        g_value_set_float (value, self->wet[2]);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_chorus_set_property (GObject      *object,
+                         guint         prop_id,
+                         const GValue *value,
+                         GParamSpec   *pspec)
+{
+    LrgChorus *self = (LrgChorus *)object;
+    gfloat before;
+
+    switch (prop_id)
+    {
+    case PROP_DELAY:
+        before = self->delay;
+        lrg_chorus_set_delay (self, g_value_get_float (value));
+        if (before != self->delay)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_RATE:
+        before = self->rate;
+        lrg_chorus_set_rate (self, g_value_get_float (value));
+        if (before != self->rate)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_DEPTH:
+        before = self->depth;
+        lrg_chorus_set_depth (self, g_value_get_float (value));
+        if (before != self->depth)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_FEEDBACK:
+        before = self->feedback;
+        lrg_chorus_set_feedback (self, g_value_get_float (value));
+        if (before != self->feedback)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_DRY:
+        before = self->dry;
+        lrg_chorus_set_dry (self, g_value_get_float (value));
+        if (before != self->dry)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_TAP_WET_0:
+        before = self->wet[0];
+        lrg_chorus_set_tap_wet (self, 0, g_value_get_float (value));
+        if (before != self->wet[0])
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_TAP_WET_1:
+        before = self->wet[1];
+        lrg_chorus_set_tap_wet (self, 1, g_value_get_float (value));
+        if (before != self->wet[1])
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_TAP_WET_2:
+        before = self->wet[2];
+        lrg_chorus_set_tap_wet (self, 2, g_value_get_float (value));
+        if (before != self->wet[2])
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
 static void
 lrg_chorus_class_init (LrgChorusClass *klass)
 {
@@ -193,6 +317,82 @@ lrg_chorus_class_init (LrgChorusClass *klass)
     object_class->finalize = lrg_chorus_finalize;
     effect_class->process = lrg_chorus_process;
     effect_class->reset = lrg_chorus_reset;
+    object_class->get_property = lrg_chorus_get_property;
+    object_class->set_property = lrg_chorus_set_property;
+
+    /**
+     * LrgChorus:delay:
+     *
+     * Base delay of the voices in seconds (lrg_chorus_set_delay()).
+     */
+    properties[PROP_DELAY] =
+        g_param_spec_float ("delay", NULL, NULL, 0.0f, LRG_CHORUS_MAX_DELAY, 0.04f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:rate:
+     *
+     * Modulation rate in Hz (lrg_chorus_set_rate()).
+     */
+    properties[PROP_RATE] =
+        g_param_spec_float ("rate", NULL, NULL, 0.0f, LRG_CHORUS_MAX_RATE, 0.8f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:depth:
+     *
+     * Modulation depth 0 .. 1 (lrg_chorus_set_depth()).
+     */
+    properties[PROP_DEPTH] =
+        g_param_spec_float ("depth", NULL, NULL, 0.0f, 1.0f, 0.03f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:feedback:
+     *
+     * Feedback of the delay lines (lrg_chorus_set_feedback()).
+     */
+    properties[PROP_FEEDBACK] =
+        g_param_spec_float ("feedback", NULL, NULL, 0.0f, MAX_FEEDBACK, 0.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:dry:
+     *
+     * Level of the input (lrg_chorus_set_dry()).
+     */
+    properties[PROP_DRY] =
+        g_param_spec_float ("dry", NULL, NULL, 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:tap-wet-0:
+     *
+     * Level of the first voice (lrg_chorus_set_tap_wet()).
+     */
+    properties[PROP_TAP_WET_0] =
+        g_param_spec_float ("tap-wet-0", NULL, NULL, 0.0f, 1.0f, 0.5f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:tap-wet-1:
+     *
+     * Level of the second voice (lrg_chorus_set_tap_wet()).
+     */
+    properties[PROP_TAP_WET_1] =
+        g_param_spec_float ("tap-wet-1", NULL, NULL, 0.0f, 1.0f, 0.5f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgChorus:tap-wet-2:
+     *
+     * Level of the third voice (lrg_chorus_set_tap_wet()).
+     */
+    properties[PROP_TAP_WET_2] =
+        g_param_spec_float ("tap-wet-2", NULL, NULL, 0.0f, 1.0f, 0.5f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void

@@ -171,13 +171,119 @@ lrg_high_pass_process (LrgAudioEffect *effect,
     }
 }
 
+/* ==========================================================================
+ * Properties (the .rmixer format, snapshots and inspectors set parameters
+ * by name; each one goes through its setter, so the clamps are the same)
+ * ========================================================================== */
+
+enum
+{
+    PROP_0,
+    PROP_CUTOFF,
+    PROP_RESONANCE,
+    PROP_GLIDE,
+    N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void
+lrg_high_pass_get_property (GObject    *object,
+                            guint       prop_id,
+                            GValue     *value,
+                            GParamSpec *pspec)
+{
+    LrgHighPass *self = (LrgHighPass *)object;
+
+    switch (prop_id)
+    {
+    case PROP_CUTOFF:
+        g_value_set_float (value, self->target);
+        break;
+    case PROP_RESONANCE:
+        g_value_set_float (value, self->q);
+        break;
+    case PROP_GLIDE:
+        g_value_set_float (value, self->glide);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_high_pass_set_property (GObject      *object,
+                            guint         prop_id,
+                            const GValue *value,
+                            GParamSpec   *pspec)
+{
+    LrgHighPass *self = (LrgHighPass *)object;
+    gfloat before;
+
+    switch (prop_id)
+    {
+    case PROP_CUTOFF:
+        before = self->target;
+        lrg_high_pass_set_cutoff (self, g_value_get_float (value));
+        if (before != self->target)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_RESONANCE:
+        before = self->q;
+        lrg_high_pass_set_resonance (self, g_value_get_float (value));
+        if (before != self->q)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_GLIDE:
+        before = self->glide;
+        lrg_high_pass_set_glide (self, g_value_get_float (value));
+        if (before != self->glide)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
 static void
 lrg_high_pass_class_init (LrgHighPassClass *klass)
 {
+    GObjectClass        *object_class = G_OBJECT_CLASS (klass);
     LrgAudioEffectClass *effect_class = LRG_AUDIO_EFFECT_CLASS (klass);
 
     effect_class->process = lrg_high_pass_process;
     effect_class->reset = lrg_high_pass_reset;
+    object_class->get_property = lrg_high_pass_get_property;
+    object_class->set_property = lrg_high_pass_set_property;
+
+    /**
+     * LrgHighPass:cutoff:
+     *
+     * The cut-off in Hz the filter glides to (lrg_high_pass_set_cutoff()).
+     */
+    properties[PROP_CUTOFF] =
+        g_param_spec_float ("cutoff", NULL, NULL, LRG_HIGH_PASS_OPEN, LRG_HIGH_PASS_MAX_CUTOFF, LRG_HIGH_PASS_OPEN,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgHighPass:resonance:
+     *
+     * The filter Q (lrg_high_pass_set_resonance()).
+     */
+    properties[PROP_RESONANCE] =
+        g_param_spec_float ("resonance", NULL, NULL, 0.1f, 10.0f, DEFAULT_Q,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgHighPass:glide:
+     *
+     * Seconds a cut-off change glides over (lrg_high_pass_set_glide()).
+     */
+    properties[PROP_GLIDE] =
+        g_param_spec_float ("glide", NULL, NULL, 0.0f, MAX_GLIDE, DEFAULT_GLIDE,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void

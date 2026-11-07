@@ -57,7 +57,7 @@ Three rules hold for all of them:
 | =world_entered=  | light (registers), camera (registers by priority), listener (becomes the world's listener), audio source (autoplay) |
 | =fixed_update=   | trigger (overlap test, enter/exit signals); the physics components run in the world's physics hooks right after it (build and sync bodies, step, write back, trigger / collision / broken signals) |
 | =update=         | skinned model (clip switch, time advance), animator (graph, IK, palette, root motion) |
-| =late_update=    | light (re-registers from the moved entity), camera (follows the entity), listener (feeds the audio manager), audio source (moves its voice, restarts loops) |
+| =late_update=    | light (re-registers from the moved entity), camera (follows the entity), listener (feeds pose and velocity to the audio manager), audio source (re-spatialises its voice: rolloff, cone, doppler, occlusion; restarts device loops) |
 | =collect_render= | mesh renderer, billboard, tilemap, skinned model                                       |
 | =world_exited=   | light, camera, listener, audio source, trigger (unregister / stop / forget)            |
 
@@ -387,9 +387,43 @@ Owns an #LrgCamera3D that renderers draw with. The camera's eye is the entity's 
 :CUSTOM_ID: audio-source
 :END:
 
-A positional emitter. =lrg_audio_source_component_play()= starts an #LrgAudioManager voice (=lrg_audio_manager_play_sound_at()=) at the entity's world position with the component's volume and attenuation; =late_update= moves the voice with the entity (=lrg_audio_manager_set_voice_position()=) and restarts a looping sound when its voice ended. =autoplay= plays on world entry; leaving the world stops the voice.
+A positional emitter. =lrg_audio_source_component_play()= starts a voice at the entity's world position and every =late_update= keeps it spatialised: distance rolloff, a directional cone, doppler from the measured movement and optional physics occlusion, mixed with flat playback by =spatial-blend=. =autoplay= plays on world entry; leaving the world stops the voice.
 
-The sound is a bank entry (=bank= + =sound=) or, when no bank is set, a file (=sound-path=, the editor AUDIO_EMITTER's asset) loaded once into the =LRG_AUDIO_SOURCE_FILE_BANK= bank of the audio manager. Without an audio device, an unknown bank or a missing file, =play()= returns 0 and nothing else happens.
+Two backends share that spatialisation:
+
+- *Mixer voice* (routed to a bus): when the component has an explicit =mixer=, or a =bus= and the audio manager has a mixer (=lrg_audio_manager_set_mixer()=, normally the project's [[file:../audio/mixer-asset.org][=.rmixer=]]). The sound plays through =lrg_audio_mixer_play()= on =bus= (master when unset); gain and pan are ramped per frame over the update interval, pitch and the occlusion low-pass are set directly (=lrg_audio_mixer_set_voice_gain()= and friends). The samples are the explicit =wave=, else the =sound-path= file, else the bank entry's manifest file, loaded once as =LrgWaveData=. Works headless: render the mixer offline.
+- *Device voice*: otherwise, an #LrgAudioManager voice (=lrg_audio_manager_play_sound_at()=) whose gain and pan the component sets itself (=lrg_audio_manager_set_voice_mix()=) along with the doppler pitch (=lrg_audio_manager_set_voice_pitch()=). The sound is a bank entry (=bank= + =sound=) or the =sound-path= file loaded once into the =LRG_AUDIO_SOURCE_FILE_BANK= bank. Without an audio device, an unknown bank or a missing file, =play()= returns 0 and nothing else happens.
+
+*** Attenuation
+:PROPERTIES:
+:CUSTOM_ID: audio-attenuation
+:END:
+The gain a source is heard at is
+
+#+begin_example
+gain = 1 + spatial_blend * (rolloff(d) * cone(angle) * occlusion - 1)
+#+end_example
+
+times =volume= (and, for device voices, the manager's master and SFX volumes). =lrg_audio_source_component_evaluate()= computes gain, pan and pitch for a given listener; =lrg_audio_source_component_get_distance_gain()= is the rolloff alone (what an attenuation gizmo plots).
+
+*Rolloff* (=rolloff-mode=, #LrgAudioRolloff, pure function =lrg_audio_rolloff_evaluate()=), with =d= the distance to the listener, every built-in curve 1 within =min-distance= and 0 beyond =max-distance=:
+
+| Mode | Gain between min and max |
+|------+--------------------------|
+| =LRG_AUDIO_ROLLOFF_LINEAR= | =(max - d) / (max - min)= |
+| =LRG_AUDIO_ROLLOFF_INVERSE= (default) | =min / (min + rolloff (d - min))= rescaled to reach 0 at max (=rolloff= 1 resembles Unity's logarithmic rolloff; 0 is linear); the same curve as #LrgAudioAttenuation |
+| =LRG_AUDIO_ROLLOFF_LOGARITHMIC= | =1 - ln (d / min) / ln (max / min)=: linear in log distance |
+| =LRG_AUDIO_ROLLOFF_CUSTOM= | the custom #LrgKeyframeCurve sampled at =t = (d - min) / (max - min)= clamped to 0 .. 1 (so it also decides the gain inside min and beyond max), output clamped to 0 .. 1; linear without a curve |
+
+The custom curve is set as an object (=lrg_audio_source_component_set_rolloff_curve()=, which also selects the mode) or as text in =rolloff-curve-keys=: =t:gain= pairs, linear between keys, the form level visual params use (=rolloff_curve_keys: "0:1, 0.25:0.4, 1:0"=).
+
+*Cone* (=lrg_audio_cone_gain()=): the angle between the entity's forward (local -Z) and the direction to the listener. Within half =cone-inner-angle= the gain is 1, beyond half =cone-outer-angle= it is =cone-outer-gain=, linear in angle between. An inner angle of 360 (the default) makes the source omnidirectional.
+
+*Doppler* (=lrg_audio_doppler_pitch()=, OpenAL 1.1): with =u= the unit vector from source to listener, =vl= and =vs= the listener's and the source's velocity along it, =pitch = (c - f vl) / (c - f vs)= with =c= = =speed-of-sound= and =f= = =doppler-factor= (scaled by =spatial-blend=; 0 turns it off). The source's velocity is measured from its movement between late updates (=lrg_audio_source_component_get_velocity()=), the listener's by #LrgAudioListenerComponent (=lrg_audio_manager_set_listener_velocity()=). The result multiplies =pitch=.
+
+*Occlusion* (=occlusion=): every late update a ray from the listener to the source is cast through the world's physics (=lrg_world3d_get_physics()=, =lrg_dynamics_world_raycast_all()= on =occlusion-mask= layers); hits in the last 2% of the ray belong to the source and are ignored. Each body hit multiplies the gain by =occlusion-gain= (up to four count), faded with the =occlusion-fade= time constant; a mixer voice also gets a =occlusion-cutoff= low-pass while occluded. =lrg_audio_source_component_get_occlusion()= and =lrg_audio_source_component_get_occluders()= report it. Without a physics world nothing is occluded.
+
+*Pan* comes from the listener's basis as in =lrg_audio_compute_spatial()=: the direction projected on the listener's right, shrunk inside =min-distance=, scaled by =spatial-blend=.
 
 *** Properties
 :PROPERTIES:
@@ -401,16 +435,32 @@ The sound is a bank entry (=bank= + =sound=) or, when no bank is set, a file (=s
 | =bank=          | string   | NULL                             | sound bank name                                 |
 | =sound=         | string   | NULL                             | sound in the bank                               |
 | =sound-path=    | string   | NULL                             | file played when no bank is set                 |
-| =volume=        | float 0..4 | 1                              | voice volume, read when a voice starts          |
-| =pitch=         | float    | 1                                | stored; 0.9 voices play at the sound's pitch    |
+| =volume=        | float 0..4 | 1                              | voice volume                                    |
+| =pitch=         | float    | 1                                | pitch multiplier (times doppler)                |
 | =min-distance=  | float    | =LRG_AUDIO_DEFAULT_MIN_DISTANCE= | full volume inside                              |
 | =max-distance=  | float    | =LRG_AUDIO_DEFAULT_MAX_DISTANCE= | silent beyond                                   |
-| =rolloff=       | float    | =LRG_AUDIO_DEFAULT_ROLLOFF=      | 0 linear, > 0 inverse distance                  |
+| =rolloff-mode=  | #LrgAudioRolloff | =inverse=                | the distance curve                              |
+| =rolloff=       | float    | =LRG_AUDIO_DEFAULT_ROLLOFF=      | steepness of =inverse= (0 linear)               |
+| =rolloff-curve-keys= | string | NULL                        | the =custom= curve as =t:gain= text (the object: =lrg_audio_source_component_set_rolloff_curve()=) |
 | =spatial-blend= | float 0..1 | 1                              | 0 flat, 1 positional                            |
-| =loop=          | boolean  | FALSE                            | restart when the sound ends                     |
+| =cone-inner-angle= / =cone-outer-angle= | float 0..360 | 360 | full cone angles in degrees             |
+| =cone-outer-gain= | float 0..1 | 0                            | gain outside the outer cone                     |
+| =doppler-factor= | float 0..10 | 1                            | doppler exaggeration, 0 off                     |
+| =speed-of-sound= | float | =LRG_AUDIO_SPEED_OF_SOUND= (343)   | units per second                                |
+| =occlusion=     | boolean  | FALSE                            | physics raycast occlusion                       |
+| =occlusion-mask= | uint    | all layers                       | occluding physics layers                        |
+| =occlusion-gain= | float 0..1 | 0.35                          | gain per occluder                               |
+| =occlusion-cutoff= | float | 1200                             | low-pass Hz while occluded (mixer voices), 0 off |
+| =occlusion-fade= | float   | 0.1                              | occlusion fade time constant, seconds           |
+| =bus=           | string   | NULL                             | mixer bus (uses the manager's mixer)            |
+| =mixer=         | #LrgAudioMixer | NULL                       | explicit mixer                                  |
+| =wave=          | #LrgWaveData | NULL                         | explicit samples for a mixer voice              |
+| =loop=          | boolean  | FALSE                            | loop (device voices restart, mixer voices loop) |
 | =autoplay=      | boolean  | FALSE                            | play on world entry                             |
 | =audio-manager= | #LrgAudioManager | NULL                     | NULL for =lrg_audio_manager_get_default()=      |
 | =playing=       | boolean (read-only) |                       | the voice is audible                            |
+
+Every property is a level visual param of an AUDIO_EMITTER node by its snake-case name (=cone_inner_angle=, =bus=, =rolloff_mode: logarithmic=, =rolloff_curve_keys=); the node's =radius= maps to =max-distance=.
 
 *** API
 :PROPERTIES:
@@ -422,18 +472,39 @@ The sound is a bank entry (=bank= + =sound=) or, when no bank is set, a file (=s
 | =lrg_audio_source_component_new()= / =lrg_audio_source_component_new_with_sound()= | an emitter |
 | =lrg_audio_source_component_set_sound()=, =lrg_audio_source_component_get_bank()=, =lrg_audio_source_component_get_sound()= | the bank entry |
 | =lrg_audio_source_component_get_sound_path()= / =lrg_audio_source_component_set_sound_path()= | the file |
-| =lrg_audio_source_component_get_attenuation()= / =lrg_audio_source_component_set_attenuation()= | the #LrgAudioAttenuation curve |
-| =lrg_audio_source_component_play()= | start a voice; returns its id or 0 |
+| =lrg_audio_source_component_get_attenuation()= / =lrg_audio_source_component_set_attenuation()= | the #LrgAudioAttenuation fields (min, max, rolloff, blend) |
+| =lrg_audio_source_component_set_rolloff_curve()= / =lrg_audio_source_component_get_rolloff_curve()= | the custom curve |
+| =lrg_audio_source_component_get_distance_gain()= | the rolloff at a distance |
+| =lrg_audio_source_component_evaluate()= | gain, pan and pitch for a listener (no device needed) |
+| =lrg_audio_source_component_get_velocity()= | measured velocity |
+| =lrg_audio_source_component_get_occlusion()= / =lrg_audio_source_component_get_occluders()= | occlusion state |
+| =lrg_audio_source_component_get_bus()= / =lrg_audio_source_component_set_bus()= | mixer bus routing |
+| =lrg_audio_source_component_get_mixer()= / =lrg_audio_source_component_set_mixer()= | explicit mixer (setting stops the voice) |
+| =lrg_audio_source_component_get_wave()= / =lrg_audio_source_component_set_wave()= | explicit samples |
+| =lrg_audio_source_component_play()= | start a voice; returns its id (a mixer voice's id, truncated) or 0 |
 | =lrg_audio_source_component_stop()= | stop the voice |
-| =lrg_audio_source_component_is_playing()= / =lrg_audio_source_component_get_voice()= | voice state |
+| =lrg_audio_source_component_is_playing()= / =lrg_audio_source_component_get_voice()= / =lrg_audio_source_component_get_mixer_voice()= | voice state |
+| =lrg_audio_source_component_update_spatial()= | what the late update does, now |
+| =lrg_audio_source_component_debug_draw()= | the attenuation gizmo: min/max spheres and the cones on =LRG_DEBUG_CATEGORY_AUDIO= |
 | =lrg_audio_source_component_get_audio_manager()= / =lrg_audio_source_component_set_audio_manager()= | the manager (setting stops the voice) |
+
+#+begin_src c
+/* a directional radio on the "sfx" bus of the project mixer, muffled by walls */
+LrgAudioSourceComponent *radio = lrg_audio_source_component_new ();
+
+g_object_set (radio, "sound-path", "audio/radio.ogg", "bus", "sfx", "loop", TRUE, "autoplay", TRUE,
+              "min-distance", 1.0f, "max-distance", 25.0f, "rolloff-mode", LRG_AUDIO_ROLLOFF_LOGARITHMIC,
+              "cone-inner-angle", 90.0f, "cone-outer-angle", 200.0f, "cone-outer-gain", 0.3f,
+              "occlusion", TRUE, NULL);
+lrg_entity3d_add_component (radio_entity, LRG_COMPONENT (radio));
+#+end_src
 
 ** LrgAudioListenerComponent
 :PROPERTIES:
 :CUSTOM_ID: audio-listener
 :END:
 
-The ears. On world entry its entity becomes the world's listener (=lrg_world3d_set_audio_listener()=); every =late_update= it feeds the entity's world position, forward (-Z) and up into =lrg_audio_manager_set_listener()=, which needs no audio device. Put it on the active camera's entity, or on the player for third-person games. A disabled listener stops feeding.
+The ears. On world entry its entity becomes the world's listener (=lrg_world3d_set_audio_listener()=); every =late_update= it feeds the entity's world position, forward (-Z) and up into =lrg_audio_manager_set_listener()= and its velocity, measured from the movement since the last update, into =lrg_audio_manager_set_listener_velocity()= (doppler); neither needs an audio device. Put it on the active camera's entity, or on the player for third-person games. A disabled listener stops feeding.
 
 | Property        | Type             | Default | Meaning                                    |
 |-----------------+------------------+---------+--------------------------------------------|
@@ -444,6 +515,7 @@ The ears. On world entry its entity becomes the world's listener (=lrg_world3d_s
 | =lrg_audio_listener_component_new()= | a listener for the default manager |
 | =lrg_audio_listener_component_get_audio_manager()= / =lrg_audio_listener_component_set_audio_manager()= | the manager |
 | =lrg_audio_listener_component_sync()= | push the pose now |
+| =lrg_audio_listener_component_get_velocity()= | the measured velocity |
 
 ** LrgBillboardComponent
 :PROPERTIES:

@@ -149,6 +149,29 @@ lrg_reverb_set_preset (room, LRG_REVERB_PRESET_CAVE);
 lrg_low_pass_set_cutoff (muffle, 600.0f);
 #+end_src
 
+* Parameters as properties
+:PROPERTIES:
+:CUSTOM_ID: properties
+:END:
+
+Since 0.9.0 every effect parameter is also a GObject property, so inspectors, the [[file:mixer-asset.org][=.rmixer=]] format, snapshot ramps (=lrg_audio_mixer_ramp_effect_param()=) and bindings set them by name. Each property goes through the matching setter, so ranges and clamps are the setters' (the param spec carries the range for sliders), and a change notifies.
+
+| Effect (=.rmixer= type) | Properties (range, default) |
+|-------------------------+-----------------------------|
+| =LrgLowPass= (=low-pass=) | =cutoff= (=LRG_LOW_PASS_MIN_CUTOFF= .. =LRG_LOW_PASS_OPEN= Hz, open), =resonance= (0.1 .. 10, 0.707), =glide= (0 .. 5 s, 0.08) |
+| =LrgHighPass= (=high-pass=) | =cutoff= (=LRG_HIGH_PASS_OPEN= .. =LRG_HIGH_PASS_MAX_CUTOFF= Hz, open), =resonance=, =glide= |
+| =LrgEcho= (=echo=) | =delay= (=LRG_ECHO_MIN_DELAY= .. =LRG_ECHO_MAX_DELAY= s, 0.5), =feedback= (0 .. 1, 0.5), =dry=, =wet= (0 .. 1, 1) |
+| =LrgReverb= (=reverb=) | =preset= (#LrgReverbPreset nick, loads all the others), =room-size=, =damping=, =wet=, =dry=, =width= (0 .. 1), =pre-delay= (0 .. =LRG_REVERB_MAX_PRE_DELAY= s) |
+| =LrgChorus= (=chorus=) | =delay= (0 .. =LRG_CHORUS_MAX_DELAY= s), =rate= (0 .. =LRG_CHORUS_MAX_RATE= Hz), =depth= (0 .. 1), =feedback= (0 .. 0.95), =dry=, =tap-wet-0=, =tap-wet-1=, =tap-wet-2= |
+| =LrgPitchShift= (=pitch-shift=) | =ratio= (=LRG_PITCH_SHIFT_MIN_RATIO= .. =LRG_PITCH_SHIFT_MAX_RATIO=, 1), =window= (=LRG_PITCH_SHIFT_MIN_WINDOW= .. =LRG_PITCH_SHIFT_MAX_WINDOW= s, 0.04) |
+| every effect | =enabled= (#LrgAudioEffect:enabled) |
+
+#+begin_src c
+g_object_set (reverb, "preset", LRG_REVERB_PRESET_CAVE, "wet", 0.3f, NULL);
+#+end_src
+
+Effects also run inside an =LrgAudioMixer= bus (=lrg_audio_mixer_get_bus_chain()=, see [[file:mixer.org::#chains][mixer.org]]), at the mixer's rate.
+
 * Tests
 
 =tests/test-audio-effects.c= (=/audio-effects/high-pass/*=): the high-pass's impulse response sums to zero (no DC) and a constant input decays to nothing; a decade above the cut-off passes, the cut-off is -3 dB and a decade below loses about 40 dB; the glide from open to 500 Hz, an open filter passing a low sine untouched, the clamps.

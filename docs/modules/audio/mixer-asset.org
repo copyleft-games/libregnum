@@ -1,0 +1,375 @@
+#+title: LrgMixerAsset and .rmixer
+#+description: The .rmixer mixer layout: buses, sends, effect chains with parameters, snapshots with blend times and side-chain ducking, loaded and saved as YAML and applied to an LrgAudioMixer at runtime
+
+* LrgMixerAsset: the =.rmixer= mixer layout
+:PROPERTIES:
+:CUSTOM_ID: mixer-asset
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Audio]] > LrgMixerAsset
+#+end_quote
+
+A game's mix is a tree of buses (music, SFX, dialogue, a shared reverb), the effects on each bus, the levels that move with the game's state (underwater, pause menu, combat) and the rules that keep dialogue intelligible (music ducks under voice). =LrgMixerAsset= (=src/audio/lrg-mixer-asset.h=, GIR =Libregnum.MixerAsset=) is that layout as data: a =.rmixer= YAML file the editor's mixer panel writes and the game loads, applied to an [[file:mixer.org][=LrgAudioMixer=]] at runtime.
+
+- *Buses* with a volume in dB, mute, solo and a parent (master is the root).
+- *Sends*: post-fader copies of a bus into another bus, with a level in dB.
+- *Effect chains*: per bus, any registered =LrgAudioEffect= (low-pass, high-pass, echo, reverb, chorus, pitch shift, or the application's own) with its parameters, which are the effect's GObject properties.
+- *Snapshots*: named overrides of bus volumes, send levels and numeric effect parameters, with a default blend time; applying one ramps the mixer there.
+- *Ducking*: side-chain rules: when the trigger bus is louder than a threshold, the target bus is turned down to a depth with attack and release times.
+
+The project names its default layout in =project.ryaml= (=audio: { mixer: audio/main.rmixer }=); =lrg_audio_manager_load_project_mixer()= builds the game mixer from it.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Layout versus mixer
+:PROPERTIES:
+:CUSTOM_ID: layout-vs-mixer
+:END:
+=LrgMixerAsset= is data only: it holds no audio state and can be edited, copied, validated and saved without a mixer. =lrg_mixer_asset_apply()= makes an =LrgAudioMixer= match it (adds buses, sets faders, rebuilds effect chains, sends and ducking rules, then applies the default snapshot) and =lrg_mixer_asset_create_mixer()= builds a fresh mixer from it. One layout can drive several mixers (a game mixer and an editor preview mixer). Applying again after an edit updates a live mixer while its voices keep playing; effect chains are rebuilt with fresh instances, so their tails restart.
+
+*** Levels in decibels
+:PROPERTIES:
+:CUSTOM_ID: decibels
+:END:
+Every level in the file is in dB: bus volumes and send levels from -144 (silence; =-inf= is accepted on input) to +12.04 (a linear gain of 4, the mixer's limit, =LRG_AUDIO_MIXER_MAX_GAIN_DB=). The mixer works in linear gain; =lrg_audio_db_to_gain()= and =lrg_audio_gain_to_db()= convert, and anything at or below =LRG_AUDIO_SILENCE_DB= is 0.
+
+*** Effects and their parameters
+:PROPERTIES:
+:CUSTOM_ID: effects
+:END:
+An effect entry names a registered type (=lrg_mixer_asset_list_effect_types()=: =low-pass=, =high-pass=, =echo=, =reverb=, =chorus=, =pitch-shift=, or any name passed to =lrg_mixer_asset_register_effect_type()=; a GType name such as =LrgEcho= works too) and an =id= unique on its bus (default: the type name, so two reverbs on one bus need ids). Its =params= are the effect's writable properties (see [[file:effects.org::#properties][effects.org: parameters as properties]]): floats, integers, booleans and enums by nick (=preset: hall=). Values are checked against the property's range when they are read: a cut-off of 5 Hz is an error, not a clamp. Parameters are applied in file order when the effect is built, so =preset= (which loads every reverb parameter) goes before the parameters it should not override. =enabled: false= keeps an effect in the chain bypassed.
+
+*** Snapshots
+:PROPERTIES:
+:CUSTOM_ID: snapshots
+:END:
+A snapshot overrides some values of the base layout: bus volumes, send levels (also of sends the base layout does not have; their base level is silence) and numeric effect parameters (=bus/effect/param=). Applying a snapshot (=lrg_mixer_asset_apply_snapshot()=) starts ramps on the mixer from its current values to the targets, where every value *any* snapshot overrides gets a target: the snapshot's override if it has one, the base value otherwise. So going from =underwater= to =explore= brings back the cut-off =underwater= lowered, and applying =NULL= returns to the base layout. =blend= is the snapshot's default transition time; pass a non-negative time to override it.
+
+Bus and send gains ramp linearly in gain, one step per frame (sample-accurate: at half the blend time the gain is half-way). Effect parameters ramp per block of =LRG_AUDIO_MIXER_BLOCK_FRAMES= (256) frames: the property is set at the start of every block. =lrg_mixer_asset_blend_snapshots()= ramps to a weighted mix of several snapshots (volumes and send levels average in dB, parameters linearly): a combat intensity slider between =calm= and =combat=, for example.
+
+*** Ducking
+:PROPERTIES:
+:CUSTOM_ID: ducking
+:END:
+A rule turns the *target* bus down while the *trigger* bus is loud. Every frame the trigger's output peak (after its fader, across channels) is compared with =threshold=; the rule's gain moves toward =depth= (at or above the threshold) or toward 1 (below) as a one-pole envelope:
+
+#+begin_example
+g += (1 - exp (-1 / (seconds * rate))) * (goal - g)      seconds = attack when goal < g, else release
+#+end_example
+
+so after a step the gap closes to 1/e in =attack= (or =release=) seconds; 0 seconds jumps. The gain multiplies the target before its fader. Several rules on one target multiply. The trigger is rendered before the target (the rule is an edge in the render order), so a rule whose target feeds the trigger, or whose trigger is master, is rejected. =lrg_audio_mixer_get_bus_duck_gain()= reports the gain reduction for a meter.
+
+*** Solo
+:PROPERTIES:
+:CUSTOM_ID: solo
+:END:
+While any bus is soloed, only soloed buses, their children (recursively) and the buses downstream of them (parents and send targets, recursively) are heard; every other bus outputs silence while its voices and effects keep running. Mute wins over solo.
+
+** Format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+version: 1                       # required to be <= LRG_MIXER_ASSET_FORMAT_VERSION (1)
+name: Main mix                   # optional display name
+default_snapshot: explore        # optional: applied (no blend) by lrg_mixer_asset_apply()
+buses:                           # required; master first (added at 0 dB when missing)
+- name: master
+  volume: 0                      # dB, -144 (or -inf) .. 12.04; default 0
+- name: music
+  parent: master                 # default master; master itself has no parent
+  volume: -6
+  sends:                         # post-fader, in render order after the bus
+  - target: reverb               # any bus but itself, its parent or one that feeds it
+    level: -12                   # dB
+  effects:                       # processing order
+  - type: low-pass               # registered name (lrg_mixer_asset_list_effect_types()) or GType name
+    id: muffle                   # default: the type; unique per bus; no '/'
+    params:                      # the effect's writable properties, kebab or snake case
+      cutoff: 18000
+      resonance: 0.8
+- name: dialogue
+  parent: master
+  volume: -1.5
+  solo: true                     # written only when true (as is mute)
+- name: reverb
+  parent: master
+  volume: 0
+  mute: true
+  effects:
+  - type: reverb
+    enabled: false               # bypassed; written only when false
+    params:
+      preset: hall               # enum by nick; loads all reverb parameters...
+      wet: 0.5                   # ...so later parameters override it
+snapshots:
+- name: explore
+  blend: 0                       # seconds, default transition time into it
+- name: underwater
+  blend: 0.5
+  volumes:                       # bus -> dB
+    music: -12
+  sends:                         # also opens sends the base layout does not have
+  - source: dialogue
+    target: reverb
+    level: -3
+  params:                        # bus/effect-id/param -> number (numeric parameters only)
+    music/muffle/cutoff: 800
+ducking:
+- trigger: dialogue              # side-chain bus
+  target: music                  # ducked bus
+  threshold: -30                 # dB, trigger peak that starts the duck (default -30)
+  depth: -10                     # dB, -144 .. 0 (default -12)
+  attack: 0.05                   # seconds, 0 .. 10 (default 0.05)
+  release: 0.4                   # seconds, 0 .. 10 (default 0.5)
+#+end_src
+
+Without the comments, the text above is exactly what =lrg_mixer_asset_to_data()= writes for it (key order is fixed: =version=, =name=, =default_snapshot=, =buses=, =snapshots=, =ducking=, then unknown keys; inside a bus =name=, =parent=, =volume=, =mute=, =solo=, =sends=, =effects=, then unknown keys). Saving a layout loaded from saved text gives the same bytes; numbers are written in their shortest round-tripping form.
+
+*** Keys
+:PROPERTIES:
+:CUSTOM_ID: format-keys
+:END:
+| Key | Where | Type | Default | Notes |
+|-----+-------+------+---------+-------|
+| =version= | root | integer | | newer than 1 is an error |
+| =name= | root | string | none | |
+| =default_snapshot= | root | string | none | must name a snapshot |
+| =buses= | root | list | | required (may be empty: master only) |
+| =snapshots= | root | list | empty | names unique |
+| =ducking= | root | list | empty | one rule per (trigger, target) |
+| =name= | bus | string | | required, unique |
+| =parent= | bus | string | =master= | parents form a tree |
+| =volume= | bus | dB | 0 | |
+| =mute=, =solo= | bus | boolean | false | |
+| =sends= | bus | list of ={target, level}= | empty | one send per target |
+| =effects= | bus | list | empty | |
+| =type= | effect | string | | required |
+| =id= | effect | string | the type | unique per bus |
+| =enabled= | effect | boolean | true | |
+| =params= | effect | mapping | empty | property name -> value |
+| =blend= | snapshot | seconds | 0 | 0 .. 3600 |
+| =volumes= | snapshot | mapping bus -> dB | empty | |
+| =sends= | snapshot | list of ={source, target, level}= | empty | all three required |
+| =params= | snapshot | mapping =bus/effect/param= -> number | empty | numeric parameters only |
+| =trigger=, =target= | ducking | string | | required, different buses |
+| =threshold= | ducking | dB | -30 | |
+| =depth= | ducking | dB | -12 | at most 0 |
+| =attack=, =release= | ducking | seconds | 0.05, 0.5 | 0 .. 10 |
+
+*** Unknown keys and errors
+:PROPERTIES:
+:CUSTOM_ID: format-errors
+:END:
+Keys this version does not know are kept, at the root and in every bus, send, effect, snapshot, snapshot send and ducking rule, and written back after the known keys: the editor stores panel state (strip colours, collapsed effects) there. Everything else is strict. The error domain is =LRG_MIXER_ASSET_ERROR= (=lrg_mixer_asset_error_quark()=, enum =LrgMixerAssetError=, =lrg_mixer_asset_error_get_type()=) and the message is =source: /key/path: text=, with list indices as they appear in the file:
+
+#+begin_example
+main.rmixer: /buses/2/effects/0/params/cutoff: '5': out of the parameter's range
+main.rmixer: /buses/1/sends/0/target: send 'b' -> 'a' makes a loop
+main.rmixer: /ducking/0: 'b' feeds 'a', so it cannot be ducked by it
+#+end_example
+
+| Code | When |
+|------+------|
+| =LRG_MIXER_ASSET_ERROR_PARSE= | not YAML, a list where a mapping belongs, a missing required key, a newer version, a malformed =bus/effect/param= key |
+| =LRG_MIXER_ASSET_ERROR_INVALID_VALUE= | a value of the wrong type or out of range, a duplicate effect id or snapshot name |
+| =LRG_MIXER_ASSET_ERROR_UNKNOWN_BUS= | a parent, send, snapshot entry or rule naming no bus; a bus defined twice |
+| =LRG_MIXER_ASSET_ERROR_UNKNOWN_EFFECT= | an unregistered effect type; a snapshot parameter on a missing effect |
+| =LRG_MIXER_ASSET_ERROR_UNKNOWN_PARAM= | a parameter the effect does not have |
+| =LRG_MIXER_ASSET_ERROR_ROUTING= | a parent loop, a send to the bus itself or its parent, a send from master, a cyclic send or ducking rule, a mixer that refuses the layout |
+| =LRG_MIXER_ASSET_ERROR_UNKNOWN_SNAPSHOT= | =default_snapshot= or an applied snapshot that does not exist |
+| =LRG_MIXER_ASSET_ERROR_IO= | a file that cannot be read or written |
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** Load, save, validate
+:PROPERTIES:
+:CUSTOM_ID: api-io
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_mixer_asset_new()= | a layout with only master at 0 dB |
+| =lrg_mixer_asset_new_from_data()= / =lrg_mixer_asset_new_from_file()= | parse (strict, unknown keys kept) |
+| =lrg_mixer_asset_to_data()= / =lrg_mixer_asset_save_to_file()= | write (byte-stable) |
+| =lrg_mixer_asset_copy()= | deep copy, for an editor's undo snapshot |
+| =lrg_mixer_asset_validate()= | the loader's checks for a layout edited through the API |
+| =lrg_mixer_asset_get_name()= / =lrg_mixer_asset_set_name()= | display name |
+| =LrgMixerAsset::changed= | emitted after every successful edit through the API |
+
+*** Buses and sends
+:PROPERTIES:
+:CUSTOM_ID: api-buses
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_mixer_asset_add_bus()= / =lrg_mixer_asset_remove_bus()= | add under a parent; remove a leaf bus and every reference to it |
+| =lrg_mixer_asset_get_bus_names()= / =lrg_mixer_asset_has_bus()= | file order, master first |
+| =lrg_mixer_asset_get_bus_parent()= / =lrg_mixer_asset_set_bus_parent()= | re-parenting below itself is refused |
+| =lrg_mixer_asset_set_bus_volume()= / =lrg_mixer_asset_get_bus_volume()= | dB, clamped |
+| =lrg_mixer_asset_set_bus_mute()= / =lrg_mixer_asset_get_bus_mute()= | |
+| =lrg_mixer_asset_set_bus_solo()= / =lrg_mixer_asset_get_bus_solo()= | |
+| =lrg_mixer_asset_set_send()= / =lrg_mixer_asset_remove_send()= / =lrg_mixer_asset_get_send()= | a send and its level in dB |
+| =lrg_mixer_asset_get_send_targets()= | the sends of a bus |
+
+*** Effects
+:PROPERTIES:
+:CUSTOM_ID: api-effects
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_mixer_asset_register_effect_type()= | make an application effect usable by name |
+| =lrg_mixer_asset_lookup_effect_type()= / =lrg_mixer_asset_list_effect_types()= | the registry |
+| =lrg_mixer_asset_add_effect()= / =lrg_mixer_asset_remove_effect()= / =lrg_mixer_asset_move_effect()= | the chain of a bus |
+| =lrg_mixer_asset_get_effect_ids()= / =lrg_mixer_asset_get_effect_type()= | |
+| =lrg_mixer_asset_set_effect_enabled()= / =lrg_mixer_asset_get_effect_enabled()= | bypass |
+| =lrg_mixer_asset_set_effect_param()= / =lrg_mixer_asset_get_effect_param()= / =lrg_mixer_asset_unset_effect_param()= | parameters as #GValue (strings convert: enum nicks) |
+
+*** Snapshots and ducking
+:PROPERTIES:
+:CUSTOM_ID: api-snapshots
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_mixer_asset_add_snapshot()= / =lrg_mixer_asset_remove_snapshot()= / =lrg_mixer_asset_get_snapshot_names()= | |
+| =lrg_mixer_asset_set_snapshot_blend()= / =lrg_mixer_asset_get_snapshot_blend()= | default transition time |
+| =lrg_mixer_asset_set_snapshot_volume()= / =lrg_mixer_asset_get_snapshot_volume()= | a NaN value removes the override |
+| =lrg_mixer_asset_set_snapshot_send()= / =lrg_mixer_asset_get_snapshot_send()= | |
+| =lrg_mixer_asset_set_snapshot_param()= / =lrg_mixer_asset_get_snapshot_param()= | numeric parameters only |
+| =lrg_mixer_asset_set_default_snapshot()= / =lrg_mixer_asset_get_default_snapshot()= | |
+| =lrg_mixer_asset_set_duck()= / =lrg_mixer_asset_remove_duck()= | add or edit a rule |
+| =lrg_mixer_asset_get_duck_count()= / =lrg_mixer_asset_get_duck()= | read rules back |
+
+*** Runtime and project
+:PROPERTIES:
+:CUSTOM_ID: api-runtime
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_mixer_asset_create_mixer()= | a new =LrgAudioMixer= with the layout applied |
+| =lrg_mixer_asset_apply()= | make an existing mixer match (voices keep playing) |
+| =lrg_mixer_asset_apply_snapshot()= | ramp to a snapshot (=NULL=: the base layout) |
+| =lrg_mixer_asset_blend_snapshots()= | ramp to a weighted mix of snapshots |
+| =lrg_mixer_asset_find_project_mixer()= | the =audio.mixer= path of the =project.ryaml= above a file |
+| =lrg_mixer_asset_new_for_project()= | load it |
+| =lrg_audio_manager_load_project_mixer()= | build the game mixer from it and hand it to the audio manager |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** Load the project mix and change state
+:PROPERTIES:
+:CUSTOM_ID: example-game
+:END:
+#+begin_src c
+g_autoptr(GError)        error = NULL;
+g_autoptr(LrgMixerAsset) mix = NULL;
+LrgAudioManager         *audio = lrg_audio_manager_get_default ();
+
+/* project.ryaml: audio: { mixer: audio/main.rmixer } */
+if (!lrg_audio_manager_load_project_mixer (audio, "levels/harbour.rlevel", 48000, &error))
+	g_warning ("mixer: %s", error->message);
+
+/* the layout again, for snapshots (the manager keeps only the mixer) */
+mix = lrg_mixer_asset_new_for_project ("levels/harbour.rlevel", NULL);
+
+/* the player dives: blend with the snapshot's own time */
+lrg_mixer_asset_apply_snapshot (mix, lrg_audio_manager_get_mixer (audio), "underwater", -1.0, &error);
+
+/* surfacing: back to the base layout over a quarter second */
+lrg_mixer_asset_apply_snapshot (mix, lrg_audio_manager_get_mixer (audio), NULL, 0.25, &error);
+
+/* every frame: lrg_audio_manager_update() plays the mixer on the device */
+lrg_audio_manager_update (audio);
+#+end_src
+
+*** Build a layout in code and render offline
+:PROPERTIES:
+:CUSTOM_ID: example-code
+:END:
+#+begin_src c
+g_autoptr(LrgMixerAsset) mix = lrg_mixer_asset_new ();
+g_autoptr(LrgAudioMixer) mixer = NULL;
+g_auto(GValue)           v = G_VALUE_INIT;
+g_autofree gfloat       *pcm = NULL;
+gsize                    n = 0;
+
+lrg_mixer_asset_add_bus (mix, "music", NULL);
+lrg_mixer_asset_add_bus (mix, "dialogue", NULL);
+lrg_mixer_asset_add_bus (mix, "verb", NULL);
+lrg_mixer_asset_set_bus_volume (mix, "music", -6.0);
+lrg_mixer_asset_set_send (mix, "dialogue", "verb", -12.0);
+lrg_mixer_asset_add_effect (mix, "verb", "reverb", NULL, NULL);
+g_value_init (&v, G_TYPE_STRING);
+g_value_set_string (&v, "cave");
+lrg_mixer_asset_set_effect_param (mix, "verb", "reverb", "preset", &v, NULL);
+lrg_mixer_asset_set_duck (mix, "dialogue", "music", -30.0, -12.0, 0.05, 0.4);
+
+mixer = lrg_mixer_asset_create_mixer (mix, 48000, 2, NULL);
+lrg_audio_mixer_play (mixer, music_wave, "music", 1.0, TRUE);
+lrg_audio_mixer_play (mixer, line_wave, "dialogue", 1.0, FALSE);
+pcm = lrg_audio_mixer_render (mixer, 48000, &n);   /* one second, no device */
+lrg_mixer_asset_save_to_file (mix, "audio/main.rmixer", NULL);
+#+end_src
+
+*** A custom effect in a layout
+:PROPERTIES:
+:CUSTOM_ID: example-custom-effect
+:END:
+#+begin_src c
+/* MyBitcrusher is an LrgAudioEffect subclass with a "bits" int property */
+lrg_mixer_asset_register_effect_type ("bitcrusher", MY_TYPE_BITCRUSHER);
+/* now a .rmixer can say:  - { type: bitcrusher, params: { bits: 6 } } */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured with =taskset -c 2 tests/build/release/tests/test-mixer-asset -m perf -p /mixer-asset/perf/render= on an Intel i7-1280P (release build): rendering 2048 frames at 48 kHz stereo through the example layout (4 buses, 32 looping voices, a low-pass, a reverb fed by a send, a ducking rule) takes about 0.39 ms, under 1% of one core for 42.7 ms of audio. Unpitched, unfiltered, centred voices without a running ramp take a copy-and-scale fast path; a voice with pitch, pan, its own low-pass or a ramp takes the per-frame path (about ten times slower per voice). Loading and applying a layout allocates; ramps and rendering do not, past the first render (the mixer keeps its scratch buffers).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Re-applying restarts effects.* =lrg_mixer_asset_apply()= builds fresh effect instances: reverb tails and delay lines restart. Use snapshots (or set properties on =lrg_audio_mixer_get_bus_chain()= effects) for live changes.
+- *Parents are fixed in a mixer.* An existing mixer bus under another parent makes =apply()= fail with =LRG_MIXER_ASSET_ERROR_ROUTING=; build a new mixer when the tree changes.
+- *Preset order.* =preset= overwrites every reverb parameter; list it first.
+- *Snapshots average levels in dB.* Blending a send between silence (-144 dB) and 0 dB at 50% gives -72 dB, effectively off; give the "off" side a level such as -40 dB for a smooth blend.
+- *Snapshot parameters are numeric.* Enums (=preset=) and booleans cannot be in a snapshot; use separate effects and send levels instead.
+- *A ducked bus needs its trigger rendered first.* A rule whose target feeds the trigger is refused; route the trigger elsewhere or duck the parent.
+- *The trigger is measured after its fader.* Muting or soloing the trigger bus silences the side-chain too.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The 0.9.0 engine wave ships the format, the runtime and these hooks; the mixer panel lands in the next editor wave:
+
+- the panel edits an =LrgMixerAsset= through its API and listens to =LrgMixerAsset::changed= to re-apply it to a preview mixer (=lrg_mixer_asset_apply()=) and to push undo snapshots (=lrg_mixer_asset_copy()=);
+- strips show =lrg_audio_mixer_get_bus_meter()= (peak and RMS per channel over the last render), =lrg_audio_mixer_get_bus_duck_gain()= (gain reduction) and =lrg_audio_mixer_is_bus_audible()= (solo state);
+- effect inspectors list the effect's properties (=g_object_class_list_properties()=); ranges come from the param specs, and =lrg_mixer_asset_set_effect_param()= stores the value;
+- unknown keys round-trip, so the panel's own layout state can live in the file;
+- the project settings expose =audio.mixer= in =project.ryaml=, and play-in-editor calls =lrg_audio_manager_load_project_mixer()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:mixer.org][LrgAudioMixer]]: the runtime graph, ramps, ducking, meters and voice controls
+- [[file:effects.org][Effects]]: the effects and their properties
+- [[file:../../guides/audio.org][Audio guide]]: the whole audio stack, spatial sources and the project mixer
+- [[file:../world3d/components.org::#audio-source][LrgAudioSourceComponent]]: bus routing of 3D sources
+- =tests/test-mixer-asset.c=: format, routing math, snapshots, ducking vs analytic, spatial checks

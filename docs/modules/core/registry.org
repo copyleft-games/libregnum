@@ -139,6 +139,12 @@ Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= be
 |                        | camera                      | LrgCameraComponent            |
 |                        | audio-source                | LrgAudioSourceComponent       |
 |                        | audio-listener              | LrgAudioListenerComponent     |
+|                        | low-pass                    | LrgLowPass                    |
+|                        | high-pass                   | LrgHighPass                   |
+|                        | echo                        | LrgEcho                       |
+|                        | reverb                      | LrgReverb                     |
+|                        | chorus                      | LrgChorus                     |
+|                        | pitch-shift                 | LrgPitchShift                 |
 |                        | billboard                   | LrgBillboardComponent         |
 |                        | tilemap                     | LrgTilemapComponent           |
 |                        | spawn                       | LrgSpawnComponent             |

@@ -244,4 +244,32 @@ gboolean lrg_project_set_physics_settings (LrgProject                *self,
                                            const LrgPhysicsSettings  *settings,
                                            GError                   **error);
 
+/**
+ * lrg_project_get_audio_mixer:
+ * @self: an #LrgProject
+ *
+ * The project's default mixer layout, `audio: { mixer: <path> }` in
+ * project.ryaml (read at the root or inside `project:`): a `.rmixer`
+ * path relative to the project root.  Games load it with
+ * lrg_audio_manager_load_project_mixer(); play-in-editor does the same.
+ *
+ * Returns: (transfer none) (nullable) (type filename): the path, %NULL
+ *   for none
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_project_get_audio_mixer (LrgProject *self);
+
+/**
+ * lrg_project_set_audio_mixer:
+ * @self: an #LrgProject
+ * @path: (nullable) (type filename): a `.rmixer` path relative to the
+ *   project root, %NULL (or empty) for none
+ *
+ * Sets the default mixer; lrg_project_save() writes it to the root
+ * `audio:` block, keeping the block's other keys.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_project_set_audio_mixer (LrgProject  *self,
+                                  const gchar *path);
+
 G_END_DECLS

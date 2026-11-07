@@ -11,7 +11,9 @@
 #include <math.h>
 #include <string.h>
 #include "lrg-audio-manager.h"
+#include "lrg-mixer-asset.h"
 #include "../lrg-log.h"
+#include <raylib.h>
 
 /*
  * LrgAudioVoice:
@@ -39,6 +41,9 @@ typedef struct
     LrgAudioAttenuation  attenuation;
     gfloat               gain;          /* last applied attenuation gain */
     gfloat               pan;           /* last applied pan */
+    gboolean             mix_override;  /* gain/pan set by lrg_audio_manager_set_voice_mix () */
+    gfloat               mix_gain;
+    gfloat               mix_pan;
 } LrgAudioVoice;
 
 static void apply_voice_foreach (gpointer key,
@@ -116,6 +121,11 @@ struct _LrgAudioManager
     gfloat          listener_position[3];
     gfloat          listener_forward[3];
     gfloat          listener_up[3];
+    gfloat          listener_velocity[3];
+
+    /* the mixer graph and the stream it plays through */
+    LrgAudioMixer  *mixer;
+    GrlAudioStream *mixer_stream;
 };
 
 G_DEFINE_FINAL_TYPE (LrgAudioManager, lrg_audio_manager, G_TYPE_OBJECT)
@@ -164,6 +174,8 @@ lrg_audio_manager_finalize (GObject *object)
     g_clear_pointer (&self->procedural, g_hash_table_unref);
     g_clear_object (&self->current_music);
     g_clear_object (&self->next_music);
+    g_clear_object (&self->mixer_stream);
+    g_clear_object (&self->mixer);
 
     if (default_manager == self)
         default_manager = NULL;
@@ -515,7 +527,12 @@ apply_voice (LrgAudioManager *self,
 
     gain = 1.0f;
     pan = 0.0f;
-    if (voice->positional)
+    if (voice->mix_override)
+    {
+        gain = voice->mix_gain;
+        pan = voice->mix_pan;
+    }
+    else if (voice->positional)
         lrg_audio_compute_spatial (self->listener_position,
                                    self->listener_forward,
                                    self->listener_up,
@@ -574,6 +591,46 @@ lookup_voice (LrgAudioManager *self,
     return g_hash_table_lookup (self->voices, GUINT_TO_POINTER (voice));
 }
 
+/*
+ * pump_mixer:
+ * Feeds the mixer graph to the audio device: creates the stream on first
+ * use (only once a device is open: raylib's own check, so a headless
+ * process never opens one) and refills it while it asks for data.
+ */
+static void
+pump_mixer (LrgAudioManager *self)
+{
+    g_autoptr(GError) error = NULL;
+    guint             i;
+
+    if (self->mixer == NULL || !IsAudioDeviceReady ())
+        return;
+    if (self->mixer_stream == NULL)
+    {
+        grl_audio_stream_set_default_buffer_size (LRG_AUDIO_MANAGER_MIXER_BLOCK);
+        self->mixer_stream = grl_audio_stream_new (lrg_audio_mixer_get_sample_rate (self->mixer), 32,
+                                                   lrg_audio_mixer_get_channels (self->mixer));
+        grl_audio_stream_set_default_buffer_size (0);
+        if (self->mixer_stream == NULL || !grl_audio_stream_is_valid (self->mixer_stream))
+        {
+            g_clear_object (&self->mixer_stream);
+            return;
+        }
+        grl_audio_stream_play (self->mixer_stream);
+    }
+    /* two refills at most: the stream is double-buffered */
+    for (i = 0; i < 2; i++)
+    {
+        if (!grl_audio_stream_is_processed (self->mixer_stream))
+            break;
+        if (!lrg_audio_mixer_pump (self->mixer, self->mixer_stream, LRG_AUDIO_MANAGER_MIXER_BLOCK, &error))
+        {
+            lrg_log_warning ("Audio mixer: %s", error->message);
+            break;
+        }
+    }
+}
+
 /* ==========================================================================
  * Update
  * ========================================================================== */
@@ -618,6 +675,9 @@ lrg_audio_manager_update (LrgAudioManager *self)
 
     /* Release finished voices, re-spatialise the others */
     update_voices (self);
+
+    /* Play the mixer graph on the device */
+    pump_mixer (self);
 
     /* Handle crossfading */
     if (self->crossfading && self->current_music != NULL && self->next_music != NULL)
@@ -1918,4 +1978,246 @@ lrg_audio_manager_stop_all_procedural (LrgAudioManager *self)
     g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
 
     g_hash_table_foreach (self->procedural, stop_procedural_foreach, NULL);
+}
+
+/* ==========================================================================
+ * Spatial helpers (0.9.0)
+ * ========================================================================== */
+
+G_DEFINE_ENUM_TYPE (LrgAudioRolloff, lrg_audio_rolloff,
+    G_DEFINE_ENUM_VALUE (LRG_AUDIO_ROLLOFF_LINEAR, "linear"),
+    G_DEFINE_ENUM_VALUE (LRG_AUDIO_ROLLOFF_INVERSE, "inverse"),
+    G_DEFINE_ENUM_VALUE (LRG_AUDIO_ROLLOFF_LOGARITHMIC, "logarithmic"),
+    G_DEFINE_ENUM_VALUE (LRG_AUDIO_ROLLOFF_CUSTOM, "custom"))
+
+/*
+ * lrg_audio_rolloff_evaluate:
+ * Each curve between min and max; the custom one also outside them (it
+ * is sampled at the clamped normalised distance).
+ */
+gfloat
+lrg_audio_rolloff_evaluate (LrgAudioRolloff   mode,
+                            gfloat            min_distance,
+                            gfloat            max_distance,
+                            gfloat            rolloff,
+                            LrgKeyframeCurve *curve,
+                            gfloat            distance)
+{
+    LrgAudioAttenuation att;
+    gfloat              min_d;
+    gfloat              max_d;
+    gfloat              t;
+
+    g_return_val_if_fail (curve == NULL || LRG_IS_KEYFRAME_CURVE (curve), 1.0f);
+
+    min_d = MAX (min_distance, 0.0001f);
+    max_d = MAX (max_distance, min_d);
+    if (isnan (distance))
+        return 1.0f;
+
+    if (mode == LRG_AUDIO_ROLLOFF_CUSTOM && curve != NULL
+        && lrg_keyframe_curve_get_key_count (curve) > 0)
+    {
+        t = (max_d > min_d) ? (distance - min_d) / (max_d - min_d) : (distance > min_d ? 1.0f : 0.0f);
+        return CLAMP (lrg_keyframe_curve_sample (curve, CLAMP (t, 0.0f, 1.0f)), 0.0f, 1.0f);
+    }
+    if (distance <= min_d)
+        return 1.0f;
+    if (distance >= max_d)
+        return 0.0f;
+
+    switch (mode)
+    {
+    case LRG_AUDIO_ROLLOFF_INVERSE:
+        att.min_distance = min_d;
+        att.max_distance = max_d;
+        att.rolloff = rolloff;
+        att.spatial_blend = 1.0f;
+        return attenuation_gain (&att, distance);
+    case LRG_AUDIO_ROLLOFF_LOGARITHMIC:
+        return CLAMP (1.0f - logf (distance / min_d) / logf (max_d / min_d), 0.0f, 1.0f);
+    case LRG_AUDIO_ROLLOFF_LINEAR:
+    case LRG_AUDIO_ROLLOFF_CUSTOM:
+    default:
+        return (max_d - distance) / (max_d - min_d);
+    }
+}
+
+gfloat
+lrg_audio_cone_gain (gfloat inner_angle,
+                     gfloat outer_angle,
+                     gfloat outer_gain,
+                     gfloat angle)
+{
+    gfloat half_in;
+    gfloat half_out;
+
+    outer_gain = CLAMP (outer_gain, 0.0f, 1.0f);
+    inner_angle = CLAMP (inner_angle, 0.0f, 360.0f);
+    outer_angle = CLAMP (MAX (outer_angle, inner_angle), 0.0f, 360.0f);
+    if (inner_angle >= 360.0f || isnan (angle))
+        return 1.0f;
+    half_in = inner_angle * 0.5f;
+    half_out = outer_angle * 0.5f;
+    angle = CLAMP (fabsf (angle), 0.0f, 180.0f);
+    if (angle <= half_in)
+        return 1.0f;
+    if (angle >= half_out || half_out <= half_in)
+        return outer_gain;
+    return 1.0f + (outer_gain - 1.0f) * (angle - half_in) / (half_out - half_in);
+}
+
+gfloat
+lrg_audio_doppler_pitch (const gfloat *listener_position,
+                         const gfloat *listener_velocity,
+                         const gfloat *source_position,
+                         const gfloat *source_velocity,
+                         gfloat        speed_of_sound,
+                         gfloat        factor)
+{
+    gfloat u[3];
+    gfloat length;
+    gfloat vl = 0.0f;
+    gfloat vs = 0.0f;
+    gfloat limit;
+    gfloat pitch;
+
+    g_return_val_if_fail (listener_position != NULL, 1.0f);
+    g_return_val_if_fail (source_position != NULL, 1.0f);
+
+    if (!(factor > 0.0f) || !(speed_of_sound > 0.0f))
+        return 1.0f;
+    u[0] = listener_position[0] - source_position[0];
+    u[1] = listener_position[1] - source_position[1];
+    u[2] = listener_position[2] - source_position[2];
+    length = vec3_length (u);
+    if (length < 1e-6f)
+        return 1.0f;
+    u[0] /= length;
+    u[1] /= length;
+    u[2] /= length;
+
+    /* the velocity components along source -> listener, clamped below
+     * the speed of sound (OpenAL 1.1, section 3.5.2) */
+    limit = speed_of_sound / factor;
+    if (listener_velocity != NULL)
+        vl = MIN (listener_velocity[0] * u[0] + listener_velocity[1] * u[1] + listener_velocity[2] * u[2],
+                  limit * 0.999f);
+    if (source_velocity != NULL)
+        vs = MIN (source_velocity[0] * u[0] + source_velocity[1] * u[1] + source_velocity[2] * u[2],
+                  limit * 0.999f);
+    pitch = (speed_of_sound - factor * vl) / (speed_of_sound - factor * vs);
+    return CLAMP (pitch, 0.125f, 8.0f);
+}
+
+void
+lrg_audio_manager_set_listener_velocity (LrgAudioManager *self,
+                                         const gfloat    *velocity)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+
+    if (velocity == NULL)
+        memset (self->listener_velocity, 0, sizeof self->listener_velocity);
+    else
+        memcpy (self->listener_velocity, velocity, sizeof self->listener_velocity);
+}
+
+void
+lrg_audio_manager_get_listener_velocity (LrgAudioManager *self,
+                                         gfloat          *out_velocity)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+    g_return_if_fail (out_velocity != NULL);
+
+    memcpy (out_velocity, self->listener_velocity, sizeof self->listener_velocity);
+}
+
+gboolean
+lrg_audio_manager_set_voice_mix (LrgAudioManager *self,
+                                 guint            voice,
+                                 gfloat           gain,
+                                 gfloat           pan)
+{
+    LrgAudioVoice *entry;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+
+    entry = lookup_voice (self, voice);
+    if (entry == NULL)
+        return FALSE;
+    entry->mix_override = TRUE;
+    entry->mix_gain = isfinite (gain) ? CLAMP (gain, 0.0f, 1.0f) : 0.0f;
+    entry->mix_pan = isfinite (pan) ? CLAMP (pan, -1.0f, 1.0f) : 0.0f;
+    apply_voice (self, entry);
+    return TRUE;
+}
+
+gboolean
+lrg_audio_manager_set_voice_pitch (LrgAudioManager *self,
+                                   guint            voice,
+                                   gfloat           pitch)
+{
+    LrgAudioVoice *entry;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+
+    entry = lookup_voice (self, voice);
+    if (entry == NULL)
+        return FALSE;
+    if (entry->alias != NULL && isfinite (pitch))
+        grl_sound_set_pitch (entry->alias, CLAMP (pitch, 0.125f, 8.0f));
+    return TRUE;
+}
+
+/* ==========================================================================
+ * Mixer graph (0.9.0)
+ * ========================================================================== */
+
+void
+lrg_audio_manager_set_mixer (LrgAudioManager *self,
+                             LrgAudioMixer   *mixer)
+{
+    g_return_if_fail (LRG_IS_AUDIO_MANAGER (self));
+    g_return_if_fail (mixer == NULL || LRG_IS_AUDIO_MIXER (mixer));
+
+    if (self->mixer == mixer)
+        return;
+    /* a new graph may have another format: the stream is rebuilt */
+    g_clear_object (&self->mixer_stream);
+    g_set_object (&self->mixer, mixer);
+}
+
+LrgAudioMixer *
+lrg_audio_manager_get_mixer (LrgAudioManager *self)
+{
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), NULL);
+
+    return self->mixer;
+}
+
+gboolean
+lrg_audio_manager_load_project_mixer (LrgAudioManager  *self,
+                                      const gchar      *start,
+                                      guint             sample_rate,
+                                      GError          **error)
+{
+    g_autoptr(LrgMixerAsset) asset = NULL;
+    g_autoptr(LrgAudioMixer) mixer = NULL;
+    g_autoptr(GError)        local = NULL;
+
+    g_return_val_if_fail (LRG_IS_AUDIO_MANAGER (self), FALSE);
+
+    asset = lrg_mixer_asset_new_for_project (start, &local);
+    if (asset == NULL)
+    {
+        if (local == NULL)
+            return TRUE;   /* the project names no mixer */
+        g_propagate_error (error, g_steal_pointer (&local));
+        return FALSE;
+    }
+    mixer = lrg_mixer_asset_create_mixer (asset, sample_rate != 0 ? sample_rate : 48000, 2, error);
+    if (mixer == NULL)
+        return FALSE;
+    lrg_audio_manager_set_mixer (self, mixer);
+    return TRUE;
 }

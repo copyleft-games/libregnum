@@ -10,6 +10,8 @@
 
 #include "config.h"
 
+#include <string.h>
+
 #include "lrg-audio-listener-component.h"
 #include "../lrg-entity3d.h"
 #include "../../audio/lrg-audio-manager.h"
@@ -19,6 +21,11 @@ struct _LrgAudioListenerComponent
 	LrgComponent     parent_instance;
 
 	LrgAudioManager *manager;   /* explicit; NULL means the default */
+
+	/* doppler: velocity measured between late updates */
+	gfloat           velocity[3];
+	gfloat           last_position[3];
+	gboolean         has_last_position;
 };
 
 G_DEFINE_FINAL_TYPE (LrgAudioListenerComponent, lrg_audio_listener_component, LRG_TYPE_COMPONENT)
@@ -46,6 +53,8 @@ lrg_audio_listener_component_world_entered (LrgComponent *component,
 	LrgAudioListenerComponent *self = LRG_AUDIO_LISTENER_COMPONENT (component);
 
 	lrg_world3d_set_audio_listener (world, lrg_component_get_entity (component));
+	self->has_last_position = FALSE;
+	memset (self->velocity, 0, sizeof self->velocity);
 	lrg_audio_listener_component_sync (self);
 }
 
@@ -62,8 +71,25 @@ static void
 lrg_audio_listener_component_late_update (LrgComponent *component,
                                           gfloat        delta)
 {
-	(void) delta;
-	lrg_audio_listener_component_sync (LRG_AUDIO_LISTENER_COMPONENT (component));
+	LrgAudioListenerComponent *self = LRG_AUDIO_LISTENER_COMPONENT (component);
+	LrgEntity3D               *entity = lrg_component_get_entity (component);
+	gfloat                     pos[3];
+
+	/* the listener's velocity for doppler, from its movement */
+	if (entity != NULL && lrg_component_get_enabled (component))
+	{
+		lrg_entity3d_get_world_position (entity, pos);
+		if (self->has_last_position && delta > 0.0f)
+		{
+			self->velocity[0] = (pos[0] - self->last_position[0]) / delta;
+			self->velocity[1] = (pos[1] - self->last_position[1]) / delta;
+			self->velocity[2] = (pos[2] - self->last_position[2]) / delta;
+		}
+		memcpy (self->last_position, pos, sizeof pos);
+		self->has_last_position = TRUE;
+		lrg_audio_manager_set_listener_velocity (get_manager (self), self->velocity);
+	}
+	lrg_audio_listener_component_sync (self);
 }
 
 static void
@@ -187,4 +213,14 @@ lrg_audio_listener_component_sync (LrgAudioListenerComponent *self)
 	lrg_entity3d_get_forward (entity, fwd);
 	lrg_entity3d_get_up (entity, up);
 	lrg_audio_manager_set_listener (get_manager (self), pos, fwd, up);
+}
+
+void
+lrg_audio_listener_component_get_velocity (LrgAudioListenerComponent *self,
+                                           gfloat                    *out_velocity)
+{
+	g_return_if_fail (LRG_IS_AUDIO_LISTENER_COMPONENT (self));
+	g_return_if_fail (out_velocity != NULL);
+
+	memcpy (out_velocity, self->velocity, sizeof self->velocity);
 }

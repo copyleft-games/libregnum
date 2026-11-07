@@ -357,6 +357,126 @@ lrg_reverb_finalize (GObject *object)
     G_OBJECT_CLASS (lrg_reverb_parent_class)->finalize (object);
 }
 
+/* ==========================================================================
+ * Properties (the .rmixer format, snapshots and inspectors set parameters
+ * by name; each one goes through its setter, so the clamps are the same)
+ * ========================================================================== */
+
+enum
+{
+    PROP_0,
+    PROP_ROOM_SIZE,
+    PROP_DAMPING,
+    PROP_WET,
+    PROP_DRY,
+    PROP_WIDTH,
+    PROP_PRE_DELAY,
+    PROP_PRESET,
+    N_PROPS
+};
+
+static GParamSpec *properties[N_PROPS];
+
+static void
+lrg_reverb_get_property (GObject    *object,
+                         guint       prop_id,
+                         GValue     *value,
+                         GParamSpec *pspec)
+{
+    LrgReverb *self = (LrgReverb *)object;
+
+    switch (prop_id)
+    {
+    case PROP_ROOM_SIZE:
+        g_value_set_float (value, self->room_size);
+        break;
+    case PROP_DAMPING:
+        g_value_set_float (value, self->damping);
+        break;
+    case PROP_WET:
+        g_value_set_float (value, self->wet);
+        break;
+    case PROP_DRY:
+        g_value_set_float (value, self->dry);
+        break;
+    case PROP_WIDTH:
+        g_value_set_float (value, self->width);
+        break;
+    case PROP_PRE_DELAY:
+        g_value_set_float (value, self->pre_delay);
+        break;
+    case PROP_PRESET:
+        g_value_set_enum (value, (gint)self->preset);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
+static void
+lrg_reverb_set_property (GObject      *object,
+                         guint         prop_id,
+                         const GValue *value,
+                         GParamSpec   *pspec)
+{
+    LrgReverb *self = (LrgReverb *)object;
+    gfloat before;
+
+    switch (prop_id)
+    {
+    case PROP_ROOM_SIZE:
+        before = self->room_size;
+        lrg_reverb_set_room_size (self, g_value_get_float (value));
+        if (before != self->room_size)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_DAMPING:
+        before = self->damping;
+        lrg_reverb_set_damping (self, g_value_get_float (value));
+        if (before != self->damping)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_WET:
+        before = self->wet;
+        lrg_reverb_set_wet (self, g_value_get_float (value));
+        if (before != self->wet)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_DRY:
+        before = self->dry;
+        lrg_reverb_set_dry (self, g_value_get_float (value));
+        if (before != self->dry)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_WIDTH:
+        before = self->width;
+        lrg_reverb_set_width (self, g_value_get_float (value));
+        if (before != self->width)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_PRE_DELAY:
+        before = self->pre_delay;
+        lrg_reverb_set_pre_delay (self, g_value_get_float (value));
+        if (before != self->pre_delay)
+            g_object_notify_by_pspec (object, pspec);
+        break;
+    case PROP_PRESET:
+        /* a preset loads every other parameter: notify them all */
+        g_object_freeze_notify (object);
+        lrg_reverb_set_preset (self, (LrgReverbPreset)g_value_get_enum (value));
+        {
+            guint k;
+
+            for (k = PROP_ROOM_SIZE; k < N_PROPS; k++)
+                g_object_notify_by_pspec (object, properties[k]);
+        }
+        g_object_thaw_notify (object);
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+    }
+}
+
 static void
 lrg_reverb_class_init (LrgReverbClass *klass)
 {
@@ -366,6 +486,75 @@ lrg_reverb_class_init (LrgReverbClass *klass)
     object_class->finalize = lrg_reverb_finalize;
     effect_class->process = lrg_reverb_process;
     effect_class->reset = lrg_reverb_reset;
+    object_class->get_property = lrg_reverb_get_property;
+    object_class->set_property = lrg_reverb_set_property;
+
+    /**
+     * LrgReverb:room-size:
+     *
+     * Room size 0 .. 1 (lrg_reverb_set_room_size()).
+     */
+    properties[PROP_ROOM_SIZE] =
+        g_param_spec_float ("room-size", NULL, NULL, 0.0f, 1.0f, 0.45f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgReverb:damping:
+     *
+     * High-frequency damping 0 .. 1 (lrg_reverb_set_damping()).
+     */
+    properties[PROP_DAMPING] =
+        g_param_spec_float ("damping", NULL, NULL, 0.0f, 1.0f, 0.6f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgReverb:wet:
+     *
+     * Level of the reverberation (lrg_reverb_set_wet()).
+     */
+    properties[PROP_WET] =
+        g_param_spec_float ("wet", NULL, NULL, 0.0f, 1.0f, 0.16f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgReverb:dry:
+     *
+     * Level of the input (lrg_reverb_set_dry()).
+     */
+    properties[PROP_DRY] =
+        g_param_spec_float ("dry", NULL, NULL, 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgReverb:width:
+     *
+     * Stereo width 0 .. 1 (lrg_reverb_set_width()).
+     */
+    properties[PROP_WIDTH] =
+        g_param_spec_float ("width", NULL, NULL, 0.0f, 1.0f, 1.0f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgReverb:pre-delay:
+     *
+     * Seconds before the reverberation starts (lrg_reverb_set_pre_delay()).
+     */
+    properties[PROP_PRE_DELAY] =
+        g_param_spec_float ("pre-delay", NULL, NULL, 0.0f, LRG_REVERB_MAX_PRE_DELAY, 0.005f,
+                            G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    /**
+     * LrgReverb:preset:
+     *
+     * The preset last loaded (lrg_reverb_set_preset()).  Setting it
+     * overwrites every other parameter, so in a `.rmixer` list it
+     * before the parameters it should not override.
+     */
+    properties[PROP_PRESET] =
+        g_param_spec_enum ("preset", NULL, NULL, LRG_TYPE_REVERB_PRESET, LRG_REVERB_PRESET_ROOM,
+                           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
+    g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void

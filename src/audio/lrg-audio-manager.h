@@ -26,6 +26,8 @@
 #include "lrg-sound-bank.h"
 #include "lrg-music-track.h"
 #include "lrg-procedural-audio.h"
+#include "lrg-audio-mixer.h"
+#include "../tween/lrg-keyframe-curve.h"
 
 G_BEGIN_DECLS
 
@@ -462,6 +464,230 @@ guint lrg_audio_manager_get_voice_count (LrgAudioManager *self);
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_audio_manager_stop_all_voices (LrgAudioManager *self);
+
+/* ==========================================================================
+ * Spatial helpers (0.9.0): rolloff curves, cones, doppler
+ * ========================================================================== */
+
+/**
+ * LRG_AUDIO_SPEED_OF_SOUND:
+ *
+ * The default speed of sound for doppler, in world units (metres) per
+ * second.
+ */
+#define LRG_AUDIO_SPEED_OF_SOUND (343.0f)
+
+/**
+ * LrgAudioRolloff:
+ * @LRG_AUDIO_ROLLOFF_LINEAR: `(max - d) / (max - min)`
+ * @LRG_AUDIO_ROLLOFF_INVERSE: inverse distance `min / (min + rolloff (d - min))`
+ *   rescaled to reach 0 at max (the curve of #LrgAudioAttenuation)
+ * @LRG_AUDIO_ROLLOFF_LOGARITHMIC: linear in log distance:
+ *   `1 - ln (d / min) / ln (max / min)` (a constant number of dB per
+ *   doubling of distance would be inverse; this one reaches 0 at max)
+ * @LRG_AUDIO_ROLLOFF_CUSTOM: an #LrgKeyframeCurve sampled at the
+ *   normalised distance `t = (d - min) / (max - min)` clamped to 0 .. 1
+ *
+ * How gain falls between the minimum and maximum distance.  Every built-in
+ * curve is 1 at or within min and 0 at or beyond max.
+ */
+typedef enum
+{
+    LRG_AUDIO_ROLLOFF_LINEAR,
+    LRG_AUDIO_ROLLOFF_INVERSE,
+    LRG_AUDIO_ROLLOFF_LOGARITHMIC,
+    LRG_AUDIO_ROLLOFF_CUSTOM
+} LrgAudioRolloff;
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_audio_rolloff_get_type (void) G_GNUC_CONST;
+#define LRG_TYPE_AUDIO_ROLLOFF (lrg_audio_rolloff_get_type ())
+
+/**
+ * lrg_audio_rolloff_evaluate:
+ * @mode: the curve
+ * @min_distance: full volume within this distance (clamped to >= 0.0001)
+ * @max_distance: silent beyond it (at least @min_distance)
+ * @rolloff: the steepness of %LRG_AUDIO_ROLLOFF_INVERSE (0 or less is
+ *   linear)
+ * @curve: (nullable): the curve of %LRG_AUDIO_ROLLOFF_CUSTOM (its output
+ *   is clamped to 0 .. 1); %NULL falls back to linear
+ * @distance: the source's distance from the listener
+ *
+ * The distance attenuation of a positional source.  Pure: no audio
+ * device, no state.
+ *
+ * Returns: the gain, 0 .. 1
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_audio_rolloff_evaluate (LrgAudioRolloff   mode,
+                                   gfloat            min_distance,
+                                   gfloat            max_distance,
+                                   gfloat            rolloff,
+                                   LrgKeyframeCurve *curve,
+                                   gfloat            distance);
+
+/**
+ * lrg_audio_cone_gain:
+ * @inner_angle: full angle of the cone heard at full volume, degrees
+ *   (360 turns the cone off)
+ * @outer_angle: full angle beyond which @outer_gain applies, degrees
+ *   (raised to @inner_angle when smaller)
+ * @outer_gain: gain outside the outer cone, 0 .. 1
+ * @angle: angle between the source's forward and the direction to the
+ *   listener, degrees 0 .. 180
+ *
+ * A directional source: 1 inside half the inner angle, @outer_gain beyond
+ * half the outer angle, linear in angle between.
+ *
+ * Returns: the cone gain
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_audio_cone_gain (gfloat inner_angle,
+                            gfloat outer_angle,
+                            gfloat outer_gain,
+                            gfloat angle);
+
+/**
+ * lrg_audio_doppler_pitch:
+ * @listener_position: (array fixed-size=3): the listener
+ * @listener_velocity: (array fixed-size=3) (nullable): its velocity, %NULL
+ *   for at rest
+ * @source_position: (array fixed-size=3): the source
+ * @source_velocity: (array fixed-size=3) (nullable): its velocity
+ * @speed_of_sound: units per second (%LRG_AUDIO_SPEED_OF_SOUND), > 0
+ * @factor: doppler exaggeration, 0 turns the effect off
+ *
+ * The OpenAL doppler shift: with `u` the unit vector from source to
+ * listener, `vl = listener_velocity . u` and `vs = source_velocity . u`
+ * (each clamped below `speed_of_sound / factor`), the pitch is
+ * `(c - factor vl) / (c - factor vs)`.  A source approaching the
+ * listener raises the pitch.
+ *
+ * Returns: the pitch multiplier, clamped to 0.125 .. 8 (1 when the two
+ *   positions coincide)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_audio_doppler_pitch (const gfloat *listener_position,
+                                const gfloat *listener_velocity,
+                                const gfloat *source_position,
+                                const gfloat *source_velocity,
+                                gfloat        speed_of_sound,
+                                gfloat        factor);
+
+/**
+ * lrg_audio_manager_set_listener_velocity:
+ * @self: the audio manager
+ * @velocity: (array fixed-size=3) (nullable): units per second, %NULL for
+ *   at rest
+ *
+ * The listener's velocity for doppler (#LrgAudioListenerComponent sets it
+ * from the entity's movement every late update).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_set_listener_velocity (LrgAudioManager *self,
+                                              const gfloat    *velocity);
+
+/**
+ * lrg_audio_manager_get_listener_velocity:
+ * @self: the audio manager
+ * @out_velocity: (out caller-allocates) (array fixed-size=3): the velocity
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_get_listener_velocity (LrgAudioManager *self,
+                                              gfloat          *out_velocity);
+
+/**
+ * lrg_audio_manager_set_voice_mix:
+ * @self: the audio manager
+ * @voice: a voice id
+ * @gain: the spatial gain, 0 .. 1
+ * @pan: -1 (left) .. 1 (right)
+ *
+ * Replaces the manager's own attenuation of a voice from now on: a
+ * component that spatialises itself (custom curves, cones, occlusion)
+ * hands over the result.  The request volume and the master and SFX
+ * volumes still apply.
+ *
+ * Returns: %TRUE when @voice is alive
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_set_voice_mix (LrgAudioManager *self,
+                                          guint            voice,
+                                          gfloat           gain,
+                                          gfloat           pan);
+
+/**
+ * lrg_audio_manager_set_voice_pitch:
+ * @self: the audio manager
+ * @voice: a voice id
+ * @pitch: the playback pitch multiplier (doppler)
+ *
+ * Returns: %TRUE when @voice is alive
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_set_voice_pitch (LrgAudioManager *self,
+                                            guint            voice,
+                                            gfloat           pitch);
+
+/* ==========================================================================
+ * Mixer graph (0.9.0)
+ * ========================================================================== */
+
+/**
+ * LRG_AUDIO_MANAGER_MIXER_BLOCK:
+ *
+ * Frames per refill when the manager plays its mixer on the audio device
+ * (also the stream's buffer size).
+ */
+#define LRG_AUDIO_MANAGER_MIXER_BLOCK (2048)
+
+/**
+ * lrg_audio_manager_set_mixer:
+ * @self: the audio manager
+ * @mixer: (nullable): the game's mixer graph, %NULL for none
+ *
+ * Gives the manager an #LrgAudioMixer (usually built from the project's
+ * `.rmixer`).  Sources routed to a bus (#LrgAudioSourceComponent:bus)
+ * play through it.  While an audio device is open,
+ * lrg_audio_manager_update() plays the mixer on it through a 32-bit
+ * #GrlAudioStream (created on first use, %LRG_AUDIO_MANAGER_MIXER_BLOCK
+ * frames a refill); without one nothing is played and the mixer can be
+ * rendered offline.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_manager_set_mixer (LrgAudioManager *self,
+                                  LrgAudioMixer   *mixer);
+
+/**
+ * lrg_audio_manager_get_mixer:
+ * @self: the audio manager
+ *
+ * Returns: (transfer none) (nullable): the mixer graph
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAudioMixer * lrg_audio_manager_get_mixer (LrgAudioManager *self);
+
+/**
+ * lrg_audio_manager_load_project_mixer:
+ * @self: the audio manager
+ * @start: (type filename): a file or directory inside the project (a
+ *   level, the game's data directory)
+ * @sample_rate: the mixer rate, 0 for 48000
+ * @error: (nullable): return location for an error
+ *
+ * Builds a mixer from the project's default `.rmixer`
+ * (lrg_mixer_asset_find_project_mixer()) and sets it with
+ * lrg_audio_manager_set_mixer().  A project without one leaves the
+ * manager unchanged and is not an error.
+ *
+ * Returns: %TRUE unless the project's mixer failed to load or apply
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_audio_manager_load_project_mixer (LrgAudioManager  *self,
+                                               const gchar      *start,
+                                               guint             sample_rate,
+                                               GError          **error);
 
 /* ==========================================================================
  * Music Playback

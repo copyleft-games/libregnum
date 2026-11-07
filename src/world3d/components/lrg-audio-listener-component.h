@@ -73,4 +73,18 @@ void lrg_audio_listener_component_set_audio_manager (LrgAudioListenerComponent *
 LRG_AVAILABLE_IN_ALL
 void lrg_audio_listener_component_sync (LrgAudioListenerComponent *self);
 
+/**
+ * lrg_audio_listener_component_get_velocity:
+ * @self: an #LrgAudioListenerComponent
+ * @out_velocity: (out caller-allocates) (array fixed-size=3): units per
+ *   second
+ *
+ * The velocity measured from the entity's movement between late updates
+ * and handed to the audio manager (lrg_audio_manager_set_listener_velocity())
+ * for doppler.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_audio_listener_component_get_velocity (LrgAudioListenerComponent *self,
+                                                gfloat                    *out_velocity);
+
 G_END_DECLS

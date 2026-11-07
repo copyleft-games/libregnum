@@ -32,6 +32,11 @@ struct _LrgProject
 	LrgPhysicsSettings *physics_settings;  /* world settings of the block */
 	YamlNode           *physics_node;
 
+	/* audio: block: the default mixer (.rmixer path relative to the
+	 * root) plus the parsed block so its other keys survive a save */
+	gchar              *audio_mixer;
+	YamlNode           *audio_node;
+
 	/* Keys this type does not model (e.g. 0.9.0 runtime settings such as
 	 * store_prefab_instances, or another tool's data), kept with their
 	 * parsed values so lrg_project_save() writes them back unchanged:
@@ -59,6 +64,8 @@ lrg_project_finalize (GObject *object)
 	g_clear_object (&self->physics_layers);
 	g_clear_pointer (&self->physics_settings, lrg_physics_settings_free);
 	g_clear_pointer (&self->physics_node, yaml_node_unref);
+	g_clear_pointer (&self->audio_mixer, g_free);
+	g_clear_pointer (&self->audio_node, yaml_node_unref);
 	g_clear_pointer (&self->extra_keys, g_ptr_array_unref);
 	g_clear_pointer (&self->extra_nodes, g_ptr_array_unref);
 	g_clear_pointer (&self->extra_root_keys, g_ptr_array_unref);
@@ -219,13 +226,34 @@ lrg_project_open (const gchar  *dir,
 			self->physics_node = yaml_node_ref (block);
 	}
 
+	/* The audio: block (root level, or inside project:): the default
+	 * mixer the game loads (lrg_mixer_asset_find_project_mixer() reads
+	 * the same key at runtime); the block is kept for its other keys */
+	{
+		YamlNode *block = yaml_mapping_get_member (root_map, "audio");
+
+		if (block == NULL)
+			block = yaml_mapping_get_member (proj_map, "audio");
+		if (block != NULL && yaml_node_get_node_type (block) == YAML_NODE_MAPPING)
+		{
+			YamlNode *mixer = yaml_mapping_get_member (yaml_node_get_mapping (block), "mixer");
+
+			if (mixer != NULL && yaml_node_get_node_type (mixer) == YAML_NODE_SCALAR
+			    && *yaml_node_get_scalar (mixer) != '\0')
+				self->audio_mixer = g_strdup (yaml_node_get_scalar (mixer));
+			self->audio_node = yaml_node_ref (block);
+		}
+		else if (block != NULL)
+			g_warning ("%s: audio block ignored: not a mapping", path);
+	}
+
 	/* Everything else survives a save */
 	{
 		static const gchar * const project_keys[] = {
 			"name", "default_level", "game_output", "run_command", "scripts_dir", "asset_dirs",
-			"physics", NULL
+			"physics", "audio", NULL
 		};
-		static const gchar * const root_keys[] = { "project", "physics", NULL };
+		static const gchar * const root_keys[] = { "project", "physics", "audio", NULL };
 
 		keep_unknown_members (proj_map, project_keys, self->extra_keys, self->extra_nodes);
 		keep_unknown_members (root_map, root_keys, self->extra_root_keys, self->extra_root_nodes);
@@ -290,6 +318,26 @@ lrg_project_save (LrgProject  *self,
 		lrg_physics_layers_write_yaml (self->physics_layers, physics_map);
 		lrg_physics_settings_write_yaml (self->physics_settings, physics_map);
 		yaml_mapping_set_mapping_member (root_map, "physics", physics_map);
+	}
+
+	/* audio: at the root too, with its other keys; omitted when empty */
+	{
+		g_autoptr(YamlNode)    audio_copy = NULL;
+		g_autoptr(YamlMapping) audio_map = NULL;
+
+		if (self->audio_node != NULL)
+		{
+			audio_copy = yaml_node_copy (self->audio_node);
+			audio_map = yaml_mapping_ref (yaml_node_get_mapping (audio_copy));
+		}
+		else
+			audio_map = yaml_mapping_new ();
+		if (self->audio_mixer != NULL)
+			yaml_mapping_set_string_member (audio_map, "mixer", self->audio_mixer);
+		else if (yaml_mapping_has_member (audio_map, "mixer"))
+			yaml_mapping_remove_member (audio_map, "mixer");
+		if (yaml_mapping_get_size (audio_map) > 0)
+			yaml_mapping_set_mapping_member (root_map, "audio", audio_map);
 	}
 	write_kept_members (root_map, self->extra_root_keys, self->extra_root_nodes);
 	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
@@ -505,4 +553,22 @@ lrg_project_set_physics_settings (LrgProject                *self,
 		return FALSE;
 	*self->physics_settings = *settings;
 	return TRUE;
+}
+
+const gchar *
+lrg_project_get_audio_mixer (LrgProject *self)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	return self->audio_mixer;
+}
+
+void
+lrg_project_set_audio_mixer (LrgProject  *self,
+                             const gchar *path)
+{
+	g_return_if_fail (LRG_IS_PROJECT (self));
+	if (path != NULL && *path == '\0')
+		path = NULL;
+	g_free (self->audio_mixer);
+	self->audio_mixer = g_strdup (path);
 }

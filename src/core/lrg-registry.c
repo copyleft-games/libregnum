@@ -45,6 +45,12 @@
 #include "../world3d/components/lrg-camera-component.h"
 #include "../world3d/components/lrg-audio-source-component.h"
 #include "../world3d/components/lrg-audio-listener-component.h"
+#include "../audio/lrg-low-pass.h"
+#include "../audio/lrg-high-pass.h"
+#include "../audio/lrg-echo.h"
+#include "../audio/lrg-reverb.h"
+#include "../audio/lrg-chorus.h"
+#include "../audio/lrg-pitch-shift.h"
 #include "../world3d/components/lrg-billboard-component.h"
 #include "../world3d/components/lrg-tilemap-component.h"
 #include "../world3d/components/lrg-spawn-component.h"
@@ -491,6 +497,12 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "camera",                    lrg_camera_component_get_type },
     { "audio-source",              lrg_audio_source_component_get_type },
     { "audio-listener",            lrg_audio_listener_component_get_type },
+    { "low-pass",                   lrg_low_pass_get_type },
+    { "high-pass",                  lrg_high_pass_get_type },
+    { "echo",                       lrg_echo_get_type },
+    { "reverb",                     lrg_reverb_get_type },
+    { "chorus",                     lrg_chorus_get_type },
+    { "pitch-shift",                lrg_pitch_shift_get_type },
     { "billboard",                 lrg_billboard_component_get_type },
     { "tilemap",                   lrg_tilemap_component_get_type },
     { "spawn",                     lrg_spawn_component_get_type },
