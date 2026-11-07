@@ -158,3 +158,21 @@ Examples: lrgeditorctl bake set samples 256 && lrgeditorctl bake start --wait; l
 - `physics layers [get] | name I NAME|- | collide A B on|off | settings [K=V..] | reset [empty=true] | open`
 - `physasset open|get|stabilize|save PATH | create PATH [model= total_mass= radius_ratio=] | model PATH MODEL | add-part PATH BONE [K=V..] | set-part PATH PART K=V.. | remove-part|select PATH PART | generate PATH [total_mass= radius_ratio=] | exclude|unexclude PATH A B | set PATH [name= exclude_adjacent=] | simulate PATH [advance=S run=false reset=true]`
 Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --node Door; lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140
+
+## 0.9.0 navigation, AI, effects, terrain, audio and 2D verbs
+
+<!-- m67e-generated: begin -->
+- `nav get | set | new PATH | bake | cancel | save | clear | area-add NAME | area-remove AREA | area-set AREA | area-box-add AREA | area-box-remove AREA BOX | area-box-set AREA BOX | link-add | link-remove INDEX | link-set INDEX | select | overlay | agents | debug-agent | show` [key=value..]
+- `bt open PATH | create PATH | get PATH | palette | add-node PATH TYPE | remove-node PATH ID | move-node PATH ID PARENT | set-node PATH ID | set-position PATH ID X Y | layout PATH | select PATH ID | show PATH SUBTREE | add-key PATH NAME TYPE | remove-key PATH NAME | set-subtree PATH NAME | remove-subtree PATH NAME | open-subtree PATH ID | validate PATH | save PATH | live PATH` [key=value..]
+- `fsm open PATH | create PATH | get PATH | enter PATH STATE | up PATH | add-state PATH NAME | remove-state PATH STATE | rename-state PATH STATE NAME | set-initial PATH STATE | add-transition PATH FROM TO | set-transition PATH FROM INDEX | remove-transition PATH FROM INDEX | set-actions PATH STATE PHASE | set-position PATH STATE X Y | select PATH | add-key PATH NAME TYPE | remove-key PATH NAME | validate PATH | save PATH | live PATH | send-event PATH EVENT` [key=value..]
+- `ai show | entities | select ENTITY | state | set-key KEY VALUE | send-event EVENT | brains | topic BRAIN TOPIC | log` [key=value..]
+- `particles open PATH | create PATH | get PATH | kinds | set PATH KEY VALUE | add-emitter PATH | remove-emitter PATH EMITTER | move-emitter PATH FROM TO | duplicate-emitter PATH EMITTER | add-module PATH EMITTER KIND | remove-module PATH EMITTER MODULE | move-module PATH EMITTER FROM TO | select PATH EMITTER | solo PATH EMITTER | play PATH PLAYING | restart PATH | seek PATH TIME | preview PATH | stats PATH | save PATH | render PATH FILE` [key=value..]
+- `weather open PATH | create PATH | get PATH | kinds | set PATH KEY VALUE | add-preset PATH ID | remove-preset PATH PRESET | set-preset PATH PRESET | add-layer PATH PRESET KIND | remove-layer PATH PRESET LAYER | move-layer PATH PRESET FROM TO | set-layer PATH PRESET LAYER | set-param PATH PRESET LAYER NAME VALUE | set-transition PATH FROM TO DURATION | remove-transition PATH FROM TO | select PATH PRESET | preview PATH | save PATH | render PATH FILE` [key=value..]
+- `terrain get | brush | stroke | sample X Z | add-layer | remove-layer INDEX | set-layer INDEX | add-foliage | remove-foliage INDEX | set-foliage INDEX | rebake | save | create | show` [key=value..]
+- `water get | set | set-wave | add-point X Z | set-point INDEX | remove-point INDEX | save` [key=value..]
+- `mixer show | open | create PATH | set-default PATH | get | effect-types | add-bus NAME | remove-bus NAME | set-bus NAME | set-send SOURCE TARGET LEVEL | remove-send SOURCE TARGET | add-effect BUS TYPE | remove-effect BUS ID | move-effect BUS ID INDEX | set-effect BUS ID | add-snapshot NAME | remove-snapshot NAME | set-snapshot NAME | capture-snapshot NAME | set-duck TRIGGER TARGET | remove-duck TRIGGER TARGET | preview | meters | save` [key=value..]
+- `audio get NODE | set NODE | curve NODE | buses` [key=value..]
+- `tiles state | grid | brush | autopaint | refresh | cell-at | tile-info TILE` [key=value..]
+- `tileset create PATH | open PATH | get | set | select | tile TILE | collision TILE OP | rule-tile OP NAME | rule RULE_TILE OP | preview RULE_TILE | save` [key=value..]
+- `sprite create PATH | open PATH | get | slice MODE | frame OP | clip OP NAME | clip-frame CLIP OP | event CLIP OP FRAME | play | save` [key=value..]
+<!-- m67e-generated: end -->

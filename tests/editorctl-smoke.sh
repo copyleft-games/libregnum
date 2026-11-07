@@ -23,7 +23,9 @@
 # 0.9.0 rendering verbs (material, shader, shadergraph, env, post, lod,
 # view layers; skipped until the editor registers their methods), the
 # 0.9.0 M3/M4 verbs (bake, seq, skel2d, anim, bonemap; likewise skipped),
-# the 0.9.0 M5 physics verbs (physasset, physics layers, physics)
+# the 0.9.0 M5 physics verbs (physasset, physics layers, physics),
+# the 0.9.0 M6/M7 verbs (asset new, nav, bt, fsm, ai, particles, weather,
+# terrain, water, mixer, audio, tileset, sprite, tiles; likewise skipped)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -148,6 +150,9 @@ check 'tiles configure' "$(ctl tiles Floor configure width=4 height=2 -o json)" 
 check 'tiles paint stroke' "$(ctl tiles Floor paint tile=2 'points=[[0,0],[3,0]]')" 'changed: 4'
 check 'tiles fill' "$(ctl tiles Floor fill x=0 y=1 tile=5)" 'changed: 4'
 check 'tiles grid' "$(ctl tiles Floor)" '    2   2   2   2'
+ctl create node Floor2 kind=tilemap >/dev/null
+check 'create node kind=tilemap makes a tilemap' "$(ctl tiles Floor2 configure width=2 height=2 -o json)" '"width" : 2'
+ctl delete node Floor2 >/dev/null
 check 'timeline key' "$(ctl timeline key Spin Box time=1 channel=rotation.y value=3.14 easing=ease-in-out-sine)" 'keys: 1'
 check 'timeline list' "$(ctl timeline)" 'name: Spin'
 check 'timeline get' "$(ctl timeline get Spin)" 'ease-in-out-sine'
@@ -437,6 +442,161 @@ then
 else
 	skip 'physics'
 fi
+# 0.9.0 M6/M7 verbs: one pass per area (navigation, AI, effects,
+# terrain/water, audio, 2D) plus asset.new; each skipped until the editor
+# registers its methods.
+if has_method asset.new
+then
+	check 'asset new bt' "$(ctl asset new bt path=ai/smoke.rbt -o json)" 'smoke.rbt'
+	check 'asset new file is a tree' "$(cat "${work}/game/ai/smoke.rbt")" 'type: sequence'
+	check 'asset new terrain' "$(ctl asset new terrain path=terrain/smoke.rterrain -o json)" '"kind" : "terrain"'
+	check 'asset new mixer (free name)' "$(ctl asset new mixer -o json)" '.rmixer'
+	"${ctl}" asset new frobnicate path=x.txt >/dev/null 2>&1 && status=0 || status=$?
+	check 'asset new unknown kind exits 1' "status=${status}" 'status=1'
+else
+	skip 'asset new'
+fi
+# The Navigation and Terrain panels are docked in the default window, so
+# nav.* and terrain.* always exist (no skip).
+check 'nav get' "$(ctl nav -o json)" '"bake"'
+check 'nav set' "$(ctl nav set agent_radius=0.4 -o json)" '0.4'
+check 'nav area-add' "$(ctl nav area-add water cost=4 -o json)" '"index"'
+check 'nav area-box-add' "$(ctl nav area-box-add water min=-1,0,-1 max=1,1,1 -o json)" '"index"'
+check 'nav link-add' "$(ctl nav link-add start=0,0,0 end=0,0,3 -o json)" '"index"'
+check 'nav overlay' "$(ctl nav overlay 'on=["polygons"]' -o json)" 'polygons'
+check 'nav bake' "$(ctl nav bake save=false -o json)" '"triangles"'
+check 'nav agents (not playing)' "$(ctl nav agents -o json)" '"playing" : false'
+if has_method bt.create
+then
+	btf="${work}/game/ai/guard.rbt"
+	check 'bt create' "$(ctl bt create "${btf}")" 'guard.rbt'
+	check 'bt palette' "$(ctl bt palette -o json)" '"sequence"'
+	check 'bt get' "$(ctl bt get "${btf}" -o json)" '"nodes"'
+	check 'bt validate' "$(ctl bt validate "${btf}" -o json)" '"ok"'
+	check 'bt save' "$(ctl bt save "${btf}")" 'guard.rbt'
+	ctl data close "${btf}" --force >/dev/null 2>&1 || true
+else
+	skip 'bt'
+fi
+if has_method fsm.create
+then
+	fsmf="${work}/game/ai/door.rfsm"
+	check 'fsm create' "$(ctl fsm create "${fsmf}")" 'door.rfsm'
+	check 'fsm add-state' "$(ctl fsm add-state "${fsmf}" open -o json)" 'open'
+	check 'fsm add-transition' "$(ctl fsm add-transition "${fsmf}" idle open event=use -o json)" '"index"'
+	check 'fsm get' "$(ctl fsm get "${fsmf}" -o json)" '"use"'
+	check 'fsm save' "$(ctl fsm save "${fsmf}")" 'door.rfsm'
+	check 'fsm file' "$(cat "${fsmf}")" 'open'
+	ctl data close "${fsmf}" --force >/dev/null 2>&1 || true
+else
+	skip 'fsm'
+fi
+if has_method ai.entities
+then
+	check 'ai entities (not playing)' "$(ctl ai entities -o json)" '"playing" : false'
+	check 'ai brains' "$(ctl ai brains -o json)" '"brains"'
+else
+	skip 'ai'
+fi
+if has_method particles.create
+then
+	pf="${work}/game/fx/sparks.rparticles"
+	check 'particles create' "$(ctl particles create "${pf}" -o json)" 'sparks.rparticles'
+	check 'particles kinds' "$(ctl particles kinds -o json)" '"stage"'
+	check 'particles add-emitter' "$(ctl particles add-emitter "${pf}" name=embers -o json)" '"embers"'
+	check 'particles seek' "$(ctl particles seek "${pf}" 0.5 -o json)" '"time"'
+	check 'particles get' "$(ctl particles get "${pf}" -o json)" '"emitters"'
+	check 'particles save' "$(ctl particles save "${pf}")" 'sparks.rparticles'
+	check 'particles file' "$(cat "${pf}")" 'embers'
+	ctl data close "${pf}" --force >/dev/null 2>&1 || true
+else
+	skip 'particles'
+fi
+if has_method weather.create
+then
+	wf="${work}/game/fx/sky.rweather"
+	check 'weather create' "$(ctl weather create "${wf}" -o json)" 'sky.rweather'
+	check 'weather kinds' "$(ctl weather kinds -o json)" '"kinds"'
+	check 'weather add-preset' "$(ctl weather add-preset "${wf}" fog -o json)" '"index"'
+	check 'weather get' "$(ctl weather get "${wf}" -o json)" '"fog"'
+	check 'weather save' "$(ctl weather save "${wf}")" 'sky.rweather'
+	ctl data close "${wf}" --force >/dev/null 2>&1 || true
+else
+	skip 'weather'
+fi
+check 'terrain create' "$(ctl terrain create name=island -o json)" 'island'
+check 'terrain brush' "$(ctl terrain brush tool=raise radius=4 -o json)" '"raise"'
+check 'terrain get' "$(ctl terrain get --node island -o json)" '"chunks"'
+check 'terrain stroke' "$(ctl terrain stroke 'points=[[0,0],[2,0]]' local=true --node island -o json)" '"changed"'
+check 'terrain sample' "$(ctl terrain sample 1 1 local=true --node island -o json)" '"hit"'
+check 'terrain add-layer' "$(ctl terrain add-layer name=sand --node island -o json)" '"index"'
+check 'terrain save' "$(ctl terrain save --node island -o json)" 'island.rterrain'
+check 'terrain create water' "$(ctl terrain create kind=water name=lake -o json)" 'lake'
+if has_method water.get
+then
+	check 'water set' "$(ctl water set level=1.5 --node lake -o json)" '1.5'
+	check 'water get' "$(ctl water get --node lake -o json)" '"waves"'
+	check 'water add-point' "$(ctl water add-point 4 0 width=3 --node lake -o json)" '"index"'
+else
+	skip 'water'
+fi
+if has_method mixer.create
+then
+	mf="${work}/game/audio/main.rmixer"
+	check 'mixer create' "$(ctl mixer create "${mf}" 'buses=["music","sfx"]' -o json)" '"sfx"'
+	check 'mixer add-bus' "$(ctl mixer add-bus steps parent=sfx path="${mf}" -o json)" '"steps"'
+	check 'mixer set-bus' "$(ctl mixer set-bus music volume=-6 path="${mf}" -o json)" '-6'
+	check 'mixer effect-types' "$(ctl mixer effect-types -o json)" '"types"'
+	check 'mixer save' "$(ctl mixer save path="${mf}" -o json)" 'main.rmixer'
+	check 'mixer file' "$(cat "${mf}")" 'steps'
+	ctl data close "${mf}" --force >/dev/null 2>&1 || true
+else
+	skip 'mixer'
+fi
+if has_method audio.get
+then
+	ctl create node Speaker --kind audio-emitter >/dev/null
+	check 'audio set' "$(ctl audio set Speaker max_distance=30 -o json)" '30'
+	check 'audio get' "$(ctl audio get Speaker -o json)" '"min_distance"'
+	check 'audio curve' "$(ctl audio curve Speaker samples=4 -o json)" '"points"'
+	check 'audio buses' "$(ctl audio buses -o json)" '"buses"'
+	ctl undo >/dev/null; ctl undo >/dev/null
+else
+	skip 'audio'
+fi
+if has_method tileset.create
+then
+	tsf="${work}/game/tiles/ground.rtileset"
+	check 'tileset create' "$(ctl tileset create "${tsf}" tile_size=16,16 columns=4 tile_count=16 -o json)" 'ground.rtileset'
+	check 'tileset tile' "$(ctl tileset tile 3 'flags=["solid"]' path="${tsf}" -o json)" 'solid'
+	check 'tileset rule-tile' "$(ctl tileset rule-tile add grass path="${tsf}" -o json)" '"grass"'
+	check 'tileset get' "$(ctl tileset get path="${tsf}" -o json)" '"rule_tiles"'
+	check 'tileset save' "$(ctl tileset save path="${tsf}" -o json)" 'ground.rtileset'
+	ctl data close "${tsf}" --force >/dev/null 2>&1 || true
+else
+	skip 'tileset'
+fi
+if has_method sprite.create
+then
+	spf="${work}/game/sprites/hero.rsprite"
+	check 'sprite create' "$(ctl sprite create "${spf}" -o json)" 'hero.rsprite'
+	check 'sprite frame add' "$(ctl sprite frame add rect=0,0,16,16 path="${spf}" -o json)" '16'
+	check 'sprite clip add' "$(ctl sprite clip add idle 'frames=[0]' path="${spf}" -o json)" '"idle"'
+	check 'sprite get' "$(ctl sprite get path="${spf}" -o json)" '"clips"'
+	check 'sprite save' "$(ctl sprite save path="${spf}" -o json)" 'hero.rsprite'
+	ctl data close "${spf}" --force >/dev/null 2>&1 || true
+else
+	skip 'sprite'
+fi
+if has_method tiles.get
+then
+	check 'tiles state' "$(ctl tiles state --node Floor -o json)" '"grid"'
+	check 'tiles brush' "$(ctl tiles brush flip_x=true -o json)" '"mirrored"'
+	check 'tiles cell-at' "$(ctl tiles cell-at local=8,8 --node Floor -o json)" '"cell"'
+else
+	skip 'tiles (rule tiles)'
+fi
+
 # 0.8.3: asset sources (none registered without a game module).
 check 'source list empty' "$(ctl source list -o json)" '[]'
 "${ctl}" source ls nope >/dev/null 2>&1 && status=0 || status=$?
@@ -506,6 +666,23 @@ else
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"bake_progress"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'
 	check 'mcp 0.8.3 source tools' "${out}" '"name":"source_import"'
+	check 'mcp navigation tools' "${out}" '"name":"nav_area_box_add"'
+	check 'mcp behaviour tree tools' "${out}" '"name":"bt_add_node"'
+	check 'mcp state machine tools' "${out}" '"name":"fsm_add_transition"'
+	check 'mcp ai tools' "${out}" '"name":"ai_set_key"'
+	check 'mcp particle tools' "${out}" '"name":"particles_add_module"'
+	check 'mcp weather tools' "${out}" '"name":"weather_set_param"'
+	check 'mcp terrain tools' "${out}" '"name":"terrain_stroke"'
+	check 'mcp water tools' "${out}" '"name":"water_add_point"'
+	check 'mcp mixer tools' "${out}" '"name":"mixer_set_send"'
+	check 'mcp audio tools' "${out}" '"name":"audio_curve"'
+	check 'mcp tiles tools' "${out}" '"name":"tiles_refresh"'
+	check 'mcp tileset tools' "${out}" '"name":"tileset_rule_tile"'
+	check 'mcp sprite tools' "${out}" '"name":"sprite_clip_frame"'
+	check 'mcp asset_new' "${out}" '"name":"asset_new"'
+	check 'mcp nav_get is read-only and takes no params' \
+		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"nav_get"[^]]*' | head -n 1)" \
+		'"properties":{}},"annotations":{"readOnlyHint":true'
 	check 'mcp inspector_state is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"inspector_state"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'

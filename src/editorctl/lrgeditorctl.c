@@ -161,6 +161,46 @@ static const gchar *description =
 	"                                   project collision layers, collide matrix, world settings\n"
 	"  physasset open|create|get|model|add-part|remove-part|set-part|generate|stabilize|exclude|unexclude\n"
 	"            |set|select|simulate|save PATH ...  .rphysasset ragdolls\n"
+	/* m67e-usage: begin */
+	"  nav get|set|new|bake|cancel|save|clear|area-add|area-remove|area-set|area-box-add|area-box-remove|\n"
+	"      area-box-set|link-add|link-remove|link-set|select|overlay|agents|debug-agent|show ... [key=value...]\n"
+	"                                   navigation (Navigation panel)\n"
+	"  bt open|create|get|palette|add-node|remove-node|move-node|set-node|set-position|layout|select|\n"
+	"     show|add-key|remove-key|set-subtree|remove-subtree|open-subtree|validate|save|live ... [key=value...]\n"
+	"                                   behaviour tree (behaviour tree editor)\n"
+	"  fsm open|create|get|enter|up|add-state|remove-state|rename-state|set-initial|add-transition|\n"
+	"      set-transition|remove-transition|set-actions|set-position|select|add-key|remove-key|validate|\n"
+	"      save|live|send-event ... [key=value...]\n"
+	"                                   state machine (state machine editor)\n"
+	"  ai show|entities|select|state|set-key|send-event|brains|topic|log ... [key=value...]\n"
+	"                                   ai debug (AI panel)\n"
+	"  particles open|create|get|kinds|set|add-emitter|remove-emitter|move-emitter|duplicate-emitter|\n"
+	"            add-module|remove-module|move-module|select|solo|play|restart|seek|preview|stats|save|\n"
+	"            render ... [key=value...]\n"
+	"                                   particle effect (particle editor)\n"
+	"  weather open|create|get|kinds|set|add-preset|remove-preset|set-preset|add-layer|remove-layer|\n"
+	"          move-layer|set-layer|set-param|set-transition|remove-transition|select|preview|save|render ... [key=value...]\n"
+	"                                   weather (weather editor)\n"
+	"  terrain get|brush|stroke|sample|add-layer|remove-layer|set-layer|add-foliage|remove-foliage|\n"
+	"          set-foliage|rebake|save|create|show ... [key=value...]\n"
+	"                                   terrain (Terrain panel)\n"
+	"  water get|set|set-wave|add-point|set-point|remove-point|save ... [key=value...]\n"
+	"                                   water (water editor)\n"
+	"  mixer show|open|create|set-default|get|effect-types|add-bus|remove-bus|set-bus|set-send|\n"
+	"        remove-send|add-effect|remove-effect|move-effect|set-effect|add-snapshot|remove-snapshot|\n"
+	"        set-snapshot|capture-snapshot|set-duck|remove-duck|preview|meters|save ... [key=value...]\n"
+	"                                   mixer (mixer editor)\n"
+	"  audio get|set|curve|buses ... [key=value...]\n"
+	"                                   audio emitter (inspector)\n"
+	"  tiles state|grid|brush|autopaint|refresh|cell-at|tile-info ... [key=value...]\n"
+	"                                   tile painting (Tiles panel)\n"
+	"  tileset create|open|get|set|select|tile|collision|rule-tile|rule|preview|save ... [key=value...]\n"
+	"                                   tileset (tileset editor)\n"
+	"  sprite create|open|get|slice|frame|clip|clip-frame|event|play|save ... [key=value...]\n"
+	"                                   sprite sheet (sprite editor)\n"
+	/* m67e-usage: end */
+	"  asset new KIND [path=P] [name=N] [image=I]  a new asset file (bt fsm particles weather mixer tileset\n"
+	"                                   sprite water nav-settings terrain ...)\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
@@ -215,6 +255,18 @@ static const gchar *description =
 	"  lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80\n"
 	"  lrgeditorctl physasset set-part chars/hero.rphysasset shin_l joint=hinge twist_degrees=0,140\n"
 	"  lrgeditorctl physasset simulate chars/hero.rphysasset advance=2\n"
+	"  lrgeditorctl nav set agent_radius=0.4; lrgeditorctl nav bake; lrgeditorctl nav save\n"
+	"  lrgeditorctl bt add-node ai/guard.rbt wait parent=root props='{\"seconds\":2}'\n"
+	"  lrgeditorctl fsm add-transition ai/door.rfsm idle open event=use\n"
+	"  lrgeditorctl particles add-module fx/sparks.rparticles 0 gravity; lrgeditorctl particles seek fx/sparks.rparticles 1.5\n"
+	"  lrgeditorctl weather preview fx/sky.rweather preset=clear transition_to=storm\n"
+	"  lrgeditorctl terrain stroke points=[[0,0],[4,0]] tool=raise radius=6 --node Island\n"
+	"  lrgeditorctl water points-add 4 0 width=3 --node Lake\n"
+	"  lrgeditorctl mixer add-bus footsteps parent=sfx; lrgeditorctl audio set Speaker max_distance=30 bus=sfx\n"
+	"  lrgeditorctl tiles autopaint cells=[3,4,4,4] rule_tile=grass --node Ground\n"
+	"  lrgeditorctl tileset rule-tile preset grass preset=blob47 first=16 path=tiles/ground.rtileset\n"
+	"  lrgeditorctl sprite clip add walk frames=[0,1,2,3] fps=10 path=sprites/hero.rsprite\n"
+	"  lrgeditorctl asset new bt path=ai/guard.rbt; lrgeditorctl asset new sprite image=sprites/hero.png\n"
 	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
@@ -782,6 +834,27 @@ cmd_create (gchar  **args,
 		json_object_set_int_member (p, "index", opt_index);
 	if (!lrg_ctl_parse_assignments (args + 2, set, error))
 		return FALSE;
+
+	/*
+	 * kind=, primitive=, parent= and index= are node.create parameters
+	 * (the same as --kind, --primitive, --parent, --index): node.set does
+	 * not know them at the top level and would drop them silently, which
+	 * created a plain node for "create node Map kind=tilemap". The flags
+	 * win when both are given.
+	 */
+	{
+		static const gchar * const create_keys[] = { "kind", "primitive", "parent", "index", NULL };
+		guint                      k;
+
+		for (k = 0; create_keys[k] != NULL; k++)
+		{
+			if (!json_object_has_member (set, create_keys[k]))
+				continue;
+			if (!json_object_has_member (p, create_keys[k]))
+				json_object_set_member (p, create_keys[k], json_object_dup_member (set, create_keys[k]));
+			json_object_remove_member (set, create_keys[k]);
+		}
+	}
 
 	created = call ("node.create", p, error);
 	if (created == NULL)
@@ -1505,6 +1578,10 @@ simple_method (const gchar  *method,
  * tiles NODE [paint|rect|fill|pick|configure key=value...]
  * Without an action, prints the grid (layer name and rows of tile ids).
  */
+/* the M6/M7 tiles.* verbs (defined with the other M6/M7 families) */
+static gboolean m67_is_tiles_verb (const gchar *verb);
+static gboolean m67_run_tiles (gchar **args, GError **error);
+
 static gboolean
 cmd_tiles (gchar  **args,
            GError **error)
@@ -1520,6 +1597,9 @@ cmd_tiles (gchar  **args,
 
 	if (args[0] == NULL)
 		return usage_error (error, "tiles NODE [paint|rect|fill|pick|configure key=value...]");
+	/* the 0.9.0 rule-tile and grid verbs: tiles state|grid|brush|autopaint|... */
+	if (m67_is_tiles_verb (args[0]))
+		return m67_run_tiles (args, error);
 	p = node_param (args[0]);
 	if (args[1] != NULL)
 	{
@@ -1913,6 +1993,12 @@ cmd_asset (gchar  **args,
 
 	if (g_strcmp0 (args[0], "orphans") == 0)
 		return passthrough ("asset.orphans", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "new") == 0)
+	{
+		static const gchar * const new_keys[] = { "kind", NULL };
+
+		return passthrough ("asset.new", new_keys, args + 1, error);
+	}
 	if (args[0] == NULL || args[1] == NULL)
 		return usage_error (error, "asset reveal|duplicate|trash PATH | asset rename PATH NAME | "
 		                    "asset move PATH DEST | asset orphans [trash=true]");
@@ -3182,6 +3268,489 @@ cmd_physasset (gchar  **args,
 	return run_family ("physasset", table, G_N_ELEMENTS (table), args, error);
 }
 
+/* ==========================================================================
+ * 0.9.0 M6/M7 verbs: nav, bt, fsm, ai, particles, weather, terrain, water,
+ * mixer, audio, tiles (rule tiles and grids), tileset and sprite
+ *
+ * One table row per IPC method (rows generated from the method lists the
+ * tools publish; keep them in sync with docs/editor/ipc-protocol.org).
+ * The verb is the method name after the family with '.' and '_' turned
+ * into '-' (nav.area.box.add -> "nav area-box-add").
+ * ========================================================================== */
+
+/*
+ * M67Verb:
+ * @verb: the CLI verb
+ * @method: the IPC method
+ * @keys: positional parameters in order ('@' a file path, '~' a typed
+ *   value, as in #CtlVerb)
+ * @wrap: %NULL, or the object member that key=value arguments go into
+ *   (nav.set "values", audio.set "params"), except the keys in @top
+ * @top: key=value keys that stay top-level when @wrap is set
+ * @node: --node fills "node" when node= was not given
+ */
+typedef struct
+{
+	const gchar *verb;
+	const gchar *method;
+	const gchar *keys[6];
+	const gchar *wrap;
+	const gchar *top[4];
+	gboolean     node;
+} M67Verb;
+
+/* m67e-generated: begin */
+/* nav get|set|new|bake|cancel|save|clear|area-add|area-remove|area-set|area-box-add|area-box-remove|area-box-set|link-add|link-remove|link-set|select|overlay|agents|debug-agent|show */
+static const M67Verb m67_nav_verbs[] = {
+	{ "get", "nav.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "nav.set", { NULL }, "values", { "key", "value", "values", NULL }, FALSE },
+	{ "new", "nav.new", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "bake", "nav.bake", { NULL }, NULL, { NULL }, FALSE },
+	{ "cancel", "nav.cancel", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "nav.save", { NULL }, NULL, { NULL }, FALSE },
+	{ "clear", "nav.clear", { NULL }, NULL, { NULL }, FALSE },
+	{ "area-add", "nav.area.add", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "area-remove", "nav.area.remove", { "~area", NULL }, NULL, { NULL }, FALSE },
+	{ "area-set", "nav.area.set", { "~area", NULL }, NULL, { NULL }, FALSE },
+	{ "area-box-add", "nav.area.box.add", { "~area", NULL }, NULL, { NULL }, FALSE },
+	{ "area-box-remove", "nav.area.box.remove", { "~area", "~box", NULL }, NULL, { NULL }, FALSE },
+	{ "area-box-set", "nav.area.box.set", { "~area", "~box", NULL }, NULL, { NULL }, FALSE },
+	{ "link-add", "nav.link.add", { NULL }, NULL, { NULL }, FALSE },
+	{ "link-remove", "nav.link.remove", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "link-set", "nav.link.set", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "nav.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "overlay", "nav.overlay", { NULL }, NULL, { NULL }, FALSE },
+	{ "agents", "nav.agents", { NULL }, NULL, { NULL }, FALSE },
+	{ "debug-agent", "nav.debug_agent", { NULL }, NULL, { NULL }, TRUE },
+	{ "show", "nav.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* bt open|create|get|palette|add-node|remove-node|move-node|set-node|set-position|layout|select|show|add-key|remove-key|set-subtree|remove-subtree|open-subtree|validate|save|live */
+static const M67Verb m67_bt_verbs[] = {
+	{ "open", "bt.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "bt.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "bt.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "palette", "bt.palette", { NULL }, NULL, { NULL }, FALSE },
+	{ "add-node", "bt.add_node", { "@path", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-node", "bt.remove_node", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "move-node", "bt.move_node", { "@path", "id", "parent", NULL }, NULL, { NULL }, FALSE },
+	{ "set-node", "bt.set_node", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-position", "bt.set_position", { "@path", "id", "~x", "~y", NULL }, NULL, { NULL }, FALSE },
+	{ "layout", "bt.layout", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "bt.select", { "@path", "~id", NULL }, NULL, { NULL }, FALSE },
+	{ "show", "bt.show", { "@path", "~subtree", NULL }, NULL, { NULL }, FALSE },
+	{ "add-key", "bt.add_key", { "@path", "name", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-key", "bt.remove_key", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-subtree", "bt.set_subtree", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-subtree", "bt.remove_subtree", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "open-subtree", "bt.open_subtree", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "bt.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "bt.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "live", "bt.live", { "@path", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* fsm open|create|get|enter|up|add-state|remove-state|rename-state|set-initial|add-transition|set-transition|remove-transition|set-actions|set-position|select|add-key|remove-key|validate|save|live|send-event */
+static const M67Verb m67_fsm_verbs[] = {
+	{ "open", "fsm.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "fsm.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "fsm.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "enter", "fsm.enter", { "@path", "state", NULL }, NULL, { NULL }, FALSE },
+	{ "up", "fsm.up", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "add-state", "fsm.add_state", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-state", "fsm.remove_state", { "@path", "state", NULL }, NULL, { NULL }, FALSE },
+	{ "rename-state", "fsm.rename_state", { "@path", "state", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-initial", "fsm.set_initial", { "@path", "state", NULL }, NULL, { NULL }, FALSE },
+	{ "add-transition", "fsm.add_transition", { "@path", "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "set-transition", "fsm.set_transition", { "@path", "from", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-transition", "fsm.remove_transition", { "@path", "from", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "set-actions", "fsm.set_actions", { "@path", "state", "phase", NULL }, NULL, { NULL }, FALSE },
+	{ "set-position", "fsm.set_position", { "@path", "state", "~x", "~y", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "fsm.select", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "add-key", "fsm.add_key", { "@path", "name", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-key", "fsm.remove_key", { "@path", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "fsm.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "fsm.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "live", "fsm.live", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "send-event", "fsm.send_event", { "@path", "event", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* ai show|entities|select|state|set-key|send-event|brains|topic|log */
+static const M67Verb m67_ai_verbs[] = {
+	{ "show", "ai.show", { NULL }, NULL, { NULL }, FALSE },
+	{ "entities", "ai.entities", { NULL }, NULL, { NULL }, FALSE },
+	{ "select", "ai.select", { "~entity", NULL }, NULL, { NULL }, FALSE },
+	{ "state", "ai.state", { NULL }, NULL, { NULL }, FALSE },
+	{ "set-key", "ai.set_key", { "key", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "send-event", "ai.send_event", { "event", NULL }, NULL, { NULL }, FALSE },
+	{ "brains", "ai.brains", { NULL }, NULL, { NULL }, FALSE },
+	{ "topic", "ai.topic", { "brain", "topic", NULL }, NULL, { NULL }, FALSE },
+	{ "log", "ai.log", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* particles open|create|get|kinds|set|add-emitter|remove-emitter|move-emitter|duplicate-emitter|add-module|remove-module|move-module|select|solo|play|restart|seek|preview|stats|save|render */
+static const M67Verb m67_particles_verbs[] = {
+	{ "open", "particles.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "particles.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "particles.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "kinds", "particles.kinds", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "particles.set", { "@path", "key", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "add-emitter", "particles.add_emitter", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-emitter", "particles.remove_emitter", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "move-emitter", "particles.move_emitter", { "@path", "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "duplicate-emitter", "particles.duplicate_emitter", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "add-module", "particles.add_module", { "@path", "~emitter", "kind", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-module", "particles.remove_module", { "@path", "~emitter", "~module", NULL }, NULL, { NULL }, FALSE },
+	{ "move-module", "particles.move_module", { "@path", "~emitter", "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "particles.select", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "solo", "particles.solo", { "@path", "~emitter", NULL }, NULL, { NULL }, FALSE },
+	{ "play", "particles.play", { "@path", "~playing", NULL }, NULL, { NULL }, FALSE },
+	{ "restart", "particles.restart", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "seek", "particles.seek", { "@path", "~time", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "particles.preview", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "stats", "particles.stats", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "particles.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "render", "particles.render", { "@path", "file", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* weather open|create|get|kinds|set|add-preset|remove-preset|set-preset|add-layer|remove-layer|move-layer|set-layer|set-param|set-transition|remove-transition|select|preview|save|render */
+static const M67Verb m67_weather_verbs[] = {
+	{ "open", "weather.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "create", "weather.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "weather.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "kinds", "weather.kinds", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "weather.set", { "@path", "key", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "add-preset", "weather.add_preset", { "@path", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-preset", "weather.remove_preset", { "@path", "~preset", NULL }, NULL, { NULL }, FALSE },
+	{ "set-preset", "weather.set_preset", { "@path", "~preset", NULL }, NULL, { NULL }, FALSE },
+	{ "add-layer", "weather.add_layer", { "@path", "~preset", "kind", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-layer", "weather.remove_layer", { "@path", "~preset", "~layer", NULL }, NULL, { NULL }, FALSE },
+	{ "move-layer", "weather.move_layer", { "@path", "~preset", "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "set-layer", "weather.set_layer", { "@path", "~preset", "~layer", NULL }, NULL, { NULL }, FALSE },
+	{ "set-param", "weather.set_param", { "@path", "~preset", "~layer", "name", "~value", NULL }, NULL, { NULL }, FALSE },
+	{ "set-transition", "weather.set_transition", { "@path", "from", "to", "~duration", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-transition", "weather.remove_transition", { "@path", "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "weather.select", { "@path", "~preset", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "weather.preview", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "weather.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "render", "weather.render", { "@path", "file", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* terrain get|brush|stroke|sample|add-layer|remove-layer|set-layer|add-foliage|remove-foliage|set-foliage|rebake|save|create|show */
+static const M67Verb m67_terrain_verbs[] = {
+	{ "get", "terrain.get", { NULL }, NULL, { NULL }, TRUE },
+	{ "brush", "terrain.brush", { NULL }, NULL, { NULL }, FALSE },
+	{ "stroke", "terrain.stroke", { NULL }, NULL, { NULL }, TRUE },
+	{ "sample", "terrain.sample", { "~x", "~z", NULL }, NULL, { NULL }, TRUE },
+	{ "add-layer", "terrain.add_layer", { NULL }, NULL, { NULL }, TRUE },
+	{ "remove-layer", "terrain.remove_layer", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "set-layer", "terrain.set_layer", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "add-foliage", "terrain.add_foliage", { NULL }, NULL, { NULL }, TRUE },
+	{ "remove-foliage", "terrain.remove_foliage", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "set-foliage", "terrain.set_foliage", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "rebake", "terrain.rebake", { NULL }, NULL, { NULL }, TRUE },
+	{ "save", "terrain.save", { NULL }, NULL, { NULL }, TRUE },
+	{ "create", "terrain.create", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "terrain.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* water get|set|set-wave|add-point|set-point|remove-point|save */
+static const M67Verb m67_water_verbs[] = {
+	{ "get", "water.get", { NULL }, NULL, { NULL }, TRUE },
+	{ "set", "water.set", { NULL }, NULL, { NULL }, TRUE },
+	{ "set-wave", "water.set_wave", { NULL }, NULL, { NULL }, TRUE },
+	{ "add-point", "water.add_point", { "~x", "~z", NULL }, NULL, { NULL }, TRUE },
+	{ "set-point", "water.set_point", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "remove-point", "water.remove_point", { "~index", NULL }, NULL, { NULL }, TRUE },
+	{ "save", "water.save", { NULL }, NULL, { NULL }, TRUE },
+};
+
+/* mixer show|open|create|set-default|get|effect-types|add-bus|remove-bus|set-bus|set-send|remove-send|add-effect|remove-effect|move-effect|set-effect|add-snapshot|remove-snapshot|set-snapshot|capture-snapshot|set-duck|remove-duck|preview|meters|save */
+static const M67Verb m67_mixer_verbs[] = {
+	{ "show", "mixer.show", { NULL }, NULL, { NULL }, FALSE },
+	{ "open", "mixer.open", { NULL }, NULL, { NULL }, FALSE },
+	{ "create", "mixer.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "set-default", "mixer.set_default", { "~path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "mixer.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "effect-types", "mixer.effect_types", { NULL }, NULL, { NULL }, FALSE },
+	{ "add-bus", "mixer.add_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-bus", "mixer.remove_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-bus", "mixer.set_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-send", "mixer.set_send", { "source", "target", "~level", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-send", "mixer.remove_send", { "source", "target", NULL }, NULL, { NULL }, FALSE },
+	{ "add-effect", "mixer.add_effect", { "bus", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-effect", "mixer.remove_effect", { "bus", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "move-effect", "mixer.move_effect", { "bus", "id", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "set-effect", "mixer.set_effect", { "bus", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "add-snapshot", "mixer.add_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-snapshot", "mixer.remove_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-snapshot", "mixer.set_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "capture-snapshot", "mixer.capture_snapshot", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-duck", "mixer.set_duck", { "trigger", "target", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-duck", "mixer.remove_duck", { "trigger", "target", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "mixer.preview", { NULL }, NULL, { NULL }, FALSE },
+	{ "meters", "mixer.meters", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "mixer.save", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* audio get|set|curve|buses */
+static const M67Verb m67_audio_verbs[] = {
+	{ "get", "audio.get", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "set", "audio.set", { "node", NULL }, "params", { "node", "params", NULL }, TRUE },
+	{ "curve", "audio.curve", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "buses", "audio.buses", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* tiles state|grid|brush|autopaint|refresh|cell-at|tile-info */
+static const M67Verb m67_tiles_verbs[] = {
+	{ "state", "tiles.get", { NULL }, NULL, { NULL }, TRUE },
+	{ "grid", "tiles.grid", { NULL }, NULL, { NULL }, TRUE },
+	{ "brush", "tiles.brush", { NULL }, NULL, { NULL }, FALSE },
+	{ "autopaint", "tiles.paint", { NULL }, NULL, { NULL }, TRUE },
+	{ "refresh", "tiles.refresh", { NULL }, NULL, { NULL }, TRUE },
+	{ "cell-at", "tiles.cell_at", { NULL }, NULL, { NULL }, TRUE },
+	{ "tile-info", "tiles.tile_info", { "~tile", NULL }, NULL, { NULL }, TRUE },
+};
+
+/* tileset create|open|get|set|select|tile|collision|rule-tile|rule|preview|save */
+static const M67Verb m67_tileset_verbs[] = {
+	{ "create", "tileset.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "open", "tileset.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "tileset.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "tileset.set", { NULL }, NULL, { NULL }, FALSE },
+	{ "select", "tileset.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "tile", "tileset.tile", { "~tile", NULL }, NULL, { NULL }, FALSE },
+	{ "collision", "tileset.collision", { "~tile", "op", NULL }, NULL, { NULL }, FALSE },
+	{ "rule-tile", "tileset.rule_tile", { "op", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "rule", "tileset.rule", { "rule_tile", "op", NULL }, NULL, { NULL }, FALSE },
+	{ "preview", "tileset.preview", { "rule_tile", NULL }, NULL, { NULL }, FALSE },
+	{ "save", "tileset.save", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* sprite create|open|get|slice|frame|clip|clip-frame|event|play|save */
+static const M67Verb m67_sprite_verbs[] = {
+	{ "create", "sprite.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "open", "sprite.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "sprite.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "slice", "sprite.slice", { "mode", NULL }, NULL, { NULL }, FALSE },
+	{ "frame", "sprite.frame", { "op", NULL }, NULL, { NULL }, FALSE },
+	{ "clip", "sprite.clip", { "op", "name", NULL }, NULL, { NULL }, FALSE },
+	{ "clip-frame", "sprite.clip_frame", { "clip", "op", NULL }, NULL, { NULL }, FALSE },
+	{ "event", "sprite.event", { "clip", "op", "~frame", NULL }, NULL, { NULL }, FALSE },
+	{ "play", "sprite.play", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "sprite.save", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* the M6/M7 families: lrgeditorctl FAMILY VERB ... */
+static const struct
+{
+	const gchar   *family;
+	const M67Verb *verbs;
+	gsize          n_verbs;
+} m67_families[] = {
+	{ "nav", m67_nav_verbs, G_N_ELEMENTS (m67_nav_verbs) },
+	{ "bt", m67_bt_verbs, G_N_ELEMENTS (m67_bt_verbs) },
+	{ "fsm", m67_fsm_verbs, G_N_ELEMENTS (m67_fsm_verbs) },
+	{ "ai", m67_ai_verbs, G_N_ELEMENTS (m67_ai_verbs) },
+	{ "particles", m67_particles_verbs, G_N_ELEMENTS (m67_particles_verbs) },
+	{ "weather", m67_weather_verbs, G_N_ELEMENTS (m67_weather_verbs) },
+	{ "terrain", m67_terrain_verbs, G_N_ELEMENTS (m67_terrain_verbs) },
+	{ "water", m67_water_verbs, G_N_ELEMENTS (m67_water_verbs) },
+	{ "mixer", m67_mixer_verbs, G_N_ELEMENTS (m67_mixer_verbs) },
+	{ "audio", m67_audio_verbs, G_N_ELEMENTS (m67_audio_verbs) },
+	{ "tiles", m67_tiles_verbs, G_N_ELEMENTS (m67_tiles_verbs) },
+	{ "tileset", m67_tileset_verbs, G_N_ELEMENTS (m67_tileset_verbs) },
+	{ "sprite", m67_sprite_verbs, G_N_ELEMENTS (m67_sprite_verbs) },
+};
+/* m67e-generated: end */
+
+/* The usage of one M6/M7 family: "family verb KEY | ...". */
+static gchar *
+m67_usage (const gchar   *family,
+           const M67Verb *table,
+           gsize          n)
+{
+	GString *s = g_string_new (NULL);
+	gsize    i;
+	guint    k;
+
+	for (i = 0; i < n; i++)
+	{
+		if (i > 0)
+			g_string_append (s, " | ");
+		g_string_append_printf (s, "%s %s", family, table[i].verb);
+		for (k = 0; table[i].keys[k] != NULL; k++)
+		{
+			const gchar      *key = table[i].keys[k];
+			g_autofree gchar *upper = NULL;
+
+			if (*key == '@' || *key == '~')
+				key++;
+			upper = g_ascii_strup (key, -1);
+			g_string_append_printf (s, " %s", upper);
+		}
+	}
+	g_string_append (s, " [key=value...]");
+	return g_string_free (s, FALSE);
+}
+
+/*
+ * m67_params:
+ * Builds the params of @row from @args: arguments without '=' fill the
+ * positional keys, key=value arguments go to the top level (parsed like
+ * every other verb's assignments) or, with @row->wrap, into that member.
+ */
+static JsonObject *
+m67_params (const M67Verb  *row,
+            gchar         **args,
+            GError        **error)
+{
+	g_autoptr(JsonObject) p = json_object_new ();
+	g_autoptr(JsonObject) wrapped = json_object_new ();
+	guint                 k = 0;
+	guint                 i;
+
+	for (i = 0; args != NULL && args[i] != NULL; i++)
+	{
+		const gchar *eq = strchr (args[i], '=');
+
+		if (eq == NULL || eq == args[i])
+		{
+			const gchar *key = row->keys[k];
+
+			if (key == NULL)
+			{
+				usage_error (error, "%s: unexpected argument '%s'", row->method, args[i]);
+				return NULL;
+			}
+			if (*key == '@')
+			{
+				g_autofree gchar *path = path_arg (args[i]);
+
+				json_object_set_string_member (p, key + 1, path);
+			}
+			else if (*key == '~')
+				json_object_set_member (p, key + 1, typed_value (args[i]));
+			else
+				json_object_set_string_member (p, key, args[i]);
+			k++;
+		}
+		else if (row->wrap != NULL)
+		{
+			g_autofree gchar *key = g_strndup (args[i], eq - args[i]);
+
+			if (g_strv_contains (row->top, key))
+				json_object_set_member (p, key, lrg_ctl_parse_value (eq + 1));
+			else
+				json_object_set_member (wrapped, key, lrg_ctl_parse_value (eq + 1));
+		}
+		else
+		{
+			gchar *one[] = { args[i], NULL };
+
+			if (!lrg_ctl_parse_assignments (one, p, error))
+				return NULL;
+		}
+	}
+	if (row->wrap != NULL && json_object_get_size (wrapped) > 0)
+		json_object_set_object_member (p, row->wrap, json_object_ref (wrapped));
+	if (row->node && opt_node != NULL && !json_object_has_member (p, "node"))
+		json_object_set_string_member (p, "node", opt_node);
+	return g_steal_pointer (&p);
+}
+
+/*
+ * m67_run:
+ * Runs "FAMILY VERB ..." of an M6/M7 family; a bare FAMILY runs its
+ * "get" (or "state") verb. The result prints as YAML by default.
+ */
+static gboolean
+m67_run (const gchar   *family,
+         const M67Verb *table,
+         gsize          n,
+         gchar        **args,
+         GError       **error)
+{
+	static gchar         *none[] = { NULL };
+	const gchar          *verb = args[0];
+	g_autoptr(JsonObject) p = NULL;
+	g_autoptr(JsonNode)   r = NULL;
+	gsize                 i;
+
+	for (i = 0; verb == NULL && i < n; i++)
+	{
+		if (g_strcmp0 (table[i].verb, "get") == 0 || g_strcmp0 (table[i].verb, "state") == 0)
+			verb = table[i].verb;
+	}
+	for (i = 0; verb != NULL && i < n; i++)
+	{
+		if (g_strcmp0 (verb, table[i].verb) != 0)
+			continue;
+		p = m67_params (&table[i], args[0] != NULL ? args + 1 : none, error);
+		if (p == NULL)
+			return FALSE;
+		r = call (table[i].method, p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	{
+		g_autofree gchar *usage = m67_usage (family, table, n);
+
+		return usage_error (error, "%s", usage);
+	}
+}
+
+/* The M6/M7 family named @family, or NULL. */
+static gboolean
+m67_lookup (const gchar    *family,
+            const M67Verb **table,
+            gsize          *n)
+{
+	gsize i;
+
+	for (i = 0; i < G_N_ELEMENTS (m67_families); i++)
+	{
+		if (g_strcmp0 (family, m67_families[i].family) == 0)
+		{
+			*table = m67_families[i].verbs;
+			*n = m67_families[i].n_verbs;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* Whether @verb is one of the M6/M7 tiles.* verbs (not a tilemap node). */
+static gboolean
+m67_is_tiles_verb (const gchar *verb)
+{
+	const M67Verb *table = NULL;
+	gsize          n = 0;
+	gsize          i;
+
+	if (verb == NULL || !m67_lookup ("tiles", &table, &n))
+		return FALSE;
+	for (i = 0; i < n; i++)
+	{
+		if (g_strcmp0 (verb, table[i].verb) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* tiles VERB ...: the tiles.* family (cmd_tiles() keeps tiles NODE ...) */
+static gboolean
+m67_run_tiles (gchar  **args,
+               GError **error)
+{
+	const M67Verb *table = NULL;
+	gsize          n = 0;
+
+	m67_lookup ("tiles", &table, &n);
+	return m67_run ("tiles", table, n, args, error);
+}
+
 /*
  * view layers [MASK | LAYER on|off] [viewport=N]: a viewport's render
  * layer cull mask. MASK is a number (0x... hex too), "all" or "none";
@@ -3284,7 +3853,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -3327,12 +3896,27 @@ static const gchar *completion_script =
 	"\t\tclip) mapfile -t COMPREPLY < <(compgen -W 'list info preview morph' -- \"${cur}\") ;;\n"
 	"\t\tphysics) mapfile -t COMPREPLY < <(compgen -W 'get add-body remove-body set-body add-shape remove-shape set-shape move-shape add-joint remove-joint set-joint fit overlay state show layers' -- \"${cur}\") ;;\n"
 	"\t\tphysasset) mapfile -t COMPREPLY < <(compgen -W 'open create get model add-part remove-part set-part generate stabilize exclude unexclude set select simulate save' -- \"${cur}\") ;;\n"
+	/* m67e-completion: begin */
+	"\t\tnav) mapfile -t COMPREPLY < <(compgen -W 'get set new bake cancel save clear area-add area-remove area-set area-box-add area-box-remove area-box-set link-add link-remove link-set select overlay agents debug-agent show' -- \"${cur}\") ;;\n"
+	"\t\tbt) mapfile -t COMPREPLY < <(compgen -W 'open create get palette add-node remove-node move-node set-node set-position layout select show add-key remove-key set-subtree remove-subtree open-subtree validate save live' -- \"${cur}\") ;;\n"
+	"\t\tfsm) mapfile -t COMPREPLY < <(compgen -W 'open create get enter up add-state remove-state rename-state set-initial add-transition set-transition remove-transition set-actions set-position select add-key remove-key validate save live send-event' -- \"${cur}\") ;;\n"
+	"\t\tai) mapfile -t COMPREPLY < <(compgen -W 'show entities select state set-key send-event brains topic log' -- \"${cur}\") ;;\n"
+	"\t\tparticles) mapfile -t COMPREPLY < <(compgen -W 'open create get kinds set add-emitter remove-emitter move-emitter duplicate-emitter add-module remove-module move-module select solo play restart seek preview stats save render' -- \"${cur}\") ;;\n"
+	"\t\tweather) mapfile -t COMPREPLY < <(compgen -W 'open create get kinds set add-preset remove-preset set-preset add-layer remove-layer move-layer set-layer set-param set-transition remove-transition select preview save render' -- \"${cur}\") ;;\n"
+	"\t\tterrain) mapfile -t COMPREPLY < <(compgen -W 'get brush stroke sample add-layer remove-layer set-layer add-foliage remove-foliage set-foliage rebake save create show' -- \"${cur}\") ;;\n"
+	"\t\twater) mapfile -t COMPREPLY < <(compgen -W 'get set set-wave add-point set-point remove-point save' -- \"${cur}\") ;;\n"
+	"\t\tmixer) mapfile -t COMPREPLY < <(compgen -W 'show open create set-default get effect-types add-bus remove-bus set-bus set-send remove-send add-effect remove-effect move-effect set-effect add-snapshot remove-snapshot set-snapshot capture-snapshot set-duck remove-duck preview meters save' -- \"${cur}\") ;;\n"
+	"\t\taudio) mapfile -t COMPREPLY < <(compgen -W 'get set curve buses' -- \"${cur}\") ;;\n"
+	"\t\ttiles) mapfile -t COMPREPLY < <(compgen -W 'state grid brush autopaint refresh cell-at tile-info' -- \"${cur}\") ;;\n"
+	"\t\ttileset) mapfile -t COMPREPLY < <(compgen -W 'create open get set select tile collision rule-tile rule preview save' -- \"${cur}\") ;;\n"
+	"\t\tsprite) mapfile -t COMPREPLY < <(compgen -W 'create open get slice frame clip clip-frame event play save' -- \"${cur}\") ;;\n"
+	/* m67e-completion: end */
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
 	"\t\tcode) mapfile -t COMPREPLY < <(compgen -W 'open list save' -- \"${cur}\") ;;\n"
 	"\t\tinspector) mapfile -t COMPREPLY < <(compgen -W 'list get set reset state apply-override revert-override' -- \"${cur}\") ;;\n"
 	"\t\thierarchy) mapfile -t COMPREPLY < <(compgen -W 'reveal rename filter state' -- \"${cur}\") ;;\n"
-	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans' -- \"${cur}\") ;;\n"
+	"\t\tasset) mapfile -t COMPREPLY < <(compgen -W 'reveal rename move duplicate trash orphans new' -- \"${cur}\") ;;\n"
 	"\t\tsource|sources) mapfile -t COMPREPLY < <(compgen -W 'list ls search export import place' -- \"${cur}\") ;;\n"
 	"\t\tdata) mapfile -t COMPREPLY < <(compgen -W 'list open get set edit undo redo validate save reload close reveal' -- \"${cur}\") ;;\n"
 	"\t\tpalette) mapfile -t COMPREPLY < <(compgen -W 'commands files' -- \"${cur}\") ;;\n"
@@ -3413,6 +3997,14 @@ dispatch (gchar  **argv,
 		return cmd_physics (rest, error);
 	if (g_strcmp0 (verb, "physasset") == 0)
 		return cmd_physasset (rest, error);
+	{
+		const M67Verb *table = NULL;
+		gsize          n = 0;
+
+		/* nav bt fsm ai particles weather terrain water mixer audio tileset sprite */
+		if (g_strcmp0 (verb, "tiles") != 0 && m67_lookup (verb, &table, &n))
+			return m67_run (verb, table, n, rest, error);
+	}
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)

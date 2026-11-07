@@ -327,4 +327,34 @@ gboolean lrg_editor_assets_panel_preview_clips (LrgEditorAssetsPanel *self,
 LRG_AVAILABLE_IN_ALL
 const gchar * lrg_editor_assets_panel_get_clip_preview_model (LrgEditorAssetsPanel *self);
 
+/**
+ * lrg_editor_assets_panel_create_asset:
+ * @path: (type filename): the new file (absolute; its folder is created)
+ * @kind: what to write: a document format nick
+ *   (lrg_editor_document_format_to_string(): "bt", "fsm", "particles",
+ *   "weather", "mixer", "tileset", "sprite", "water", "nav-settings",
+ *   "material", ...) or "terrain"
+ * @image: (nullable) (type filename): for "sprite", an image to slice:
+ *   the .rsprite references it (relative to @path when it lies below
+ *   @path's folder) and gets one frame per opaque island of it
+ *   (lrg_sprite_sheet_slice_alpha(), bottom-centre pivots)
+ * @error: return location for a #GError
+ *
+ * The background menu's New entries of the gameplay and effect formats
+ * (and the `asset.new` IPC method): a document format writes the
+ * smallest file its engine loader accepts (lrg_editor_document_new());
+ * "terrain" writes a flat 4x4-chunk #LrgTerrainAsset (64 cells, 32 units
+ * per chunk) with its sidecars.
+ *
+ * Returns: %TRUE on success; %G_IO_ERROR_EXISTS when @path exists,
+ *   %G_IO_ERROR_INVALID_ARGUMENT for an unknown @kind
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_assets_panel_create_asset (const gchar  *path,
+                                               const gchar  *kind,
+                                               const gchar  *image,
+                                               GError      **error);
+
 G_END_DECLS

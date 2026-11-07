@@ -380,6 +380,206 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =physasset.select= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
 | =physasset.simulate= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
 | =physasset.save= | 0.9.0 | physics asset editor | [[#ipc-physics-assets][Physics layers and assets]] |
+| =nav.get= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.set= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.new= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.bake= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.cancel= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.save= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.clear= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.area.add= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.area.remove= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.area.set= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.area.box.add= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.area.box.remove= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.area.box.set= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.link.add= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.link.remove= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.link.set= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.select= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.overlay= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.agents= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.debug_agent= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =nav.show= | 0.9.0 | Navigation panel | [[#ipc-nav][Navigation methods]] |
+| =bt.open= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.create= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.get= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.palette= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.add_node= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.remove_node= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.move_node= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.set_node= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.set_position= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.layout= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.select= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.show= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.add_key= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.remove_key= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.set_subtree= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.remove_subtree= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.open_subtree= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.validate= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.save= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =bt.live= | 0.9.0 | behaviour tree editor | [[#ipc-bt][Behaviour tree methods]] |
+| =fsm.open= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.create= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.get= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.enter= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.up= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.add_state= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.remove_state= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.rename_state= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.set_initial= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.add_transition= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.set_transition= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.remove_transition= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.set_actions= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.set_position= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.select= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.add_key= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.remove_key= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.validate= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.save= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.live= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =fsm.send_event= | 0.9.0 | state machine editor | [[#ipc-fsm][State machine methods]] |
+| =ai.show= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.entities= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.select= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.state= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.set_key= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.send_event= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.brains= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.topic= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =ai.log= | 0.9.0 | AI panel | [[#ipc-ai][AI debug methods]] |
+| =particles.open= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.create= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.get= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.kinds= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.set= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.add_emitter= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.remove_emitter= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.move_emitter= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.duplicate_emitter= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.add_module= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.remove_module= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.move_module= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.select= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.solo= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.play= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.restart= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.seek= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.preview= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.stats= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.save= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =particles.render= | 0.9.0 | particle editor | [[#ipc-particles][Particle effect methods]] |
+| =weather.open= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.create= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.get= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.kinds= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.set= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.add_preset= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.remove_preset= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.set_preset= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.add_layer= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.remove_layer= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.move_layer= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.set_layer= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.set_param= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.set_transition= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.remove_transition= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.select= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.preview= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.save= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =weather.render= | 0.9.0 | weather editor | [[#ipc-weather][Weather methods]] |
+| =terrain.get= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.brush= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.stroke= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.sample= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.add_layer= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.remove_layer= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.set_layer= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.add_foliage= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.remove_foliage= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.set_foliage= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.rebake= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.save= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.create= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.show= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =water.get= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.set= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.set_wave= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.add_point= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.set_point= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.remove_point= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.save= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =mixer.show= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.open= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.create= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.set_default= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.get= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.effect_types= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.add_bus= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.remove_bus= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.set_bus= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.set_send= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.remove_send= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.add_effect= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.remove_effect= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.move_effect= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.set_effect= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.add_snapshot= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.remove_snapshot= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.set_snapshot= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.capture_snapshot= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.set_duck= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.remove_duck= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.preview= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.meters= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =mixer.save= | 0.9.0 | mixer editor | [[#ipc-mixer][Mixer methods]] |
+| =audio.get= | 0.9.0 | inspector | [[#ipc-audio][Audio emitter methods]] |
+| =audio.set= | 0.9.0 | inspector | [[#ipc-audio][Audio emitter methods]] |
+| =audio.curve= | 0.9.0 | inspector | [[#ipc-audio][Audio emitter methods]] |
+| =audio.buses= | 0.9.0 | inspector | [[#ipc-audio][Audio emitter methods]] |
+| =tiles.get= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tiles.grid= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tiles.brush= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tiles.paint= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tiles.refresh= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tiles.cell_at= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tiles.tile_info= | 0.9.0 | Tiles panel | [[#ipc-tiles][Tile painting methods]] |
+| =tileset.create= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.open= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.get= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.set= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.select= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.tile= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.collision= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.rule_tile= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.rule= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.preview= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =tileset.save= | 0.9.0 | tileset editor | [[#ipc-tileset][Tileset methods]] |
+| =sprite.create= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.open= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.get= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.slice= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.frame= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.clip= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.clip_frame= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.event= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.play= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =sprite.save= | 0.9.0 | sprite editor | [[#ipc-sprite][Sprite sheet methods]] |
+| =asset.new= | 0.9.0 | assets panel | [[#asset-file-methods][Asset file]] |
+| =terrain.layers.add= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.layers.remove= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.layers.set= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.foliage.add= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.foliage.remove= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =terrain.foliage.set= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
+| =water.waves.set= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.points.add= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.points.set= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.points.remove= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
+| =water.create= | 0.9.0 | water editor | [[#ipc-water][Water methods]] |
 
 Errors are the codes of the [[#messages][message table]] everywhere: a missing or mistyped parameter is =invalid-params=, an unknown node, file, path or panel item =not-found=, and an operation that could not be carried out =failed= with the reason in =message=. The sections below name the cases that are specific to a method.
 
@@ -811,6 +1011,314 @@ The project's collision layers and collide matrix (=lrg_project_get_physics_laye
 {"id":3,"method":"physasset.set_part","params":{"path":"chars/hero.rphysasset","part":"shin_l","values":{"joint":"hinge","twist_degrees":[0,140]}}}
 {"id":3,"result":{"index":10,"bone":"shin_l","shape":"capsule","radius":0.09,"half_height":0.21,"offset":[0.0,-0.21,0.0],"rotation":[0.0,0.0,0.0,1.0],"mass":4.1,"parent":"thigh_l","joint":{"kind":"hinge","position":[0.0,0.0,0.0],"rotation":[0.0,0.0,-0.7071068,0.7071068],"twist":[0.0,2.443461],"swing":[0.5,0.5],"friction":0.0,"motor_max_torque":300.0,"motor_frequency":10.0,"motor_damping":8.0}}}
 #+end_src
+
+# m67e-generated: begin
+** Navigation methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-nav
+:END:
+Registered by the Navigation panel (=src/editor/ui/lrg-editor-nav-panel.c=). Everything works on the open level (=failed= "No level is open" without one). The panel state is the level's =navigation:= block plus the in-memory =.rnav= bake settings (=LrgNavBake=); =dirty= says the settings differ from the =.rnav= file on disk. Every mutating method except =nav.bake=, =nav.cancel=, =nav.overlay=, =nav.select= and =nav.debug_agent= is one undo step of the level (=edit.undo= reverts it). Vectors are =[x, y, z]=; =area= is an index or a name. Errors: missing or bad parameters =invalid-params=, an unknown area, box, link or file =not-found=, an engine error (bake, load, save) =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =nav.get= |  | ={settings, settings_path, data, bake_on_load, dirty, bake: {name, agent: {radius, height, max_slope, max_step, max_drop}, voxel: {cell_size, cell_height}, regions: {min_area, corner_margin}, sources: {meshes, colliders, static_only, layer_mask, include_tags, exclude_tags, physics_layers, bounds}, output}, areas: [{index, name, tag, cost, color, boxes: [{min, max}]}], links: [{index, start, end, bidirectional, cost, area}], mesh: {present, unsaved, polygons, regions, links, boundaries, triangles, seconds}, baking, playing, overlay, selection: {area, box, link}}= |
+| =nav.set= | =key?=, =value?=, =values?= | as =nav.get=; one undo step |
+| =nav.new= | =path?= | as =nav.get=; the =settings:= ref change is undoable, the file stays |
+| =nav.bake= | =async?=, =save?= | ={polygons, regions, links, boundaries, triangles, seconds, saved}=; with =async= ={started: true}= |
+| =nav.cancel= |  | ={cancelled}= (an async bake's result is dropped) |
+| =nav.save= |  | as =nav.get= |
+| =nav.clear= |  | ={cleared}=; undoable |
+| =nav.area.add= | =name=, =tag?=, =cost?= | ={index}= |
+| =nav.area.remove= | =area= | ={removed}=; links naming it lose their area |
+| =nav.area.set= | =area=, =name?=, =tag?=, =cost?= | ={index}= |
+| =nav.area.box.add= | =area=, =min=, =max= | ={index}= |
+| =nav.area.box.remove= | =area=, =box= | ={removed}= |
+| =nav.area.box.set= | =area=, =box=, =min?=, =max?= | ={index}= |
+| =nav.link.add= | =start=, =end=, =bidirectional?=, =cost?=, =area?= | ={index}= |
+| =nav.link.remove= | =index= | ={removed}= |
+| =nav.link.set= | =index=, =start?=, =end?=, =bidirectional?=, =cost?=, =area?= | ={index}= |
+| =nav.select= | =area?=, =box?=, =link?= | ={area, box, link}= (-1 = none) |
+| =nav.overlay= | =flags?=, =on?=, =off?= | ={flags}= |
+| =nav.agents= |  | ={playing, step_seconds, step_count, debug, agents: [{index, guid, node, entity, state, position, velocity, speed, remaining, destination, path, corner}]}= (empty when not playing) |
+| =nav.debug_agent= | =index?=, =guid?=, =node?=, =clear?= | ={debug}= |
+| =nav.show= |  | ={panel, shown}= |
+
+** Behaviour tree methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-bt
+:END:
+Registered by the behaviour tree editor (=src/editor/ui/data/lrg-editor-bt-editor.c=). =path= is the =.rbt= file, absolute or project relative; the method opens its editor tab when needed. Node ids are the =id:= of =LrgBtAssetNode= (the asset generates =n0=, =n1=, ... for nodes without one). Every edit is one undo step of the document (=data.undo= undoes it). Errors: a missing or wrong parameter =invalid-params=, an unknown file, node or key =not-found=, an engine or document error =failed= with its message.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =bt.open= | =path= | ={path}= |
+| =bt.create= | =path=, =name?= | ={path}=; =failed= when the file exists |
+| =bt.get= | =path= | ={path, name, shown, root, nodes: [{id, explicit, type, kind, name, parent, index, yaml_path, props, params, x, y}], blackboard: [{name, type, default?}], subtrees: [{name, file}], selected, dirty, load_error?}= |
+| =bt.palette= |  | ={types: [{name, kind}], actions, conditions}= |
+| =bt.add_node= | =path=, =type=, =parent?=, =index?=, =id?=, =name?=, =props?=, =params?=, =x?=, =y?= | ={id}= |
+| =bt.remove_node= | =path=, =id= | ={removed}= |
+| =bt.move_node= | =path=, =id=, =parent=, =index?= | ={id}= |
+| =bt.set_node= | =path=, =id=, =new_id?=, =name?=, =type?=, =props?=, =params?= | ={id}= |
+| =bt.set_position= | =path=, =id=, =x=, =y= | ={id}= |
+| =bt.layout= | =path= | ={nodes}= |
+| =bt.select= | =path=, =id?= | ={selected}= |
+| =bt.show= | =path=, =subtree?= | ={shown}= |
+| =bt.add_key= | =path=, =name=, =type=, =default?= | ={name}= |
+| =bt.remove_key= | =path=, =name= | ={removed}= |
+| =bt.set_subtree= | =path=, =name=, =file?= | ={name}= |
+| =bt.remove_subtree= | =path=, =name= | ={removed}= |
+| =bt.open_subtree= | =path=, =id= | ={path}= for a file subtree (opened), ={shown}= for an inline one |
+| =bt.validate= | =path= | ={ok, issues: [{severity, path, line, message, node}]}= |
+| =bt.save= | =path= | ={path}= |
+| =bt.live= | =path= | ={playing, attached, entity, status, tick, current, active_path, nodes: [{id, status, visited, ticks}]}= |
+
+** State machine methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-fsm
+:END:
+Registered by the state machine editor (=src/editor/ui/data/lrg-editor-fsm-editor.c=). =path= is the =.rfsm= file (opened in its tab when needed). State paths are =a/b= (="= is the root, the top level); =from= ="= names the any-state transitions. Actions are JSON objects ={"action": NAME, "params": {}}=, ={"script": NAME, "params": {}}=, ={"set": KEY, "value": V}= or ={"event": NAME}=; conditions ={"key": KEY, "op": "eq\vert{}ne\vert{}lt\vert{}le\vert{}gt\vert{}ge\vert{}set\vert{}unset", "value": V}=, ={"condition": NAME, "params": {}}= or ={"script": NAME, "params": {}}=. Every edit is one undo step of the document. Errors as for =bt.*=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =fsm.open= | =path= | ={path}= |
+| =fsm.create= | =path=, =name?= | ={path}=; =failed= when the file exists |
+| =fsm.get= | =path=, =machine?= | ={path, name, machine, breadcrumbs, initial, blackboard, states: [{name, path, initial, children, enter, update, exit, x, y}], enter, update, exit (machine-wide), transitions: [{from, index, to, event, after, when, do, fires}] (every transition, the root's first, depth first), selected: {state, from, index}, dirty, load_error?}= |
+| =fsm.enter= | =path=, =state= | ={machine}= |
+| =fsm.up= | =path= | ={machine}= |
+| =fsm.add_state= | =path=, =name=, =parent?=, =x?=, =y?= | ={state}= |
+| =fsm.remove_state= | =path=, =state= | ={removed}= |
+| =fsm.rename_state= | =path=, =state=, =name= | ={state}= |
+| =fsm.set_initial= | =path=, =state= | ={state}= |
+| =fsm.add_transition= | =path=, =from=, =to=, =event?=, =after?=, =when?=, =do?= | ={from, index}= |
+| =fsm.set_transition= | =path=, =from=, =index=, =to?=, =event?=, =after?=, =when?=, =do?= | ={from, index}= |
+| =fsm.remove_transition= | =path=, =from=, =index= | ={removed}= |
+| =fsm.set_actions= | =path=, =state=, =phase=, =actions= | ={count}= |
+| =fsm.set_position= | =path=, =state=, =x=, =y= | ={state}= |
+| =fsm.select= | =path=, =state?=, =from?=, =index?= | ={state, from?, index?}= |
+| =fsm.add_key= | =path=, =name=, =type=, =default?= | ={name}= |
+| =fsm.remove_key= | =path=, =name= | ={removed}= |
+| =fsm.validate= | =path= | ={ok, issues: [{severity, path, line, message}]}= |
+| =fsm.save= | =path= | ={path}= |
+| =fsm.live= | =path= | ={playing, attached, entity, running, active: [{state, time}], last_transition, queued (always empty: the engine does not expose the queue), fires: [{from, index, to, count}]}= |
+| =fsm.send_event= | =path=, =event= | ={sent}=; =failed= when not playing or not attached |
+
+** AI debug methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-ai
+:END:
+Registered by the docked AI panel (=src/editor/ui/lrg-editor-ai-debug-panel.c=); live data only while playing. =entity= is the node GUID of a live entity made from a level node, else its name; omitted, the panel's selection. LLM decision brains appear once the embedding game or tool registers them with =lrg_editor_ai_debug_panel_watch_brain()=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =ai.show= |  | ={shown}= |
+| =ai.entities= |  | ={playing, selected, entities: [{entity, name, tree, machine, current_node, current_state, running, keys, focused}]}= |
+| =ai.select= | =entity?= | ={selected}=; a name resolves to its live id (=not-found= without a match) |
+| =ai.state= | =entity?= | ={entity, debug, blackboard: [{key, type, value}]}= |
+| =ai.set_key= | =entity?=, =key=, =value=, =type?= | ={key, value}= |
+| =ai.send_event= | =entity?=, =event= | ={sent}= |
+| =ai.brains= |  | ={brains: [{name, provider, model, asked, answered, cached, failed, input_tokens, output_tokens, mean_seconds, topics: [{topic, busy, pending_seconds, latency, asked, answered, cached, failed, error}]}]}= |
+| =ai.topic= | =brain=, =topic= | ={brain, topic, state, request}= |
+| =ai.log= | =brain?=, =limit?= | ={entries: [{time, brain, kind, topic, text}]}= |
+
+** Particle effect methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-particles
+:END:
+Registered by =lrg_editor_particle_editor_install()= (=src/editor/ui/data/lrg-editor-particle-editor.c=). Every method takes =path= (the =.rparticles= file, absolute or project relative; opened in its editor tab when needed). =emitter= is an index or an emitter name, =module= an index in that emitter's stack. =value= is file syntax: a JSON number or boolean, a string exactly as written in the YAML file (="[4, 8]"= ranges, ="#ffc040"= colours, ="0 1; 1 0 ease-out-quad"= curves, ="0 #fff; 1 #0000"= gradients) or a JSON array of numbers; =null= resets to the default. Every edit is one undo step of the document. Errors: malformed parameters or an engine validation message =invalid-params=, an unknown file, emitter or module =not-found=, a file that does not load =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =particles.open= | =path= | ={path, panel}= |
+| =particles.create= | =path=, =template?= | ={path}=; an existing file is =invalid-params= |
+| =particles.get= | =path= | ={path, name, seed, duration, loop, prewarm, local_space, emitters: [{index, name, enabled, max_particles, start_delay, renderer, modules: [{index, kind, stage, enabled, gpu_capable, values}]}], unknown_keys, load_error, selected: {emitter, module}, dirty}= |
+| =particles.kinds= |  | ={kinds: [{kind, stage, gpu_capable}]}= |
+| =particles.set= | =path=, =key=, =value=, =emitter?=, =module?=, =renderer?= | ={ok}= |
+| =particles.add_emitter= | =path=, =name?=, =index?= | ={index, name}= |
+| =particles.remove_emitter= | =path=, =emitter= | ={ok}= |
+| =particles.move_emitter= | =path=, =from=, =to= | ={ok}= |
+| =particles.duplicate_emitter= | =path=, =emitter= | ={index, name}= |
+| =particles.add_module= | =path=, =emitter=, =kind=, =index?= | ={index}= |
+| =particles.remove_module= | =path=, =emitter=, =module= | ={ok}= |
+| =particles.move_module= | =path=, =emitter=, =from=, =to= | ={ok}= |
+| =particles.select= | =path=, =emitter=, =module?= | ={emitter, module}= |
+| =particles.solo= | =path=, =emitter= | ={solo}= |
+| =particles.play= | =path=, =playing= | the preview state (as =particles.preview=) |
+| =particles.restart= | =path= | the preview state |
+| =particles.seek= | =path=, =time= | the preview state |
+| =particles.preview= | =path=, =speed?=, =seed?=, =ground?=, =background?=, =gpu?= | ={time, playing, speed, seed, ground, background, gpu, solo}= |
+| =particles.stats= | =path= | the preview state plus ={active, bounds, emitters: [{name, enabled, active, capacity, bounds, gpu_ok, gpu_message, simulation, backend, drawn}]}= |
+| =particles.save= | =path= | ={path}= |
+| =particles.render= | =path=, =file=, =size?= | ={file, width, height}=; =failed= without a GL context |
+
+** Weather methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-weather
+:END:
+Registered by =lrg_editor_weather_editor_install()= (=src/editor/ui/data/lrg-editor-weather-editor.c=). =path= is the =.rweather= file (opened in its tab when needed); =preset= is an index or preset id, =layer= an index or layer id; =value= is file syntax as for =particles.*=. Every edit is one undo step of the document; errors as for =particles.*=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =weather.open= | =path= | ={path, panel}= |
+| =weather.create= | =path=, =template?= | ={path}=; an existing file is =invalid-params= |
+| =weather.get= | =path= | ={path, dirty, load_error, name, default_preset, default_transition, presets: [{index, id, name, ambient_color, ambient_brightness, layers: [{index, kind, id, intensity, enabled, params}]}], transitions: [{from, to, duration}], selected: {preset, layer}, preview}= |
+| =weather.kinds= | =kind?= | ={kinds: [{kind, params: [{name, type, blurb, default, min?, max?, values?}]}]}=; an unknown kind is =not-found= |
+| =weather.set= | =path=, =key=, =value= | ={ok}= |
+| =weather.add_preset= | =path=, =id=, =name?= | ={index}= |
+| =weather.remove_preset= | =path=, =preset= | ={ok}= |
+| =weather.set_preset= | =path=, =preset=, =name?=, =ambient_color?=, =ambient_brightness?= | ={ok}= |
+| =weather.add_layer= | =path=, =preset=, =kind=, =id?= | ={index, id}= |
+| =weather.remove_layer= | =path=, =preset=, =layer= | ={ok}= |
+| =weather.move_layer= | =path=, =preset=, =from=, =to= | ={ok}= |
+| =weather.set_layer= | =path=, =preset=, =layer=, =intensity?=, =enabled?= | ={ok}= |
+| =weather.set_param= | =path=, =preset=, =layer=, =name=, =value= | ={ok}= |
+| =weather.set_transition= | =path=, =from=, =to=, =duration= | ={ok}= |
+| =weather.remove_transition= | =path=, =from=, =to= | ={ok}= |
+| =weather.select= | =path=, =preset=, =layer?= | ={preset, layer}= |
+| =weather.preview= | =path=, =preset?=, =transition_to?=, =advance?= | ={active, transitioning, duration, remaining, wind_x, wind_y}= |
+| =weather.save= | =path= | ={path}= |
+| =weather.render= | =path=, =file=, =width?=, =height?= | ={file, width, height}=; =failed= without a GL context |
+
+** Terrain methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-terrain
+:END:
+Registered by the Terrain panel (=src/editor/ui/lrg-editor-terrain-panel.c=) once it is constructed. =node= is a node GUID, path or name; the default is the terrain node the panel shows (the primary selection when it is a =terrain= node). Every mutating method is one undo step of the level (=edit.undo=) unless noted; a stroke is one step however many dabs it has. Tool nicks: =select raise lower flatten smooth noise paint hole fill foliage-paint foliage-erase=; falloff nicks: =linear smooth sphere sharp constant curve=. Errors: missing or bad parameters (or no node selected) =invalid-params=, no such node, not a terrain node or an asset that does not load =not-found=, no Terrain panel, a save or load error or a limit =failed=. Actions: =terrain.show=, =terrain.create= (Create > Terrain), =terrain.create-water= (Create > Water), =terrain.save=, =terrain.rebake=, =terrain.tool-<nick>=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =terrain.get= | =node?= | ={node, name, asset, path, dirty, resolution, chunk_size, cell_size, chunks, cells, samples, size, height_range, splat_mode, holes, lod_levels, bake_resolution, layers: [{name, texture, material, tiling, color}], foliage: [{name, kind, mesh, texture, color, density, scale, slope, height, align, size, fade, seed, instances}], brush}= |
+| =terrain.brush= | =tool?=, =radius?=, =strength?=, =falloff?=, =target_height?=, =sample_target?=, =noise_scale?=, =seed?=, =layer?=, =foliage_layer?= | the brush object (as in =terrain.get=); not undoable |
+| =terrain.stroke= | =node?=, =points=, =local?=, =tool?=, =amount?=, =invert?=, =smooth?=, =radius?=, =strength?=, =falloff?=, =target_height?=, =noise_scale?=, =seed?=, =layer?=, =foliage_layer?= | ={changed, dabs, tool, label?}= |
+| =terrain.sample= | =node?=, =x=, =z=, =local?= | ={hit, height?, normal?, weights?, local?, world?, hole?, foliage_density?}= |
+| =terrain.add_layer= | =node?=, =name?=, =texture?=, =material?=, =tiling?=, =color?= | ={index}=; =failed= at 8 layers |
+| =terrain.remove_layer= | =node?=, =index= | ={removed}=; undo restores the layer and its weights; =failed= for the last layer |
+| =terrain.set_layer= | =node?=, =index=, =name?=, =texture?=, =material?=, =tiling?=, =color?= | ={index}= |
+| =terrain.add_foliage= | =node?=, =name?=, =kind?=, =mesh?=, =lod_mesh?=, =lod_distance?=, =texture?=, =color?=, =density?=, =scale?=, =slope?=, =height?=, =align?=, =size?=, =fade?=, =seed?= | ={index}= |
+| =terrain.remove_foliage= | =node?=, =index= | ={removed}=; undo restores the layer and its density map |
+| =terrain.set_foliage= | =node?=, =index=, =mesh?=, =lod_mesh?=, =lod_distance?=, =texture?=, =color?=, =density?=, =scale?=, =slope?=, =height?=, =align?=, =size?=, =fade?=, =seed?= | ={index}= |
+| =terrain.rebake= | =node?= | ={instances}=; not undoable |
+| =terrain.save= | =node?= | ={path}=; not undoable |
+| =terrain.create= | =kind?=, =name?= | ={guid, name, asset}= |
+| =terrain.show= |  | ={panel, shown}= |
+
+** Water methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-water
+:END:
+Registered by =lrg_editor_water_editor_install()= (=src/editor/ui/data/lrg-editor-water-editor.c=; the Terrain panel and the first =.rwater= editor call it). Each method takes either =path= (a =.rwater= file, opened in its data editor when needed: edits are steps of the document's undo history) or =node= (a level water node: edits the shared body as a level undo step; the file is marked dirty and written on level save, and an open editor of the same file follows). Errors as for =terrain.*=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =water.get= | =path?=, =node?= | ={path, node?, name, shape, level, size, points: [[x, y, z, width]], cell_size, foam: [band, depth], waves: [{direction, amplitude, wavelength, speed, steepness}], wave_scale, colors: {shallow, deep, foam}, optics: {transparency, reflection, refraction, reflect_distance}, dirty}= |
+| =water.set= | =path?=, =node?=, =name?=, =shape?=, =level?=, =size?=, =cell_size?=, =wave_scale?=, =foam?=, =transparency?=, =reflection?=, =refraction?=, =reflect_distance?=, =colors?= | as =water.get= |
+| =water.set_wave= | =path?=, =node?=, =count?=, =index?=, =direction?=, =amplitude?=, =wavelength?=, =speed?=, =steepness?= | as =water.get= |
+| =water.add_point= | =path?=, =node?=, =x=, =z=, =y?=, =width?=, =index?= | ={index}= |
+| =water.set_point= | =path?=, =node?=, =index=, =x?=, =y?=, =z?=, =width?= | ={index}= |
+| =water.remove_point= | =path?=, =node?=, =index= | ={removed}= |
+| =water.save= | =path?=, =node?= | ={path}= |
+
+** Mixer methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-mixer
+:END:
+Registered by =lrg_editor_mixer_editor_install()= (=src/editor/ui/data/lrg-editor-mixer-editor.c=; the Mixer panel and every mixer editor call it). Every method takes an optional =path= (a =.rmixer=); without it the project's default mixer (=project.ryaml= =audio: mixer:=), else =not-found= "No mixer: pass \"path\" or set the project's default mixer". Edits go through the file's mixer editor (opened as a tab when needed): one undo step each, the document stays dirty until =mixer.save=. Levels are dB (-144 .. 12.04). Most methods return the /mixer/: ={path, name, default_snapshot, dirty, buses: [{name, parent, volume, mute, solo, sends: [{target, level}], effects: [{id, type, enabled, params}]}], snapshots: [{name, blend, volumes, sends, params}], ducking: [{trigger, target, threshold, depth, attack, release}]}=. Errors: missing or mistyped parameters =invalid-params=, an unknown bus, effect, snapshot or file =not-found=, an engine refusal (a routing loop, ...) =failed= with the =LrgMixerAsset= message.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =mixer.show= |  | ={panel, shown}= |
+| =mixer.open= | =path?= | ={path, panel}= |
+| =mixer.create= | =path=, =buses?=, =set_default?= | the mixer |
+| =mixer.set_default= | =path= | ={mixer}= |
+| =mixer.get= | =path?= | the mixer |
+| =mixer.effect_types= |  | ={types: [{name, gtype, params: [{name, type, min, max, default, values}]}]}= |
+| =mixer.add_bus= | =path?=, =name=, =parent?= | the mixer |
+| =mixer.remove_bus= | =path?=, =name= | the mixer |
+| =mixer.set_bus= | =path?=, =name=, =volume?=, =mute?=, =solo?=, =parent?= | the mixer |
+| =mixer.set_send= | =path?=, =source=, =target=, =level= | the mixer |
+| =mixer.remove_send= | =path?=, =source=, =target= | the mixer |
+| =mixer.add_effect= | =path?=, =bus=, =type=, =id?= | the mixer |
+| =mixer.remove_effect= | =path?=, =bus=, =id= | the mixer |
+| =mixer.move_effect= | =path?=, =bus=, =id=, =index= | the mixer |
+| =mixer.set_effect= | =path?=, =bus=, =id=, =enabled?=, =params?= | the mixer |
+| =mixer.add_snapshot= | =path?=, =name=, =blend?=, =capture?= | the mixer |
+| =mixer.remove_snapshot= | =path?=, =name= | the mixer |
+| =mixer.set_snapshot= | =path?=, =name=, =blend?=, =default?=, =volumes?=, =sends?=, =params?= | the mixer |
+| =mixer.capture_snapshot= | =path?=, =name= | the mixer |
+| =mixer.set_duck= | =path?=, =trigger=, =target=, =threshold?=, =depth?=, =attack?=, =release?= | the mixer |
+| =mixer.remove_duck= | =path?=, =trigger=, =target= | the mixer |
+| =mixer.preview= | =path?=, =playing?=, =snapshot?=, =snapshots?=, =weights?=, =blend?= | ={playing, snapshot, source}= |
+| =mixer.meters= | =path?= | ={source, buses: [{name, peak, rms, peak_db, rms_db, duck_gain, audible}]}= |
+| =mixer.save= | =path?= | ={path, saved}= |
+
+** Audio emitter methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-audio
+:END:
+Registered by the inspector (=src/editor/ui/lrg-editor-inspector-panel.c=): the audio section of an =audio-emitter= node. =node= is a GUID or path. =params= keys: =min_distance=, =max_distance= (the radius), =rolloff_mode=, =rolloff=, =rolloff_curve_keys=, =cone_inner_angle=, =cone_outer_angle=, =cone_outer_gain=, =doppler_factor=, =speed_of_sound=, =occlusion=, =occlusion_gain=, =occlusion_cutoff=, =spatial_blend=, =bus=, =volume=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =audio.get= | =node= | ={node, kind, params}= |
+| =audio.set= | =node=, =params= | as =audio.get=; one undo step |
+| =audio.curve= | =node=, =samples?= | ={min, max, mode, points: [[distance, gain]]}= |
+| =audio.buses= |  | ={mixer, buses}= |
+
+** Tile painting methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-tiles
+:END:
+Registered by the Tiles panel (=src/editor/ui/lrg-editor-tiles-panel.c=). =node= is a tilemap node (default the tiles target: the primary selection when it is a tilemap). Map cells and brush values are 1-based tile ids (0 = empty); tileset entries are 0-based tile indices. Mutating methods are one undo step of the level. Errors: bad parameters =invalid-params=, no target, tile or rule tile =not-found=, an engine error =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =tiles.get= | =node?= | ={node, tileset, tileset_kind, size, tile_size, grid: {orientation, stagger_axis, stagger_index, hex_side, cell_size} or null, layout, layers, brush: {tile, id, mirrored, rotation, rule_tile}, rule_tiles: [{name, default, n_rules}], tile}= |
+| =tiles.grid= | =node?=, =orientation?=, =stagger_axis?=, =stagger_index?=, =hex_side?=, =cell_size?= | as =tiles.get=; one undo step; the node needs a grid (=tilemap.configure= first) |
+| =tiles.brush= | =tile?=, =rule_tile?=, =mirrored?=, =rotation?=, =rotate?=, =flip_x?=, =flip_y?= | ={tile, id, mirrored, rotation, rule_tile}=; not undoable |
+| =tiles.paint= | =node?=, =cells=, =rule_tile?=, =layer?=, =erase?= | ={changed}=; one undo step; creates the grid when missing |
+| =tiles.refresh= | =node?=, =layer?= | ={changed}=; one undo step; needs an =.rtileset= |
+| =tiles.cell_at= | =node?=, =local= | ={cell, inside, polygon}= (local units, 4 or 6 points) |
+| =tiles.tile_info= | =node?=, =tile= | ={tile, index, flags, collision, data, animation, rule_tile}= |
+
+** Tileset methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-tileset
+:END:
+Registered by the tileset editor (=src/editor/ui/data/lrg-editor-tileset-editor.c=). =path= is a =.rtileset= file, absolute or project relative (default the focused tileset editor). Tile indices are 0-based. Every mutating method is one undo step of the document (=data.undo=). Errors as for =tiles.*=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =tileset.create= | =path=, =image?=, =tile_size?=, =name?= | ={path}=; refuses to overwrite |
+| =tileset.open= | =path= | ={path, panel}= |
+| =tileset.get= | =path?= | ={path, dirty, selected, selected_rule_tile, selected_rule, issues, error?, name, image, tile_size, columns, tile_count, margin, spacing, offset, tiles: [{id, flags, collision, data, animation}], rule_tiles: [{name, default, seed, border_is_this, match_tiles, rules: [{pattern, transform, tiles: [{tile, weight, rotate, flip}]}]}]}= |
+| =tileset.set= | =path?=, =name?=, =image?=, =tile_size?=, =columns?=, =tile_count?=, =margin?=, =spacing?=, =offset?= | as =tileset.get= |
+| =tileset.select= | =path?=, =tile?=, =rule_tile?=, =rule?=, =page?= | ={selected, selected_rule_tile, selected_rule}= |
+| =tileset.tile= | =path?=, =tile=, =flags?=, =data?=, =animation?= | the tile entry ={id, flags, collision, data, animation}= |
+| =tileset.collision= | =path?=, =tile=, =op=, =polygon?=, =index?=, =point?=, =x?=, =y?= | the tile entry |
+| =tileset.rule_tile= | =path?=, =op=, =name=, =new_name?=, =preset?=, =first?=, =default?=, =seed?=, =border_is_this?= | the rule tile entry (={removed}= for remove) |
+| =tileset.rule= | =path?=, =rule_tile=, =op=, =index?=, =to?=, =pattern?=, =neighbor?=, =match?=, =transform?=, =tiles?= | the rule tile entry |
+| =tileset.preview= | =path?=, =rule_tile=, =cells=, =size?= | ={size, tiles}= (cell values); no edit |
+| =tileset.save= | =path?= | ={path}= |
+
+** Sprite sheet methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-sprite
+:END:
+Registered by the sprite editor (=src/editor/ui/data/lrg-editor-sprite-editor.c=). =path= is a =.rsprite= file, absolute or project relative (default the focused sprite editor). Every mutating method is one undo step of the document. Errors as for =tiles.*=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =sprite.create= | =path=, =image?=, =name?=, =frame_size?= | ={path}=; refuses to overwrite |
+| =sprite.open= | =path= | ={path, panel}= |
+| =sprite.get= | =path?= | ={path, dirty, selected_frame, selected_clip, playing, time, preview_frame, preview_position, issues, error?, name, image, image_size, grid: {frame_size, columns, count} or null, frames: [{index, name, rect, pivot, grid}], clips: [{name, fps, loop, frames: [{frame, duration}], events: [{frame, name}], duration}]}= |
+| =sprite.slice= | =path?=, =mode=, =frame_size?=, =columns?=, =rows?=, =count?=, =margin?=, =spacing?=, =pivot?=, =threshold?=, =min_size?= | as =sprite.get= |
+| =sprite.frame= | =path?=, =op=, =index?=, =rect?=, =name?=, =pivot?= | the frame entry (={removed}= for remove) |
+| =sprite.clip= | =path?=, =op=, =name=, =new_name?=, =fps?=, =loop?=, =frames?= | the clip entry |
+| =sprite.clip_frame= | =path?=, =clip=, =op=, =index?=, =to?=, =frame?=, =duration?= | the clip entry |
+| =sprite.event= | =path?=, =clip=, =op=, =frame=, =name?= | the clip entry |
+| =sprite.play= | =path?=, =clip?=, =playing?=, =time?= | ={clip, playing, time, frame, position}=; not an edit |
+| =sprite.save= | =path?= | ={path}= |
+
+# m67e-generated: end
 
 ** Data editor methods
 :PROPERTIES:

@@ -65,6 +65,17 @@
  * on a turntable playing one of its clips (clip list, play / pause, scrub
  * bar, track summary) and a slider per morph target; the `clip.*` IPC
  * methods drive it and read clip data without UI.
+ *
+ * Gameplay and effect assets (0.9.0 M6/M7). Behaviour trees (.rbt),
+ * state machines (.rfsm), particle effects (.rparticles), weather
+ * (.rweather), mixers (.rmixer), tilesets (.rtileset), sprite sheets
+ * (.rsprite), water bodies (.rwater), navigation bake settings (.rnav)
+ * and terrains (.rterrain) get glyphs, type names and New entries
+ * (lrg_editor_assets_panel_create_asset(), also `asset.new` over IPC);
+ * "Slice Sprite Sheet" on an image writes an auto-sliced .rsprite next
+ * to it. Double-click opens them in their data editors; .rnav files go
+ * to the Navigation panel through the `nav.open-settings` action (the
+ * path is passed as the app's "lrg-editor-nav-settings-path" data).
  */
 
 #include "config.h"
@@ -77,7 +88,17 @@
 #include "data/lrg-editor-bone-map-editor.h"
 #include "data/lrg-editor-skeleton2d-editor.h"
 #include "data/lrg-editor-physics-asset-editor.h"
+#include "data/lrg-editor-particle-editor.h"
+#include "data/lrg-editor-weather-editor.h"
+#include "data/lrg-editor-mixer-editor.h"
+#include "data/lrg-editor-bt-editor.h"
+#include "data/lrg-editor-fsm-editor.h"
+#include "data/lrg-editor-water-editor.h"
 #include "lrg-editor-sequencer-panel.h"
+#include "../lrg-editor-document.h"
+#include "../../atlas/lrg-sprite-sheet.h"
+#include "../../atlas/lrg-sprite-animation.h"
+#include "../../graphics/lrg-terrain-asset.h"
 #include "../../animation/lrg-gltf-animation.h"
 #include "../../ui/lrg-slider.h"
 #include "../../ui/lrg-label.h"
@@ -101,6 +122,7 @@
 #include "../../paint/lrg-paint-icons.h"
 #include "../../text/lrg-font-manager.h"
 #include <glib/gstdio.h>
+#include <errno.h>
 #include <json-glib/json-glib.h>
 #include <raylib.h>
 #include <math.h>
@@ -565,8 +587,40 @@ typedef enum
 	SPECIAL_BONE_MAP,
 	SPECIAL_SEQUENCE,
 	SPECIAL_SKELETON2D,
-	SPECIAL_PHYSICS_ASSET
+	SPECIAL_PHYSICS_ASSET,
+	SPECIAL_BT,
+	SPECIAL_FSM,
+	SPECIAL_PARTICLES,
+	SPECIAL_WEATHER,
+	SPECIAL_MIXER,
+	SPECIAL_TILESET,
+	SPECIAL_SPRITE,
+	SPECIAL_WATER,
+	SPECIAL_NAV,
+	SPECIAL_TERRAIN
 } SpecialKind;
+
+/* The M6/M7 kinds by extension (glyph, type name) */
+static const struct
+{
+	SpecialKind  kind;
+	const gchar *extension;
+	const gchar *glyph;
+	const gchar *name;
+} special_assets[] = {
+	{ SPECIAL_BT, ".rbt", "BT", "Behaviour tree" },
+	{ SPECIAL_FSM, ".rfsm", "SM", "State machine" },
+	{ SPECIAL_PARTICLES, ".rparticles", "Fx", "Particle effect" },
+	{ SPECIAL_WEATHER, ".rweather", "Wx", "Weather" },
+	{ SPECIAL_MIXER, ".rmixer", "Mx", "Mixer" },
+	{ SPECIAL_TILESET, ".rtileset", "TS", "Tileset" },
+	{ SPECIAL_SPRITE, ".rsprite", "Sp", "Sprite sheet" },
+	{ SPECIAL_WATER, ".rwater", "Wa", "Water body" },
+	{ SPECIAL_NAV, ".rnav", "Nv", "Navigation settings" },
+	{ SPECIAL_TERRAIN, ".rterrain", "Tr", "Terrain" }
+};
+
+static gboolean open_nav_settings (LrgEditorApp *app, const gchar *path);
 
 static SpecialKind
 special_kind (const gchar *path)
@@ -592,6 +646,15 @@ special_kind (const gchar *path)
 		return SPECIAL_SKELETON2D;
 	if (g_str_has_suffix (lower, ".rphysasset"))
 		return SPECIAL_PHYSICS_ASSET;
+	{
+		guint i;
+
+		for (i = 0; i < G_N_ELEMENTS (special_assets); i++)
+		{
+			if (g_str_has_suffix (lower, special_assets[i].extension))
+				return special_assets[i].kind;
+		}
+	}
 	if (g_str_has_suffix (lower, ".glsl") || g_str_has_suffix (lower, ".vert") || g_str_has_suffix (lower, ".frag") ||
 	    g_str_has_suffix (lower, ".vs") || g_str_has_suffix (lower, ".fs"))
 		return SPECIAL_SHADER_STAGE;
@@ -612,7 +675,17 @@ special_glyph (SpecialKind kind)
 	case SPECIAL_SEQUENCE:     return "Sq";
 	case SPECIAL_SKELETON2D:   return "2D";
 	case SPECIAL_PHYSICS_ASSET: return "Rd";
-	default:                   return NULL;
+	default:
+		{
+			guint i;
+
+			for (i = 0; i < G_N_ELEMENTS (special_assets); i++)
+			{
+				if (special_assets[i].kind == kind)
+					return special_assets[i].glyph;
+			}
+		}
+		return NULL;
 	}
 }
 
@@ -630,7 +703,17 @@ special_name (SpecialKind kind)
 	case SPECIAL_SEQUENCE:     return "Sequence";
 	case SPECIAL_SKELETON2D:   return "2D skeleton";
 	case SPECIAL_PHYSICS_ASSET: return "Physics asset";
-	default:                   return NULL;
+	default:
+		{
+			guint i;
+
+			for (i = 0; i < G_N_ELEMENTS (special_assets); i++)
+			{
+				if (special_assets[i].kind == kind)
+					return special_assets[i].name;
+			}
+		}
+		return NULL;
 	}
 }
 
@@ -647,6 +730,16 @@ special_role (SpecialKind kind)
 	case SPECIAL_SEQUENCE:
 	case SPECIAL_SKELETON2D:   return LRG_THEME_COLOR_DANGER;
 	case SPECIAL_PHYSICS_ASSET: return LRG_THEME_COLOR_SUCCESS;
+	case SPECIAL_BT:
+	case SPECIAL_FSM:          return LRG_THEME_COLOR_LINK;
+	case SPECIAL_PARTICLES:
+	case SPECIAL_WEATHER:      return LRG_THEME_COLOR_WARNING;
+	case SPECIAL_MIXER:        return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_TILESET:
+	case SPECIAL_SPRITE:       return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_WATER:
+	case SPECIAL_NAV:
+	case SPECIAL_TERRAIN:      return LRG_THEME_COLOR_SUCCESS;
 	default:                   return LRG_THEME_COLOR_ACCENT;
 	}
 }
@@ -2219,6 +2312,9 @@ open_entry (LrgEditorAssetsPanel *self,
 	/* sequences open in the docked sequencer */
 	if (g_str_has_suffix (path, ".rseq") && lrg_editor_sequencer_panel_open_file (self->app, path, NULL))
 		return;
+	/* navigation bake settings open in the Navigation panel */
+	if (special_kind (path) == SPECIAL_NAV && open_nav_settings (self->app, path))
+		return;
 	/* data formats (input maps, locales, themes, ...) open in their editor;
 	 * a file that does not parse falls through to the usual handling */
 	if (lrg_editor_data_editor_can_open (path) && lrg_editor_data_editor_open (self->app, path, NULL) != NULL)
@@ -2692,6 +2788,233 @@ new_anim_asset (LrgEditorAssetsPanel *self,
 	lrg_editor_assets_panel_begin_rename (self, path);
 }
 
+/* ==========================================================================
+ * Gameplay and effect assets (M6/M7): New entries and Slice Sprite Sheet
+ * ========================================================================== */
+
+/*
+ * The New entries of the M6/M7 formats: the action name, the menu label,
+ * the `asset.new` kind (a document format nick, or "terrain"), the file
+ * stem and extension.
+ */
+static const struct
+{
+	const gchar *action;
+	const gchar *label;
+	const gchar *kind;
+	const gchar *stem;
+	const gchar *ext;
+} new_gameplay[] = {
+	{ "new-bt", "New Behaviour Tree", "bt", "new_behaviour_tree", "rbt" },
+	{ "new-fsm", "New State Machine", "fsm", "new_state_machine", "rfsm" },
+	{ "new-particles", "New Particle Effect", "particles", "new_particle_effect", "rparticles" },
+	{ "new-weather", "New Weather", "weather", "new_weather", "rweather" },
+	{ "new-mixer", "New Mixer", "mixer", "new_mixer", "rmixer" },
+	{ "new-tileset", "New Tileset", "tileset", "new_tileset", "rtileset" },
+	{ "new-sprite", "New Sprite Sheet", "sprite", "new_sprite", "rsprite" },
+	{ "new-water", "New Water Body", "water", "new_water", "rwater" },
+	{ "new-terrain", "New Terrain", "terrain", "new_terrain", "rterrain" },
+	{ "new-nav-settings", "New Navigation Settings", "nav-settings", "new_navigation", "rnav" }
+};
+
+/* The extension (without the dot) of an asset.new kind, or NULL. */
+static const gchar *
+kind_extension (const gchar *kind)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (new_gameplay); i++)
+	{
+		if (g_strcmp0 (new_gameplay[i].kind, kind) == 0)
+			return new_gameplay[i].ext;
+	}
+	return NULL;
+}
+
+/*
+ * write_sliced_sprite:
+ * A .rsprite at @path for @image: the image path relative to the file,
+ * frames auto-sliced from the image's opaque islands (bottom-centre
+ * pivots), no clips.  A file that cannot be read as an image still gets
+ * the reference, with no frames.
+ */
+static gboolean
+write_sliced_sprite (const gchar  *path,
+                     const gchar  *image,
+                     guint        *n_frames,
+                     GError      **error)
+{
+	g_autofree gchar *dir = g_path_get_dirname (path);
+	g_autofree gchar *base = g_path_get_basename (path);
+	g_autofree gchar *rel = NULL;
+	g_autoptr(LrgSpriteSheet) sheet = NULL;
+	g_autoptr(GrlImage) img = NULL;
+	gchar *dot;
+	guint frames = 0;
+
+	dot = strrchr (base, '.');
+	if (dot != NULL)
+		*dot = '\0';
+	sheet = lrg_sprite_sheet_new (base);
+
+	/* the image reference is relative to the .rsprite */
+	if (g_str_has_prefix (image, dir) && image[strlen (dir)] == G_DIR_SEPARATOR)
+		rel = g_strdup (image + strlen (dir) + 1);
+	else
+		rel = g_strdup (image);
+	lrg_sprite_sheet_set_texture_path (sheet, rel);
+
+	/* CPU decode only: no GL context needed */
+	img = grl_image_new_from_file (image);
+	if (img != NULL && grl_image_get_width (img) > 0)
+	{
+		gsize   size = 0;
+		guint8 *rgba = grl_image_get_pixels (img, &size);
+
+		if (rgba != NULL)
+			frames = lrg_sprite_sheet_slice_alpha (sheet, rgba, size, (guint) grl_image_get_width (img),
+			                                       (guint) grl_image_get_height (img), 8, 2, 0.5f, 1.0f);
+	}
+	if (n_frames != NULL)
+		*n_frames = frames;
+	return lrg_sprite_sheet_save_rsprite_to_file (sheet, path, error);
+}
+
+gboolean
+lrg_editor_assets_panel_create_asset (const gchar  *path,
+                                      const gchar  *kind,
+                                      const gchar  *image,
+                                      GError      **error)
+{
+	LrgEditorDocumentFormat format;
+	g_autofree gchar *dir = NULL;
+
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (kind != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (g_file_test (path, G_FILE_TEST_EXISTS))
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_EXISTS, "%s already exists", path);
+		return FALSE;
+	}
+	dir = g_path_get_dirname (path);
+	if (g_mkdir_with_parents (dir, 0755) != 0)
+	{
+		g_set_error (error, G_IO_ERROR, g_io_error_from_errno (errno), "Cannot create %s: %s", dir,
+		             g_strerror (errno));
+		return FALSE;
+	}
+
+	/* --- a flat terrain: the .rterrain and its sidecars --- */
+	if (g_strcmp0 (kind, "terrain") == 0)
+	{
+		g_autoptr(LrgTerrainAsset) terrain = lrg_terrain_asset_new (64, 32.0f, 4, 4);
+
+		return lrg_terrain_asset_save_to_file (terrain, path, error);
+	}
+
+	/* --- a sprite sheet sliced from an image --- */
+	if (g_strcmp0 (kind, "sprite") == 0 && image != NULL)
+		return write_sliced_sprite (path, image, NULL, error);
+
+	/* --- every other kind is a document format's new file --- */
+	format = lrg_editor_document_format_from_string (kind);
+	if (format == LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		             "Unknown asset kind '%s' (a document format such as bt, fsm, particles, weather, "
+		             "mixer, tileset, sprite, water, nav-settings, or terrain)", kind);
+		return FALSE;
+	}
+	{
+		g_autoptr(LrgEditorDocument) doc = lrg_editor_document_new (format);
+
+		return lrg_editor_document_save_as (doc, path, error);
+	}
+}
+
+/* New Behaviour Tree / ... / New Terrain from the background menu. */
+static void
+new_gameplay_asset (LrgEditorAssetsPanel *self,
+                    guint                 index)
+{
+	g_autofree gchar *path = NULL;
+	g_autoptr(GError) error = NULL;
+
+	if (self->dir == NULL || index >= G_N_ELEMENTS (new_gameplay))
+		return;
+	path = free_name (self, new_gameplay[index].stem, new_gameplay[index].ext);
+	if (path == NULL || !lrg_editor_assets_panel_create_asset (path, new_gameplay[index].kind, NULL, &error))
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot create the file: %s",
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	refresh_listing (self);
+	lrg_editor_assets_panel_begin_rename (self, path);
+}
+
+/* Slice Sprite Sheet on an image: <image stem>.rsprite next to it. */
+static void
+slice_sprite_sheet (LrgEditorAssetsPanel *self,
+                    const gchar          *image)
+{
+	g_autofree gchar *dir = g_path_get_dirname (image);
+	g_autofree gchar *base = g_path_get_basename (image);
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *saved_dir = NULL;
+	g_autoptr(GError) error = NULL;
+	gchar            *dot;
+	guint             frames = 0;
+
+	dot = strrchr (base, '.');
+	if (dot != NULL)
+		*dot = '\0';
+	/* free_name() works in the listed folder: point it at the image's */
+	saved_dir = g_strdup (self->dir);
+	g_free (self->dir);
+	self->dir = g_strdup (dir);
+	path = free_name (self, base, "rsprite");
+	g_free (self->dir);
+	self->dir = g_steal_pointer (&saved_dir);
+
+	if (path == NULL || !write_sliced_sprite (path, image, &frames, &error))
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Cannot slice %s: %s", image,
+		                                         error != NULL ? error->message : "no free name");
+
+		notify_user (self, EDITOR_NOTIFY_ERROR, msg);
+		return;
+	}
+	{
+		g_autofree gchar *msg = g_strdup_printf ("Sliced %u frame(s) into %s", frames, path);
+
+		notify_user (self, EDITOR_NOTIFY_INFO, msg);
+	}
+	refresh_listing (self);
+	if (lrg_editor_data_editor_can_open (path) && self->app != NULL)
+		lrg_editor_data_editor_open (self->app, path, NULL);
+}
+
+/*
+ * open_nav_settings:
+ * A .rnav goes to the Navigation panel: the path rides on the app as
+ * "lrg-editor-nav-settings-path" for the `nav.open-settings` action.
+ * Returns FALSE when that action is not registered.
+ */
+static gboolean
+open_nav_settings (LrgEditorApp *app,
+                   const gchar  *path)
+{
+	if (app == NULL || !lrg_editor_actions_has (app->actions, "nav.open-settings"))
+		return FALSE;
+	g_object_set_data_full (G_OBJECT (app), "lrg-editor-nav-settings-path", g_strdup (path), g_free);
+	return lrg_editor_actions_activate (app->actions, "nav.open-settings");
+}
+
 /* Opens the desktop file manager on a folder. */
 static void
 show_in_file_manager (LrgEditorAssetsPanel *self,
@@ -3131,6 +3454,31 @@ act_new_physics_asset (GSimpleAction *a, GVariant *p, gpointer user_data)
 	new_anim_asset (user_data, SPECIAL_PHYSICS_ASSET, NULL);
 }
 
+/* the New entries of the M6/M7 formats, one per row of new_gameplay[] */
+#define NEW_GAMEPLAY_ACTION(n, i) \
+	static void act_##n (GSimpleAction *a, GVariant *p, gpointer user_data) { new_gameplay_asset (user_data, i); }
+NEW_GAMEPLAY_ACTION (new_bt, 0)
+NEW_GAMEPLAY_ACTION (new_fsm, 1)
+NEW_GAMEPLAY_ACTION (new_particles, 2)
+NEW_GAMEPLAY_ACTION (new_weather, 3)
+NEW_GAMEPLAY_ACTION (new_mixer, 4)
+NEW_GAMEPLAY_ACTION (new_tileset, 5)
+NEW_GAMEPLAY_ACTION (new_sprite, 6)
+NEW_GAMEPLAY_ACTION (new_water, 7)
+NEW_GAMEPLAY_ACTION (new_terrain, 8)
+NEW_GAMEPLAY_ACTION (new_nav_settings, 9)
+#undef NEW_GAMEPLAY_ACTION
+
+static void
+act_slice_sprite_sheet (GSimpleAction *a, GVariant *p, gpointer user_data)
+{
+	LrgEditorAssetsPanel *self = user_data;
+	const gchar          *path = first_target (self);
+
+	if (path != NULL)
+		slice_sprite_sheet (self, path);
+}
+
 static void
 act_physics_asset_from_model (GSimpleAction *a, GVariant *p, gpointer user_data)
 {
@@ -3235,6 +3583,17 @@ static const GActionEntry action_entries[] = {
 	{ "anim-graph-from-model", act_anim_graph_from_model, NULL, NULL, NULL, { 0 } },
 	{ "new-physics-asset", act_new_physics_asset, NULL, NULL, NULL, { 0 } },
 	{ "physics-asset-from-model", act_physics_asset_from_model, NULL, NULL, NULL, { 0 } },
+	{ "new-bt", act_new_bt, NULL, NULL, NULL, { 0 } },
+	{ "new-fsm", act_new_fsm, NULL, NULL, NULL, { 0 } },
+	{ "new-particles", act_new_particles, NULL, NULL, NULL, { 0 } },
+	{ "new-weather", act_new_weather, NULL, NULL, NULL, { 0 } },
+	{ "new-mixer", act_new_mixer, NULL, NULL, NULL, { 0 } },
+	{ "new-tileset", act_new_tileset, NULL, NULL, NULL, { 0 } },
+	{ "new-sprite", act_new_sprite, NULL, NULL, NULL, { 0 } },
+	{ "new-water", act_new_water, NULL, NULL, NULL, { 0 } },
+	{ "new-terrain", act_new_terrain, NULL, NULL, NULL, { 0 } },
+	{ "new-nav-settings", act_new_nav_settings, NULL, NULL, NULL, { 0 } },
+	{ "slice-sprite-sheet", act_slice_sprite_sheet, NULL, NULL, NULL, { 0 } },
 	{ "preview-clips", act_preview_clips, NULL, NULL, NULL, { 0 } },
 	{ "create-variant", act_create_variant, NULL, NULL, NULL, { 0 } },
 	{ "refresh", act_refresh, NULL, NULL, NULL, { 0 } },
@@ -3296,6 +3655,8 @@ build_entry_menu (LrgEditorAssetsPanel *self)
 		menu_add (open, "New Animation Graph from Model", "assets.anim-graph-from-model", NULL);
 		menu_add (open, "New Physics Asset from Model", "assets.physics-asset-from-model", NULL);
 	}
+	if (type == LRG_ASSET_TYPE_TEXTURE)
+		menu_add (open, "Slice Sprite Sheet", "assets.slice-sprite-sheet", NULL);
 
 	menu_add (edit, "Rename", "assets.rename", "F2");
 	if (!is_dir)
@@ -3323,6 +3684,7 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	g_autoptr(GMenu)  create = g_menu_new ();
 	g_autoptr(GMenu)  render = g_menu_new ();
 	g_autoptr(GMenu)  anim = g_menu_new ();
+	g_autoptr(GMenu)  gameplay = g_menu_new ();
 	g_autoptr(GMenu)  view = g_menu_new ();
 	LrgAssetDatabase *db = (self->root != NULL) ? get_db (self) : NULL;
 	GPtrArray        *orphans = (db != NULL) ? lrg_asset_database_get_orphaned_metas (db) : NULL;
@@ -3338,6 +3700,16 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	menu_add (anim, "New Sequence", "assets.new-sequence", NULL);
 	menu_add (anim, "New 2D Skeleton", "assets.new-skeleton2d", NULL);
 	menu_add (anim, "New Physics Asset", "assets.new-physics-asset", NULL);
+	{
+		guint i;
+
+		for (i = 0; i < G_N_ELEMENTS (new_gameplay); i++)
+		{
+			g_autofree gchar *action = g_strconcat ("assets.", new_gameplay[i].action, NULL);
+
+			menu_add (gameplay, new_gameplay[i].label, action, NULL);
+		}
+	}
 
 	menu_add (view, "Refresh", "assets.refresh", NULL);
 	menu_add (view, "Show in File Manager", "assets.show-in-file-manager", NULL);
@@ -3352,6 +3724,7 @@ build_background_menu (LrgEditorAssetsPanel *self)
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (create));
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (render));
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (anim));
+	g_menu_append_section (menu, NULL, G_MENU_MODEL (gameplay));
 	g_menu_append_section (menu, NULL, G_MENU_MODEL (view));
 	return G_MENU_MODEL (menu);
 }
@@ -4765,6 +5138,85 @@ m_asset_duplicate (LrgEditorServer *server, JsonObject *params, gpointer user_da
 	return entry_json (self, done);
 }
 
+/*
+ * asset.new {kind, path?, name?, image?}: writes a new asset.  @path is
+ * the file (project relative or absolute, inside the project); without
+ * it the file is <name or the kind's default stem>.<ext> in the listed
+ * folder (a free name).  kind "sprite" with @image slices that image.
+ */
+static JsonNode *
+m_asset_new (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
+{
+	LrgEditorAssetsPanel *self = method_panel (user_data, error);
+	const gchar          *kind = param_string (params, "kind");
+	const gchar          *p = param_string (params, "path");
+	const gchar          *name = param_string (params, "name");
+	const gchar          *image = param_string (params, "image");
+	g_autofree gchar     *path = NULL;
+	g_autofree gchar     *image_abs = NULL;
+	g_autoptr(GError)     cause = NULL;
+	JsonNode             *node;
+
+	if (self == NULL)
+		return NULL;
+	if (kind == NULL)
+	{
+		g_set_error_literal (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		                     "Missing string parameter 'kind'");
+		return NULL;
+	}
+	if (p != NULL)
+		path = abs_path (self, p);
+	else
+	{
+		const gchar *ext = kind_extension (kind);
+		LrgEditorDocumentFormat format = lrg_editor_document_format_from_string (kind);
+		const gchar *dext = lrg_editor_document_format_get_extension (format);
+		guint i;
+		const gchar *stem = name;
+
+		if (ext == NULL && dext != NULL)
+			ext = dext + 1;
+		for (i = 0; stem == NULL && i < G_N_ELEMENTS (new_gameplay); i++)
+		{
+			if (g_strcmp0 (new_gameplay[i].kind, kind) == 0)
+				stem = new_gameplay[i].stem;
+		}
+		if (ext == NULL)
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+			             "Unknown asset kind '%s'; pass 'path' for a plain YAML format", kind);
+			return NULL;
+		}
+		path = free_name (self, stem != NULL ? stem : "new_asset", ext);
+	}
+	if (path == NULL || !path_is_under (path, self->root))
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_INVALID_PARAMS,
+		             "'%s' is not a free path inside the project", p != NULL ? p : kind);
+		return NULL;
+	}
+	if (image != NULL)
+	{
+		image_abs = abs_path (self, image);
+		if (!g_file_test (image_abs, G_FILE_TEST_IS_REGULAR))
+		{
+			g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+			             "No image '%s' in the project", image);
+			return NULL;
+		}
+	}
+	if (!lrg_editor_assets_panel_create_asset (path, kind, image_abs, &cause))
+	{
+		set_failed (error, cause, "Create failed");
+		return NULL;
+	}
+	refresh_listing (self);
+	node = entry_json (self, path);
+	json_object_set_string_member (json_node_get_object (node), "kind", kind);
+	return node;
+}
+
 /* asset.trash {path}: no confirmation (the caller asked) */
 static JsonNode *
 m_asset_trash (LrgEditorServer *server, JsonObject *params, gpointer user_data, GError **error)
@@ -5141,6 +5593,7 @@ register_with_app (LrgEditorAssetsPanel *self)
 	lrg_editor_server_register_method (server, "asset.move", m_asset_move, app, NULL);
 	lrg_editor_server_register_method (server, "asset.duplicate", m_asset_duplicate, app, NULL);
 	lrg_editor_server_register_method (server, "asset.trash", m_asset_trash, app, NULL);
+	lrg_editor_server_register_method (server, "asset.new", m_asset_new, app, NULL);
 	lrg_editor_server_register_method (server, "asset.orphans", m_asset_orphans, app, NULL);
 	lrg_editor_server_register_method (server, "clip.list", m_clip_list, app, NULL);
 	lrg_editor_server_register_method (server, "clip.info", m_clip_info, app, NULL);
@@ -5439,6 +5892,12 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 	lrg_editor_bone_map_editor_install (app); /* bonemap.* */
 	lrg_editor_skeleton2d_editor_install (app); /* skel2d.* */
 	lrg_editor_physics_asset_editor_install (app); /* physasset.*, physics.layers.* */
+	lrg_editor_particle_editor_install (app); /* particles.* */
+	lrg_editor_weather_editor_install (app); /* weather.* */
+	lrg_editor_mixer_editor_install (app); /* mixer.*, actions mixer.new / mixer.open */
+	lrg_editor_bt_editor_install (app); /* bt.* (and ai.*) */
+	lrg_editor_fsm_editor_install (app); /* fsm.* (and ai.*) */
+	lrg_editor_water_editor_install (app); /* water.* (EDTERR) */
 	register_with_app (self);
 	sync_app (self);
 	update_context_menu (self, TRUE);
