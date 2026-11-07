@@ -282,7 +282,7 @@ lrg_terrain_edit_apply (stroke, asset, TRUE);
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-In 0.9.0 a terrain is a level node of kind =terrain= whose asset is the =.rterrain= (see [[file:../../editor/yaml-format.org][the level format]]); the runtime turns it into an =LrgTerrainComponent=. The sculpt, paint and foliage brushes of the next editor wave call =lrg_terrain_component_raycast()= for the cursor, =lrg_terrain_brush_get_region()= / =lrg_terrain_brush_get_weight()= to draw it, =lrg_terrain_brush_begin_stroke()= / =lrg_terrain_brush_apply()= / =lrg_terrain_brush_end_stroke()= while dragging, push the stroke's =LrgTerrainEdit= on the undo stack and save with =lrg_terrain_asset_save_to_file()=.
+In 0.9.0 a terrain is a level node of kind =terrain= whose asset is the =.rterrain= (see [[file:../../editor/yaml-format.org][the level format]]); the runtime turns it into an =LrgTerrainComponent=. In lrgeditor, Create > Terrain writes a flat 4 x 4 chunk =.rterrain= under the project's =terrain/= folder and adds the node; the Terrain panel ([[file:../../editor/terrain.org][Terrain and Water in the Editor]]) sculpts, paints, cuts holes and paints foliage with an =LrgTerrainBrush= (the cursor from =lrg_terrain_component_raycast()=, the ring from =lrg_terrain_brush_get_weight()=, =lrg_terrain_brush_begin_stroke()= / =lrg_terrain_brush_apply()= / =lrg_terrain_brush_end_stroke()= while dragging, the stroke's =LrgTerrainEdit= as one undo step), edits the surface and foliage layers, shows the chunk grid, rebakes, and saves with =lrg_terrain_asset_save_to_file()= (also when the level is saved). Scripts use the =terrain.*= IPC methods (=terrain.stroke=, =terrain.add_layer=, ...) or =lrgeditorctl terrain ...=.
 
 ** See also
 :PROPERTIES:

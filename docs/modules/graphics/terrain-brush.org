@@ -138,7 +138,7 @@ A dab costs O(region) plus the edit copies; a stroke's snapshot costs one copy o
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The next editor wave's sculpt / paint / foliage brushes are thin UI over this API: the cursor rings come from =lrg_terrain_brush_get_weight()=, the affected area from =lrg_terrain_brush_get_region()=, the undo entry from =lrg_terrain_brush_end_stroke()=.
+The Terrain panel's tools ([[file:../../editor/terrain.org::#editor-terrain-tools][Terrain and Water in the Editor]]) are thin UI over this API: the panel owns one brush (radius, strength, falloff and curve, target height and sample, noise scale and seed in its grid), each tool is an operation, Ctrl and Shift pick the inverse operation or smooth, the cursor ring's half-weight circle comes from =lrg_terrain_brush_get_weight()=, a viewport drag is =lrg_terrain_brush_begin_stroke()=, a dab per frame with the frame time as the amount, and =lrg_terrain_brush_end_stroke()= whose edit is the stroke's single undo step. =terrain.stroke= runs the same path from scripts (=lrg_editor_terrain_panel_stroke()=).
 
 ** See also
 :PROPERTIES:

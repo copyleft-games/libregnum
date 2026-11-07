@@ -54,6 +54,15 @@
  * animator draws its last solved target as a ring with its name and a
  * line from the effector bone. Both are painted in the 2D overlay pass.
  *
+ * Terrain and water (0.9.0 M6/M7): with a brush tool picked in the Terrain
+ * panel and a terrain node selected, a left press paints a stroke (the
+ * panel's lrg_editor_terrain_panel_viewport_press() and friends: cursor
+ * ring, Ctrl inverts, Shift smooths, [ ] radius, one undo step per
+ * stroke); with a water lake or river selected its outline points are
+ * handles. The press reaches the terrain tools after tile painting and
+ * before navigation (Alt still orbits), the ring and handles are painted
+ * in the overlay pass, and a held brush dabs every frame from the tick.
+ *
  * Everything works headless: LrgViewport maps pointer positions with the
  * size its texture is heading for, so tests drive the viewport through
  * lrg_canvas_process_input() without a GL context.
@@ -64,6 +73,7 @@
 #include "lrg-editor-app-private.h"
 #include "lrg-editor-viewport-split.h"
 #include "lrg-editor-gizmo-paint.h"
+#include "lrg-editor-tiles-panel.h"
 #include "../lrg-asset-database.h"
 #include "../../ui/lrg-menu.h"
 #include "../../ui/lrg-hbox.h"
@@ -86,6 +96,8 @@
 #include "../../world3d/lrg-world3d-renderer.h"
 #include "../../level/lrg-component-desc.h"
 #include "lrg-editor-physics-panel.h"
+#include "lrg-editor-terrain-panel.h"
+#include "lrg-editor-nav-panel.h"
 #include <math.h>
 #include <string.h>
 
@@ -260,6 +272,10 @@ struct _LrgEditorViewportPanel
 	GObject             *phys_runtime;    /* the runtime renderer we hook */
 	gulong               phys_overlay_id;
 	guint                phys_painted;
+
+	/* Terrain / water tools (0.9.0 M6/M7): this panel took the press */
+	gboolean             terrain_drag;
+	guint                terrain_painted;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorViewportPanel, lrg_editor_viewport_panel, LRG_TYPE_CONTAINER)
@@ -272,6 +288,22 @@ static LrgNode *physics_node (LrgEditorViewportPanel *self);
 static void physics_hook_runtime (LrgEditorViewportPanel *self);
 static guint paint_physics_tree (LrgPaintList *list, const LrgEditorView *view, LrgLevel *level, LrgNode *node,
                                  LrgNode *skip, LrgDynamicsDebugFlags flags, gfloat ox, gfloat oy, gfloat scale);
+
+/* The app's Terrain panel (it owns the terrain / water viewport tools). */
+static LrgEditorTerrainPanel *
+terrain_tools (LrgEditorViewportPanel *self)
+{
+	return (self->app != NULL) ? lrg_editor_terrain_panel_find (self->app) : NULL;
+}
+
+/* Whether a terrain stroke or water point drag is running. */
+static gboolean
+terrain_busy (LrgEditorViewportPanel *self)
+{
+	LrgEditorTerrainPanel *tp = terrain_tools (self);
+
+	return tp != NULL && (lrg_editor_terrain_panel_is_stroking (tp) || self->terrain_drag);
+}
 
 /* This panel's camera as an LrgEditorView (picking and gizmo math). */
 static void
@@ -789,11 +821,24 @@ overlay_paint (LrgCustomWidget *widget,
 		}
 	}
 
+	/* The terrain brush ring and the water outline handles */
+	self->terrain_painted = 0;
+	if (terrain_tools (self) != NULL && !lrg_editor_play_session_is_playing (app->play))
+		self->terrain_painted = lrg_editor_terrain_panel_paint_overlay (terrain_tools (self), list, theme, &view, ox,
+		                                                                oy, scale);
+
+	/* Navigation: the selected area box and off-mesh link with their
+	 * handles (the Navigation panel paints them) */
+	if (lrg_editor_nav_panel_find (app) != NULL)
+		lrg_editor_nav_panel_paint_handles (lrg_editor_nav_panel_find (app), list, theme, &view, ox, oy, scale);
+
 	/* Skeletons and IK targets of the selected animated nodes */
 	paint_anim_overlay (self, list, theme, &view, ox, oy, scale);
 
-	/* The transform gizmo (every viewport shows it, through its camera) */
-	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) && !lrg_editor_view_state_get_tile_mode (app->view))
+	/* The transform gizmo (every viewport shows it, through its camera);
+	 * hidden while a terrain brush owns the left button */
+	if ((overlays & LRG_EDITOR_VIEW_OVERLAY_GIZMOS) && !lrg_editor_view_state_get_tile_mode (app->view) &&
+	    (terrain_tools (self) == NULL || !lrg_editor_terrain_panel_get_brush_active (terrain_tools (self))))
 		lrg_editor_gizmo_paint_transform (list, app->gizmo, lrg_editor_get_tool (app->editor), &view, ox, oy, scale);
 
 	/* The box-select rectangle of this panel's gesture */
@@ -909,7 +954,7 @@ cell_under (LrgEditorViewportPanel *self,
 	p[0] = o[0] + d[0] * t;
 	p[1] = o[1] + d[1] * t;
 	p[2] = o[2] + d[2] * t;
-	lrg_editor_tile_painter_cell_at (node, p, x, y);
+	lrg_editor_tiles_panel_cell_at (node, p, x, y);   /* iso / hex aware */
 	return TRUE;
 }
 
@@ -958,6 +1003,7 @@ tile_finish (LrgEditorViewportPanel *self,
 
 		editor_app_set_status (app, "Rectangle: %u tile(s)", n);
 	}
+	lrg_editor_tiles_panel_end_gesture (app);   /* rule tiles: autotile, close the undo group */
 	self->tile_rect = FALSE;
 	self->tile_drag = FALSE;
 	mark_dirty (self);
@@ -984,6 +1030,7 @@ tile_press (LrgEditorViewportPanel *self,
 	if (lrg_node_visual_get_tilemap (lrg_node_get_visual (node)) == NULL && tool != LRG_EDITOR_TILE_TOOL_PICK)
 		lrg_editor_tile_painter_ensure_tilemap (app->tile_painter, node);
 	update_tile_hover (self, node);
+	lrg_editor_tiles_panel_begin_gesture (app, node);   /* rule tile brush: one undo group */
 
 	switch (tool)
 	{
@@ -1018,6 +1065,8 @@ tile_press (LrgEditorViewportPanel *self,
 		}
 		break;
 	}
+	if (!self->tile_drag)
+		lrg_editor_tiles_panel_end_gesture (app);   /* instant tools (fill, pick) */
 	mark_dirty (self);
 	return TRUE;
 }
@@ -1262,13 +1311,20 @@ volume_drag (LrgEditorViewportPanel *self,
 	/* Ctrl snaps to tenths (whole degrees for cones) */
 	if (self->mods & LRG_INPUT_MODIFIER_CTRL)
 		value = (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_CONE ||
-		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE) ? round (value) : round (value * 10.0) / 10.0;
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_INNER_CONE ||
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE ||
+		         self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_INNER_CONE) ? round (value)
+		                                                                       : round (value * 10.0) / 10.0;
 	visual = lrg_node_get_visual (self->vol_node);
 	lrg_node_visual_set_param_double (visual, param, value);
 	/* a spot light without an explicit inner cone keeps the 0.8 ratio */
 	if (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_CONE &&
 	    lrg_node_visual_get_param_double (visual, "spot_inner_angle", 0.0) > value)
 		lrg_node_visual_set_param_double (visual, "spot_inner_angle", value);
+	/* an audio emitter's inner cone stays inside the outer one (EDAUDIO) */
+	if (self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_AUDIO_CONE &&
+	    lrg_node_visual_get_param_double (visual, "cone_inner_angle", 360.0) > value)
+		lrg_node_visual_set_param_double (visual, "cone_inner_angle", value);
 	if (lrg_editor_get_level (self->app->editor) != NULL)
 		lrg_level_notify_node_changed (lrg_editor_get_level (self->app->editor), self->vol_node);
 	mark_dirty (self);
@@ -1578,6 +1634,13 @@ lrg_editor_viewport_panel_get_physics_painted (LrgEditorViewportPanel *self)
 	return self->phys_painted;
 }
 
+guint
+lrg_editor_viewport_panel_get_terrain_painted (LrgEditorViewportPanel *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_VIEWPORT_PANEL (self), 0);
+	return self->terrain_painted;
+}
+
 LrgEditorPhysicsHandle
 lrg_editor_viewport_panel_get_physics_handle (LrgEditorViewportPanel *self,
                                               guint                  *index)
@@ -1628,6 +1691,17 @@ on_pointer_press (LrgViewport       *viewport,
 			physics_finish (self, FALSE);
 		return;
 	}
+	/* ... and a terrain stroke or water point drag */
+	if (self->terrain_drag)
+	{
+		if (button != (gint) GRL_MOUSE_BUTTON_LEFT)
+		{
+			lrg_editor_terrain_panel_viewport_release (terrain_tools (self), FALSE);
+			self->terrain_drag = FALSE;
+			mark_dirty (self);
+		}
+		return;
+	}
 
 	/* A right click (or any other button) cancels a gizmo drag */
 	if (self->gizmo_drag)
@@ -1644,8 +1718,33 @@ on_pointer_press (LrgViewport       *viewport,
 	if (self->tile_drag)
 		return;
 
+	/* Navigation handles (area boxes, link ends): a left press grabs one,
+	 * another button during the drag cancels it */
+	if (lrg_editor_nav_panel_find (app) != NULL && !(mods & LRG_INPUT_MODIFIER_ALT))
+	{
+		current_view (self, &view);
+		if (lrg_editor_nav_panel_handle_press (lrg_editor_nav_panel_find (app), &view, button, u, v))
+		{
+			mark_dirty (self);
+			return;
+		}
+	}
+
 	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && tile_press (self, mods))
 		return;
+
+	/* Terrain brush strokes and water outline handles (Alt navigates) */
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && !(mods & LRG_INPUT_MODIFIER_ALT) && terrain_tools (self) != NULL &&
+	    !lrg_editor_view_state_get_tile_mode (app->view))
+	{
+		current_view (self, &view);
+		if (lrg_editor_terrain_panel_viewport_press (terrain_tools (self), &view, u, v, mods))
+		{
+			self->terrain_drag = TRUE;
+			mark_dirty (self);
+			return;
+		}
+	}
 	if (lrg_editor_viewport_nav_pointer_press (app->nav, (GrlMouseButton) button, u, v, mods))
 		return;
 	if (button != (gint) GRL_MOUSE_BUTTON_LEFT || (mods & LRG_INPUT_MODIFIER_ALT))
@@ -1683,7 +1782,7 @@ on_pointer_move (LrgViewport *viewport,
 	self->hovered = TRUE;
 	idle = lrg_editor_viewport_nav_get_mode (app->nav) == LRG_EDITOR_NAV_MODE_NONE && !self->gizmo_drag &&
 	       !self->tile_drag && self->vol_handle == LRG_EDITOR_VOLUME_HANDLE_NONE &&
-	       self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_NONE;
+	       self->phys_handle == LRG_EDITOR_PHYSICS_HANDLE_NONE && !self->terrain_drag;
 
 	/* Hovering with no gesture running makes this the active viewport,
 	 * so shortcuts and the keyboard act where the pointer is */
@@ -1695,6 +1794,20 @@ on_pointer_move (LrgViewport *viewport,
 	if (lrg_editor_viewport_nav_pointer_move (app->nav, u, v, dx, dy, self->mods))
 		return;
 
+	/* The terrain cursor ring follows the pointer; a stroke or a water
+	 * point drag owns the motion */
+	if (terrain_tools (self) != NULL && !lrg_editor_view_state_get_tile_mode (app->view))
+	{
+		current_view (self, &view);
+		if (lrg_editor_terrain_panel_viewport_move (terrain_tools (self), &view, u, v, self->mods) ||
+		    lrg_editor_terrain_panel_get_brush_active (terrain_tools (self)))
+		{
+			mark_dirty (self);
+			if (self->terrain_drag)
+				return;
+		}
+	}
+
 	node = tile_target (self);
 	if (node != NULL)
 	{
@@ -1702,12 +1815,28 @@ on_pointer_move (LrgViewport *viewport,
 		if (self->tile_drag && lrg_editor_tile_painter_is_stroking (app->tile_painter))
 		{
 			lrg_editor_tile_painter_stroke_to (app->tile_painter, app->tile_hover_x, app->tile_hover_y);
+			lrg_editor_tiles_panel_update_gesture (app);   /* autotile this sample */
 			mark_dirty (self);
 		}
 	}
 	else
 		app->tile_hover_valid = FALSE;
 
+	/* A navigation handle drag, or its hover */
+	if (lrg_editor_nav_panel_find (app) != NULL)
+	{
+		gboolean repaint = FALSE;
+
+		current_view (self, &view);
+		if (lrg_editor_nav_panel_handle_motion (lrg_editor_nav_panel_find (app), &view, u, v,
+		                                        (self->mods & LRG_INPUT_MODIFIER_CTRL) != 0, &repaint))
+		{
+			mark_dirty (self);
+			return;
+		}
+		if (repaint)
+			mark_dirty (self);
+	}
 	if (self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
 	{
 		volume_drag (self, u, v);
@@ -1778,6 +1907,33 @@ on_pointer_release (LrgViewport       *viewport,
 		tile_finish (self, node, TRUE);
 		return;
 	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->terrain_drag)
+	{
+		LrgEditorView view;
+
+		/* the release carries the last motion */
+		current_view (self, &view);
+		if (terrain_tools (self) != NULL)
+		{
+			lrg_editor_terrain_panel_viewport_move (terrain_tools (self), &view, u, v, mods);
+			lrg_editor_terrain_panel_viewport_release (terrain_tools (self), TRUE);
+		}
+		self->terrain_drag = FALSE;
+		mark_dirty (self);
+		return;
+	}
+	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && lrg_editor_nav_panel_find (app) != NULL)
+	{
+		LrgEditorView view;
+
+		current_view (self, &view);
+		if (lrg_editor_nav_panel_handle_release (lrg_editor_nav_panel_find (app), &view, u, v,
+		                                         (mods & LRG_INPUT_MODIFIER_CTRL) != 0))
+		{
+			mark_dirty (self);
+			return;
+		}
+	}
 	if (button == (gint) GRL_MOUSE_BUTTON_LEFT && self->vol_handle != LRG_EDITOR_VOLUME_HANDLE_NONE)
 	{
 		volume_drag (self, u, v);
@@ -1830,6 +1986,15 @@ on_key (LrgViewport       *viewport,
 	LrgEditorApp           *app = self->app;
 
 	self->mods = mods;
+
+	/* Terrain brush keys ([ ] radius, Escape cancels a stroke) */
+	if (terrain_tools (self) != NULL && lrg_editor_terrain_panel_viewport_key (terrain_tools (self), key, mods))
+	{
+		if (key == GRL_KEY_ESCAPE)
+			self->terrain_drag = FALSE;
+		mark_dirty (self);
+		return TRUE;
+	}
 	if (key == GRL_KEY_ESCAPE)
 	{
 		/* A volume resize, then a gizmo drag own Escape */
@@ -1891,6 +2056,11 @@ lrg_editor_viewport_panel_handle_event (LrgWidget        *widget,
 		self->hovered = FALSE;
 		if (is_active (self))
 			self->app->tile_hover_valid = FALSE;
+		if (terrain_tools (self) != NULL && !self->terrain_drag)
+		{
+			lrg_editor_terrain_panel_viewport_leave (terrain_tools (self));
+			mark_dirty (self);
+		}
 		return FALSE;
 	default:
 		return FALSE;
@@ -2343,6 +2513,21 @@ open_overlay_menu (LrgEditorViewportPanel *self)
 			g_menu_append (phys, "Velocities (playing)", "vp.physics-velocity");
 			g_menu_append (phys, "Broadphase Tree (playing)", "vp.physics-broadphase");
 			g_menu_append_section (menu, "Physics", G_MENU_MODEL (phys));
+		}
+		{
+			/* the Navigation panel's app actions (lrg-editor-nav-panel.c) */
+			g_autoptr(GMenu) nav = g_menu_new ();
+
+			g_menu_append (nav, "Navigation Mesh", "editor.nav.overlay-polygons");
+			g_menu_append (nav, "Colour by Area", "editor.nav.overlay-areas");
+			g_menu_append (nav, "Polygon Edges", "editor.nav.overlay-edges");
+			g_menu_append (nav, "Boundaries", "editor.nav.overlay-boundaries");
+			g_menu_append (nav, "Off-mesh Links", "editor.nav.overlay-links");
+			g_menu_append (nav, "Agents (playing)", "editor.nav.overlay-agents");
+			g_menu_append (nav, "Agent Paths (playing)", "editor.nav.overlay-paths");
+			g_menu_append (nav, "ORCA, Debug Agent (playing)", "editor.nav.overlay-orca");
+			g_menu_append (nav, "Area and Link Handles", "editor.nav.overlay-handles");
+			g_menu_append_section (menu, "Navigation", G_MENU_MODEL (nav));
 		}
 		self->overlay_menu = g_object_ref_sink (lrg_menu_new_from_model (G_MENU_MODEL (menu)));
 	}
@@ -2919,6 +3104,10 @@ editor_viewport_panel_tick (LrgEditorViewportPanel *self,
 		return;
 	lrg_editor_viewport_nav_tick (self->app->nav, dt);
 
+	/* A held terrain brush keeps dabbing while the pointer rests */
+	if (terrain_tools (self) != NULL && lrg_editor_terrain_panel_viewport_tick (terrain_tools (self), dt))
+		mark_dirty (self);
+
 	/* The split registers its 0.8.1 view.render_mode after the panels
 	 * exist; the first frame puts the 0.9.0 one (mode list, debug views)
 	 * back on top. */
@@ -3123,6 +3312,7 @@ lrg_editor_viewport_panel_step (LrgWidget *widget,
 	update_preview (self);
 
 	continuous = lrg_editor_play_session_is_playing (app->play) || self->gizmo_drag || self->tile_drag ||
+	             terrain_busy (self) ||
 	             lrg_editor_view_state_get_timeline_playing (app->view) ||
 	             (is_active (self) && lrg_editor_viewport_nav_get_mode (app->nav) != LRG_EDITOR_NAV_MODE_NONE &&
 	              lrg_editor_viewport_nav_get_mode (app->nav) != LRG_EDITOR_NAV_MODE_BOX);

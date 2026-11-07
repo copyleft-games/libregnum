@@ -535,8 +535,9 @@ guint lrg_editor_scene_renderer_get_generation (LrgEditorSceneRenderer *self);
  * @node: a node
  *
  * Whether @node references a model, sprite or tileset file that does
- * not exist (resolved against the base directory). Works without a
- * window; the viewport paints these nodes with magenta boxes.
+ * not exist (resolved against the base directory), or a terrain / water
+ * node whose `.rterrain` / `.rwater` does not load (0.9.0). Works
+ * without a window; the viewport paints these nodes with magenta boxes.
  *
  * Returns: %TRUE when the node's asset is missing
  */

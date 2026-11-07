@@ -359,6 +359,19 @@ LRG_AVAILABLE_IN_ALL
 guint lrg_editor_viewport_panel_get_physics_painted (LrgEditorViewportPanel *self);
 
 /**
+ * lrg_editor_viewport_panel_get_terrain_painted:
+ * @self: an #LrgEditorViewportPanel
+ *
+ * Returns: the terrain brush rings and water outline handles the last
+ *   overlay paint drew (lrg_editor_terrain_panel_paint_overlay(); tests,
+ *   tooling)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_editor_viewport_panel_get_terrain_painted (LrgEditorViewportPanel *self);
+
+/**
  * lrg_editor_viewport_panel_get_physics_handle:
  * @self: an #LrgEditorViewportPanel
  * @index: (out) (optional): the handle's shape or joint index

@@ -130,7 +130,7 @@ A body builds once (and on change); a 100 x 80 lake at 1-unit cells is one patch
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-A water body is a level node of kind =water= whose asset is the =.rwater=; the runtime makes an =LrgWaterComponent=. The next wave's water inspector edits the body through the setters above and calls =lrg_water_component_rebuild()=.
+A water body is a level node of kind =water= whose asset is the =.rwater=; the runtime makes an =LrgWaterComponent=. In lrgeditor ([[file:../../editor/terrain.org::#editor-water-editor][Water editor]]), Create > Water writes a small lake =.rwater= and adds the node; selecting a lake or river node shows its outline points as viewport handles (drag, Ctrl+click adds, Shift+click removes, one undo step each), and double-clicking the =.rwater= opens the water editor: the body fields, up to four waves and the outline with an animated preview, every change one undo step of the document, the level's water nodes following the unsaved state (the editor rebuilds their =LrgWaterComponent= with =lrg_water_component_rebuild()=). IPC: =water.get=, =water.set=, =water.set_wave=, =water.add_point= / =set_point= / =remove_point=, =water.save= on a ={"path"}= or a ={"node"}=.
 
 ** See also
 :PROPERTIES:

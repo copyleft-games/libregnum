@@ -34,6 +34,7 @@
 #include "config.h"
 
 #include "lrg-editor-scene-renderer.h"
+#include "lrg-editor-tiles-panel.h"
 #include "../lrg-editor.h"
 #include "../lrg-editor-selection.h"
 #include "../lrg-editor-math.h"
@@ -54,6 +55,8 @@
 #include "../../lighting/lrg-lightmap3d.h"
 #include "../../lighting/lrg-probe-grid.h"
 #include "../../postprocess/lrg-post-stack.h"
+#include "lrg-editor-terrain-panel.h"
+#include "../../world3d/components/lrg-terrain-component.h"
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
@@ -870,7 +873,11 @@ draw_probe_volume (LrgEditorSceneRenderer *self,
  * The render item of one node's geometry: primitives, models (from the
  * runtime renderer's cache), sprites (a textured quad keeping the image's
  * aspect ratio) and CAD parts.  Missing assets, tilemaps and prefab
- * instances have no item: the overlay hook draws them.
+ * instances have no item: the overlay hook draws them.  Terrain and water
+ * nodes (0.9.0) add the items of their authoring stand-in component
+ * (lrg_editor_terrain_node_component(): the asset shared with the Terrain
+ * panel's brushes and the water editor), exactly what the game's
+ * LrgTerrainComponent / LrgWaterComponent draw.
  */
 static void
 add_node_item (NodeWalk      *walk,
@@ -983,6 +990,17 @@ add_node_item (NodeWalk      *walk,
 				item.color[0] = item.color[1] = item.color[2] = item.color[3] = 1.0f;
 		}
 		break;
+
+	case LRG_NODE_VISUAL_TERRAIN:
+	case LRG_NODE_VISUAL_WATER:
+		{
+			LrgComponent *comp = (self->editor != NULL)
+			                     ? lrg_editor_terrain_node_component (self->editor, self->runtime, node) : NULL;
+
+			if (comp != NULL)
+				lrg_component_collect_render (comp, walk->list);
+		}
+		return;   /* a file that does not load: the overlay's placeholder */
 
 	case LRG_NODE_VISUAL_CAD_PART:
 		item.kind = LRG_RENDER_ITEM_PRIMITIVE;
@@ -1257,25 +1275,12 @@ draw_icon (LrgNodeVisualKind kind,
 	}
 }
 
-/* Colour of an untextured tile id (matches the tile palette swatches). */
-static Color
-tile_swatch (guint id)
-{
-	static const guint32 palette[] = {
-		0xf38ba8ffu, 0xfab387ffu, 0xf9e2afffu, 0xa6e3a1ffu, 0x94e2d5ffu, 0x89dcebffu,
-		0x74c7ecffu, 0x89b4faffu, 0xb4befeffu, 0xcba6f7ffu, 0xf5c2e7ffu, 0xeba0acffu
-	};
-	guint32 c = palette[(id - 1) % G_N_ELEMENTS (palette)];
-
-	return (Color) { (guchar) (c >> 24), (guchar) (c >> 16), (guchar) (c >> 8), (guchar) c };
-}
-
 /*
- * Draws a tilemap node's grid in its local XY plane: one textured quad
- * per non-empty cell (tileset slices), or flat swatches without a
- * tileset. Layers stack bottom first with a tiny z offset. The bounds
- * always show; cell lines show while the node is the tile paint target
- * (tile mode on and the node is the primary selection).
+ * Draws a tilemap node: the Tiles panel's drawer handles every grid
+ * orientation (isometric, staggered, hexagonal), the cells' flip /
+ * rotation bits, `.rtileset` tilesets (margin, spacing, animated tiles)
+ * and the cell outlines while the node is the tile paint target (tile
+ * mode on and the node is the primary selection).
  */
 static void
 draw_tilemap (LrgEditorSceneRenderer *self,
@@ -1283,104 +1288,8 @@ draw_tilemap (LrgEditorSceneRenderer *self,
               LrgNodeVisual          *visual,
               const gfloat           *world)
 {
-	LrgNodeTilemap         *grid = lrg_node_visual_get_tilemap (visual);
-	const gchar            *asset = lrg_node_visual_get_asset (visual);
-	GrlTexture             *gtex = (asset != NULL) ? lrg_world3d_renderer_get_texture (self->runtime, asset) : NULL;
-	Texture2D              *tex = (gtex != NULL) ? (Texture2D *) grl_texture_get_handle (gtex) : NULL;
-	gfloat                  ts = (gfloat) lrg_node_visual_get_param_double (visual, "tile_size", 1.0);
-	guint                   w = lrg_node_tilemap_get_width (grid);
-	guint                   h = lrg_node_tilemap_get_height (grid);
-	guint                   tw = lrg_node_tilemap_get_tile_width (grid);
-	guint                   th = lrg_node_tilemap_get_tile_height (grid);
-	guint                   cols = 0, count = 0;
-	guint                   layer, x, y;
-
-	if (!(ts > 0.0f))
-		ts = 1.0f;
-	/* The tileset is usable when it holds at least one tile. */
-	if (tex != NULL && tw > 0 && th > 0 && tex->width >= (gint) tw && tex->height >= (gint) th)
-	{
-		cols = (guint) tex->width / tw;
-		count = cols * ((guint) tex->height / th);
-	}
-	else
-		tex = NULL;
-
-	push_local (world);
-	rlDisableBackfaceCulling ();
-	for (layer = 0; layer < lrg_node_tilemap_get_n_layers (grid); layer++)
-	{
-		gfloat       z = 0.002f * (gfloat) layer;
-		gsize        n = 0;
-		const guint *cells = lrg_node_tilemap_get_layer_tiles (grid, layer, &n);
-
-		if (!lrg_node_tilemap_get_layer_visible (grid, layer) || cells == NULL)
-			continue;
-		rlSetTexture (tex != NULL ? tex->id : rlGetTextureIdDefault ());
-		for (y = 0; y < h; y++)
-		{
-			rlCheckRenderBatchLimit ((gint) (4 * w));
-			rlBegin (RL_QUADS);
-			for (x = 0; x < w; x++)
-			{
-				guint  id = cells[(gsize) y * w + x];
-				gfloat x0 = (gfloat) x * ts, x1 = (gfloat) (x + 1) * ts;
-				gfloat y0 = -(gfloat) y * ts, y1 = -(gfloat) (y + 1) * ts;
-				gfloat u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
-				Color  c = WHITE;
-
-				if (id == 0)
-					continue;
-				if (tex != NULL)
-				{
-					guint idx = (id - 1) % MAX (count, 1u);
-
-					u0 = (gfloat) ((idx % cols) * tw) / (gfloat) tex->width;
-					v0 = (gfloat) ((idx / cols) * th) / (gfloat) tex->height;
-					u1 = u0 + (gfloat) tw / (gfloat) tex->width;
-					v1 = v0 + (gfloat) th / (gfloat) tex->height;
-				}
-				else
-					c = tile_swatch (id);
-				rlColor4ub (c.r, c.g, c.b, c.a);
-				rlNormal3f (0.0f, 0.0f, 1.0f);
-				rlTexCoord2f (u0, v0);
-				rlVertex3f (x0, y0, z);
-				rlTexCoord2f (u0, v1);
-				rlVertex3f (x0, y1, z);
-				rlTexCoord2f (u1, v1);
-				rlVertex3f (x1, y1, z);
-				rlTexCoord2f (u1, v0);
-				rlVertex3f (x1, y0, z);
-			}
-			rlEnd ();
-		}
-		rlSetTexture (0);
-		self->tile_draws++;
-	}
-	rlEnableBackfaceCulling ();
-
-	/* Bounds always; cell lines while painting this node. */
-	{
-		Color  edge = { 120, 200, 140, 200 };
-		gfloat gw = (gfloat) w * ts, gh = -(gfloat) h * ts;
-
-		DrawLine3D ((Vector3) { 0.0f, 0.0f, 0.0f }, (Vector3) { gw, 0.0f, 0.0f }, edge);
-		DrawLine3D ((Vector3) { gw, 0.0f, 0.0f }, (Vector3) { gw, gh, 0.0f }, edge);
-		DrawLine3D ((Vector3) { gw, gh, 0.0f }, (Vector3) { 0.0f, gh, 0.0f }, edge);
-		DrawLine3D ((Vector3) { 0.0f, gh, 0.0f }, (Vector3) { 0.0f, 0.0f, 0.0f }, edge);
-		if (self->cur_tile_mode && self->cur_primary == node && w * h <= 256u * 256u)
-		{
-			Color line = { 120, 200, 140, 70 };
-
-			for (x = 1; x < w; x++)
-				DrawLine3D ((Vector3) { (gfloat) x * ts, 0.0f, 0.001f }, (Vector3) { (gfloat) x * ts, gh, 0.001f }, line);
-			for (y = 1; y < h; y++)
-				DrawLine3D ((Vector3) { 0.0f, -(gfloat) y * ts, 0.001f }, (Vector3) { gw, -(gfloat) y * ts, 0.001f },
-				            line);
-		}
-	}
-	rlPopMatrix ();
+	lrg_editor_tiles_panel_draw_tilemap (self->runtime, node, world, self->cur_tile_mode && self->cur_primary == node);
+	self->tile_draws += lrg_node_tilemap_get_n_layers (lrg_node_visual_get_tilemap (visual));
 }
 
 /* The icon of a light, camera, audio emitter or empty node, at a
@@ -1910,6 +1819,50 @@ draw_node_overlay (LrgEditorSceneRenderer *self,
 
 		case LRG_NODE_VISUAL_PROBE_VOLUME:
 			draw_probe_volume (self, visual, entry->world, entry->selected);
+			break;
+
+		case LRG_NODE_VISUAL_TERRAIN:
+		case LRG_NODE_VISUAL_WATER:
+			{
+				LrgComponent    *comp = (self->editor != NULL)
+				                        ? lrg_editor_terrain_node_component (self->editor, self->runtime, node)
+				                        : NULL;
+				LrgBoundingBox3D b;
+
+				/* A file that does not load: a flat magenta frame */
+				if (comp == NULL)
+				{
+					push_local (entry->world);
+					draw_unit_wire_box (2.0f, 0.05f, 2.0f, MAGENTA);
+					rlPopMatrix ();
+				}
+				/* The selected terrain's footprint and chunk borders */
+				else if (entry->selected && LRG_IS_TERRAIN_COMPONENT (comp) && lrg_component_get_bounds (comp, &b))
+				{
+					LrgTerrainAsset *asset = lrg_terrain_component_get_asset (LRG_TERRAIN_COMPONENT (comp));
+					Color            edge = { 250, 179, 135, 160 };
+					Color            seam = { 250, 179, 135, 60 };
+					guint            cx = 1, cz = 1, k;
+					gfloat           cs = 1.0f, y = b.max.y + 0.05f;
+
+					if (asset != NULL)
+					{
+						lrg_terrain_asset_get_chunks (asset, &cx, &cz);
+						cs = lrg_terrain_asset_get_chunk_size (asset);
+					}
+					push_local (entry->world);
+					DrawCubeWires ((Vector3) { (b.min.x + b.max.x) * 0.5f, (b.min.y + b.max.y) * 0.5f,
+					                           (b.min.z + b.max.z) * 0.5f },
+					               b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z, edge);
+					for (k = 1; asset != NULL && k < cx; k++)
+						DrawLine3D ((Vector3) { cs * (gfloat) k, y, b.min.z }, (Vector3) { cs * (gfloat) k, y, b.max.z },
+						            seam);
+					for (k = 1; asset != NULL && k < cz; k++)
+						DrawLine3D ((Vector3) { b.min.x, y, cs * (gfloat) k }, (Vector3) { b.max.x, y, cs * (gfloat) k },
+						            seam);
+					rlPopMatrix ();
+				}
+			}
 			break;
 
 		case LRG_NODE_VISUAL_PREFAB_INSTANCE:
@@ -2590,6 +2543,8 @@ lrg_editor_scene_renderer_is_asset_missing (LrgEditorSceneRenderer *self,
 	if (visual == NULL)
 		return FALSE;
 	kind = lrg_node_visual_get_kind (visual);
+	if (kind == LRG_NODE_VISUAL_TERRAIN || kind == LRG_NODE_VISUAL_WATER)
+		return self->editor == NULL || lrg_editor_terrain_node_component (self->editor, self->runtime, node) == NULL;
 	if (kind != LRG_NODE_VISUAL_MESH_ASSET && kind != LRG_NODE_VISUAL_SPRITE && kind != LRG_NODE_VISUAL_TILEMAP)
 		return FALSE;
 	asset = lrg_node_visual_get_asset (visual);

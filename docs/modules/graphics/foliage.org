@@ -144,7 +144,7 @@ Scattering costs one hash chain, a weight sample and (for accepted slots) a heig
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The next editor wave's foliage brush paints density with =LRG_TERRAIN_BRUSH_FOLIAGE_PAINT= / =_ERASE= (undo through the stroke's =LrgTerrainEdit= of kind =LRG_TERRAIN_EDIT_FOLIAGE=) and edits layer settings through the getters and setters above; the result saves with the terrain.
+The Terrain panel's Foliage section ([[file:../../editor/terrain.org::#editor-terrain-foliage][Foliage layers]]) adds mesh, card and grass layers, edits every scatter rule above in a grid (density, scale, slope, height, align, size, fade, seed, mesh / LOD mesh / texture, colour), and its Foliage / Erase brushes paint the selected layer's density with =LRG_TERRAIN_BRUSH_FOLIAGE_PAINT= / =_ERASE= (one undo step per stroke, from the stroke's =LrgTerrainEdit= of kind =LRG_TERRAIN_EDIT_FOLIAGE=); Rebake runs =lrg_terrain_asset_scatter_foliage()=. IPC: =terrain.add_foliage=, =terrain.set_foliage=, =terrain.remove_foliage=, =terrain.stroke {"tool": "foliage-paint"}=. The result saves with the terrain.
 
 ** See also
 :PROPERTIES:

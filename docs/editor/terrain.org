@@ -1,0 +1,395 @@
+#+title: Terrain and Water in the Editor: Terrain Panel, Brushes, Foliage and the Water Editor
+#+description: The lrgeditor tools for landscapes in 0.9.0: Create > Terrain / Water, the Terrain panel (sculpt, paint, hole and foliage brushes, surface and foliage layers, chunk grid, Rebake, Save), the viewport brush with its cursor ring and one undo step per stroke, water outline handles, the .rwater data editor with a live preview, the shared terrain / water store and the terrain.* and water.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor terrain water foliage brush ipc
+#+created: 2026-11-07T12:30:00-05:00
+#+updated: 2026-11-07T12:30:00-05:00
+#+version: 0.9.0
+
+* Terrain and Water in the Editor
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Terrain and Water
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-overview
+:END:
+A landscape in a level is two node kinds: a =terrain= node whose asset is an =.rterrain= ([[file:../modules/graphics/terrain-asset.org][LrgTerrainAsset]]: chunked heights, surface layers, holes, foliage scatter layers) and =water= nodes whose asset is an =.rwater= ([[file:../modules/graphics/water-body.org][LrgWaterBody]]: a plane, lake polygon or river spline with waves, colours and optics). =lrg_level_instantiate_3d()= turns them into an =LrgTerrainComponent= and an =LrgWaterComponent=, so play-in-editor and the game draw, collide and scatter exactly what the editor authored.
+
+The editor tools (0.9.0, M6/M7 editor wave):
+
+| Tool | Where | Edits | Source |
+|------+-------+-------+--------|
+| Create > Terrain / Water | Create menu, viewport context menu, actions =terrain.create= / =terrain.create-water=, IPC =terrain.create= | a new node plus a new asset file under =terrain/= | =src/editor/ui/lrg-editor-terrain-panel.c= |
+| Terrain panel | A dock tab (action =terrain.show=, dock id ="terrain"=) | the selected terrain's brush, surface layers, foliage layers; Rebake, Save | =src/editor/ui/lrg-editor-terrain-panel.{h,c}= |
+| Viewport brush | Every viewport, while a brush tool is picked and a terrain node is selected | heights, splat weights, holes, foliage density | the viewport panel calls the Terrain panel's =lrg_editor_terrain_panel_viewport_*()= hooks |
+| Water outline handles | Every viewport, for a selected lake or river node | the body's points | same hooks |
+| Water editor | A document tab for an =.rwater= file (double-click it in Assets, IPC =water.get {path}=) | every body field, the waves, the outline, with a live preview | =src/editor/ui/data/lrg-editor-water-editor.{h,c}= |
+| Scene renderer | Viewports while authoring | nothing: draws terrain and water nodes through their stand-in components | =src/editor/ui/lrg-editor-scene-renderer.c= |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-concepts
+:END:
+*** The shared store
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-store
+:END:
+Terrain and water data live in their own files, not in the level, so the editor keeps one loaded copy of each file per =LrgEditor=: the store (=lrg_editor_terrain_store_get_terrain()=, =lrg_editor_terrain_store_get_water()=, keyed by absolute path, created on first use and attached to the editor). The scene renderer, the Terrain panel, the viewport tools, the water editor and the IPC methods all work on that one object, so a stroke is visible everywhere the moment it is applied. Every change marks the file dirty (=lrg_editor_terrain_store_set_dirty()=, =lrg_editor_terrain_store_is_dirty()=); =lrg_editor_terrain_store_save()= writes one file (a terrain with its PNG / raw sidecars), =lrg_editor_terrain_store_save_all()= every dirty one, and the editor's =saved= signal runs =save_all= so *saving the level saves its edited terrains and water bodies*. =lrg_editor_terrain_store_forget()= drops a file (unsaved changes are lost; the next use reloads it).
+
+A node's file comes from its asset string through =lrg_editor_terrain_node_path()=: absolute paths as they are, relative ones against the level's directory first (the runtime's rule), then the scene renderer's asset resolver (GUIDs and project-relative paths).
+
+*** Stand-in components
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-standins
+:END:
+=lrg_editor_terrain_node_component()= gives every drawn terrain or water node a private =LrgEntity3D= with an =LrgTerrainComponent= or =LrgWaterComponent= showing the store's asset. The entity follows the node's world transform on every call; the node's =cast_shadows= and =foliage= params are applied. The scene renderer calls it for =LRG_NODE_VISUAL_TERRAIN= / =LRG_NODE_VISUAL_WATER= nodes and adds the component's render items (=lrg_component_collect_render()=): chunk meshes with LOD and the baked splat albedo, foliage, the water surface. The brush picks with =lrg_terrain_component_raycast()= on the same component, so the cursor sits exactly on what is drawn. A node whose file does not load gets a flat magenta frame and counts as a missing asset (=lrg_editor_scene_renderer_is_asset_missing()=); a selected terrain shows its footprint box and chunk borders.
+
+*** Undo
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-undo
+:END:
+Terrain and water edits are steps of the *level's* history (Ctrl+Z, the History panel, =edit.undo=) although the data is in other files: each step is an =LrgEditorCommand= set-property command on a private object whose "applied" property restores the "before" or "after" state.
+
+| Change | One step holds | Label |
+|--------+----------------+-------|
+| A brush stroke (viewport drag or =terrain.stroke=) | the stroke's =LrgTerrainEdit= (=lrg_terrain_brush_end_stroke()=): the touched region of one data set before and after | "Terrain: Raise stroke", ... |
+| A layer or foliage field | the surface and foliage layer settings before and after (a grid drag or typing session updates one step) | "Terrain: layer 1 tiling", "Terrain: foliage 0 density" |
+| Add / remove a surface or foliage layer | the settings plus the whole splat, ids and density maps | "Terrain: add layer", "Terrain: remove foliage layer" |
+| A water outline handle drag, Ctrl+click, Shift+click | the body's point list before and after | "Water: move point", "Water: add point", "Water: remove point" |
+| =water.*= with a ={node}= | the body's =.rwater= text before and after | "Water: set", ... |
+| Create > Terrain / Water | the node insertion (the written file stays) | "Add Terrain" |
+
+Undo and redo mark the file dirty again. =.rwater= files open in the water editor have their own document history: its edits are document steps, and outline handle drags on a node showing that file are pushed into the open document as one more document step (=lrg_editor_water_editor_sync_from_store()=).
+
+** Creating terrain and water
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-create
+:END:
+Create > Terrain (=terrain.create=, IPC =terrain.create {"kind": "terrain"}=) adds a =terrain= node and writes =<project>/terrain/<name>.rterrain= (unique: =ground.rterrain=, =ground2.rterrain=, ...): 4 x 4 chunks of 32 one-unit cells (128 x 128 units, 129 x 129 samples), flat, two surface layers ("grass", "rock") with colours. The node is moved by (-64, 0, -64) from where new nodes appear (the camera's target), so the terrain is centred there. Create > Water (=terrain.create-water=, =terrain.create {"kind": "water"}=) writes a 20-unit, four-point lake at level 0.5 with one gentle wave. The node insertion is one undo step; =lrg_editor_terrain_init_node()= is the C entry point the shell's Create menu calls for both. The Assets panel's "New Terrain" / "New Water Body" entries write files without a node; drop or point a node's asset at them.
+
+** Terrain panel
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-panel
+:END:
+=LrgEditorTerrainPanel= (=lrg_editor_terrain_panel_new()=, =lrg_editor_terrain_panel_find()=; dock id =LRG_EDITOR_TERRAIN_PANEL_ID=, "terrain") shows the primary selection when it is a =terrain= node (=lrg_editor_terrain_panel_get_node()=, =lrg_editor_terrain_panel_get_asset()=). Otherwise an empty state explains what to do (select a terrain, Create > Terrain, or select a water lake / river for its handles); a terrain node whose file does not load says so.
+
+*** Layout
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-panel-layout
+:END:
+Top to bottom (widget names in parentheses, for tests and =ui.state=):
+
+- Header (=terrain-top=, =terrain-header=): the title (=terrain-title=), the node name (=terrain-node=), Rebake (=terrain-rebake=) and Save (=terrain-save=, a "*" badge while the file is unsaved).
+- In a scroll box (=terrain-scroll=, =terrain-content=):
+  - *Tools* (=terrain-tools-heading=): the tool strip (=terrain-tools=), eleven painted cells of 58 x 50 px wrapping to the panel width, each a glyph and a label; the picked tool is filled with the accent colour.
+  - *Brush* (=terrain-brush-heading=): the brush grid (=terrain-brush-grid=, =lrg_editor_terrain_panel_get_brush_grid()=).
+  - *Surface layers* (=terrain-layers-heading=, Add =terrain-add-layer=, hidden at 8 layers): the painted list =terrain-layer-list= (24 px rows from y + 1: colour swatch, index, name, texture file or "colour", tiling; a remove button, 22 px, right aligned, dimmed for the last layer) and the selected layer's grid (=terrain-layer-grid=, =lrg_editor_terrain_panel_get_layer_grid()=).
+  - *Foliage* (=terrain-foliage-heading=, the kind picker =terrain-foliage-kind= "Trees (mesh)" / "Cards (billboard)" / "Grass", Add =terrain-add-foliage=): the list =terrain-foliage-list= (a tinted tree glyph, name, kind, density per m², mesh or texture, instance count; a remove button) and the selected layer's grid (=terrain-foliage-grid=, =lrg_editor_terrain_panel_get_foliage_grid()=).
+  - *Chunk grid* (=terrain-grid-heading=): the summary (=terrain-info=, the text of =lrg_editor_terrain_panel_describe()=: chunks and cells, cell size, samples, size, LOD levels, layer and foliage counts with instances, holes, "unsaved"), wrapped over up to three lines.
+- Empty state (=terrain-empty=, =terrain-hint=, =terrain-hint-missing=).
+
+*** Tools
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-tools
+:END:
+=LrgEditorTerrainTool= (=lrg_editor_terrain_tool_get_type()=, =LRG_TYPE_EDITOR_TERRAIN_TOOL=; =lrg_editor_terrain_panel_get_tool()= / =lrg_editor_terrain_panel_set_tool()=; actions =terrain.tool-<nick>=, checked while picked). Every tool but Select is the =LrgTerrainBrushOp= of the same name (=lrg_editor_terrain_tool_get_op()=, =lrg_editor_terrain_tool_get_label()=):
+
+| Tool (nick) | Brush operation | Ctrl (invert) | Works on |
+|-------------+-----------------+---------------+----------|
+| Select (=select=) | none: the viewport picks and transforms as usual | | |
+| Raise (=raise=) | =LRG_TERRAIN_BRUSH_RAISE= | Lower | heights |
+| Lower (=lower=) | =LRG_TERRAIN_BRUSH_LOWER= | Raise | heights |
+| Flatten (=flatten=) | =LRG_TERRAIN_BRUSH_FLATTEN= towards Target height (or the height under the stroke's start with Sample target) | | heights |
+| Smooth (=smooth=) | =LRG_TERRAIN_BRUSH_SMOOTH= | | heights |
+| Noise (=noise=) | =LRG_TERRAIN_BRUSH_NOISE= with Noise scale and Seed | | heights |
+| Paint (=paint=) | =LRG_TERRAIN_BRUSH_PAINT= of the selected surface layer | | splat weights (ids in ids mode) |
+| Hole (=hole=) | =LRG_TERRAIN_BRUSH_HOLE= | Fill | holes |
+| Fill (=fill=) | =LRG_TERRAIN_BRUSH_FILL= | Hole | holes |
+| Foliage (=foliage-paint=) | =LRG_TERRAIN_BRUSH_FOLIAGE_PAINT= of the selected foliage layer | Erase | foliage density |
+| Erase (=foliage-erase=) | =LRG_TERRAIN_BRUSH_FOLIAGE_ERASE= of the selected foliage layer | Foliage | foliage density |
+
+Shift turns any stroke into a smooth (=LrgEditorTerrainStrokeFlags=: =LRG_EDITOR_TERRAIN_STROKE_INVERT=, =LRG_EDITOR_TERRAIN_STROKE_SMOOTH=; =lrg_editor_terrain_stroke_flags_get_type()=). Paint needs a selected surface layer, the foliage tools a selected foliage layer (the panel says so in the status bar otherwise).
+
+*** Brush settings
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-brush
+:END:
+The panel's =LrgTerrainBrush= (=lrg_editor_terrain_panel_get_brush()=) holds the settings; the operation and layer are set from the tool and the list selection at each stroke and put back after it. The brush grid shows:
+
+| Row | Brush property | Range | Note |
+|-----+----------------+-------+------|
+| Radius | =radius= | 0.1 .. 256 | world units, default 8; =[= / =]= in the viewport |
+| Strength | =strength= | 0 .. 64 | default 6: height per second while held (sculpt), blend rate per second (paint); Shift+=[= / =]= |
+| Falloff | =falloff= | linear, smooth, sphere, sharp, constant, curve | |
+| Curve | =falloff-curve= | a curve editor | only for the curve falloff |
+| Target height, Sample target | =target-height=, =sample-target= | | Flatten only |
+| Noise scale, Seed | =noise-scale=, =seed= | | Noise only |
+
+Brush settings are editor state, not undo steps.
+
+*** Surface layers
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-layers
+:END:
+1 .. 8 layers. Add (=lrg_editor_terrain_panel_add_layer()=) appends one with a palette colour and selects it; the row's remove button (=lrg_editor_terrain_panel_remove_layer()=) hands its weight to the others, undo brings the layer and the weights back; the last layer stays. Clicking a row selects it (=lrg_editor_terrain_panel_set_selected_layer()=, =lrg_editor_terrain_panel_get_selected_layer()=): the Paint tool paints it. The grid edits Name, Texture (an =asset:texture= reference: drag a texture from Assets), Material (an =.rmat=, kept for tools), Tiling (world units per repeat) and Colour (multiplies the texture) through =lrg_editor_terrain_panel_set_layer_field()= ("name", "texture", "material", "tiling", "color"); every chunk's splat is baked again.
+
+*** Foliage layers
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-foliage
+:END:
+Pick a kind and Add (=lrg_editor_terrain_panel_add_foliage()=): a mesh layer starts as =builtin:conifer= at 0.01 per m², grass at 2 per m² fading out at 30 .. 50 units, cards at 0.05. Remove (=lrg_editor_terrain_panel_remove_foliage()=) is undone with the layer's density map. The selected layer (=lrg_editor_terrain_panel_set_selected_foliage()=, =lrg_editor_terrain_panel_get_selected_foliage()=) is what the foliage brushes paint; its grid edits the scatter rules through =lrg_editor_terrain_panel_set_foliage_field()=:
+
+| Row | Field | Meaning |
+|-----+-------+---------|
+| Kind | (read only) | mesh, billboard, grass |
+| Mesh, LOD mesh, LOD distance | "mesh", "lod-mesh", "lod-distance" | mesh layers: a model or =builtin:conifer= / =builtin:broadleaf= / =builtin:rock=, a cheaper model past the distance |
+| Texture | "texture" | card and grass layers |
+| Colour | "color" | tint |
+| Density | "density" | instances per square unit at full density |
+| Scale | "scale" (min, max) | random scale |
+| Slope | "slope" (min, max) | allowed ground slope in degrees |
+| Height | "height" (min, max) | allowed terrain height |
+| Align | "align" | 0 upright .. 1 along the ground normal |
+| Size | "size" (width, height) | card and grass sizes |
+| Fade | "fade" (start, end) | distance fade (0, 0: never) |
+| Seed | "seed" | the layer's scatter seed |
+
+A changed rule marks every patch for re-scattering; heights strokes re-scatter the patches they touch.
+
+*** Rebake and Save
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-rebake
+:END:
+Rebake (=lrg_editor_terrain_panel_rebake()=, action =terrain.rebake=, IPC =terrain.rebake=) re-scatters every foliage layer now and, with a window, drops the stand-in's chunk meshes and splat bakes so they are made again; it returns the instance count and is not an undo step. Save (=lrg_editor_terrain_panel_save()=, action =terrain.save=, IPC =terrain.save=) writes the =.rterrain= and its sidecars; saving the level does the same for every dirty terrain and water file.
+
+** Viewport brush
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-viewport
+:END:
+With a brush tool picked and the panel's terrain node selected (=lrg_editor_terrain_panel_get_brush_active()=: also unlocked, not playing, the file loaded):
+
+- *Cursor.* Pointer motion casts the view ray onto the terrain (=lrg_terrain_component_raycast()= on the stand-in); =lrg_editor_terrain_panel_get_cursor()= gives the hit in asset-local and world space. The overlay pass draws the ring draped on the terrain at the radius, a thinner ring where the falloff weight is one half, and the centre dot, coloured by what the stroke will do (accent: raise / flatten / noise, danger: lower / hole / erase, success: paint / fill / foliage, warning: smooth); Ctrl and Shift change the colour live. The transform gizmo is hidden while the brush owns the left button.
+- *Strokes.* A left press on the terrain starts a stroke (=lrg_editor_terrain_panel_begin_stroke()=, one dab of 1/60), every frame while held dabs at the cursor with the frame time as the amount (=lrg_editor_terrain_panel_viewport_tick()=, so a resting brush keeps working), the release records the whole stroke as one undo step (=lrg_editor_terrain_panel_end_stroke()=). A press off the terrain is taken but does nothing (the terrain stays selected). Alt+drag still orbits; the right button or Escape during a stroke puts the data back without a step.
+- *Keys.* =[= / =]= shrink / grow the radius by 10 %; with Shift the strength.
+- The Select tool gives the left button back to picking and the gizmo.
+
+The hooks the viewport panel calls (also usable by other hosts): =lrg_editor_terrain_panel_viewport_press()=, =lrg_editor_terrain_panel_viewport_move()=, =lrg_editor_terrain_panel_viewport_release()=, =lrg_editor_terrain_panel_viewport_tick()=, =lrg_editor_terrain_panel_viewport_key()=, =lrg_editor_terrain_panel_viewport_leave()= and =lrg_editor_terrain_panel_paint_overlay()= (it returns the shapes painted; =lrg_editor_viewport_panel_get_terrain_painted()= reports the last count). The press reaches them after tile painting and navigation handles, before navigation.
+
+*** Water outline handles
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-water-handles
+:END:
+With a =water= node selected whose body is a lake or a river, the overlay draws its outline (closed for a lake) and a handle per point (the hovered one larger, in the accent colour). Points sit at the node's world position plus the point (the water component ignores rotation and scale), at the lake's level or the river point's height.
+
+- Drag a handle: the point follows the pointer on its horizontal plane; one undo step on release, Escape or another button cancels.
+- Ctrl+click on the water's plane: a new point after the nearest one (one step).
+- Shift+click on a handle: removes it, keeping at least three lake / two river points (one step).
+
+The body is the store's, marked dirty, written on level save, and pushed into an open water editor of the same file.
+
+** Water editor
+:PROPERTIES:
+:CUSTOM_ID: editor-water-editor
+:END:
+=LrgEditorWaterEditor= (=lrg_editor_water_editor_new()=; the data editor of =LRG_EDITOR_DOCUMENT_FORMAT_WATER=, opened by =lrg_editor_data_editor_open()= for =.rwater= files) is a split view: on the left one scrolling column with the body grid (=water-grid=, =lrg_editor_water_editor_get_grid()=), the waves (=water-waves-heading=, Add =water-add-wave=, the list =water-wave-list=, the selected wave's grid =water-wave-grid=, =lrg_editor_water_editor_get_wave_grid()=) and, for lakes and rivers, the outline (=water-points-heading=, Add =water-add-point=, =water-point-list=, =water-point-grid=, =lrg_editor_water_editor_get_point_grid()=); on the right the live preview (=water-preview=, =lrg_editor_water_editor_get_preview()=) and a caption (=water-caption=: shape, points, waves, level, or the load error).
+
+| Group | Rows (field names for =lrg_editor_water_editor_set_field()= and =lrg_editor_water_body_apply_field()=) |
+|-------+-------------------------------------------------------------|
+| Body | name, shape (plane / lake / river), level (not for rivers), size (planes), cell-size |
+| Waves | wave-scale |
+| Foam | foam (band width, shallow depth) |
+| Colours | shallow-color, deep-color, foam-color (=GrlColor= or ="#rrggbb[aa]"=) |
+| Optics | transparency, reflection, refraction, reflect-distance |
+
+- *Waves*: up to four Gerstner waves (direction, amplitude, wavelength, speed, steepness). Add appends a gentle swell turned from the last one (=lrg_editor_water_editor_set_wave_count()=); a row's remove button shifts the rest down; =lrg_editor_water_editor_set_wave()= sets one (adding waves up to its index). Selection: =lrg_editor_water_editor_get_selected_wave()= / =lrg_editor_water_editor_set_selected_wave()=.
+- *Outline*: rows "index  x, z" (rivers: x, y, z and the width). Add inserts after the selected point, halfway to the next (=lrg_editor_water_editor_add_point()=); =lrg_editor_water_editor_set_point()=, =lrg_editor_water_editor_remove_point()=; selection =lrg_editor_water_editor_get_selected_point()= / =lrg_editor_water_editor_set_selected_point()=.
+- *Preview*: the surface through an =LrgWaterComponent= over a sand-coloured ground plane 1.5 units below the body, drawn by a private =LrgWorld3DRenderer= with the sky; the wave clock runs, drag orbits, the wheel zooms.
+- *Undo*: every change is one document step through =lrg_editor_document_commit_object()= (the engine writer's text replaces the document, so saves stay byte-stable); a grid drag merges into one step.
+- *The level follows*: after every change the parsed body (=lrg_editor_water_editor_get_body()=) is copied into the store's body of the file (=lrg_editor_terrain_store_set_water()= copies into the stored object, which every stand-in keeps), so water nodes in the level show the unsaved state.
+- *Validation*: a lake with fewer than three points or a river with fewer than two is a warning (the engine loader's errors come from the document).
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-ipc
+:END:
+=terrain.*= are registered when the Terrain panel is created; =water.*= by =lrg_editor_water_editor_install()= (the panel and the first water editor call it). Every mutating method is one undo step unless noted; see [[file:ipc-protocol.org][IPC protocol]] for the wire format and [[file:lrgeditorctl.org][lrgeditorctl]] for the verbs.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =terrain.get= | =node?= (GUID, path or name; default the panel's terrain) | the asset's grid, layers, foliage layers, dirty flag and the brush |
+| =terrain.brush= | =tool?=, =radius?=, =strength?=, =falloff?=, =target_height?=, =sample_target?=, =noise_scale?=, =seed?=, =layer?=, =foliage_layer?= | the brush (not undoable) |
+| =terrain.stroke= | =node?=, =points= ([[x, z], ...]), =local?= (default false: world x, z dropped onto the terrain), =tool?=, =amount?= (1), =invert?=, =smooth?=, brush overrides | ={changed, dabs, tool, label}=; one step |
+| =terrain.sample= | =node?=, =x=, =z=, =local?= | ={hit, height, normal, weights, local, world, hole, foliage_density}= |
+| =terrain.add_layer= / =terrain.remove_layer= / =terrain.set_layer= | =index=, =name=, =texture=, =material=, =tiling=, =color= | ={index}= / ={removed}= |
+| =terrain.add_foliage= / =terrain.remove_foliage= / =terrain.set_foliage= | =index=, =name=, =kind=, =mesh=, =lod_mesh=, =lod_distance=, =texture=, =color=, =density=, =scale=, =slope=, =height=, =align=, =size=, =fade=, =seed= | ={index}= / ={removed}= |
+| =terrain.rebake= | =node?= | ={instances}= (not undoable) |
+| =terrain.save= | =node?= | ={path}= |
+| =terrain.create= | =kind?= (terrain / water), =name?= | ={guid, name, asset}= |
+| =terrain.show= | | ={panel, shown}= |
+| =water.get= | =path= (a =.rwater=) or =node= (a water node) | the body: shape, level, size, points, cell size, foam, waves, wave scale, colours, optics, dirty |
+| =water.set= | =path= / =node=, =name=, =shape=, =level=, =size=, =cell_size=, =wave_scale=, =foam=, =transparency=, =reflection=, =refraction=, =reflect_distance=, =colors= ={shallow, deep, foam}= | the body |
+| =water.set_wave= | =path= / =node=, =count?=, =index?=, =direction=, =amplitude=, =wavelength=, =speed=, =steepness= | the body |
+| =water.add_point= / =water.set_point= / =water.remove_point= | =path= / =node=, =index=, =x=, =y=, =z=, =width= | ={index}= / ={removed}= |
+| =water.save= | =path= / =node= | ={path}= |
+
+With ={path}= the file opens in its water editor and edits are document steps; with ={node}= they edit the store's body as level steps.
+
+Examples:
+
+#+begin_src sh
+lrgeditorctl call terrain.create '{"name": "Valley"}'
+lrgeditorctl call terrain.stroke '{"tool": "raise", "points": [[0,0],[4,0],[8,0]], "strength": 4, "radius": 12}'
+lrgeditorctl call terrain.add_foliage '{"name": "pines", "kind": "mesh", "density": 0.008, "slope": [0, 30]}'
+lrgeditorctl call terrain.stroke '{"tool": "foliage-erase", "points": [[0,0]], "radius": 6}'
+lrgeditorctl call water.set '{"node": "Water", "level": 1.2, "colors": {"deep": [0.05, 0.2, 0.3, 1]}}'
+lrgeditorctl call terrain.save
+#+end_src
+
+** Actions
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-actions
+:END:
+| Action | Label | Category |
+|--------+-------+----------|
+| =terrain.show= | Terrain Panel | View |
+| =terrain.create= | Terrain | Create |
+| =terrain.create-water= | Water | Create |
+| =terrain.save= | Save Terrain | Terrain |
+| =terrain.rebake= | Rebake Terrain | Terrain |
+| =terrain.tool-select= ... =terrain.tool-foliage-erase= | Terrain Tool: Select ... Erase (checked while picked) | Terrain |
+
+All are in the command palette and rebindable; none has a default shortcut.
+
+** C API
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-api
+:END:
+*** Store and stand-ins
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-api-store
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_terrain_store_get_terrain (editor, path, error)= | the shared =LrgTerrainAsset= of an absolute =.rterrain= path (transfer none; a failed load is not cached) |
+| =lrg_editor_terrain_store_get_water (editor, path, error)= | the shared =LrgWaterBody= of an =.rwater= |
+| =lrg_editor_terrain_store_set_water (editor, path, body)= | stores @body for @path, or copies it into the stored body; water stand-ins rebuild |
+| =lrg_editor_terrain_store_set_dirty (editor, path, dirty)= / =lrg_editor_terrain_store_is_dirty (editor, path)= | the unsaved mark |
+| =lrg_editor_terrain_store_save (editor, path, error)= / =lrg_editor_terrain_store_save_all (editor, error)= | write one / every dirty file |
+| =lrg_editor_terrain_store_forget (editor, path)= | drop a file from the store |
+| =lrg_editor_terrain_node_path (editor, resolver, node)= | the absolute file of a terrain / water node (transfer full) |
+| =lrg_editor_terrain_node_component (editor, resolver, node)= | the node's stand-in =LrgTerrainComponent= / =LrgWaterComponent= (transfer none) |
+| =lrg_editor_terrain_init_node (app, node, error)= | write a new asset for a freshly created terrain / water node and point the node at it |
+
+*** LrgEditorTerrainPanel
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-api-panel
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_terrain_panel_new (app)= / =lrg_editor_terrain_panel_find (app)= | create (registers =terrain.*=, =water.*= and the actions) / find |
+| =lrg_editor_terrain_panel_get_node= / =lrg_editor_terrain_panel_get_asset= | the terrain shown |
+| =lrg_editor_terrain_panel_get_brush= / =lrg_editor_terrain_panel_get_brush_grid= / =lrg_editor_terrain_panel_get_layer_grid= / =lrg_editor_terrain_panel_get_foliage_grid= | the brush and the grids |
+| =lrg_editor_terrain_panel_get_tool= / =lrg_editor_terrain_panel_set_tool= / =lrg_editor_terrain_panel_get_brush_active= | tools |
+| =lrg_editor_terrain_panel_get_selected_layer= / =lrg_editor_terrain_panel_set_selected_layer= / =lrg_editor_terrain_panel_get_selected_foliage= / =lrg_editor_terrain_panel_set_selected_foliage= | list selections |
+| =lrg_editor_terrain_panel_begin_stroke= / =lrg_editor_terrain_panel_stroke_to= / =lrg_editor_terrain_panel_end_stroke= / =lrg_editor_terrain_panel_is_stroking= / =lrg_editor_terrain_panel_stroke= | strokes (one undo step each) |
+| =lrg_editor_terrain_panel_add_layer= / =lrg_editor_terrain_panel_remove_layer= / =lrg_editor_terrain_panel_set_layer_field= | surface layers |
+| =lrg_editor_terrain_panel_add_foliage= / =lrg_editor_terrain_panel_remove_foliage= / =lrg_editor_terrain_panel_set_foliage_field= | foliage layers |
+| =lrg_editor_terrain_panel_rebake= / =lrg_editor_terrain_panel_save= / =lrg_editor_terrain_panel_describe= | Rebake, Save, the summary |
+| =lrg_editor_terrain_panel_viewport_press= / =_move= / =_release= / =_tick= / =_key= / =_leave=, =lrg_editor_terrain_panel_paint_overlay=, =lrg_editor_terrain_panel_get_cursor= | the viewport tools |
+| =lrg_editor_terrain_tool_get_op= / =lrg_editor_terrain_tool_get_label= | tool table |
+
+All functions taking a =node= accept =NULL= for the terrain shown; they return =FALSE= / -1 without a terrain whose file loads.
+
+*** LrgEditorWaterEditor
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-api-water
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_water_editor_new (app, document)= / =lrg_editor_water_editor_install (app)= | create / register =water.*= |
+| =lrg_editor_water_editor_get_body= | the parsed body (transfer none, =NULL= while the text does not load) |
+| =lrg_editor_water_editor_get_grid= / =lrg_editor_water_editor_get_wave_grid= / =lrg_editor_water_editor_get_point_grid= / =lrg_editor_water_editor_get_preview= | widgets |
+| =lrg_editor_water_editor_set_field (self, name, value, gesture, error)= | one body field |
+| =lrg_editor_water_editor_set_wave= / =lrg_editor_water_editor_set_wave_count= | waves |
+| =lrg_editor_water_editor_add_point= / =lrg_editor_water_editor_set_point= / =lrg_editor_water_editor_remove_point= | outline |
+| =lrg_editor_water_editor_get_selected_wave= / =lrg_editor_water_editor_set_selected_wave= / =lrg_editor_water_editor_get_selected_point= / =lrg_editor_water_editor_set_selected_point= | selections |
+| =lrg_editor_water_editor_sync_from_store (app, path)= | push the store's body into an open editor (one document step) |
+| =lrg_editor_water_body_apply_field (body, name, value)= | the shared GValue -> body field conversion |
+
+** Example (C)
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-example
+:END:
+A script that roughs out a valley in the open level, with one undo step per stroke:
+
+#+begin_src C
+LrgEditorTerrainPanel   *panel = lrg_editor_terrain_panel_find (app);
+g_autoptr(LrgNode)       node = lrg_node_new ("Valley");
+g_autoptr(LrgNodeVisual) visual = lrg_node_visual_new (LRG_NODE_VISUAL_TERRAIN);
+g_autoptr(GError)        error = NULL;
+LrgTerrainBrush         *brush;
+gfloat                   ridge[] = { 10.0f, 20.0f, 30.0f, 22.0f, 50.0f, 26.0f, 70.0f, 24.0f };
+gfloat                   pond[] = { 64.0f, 64.0f };
+
+/* Create > Terrain: a node and terrain/valley.rterrain (local x, z below) */
+lrg_node_set_visual (node, visual);
+lrg_editor_insert_node (lrg_editor_app_get_editor (app), node, NULL, -1);
+lrg_editor_terrain_init_node (app, node, &error);
+lrg_editor_select (lrg_editor_app_get_editor (app), node, FALSE);
+
+/* a ridge, then a flat pond basin */
+brush = lrg_editor_terrain_panel_get_brush (panel);
+lrg_terrain_brush_set_radius (brush, 14.0f);
+lrg_terrain_brush_set_strength (brush, 3.0f);
+lrg_editor_terrain_panel_stroke (panel, node, LRG_EDITOR_TERRAIN_TOOL_RAISE, ridge, G_N_ELEMENTS (ridge), 1.0f,
+                                 LRG_EDITOR_TERRAIN_STROKE_NONE);
+lrg_terrain_brush_set_target_height (brush, -2.0f);
+lrg_terrain_brush_set_strength (brush, 50.0f);
+lrg_editor_terrain_panel_stroke (panel, node, LRG_EDITOR_TERRAIN_TOOL_FLATTEN, pond, 2, 1.0f,
+                                 LRG_EDITOR_TERRAIN_STROKE_NONE);
+
+/* trees on the ridge only */
+lrg_editor_terrain_panel_add_foliage (panel, node, "pines", LRG_FOLIAGE_KIND_MESH);
+lrg_editor_terrain_panel_rebake (panel, node);
+
+/* written with the level, or now */
+lrg_editor_terrain_panel_save (panel, node, &error);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-performance
+:END:
+- A dab costs the brush's region (see [[file:../modules/graphics/terrain-brush.org::#performance][LrgTerrainBrush performance]]); the stand-in re-meshes only the touched chunks and re-bakes the splat of chunks a paint stroke touched (the 256-texel bake is about 23 ms per chunk in release builds, so painting across many chunks at once is the slowest stroke).
+- A stroke's snapshot copies the whole edited data set once at its start (4 bytes per sample for heights, 8 for weights): about 66 kB for the default 129 x 129 terrain, 1 MB for 513 x 513.
+- A layer field change re-bakes every chunk; a structural layer change (add / remove) keeps a full copy of the splat, ids and density maps in its undo step.
+- The viewport renders every frame while a stroke is held; otherwise only on change.
+- Software GL under Xvfb (CI) is slow at splat bakes; that is not representative.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-pitfalls
+:END:
+- Terrain and water data are not in the level file: an undo step for a stroke undoes the data in the store, but closing the editor without saving the level (or the terrain) loses the strokes like any unsaved change.
+- =lrg_editor_terrain_store_forget()= throws unsaved changes away and leaves earlier undo steps pointing at the old object.
+- Brush positions are asset-local: =terrain.stroke= with =local: true= takes local x, z (0 .. width), the default takes world x, z.
+- The water component draws at the node's world *position* only: rotating or scaling a water node does not turn or stretch the body (edit the points).
+- Picking a terrain node with a click uses the node's picking bounds, not the heightfield: select big terrains in the Hierarchy.
+- An open water editor and the viewport handles both change the file: the handles push into the document (a document step), but the level's undo of a handle drag pushes again rather than undoing the document step.
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-testing
+:END:
+=tests/test-editor-app-terrain.c= (=make tests/build/release/tests/test-editor-app-terrain= in =tests/=): create and the store, strokes with every modifier and their undo, layers and foliage with structural undo and merged grid gestures, the panel's widgets, the viewport brush driven through the canvas, the water handles, saving with the level, the water editor and =water.*= on files and nodes; =/editor-app/terrain/gpu-render= renders terrain and water under =build-aux/xrun.sh=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: editor-terrain-see-also
+:END:
+[[file:../guides/terrain.org][Terrain guide]], [[file:../modules/graphics/terrain-asset.org][LrgTerrainAsset]], [[file:../modules/graphics/terrain-brush.org][LrgTerrainBrush]], [[file:../modules/graphics/foliage.org][LrgFoliage]], [[file:../modules/graphics/water-body.org][LrgWaterBody]], [[file:data-editors.org][Data editors]], [[file:editor-app.org][Editor application]], [[file:ipc-protocol.org][IPC protocol]].

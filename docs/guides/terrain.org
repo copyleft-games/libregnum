@@ -98,6 +98,21 @@ The renderer needs nothing else: chunks are mesh items (lit, shadowed, layered, 
 :END:
 =lrg_terrain_asset_save_to_file (t, "levels/valley.rterrain", &error)= writes the document and its sidecars next to it; =lrg_water_body_save_to_file()= the lake. In a level, a node of kind =terrain= with the =.rterrain= as its asset, and a node of kind =water= with the =.rwater=, turn into the two components at instantiation.
 
+** In the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Everything above is also a few clicks in lrgeditor ([[file:../editor/terrain.org][Terrain and Water in the Editor]]): Create > Terrain writes a flat =.rterrain= and adds the node; the Terrain panel's tools sculpt (raise, lower, flatten, smooth, noise), paint surface layers, cut and fill holes and paint foliage density with the cursor ring in the viewport, one undo step per stroke; its lists edit the surface and foliage layers; Create > Water adds a lake whose outline points are viewport handles and whose =.rwater= opens in the water editor with a live preview. Saving the level writes the terrain and water files. Scripted, the same steps are:
+
+#+begin_src sh
+lrgeditorctl call terrain.create '{"name": "Valley"}'
+lrgeditorctl call terrain.stroke '{"tool": "noise", "points": [[0,0]], "radius": 200, "falloff": "constant", "strength": 6}'
+lrgeditorctl call terrain.stroke '{"tool": "flatten", "points": [[12,24]], "radius": 20, "strength": 60, "target_height": -3}'
+lrgeditorctl call terrain.add_foliage '{"name": "pines", "kind": "mesh", "density": 0.02, "height": [-1, 40]}'
+lrgeditorctl call terrain.create '{"kind": "water", "name": "Lake"}'
+lrgeditorctl save
+#+end_src
+
 ** Performance
 :PROPERTIES:
 :CUSTOM_ID: performance
