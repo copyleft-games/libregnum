@@ -163,4 +163,28 @@ LRG_AVAILABLE_IN_ALL
 void lrg_label_set_alignment (LrgLabel         *self,
                               LrgTextAlignment  alignment);
 
+/**
+ * lrg_label_get_ellipsize:
+ * @self: an #LrgLabel
+ *
+ * Returns: whether the label cuts its text with "…" when it does not fit
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_label_get_ellipsize (LrgLabel *self);
+
+/**
+ * lrg_label_set_ellipsize:
+ * @self: an #LrgLabel
+ * @ellipsize: whether to cut the text with "…" when it does not fit
+ *
+ * A label wider than its allocation draws past its own edge, over its
+ * neighbours.  With this set it draws its first line cut short with an
+ * ellipsis instead.  Its preferred width is unchanged, so a box with
+ * room still shows the whole text; pair it with a fill weight so a box
+ * short of room takes the space from this label first.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_label_set_ellipsize (LrgLabel *self,
+                              gboolean  ellipsize);
+
 G_END_DECLS
