@@ -1,0 +1,275 @@
+#+title: 2D lights and shadows
+#+description: 2D shadow geometry in the 2D light pass: LrgShadowOccluder2D (polygons, tile collision, sprite outlines), hard and soft shadows, shadow queries, and the full 2D lighting API reference
+#+created: 2026-11-07
+
+* 2D lights and shadows
+:PROPERTIES:
+:CUSTOM_ID: 2d-shadows
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Lighting]] > 2D lights and shadows
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+The 2D light pass (=LrgLightingManager=) renders point, spot and directional lights into a light texture that is composited over the scene. Since 0.9.0 lights cast real shadow geometry: every shadow-casting light projects the edges of the registered shadow casters away from itself into shadow triangles, and the light pass draws the light with those triangles cut out. Shadows are hard by default and soft (an area light sampled several times) with =LrgLight2D:shadow-softness=.
+
+Occluders come from:
+
+- *polygons and rectangles* (=lrg_shadow_occluder2d_add_polygon()=, =lrg_shadow_occluder2d_add_rect()=);
+- *tilemap collision* (=lrg_shadow_occluder2d_add_tilemap()=: solid cells and per-tile collision polygons, on any [[file:../tilemap/iso-hex.org][orientation]], with shared sides merged);
+- *sprite outlines* (=lrg_shadow_occluder2d_add_alpha_outline()= / =lrg_shadow_occluder2d_add_image_outline()=: the opaque pixels of an image or a sprite frame, traced and simplified on the CPU);
+- *any object implementing =LrgShadowCaster=* (edges without orientation).
+
+The shadow geometry is plain CPU data, so it is also queryable: =lrg_light2d_get_shadow_factor()= tells how much of a light reaches a point (stealth games, AI perception) without a GPU.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Oriented edges and self-lit occluders
+:PROPERTIES:
+:CUSTOM_ID: oriented-edges
+:END:
+=LrgShadowOccluder2D= stores edges that run clockwise round solids (y down), so each edge knows its solid side: the outward normal of edge (x1, y1) -> (x2, y2) is (dy, -dx). Polygons are normalised to that winding when added. A light then projects only the edges that face *away* from it: the shadow starts at the back of the occluder and the occluder itself stays lit (characters, props, walls seen from the side). =LrgShadowOccluder2D:self-shadow= projects every edge instead, darkening the occluder's own area (flat top-down walls). Edges from other =LrgShadowCaster= implementations have no orientation and are always projected.
+
+Adding an edge whose exact reverse is already in the occluder removes both: two solids sharing a side merge, so a wall of solid tiles casts from its outline only.
+
+*** Shadow geometry
+:PROPERTIES:
+:CUSTOM_ID: geometry
+:END:
+=lrg_light2d_calculate_shadows()= (called by the manager every frame for every visible shadow-casting light) builds, per sample, two triangles per projected edge:
+
+- *point and spot lights*: each end point is pushed along the ray from the light past the light's reach (=LrgPointLight2D:radius=, =LrgSpotLight2D:radius=); edges farther than the reach are skipped;
+- *directional lights*: both end points are pushed along the light's direction (=LrgDirectionalLight2D:direction=) by its shadow length (=LrgDirectionalLight2D:shadow-length=).
+
+Each triangle carries its caster's opacity (=LrgShadowOccluder2D:opacity=, or =lrg_shadow_caster_get_shadow_opacity()=).
+
+*** Soft shadows
+:PROPERTIES:
+:CUSTOM_ID: soft
+:END:
+With =shadow-softness= above 0 the geometry is built =LrgLight2D:shadow-samples= times (default 8, at most 32): point and spot lights from positions on a disc of radius =softness * 15 % * reach= around the light (a Vogel spiral), directional lights from directions spread over =+- softness * 8= degrees. The light pass draws the light once per sample with that sample's shadows and adds the results at 1 / samples, so points seen by some samples get a partial light: the penumbra. Cost grows linearly with the samples.
+
+*** The light pass
+:PROPERTIES:
+:CUSTOM_ID: light-pass
+:END:
+=lrg_lighting_manager_render()=:
+
+1. culls lights against the viewport;
+2. builds shadow geometry for shadow-casting lights (when shadows are enabled and casters exist; other lights drop theirs);
+3. clears the light target to the ambient colour and adds the lightmap and every light without shadow geometry (additive);
+4. draws each shadowed light through a scratch target the size of the light target, per sample: clear to black, draw the light additively, draw the sample's shadow triangles in black with alpha blending (a triangle of opacity a keeps 1 - a of the light), add the scratch to the light target with weight 1 / samples.
+
+Steps 1 and 2 run without a window, so shadow queries work on servers and in tests. =lrg_lighting_manager_get_shadowed_light_count()= reports how many lights took the shadow path.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** LrgShadowOccluder2D
+:PROPERTIES:
+:CUSTOM_ID: api-occluder
+:END:
+Implements =LrgShadowCaster=.
+
+| Function | Description |
+|----------+-------------|
+| =lrg_shadow_occluder2d_new ()= | empty occluder |
+| =lrg_shadow_occluder2d_add_polygon (self, coords, n_coords)= | a closed polygon, either winding (=n_coords= >= 6, even) |
+| =lrg_shadow_occluder2d_add_rect (self, x, y, width, height)= | a rectangle |
+| =lrg_shadow_occluder2d_add_tilemap (self, tilemap, layer_index, x, y)= | tile collision of one layer (or -1: every collision-enabled layer) drawn at (x, y); returns the tiles added |
+| =lrg_shadow_occluder2d_add_alpha_outline (self, rgba, n_bytes, width, height, stride, alpha_threshold, tolerance, x, y, scale)= | trace opaque pixels (outer loops and holes), Douglas-Peucker with =tolerance= pixels, place at (x, y) scaled; returns the loops added |
+| =lrg_shadow_occluder2d_add_image_outline (self, image, source, alpha_threshold, tolerance, x, y, scale)= | the same on a =GrlImage= (or a sub-rectangle: a sprite frame) |
+| =lrg_shadow_occluder2d_clear (self)= | remove every edge |
+| =lrg_shadow_occluder2d_get_edge_count=, =lrg_shadow_occluder2d_get_edge (self, index, &edge)= | read edges in world space (position applied) |
+| =lrg_shadow_occluder2d_get_position= / =lrg_shadow_occluder2d_set_position= | properties =x=, =y=: move without rebuilding |
+| =lrg_shadow_occluder2d_get_opacity= / =lrg_shadow_occluder2d_set_opacity= | property =opacity= (0..1, default 1) |
+| =lrg_shadow_occluder2d_get_self_shadow= / =lrg_shadow_occluder2d_set_self_shadow= | property =self-shadow= (default FALSE) |
+| =lrg_shadow_occluder2d_get_enabled= / =lrg_shadow_occluder2d_set_enabled= | property =enabled= |
+
+*** LrgShadowCaster and LrgShadowEdge
+:PROPERTIES:
+:CUSTOM_ID: api-caster
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_shadow_caster_get_edges (self)= | the caster's edges in world space (transfer full, element type =LrgShadowEdge=); vfunc =get_edges= |
+| =lrg_shadow_caster_is_opaque (self)= | vfunc =is_opaque= (default TRUE) |
+| =lrg_shadow_caster_get_shadow_opacity (self)= | vfunc =get_shadow_opacity= (default 1) |
+| =lrg_shadow_edge_new (x1, y1, x2, y2)=, =lrg_shadow_edge_copy=, =lrg_shadow_edge_free=, =lrg_shadow_edge_get_type()= | the boxed edge |
+
+*** LrgLight2D (base class)
+:PROPERTIES:
+:CUSTOM_ID: api-light2d
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_light2d_get_position= / =lrg_light2d_set_position= | world position (properties =x=, =y=) |
+| =lrg_light2d_get_color (self, &r, &g, &b)= / =lrg_light2d_set_color= | colour |
+| =lrg_light2d_get_intensity= / =lrg_light2d_set_intensity= | brightness multiplier |
+| =lrg_light2d_get_enabled= / =lrg_light2d_set_enabled= | on/off |
+| =lrg_light2d_get_casts_shadows= / =lrg_light2d_set_casts_shadows= | shadow casting (default TRUE) |
+| =lrg_light2d_get_shadow_method= / =lrg_light2d_set_shadow_method= | =LrgShadowMethod= (informational; geometry is always used) |
+| =lrg_light2d_get_shadow_softness= / =lrg_light2d_set_shadow_softness= | 0 (hard) .. 1 |
+| =lrg_light2d_get_shadow_samples= / =lrg_light2d_set_shadow_samples= | soft shadow samples (property =shadow-samples=, 1..32) |
+| =lrg_light2d_get_falloff= / =lrg_light2d_set_falloff= | =LrgLightFalloff= |
+| =lrg_light2d_get_blend_mode= / =lrg_light2d_set_blend_mode= | =LrgLightBlendMode= of the light |
+| =lrg_light2d_get_layer= / =lrg_light2d_set_layer= | render layer |
+| =lrg_light2d_render (self, target_id, width, height)= | vfunc =render=: draw the light (inside the light pass) |
+| =lrg_light2d_is_visible (self, x, y, w, h)= | vfunc =is_visible=: viewport test |
+| =lrg_light2d_update (self, delta)= | vfunc =update= (flicker) |
+| =lrg_light2d_calculate_shadows (self, casters)= | vfunc =calculate_shadows=: build the shadow geometry |
+| =lrg_light2d_get_shadow_sample_count (self)= | samples of the last calculation (0: none) |
+| =lrg_light2d_get_shadow_triangles (self, sample, &n_coords)= | the triangles, 6 floats each (transfer none) |
+| =lrg_light2d_get_shadow_opacities (self, sample, &n_triangles)= | each triangle's opacity |
+| =lrg_light2d_get_shadow_factor (self, x, y)= | 0 (lit) .. 1 (shadowed) at a point |
+| =lrg_light2d_clear_shadows (self)= | drop the geometry |
+
+*** Light types
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_point_light2d_new=, =lrg_point_light2d_get_radius= / =lrg_point_light2d_set_radius=, =lrg_point_light2d_get_inner_radius= / =lrg_point_light2d_set_inner_radius= | radial light; the radius is the shadow reach |
+| =lrg_point_light2d_get_flicker_enabled= / =lrg_point_light2d_set_flicker_enabled=, =lrg_point_light2d_get_flicker_speed= / =lrg_point_light2d_set_flicker_speed=, =lrg_point_light2d_get_flicker_amount= / =lrg_point_light2d_set_flicker_amount= | flicker |
+| =lrg_spot_light2d_new=, =lrg_spot_light2d_get_radius= / =lrg_spot_light2d_set_radius=, =lrg_spot_light2d_get_angle= / =lrg_spot_light2d_set_angle=, =lrg_spot_light2d_get_inner_angle= / =lrg_spot_light2d_set_inner_angle=, =lrg_spot_light2d_get_direction= / =lrg_spot_light2d_set_direction= | cone light (degrees; 0 is +x, clockwise on screen) |
+| =lrg_directional_light2d_new=, =lrg_directional_light2d_get_direction= / =lrg_directional_light2d_set_direction=, =lrg_directional_light2d_get_shadow_length= / =lrg_directional_light2d_set_shadow_length= | parallel light; direction is where the light travels, shadows extend that way |
+
+*** LrgLightingManager
+:PROPERTIES:
+:CUSTOM_ID: api-manager
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_lighting_manager_new ()= | manager |
+| =lrg_lighting_manager_add_light=, =lrg_lighting_manager_remove_light=, =lrg_lighting_manager_get_lights=, =lrg_lighting_manager_get_light_count= | lights |
+| =lrg_lighting_manager_add_shadow_caster=, =lrg_lighting_manager_remove_shadow_caster=, =lrg_lighting_manager_get_shadow_caster_count= | shadow casters (occluders) |
+| =lrg_lighting_manager_get_shadows_enabled= / =lrg_lighting_manager_set_shadows_enabled= | global shadow switch |
+| =lrg_lighting_manager_get_default_shadow_method= / =lrg_lighting_manager_set_default_shadow_method= | default =LrgShadowMethod= |
+| =lrg_lighting_manager_get_ambient_color= / =lrg_lighting_manager_set_ambient_color=, =lrg_lighting_manager_get_ambient_intensity= / =lrg_lighting_manager_set_ambient_intensity= | ambient light (the target's clear colour) |
+| =lrg_lighting_manager_get_blend_mode= / =lrg_lighting_manager_set_blend_mode= | composite mode (multiply, additive, soft) |
+| =lrg_lighting_manager_get_lightmap= / =lrg_lighting_manager_set_lightmap=, =lrg_lighting_manager_get_lightmap_bounds= / =lrg_lighting_manager_set_lightmap_bounds= | baked 2D lightmap |
+| =lrg_lighting_manager_set_viewport=, =lrg_lighting_manager_get_viewport=, =lrg_lighting_manager_set_viewport_from_camera= | world rectangle the light target covers |
+| =lrg_lighting_manager_get_visible_lights=, =lrg_lighting_manager_get_visible_light_count= | culling |
+| =lrg_lighting_manager_update (self, delta)= | update lights (flicker) |
+| =lrg_lighting_manager_render (self)= | the light pass (above) |
+| =lrg_lighting_manager_composite (self)= | draw the light target over the scene (inside the scene's camera) |
+| =lrg_lighting_manager_get_light_target=, =lrg_lighting_manager_get_light_texture_id= | the light texture |
+| =lrg_lighting_manager_get_rendered_light_count=, =lrg_lighting_manager_get_shadowed_light_count= | statistics of the last pass |
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** Torches, a tilemap and a character
+:PROPERTIES:
+:CUSTOM_ID: example-scene
+:END:
+#+begin_src C
+g_autoptr(LrgLightingManager) lights = lrg_lighting_manager_new ();
+g_autoptr(LrgPointLight2D) torch = lrg_point_light2d_new ();
+g_autoptr(LrgShadowOccluder2D) walls = lrg_shadow_occluder2d_new ();
+g_autoptr(LrgShadowOccluder2D) hero_shadow = lrg_shadow_occluder2d_new ();
+g_autoptr(GrlImage) hero_image = grl_image_new_from_file ("hero.png");
+
+lrg_lighting_manager_set_ambient_color (lights, 40, 40, 60);
+lrg_light2d_set_position (LRG_LIGHT2D (torch), 320.0f, 200.0f);
+lrg_light2d_set_color (LRG_LIGHT2D (torch), 255, 180, 90);
+lrg_light2d_set_shadow_softness (LRG_LIGHT2D (torch), 0.3f);
+lrg_point_light2d_set_radius (torch, 300.0f);
+lrg_lighting_manager_add_light (lights, LRG_LIGHT2D (torch));
+
+/* walls: the tilemap's solid tiles, merged into outlines */
+lrg_shadow_occluder2d_add_tilemap (walls, map, -1, 0.0f, 0.0f);
+lrg_lighting_manager_add_shadow_caster (lights, LRG_SHADOW_CASTER (walls));
+lrg_lighting_manager_add_shadow_caster (lights, LRG_SHADOW_CASTER (hero_shadow));
+
+/* per frame */
+{
+	LrgAtlasRegion *frame = lrg_sprite_animation_player_get_region (anim);
+	GrlRectangle src = { lrg_atlas_region_get_x (frame), lrg_atlas_region_get_y (frame),
+	                     lrg_atlas_region_get_width (frame), lrg_atlas_region_get_height (frame) };
+
+	/* rebuild only when the frame changed (connect to ::frame-changed) */
+	lrg_shadow_occluder2d_clear (hero_shadow);
+	lrg_shadow_occluder2d_add_image_outline (hero_shadow, hero_image, &src, 32, 1.5f,
+	                                         -lrg_atlas_region_get_pivot_x (frame),
+	                                         -lrg_atlas_region_get_pivot_y (frame), 1.0f);
+	lrg_shadow_occluder2d_set_position (hero_shadow, hero_x, hero_y);
+}
+lrg_lighting_manager_update (lights, dt);
+lrg_lighting_manager_set_viewport (lights, view_x, view_y, view_w, view_h);
+lrg_lighting_manager_render (lights);          /* before BeginDrawing's scene */
+
+BeginDrawing ();
+BeginMode2D (camera);
+lrg_tilemap_draw (map);
+draw_hero ();
+lrg_lighting_manager_composite (lights);       /* multiply over the scene */
+EndMode2D ();
+EndDrawing ();
+#+end_src
+
+*** Is the player in the dark?
+:PROPERTIES:
+:CUSTOM_ID: example-query
+:END:
+#+begin_src C
+/* after lrg_lighting_manager_render() (works without a window too) */
+gfloat lit = 0.0f;
+GList *l;
+
+for (l = lrg_lighting_manager_get_lights (lights); l != NULL; l = l->next)
+	lit += 1.0f - lrg_light2d_get_shadow_factor (l->data, player_x, player_y);
+if (lit < 0.5f)
+	player_hidden = TRUE;
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured with =taskset -c 2= on the release build (x86_64, one core):
+
+| Work | Time |
+|------+------|
+| Hard shadow geometry, one light, 2000 edges (500 boxes) | 0.29 ms |
+| Soft shadow geometry, 8 samples, 2000 edges | 1.2 ms |
+| Alpha outline of a 128x128 sprite (tolerance 1.5 px, 17 edges) | 0.20 ms |
+
+On the GPU a shadowed light costs one scratch clear, one light draw, one triangle batch and one full-target blit *per sample*; unshadowed lights draw directly. Keep soft samples low (4-8) and switch shadows off for small decorative lights (=lrg_light2d_set_casts_shadows()=). Merge static geometry into one occluder (tile maps already merge shared sides) and rebuild sprite outlines only when the frame changes.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Reach matters*: point and spot shadows only cover edges within the light's radius; a directional light needs a shadow length long enough for the scene.
+- *Lights inside occluders* project every back edge outward and shadow everything around; keep lights outside solid tiles.
+- *Edge cancellation is exact*: shared sides only merge when the coordinates match to 1/64 pixel; build adjacent shapes from the same numbers.
+- *Concave occluders* in self-lit mode can shadow parts of themselves (an inner back edge is still a back edge).
+- *The light pass runs before the scene*, outside any camera or render-texture mode; =composite()= runs inside the scene's camera.
+- *8-bit light texture*: with many samples very dim lights band; use fewer samples or brighter lights.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+2D light gizmos and a 2D lighting preview come with the editor wave. Hooks: occluder outlines draw from =lrg_shadow_occluder2d_get_edge()=; shadow volumes as a debug overlay from =lrg_light2d_get_shadow_triangles()=; a light's reach from =LrgPointLight2D:radius= or =LrgSpotLight2D:radius=; the tile painter's preview can rebuild a tilemap occluder with =lrg_shadow_occluder2d_add_tilemap()= after each stroke.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:index.org][2D lighting module]] (lights, falloff, blend modes, lightmaps)
+- [[file:../tilemap/tileset-asset.org][Tileset assets]] (collision polygons)
+- [[file:../atlas/sprite-animation.org][Sprite animations]]
+- [[file:../../guides/2d.org][2D guide]]

@@ -305,6 +305,25 @@ guint               lrg_sprite_sheet_add_frame_rect         (LrgSpriteSheet *sel
  *
  * Since: 1.0
  */
+/**
+ * lrg_sprite_sheet_replace_frame:
+ * @self: A #LrgSpriteSheet
+ * @index: Frame index
+ * @frame: (transfer full): The new frame (rectangle, name, pivot)
+ *
+ * Replaces a frame in place, keeping every other frame's index (the
+ * sprite slicer edits frames with it).  UVs are recalculated when the
+ * texture size is known.
+ *
+ * Returns: %TRUE if @index was valid (otherwise @frame is freed)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_sprite_sheet_replace_frame          (LrgSpriteSheet *self,
+                                                             guint           index,
+                                                             LrgAtlasRegion *frame);
+
 LRG_AVAILABLE_IN_ALL
 gboolean            lrg_sprite_sheet_remove_frame           (LrgSpriteSheet *self,
                                                              guint           index);

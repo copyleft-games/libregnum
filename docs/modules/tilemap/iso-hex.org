@@ -1,0 +1,222 @@
+#+title: Isometric and hexagonal tilemaps
+#+description: LrgTilemap orientations (orthogonal, isometric, staggered, hexagonal): cell placement, exact picking, outlines, draw order, depth sorting, animated tiles and rule painting
+#+created: 2026-11-07
+
+* Isometric and hexagonal tilemaps
+:PROPERTIES:
+:CUSTOM_ID: iso-hex
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Tilemap]] > Isometric and hexagonal maps
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=LrgTilemap= lays its cells out in four ways (=LrgTilemapOrientation=), with Tiled's conventions so maps translate one to one:
+
+| Orientation | Cells | Typical use |
+|-------------+-------+-------------|
+| =LRG_TILEMAP_ORIENTATION_ORTHOGONAL= | rectangles in rows and columns | top-down and side-view games |
+| =LRG_TILEMAP_ORIENTATION_ISOMETRIC= | diamonds; x runs down-right, y down-left | isometric strategy, RPGs |
+| =LRG_TILEMAP_ORIENTATION_STAGGERED= | diamonds in rows, every other row shifted | isometric maps that stay rectangular on screen |
+| =LRG_TILEMAP_ORIENTATION_HEXAGONAL= | hexagons in staggered rows (pointy top) or columns (flat top) | board and strategy games |
+
+For every orientation the map converts cells to world positions and back exactly (diamond and hexagon outlines, not bounding boxes), returns cell outlines for grids and hover highlights, draws back to front so tall tiles overlap correctly, and offers a depth key for interleaving sprites. Rule tiles find neighbours through the map's =LrgTileNeighborLayout=.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Cell size and tile images
+:PROPERTIES:
+:CUSTOM_ID: cell-size
+:END:
+The grid's cell size defaults to the tileset's tile size; =lrg_tilemap_set_cell_size()= separates them (an isometric map usually has 64x32 cells drawn with 64x64 or taller tiles). =lrg_tilemap_get_cell_width()= / =lrg_tilemap_get_cell_height()= return the effective size. A tile image is drawn with its bottom-left corner on the bottom-left of the cell's bounding box, plus the tileset's draw offset (=lrg_tileset_set_draw_offset()=), so taller images stick out upwards, as in Tiled.
+
+*** Placement
+:PROPERTIES:
+:CUSTOM_ID: placement
+:END:
+World coordinates are pixels relative to where the map is drawn. With cell size cw x ch and the map height h (rows):
+
+- *Orthogonal*: cell (x, y) spans =[x*cw, (x+1)*cw) x [y*ch, (y+1)*ch)=.
+- *Isometric*: the top corner of cell (x, y) is at =((x - y) * cw/2 + h * cw/2, (x + y) * ch/2)=; the map's bounding box starts at (0, 0) and is =(w + h) * cw/2= by =(w + h) * ch/2=.
+- *Staggered and hexagonal*: with =LrgTilemapStaggerAxis= =LRG_TILEMAP_STAGGER_AXIS_Y= rows advance by =side_offset + side= and the shifted rows (=LrgTilemapStaggerIndex= =LRG_TILEMAP_STAGGER_INDEX_ODD= or =_EVEN=) move right by cw/2; with =LRG_TILEMAP_STAGGER_AXIS_X= columns advance by =side_offset + side= and the shifted columns move down by ch/2. =side= is the length of the hexagon sides along the stagger axis (=lrg_tilemap_set_hex_side_length()=, 0 = half the cell size on that axis); staggered maps use 0 (diamonds). =side_offset= = (cell size on the axis - side) / 2.
+
+=lrg_tilemap_get_cell_bounds()= returns a cell's bounding box, =lrg_tilemap_cell_to_world()= its centre, =lrg_tilemap_get_cell_polygon()= its outline (4 or 6 points, clockwise from the top), and =lrg_tilemap_get_world_bounds()=, =lrg_tilemap_get_pixel_width()= and =lrg_tilemap_get_pixel_height()= the map's box. Cells outside the map are valid inputs (negative or large coordinates): editors use them to draw the cursor past the edge.
+
+*** Picking
+:PROPERTIES:
+:CUSTOM_ID: picking
+:END:
+=lrg_tilemap_world_to_cell()= returns the cell whose outline contains a point and whether it is inside the map. Orthogonal and isometric picking are closed-form; staggered and hexagonal picking guess from the step grid and test the outlines of the 5x5 cells around the guess. The pre-0.9.0 =lrg_tilemap_world_to_tile()= and =lrg_tilemap_tile_to_world()= follow the orientation too (clamping negative cells to 0, and returning the top-left of the bounding box).
+
+*** Draw order and depth
+:PROPERTIES:
+:CUSTOM_ID: draw-order
+:END:
+Cells are drawn back to front, layer by layer: rows top to bottom (in a row, left to right) for orthogonal, isometric and row-staggered maps, which puts every isometric cell after the cells behind it ((x-1, y) and (x, y-1)). Column-staggered maps draw, in each row, the raised (unshifted) columns before the lowered ones. =lrg_tilemap_get_draw_order()= lists a region's cells in that order.
+
+Sprites standing on the map are sorted against tiles with =lrg_tilemap_get_cell_depth()= (the world y of the cell centre): draw a sprite after the cells whose depth is not greater than its feet. Put floors and walls on separate layers so floors never cover sprites.
+
+*** Culling
+:PROPERTIES:
+:CUSTOM_ID: culling
+:END:
+Only cells that can reach the viewport are drawn. The view rectangle comes from the live rlgl matrices (any camera or render target), its corners are picked into cell coordinates, and the range grows by enough cells to cover tiles taller or wider than a cell. Perspective projections fall back to drawing every cell.
+
+*** Animated tiles
+:PROPERTIES:
+:CUSTOM_ID: animated
+:END:
+=lrg_tilemap_update (self, delta)= advances the clock animated tiles use (milliseconds, sub-millisecond rests carried over); =lrg_tilemap_get_animation_time()= / =lrg_tilemap_set_animation_time()= read and set it (an editor preview can scrub it). See [[file:tileset-asset.org::#animation][animated tiles]].
+
+*** Rule painting
+:PROPERTIES:
+:CUSTOM_ID: rule-painting
+:END:
+=lrg_tilemap_paint_rule_tile()=, =lrg_tilemap_erase_rule_tile()= and =lrg_tilemap_refresh_rule_tiles()= run [[file:rule-tile.org][rule tiles]] on a layer with the map's =lrg_tilemap_get_neighbor_layout()= and emit =LrgTilemap::tile-changed= for every cell they change.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function / symbol | Description |
+|-------------------+-------------|
+| =LrgTilemapOrientation=, =lrg_tilemap_orientation_get_type()= | =ORTHOGONAL=, =ISOMETRIC=, =STAGGERED=, =HEXAGONAL= |
+| =LrgTilemapStaggerAxis=, =lrg_tilemap_stagger_axis_get_type()= | =X= (columns, flat-top), =Y= (rows, pointy-top) |
+| =LrgTilemapStaggerIndex=, =lrg_tilemap_stagger_index_get_type()= | =ODD=, =EVEN= |
+| =lrg_tilemap_get_orientation= / =lrg_tilemap_set_orientation= | property =orientation= (default orthogonal) |
+| =lrg_tilemap_get_stagger_axis= / =lrg_tilemap_set_stagger_axis= | property =stagger-axis= (default y) |
+| =lrg_tilemap_get_stagger_index= / =lrg_tilemap_set_stagger_index= | property =stagger-index= (default odd) |
+| =lrg_tilemap_get_hex_side_length= / =lrg_tilemap_set_hex_side_length= | property =hex-side-length= (0 automatic) |
+| =lrg_tilemap_get_cell_width=, =lrg_tilemap_get_cell_height=, =lrg_tilemap_set_cell_size (self, w, h)= | grid cell size (0 follows the tileset) |
+| =lrg_tilemap_get_neighbor_layout (self)= | the rule tile layout for this map |
+| =lrg_tilemap_get_cell_bounds (self, x, y, &rect)= | bounding box of a cell |
+| =lrg_tilemap_cell_to_world (self, x, y, &wx, &wy)= | centre of a cell |
+| =lrg_tilemap_world_to_cell (self, wx, wy, &x, &y)= | exact picking; TRUE when inside the map |
+| =lrg_tilemap_get_cell_polygon (self, x, y, coords[12])= | outline, returns the point count |
+| =lrg_tilemap_get_cell_depth (self, x, y)= | y-sort key |
+| =lrg_tilemap_get_draw_order (self, x, y, w, h)= | cells of a region in draw order (=GArray= of x, y =gint= pairs) |
+| =lrg_tilemap_update (self, delta)=, =lrg_tilemap_get_animation_time=, =lrg_tilemap_set_animation_time= | animated tile clock |
+| =lrg_tilemap_paint_rule_tile (self, layer, rule_tile, x, y)=, =lrg_tilemap_erase_rule_tile (self, layer, x, y)=, =lrg_tilemap_refresh_rule_tiles (self, layer)= | rule tile operations on a layer |
+
+The rest of =LrgTilemap= (layers, drawing, collision) is in [[file:tilemap.org][LrgTilemap]].
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** An isometric map with mouse picking
+:PROPERTIES:
+:CUSTOM_ID: example-iso
+:END:
+#+begin_src C
+g_autoptr(LrgTilemap) map = lrg_tilemap_new (tileset);   /* 64x64 tile images */
+g_autoptr(LrgTilemapLayer) ground = lrg_tilemap_layer_new (32, 32);
+gfloat outline[12];
+gint cx, cy;
+
+lrg_tilemap_add_layer (map, ground);
+lrg_tilemap_set_orientation (map, LRG_TILEMAP_ORIENTATION_ISOMETRIC);
+lrg_tilemap_set_cell_size (map, 64, 32);
+
+/* per frame, inside BeginMode2D (camera) */
+lrg_tilemap_draw (map);
+{
+	Vector2 mouse = GetScreenToWorld2D (GetMousePosition (), camera);
+
+	if (lrg_tilemap_world_to_cell (map, mouse.x, mouse.y, &cx, &cy))
+	{
+		guint n = lrg_tilemap_get_cell_polygon (map, cx, cy, outline);
+		guint i;
+
+		for (i = 0; i < n; i++)
+			DrawLineV ((Vector2) { outline[i * 2], outline[i * 2 + 1] },
+			           (Vector2) { outline[((i + 1) % n) * 2], outline[((i + 1) % n) * 2 + 1] }, YELLOW);
+	}
+}
+#+end_src
+
+*** A hex board
+:PROPERTIES:
+:CUSTOM_ID: example-hex
+:END:
+#+begin_src C
+/* pointy-top hexagons, 56x64 images, sides of 32 */
+lrg_tilemap_set_orientation (map, LRG_TILEMAP_ORIENTATION_HEXAGONAL);
+lrg_tilemap_set_stagger_axis (map, LRG_TILEMAP_STAGGER_AXIS_Y);
+lrg_tilemap_set_stagger_index (map, LRG_TILEMAP_STAGGER_INDEX_ODD);
+lrg_tilemap_set_hex_side_length (map, 32);
+
+/* move a unit to the cell north-east of (x, y) */
+if (lrg_tile_neighbor_offset (lrg_tilemap_get_neighbor_layout (map), x, y,
+                              LRG_TILE_NEIGHBOR_NE, &nx, &ny))
+	lrg_tilemap_cell_to_world (map, nx, ny, &unit_x, &unit_y);
+#+end_src
+
+*** Y-sorting sprites with an isometric wall layer
+:PROPERTIES:
+:CUSTOM_ID: example-ysort
+:END:
+#+begin_src C
+/* floors first, then walls and sprites interleaved by depth */
+g_autoptr(GArray) order = lrg_tilemap_get_draw_order (map, 0, 0, w, h);
+guint i;
+
+lrg_tilemap_draw_layer (map, FLOOR, 0, 0);
+for (i = 0; i < order->len; i += 2)
+{
+	gint x = g_array_index (order, gint, i);
+	gint y = g_array_index (order, gint, i + 1);
+
+	draw_sprites_with_feet_above (lrg_tilemap_get_cell_depth (map, x, y));
+	draw_one_wall_cell (x, y);   /* game code: the wall layer cell (x, y) */
+}
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Measured with =taskset -c 2= on the release build (x86_64, one core):
+
+| Work | Time |
+|------+------|
+| =lrg_tilemap_world_to_cell()=, isometric | 0.10 µs |
+| =lrg_tilemap_world_to_cell()=, hexagonal (outline tests) | 0.63 µs |
+
+Drawing is one textured quad per visible non-empty cell through raylib's batch; the orthogonal path walks rows directly, the other orientations build the visible region's order once per layer per draw. Culling keeps cost proportional to the viewport, not the map.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Isometric origin*: the map's box starts at (0, 0), so cell (0, 0) is not at the origin but at =h * cw/2= along x. Use =lrg_tilemap_cell_to_world()= rather than your own formula.
+- *Set the cell size* for isometric tiles taller than their footprint, or cells inherit the image size and the grid is twice as tall.
+- *Staggered maps support row staggering* for neighbours; a column-staggered (axis x) staggered isometric map draws and picks correctly but rule tiles use the row layout.
+- *Map size comes from the first layer.* Give every layer the same size.
+- *Depth is a sort key, not a z-buffer*: sprites that span several cells need their feet position for sorting.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The tile painter works on orthogonal level tilemaps today; the hooks for grid modes:
+- *Grid overlay and hover*: =lrg_tilemap_get_cell_polygon()= per visible cell, =lrg_tilemap_world_to_cell()= under the mouse.
+- *Brush stamping*: brush cells map through the same cell coordinates; the painter's rectangle and fill tools operate on cell coordinates unchanged.
+- *Level data*: the level tilemap node needs =orientation=, =stagger_axis=, =stagger_index=, =hex_side_length= and the cell size keys to round-trip a non-orthogonal map; =lrg_node_tilemap_to_runtime()= then sets them on the runtime map (planned for the editor wave).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:tilemap.org][LrgTilemap]]
+- [[file:rule-tile.org][Rule tiles]]
+- [[file:tileset-asset.org][Tileset assets]]
+- [[file:../lighting/2d-shadows.org][2D shadows]] (tile collision on any orientation)
+- [[file:../../guides/2d.org][2D guide]]

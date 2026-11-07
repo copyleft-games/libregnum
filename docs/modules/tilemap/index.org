@@ -26,6 +26,10 @@ The Tilemap module consists of three core classes:
 - *Coordinate conversion* - Convert between world and tile coordinates
 - *Layer visibility and opacity* - Control rendering per layer
 - *Dynamic tile editing* - Change tile values at runtime
+- *Per-tile flips and rotation* - three transform bits per cell (0.9.0)
+- *Rule tiles* - autotiling brushes stored in the =.rtileset= (0.9.0)
+- *Isometric, staggered and hexagonal grids* (0.9.0)
+- *Animated tiles, collision polygons, custom tile data* (0.9.0)
 
 ** Quick Start
 :PROPERTIES:
@@ -112,3 +116,10 @@ See the individual class documentation:
 - [[file:tileset.org][LrgTileset]] - Texture atlas for tile definitions
 - [[file:tilemap-layer.org][LrgTilemapLayer]] - Single layer of tile data
 - [[file:tilemap.org][LrgTilemap]] - Multi-layer tilemap renderer
+
+0.9.0:
+
+- [[file:tileset-asset.org][Tileset assets (.rtileset)]] - per-tile flip/rotation bits, collision polygons, custom data, animated tiles, the =.rtileset= format
+- [[file:rule-tile.org][Rule tiles]] - autotiling with 3x3 neighbour rules, 16/47-tile presets, weighted variants, rotated and mirrored rules
+- [[file:iso-hex.org][Isometric and hexagonal maps]] - orientations, exact picking, cell outlines, draw order and depth sorting
+- [[file:../../guides/2d.org][2D guide]] - tiles, sprites and lights end to end

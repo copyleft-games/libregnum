@@ -281,6 +281,63 @@ test_composite_multiply (void)
     g_assert_cmpuint (red_at (image, 32, 32), >, 200);
 }
 
+/*
+ * 2D shadows: a red point light in the middle and a wall (x 40..44, full
+ * height, so the check holds whichever way up the read-back is) to its
+ * right.  Left of the light is lit, behind the wall only the ambient
+ * remains, the wall itself stays lit (occluders are not self-shadowing by
+ * default).  Run hard (1 sample) and soft (8 samples).
+ */
+static void
+run_shadow_wall (gfloat softness)
+{
+    g_autoptr(LrgLightingManager) manager = NULL;
+    g_autoptr(LrgPointLight2D) light = NULL;
+    g_autoptr(LrgShadowOccluder2D) wall = NULL;
+    g_autoptr(GrlImage) image = NULL;
+    guint behind;
+    guint front;
+
+    manager = new_manager ();
+    light = lrg_point_light2d_new ();
+    lrg_light2d_set_position (LRG_LIGHT2D (light), 32.0f, 32.0f);
+    lrg_light2d_set_color (LRG_LIGHT2D (light), 255, 0, 0);
+    lrg_light2d_set_shadow_softness (LRG_LIGHT2D (light), softness);
+    lrg_light2d_set_shadow_samples (LRG_LIGHT2D (light), 8);
+    lrg_light2d_set_falloff (LRG_LIGHT2D (light), LRG_LIGHT_FALLOFF_NONE);
+    lrg_point_light2d_set_radius (light, 30.0f);
+    lrg_lighting_manager_add_light (manager, LRG_LIGHT2D (light));
+
+    wall = lrg_shadow_occluder2d_new ();
+    lrg_shadow_occluder2d_add_rect (wall, 40.0f, -8.0f, 4.0f, 80.0f);
+    lrg_lighting_manager_add_shadow_caster (manager, LRG_SHADOW_CASTER (wall));
+
+    lrg_lighting_manager_render (manager);
+    g_assert_cmpuint (lrg_lighting_manager_get_shadowed_light_count (manager), ==, 1);
+
+    image = read_target (manager);
+    front = red_at (image, 24, 32);
+    behind = red_at (image, 54, 32);
+    g_assert_cmpuint (front, >, 200);
+    g_assert_cmpuint (behind, >=, 18);
+    g_assert_cmpuint (behind, <=, 24);
+    g_assert_cmpuint (red_at (image, 42, 32), >, 200);
+}
+
+static void
+test_render_shadow_hard (void)
+{
+    SKIP_WITHOUT_GRAPHICS ();
+    run_shadow_wall (0.0f);
+}
+
+static void
+test_render_shadow_soft (void)
+{
+    SKIP_WITHOUT_GRAPHICS ();
+    run_shadow_wall (0.3f);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -297,6 +354,8 @@ main (int   argc,
     g_test_add_func ("/lighting-render/pass/spot-and-directional", test_render_spot_and_directional);
     g_test_add_func ("/lighting-render/pass/lightmap", test_render_lightmap);
     g_test_add_func ("/lighting-render/composite/multiply", test_composite_multiply);
+    g_test_add_func ("/lighting-render/shadow/hard", test_render_shadow_hard);
+    g_test_add_func ("/lighting-render/shadow/soft", test_render_shadow_soft);
 
     result = g_test_run ();
 

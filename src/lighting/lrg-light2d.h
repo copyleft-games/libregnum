@@ -401,10 +401,109 @@ void lrg_light2d_update (LrgLight2D *self,
  * @self: an #LrgLight2D
  * @casters: (element-type LrgShadowCaster): array of shadow casters
  *
- * Calculates shadow geometry.
+ * Calculates the light's shadow geometry from the casters (the
+ * #LrgLightingManager calls it every frame for shadow-casting lights).
+ *
+ * The base implementation projects the casters' edges away from the light
+ * into shadow triangles: from the light's position to its reach (point
+ * and spot lights: their radius) or along its direction by its shadow
+ * length (#LrgDirectionalLight2D).  #LrgShadowOccluder2D casters project
+ * only the edges facing away from the light unless they self-shadow.
+ * With #LrgLight2D:shadow-softness above 0 the geometry is built once per
+ * sample (#LrgLight2D:shadow-samples) from points spread over the light's
+ * area (or directions spread over an angle), which renders as a soft
+ * penumbra.  Read the result with lrg_light2d_get_shadow_triangles() and
+ * lrg_light2d_get_shadow_factor().
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_light2d_calculate_shadows (LrgLight2D *self,
                                     GPtrArray  *casters);
+
+/**
+ * lrg_light2d_get_shadow_samples:
+ * @self: an #LrgLight2D
+ *
+ * Returns: how many shadow samples a soft light uses
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_light2d_get_shadow_samples (LrgLight2D *self);
+
+/**
+ * lrg_light2d_set_shadow_samples:
+ * @self: an #LrgLight2D
+ * @samples: shadow samples for soft shadows (1 to 32; each costs one
+ *   extra light draw per frame)
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_light2d_set_shadow_samples (LrgLight2D *self,
+                                     guint       samples);
+
+/**
+ * lrg_light2d_get_shadow_sample_count:
+ * @self: an #LrgLight2D
+ *
+ * Returns: the number of samples the last lrg_light2d_calculate_shadows()
+ *   produced (0: no shadow geometry; 1: hard shadows)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_light2d_get_shadow_sample_count (LrgLight2D *self);
+
+/**
+ * lrg_light2d_get_shadow_triangles:
+ * @self: an #LrgLight2D
+ * @sample: the sample index
+ * @n_coords: (out): number of floats (6 per triangle)
+ *
+ * Gets the shadow triangles of one sample in world pixels.
+ *
+ * Returns: (array length=n_coords) (transfer none) (nullable): x, y
+ *   triples of the triangles, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+const gfloat * lrg_light2d_get_shadow_triangles (LrgLight2D *self,
+                                                 guint       sample,
+                                                 guint      *n_coords);
+
+/**
+ * lrg_light2d_get_shadow_opacities:
+ * @self: an #LrgLight2D
+ * @sample: the sample index
+ * @n_triangles: (out): number of triangles
+ *
+ * Returns: (array length=n_triangles) (transfer none) (nullable): the
+ *   opacity of each triangle of the sample (its caster's opacity)
+ */
+LRG_AVAILABLE_IN_ALL
+const gfloat * lrg_light2d_get_shadow_opacities (LrgLight2D *self,
+                                                 guint       sample,
+                                                 guint      *n_triangles);
+
+/**
+ * lrg_light2d_get_shadow_factor:
+ * @self: an #LrgLight2D
+ * @x: world x
+ * @y: world y
+ *
+ * Gets how much of the light a point loses to shadows, from the last
+ * lrg_light2d_calculate_shadows(): the average over the samples of the
+ * strongest shadow covering the point.  Useful beyond rendering (stealth:
+ * is the player in the dark?).
+ *
+ * Returns: 0 (fully lit) to 1 (fully shadowed)
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_light2d_get_shadow_factor (LrgLight2D *self,
+                                      gfloat      x,
+                                      gfloat      y);
+
+/**
+ * lrg_light2d_clear_shadows:
+ * @self: an #LrgLight2D
+ *
+ * Drops the shadow geometry (the light renders unshadowed until the next
+ * lrg_light2d_calculate_shadows()).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_light2d_clear_shadows (LrgLight2D *self);
 
 G_END_DECLS

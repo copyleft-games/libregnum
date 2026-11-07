@@ -199,6 +199,13 @@ regions:
 | =src/atlas/lrg-nine-slice.h=    | 9-slice renderer    |
 | =src/atlas/lrg-atlas-packer.h=  | Build tool          |
 
+** Sprite sheets and frame animations (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: sprite-animations-090
+:END:
+- [[file:sprite-sheet.org][LrgSpriteSheet]] - complete API: frames with pivots, grid and alpha-island slicing, clips
+- [[file:sprite-animation.org][Sprite animations]] - =LrgSpriteAnimation= clips (durations, loop modes, events), the =.rsprite= format and the =LrgSpriteAnimationPlayer= component
+
 ** Shelf, MaxRects, and Guillotine packing
 
 See [[file:packing.org][Shelf, MaxRects, and Guillotine packing]] for the API, examples, and tested behavior.

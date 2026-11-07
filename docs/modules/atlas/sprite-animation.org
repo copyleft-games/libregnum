@@ -1,0 +1,272 @@
+#+title: Sprite animations and the .rsprite format
+#+description: LrgSpriteAnimation clips (durations, loop modes, events), the .rsprite sprite-sheet format, LrgSpriteAnimationPlayer and the LrgAnimatorComponent bridge
+#+created: 2026-11-07
+
+* Sprite animations and the .rsprite format
+:PROPERTIES:
+:CUSTOM_ID: sprite-animation
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Atlas]] > Sprite animations
+#+end_quote
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Frame-by-frame sprite animation in three pieces:
+
+- *=LrgSpriteAnimation=*: one clip: a list of [[file:sprite-sheet.org][sprite sheet]] frames with per-frame durations (or a shared fps), a loop mode (once, loop, ping-pong) and named events on frames (footsteps, hit frames, spawn points).
+- *=.rsprite=*: a YAML file describing a sheet: the image, how it is sliced (a grid and/or explicit rectangles, with pivots and names) and its clips. Loaded into an =LrgSpriteSheet= that carries the clips.
+- *=LrgSpriteAnimationPlayer=*: a component that plays clips. On an =LrgGameObject= it updates every frame and writes the current frame (and the sheet texture) into the object's =LrgSpriteComponent=; it emits events, frame changes and the end of once clips as signals.
+
+Clips whose frames are consecutive grid frames at one rate can also be handed to the existing =LrgAnimatorComponent= with =lrg_sprite_sheet_apply_to_animator()=.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+
+*** Timing
+:PROPERTIES:
+:CUSTOM_ID: timing
+:END:
+A frame shows for its own duration (seconds) or, when that is 0, for 1 / =fps= (=LrgSpriteAnimation:fps=, default 10). =lrg_sprite_animation_get_frame_duration()= gives the effective value, =lrg_sprite_animation_get_duration()= the length of one cycle.
+
+*** Loop modes
+:PROPERTIES:
+:CUSTOM_ID: loop-modes
+:END:
+=LrgSpriteLoopMode=:
+
+| Mode | Steps of a cycle (4 frames) | After the end |
+|------+-----------------------------+---------------|
+| =LRG_SPRITE_LOOP_ONCE= | 0 1 2 3 | holds frame 3, =finished= |
+| =LRG_SPRITE_LOOP_LOOP= (default) | 0 1 2 3 | repeats |
+| =LRG_SPRITE_LOOP_PING_PONG= | 0 1 2 3 2 1 | repeats; the end frames are not doubled |
+
+=lrg_sprite_animation_sample()= returns the clip position showing at any time; it is pure, so previews, scrubbing and the player agree.
+
+*** Events
+:PROPERTIES:
+:CUSTOM_ID: events
+:END:
+=lrg_sprite_animation_add_event (clip, frame, name)= attaches a name to a clip position. The player emits =LrgSpriteAnimationPlayer::event= every time playback enters that position: on =play()= for position 0, on every pass of a looping clip, and for every position crossed by a large time step (capped at four cycles per advance so a hitch cannot flood listeners). Events stay attached to their frames when frames are inserted or removed; removing a frame drops its events.
+
+*** The player and components
+:PROPERTIES:
+:CUSTOM_ID: player
+:END:
+=LrgSpriteAnimationPlayer= derives from =LrgComponent=. Its update (=lrg_component_update()=, called by the game object) calls =lrg_sprite_animation_player_advance()=, which moves the clock (times =speed=), fires events, updates the frame and pushes =lrg_sprite_component_set_source()= (and =lrg_sprite_component_set_texture()= when =LrgSpriteAnimationPlayer:texture= is set) into the owner's =LrgSpriteComponent=. Without an owner it is a plain player you advance yourself.
+
+=lrg_sprite_animation_player_play()= restarts a clip; =lrg_sprite_animation_player_play_if_different()= keeps it running (call it every frame with the clip the state wants).
+
+*** The animator bridge
+:PROPERTIES:
+:CUSTOM_ID: animator
+:END:
+=LrgAnimatorComponent= plays ranges of consecutive frames of a gap-less grid at one fps. =lrg_sprite_sheet_apply_to_animator()= registers every clip that fits (grid without margins or spacing, consecutive ascending frames, one duration, not ping-pong) and returns how many; other clips need the player.
+
+** The .rsprite format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: format-example
+:END:
+#+begin_src yaml
+version: 1                  # optional; only 1 is accepted
+name: hero                  # optional sheet name
+image: hero.png             # optional, relative to this file
+image_size: [128, 96]       # optional: enables UVs; written when known
+grid:                       # optional: the first frames, row by row
+  frame_size: [32, 32]      # required in grid: frame width, height (>= 1)
+  columns: 4                # required (1..65536)
+  rows: 2                   # required (1..65536)
+  count: 6                  # optional, default columns x rows (<= that)
+  margin: [0, 0]            # optional, pixels before the first column / row
+  spacing: [0, 0]           # optional, pixels between columns / rows
+  pivot: [16, 32]           # optional, pixels from each frame's top-left
+frames:                     # optional
+- index: 3                  # override grid frame 3: only name and pivot
+  name: hero_hit
+  pivot: [12, 32]
+- name: sword               # explicit frame appended after the grid frames
+  rect: [0, 64, 48, 16]     # required for explicit frames: x, y, width, height
+  pivot: [0, 8.5]           # optional, default [0, 0]
+- rect: [48, 64, 16, 16]    # unnamed: named frame_<index> (frame_7 here)
+animations:                 # optional: clips
+- name: walk                # required, unique
+  fps: 12                   # optional, default 10 (> 0)
+  frames: [0, 1, 2]         # frame index or name, or {frame, duration}
+  events:                   # optional
+  - frame: 1                # clip position (0..frames-1)
+    name: footstep
+- name: hit
+  loop: once                # optional: once, loop (default), ping-pong
+  frames:
+  - hero_hit                # by name
+  - {frame: sword, duration: 0.25}   # own duration in seconds (0: 1 / fps)
+  - 7
+  blend: additive           # unknown keys of a clip are kept
+author: zach                # unknown top-level keys are kept
+#+end_src
+
+The writer writes =grid= when the sheet was sliced with =lrg_sprite_sheet_slice_grid()=, an override entry only for grid frames whose name or pivot changed, explicit frames with their name only when it is not the generated =frame_<index>=, and frame references by name when the frame has a real name (by index otherwise). Defaults (=fps: 10=, =loop: loop=, zero pivots, full =count=) are omitted. Saving the same sheet twice gives the same bytes.
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: format-errors
+:END:
+=LRG_SPRITE_ANIMATION_ERROR= (=LrgSpriteAnimationError=, =lrg_sprite_animation_error_get_type()=, =lrg_sprite_animation_error_quark()=): =LRG_SPRITE_ANIMATION_ERROR_IO= (file), =_PARSE= (not YAML), =_INVALID= (schema; =source: /path: message=). Examples: =/grid: a grid needs frame_size, columns and rows=, =/grid/count: count is larger than columns x rows=, =/frames/0: a grid frame override cannot change rect (the grid sets it)=, =/frames/0: frame name "frame_1" is used twice=, =/animations/0/frames/1: frame 9 does not exist (the sheet has 4)=, =/animations/0/frames/0: no frame named "nope"=, =/animations/0/loop: expected once, loop or ping-pong=, =/animations/1: animation "a" is defined twice=.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+
+*** LrgSpriteAnimation
+:PROPERTIES:
+:CUSTOM_ID: api-clip
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_animation_new (name)= | empty clip, 10 fps, loop |
+| =lrg_sprite_animation_get_name= / =lrg_sprite_animation_set_name= | property =name= |
+| =lrg_sprite_animation_get_fps= / =lrg_sprite_animation_set_fps= | property =fps= |
+| =lrg_sprite_animation_get_loop_mode= / =lrg_sprite_animation_set_loop_mode= | property =loop-mode= (=LrgSpriteLoopMode=, =lrg_sprite_loop_mode_get_type()=) |
+| =lrg_sprite_animation_add_frame (self, frame, duration)=, =lrg_sprite_animation_insert_frame (self, index, frame, duration)= | add sheet frames (=duration= 0: 1 / fps) |
+| =lrg_sprite_animation_set_frame (self, index, frame, duration)=, =lrg_sprite_animation_remove_frame=, =lrg_sprite_animation_clear_frames= | edit |
+| =lrg_sprite_animation_get_n_frames=, =lrg_sprite_animation_get_frame (self, index, &duration)= | read (sheet frame index and own duration) |
+| =lrg_sprite_animation_get_frame_duration (self, index)=, =lrg_sprite_animation_get_duration (self)= | effective timing |
+| =lrg_sprite_animation_sample (self, time, &finished)= | clip position at a time |
+| =lrg_sprite_animation_add_event (self, frame, name)=, =lrg_sprite_animation_get_n_events=, =lrg_sprite_animation_get_event (self, index, &frame)=, =lrg_sprite_animation_remove_event= | events, sorted by frame |
+
+Signal: =changed= on frame, event, fps or loop mode edits.
+
+*** Sheets and files
+:PROPERTIES:
+:CUSTOM_ID: api-sheet
+:END:
+Declared in =lrg-sprite-animation.h= and documented with the sheet: =lrg_sprite_sheet_slice_grid()=, =lrg_sprite_sheet_get_grid()=, =lrg_sprite_sheet_slice_alpha()=, =lrg_sprite_sheet_add_clip()=, =lrg_sprite_sheet_remove_clip()=, =lrg_sprite_sheet_get_clip()=, =lrg_sprite_sheet_get_n_clips()=, =lrg_sprite_sheet_get_clip_at()=, =lrg_sprite_sheet_new_from_rsprite_file()=, =lrg_sprite_sheet_new_from_rsprite_data()=, =lrg_sprite_sheet_save_rsprite_to_data()=, =lrg_sprite_sheet_save_rsprite_to_file()=, =lrg_sprite_sheet_apply_to_animator()= (see [[file:sprite-sheet.org][LrgSpriteSheet]]).
+
+*** LrgSpriteAnimationPlayer
+:PROPERTIES:
+:CUSTOM_ID: api-player
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_sprite_animation_player_new (sheet)= | a player component |
+| =lrg_sprite_animation_player_get_sheet= / =lrg_sprite_animation_player_set_sheet= | property =sheet= (setting stops playback) |
+| =lrg_sprite_animation_player_get_texture= / =lrg_sprite_animation_player_set_texture= | property =texture=, pushed to the sprite component |
+| =lrg_sprite_animation_player_play (self, name)= | start a clip from frame 0 (FALSE: unknown clip) |
+| =lrg_sprite_animation_player_play_if_different (self, name)= | start unless it is the current clip |
+| =lrg_sprite_animation_player_stop (self)= | stop and rewind |
+| =lrg_sprite_animation_player_set_paused= / =lrg_sprite_animation_player_get_paused= | property =paused= |
+| =lrg_sprite_animation_player_get_speed= / =lrg_sprite_animation_player_set_speed= | property =speed= (0..100, default 1) |
+| =lrg_sprite_animation_player_advance (self, delta)= | advance (the component update calls it) |
+| =lrg_sprite_animation_player_is_playing=, =lrg_sprite_animation_player_get_current_clip=, =lrg_sprite_animation_player_get_time= | state |
+| =lrg_sprite_animation_player_get_frame=, =lrg_sprite_animation_player_get_region= | the sheet frame shown (index, region with rect and pivot) |
+
+Signals: =frame-changed (guint frame)=, =event (const gchar *name, guint clip_frame)=, =finished (const gchar *name)=.
+
+** Examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+
+*** A character on a game object
+:PROPERTIES:
+:CUSTOM_ID: example-component
+:END:
+#+begin_src C
+static void
+on_event (LrgSpriteAnimationPlayer *player, const gchar *name, guint frame, gpointer data)
+{
+	if (g_strcmp0 (name, "footstep") == 0)
+		play_sound ("step.wav");
+}
+
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgSpriteSheet) sheet = lrg_sprite_sheet_new_from_rsprite_file ("assets/hero.rsprite", &error);
+g_autoptr(GrlTexture) texture = grl_texture_new_from_file ("assets/hero.png");
+LrgGameObject *hero = lrg_game_object_new_at (100.0f, 200.0f);
+LrgSpriteAnimationPlayer *anim = lrg_sprite_animation_player_new (sheet);
+
+lrg_game_object_add_component (hero, LRG_COMPONENT (lrg_sprite_component_new ()));
+lrg_game_object_add_component (hero, LRG_COMPONENT (anim));
+lrg_sprite_animation_player_set_texture (anim, texture);
+g_signal_connect (anim, "event", G_CALLBACK (on_event), NULL);
+
+/* each frame, from the character's state */
+lrg_sprite_animation_player_play_if_different (anim, moving ? "walk" : "idle");
+#+end_src
+
+*** Building a clip in code and saving the sheet
+:PROPERTIES:
+:CUSTOM_ID: example-code
+:END:
+#+begin_src C
+g_autoptr(LrgSpriteSheet) sheet = lrg_sprite_sheet_new ("coin");
+g_autoptr(LrgSpriteAnimation) spin = lrg_sprite_animation_new ("spin");
+guint i;
+
+lrg_sprite_sheet_set_texture_path (sheet, "coin.png");
+lrg_sprite_sheet_slice_grid (sheet, 16, 16, 8, 1, 0, 0, 0, 0, 0, 8.0f, 8.0f);
+for (i = 0; i < 8; i++)
+	lrg_sprite_animation_add_frame (spin, i, 0.0f);
+lrg_sprite_animation_set_fps (spin, 12.0f);
+lrg_sprite_animation_set_loop_mode (spin, LRG_SPRITE_LOOP_PING_PONG);
+lrg_sprite_sheet_add_clip (sheet, spin);
+lrg_sprite_sheet_save_rsprite_to_file (sheet, "assets/coin.rsprite", NULL);
+#+end_src
+
+*** Reusing an existing LrgAnimatorComponent setup
+:PROPERTIES:
+:CUSTOM_ID: example-animator
+:END:
+#+begin_src C
+LrgAnimatorComponent *animator = lrg_animator_component_new ();
+guint n = lrg_sprite_sheet_apply_to_animator (sheet, animator, texture);
+
+g_message ("%u clips registered", n);
+lrg_animator_component_play (animator, "walk");
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Advancing a player is O(frames in the clip) (a walk over the durations to find the step), plus one signal emission per event entered; a clip of 8 frames costs well under a microsecond per update. Sampling is pure and allocation-free. Loading is linear in the file; the image is not decoded.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Clip positions vs sheet frames*: events and =lrg_sprite_animation_sample()= use clip positions; =lrg_sprite_animation_player_get_frame()= returns the sheet frame.
+- *Slicing again keeps clips* but their frame indices now point at the new frames.
+- *The sprite component has no pivot*: it draws from its position; offset the object by the region's pivot (=lrg_atlas_region_get_pivot_x()=) or draw with the region yourself until the component grows pivot support.
+- *=play()= restarts*: calling it every frame freezes on frame 0; use =play_if_different()=.
+- *Once clips stop* (=is_playing= FALSE after =finished=) and hold their last frame; =play_if_different()= does not restart them, =play()= does.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+Hooks for the sprite slicer and frame animation editor of the next editor wave:
+- *Slicer*: see [[file:sprite-sheet.org::#editor][LrgSpriteSheet]].
+- *Clip list*: =lrg_sprite_sheet_get_n_clips()= / =lrg_sprite_sheet_get_clip_at()=, add/remove with =lrg_sprite_sheet_add_clip()= / =lrg_sprite_sheet_remove_clip()=.
+- *Timeline strip*: one cell per =lrg_sprite_animation_get_frame()=, widths from =lrg_sprite_animation_get_frame_duration()=; drag-reorder with =insert_frame= / =remove_frame=; event markers from =lrg_sprite_animation_get_event()=; refresh on =changed=.
+- *Preview*: a stand-alone =LrgSpriteAnimationPlayer= advanced by the editor clock, or scrubbing with =lrg_sprite_animation_sample()=.
+- *Document*: =lrg_sprite_sheet_save_rsprite_to_data()= / =lrg_sprite_sheet_new_from_rsprite_data()= for saving and validation with key paths.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:sprite-sheet.org][LrgSpriteSheet]]
+- [[file:../ecs/component.org][LrgComponent]]
+- [[file:../animation/skeleton2d.org][LrgSkeleton2D]] (bone-based 2D animation)
+- [[file:../../guides/2d.org][2D guide]]

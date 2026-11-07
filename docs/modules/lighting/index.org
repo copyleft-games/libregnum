@@ -11,6 +11,7 @@ The 2D Lighting System provides dynamic lights, shadows, and baked lighting for 
 The lighting system renders lights to a texture that composites with the scene:
 
 - *LrgShadowCaster* - Interface for objects that cast shadows
+- *LrgShadowOccluder2D* - Oriented shadow edges from polygons, tile collision and sprite outlines (0.9.0, see [[file:2d-shadows.org][2D lights and shadows]])
 - *LrgLight2D* - Abstract base class for 2D lights (derivable)
 - *LrgPointLight2D* - Radial light with optional flicker
 - *LrgSpotLight2D* - Directional cone light
@@ -169,6 +170,8 @@ lrg_light2d_set_casts_shadows (light, TRUE);
 lrg_light2d_set_shadow_method (light, LRG_SHADOW_METHOD_GEOMETRY);
 #+end_src
 
+Since 0.9.0 shadows are real geometry in the light pass: =LrgShadowOccluder2D= builds casters from polygons, tilemap collision and sprite outlines, every shadow-casting light projects their edges into shadow triangles, and =LrgLight2D:shadow-softness= turns hard shadows into soft ones. See [[file:2d-shadows.org][2D lights and shadows]].
+
 *** Shadow Methods
 :PROPERTIES:
 :CUSTOM_ID: shadow-methods
@@ -177,6 +180,8 @@ lrg_light2d_set_shadow_method (light, LRG_SHADOW_METHOD_GEOMETRY);
 |------------+-------------------------------------------|
 | =RAY_CAST= | CPU ray casting, accurate soft shadows    |
 | =GEOMETRY= | GPU shadow volumes, fast for many casters |
+
+The method is informational in 0.9.0: the light pass always uses projected shadow geometry.
 
 *** Shadow Map
 :PROPERTIES:
@@ -316,7 +321,7 @@ guint n = lrg_lighting_manager_get_visible_light_count (lighting);
 
 1. Cull the lights against the viewport.
 2. Clear the target to the ambient colour times the ambient intensity.
-3. With additive blending and a camera mapping world units onto the target, draw the lightmap (uploading it if dirty) and then every visible light. When shadows are enabled and casters are registered, a light that casts shadows first gets =lrg_light2d_calculate_shadows()=.
+3. With additive blending and a camera mapping world units onto the target, draw the lightmap (uploading it if dirty) and then every visible light without shadow geometry. When shadows are enabled and casters are registered, every light that casts shadows first gets =lrg_light2d_calculate_shadows()=; lights that end up with shadow triangles are drawn afterwards through a scratch target, once per shadow sample, with their shadows cut out (see [[file:2d-shadows.org::#light-pass][the light pass]]).
 
 The target is one pixel per world unit, scaled down uniformly when a side of the viewport exceeds 4096 units (a zoomed-out camera). Call =render()= once per frame after =update()=, outside any other render texture or camera mode.
 
@@ -336,7 +341,7 @@ For a custom composite (a lighting shader, a post-process stage) use =lrg_lighti
 :END:
 Inside the pass each light's =render= vfunc draws its contribution in world coordinates with graylib, using the colour's alpha as its weight (the blend is source x alpha + destination). Point and spot lights build their falloff from 16 stacked discs or sectors whose radii are spaced so the summed light follows the curve: linear =1 - t=, quadratic =(1 - t)^2=, with =t= running from the inner radius (full brightness) to the radius. =LRG_LIGHT_FALLOFF_NONE= draws one flat disc. Intensity above 1 saturates. A directional light fills the whole target evenly; its direction and shadow length only matter for shadows. Custom subclasses override =render= under the same contract.
 
-The 2D shadow casters are passed to each light's =calculate_shadows= vfunc, but the built-in lights do not yet draw shadow geometry into the pass: shadows in the 2D light pass remain a follow-up.
+The 2D shadow casters are passed to each light's =calculate_shadows= vfunc; the base implementation (used by every built-in light) projects them into shadow triangles that the pass draws (0.9.0, [[file:2d-shadows.org][2D lights and shadows]]).
 
 ** YAML Configuration
 :PROPERTIES:
