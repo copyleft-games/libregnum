@@ -23,6 +23,7 @@
  */
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <string.h>
 #include <libregnum.h>
 
@@ -1012,6 +1013,118 @@ test_play3d_apply (Fixture3D     *f,
 	                                1.0, 1e-6);
 }
 
+/* ==========================================================================
+ * Project physics: play uses the open project's physics: block
+ * ========================================================================== */
+
+static const gchar *PLAY_PROJECT_YAML =
+	"project:\n"
+	"  name: mars\n"
+	"physics:\n"
+	"  layers: [default, ground, crate, ghost]\n"
+	"  no_collide: [[ground, ghost]]\n"
+	"  gravity: [0, -3.7, 0]\n"
+	"  iterations: 6\n"
+	"  extra_tool_key: 1\n";
+
+/* a dynamic box on @layer at the origin */
+static LrgNode *
+add_physics_box (Fixture3D   *f,
+                 const gchar *name,
+                 const gchar *layer)
+{
+	LrgNode                        *node = add3d (f, name, NULL);
+	g_autoptr(LrgNodePhysics)       phys = lrg_node_physics_new (LRG_DYNAMICS_BODY_DYNAMIC);
+	g_autoptr(LrgNodePhysicsShape)  box = lrg_node_physics_shape_new (LRG_COLLIDER3D_BOX);
+
+	lrg_node_physics_shape_set_half_extents (box, 0.5f, 0.5f, 0.5f);
+	lrg_node_physics_add_shape (phys, box);
+	lrg_node_physics_set_layer (phys, layer);
+	lrg_node_physics_set_mass (phys, 1.0f);
+	lrg_node_set_physics (node, phys);
+	return node;
+}
+
+static void
+test_play3d_project_physics (Fixture3D     *f,
+                             gconstpointer  data)
+{
+	g_autoptr(GError)      error = NULL;
+	g_autofree gchar      *dir = g_dir_make_tmp ("lrg-play-physics-XXXXXX", &error);
+	g_autofree gchar      *manifest = NULL;
+	g_autofree gchar      *level_path = NULL;
+	g_autoptr(LrgProject)  project = NULL;
+	LrgNode               *ghost;
+	LrgWorld3D            *world;
+	LrgDynamicsWorld      *physics;
+	LrgRigidBodyComponent *rb;
+	LrgPhysicsSettings     got;
+	guint                  layer = 0;
+
+	(void) data;
+	g_assert_no_error (error);
+	manifest = g_build_filename (dir, "project.ryaml", NULL);
+	g_assert_true (g_file_set_contents (manifest, PLAY_PROJECT_YAML, -1, &error));
+	project = lrg_project_open (dir, &error);
+	g_assert_no_error (error);
+	g_assert_cmpfloat (lrg_project_get_physics_settings (project)->gravity[1], ==, -3.7f);
+	ghost = add_physics_box (f, "Ghost", "ghost");
+
+	/* with the project: its settings and its (shared) layer table */
+	lrg_editor_play_session_set_project (f->session, project);
+	g_assert_true (lrg_editor_play_session_get_project (f->session) == project);
+	start3d (f);
+	world = lrg_editor_play_session_get_world3d (f->session);
+	physics = lrg_world3d_get_physics (world);
+	g_assert_nonnull (physics);
+	lrg_dynamics_world_get_settings (physics, &got);
+	g_assert_cmpfloat (got.gravity[1], ==, -3.7f);
+	g_assert_cmpuint (got.iterations, ==, 6);
+	g_assert_true (lrg_dynamics_world_get_layers (physics) == lrg_project_get_physics_layers (project));
+	g_assert_true (lrg_editor_play_session_tick (f->session, 1.0f / 60.0f));
+	rb = LRG_RIGID_BODY_COMPONENT (lrg_entity3d_get_component (LRG_ENTITY3D (lrg_editor_play_session_get_live_for_node (f->session, ghost)),
+	                                                           LRG_TYPE_RIGID_BODY_COMPONENT));
+	g_assert_nonnull (rb);
+	g_assert_true (lrg_dynamics_world_get_body_layer (physics, lrg_rigid_body_component_get_body_id (rb), &layer, NULL, NULL));
+	g_assert_cmpuint (layer, ==, 3);
+	lrg_editor_play_session_stop (f->session);
+
+	/* an in-memory edit (Project Settings before saving) applies next play */
+	lrg_project_get_physics_settings (project)->gravity[1] = -1.62f;
+	start3d (f);
+	lrg_dynamics_world_get_settings (lrg_world3d_get_physics (lrg_editor_play_session_get_world3d (f->session)), &got);
+	g_assert_cmpfloat (got.gravity[1], ==, -1.62f);
+	lrg_editor_play_session_stop (f->session);
+
+	/* saving keeps the block's other keys and writes the new value */
+	g_assert_true (lrg_project_save (project, &error));
+	g_assert_no_error (error);
+	{
+		g_autoptr(LrgPhysicsSettings) back = lrg_physics_settings_new ();
+		g_autofree gchar             *text = NULL;
+
+		g_assert_true (lrg_physics_settings_load_from_file (back, manifest, &error));
+		g_assert_cmpfloat (back->gravity[1], ==, -1.62f);
+		g_assert_cmpuint (back->iterations, ==, 6);
+		g_assert_true (g_file_get_contents (manifest, &text, NULL, &error));
+		g_assert_nonnull (strstr (text, "extra_tool_key"));
+	}
+
+	/* no project on the session: the project.ryaml above the level file */
+	lrg_editor_play_session_set_project (f->session, NULL);
+	level_path = g_build_filename (dir, "arena.rlevel", NULL);
+	lrg_editor_set_path (f->editor, level_path);
+	start3d (f);
+	lrg_dynamics_world_get_settings (lrg_world3d_get_physics (lrg_editor_play_session_get_world3d (f->session)), &got);
+	g_assert_cmpfloat (got.gravity[1], ==, -1.62f);
+	g_assert_cmpint (lrg_physics_layers_find (lrg_dynamics_world_get_layers (lrg_world3d_get_physics (
+	                     lrg_editor_play_session_get_world3d (f->session))), "ghost"), ==, 3);
+	lrg_editor_play_session_stop (f->session);
+
+	g_unlink (manifest);
+	g_rmdir (dir);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1053,6 +1166,7 @@ main (int   argc,
 	ADD3D ("lookups", test_play3d_lookups);
 	ADD3D ("live-tree", test_play3d_live_tree);
 	ADD3D ("apply", test_play3d_apply);
+	ADD3D ("project-physics", test_play3d_project_physics);
 
 #undef ADD3D
 

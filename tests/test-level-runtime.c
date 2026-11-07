@@ -462,6 +462,258 @@ test_prefab_spawn (Fixture       *f,
 	g_assert_nonnull (lrg_world_find_by_tag (world, lrg_node_get_guid (lid)));
 }
 
+/* ==========================================================================
+ * Project physics: the physics: block of project.ryaml configures the
+ * world a level is loaded into (gravity, step limits, layers, no_collide)
+ * ========================================================================== */
+
+/*
+ * A Mars-gravity project with its own layers: "ghost" does not collide
+ * with "ground". An unknown key (cloth_quality) and another tool's root
+ * key must not disturb loading.
+ */
+static const gchar *PHYSICS_PROJECT_YAML =
+	"project:\n"
+	"  name: mars\n"
+	"  asset_dirs: [assets/]\n"
+	"physics:\n"
+	"  layers: [default, ground, crate, ghost]\n"
+	"  no_collide:\n"
+	"    - [ground, ghost]\n"
+	"  gravity: [0, -3.7, 0]\n"
+	"  fixed_dt: 0.02\n"
+	"  max_substeps: 3\n"
+	"  iterations: 6\n"
+	"  sleep_threshold: 0.001\n"
+	"  sleep_substeps: 12\n"
+	"  cloth_quality: high\n"
+	"tool_data: {keep: me}\n";
+
+/* a box body of @kind on @layer at (x, y, 0) */
+static void
+add_box_node (LrgLevel           *level,
+              const gchar        *name,
+              LrgDynamicsBodyKind kind,
+              const gchar        *layer,
+              gfloat              x,
+              gfloat              y,
+              gfloat              half_x,
+              gfloat              half_y)
+{
+	g_autoptr(LrgNode)             node = lrg_node_new (name);
+	g_autoptr(LrgNodePhysics)      phys = lrg_node_physics_new (kind);
+	g_autoptr(LrgNodePhysicsShape) box = lrg_node_physics_shape_new (LRG_COLLIDER3D_BOX);
+
+	lrg_node_physics_shape_set_half_extents (box, half_x, half_y, half_x);
+	lrg_node_physics_add_shape (phys, box);
+	lrg_node_physics_set_layer (phys, layer);
+	if (kind == LRG_DYNAMICS_BODY_DYNAMIC)
+		lrg_node_physics_set_mass (phys, 1.0f);
+	lrg_node_set_physics (node, phys);
+	lrg_node_set_location_xyz (node, x, y, 0.0f);
+	lrg_level_add_node (level, node, NULL);
+}
+
+/* a level with a floor, a crate above it and a ghost above it */
+static LrgLevel *
+physics_arena (void)
+{
+	LrgLevel *level = lrg_level_new ("arena");
+
+	add_box_node (level, "Floor", LRG_DYNAMICS_BODY_STATIC, "ground", 0.0f, -0.5f, 10.0f, 0.5f);
+	add_box_node (level, "Crate", LRG_DYNAMICS_BODY_DYNAMIC, "crate", -2.0f, 1.0f, 0.5f, 0.5f);
+	add_box_node (level, "Ghost", LRG_DYNAMICS_BODY_DYNAMIC, "ghost", 2.0f, 1.0f, 0.5f, 0.5f);
+	return level;
+}
+
+static gfloat
+entity_y (LrgWorld3D  *world,
+          const gchar *name)
+{
+	LrgEntity3D *e = lrg_world3d_find_by_name (world, name);
+	gfloat       p[3];
+
+	g_assert_nonnull (e);
+	lrg_entity3d_get_world_position (e, p);
+	return p[1];
+}
+
+static void
+run_world (LrgWorld3D *world,
+           gfloat      seconds)
+{
+	guint i;
+	guint n = (guint) ceilf (seconds / (1.0f / 60.0f));
+
+	for (i = 0; i < n; i++)
+		lrg_world3d_step (world, 1.0f / 60.0f);
+}
+
+static void
+test_project_physics (Fixture       *f,
+                      gconstpointer  data)
+{
+	g_autoptr(GError)             error = NULL;
+	g_autoptr(LrgLevel)           arena = physics_arena ();
+	g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+	g_autoptr(LrgLevel)           loaded = NULL;
+	g_autoptr(LrgWorld3D)         world = lrg_world3d_new ();
+	g_autofree gchar             *project = g_build_filename (f->dir, "project.ryaml", NULL);
+	g_autofree gchar             *levels = g_build_filename (f->dir, "levels", NULL);
+	g_autofree gchar             *level_path = g_build_filename (levels, "arena.rlevel", NULL);
+	g_autofree gchar             *found = NULL;
+	LrgDynamicsWorld             *physics;
+	LrgPhysicsLayers             *layers;
+	LrgPhysicsSettings            settings;
+	gint                          ground;
+	gint                          ghost;
+
+	(void) data;
+
+	/* the project at the root, the level one directory down */
+	g_assert_true (g_file_set_contents (project, PHYSICS_PROJECT_YAML, -1, &error));
+	g_assert_cmpint (g_mkdir_with_parents (levels, 0700), ==, 0);
+	g_assert_true (lrg_level_serializer_save_to_file (ser, arena, level_path, &error));
+	g_assert_no_error (error);
+	found = lrg_physics_settings_find_project (level_path);
+	g_assert_cmpstr (found, ==, project);
+
+	loaded = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (loaded);
+
+	/* the world took the project's block */
+	g_assert_nonnull (lrg_world3d_get_physics_settings (world));
+	physics = lrg_world3d_get_physics (world);
+	g_assert_nonnull (physics);
+	lrg_dynamics_world_get_settings (physics, &settings);
+	g_assert_cmpfloat (settings.gravity[0], ==, 0.0f);
+	g_assert_cmpfloat (settings.gravity[1], ==, -3.7f);
+	g_assert_cmpfloat (settings.gravity[2], ==, 0.0f);
+	g_assert_cmpuint (settings.iterations, ==, 6);
+	g_assert_cmpfloat (settings.sleep_threshold, ==, 0.001f);
+	g_assert_cmpuint (settings.sleep_substeps, ==, 12);
+	g_assert_cmpfloat (settings.fixed_dt, ==, 0.02f);
+	g_assert_cmpuint (settings.max_substeps, ==, 1);   /* one per world fixed update */
+	g_assert_cmpfloat (lrg_world3d_get_fixed_step (world), ==, 0.02f);
+	g_assert_cmpuint (lrg_world3d_get_max_substeps (world), ==, 3);
+
+	/* the project's layers and matrix, not the default table */
+	layers = lrg_dynamics_world_get_layers (physics);
+	g_assert_nonnull (layers);
+	g_assert_true (layers == lrg_world3d_get_physics_layers (world));
+	ground = lrg_physics_layers_find (layers, "ground");
+	ghost = lrg_physics_layers_find (layers, "ghost");
+	g_assert_cmpint (ground, ==, 1);
+	g_assert_cmpint (ghost, ==, 3);
+	g_assert_false (lrg_physics_layers_get_collides (layers, (guint) ground, (guint) ghost));
+	g_assert_true (lrg_physics_layers_get_collides (layers, (guint) ground, 2u));
+
+	/* simulated: the crate lands on the floor, the ghost falls through;
+	 * free fall from rest for 1 s at 3.7 m/s² is 1.85 m */
+	run_world (world, 1.0f);
+	g_assert_cmpfloat_with_epsilon (entity_y (world, "Ghost"), 1.0f - 1.85f, 0.15f);
+	run_world (world, 2.0f);
+	g_assert_cmpfloat_with_epsilon (entity_y (world, "Crate"), 0.5f, 0.06f);
+	g_assert_cmpfloat (entity_y (world, "Ghost"), <, -3.0f);
+
+	g_unlink (level_path);
+	g_rmdir (levels);
+}
+
+/* No project.ryaml above the level: the defaults (Earth gravity, the
+ * default layer table) */
+static void
+test_project_physics_none (Fixture       *f,
+                           gconstpointer  data)
+{
+	g_autoptr(GError)             error = NULL;
+	g_autoptr(LrgLevel)           arena = physics_arena ();
+	g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+	g_autoptr(LrgLevel)           loaded = NULL;
+	g_autoptr(LrgWorld3D)         world = lrg_world3d_new ();
+	g_autoptr(LrgPhysicsLayers)   defaults = lrg_physics_layers_new_default ();
+	g_autofree gchar             *level_path = g_build_filename (f->dir, "arena.rlevel", NULL);
+	g_autofree gchar             *found = NULL;
+	LrgPhysicsSettings            settings;
+	LrgPhysicsSettings            expected;
+
+	(void) data;
+
+	g_assert_true (lrg_level_serializer_save_to_file (ser, arena, level_path, &error));
+	g_assert_no_error (error);
+	found = lrg_physics_settings_find_project (level_path);
+	if (found != NULL)
+	{
+		/* a project.ryaml in a parent of the temp directory */
+		g_test_skip ("a project.ryaml exists above the temporary directory");
+		return;
+	}
+
+	loaded = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_no_error (error);
+	g_assert_null (lrg_world3d_get_physics_settings (world));
+	g_assert_null (lrg_world3d_get_physics_layers (world));
+	lrg_dynamics_world_get_settings (lrg_world3d_get_physics (world), &settings);
+	lrg_physics_settings_init_default (&expected);
+	/* the world runs one physics substep per fixed update of its own */
+	expected.max_substeps = 1;
+	g_assert_true (lrg_physics_settings_equal (&settings, &expected));
+	g_assert_true (lrg_physics_layers_equal (lrg_dynamics_world_get_layers (lrg_world3d_get_physics (world)),
+	                                         defaults));
+	/* the world's own fixed step is not touched without a project */
+	g_assert_cmpfloat (lrg_world3d_get_fixed_step (world), ==, 1.0f / 60.0f);
+	g_assert_cmpuint (lrg_world3d_get_max_substeps (world), ==, 8);
+}
+
+/* Explicit settings win over the project the level sits in */
+static void
+test_project_physics_explicit (Fixture       *f,
+                               gconstpointer  data)
+{
+	g_autoptr(GError)             error = NULL;
+	g_autoptr(LrgLevel)           arena = physics_arena ();
+	g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+	g_autoptr(LrgLevel)           loaded = NULL;
+	g_autoptr(LrgWorld3D)         world = lrg_world3d_new ();
+	g_autofree gchar             *project = g_build_filename (f->dir, "project.ryaml", NULL);
+	g_autofree gchar             *level_path = g_build_filename (f->dir, "arena.rlevel", NULL);
+	LrgPhysicsSettings            mine;
+	LrgPhysicsSettings            got;
+
+	(void) data;
+
+	g_assert_true (g_file_set_contents (project, PHYSICS_PROJECT_YAML, -1, &error));
+	g_assert_true (lrg_level_serializer_save_to_file (ser, arena, level_path, &error));
+	g_assert_no_error (error);
+
+	lrg_physics_settings_init_default (&mine);
+	mine.gravity[1] = -1.62f;
+	mine.iterations = 0;
+	g_assert_false (lrg_world3d_set_physics_settings (world, &mine, NULL, &error));
+	g_assert_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT);
+	g_clear_error (&error);
+	g_assert_null (lrg_world3d_get_physics_settings (world));
+	mine.iterations = 12;
+	g_assert_true (lrg_world3d_set_physics_settings (world, &mine, NULL, &error));
+	g_assert_no_error (error);
+
+	loaded = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_no_error (error);
+	lrg_dynamics_world_get_settings (lrg_world3d_get_physics (world), &got);
+	g_assert_cmpfloat (got.gravity[1], ==, -1.62f);
+	g_assert_cmpuint (got.iterations, ==, 12);
+	/* no project layers given: the default table */
+	g_assert_cmpint (lrg_physics_layers_find (lrg_dynamics_world_get_layers (lrg_world3d_get_physics (world)),
+	                                          "ghost"), ==, -1);
+
+	/* applied to an attached world straight away */
+	mine.gravity[1] = -20.0f;
+	g_assert_true (lrg_world3d_set_physics_settings (world, &mine, NULL, &error));
+	lrg_dynamics_world_get_settings (lrg_world3d_get_physics (world), &got);
+	g_assert_cmpfloat (got.gravity[1], ==, -20.0f);
+}
+
 /*
  * The runtime module's types must be usable without any editor type having
  * been registered: the program above never touches LrgEditor, and in a
@@ -499,6 +751,12 @@ main (int   argc,
 	            fixture_setup, test_instantiate_level, fixture_teardown);
 	g_test_add ("/level-runtime/prefab-spawn", Fixture, NULL,
 	            fixture_setup, test_prefab_spawn, fixture_teardown);
+	g_test_add ("/level-runtime/project-physics", Fixture, NULL,
+	            fixture_setup, test_project_physics, fixture_teardown);
+	g_test_add ("/level-runtime/project-physics/none", Fixture, NULL,
+	            fixture_setup, test_project_physics_none, fixture_teardown);
+	g_test_add ("/level-runtime/project-physics/explicit", Fixture, NULL,
+	            fixture_setup, test_project_physics_explicit, fixture_teardown);
 
 	return g_test_run ();
 }

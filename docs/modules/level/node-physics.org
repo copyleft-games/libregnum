@@ -47,7 +47,7 @@ The YAML schema with every key and default is in [[file:../../editor/yaml-format
 :END:
 =lrg_level_instantiate_3d()= (and =lrg_level_instantiate_node_3d()=, =lrg_level_load_world3d()=) turn the block into components on the node's entity, after the visual component and before the registry and script components:
 
-1. =lrg_world3d_ensure_physics()= on the target world;
+1. =lrg_world3d_ensure_physics()= on the target world, which by then carries the project's =physics:= block: before the nodes, instantiation finds the level's =project.ryaml= (walking up from the base directory, then the asset manager's project root) and gives it to the world with =lrg_world3d_load_physics_project()=, unless the world already has settings (=lrg_world3d_set_physics_settings()=) or a physics world. The world therefore simulates with the project's gravity, step, solver iterations, sleep threshold and layer table, and the body's =layer= names resolve against the project's layers;
 2. an =LrgRigidBodyComponent= of =body-kind=, configured with =lrg_node_physics_apply()=;
 3. one =LrgColliderComponent3D= per shape, in order (=lrg_node_physics_shape_apply()=);
 4. one =LrgJointComponent= per joint, in order (=lrg_node_physics_joint_apply()=); targets resolve by GUID once the target entity exists.
@@ -192,14 +192,15 @@ The descriptions are small objects; copies are deep (one object per shape and jo
 :PROPERTIES:
 :CUSTOM_ID: node-physics-pitfalls
 :END:
-- =layer= is a name resolved at runtime against the project's layer table; a typo is a warning and layer 0, not a load error.
+- =layer= is a name resolved at runtime against the project's layer table (the one of the =project.ryaml= above the level, or the default table without a project); a typo is a warning and layer 0, not a load error.
+- A level instantiated outside its project directory (copied elsewhere, built in memory with no base directory) finds no =project.ryaml= and runs with the defaults; pass the project directory as the base directory, set the asset manager's project root, or call =lrg_world3d_load_physics_project()= first.
 - Edit a copy (=lrg_node_physics_copy()=) when the same object may be shared by an undo snapshot.
 
 ** Using it from the editor
 :PROPERTIES:
 :CUSTOM_ID: node-physics-editor
 :END:
-The Physics panel edits the block of the selected node (body, shapes, joints, fit to mesh; every change one undo step), the viewport draws collider and joint gizmos with drag handles and a Physics overlay (authored shapes while authoring, the play world's debug draw while playing), the inspector shows a summary and the hierarchy a badge; scripts and agents use the =physics.*= IPC methods. See [[file:../../editor/physics.org][Physics in Levels]]. Layers and the collide matrix are edited in Project Settings > Physics.
+The Physics panel edits the block of the selected node (body, shapes, joints, fit to mesh; every change one undo step), the viewport draws collider and joint gizmos with drag handles and a Physics overlay (authored shapes while authoring, the play world's debug draw while playing), the inspector shows a summary and the hierarchy a badge; scripts and agents use the =physics.*= IPC methods. See [[file:../../editor/physics.org][Physics in Levels]]. Layers, the collide matrix and the world settings are edited in Project Settings > Physics; play-in-editor and the game both run with them ([[file:../physics/physics-layers.org::#runtime][The block at runtime]]).
 
 ** See also
 :PROPERTIES:

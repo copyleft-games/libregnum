@@ -101,6 +101,32 @@ void lrg_editor_play_session_set_engine (LrgEditorPlaySession *self,
                                          LrgEngine            *engine);
 
 /**
+ * lrg_editor_play_session_get_project:
+ * @self: an #LrgEditorPlaySession
+ *
+ * Returns: (transfer none) (nullable): the project whose physics settings
+ *   a 3D level plays with, see #LrgEditorPlaySession:project
+ */
+LRG_AVAILABLE_IN_ALL
+LrgProject * lrg_editor_play_session_get_project (LrgEditorPlaySession *self);
+
+/**
+ * lrg_editor_play_session_set_project:
+ * @self: an #LrgEditorPlaySession
+ * @project: (nullable): the open project, or %NULL
+ *
+ * Sets the project whose `physics:` block (world settings and layer
+ * table) the play world of a 3D level uses from the next start
+ * (lrg_world3d_set_physics_settings()). The layer table is shared, so
+ * matrix edits apply while playing; the world settings are copied at
+ * start. Without a project, lrg_level_instantiate_3d_with_base_dir()
+ * looks for the project.ryaml above the level file.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_play_session_set_project (LrgEditorPlaySession *self,
+                                          LrgProject           *project);
+
+/**
  * lrg_editor_play_session_get_profiler:
  * @self: an #LrgEditorPlaySession
  *

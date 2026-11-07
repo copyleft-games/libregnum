@@ -209,4 +209,39 @@ gchar * lrg_project_relativize (LrgProject  *self,
 LRG_AVAILABLE_IN_ALL
 LrgPhysicsLayers * lrg_project_get_physics_layers (LrgProject *self);
 
+/**
+ * lrg_project_get_physics_settings:
+ * @self: an #LrgProject
+ *
+ * The project's physics world settings (gravity, fixed substep and cap,
+ * solver iterations, sleep), read from the same `physics:` block as
+ * lrg_project_get_physics_layers(). Missing keys, a missing block and a
+ * new project give the defaults (lrg_physics_settings_init_default()); a
+ * broken block is reported with g_warning() and reads as the defaults.
+ * Edit the fields in place (or use lrg_project_set_physics_settings());
+ * lrg_project_save() writes them back next to the layers, keeping every
+ * other key of the block. Hand both to lrg_world3d_set_physics_settings()
+ * or lrg_dynamics_world_apply_settings() to run a world with them.
+ *
+ * Returns: (transfer none): the settings, owned by @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsSettings * lrg_project_get_physics_settings (LrgProject *self);
+
+/**
+ * lrg_project_set_physics_settings:
+ * @self: an #LrgProject
+ * @settings: the new settings (copied)
+ * @error: return location for a #GError
+ *
+ * Validates @settings (lrg_physics_settings_validate()) and copies them
+ * into the project. Call lrg_project_save() to write them.
+ *
+ * Returns: %TRUE on success; on error the project is unchanged
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_project_set_physics_settings (LrgProject                *self,
+                                           const LrgPhysicsSettings  *settings,
+                                           GError                   **error);
+
 G_END_DECLS

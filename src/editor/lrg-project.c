@@ -28,8 +28,9 @@ struct _LrgProject
 
 	/* physics: block: the layer table, plus the parsed block itself so
 	 * keys other than layers/no_collide (world settings) survive a save */
-	LrgPhysicsLayers *physics_layers;
-	YamlNode         *physics_node;
+	LrgPhysicsLayers   *physics_layers;
+	LrgPhysicsSettings *physics_settings;  /* world settings of the block */
+	YamlNode           *physics_node;
 
 	/* Keys this type does not model (e.g. 0.9.0 runtime settings such as
 	 * store_prefab_instances, or another tool's data), kept with their
@@ -56,6 +57,7 @@ lrg_project_finalize (GObject *object)
 	g_clear_pointer (&self->scripts_dir, g_free);
 	g_clear_pointer (&self->asset_dirs, g_ptr_array_unref);
 	g_clear_object (&self->physics_layers);
+	g_clear_pointer (&self->physics_settings, lrg_physics_settings_free);
 	g_clear_pointer (&self->physics_node, yaml_node_unref);
 	g_clear_pointer (&self->extra_keys, g_ptr_array_unref);
 	g_clear_pointer (&self->extra_nodes, g_ptr_array_unref);
@@ -76,6 +78,7 @@ lrg_project_init (LrgProject *self)
 {
 	self->asset_dirs = g_ptr_array_new_with_free_func (g_free);
 	self->physics_layers = lrg_physics_layers_new_default ();
+	self->physics_settings = lrg_physics_settings_new ();
 	self->extra_keys = g_ptr_array_new_with_free_func (g_free);
 	self->extra_nodes = g_ptr_array_new_with_free_func ((GDestroyNotify) yaml_node_unref);
 	self->extra_root_keys = g_ptr_array_new_with_free_func (g_free);
@@ -206,6 +209,12 @@ lrg_project_open (const gchar  *dir,
 			g_warning ("%s: physics block ignored: %s", path, physics_error->message);
 			lrg_physics_layers_reset (self->physics_layers);
 		}
+		g_clear_error (&physics_error);
+		if (!lrg_physics_settings_load_yaml (self->physics_settings, block, &physics_error))
+		{
+			g_warning ("%s: physics settings ignored: %s", path, physics_error->message);
+			lrg_physics_settings_init_default (self->physics_settings);
+		}
 		if (block != NULL)
 			self->physics_node = yaml_node_ref (block);
 	}
@@ -279,6 +288,7 @@ lrg_project_save (LrgProject  *self,
 		else
 			physics_map = yaml_mapping_new ();
 		lrg_physics_layers_write_yaml (self->physics_layers, physics_map);
+		lrg_physics_settings_write_yaml (self->physics_settings, physics_map);
 		yaml_mapping_set_mapping_member (root_map, "physics", physics_map);
 	}
 	write_kept_members (root_map, self->extra_root_keys, self->extra_root_nodes);
@@ -473,4 +483,26 @@ lrg_project_get_physics_layers (LrgProject *self)
 {
 	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
 	return self->physics_layers;
+}
+
+LrgPhysicsSettings *
+lrg_project_get_physics_settings (LrgProject *self)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), NULL);
+	return self->physics_settings;
+}
+
+gboolean
+lrg_project_set_physics_settings (LrgProject                *self,
+                                  const LrgPhysicsSettings  *settings,
+                                  GError                   **error)
+{
+	g_return_val_if_fail (LRG_IS_PROJECT (self), FALSE);
+	g_return_val_if_fail (settings != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (!lrg_physics_settings_validate (settings, error))
+		return FALSE;
+	*self->physics_settings = *settings;
+	return TRUE;
 }

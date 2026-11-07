@@ -12,6 +12,7 @@
 #include <glib.h>
 #include <glib/gstdio.h>
 #include <libregnum.h>
+#include <yaml-glib.h>
 #include <math.h>
 #include <string.h>
 
@@ -1350,6 +1351,263 @@ test_layers_load_errors (void)
 	g_assert_true (G_TYPE_IS_ENUM (LRG_TYPE_PHYSICS_LAYERS_ERROR));
 }
 
+/* ==========================================================================
+ * LrgPhysicsSettings: the world settings of the physics: block
+ * ========================================================================== */
+
+static void
+test_settings_defaults (void)
+{
+	g_autoptr(LrgPhysicsSettings) s = lrg_physics_settings_new ();
+	g_autoptr(LrgPhysicsSettings) c = NULL;
+	g_autoptr(LrgDynamicsWorld)   world = lrg_dynamics_world_new ();
+	g_autoptr(GError)             error = NULL;
+	LrgPhysicsSettings            fresh;
+	LrgPhysicsSettings            got;
+
+	g_assert_cmpfloat (s->gravity[1], ==, -9.81f);
+	g_assert_cmpfloat (s->fixed_dt, ==, 1.0f / 60.0f);
+	g_assert_cmpuint (s->max_substeps, ==, 4);
+	g_assert_cmpuint (s->iterations, ==, 10);
+	g_assert_cmpfloat (s->sleep_threshold, ==, 9.0e-4f);
+	g_assert_cmpuint (s->sleep_substeps, ==, 30);
+	g_assert_true (lrg_physics_settings_validate (s, &error));
+	g_assert_no_error (error);
+
+	/* a bare world has the same values except gravity */
+	lrg_dynamics_world_get_settings (world, &fresh);
+	g_assert_cmpfloat (fresh.gravity[1], ==, 0.0f);
+	fresh.gravity[1] = -9.81f;
+	g_assert_true (lrg_physics_settings_equal (&fresh, s));
+
+	/* copy, boxed type */
+	c = lrg_physics_settings_copy (s);
+	g_assert_true (lrg_physics_settings_equal (c, s));
+	g_assert_true (G_TYPE_IS_BOXED (LRG_TYPE_PHYSICS_SETTINGS));
+
+	/* apply: NULL = defaults; layers NULL keeps the world's table */
+	g_assert_true (lrg_dynamics_world_apply_settings (world, NULL, NULL, &error));
+	lrg_dynamics_world_get_settings (world, &got);
+	g_assert_true (lrg_physics_settings_equal (&got, s));
+	g_assert_null (lrg_dynamics_world_get_layers (world));
+
+	/* every bad field is rejected, and a rejected apply changes nothing */
+	c->fixed_dt = 0.0f;
+	g_assert_false (lrg_physics_settings_validate (c, NULL));
+	c->fixed_dt = 0.2f;
+	g_assert_false (lrg_physics_settings_validate (c, NULL));
+	*c = *s;
+	c->max_substeps = 9;
+	g_assert_false (lrg_physics_settings_validate (c, NULL));
+	*c = *s;
+	c->iterations = 33;
+	g_assert_false (lrg_physics_settings_validate (c, NULL));
+	*c = *s;
+	c->sleep_threshold = -1.0f;
+	g_assert_false (lrg_physics_settings_validate (c, NULL));
+	*c = *s;
+	c->sleep_substeps = 0;
+	g_assert_false (lrg_physics_settings_validate (c, NULL));
+	*c = *s;
+	c->gravity[2] = (gfloat) NAN;
+	c->gravity[1] = -1.0f;
+	g_assert_false (lrg_dynamics_world_apply_settings (world, c, NULL, &error));
+	g_assert_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT);
+	g_clear_error (&error);
+	lrg_dynamics_world_get_settings (world, &got);
+	g_assert_cmpfloat (got.gravity[1], ==, -9.81f);
+}
+
+static void
+test_settings_load (void)
+{
+	g_autoptr(LrgPhysicsSettings) s = lrg_physics_settings_new ();
+	g_autoptr(LrgPhysicsSettings) d = lrg_physics_settings_new ();
+	g_autoptr(GError)             error = NULL;
+	const gchar *project =
+		"project:\n"
+		"  name: Demo\n"
+		"physics:\n"
+		"  layers: [default, world]\n"
+		"  gravity: [0, -3.7, 0.5]\n"
+		"  fixed_dt: 0.01\n"
+		"  max_substeps: 8\n"
+		"  iterations: 4\n"
+		"  sleep_threshold: 0\n"
+		"  sleep_substeps: 1\n"
+		"  future_key: [1, 2]\n";
+	const gchar *partial = "project:\n  physics:\n    iterations: 20\n";
+	const gchar *block_only = "gravity: [1, 2, 3]\n";
+	const gchar *no_block = "project:\n  name: Demo\n";
+	const gchar *bad[] = {
+		"physics:\n  gravity: [0, -9.81]\n",
+		"physics:\n  gravity: [0, x, 0]\n",
+		"physics:\n  gravity: 9.81\n",
+		"physics:\n  fixed_dt: fast\n",
+		"physics:\n  fixed_dt: 0.5\n",
+		"physics:\n  iterations: 2.5\n",
+		"physics:\n  iterations: 0\n",
+		"physics:\n  max_substeps: -1\n",
+		"physics:\n  sleep_substeps: [1]\n",
+		"physics: [a, b]\n",
+		NULL
+	};
+	guint i;
+
+	g_assert_true (lrg_physics_settings_load_from_data (s, project, -1, &error));
+	g_assert_no_error (error);
+	g_assert_cmpfloat (s->gravity[1], ==, -3.7f);
+	g_assert_cmpfloat (s->gravity[2], ==, 0.5f);
+	g_assert_cmpfloat (s->fixed_dt, ==, 0.01f);
+	g_assert_cmpuint (s->max_substeps, ==, 8);
+	g_assert_cmpuint (s->iterations, ==, 4);
+	g_assert_cmpfloat (s->sleep_threshold, ==, 0.0f);
+	g_assert_cmpuint (s->sleep_substeps, ==, 1);
+
+	/* missing keys take the defaults (not the previous values) */
+	g_assert_true (lrg_physics_settings_load_from_data (s, partial, -1, &error));
+	g_assert_cmpuint (s->iterations, ==, 20);
+	g_assert_cmpfloat (s->gravity[1], ==, -9.81f);
+	g_assert_true (lrg_physics_settings_load_from_data (s, block_only, -1, &error));
+	g_assert_cmpfloat (s->gravity[2], ==, 3.0f);
+	g_assert_true (lrg_physics_settings_load_from_data (s, no_block, -1, &error));
+	g_assert_true (lrg_physics_settings_equal (s, d));
+
+	/* errors leave the settings alone */
+	s->iterations = 7;
+	for (i = 0; bad[i] != NULL; i++)
+	{
+		g_assert_false (lrg_physics_settings_load_from_data (s, bad[i], -1, &error));
+		g_assert_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT);
+		g_clear_error (&error);
+		g_assert_cmpuint (s->iterations, ==, 7);
+	}
+	g_assert_false (lrg_physics_settings_load_from_data (s, "physics: [unclosed\n", -1, &error));
+	g_assert_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_PARSE);
+	g_clear_error (&error);
+	g_assert_false (lrg_physics_settings_load_from_file (s, "/nonexistent/project.ryaml", &error));
+	g_assert_error (error, G_FILE_ERROR, G_FILE_ERROR_NOENT);
+}
+
+static void
+test_settings_round_trip (void)
+{
+	g_autoptr(LrgPhysicsSettings) s = lrg_physics_settings_new ();
+	g_autoptr(LrgPhysicsSettings) back = lrg_physics_settings_new ();
+	g_autoptr(LrgPhysicsLayers)   layers = lrg_physics_layers_new_default ();
+	g_autoptr(LrgPhysicsLayers)   layers_back = lrg_physics_layers_new ();
+	g_autoptr(GError)             error = NULL;
+	g_autoptr(YamlParser)         parser = NULL;
+	g_autofree gchar             *text = NULL;
+	g_autofree gchar             *text2 = NULL;
+	g_autofree gchar             *dir = NULL;
+	g_autofree gchar             *path = NULL;
+	g_autofree gchar             *sub = NULL;
+	g_autofree gchar             *found = NULL;
+	YamlMapping                  *root;
+	YamlMapping                  *physics;
+	const gchar *project =
+		"project:\n"
+		"  name: Demo\n"
+		"  store_prefab_instances: reference\n"
+		"physics:\n"
+		"  layers: [a, b]\n"
+		"  no_collide: [[a, b]]\n"
+		"  gravity: [0, -9.81, 0]\n"
+		"  cloth_quality: high\n"
+		"other_tool:\n"
+		"  keep: [1, 2, 3]\n";
+
+	s->gravity[1] = -3.7f;
+	s->fixed_dt = 1.0f / 120.0f;
+	s->iterations = 16;
+	s->sleep_threshold = 2.5e-3f;
+
+	/* settings only: layers, unknown keys and other root keys survive */
+	text = lrg_physics_settings_write_data (s, NULL, project, -1, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (text);
+	g_assert_nonnull (strstr (text, "-3.7"));
+	g_assert_null (strstr (text, "-3.70000"));
+	parser = yaml_parser_new ();
+	g_assert_true (yaml_parser_load_from_data (parser, text, -1, &error));
+	root = yaml_node_get_mapping (yaml_parser_get_root (parser));
+	g_assert_cmpstr (yaml_mapping_get_string_member (yaml_node_get_mapping (yaml_mapping_get_member (root, "project")),
+	                 "store_prefab_instances"), ==, "reference");
+	g_assert_true (yaml_mapping_has_member (root, "other_tool"));
+	physics = yaml_node_get_mapping (yaml_mapping_get_member (root, "physics"));
+	g_assert_cmpstr (yaml_mapping_get_string_member (physics, "cloth_quality"), ==, "high");
+	g_assert_true (lrg_physics_settings_load_from_data (back, text, -1, &error));
+	g_assert_true (lrg_physics_settings_equal (back, s));
+	g_assert_true (lrg_physics_layers_load_from_data (layers_back, text, -1, &error));
+	g_assert_cmpint (lrg_physics_layers_find (layers_back, "b"), ==, 1);
+	g_assert_false (lrg_physics_layers_get_collides (layers_back, 0, 1));
+
+	/* writing again is stable */
+	text2 = lrg_physics_settings_write_data (back, NULL, text, -1, &error);
+	g_assert_cmpstr (text2, ==, text);
+	g_clear_pointer (&text2, g_free);
+
+	/* with layers: the table is replaced, the rest stays */
+	text2 = lrg_physics_settings_write_data (s, layers, project, -1, &error);
+	g_assert_no_error (error);
+	g_assert_true (lrg_physics_layers_load_from_data (layers_back, text2, -1, &error));
+	g_assert_true (lrg_physics_layers_equal (layers_back, layers));
+	g_assert_nonnull (strstr (text2, "cloth_quality"));
+	g_clear_pointer (&text2, g_free);
+
+	/* no document / a nested block */
+	text2 = lrg_physics_settings_write_data (s, NULL, NULL, 0, &error);
+	g_assert_true (lrg_physics_settings_load_from_data (back, text2, -1, &error));
+	g_assert_true (lrg_physics_settings_equal (back, s));
+	g_clear_pointer (&text2, g_free);
+	text2 = lrg_physics_settings_write_data (s, NULL, "project:\n  physics:\n    layers: [x]\n", -1, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (strstr (text2, "  physics:"));
+	g_assert_true (lrg_physics_settings_load_from_data (back, text2, -1, &error));
+	g_assert_true (lrg_physics_settings_equal (back, s));
+	g_clear_pointer (&text2, g_free);
+
+	/* invalid settings are not written */
+	back->iterations = 0;
+	g_assert_null (lrg_physics_settings_write_data (back, NULL, project, -1, &error));
+	g_assert_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT);
+	g_clear_error (&error);
+
+	/* files, and finding the project from a file below it */
+	dir = g_dir_make_tmp ("lrg-physics-settings-XXXXXX", &error);
+	g_assert_no_error (error);
+	path = g_build_filename (dir, "project.ryaml", NULL);
+	sub = g_build_filename (dir, "levels", "deep", NULL);
+	g_assert_cmpint (g_mkdir_with_parents (sub, 0700), ==, 0);
+	g_assert_true (g_file_set_contents (path, project, -1, &error));
+	g_assert_true (lrg_physics_settings_save_to_file (s, NULL, path, &error));
+	g_assert_no_error (error);
+	lrg_physics_settings_init_default (back);
+	g_assert_true (lrg_physics_settings_load_from_file (back, path, &error));
+	g_assert_true (lrg_physics_settings_equal (back, s));
+	found = lrg_physics_settings_find_project (sub);
+	g_assert_cmpstr (found, ==, path);
+	g_unlink (path);
+	g_clear_pointer (&found, g_free);
+	found = lrg_physics_settings_find_project (sub);
+	if (found != NULL)
+		g_test_message ("a project.ryaml above the temp dir: %s", found);
+	else
+		g_assert_null (found);
+	/* a missing file is created */
+	g_assert_true (lrg_physics_settings_save_to_file (s, layers, path, &error));
+	g_assert_true (lrg_physics_settings_load_from_file (back, path, &error));
+	g_assert_true (lrg_physics_settings_equal (back, s));
+	g_unlink (path);
+	g_rmdir (sub);
+	g_clear_pointer (&sub, g_free);
+	sub = g_build_filename (dir, "levels", NULL);
+	g_rmdir (sub);
+	g_rmdir (dir);
+	g_assert_null (lrg_physics_settings_find_project (NULL));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1372,6 +1630,9 @@ main (int   argc,
 	g_test_add_func ("/physics-layers/round-trip", test_layers_round_trip);
 	g_test_add_func ("/physics-layers/project-file", test_layers_project_file);
 	g_test_add_func ("/physics-layers/load-errors", test_layers_load_errors);
+	g_test_add_func ("/physics-settings/defaults", test_settings_defaults);
+	g_test_add_func ("/physics-settings/load", test_settings_load);
+	g_test_add_func ("/physics-settings/round-trip", test_settings_round_trip);
 
 	return g_test_run ();
 }

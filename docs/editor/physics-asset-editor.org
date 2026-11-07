@@ -237,7 +237,9 @@ physics:
   sleep_substeps: 30           # quiet substeps before an island sleeps; default 30
 #+end_src
 
-=LrgProject= keeps keys of the block it does not know, but only those it read when the project was opened; the editor therefore re-applies the settings after every project save (=editor_physics_project_save()= in =lrg-editor-physics-asset-editor.c=, used by the dialog and the =physics.layers.*= methods). A broken value in the file reads as the default.
+The settings are the engine's =LrgPhysicsSettings= and live on the open =LrgProject= next to the layer table (=lrg_project_get_physics_settings()=, =lrg_project_set_physics_settings()=); =lrg_project_save()= writes both halves into the block and keeps every key it does not know (=editor_physics_project_save()=, used by the dialog and the =physics.layers.*= methods, is now just set-and-save). A broken value in the file is reported when the project opens and reads as the default.
+
+*The runtime honours the block.* Play-in-editor gives its world the open project's settings and layer table (=lrg_editor_play_session_set_project()=, set by the app on every Play; unsaved Project Settings edits apply on the next Play, matrix edits even while playing), and a game loading its levels with =lrg_level_load_world3d()= / =lrg_level_instantiate_3d()= reads the saved block from the =project.ryaml= above the level ([[file:../modules/physics/physics-layers.org::#runtime][The block at runtime]]). The physics asset preview's Simulate uses the same settings (=lrg_dynamics_world_apply_settings()=).
 
 ** Using it from C
 :PROPERTIES:
@@ -345,7 +347,8 @@ lrgeditorctl physics layers settings gravity=0,-3.7,0 iterations=12
 - Joint limits are measured from the bind pose of the skeleton the ragdoll is built on; a model with a different bind pose needs its own asset.
 - A part's =rotation= / =joint_rotation= rows show Euler angles; values near ±90 degrees on Y (gimbal lock) may read back differently from what was typed while describing the same rotation.
 - =physics.layers.*= methods save =project.ryaml= at once and are not undoable; use the dialog for an explicit Save / Cancel.
-- The world settings are project data the editor keeps; runtime code reads them from the =physics:= block itself (the 0.9.0 =lrg_world3d_ensure_physics()= still uses its own gravity and the default layer table).
+- Project Settings saves =project.ryaml=; a game only sees saved settings, while Play uses the editor's current (possibly unsaved) ones. Save before testing the built game.
+- Setting =fixed_dt= / =max_substeps= changes the play world's =LrgWorld3D:fixed-step= / =max-substeps= too (one physics substep per fixed update).
 
 ** Tests
 :PROPERTIES:

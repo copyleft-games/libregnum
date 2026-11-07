@@ -128,6 +128,18 @@ gboolean lrg_level_instantiate (LrgLevel   *level,
  * fail the call.  Renderers use the world's environment and post stack
  * unless they were given their own.
  *
+ * Project physics: unless @world already has project physics settings
+ * (lrg_world3d_set_physics_settings()) or a physics world, the `physics:`
+ * block of the level's project.ryaml (layers, no_collide, gravity, step
+ * limits, iterations, sleep) is given to it with
+ * lrg_world3d_load_physics_project(), so the physics world physics nodes
+ * attach uses the project's settings. The project.ryaml is found by
+ * walking up from the base directory (see
+ * lrg_level_instantiate_3d_with_base_dir() and
+ * lrg_physics_settings_find_project()), then in the asset manager's
+ * project root; without one the defaults apply. A broken block is
+ * reported with g_warning() and does not fail the call.
+ *
  * @world is not cleared first. lrg_level_instantiate() (2D) is unchanged.
  *
  * Returns: %TRUE on success
@@ -158,7 +170,9 @@ gboolean lrg_level_instantiate_3d (LrgLevel    *level,
  * are tried in this order: @base_dir, the asset manager's search paths,
  * its project root, then the working directory; `guid:` references go
  * through the asset manager's GUID index.  Resolved decal texture and
- * LOD mesh paths are stored absolute on the components.
+ * LOD mesh paths are stored absolute on the components.  The project
+ * whose `physics:` block configures the world's physics is searched for
+ * from @base_dir upwards.
  *
  * Returns: %TRUE on success
  *
@@ -267,7 +281,8 @@ gboolean lrg_level_visual_store_property (LrgNodeVisual *visual,
  * instantiates it into @world with lrg_level_instantiate_3d_with_base_dir()
  * (the level file's directory as the base directory) and the default
  * engine. Register your component types in the default engine's
- * registry first.
+ * registry first. The `physics:` block of the project.ryaml above
+ * @path (layers and world settings) configures the world's physics.
  *
  * Returns: (transfer full) (nullable): the loaded #LrgLevel (keep it to
  *   look nodes up by GUID, or drop it: the world does not need it), or

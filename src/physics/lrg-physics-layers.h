@@ -435,6 +435,242 @@ LRG_AVAILABLE_IN_ALL
 gchar * lrg_physics_layers_to_data (LrgPhysicsLayers  *self,
                                     GError           **error);
 
+/* ==========================================================================
+ * LrgPhysicsSettings: the world settings of the physics: block
+ * ========================================================================== */
+
+/**
+ * LRG_PHYSICS_SETTINGS_MAX_ITERATIONS:
+ *
+ * The largest #LrgPhysicsSettings.iterations value (solver passes per
+ * substep).
+ */
+#define LRG_PHYSICS_SETTINGS_MAX_ITERATIONS (32u)
+
+/**
+ * LRG_PHYSICS_SETTINGS_MAX_SUBSTEPS:
+ *
+ * The largest #LrgPhysicsSettings.max_substeps value (the same cap as
+ * %LRG_DYNAMICS_MAX_SUBSTEPS).
+ */
+#define LRG_PHYSICS_SETTINGS_MAX_SUBSTEPS (8u)
+
+/**
+ * LrgPhysicsSettings:
+ * @gravity: world acceleration in m/s² (Y up: a negative Y component);
+ *   default { 0, -9.81, 0 }
+ * @fixed_dt: the fixed substep in seconds, in (0, 0.1]; default 1/60
+ * @max_substeps: substeps one step may run, 1 to
+ *   %LRG_PHYSICS_SETTINGS_MAX_SUBSTEPS; default 4
+ * @iterations: solver velocity passes per substep, 1 to
+ *   %LRG_PHYSICS_SETTINGS_MAX_ITERATIONS; default 10
+ * @sleep_threshold: a body whose |v|²+|ω|² stays below this is quiet;
+ *   zero or positive, default 9e-4
+ * @sleep_substeps: quiet substeps before an island sleeps, at least 1;
+ *   default 30
+ *
+ * The world settings a project keeps in the `physics:` block of
+ * `project.ryaml`, next to the layer table (#LrgPhysicsLayers):
+ * gravity, the fixed substep and its cap, solver iterations and the
+ * sleep threshold. A plain struct (boxed for bindings): fill it with
+ * lrg_physics_settings_init_default(), edit the fields, check them with
+ * lrg_physics_settings_validate() and hand it to
+ * lrg_dynamics_world_apply_settings().
+ *
+ * The block is read with lrg_physics_settings_load_from_data() /
+ * lrg_physics_settings_load_from_file() and written back with
+ * lrg_physics_settings_write_data() / lrg_physics_settings_save_to_file(),
+ * which replace only these keys (and optionally the layer table) and
+ * keep every other key of the file. lrg_world3d_ensure_physics() and
+ * lrg_level_instantiate_3d() apply a project's settings automatically,
+ * see docs/modules/physics/physics-layers.org.
+ */
+typedef struct _LrgPhysicsSettings LrgPhysicsSettings;
+
+struct _LrgPhysicsSettings
+{
+	gfloat gravity[3];
+	gfloat fixed_dt;
+	guint  max_substeps;
+	guint  iterations;
+	gfloat sleep_threshold;
+	guint  sleep_substeps;
+
+	/*< private >*/
+	gpointer reserved[4];
+};
+
+#define LRG_TYPE_PHYSICS_SETTINGS (lrg_physics_settings_get_type ())
+
+LRG_AVAILABLE_IN_ALL
+GType lrg_physics_settings_get_type (void) G_GNUC_CONST;
+
+/**
+ * lrg_physics_settings_new:
+ *
+ * Creates settings holding the defaults (see
+ * lrg_physics_settings_init_default()).
+ *
+ * Returns: (transfer full): new settings; free with
+ *   lrg_physics_settings_free()
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsSettings * lrg_physics_settings_new (void);
+
+/**
+ * lrg_physics_settings_copy:
+ * @self: settings
+ *
+ * Returns: (transfer full): a copy of @self
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsSettings * lrg_physics_settings_copy (const LrgPhysicsSettings *self);
+
+/**
+ * lrg_physics_settings_free:
+ * @self: (nullable): settings from lrg_physics_settings_new() or
+ *   lrg_physics_settings_copy()
+ *
+ * Frees @self.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_physics_settings_free (LrgPhysicsSettings *self);
+
+/**
+ * lrg_physics_settings_init_default:
+ * @self: settings to fill (may live on the stack)
+ *
+ * Sets every field to its default: gravity { 0, -9.81, 0 }, fixed_dt
+ * 1/60, max_substeps 4, iterations 10, sleep_threshold 9e-4,
+ * sleep_substeps 30. These are the values an #LrgDynamicsWorld starts
+ * with, except gravity, which a bare world leaves at zero.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_physics_settings_init_default (LrgPhysicsSettings *self);
+
+/**
+ * lrg_physics_settings_equal:
+ * @a: settings
+ * @b: settings
+ *
+ * Returns: %TRUE when every field of @a equals the one of @b
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_physics_settings_equal (const LrgPhysicsSettings *a,
+                                     const LrgPhysicsSettings *b);
+
+/**
+ * lrg_physics_settings_validate:
+ * @self: settings
+ * @error: return location for a #GError
+ *
+ * Checks every field against its range (see #LrgPhysicsSettings).
+ * Fails with %LRG_PHYSICS_LAYERS_ERROR_FORMAT naming the first bad
+ * field.
+ *
+ * Returns: %TRUE when the settings are usable
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_physics_settings_validate (const LrgPhysicsSettings  *self,
+                                        GError                   **error);
+
+/**
+ * lrg_physics_settings_load_from_data:
+ * @self: settings
+ * @data: YAML text
+ * @length: length of @data, or -1 when NUL-terminated
+ * @error: return location for a #GError
+ *
+ * Loads the world settings from YAML text: a whole project.ryaml (the
+ * root `physics:` block, or one nested in `project:`) or a document
+ * whose root is the block itself. Missing keys (or a missing block)
+ * take their defaults; unknown keys are ignored. Errors are in the
+ * %LRG_PHYSICS_LAYERS_ERROR domain: %LRG_PHYSICS_LAYERS_ERROR_PARSE for
+ * text that is not YAML, %LRG_PHYSICS_LAYERS_ERROR_FORMAT for a value
+ * of the wrong shape or out of range. On error @self is unchanged.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_physics_settings_load_from_data (LrgPhysicsSettings  *self,
+                                              const gchar         *data,
+                                              gssize               length,
+                                              GError             **error);
+
+/**
+ * lrg_physics_settings_load_from_file:
+ * @self: settings
+ * @path: a YAML file, usually a project.ryaml
+ * @error: return location for a #GError
+ *
+ * Reads @path and calls lrg_physics_settings_load_from_data().
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_physics_settings_load_from_file (LrgPhysicsSettings  *self,
+                                              const gchar         *path,
+                                              GError             **error);
+
+/**
+ * lrg_physics_settings_write_data:
+ * @self: settings
+ * @layers: (nullable): a layer table to write too, or %NULL to leave the
+ *   block's `layers` and `no_collide` as they are
+ * @data: (nullable): the current file text (a project.ryaml), or %NULL
+ *   for an empty document
+ * @length: length of @data, or -1 when NUL-terminated
+ * @error: return location for a #GError
+ *
+ * Returns @data with the world settings (and @layers, when given)
+ * written into its `physics:` block. Every other key of the document
+ * and of the block is kept; a block nested in `project:` is updated in
+ * place, and a document without a block gets one at the root.
+ *
+ * Returns: (transfer full) (nullable): the new YAML text, or %NULL on
+ *   error
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_physics_settings_write_data (const LrgPhysicsSettings  *self,
+                                         LrgPhysicsLayers          *layers,
+                                         const gchar               *data,
+                                         gssize                     length,
+                                         GError                   **error);
+
+/**
+ * lrg_physics_settings_save_to_file:
+ * @self: settings
+ * @layers: (nullable): a layer table to write too, or %NULL
+ * @path: a YAML file, usually a project.ryaml; it need not exist
+ * @error: return location for a #GError
+ *
+ * Reads @path (when it exists), calls lrg_physics_settings_write_data()
+ * and writes the result back, keeping every other key of the file.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_physics_settings_save_to_file (const LrgPhysicsSettings  *self,
+                                            LrgPhysicsLayers          *layers,
+                                            const gchar               *path,
+                                            GError                   **error);
+
+/**
+ * lrg_physics_settings_find_project:
+ * @start: (type filename): a file or directory inside a project
+ *
+ * Walks up from @start (the directory of @start when it is a file) to
+ * the first directory holding a `project.ryaml`, the same search the
+ * level serializer does for project settings.
+ *
+ * Returns: (transfer full) (nullable) (type filename): the path of that
+ *   `project.ryaml`, or %NULL when there is none
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_physics_settings_find_project (const gchar *start);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (LrgPhysicsSettings, lrg_physics_settings_free)
+
 #ifndef __GI_SCANNER__
 #ifdef LIBREGNUM_COMPILATION
 /*
@@ -475,6 +711,29 @@ void lrg_physics_layers_write_yaml (LrgPhysicsLayers *self,
  */
 G_GNUC_INTERNAL
 YamlNode * lrg_physics_layers_find_block (YamlNode *root);
+
+/*
+ * lrg_physics_settings_load_yaml:
+ * @node: the physics: block (a mapping); NULL gives the defaults
+ *
+ * Loads the world settings from the block. Missing keys take their
+ * defaults, unknown keys are ignored; on error @self is unchanged.
+ */
+G_GNUC_INTERNAL
+gboolean lrg_physics_settings_load_yaml (LrgPhysicsSettings  *self,
+                                         YamlNode            *node,
+                                         GError             **error);
+
+/*
+ * lrg_physics_settings_write_yaml:
+ * @map: the physics: mapping to update
+ *
+ * Sets (replaces) gravity, fixed_dt, max_substeps, iterations,
+ * sleep_threshold and sleep_substeps and keeps every other member.
+ */
+G_GNUC_INTERNAL
+void lrg_physics_settings_write_yaml (const LrgPhysicsSettings *self,
+                                      YamlMapping              *map);
 #endif
 #endif
 

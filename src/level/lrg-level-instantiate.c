@@ -1757,6 +1757,46 @@ apply_level_lighting (Instantiate3D *ctx,
 }
 
 /*
+ * apply_project_physics:
+ *
+ * Gives the world its project's physics: block (layers, gravity, step
+ * limits, iterations, sleep) before any physics component asks for a
+ * physics world. The project.ryaml is found the way the level serializer
+ * finds project settings: walking up from the level's directory, then
+ * the asset manager's project root. A world that already has settings
+ * (lrg_world3d_set_physics_settings(), e.g. from the editor's open
+ * project) or a physics world of its own is left alone; no project
+ * means lrg_world3d_ensure_physics() uses the defaults.
+ */
+static void
+apply_project_physics (Instantiate3D *ctx)
+{
+	g_autofree gchar  *path = NULL;
+	g_autoptr(GError)  error = NULL;
+
+	if (lrg_world3d_get_physics_settings (ctx->world) != NULL || lrg_world3d_get_physics (ctx->world) != NULL)
+		return;
+
+	/* the level's own project first, then the game's project root */
+	if (ctx->base_dir != NULL)
+		path = lrg_physics_settings_find_project (ctx->base_dir);
+	if (path == NULL && ctx->assets != NULL && lrg_asset_manager_get_project_root (ctx->assets) != NULL)
+	{
+		g_autofree gchar *candidate = g_build_filename (lrg_asset_manager_get_project_root (ctx->assets),
+		                                                "project.ryaml", NULL);
+
+		if (g_file_test (candidate, G_FILE_TEST_IS_REGULAR))
+			path = g_steal_pointer (&candidate);
+	}
+	if (path == NULL)
+		return;
+
+	/* a broken block is reported and the defaults are used */
+	if (!lrg_world3d_load_physics_project (ctx->world, path, &error))
+		g_warning ("lrg_level_instantiate_3d: %s: physics block ignored: %s", path, error->message);
+}
+
+/*
  * lrg_level_instantiate_3d:
  *
  * One entity per node under the world root, see the header.
@@ -1802,6 +1842,9 @@ lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
 	 * environment to register with. */
 	apply_level_look (&ctx, level);
 	apply_level_lighting (&ctx, level);
+
+	/* the project's physics settings before any body is made */
+	apply_project_physics (&ctx);
 
 	/* The level's implicit root is not an entity: its children are the
 	 * world's top-level entities. */

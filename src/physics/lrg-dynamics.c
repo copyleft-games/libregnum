@@ -5178,6 +5178,58 @@ lrg_dynamics_world_get_layers (LrgDynamicsWorld *self)
 	return self->layers;
 }
 
+/* the settings block and the world share one substep cap */
+G_STATIC_ASSERT (LRG_PHYSICS_SETTINGS_MAX_SUBSTEPS == LRG_DYNAMICS_MAX_SUBSTEPS);
+
+gboolean
+lrg_dynamics_world_apply_settings (LrgDynamicsWorld          *self,
+                                   const LrgPhysicsSettings  *settings,
+                                   LrgPhysicsLayers          *layers,
+                                   GError                   **error)
+{
+	LrgPhysicsSettings defaults;
+
+	g_return_val_if_fail (LRG_IS_DYNAMICS_WORLD (self), FALSE);
+	g_return_val_if_fail (layers == NULL || LRG_IS_PHYSICS_LAYERS (layers), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (settings == NULL)
+	{
+		lrg_physics_settings_init_default (&defaults);
+		settings = &defaults;
+	}
+
+	/* validate everything up front so a bad block changes nothing; the
+	 * setters below then cannot fail */
+	if (!lrg_physics_settings_validate (settings, error))
+		return FALSE;
+	copy3 (self->gravity, settings->gravity);
+	self->fixed_dt = settings->fixed_dt;
+	self->max_substeps = settings->max_substeps;
+	lrg_contact_solver_set_velocity_iterations (self->solver, settings->iterations);
+	self->sleep_speed2 = settings->sleep_threshold;
+	self->sleep_after = settings->sleep_substeps;
+	if (layers != NULL)
+		lrg_dynamics_world_set_layers (self, layers);
+	return TRUE;
+}
+
+void
+lrg_dynamics_world_get_settings (LrgDynamicsWorld   *self,
+                                 LrgPhysicsSettings *out_settings)
+{
+	g_return_if_fail (LRG_IS_DYNAMICS_WORLD (self));
+	g_return_if_fail (out_settings != NULL);
+
+	memset (out_settings, 0, sizeof (LrgPhysicsSettings));
+	copy3 (out_settings->gravity, self->gravity);
+	out_settings->fixed_dt = self->fixed_dt;
+	out_settings->max_substeps = self->max_substeps;
+	out_settings->iterations = lrg_contact_solver_get_velocity_iterations (self->solver);
+	out_settings->sleep_threshold = self->sleep_speed2;
+	out_settings->sleep_substeps = self->sleep_after;
+}
+
 gboolean
 lrg_dynamics_world_set_collision_between (LrgDynamicsWorld *self,
                                           guint             body_a,

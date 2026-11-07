@@ -430,6 +430,7 @@ Every public function of the view-model headers that the sections above do not w
 | =lrg_editor_play_session_get_editor ()= | Returns the editor. |
 | =lrg_editor_play_session_get_engine ()= | Returns the engine whose registry builds components, or =NULL= for the default engine. |
 | =lrg_editor_play_session_set_engine ()= | Sets the engine whose component registry builds the play world; =NULL= uses =lrg_engine_get_default()=. |
+| =lrg_editor_play_session_set_project ()= / =lrg_editor_play_session_get_project ()= | The project (property =project=) whose =physics:= block a 3D play world uses: its in-memory =LrgPhysicsSettings= (copied at start) and its layer table (shared, so matrix edits apply while playing), through =lrg_world3d_set_physics_settings()=. The editor app sets the open project on every Play; =NULL= falls back to the =project.ryaml= above the level file. See [[file:../modules/physics/physics-layers.org::#runtime][The block at runtime]]. |
 | =lrg_editor_play_session_get_profiler ()= | Returns the profiler ticks are timed with. |
 | =lrg_editor_play_session_set_paused ()= | Does nothing while stopped. Emits =LrgEditorPlaySession=::paused on a change. |
 | =lrg_editor_play_session_get_state ()= | Returns stopped, playing or paused. |

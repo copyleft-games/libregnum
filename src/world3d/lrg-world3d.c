@@ -803,6 +803,11 @@ struct _LrgWorld3D
 	gboolean          physics_interpolation;
 	gboolean          physics_syncing;
 	GHashTable       *contact_index;   /* body id -> GArray of guint, lazily per substep */
+
+	/* Project physics settings (project.ryaml physics: block), applied
+	 * to the physics world lrg_world3d_ensure_physics() attaches */
+	LrgPhysicsSettings *physics_settings;  /* owned or NULL (defaults) */
+	LrgPhysicsLayers   *physics_layers;    /* owned ref or NULL (default table) */
 };
 
 /* One registered physics component (see lrg-world3d-physics-private.h). */
@@ -1054,6 +1059,8 @@ lrg_world3d_dispose (GObject *object)
 	g_clear_pointer (&self->probe_grids, g_ptr_array_unref);
 	/* the tree left above, so every client has unregistered already */
 	g_clear_object (&self->physics);
+	g_clear_object (&self->physics_layers);
+	g_clear_pointer (&self->physics_settings, lrg_physics_settings_free);
 
 	G_OBJECT_CLASS (lrg_world3d_parent_class)->dispose (object);
 }
@@ -1857,23 +1864,132 @@ lrg_world3d_get_physics (LrgWorld3D *self)
 	return self->physics;
 }
 
+/*
+ * physics_apply_settings:
+ *
+ * Pushes the project settings (or the defaults) into the attached physics
+ * world: gravity, iterations, sleep and layers go to the dynamics world;
+ * fixed_dt and max_substeps (project settings only) drive the world's
+ * own fixed update, and the physics world goes back to one substep of
+ * that fixed step.
+ * @layers_fallback is used when the world has no project table (a new
+ * physics world gets the default table; an existing one keeps its own).
+ */
+static void
+physics_apply_settings (LrgWorld3D       *self,
+                        LrgPhysicsLayers *layers_fallback)
+{
+	g_autoptr(GError)  error = NULL;
+	LrgPhysicsSettings settings;
+
+	if (self->physics_settings != NULL)
+		settings = *self->physics_settings;
+	else
+		lrg_physics_settings_init_default (&settings);
+
+	if (self->physics != NULL
+	    && !lrg_dynamics_world_apply_settings (self->physics, &settings,
+	                                           self->physics_layers != NULL ? self->physics_layers
+	                                                                        : layers_fallback,
+	                                           &error))
+	{
+		lrg_warning (LRG_LOG_DOMAIN_WORLD3D, "physics settings: %s", error->message);
+		return;
+	}
+
+	/* only project settings own the fixed update: without them a fixed
+	 * step the game chose stays */
+	if (self->physics_settings != NULL)
+	{
+		lrg_world3d_set_max_substeps (self, settings.max_substeps);
+		lrg_world3d_set_fixed_step (self, settings.fixed_dt);
+	}
+	physics_apply_step_limits (self);
+}
+
 LrgDynamicsWorld *
 lrg_world3d_ensure_physics (LrgWorld3D *self)
 {
 	g_autoptr(LrgDynamicsWorld) physics = NULL;
 	g_autoptr(LrgPhysicsLayers) layers = NULL;
-	static const gfloat         gravity[3] = { 0.0f, -9.81f, 0.0f };
 
 	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
 
 	if (self->physics != NULL)
 		return self->physics;
+
+	/* a new world from the project settings, or the defaults */
 	layers = lrg_physics_layers_new_default ();
 	physics = lrg_dynamics_world_new ();
-	lrg_dynamics_world_set_gravity (physics, gravity, NULL);
-	lrg_dynamics_world_set_layers (physics, layers);
 	lrg_world3d_set_physics (self, physics);
+	physics_apply_settings (self, layers);
 	return self->physics;
+}
+
+gboolean
+lrg_world3d_set_physics_settings (LrgWorld3D                *self,
+                                  const LrgPhysicsSettings  *settings,
+                                  LrgPhysicsLayers          *layers,
+                                  GError                   **error)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), FALSE);
+	g_return_val_if_fail (layers == NULL || LRG_IS_PHYSICS_LAYERS (layers), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (settings != NULL && !lrg_physics_settings_validate (settings, error))
+		return FALSE;
+
+	/* forget: the attached physics world keeps what it has */
+	if (settings == NULL && layers == NULL)
+	{
+		g_clear_pointer (&self->physics_settings, lrg_physics_settings_free);
+		g_clear_object (&self->physics_layers);
+		return TRUE;
+	}
+
+	/* layers without settings: the default world settings with them */
+	g_clear_pointer (&self->physics_settings, lrg_physics_settings_free);
+	self->physics_settings = settings != NULL ? lrg_physics_settings_copy (settings) : lrg_physics_settings_new ();
+	g_set_object (&self->physics_layers, layers);
+	if (self->physics != NULL)
+		physics_apply_settings (self, NULL);
+	return TRUE;
+}
+
+const LrgPhysicsSettings *
+lrg_world3d_get_physics_settings (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+	return self->physics_settings;
+}
+
+LrgPhysicsLayers *
+lrg_world3d_get_physics_layers (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+	return self->physics_layers;
+}
+
+gboolean
+lrg_world3d_load_physics_project (LrgWorld3D   *self,
+                                  const gchar  *path,
+                                  GError      **error)
+{
+	g_autoptr(LrgPhysicsLayers) layers = NULL;
+	LrgPhysicsSettings          settings;
+
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* both halves of the block first, so a broken file changes nothing */
+	layers = lrg_physics_layers_new ();
+	if (!lrg_physics_layers_load_from_file (layers, path, error))
+		return FALSE;
+	lrg_physics_settings_init_default (&settings);
+	if (!lrg_physics_settings_load_from_file (&settings, path, error))
+		return FALSE;
+	return lrg_world3d_set_physics_settings (self, &settings, layers, error);
 }
 
 gboolean

@@ -1141,6 +1141,44 @@ LRG_AVAILABLE_IN_ALL
 LrgPhysicsLayers *lrg_dynamics_world_get_layers (LrgDynamicsWorld *self);
 
 /**
+ * lrg_dynamics_world_apply_settings:
+ * @self: a world
+ * @settings: (nullable): the world settings, or %NULL for the defaults
+ *   (lrg_physics_settings_init_default())
+ * @layers: (nullable): the layer table to use (the world keeps a
+ *   reference and reads it live), or %NULL to keep the current one
+ * @error: (nullable): return location for a #GError
+ *
+ * Applies a project's `physics:` block in one call: gravity
+ * (lrg_dynamics_world_set_gravity()), the fixed substep and its cap
+ * (lrg_dynamics_world_set_step_limits()), solver iterations
+ * (lrg_dynamics_world_set_iterations()), the sleep threshold
+ * (lrg_dynamics_world_set_sleep()) and, when given, the layers
+ * (lrg_dynamics_world_set_layers()). The settings are validated first
+ * (lrg_physics_settings_validate()); on error nothing changes.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_dynamics_world_apply_settings (LrgDynamicsWorld          *self,
+                                            const LrgPhysicsSettings  *settings,
+                                            LrgPhysicsLayers          *layers,
+                                            GError                   **error);
+
+/**
+ * lrg_dynamics_world_get_settings:
+ * @self: a world
+ * @out_settings: (out caller-allocates): the world's current gravity,
+ *   step limits, solver iterations and sleep threshold
+ *
+ * Reads back what lrg_dynamics_world_apply_settings() (or the single
+ * setters) set, e.g. to check which project settings a world runs with.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_dynamics_world_get_settings (LrgDynamicsWorld   *self,
+                                      LrgPhysicsSettings *out_settings);
+
+/**
  * lrg_dynamics_world_set_collision_between:
  * @self: a world
  * @body_a: a body id

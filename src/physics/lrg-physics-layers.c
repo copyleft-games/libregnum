@@ -18,6 +18,7 @@
 #include "lrg-physics-layers.h"
 #include "../core/lrg-data-loader.h"
 
+#include <math.h>
 #include <string.h>
 #include <yaml-glib.h>
 
@@ -1015,4 +1016,494 @@ lrg_physics_layers_to_data (LrgPhysicsLayers  *self,
 	root = yaml_node_new_mapping (root_map);
 
 	return lrg_data_yaml_to_data (root, NULL, error);
+}
+
+/* ================================================================== */
+/* LrgPhysicsSettings                                                  */
+/* ================================================================== */
+/*
+ * The world settings of the physics: block, next to layers/no_collide:
+ *
+ *     physics:
+ *       gravity: [0, -9.81, 0]
+ *       fixed_dt: 0.0166667
+ *       max_substeps: 4
+ *       iterations: 10
+ *       sleep_threshold: 0.0009
+ *       sleep_substeps: 30
+ *
+ * Reading is lenient about what is missing (defaults) and strict about
+ * what is there (a value of the wrong shape or out of range fails the
+ * load, so a typo is reported instead of silently simulating with a
+ * default). Writing replaces only these six keys.
+ */
+
+#define PROJECT_MANIFEST "project.ryaml"
+
+G_DEFINE_BOXED_TYPE (LrgPhysicsSettings, lrg_physics_settings,
+                     lrg_physics_settings_copy, lrg_physics_settings_free)
+
+LrgPhysicsSettings *
+lrg_physics_settings_new (void)
+{
+	LrgPhysicsSettings *self = g_new0 (LrgPhysicsSettings, 1);
+
+	lrg_physics_settings_init_default (self);
+	return self;
+}
+
+LrgPhysicsSettings *
+lrg_physics_settings_copy (const LrgPhysicsSettings *self)
+{
+	g_return_val_if_fail (self != NULL, NULL);
+	return (LrgPhysicsSettings *) g_memdup2 (self, sizeof (LrgPhysicsSettings));
+}
+
+void
+lrg_physics_settings_free (LrgPhysicsSettings *self)
+{
+	g_free (self);
+}
+
+void
+lrg_physics_settings_init_default (LrgPhysicsSettings *self)
+{
+	g_return_if_fail (self != NULL);
+
+	/* the step limits and sleep values match lrg_dynamics_world_init()
+	 * and the contact solver's default velocity iterations; gravity is
+	 * the Y-up Earth value a game wants (a bare world has none) */
+	memset (self, 0, sizeof (LrgPhysicsSettings));
+	self->gravity[0] = 0.0f;
+	self->gravity[1] = -9.81f;
+	self->gravity[2] = 0.0f;
+	self->fixed_dt = 1.0f / 60.0f;
+	self->max_substeps = 4;
+	self->iterations = 10;
+	self->sleep_threshold = 9.0e-4f;
+	self->sleep_substeps = 30;
+}
+
+gboolean
+lrg_physics_settings_equal (const LrgPhysicsSettings *a,
+                            const LrgPhysicsSettings *b)
+{
+	g_return_val_if_fail (a != NULL, FALSE);
+	g_return_val_if_fail (b != NULL, FALSE);
+
+	/* field by field: the reserved tail is not compared */
+	return a->gravity[0] == b->gravity[0] && a->gravity[1] == b->gravity[1] && a->gravity[2] == b->gravity[2]
+	       && a->fixed_dt == b->fixed_dt && a->max_substeps == b->max_substeps
+	       && a->iterations == b->iterations && a->sleep_threshold == b->sleep_threshold
+	       && a->sleep_substeps == b->sleep_substeps;
+}
+
+gboolean
+lrg_physics_settings_validate (const LrgPhysicsSettings  *self,
+                               GError                   **error)
+{
+	g_return_val_if_fail (self != NULL, FALSE);
+
+	if (!isfinite (self->gravity[0]) || !isfinite (self->gravity[1]) || !isfinite (self->gravity[2]))
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "physics gravity must be finite");
+		return FALSE;
+	}
+	/* written so a NaN fails too */
+	if (!(self->fixed_dt > 0.0f && self->fixed_dt <= 0.1f))
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "physics fixed_dt must be in (0, 0.1] seconds");
+		return FALSE;
+	}
+	if (self->max_substeps < 1 || self->max_substeps > LRG_PHYSICS_SETTINGS_MAX_SUBSTEPS)
+	{
+		g_set_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		             "physics max_substeps must be 1 to %u", (guint) LRG_PHYSICS_SETTINGS_MAX_SUBSTEPS);
+		return FALSE;
+	}
+	if (self->iterations < 1 || self->iterations > LRG_PHYSICS_SETTINGS_MAX_ITERATIONS)
+	{
+		g_set_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		             "physics iterations must be 1 to %u", (guint) LRG_PHYSICS_SETTINGS_MAX_ITERATIONS);
+		return FALSE;
+	}
+	if (!(self->sleep_threshold >= 0.0f) || !isfinite (self->sleep_threshold))
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "physics sleep_threshold must be zero or positive");
+		return FALSE;
+	}
+	if (self->sleep_substeps < 1)
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "physics sleep_substeps must be at least 1");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/* read_number: the number in member @key of @map into @out. A missing
+ * member leaves @out alone and succeeds; anything but a numeric scalar
+ * fails with FORMAT. */
+static gboolean
+read_number (YamlMapping  *map,
+             const gchar  *key,
+             gdouble      *out,
+             GError      **error)
+{
+	YamlNode    *node = yaml_mapping_get_member (map, key);
+	const gchar *text;
+	gchar       *end = NULL;
+	gdouble      value;
+
+	if (node == NULL || yaml_node_get_node_type (node) == YAML_NODE_NULL)
+		return TRUE;
+	text = scalar_text (node);
+	if (text != NULL && *text != '\0')
+	{
+		value = g_ascii_strtod (text, &end);
+		if (end != NULL && end != text && *end == '\0')
+		{
+			*out = value;
+			return TRUE;
+		}
+	}
+	g_set_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+	             "physics %s is not a number", key);
+	return FALSE;
+}
+
+/* read_count: like read_number, for a non-negative whole number */
+static gboolean
+read_count (YamlMapping  *map,
+            const gchar  *key,
+            guint        *out,
+            GError      **error)
+{
+	gdouble value = (gdouble) *out;
+
+	if (!read_number (map, key, &value, error))
+		return FALSE;
+	if (value < 0.0 || value > (gdouble) G_MAXUINT || value != floor (value))
+	{
+		g_set_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		             "physics %s must be a whole number", key);
+		return FALSE;
+	}
+	*out = (guint) value;
+	return TRUE;
+}
+
+gboolean
+lrg_physics_settings_load_yaml (LrgPhysicsSettings  *self,
+                                YamlNode            *node,
+                                GError             **error)
+{
+	LrgPhysicsSettings  s;
+	YamlMapping        *map;
+	YamlNode           *gravity;
+	gdouble             value;
+
+	g_return_val_if_fail (self != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* everything starts at its default, so missing keys need no code */
+	lrg_physics_settings_init_default (&s);
+	if (node == NULL || yaml_node_get_node_type (node) == YAML_NODE_NULL)
+	{
+		*self = s;
+		return TRUE;
+	}
+	if (yaml_node_get_node_type (node) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "the physics: block is not a mapping");
+		return FALSE;
+	}
+	map = yaml_node_get_mapping (node);
+
+	/* gravity: a three-number sequence */
+	gravity = yaml_mapping_get_member (map, "gravity");
+	if (gravity != NULL && yaml_node_get_node_type (gravity) != YAML_NODE_NULL)
+	{
+		YamlSequence *seq;
+		guint         k;
+
+		if (yaml_node_get_node_type (gravity) != YAML_NODE_SEQUENCE
+		    || yaml_sequence_get_length (yaml_node_get_sequence (gravity)) != 3)
+		{
+			g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+			                     "physics gravity must be a sequence of three numbers");
+			return FALSE;
+		}
+		seq = yaml_node_get_sequence (gravity);
+		for (k = 0; k < 3; k++)
+		{
+			const gchar *text = scalar_text (yaml_sequence_get_element (seq, k));
+			gchar       *end = NULL;
+
+			value = text != NULL ? g_ascii_strtod (text, &end) : 0.0;
+			if (text == NULL || *text == '\0' || end == text || *end != '\0')
+			{
+				g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+				                     "physics gravity must be a sequence of three numbers");
+				return FALSE;
+			}
+			s.gravity[k] = (gfloat) value;
+		}
+	}
+
+	/* the scalar keys */
+	value = (gdouble) s.fixed_dt;
+	if (!read_number (map, "fixed_dt", &value, error))
+		return FALSE;
+	s.fixed_dt = (gfloat) value;
+	value = (gdouble) s.sleep_threshold;
+	if (!read_number (map, "sleep_threshold", &value, error))
+		return FALSE;
+	s.sleep_threshold = (gfloat) value;
+	if (!read_count (map, "max_substeps", &s.max_substeps, error)
+	    || !read_count (map, "iterations", &s.iterations, error)
+	    || !read_count (map, "sleep_substeps", &s.sleep_substeps, error))
+		return FALSE;
+
+	/* ranges last, so the message names the bad field */
+	if (!lrg_physics_settings_validate (&s, error))
+		return FALSE;
+	*self = s;
+	return TRUE;
+}
+
+/* float_node: a plain scalar holding the shortest decimal text that
+ * reads back as @value (6 to 9 significant digits, C locale), so
+ * -3.7f is written "-3.7" and not "-3.70000005" */
+static YamlNode *
+float_node (gfloat value)
+{
+	gchar  buf[G_ASCII_DTOSTR_BUF_SIZE];
+	guint  precision;
+
+	for (precision = 6; precision <= 9; precision++)
+	{
+		gchar format[8];
+
+		g_snprintf (format, sizeof (format), "%%.%ug", precision);
+		g_ascii_formatd (buf, sizeof (buf), format, (gdouble) value);
+		if ((gfloat) g_ascii_strtod (buf, NULL) == value)
+			break;
+	}
+	return yaml_node_new_scalar (buf, YAML_SCALAR_STYLE_PLAIN);
+}
+
+void
+lrg_physics_settings_write_yaml (const LrgPhysicsSettings *self,
+                                 YamlMapping              *map)
+{
+	g_autoptr(YamlSequence) gravity = NULL;
+	guint                   k;
+
+	g_return_if_fail (self != NULL);
+	g_return_if_fail (map != NULL);
+
+	gravity = yaml_sequence_new ();
+	for (k = 0; k < 3; k++)
+	{
+		g_autoptr(YamlNode) n = float_node (self->gravity[k]);
+
+		yaml_sequence_add_element (gravity, n);
+	}
+	yaml_mapping_set_sequence_member (map, "gravity", gravity);
+	{
+		g_autoptr(YamlNode) fixed_dt = float_node (self->fixed_dt);
+		g_autoptr(YamlNode) sleep = float_node (self->sleep_threshold);
+
+		yaml_mapping_set_member (map, "fixed_dt", fixed_dt);
+		yaml_mapping_set_int_member (map, "max_substeps", (gint64) self->max_substeps);
+		yaml_mapping_set_int_member (map, "iterations", (gint64) self->iterations);
+		yaml_mapping_set_member (map, "sleep_threshold", sleep);
+		yaml_mapping_set_int_member (map, "sleep_substeps", (gint64) self->sleep_substeps);
+	}
+}
+
+gboolean
+lrg_physics_settings_load_from_data (LrgPhysicsSettings  *self,
+                                     const gchar         *data,
+                                     gssize               length,
+                                     GError             **error)
+{
+	g_autoptr(YamlParser) parser = NULL;
+	g_autoptr(GError)     local = NULL;
+	YamlNode             *root;
+	YamlNode             *block;
+
+	g_return_val_if_fail (self != NULL, FALSE);
+	g_return_val_if_fail (data != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	parser = yaml_parser_new ();
+	if (!yaml_parser_load_from_data (parser, data, length, &local))
+	{
+		g_set_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_PARSE,
+		             "Cannot parse physics settings YAML: %s", local->message);
+		return FALSE;
+	}
+	root = yaml_parser_get_root (parser);
+
+	/* a project file (physics: at the root or under project:), or the
+	 * block itself (a mapping without project:/physics: keys) */
+	block = lrg_physics_layers_find_block (root);
+	if (block == NULL && root != NULL && yaml_node_get_node_type (root) == YAML_NODE_MAPPING
+	    && !yaml_mapping_has_member (yaml_node_get_mapping (root), "project"))
+		block = root;
+	return lrg_physics_settings_load_yaml (self, block, error);
+}
+
+gboolean
+lrg_physics_settings_load_from_file (LrgPhysicsSettings  *self,
+                                     const gchar         *path,
+                                     GError             **error)
+{
+	g_autofree gchar *data = NULL;
+	gsize             length = 0;
+
+	g_return_val_if_fail (self != NULL, FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (!g_file_get_contents (path, &data, &length, error))
+		return FALSE;
+	return lrg_physics_settings_load_from_data (self, data, (gssize) length, error);
+}
+
+gchar *
+lrg_physics_settings_write_data (const LrgPhysicsSettings  *self,
+                                 LrgPhysicsLayers          *layers,
+                                 const gchar               *data,
+                                 gssize                     length,
+                                 GError                   **error)
+{
+	g_autoptr(YamlParser) parser = NULL;
+	g_autoptr(YamlNode)   root = NULL;
+	g_autoptr(GError)     local = NULL;
+	YamlNode             *block;
+	YamlMapping          *physics;
+
+	g_return_val_if_fail (self != NULL, NULL);
+	g_return_val_if_fail (layers == NULL || LRG_IS_PHYSICS_LAYERS (layers), NULL);
+	g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+	if (!lrg_physics_settings_validate (self, error))
+		return NULL;
+
+	/* a mutable copy of the current document (parsed trees are sealed),
+	 * or a fresh root mapping */
+	if (data != NULL)
+	{
+		parser = yaml_parser_new ();
+		if (!yaml_parser_load_from_data (parser, data, length, &local))
+		{
+			g_set_error (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_PARSE,
+			             "Cannot parse the project file: %s", local->message);
+			return NULL;
+		}
+		if (yaml_parser_get_root (parser) != NULL)
+			root = yaml_node_copy (yaml_parser_get_root (parser));
+	}
+	if (root == NULL || yaml_node_get_node_type (root) == YAML_NODE_NULL)
+	{
+		g_autoptr(YamlMapping) empty = yaml_mapping_new ();
+
+		g_clear_pointer (&root, yaml_node_unref);
+		root = yaml_node_new_mapping (empty);
+	}
+	if (yaml_node_get_node_type (root) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "the project file's root is not a mapping");
+		return NULL;
+	}
+
+	/* the block where it is (root or nested), or a new one at the root */
+	block = lrg_physics_layers_find_block (root);
+	if (block == NULL || yaml_node_get_node_type (block) == YAML_NODE_NULL)
+	{
+		g_autoptr(YamlMapping) fresh = yaml_mapping_new ();
+
+		yaml_mapping_set_mapping_member (yaml_node_get_mapping (root), "physics", fresh);
+		block = lrg_physics_layers_find_block (root);
+	}
+	if (block == NULL || yaml_node_get_node_type (block) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_PHYSICS_LAYERS_ERROR, LRG_PHYSICS_LAYERS_ERROR_FORMAT,
+		                     "the physics: block is not a mapping");
+		return NULL;
+	}
+	physics = yaml_node_get_mapping (block);
+
+	if (layers != NULL)
+		lrg_physics_layers_write_yaml (layers, physics);
+	lrg_physics_settings_write_yaml (self, physics);
+	return lrg_data_yaml_to_data (root, NULL, error);
+}
+
+gboolean
+lrg_physics_settings_save_to_file (const LrgPhysicsSettings  *self,
+                                   LrgPhysicsLayers          *layers,
+                                   const gchar               *path,
+                                   GError                   **error)
+{
+	g_autofree gchar *current = NULL;
+	g_autofree gchar *text = NULL;
+	gsize             length = 0;
+
+	g_return_val_if_fail (self != NULL, FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* a missing file starts empty; any other read error is reported */
+	if (g_file_test (path, G_FILE_TEST_EXISTS)
+	    && !g_file_get_contents (path, &current, &length, error))
+		return FALSE;
+	text = lrg_physics_settings_write_data (self, layers, current, (gssize) length, error);
+	if (text == NULL)
+		return FALSE;
+	return g_file_set_contents (path, text, -1, error);
+}
+
+gchar *
+lrg_physics_settings_find_project (const gchar *start)
+{
+	g_autofree gchar *dir = NULL;
+	guint             depth;
+
+	if (start == NULL || *start == '\0')
+		return NULL;
+
+	/* start at the directory itself, or at a file's directory */
+	dir = g_canonicalize_filename (start, NULL);
+	if (!g_file_test (dir, G_FILE_TEST_IS_DIR))
+	{
+		gchar *parent = g_path_get_dirname (dir);
+
+		g_free (dir);
+		dir = parent;
+	}
+
+	/* up to the filesystem root (bounded, in case of odd paths) */
+	for (depth = 0; depth < 64 && dir != NULL; depth++)
+	{
+		g_autofree gchar *manifest = g_build_filename (dir, PROJECT_MANIFEST, NULL);
+		g_autofree gchar *parent = NULL;
+
+		if (g_file_test (manifest, G_FILE_TEST_IS_REGULAR))
+			return g_steal_pointer (&manifest);
+		parent = g_path_get_dirname (dir);
+		if (g_strcmp0 (parent, dir) == 0)
+			break;
+		g_free (dir);
+		dir = g_steal_pointer (&parent);
+	}
+	return NULL;
 }

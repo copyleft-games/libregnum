@@ -185,7 +185,7 @@ The description of a light carries its bake mode: =LrgLight3DDesc.bake_mode= (=L
 :PROPERTIES:
 :CUSTOM_ID: physics
 :END:
-A world can carry an [[file:../physics/dynamics.org][LrgDynamicsWorld]] (=lrg_world3d_set_physics()=, a reference held; =lrg_world3d_ensure_physics()= attaches a new one with gravity (0, -9.81, 0) and the default layer table when there is none; =lrg_level_instantiate_3d()= calls it for levels with a =physics:= block). The physics components ([[file:components.org::#physics-components][rigid body, collider, joint]]) register with the world as *physics clients* while they are in it, and the world drives them from =lrg_world3d_fixed_update()=:
+A world can carry an [[file:../physics/dynamics.org][LrgDynamicsWorld]] (=lrg_world3d_set_physics()=, a reference held; =lrg_world3d_ensure_physics()= attaches a new one when there is none, configured from the project physics settings given with =lrg_world3d_set_physics_settings()= / =lrg_world3d_load_physics_project()= or else from the defaults: gravity (0, -9.81, 0) and the default layer table; =lrg_level_instantiate_3d()= first gives the world the =physics:= block of the level's =project.ryaml= and then calls it for levels with a =physics:= block, see [[file:../physics/physics-layers.org::#runtime][The block at runtime]]). Project settings also set =LrgWorld3D:fixed-step= and =LrgWorld3D:max-substeps= from the block's =fixed_dt= and =max_substeps=. The physics components ([[file:components.org::#physics-components][rigid body, collider, joint]]) register with the world as *physics clients* while they are in it, and the world drives them from =lrg_world3d_fixed_update()=:
 
 #+begin_example
  for every fixed substep:
@@ -349,7 +349,10 @@ Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[
 | =lrg_world3d_add_probe_grid()= / =lrg_world3d_remove_probe_grid()= / =lrg_world3d_clear_probe_grids()= / =lrg_world3d_get_probe_grids()= | the probe grids (refs held) (0.9.0) |
 | =lrg_world3d_find_probe_grid()= | the grid lighting a point (transfer none, nullable) (0.9.0) |
 | =lrg_world3d_set_physics()= / =lrg_world3d_get_physics()= | the attached #LrgDynamicsWorld (ref held, nullable), see [[#physics][Physics]] (0.9.0) |
-| =lrg_world3d_ensure_physics()= | attach a default physics world if none; transfer none |
+| =lrg_world3d_ensure_physics()= | attach a physics world if none (project settings or defaults); transfer none |
+| =lrg_world3d_set_physics_settings (world, settings, layers, &error)= | the project's =physics:= block for this world (copied / ref held; applied to an attached physics world at once); =NULL=, =NULL= forgets it |
+| =lrg_world3d_get_physics_settings()= / =lrg_world3d_get_physics_layers()= | what was given (transfer none, nullable) |
+| =lrg_world3d_load_physics_project (world, path, &error)= | read a =project.ryaml='s block and set it |
 | =lrg_world3d_set_physics_interpolation()= / =lrg_world3d_get_physics_interpolation()= | render blend of dynamic bodies |
 | =lrg_world3d_find_body_entity (world, body_id)= | the entity owning a body (transfer none, nullable) |
 | =lrg_world3d_debug_draw_physics (world, draw, flags)= | physics debug draw for one frame |

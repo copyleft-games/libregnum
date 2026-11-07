@@ -864,12 +864,9 @@ start_simulation (LrgEditorPhysicsAssetEditor  *self,
 	/* the project's world settings */
 	editor_physics_settings_load (app_of (self), &settings);
 	world = lrg_dynamics_world_new ();
-	if (!lrg_dynamics_world_set_gravity (world, settings.gravity, error) ||
-	    !lrg_dynamics_world_set_step_limits (world, settings.fixed_dt, settings.max_substeps, error) ||
-	    !lrg_dynamics_world_set_sleep (world, settings.sleep_threshold, settings.sleep_substeps, error) ||
+	if (!lrg_dynamics_world_apply_settings (world, &settings, NULL, error) ||
 	    !lrg_dynamics_world_set_material (world, 0.0f, 0.8f, error))
 		return FALSE;
-	lrg_dynamics_world_set_iterations (world, settings.iterations);
 
 	/* a ground plane under the model's feet */
 	o[1] = self->bmin[1];
@@ -2877,204 +2874,60 @@ lrg_editor_physics_asset_editor_render_preview (LrgEditorPhysicsAssetEditor *sel
 
 /* ==========================================================================
  * Project physics settings (project.ryaml `physics:` block)
+ *
+ * The settings are the engine's LrgPhysicsSettings (EditorPhysicsSettings
+ * is the same struct) and live on the open LrgProject next to the layer
+ * table: lrg_project_save() writes both into the block and keeps its
+ * other keys, and the runtime (lrg_world3d_ensure_physics(), level
+ * instantiation, play-in-editor) reads the same block.
  * ========================================================================== */
 
 void
 editor_physics_settings_defaults (EditorPhysicsSettings *settings)
 {
-	/* the values LrgDynamicsWorld starts with, gravity Y up */
-	settings->gravity[0] = 0.0f;
-	settings->gravity[1] = -9.81f;
-	settings->gravity[2] = 0.0f;
-	settings->fixed_dt = 1.0f / 60.0f;
-	settings->max_substeps = 4;
-	settings->iterations = 10;
-	settings->sleep_threshold = 9.0e-4f;
-	settings->sleep_substeps = 30;
+	lrg_physics_settings_init_default (settings);
 }
 
 gboolean
 editor_physics_settings_validate (const EditorPhysicsSettings  *s,
                                   GError                      **error)
 {
-	if (s->fixed_dt <= 0.0f || s->fixed_dt > 0.1f)
-	{
-		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "fixed_dt must be in (0, 0.1] s");
-		return FALSE;
-	}
-	if (s->max_substeps < 1 || s->max_substeps > LRG_DYNAMICS_MAX_SUBSTEPS)
-	{
-		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "max_substeps must be 1 to %u",
-		             (guint) LRG_DYNAMICS_MAX_SUBSTEPS);
-		return FALSE;
-	}
-	if (s->iterations < 1 || s->iterations > 32)
-	{
-		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "iterations must be 1 to 32");
-		return FALSE;
-	}
-	if (s->sleep_threshold < 0.0f || s->sleep_substeps < 1)
-	{
-		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                     "sleep_threshold must be >= 0 and sleep_substeps >= 1");
-		return FALSE;
-	}
-	if (!isfinite (s->gravity[0]) || !isfinite (s->gravity[1]) || !isfinite (s->gravity[2]))
-	{
-		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "gravity must be finite");
-		return FALSE;
-	}
-	return TRUE;
-}
-
-static gchar *
-manifest_path (LrgEditorApp *app)
-{
-	if (app == NULL || app->project == NULL)
-		return NULL;
-	return g_build_filename (lrg_project_get_root (app->project), LRG_PROJECT_MANIFEST, NULL);
-}
-
-/* The root `physics:` mapping of a parsed manifest (or inside project:). */
-static YamlMapping *
-find_physics (YamlNode *root)
-{
-	YamlNode *block = root != NULL ? lrg_physics_layers_find_block (root) : NULL;
-
-	return (block != NULL && yaml_node_get_node_type (block) == YAML_NODE_MAPPING) ? yaml_node_get_mapping (block)
-	                                                                               : NULL;
-}
-
-static gdouble
-number_member (YamlMapping *map,
-               const gchar *key,
-               gdouble      fallback)
-{
-	YamlNode    *n = map != NULL ? yaml_mapping_get_member (map, key) : NULL;
-	const gchar *s;
-	gchar       *end = NULL;
-	gdouble      v;
-
-	if (n == NULL || yaml_node_get_node_type (n) != YAML_NODE_SCALAR)
-		return fallback;
-	s = yaml_node_get_scalar (n);
-	v = g_ascii_strtod (s, &end);
-	return (end != s && end != NULL && *end == '\0') ? v : fallback;
+	return lrg_physics_settings_validate (s, error);
 }
 
 gboolean
 editor_physics_settings_load (LrgEditorApp          *app,
                               EditorPhysicsSettings *s)
 {
-	g_autofree gchar     *path = manifest_path (app);
-	g_autoptr(YamlParser) parser = NULL;
-	YamlMapping          *map;
-	YamlNode             *g;
-	EditorPhysicsSettings d;
-
-	editor_physics_settings_defaults (s);
-	if (path == NULL)
-		return FALSE;
-	parser = yaml_parser_new ();
-	if (!yaml_parser_load_from_file (parser, path, NULL))
-		return FALSE;
-	map = find_physics (yaml_parser_get_root (parser));
-	if (map == NULL)
-		return TRUE;
-	d = *s;
-	g = yaml_mapping_get_member (map, "gravity");
-	if (g != NULL && yaml_node_get_node_type (g) == YAML_NODE_SEQUENCE &&
-	    yaml_sequence_get_length (yaml_node_get_sequence (g)) == 3)
+	/* the project's in-memory copy, loaded at open and kept by saves */
+	if (app == NULL || app->project == NULL)
 	{
-		guint k;
-
-		for (k = 0; k < 3; k++)
-		{
-			YamlNode    *e = yaml_sequence_get_element (yaml_node_get_sequence (g), k);
-			const gchar *t = (e != NULL && yaml_node_get_node_type (e) == YAML_NODE_SCALAR)
-			                 ? yaml_node_get_scalar (e) : NULL;
-
-			if (t != NULL)
-				s->gravity[k] = (gfloat) g_ascii_strtod (t, NULL);
-		}
+		lrg_physics_settings_init_default (s);
+		return FALSE;
 	}
-	s->fixed_dt = (gfloat) number_member (map, "fixed_dt", d.fixed_dt);
-	s->max_substeps = (guint) number_member (map, "max_substeps", d.max_substeps);
-	s->iterations = (guint) number_member (map, "iterations", d.iterations);
-	s->sleep_threshold = (gfloat) number_member (map, "sleep_threshold", d.sleep_threshold);
-	s->sleep_substeps = (guint) number_member (map, "sleep_substeps", d.sleep_substeps);
-	/* a broken value falls back to the default rather than break worlds */
-	if (!editor_physics_settings_validate (s, NULL))
-		*s = d;
+	*s = *lrg_project_get_physics_settings (app->project);
 	return TRUE;
 }
 
 /*
  * editor_physics_project_save:
- * lrg_project_save() (the layer table goes through LrgProject) followed
- * by the world settings written into the same `physics:` block. LrgProject
- * keeps the block it read at open time, so the settings are re-applied
- * after every save: with @settings NULL the file's current ones.
+ * Stores @settings on the project (NULL keeps the current ones) and
+ * saves project.ryaml, which writes the layer table and the settings
+ * into the `physics:` block.
  */
 gboolean
 editor_physics_project_save (LrgEditorApp                 *app,
                              const EditorPhysicsSettings  *settings,
                              GError                      **error)
 {
-	g_autofree gchar         *path = manifest_path (app);
-	EditorPhysicsSettings     s;
-	g_autoptr(YamlParser)     parser = NULL;
-	g_autoptr(YamlNode)       root = NULL;
-	g_autoptr(YamlDocument)   ydoc = NULL;
-	g_autoptr(YamlGenerator)  gen = NULL;
-	g_autoptr(YamlSequence)   gravity = NULL;
-	g_autofree gchar         *data = NULL;
-	YamlMapping              *map;
-	guint                     k;
-
-	if (path == NULL)
+	if (app == NULL || app->project == NULL)
 	{
 		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No project is open");
 		return FALSE;
 	}
-	if (settings != NULL)
-	{
-		if (!editor_physics_settings_validate (settings, error))
-			return FALSE;
-		s = *settings;
-	}
-	else
-		editor_physics_settings_load (app, &s);
-	if (!lrg_project_save (app->project, error))
+	if (settings != NULL && !lrg_project_set_physics_settings (app->project, settings, error))
 		return FALSE;
-
-	/* patch the block LrgProject just wrote */
-	parser = yaml_parser_new ();
-	if (!yaml_parser_load_from_file (parser, path, error))
-		return FALSE;
-	root = yaml_node_copy (yaml_parser_get_root (parser));
-	map = find_physics (root);
-	if (map == NULL)
-	{
-		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "project.ryaml has no physics: block");
-		return FALSE;
-	}
-	gravity = yaml_sequence_new ();
-	for (k = 0; k < 3; k++)
-		yaml_sequence_add_double_element (gravity, (gdouble) s.gravity[k]);
-	yaml_mapping_set_sequence_member (map, "gravity", gravity);
-	yaml_mapping_set_double_member (map, "fixed_dt", (gdouble) s.fixed_dt);
-	yaml_mapping_set_int_member (map, "max_substeps", (gint64) s.max_substeps);
-	yaml_mapping_set_int_member (map, "iterations", (gint64) s.iterations);
-	yaml_mapping_set_double_member (map, "sleep_threshold", (gdouble) s.sleep_threshold);
-	yaml_mapping_set_int_member (map, "sleep_substeps", (gint64) s.sleep_substeps);
-	ydoc = yaml_document_new_with_root (root);
-	gen = yaml_generator_new ();
-	yaml_generator_set_document (gen, ydoc);
-	data = yaml_generator_to_data (gen, NULL, error);
-	if (data == NULL)
-		return FALSE;
-	return g_file_set_contents (path, data, -1, error);
+	return lrg_project_save (app->project, error);
 }
 
 /* ==========================================================================

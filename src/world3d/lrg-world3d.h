@@ -1328,12 +1328,88 @@ LrgDynamicsWorld * lrg_world3d_get_physics (LrgWorld3D *self);
  * @self: a #LrgWorld3D
  *
  * Returns the attached physics world, attaching a new one first when there
- * is none (gravity (0, -9.81, 0), the default layer table).
+ * is none. The new world is configured from the project physics settings
+ * of lrg_world3d_set_physics_settings() (lrg_level_instantiate_3d() finds
+ * them in the level's project.ryaml); without any it uses the defaults
+ * (lrg_physics_settings_init_default(): gravity (0, -9.81, 0)) and the
+ * default layer table (lrg_physics_layers_new_default()).
  *
  * Returns: (transfer none): the physics world
  */
 LRG_AVAILABLE_IN_ALL
 LrgDynamicsWorld * lrg_world3d_ensure_physics (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_set_physics_settings:
+ * @self: a #LrgWorld3D
+ * @settings: (nullable): the project's physics world settings, or %NULL
+ *   to forget them
+ * @layers: (nullable): the project's layer table (the world keeps a
+ *   reference; the physics world reads it live), or %NULL for the
+ *   default table
+ * @error: return location for a #GError
+ *
+ * Gives the world a project's `physics:` block (see #LrgPhysicsSettings).
+ * The physics world attached now, or later by lrg_world3d_ensure_physics(),
+ * gets them: gravity, solver iterations, sleep and @layers through
+ * lrg_dynamics_world_apply_settings(), while fixed_dt and max_substeps
+ * become #LrgWorld3D:fixed-step and #LrgWorld3D:max-substeps (the world
+ * runs one physics substep per fixed update). A world given settings this
+ * way is not reconfigured by lrg_level_instantiate_3d().
+ *
+ * %NULL @settings with %NULL @layers forgets the settings; a physics world
+ * that is already attached keeps its values. Invalid @settings (see
+ * lrg_physics_settings_validate()) fail and change nothing.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_set_physics_settings (LrgWorld3D                *self,
+                                           const LrgPhysicsSettings  *settings,
+                                           LrgPhysicsLayers          *layers,
+                                           GError                   **error);
+
+/**
+ * lrg_world3d_get_physics_settings:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the settings given with
+ *   lrg_world3d_set_physics_settings() or
+ *   lrg_world3d_load_physics_project(), or %NULL when the world uses the
+ *   defaults
+ */
+LRG_AVAILABLE_IN_ALL
+const LrgPhysicsSettings * lrg_world3d_get_physics_settings (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_get_physics_layers:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the layer table given with
+ *   lrg_world3d_set_physics_settings() or
+ *   lrg_world3d_load_physics_project(), or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgPhysicsLayers * lrg_world3d_get_physics_layers (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_load_physics_project:
+ * @self: a #LrgWorld3D
+ * @path: (type filename): a project.ryaml (see
+ *   lrg_physics_settings_find_project() to find one above a level)
+ * @error: return location for a #GError
+ *
+ * Reads the `physics:` block of @path (the layer table with
+ * lrg_physics_layers_load_from_file(), the world settings with
+ * lrg_physics_settings_load_from_file()) and calls
+ * lrg_world3d_set_physics_settings(). On error nothing changes.
+ *
+ * Returns: %TRUE on success
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_world3d_load_physics_project (LrgWorld3D   *self,
+                                           const gchar  *path,
+                                           GError      **error);
 
 /**
  * lrg_world3d_get_physics_interpolation:

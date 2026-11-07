@@ -377,21 +377,13 @@ GrlImage * lrg_editor_physics_asset_editor_render_preview (LrgEditorPhysicsAsset
 /*
  * EditorPhysicsSettings:
  * The world settings of project.ryaml's `physics:` block next to the
- * layer table (which LrgProject owns): gravity, the fixed substep and
- * its cap, solver iterations and the sleep threshold. LrgProject keeps
- * unknown keys of the block, so these round-trip through it; the editor
- * reads and writes them with editor_physics_settings_load() and
- * editor_physics_project_save().
+ * layer table: the engine's #LrgPhysicsSettings, kept on the open
+ * LrgProject (lrg_project_get_physics_settings()). The editor reads them
+ * with editor_physics_settings_load() and writes them with
+ * editor_physics_project_save() (which is lrg_project_save()); the
+ * runtime reads the same block.
  */
-typedef struct
-{
-	gfloat gravity[3];
-	gfloat fixed_dt;
-	guint  max_substeps;
-	guint  iterations;
-	gfloat sleep_threshold;
-	guint  sleep_substeps;
-} EditorPhysicsSettings;
+typedef LrgPhysicsSettings EditorPhysicsSettings;
 
 G_GNUC_INTERNAL void     editor_physics_settings_defaults (EditorPhysicsSettings *settings);
 G_GNUC_INTERNAL gboolean editor_physics_settings_load     (LrgEditorApp *app, EditorPhysicsSettings *settings);

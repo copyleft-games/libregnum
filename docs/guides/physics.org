@@ -100,7 +100,7 @@ lrg_dynamics_world_set_layers (world, layers);
 lrg_dynamics_world_set_body_layer (world, chunk, LRG_PHYSICS_LAYER_DEBRIS, LRG_PHYSICS_LAYERS_ALL, &error);
 #+end_src
 
-A project keeps its layer names and matrix in the =physics:= block of =project.ryaml= ([[file:../modules/physics/physics-layers.org][format]]); load it with =lrg_physics_layers_load_from_file()=. For single pairs (a ragdoll's neighbouring bones, a vehicle and its own wheels) use =lrg_dynamics_world_set_collision_between()=.
+A project keeps its layer names and matrix, plus its world settings (gravity, fixed substep and cap, solver iterations, sleep threshold), in the =physics:= block of =project.ryaml= ([[file:../modules/physics/physics-layers.org][format]]). Levels pick it up on their own (next sections); for a hand-made world load it with =lrg_physics_layers_load_from_file()= and =lrg_physics_settings_load_from_file()= and apply both with =lrg_dynamics_world_apply_settings()=. For single pairs (a ragdoll's neighbouring bones, a vehicle and its own wheels) use =lrg_dynamics_world_set_collision_between()=.
 
 ** Asking the world: queries
 :PROPERTIES:
@@ -345,7 +345,7 @@ lrg_node_physics_set_mass (phys, 15.0f);
 lrg_node_set_physics (door, phys);
 #+end_src
 
-- =lrg_level_instantiate_3d()= attaches a physics world (=lrg_world3d_ensure_physics()=) when the level has bodies; set the project's layer table on it (=lrg_dynamics_world_set_layers()=) before stepping.
+- =lrg_level_instantiate_3d()= attaches a physics world (=lrg_world3d_ensure_physics()=) when the level has bodies, configured from the =physics:= block of the level's =project.ryaml= (found by walking up from the level's directory, as =lrg_level_load_world3d()= passes it, then the asset manager's project root): the project's gravity, fixed step, iterations, sleep and layer table, with no extra code. Without a project it uses the defaults. To force other settings, call =lrg_world3d_set_physics_settings()= on the world before instantiating.
 - Joint targets are node GUIDs: a joint to a node instantiated later is built once that entity exists.
 - Undo snapshots (=lrg_node_copy_state()=), =lrg_node_state_equal()= and prefabs carry the block (deep copies). Joints between nodes of one prefab point at the instance's nodes after instantiation, and an instance's edited block is a prefab override (=physics=) that survives a sync.
 - The block saves byte stable: keys in a fixed order, defaults left out where the format says so.

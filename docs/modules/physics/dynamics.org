@@ -160,6 +160,8 @@ Render at the interpolated pose to hide the fixed-step stutter: =lrg_dynamics_wo
 | =lrg_dynamics_world_set_material()= | default restitution and friction of bodies without their own material |
 | =lrg_dynamics_world_set_iterations()= | velocity iterations 1 .. 32 (same as the contact solver setting) |
 | =lrg_dynamics_world_set_sleep()= | sleep speed² threshold and quiet substeps |
+| =lrg_dynamics_world_apply_settings()= | a project's =physics:= block in one call: gravity, step limits, iterations, sleep and (optionally) the layer table from an =LrgPhysicsSettings= (=NULL= = the defaults); validated first, nothing changes on error ([[file:physics-layers.org::#settings][Physics Settings]]) |
+| =lrg_dynamics_world_get_settings()= | reads gravity, step limits, iterations and sleep back into an =LrgPhysicsSettings= |
 | =lrg_dynamics_world_set_bounds()= | eviction box for dynamic bodies |
 | =lrg_dynamics_world_step()= | runs the fixed substeps for a frame time, emits queued signals |
 | =lrg_dynamics_world_get_dropped_time()= | time dropped by the substep cap in the last step |
@@ -322,14 +324,19 @@ lrg_dynamics_world_move_kinematic (world, platform, target, NULL, frame_dt, &err
 lrg_dynamics_world_step (world, frame_dt, NULL, &error);
 #+end_src
 
-*** Layers from a project
+*** Layers and settings from a project
 :PROPERTIES:
 :CUSTOM_ID: example-layers
 :END:
 #+begin_src c
 g_autoptr(LrgPhysicsLayers) layers = lrg_physics_layers_new_default ();
-lrg_physics_layers_load_from_file (layers, "project.ryaml", &error);
-lrg_dynamics_world_set_layers (world, layers);
+LrgPhysicsSettings          settings;
+
+lrg_physics_settings_init_default (&settings);
+if (!lrg_physics_layers_load_from_file (layers, "project.ryaml", &error)
+    || !lrg_physics_settings_load_from_file (&settings, "project.ryaml", &error))
+	g_warning ("project physics: %s", error->message);   /* defaults stay */
+lrg_dynamics_world_apply_settings (world, &settings, layers, NULL);
 lrg_dynamics_world_set_body_layer (world, debris, LRG_PHYSICS_LAYER_DEBRIS,
                                    LRG_PHYSICS_LAYERS_ALL & ~LRG_PHYSICS_LAYER_BIT (LRG_PHYSICS_LAYER_CHARACTER),
                                    &error);
@@ -367,7 +374,7 @@ Everything is single-threaded; islands are independent, so a later parallel solv
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The editor tools (collider gizmos, body/shape/joint inspector, layer matrix, physics asset editor) arrive in the next 0.9 wave. They build on what this world exposes: =lrg_dynamics_world_debug_draw()= for the viewport overlay, =lrg_dynamics_world_get_body_ids()= / =lrg_dynamics_world_get_shape()= / =lrg_dynamics_world_get_body_layer()= / =lrg_dynamics_world_get_body_material()= for inspection, the queries for picking, and the project.ryaml =physics:= block for the layer matrix ([[file:physics-layers.org][Physics Layers]]). Levels get bodies through the rigid-body and collider components ([[file:../../guides/physics.org][physics guide]]).
+The editor tools (collider gizmos, body/shape/joint inspector, layer matrix, physics asset editor) arrive in the next 0.9 wave. They build on what this world exposes: =lrg_dynamics_world_debug_draw()= for the viewport overlay, =lrg_dynamics_world_get_body_ids()= / =lrg_dynamics_world_get_shape()= / =lrg_dynamics_world_get_body_layer()= / =lrg_dynamics_world_get_body_material()= for inspection, the queries for picking, and the project.ryaml =physics:= block for the layer matrix and the world settings ([[file:physics-layers.org][Physics Layers]]). Project Settings > Physics edits that block, and play-in-editor and games apply it to their worlds with =lrg_dynamics_world_apply_settings()= (through =lrg_world3d_set_physics_settings()=). Levels get bodies through the rigid-body and collider components ([[file:../../guides/physics.org][physics guide]]).
 
 ** Tests
 :PROPERTIES:

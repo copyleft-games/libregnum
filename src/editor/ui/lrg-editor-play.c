@@ -144,6 +144,8 @@ editor_play_start (LrgEditorApp *self)
 	/* A timeline preview must not leak into the play snapshot */
 	editor_timeline_end_preview (self);
 	lrg_editor_play_session_set_engine (self->play, lrg_engine_get_default ());
+	/* the open project's physics settings and layers (NULL: none open) */
+	lrg_editor_play_session_set_project (self->play, self->project);
 	if (!lrg_editor_play_session_start (self->play, &error))
 		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot play: %s", error->message);
 }

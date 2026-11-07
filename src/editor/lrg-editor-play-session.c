@@ -24,6 +24,7 @@
 
 #include "lrg-editor-play-session.h"
 #include "lrg-editor.h"
+#include "lrg-project.h"
 #include "lrg-level.h"
 #include "lrg-node.h"
 #include "lrg-component-desc.h"
@@ -84,6 +85,7 @@ struct _LrgEditorPlaySession
 	LrgEditor          *editor;      /* strong ref */
 	LrgEngine          *engine;      /* strong ref, nullable = default */
 	LrgProfiler        *profiler;    /* strong ref, nullable */
+	LrgProject         *project;     /* strong ref, nullable: physics settings */
 
 	LrgWorld           *world;       /* 2D play world, NULL when stopped */
 	LrgWorld3D         *world3d;     /* 3D play world, NULL when stopped */
@@ -111,6 +113,7 @@ enum
 	PROP_EDITOR,
 	PROP_ENGINE,
 	PROP_PROFILER,
+	PROP_PROJECT,
 	PROP_STATE,
 	PROP_TIME,
 	N_PROPS
@@ -199,6 +202,7 @@ lrg_editor_play_session_dispose (GObject *object)
 	if (self->children != NULL)
 		g_hash_table_remove_all (self->children);
 	g_clear_object (&self->profiler);
+	g_clear_object (&self->project);
 	g_clear_object (&self->engine);
 	g_clear_object (&self->editor);
 
@@ -234,6 +238,7 @@ lrg_editor_play_session_get_property (GObject    *object,
 	case PROP_EDITOR:   g_value_set_object (value, self->editor); break;
 	case PROP_ENGINE:   g_value_set_object (value, self->engine); break;
 	case PROP_PROFILER: g_value_set_object (value, self->profiler); break;
+	case PROP_PROJECT:  g_value_set_object (value, self->project); break;
 	case PROP_STATE:    g_value_set_enum (value, (gint) self->state); break;
 	case PROP_TIME:     g_value_set_double (value, self->time); break;
 	default:
@@ -260,6 +265,9 @@ lrg_editor_play_session_set_property (GObject      *object,
 		break;
 	case PROP_PROFILER:
 		lrg_editor_play_session_set_profiler (self, g_value_get_object (value));
+		break;
+	case PROP_PROJECT:
+		lrg_editor_play_session_set_project (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -307,6 +315,18 @@ lrg_editor_play_session_class_init (LrgEditorPlaySessionClass *klass)
 	properties[PROP_PROFILER] =
 		g_param_spec_object ("profiler", "Profiler", "Profiler ticks are timed with",
 		                     LRG_TYPE_PROFILER, rw);
+
+	/**
+	 * LrgEditorPlaySession:project:
+	 *
+	 * The open project. A 3D level plays with its physics settings and
+	 * layer table (lrg_project_get_physics_settings(),
+	 * lrg_project_get_physics_layers()); %NULL looks for the project.ryaml
+	 * above the level file instead.
+	 */
+	properties[PROP_PROJECT] =
+		g_param_spec_object ("project", "Project", "Project whose physics settings play uses",
+		                     LRG_TYPE_PROJECT, rw);
 
 	/**
 	 * LrgEditorPlaySession:state:
@@ -437,6 +457,25 @@ lrg_editor_play_session_set_profiler (LrgEditorPlaySession *self,
 
 	if (g_set_object (&self->profiler, profiler))
 		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROFILER]);
+}
+
+LrgProject *
+lrg_editor_play_session_get_project (LrgEditorPlaySession *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_PLAY_SESSION (self), NULL);
+
+	return self->project;
+}
+
+void
+lrg_editor_play_session_set_project (LrgEditorPlaySession *self,
+                                     LrgProject           *project)
+{
+	g_return_if_fail (LRG_IS_EDITOR_PLAY_SESSION (self));
+	g_return_if_fail (project == NULL || LRG_IS_PROJECT (project));
+
+	if (g_set_object (&self->project, project))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PROJECT]);
 }
 
 /* ==========================================================================
@@ -840,6 +879,14 @@ instantiate_level (LrgEditorPlaySession  *self,
 	self->world3d = lrg_world3d_new ();
 	if (lrg_editor_get_path (self->editor) != NULL)
 		level_dir = g_path_get_dirname (lrg_editor_get_path (self->editor));
+
+	/* The open project's physics: block (its in-memory settings and the
+	 * live layer table, so matrix edits apply on the next step); without
+	 * a project the instantiation finds project.ryaml above the level */
+	if (self->project != NULL
+	    && !lrg_world3d_set_physics_settings (self->world3d, lrg_project_get_physics_settings (self->project),
+	                                          lrg_project_get_physics_layers (self->project), error))
+		return FALSE;
 	if (!lrg_level_instantiate_3d_with_base_dir (level, self->world3d, engine (self), level_dir, error))
 		return FALSE;
 	record_entity_baselines_3d (self);
