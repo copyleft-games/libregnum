@@ -698,7 +698,7 @@ bounds", "Cost of a page").
 - The app runs headless frame by frame (`lrg_editor_app_frame()` with a synthetic `LrgGuiInput`); add app tests to `tests/test-editor-app.c`. In tests, release keys after a press (`input.key_down[key] = FALSE`) or the next press counts as a repeat.
 - **raylib `bool` under gnu89**: `<raylib.h>` without `<stdbool.h>` typedefs `bool` as an int-sized enum while raylib returns/stores a one-byte `_Bool`, so callers read garbage (this made `IsMouseButtonDown()` always "held": the editor's menus never opened and the camera never rotated; `RayCollision.hit` and `Music.looping` read padding). `BASE_CFLAGS` now has `-include stdbool.h` and `libregnum.h` includes it first; new code needs nothing special. `src/gui/lrg-gui-raylib-private.h` asserts `sizeof (bool) == 1`.
 - The raylib GUI backend chains GLFW mouse-button and key callbacks (`lrg-gui-raylib.c`) so clicks and chords shorter than a frame are latched with their own modifiers; raylib alone samples state once per frame and loses them.
-- `make test-editor-x11` (`tests/editor-x11-smoke.sh`) drives a real window with xdotool under Xvfb and checks results over IPC (`ui.state` reports open menu, nav mode, rects and input). Run it for anything touching input; the headless app tests inject input straight into the GUI and cannot see backend bugs. When running the editor under Xvfb by hand, point `XDG_RUNTIME_DIR` at an empty short dir or GLFW opens the window on your Wayland session.
+- `make test-editor-x11` (`tests/editor-x11-smoke.sh`) drives a real window with xdotool under Xvfb and checks results over IPC (`ui.state` reports open menu, nav mode, rects and input). Run it for anything touching input; the headless app tests inject input straight into the GUI and cannot see backend bugs. Run the editor under Xvfb by hand only through `build-aux/xrun.sh` (see Testing > GPU tests, editor runs and screenshots): it sets the display, `XDG_RUNTIME_DIR` and throwaway config dirs, without which GLFW opens the window on your Wayland session and the run rewrites your `editor.yaml`.
 - Viewport rendering (`lrg-editor-render.c`) uses raw raylib/rlgl with matrices from `LrgEditorView`; raylib `Matrix` fields are named by storage index but declared in row order, so convert by name (`to_matrix`/`from_matrix`), never `memcpy`. `raymath.h` is not gnu89-clean; do not include it.
 - `g_ptr_array_copy (src, NULL, NULL)` inherits `src`'s free function: copying a node's children that way and freeing the copy unrefs the live nodes. Pass a ref-copy function or use the original array.
 - Unix socket paths must fit `sun_path` (107 bytes); the server rejects longer ones. Keep test sockets under `$XDG_RUNTIME_DIR`.
@@ -1238,6 +1238,58 @@ targets automate detection across the 85-file test suite:
 Any ASan/UBSan report or valgrind "definite leak" is a real defect — file it;
 do not add a suppression to `tests/valgrind.supp` unless confirmed benign.
 See `docs/building.org` § "Testing & Memory Checking".
+
+### GPU tests, editor runs and screenshots (isolated Xvfb)
+
+Never open a window on the developer's desktop session. Every GPU test, `make test`
+run that needs a display, hand-started `lrgeditor`, example and screenshot goes through
+`build-aux/xrun.sh`, which gives the command a private display set up correctly:
+
+- a free Xvfb display (`xvfb-run -a`) with a **1920x1200** screen;
+- `-noreset` (without it Xvfb resets when its last client disconnects and the next window
+  in the same process fails with "X11: Failed to open display");
+- `WAYLAND_DISPLAY` unset and `XDG_SESSION_TYPE=x11`, so GLFW uses X11;
+- a short, empty `XDG_RUNTIME_DIR` (IPC socket paths must fit 107 bytes);
+- throwaway `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`, so a run never reads or
+  rewrites `~/.config/libregnum/editor.yaml` (a saved dock layout or theme from a dev run
+  silently changes what later runs show). `-k` keeps the real dirs when you need them.
+
+```bash
+build-aux/xrun.sh make test                                  # whole suite with a display
+build-aux/xrun.sh -t 300 tests/build/release/tests/test-pbr  # one GPU suite, 5 min limit
+build-aux/xrun.sh build/release/lrgeditor --width 1920 --height 1080 ~/games/demo
+```
+
+**Screenshot size: 1920x1080.** Editor and example screenshots (visual checks, docs,
+reports) are taken at 1920x1080 inside the 1920x1200 screen: start the editor with
+`--width 1920 --height 1080`, open example windows at 1920x1080 (or use the example's
+`--screenshot FILE --frames N` option where it has one). Smaller windows squash the
+panels and make the shot useless for judging layout.
+
+An editor screenshot from a script, run as one command under `build-aux/xrun.sh`:
+
+```bash
+#!/bin/bash
+# shot.sh THEME OUT.png PROJECT (run: build-aux/xrun.sh -t 300 ./shot.sh catppuccin-latte out.png ~/games/demo)
+set -euo pipefail
+mkdir -p "${XDG_CONFIG_HOME}/libregnum"
+printf 'theme: %s\n' "${1}" > "${XDG_CONFIG_HOME}/libregnum/editor.yaml"   # dark/light theme
+build/release/lrgeditor --width 1920 --height 1080 "${3}" &
+for _ in $(seq 60); do build/release/lrgeditorctl get info >/dev/null 2>&1 && break; sleep 0.5; done
+build/release/lrgeditorctl create node Crate --primitive cube location=0,0.5,0  # set up the scene/tool state
+sleep 1                                                                         # let a few frames draw
+build/release/lrgeditorctl screenshot "${2}" --window    # whole window; without --window: viewport only
+build/release/lrgeditorctl quit --force                  # throwaway project only
+wait
+```
+
+- Shoot every new editor tool in a dark theme (`catppuccin-mocha`) and a light one
+  (`catppuccin-latte`), then **look at the images** and fix what is off (clipped labels,
+  overflowing rows, unreadable colours) before calling the work done.
+- Software GL (llvmpipe) under Xvfb: frame rates in shots are meaningless; colours,
+  layout and lighting are not. Keep FPS counters out of doc images where possible.
+- Doc images live next to their pages: `docs/examples/images/<example>.png`,
+  `docs/editor/images/<tool>.png`. Scratch shots go in your scratch directory, not the repo.
 
 Tests use GLib testing framework:
 

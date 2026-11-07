@@ -307,6 +307,20 @@ This builds and runs all unit tests using the GLib testing framework.
 
 Frame-time benchmarks live in =bench/= (=make -C bench run=); see [[file:performance.org][Performance]].
 
+*** GPU tests, editor runs and screenshots
+:PROPERTIES:
+:CUSTOM_ID: testing-xvfb
+:END:
+Suites that open a window (GPU tests, editor app tests, examples) need a display. Run them on a private Xvfb with =build-aux/xrun.sh=, never on your desktop session:
+
+#+begin_src sh
+build-aux/xrun.sh make test                                  # the whole suite with a display
+build-aux/xrun.sh -t 300 tests/build/release/tests/test-pbr  # one suite, killed after 5 minutes
+build-aux/xrun.sh build/release/lrgeditor --width 1920 --height 1080 ~/games/demo
+#+end_src
+
+The wrapper starts a 1920x1200 Xvfb with =-noreset= (otherwise a second window in the same process fails with "X11: Failed to open display"), forces X11 for GLFW, and gives the command a short =XDG_RUNTIME_DIR= and throwaway =XDG_CONFIG_HOME=, =XDG_DATA_HOME= and =XDG_CACHE_HOME=, so a run never changes your =~/.config/libregnum/editor.yaml= (=-k= keeps the real directories). Screenshots for docs and reviews are taken at 1920x1080 (=lrgeditor --width 1920 --height 1080=, =lrgeditorctl screenshot FILE --window=); AGENTS.md has a complete scripted recipe including dark/light themes. Fedora package: =xorg-x11-server-Xvfb= (plus =xdotool= for =make test-editor-x11=).
+
 ** Versioning
 :PROPERTIES:
 :CUSTOM_ID: versioning
