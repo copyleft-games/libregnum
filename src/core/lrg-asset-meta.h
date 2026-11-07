@@ -846,6 +846,209 @@ LRG_AVAILABLE_IN_ALL
 void lrg_asset_meta_set_model_import_animations (LrgAssetMeta *self,
                                                  gboolean      import);
 
+/**
+ * lrg_asset_meta_get_model_lod_levels:
+ * @self: an #LrgAssetMeta
+ *
+ * Returns: the "lod-levels" setting: how many levels of detail the model
+ *   gets, counting the original (1 .. 8, default 1 = no LOD chain)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_asset_meta_get_model_lod_levels (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_levels:
+ * @self: an #LrgAssetMeta
+ * @levels: level count including the original, clamped to 1 .. 8
+ *
+ * Sets the "lod-levels" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_levels (LrgAssetMeta *self,
+                                          guint         levels);
+
+/**
+ * lrg_asset_meta_get_model_lod_ratios:
+ * @self: an #LrgAssetMeta
+ *
+ * The triangle ratio of every generated level (level 1 first), e.g.
+ * "0.5, 0.25". Empty (the default) means 0.5 to the power of the level.
+ * A YAML sequence (`[0.5, 0.25]`) is read too.
+ *
+ * Returns: (transfer full): the "lod-ratios" setting as text
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_asset_meta_get_model_lod_ratios (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_ratios:
+ * @self: an #LrgAssetMeta
+ * @ratios: comma-separated ratios, see lrg_asset_meta_get_model_lod_ratios()
+ *
+ * Sets the "lod-ratios" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_ratios (LrgAssetMeta *self,
+                                          const gchar  *ratios);
+
+/**
+ * lrg_asset_meta_get_model_lod_screen_sizes:
+ * @self: an #LrgAssetMeta
+ *
+ * The screen size (fraction of the screen height covered by the model's
+ * bounding sphere) down to which each level stays, level 0 first, e.g.
+ * "0.5, 0.2, 0.05". Below the last entry the model is culled (0 = never).
+ * Empty (the default) picks 0.5, 0.25, ... with no culling.
+ *
+ * Returns: (transfer full): the "lod-screen-sizes" setting as text
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_asset_meta_get_model_lod_screen_sizes (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_screen_sizes:
+ * @self: an #LrgAssetMeta
+ * @sizes: comma-separated screen sizes, see
+ *   lrg_asset_meta_get_model_lod_screen_sizes()
+ *
+ * Sets the "lod-screen-sizes" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_screen_sizes (LrgAssetMeta *self,
+                                                const gchar  *sizes);
+
+/**
+ * lrg_asset_meta_get_model_lod_max_error:
+ * @self: an #LrgAssetMeta
+ *
+ * Returns: the "lod-max-error" setting: the largest simplification error
+ *   of a generated level, relative to the model size (0 .. 1, default
+ *   0.05)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_asset_meta_get_model_lod_max_error (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_max_error:
+ * @self: an #LrgAssetMeta
+ * @max_error: relative error, clamped to 0 .. 1
+ *
+ * Sets the "lod-max-error" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_max_error (LrgAssetMeta *self,
+                                             gdouble       max_error);
+
+/**
+ * lrg_asset_meta_get_model_lod_lock_border:
+ * @self: an #LrgAssetMeta
+ *
+ * Returns: the "lod-lock-border" setting: whether open mesh borders are
+ *   pinned while generating levels (default %TRUE)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_meta_get_model_lod_lock_border (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_lock_border:
+ * @self: an #LrgAssetMeta
+ * @lock: whether borders are pinned
+ *
+ * Sets the "lod-lock-border" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_lock_border (LrgAssetMeta *self,
+                                               gboolean      lock);
+
+/**
+ * lrg_asset_meta_get_model_lod_hysteresis:
+ * @self: an #LrgAssetMeta
+ *
+ * Returns: the "lod-hysteresis" setting: the relative band around each
+ *   screen-size threshold inside which the level does not change
+ *   (0 .. 0.9, default 0.1)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_asset_meta_get_model_lod_hysteresis (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_hysteresis:
+ * @self: an #LrgAssetMeta
+ * @hysteresis: relative band, clamped to 0 .. 0.9
+ *
+ * Sets the "lod-hysteresis" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_hysteresis (LrgAssetMeta *self,
+                                              gdouble       hysteresis);
+
+/**
+ * lrg_asset_meta_get_model_lod_fade_duration:
+ * @self: an #LrgAssetMeta
+ *
+ * Returns: the "lod-fade-duration" setting: seconds of dithered
+ *   cross-fade when the level changes (0 .. 10, default 0.25; 0 pops)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gdouble lrg_asset_meta_get_model_lod_fade_duration (LrgAssetMeta *self);
+
+/**
+ * lrg_asset_meta_set_model_lod_fade_duration:
+ * @self: an #LrgAssetMeta
+ * @seconds: cross-fade time, clamped to 0 .. 10
+ *
+ * Sets the "lod-fade-duration" setting.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_meta_set_model_lod_fade_duration (LrgAssetMeta *self,
+                                                 gdouble       seconds);
+
+/**
+ * lrg_asset_meta_parse_float_list:
+ * @text: numbers separated by commas, spaces or semicolons, optionally
+ *   in brackets ("0.5, 0.25", "[0.5 0.25]")
+ * @error: return location for a #GError
+ *
+ * Parses a list setting such as "lod-ratios". Malformed numbers fail with
+ * %G_IO_ERROR_INVALID_ARGUMENT; an empty string gives an empty array.
+ *
+ * Returns: (transfer full) (nullable) (element-type gfloat): the numbers,
+ *   or %NULL with @error set
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+GArray * lrg_asset_meta_parse_float_list (const gchar  *text,
+                                          GError      **error);
+
 /* --------------------------------------------------------------------------
  * Typed accessors: audio
  * -------------------------------------------------------------------------- */

@@ -228,7 +228,7 @@ Draws a built-in primitive (the #LrgPrimitiveType set the editor uses) or a mesh
 | =metallic=          | float 0..1           | 0        | PBR metalness                                                    |
 | =emission-r= .. =emission-b= | float 0..1  | 0        | emissive colour                                                  |
 | =emission-strength= | float                | 0        | emission multiplier                                              |
-| =material=          | GObject              | NULL     | material slot (#LrgMaterial3D now; =LrgMaterial= from 0.9 M2); replaces the scalar material |
+| =material=          | GObject              | NULL     | material slot: an =LrgMaterial= (or a legacy #LrgMaterial3D); replaces the scalar material |
 | =cast-shadows=      | boolean              | TRUE     | adds =LRG_RENDER_ITEM_FLAG_CAST_SHADOW=                          |
 | =receive-shadows=   | boolean              | TRUE     | adds =LRG_RENDER_ITEM_FLAG_RECEIVE_SHADOW=                       |
 | =transparent=       | boolean              | FALSE    | forces =LRG_RENDER_ITEM_FLAG_TRANSPARENT=                        |
@@ -249,6 +249,10 @@ One item per frame:
 | mesh asset or model  | MODEL     | =model= (resolved, or NULL for the renderer to resolve from =mesh-asset=), =mesh_index= |
 
 Both carry =material= (=lrg_mesh_renderer_component_get_effective_material()=: the slot, or an internal #LrgMaterial3D mirroring colour, roughness, metallic and emission), =color=, the flags of =lrg_mesh_renderer_component_get_flags()=, the layer, world bounds from the local bounds (unknown for an unresolved model) and a =sort_key= grouping equal shapes and models.
+
+With an =LrgMaterial= in the slot (see [[file:../graphics/material.org::#binding][Material binding]]) the item's =color= is the material's base colour and its flags follow the material: the resolved render queue adds =LRG_RENDER_ITEM_FLAG_TRANSPARENT= or =LRG_RENDER_ITEM_FLAG_CUTOUT= (the scalar alpha is no longer consulted; =transparent= still forces it), cull =none= adds =LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED=, the unlit model =LRG_RENDER_ITEM_FLAG_UNLIT=.
+
+*Submesh materials.* =lrg_mesh_renderer_component_set_submesh_material (self, index, material)= gives one mesh of a mesh asset its own =LrgMaterial= (%NULL falls back to the slot); =lrg_mesh_renderer_component_get_submesh_material()=, =lrg_mesh_renderer_component_get_n_submesh_materials()= (one past the highest set index) and =lrg_mesh_renderer_component_clear_submesh_materials()= complete the set. With any submesh material and a resolved model (and =mesh-index= -1) the component submits one MODEL item per mesh (=mesh_index= = i), each with its submesh material or the slot's. Primitives ignore them.
 
 *** API
 :PROPERTIES:
@@ -290,13 +294,14 @@ A light registered with the world as an #LrgLight3DDesc: at =world_entered=, aft
 | Property       | Type             | Default  | #LrgLight3DDesc field                        |
 |----------------+------------------+----------+----------------------------------------------|
 | =kind=         | #LrgLight3DKind  | POINT    | =kind=                                        |
-| =color-r= .. =color-b= | float 0..1 | 1      | =color= (linear RGB)                          |
-| =intensity=    | float            | 1        | =intensity=                                   |
+| =color-r= .. =color-b= | float 0..1 | 1      | =color= (display RGB: the light set linearizes colour x intensity) |
+| =intensity=    | float            | 1        | =intensity= (display-space multiplier; 2 is about 4.6 x the linear radiance, not a photometric unit) |
 | =range=        | float            | 10       | =range=                                       |
 | =inner-angle=  | float 0..89 deg  | 30       | =inner_angle= (half-angle, converted to radians) |
 | =outer-angle=  | float 0..89 deg  | 45       | =outer_angle= (half-angle, radians)           |
 | =cast-shadows= | boolean          | FALSE    | =cast_shadows=                                |
-| =layer-mask=   | uint             | all      | =layer_mask=                                  |
+| =layer-mask=   | uint             | all      | =layer_mask= (render layers the light reaches, see [[file:../graphics/light-set.org::#render-layers][light-set layers]]) |
+| =shadow-bias=  | float 0..100     | 0        | (read from =source= by =lrg_light_set_add_light_desc()=): shadow depth bias in world units, 0 = the shadow renderer's (0.9.0) |
 | (component enabled, entity active) | | | =enabled=                                   |
 
 *** API
@@ -312,7 +317,11 @@ A light registered with the world as an #LrgLight3DDesc: at =world_entered=, aft
 | =lrg_light_component_get_intensity()= / =lrg_light_component_set_intensity()= | multiplier (>= 0) |
 | =lrg_light_component_get_range()= / =lrg_light_component_set_range()= | reach of point and spot lights |
 | =lrg_light_component_set_spot_angles()= | inner and outer half-angles in degrees (outer clamped to >= inner) |
-| =lrg_light_component_get_cast_shadows()= / =lrg_light_component_set_cast_shadows()= | shadow maps |
+| =lrg_light_component_get_spot_angles()= | reads the inner (never above the outer) and outer half-angles (0.9.0) |
+| =lrg_light_component_get_cast_shadows()= / =lrg_light_component_set_cast_shadows()= | shadow maps (a cube for a point light, a spot map for a spot light, the cascades for a directional light) |
+| =lrg_light_component_get_shadow_bias()= / =lrg_light_component_set_shadow_bias()= | per-light shadow depth bias in world units (0.9.0) |
+| =lrg_light_component_get_layer_mask()= / =lrg_light_component_set_layer_mask()= | the render layers it lights (0.9.0) |
+| =lrg_light_component_add_to_light_set()= | adds the light to an #LrgLightSet now: kind, colour, intensity, range, cone, layers, shadow priority 1 when it casts, its bias (0.9.0) |
 | =lrg_light_component_fill_desc()= | builds the #LrgLight3DDesc the world gets |
 | =lrg_light_component_sync()= | re-registers now |
 
@@ -579,6 +588,7 @@ An animated glTF model. The component holds an #LrgModelAnimator (created from =
 | =color-r= .. =color-a= | float 0..1   | 1       | tint                                    |
 | =cast-shadows=, =receive-shadows= | boolean | TRUE | shadow flags                          |
 | =layer=           | int -1..31        | -1      | layer override                          |
+| =material=        | =LrgMaterial=     | NULL    | material of every mesh (unless a submesh material is set); NULL for the model's own |
 
 | Function | Description |
 |----------+-------------|
@@ -593,13 +603,129 @@ An animated glTF model. The component holds an #LrgModelAnimator (created from =
 | =lrg_skinned_model_component_is_finished()= | a non-looping clip ended |
 | =lrg_skinned_model_component_get_model()= | the drawn model |
 | =lrg_skinned_model_component_apply_pose()= | pose the shared model for this component |
+| =lrg_skinned_model_component_get_material()= / =lrg_skinned_model_component_set_material()= | the =material= property |
+| =lrg_skinned_model_component_set_submesh_material()= / =lrg_skinned_model_component_get_submesh_material()= / =lrg_skinned_model_component_get_n_submesh_materials()= | per-mesh materials: with any set, one posed item per mesh (=mesh_index= = i) |
+
+With a material the item carries it, its base colour times the component colour, and the transparent / cutout / double-sided / unlit flags it implies (see [[file:../graphics/material.org::#binding][Material binding]]).
+
+** LrgLodComponent
+:PROPERTIES:
+:CUSTOM_ID: lod
+:END:
+
+Draws an [[file:../graphics/lod-group.org][LrgLodGroup]] (a level-of-detail chain) at the entity (0.9.0). Every =collect_render= measures the entity's screen size from the render list's camera, picks the level (thresholds, hysteresis, biases, forced level) and submits the models of that level; during a cross-fade it also submits the level fading out. The group is set directly (=group=) or generated from a model asset and its =.meta= LOD keys (=mesh-asset= + =asset-manager=; components with the same model and sidecar settings share one generated group).
+
+*Screen size:* the group's bounding sphere (local bounds, centre and half diagonal) moved by the entity's world matrix, the radius scaled by the largest axis scale, measured with =lrg_lod_screen_size_from_view_projection()= on the list's view-projection, or, when the list has none (frustum culling off), by distance to the eye with the world's active camera fovy (45° without one). It is then multiplied by the component's =bias=.
+
+*Per view state:* selection is stateful (hysteresis, fade), so the component keeps one #LrgLodState per #LrgRenderList (=lrg_lod_component_get_state_for_list()=). The fade advances with the world time the component receives in =update=; before the world ever steps (an editor viewport in edit mode) it uses wall-clock time. Fade steps are clamped to 0.25 s per draw.
+
+*Render items:* one MODEL item per model of the level (=mesh_index= -1, the =material= override, =color=, the layer, world bounds from the group bounds, a =sort_key= by model). Only the incoming level gets =LRG_RENDER_ITEM_FLAG_CAST_SHADOW= (when =cast-shadows=), so a cross-fade does not double the shadow. The item's =lodFade= value is packed into =user_data= (float bits, no destroy notify); renderers read it with =lrg_lod_component_get_item_fade()= and bind it with =lrg_lod_bind_fade()= (see [[file:../graphics/lod-group.org::#renderer][Renderer integration]]).
+
+| Property            | Type              | Default | Meaning                                                    |
+|---------------------+-------------------+---------+------------------------------------------------------------|
+| =group=             | #LrgLodGroup      | NULL    | the chain (explicit, or generated from =mesh-asset=)        |
+| =mesh-asset=        | string            | NULL    | model path or =guid:= whose chain is generated              |
+| =asset-manager=     | #LrgAssetManager  | NULL    | loads =mesh-asset= and its sidecar                          |
+| =force-level=       | int -1..7         | -1      | per-instance forced level (the group may be shared)         |
+| =bias=              | float > 0         | 1       | per-instance screen-size multiplier                         |
+| =cast-shadows=      | boolean           | TRUE    | the current level casts shadows                             |
+| =receive-shadows=   | boolean           | TRUE    | =LRG_RENDER_ITEM_FLAG_RECEIVE_SHADOW=                       |
+| =layer=             | int -1..31        | -1      | layer override                                              |
+| =color-r= .. =color-a= | float 0..1     | 1       | tint multiplied into the models' material colours           |
+| =material=          | GObject           | NULL    | material override on every item (an =LrgMaterial= or #LrgMaterial3D) |
+| =current-level=     | int, read-only    | -1      | level chosen by the last draw (any view; not notified)      |
+| =screen-size=       | float, read-only  | 0       | biased screen size of the last draw (not notified)          |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_lod_component_new()= / =lrg_lod_component_new_with_group()= | an empty component / one drawing a group |
+| =lrg_lod_component_get_group()= / =lrg_lod_component_set_group()= | the chain (transfer none / referenced; setting resets every view) |
+| =lrg_lod_component_get_mesh_asset()= / =lrg_lod_component_set_mesh_asset()= | the generated chain's model |
+| =lrg_lod_component_get_asset_manager()= / =lrg_lod_component_set_asset_manager()= | the loader |
+| =lrg_lod_component_get_force_level()= / =lrg_lod_component_set_force_level()= | forced level, clamped to -1..7 |
+| =lrg_lod_component_get_bias()= / =lrg_lod_component_set_bias()= | per-instance bias |
+| =lrg_lod_component_get_cast_shadows()= / =lrg_lod_component_set_cast_shadows()= | shadow casting |
+| =lrg_lod_component_get_receive_shadows()= / =lrg_lod_component_set_receive_shadows()= | shadow receiving |
+| =lrg_lod_component_get_layer()= / =lrg_lod_component_set_layer()= | layer override, clamped to -1..31 |
+| =lrg_lod_component_get_color()= / =lrg_lod_component_set_color()= | tint (=out_rgba= is a float[4]) |
+| =lrg_lod_component_get_material()= / =lrg_lod_component_set_material()= | material override |
+| =lrg_lod_component_get_current_level()= / =lrg_lod_component_get_screen_size()= | last selection |
+| =lrg_lod_component_get_state_for_list()= | the #LrgLodState of a view (transfer none), or NULL |
+| =lrg_lod_component_reset_states()= | forget every view (after a camera cut); also done on =world_exited= |
+| =lrg_lod_component_get_item_fade()= | renderer helper: the item's =lodFade= (0 for other components) and level |
+
+#+begin_src C
+/* A rock with three generated levels, drawn by the world renderer. */
+g_autoptr(LrgEntity3D)     rock = lrg_entity3d_new_with_name ("rock");
+g_autoptr(LrgLodComponent) lod = lrg_lod_component_new ();
+
+lrg_lod_component_set_asset_manager (lod, assets);          /* after the window opens */
+lrg_lod_component_set_mesh_asset (lod, "models/rock.glb");  /* rock.glb.meta: lod-levels: 3 */
+lrg_entity3d_add_component (rock, LRG_COMPONENT (lod));
+lrg_world3d_add_entity (world, rock);
+#+end_src
+
+** LrgDecalComponent
+:PROPERTIES:
+:CUSTOM_ID: decal
+:END:
+
+A projected decal ([[file:../graphics/decal.org][LrgDecal]]) on the entity: the projector box is the entity's world matrix times =size= (local -Y is the projection direction, local X and Z the picture's width and height). Decals are not render items - the lit shader paints them onto whatever it draws inside the box - so =collect_render= submits nothing; =get_bounds= reports the box (for picking, the octree and =lrg_world3d_query_box()=).
+
+*World registration.* Every world carries one #LrgDecalSet, made on first use by =lrg_decal_component_get_world_set()= and owned by the world (object data). =world_entered= adds the component's decal to it, =world_exited= removes it, and =late_update= (=lrg_decal_component_sync()=) copies the transform. A renderer drives the set each frame:
+
+#+begin_src C
+LrgDecalSet *decals = lrg_decal_component_get_world_set (world);
+
+lrg_decal_component_sync_world (world, resolve_texture, renderer); /* transforms, visibility, textures */
+lrg_decal_set_select (decals, eye[0], eye[1], eye[2]);
+lrg_light_set_set_decals (lights, decals);                          /* bound by lrg_light_set_apply () */
+#+end_src
+
+=lrg_decal_component_sync_world()= visits every decal component, including disabled ones and those on inactive or hidden entities (which get no =late_update=), and turns their decals off; components without an asset manager resolve their texture paths through the given =LrgDecalTextureFunc= (=GrlTexture * (*) (const gchar *path, gpointer user_data)=, transfer none).
+
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =size-x=, =size-y=, =size-z= | float | 1 | box width (X), projection depth (Y), height (Z) in local units |
+| =albedo-path=, =normal-path=, =orm-path= | string | NULL | texture paths or =guid:= (loaded lazily) |
+| =asset-manager= | #LrgAssetManager | NULL | loads the paths; NULL = the resolver of =sync_world()= |
+| =color-r= .. =color-a=, =opacity=, =fade-angle=, =fade-width=, =depth-fade=, =sort-order=, =layer-mask=, =blend=, =channels=, =normal-strength=, =roughness=, =metallic= | as #LrgDecal | as #LrgDecal | mirrors of the decal's properties: setting one sets the decal's, and the decal's change notifications are re-emitted on the component |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_decal_component_new()= | a 1 x 1 x 1 decal |
+| =lrg_decal_component_get_decal()= | the #LrgDecal (transfer none); its transform is rewritten on each sync |
+| =lrg_decal_component_set_size()= / =lrg_decal_component_get_size()= | the box size (=out_size= is a float[3]) |
+| =lrg_decal_component_set_albedo_path()= / =lrg_decal_component_get_albedo_path()= | albedo path; a new path drops the old texture |
+| =lrg_decal_component_set_normal_path()= / =lrg_decal_component_get_normal_path()= | normal map path |
+| =lrg_decal_component_set_orm_path()= / =lrg_decal_component_get_orm_path()= | ORM map path |
+| =lrg_decal_component_set_asset_manager()= / =lrg_decal_component_get_asset_manager()= | the loading manager (failed paths retry after a change) |
+| =lrg_decal_component_sync()= | transform, visibility (enabled, active and visible in the hierarchy) and asset-manager textures now |
+| =lrg_decal_component_get_world_set()= | the world's decal set (transfer none) |
+| =lrg_decal_component_sync_world()= | sync every decal component of a world; returns how many |
+
+#+begin_src C
+/* Graffiti on the wall at z = -4 (the wall faces +Z) */
+g_autoptr(LrgEntity3D)       tag = lrg_entity3d_new_with_name ("graffiti");
+g_autoptr(LrgDecalComponent) decal = lrg_decal_component_new ();
+gfloat                       euler[3] = { G_PI / 2.0f, 0.0f, 0.0f };   /* local +Y -> +Z */
+
+lrg_decal_component_set_size (decal, 3.0f, 0.4f, 1.5f);
+lrg_decal_component_set_albedo_path (decal, "textures/graffiti.png");
+lrg_decal_component_set_asset_manager (decal, assets);
+g_object_set (decal, "sort-order", 5, "fade-angle", 70.0f, NULL);
+lrg_entity3d_set_position_xyz (tag, 0.0f, 2.0f, -3.9f);
+lrg_entity3d_set_rotation_euler (tag, euler);
+lrg_entity3d_add_component (tag, LRG_COMPONENT (decal));
+lrg_world3d_add_entity (world, tag);
+#+end_src
 
 ** Type functions
 :PROPERTIES:
 :CUSTOM_ID: type-functions
 :END:
 
-=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()= and =lrg_skinned_model_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=).
+=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()= and =lrg_decal_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=).
 
 ** Using it from the editor
 :PROPERTIES:
@@ -649,6 +775,8 @@ nodes:
 - Lights re-register every =late_update= (a hash lookup and a struct copy). Hundreds are fine; with thousands, prefer fewer, larger lights (the 0.9 light set holds a limited number of point lights anyway).
 - Trigger tests are O(candidates) per fixed step. Filter by tag or component on busy worlds; the unfiltered case uses the octree (=lrg_world3d_query_box()=), so keep entity bounds meaningful.
 - Tilemaps emit every non-empty cell each frame through the rlgl batch (4 vertices per tile per layer). Very large maps should be split across several entities so frustum culling drops off-screen chunks.
+- LOD components measure one sphere and run a few comparisons per view; generating a chain from =mesh-asset= simplifies the model once per level on the first draw (about 3 µs per source triangle per level, see [[file:../graphics/mesh-simplify.org::#performance][simplifier performance]]) and the result is shared by every component with the same model and sidecar.
+- Decal components cost nothing per camera (no render items); =sync_world()= is one matrix multiply per decal per frame, and the decal set's selection and upload are described in [[file:../graphics/decal.org::#performance][decal performance]].
 - Skinned models sharing one animator re-pose the shared model per component only when the pose key changes (=lrg_model_animator_apply()=).
 
 ** Pitfalls
@@ -663,6 +791,9 @@ nodes:
 - *Pitch is stored, not applied* by the 0.9 audio manager's voices; volume changes apply on the next play.
 - *Asset loads need a graphics context.* With an asset manager but no window, the first load fails and is not retried until the path or manager changes; set the manager after the window opens (or let the renderer resolve assets).
 - *Tilemap custom items transform themselves.* A renderer must not push the item's world matrix before calling the =draw_func=.
+- *LOD state is per render list.* A renderer that reuses one list for several cameras makes them share the hysteresis and fade state; give each view its own list (the editor's viewports do).
+- *Level instantiation does not create LOD components yet.* A MESH_ASSET visual still becomes a mesh renderer; add an #LrgLodComponent in code (or wait for the 0.9 wave 2b mapping).
+- *Decals need the renderer to drive the world's set.* Until a renderer calls =lrg_decal_component_sync_world()=, =lrg_decal_set_select()= and =lrg_light_set_set_decals()= (wave 2b does this in #LrgWorld3DRenderer), decal components register but nothing paints. A decal projects along the entity's local -Y, not -Z.
 - *Fixed billboards* are plane primitives: a renderer's plane must be the editor's unit XZ plane for the Rx(90°) turn to land in XY.
 
 ** See also

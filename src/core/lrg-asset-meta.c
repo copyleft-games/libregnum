@@ -146,6 +146,14 @@ static const SettingSpec setting_specs[] = {
 	{ "model", "up-axis", SPEC_CHOICE, "y", lrg_asset_up_axis_get_type, 0, 0 },
 	{ "model", "generate-normals", SPEC_BOOL, "false", NULL, 0, 0 },
 	{ "model", "import-animations", SPEC_BOOL, "true", NULL, 0, 0 },
+	/* LOD chain generated at load time (LrgLodGroup, 0.9.0) */
+	{ "model", "lod-levels", SPEC_INT, "1", NULL, 1, 8 },
+	{ "model", "lod-ratios", SPEC_STRING, "", NULL, 0, 0 },
+	{ "model", "lod-screen-sizes", SPEC_STRING, "", NULL, 0, 0 },
+	{ "model", "lod-max-error", SPEC_DOUBLE, "0.05", NULL, 0, 1 },
+	{ "model", "lod-lock-border", SPEC_BOOL, "true", NULL, 0, 0 },
+	{ "model", "lod-hysteresis", SPEC_DOUBLE, "0.1", NULL, 0, 0.9 },
+	{ "model", "lod-fade-duration", SPEC_DOUBLE, "0.25", NULL, 0, 10 },
 	{ "audio", "mode", SPEC_CHOICE, "sample", lrg_asset_audio_mode_get_type, 0, 0 },
 	{ "audio", "loop", SPEC_BOOL, "false", NULL, 0, 0 },
 	{ "audio", "volume", SPEC_DOUBLE, "1", NULL, 0, 4 },
@@ -254,6 +262,28 @@ node_text (YamlNode *node)
 	if (node == NULL || yaml_node_get_node_type (node) != YAML_NODE_SCALAR)
 		return NULL;
 	return yaml_node_get_scalar (node);
+}
+
+/* A YAML sequence of scalars as "a, b, c" (non-scalars are skipped), so
+ * list settings may be written either as a flow sequence or a string. */
+static gchar *
+sequence_text (YamlNode *node)
+{
+	g_autoptr(GString) out = g_string_new (NULL);
+	YamlSequence      *seq = yaml_node_get_sequence (node);
+	guint              i;
+
+	for (i = 0; seq != NULL && i < yaml_sequence_get_length (seq); i++)
+	{
+		const gchar *text = node_text (yaml_sequence_get_element (seq, i));
+
+		if (text == NULL)
+			continue;
+		if (out->len > 0)
+			g_string_append (out, ", ");
+		g_string_append (out, text);
+	}
+	return g_string_free (g_steal_pointer (&out), FALSE);
 }
 
 /* ==========================================================================
@@ -1111,6 +1141,13 @@ lrg_asset_meta_get_setting_variant (LrgAssetMeta *self,
 
 	spec = find_spec (lrg_asset_meta_get_importer (self), key);
 	node = stored (self, key);
+	if (spec != NULL && spec->kind == SPEC_STRING && node != NULL &&
+	    yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
+	{
+		g_autofree gchar *joined = sequence_text (node);
+
+		return g_variant_ref_sink (g_variant_new_string (joined));
+	}
 	if (spec != NULL)
 		return g_variant_ref_sink (variant_for_spec (spec, node_text (node)));
 	if (node == NULL)
@@ -1319,6 +1356,13 @@ set_known (LrgAssetMeta       *self,
 			g_autoptr(GArray) cps = lrg_asset_meta_parse_codepoints (g_variant_get_string (value, NULL), error);
 
 			if (cps == NULL)
+				return FALSE;
+		}
+		if (g_str_equal (spec->key, "lod-ratios") || g_str_equal (spec->key, "lod-screen-sizes"))
+		{
+			g_autoptr(GArray) list = lrg_asset_meta_parse_float_list (g_variant_get_string (value, NULL), error);
+
+			if (list == NULL)
 				return FALSE;
 		}
 		lrg_asset_meta_set_setting_string (self, spec->key, g_variant_get_string (value, NULL));
@@ -1700,6 +1744,163 @@ lrg_asset_meta_set_model_import_animations (LrgAssetMeta *self,
 {
 	g_return_if_fail (LRG_IS_ASSET_META (self));
 	lrg_asset_meta_set_setting_boolean (self, "import-animations", import);
+}
+
+/* The effective text of a list setting: a stored scalar, a stored
+ * sequence joined with ", ", else the default. */
+static gchar *
+list_setting_text (LrgAssetMeta *self,
+                   const gchar  *key)
+{
+	YamlNode *node = stored (self, key);
+
+	if (node != NULL && yaml_node_get_node_type (node) == YAML_NODE_SEQUENCE)
+		return sequence_text (node);
+	return g_strdup (effective_text (self, key) != NULL ? effective_text (self, key) : "");
+}
+
+guint
+lrg_asset_meta_get_model_lod_levels (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), 1);
+	return (guint) CLAMP (get_number_spec (self, "model", "lod-levels"), 1.0, 8.0);
+}
+
+void
+lrg_asset_meta_set_model_lod_levels (LrgAssetMeta *self,
+                                     guint         levels)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	lrg_asset_meta_set_setting_int (self, "lod-levels", (gint64) CLAMP (levels, 1u, 8u));
+}
+
+gchar *
+lrg_asset_meta_get_model_lod_ratios (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), NULL);
+	return list_setting_text (self, "lod-ratios");
+}
+
+void
+lrg_asset_meta_set_model_lod_ratios (LrgAssetMeta *self,
+                                     const gchar  *ratios)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	g_return_if_fail (ratios != NULL);
+	lrg_asset_meta_set_setting_string (self, "lod-ratios", ratios);
+}
+
+gchar *
+lrg_asset_meta_get_model_lod_screen_sizes (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), NULL);
+	return list_setting_text (self, "lod-screen-sizes");
+}
+
+void
+lrg_asset_meta_set_model_lod_screen_sizes (LrgAssetMeta *self,
+                                           const gchar  *sizes)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	g_return_if_fail (sizes != NULL);
+	lrg_asset_meta_set_setting_string (self, "lod-screen-sizes", sizes);
+}
+
+gdouble
+lrg_asset_meta_get_model_lod_max_error (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), 0.05);
+	return get_number_spec (self, "model", "lod-max-error");
+}
+
+void
+lrg_asset_meta_set_model_lod_max_error (LrgAssetMeta *self,
+                                        gdouble       max_error)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	lrg_asset_meta_set_setting_double (self, "lod-max-error", CLAMP (max_error, 0.0, 1.0));
+}
+
+gboolean
+lrg_asset_meta_get_model_lod_lock_border (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), TRUE);
+	return get_bool_spec (self, "model", "lod-lock-border");
+}
+
+void
+lrg_asset_meta_set_model_lod_lock_border (LrgAssetMeta *self,
+                                          gboolean      lock)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	lrg_asset_meta_set_setting_boolean (self, "lod-lock-border", lock);
+}
+
+gdouble
+lrg_asset_meta_get_model_lod_hysteresis (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), 0.1);
+	return get_number_spec (self, "model", "lod-hysteresis");
+}
+
+void
+lrg_asset_meta_set_model_lod_hysteresis (LrgAssetMeta *self,
+                                         gdouble       hysteresis)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	lrg_asset_meta_set_setting_double (self, "lod-hysteresis", CLAMP (hysteresis, 0.0, 0.9));
+}
+
+gdouble
+lrg_asset_meta_get_model_lod_fade_duration (LrgAssetMeta *self)
+{
+	g_return_val_if_fail (LRG_IS_ASSET_META (self), 0.25);
+	return get_number_spec (self, "model", "lod-fade-duration");
+}
+
+void
+lrg_asset_meta_set_model_lod_fade_duration (LrgAssetMeta *self,
+                                            gdouble       seconds)
+{
+	g_return_if_fail (LRG_IS_ASSET_META (self));
+	lrg_asset_meta_set_setting_double (self, "lod-fade-duration", CLAMP (seconds, 0.0, 10.0));
+}
+
+GArray *
+lrg_asset_meta_parse_float_list (const gchar  *text,
+                                 GError      **error)
+{
+	g_autoptr(GArray) out = NULL;
+	g_autofree gchar *copy = NULL;
+	g_auto(GStrv)     parts = NULL;
+	guint             i;
+
+	g_return_val_if_fail (text != NULL, NULL);
+	g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+	/* Accept "0.5, 0.25", "0.5 0.25", "[0.5, 0.25]" alike. */
+	copy = g_strdup (text);
+	g_strdelimit (copy, "[]", ' ');
+	g_strdelimit (copy, " \t;", ',');
+	out = g_array_new (FALSE, FALSE, sizeof (gfloat));
+	parts = g_strsplit (copy, ",", -1);
+	for (i = 0; parts[i] != NULL; i++)
+	{
+		gchar  *item = g_strstrip (parts[i]);
+		gdouble v;
+		gfloat  f;
+
+		if (*item == '\0')
+			continue;
+		if (!text_to_double (item, &v))
+		{
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Bad number '%s' in list", item);
+			return NULL;
+		}
+		f = (gfloat) v;
+		g_array_append_val (out, f);
+	}
+	return g_steal_pointer (&out);
 }
 
 LrgAssetAudioMode

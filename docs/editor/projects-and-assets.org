@@ -218,11 +218,20 @@ The known settings per importer, with their defaults and the typed accessors:
 | =model= | =up-axis= | =y= / =z= | =y= | =lrg_asset_meta_get/set_model_up_axis()= (=LrgAssetUpAxis=) |
 | =model= | =generate-normals= | boolean | =false= | =lrg_asset_meta_get/set_model_generate_normals()= |
 | =model= | =import-animations= | boolean | =true= | =lrg_asset_meta_get/set_model_import_animations()= |
+| =model= | =lod-levels= | integer 1..8 (levels including the original) | =1= (no LOD) | =lrg_asset_meta_get/set_model_lod_levels()= |
+| =model= | =lod-ratios= | list of triangle ratios for levels 1, 2, ... (="0.5, 0.25"= or =[0.5, 0.25]=) | empty (0.5^level) | =lrg_asset_meta_get/set_model_lod_ratios()=, =lrg_asset_meta_parse_float_list()= |
+| =model= | =lod-screen-sizes= | list of screen-size thresholds for levels 0, 1, ...; below the last the model is culled (0 = never) | empty (0.5, 0.25, ..., last 0) | =lrg_asset_meta_get/set_model_lod_screen_sizes()= |
+| =model= | =lod-max-error= | number 0..1 (relative to the model size) | =0.05= | =lrg_asset_meta_get/set_model_lod_max_error()= |
+| =model= | =lod-lock-border= | boolean | =true= | =lrg_asset_meta_get/set_model_lod_lock_border()= |
+| =model= | =lod-hysteresis= | number 0..0.9 | =0.1= | =lrg_asset_meta_get/set_model_lod_hysteresis()= |
+| =model= | =lod-fade-duration= | seconds 0..10 (0 = pop) | =0.25= | =lrg_asset_meta_get/set_model_lod_fade_duration()= |
 | =audio= | =mode= | =stream= / =sample= | =sample= | =lrg_asset_meta_get/set_audio_mode()= (=LrgAssetAudioMode=) |
 | =audio= | =loop= | boolean | =false= | =lrg_asset_meta_get/set_audio_loop()= |
 | =audio= | =volume= | number 0..4 | =1= | =lrg_asset_meta_get/set_audio_volume()= |
 | =font= | =size= | integer 1..1024 (pixels) | =32= | =lrg_asset_meta_get/set_font_size()= |
 | =font= | =codepoints= | comma-separated code points and inclusive ranges, decimal, =0x= or =U+= hex | =32-126= | =lrg_asset_meta_get/set_font_codepoints()=, =lrg_asset_meta_parse_codepoints()= |
+
+The =lod-*= keys (0.9.0) describe a level-of-detail chain generated from the model by [[file:../modules/graphics/mesh-simplify.org][LrgMeshSimplify]]; they are read by =lrg_lod_group_new_from_model_with_meta()= and by an =LrgLodComponent= with a =mesh-asset=, not by =lrg_asset_manager_load_model()= (which still returns the full model). The list keys accept a string or a YAML flow sequence; the validating setter (=lrg_asset_meta_set_setting_variant()=) rejects lists that do not parse. The full format, with an annotated example, is in [[file:../modules/graphics/lod-group.org::#meta-keys][LOD import keys]]. Typed accessors: =lrg_asset_meta_get_model_lod_levels()= / =lrg_asset_meta_set_model_lod_levels()=, =lrg_asset_meta_get_model_lod_ratios()= / =lrg_asset_meta_set_model_lod_ratios()=, =lrg_asset_meta_get_model_lod_screen_sizes()= / =lrg_asset_meta_set_model_lod_screen_sizes()=, =lrg_asset_meta_get_model_lod_max_error()= / =lrg_asset_meta_set_model_lod_max_error()=, =lrg_asset_meta_get_model_lod_lock_border()= / =lrg_asset_meta_set_model_lod_lock_border()=, =lrg_asset_meta_get_model_lod_hysteresis()= / =lrg_asset_meta_set_model_lod_hysteresis()=, =lrg_asset_meta_get_model_lod_fade_duration()= / =lrg_asset_meta_set_model_lod_fade_duration()=.
 
 In 0.8.1 import settings were applied in editor previews only (for example a texture thumbnail honours =max-size=). Since 0.9.0 the runtime applies them too: =LrgAssetManager= reads the sidecar when it loads an asset and applies the texture filter, wrap, mipmaps and size limit, the model scale, up axis and normals, the audio mode, volume and looping, and the font size and code points (=apply-import-settings=, default on). The details, including what =srgb= and sample =loop= mean at runtime, are in [[file:../modules/core/asset-manager.org::#import-settings][Runtime import settings]].
 

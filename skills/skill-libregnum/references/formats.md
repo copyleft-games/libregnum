@@ -29,3 +29,8 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 - Load `lrg_post_stack_new_from_file` / `_from_data (text, len, base_dir, &err)`; save `lrg_post_stack_save_to_file` / `_to_data` (byte-stable; unknown top-level and per-effect keys kept). Strict: unknown effect type / param, bad value, version > 1 are errors (LRG_POST_STACK_ERROR_*). Not an LrgDataLoader document (own reader: per-effect param validation).
 - `lrg_post_stack_build (stack, processor, &err)` reuses same-type effects in order, resets unset params to defaults (except screen-shake trauma), removes unlisted effects: cheap per frame. `lrg_post_stack_blend (a, b, t)` for post volumes. Custom effects: `lrg_post_stack_register_effect_type ("my-sepia", TYPE)`.
 - Order: bloom (wants HDR) -> tonemap -> grade/colorblind/sharpen/fxaa/palettize/film-grain/vignette. Docs: docs/modules/postprocess/post-stack.org.
+
+## Model `.meta` LOD keys (0.9.0)
+- Under `settings:` of `importer: model`: `lod-levels` (1..8, 1 = none), `lod-ratios` (list for levels 1.., default 0.5^i), `lod-screen-sizes` (list for levels 0.., default 0.5^(i+1) with last 0; a positive last value culls), `lod-max-error` (0.05), `lod-lock-border` (true), `lod-hysteresis` (0.1), `lod-fade-duration` (0.25 s).
+- Lists may be `"0.5, 0.25"` or `[0.5, 0.25]`; `asset.meta.set` / `lrgeditorctl meta set` validate them.
+- `lrg_asset_manager_load_model` ignores these keys; `LrgLodComponent` and `lrg_lod_group_new_from_model_with_meta` read them.

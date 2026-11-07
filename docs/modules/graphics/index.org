@@ -29,6 +29,7 @@ The Graphics module provides:
 - *[[file:camera-zoom.org][LrgCameraZoom]]* - Spring-arm zoom from the farthest third-person distance into first person
 - *[[file:renderer.org][LrgRenderer]]* - Render management and layer system
 - *[[file:render-layers.org][Render layers]]* - Camera cull masks and per-drawable visibility layers
+- *[[file:material.org][LrgMaterial]]* - Material assets (=.rmat=): shading model, PBR parameters, texture slots, render state, instances, the lit shader uniform contract
 - *[[file:static-batch.org][LrgStaticBatch]]* - Static geometry and copied auxiliary UV streams; [[file:aux-uv-contract.org][integration contract and verification]]
 - *[[file:image-canvas.org][LrgImageCanvas]]* - CPU dynamic-texture canvas (draw/composite/blur/transform)
 - *[[file:vector-image.org][LrgVectorImage]]* - Load and rasterise SVG vector assets at any size
@@ -738,6 +739,11 @@ Helpers for games that render many glTF characters and props with raylib:
 - *[[file:sky-dome.org][LrgSkyDome]]* - camera-centred sky: zenith/horizon/ground gradient, textured horizon band (one panorama or two halves), sun disc and halo, time-of-day keyframes and sun arc; headless geometry
 - *[[file:world-look.org][World look]]* - =LrgTerrainDetail= landform noise, =LrgWaterSurface= Gerstner water with screen-space reflection, refraction and foam, =LrgGrassField= instanced grass, =LrgTreeMesh= procedural low-poly trees, =LrgHorizonRing= distant-terrain ring; headless geometry and math
 - *[[file:light-set.org][LrgLightSet]]* - forward lighting for LrgStaticBatch/LrgTerrain: ambient, one directional and up to 16 nearest point lights per frame (headless selection), GLSL 330 shader with optional alpha cutout and floating origin; CPU sampling of the same model and a process-wide bound set for billboards
+- *[[file:depth-prepass.org][LrgDepthPrepass]]* - offscreen depth + view-space normal target recorded from the main camera (records its projection/view; =draw_model()= with the prepass shader) for screen-space passes
+- *[[file:ssao.org][LrgSsao]]* - screen-space ambient occlusion from the prepass (seeded hemisphere kernel, 4 x 4 noise, depth-aware blur, half resolution); the lit shader reads it through =lrg_ssao()=
+- *[[file:decal.org][LrgDecal / LrgDecalSet]]* - clustered forward decals: box projectors painting albedo, normal, roughness and metallic inside the lit shader (sort order, angle/depth fades, receiver layers, texture atlas)
+- *[[file:mesh-simplify.org][LrgMeshSimplify]]* - our own C quadric-error edge-collapse simplifier (seams slide as wedge pairs, locked borders, ratio or error targets), headless
+- *[[file:lod-group.org][LrgLodGroup]]* - level-of-detail chains with screen-size thresholds, hysteresis, bias, forced levels and a dithered cross-fade (=lodFade=)
 - *[[file:model-animator.org][LrgModelAnimator]]* - One shared skinned model for many actors: clip lookup (exact, alias, suffix), per-actor LrgModelAnimState with loop/clamp and crossfades, deduplicated posing and masked drawing
 - *[[file:../core/asset-manager.org::#models-and-animations][Model cache]]* - =lrg_asset_manager_load_model()= / =lrg_asset_manager_load_model_animations()=
 
