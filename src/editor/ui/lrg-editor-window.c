@@ -54,7 +54,7 @@ static const gchar * const menu_titles[] = {
 static const gchar * const panel_entries[][2] = {
 	{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
 	{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
-	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "environment", "Environment" }, { "bake", "Lighting" }, { "physics", "Physics" }, { "timeline", "Timeline" }, { "sequencer", "Sequencer" },
+	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "environment", "Environment" }, { "bake", "Lighting" }, { "physics", "Physics" }, { "terrain", "Terrain" }, { "navigation", "Navigation" }, { "ai", "AI" }, { "mixer", "Mixer" }, { "timeline", "Timeline" }, { "sequencer", "Sequencer" },
 	{ "profiler", "Profiler" }, { "code", "Code" }, { "sources", "Sources" }
 };
 
@@ -409,7 +409,8 @@ build_menu_model (LrgEditorWindow *self)
 		"tool.select", "tool.move", "tool.rotate", "tool.scale", "-", "tool.toggle-space",
 		"tool.toggle-snap", "-", "tools.validate", "tools.palette", "tools.quick-open",
 		"tools.open-level-yaml", "tools.reveal-socket", "-", "tilemap.paint-mode", "tilemap.show-panel",
-		"timeline.key", "timeline.play", "timeline.show-panel", "tools.rebuild-thumbnails", NULL
+		"timeline.key", "timeline.play", "timeline.show-panel", "tools.rebuild-thumbnails", "-",
+		"mixer.new", "mixer.open", "mixer.show", NULL
 	};
 	static const gchar *help_items[] = { "help.shortcuts", "help.docs", "help.about", NULL };
 	LrgEditorActions *actions = self->app->actions;
@@ -484,6 +485,16 @@ build_menu_model (LrgEditorWindow *self)
 
 	append_items (menus[5], actions, play_items);
 	append_items (menus[6], actions, tool_items);
+	{
+		/* Navigation: its actions are registered by the panel, after the
+		 * menus are built, so the rows are added unconditionally */
+		g_autoptr(GMenu) section = g_menu_new ();
+
+		g_menu_append (section, "Navigation Panel", "editor.nav.show");
+		g_menu_append (section, "Bake Navigation", "editor.nav.bake");
+		g_menu_append (section, "Save Navigation", "editor.nav.save");
+		g_menu_append_section (menus[6], NULL, G_MENU_MODEL (section));
+	}
 	append_items (menus[7], actions, help_items);
 
 	for (i = 0; i < G_N_ELEMENTS (menu_titles); i++)

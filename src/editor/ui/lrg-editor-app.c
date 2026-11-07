@@ -28,6 +28,10 @@
 #include "lrg-editor-environment-panel.h"
 #include "lrg-editor-bake-panel.h"
 #include "lrg-editor-physics-panel.h"
+#include "lrg-editor-mixer-panel.h"
+#include "lrg-editor-terrain-panel.h"
+#include "lrg-editor-nav-panel.h"
+#include "lrg-editor-ai-debug-panel.h"
 #include "lrg-editor-sequencer-panel.h"
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-profiler-panel.h"
@@ -213,9 +217,13 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "profiler", "Profiler", "chart", LRG_WIDGET (lrg_editor_profiler_panel_new (self)), TRUE);
 	make_panel (self, "code", "Code", "code", LRG_WIDGET (lrg_editor_code_panel_new (self)), TRUE);
 	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_MIXER_PANEL_ID, "Mixer", "chart", LRG_WIDGET (lrg_editor_mixer_panel_new (self)), TRUE);
 	make_panel (self, "environment", "Environment", "star", LRG_WIDGET (lrg_editor_environment_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_TERRAIN_PANEL_ID, "Terrain", "edit", LRG_WIDGET (lrg_editor_terrain_panel_new (self)), TRUE);
 	make_panel (self, LRG_EDITOR_BAKE_PANEL_ID, "Lighting", "refresh", LRG_WIDGET (lrg_editor_bake_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_NAV_PANEL_ID, "Navigation", "arrow-right", LRG_WIDGET (lrg_editor_nav_panel_new (self)), TRUE);
 	make_panel (self, LRG_EDITOR_PHYSICS_PANEL_ID, "Physics", "download", LRG_WIDGET (lrg_editor_physics_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_AI_DEBUG_PANEL_ID, "AI", "user", LRG_WIDGET (lrg_editor_ai_debug_panel_new (self)), TRUE);
 	make_panel (self, "sources", "Sources", "folder", LRG_WIDGET (lrg_editor_sources_panel_new (self)), TRUE);
 }
 
@@ -241,12 +249,16 @@ dock_default (LrgEditorApp *self,
 		{ "history", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "timeline", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "sequencer", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "mixer", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "profiler", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "code", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "terrain", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "environment", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "navigation", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "bake", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "physics", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "ai", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "sources", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 	};
 	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
@@ -280,7 +292,7 @@ editor_app_reset_layout (LrgEditorApp *self)
 {
 	static const gchar *order[] = {
 		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
-		"timeline", "sequencer", "profiler", "code", "tiles", "environment", "bake", "physics", "sources", NULL
+		"timeline", "sequencer", "profiler", "code", "tiles", "mixer", "environment", "terrain", "navigation", "bake", "physics", "ai", "sources", NULL
 	};
 	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
 	GList         *docked = lrg_dock_area_get_panels (dock);
@@ -1391,6 +1403,9 @@ editor_create_items (guint *n_items)
 		{ "decal", "Decal", "Decal", LRG_NODE_VISUAL_DECAL, 0 },
 		{ "reflection-probe", "Reflection Probe", "Reflection Probe", LRG_NODE_VISUAL_REFLECTION_PROBE, 0 },
 		{ "probe-volume", "Probe Volume", "Probe Volume", LRG_NODE_VISUAL_PROBE_VOLUME, 0 },
+		{ "-", NULL, NULL, 0, 0 },
+		{ "terrain", "Terrain", "Terrain", LRG_NODE_VISUAL_TERRAIN, 0 },
+		{ "water", "Water", "Water", LRG_NODE_VISUAL_WATER, 0 },
 	};
 
 	*n_items = G_N_ELEMENTS (items);
@@ -1464,6 +1479,17 @@ editor_app_create_node_kind (LrgEditorApp *self,
 
 		node = editor_app_create_node (self, items[i].name, items[i].kind, items[i].primitive, parent);
 		visual = (node != NULL) ? lrg_node_get_visual (node) : NULL;
+
+		/* Terrain and water nodes get a fresh .rterrain / .rwater under
+		 * the project's terrain/ folder (lrg-editor-terrain-panel.c) */
+		if (node != NULL && (items[i].kind == LRG_NODE_VISUAL_TERRAIN || items[i].kind == LRG_NODE_VISUAL_WATER))
+		{
+			g_autoptr(GError) error = NULL;
+
+			if (!lrg_editor_terrain_init_node (self, node, &error))
+				editor_app_notify (self, EDITOR_NOTIFY_ERROR, "%s: %s", items[i].label, error->message);
+			return node;
+		}
 
 		/* Light presets: a spot light and a sun are light nodes with a
 		 * light_type, tilted -90 degrees about X so their -Z axis points

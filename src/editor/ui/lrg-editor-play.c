@@ -143,6 +143,16 @@ editor_play_start (LrgEditorApp *self)
 		return;
 	/* A timeline preview must not leak into the play snapshot */
 	editor_timeline_end_preview (self);
+	/* the default engine's registry builds the level's registry components
+	 * (ai, light, audio-source, ...); lrgeditor never started the engine,
+	 * so without this every one of them was skipped (startup is
+	 * headless-safe and refcounted) */
+	if (lrg_engine_get_registry (lrg_engine_get_default ()) == NULL &&
+	    !lrg_engine_startup (lrg_engine_get_default (), &error))
+	{
+		editor_app_notify (self, EDITOR_NOTIFY_ERROR, "Cannot play: %s", error->message);
+		return;
+	}
 	lrg_editor_play_session_set_engine (self->play, lrg_engine_get_default ());
 	/* the open project's physics settings and layers (NULL: none open) */
 	lrg_editor_play_session_set_project (self->play, self->project);

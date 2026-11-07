@@ -753,6 +753,7 @@ At construction the panel gives the shell's =view.asset-grid= (toggle, checked w
 | =asset.duplicate= | =path= | Copies a file as "name copy.ext" with a fresh GUID: the copy's =path relative is_dir guid= |
 | =asset.trash= | =path= | Moves the file and its sidecar (or a folder) to the desktop trash, without a confirmation: =path trashed= |
 | =asset.orphans= | =trash= (optional boolean) | Rescans and lists the sidecars whose asset is gone (=orphans=, project-relative); with =trash: true= moves them to the trash (=trashed= count) |
+| =asset.new= | =kind=, =path?=, =name?=, =image?= | Writes a new asset file (0.9.0): =kind= a document format nick or =terrain=; =path= project relative or absolute, else a free =<name or default stem>.<ext>= in the shown folder; =sprite= with =image= auto-slices it. Returns =path=, =relative=, =is_dir=, =guid= and =kind=; a taken path or unknown kind is =invalid-params= |
 
 Errors: a missing parameter is =invalid-params=, a path outside the project or that does not exist =not-found=, a name that exists or is invalid =invalid-params=, any other failure =failed=. Each method rescans, re-lists the panel and queues a git refresh.
 
@@ -772,6 +773,25 @@ Materials, shaders and shader graphs are recognised by extension (the asset data
 The background menu has a third section: *New Material* (=new_material.rmat=, a grey lit material), *New Shader* (=new_shader.rshader= plus =new_shader.frag=, a lit starter with three described uniforms) and *New Shader Graph* (=new_shader_graph.rshadergraph=, the PBR starter graph); each is created in the shown folder with a free name and renamed inline. Actions: =assets.new-material=, =assets.new-shader=, =assets.new-shader-graph=.
 
 The entry menu has *Create Variant* for prefabs and materials (=assets.create-variant=, =lrg_editor_assets_panel_create_variant()=): a prefab variant through =lrg_editor_create_prefab_variant()= (undoable: undo removes the file), a material instance through =lrg_editor_material_editor_create_variant()=, both as =<stem>_variant= next to the source, then renamed inline.
+
+*Gameplay and effect assets (0.9.0).* The navigation, AI, effects, terrain, audio and 2D formats are recognised by extension too:
+
+| Files | Glyph | Type column | Double click |
+|-------+-------+-------------+--------------|
+| =.rbt= | BT | Behaviour tree | the behaviour tree editor |
+| =.rfsm= | SM | State machine | the state machine editor |
+| =.rparticles= | Fx | Particle effect | the particle editor |
+| =.rweather= | Wx | Weather | the weather editor |
+| =.rmixer= | Mx | Mixer | the mixer editor |
+| =.rtileset= | TS | Tileset | the tileset editor |
+| =.rsprite= | Sp | Sprite sheet | the sprite editor |
+| =.rwater= | Wa | Water body | the water editor |
+| =.rnav= | Nv | Navigation settings | the Navigation panel (action =nav.open-settings=; the path rides on the app as ="lrg-editor-nav-settings-path"= data) |
+| =.rterrain= | Tr | Terrain | the external editor (terrains are edited on their level node) |
+
+The background menu's fourth section creates them in the shown folder with a free name, then renames inline: *New Behaviour Tree* (=new_behaviour_tree.rbt=, an empty =sequence= root), *New State Machine* (=new_state_machine.rfsm=, one =idle= state), *New Particle Effect* (=new_particle_effect.rparticles=), *New Weather*, *New Mixer* (a master bus), *New Tileset* (one 16x16 tile, no image yet), *New Sprite Sheet*, *New Water Body* (a plane), *New Terrain* (=new_terrain.rterrain=: a flat 4x4-chunk terrain, 64 cells and 32 units per chunk, with its sidecars) and *New Navigation Settings* (=new_navigation.rnav=, the =LrgNavBake= defaults). Actions: =assets.new-bt=, =assets.new-fsm=, =assets.new-particles=, =assets.new-weather=, =assets.new-mixer=, =assets.new-tileset=, =assets.new-sprite=, =assets.new-water=, =assets.new-terrain=, =assets.new-nav-settings=. Every document format's file is the engine's own default object written by the engine writer (see [[file:data-editors.org::#data-editors-engine-backed][Engine-backed formats]]).
+
+An image's entry menu has *Slice Sprite Sheet* (=assets.slice-sprite-sheet=): it writes =<image stem>.rsprite= next to the image (numbered when taken) with the image referenced relative to it and one frame per opaque island of the image (alpha above 8, islands at least 2 px, bottom-centre pivots; =lrg_sprite_sheet_slice_alpha()=), reports the frame count and opens the sprite editor. Over IPC and from scripts the same files come from =asset.new= (=lrgeditorctl asset new KIND [path=P] [name=N] [image=I]=) and ~lrg_editor_assets_panel_create_asset (path, kind, image, error)~.
 
 The Import Settings dialog of a model shows the LOD keys of 0.9.0 with labels and ranges: LOD levels (1..8), LOD ratios, LOD screen sizes, LOD max error (0..1), LOD lock border, LOD hysteresis (0..0.9), LOD fade (s) (0..10).
 
@@ -797,6 +817,7 @@ The panel's constructor also registers the =material.*= and =shadergraph.*= IPC 
 | ~lrg_editor_assets_panel_begin_rename (self, path)~, ~get_renaming (self)~ | Inline rename (F2) |
 | ~lrg_editor_assets_panel_show_import_settings (self, path)~ | The Import Settings dialog |
 | ~lrg_editor_assets_panel_create_variant (self, path, error)~ | Create Variant of a prefab or material (0.9.0) |
+| ~lrg_editor_assets_panel_create_asset (path, kind, image, error)~ | A new asset file: a document format nick (=bt=, =fsm=, =particles=, =weather=, =mixer=, =tileset=, =sprite=, =water=, =nav-settings=, =material=, ...) or =terrain=; =sprite= with an image slices it (0.9.0) |
 
 *** Implementation notes
 :PROPERTIES:
@@ -1706,6 +1727,44 @@ Since 0.9.0 M5. The physics tools are described in [[file:physics.org][Physics i
 - *Hierarchy.* A body-kind badge on rows with a body; =hierarchy.state= rows carry ="physics"=.
 - *IPC.* =physics.*= ([[file:ipc-protocol.org::#ipc-physics][IPC: physics methods]]), registered when the panel is created; =physics.overlay= by the viewport panel.
 
+** Mixer panel and audio tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-mixer
+:END:
+Since 0.9.0 M7. The audio tools are described in [[file:audio.org][Audio in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorMixerPanel= (=lrg_editor_mixer_panel_new()=, dock id "mixer", =LRG_EDITOR_MIXER_PANEL_ID=; View > Panels > Mixer, action =mixer.show=). Widgets: =mixer-panel=; header =mixer-panel-top= / =mixer-panel-header= (=mixer-panel-path=, =mixer-panel-source=, =mixer-panel-preview=, =mixer-panel-open=, =mixer-panel-save=, =mixer-panel-new=); =mixer-panel-scroll= holding the compact strips =mixer-strips-compact=; empty state =mixer-panel-empty= (=mixer-panel-hint=, =mixer-panel-empty-new=). Strip parts are painted, not widgets: =lrg_editor_mixer_strips_get_part_rect()= reports them after a paint.
+- *Mixer editor tab.* =LrgEditorMixerEditor= for =.rmixer= documents. Widgets: =mixer-split= (=mixer-strips-scroll= / =mixer-strips=, =mixer-details=); =mixer-bus-column= (=mixer-bus-heading=, =mixer-bus-grid=, =mixer-add-effect=, =mixer-add-send=, =mixer-bus-name=, =mixer-add-bus=, =mixer-effect-up=, =mixer-effect-down=, =mixer-remove=); =mixer-snapshot-column= (painted list =mixer-snapshots=: 22 px rows from y + 1, a preview and a trash button of 22 px at the right; =mixer-snapshot-name=, =mixer-add-snapshot=, =mixer-capture=, =mixer-snapshot-grid=); =mixer-duck-column= (painted list =mixer-ducks=, =mixer-duck-trigger=, =mixer-duck-target=, =mixer-add-duck=, =mixer-duck-grid=, =mixer-status=); toolbar tools =mixer-preview=, =mixer-base=. Every edit is one document command.
+- *Actions.* =mixer.show=, =mixer.new= (Tools > New Mixer), =mixer.open= (Tools > Open Project Mixer).
+- *Viewport.* The volume gizmo of a selected audio emitter (min / max distance spheres, half-volume ring, sound cones; handles =LRG_EDITOR_VOLUME_HANDLE_MIN_DISTANCE=, =..._MAX_DISTANCE=, =..._AUDIO_CONE=, =..._AUDIO_INNER_CONE=).
+- *Inspector.* =inspector-section-audio= (=inspector-audio-grid=, =inspector-audio-plot=, =inspector-audio-hint=, =inspector-audio-curve=) for one inspected audio emitter.
+- *IPC.* =mixer.*= (registered by =lrg_editor_mixer_editor_install()=: the panel, the Assets panel and every mixer editor call it) and =audio.*= (registered by the inspector), see [[file:audio.org::#editor-audio-ipc][Audio: IPC methods]].
+
+** Terrain panel and terrain / water tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-terrain
+:END:
+Since 0.9.0 (M6/M7 editor wave). The tools are described in [[file:terrain.org][Terrain and Water in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorTerrainPanel= (=lrg_editor_terrain_panel_new()=, dock id "terrain", a tab of the Inspector's stack; action =terrain.show=). Widgets: =terrain-panel=; header =terrain-top= / =terrain-header= (=terrain-title=, =terrain-node=, =terrain-rebake=, =terrain-save=); content =terrain-scroll= / =terrain-content=: =terrain-tools-heading=, the painted tool strip =terrain-tools= (eleven 58 x 50 px cells, as many per row as fit, in =LrgEditorTerrainTool= order), =terrain-brush-heading=, =terrain-brush-grid=, =terrain-layers-heading= (=terrain-add-layer=), the painted list =terrain-layer-list= (24 px rows from y + 1, a 22 px remove button right aligned), =terrain-layer-grid=, =terrain-foliage-heading= (=terrain-foliage-kind=, =terrain-add-foliage=), =terrain-foliage-list=, =terrain-foliage-grid=, =terrain-grid-heading=, =terrain-info=; empty state =terrain-empty= (=terrain-hint=, =terrain-hint-missing=). Every edit is one level command.
+- *Viewport.* With a brush tool and a terrain node selected: the cursor ring, strokes on a left drag (one undo step each; Ctrl inverts, Shift smooths, =[= / =]= radius, Escape cancels), the transform gizmo hidden; for a selected water lake or river its outline handles (drag, Ctrl+click adds, Shift+click removes). =lrg_editor_viewport_panel_get_terrain_painted()= counts what the last overlay pass drew.
+- *Scene renderer.* =terrain= and =water= nodes draw through their stand-in components while authoring (=lrg_editor_terrain_node_component()=); a file that does not load is a magenta frame and a missing asset.
+- *Data editor.* =.rwater= files open in =LrgEditorWaterEditor= (=water-grid=, =water-waves-heading=, =water-add-wave=, =water-wave-list=, =water-wave-grid=, =water-points-heading=, =water-add-point=, =water-point-list=, =water-point-grid=, =water-preview=, =water-caption=).
+- *Create menu.* Terrain and Water (actions =terrain.create=, =terrain.create-water=; =lrg_editor_terrain_init_node()= writes the asset).
+- *IPC.* =terrain.*= (registered when the panel is created) and =water.*= ([[file:terrain.org::#editor-terrain-ipc][Terrain and water IPC]]).
+
+** AI panel and AI editors
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-ai
+:END:
+Since 0.9.0 (M6/M7 editor wave). The tools are described in [[file:ai.org][AI in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Panel.* =LrgEditorAiDebugPanel= (=lrg_editor_ai_debug_panel_new()=, dock id "ai", =LRG_EDITOR_AI_DEBUG_PANEL_ID=, a tab of the Inspector's stack; View > Panels > AI, action =ai.show=). Widgets: =ai-panel=; header =ai-top= (=ai-status=); =ai-scroll= / =ai-body=: =ai-agents= (one chip =ai-agent-N= per live agent, or the hint =ai-hint=), =ai-agent= (playing with a focus only: =ai-agent-lines= with =ai-agent-line-N=, =ai-open-tree=, =ai-open-machine=, =ai-event=, =ai-event-send=, =ai-blackboard= with one row =ai-bb-KEY= and its value =ai-bb-KEY-value= per key), =ai-brains= (=ai-brain-N= totals, chips =ai-topic-TOPIC=, hint =ai-brains-hint=), =ai-topic= (=ai-topic-line-N=), =ai-log= (=ai-log-line-N=).
+- *Behaviour tree editor tab.* =LrgEditorBtEditor= for =.rbt= documents. Widgets: =bt-split= (=bt-left-scroll= / =bt-left= / =bt-palette= with chips =bt-palette-TYPE=, =bt-palette-action-NAME=, =bt-palette-condition-NAME=), =bt-inner= (=bt-center=: =bt-topbar= with =bt-trees= (=bt-tree-main=, =bt-tree-NAME=) and =bt-live=, the canvas =bt-canvas=; =bt-inspector-scroll= / =bt-inspector=: =bt-inspector-title=, =bt-grid=, =bt-param-row= (=bt-param-name=, =bt-param-add=), =bt-blackboard= (rows =bt-key-NAME=, =bt-key-NAME-default=, =bt-key-NAME-remove=), =bt-key-add-row= (=bt-key-name=, =bt-key-type=, =bt-key-add=), =bt-subtrees= (rows =bt-sub-NAME=, =bt-sub-NAME-open=, =bt-sub-NAME-remove=), =bt-sub-add-row= (=bt-sub-name=, =bt-sub-file=, =bt-sub-add=)); toolbar tool =bt-layout=. Canvas card ids are node ids.
+- *State-machine editor tab.* =LrgEditorFsmEditor= for =.rfsm= documents. Widgets: =fsm-split= (=fsm-center=: =fsm-topbar= with =fsm-crumbs= and =fsm-live=, the canvas =fsm-canvas=; =fsm-inspector-scroll= / =fsm-inspector=: =fsm-inspector-title=, =fsm-grid=, =fsm-lists= (entry rows =fsm-KEY-N= with =fsm-KEY-N-text=, =fsm-KEY-N-up=, =fsm-KEY-N-remove=, add buttons =fsm-KEY-add-KIND=, transition buttons =fsm-tr-N=; KEY is =enter=, =update=, =exit=, =when= or =do=), =fsm-blackboard=, =fsm-key-add-row=, =fsm-event-row= (=fsm-event=, =fsm-event-send=)); toolbar tools =fsm-add-state=, =fsm-up=. Card ids are child state names, the owner card =@owner= (=LRG_EDITOR_FSM_EDITOR_OWNER_CARD=), exit cards =@to:TARGET=.
+- *Live.* While playing, both editors follow the focused agent (=lrg_editor_ai_debug_panel_find_for_file()=); the panel picks it.
+- *IPC.* =bt.*=, =fsm.*= and =ai.*= ([[file:ai.org::#editor-ai-ipc][AI: IPC methods]]): registered by =lrg_editor_bt_editor_install()=, =lrg_editor_fsm_editor_install()= (the Assets panel and every editor call them) and =lrg_editor_ai_debug_panel_install()= (the panel and both editors).
+
 ** API index
 :PROPERTIES:
 :CUSTOM_ID: editor-app-api-index
@@ -1777,6 +1836,7 @@ The full table with one line per function is in [[file:sequencer.org::#sequencer
 | =lrg_editor_viewport_panel_record_physics ()= | Records the play world's physics into the panel's debug draw batch; returns the primitive count (0.9.0). |
 | =lrg_editor_viewport_panel_get_physics_debug_draw ()= | The batch the 3D pass draws the play world's physics from (0.9.0). |
 | =lrg_editor_viewport_panel_get_physics_painted ()= | Shapes and joints the last authoring overlay paint drew (0.9.0). |
+| =lrg_editor_viewport_panel_get_terrain_painted ()= | Terrain brush rings and water outline handles the last overlay paint drew (0.9.0, see [[file:terrain.org::#editor-terrain-viewport][Viewport brush]]). |
 | =lrg_editor_viewport_panel_get_physics_handle ()= | The physics gizmo handle being dragged, else hovered (0.9.0). |
 | =lrg_editor_viewport_panel_get_layer_mask ()= | Returns the viewport's render-layer mask (default all) (0.9.0). |
 | =lrg_editor_viewport_panel_queue_render ()= | Renders the scene again next frame, for changes the panel does not watch (a previewed post stack, a bake) (0.9.0). |

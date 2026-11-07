@@ -156,6 +156,48 @@ Part 2: collision layers, world settings and ragdolls.
 4. Give walkers a `nav-agent` component and call `lrg_nav_agent_component_set_destination`.
 5. Check with `lrg_world3d_debug_draw_navigation`. Format details: `references/formats.md`, `references/level-format.md`.
 
+### Engine-backed assets (0.9.0)
+Gameplay and effect assets (.rbt .rfsm .rparticles .rweather .rmixer .rtileset .rsprite .rwater .rnav) are engine-backed documents: create them with `lrgeditorctl asset new KIND [path=]` (also `terrain`, and `sprite image=X.png` to auto-slice) or Assets > New ...; edit them with the family verbs (nav, bt, fsm, ai, particles, weather, terrain, water, mixer, audio, tiles, tileset, sprite: one verb per IPC method, `-` for `_`; MCP tools are the method names with `_`, e.g. `bt_add_node`). Every edit is one undo step (`data.undo {path}` for files, `undo` for level edits). Saves write the engine's canonical bytes, so YAML comments in these files are not kept.
+
+### Bake navigation in the editor (0.9.0)
+1. Open the Navigation panel (`lrgeditorctl call nav.show`); save the level once (files go next to it).
+2. Settings: `nav.set '{"values":{"agent_radius":0.4,"max_slope":45,"cell_size":0.2,"exclude_tags":["no-nav"]}}'` (keys = .rnav fields with `_`; `settings` loads another .rnav, `data`/`bake_on_load` edit the level block; one undo step).
+3. Areas/links: `nav.area.add {name,cost,tag?}`, `nav.area.box.add {area,min,max}`, `nav.link.add {start,end,bidirectional?,cost?,area?}`; `*.set` / `*.remove` by index (areas also by name).
+4. `nav.bake '{"save":true}'` writes <level>.rnav + <level>.rnavmesh and sets the level's `navigation:` refs (save the level after). `nav.get` shows everything; `nav.clear` drops the mesh and data ref.
+5. Overlay: `nav.overlay '{"flags":["polygons","areas","boundaries","links","handles"]}'`; `nav.select '{"area":"mud","link":0}'` puts drag handles on that box/link (Ctrl snaps 0.25 m, one undo per drag).
+6. While playing: `nav.agents` lists the crowd (state, path, remaining); `nav.debug_agent '{"node":"Guard"}'` draws its ORCA planes. Unsaved bakes are pushed into the play world.
+
+### Behaviour trees, state machines and AI debugging (0.9.0)
+- `.rbt` / `.rfsm` open in data-editor tabs (`bt open PATH`, `fsm open PATH`, `bt create`, `fsm create`). Trees: `bt get`, `add-node parent=ID type=T id=X props.KEY=V`, `set-node`, `move-node`, `remove-node`, `layout`, `add-key`, `set-subtree`, `validate`, `save`. Machines: states are paths (`a/b`, "" = top), `from=""` = any-state transitions; `fsm add-state`, `rename-state` (rewrites targets), `add-transition from=A to=B event=E after=S`, `set-transition` / `set-actions` with JSON lists. Card positions live in the file's `editor: positions:` block.
+- Playing (`run play.start`): `ai entities`, `ai select entity=NAME` (editors follow that agent), `ai state`, `ai set-key key=K value=V`, `ai send-event event=E`; `bt live PATH` / `fsm live PATH` give node statuses / active states. `ai brains`, `ai topic`, `ai log` show decision brains a game registered with `lrg_editor_ai_debug_panel_watch_brain()`.
+- Actions and conditions are registered by the game, not the editor: missing bindings are info issues, not errors.
+
+### Author VFX in the editor (0.9.0)
+1. `particles.create '{"path":"fx/fire.rparticles"}'` (template `default` or `empty`) or double-click the file; `particles.get`, `particles.kinds`.
+2. Structure: `particles.add_emitter {name}`, `duplicate_emitter`, `remove_emitter`, `move_emitter {from,to}`; `particles.add_module {emitter, kind}` (placed after its stage), `move_module`, `remove_module`.
+3. Values: `particles.set {path, emitter?, module?, renderer?:true, key, value}` in file syntax (`"[4, 8]"`, `"#ffc040"`, `"0 1; 1 0 ease-out-quad"`, `"0 #ffffffff; 1 #00000000"`); `null` resets; bad values fail with the key path. Mute with `key:"enabled", value:false`.
+4. Preview only: `particles.seek {time}` (deterministic), `particles.play`, `particles.restart`, `particles.preview {speed, seed, ground, background, gpu}`, `particles.solo`, `particles.stats` (counts, bounds, `gpu_ok`, `gpu_message`).
+5. Weather: `weather.create`, `weather.kinds {kind}` (param schema), `add_preset`, `set_preset`, `add_layer {preset, kind, id?}`, `set_layer`, `set_param {preset, layer, name, value|null}`, `set_transition {from,to,duration}` (`*` / `none` allowed); `weather.preview {preset, transition_to, advance}` returns the rule's crossfade.
+
+### Terrain and water (0.9.0)
+- Create > Terrain / Water or `terrain.create '{"name":"Valley"}'` (`kind: water` for a lake) writes `terrain/<name>.rterrain|.rwater` and adds the node.
+- Sculpt/paint: `terrain.stroke {tool: raise|lower|flatten|smooth|noise|paint|hole|fill|foliage-paint|foliage-erase, points: [[x,z],...] (world; local:true for asset-local), radius, strength, falloff, target_height, invert, smooth}`: one undo step per stroke. Layers: `terrain.add_layer`, `set_layer`, `remove_layer`; paint layer via `terrain.brush {layer}`. Foliage: `terrain.add_foliage {kind: mesh|billboard|grass, density, slope, height}`, `set_foliage`, `terrain.rebake`. Inspect: `terrain.get`, `terrain.sample {x,z}`.
+- Water: `water.set {node|path, level, shape, colors}`, `water.set_wave`, `water.add_point`. Terrain and water files save with the level (or `terrain.save` / `water.save`).
+- GUI: Terrain panel tool strip, then left-drag in the viewport (Ctrl inverts, Shift smooths, `[` `]` radius, Escape cancels); select a lake/river to drag outline points (Ctrl+click adds, Shift+click removes).
+
+### Mix and spatialise audio (0.9.0)
+1. `mixer.create '{"path":"audio/main.rmixer","buses":["music","sfx","dialogue"],"set_default":true}'` (writes project.ryaml `audio.mixer`; Tools > New Mixer does the same).
+2. Edit (one undo step each): `mixer.set_bus {name, volume, mute}`, `mixer.add_effect {bus, type, id}`, `mixer.set_effect {bus, id, params}` (`mixer.effect_types` lists params), `mixer.set_send {source, target, level}`, `mixer.set_duck {trigger, target, depth}`.
+3. Snapshots: `mixer.add_snapshot {name, blend}`, `mixer.set_snapshot {name, volumes, params}` (null removes) or set faders and `mixer.capture_snapshot`.
+4. Without a device: `mixer.preview {playing, snapshot}` then `mixer.meters`; `mixer.save`. Without `path` every mixer.* method uses the project's default mixer.
+5. Emitters: `audio.set {node, params:{min_distance, max_distance, rolloff_mode, rolloff_curve_keys, cone_outer_angle, cone_inner_angle, bus, occlusion}}` (max_distance is stored as the node's `radius`); `audio.curve {node}`, `audio.buses`. The viewport shows min/max spheres and the cone with drag handles.
+
+### 2D tools (0.9.0)
+- Tiles panel: drop an .rtileset on the tileset zone; pick a rule tile chip to paint with autotiling (one undo step per gesture); "Refresh all" = `tiles.refresh`. Brush transforms: X mirror, Shift+X vertical flip, Z rotate (Y stays snap). Grid layout (orthogonal / isometric / staggered / hexagonal) = `tiles.grid`. Script: `tiles.paint '{"cells":[3,3,4,3],"rule_tile":"plateau"}'`, `tiles.brush`, `tiles.cell_at`.
+- .rtileset editor: Tile page (flags, collision polygons, custom data, animation) and Rule tiles page (3x3 masks, outputs + weights, 16/47 presets, preview). `tileset.*` uses 0-based tile indices; map cells and `tiles.*` use 1-based ids.
+- .rsprite editor: Grid / Auto (alpha islands) / Manual slicing, pivot drag, clips with fps/loop, strip with durations and events, preview. IPC `sprite.slice|frame|clip|clip_frame|event|play|save`.
+- Pitfalls: plain tiles inside a rule tile's range need Refresh all; the 3D runtime tilemap component draws orthogonal grids without flip bits as of 0.9.0.
+
 ## Output Format
 
 - For editor work: report what changed as `node/PATH created|configured|deleted` lines (what `lrgeditorctl` prints), whether the level is saved or still dirty, and any problems from `get problems`.
