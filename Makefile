@@ -1868,6 +1868,18 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-bake-panel.h \
 	src/editor/ui/lrg-editor-physics-panel.h \
 	src/editor/ui/data/lrg-editor-physics-asset-editor.h \
+	src/editor/ui/lrg-editor-nav-panel.h \
+	src/editor/ui/lrg-editor-ai-debug-panel.h \
+	src/editor/ui/lrg-editor-terrain-panel.h \
+	src/editor/ui/lrg-editor-mixer-panel.h \
+	src/editor/ui/data/lrg-editor-bt-editor.h \
+	src/editor/ui/data/lrg-editor-fsm-editor.h \
+	src/editor/ui/data/lrg-editor-particle-editor.h \
+	src/editor/ui/data/lrg-editor-weather-editor.h \
+	src/editor/ui/data/lrg-editor-water-editor.h \
+	src/editor/ui/data/lrg-editor-mixer-editor.h \
+	src/editor/ui/data/lrg-editor-tileset-editor.h \
+	src/editor/ui/data/lrg-editor-sprite-editor.h \
 	src/editor/ui/lrg-editor-sequencer-panel.h \
 	src/editor/ui/data/lrg-editor-anim-graph-editor.h \
 	src/editor/ui/data/lrg-editor-bone-map-editor.h \
@@ -1908,6 +1920,18 @@ SOURCES += \
 	src/editor/ui/lrg-editor-bake-panel.c \
 	src/editor/ui/lrg-editor-physics-panel.c \
 	src/editor/ui/data/lrg-editor-physics-asset-editor.c \
+	src/editor/ui/lrg-editor-nav-panel.c \
+	src/editor/ui/lrg-editor-ai-debug-panel.c \
+	src/editor/ui/lrg-editor-terrain-panel.c \
+	src/editor/ui/lrg-editor-mixer-panel.c \
+	src/editor/ui/data/lrg-editor-bt-editor.c \
+	src/editor/ui/data/lrg-editor-fsm-editor.c \
+	src/editor/ui/data/lrg-editor-particle-editor.c \
+	src/editor/ui/data/lrg-editor-weather-editor.c \
+	src/editor/ui/data/lrg-editor-water-editor.c \
+	src/editor/ui/data/lrg-editor-mixer-editor.c \
+	src/editor/ui/data/lrg-editor-tileset-editor.c \
+	src/editor/ui/data/lrg-editor-sprite-editor.c \
 	src/editor/ui/lrg-editor-sequencer-panel.c \
 	src/editor/ui/data/lrg-editor-anim-graph-editor.c \
 	src/editor/ui/data/lrg-editor-bone-map-editor.c \
