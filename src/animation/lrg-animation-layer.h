@@ -18,6 +18,8 @@
 #include "../lrg-enums.h"
 #include "lrg-animation-state.h"
 #include "lrg-bone-pose.h"
+#include "lrg-skeleton.h"
+#include "../lrg-types.h"
 
 G_BEGIN_DECLS
 
@@ -203,5 +205,114 @@ LRG_AVAILABLE_IN_ALL
 void                lrg_animation_layer_apply           (LrgAnimationLayer  *self,
                                                           LrgBonePose        *base_pose,
                                                           const gchar        *bone_name);
+
+/* ==========================================================================
+ * 0.9.0: a state machine per layer, ordered and recursive masks, whole
+ * skeleton blending
+ * ========================================================================== */
+
+/**
+ * lrg_animation_layer_get_state_machine:
+ * @self: A #LrgAnimationLayer
+ *
+ * Returns: (transfer none) (nullable): the layer's state machine
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAnimationStateMachine * lrg_animation_layer_get_state_machine (LrgAnimationLayer *self);
+
+/**
+ * lrg_animation_layer_set_state_machine:
+ * @self: A #LrgAnimationLayer
+ * @machine: (nullable): the machine the layer plays
+ *
+ * Makes the layer play a state machine (an #LrgAnimGraph layer always
+ * has one). It takes precedence over lrg_animation_layer_set_state().
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_animation_layer_set_state_machine (LrgAnimationLayer        *self,
+                                                           LrgAnimationStateMachine *machine);
+
+/**
+ * lrg_animation_layer_get_mask:
+ * @self: A #LrgAnimationLayer
+ *
+ * Returns: (transfer full) (array zero-terminated=1) (nullable): the
+ *   mask's bone names in the order they were added, %NULL without a mask
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **            lrg_animation_layer_get_mask        (LrgAnimationLayer  *self);
+
+/**
+ * lrg_animation_layer_get_mask_recursive:
+ * @self: A #LrgAnimationLayer
+ *
+ * Returns: whether a masked bone also covers its descendants
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_animation_layer_get_mask_recursive (LrgAnimationLayer *self);
+
+/**
+ * lrg_animation_layer_set_mask_recursive:
+ * @self: A #LrgAnimationLayer
+ * @recursive: whether masked bones cover their descendants
+ *
+ * With a recursive mask (the default) listing `spine` affects the spine
+ * and everything below it (arms, head); otherwise only the listed bones.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_animation_layer_set_mask_recursive (LrgAnimationLayer *self,
+                                                            gboolean           recursive);
+
+/**
+ * lrg_animation_layer_get_bone_weights:
+ * @self: A #LrgAnimationLayer
+ * @skeleton: the skeleton
+ * @out_weights: (array length=n_weights) (out caller-allocates): one
+ *   factor per bone index, 1 inside the mask and 0 outside
+ * @n_weights: number of entries
+ *
+ * Resolves the mask against a skeleton (the editor paints masked bones
+ * with it). Without a mask every factor is 1.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_animation_layer_get_bone_weights (LrgAnimationLayer *self,
+                                                          LrgSkeleton       *skeleton,
+                                                          gfloat            *out_weights,
+                                                          guint              n_weights);
+
+/**
+ * lrg_animation_layer_sample_pose:
+ * @self: A #LrgAnimationLayer
+ * @skeleton: the skeleton
+ * @poses: (array length=n_poses) (out caller-allocates): the layer's own
+ *   pose
+ * @n_poses: number of entries
+ *
+ * Samples the layer's machine (or state) without blending it.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_animation_layer_sample_pose     (LrgAnimationLayer  *self,
+                                                         LrgSkeleton        *skeleton,
+                                                         LrgBonePose        *poses,
+                                                         guint               n_poses);
+
+/**
+ * lrg_animation_layer_blend_pose:
+ * @self: A #LrgAnimationLayer
+ * @skeleton: the skeleton
+ * @poses: (array length=n_poses) (inout): the pose of the layers below,
+ *   blended in place
+ * @n_poses: number of entries
+ *
+ * Samples the layer and blends it over @poses: override layers lerp by
+ * weight x mask, additive layers add their difference from the bind
+ * pose times weight x mask. A disabled or zero-weight layer leaves
+ * @poses alone.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_animation_layer_blend_pose      (LrgAnimationLayer  *self,
+                                                         LrgSkeleton        *skeleton,
+                                                         LrgBonePose        *poses,
+                                                         guint               n_poses);
 
 G_END_DECLS

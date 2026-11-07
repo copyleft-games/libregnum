@@ -40,6 +40,7 @@
 #include "../graphics/lrg-light-set.h"
 #include "../world3d/components/lrg-mesh-renderer-component.h"
 #include "../world3d/components/lrg-skinned-model-component.h"
+#include "../world3d/components/lrg-animator-component3d.h"
 #include "../world3d/components/lrg-light-component.h"
 #include "../world3d/components/lrg-camera-component.h"
 #include "../world3d/components/lrg-audio-source-component.h"
@@ -480,6 +481,7 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     /* 3D (LrgWorld3D) components: same suffix rule as the ECS ones */
     { "mesh-renderer",             lrg_mesh_renderer_component_get_type },
     { "skinned-model",             lrg_skinned_model_component_get_type },
+    { "animator3d",                lrg_animator_component3d_get_type },
     { "light",                     lrg_light_component_get_type },
     { "camera",                    lrg_camera_component_get_type },
     { "audio-source",              lrg_audio_source_component_get_type },

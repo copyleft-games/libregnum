@@ -10,7 +10,10 @@
 
 #include "config.h"
 
+#include <math.h>
 #include <string.h>
+#include <raylib.h>
+#include <rlgl.h>
 
 #include "lrg-skinned-model-component.h"
 #include "../lrg-entity3d.h"
@@ -40,6 +43,14 @@ struct _LrgSkinnedModelComponent
 	gint               layer;
 	LrgMaterial       *material;      /* nullable */
 	GPtrArray         *submesh;       /* LrgMaterial* or NULL per mesh index */
+
+	/* 0.9.0: external pose */
+	LrgSkeleton       *skeleton;      /* nullable */
+	LrgSkinnedMesh    *skinned_mesh;  /* nullable */
+	GArray            *palette;       /* gfloat, 16 per bone; empty = playback */
+	guint              palette_serial;
+	guint              skinned_serial;  /* palette the model was last skinned with */
+	GrlModel          *skinned_model;   /* the model that serial belongs to */
 };
 
 G_DEFINE_FINAL_TYPE (LrgSkinnedModelComponent, lrg_skinned_model_component, LRG_TYPE_COMPONENT)
@@ -63,6 +74,8 @@ enum
 	PROP_RECEIVE_SHADOWS,
 	PROP_LAYER,
 	PROP_MATERIAL,
+	PROP_SKELETON,
+	PROP_SKINNED_MESH,
 	N_PROPS
 };
 
@@ -141,7 +154,7 @@ lrg_skinned_model_component_update (LrgComponent *component,
 	LrgSkinnedModelComponent *self = LRG_SKINNED_MODEL_COMPONENT (component);
 
 	ensure_animator (self);
-	if (self->animator == NULL)
+	if (self->animator == NULL || self->palette->len > 0)
 		return;
 	if (self->clip_dirty)
 		apply_clip (self);
@@ -226,6 +239,176 @@ item_set_material (LrgSkinnedModelComponent *self,
 	item->flags = (LrgRenderItemFlags) flags;
 }
 
+/* Draws the skinned mesh of a CUSTOM item with the component's palette. */
+static void
+draw_skinned_mesh (const LrgRenderItem *item,
+                   LrgRenderCategory    category,
+                   gpointer             pass_data)
+{
+	LrgSkinnedModelComponent *self = LRG_SKINNED_MODEL_COMPONENT (item->user_data);
+	GrlMatrix                 m;
+	const gfloat             *w = item->world_matrix;
+
+	if (self->skinned_mesh == NULL)
+		return;
+	if (self->palette->len >= 16 * lrg_skinned_mesh_get_bone_count (self->skinned_mesh) &&
+	    self->palette->len > 0)
+		lrg_skinned_mesh_set_palette (self->skinned_mesh, (const gfloat *) (gpointer) self->palette->data);
+	lrg_skinned_mesh_set_tint (self->skinned_mesh,
+	                           (guint8) (CLAMP (item->color[0], 0.0f, 1.0f) * 255.0f),
+	                           (guint8) (CLAMP (item->color[1], 0.0f, 1.0f) * 255.0f),
+	                           (guint8) (CLAMP (item->color[2], 0.0f, 1.0f) * 255.0f),
+	                           (guint8) (CLAMP (item->color[3], 0.0f, 1.0f) * 255.0f));
+	/* column-major float[16] into GrlMatrix fields (no memcpy) */
+	m.m0 = w[0];  m.m1 = w[1];  m.m2 = w[2];  m.m3 = w[3];
+	m.m4 = w[4];  m.m5 = w[5];  m.m6 = w[6];  m.m7 = w[7];
+	m.m8 = w[8];  m.m9 = w[9];  m.m10 = w[10]; m.m11 = w[11];
+	m.m12 = w[12]; m.m13 = w[13]; m.m14 = w[14]; m.m15 = w[15];
+	lrg_skinned_mesh_draw (self->skinned_mesh, &m);
+}
+
+/* One CUSTOM item for the skinned mesh (no model). */
+static void
+collect_skinned_mesh (LrgSkinnedModelComponent *self,
+                      LrgEntity3D              *entity,
+                      LrgRenderList            *list)
+{
+	LrgRenderItem item;
+	gfloat        mn[3], mx[3];
+	guint         flags = LRG_RENDER_ITEM_FLAG_NONE;
+
+	lrg_render_item_init_for_entity (&item, entity, LRG_COMPONENT (self));
+	item.kind = LRG_RENDER_ITEM_CUSTOM;
+	item.draw_func = draw_skinned_mesh;
+	item.user_data = self;
+	item.user_data_destroy = NULL;
+	if (self->cast_shadows)
+		flags |= LRG_RENDER_ITEM_FLAG_CAST_SHADOW;
+	if (self->receive_shadows)
+		flags |= LRG_RENDER_ITEM_FLAG_RECEIVE_SHADOW;
+	item.flags = (LrgRenderItemFlags) (flags | LRG_RENDER_ITEM_FLAG_UNLIT);
+	memcpy (item.color, self->color, sizeof item.color);
+	if (self->layer >= 0)
+		item.layer = (guint) self->layer;
+	if (self->palette->len > 0)
+		lrg_skinned_mesh_set_palette (self->skinned_mesh, (const gfloat *) (gpointer) self->palette->data);
+	if (lrg_skinned_mesh_get_skinned_bounds (self->skinned_mesh, mn, mx))
+	{
+		LrgBoundingBox3D local;
+
+		local.min.x = mn[0];
+		local.min.y = mn[1];
+		local.min.z = mn[2];
+		local.max.x = mx[0];
+		local.max.y = mx[1];
+		local.max.z = mx[2];
+		lrg_render_item_set_local_bounds (&item, &local);
+	}
+	if (lrg_render_list_accepts (list, &item))
+		lrg_render_list_add (list, &item);
+}
+
+/* CPU-skins every skinned mesh of @model with the palette (the same math
+ * as raylib's CPU skinning, from our palette instead of a clip) and
+ * re-uploads the position and normal buffers. */
+static gboolean
+skin_model_with_palette (LrgSkinnedModelComponent *self,
+                         GrlModel                 *grl)
+{
+	Model        *model = (Model *) grl_model_get_handle (grl);
+	const gfloat *pal = (const gfloat *) (gpointer) self->palette->data;
+	guint         n_bones = self->palette->len / 16;
+	gint          mi;
+
+	if (model == NULL)
+		return FALSE;
+	if (self->skinned_model == grl && self->skinned_serial == self->palette_serial)
+		return FALSE;
+
+	for (mi = 0; mi < model->meshCount; mi++)
+	{
+		Mesh *mesh = &model->meshes[mi];
+		gint  v, k;
+
+		if (mesh->boneIndices == NULL || mesh->boneWeights == NULL || mesh->vertices == NULL)
+			continue;
+		if (mesh->animVertices == NULL)
+			mesh->animVertices = (float *) RL_CALLOC (mesh->vertexCount * 3, sizeof (float));
+		if (mesh->normals != NULL && mesh->animNormals == NULL)
+			mesh->animNormals = (float *) RL_CALLOC (mesh->vertexCount * 3, sizeof (float));
+
+		for (v = 0; v < mesh->vertexCount; v++)
+		{
+			const gfloat *p = &mesh->vertices[3 * v];
+			const gfloat *nrm = mesh->normals != NULL ? &mesh->normals[3 * v] : NULL;
+			gfloat        op[3] = { 0.0f, 0.0f, 0.0f }, on[3] = { 0.0f, 0.0f, 0.0f };
+			gfloat        total = 0.0f;
+
+			for (k = 0; k < 4; k++)
+			{
+				gfloat        w = mesh->boneWeights[4 * v + k];
+				guint         b = mesh->boneIndices[4 * v + k];
+				const gfloat *m;
+
+				if (w <= 0.0f || b >= n_bones)
+					continue;
+				m = pal + 16 * b;
+				op[0] += w * (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]);
+				op[1] += w * (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]);
+				op[2] += w * (m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]);
+				if (nrm != NULL)
+				{
+					/* rigid bones: the upper 3x3 is a rotation (scale is renormalised) */
+					on[0] += w * (m[0] * nrm[0] + m[4] * nrm[1] + m[8] * nrm[2]);
+					on[1] += w * (m[1] * nrm[0] + m[5] * nrm[1] + m[9] * nrm[2]);
+					on[2] += w * (m[2] * nrm[0] + m[6] * nrm[1] + m[10] * nrm[2]);
+				}
+				total += w;
+			}
+			if (total <= 0.0f)
+			{
+				op[0] = p[0];
+				op[1] = p[1];
+				op[2] = p[2];
+				if (nrm != NULL)
+				{
+					on[0] = nrm[0];
+					on[1] = nrm[1];
+					on[2] = nrm[2];
+				}
+			}
+			mesh->animVertices[3 * v] = op[0];
+			mesh->animVertices[3 * v + 1] = op[1];
+			mesh->animVertices[3 * v + 2] = op[2];
+			if (nrm != NULL)
+			{
+				gfloat l = sqrtf (on[0] * on[0] + on[1] * on[1] + on[2] * on[2]);
+
+				if (l > 1e-8f)
+				{
+					on[0] /= l;
+					on[1] /= l;
+					on[2] /= l;
+				}
+				mesh->animNormals[3 * v] = on[0];
+				mesh->animNormals[3 * v + 1] = on[1];
+				mesh->animNormals[3 * v + 2] = on[2];
+			}
+		}
+		if (mesh->vboId != NULL && mesh->vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_POSITION] != 0)
+		{
+			rlUpdateVertexBuffer (mesh->vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_POSITION], mesh->animVertices,
+			                      mesh->vertexCount * 3 * (gint) sizeof (float), 0);
+			if (mesh->normals != NULL && mesh->vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_NORMAL] != 0)
+				rlUpdateVertexBuffer (mesh->vboId[RL_DEFAULT_SHADER_ATTRIB_LOCATION_NORMAL], mesh->animNormals,
+				                      mesh->vertexCount * 3 * (gint) sizeof (float), 0);
+		}
+	}
+	self->skinned_model = grl;
+	self->skinned_serial = self->palette_serial;
+	return TRUE;
+}
+
 /* One MODEL item with the animator's model, posed for this component. */
 static void
 lrg_skinned_model_component_collect_render (LrgComponent  *component,
@@ -242,7 +425,11 @@ lrg_skinned_model_component_collect_render (LrgComponent  *component,
 		return;
 	model = lrg_skinned_model_component_get_model (self);
 	if (model == NULL)
+	{
+		if (self->skinned_mesh != NULL)
+			collect_skinned_mesh (self, entity, list);
 		return;
+	}
 
 	lrg_skinned_model_component_apply_pose (self);
 
@@ -297,6 +484,8 @@ lrg_skinned_model_component_dispose (GObject *object)
 	LrgSkinnedModelComponent *self = LRG_SKINNED_MODEL_COMPONENT (object);
 
 	g_clear_object (&self->animator);
+	g_clear_object (&self->skeleton);
+	g_clear_object (&self->skinned_mesh);
 	g_clear_object (&self->material);
 	g_clear_pointer (&self->submesh, g_ptr_array_unref);
 	g_clear_object (&self->asset_manager);
@@ -311,6 +500,7 @@ lrg_skinned_model_component_finalize (GObject *object)
 
 	g_free (self->model_path);
 	g_free (self->clip);
+	g_array_unref (self->palette);
 
 	G_OBJECT_CLASS (lrg_skinned_model_component_parent_class)->finalize (object);
 }
@@ -369,6 +559,8 @@ lrg_skinned_model_component_get_property (GObject    *object,
 	case PROP_RECEIVE_SHADOWS: g_value_set_boolean (value, self->receive_shadows); break;
 	case PROP_LAYER:           g_value_set_int (value, self->layer); break;
 	case PROP_MATERIAL:        g_value_set_object (value, self->material); break;
+	case PROP_SKELETON:        g_value_set_object (value, self->skeleton); break;
+	case PROP_SKINNED_MESH:    g_value_set_object (value, self->skinned_mesh); break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -429,6 +621,12 @@ lrg_skinned_model_component_set_property (GObject      *object,
 		break;
 	case PROP_MATERIAL:
 		lrg_skinned_model_component_set_material (self, g_value_get_object (value));
+		break;
+	case PROP_SKELETON:
+		lrg_skinned_model_component_set_skeleton (self, g_value_get_object (value));
+		break;
+	case PROP_SKINNED_MESH:
+		lrg_skinned_model_component_set_skinned_mesh (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -572,12 +770,29 @@ lrg_skinned_model_component_class_init (LrgSkinnedModelComponentClass *klass)
 	properties[PROP_MATERIAL] = g_param_spec_object ("material", NULL, "Material",
 	                                                 LRG_TYPE_MATERIAL, rw);
 
+	/**
+	 * LrgSkinnedModelComponent:skeleton:
+	 *
+	 * The model's skeleton (posed by an #LrgAnimatorComponent3D).
+	 */
+	properties[PROP_SKELETON] =
+		g_param_spec_object ("skeleton", NULL, "Skeleton", LRG_TYPE_SKELETON, rw);
+
+	/**
+	 * LrgSkinnedModelComponent:skinned-mesh:
+	 *
+	 * An #LrgSkinnedMesh drawn when there is no model.
+	 */
+	properties[PROP_SKINNED_MESH] =
+		g_param_spec_object ("skinned-mesh", NULL, "Skinned mesh", LRG_TYPE_SKINNED_MESH, rw);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 }
 
 static void
 lrg_skinned_model_component_init (LrgSkinnedModelComponent *self)
 {
+	self->palette = g_array_new (FALSE, FALSE, sizeof (gfloat));
 	lrg_model_anim_state_reset (&self->state);
 	self->speed = 1.0f;
 	self->loop = TRUE;
@@ -751,6 +966,13 @@ lrg_skinned_model_component_apply_pose (LrgSkinnedModelComponent *self)
 
 	if (self->animator == NULL)
 		return FALSE;
+	/* an external palette replaces the clip playback */
+	if (self->palette->len > 0)
+	{
+		GrlModel *model = lrg_model_animator_get_model (self->animator);
+
+		return model != NULL && skin_model_with_palette (self, model);
+	}
 	return lrg_model_animator_apply (self->animator, &self->state);
 }
 
@@ -812,4 +1034,82 @@ lrg_skinned_model_component_get_n_submesh_materials (LrgSkinnedModelComponent *s
 {
 	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), 0);
 	return self->submesh != NULL ? self->submesh->len : 0;
+}
+
+/* ==========================================================================
+ * 0.9.0: external pose
+ * ========================================================================== */
+
+LrgSkeleton *
+lrg_skinned_model_component_get_skeleton (LrgSkinnedModelComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), NULL);
+	return self->skeleton;
+}
+
+void
+lrg_skinned_model_component_set_skeleton (LrgSkinnedModelComponent *self,
+                                          LrgSkeleton              *skeleton)
+{
+	g_return_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self));
+	g_return_if_fail (skeleton == NULL || LRG_IS_SKELETON (skeleton));
+	if (g_set_object (&self->skeleton, skeleton))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SKELETON]);
+}
+
+LrgSkinnedMesh *
+lrg_skinned_model_component_get_skinned_mesh (LrgSkinnedModelComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), NULL);
+	return self->skinned_mesh;
+}
+
+void
+lrg_skinned_model_component_set_skinned_mesh (LrgSkinnedModelComponent *self,
+                                              LrgSkinnedMesh           *mesh)
+{
+	g_return_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self));
+	g_return_if_fail (mesh == NULL || LRG_IS_SKINNED_MESH (mesh));
+	if (g_set_object (&self->skinned_mesh, mesh))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SKINNED_MESH]);
+}
+
+void
+lrg_skinned_model_component_set_palette (LrgSkinnedModelComponent *self,
+                                         const gfloat             *palette,
+                                         guint                     n_bones)
+{
+	g_return_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self));
+
+	if (palette == NULL || n_bones == 0)
+	{
+		g_array_set_size (self->palette, 0);
+		/* back to playback: the animator must pose again */
+		if (self->animator != NULL)
+			lrg_model_animator_invalidate (self->animator);
+		self->skinned_model = NULL;
+		return;
+	}
+	g_array_set_size (self->palette, 16 * n_bones);
+	memcpy (self->palette->data, palette, 16 * n_bones * sizeof (gfloat));
+	self->palette_serial++;
+	if (self->skinned_mesh != NULL && n_bones >= lrg_skinned_mesh_get_bone_count (self->skinned_mesh))
+		lrg_skinned_mesh_set_palette (self->skinned_mesh, palette);
+}
+
+const gfloat *
+lrg_skinned_model_component_get_palette (LrgSkinnedModelComponent *self,
+                                         guint                    *out_n_bones)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), NULL);
+	if (out_n_bones != NULL)
+		*out_n_bones = self->palette->len / 16;
+	return self->palette->len > 0 ? (const gfloat *) (gpointer) self->palette->data : NULL;
+}
+
+guint
+lrg_skinned_model_component_get_palette_serial (LrgSkinnedModelComponent *self)
+{
+	g_return_val_if_fail (LRG_IS_SKINNED_MODEL_COMPONENT (self), 0);
+	return self->palette_serial;
 }

@@ -20,20 +20,36 @@ G_DECLARE_FINAL_TYPE (LrgIKChain, lrg_ik_chain, LRG, IK_CHAIN, GObject)
 :CUSTOM_ID: chain-functions
 :END:
 #+begin_src C
-LrgIKChain *lrg_ik_chain_new (void);
+LrgIKChain *lrg_ik_chain_new (LrgSkeleton *skeleton);
+LrgSkeleton *lrg_ik_chain_get_skeleton (LrgIKChain *self);
 
-/* Add bones to chain (root to tip) */
-void lrg_ik_chain_add_bone (LrgIKChain *self, LrgBone *bone);
+/* Bones the solver turns, root to tip (by name) */
+void lrg_ik_chain_add_bone (LrgIKChain *self, const gchar *bone_name);
+void lrg_ik_chain_clear_bones (LrgIKChain *self);
 guint lrg_ik_chain_get_bone_count (LrgIKChain *self);
+const gchar *lrg_ik_chain_get_bone_name (LrgIKChain *self, guint index);
 LrgBone *lrg_ik_chain_get_bone (LrgIKChain *self, guint index);
 
-/* Target position */
-void lrg_ik_chain_set_target (LrgIKChain *self, gfloat x, gfloat y, gfloat z);
-void lrg_ik_chain_get_target (LrgIKChain *self, gfloat *x, gfloat *y, gfloat *z);
+/* End effector: a child bone, or the last bone's tip along the bone axis */
+void lrg_ik_chain_set_effector_bone (LrgIKChain *self, const gchar *bone_name);
+const gchar *lrg_ik_chain_get_effector_bone (LrgIKChain *self);
+void lrg_ik_chain_set_bone_axis (LrgIKChain *self, gfloat x, gfloat y, gfloat z);   /* default +Y */
+void lrg_ik_chain_get_bone_axis (LrgIKChain *self, gfloat *x, gfloat *y, gfloat *z);
+void lrg_ik_chain_get_end_effector_position (LrgIKChain *self, gfloat *x, gfloat *y, gfloat *z);
+gfloat lrg_ik_chain_get_total_length (LrgIKChain *self);
 
-/* Pole vector (for knee/elbow direction) */
-void lrg_ik_chain_set_pole (LrgIKChain *self, gfloat x, gfloat y, gfloat z);
-void lrg_ik_chain_get_pole (LrgIKChain *self, gfloat *x, gfloat *y, gfloat *z);
+/* Target and pole, model (skeleton) space */
+void lrg_ik_chain_set_target_position (LrgIKChain *self, gfloat x, gfloat y, gfloat z);
+void lrg_ik_chain_get_target_position (LrgIKChain *self, gfloat *x, gfloat *y, gfloat *z);
+void lrg_ik_chain_set_pole_position (LrgIKChain *self, gfloat x, gfloat y, gfloat z);
+void lrg_ik_chain_get_pole_position (LrgIKChain *self, gfloat *x, gfloat *y, gfloat *z);
+gboolean lrg_ik_chain_has_pole (LrgIKChain *self);
+void lrg_ik_chain_clear_pole (LrgIKChain *self);
+
+/* The primitives every solver is written with */
+guint lrg_ik_chain_get_joint_positions (LrgIKChain *self, gfloat *out_positions, guint max_joints);
+gboolean lrg_ik_chain_aim_bone (LrgIKChain *self, guint index, const gfloat *from, const gfloat *to);
+void lrg_ik_chain_apply_to_skeleton (LrgIKChain *self);   /* refreshes world poses */
 #+end_src
 
 --------------
@@ -145,9 +161,10 @@ void lrg_ik_solver_look_at_set_up_vector (LrgIKSolverLookAt *self, gfloat x, gfl
 :END:
 #+begin_src C
 /* Build IK chain for arm */
-g_autoptr(LrgIKChain) arm_chain = lrg_ik_chain_new ();
-lrg_ik_chain_add_bone (arm_chain, lrg_skeleton_get_bone_by_name (skeleton, "upper_arm"));
-lrg_ik_chain_add_bone (arm_chain, lrg_skeleton_get_bone_by_name (skeleton, "forearm"));
+g_autoptr(LrgIKChain) arm_chain = lrg_ik_chain_new (skeleton);
+lrg_ik_chain_add_bone (arm_chain, "upper_arm");
+lrg_ik_chain_add_bone (arm_chain, "forearm");
+lrg_ik_chain_set_effector_bone (arm_chain, "hand");   /* the hand reaches the target */
 
 /* Create two-bone solver */
 g_autoptr(LrgIKSolverTwoBone) solver = lrg_ik_solver_two_bone_new ();
@@ -157,10 +174,10 @@ void
 update_arm_ik (gfloat target_x, gfloat target_y, gfloat target_z)
 {
     /* Set target (e.g., weapon aim point) */
-    lrg_ik_chain_set_target (arm_chain, target_x, target_y, target_z);
+    lrg_ik_chain_set_target_position (arm_chain, target_x, target_y, target_z);
 
     /* Set pole (elbow direction) */
-    lrg_ik_chain_set_pole (arm_chain, 0.0f, -1.0f, 0.0f);  /* Elbow points down */
+    lrg_ik_chain_set_pole_position (arm_chain, shoulder_x, shoulder_y - 1.0f, shoulder_z);  /* a point below: the elbow bends down */
 
     /* Solve */
     if (lrg_ik_solver_solve (LRG_IK_SOLVER (solver), arm_chain, 1, 0.001f))
@@ -168,8 +185,7 @@ update_arm_ik (gfloat target_x, gfloat target_y, gfloat target_z)
         /* Solution found - bone poses updated */
     }
 
-    /* Recalculate world poses */
-    lrg_skeleton_calculate_world_poses (skeleton);
+    /* the solver already recomputed the world poses */
 }
 #+end_src
 
@@ -179,8 +195,8 @@ update_arm_ik (gfloat target_x, gfloat target_y, gfloat target_z)
 :END:
 #+begin_src C
 /* Build chain for head */
-g_autoptr(LrgIKChain) head_chain = lrg_ik_chain_new ();
-lrg_ik_chain_add_bone (head_chain, lrg_skeleton_get_bone_by_name (skeleton, "head"));
+g_autoptr(LrgIKChain) head_chain = lrg_ik_chain_new (skeleton);
+lrg_ik_chain_add_bone (head_chain, "head");
 
 /* Create look-at solver */
 g_autoptr(LrgIKSolverLookAt) look_at = lrg_ik_solver_look_at_new ();
@@ -190,7 +206,7 @@ lrg_ik_solver_look_at_set_up_vector (look_at, 0.0f, 1.0f, 0.0f);  /* World up */
 void
 look_at_target (gfloat x, gfloat y, gfloat z)
 {
-    lrg_ik_chain_set_target (head_chain, x, y, z);
+    lrg_ik_chain_set_target_position (head_chain, x, y, z);
     lrg_ik_solver_solve (LRG_IK_SOLVER (look_at), head_chain, 1, 0.0f);
     lrg_skeleton_calculate_world_poses (skeleton);
 }
@@ -202,16 +218,16 @@ look_at_target (gfloat x, gfloat y, gfloat z)
 :END:
 #+begin_src C
 /* Build spine chain */
-g_autoptr(LrgIKChain) spine_chain = lrg_ik_chain_new ();
-lrg_ik_chain_add_bone (spine_chain, lrg_skeleton_get_bone_by_name (skeleton, "spine1"));
-lrg_ik_chain_add_bone (spine_chain, lrg_skeleton_get_bone_by_name (skeleton, "spine2"));
-lrg_ik_chain_add_bone (spine_chain, lrg_skeleton_get_bone_by_name (skeleton, "spine3"));
-lrg_ik_chain_add_bone (spine_chain, lrg_skeleton_get_bone_by_name (skeleton, "chest"));
+g_autoptr(LrgIKChain) spine_chain = lrg_ik_chain_new (skeleton);
+lrg_ik_chain_add_bone (spine_chain, "spine1");
+lrg_ik_chain_add_bone (spine_chain, "spine2");
+lrg_ik_chain_add_bone (spine_chain, "spine3");
+lrg_ik_chain_add_bone (spine_chain, "chest");
 
 /* FABRIK works well for organic multi-bone chains */
 g_autoptr(LrgIKSolverFABRIK) fabrik = lrg_ik_solver_fabrik_new ();
 
-lrg_ik_chain_set_target (spine_chain, target_x, target_y, target_z);
+lrg_ik_chain_set_target_position (spine_chain, target_x, target_y, target_z);
 lrg_ik_solver_solve (LRG_IK_SOLVER (fabrik), spine_chain, 10, 0.01f);
 #+end_src
 
@@ -229,10 +245,72 @@ update (gfloat delta_time)
     lrg_animator_update (animator, delta_time);
 
     /* 2. Apply IK (modifies local poses) */
-    lrg_ik_chain_set_target (arm_chain, aim_target_x, aim_target_y, aim_target_z);
+    lrg_ik_chain_set_target_position (arm_chain, aim_target_x, aim_target_y, aim_target_z);
     lrg_ik_solver_solve (LRG_IK_SOLVER (arm_solver), arm_chain, 1, 0.001f);
 
     /* 3. Calculate final world poses */
     lrg_skeleton_calculate_world_poses (skeleton);
 }
 #+end_src
+
+** 0.9.0: correct solvers and the IK post-pass
+:PROPERTIES:
+:CUSTOM_ID: v090
+:END:
+The solvers were rewritten. They used to write world-space orientations into local poses with the translation reset, which collapsed any real skeleton; they now move a chain only by rotating bones about their joints (=lrg_ik_chain_aim_bone()=: the shortest arc between two model-space directions, converted into a local rotation under the parent; translations, scales and therefore bone lengths never change) and work on the current animated pose.
+
+*Conventions.* Positions are model space (the space of the skeleton's world poses). The chain lists the bones a solver turns; the end effector is the =effector= bone (a child of the last chain bone, e.g. the hand of an upper-arm/forearm chain) or, without one, the tip of the last bone (its position plus its length along the bone axis, default +Y as glTF and Blender export bones; a zero-length bone counts as length 1 so look-at still has a direction). Two-bone needs 2 chain bones, look-at 1, FABRIK and CCD any number.
+
+| solver | method | result |
+|-+-+-|
+| =LrgIKSolverTwoBone= | law of cosines: the knee on the circle at len0 from the root and len1 from the (clamped) target, picked by the pole (else the current bend plane) | exact in reach (the tests check < 1e-3), fully stretched toward an unreachable target |
+| =LrgIKSolverFABRIK= | backward/forward passes on joint positions (Aristidou and Lasenby 2011), then each bone aimed at its solved child | converges within tolerance in a few iterations; stretched line when out of reach |
+| =LrgIKSolverCCD= | from the last bone to the first, turn the bone so the effector lies on the line to the target | converges for reachable targets, tends to curl the tip first |
+| =LrgIKSolverLookAt= | turn the single bone so its bone axis points at the target (shortest arc; the animated roll is kept, the up vector is not used) | exact |
+
+=lrg_ik_solver_solve()= now refuses chains the solver does not support (=supports_chain_length=).
+
+*** LrgIKGoal
+:PROPERTIES:
+:CUSTOM_ID: ik-goal
+:END:
+=LrgIKGoal= is one entry of the [[file:anim-graph.org::#ik][animation graph's IK post-pass]] (=ik:= in .ranim) and can be used on its own: a chain, a solver kind (=LrgIKGoalKind=, =lrg_ik_goal_kind_get_type()=: =TWO_BONE=, =CCD=, =FABRIK=, =LOOK_AT=, =FOOT=), a world-space target, a pole, a weight.
+
+| function | |
+|-+-|
+| =lrg_ik_goal_new (name, kind)= / =lrg_ik_goal_get_name()= / =lrg_ik_goal_get_kind()= | |
+| =lrg_ik_goal_set_bones()= / =lrg_ik_goal_get_bones()= | the chain, root first |
+| =lrg_ik_goal_set_effector()= / =lrg_ik_goal_get_effector()= | the effector bone |
+| =lrg_ik_goal_set_pole()= / =lrg_ik_goal_get_pole()= / =lrg_ik_goal_clear_pole()= | model-space bend point |
+| =lrg_ik_goal_set_target()= / =lrg_ik_goal_get_target()= / =lrg_ik_goal_clear_target()= | world-space target (no target: the goal does nothing, except foot goals) |
+| =lrg_ik_goal_set_weight()= / =lrg_ik_goal_get_weight()= | 0 = animation, 1 = solved (slerped per bone) |
+| =lrg_ik_goal_set_iterations()= / =lrg_ik_goal_get_iterations()= / =lrg_ik_goal_set_tolerance()= / =lrg_ik_goal_get_tolerance()= | CCD/FABRIK budget |
+| =lrg_ik_goal_set_enabled()= / =lrg_ik_goal_get_enabled()= | |
+| =lrg_ik_goal_set_bone_axis()= / =lrg_ik_goal_get_bone_axis()= | look-at forward / tip direction |
+| =lrg_ik_goal_set_foot (self, ray_up, ray_down, align)= / =lrg_ik_goal_get_foot()= | foot probe |
+| =lrg_ik_goal_apply (self, skeleton, model_matrix, raycast, user_data)= | solve on a posed skeleton; =model_matrix= is the character's model-to-world matrix (column-major), =raycast= an =LrgIKRaycastFunc= |
+| =lrg_ik_goal_get_last_target()= | the model-space point the last apply aimed at (gizmos) |
+
+*Foot placement.* A foot goal casts a ray (your =LrgIKRaycastFunc=, world space) from =ray_up= above the animated foot down =ray_up + ray_down=. On a hit the foot moves by the ground's height relative to the character's ground plane (model y = 0 under the foot), so planted feet land on slopes and steps while lifted feet stay lifted; the leg is solved as two-bone; with =align= the effector is turned so its model-space up matches the ground normal. No hit (or no raycast): nothing changes. Pelvis lowering for steps below the plane is left to gameplay (move the entity or add an additive crouch layer).
+
+#+begin_src c
+static gboolean
+ground_ray (const gfloat *origin, const gfloat *dir, gfloat max_distance,
+            gfloat *hit, gfloat *normal, gpointer user_data)
+{
+	return my_physics_raycast (user_data, origin, dir, max_distance, hit, normal);
+}
+
+g_autoptr(LrgIKGoal) foot = lrg_ik_goal_new ("l_foot", LRG_IK_GOAL_FOOT);
+const gchar *bones[] = { "l_thigh", "l_shin", NULL };
+
+lrg_ik_goal_set_bones (foot, bones);
+lrg_ik_goal_set_effector (foot, "l_foot");
+lrg_ik_goal_set_pole (foot, -0.15f, 0.5f, 1.0f);   /* knee forward */
+lrg_ik_goal_set_foot (foot, 0.5f, 0.5f, TRUE);
+
+/* after posing the skeleton for this frame */
+lrg_ik_goal_apply (foot, skeleton, entity_world_matrix, ground_ray, physics);
+#+end_src
+
+Measured: a two-bone goal adds about 5 µs to an animator step (16-bone character, see [[file:anim-graph.org::#performance][performance]]); FABRIK and CCD cost one world pose recomputation per bone turned per iteration.

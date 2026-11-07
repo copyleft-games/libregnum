@@ -232,3 +232,17 @@ Final Pose = Base + (Override - Base) * weight + Additive * weight
 | RPG        | Base (body), Upper (gesture), Face (expressions)       |
 | Platformer | Base (movement), Upper (item carry)                    |
 | Fighting   | Base (stance), Upper (attack), Additive (hit reaction) |
+
+** 0.9.0: machines, ordered and recursive masks, whole-skeleton blending
+:PROPERTIES:
+:CUSTOM_ID: v090
+:END:
+A layer now plays a state machine (=lrg_animation_layer_set_state_machine()= / =lrg_animation_layer_get_state_machine()=; it takes precedence over =set_state=, and =lrg_animation_layer_update()= starts it when needed). Masks keep their order (=lrg_animation_layer_get_mask()=) and are recursive by default (=lrg_animation_layer_set_mask_recursive()= / =lrg_animation_layer_get_mask_recursive()=): listing =spine= covers its descendants. =lrg_animation_layer_get_bone_weights (self, skeleton, weights, n)= resolves the mask to one factor per bone.
+
+=lrg_animation_layer_sample_pose (self, skeleton, poses, n)= samples the layer's own pose; =lrg_animation_layer_blend_pose (self, skeleton, poses, n)= blends it over the poses of the layers below: override slerps by weight x mask, additive adds the difference from the *bind pose* times weight x mask (translations add, rotations multiply by the weighted =inverse(bind) * layer=, scales multiply by the weighted ratio). The per-bone =lrg_animation_layer_apply()= uses the identity as the additive reference. [[file:anim-graph.org::#layers][LrgAnimGraph]] stacks layers this way.
+
+| function | |
+|-+-|
+| =lrg_animation_layer_add_mask()= / =lrg_animation_layer_remove_mask()= / =lrg_animation_layer_clear_mask()= | edit the mask (no mask = every bone) |
+| =lrg_animation_layer_is_bone_masked()= | whether a bone is listed (not counting recursion) |
+| =lrg_animation_layer_get_enabled()= / =lrg_animation_layer_set_enabled()= | a disabled layer neither updates nor blends |

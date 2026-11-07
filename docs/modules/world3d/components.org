@@ -53,7 +53,7 @@ Three rules hold for all of them:
 |------------------+----------------------------------------------------------------------------------------|
 | =world_entered=  | light (registers), camera (registers by priority), listener (becomes the world's listener), audio source (autoplay) |
 | =fixed_update=   | trigger (overlap test, enter/exit signals)                                              |
-| =update=         | skinned model (clip switch, time advance)                                              |
+| =update=         | skinned model (clip switch, time advance), animator (graph, IK, palette, root motion) |
 | =late_update=    | light (re-registers from the moved entity), camera (follows the entity), listener (feeds the audio manager), audio source (moves its voice, restarts loops) |
 | =collect_render= | mesh renderer, billboard, tilemap, skinned model                                       |
 | =world_exited=   | light, camera, listener, audio source, trigger (unregister / stop / forget)            |
@@ -235,6 +235,8 @@ Draws a built-in primitive (the #LrgPrimitiveType set the editor uses) or a mesh
 | =double-sided=      | boolean              | FALSE    | adds =LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED=                         |
 | =unlit=             | boolean              | FALSE    | adds =LRG_RENDER_ITEM_FLAG_UNLIT=                                |
 | =layer=             | int -1..31           | -1       | render layer override                                            |
+| =static-lighting=   | boolean              | FALSE    | takes part in the lighting bake: casts / bounces light for the baker and gets a [[file:../lighting/lightmap3d.org][lightmap]] entry keyed by its entity's GUID (0.9.0); node param =static_lighting= |
+| =lightmap-scale=    | float 0..16          | 1        | multiplier on the bake's texels per unit; 0 keeps it out of the lightmaps (probe lit) (0.9.0); node param =lightmap_scale= |
 
 *** Render items
 :PROPERTIES:
@@ -278,6 +280,10 @@ With an =LrgMaterial= in the slot (see [[file:../graphics/material.org::#binding
 | =lrg_mesh_renderer_component_get_receive_shadows()= / =lrg_mesh_renderer_component_set_receive_shadows()= | shadow receiving |
 | =lrg_mesh_renderer_component_get_layer()= / =lrg_mesh_renderer_component_set_layer()= | layer override, clamped to -1..31 |
 | =lrg_mesh_renderer_component_get_flags()= | the #LrgRenderItemFlags of the items |
+| =lrg_mesh_renderer_component_get_static_lighting()= / =lrg_mesh_renderer_component_set_static_lighting()= | bake participation (0.9.0) |
+| =lrg_mesh_renderer_component_get_lightmap_scale()= / =lrg_mesh_renderer_component_set_lightmap_scale()= | lightmap resolution multiplier, clamped to 0..16 (NaN: 1) (0.9.0) |
+
+At runtime the item of a mesh whose entity GUID has an entry in its world's lightmap draws its indirect light from the lightmap, else from the world's probe grid around it; both properties only steer the baker (see the [[file:../../guides/lighting-bake.org][lighting bake guide]]).
 
 ** LrgLightComponent
 :PROPERTIES:
@@ -302,6 +308,7 @@ A light registered with the world as an #LrgLight3DDesc: at =world_entered=, aft
 | =cast-shadows= | boolean          | FALSE    | =cast_shadows=                                |
 | =layer-mask=   | uint             | all      | =layer_mask= (render layers the light reaches, see [[file:../graphics/light-set.org::#render-layers][light-set layers]]) |
 | =shadow-bias=  | float 0..100     | 0        | (read from =source= by =lrg_light_set_add_light_desc()=): shadow depth bias in world units, 0 = the shadow renderer's (0.9.0) |
+| =bake-mode=    | =LrgLightMode=   | realtime | =bake_mode=: realtime, mixed or baked (0.9.0 M3, see [[file:../lighting/lightmap3d.org::#lightmap3d-light-modes][light modes]]); node param =bake_mode= |
 | (component enabled, entity active) | | | =enabled=                                   |
 
 *** API
@@ -321,6 +328,7 @@ A light registered with the world as an #LrgLight3DDesc: at =world_entered=, aft
 | =lrg_light_component_get_cast_shadows()= / =lrg_light_component_set_cast_shadows()= | shadow maps (a cube for a point light, a spot map for a spot light, the cascades for a directional light) |
 | =lrg_light_component_get_shadow_bias()= / =lrg_light_component_set_shadow_bias()= | per-light shadow depth bias in world units (0.9.0) |
 | =lrg_light_component_get_layer_mask()= / =lrg_light_component_set_layer_mask()= | the render layers it lights (0.9.0) |
+| =lrg_light_component_get_bake_mode()= / =lrg_light_component_set_bake_mode()= | its part in the lighting bake (0.9.0) |
 | =lrg_light_component_add_to_light_set()= | adds the light to an #LrgLightSet now: kind, colour, intensity, range, cone, layers, shadow priority 1 when it casts, its bias (0.9.0) |
 | =lrg_light_component_fill_desc()= | builds the #LrgLight3DDesc the world gets |
 | =lrg_light_component_sync()= | re-registers now |
@@ -573,7 +581,7 @@ The trigger's local bounds (=get_bounds=) are its volume, so it is indexed in th
 
 An animated glTF model. The component holds an #LrgModelAnimator (created from =model-path= through =asset-manager=, or set explicitly; one animator and its model may be shared by many components) and its own #LrgModelAnimState. In =update= it applies a requested clip (=lrg_model_animator_find_clip()=: exact name, alias, or suffix such as "walk" for "Armature|Walk"; crossfaded by =crossfade= seconds) and advances time by delta × =speed= while =playing=.
 
-*Render item:* one MODEL item with the animator's model, the tint and the shadow flags. =collect_render= poses the shared model for this component (=lrg_skinned_model_component_apply_pose()=); a renderer drawing several components sharing one model should call it again right before each such item. No item is submitted without a model (headless animators have none). Animation graphs and blend trees arrive in 0.9 M4.
+*Render item:* one MODEL item with the animator's model, the tint and the shadow flags. =collect_render= poses the shared model for this component (=lrg_skinned_model_component_apply_pose()=); a renderer drawing several components sharing one model should call it again right before each such item. No item is submitted without a model or a skinned mesh (headless animators have none). Animation graphs drive the component through [[#animator][LrgAnimatorComponent3D]].
 
 | Property          | Type              | Default | Meaning                                 |
 |-------------------+-------------------+---------+-----------------------------------------|
@@ -607,6 +615,100 @@ An animated glTF model. The component holds an #LrgModelAnimator (created from =
 | =lrg_skinned_model_component_set_submesh_material()= / =lrg_skinned_model_component_get_submesh_material()= / =lrg_skinned_model_component_get_n_submesh_materials()= | per-mesh materials: with any set, one posed item per mesh (=mesh_index= = i) |
 
 With a material the item carries it, its base colour times the component colour, and the transparent / cutout / double-sided / unlit flags it implies (see [[file:../graphics/material.org::#binding][Material binding]]).
+
+*** External pose (0.9.0)
+:PROPERTIES:
+:CUSTOM_ID: skinned-model-palette
+:END:
+The component can also be posed from outside, which is how [[#animator][LrgAnimatorComponent3D]] drives it:
+
+| Property / function | |
+|-+-|
+| =skeleton= (=LrgSkeleton=): =lrg_skinned_model_component_get_skeleton()= / =lrg_skinned_model_component_set_skeleton()= | the model's skeleton (bone i = skin joint i), the default skeleton of an animator on the same entity |
+| =skinned-mesh= (=LrgSkinnedMesh=): =lrg_skinned_model_component_get_skinned_mesh()= / =lrg_skinned_model_component_set_skinned_mesh()= | drawn when there is no model, as one =LRG_RENDER_ITEM_CUSTOM= item (=UNLIT=, the tint, skinned bounds) calling =lrg_skinned_mesh_draw()= |
+| =lrg_skinned_model_component_set_palette (self, palette, n_bones)= | 16 floats per bone (bone world x inverse bind, model space, column-major); =NULL= returns to clip playback |
+| =lrg_skinned_model_component_get_palette (self, &n)= / =lrg_skinned_model_component_get_palette_serial()= | the palette and a counter bumped by every set (tests, editor) |
+
+While a palette is set the component's own clip playback is not advanced or applied. A glTF model is skinned on the CPU with the palette when it is posed (=apply_pose=, i.e. at =collect_render= and before each draw; once per palette), writing the meshes' =animVertices= / =animNormals= and re-uploading the position and normal buffers, so it draws correctly with any shader; a skinned mesh gets the palette directly (GPU skinning when its shader allows). Normals are transformed by the palette's upper 3x3 and renormalised (exact for rigid and uniformly scaled bones).
+
+
+** LrgAnimatorComponent3D
+:PROPERTIES:
+:CUSTOM_ID: animator
+:END:
+
+Runs an [[file:../animation/anim-graph.org][LrgAnimGraph]] (.ranim) on the entity and drives the entity's [[#skinned-model][LrgSkinnedModelComponent]]. (The 2D =LrgAnimatorComponent= of =LrgGameObject= is unrelated and unchanged.) Registration in the component registry and the level format is planned with the editor wave; create it in code for now.
+
+*One step* (=update= calls =lrg_animator_component3d_evaluate()= with the frame delta):
+1. the graph: the one set, or the one loaded from =graph-path= (once; its clips resolved relative to the file through =lrg_anim_graph_resolve_clips()=; load errors are logged once); the skeleton: the one set, else the skinned model's;
+2. =lrg_anim_graph_update()= by delta x =speed= when =playing= (a paused animator keeps posing, so IK still follows its targets);
+3. =lrg_anim_graph_evaluate()=: the layers blended, the root motion taken out;
+4. =lrg_anim_pose_apply()= into the skeleton, then every enabled IK goal (=ik-enabled=) with the entity's world matrix and the raycast;
+5. the palette (through the skinned mesh's inverse binds when the model is a skinned mesh, else the skeleton's inverse bind matrices, computed from the bind pose when none are set) handed to the skinned model with =lrg_skinned_model_component_set_palette()=;
+6. the root motion scaled and rotated into the entity's parent space and added to its position, the turn post-multiplied onto its rotation, when =apply-root-motion= (default: the graph's =root_motion.apply=).
+
+| Property | Type | Default | Meaning |
+|-+-+-+-|
+| =graph= | =LrgAnimGraph= | NULL | the running graph (one per character: =lrg_anim_graph_duplicate()=) |
+| =graph-path= | string | NULL | .ranim loaded lazily |
+| =skeleton= | =LrgSkeleton= | NULL | posed skeleton (NULL: the skinned model's) |
+| =speed= | float 0..100 | 1 | time scale |
+| =playing= | boolean | TRUE | time advances |
+| =apply-root-motion= | boolean | graph | move the entity |
+| =ik-enabled= | boolean | TRUE | run the IK post-pass |
+
+| Function | Description |
+|----------+-------------|
+| =lrg_animator_component3d_new()= / =lrg_animator_component3d_new_with_graph()= | |
+| =lrg_animator_component3d_get_graph()= / =lrg_animator_component3d_set_graph()= | (setting starts the graph) |
+| =lrg_animator_component3d_get_graph_path()= / =lrg_animator_component3d_set_graph_path()= | |
+| =lrg_animator_component3d_get_skeleton()= / =lrg_animator_component3d_set_skeleton()= | |
+| =lrg_animator_component3d_get_skinned_model()= | the entity's skinned model component |
+| =lrg_animator_component3d_set_float()= / =lrg_animator_component3d_get_float()= | parameters |
+| =lrg_animator_component3d_set_int()= / =lrg_animator_component3d_get_int()= | |
+| =lrg_animator_component3d_set_bool()= / =lrg_animator_component3d_get_bool()= | |
+| =lrg_animator_component3d_set_trigger()= / =lrg_animator_component3d_reset_trigger()= | |
+| =lrg_animator_component3d_get_current_state (self, layer)= | a layer's current state (NULL layer: the base) |
+| =lrg_animator_component3d_set_layer_weight()= | fade a layer |
+| =lrg_animator_component3d_get_speed()= / =lrg_animator_component3d_set_speed()= | |
+| =lrg_animator_component3d_get_playing()= / =lrg_animator_component3d_set_playing()= | |
+| =lrg_animator_component3d_get_apply_root_motion()= / =lrg_animator_component3d_set_apply_root_motion()= | |
+| =lrg_animator_component3d_get_root_motion (self, translation, yaw)= | the last step's motion in the parent space (what was, or would have been, added) |
+| =lrg_animator_component3d_get_ik_enabled()= / =lrg_animator_component3d_set_ik_enabled()= | |
+| =lrg_animator_component3d_set_ik_target (self, goal, x, y, z)= / =lrg_animator_component3d_set_ik_weight()= | world-space targets by goal name |
+| =lrg_animator_component3d_set_raycast_func (self, func, data, destroy)= | the ground probe of foot goals |
+| =lrg_animator_component3d_evaluate (self, dt)= | one step by hand (editor preview, tests) |
+| =lrg_animator_component3d_get_palette (self, &n)= | the last palette |
+
+*Signals:* =event (layer_name, state_name, LrgAnimationEvent *event)=, detailed by the event name, and =state-changed (layer_name, state_name)=.
+
+#+begin_src c
+/* A character: skinned model + animator, footsteps, IK and root motion. */
+g_autoptr(GError)          error = NULL;
+g_autoptr(LrgEntity3D)     hero = lrg_entity3d_new_with_name ("hero");
+g_autoptr(LrgSkeleton)     skeleton = lrg_gltf_load_skeleton ("chars/hero.glb", 0, &error);
+LrgSkinnedModelComponent  *body = lrg_skinned_model_component_new_with_model ("chars/hero.glb", NULL);
+LrgAnimatorComponent3D    *anim = lrg_animator_component3d_new ();
+
+lrg_skinned_model_component_set_asset_manager (body, assets);
+lrg_skinned_model_component_set_skeleton (body, skeleton);
+lrg_animator_component3d_set_graph_path (anim, "chars/hero.ranim");
+lrg_animator_component3d_set_raycast_func (anim, ground_ray, physics, NULL);
+g_signal_connect (anim, "event::footstep", G_CALLBACK (on_footstep), NULL);
+lrg_entity3d_add_component (hero, LRG_COMPONENT (body));
+lrg_entity3d_add_component (hero, LRG_COMPONENT (anim));
+g_object_unref (body);
+g_object_unref (anim);
+lrg_world3d_add_entity (world, hero);
+
+/* gameplay, every frame */
+lrg_animator_component3d_set_float (anim, "speed", ground_speed);
+if (jump)
+	lrg_animator_component3d_set_trigger (anim, "jump");
+lrg_animator_component3d_set_ik_target (anim, "look", cam[0], cam[1], cam[2]);
+#+end_src
+
+*Performance:* about 17 µs per step for a 16-bone character with two layers, 22 µs with one two-bone IK goal (see [[file:../animation/anim-graph.org::#performance][measurements]]), plus the CPU skinning of a glTF model (proportional to its vertices; skinned meshes skin on the GPU). *Pitfalls:* add the skinned model component before or with the animator (the animator looks it up each step); share no graph between animators; root motion with =apply= moves the entity's local position, so a physics-driven character should turn =apply-root-motion= off and feed =lrg_animator_component3d_get_root_motion()= to its controller. *In the editor:* the inspector shows these properties; the planned state machine graph, blend space and IK gizmo tools edit the component's graph (see [[file:../animation/anim-graph.org::#editor][the graph page]]).
 
 ** LrgLodComponent
 :PROPERTIES:
@@ -776,6 +878,12 @@ lrg_entity3d_set_position_xyz (room, 0.0f, 2.0f, 0.0f);
 lrg_entity3d_add_component (room, LRG_COMPONENT (probe));
 lrg_world3d_add_entity (world, room);      /* registers with the world's environment */
 #+end_src
+
+** LrgSequenceComponent
+:PROPERTIES:
+:CUSTOM_ID: sequence-component
+:END:
+Plays an =LrgSequence= (=.rseq=) from the entity (0.9.0, registry name =sequence=). It owns an =LrgSequencePlayer= (=lrg_sequence_component_get_player()=): on entering a world it gives the player the world, loads =sequence-path= when no sequence was set in code (=lrg_sequence_component_set_sequence()=) and starts it when =autoplay= is set; =update= advances it; leaving the world stops it. The track binding ="self"= resolves to the owning entity. Properties: =sequence=, =sequence-path=, =autoplay= (default =TRUE=), =play-mode= (overrides the asset's), =rate=. Full reference: [[file:../animation/sequence.org::#sequence-api-component][Sequences]].
 
 ** Type functions
 :PROPERTIES:

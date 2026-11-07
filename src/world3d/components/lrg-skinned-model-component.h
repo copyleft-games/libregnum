@@ -7,7 +7,11 @@
  * LrgSkinnedModelComponent: an animated glTF model.  Plays one clip of an
  * #LrgModelAnimator (by name, speed, loop, crossfade) in update() and
  * submits the model as an %LRG_RENDER_ITEM_MODEL item, posed for this
- * component.  Animation graphs arrive in 0.9 M4.
+ * component.  From 0.9 an #LrgAnimatorComponent3D can drive it instead:
+ * it writes a skinning palette computed from an #LrgSkeleton
+ * (lrg_skinned_model_component_set_palette()), which then replaces the
+ * clip playback; and the component can draw an #LrgSkinnedMesh instead of
+ * a glTF model.
  */
 
 #pragma once
@@ -24,6 +28,8 @@
 #include "../../graphics/lrg-model-animator.h"
 #include "../lrg-world3d.h"
 #include "../../graphics/lrg-material.h"
+#include "../../graphics/lrg-skinned-mesh.h"
+#include "../../animation/lrg-skeleton.h"
 
 G_BEGIN_DECLS
 
@@ -265,5 +271,96 @@ LrgMaterial * lrg_skinned_model_component_get_submesh_material (LrgSkinnedModelC
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_skinned_model_component_get_n_submesh_materials (LrgSkinnedModelComponent *self);
+
+/* ==========================================================================
+ * 0.9.0: external pose (palette), skeleton and skinned mesh
+ * ========================================================================== */
+
+/**
+ * lrg_skinned_model_component_get_skeleton:
+ * @self: an #LrgSkinnedModelComponent
+ *
+ * Returns: (transfer none) (nullable): the skeleton of the model (what an
+ *   #LrgAnimatorComponent3D poses when it has none of its own)
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSkeleton * lrg_skinned_model_component_get_skeleton (LrgSkinnedModelComponent *self);
+
+/**
+ * lrg_skinned_model_component_set_skeleton:
+ * @self: an #LrgSkinnedModelComponent
+ * @skeleton: (nullable): the model's skeleton (bone i = skin joint i,
+ *   for example from lrg_gltf_load_skeleton())
+ *
+ * Gives the component the skeleton its palette is computed from.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_model_component_set_skeleton (LrgSkinnedModelComponent *self,
+                                               LrgSkeleton              *skeleton);
+
+/**
+ * lrg_skinned_model_component_get_skinned_mesh:
+ * @self: an #LrgSkinnedModelComponent
+ *
+ * Returns: (transfer none) (nullable): the skinned mesh drawn instead of a
+ *   model
+ */
+LRG_AVAILABLE_IN_ALL
+LrgSkinnedMesh * lrg_skinned_model_component_get_skinned_mesh (LrgSkinnedModelComponent *self);
+
+/**
+ * lrg_skinned_model_component_set_skinned_mesh:
+ * @self: an #LrgSkinnedModelComponent
+ * @mesh: (nullable): an #LrgSkinnedMesh (procedural or from
+ *   lrg_gltf_animation_create_skinned_mesh())
+ *
+ * Draws @mesh (as an %LRG_RENDER_ITEM_CUSTOM item, skinned on the GPU
+ * when possible) when the component has no model. The mesh's palette
+ * follows lrg_skinned_model_component_set_palette().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_model_component_set_skinned_mesh (LrgSkinnedModelComponent *self,
+                                                   LrgSkinnedMesh           *mesh);
+
+/**
+ * lrg_skinned_model_component_set_palette:
+ * @self: an #LrgSkinnedModelComponent
+ * @palette: (array length=n_bones) (element-type gfloat) (nullable):
+ *   16 * @n_bones floats, one column-major matrix per bone (bone world x
+ *   inverse bind, in model space), or %NULL to go back to clip playback
+ * @n_bones: number of matrices
+ *
+ * Poses the component from outside (an #LrgAnimatorComponent3D does this
+ * every update). While a palette is set the component's own clip
+ * playback is not applied: a glTF model is skinned on the CPU with the
+ * palette when it is drawn, a skinned mesh gets the palette directly.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_skinned_model_component_set_palette (LrgSkinnedModelComponent *self,
+                                              const gfloat             *palette,
+                                              guint                     n_bones);
+
+/**
+ * lrg_skinned_model_component_get_palette:
+ * @self: an #LrgSkinnedModelComponent
+ * @out_n_bones: (out) (optional): number of matrices
+ *
+ * Returns: (transfer none) (nullable) (array) (element-type gfloat): the
+ *   external palette, %NULL during clip playback
+ */
+LRG_AVAILABLE_IN_ALL
+const gfloat * lrg_skinned_model_component_get_palette (LrgSkinnedModelComponent *self,
+                                                        guint                    *out_n_bones);
+
+/**
+ * lrg_skinned_model_component_get_palette_serial:
+ * @self: an #LrgSkinnedModelComponent
+ *
+ * Returns: a counter that grows with every
+ *   lrg_skinned_model_component_set_palette() (tests and the editor use it
+ *   to see that a pose arrived)
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_skinned_model_component_get_palette_serial (LrgSkinnedModelComponent *self);
 
 G_END_DECLS

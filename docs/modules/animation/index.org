@@ -92,6 +92,7 @@ LrgIKChain + LrgIKSolver (post-process)
 | [[file:blend-tree.org]]    | Animation blending            |
 | [[file:layers.org]]        | Layered animation             |
 | [[file:ik-solver.org]]     | Inverse kinematics            |
+| [[file:anim-graph.org]]    | .ranim animation graphs, pose utilities, root motion, IK post-pass |
 | [[file:gltf-animation.org]] | glTF skins, clips, morph targets |
 | [[file:retargeter.org]]    | Bone maps and retargeting     |
 | [[file:sequence.org]]      | Sequences (=.rseq=) and the sequence player |

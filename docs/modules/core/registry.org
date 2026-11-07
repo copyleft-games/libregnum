@@ -134,6 +134,7 @@ Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= be
 |                        | animator                    | LrgAnimatorComponent          |
 | 3D components (0.9.0)  | mesh-renderer               | LrgMeshRendererComponent      |
 |                        | skinned-model               | LrgSkinnedModelComponent      |
+|                        | animator3d                  | LrgAnimatorComponent3D        |
 |                        | light                       | LrgLightComponent             |
 |                        | camera                      | LrgCameraComponent            |
 |                        | audio-source                | LrgAudioSourceComponent       |
