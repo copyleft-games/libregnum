@@ -56,6 +56,8 @@
 #include "../world3d/components/lrg-rigid-body-component.h"
 #include "../world3d/components/lrg-collider-component3d.h"
 #include "../world3d/components/lrg-joint-component.h"
+#include "../world3d/components/lrg-cloth-component.h"
+#include "../world3d/components/lrg-destructible-component.h"
 #include "../ecs/components/lrg-skeleton2d-component.h"
 #include "../particles/lrg-particle-system.h"
 #include "../particles/lrg-particle-emitter.h"
@@ -501,6 +503,8 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "rigid-body3d",              lrg_rigid_body_component_get_type },
     { "collider3d",                lrg_collider_component3d_get_type },
     { "joint3d",                   lrg_joint_component_get_type },
+    { "cloth3d",                   lrg_cloth_component_get_type },
+    { "destructible3d",            lrg_destructible_component_get_type },
     { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */

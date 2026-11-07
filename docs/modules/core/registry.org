@@ -150,6 +150,8 @@ Names are kebab-case: the type's C prefix without =lrg_= (=lrg_point_light2d= be
 |                        | rigid-body3d                | LrgRigidBodyComponent         |
 |                        | collider3d                  | LrgColliderComponent3D        |
 |                        | joint3d                     | LrgJointComponent             |
+|                        | cloth3d                     | LrgClothComponent             |
+|                        | destructible3d              | LrgDestructibleComponent      |
 |                        | skeleton2d                  | LrgSkeleton2DComponent        |
 | Scenes and levels      | scene                       | LrgScene                      |
 |                        | scene-entity                | LrgSceneEntity                |

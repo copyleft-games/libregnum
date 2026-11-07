@@ -1111,12 +1111,127 @@ lrg_world3d_step (world, frame_time);
 :END:
 #LrgCharacterController is not a component: a game component owns one, points it at the world's physics (=lrg_character_controller_set_physics (cc, lrg_world3d_get_physics (world), mask)=) and moves its entity in =fixed_update=. A character that should push crates also carries a kinematic #LrgRigidBodyComponent with a capsule collider, and passes its body id to =lrg_character_controller_set_ignore_body()= so the controller does not collide with itself. See [[file:../physics/character-controller.org::#physics-world][the controller page]].
 
+** LrgClothComponent
+:PROPERTIES:
+:CUSTOM_ID: cloth-component
+:END:
+A cloth grid hanging from its entity (=src/world3d/components/lrg-cloth-component.h=): a flag, a banner, a curtain, a cape. It owns an [[file:../physics/cloth.org][LrgCloth]]. The grid lies in the entity's local XY plane with its top left corner at the entity origin, columns along local +X and rows down local -Y; =pin-edges= chooses which vertices follow the entity.
+
+*Phases:* =fixed_update= rebuilds the grid after a property change, pushes the parameters, sets the cloth transform to the entity's world matrix (the first time also resets the cloth there), feeds the skeleton's bone matrices (=lrg_cloth_component_set_skeleton()=), attaches the world's physics (=collide-physics=, =collision-mask=) and steps the cloth by the fixed step. =collect_render= streams the particles into the mesh once per simulation step and submits one =LRG_RENDER_ITEM_MESH= item with an identity world matrix (particles are in world space), the colour, =DOUBLE_SIDED | RECEIVE_SHADOW= (plus =CAST_SHADOW=, =TRANSPARENT= for alpha below 1) and world bounds from the particles. The mesh is created on the first draw with a graphics context; headless the item goes out with a =NULL= mesh. =get_bounds= reports the rest grid. =world_exited= detaches the physics world.
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: cloth-component-properties
+:END:
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =columns=, =rows= | uint 2..256 | 16 | grid vertices (rebuild) |
+| =width=, =height= | float (m) | 1 | grid size (rebuild) |
+| =pin-edges= | =LrgClothPinEdges= flags | top | pinned vertices (rebuild): =LRG_CLOTH_PIN_NONE=, =LRG_CLOTH_PIN_TOP=, =LRG_CLOTH_PIN_BOTTOM=, =LRG_CLOTH_PIN_LEFT=, =LRG_CLOTH_PIN_RIGHT=, =LRG_CLOTH_PIN_TOP_CORNERS= (nicks =top= .. =top-corners=) |
+| =substeps= | uint | 8 | =LrgCloth:substeps= |
+| =bend-mode= | =LrgClothBendMode= | distance | =LrgCloth:bend-mode= |
+| =stretch-compliance=, =shear-compliance=, =bend-compliance= | float | 0, 0.5, 1 | relative compliances |
+| =damping=, =drag=, =friction=, =thickness=, =density= | float | 0.1, 1, 0.3, 0.01, 0.25 | as on =LrgCloth= |
+| =wind-x=, =wind-y=, =wind-z= | float (m/s) | 0 | world wind |
+| =color-r= .. =color-a= | float 0..1 | 0.8, 0.15, 0.15, 1 | item colour |
+| =collide-physics= | boolean | TRUE | collide with the world's =LrgDynamicsWorld= bodies |
+| =collision-mask= | uint | all | object layers collided with |
+| =self-collision= | boolean | FALSE | =LrgCloth:self-collision= |
+| =cast-shadows= | boolean | TRUE | adds =CAST_SHADOW= |
+| =layer= | int -1..31 | -1 | render layer override |
+| =skeleton= | =LrgSkeleton= | NULL | drives bone attachments |
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: cloth-component-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_cloth_component_new()= | 1 x 1 m, 16 x 16, top edge pinned |
+| =lrg_cloth_component_new_flag (width, height)= | left column pinned, about 20 vertices per metre (8 .. 256 per side) |
+| =lrg_cloth_component_get_cloth()= | the =LrgCloth= (rebuilt first if dirty): custom pins, bone attachments, colliders; a grid property change drops such edits |
+| =lrg_cloth_component_set_grid (self, columns, rows, width, height)= | one rebuild for all four |
+| =lrg_cloth_component_get_pin_edges()= / =lrg_cloth_component_set_pin_edges()= | pinned edges |
+| =lrg_cloth_component_set_wind (self, x, y, z)= | wind properties at once |
+| =lrg_cloth_component_set_color (self, r, g, b, a)= | colour (clamped) |
+| =lrg_cloth_component_set_skeleton()= / =lrg_cloth_component_get_skeleton()= | bone source (model-space world poses, kept current by an animator) |
+| =lrg_cloth_component_reset()= | back to rest at the entity (after a teleport) |
+| =lrg_cloth_component_get_mesh()= | the streamed =GrlMesh= (NULL headless) |
+| =lrg_cloth_pin_edges_get_type()= | the flags type |
+
+#+begin_src c
+/* A 2 x 1.2 m flag on a pole entity, blowing along +X. */
+LrgClothComponent *flag = lrg_cloth_component_new_flag (2.0f, 1.2f);
+
+lrg_cloth_component_set_wind (flag, 8.0f, 0.0f, 1.0f);
+lrg_cloth_component_set_color (flag, 0.1f, 0.3f, 0.8f, 1.0f);
+lrg_entity3d_add_component (pole_top, LRG_COMPONENT (flag));
+g_object_unref (flag);
+#+end_src
+
+*Pitfalls:* the grid hangs from the entity origin (put the entity at the top of the pole, not its base); teleporting the entity drags the cloth along through its pins, call =lrg_cloth_component_reset()= to snap it; physics collision is one way (bodies do not feel the cloth).
+
+** LrgDestructibleComponent
+:PROPERTIES:
+:CUSTOM_ID: destructible-component
+:END:
+Makes an entity breakable (=src/world3d/components/lrg-destructible-component.h=). Its shape is pre-fractured into Voronoi chunks ([[file:../physics/fracture.org][LrgFracture]]): by default the box of the entity's cube #LrgMeshRendererComponent (its size times the entity's world scale), or any fracture given with =lrg_destructible_component_set_fracture()=. A hit swaps the intact object for one dynamic body per chunk in the world's physics.
+
+*Lifecycle:* /intact/ - with =auto-break= the component listens to the physics world's =contact-added= signal; a contact on the entity's #LrgRigidBodyComponent body whose =normal_impulse= reaches =impulse-threshold= is reported (=lrg_destructible_component_report_impact()=, the strongest of a step is kept). /queued/ - the next =fixed_update= breaks (never inside the physics emission). /broken/ - =lrg_fracture_swap_in()= added the chunk bodies (layer =debris-layer=, mass =density= x volume, the break-up velocity), the mesh renderer and rigid body components are disabled (the rigid body drops its body on its next sync), =fractured= is emitted, and =collect_render= draws every chunk as a MESH item at its body's (interpolated) pose with the mesh renderer's colour, material and flags. With =chunk-lifetime= the chunk bodies are removed that many seconds later. =lrg_destructible_component_restore()= undoes it all.
+
+*Signals:* =fractured (LrgDestructibleComponent *self, guint n_chunks)=, =G_SIGNAL_RUN_LAST=.
+
+*** Properties
+:PROPERTIES:
+:CUSTOM_ID: destructible-component-properties
+:END:
+| Property | Type | Default | Meaning |
+|----------+------+---------+---------|
+| =fracture= | =LrgFracture= | NULL | the fracture in use (explicit or derived) |
+| =fracture-path= | string | NULL | =.rfracture= cache of the derived fracture |
+| =chunk-count=, =seed=, =seed-mode=, =interior-material= | | 12, 1, random, 1 | derived fracture parameters |
+| =impulse-threshold= | float (N·s) | 50 | break impulse |
+| =density= | float (kg/m³) | 1000 | chunk density |
+| =debris-layer= | uint | =LRG_PHYSICS_LAYER_DEBRIS= | chunk object layer |
+| =auto-break= | boolean | TRUE | watch contacts |
+| =chunk-lifetime= | float (s) | 0 | remove debris after (0: keep) |
+| =broken= | boolean, read only | FALSE | state |
+
+*** API
+:PROPERTIES:
+:CUSTOM_ID: destructible-component-api
+:END:
+| Function | Description |
+|----------+-------------|
+| =lrg_destructible_component_new()= | defaults above |
+| =lrg_destructible_component_get_fracture()= / =lrg_destructible_component_set_fracture()= | explicit fracture (local frame, scale baked) |
+| =lrg_destructible_component_prepare (self, error)= | derive and build (or load the cache) now, at load time |
+| =lrg_destructible_component_fracture (self, impact_point, impulse, error)= | break now (needs a world with physics) |
+| =lrg_destructible_component_report_impact (self, point, impulse)= | queue a hit; TRUE when it will break |
+| =lrg_destructible_component_restore()= | undo the break |
+| =lrg_destructible_component_is_broken()=, =lrg_destructible_component_get_chunk_count()=, =lrg_destructible_component_get_chunk_body()= | state and chunk body ids |
+
+#+begin_src c
+/* A breakable 2 x 1 x 0.2 m wall: cube visual, static body, box collider, destructible. */
+LrgMeshRendererComponent *cube = lrg_mesh_renderer_component_new_primitive (LRG_PRIMITIVE_CUBE);
+LrgDestructibleComponent *breakable = lrg_destructible_component_new ();
+
+lrg_mesh_renderer_component_set_size (cube, 2.0f, 1.0f, 0.2f);
+g_object_set (breakable, "chunk-count", 16, "impulse-threshold", 80.0f, "density", 2400.0f,
+              "fracture-path", "cache/wall.rfracture", "chunk-lifetime", 20.0f, NULL);
+/* ... add cube, an LrgRigidBodyComponent (static) with a box collider, then: */
+lrg_entity3d_add_component (wall, LRG_COMPONENT (breakable));
+lrg_destructible_component_prepare (breakable, NULL);   /* at load time */
+#+end_src
+
+*Pitfalls:* derived fractures need a cube primitive (use =set_fracture= for anything else, convex only); a queued break happens in the destructible's =fixed_update=, before the entity-to-body sync of the same fixed update drops the intact body, so the chunks never meet it in a step; a direct =lrg_destructible_component_fracture()= call from game code outside the fixed update leaves the intact body in place until the next sync; a hit must start a new contact to be seen (a resting heavy object never breaks its support); without a rigid body, call =report_impact()= or =fracture()= yourself.
+
 ** Type functions
 :PROPERTIES:
 :CUSTOM_ID: type-functions
 :END:
 
-=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()=, =lrg_reflection_probe_component_get_type()=, =lrg_rigid_body_component_get_type()=, =lrg_collider_component3d_get_type()= and =lrg_joint_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=); =lrg_collider3d_kind_get_type()= registers #LrgCollider3DKind (=sphere=, =capsule=, =cylinder=, =box=, =convex=, =mesh=, =plane=).
+=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()=, =lrg_reflection_probe_component_get_type()=, =lrg_rigid_body_component_get_type()=, =lrg_collider_component3d_get_type()=, =lrg_joint_component_get_type()=, =lrg_cloth_component_get_type()= and =lrg_destructible_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=); =lrg_collider3d_kind_get_type()= registers #LrgCollider3DKind (=sphere=, =capsule=, =cylinder=, =box=, =convex=, =mesh=, =plane=).
 
 ** Using it from the editor
 :PROPERTIES:
@@ -1174,6 +1289,7 @@ nodes:
 - LOD components measure one sphere and run a few comparisons per view; generating a chain from =mesh-asset= simplifies the model once per level on the first draw (about 3 µs per source triangle per level, see [[file:../graphics/mesh-simplify.org::#performance][simplifier performance]]) and the result is shared by every component with the same model and sidecar.
 - Decal components cost nothing per camera (no render items); =sync_world()= is one matrix multiply per decal per frame, and the decal set's selection and upload are described in [[file:../graphics/decal.org::#performance][decal performance]].
 - Physics components cost one hook call each per fixed substep (a world-version compare for static bodies, a kinematic move, a pose read and two entity writes for dynamic bodies) plus the dynamics step itself; interpolation writes every dynamic entity once per frame. Contact signals build a body-to-contacts index once per substep, only when some body listens.
+- Cloth components cost a cloth step per fixed update (about 2-3 ms for a 32 x 32 grid at 8 substeps, see [[file:../physics/cloth.org::#performance][cloth performance]]) and one mesh upload per step when drawn; destructibles cost nothing until they break, then one MESH item and a pose read per chunk per camera.
 - Skinned models sharing one animator re-pose the shared model per component only when the pose key changes (=lrg_model_animator_apply()=).
 
 ** Pitfalls

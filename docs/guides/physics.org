@@ -1,5 +1,5 @@
 #+title: Physics
-#+description: Using libregnum's 3D physics: worlds and bodies, shapes, layers, materials, queries, sensors and contacts; joints and ragdolls, components and levels, cloth and destruction follow in their sections.
+#+description: Using libregnum's 3D physics: worlds and bodies, shapes, layers, materials, queries, sensors and contacts; joints and ragdolls, components and levels, cloth and destruction.
 
 * Physics
 :PROPERTIES:
@@ -374,8 +374,57 @@ Give the player entity a kinematic rigid body with a capsule collider matching t
 :PROPERTIES:
 :CUSTOM_ID: soft
 :END:
-# SOFT: cloth and fracture go here.
-(Section continued by the soft-body work.)
+Two features sit next to the rigid bodies: cloth that hangs, flaps and drapes, and objects that break into pieces. Both are plain objects you can use on their own ([[file:../modules/physics/cloth.org][LrgCloth]], [[file:../modules/physics/fracture.org][LrgFracture]]) and both have a component that does the wiring in a 3D world ([[file:../modules/world3d/components.org::#cloth-component][LrgClothComponent]], [[file:../modules/world3d/components.org::#destructible-component][LrgDestructibleComponent]]).
+
+*** Cloth in five lines
+:PROPERTIES:
+:CUSTOM_ID: soft-cloth
+:END:
+#+begin_src c
+LrgClothComponent *flag = lrg_cloth_component_new_flag (2.0f, 1.2f);   /* pinned on its left edge */
+
+lrg_cloth_component_set_wind (flag, 8.0f, 0.0f, 1.0f);
+lrg_entity3d_add_component (pole_top, LRG_COMPONENT (flag));           /* hangs from the entity origin */
+g_object_unref (flag);
+#+end_src
+The component steps the cloth every fixed update, moves the pinned edge with the entity, collides the cloth with the world's physics bodies (one way) and draws it as a streamed mesh. Everything is a property (=columns=, =rows=, =pin-edges=, compliances, =drag=, =wind-x= ...), so levels and the inspector set it like any other component.
+
+What to know:
+- *Compliances are relative*: =0= is rigid, =1= gives way by half per substep, the same at any resolution. Defaults (stretch 0, shear 0.5, bend 1) suit fabric; raise =bend-compliance= for silk, use =bend-mode= =dihedral= with a low compliance for leather.
+- *Long-range attachments* (on by default) stop a hanging cloth from stretching however few substeps run; they need at least one pinned vertex.
+- *Characters*: attach vertices to bones with =lrg_cloth_attach_to_bone()= (=max_distance= 0 glues, more lets the vertex swing within that distance), feed the skeleton with =lrg_cloth_component_set_skeleton()=, and give legs and torso capsule colliders (=lrg_cloth_add_capsule()= + =lrg_cloth_set_collider_bone()=): colliders are tested every substep and are cheaper than world collision.
+- *Wind* pushes along the triangle normals: a cross component makes flags livelier.
+- Cost: about 2-3 ms per step for 1024 particles at 8 substeps on one core. Halve the resolution before raising substeps.
+
+*** Breakable objects
+:PROPERTIES:
+:CUSTOM_ID: soft-destruction
+:END:
+Breaking is done ahead of time: =LrgFracture= cuts a convex mesh into convex Voronoi chunks (random, impact-biased or brick-like grid seeds), keeps the original surface on the outside and tags the cut faces with an interior material id. The result is cached in a =.rfracture= file and swapped in when the object is hit hard enough.
+
+#+begin_src c
+/* A wall entity: cube visual + static rigid body with a box collider + this. */
+LrgDestructibleComponent *breakable = lrg_destructible_component_new ();
+
+g_object_set (breakable,
+              "chunk-count", 16,                     /* pieces */
+              "seed-mode", LRG_FRACTURE_SEED_GRID,   /* bricks; random or impact for rubble */
+              "impulse-threshold", 80.0f,            /* N s of a contact that breaks it */
+              "density", 2400.0f,                    /* concrete */
+              "fracture-path", "cache/wall.rfracture",
+              "chunk-lifetime", 20.0f,               /* debris disappears after 20 s */
+              NULL);
+lrg_entity3d_add_component (wall, LRG_COMPONENT (breakable));
+lrg_destructible_component_prepare (breakable, NULL);   /* build or load the cache now, not on the hit */
+g_signal_connect (breakable, "fractured", G_CALLBACK (play_crash_sound), NULL);
+#+end_src
+When a contact on the wall's body reaches the threshold, the next fixed update removes the intact body and adds one dynamic body per chunk on the =debris= layer (convex hull shape, mass from the density, launched away from the hit); the chunks draw with the wall's material. =lrg_destructible_component_fracture()= breaks on demand (explosions, scripts), =lrg_destructible_component_restore()= puts the wall back (play-in-editor resets, respawning props).
+
+What to know:
+- *Convex sources only*: split an L-shaped wall into two destructibles. The component derives the shape from a cube visual (size times entity scale); for other shapes build an =LrgFracture= with =lrg_fracture_set_mesh()= and hand it over with =lrg_destructible_component_set_fracture()=.
+- *Ship the cache*: =lrg_fracture_load_or_build()= rebuilds only when the source or parameters changed (a SHA-256 in the file says which input it came from).
+- *Debris layer*: chunks use =LRG_PHYSICS_LAYER_DEBRIS=; make it not collide with characters in the layer matrix if rubble should not trip the player.
+- *Hits start contacts*: a heavy object resting on a destructible never breaks it; something has to hit it (or call =report_impact()= yourself from game logic).
 
 ** Pitfalls
 :PROPERTIES:

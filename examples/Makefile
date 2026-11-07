@@ -187,6 +187,10 @@ endif
 
 EXAMPLE_BINARIES := $(patsubst %,$(EXAMPLES_BUILDDIR)/%$(EXE_EXT),$(EXAMPLES))
 
+# Examples link the static library: relink them whenever it changes
+# (each per-example rule below has only its .c file as a prerequisite).
+$(EXAMPLE_BINARIES): $(LIBREGNUM_STATIC)
+
 # MinGW sysroot for Windows DLLs
 MINGW_BIN := /usr/x86_64-w64-mingw32/sys-root/mingw/bin
 
