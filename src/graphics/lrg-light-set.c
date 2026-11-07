@@ -2338,3 +2338,17 @@ lrg_light_set_prewarmable_init (LrgPrewarmableInterface *iface)
 {
     iface->prewarm = lrg_light_set_prewarm;
 }
+
+/* stub (0.9.0 M2 contract): replaced by the PBR shader library */
+const gchar *
+lrg_light_set_get_glsl_library (void)
+{
+    return "";
+}
+
+/* stub (0.9.0 M2 contract): replaced by the PBR vertex source */
+const gchar *
+lrg_light_set_get_vertex_source (void)
+{
+    return "";
+}

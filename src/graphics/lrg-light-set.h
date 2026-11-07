@@ -995,4 +995,25 @@ LRG_AVAILABLE_IN_ALL
 LrgGroundOverlay *
 lrg_light_set_get_ground_overlay (LrgLightSet *self);
 
+/**
+ * lrg_light_set_get_glsl_library:
+ *
+ * The lit fragment shader's uniforms, hooks and functions without
+ * `#version` and `main`, for user shaders (stub, being written).
+ *
+ * Returns: (transfer none): the GLSL library source
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_light_set_get_glsl_library (void);
+
+/**
+ * lrg_light_set_get_vertex_source:
+ *
+ * The lit vertex shader source (stub, being written).
+ *
+ * Returns: (transfer none): the GLSL vertex source
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_light_set_get_vertex_source (void);
+
 G_END_DECLS

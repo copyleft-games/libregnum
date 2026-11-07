@@ -79,6 +79,15 @@ PUBLIC_HEADERS := \
 	src/graphics/lrg-sky-dome.h \
 	src/graphics/lrg-sky-bodies.h \
 	src/graphics/lrg-light-set.h \
+	src/graphics/lrg-material.h \
+	src/graphics/lrg-shader-asset.h \
+	src/graphics/lrg-shader-graph.h \
+	src/graphics/lrg-hdr-image.h \
+	src/graphics/lrg-depth-prepass.h \
+	src/graphics/lrg-ssao.h \
+	src/graphics/lrg-decal.h \
+	src/graphics/lrg-mesh-simplify.h \
+	src/graphics/lrg-lod-group.h \
 	src/graphics/lrg-texture-sampling.h \
 	src/ecs/lrg-component.h \
 	src/ecs/lrg-game-object.h \
@@ -390,6 +399,8 @@ PUBLIC_HEADERS := \
 	src/world3d/components/lrg-spawn-component.h \
 	src/world3d/components/lrg-trigger-component.h \
 	src/world3d/components/lrg-skinned-model-component.h \
+	src/world3d/components/lrg-decal-component.h \
+	src/world3d/components/lrg-lod-component.h \
 	src/world3d/lrg-portal-system.h \
 	src/scene/lrg-material3d.h \
 	src/scene/lrg-scene-object.h \
@@ -477,6 +488,7 @@ PUBLIC_HEADERS := \
 	src/particles/lrg-particle-billboard-renderer.h \
 	src/postprocess/lrg-post-effect.h \
 	src/postprocess/lrg-post-processor.h \
+	src/postprocess/lrg-post-stack.h \
 	src/postprocess/effects/lrg-vignette.h \
 	src/postprocess/effects/lrg-heat-haze.h \
 	src/postprocess/effects/lrg-bloom.h \
@@ -566,6 +578,9 @@ PUBLIC_HEADERS := \
 	src/lighting/lrg-directional-light2d.h \
 	src/lighting/lrg-shadow-map.h \
 	src/lighting/lrg-shadow-renderer.h \
+	src/lighting/lrg-environment.h \
+	src/lighting/lrg-reflection-probe.h \
+	src/lighting/lrg-volumetric-fog.h \
 	src/lighting/lrg-lightmap.h \
 	src/lighting/lrg-light-probe.h \
 	src/lighting/lrg-lighting-manager.h \
@@ -801,6 +816,15 @@ SOURCES := \
 	src/graphics/lrg-sky-dome.c \
 	src/graphics/lrg-sky-bodies.c \
 	src/graphics/lrg-light-set.c \
+	src/graphics/lrg-material.c \
+	src/graphics/lrg-shader-asset.c \
+	src/graphics/lrg-shader-graph.c \
+	src/graphics/lrg-hdr-image.c \
+	src/graphics/lrg-depth-prepass.c \
+	src/graphics/lrg-ssao.c \
+	src/graphics/lrg-decal.c \
+	src/graphics/lrg-mesh-simplify.c \
+	src/graphics/lrg-lod-group.c \
 	src/graphics/lrg-texture-sampling.c \
 	src/ecs/lrg-component.c \
 	src/ecs/lrg-game-object.c \
@@ -1117,6 +1141,8 @@ SOURCES := \
 	src/world3d/components/lrg-spawn-component.c \
 	src/world3d/components/lrg-trigger-component.c \
 	src/world3d/components/lrg-skinned-model-component.c \
+	src/world3d/components/lrg-decal-component.c \
+	src/world3d/components/lrg-lod-component.c \
 	src/world3d/lrg-portal-system.c \
 	src/scene/lrg-material3d.c \
 	src/scene/lrg-scene-object.c \
@@ -1204,6 +1230,7 @@ SOURCES := \
 	src/particles/lrg-particle-billboard-renderer.c \
 	src/postprocess/lrg-post-effect.c \
 	src/postprocess/lrg-post-processor.c \
+	src/postprocess/lrg-post-stack.c \
 	src/postprocess/effects/lrg-vignette.c \
 	src/postprocess/effects/lrg-heat-haze.c \
 	src/postprocess/effects/lrg-bloom.c \
@@ -1294,6 +1321,9 @@ SOURCES := \
 	src/lighting/lrg-directional-light2d.c \
 	src/lighting/lrg-shadow-map.c \
 	src/lighting/lrg-shadow-renderer.c \
+	src/lighting/lrg-environment.c \
+	src/lighting/lrg-reflection-probe.c \
+	src/lighting/lrg-volumetric-fog.c \
 	src/lighting/lrg-lightmap.c \
 	src/lighting/lrg-light-probe.c \
 	src/lighting/lrg-lighting-manager.c \
@@ -2414,7 +2444,9 @@ DOCS_CHECK_HEADERS := $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
 	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \
 	$(wildcard src/world3d/components/*.h) \
-	src/core/lrg-asset-meta.h src/core/lrg-asset-manager.h
+	src/core/lrg-asset-meta.h src/core/lrg-asset-manager.h \
+	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
+	src/graphics/lrg-material.h src/graphics/lrg-shader-asset.h src/graphics/lrg-shader-graph.h src/graphics/lrg-hdr-image.h src/graphics/lrg-depth-prepass.h src/graphics/lrg-ssao.h src/graphics/lrg-decal.h src/graphics/lrg-mesh-simplify.h src/graphics/lrg-lod-group.h src/lighting/lrg-environment.h src/lighting/lrg-reflection-probe.h src/lighting/lrg-volumetric-fog.h src/postprocess/lrg-post-stack.h src/world3d/components/lrg-decal-component.h src/world3d/components/lrg-lod-component.h
 
 docs-check:
 	@build-aux/docs-check.sh -d docs $(DOCS_CHECK_HEADERS)

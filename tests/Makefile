@@ -80,6 +80,17 @@ TEST_SOURCES := \
 	test-world3d-renderer.c \
 	test-world3d-components.c \
 	test-level-instantiate-3d.c \
+	test-material.c \
+	test-shader-asset.c \
+	test-shader-graph.c \
+	test-pbr.c \
+	test-environment.c \
+	test-reflection-probe.c \
+	test-ssao.c \
+	test-decal.c \
+	test-mesh-simplify.c \
+	test-lod.c \
+	test-post-stack.c \
 	test-runtime-prefab.c \
 	test-runtime-import-settings.c \
 	test-asset-dependencies.c \
