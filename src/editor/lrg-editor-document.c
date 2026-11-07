@@ -53,6 +53,16 @@
 #include "../ui/lrg-theme.h"
 #include "../dialog/lrg-dialog-tree.h"
 #include "../procgen/lrg-procgen-dungeon.h"
+#include "../ai/lrg-bt-asset.h"
+#include "../ai/lrg-logic-machine.h"
+#include "../particles/lrg-particle-asset.h"
+#include "../weather/lrg-weather-asset.h"
+#include "../audio/lrg-mixer-asset.h"
+#include "../tilemap/lrg-tileset.h"
+#include "../atlas/lrg-sprite-sheet.h"
+#include "../atlas/lrg-sprite-animation.h"
+#include "../graphics/lrg-water-body.h"
+#include "../pathfinding/lrg-nav-bake.h"
 
 #define DEFAULT_UNDO_LIMIT (256)
 
@@ -85,6 +95,15 @@ lrg_editor_document_format_get_type (void)
 			{ LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE, "LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE", "sequence" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D, "LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D", "skeleton2d" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET, "LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET", "physics-asset" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_BT, "LRG_EDITOR_DOCUMENT_FORMAT_BT", "bt" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_FSM, "LRG_EDITOR_DOCUMENT_FORMAT_FSM", "fsm" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES, "LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES", "particles" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_WEATHER, "LRG_EDITOR_DOCUMENT_FORMAT_WEATHER", "weather" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_MIXER, "LRG_EDITOR_DOCUMENT_FORMAT_MIXER", "mixer" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_TILESET, "LRG_EDITOR_DOCUMENT_FORMAT_TILESET", "tileset" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, "LRG_EDITOR_DOCUMENT_FORMAT_SPRITE", "sprite" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, "LRG_EDITOR_DOCUMENT_FORMAT_WATER", "water" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, "LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS", "nav-settings" },
 			{ 0, NULL, NULL }
 		};
 		GType id;
@@ -128,6 +147,77 @@ lrg_editor_document_format_from_string (const gchar *name)
 	g_type_class_unref (klass);
 
 	return format;
+}
+
+/*
+ * The engine extension of each format.  The table is also what
+ * lrg_editor_document_detect_format() matches first, so a format and its
+ * extension are declared in one place.
+ */
+static const struct
+{
+	LrgEditorDocumentFormat  format;
+	const gchar             *extension;
+} format_extensions[] = {
+	{ LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL, ".rmat" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK, ".rpost" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH, ".rshadergraph" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH, ".ranim" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP, ".rbonemap" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE, ".rseq" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D, ".rskel2d" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET, ".rphysasset" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_BT, ".rbt" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_FSM, ".rfsm" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES, ".rparticles" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_WEATHER, ".rweather" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_MIXER, ".rmixer" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_TILESET, ".rtileset" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, ".rsprite" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, ".rwater" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, ".rnav" }
+};
+
+const gchar *
+lrg_editor_document_format_get_extension (LrgEditorDocumentFormat format)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (format_extensions); i++)
+	{
+		if (format_extensions[i].format == format)
+			return format_extensions[i].extension;
+	}
+
+	return NULL;
+}
+
+GType
+lrg_editor_document_format_get_object_type (LrgEditorDocumentFormat format)
+{
+	switch (format)
+	{
+	case LRG_EDITOR_DOCUMENT_FORMAT_BT:
+		return LRG_TYPE_BT_ASSET;
+	case LRG_EDITOR_DOCUMENT_FORMAT_FSM:
+		return LRG_TYPE_LOGIC_MACHINE;
+	case LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES:
+		return LRG_TYPE_PARTICLE_ASSET;
+	case LRG_EDITOR_DOCUMENT_FORMAT_WEATHER:
+		return LRG_TYPE_WEATHER_ASSET;
+	case LRG_EDITOR_DOCUMENT_FORMAT_MIXER:
+		return LRG_TYPE_MIXER_ASSET;
+	case LRG_EDITOR_DOCUMENT_FORMAT_TILESET:
+		return LRG_TYPE_TILESET;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
+		return LRG_TYPE_SPRITE_SHEET;
+	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
+		return LRG_TYPE_WATER_BODY;
+	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+		return LRG_TYPE_NAV_BAKE;
+	default:
+		return G_TYPE_INVALID;
+	}
 }
 
 GType
@@ -400,6 +490,8 @@ struct _LrgEditorDocument
 	/* caches, dropped on every change */
 	gchar                   *text_cache;
 	gsize                    text_length;
+	gchar                   *file_cache;     /* engine-backed: the engine writer's text */
+	gsize                    file_length;
 	GPtrArray               *line_index;     /* LineEntry*, document order */
 
 	/* duplicate keys found in the source text when it was read */
@@ -448,6 +540,8 @@ invalidate_caches (LrgEditorDocument *self)
 {
 	g_clear_pointer (&self->text_cache, g_free);
 	self->text_length = 0;
+	g_clear_pointer (&self->file_cache, g_free);
+	self->file_length = 0;
 	g_clear_pointer (&self->line_index, g_ptr_array_unref);
 }
 
@@ -1791,6 +1885,11 @@ lrg_editor_document_init (LrgEditorDocument *self)
  * Construction
  * ========================================================================== */
 
+/* engine-backed formats (defined with the object API below) */
+static gchar *engine_skeleton (LrgEditorDocumentFormat format);
+static const gchar *file_text (LrgEditorDocument *self,
+                               gsize             *length);
+
 /* the smallest document each loader accepts */
 static const gchar *
 skeleton_for (LrgEditorDocumentFormat format)
@@ -1938,11 +2037,15 @@ LrgEditorDocument *
 lrg_editor_document_new (LrgEditorDocumentFormat format)
 {
 	LrgEditorDocument *self;
+	g_autofree gchar *engine_text = NULL;
 	const gchar *text;
 
 	self = g_object_new (LRG_TYPE_EDITOR_DOCUMENT, NULL);
 	self->format = format;
-	text = skeleton_for (format);
+
+	/* an engine-backed format starts as the engine's own empty object */
+	engine_text = engine_skeleton (format);
+	text = engine_text != NULL ? engine_text : skeleton_for (format);
 	if (!load_text (self, text, strlen (text), NULL))
 		g_assert_not_reached ();
 	reset_history (self);
@@ -2111,22 +2214,11 @@ lrg_editor_document_detect_format (const gchar *filename,
 	{
 		g_autofree gchar *lower = g_ascii_strdown (filename, -1);
 
-		if (g_str_has_suffix (lower, ".rmat"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_MATERIAL;
-		if (g_str_has_suffix (lower, ".rpost"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_POST_STACK;
-		if (g_str_has_suffix (lower, ".rshadergraph"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_SHADER_GRAPH;
-		if (g_str_has_suffix (lower, ".ranim"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_ANIM_GRAPH;
-		if (g_str_has_suffix (lower, ".rbonemap"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_BONE_MAP;
-		if (g_str_has_suffix (lower, ".rseq"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_SEQUENCE;
-		if (g_str_has_suffix (lower, ".rskel2d"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_SKELETON2D;
-		if (g_str_has_suffix (lower, ".rphysasset"))
-			return LRG_EDITOR_DOCUMENT_FORMAT_PHYSICS_ASSET;
+		for (i = 0; i < G_N_ELEMENTS (format_extensions); i++)
+		{
+			if (g_str_has_suffix (lower, format_extensions[i].extension))
+				return format_extensions[i].format;
+		}
 	}
 
 	/* --- 1. a double extension is an explicit statement --- */
@@ -3394,7 +3486,7 @@ lrg_editor_document_save_as (LrgEditorDocument  *self,
 		return FALSE;
 	}
 
-	text = document_text (self, &length);
+	text = file_text (self, &length);
 	dir = g_path_get_dirname (path);
 	if (g_mkdir_with_parents (dir, 0755) != 0)
 	{
@@ -4611,6 +4703,330 @@ validate_theme (Validation *v)
 		add_loader_error (v, error, NULL);
 }
 
+/* ==========================================================================
+ * Engine-backed formats (BT, FSM, particles, weather, mixer, tileset,
+ * sprite, water, nav settings)
+ *
+ * These documents are still YAML trees (so path edits, the generic IPC
+ * methods and undo work as for every format), but the engine object is
+ * the authority on the file: the loader parses the tree's text, the
+ * writer produces what is saved, and editors commit whole objects.
+ * ========================================================================== */
+
+/*
+ * engine_parse:
+ * Runs @format's engine loader on @text.  Relative paths (weather particle
+ * effects, tileset images) resolve from @base_dir; no texture is loaded,
+ * so this works without a GL context.
+ */
+static GObject *
+engine_parse (LrgEditorDocumentFormat   format,
+              const gchar              *text,
+              gssize                    length,
+              const gchar              *base_dir,
+              GError                  **error)
+{
+	switch (format)
+	{
+	case LRG_EDITOR_DOCUMENT_FORMAT_BT:
+		return (GObject *) lrg_bt_asset_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_FSM:
+		return (GObject *) lrg_logic_machine_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES:
+		return (GObject *) lrg_particle_asset_new_from_data (text, length, DATA_SOURCE, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_WEATHER:
+		return (GObject *) lrg_weather_asset_new_from_data (text, length, base_dir, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_MIXER:
+		return (GObject *) lrg_mixer_asset_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_TILESET:
+		return (GObject *) lrg_tileset_new_from_asset_data (text, length, base_dir, DATA_SOURCE, FALSE, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
+		return (GObject *) lrg_sprite_sheet_new_from_rsprite_data (text, length, DATA_SOURCE, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
+		return (GObject *) lrg_water_body_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+		return (GObject *) lrg_nav_bake_new_from_data (text, length, error);
+	default:
+		g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
+		             "%s documents have no engine object",
+		             lrg_editor_document_format_to_string (format));
+		return NULL;
+	}
+}
+
+/*
+ * engine_write:
+ * Runs the engine writer of @object's type.  The caller checked that the
+ * type belongs to an engine-backed format.
+ */
+static gchar *
+engine_write (GObject  *object,
+              GError  **error)
+{
+	if (LRG_IS_BT_ASSET (object))
+		return lrg_bt_asset_to_data (LRG_BT_ASSET (object), error);
+	if (LRG_IS_LOGIC_MACHINE (object))
+		return lrg_logic_machine_to_data (LRG_LOGIC_MACHINE (object), error);
+	if (LRG_IS_PARTICLE_ASSET (object))
+		return lrg_particle_asset_save_to_data (LRG_PARTICLE_ASSET (object), NULL, error);
+	if (LRG_IS_WEATHER_ASSET (object))
+		return lrg_weather_asset_to_data (LRG_WEATHER_ASSET (object), error);
+	if (LRG_IS_MIXER_ASSET (object))
+		return lrg_mixer_asset_to_data (LRG_MIXER_ASSET (object), NULL, error);
+	if (LRG_IS_TILESET (object))
+		return lrg_tileset_save_to_data (LRG_TILESET (object), NULL, error);
+	if (LRG_IS_SPRITE_SHEET (object))
+		return lrg_sprite_sheet_save_rsprite_to_data (LRG_SPRITE_SHEET (object), NULL, error);
+	if (LRG_IS_WATER_BODY (object))
+		return lrg_water_body_to_data (LRG_WATER_BODY (object), NULL, error);
+	if (LRG_IS_NAV_BAKE (object))
+		return lrg_nav_bake_to_data (LRG_NAV_BAKE (object));
+
+	g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
+	             "%s is not an engine-backed document object", G_OBJECT_TYPE_NAME (object));
+	return NULL;
+}
+
+/*
+ * engine_skeleton:
+ * The text of a new engine-backed document: the writer's output for the
+ * engine's default object, so a new file is exactly what the engine
+ * would write.  %NULL for the plain YAML formats (skeleton_for() has
+ * those).
+ */
+static gchar *
+engine_skeleton (LrgEditorDocumentFormat format)
+{
+	g_autoptr(GObject) object = NULL;
+	g_autoptr(GError) error = NULL;
+	gchar *text;
+
+	switch (format)
+	{
+	case LRG_EDITOR_DOCUMENT_FORMAT_BT:
+		{
+			/* validate wants a root: an empty `sequence` (succeeds at once) */
+			g_autoptr(LrgBtAssetNode) root = lrg_bt_asset_node_new ("sequence");
+
+			object = (GObject *) lrg_bt_asset_new ();
+			lrg_bt_asset_node_set_id (root, "root");
+			lrg_bt_asset_set_root (LRG_BT_ASSET (object), root);
+		}
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_FSM:
+		{
+			/* validate wants a state: one `idle` state, the initial one */
+			g_autoptr(LrgLogicState) idle = lrg_logic_state_new ("idle");
+			LrgLogicState *root;
+
+			object = (GObject *) lrg_logic_machine_new ();
+			root = lrg_logic_machine_get_root (LRG_LOGIC_MACHINE (object));
+			lrg_logic_state_add_state (root, idle);
+			lrg_logic_state_set_initial (root, "idle");
+		}
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES:
+		object = (GObject *) lrg_particle_asset_new ();
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_WEATHER:
+		object = (GObject *) lrg_weather_asset_new ();
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_MIXER:
+		object = (GObject *) lrg_mixer_asset_new ();
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_TILESET:
+		/* one 16x16 tile; the tileset editor sets the image and grid */
+		object = (GObject *) lrg_tileset_new_empty (16, 16, 1, 1);
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
+		object = (GObject *) lrg_sprite_sheet_new ("sprite");
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
+		object = (GObject *) lrg_water_body_new (LRG_WATER_BODY_PLANE);
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+		object = (GObject *) lrg_nav_bake_new ();
+		break;
+	default:
+		return NULL;
+	}
+
+	text = engine_write (object, &error);
+	if (text == NULL)
+	{
+		/* a default object always writes; keep the document usable anyway */
+		g_warning ("LrgEditorDocument: cannot write a new %s: %s",
+		           lrg_editor_document_format_to_string (format), error->message);
+		text = g_strdup ("version: 1\n");
+	}
+
+	return text;
+}
+
+/* whether the document's format has an engine object */
+static gboolean
+is_engine_backed (LrgEditorDocument *self)
+{
+	return lrg_editor_document_format_get_object_type (self->format) != G_TYPE_INVALID;
+}
+
+/*
+ * file_text:
+ * What a save writes (owned by @self, cached until the next change): the
+ * engine writer's output for an engine-backed document the engine can
+ * parse, the YAML text otherwise.
+ */
+static const gchar *
+file_text (LrgEditorDocument *self,
+           gsize             *length)
+{
+	const gchar *yaml;
+	gsize        yaml_length;
+
+	yaml = document_text (self, &yaml_length);
+	if (!is_engine_backed (self))
+	{
+		if (length != NULL)
+			*length = yaml_length;
+		return yaml;
+	}
+
+	if (self->file_cache == NULL)
+	{
+		g_autofree gchar *base_dir = document_base_dir (self);
+		g_autoptr(GObject) object = NULL;
+		gchar *text = NULL;
+
+		object = engine_parse (self->format, yaml, (gssize) yaml_length, base_dir, NULL);
+		if (object != NULL)
+			text = engine_write (object, NULL);
+		/* the engine cannot read it yet: save the YAML, validation says why */
+		if (text == NULL)
+			text = g_strndup (yaml, yaml_length);
+		self->file_cache = text;
+		self->file_length = strlen (text);
+	}
+
+	if (length != NULL)
+		*length = self->file_length;
+	return self->file_cache;
+}
+
+GObject *
+lrg_editor_document_dup_object (LrgEditorDocument  *self,
+                                GError            **error)
+{
+	g_autofree gchar *base_dir = NULL;
+	const gchar *text;
+	gsize length;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_DOCUMENT (self), NULL);
+	g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+	base_dir = document_base_dir (self);
+	text = document_text (self, &length);
+
+	return engine_parse (self->format, text, (gssize) length, base_dir, error);
+}
+
+gboolean
+lrg_editor_document_commit_object (LrgEditorDocument  *self,
+                                   GObject            *object,
+                                   const gchar        *label,
+                                   guint               gesture,
+                                   GError            **error)
+{
+	g_autofree gchar *text = NULL;
+	GType type;
+	gboolean ok;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_DOCUMENT (self), FALSE);
+	g_return_val_if_fail (G_IS_OBJECT (object), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	/* --- the object must be the format's engine type --- */
+	type = lrg_editor_document_format_get_object_type (self->format);
+	if (type == G_TYPE_INVALID || !g_type_is_a (G_OBJECT_TYPE (object), type))
+	{
+		g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
+		             "a %s document cannot hold a %s",
+		             lrg_editor_document_format_to_string (self->format), G_OBJECT_TYPE_NAME (object));
+		return FALSE;
+	}
+	if (!check_writable (self, error))
+		return FALSE;
+
+	/* --- the engine writer's text; no command when nothing changes --- */
+	text = engine_write (object, error);
+	if (text == NULL)
+		return FALSE;
+	if (g_strcmp0 (text, file_text (self, NULL)) == 0)
+		return TRUE;
+
+	/*
+	 * One replace of the root: its undo restores the previous tree, so
+	 * the undo stack holds whole snapshots of the engine's output.  A
+	 * gesture merges consecutive commits (a drag) into one step.
+	 */
+	if (gesture != 0)
+		return lrg_editor_document_replace_gesture (self, "", text, gesture, error);
+
+	lrg_editor_document_begin_group (self, label != NULL ? label : "Edit");
+	ok = lrg_editor_document_replace_gesture (self, "", text, 0, error);
+	lrg_editor_document_end_group (self);
+
+	return ok;
+}
+
+gchar *
+lrg_editor_document_to_file_data (LrgEditorDocument *self,
+                                  gsize             *length)
+{
+	const gchar *text;
+	gsize len;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_DOCUMENT (self), NULL);
+
+	text = file_text (self, &len);
+	if (length != NULL)
+		*length = len;
+
+	return g_strndup (text, len);
+}
+
+/*
+ * validate_engine:
+ * The engine loader on the document text, then the asset's own validate
+ * where it has one (references, cycles, ranges).  Loader warnings become
+ * warning issues through the usual log capture.
+ */
+static void
+validate_engine (Validation *v)
+{
+	g_autoptr(GError) error = NULL;
+	g_autoptr(GObject) object = NULL;
+	g_autofree gchar *base_dir = document_base_dir (v->self);
+	gboolean ok = TRUE;
+
+	object = engine_parse (v->self->format, v->text, (gssize) v->length, base_dir, &error);
+	if (object == NULL)
+	{
+		add_loader_error (v, error, DATA_SOURCE);
+		return;
+	}
+
+	if (LRG_IS_BT_ASSET (object))
+		ok = lrg_bt_asset_validate (LRG_BT_ASSET (object), &error);
+	else if (LRG_IS_LOGIC_MACHINE (object))
+		ok = lrg_logic_machine_validate (LRG_LOGIC_MACHINE (object), &error);
+	else if (LRG_IS_PARTICLE_ASSET (object))
+		ok = lrg_particle_asset_validate (LRG_PARTICLE_ASSET (object), &error);
+	else if (LRG_IS_MIXER_ASSET (object))
+		ok = lrg_mixer_asset_validate (LRG_MIXER_ASSET (object), &error);
+	if (!ok)
+		add_loader_error (v, error, DATA_SOURCE);
+}
+
 gboolean
 lrg_editor_document_validate (LrgEditorDocument  *self,
                               GPtrArray         **issues)
@@ -4658,6 +5074,17 @@ lrg_editor_document_validate (LrgEditorDocument  *self,
 		break;
 	case LRG_EDITOR_DOCUMENT_FORMAT_THEME:
 		validate_theme (&v);
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_BT:
+	case LRG_EDITOR_DOCUMENT_FORMAT_FSM:
+	case LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES:
+	case LRG_EDITOR_DOCUMENT_FORMAT_WEATHER:
+	case LRG_EDITOR_DOCUMENT_FORMAT_MIXER:
+	case LRG_EDITOR_DOCUMENT_FORMAT_TILESET:
+	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
+	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
+	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+		validate_engine (&v);
 		break;
 	case LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN:
 	default:

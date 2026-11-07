@@ -1281,6 +1281,209 @@ test_format_theme (Fixture       *fixture,
 
 /* A UI layout naming a game handler validates with a warning: the
  * editor does not have the game's functions */
+/* ==========================================================================
+ * Engine-backed formats (0.9.0 M6/M7): BT, FSM, particles, weather, mixer,
+ * tileset, sprite, water, nav settings
+ * ========================================================================== */
+
+static const struct
+{
+	LrgEditorDocumentFormat  format;
+	const gchar             *nick;
+	const gchar             *extension;
+} engine_formats[] = {
+	{ LRG_EDITOR_DOCUMENT_FORMAT_BT, "bt", ".rbt" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_FSM, "fsm", ".rfsm" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_PARTICLES, "particles", ".rparticles" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_WEATHER, "weather", ".rweather" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_MIXER, "mixer", ".rmixer" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_TILESET, "tileset", ".rtileset" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, "sprite", ".rsprite" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, "water", ".rwater" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, "nav-settings", ".rnav" }
+};
+
+/* renames an engine object through its own API (every engine-backed
+ * format writes a top-level `name:`) */
+static void
+set_object_name (GObject     *object,
+                 const gchar *name)
+{
+	if (LRG_IS_BT_ASSET (object))
+		lrg_bt_asset_set_name (LRG_BT_ASSET (object), name);
+	else if (LRG_IS_LOGIC_MACHINE (object))
+		lrg_logic_machine_set_name (LRG_LOGIC_MACHINE (object), name);
+	else if (LRG_IS_WEATHER_ASSET (object))
+		lrg_weather_asset_set_name (LRG_WEATHER_ASSET (object), name);
+	else if (LRG_IS_MIXER_ASSET (object))
+		lrg_mixer_asset_set_name (LRG_MIXER_ASSET (object), name);
+	else if (LRG_IS_TILESET (object))
+		lrg_tileset_set_name (LRG_TILESET (object), name);
+	else if (LRG_IS_WATER_BODY (object))
+		lrg_water_body_set_name (LRG_WATER_BODY (object), name);
+	else
+		g_object_set (object, "name", name, NULL);    /* particles, sprite, nav */
+}
+
+/* reads a whole file */
+static gchar *
+slurp (const gchar *path)
+{
+	g_autoptr(GError) error = NULL;
+	gchar *text = NULL;
+
+	g_assert_true (g_file_get_contents (path, &text, NULL, &error));
+	g_assert_no_error (error);
+	return text;
+}
+
+/*
+ * One engine-backed format, end to end: the skeleton is the engine's own
+ * empty object and validates; save writes the engine writer's bytes and
+ * a reload is byte-stable; dup/commit is one undo step (and a gesture
+ * merges); a wrong object type is refused.
+ */
+static void
+test_engine_format (Fixture       *fixture,
+                    gconstpointer  data)
+{
+	guint index = GPOINTER_TO_UINT (data);
+	LrgEditorDocumentFormat format = engine_formats[index].format;
+	g_autoptr(LrgEditorDocument) doc = NULL;
+	g_autoptr(LrgEditorDocument) again = NULL;
+	g_autoptr(GObject) object = NULL;
+	g_autoptr(GObject) check = NULL;
+	g_autoptr(GObject) wrong = NULL;
+	g_autoptr(GPtrArray) issues = NULL;
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *name = NULL;
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *file = NULL;
+	g_autofree gchar *saved = NULL;
+	g_autofree gchar *reloaded = NULL;
+
+	/* --- format table: nick, extension, object type, detection --- */
+	g_assert_cmpstr (lrg_editor_document_format_to_string (format), ==, engine_formats[index].nick);
+	g_assert_cmpint (lrg_editor_document_format_from_string (engine_formats[index].nick), ==, format);
+	g_assert_cmpstr (lrg_editor_document_format_get_extension (format), ==, engine_formats[index].extension);
+	g_assert_true (lrg_editor_document_format_get_object_type (format) != G_TYPE_INVALID);
+	name = g_strconcat ("assets/thing", engine_formats[index].extension, NULL);
+	g_assert_cmpint (lrg_editor_document_detect_format (name, NULL, 0), ==, format);
+
+	/* --- the skeleton: the engine's empty object, valid --- */
+	doc = lrg_editor_document_new (format);
+	issues = validate (doc, TRUE);
+	object = lrg_editor_document_dup_object (doc, &error);
+	g_assert_no_error (error);
+	g_assert_true (G_TYPE_CHECK_INSTANCE_TYPE (object, lrg_editor_document_format_get_object_type (format)));
+
+	/* --- save: the engine writer's bytes; reopen is byte-stable --- */
+	path = g_build_filename (fixture->dir, name, NULL);
+	g_assert_true (lrg_editor_document_save_as (doc, path, &error));
+	g_assert_no_error (error);
+	file = slurp (path);
+	saved = lrg_editor_document_to_file_data (doc, NULL);
+	g_assert_cmpstr (file, ==, saved);
+	again = lrg_editor_document_new_from_file (path, &error);
+	g_assert_no_error (error);
+	g_assert_cmpint (lrg_editor_document_get_format (again), ==, format);
+	reloaded = lrg_editor_document_to_file_data (again, NULL);
+	g_assert_cmpstr (reloaded, ==, file);
+
+	/* --- commit an edited object: one undo step, labelled --- */
+	set_object_name (object, "edited");
+	g_assert_true (lrg_editor_document_commit_object (doc, object, "Rename", 0, &error));
+	g_assert_no_error (error);
+	g_assert_true (lrg_editor_document_get_dirty (doc));
+	g_assert_cmpstr (lrg_editor_document_get_undo_label (doc), ==, "Rename");
+	g_assert_cmpstr (lrg_editor_document_get_scalar (doc, "/name"), ==, "edited");
+
+	/* the same object again changes nothing and records nothing */
+	g_assert_true (lrg_editor_document_commit_object (doc, object, "Again", 0, &error));
+	g_assert_cmpstr (lrg_editor_document_get_undo_label (doc), ==, "Rename");
+
+	/* a gesture: two commits, one step */
+	set_object_name (object, "drag-a");
+	g_assert_true (lrg_editor_document_commit_object (doc, object, NULL, 41, &error));
+	set_object_name (object, "drag-b");
+	g_assert_true (lrg_editor_document_commit_object (doc, object, NULL, 41, &error));
+	g_assert_no_error (error);
+	g_assert_cmpstr (lrg_editor_document_get_scalar (doc, "/name"), ==, "drag-b");
+	g_assert_true (lrg_editor_document_undo (doc));
+	g_assert_cmpstr (lrg_editor_document_get_scalar (doc, "/name"), ==, "edited");
+
+	/* undo the rename: back to the saved text, clean */
+	g_assert_true (lrg_editor_document_undo (doc));
+	g_assert_false (lrg_editor_document_get_dirty (doc));
+	g_clear_pointer (&saved, g_free);
+	saved = lrg_editor_document_to_file_data (doc, NULL);
+	g_assert_cmpstr (saved, ==, file);
+	g_assert_true (lrg_editor_document_redo (doc));
+	check = lrg_editor_document_dup_object (doc, &error);
+	g_assert_no_error (error);
+	g_clear_pointer (&saved, g_free);
+	saved = lrg_editor_document_to_file_data (doc, NULL);
+	g_assert_nonnull (strstr (saved, "edited"));
+
+	/* save and reload: the file is the engine's text of the edit */
+	g_assert_true (lrg_editor_document_save (doc, &error));
+	g_assert_no_error (error);
+	g_clear_pointer (&file, g_free);
+	file = slurp (path);
+	g_assert_cmpstr (file, ==, saved);
+	g_assert_true (lrg_editor_document_reload (doc, &error));
+	g_assert_no_error (error);
+	g_clear_pointer (&reloaded, g_free);
+	reloaded = lrg_editor_document_to_file_data (doc, NULL);
+	g_assert_cmpstr (reloaded, ==, file);
+	g_clear_pointer (&issues, g_ptr_array_unref);
+	issues = validate (doc, TRUE);
+
+	/* --- the wrong object type is refused --- */
+	wrong = format == LRG_EDITOR_DOCUMENT_FORMAT_BT ? (GObject *) lrg_nav_bake_new () : (GObject *) lrg_bt_asset_new ();
+	g_assert_false (lrg_editor_document_commit_object (doc, wrong, "Wrong", 0, &error));
+	g_assert_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND);
+}
+
+/* text the loader rejects is an error issue, and saving keeps the YAML */
+static void
+test_engine_invalid (Fixture       *fixture,
+                     gconstpointer  data)
+{
+	g_autoptr(LrgEditorDocument) doc = NULL;
+	g_autoptr(GPtrArray) issues = NULL;
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *path = NULL;
+	g_autofree gchar *text = NULL;
+
+	(void) data;
+	doc = lrg_editor_document_new (LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS);
+	/* a newer `version:` than the engine writes fails to load */
+	g_assert_true (lrg_editor_document_set_int (doc, "/version", 999, 0, &error));
+	g_assert_no_error (error);
+	issues = validate (doc, FALSE);
+	g_assert_null (lrg_editor_document_dup_object (doc, &error));
+	g_assert_nonnull (error);
+	g_clear_error (&error);
+
+	path = g_build_filename (fixture->dir, "broken.rnav", NULL);
+	g_assert_true (lrg_editor_document_save_as (doc, path, &error));
+	g_assert_no_error (error);
+	text = slurp (path);
+	g_assert_nonnull (strstr (text, "version: 999"));
+
+	/* plain YAML formats have no engine object */
+	{
+		g_autoptr(LrgEditorDocument) plain = lrg_editor_document_new (LRG_EDITOR_DOCUMENT_FORMAT_LOCALE);
+
+		g_assert_cmpint (lrg_editor_document_format_get_object_type (LRG_EDITOR_DOCUMENT_FORMAT_LOCALE), ==,
+		                 G_TYPE_INVALID);
+		g_assert_null (lrg_editor_document_format_get_extension (LRG_EDITOR_DOCUMENT_FORMAT_LOCALE));
+		g_assert_null (lrg_editor_document_dup_object (plain, &error));
+		g_assert_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND);
+	}
+}
+
 static void
 test_ui_layout_game_handler (void)
 {
@@ -1345,6 +1548,19 @@ main (int   argc,
 	g_test_add ("/editor/document/format/dungeon", Fixture, NULL, fixture_set_up, test_format_dungeon,
 	            fixture_tear_down);
 	g_test_add ("/editor/document/format/theme", Fixture, NULL, fixture_set_up, test_format_theme,
+	            fixture_tear_down);
+	{
+		guint i;
+
+		for (i = 0; i < G_N_ELEMENTS (engine_formats); i++)
+		{
+			g_autofree gchar *name = g_strdup_printf ("/editor/document/format/%s", engine_formats[i].nick);
+
+			g_test_add (name, Fixture, GUINT_TO_POINTER (i), fixture_set_up, test_engine_format,
+			            fixture_tear_down);
+		}
+	}
+	g_test_add ("/editor/document/format/engine-invalid", Fixture, NULL, fixture_set_up, test_engine_invalid,
 	            fixture_tear_down);
 
 	return g_test_run ();
