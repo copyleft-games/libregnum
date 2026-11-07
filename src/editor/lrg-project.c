@@ -24,6 +24,15 @@ struct _LrgProject
 	gchar     *run_command;
 	gchar     *scripts_dir;
 	GPtrArray *asset_dirs;   /* gchar* */
+
+	/* Keys this type does not model (e.g. 0.9.0 runtime settings such as
+	 * store_prefab_instances, or another tool's data), kept with their
+	 * parsed values so lrg_project_save() writes them back unchanged:
+	 * parallel arrays of key (gchar*) and value (YamlNode*) */
+	GPtrArray *extra_keys;        /* inside project: */
+	GPtrArray *extra_nodes;
+	GPtrArray *extra_root_keys;   /* next to project: */
+	GPtrArray *extra_root_nodes;
 };
 
 G_DEFINE_FINAL_TYPE (LrgProject, lrg_project, G_TYPE_OBJECT)
@@ -40,6 +49,10 @@ lrg_project_finalize (GObject *object)
 	g_clear_pointer (&self->run_command, g_free);
 	g_clear_pointer (&self->scripts_dir, g_free);
 	g_clear_pointer (&self->asset_dirs, g_ptr_array_unref);
+	g_clear_pointer (&self->extra_keys, g_ptr_array_unref);
+	g_clear_pointer (&self->extra_nodes, g_ptr_array_unref);
+	g_clear_pointer (&self->extra_root_keys, g_ptr_array_unref);
+	g_clear_pointer (&self->extra_root_nodes, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_project_parent_class)->finalize (object);
 }
@@ -54,6 +67,46 @@ static void
 lrg_project_init (LrgProject *self)
 {
 	self->asset_dirs = g_ptr_array_new_with_free_func (g_free);
+	self->extra_keys = g_ptr_array_new_with_free_func (g_free);
+	self->extra_nodes = g_ptr_array_new_with_free_func ((GDestroyNotify) yaml_node_unref);
+	self->extra_root_keys = g_ptr_array_new_with_free_func (g_free);
+	self->extra_root_nodes = g_ptr_array_new_with_free_func ((GDestroyNotify) yaml_node_unref);
+}
+
+/* keep_unknown_members: remembers every member of @map whose key is not
+ * in @known (NULL-terminated), in file order */
+static void
+keep_unknown_members (YamlMapping        *map,
+                      const gchar * const *known,
+                      GPtrArray          *keys,
+                      GPtrArray          *nodes)
+{
+	guint i;
+	guint n = yaml_mapping_get_size (map);
+
+	for (i = 0; i < n; i++)
+	{
+		const gchar *key = yaml_mapping_get_key (map, i);
+		YamlNode    *value = yaml_mapping_get_value (map, i);
+
+		if (key == NULL || value == NULL || g_strv_contains (known, key))
+			continue;
+		g_ptr_array_add (keys, g_strdup (key));
+		g_ptr_array_add (nodes, yaml_node_ref (value));
+	}
+}
+
+/* write_kept_members: appends the remembered members to @map */
+static void
+write_kept_members (YamlMapping *map,
+                    GPtrArray   *keys,
+                    GPtrArray   *nodes)
+{
+	guint i;
+
+	for (i = 0; i < keys->len; i++)
+		if (!yaml_mapping_has_member (map, g_ptr_array_index (keys, i)))
+			yaml_mapping_set_member (map, g_ptr_array_index (keys, i), g_ptr_array_index (nodes, i));
 }
 
 LrgProject *
@@ -131,6 +184,17 @@ lrg_project_open (const gchar  *dir,
 		}
 	}
 
+	/* Everything else survives a save */
+	{
+		static const gchar * const project_keys[] = {
+			"name", "default_level", "game_output", "run_command", "scripts_dir", "asset_dirs", NULL
+		};
+		static const gchar * const root_keys[] = { "project", NULL };
+
+		keep_unknown_members (proj_map, project_keys, self->extra_keys, self->extra_nodes);
+		keep_unknown_members (root_map, root_keys, self->extra_root_keys, self->extra_root_nodes);
+	}
+
 	return self;
 }
 
@@ -169,8 +233,10 @@ lrg_project_save (LrgProject  *self,
 	for (i = 0; i < self->asset_dirs->len; i++)
 		yaml_sequence_add_string_element (dirs_seq, g_ptr_array_index (self->asset_dirs, i));
 	yaml_mapping_set_sequence_member (proj_map, "asset_dirs", dirs_seq);
+	write_kept_members (proj_map, self->extra_keys, self->extra_nodes);
 
 	yaml_mapping_set_mapping_member (root_map, "project", proj_map);
+	write_kept_members (root_map, self->extra_root_keys, self->extra_root_nodes);
 	/* yaml_node_new_mapping refs the mapping (transfer none); let the autoptr
 	 * drop our reference. g_steal_pointer would leak it and the whole tree. */
 	root_node = yaml_node_new_mapping (root_map);
