@@ -258,4 +258,64 @@ void            lrg_skeleton_set_name               (LrgSkeleton        *self,
 LRG_AVAILABLE_IN_ALL
 LrgSkeleton *   lrg_skeleton_copy                   (LrgSkeleton        *self);
 
+/**
+ * lrg_skeleton_set_inverse_bind_matrix:
+ * @self: A #LrgSkeleton
+ * @bone_index: Bone index
+ * @matrix: (array fixed-size=16): column-major matrix taking a mesh
+ *   (bind-space) position into the bone's space, as a glTF skin's
+ *   inverseBindMatrices store it
+ *
+ * Stores the bone's inverse bind matrix. Skinned meshes copy these with
+ * lrg_skinned_mesh_set_inverse_binds_from_skeleton(). The glTF importer
+ * sets them from the skin; skeletons built by hand can derive them from
+ * the bind pose with lrg_skeleton_compute_inverse_bind_matrices().
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_skeleton_set_inverse_bind_matrix (LrgSkeleton       *self,
+                                                      gint               bone_index,
+                                                      const gfloat      *matrix);
+
+/**
+ * lrg_skeleton_get_inverse_bind_matrix:
+ * @self: A #LrgSkeleton
+ * @bone_index: Bone index
+ *
+ * Returns: (transfer none) (nullable) (array fixed-size=16): the bone's
+ *   inverse bind matrix, or %NULL when none was set
+ */
+LRG_AVAILABLE_IN_ALL
+const gfloat *  lrg_skeleton_get_inverse_bind_matrix (LrgSkeleton       *self,
+                                                      gint               bone_index);
+
+/**
+ * lrg_skeleton_compute_inverse_bind_matrices:
+ * @self: A #LrgSkeleton
+ *
+ * Sets every bone's inverse bind matrix to the inverse of its bind-pose
+ * world matrix (the bind poses composed down the hierarchy). The current
+ * local and world poses are left as they are.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_skeleton_compute_inverse_bind_matrices (LrgSkeleton *self);
+
+/**
+ * lrg_skeleton_compute_bind_world_poses:
+ * @self: A #LrgSkeleton
+ * @out_poses: (array length=n_poses) (out caller-allocates): one
+ *   #LrgBonePose per bone, indexed by bone index
+ * @n_poses: entries in @out_poses (at least lrg_skeleton_get_bone_count())
+ *
+ * Composes the bind poses down the hierarchy without touching the bones'
+ * current poses: each entry is the bone's rest pose in skeleton space.
+ * The retargeter aligns rest poses with it.
+ *
+ * Returns: %FALSE when the bone indices are not 0 .. count - 1 or
+ *   @n_poses is smaller than the bone count
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_skeleton_compute_bind_world_poses (LrgSkeleton     *self,
+                                                       LrgBonePose     *out_poses,
+                                                       guint            n_poses);
+
 G_END_DECLS

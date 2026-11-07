@@ -203,6 +203,25 @@ If parent chains form a cycle there is no valid order; the skeleton then falls b
 void lrg_skeleton_update (LrgSkeleton *self, gfloat delta_time);
 #+end_src
 
+*** Inverse Bind Matrices
+:PROPERTIES:
+:CUSTOM_ID: inverse-bind-matrices
+:END:
+A skeleton can store one inverse bind matrix per bone: the column-major matrix taking a mesh (bind-space) position into the bone's space, what a glTF skin's =inverseBindMatrices= hold. Skinned meshes copy them (=lrg_skinned_mesh_set_inverse_binds_from_skeleton()=) so one skeleton poses several meshes.
+
+#+begin_src C
+void          lrg_skeleton_set_inverse_bind_matrix (LrgSkeleton *self, gint bone_index, const gfloat *matrix);
+const gfloat *lrg_skeleton_get_inverse_bind_matrix (LrgSkeleton *self, gint bone_index);   /* NULL when unset */
+void          lrg_skeleton_compute_inverse_bind_matrices (LrgSkeleton *self);
+gboolean      lrg_skeleton_compute_bind_world_poses (LrgSkeleton *self, LrgBonePose *out_poses, guint n_poses);
+#+end_src
+
+- =compute_inverse_bind_matrices()= sets every bone's to the inverse of its bind-pose world matrix, for skeletons built by hand (the glTF importer takes the file's, which may differ from the node rest pose).
+- =compute_bind_world_poses()= composes the bind poses down the hierarchy into =out_poses= (one per bone, indexed by bone index) without touching the bones' current poses; it needs indices 0 .. count - 1 and =n_poses= at least the bone count, and returns =FALSE= otherwise. The retargeter aligns rest poses with it.
+- =lrg_skeleton_copy()= copies the inverse bind matrices (and the name, =lrg_skeleton_get_name()=).
+
+Skeletons usually come from a file: see [[file:gltf-animation.org][glTF animation import]] (=lrg_gltf_load_skeleton()=), and [[file:retargeter.org][Retargeting]] to move clips between skeletons.
+
 ** Example: Building a Skeleton
 :PROPERTIES:
 :CUSTOM_ID: example-building-a-skeleton

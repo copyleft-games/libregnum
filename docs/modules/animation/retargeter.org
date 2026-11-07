@@ -1,0 +1,257 @@
+* Retargeting - LrgBoneMap and LrgRetargeter
+:PROPERTIES:
+:CUSTOM_ID: retargeting
+:END:
+Retargeting plays an animation made for one skeleton on another: a mocap walk recorded on a Mixamo rig on your own character, a shared locomotion set on every humanoid of a game. Two pieces do it:
+
+- =LrgBoneMap= pairs the bones of the two skeletons: explicit =source: target= pairs plus name rules (prefixes to strip, case, separators, left/right words). It is saved as a =.rbonemap= YAML file next to the character.
+- =LrgRetargeter= moves poses and whole clips from the source skeleton onto the target skeleton through the map, aligning the two *rest poses*: the skeletons may have different bone axes, rest angles, proportions and bone counts.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Rest-pose alignment
+:PROPERTIES:
+:CUSTOM_ID: rest-pose-alignment
+:END:
+Copying local rotations between rigs only works when their bones share axes and rest angles, which rigs from different tools never do. The retargeter instead carries each bone's rotation *change from rest, measured in skeleton (world) space*:
+
+- =Sr= and =Tr= are the source and target bones' rest rotations in skeleton space (=lrg_skeleton_compute_bind_world_poses()=), =Ws= the source bone's animated skeleton-space rotation;
+- the source bone turned by =D = Ws * Sr^-1= from its rest;
+- the target bone turns by the same =D= from its own rest: =Wt = D * Tr=;
+- its local rotation is =Wp^-1 * Wt=, with =Wp= the target parent's animated rotation, so the target is walked parents first.
+
+Unmapped target bones keep their bind local pose and follow their parent. Unmapped source bones still move their mapped descendants (they are part of the source forward kinematics). The two skeletons should face the same way and use the same up axis in their rest poses (import both through glTF, which fixes Y-up and +Z forward); a T-pose source onto an A-pose target is fine, the difference is the rest-pose alignment.
+
+*** Translation
+:PROPERTIES:
+:CUSTOM_ID: translation
+:END:
+=LrgRetargetTranslationMode= says which bones take translation:
+
+| Mode                              | Bones moved                     | Use                                    |
+|-----------------------------------+---------------------------------+----------------------------------------|
+| =LRG_RETARGET_TRANSLATION_NONE=   | none (bind translations)        | in-place clips, upper-body layers      |
+| =LRG_RETARGET_TRANSLATION_ROOT=   | the root bone only (default)    | locomotion: hips move, limbs rotate    |
+| =LRG_RETARGET_TRANSLATION_ALL=    | every mapped bone               | stretchy or facial rigs                |
+
+A moved bone's skeleton-space position is its rest position plus the source bone's displacement from its rest, times the translation scale, brought back into the parent's frame. The scale defaults to automatic: the ratio of the root bones' rest heights (target over source), so a short character's hips bob less. The root bone is the topmost mapped target bone unless set by name.
+
+*** Name rules
+:PROPERTIES:
+:CUSTOM_ID: name-rules
+:END:
+=lrg_bone_map_normalize_name()= turns a name into the canonical form the rules compare:
+1. strip every configured prefix (repeatedly, so ="Armature|mixamorig:Hips"= loses both);
+2. with =normalize-separators=: split into words at =_ - . : | space= and at lower-to-upper case changes, join them with =_=;
+3. with =ignore-case=: lower-case;
+4. with =normalize-sides=: the first word =left=/=l= or =right=/=r= becomes a trailing =.l=/=.r=.
+
+So with the prefix ="mixamorig:"=, ="mixamorig:LeftUpperArm"=, ="upper_arm.L"= and ="UpperArm_Left"= all become ="upper_arm.l"=. Explicit pairs always win over rules; a source bone drives at most one target bone.
+
+** .rbonemap format
+:PROPERTIES:
+:CUSTOM_ID: rbonemap-format
+:END:
+A YAML mapping; every member is optional.
+
+#+begin_src yaml
+# hero_to_goblin.rbonemap
+version: 1                       # format version (absent: 1; newer than the library: error)
+rules:
+  ignore_case: true              # compare names without case             (default true)
+  normalize_separators: true     # split names into words                 (default true)
+  normalize_sides: true          # left/right words become a side marker  (default true)
+  strip_prefixes:                # removed from names before comparing
+    - "mixamorig:"
+    - "DEF-"
+bones:                           # explicit pairs, source bone: target bone
+  Hips: pelvis
+  Spine2: spine_03
+  LeftToeBase: ball_l
+#+end_src
+
+| Key                          | Type             | Meaning                                                     |
+|------------------------------+------------------+-------------------------------------------------------------|
+| =version=                    | int              | =LRG_BONE_MAP_FORMAT_VERSION= (1)                           |
+| =rules.ignore_case=          | bool             | =LrgBoneMap:ignore-case=                                    |
+| =rules.normalize_separators= | bool             | =LrgBoneMap:normalize-separators=                           |
+| =rules.normalize_sides=      | bool             | =LrgBoneMap:normalize-sides=                                |
+| =rules.strip_prefixes=       | list of strings  | =lrg_bone_map_add_strip_prefix()= per entry                 |
+| =bones=                      | mapping          | =lrg_bone_map_set (source, target)= per member, file order  |
+
+=lrg_bone_map_to_data()= writes the explicit pairs sorted by source name, so a map saved twice is byte-identical (friendly to version control). Errors are in =LRG_RETARGET_ERROR=: =LRG_RETARGET_ERROR_IO= (read/write), =LRG_RETARGET_ERROR_PARSE= (bad YAML or shape), =LRG_RETARGET_ERROR_VERSION= (newer file).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api-reference
+:END:
+- =LrgBoneMap=, =LrgRetargeter= - *Final GObject classes*, =LRG_TYPE_BONE_MAP=, =LRG_TYPE_RETARGETER=
+- =LrgRetargetError= (=LRG_TYPE_RETARGET_ERROR= / =lrg_retarget_error_get_type()=, domain =LRG_RETARGET_ERROR= / =lrg_retarget_error_quark()=), =LrgRetargetTranslationMode= (=LRG_TYPE_RETARGET_TRANSLATION_MODE= / =lrg_retarget_translation_mode_get_type()=)
+- *Header* - =animation/lrg-retargeter.h=
+
+*** LrgBoneMap
+:PROPERTIES:
+:CUSTOM_ID: lrgbonemap
+:END:
+#+begin_src C
+LrgBoneMap *lrg_bone_map_new           (void);
+LrgBoneMap *lrg_bone_map_new_from_file (const gchar *path, GError **error);
+LrgBoneMap *lrg_bone_map_new_from_data (const gchar *data, gssize length, GError **error);
+gchar      *lrg_bone_map_to_data       (LrgBoneMap *self, GError **error);
+gboolean    lrg_bone_map_save_to_file  (LrgBoneMap *self, const gchar *path, GError **error);
+
+void         lrg_bone_map_set        (LrgBoneMap *self, const gchar *source, const gchar *target); /* NULL target removes */
+const gchar *lrg_bone_map_get_target (LrgBoneMap *self, const gchar *source);
+const gchar *lrg_bone_map_get_source (LrgBoneMap *self, const gchar *target);
+gchar      **lrg_bone_map_get_sources (LrgBoneMap *self);            /* sorted, g_strfreev() */
+guint        lrg_bone_map_get_size    (LrgBoneMap *self);
+void         lrg_bone_map_clear       (LrgBoneMap *self);
+
+void                 lrg_bone_map_add_strip_prefix   (LrgBoneMap *self, const gchar *prefix);
+const gchar * const *lrg_bone_map_get_strip_prefixes (LrgBoneMap *self);
+void     lrg_bone_map_set_ignore_case          (LrgBoneMap *self, gboolean ignore_case);
+gboolean lrg_bone_map_get_ignore_case          (LrgBoneMap *self);
+void     lrg_bone_map_set_normalize_separators (LrgBoneMap *self, gboolean normalize);
+gboolean lrg_bone_map_get_normalize_separators (LrgBoneMap *self);
+void     lrg_bone_map_set_normalize_sides      (LrgBoneMap *self, gboolean normalize);
+gboolean lrg_bone_map_get_normalize_sides      (LrgBoneMap *self);
+gchar   *lrg_bone_map_normalize_name           (LrgBoneMap *self, const gchar *name);
+
+gint    *lrg_bone_map_resolve   (LrgBoneMap *self, LrgSkeleton *source, LrgSkeleton *target, guint *n_target);
+guint    lrg_bone_map_auto_fill (LrgBoneMap *self, LrgSkeleton *source, LrgSkeleton *target);
+#+end_src
+- Properties: =ignore-case=, =normalize-separators=, =normalize-sides= (booleans, default =TRUE=).
+- Signal: =changed= - after any pair or rule change (the retargeter re-resolves on it; an editor panel refreshes on it).
+- =resolve()= returns, per target bone index, the driving source bone index or -1 (=g_free()= it).
+- =auto_fill()= turns rule matches into explicit pairs and returns how many it added.
+
+*** LrgRetargeter
+:PROPERTIES:
+:CUSTOM_ID: lrgretargeter
+:END:
+#+begin_src C
+LrgRetargeter *lrg_retargeter_new (LrgSkeleton *source, LrgSkeleton *target, LrgBoneMap *map /* nullable */);
+LrgSkeleton *lrg_retargeter_get_source   (LrgRetargeter *self);
+LrgSkeleton *lrg_retargeter_get_target   (LrgRetargeter *self);
+LrgBoneMap  *lrg_retargeter_get_bone_map (LrgRetargeter *self);
+
+void   lrg_retargeter_set_translation_mode  (LrgRetargeter *self, LrgRetargetTranslationMode mode);
+LrgRetargetTranslationMode lrg_retargeter_get_translation_mode (LrgRetargeter *self);
+void   lrg_retargeter_set_translation_scale (LrgRetargeter *self, gfloat scale);   /* 0: automatic */
+gfloat lrg_retargeter_get_translation_scale (LrgRetargeter *self);                 /* the factor in use */
+void   lrg_retargeter_set_root_bone (LrgRetargeter *self, const gchar *target_bone);
+const gchar *lrg_retargeter_get_root_bone (LrgRetargeter *self);
+void   lrg_retargeter_set_sample_rate (LrgRetargeter *self, gfloat fps);           /* 1 .. 240, default 30 */
+gfloat lrg_retargeter_get_sample_rate (LrgRetargeter *self);
+const gint *lrg_retargeter_get_mapping (LrgRetargeter *self, guint *n_target);
+
+gboolean lrg_retargeter_retarget_pose (LrgRetargeter *self, const LrgBonePose *source_local, guint n_source,
+                                       LrgBonePose *out_target_local, guint n_target);
+gboolean lrg_retargeter_retarget_skeleton (LrgRetargeter *self);
+LrgAnimationClip *lrg_retargeter_retarget_clip (LrgRetargeter *self, LrgAnimationClip *clip, GError **error);
+#+end_src
+- Properties: =source=, =target=, =bone-map= (construct-only), =translation-mode=, =translation-scale=, =root-bone=, =sample-rate=.
+- Both skeletons need bone indices 0 .. count - 1 (glTF-imported skeletons have them); otherwise =get_mapping()= is =NULL= and the retarget calls fail (=LRG_RETARGET_ERROR_SKELETON= for clips).
+- =retarget_pose()= - one pose, arrays indexed by bone index.
+- =retarget_skeleton()= - live: reads the source skeleton's local poses, writes the target's and recalculates its world poses.
+- =retarget_clip()= - bakes a clip: sampled at the sample rate plus the last instant, each sample retargeted, written as linear rotation channels for mapped bones and translation channels for the bones the mode moves; base poses are the target bind poses; morph weight channels (resampled), events, duration and loop mode are carried over.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: worked-examples
+:END:
+*** Bake a library of clips onto a new character
+:PROPERTIES:
+:CUSTOM_ID: bake-a-library-of-clips-onto-a-new-character
+:END:
+#+begin_src C
+g_autoptr(GError)        error = NULL;
+g_autoptr(LrgSkeleton)   mocap = lrg_gltf_load_skeleton ("anims/mocap_rig.glb", 0, &error);
+g_autoptr(LrgSkeleton)   goblin = lrg_gltf_load_skeleton ("chars/goblin.glb", 0, &error);
+g_autoptr(GPtrArray)     clips = lrg_gltf_load_clips ("anims/locomotion.glb", &error);
+g_autoptr(LrgBoneMap)    map = lrg_bone_map_new_from_file ("chars/goblin.rbonemap", &error);
+g_autoptr(LrgRetargeter) rt = lrg_retargeter_new (mocap, goblin, map);
+guint                    i;
+
+lrg_retargeter_set_sample_rate (rt, 30.0f);
+for (i = 0; i < clips->len; i++)
+{
+	g_autoptr(LrgAnimationClip) baked = lrg_retargeter_retarget_clip (rt, g_ptr_array_index (clips, i), &error);
+
+	if (baked == NULL)
+		g_error ("%s", error->message);
+	lrg_animator_add_clip (goblin_animator, lrg_animation_clip_get_name (baked), baked);
+}
+#+end_src
+
+*** Build and save a bone map
+:PROPERTIES:
+:CUSTOM_ID: build-and-save-a-bone-map
+:END:
+#+begin_src C
+g_autoptr(LrgBoneMap) map = lrg_bone_map_new ();
+
+lrg_bone_map_add_strip_prefix (map, "mixamorig:");
+lrg_bone_map_auto_fill (map, mocap, goblin);     /* Hips -> hips, LeftArm -> arm.L, ... */
+lrg_bone_map_set (map, "Spine2", "chest");       /* fix what the rules missed */
+lrg_bone_map_set (map, "HeadTop_End", NULL);     /* and drop what should not move */
+lrg_bone_map_save_to_file (map, "chars/goblin.rbonemap", &error);
+#+end_src
+
+*** Live retargeting every frame
+:PROPERTIES:
+:CUSTOM_ID: live-retargeting-every-frame
+:END:
+#+begin_src C
+/* the mocap skeleton is driven by its own animator */
+lrg_animator_update (mocap_animator, dt);
+lrg_retargeter_retarget_skeleton (rt);             /* writes goblin's poses */
+lrg_skinned_mesh_apply_skeleton (goblin_mesh, goblin);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Resolution (pairing, rest poses, hierarchy order, translation scale) is cached and redone only after the map or a setting changes.
+- =retarget_pose()= is O(source bones + target bones): one forward-kinematics pass over the source, one quaternion chain per target bone. Two small arrays are allocated per call; prefer =retarget_clip()= (bake once at load) over live retargeting for many characters.
+- =retarget_clip()= costs samples x (source tracks sampled + one pose retarget); a 2 s clip at 30 fps is 61 samples. Measured with =tests/test-gltf-animation -m perf= (release build, i7-1280P): baking the 1 s walk of the 11-bone test character at 30 fps (31 samples) takes 221 us; cost grows linearly with bones and samples.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *Facing.* Rest-pose alignment assumes both rest poses face the same way. A rig that faces -Z where the source faces +Z turns every bone half-way round; rotate it in the DCC tool or import both through glTF.
+- *Twist bones.* A twist bone without a source partner stays at bind; map it to the limb it twists with, or let it follow its parent.
+- *Root vs. hips.* Some rigs have a ground-level =Root= above the hips; set =lrg_retargeter_set_root_bone()= to the bone that should take the motion, and use the 3D animator's root motion extraction for the ground bone.
+- *Automatic scale near the ground.* The automatic translation scale is the ratio of the root bones' rest heights; with a root at height 0 it falls back to 1. Set it explicitly for such rigs.
+- *Baked clips are linear.* =retarget_clip()= resamples; raise the sample rate for fast motions (240 max).
+- *Skeleton indices.* Hand-built skeletons must use indices 0 .. count - 1.
+
+** Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
+In =tests/test-gltf-animation.c=, two chains imported from GLB fixtures: a source chain along +Y at height 1 and a target chain lying along +Z (root rotated 90 degrees about X), its middle bone twisted -45 degrees about Y, its root at height 2, with bones ="mixamorig:Root"=, ="MID"=, ="TipEnd"=.
+- */gltf-animation/bone-map* - canonical names (prefix, camel case, sides), resolution by rules and by an explicit pair, =auto_fill()=, one source per target, =.rbonemap= round trip through data and a file (identical bytes), a hand-written file, version and shape errors.
+- */gltf-animation/retarget* - mapping and automatic root/scale (2.0), baking at 20 fps (21 keys), every mapped bone's skeleton-space rotation change equal to its source bone's at five times, the root moving twice the source distance, live retargeting equal to the baked clip, translation mode =NONE=, and a map that matches nothing failing with =LRG_RETARGET_ERROR_SKELETON=.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: using-it-from-the-editor
+:END:
+The bone map editor arrives with the next wave's animation tools:
+- open a =.rbonemap= (or create one from two =.glb= files); the panel shows the source and target skeleton trees (=lrg_gltf_animation_create_skeleton()=) side by side with lines for =lrg_retargeter_get_mapping()=;
+- *Auto map* calls =lrg_bone_map_auto_fill()=; dragging a source bone onto a target bone calls =lrg_bone_map_set()=; the rules (prefixes, case, sides) are edited in a side form bound to the properties; the panel refreshes on =LrgBoneMap::changed=;
+- a preview viewport plays a source clip retargeted live (=lrg_retargeter_retarget_skeleton()=) on the target mesh; *Bake* writes the baked clips (=lrg_retargeter_retarget_clip()=).
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+- [[file:gltf-animation.org][glTF animation import]]
+- [[file:skeleton.org][Skeleton and bones]]
+- [[file:clip.org][Animation clips]]
+- [[file:../../guides/animation-pipeline.org][Animation pipeline guide]]

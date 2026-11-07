@@ -124,3 +124,12 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - Profiling: lrg_world3d_renderer_set_timing(r, TRUE) then get_pass_time(r, LRG_WORLD3D_RENDER_PASS_*) (ms, GPU-synced per pass).
 - Preview post processor = bloom, tonemap (filmic +1 EV), vignette, fxaa, color-grade.
 - Editor: lrg_editor_scene_renderer_set_cull_mask(slot), get_lod_group(asset) (forced level previews), recapture_probes(); decal / reflection-probe nodes and material: refs draw while authoring.
+
+### Animation import and retargeting (0.9.0 M4)
+- `LrgGltfAnimation` (headless; raylib's compiled cgltf): `new_from_file/_bytes`, `create_skeleton(skin)`, `create_clip(s)`, `create_skinned_mesh(skin)`, `create_mesh(mesh)`. Shortcuts: `lrg_gltf_load_skeleton(path, skin, &err)`, `lrg_gltf_load_clips(path, &err)`.
+- Bone i = skin joint i = skinned-mesh bone i. Bone, track and morph group names all come from `lrg_gltf_animation_get_node_name` (unique: "node_<i>" if unnamed, "<name>_<i>" if duplicated).
+- Non-joint ancestors of root joints (the Armature) are folded into the root's bind pose and its channel keys: exact for uniform scale, non-uniform approximated with a warning; an animated Armature is not folded.
+- Clip channels: `lrg_animation_clip_set_track_channel` (step/linear/cubic; cubic values in-tangent, value, out-tangent like glTF); channels win over keyframes; components without a channel come from `set_track_base_pose`. Morph weights: `add_weights_channel`/`sample_weights`, applied with `lrg_skinned_mesh_set_morph_group_weights`.
+- Per frame: `lrg_skeleton_calculate_world_poses` then `lrg_skinned_mesh_apply_skeleton(mesh, skeleton)`. Inverse binds live on the skeleton. `LrgMorphTargets` (in lrg-skinned-mesh.h) blends lazily on the CPU; on the GPU path set_morph_targets makes vertex buffers dynamic.
+- Retargeting: `LrgBoneMap` (`.rbonemap`; explicit pairs + name rules: prefix strip, case, separators/camel case, left/right -> `.l`/`.r`) and `LrgRetargeter` (skeleton-space rest alignment; translation NONE/ROOT/ALL; automatic scale from hip heights; `retarget_clip` bakes linear channels; `retarget_skeleton` is live). Skeletons need bone indices 0..n-1.
+- Traps: graylib's raylib is built without `ImageDraw`. Cross-check new import paths against `lrg_gltf_geometry_pose` (pattern in test-gltf-animation).
