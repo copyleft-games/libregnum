@@ -55,7 +55,7 @@ static const gchar * const panel_entries[][2] = {
 	{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
 	{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
 	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "timeline", "Timeline" },
-	{ "profiler", "Profiler" }, { "code", "Code" }
+	{ "profiler", "Profiler" }, { "code", "Code" }, { "sources", "Sources" }
 };
 
 /* Toolbar toggle buttons: label and the action they run and reflect. */

@@ -31,9 +31,9 @@ The module is four layers. Everything below the application is headless: it need
 | Document | =src/editor/lrg-level*.c=, =lrg-node*.c=, =lrg-prefab.c=, =lrg-project.c=, =lrg-asset-*.c= | Levels, nodes, visuals, component descriptions, script bindings, linked prefabs, projects, the asset database with =.meta= sidecars | [[file:level-model.org][Level Model]], [[file:prefabs.org][Prefabs]], [[file:projects-and-assets.org][Projects and Assets]], [[file:yaml-format.org][.rlevel format]] |
 | Editing core | =src/editor/lrg-editor*.c= | =LrgEditor= (undo/redo, selection, clipboard, commands), gizmo and picking math, validation, tilemap and timeline editing, =LrgEditorDocument= for data files, version-control status, the IPC server | [[file:editor-runtime.org][Editor Runtime]], [[file:editor-tools.org][Editor Tools]], [[file:data-editors.org][Data Editors]] |
 | View model | =src/editor/lrg-editor-view-state.c=, =lrg-editor-viewport-nav.c=, =lrg-editor-play-session.c= | Viewport cameras, layout, render modes and overlays, navigation state machine, play-in-editor session (new in 0.8.1) | [[file:view-model.org][View Model]] |
-| Application | =src/editor/ui/= on =src/ui/= | =LrgEditorApp=, the window, every panel and dialog, the scene renderer | [[file:editor-app.org][The Editor Application]] |
+| Application | =src/editor/ui/= on =src/ui/= | =LrgEditorApp=, the window, every panel and dialog, the scene renderer, the asset source registry (0.8.3) | [[file:editor-app.org][The Editor Application]], [[file:asset-sources.org][Asset Sources]] |
 
-Around them sit the automation surfaces: the JSON-lines [[file:ipc-protocol.org][IPC protocol]] (130 methods in 0.8.1), the [[file:lrgeditorctl.org][lrgeditorctl]] CLI and its MCP server, and the [[file:emacs.org][Emacs package]].
+Around them sit the automation surfaces: the JSON-lines [[file:ipc-protocol.org][IPC protocol]] (136 methods in 0.8.3), the [[file:lrgeditorctl.org][lrgeditorctl]] CLI and its MCP server, and the [[file:emacs.org][Emacs package]].
 
 ** The Three-Layer Model
 :PROPERTIES:
@@ -268,6 +268,7 @@ The Fedora packages the application needs beyond the base build are listed in [[
 - [[file:data-editors.org][Data Editors]]: =LrgEditorDocument= and the eight data editor panels
 - [[file:prefabs.org][Prefabs]]: reusable node subtrees and linked instances
 - [[file:projects-and-assets.org][Projects and Assets]]: =LrgProject=, =LrgAssetDatabase=, =.meta= sidecars, thumbnails, git status
+- [[file:asset-sources.org][Asset Sources]]: =LrgAssetSource= virtual asset trees from game modules (game archives), the Sources panel, cached exports and imports
 - [[file:editor-tools.org][Editor Tools]]: tilemap painting, the animation timeline, asset thumbnails
 - [[file:level-model.org][Level Model]]: =LrgLevel= / =LrgNode= / =LrgNodeVisual= and the node property source
 - [[file:yaml-format.org][.rlevel YAML Format]]: serialization schema

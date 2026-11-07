@@ -240,6 +240,23 @@ lrg_loaded_game_get_info (LrgLoadedGame *self)
     return self->info;
 }
 
+gpointer
+lrg_loaded_game_lookup_symbol (LrgLoadedGame *self,
+                               const gchar   *name)
+{
+    gpointer symbol = NULL;
+
+    g_return_val_if_fail (LRG_IS_LOADED_GAME (self), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+
+    /* After unload the module handle is gone; nothing to look up. */
+    if (self->module == NULL)
+        return NULL;
+    if (!g_module_symbol (self->module, name, &symbol))
+        return NULL;
+    return symbol;
+}
+
 void
 lrg_loaded_game_unload (LrgLoadedGame *self)
 {

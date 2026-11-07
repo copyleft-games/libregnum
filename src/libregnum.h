@@ -472,6 +472,7 @@
 #include "editor/lrg-asset-meta.h"
 #include "editor/lrg-editor-vcs.h"
 #include "editor/lrg-editor-document.h"
+#include "editor/lrg-asset-source.h"
 #ifdef LRG_BUILD_EDITOR_UI
 #include "editor/ui/lrg-editor-app.h"
 #include "editor/ui/data/lrg-editor-data-editor.h"
@@ -497,6 +498,7 @@
 #include "editor/ui/lrg-editor-timeline-panel.h"
 #include "editor/ui/lrg-editor-profiler-panel.h"
 #include "editor/ui/lrg-editor-code-panel.h"
+#include "editor/ui/lrg-editor-sources-panel.h"
 #include "editor/ui/lrg-editor-palette.h"
 #include "editor/ui/lrg-editor-preferences.h"
 #endif

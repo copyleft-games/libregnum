@@ -122,6 +122,8 @@ See [[file:../../editor/editor-runtime.org][Editor Runtime]] for usage of all of
 | =LrgAssetEntry= | Final | Single classified asset record (path, name, type, guid) |
 | =LrgAssetMeta= | Final | A =<file>.meta= sidecar: stable GUID, importer and import settings (0.8.1) |
 | =LrgEditorVcs= | Final | Debounced async =git status= of the project for badges and the branch name (0.8.1) |
+| =LrgAssetSource= | Interface | A virtual asset tree (game archives, generated content): list, search, export with a per-entry cache (0.8.3); see [[file:../../editor/asset-sources.org][Asset Sources]] |
+| =LrgAssetSourceEntry= | Final | One folder or asset of a source: path, name, exported asset type, size, description (0.8.3) |
 
 New =LrgProject= functions: =lrg_project_get_run_command= / =lrg_project_set_run_command= (=Run Game= template with ={project}=, ={level}=, ={module}=), =lrg_project_get_scripts_dir= / =lrg_project_set_scripts_dir=, =lrg_project_clear_asset_dirs=, =lrg_project_resolve=, =lrg_project_relativize=.
 
@@ -179,6 +181,7 @@ All in =src/editor/ui/=, built on the retained UI toolkit; see [[file:../../edit
 | =LrgEditorConsolePanel=, =LrgEditorHistoryPanel=, =LrgEditorProblemsPanel= | Final | Log and commands, undo history, validation |
 | =LrgEditorTimelinePanel=, =LrgEditorTilesPanel=, =LrgEditorProfilerPanel= | Final | Keyframes, tilemap settings, frame graph and sections |
 | =LrgEditorCodePanel= | Final | Tabs of =LrgTextEditor= |
+| =LrgEditorSourcesPanel= | Final | Browser of the registered asset sources: chooser, filter / search, preview export, Import, Place, Export to (0.8.3) |
 | =LrgEditorPalette= | Final | Command palette and quick open |
 | =LrgEditorPreferences= | Final | The preferences dialog |
 | =LrgEditorDataEditor= | Derivable | Base panel of the data editors (Save, Revert, Validate, issues) |

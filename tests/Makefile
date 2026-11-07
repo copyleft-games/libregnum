@@ -271,6 +271,7 @@ TEST_SOURCES := \
 	test-editor-vcs.c \
 	test-editor-prefab-link.c \
 	test-editor-document.c \
+	test-editor-sources.c \
 	test-thumbnail-cache.c \
 	test-gui.c \
 	test-gif-recorder.c \
@@ -499,6 +500,22 @@ $(TEST_BUILDDIR)/test-lrgldr: test-lrgldr.c $(GENERATED_HEADERS) $(LRGLDR_BIN) $
 		-DTEST_ARGS_MODULE_PATH='"$(FIXTURE_SO_ABS)"' \
 		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
 
+# Fixture game module with an editor hook (LRG_DEFINE_GAME_MODULE_EDITOR),
+# loaded in-process by test-editor-sources together with the plain fixture.
+EDITOR_FIXTURE_SO     := $(TEST_BUILDDIR)/test-editor-module.so
+EDITOR_FIXTURE_SO_ABS := $(abspath $(EDITOR_FIXTURE_SO))
+
+$(EDITOR_FIXTURE_SO): fixtures/test-editor-module.c ../src/gamemodule/lrg-game-module-macros.h ../src/editor/lrg-asset-source.h | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(FIXTURE_CFLAGS) -shared -o $@ $<
+
+$(TEST_BUILDDIR)/test-editor-sources: test-editor-sources.c editor-app-fixture.h $(GENERATED_HEADERS) $(FIXTURE_SO) $(EDITOR_FIXTURE_SO) | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) -MMD -MP -MF $@.d \
+		-DTEST_EDITOR_MODULE_PATH='"$(EDITOR_FIXTURE_SO_ABS)"' \
+		-DTEST_ARGS_MODULE_PATH='"$(FIXTURE_SO_ABS)"' \
+		-o $@ $< $(TEST_LDFLAGS) $(TEST_LIBS)
+
 # Fixture script loaded by test-scripting-native: prebuilt here as a shared
 # object, and compiled from the same source by the Crispy backend at runtime.
 NATIVE_FIXTURE_SO     := $(TEST_BUILDDIR)/test-native-script.so
@@ -523,5 +540,5 @@ $(TEST_BUILDDIR):
 
 clean:
 	$(call print_status,"Cleaning test artifacts...")
-	$(RM) $(TEST_BINARIES) $(FIXTURE_SO) $(NATIVE_FIXTURE_SO)
+	$(RM) $(TEST_BINARIES) $(FIXTURE_SO) $(NATIVE_FIXTURE_SO) $(EDITOR_FIXTURE_SO)
 	@if [ -d "$(TEST_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(TEST_BUILDDIR)"; fi

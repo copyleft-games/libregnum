@@ -43,6 +43,8 @@
 #include "../lrg-editor-view-state.h"
 #include "../lrg-editor-viewport-nav.h"
 #include "../lrg-editor-play-session.h"
+#include "../lrg-asset-source.h"
+#include "../../gamemodule/lrg-loaded-game.h"
 
 G_BEGIN_DECLS
 
@@ -204,6 +206,178 @@ LRG_AVAILABLE_IN_ALL
 void lrg_editor_app_add_panel (LrgEditorApp *self,
                                LrgDockPanel *panel,
                                const gchar  *where);
+
+/* ==========================================================================
+ * Game modules and asset sources (since 0.8.3)
+ * ========================================================================== */
+
+/**
+ * LrgGameModuleEditorInit:
+ * @app: the editor application
+ * @error: (nullable): return location for an error
+ *
+ * The type of a game module's optional editor entry point
+ * (#LRG_GAME_MODULE_EDITOR_SYMBOL, emitted by
+ * LRG_DEFINE_GAME_MODULE_EDITOR()). It runs once, after the application
+ * is created and its preferences are loaded, and typically registers
+ * asset sources (lrg_editor_app_add_asset_source()), panels
+ * (lrg_editor_app_add_panel()) and actions.
+ *
+ * Returns: %TRUE on success; %FALSE with @error set makes lrgeditor exit
+ *
+ * Since: 0.8.3
+ */
+typedef gboolean (*LrgGameModuleEditorInit) (LrgEditorApp  *app,
+                                             GError       **error);
+
+/**
+ * lrg_editor_app_init_module:
+ * @self: an #LrgEditorApp
+ * @game: a loaded game module
+ * @error: (nullable): return location for an error
+ *
+ * Runs the module's editor entry point (#LRG_GAME_MODULE_EDITOR_SYMBOL)
+ * with @self. A module without one needs nothing from the editor, which
+ * is success. `lrgeditor --module SO` calls this right after creating
+ * the application and loading its preferences.
+ *
+ * Returns: %TRUE when the module has no editor hook or it succeeded
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_app_init_module (LrgEditorApp   *self,
+                                     LrgLoadedGame  *game,
+                                     GError        **error);
+
+/**
+ * lrg_editor_app_add_asset_source:
+ * @self: an #LrgEditorApp
+ * @source: (transfer none): an asset source
+ *
+ * Registers @source (the app keeps a reference): the Sources panel lists
+ * it and the "source.*" IPC methods reach it by its id. A source with
+ * the same id replaces the earlier one.
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_app_add_asset_source (LrgEditorApp   *self,
+                                      LrgAssetSource *source);
+
+/**
+ * lrg_editor_app_remove_asset_source:
+ * @self: an #LrgEditorApp
+ * @id: a source id
+ *
+ * Unregisters a source. Imported files stay in the project.
+ *
+ * Returns: %TRUE if a source with @id was registered
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_app_remove_asset_source (LrgEditorApp *self,
+                                             const gchar  *id);
+
+/**
+ * lrg_editor_app_get_asset_sources:
+ * @self: an #LrgEditorApp
+ *
+ * Returns: (transfer container) (element-type LrgAssetSource): the
+ *   registered sources, in registration order
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_editor_app_get_asset_sources (LrgEditorApp *self);
+
+/**
+ * lrg_editor_app_lookup_asset_source:
+ * @self: an #LrgEditorApp
+ * @id: a source id
+ *
+ * Returns: (transfer none) (nullable): the source registered as @id
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+LrgAssetSource * lrg_editor_app_lookup_asset_source (LrgEditorApp *self,
+                                                     const gchar  *id);
+
+/**
+ * lrg_editor_app_export_source_entry:
+ * @self: an #LrgEditorApp
+ * @source_id: a registered source id
+ * @path: the virtual path of an entry
+ * @dest_dir: (nullable): a folder to copy the export into (created if
+ *   needed), or %NULL to only export into the cache
+ * @error: (nullable): return location for an error
+ *
+ * Exports an entry through the source's cache
+ * (lrg_asset_source_export_cached(): the first call converts, later
+ * calls reuse the files). With @dest_dir the exported files (main and
+ * side files) are then copied there, overwriting files of the same
+ * name. The first export of an entry may take seconds and blocks the
+ * caller.
+ *
+ * Returns: (transfer full) (nullable): the absolute path of the main
+ *   file (in the cache, or in @dest_dir), or %NULL on error
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_app_export_source_entry (LrgEditorApp  *self,
+                                            const gchar   *source_id,
+                                            const gchar   *path,
+                                            const gchar   *dest_dir,
+                                            GError       **error);
+
+/**
+ * lrg_editor_app_import_source_entry:
+ * @self: an #LrgEditorApp
+ * @source_id: a registered source id
+ * @path: the virtual path of an entry
+ * @error: (nullable): return location for an error
+ *
+ * Imports an entry into the open project: exports it (cached) and copies
+ * the files to `<project>/assets/<source-id>/<virtual folder>/`, so the
+ * asset browser lists them and levels reference them like any project
+ * asset. Importing again overwrites the copy.
+ *
+ * Returns: (transfer full) (nullable): the main file's path relative to
+ *   the project, or %NULL on error (%G_IO_ERROR_NOT_INITIALIZED when no
+ *   project is open)
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_app_import_source_entry (LrgEditorApp  *self,
+                                            const gchar   *source_id,
+                                            const gchar   *path,
+                                            GError       **error);
+
+/**
+ * lrg_editor_app_place_source_entry:
+ * @self: an #LrgEditorApp
+ * @source_id: a registered source id
+ * @path: the virtual path of an entry
+ * @error: (nullable): return location for an error
+ *
+ * Imports the entry (lrg_editor_app_import_source_entry()) and places it
+ * in the level the way the Assets panel's "Place in Scene" does: a model
+ * becomes a mesh-asset node, a texture a sprite, a prefab a linked
+ * instance, at the camera's target, as one undo step, selected.
+ *
+ * Returns: (transfer none) (nullable): the new node, or %NULL on error
+ *
+ * Since: 0.8.3
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNode * lrg_editor_app_place_source_entry (LrgEditorApp  *self,
+                                             const gchar   *source_id,
+                                             const gchar   *path,
+                                             GError       **error);
 
 /**
  * lrg_editor_app_get_project_dir:

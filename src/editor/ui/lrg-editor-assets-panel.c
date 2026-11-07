@@ -2284,62 +2284,31 @@ show_in_file_manager (LrgEditorAssetsPanel *self,
 /*
  * place_in_scene:
  *
- * Context menu "Place in Scene": a prefab becomes a linked instance, a
- * model / texture / CAD part a node showing it, placed at the active
- * camera's target point, as one undo step, and selected.
+ * Context menu "Place in Scene": editor_app_place_asset() (shared with
+ * the Sources panel) plus the panel's status line. Files that cannot be
+ * placed are ignored quietly (the menu offers the item for every file).
  */
 static void
 place_in_scene (LrgEditorAssetsPanel *self,
                 const gchar          *path)
 {
-	LrgEditorApp         *app = self->app;
-	LrgAssetType          type = lrg_asset_database_classify (path);
-	LrgEditorViewCamera  *cam;
-	g_autofree gchar     *rel = NULL;
-	g_autofree gchar     *stem = NULL;
-	g_autoptr(GError)     error = NULL;
-	LrgNode              *node = NULL;
-	gchar                *dot;
+	g_autoptr(GError)  error = NULL;
+	g_autofree gchar  *stem = g_path_get_basename (path);
+	LrgNode           *node;
+	gchar             *dot = strrchr (stem, '.');
 
-	if (app == NULL)
+	if (self->app == NULL)
 		return;
-	rel = (app->project_dir != NULL) ? editor_app_relative_path (app, path) : g_strdup (path);
-	stem = g_path_get_basename (path);
-	dot = strrchr (stem, '.');
 	if (dot != NULL)
 		*dot = '\0';
-	cam = lrg_editor_view_state_get_camera (app->view, -1);
-
-	lrg_editor_begin_group (app->editor, "Place Asset");
-	if (type == LRG_ASSET_TYPE_PREFAB)
-		node = lrg_editor_instantiate_prefab (app->editor, path, NULL, &error);
-	else if (type == LRG_ASSET_TYPE_MODEL || type == LRG_ASSET_TYPE_TEXTURE || type == LRG_ASSET_TYPE_CAD)
-	{
-		LrgNodeVisualKind kind = (type == LRG_ASSET_TYPE_MODEL) ? LRG_NODE_VISUAL_MESH_ASSET
-		                       : (type == LRG_ASSET_TYPE_CAD) ? LRG_NODE_VISUAL_CAD_PART
-		                                                      : LRG_NODE_VISUAL_SPRITE;
-
-		node = editor_app_create_node (app, stem, kind, 0, NULL);
-		if (node != NULL && lrg_node_get_visual (node) != NULL)
-		{
-			g_autoptr(LrgNode) before = lrg_editor_snapshot_node (node);
-
-			lrg_node_visual_set_asset (lrg_node_get_visual (node), rel);
-			lrg_editor_commit_node_state (app->editor, node, before, "Set Asset", FALSE);
-		}
-	}
-	if (node != NULL && cam != NULL)
-		lrg_editor_transform_node (app->editor, node, cam->view.target, NULL, NULL, FALSE);
-	lrg_editor_end_group (app->editor);
-
+	node = editor_app_place_asset (self->app, path, &error);
 	if (node != NULL)
 	{
 		g_autofree gchar *msg = g_strdup_printf ("Placed %s", stem);
 
-		lrg_editor_select (app->editor, node, FALSE);
 		set_status (self, msg);
 	}
-	else if (error != NULL)
+	else if (error != NULL && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED))
 	{
 		g_autofree gchar *msg = g_strdup_printf ("%s: %s", stem, error->message);
 

@@ -220,6 +220,13 @@ check 'preferences' "$(ctl preferences keybindings)" 'preferences/keybindings op
 "${ctl}" preferences nope >/dev/null 2>&1 && status=0 || status=$?
 check 'preferences unknown page exits 1' "status=${status}" 'status=1'
 
+# 0.8.3: asset sources (none registered without a game module).
+check 'source list empty' "$(ctl source list -o json)" '[]'
+"${ctl}" source ls nope >/dev/null 2>&1 && status=0 || status=$?
+check 'unknown source exits 1' "status=${status}" 'status=1'
+"${ctl}" source frobnicate >/dev/null 2>&1 && status=0 || status=$?
+check 'source usage error exits 2' "status=${status}" 'status=2'
+
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
 check 'saved file has the nodes' "$(cat "${work}/game/levels/main.rlevel")" 'Barrel'
@@ -262,6 +269,7 @@ else
 	check 'mcp data tools' "${out}" '"name":"data_set"'
 	check 'mcp palette and preferences tools' "${out}" '"name":"open_preferences"'
 	check 'mcp hierarchy_filter' "${out}" '"name":"hierarchy_filter"'
+	check 'mcp 0.8.3 source tools' "${out}" '"name":"source_import"'
 	check 'mcp inspector_state is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"inspector_state"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'
