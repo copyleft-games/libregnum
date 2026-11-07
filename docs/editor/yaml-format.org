@@ -579,6 +579,27 @@ lighting:
 
 Node params that steer the bake (they map onto component properties by name): =static_lighting= and =lightmap_scale= on primitive and mesh-asset visuals (=LrgMeshRendererComponent:static-lighting= / =lightmap-scale=), =bake_mode= (=realtime= / =mixed= / =baked=) on lights (=LrgLightComponent:bake-mode=). Lightmap entries are keyed by node GUID, which is why GUIDs must stay stable. The editor's Lighting panel writes the whole block ([[file:bake.org][Lighting Bake in the Editor]]).
 
+** Navigation
+:PROPERTIES:
+:CUSTOM_ID: navigation
+:END:
+Optional, additive (0.9.0 M6): the level's navigation mesh. Written only when the level has one of the keys (=lrg_level_has_navigation()=); older readers ignore it. The block is strict: an unknown key, a reference that is not a non-empty scalar or a =bake_on_load= that is not a boolean fails the load with =LRG_LEVEL_ERROR_PARSE= and a message naming the key (=navigation.settngs: unknown key=).
+
+#+begin_src yaml
+navigation:
+  settings: nav/castle.rnav            # .rnav bake settings (LrgNavBake): path relative to the level, or guid:<uuid>
+  data: nav/castle.rnavmesh            # the baked mesh (lrg_nav_poly_mesh_save() bytes), same reference rules
+  bake_on_load: false                  # true: bake from the instantiated world when data is missing or fails
+#+end_src
+
+| Key | Type | Meaning |
+|-+-+-|
+| =settings= | string | the [[file:../modules/pathfinding/nav-bake.org][.rnav]] settings; =lrg_level_get_nav_settings_ref()= / =lrg_level_set_nav_settings_ref()= |
+| =data= | string | the baked [[file:../modules/pathfinding/nav-poly-mesh.org][LrgNavPolyMesh]]; =lrg_level_get_nav_data_ref()= / =lrg_level_set_nav_data_ref()= |
+| =bake_on_load= | boolean | =lrg_level_get_nav_bake_on_load()= / =lrg_level_set_nav_bake_on_load()=; written only when true |
+
+=lrg_level_clear_navigation()= drops the block. At runtime =lrg_level_instantiate_3d()=, after every entity exists, loads =data= (giving it the area costs of =settings=), or with =bake_on_load= bakes the mesh from the instantiated world with =settings= (defaults without them), and calls =lrg_world3d_set_navigation()=. A reference that does not resolve or load logs a warning; the level loads without navigation. Agents are =LrgNavAgentComponent= components on nodes ([[file:../modules/pathfinding/nav-agent.org][nav-agent]]).
+
 ** Notes
 :PROPERTIES:
 :CUSTOM_ID: notes

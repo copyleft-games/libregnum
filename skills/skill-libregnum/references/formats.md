@@ -113,3 +113,8 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 - Ranges are `n` or `[min, max]`; colours and gradients quoted (`'#rrggbb'`, `'0 #fff; 1 #0000'`); curves `"t v [easing]; ..."`.
 - Load with `lrg_particle_asset_new_from_file/_data`, play with `lrg_particle_effect_new` or LrgParticleComponent (`asset-path`). Unknown keys kept and listed by `get_unknown_keys()`; errors read `file: /key/path: msg`; byte-stable round trip.
 
+## Navigation bake settings (.rnav), 0.9.0: LrgNavBake
+- `lrg_nav_bake_new_from_file/_from_data`, `save_to_file/_to_data`. Strict, byte-stable, unknown keys kept at the top level, in agent/voxel/regions/sources, and in each area and link.
+- Keys: `version: 1, name, agent{radius 0.3, height 1.8, max_slope 50, max_step 0.45, max_drop 0}, voxel{cell_size 0.25, cell_height 0.1}, regions{min_area 0, corner_margin 0}, sources{meshes true, colliders true, static_only false, layer_mask, include_tags, exclude_tags, physics_layers, bounds{min,max}}, areas[{name, tag (nonzero, unique), cost > 0, boxes[{min,max}]}], links[{start, end, bidirectional true, cost 0, area}], output`.
+- Errors are `LRG_NAV_BAKE_ERROR_*` with key paths such as `areas[0].boxes[0].max[2]`.
+

@@ -393,4 +393,108 @@ gboolean lrg_level_has_lighting (LrgLevel *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_level_clear_lighting (LrgLevel *self);
 
+/* ==========================================================================
+ * Navigation (the `navigation:` block, 0.9.0 M6)
+ * ========================================================================== */
+
+/**
+ * lrg_level_get_nav_settings_ref:
+ * @self: an #LrgLevel
+ *
+ * The `navigation: settings:` reference: the level's `.rnav` bake
+ * settings (#LrgNavBake), a path relative to the level file or a
+ * `guid:` asset reference.
+ *
+ * Returns: (transfer none) (nullable): the reference
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_level_get_nav_settings_ref (LrgLevel *self);
+
+/**
+ * lrg_level_set_nav_settings_ref:
+ * @self: an #LrgLevel
+ * @ref: (nullable): a `.rnav` path or `guid:` reference, %NULL or empty
+ *   to drop it
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_nav_settings_ref (LrgLevel    *self,
+                                     const gchar *ref);
+
+/**
+ * lrg_level_get_nav_data_ref:
+ * @self: an #LrgLevel
+ *
+ * The `navigation: data:` reference: the baked mesh
+ * (lrg_nav_poly_mesh_save() bytes, conventionally `.rnavmesh`) that
+ * lrg_level_instantiate_3d() loads onto the world.
+ *
+ * Returns: (transfer none) (nullable): the reference
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_level_get_nav_data_ref (LrgLevel *self);
+
+/**
+ * lrg_level_set_nav_data_ref:
+ * @self: an #LrgLevel
+ * @ref: (nullable): a baked mesh path or `guid:` reference, %NULL or
+ *   empty to drop it
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_nav_data_ref (LrgLevel    *self,
+                                 const gchar *ref);
+
+/**
+ * lrg_level_get_nav_bake_on_load:
+ * @self: an #LrgLevel
+ *
+ * Returns: the `navigation: bake_on_load:` flag
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_get_nav_bake_on_load (LrgLevel *self);
+
+/**
+ * lrg_level_set_nav_bake_on_load:
+ * @self: an #LrgLevel
+ * @bake_on_load: when the baked data is missing (or does not load),
+ *   bake the mesh from the instantiated world with the settings
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_nav_bake_on_load (LrgLevel *self,
+                                     gboolean  bake_on_load);
+
+/**
+ * lrg_level_has_navigation:
+ * @self: an #LrgLevel
+ *
+ * Returns: %TRUE when the level has a `navigation:` block (settings,
+ *   data or bake on load)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_level_has_navigation (LrgLevel *self);
+
+/**
+ * lrg_level_clear_navigation:
+ * @self: an #LrgLevel
+ *
+ * Drops the whole `navigation:` block.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_clear_navigation (LrgLevel *self);
+
 G_END_DECLS

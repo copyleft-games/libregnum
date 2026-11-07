@@ -620,6 +620,93 @@ parse_lighting (LrgLevel  *level,
 }
 
 /* ==========================================================================
+ * The `navigation:` block (0.9.0 M6)
+ *
+ * navigation:
+ *   settings: nav/level.rnav          # .rnav bake settings (path or guid:)
+ *   data: nav/level.rnavmesh          # baked mesh (path or guid:)
+ *   bake_on_load: false               # bake from the world when data is missing
+ * ========================================================================== */
+
+/* the `navigation:` mapping of @level */
+static YamlMapping *
+build_navigation_mapping (LrgLevel *level)
+{
+	YamlMapping *map = yaml_mapping_new ();
+
+	if (lrg_level_get_nav_settings_ref (level) != NULL)
+		yaml_mapping_set_string_member (map, "settings", lrg_level_get_nav_settings_ref (level));
+	if (lrg_level_get_nav_data_ref (level) != NULL)
+		yaml_mapping_set_string_member (map, "data", lrg_level_get_nav_data_ref (level));
+	if (lrg_level_get_nav_bake_on_load (level))
+		yaml_mapping_set_boolean_member (map, "bake_on_load", TRUE);
+	return map;
+}
+
+/* reads a `navigation:` node into @level; FALSE with @error (naming the key) when malformed */
+static gboolean
+parse_navigation (LrgLevel  *level,
+                  YamlNode  *node,
+                  GError   **error)
+{
+	YamlMapping      *map;
+	g_autoptr(GList)  keys = NULL;
+	GList            *l;
+
+	if (yaml_node_get_node_type (node) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, "navigation: must be a mapping");
+		return FALSE;
+	}
+	map = yaml_node_get_mapping (node);
+	keys = yaml_mapping_get_members (map);
+	for (l = keys; l != NULL; l = l->next)
+	{
+		const gchar *key = l->data;
+		YamlNode    *member = yaml_mapping_get_member (map, key);
+		const gchar *s = NULL;
+
+		if (yaml_node_is_null (member))
+			continue;
+		if (yaml_node_get_node_type (member) == YAML_NODE_SCALAR)
+			s = yaml_node_get_scalar (member);
+		if (g_strcmp0 (key, "settings") == 0 || g_strcmp0 (key, "data") == 0)
+		{
+			if (s == NULL || *s == '\0')
+			{
+				g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+				             "navigation.%s: must be a path or guid: reference", key);
+				return FALSE;
+			}
+			if (g_strcmp0 (key, "settings") == 0)
+				lrg_level_set_nav_settings_ref (level, s);
+			else
+				lrg_level_set_nav_data_ref (level, s);
+		}
+		else if (g_strcmp0 (key, "bake_on_load") == 0)
+		{
+			if (s != NULL && (g_ascii_strcasecmp (s, "true") == 0 || g_ascii_strcasecmp (s, "yes") == 0))
+				lrg_level_set_nav_bake_on_load (level, TRUE);
+			else if (s != NULL && (g_ascii_strcasecmp (s, "false") == 0 || g_ascii_strcasecmp (s, "no") == 0))
+				lrg_level_set_nav_bake_on_load (level, FALSE);
+			else
+			{
+				g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+				                     "navigation.bake_on_load: must be true or false");
+				return FALSE;
+			}
+		}
+		else
+		{
+			g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+			             "navigation.%s: unknown key (settings, data, bake_on_load)", key);
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+/* ==========================================================================
  * Build (write) path
  * ========================================================================== */
 
@@ -1578,6 +1665,14 @@ build_level_yaml (LrgLevel         *level,
 		yaml_mapping_set_mapping_member (root_map, "lighting", lighting_map);
 	}
 
+	/* Additive (0.9.0 M6): the navigation block, only when set. */
+	if (lrg_level_has_navigation (level))
+	{
+		g_autoptr(YamlMapping) nav_map = build_navigation_mapping (level);
+
+		yaml_mapping_set_mapping_member (root_map, "navigation", nav_map);
+	}
+
 	/* Additive: files without timelines keep their old shape. */
 	if (lrg_level_get_n_timelines (level) > 0)
 	{
@@ -2387,6 +2482,20 @@ parse_level_from_root (YamlNode  *root,
 		{
 			g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
 			             "lighting: %s", lighting_error->message);
+			g_object_unref (level);
+			return NULL;
+		}
+	}
+
+	/* The navigation block (0.9.0 M6); a malformed one fails the load. */
+	{
+		YamlNode         *nav_node = yaml_mapping_get_member (root_map, "navigation");
+		g_autoptr(GError) nav_error = NULL;
+
+		if (nav_node != NULL && !yaml_node_is_null (nav_node)
+		    && !parse_navigation (level, nav_node, &nav_error))
+		{
+			g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, nav_error->message);
 			g_object_unref (level);
 			return NULL;
 		}

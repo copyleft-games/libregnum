@@ -42,6 +42,8 @@
 #include "../lighting/lrg-probe-grid.h"
 #include "../postprocess/lrg-post-stack.h"
 #include "../physics/lrg-dynamics.h"
+#include "../pathfinding/lrg-nav-poly-mesh.h"
+#include "../pathfinding/lrg-nav-agent.h"
 
 G_BEGIN_DECLS
 
@@ -1463,5 +1465,72 @@ LRG_AVAILABLE_IN_ALL
 void lrg_world3d_debug_draw_physics (LrgWorld3D            *self,
                                      LrgDebugDraw          *draw,
                                      LrgDynamicsDebugFlags  flags);
+
+/* ==========================================================================
+ * Navigation (0.9.0 M6)
+ * ========================================================================== */
+
+/**
+ * lrg_world3d_set_navigation:
+ * @self: a #LrgWorld3D
+ * @mesh: (nullable): the world's navigation mesh, %NULL to drop it
+ *
+ * Gives the world its #LrgNavPolyMesh (lrg_level_instantiate_3d() does
+ * this for a level's `navigation:` block).  The world's crowd
+ * (lrg_world3d_get_nav_crowd()) and every #LrgNavAgentComponent switch
+ * to it; their agents plan their paths again.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_set_navigation (LrgWorld3D     *self,
+                                 LrgNavPolyMesh *mesh);
+
+/**
+ * lrg_world3d_get_navigation:
+ * @self: a #LrgWorld3D
+ *
+ * Returns: (transfer none) (nullable): the navigation mesh
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNavPolyMesh * lrg_world3d_get_navigation (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_get_nav_crowd:
+ * @self: a #LrgWorld3D
+ *
+ * The crowd of the world's navigation agents, made on first use and
+ * kept on lrg_world3d_get_navigation().  While it exists every fixed
+ * update of lrg_world3d_fixed_update() steps it with
+ * #LrgWorld3D:fixed-step after the components' fixed_update() and
+ * before physics (so kinematic bodies follow the agents in the same
+ * step); #LrgNavAgentComponent writes the agents back to their entities
+ * from #LrgNavCrowd::stepped.
+ *
+ * Returns: (transfer none): the crowd
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+LrgNavCrowd * lrg_world3d_get_nav_crowd (LrgWorld3D *self);
+
+/**
+ * lrg_world3d_debug_draw_navigation:
+ * @self: a #LrgWorld3D
+ * @draw: the debug draw batch to record into
+ * @flags: what to draw (#LrgNavDebugFlags)
+ *
+ * Records the navigation mesh and the crowd's agents (paths,
+ * velocities, ORCA half-planes as @flags ask) for one frame into
+ * %LRG_DEBUG_CATEGORY_NAVIGATION; does nothing without a mesh or crowd.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_debug_draw_navigation (LrgWorld3D       *self,
+                                        LrgDebugDraw     *draw,
+                                        LrgNavDebugFlags  flags);
 
 G_END_DECLS

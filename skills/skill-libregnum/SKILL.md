@@ -148,6 +148,14 @@ Part 2: collision layers, world settings and ragdolls.
 - The runtime applies that block: `lrg_level_load_world3d()` / `lrg_level_instantiate_3d*()` find the `project.ryaml` above the level (then the asset manager's project root) and set up the world's physics from it (gravity, fixed step and substep cap -> `LrgWorld3D:fixed-step`/`max-substeps`, iterations, sleep, layer table, so level `layer:` names resolve against the project's layers). Play-in-editor uses the open project's current settings (unsaved edits included); a built game only sees what is saved. Override with `lrg_world3d_set_physics_settings (world, &settings, layers, &err)` before instantiating. C: `LrgPhysicsSettings` (`lrg_physics_settings_load_from_file`, `_save_to_file` keeps other keys), `lrg_dynamics_world_apply_settings()`, `lrg_project_get_physics_settings()` (edit in place, then `lrg_project_save()`).
 - Ragdolls (.rphysasset): one part per bone (capsule/box/sphere, offset, rotation, mass) with a joint to its parent part (swing-twist, cone, hinge, point, fixed; limits in radians) plus exclusions. Create: right-click a skinned .glb > New Physics Asset from Model, or `lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80`. Tune: `physasset set-part PATH shin_l joint=hinge twist_degrees=0,140`, `physasset set-part PATH head shape=sphere radius=0.12`, `physasset exclude PATH thigh_l thigh_r`, `physasset stabilize PATH`. Try: `physasset simulate PATH advance=2` (passive drop; `run=false` returns to bind pose); `physasset save PATH`. Each edit is one undo step of the file (`data undo PATH`). The preview model lives in the `.meta` sidecar (`physasset model PATH chars/hero.glb`). Keys must match the shape and joint kind (no `radius` on a box, no `twist` on a cone).
 
+### Add navigation to a level (0.9.0)
+
+1. Write `nav/<level>.rnav` (agent radius = the largest walker; exclude moving props with a `no-nav` tag).
+2. Bake headless: `lrg_level_load_world3d` -> `lrg_nav_bake_bake` -> `lrg_nav_poly_mesh_save` to `nav/<level>.rnavmesh`.
+3. Add `navigation: {settings, data}` to the `.rlevel` (or `bake_on_load: true` for prototypes).
+4. Give walkers a `nav-agent` component and call `lrg_nav_agent_component_set_destination`.
+5. Check with `lrg_world3d_debug_draw_navigation`. Format details: `references/formats.md`, `references/level-format.md`.
+
 ## Output Format
 
 - For editor work: report what changed as `node/PATH created|configured|deleted` lines (what `lrgeditorctl` prints), whether the level is saved or still dirty, and any problems from `get problems`.

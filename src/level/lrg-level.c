@@ -31,6 +31,11 @@ struct _LrgLevel
 	gchar      *lightmap_ref;     /* nullable */
 	GPtrArray  *probe_refs;       /* gchar *, owned */
 	GHashTable *bake_settings;    /* gchar * -> gdouble * */
+
+	/* the `navigation:` block (0.9.0 M6) */
+	gchar      *nav_settings_ref; /* nullable: a .rnav */
+	gchar      *nav_data_ref;     /* nullable: a baked mesh */
+	gboolean    nav_bake_on_load;
 };
 
 G_DEFINE_FINAL_TYPE (LrgLevel, lrg_level, G_TYPE_OBJECT)
@@ -71,6 +76,8 @@ lrg_level_finalize (GObject *object)
 	g_clear_pointer (&self->lightmap_ref, g_free);
 	g_clear_pointer (&self->probe_refs, g_ptr_array_unref);
 	g_clear_pointer (&self->bake_settings, g_hash_table_unref);
+	g_clear_pointer (&self->nav_settings_ref, g_free);
+	g_clear_pointer (&self->nav_data_ref, g_free);
 
 	G_OBJECT_CLASS (lrg_level_parent_class)->finalize (object);
 }
@@ -645,4 +652,74 @@ lrg_level_clear_lighting (LrgLevel *self)
 		g_ptr_array_set_size (self->probe_refs, 0);
 	if (self->bake_settings != NULL)
 		g_hash_table_remove_all (self->bake_settings);
+}
+
+/* ==========================================================================
+ * Navigation (the `navigation:` block, 0.9.0 M6)
+ * ========================================================================== */
+
+const gchar *
+lrg_level_get_nav_settings_ref (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return self->nav_settings_ref;
+}
+
+void
+lrg_level_set_nav_settings_ref (LrgLevel    *self,
+                                const gchar *ref)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+
+	g_free (self->nav_settings_ref);
+	self->nav_settings_ref = (ref != NULL && *ref != '\0') ? g_strdup (ref) : NULL;
+}
+
+const gchar *
+lrg_level_get_nav_data_ref (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return self->nav_data_ref;
+}
+
+void
+lrg_level_set_nav_data_ref (LrgLevel    *self,
+                            const gchar *ref)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+
+	g_free (self->nav_data_ref);
+	self->nav_data_ref = (ref != NULL && *ref != '\0') ? g_strdup (ref) : NULL;
+}
+
+gboolean
+lrg_level_get_nav_bake_on_load (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), FALSE);
+	return self->nav_bake_on_load;
+}
+
+void
+lrg_level_set_nav_bake_on_load (LrgLevel *self,
+                                gboolean  bake_on_load)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+	self->nav_bake_on_load = bake_on_load ? TRUE : FALSE;
+}
+
+gboolean
+lrg_level_has_navigation (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), FALSE);
+	return self->nav_settings_ref != NULL || self->nav_data_ref != NULL || self->nav_bake_on_load;
+}
+
+void
+lrg_level_clear_navigation (LrgLevel *self)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+
+	g_clear_pointer (&self->nav_settings_ref, g_free);
+	g_clear_pointer (&self->nav_data_ref, g_free);
+	self->nav_bake_on_load = FALSE;
 }

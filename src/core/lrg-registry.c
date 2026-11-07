@@ -114,6 +114,7 @@
 #include "../core/lrg-color-gradient.h"
 #include "../particles/lrg-gpu-particles.h"
 #include "../weather/lrg-weather-asset.h"
+#include "../world3d/components/lrg-nav-agent-component.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -555,6 +556,7 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "gpu-particles",              lrg_gpu_particles_get_type },
     { "weather-wind",               lrg_weather_wind_get_type },
     { "weather-particles",          lrg_weather_particles_get_type },
+    { "nav-agent",                  lrg_nav_agent_component_get_type },
     { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */

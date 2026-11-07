@@ -808,6 +808,10 @@ struct _LrgWorld3D
 	 * to the physics world lrg_world3d_ensure_physics() attaches */
 	LrgPhysicsSettings *physics_settings;  /* owned or NULL (defaults) */
 	LrgPhysicsLayers   *physics_layers;    /* owned ref or NULL (default table) */
+
+	/* Navigation (0.9.0 M6) */
+	LrgNavPolyMesh *navigation;            /* owned ref or NULL */
+	LrgNavCrowd    *nav_crowd;             /* owned, made on first use */
 };
 
 /* One registered physics component (see lrg-world3d-physics-private.h). */
@@ -1061,6 +1065,9 @@ lrg_world3d_dispose (GObject *object)
 	g_clear_object (&self->physics);
 	g_clear_object (&self->physics_layers);
 	g_clear_pointer (&self->physics_settings, lrg_physics_settings_free);
+	/* agent components left with the tree: drop the crowd and the mesh */
+	g_clear_object (&self->nav_crowd);
+	g_clear_object (&self->navigation);
 
 	G_OBJECT_CLASS (lrg_world3d_parent_class)->dispose (object);
 }
@@ -2137,6 +2144,10 @@ lrg_world3d_fixed_update (LrgWorld3D *self,
 	while (self->accumulator >= self->fixed_step && steps < self->max_substeps)
 	{
 		run_phase (self->root, PHASE_FIXED, self->fixed_step);
+		/* agents move after the game logic set their destinations and
+		 * before physics, so kinematic bodies follow them this step */
+		if (self->nav_crowd != NULL)
+			lrg_nav_crowd_step (self->nav_crowd, self->fixed_step);
 		flush_transforms (self);
 		physics_substep (self, self->fixed_step);
 		self->accumulator -= self->fixed_step;
@@ -2961,4 +2972,52 @@ lrg_world3d_find_probe_grid (LrgWorld3D   *self,
 		}
 	}
 	return best;
+}
+
+/* ==========================================================================
+ * Navigation (0.9.0 M6)
+ * ========================================================================== */
+
+void
+lrg_world3d_set_navigation (LrgWorld3D     *self,
+                            LrgNavPolyMesh *mesh)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (mesh == NULL || LRG_IS_NAV_POLY_MESH (mesh));
+
+	if (!g_set_object (&self->navigation, mesh))
+		return;
+	if (self->nav_crowd != NULL)
+		lrg_nav_crowd_set_mesh (self->nav_crowd, mesh);
+}
+
+LrgNavPolyMesh *
+lrg_world3d_get_navigation (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+	return self->navigation;
+}
+
+LrgNavCrowd *
+lrg_world3d_get_nav_crowd (LrgWorld3D *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D (self), NULL);
+
+	if (self->nav_crowd == NULL)
+		self->nav_crowd = lrg_nav_crowd_new (self->navigation);
+	return self->nav_crowd;
+}
+
+void
+lrg_world3d_debug_draw_navigation (LrgWorld3D       *self,
+                                   LrgDebugDraw     *draw,
+                                   LrgNavDebugFlags  flags)
+{
+	g_return_if_fail (LRG_IS_WORLD3D (self));
+	g_return_if_fail (LRG_IS_DEBUG_DRAW (draw));
+
+	if (self->nav_crowd != NULL)
+		lrg_nav_crowd_debug_draw (self->nav_crowd, draw, flags);
+	else if (self->navigation != NULL)
+		lrg_nav_poly_mesh_debug_draw (self->navigation, draw, flags);
 }

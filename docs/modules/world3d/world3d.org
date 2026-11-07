@@ -230,6 +230,37 @@ while (running)
 }
 #+end_src
 
+*** Navigation (0.9.0 M6)
+:PROPERTIES:
+:CUSTOM_ID: navigation
+:END:
+A world can carry a navigation mesh, an [[file:../pathfinding/nav-poly-mesh.org][LrgNavPolyMesh]] (=lrg_world3d_set_navigation()=, a reference held; =lrg_level_instantiate_3d()= sets it from the level's =navigation:= block, see [[file:../pathfinding/nav-bake.org][nav-bake]]), and a crowd of agents walking it, an [[file:../pathfinding/nav-agent.org][LrgNavCrowd]] made on first use by =lrg_world3d_get_nav_crowd()= (every =LrgNavAgentComponent= joins it while its entity is in the world). Setting another mesh moves the crowd to it; its agents plan again.
+
+While the crowd exists, each fixed substep of =lrg_world3d_fixed_update()= steps it right after the components' =fixed_update()= and before the transform flush and physics:
+
+#+begin_example
+ for every fixed substep:
+     components' fixed_update (step)      game logic sets destinations; agent components
+                                          sync teleports / dynamic bodies into their agents
+     lrg_nav_crowd_step (crowd, step)     plan, steer, ORCA, integrate; agent components
+                                          write entities back from LrgNavCrowd::stepped
+     flush transform-changed
+     physics ...                          kinematic bodies follow the moved entities
+#+end_example
+
+*Debug draw:* =lrg_world3d_debug_draw_navigation (world, draw, flags)= records the mesh and the crowd (=LrgNavDebugFlags=: polygons, edges, boundaries, portals, links, areas, agents, paths, velocities, ORCA half-planes, neighbours) for one frame on =LRG_DEBUG_CATEGORY_NAVIGATION=; without a crowd only the mesh.
+
+#+begin_src C
+lrg_world3d_set_navigation (world, mesh);
+/* ... entities with LrgNavAgentComponent, destinations ... */
+while (running)
+{
+	lrg_world3d_step (world, GetFrameTime ());   /* the crowd runs in the fixed updates */
+	lrg_world3d_debug_draw_navigation (world, dd, LRG_NAV_DEBUG_DEFAULT);
+	/* render */
+}
+#+end_src
+
 *** Spatial index
 :PROPERTIES:
 :CUSTOM_ID: spatial-index
@@ -356,6 +387,9 @@ Plain struct (no GType). Fields: =kind=, =flags=, =layer=, =primitive=, =params[
 | =lrg_world3d_set_physics_interpolation()= / =lrg_world3d_get_physics_interpolation()= | render blend of dynamic bodies |
 | =lrg_world3d_find_body_entity (world, body_id)= | the entity owning a body (transfer none, nullable) |
 | =lrg_world3d_debug_draw_physics (world, draw, flags)= | physics debug draw for one frame |
+| =lrg_world3d_set_navigation()= / =lrg_world3d_get_navigation()= | the world's #LrgNavPolyMesh (ref held, nullable), see [[#navigation][Navigation]] (0.9.0) |
+| =lrg_world3d_get_nav_crowd()= | the world's #LrgNavCrowd, made on first use and stepped every fixed substep; transfer none |
+| =lrg_world3d_debug_draw_navigation (world, draw, flags)= | navigation debug draw for one frame |
 
 *** Properties and signals
 :PROPERTIES:

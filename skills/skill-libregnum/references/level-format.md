@@ -157,3 +157,9 @@ physics:
     - {kind: hinge, target: <node guid>, anchor: [-0.5,0,0], axis: [0,1,0], limits: [-1.57,1.57], motor: [3,50], break_force: 500}
 ```
 - Shape keys also `offset`, `rotation` (degrees), `friction`/`restitution` overrides; joint keys also `spring [Hz, ratio]`. Instantiation adds the rigid body, one collider per shape, one joint per joint, and attaches a physics world; saving is byte-stable. C: `LrgNodePhysics` (`lrg_node_get/set_physics`). Prefabs carry the block: joint targets follow regenerated GUIDs and an edited block is the instance override `physics`.
+
+## navigation: (0.9.0, optional)
+- `navigation: { settings: nav/x.rnav, data: nav/x.rnavmesh, bake_on_load: false }`; references are paths relative to the level or `guid:`. Strict: unknown keys fail with `navigation.<key>`.
+- `lrg_level_instantiate_3d` loads the data and applies the costs from settings (or bakes from the world when `bake_on_load`), then `lrg_world3d_set_navigation`. Missing data is only a warning.
+- API: `lrg_level_get/set_nav_settings_ref`, `get/set_nav_data_ref`, `get/set_nav_bake_on_load`, `has_navigation`, `clear_navigation`.
+

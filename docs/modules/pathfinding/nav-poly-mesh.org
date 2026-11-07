@@ -82,6 +82,17 @@ A level whose moving parts (bridges, platforms, doors baked as geometry) return 
 
 A cache entry costs the size of the binary form (cells, polygons, portals, links); the digest costs one pass over the input, far below a bake.  librefall keeps one cache per world for its dungeon and interior meshes (=LfNavMesh=).
 
+* Solids, area costs, walls and debug draw (0.9.0)
+
+Additions for the 0.9.0 bake settings ([[file:nav-bake.org][LrgNavBake]]) and agents ([[file:nav-agent.org][LrgNavAgent / LrgNavCrowd]]):
+
+- *Solids*: =lrg_nav_poly_mesh_add_solid(mesh, vertices, n_floats)= stages the closed surface of one solid; the bake fills every column it covers from its lowest to its highest surface (one span), so no floor is found inside it.  Plain triangles mark only their surfaces, which leaves the inside of a closed shape taller than the agent walkable (an island).  The input digest covers the solid grouping (digests of input without solids are unchanged).
+- *Area costs*: =lrg_nav_poly_mesh_set_tag_cost(mesh, tag, cost)= / =lrg_nav_poly_mesh_get_tag_cost()= give a tag a cost multiplier (> 0, default 1).  A* weighs the distance walked inside a polygon by its tag's cost; the heuristic is scaled by the cheapest cost below 1 so it stays admissible.  Costs are query settings: they survive bakes and are not part of =lrg_nav_poly_mesh_save()=.
+- *Walls*: =lrg_nav_poly_mesh_get_boundary_count()= and =lrg_nav_poly_mesh_get_boundary_segments(mesh, center, radius, half_height, &n_floats)= give the polygon sides no portal covers, collinear touching ones merged, six floats each, oriented with the walkable side on the right (the RVO2 obstacle convention), within =radius= of =center= in X/Z and =half_height= of its height (=NULL= centre: all).  They are built on first use after a bake or load and indexed in 4 m buckets; ORCA treats them as static obstacles.
+- *Inspection*: =lrg_nav_poly_mesh_get_polygon_corners(mesh, polygon, corners)= (the four floor corners, the OBJ export's vertices), =lrg_nav_poly_mesh_get_polygon_enabled()=, =lrg_nav_poly_mesh_get_link(mesh, i, start, end, &bidirectional, &enabled, &tag)= over the added links then the drops, =lrg_nav_poly_mesh_get_is_baked()=, and =lrg_nav_poly_mesh_get_serial()=, a counter that changes on every successful bake or load (agents compare it to plan again).
+- *Counts and per-polygon reads* (all releases): =lrg_nav_poly_mesh_get_polygon_count()=, =lrg_nav_poly_mesh_get_portal_count()= (each shared edge once per direction), =lrg_nav_poly_mesh_get_span_count()= (walkable cells), =lrg_nav_poly_mesh_get_link_count()= (added plus drops), =lrg_nav_poly_mesh_get_drop_link_count()=, =lrg_nav_poly_mesh_get_region_count()=, =lrg_nav_poly_mesh_get_polygon_region()= and =lrg_nav_poly_mesh_get_tag_enabled()=.
+- *Debug draw*: =lrg_nav_poly_mesh_debug_draw(mesh, draw, flags)= records the mesh into an =LrgDebugDraw= on =LRG_DEBUG_CATEGORY_NAVIGATION=; =LrgNavDebugFlags= (=LRG_TYPE_NAV_DEBUG_FLAGS=) selects polygons, polygon edges, boundaries, portals, links and area colouring (the agent flags are for =lrg_nav_crowd_debug_draw()=, see [[file:nav-agent.org::#api-debug-draw][nav-agent]]).
+
 * Costs
 
 The bake is linear in the rasterised area (columns times spans per column) plus the triangles' footprints; the column index costs four bytes per column of the level's bounds.  Nearest-point searches visit the columns of the box; A* is O(P log P) over polygons.  One thread; no graphics context or physics world.

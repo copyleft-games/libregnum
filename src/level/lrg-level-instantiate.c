@@ -37,6 +37,8 @@
 #include "../lighting/lrg-environment.h"
 #include "../lighting/lrg-probe-grid.h"
 #include "../postprocess/lrg-post-stack.h"
+#include "../pathfinding/lrg-nav-bake.h"
+#include "../pathfinding/lrg-nav-poly-mesh.h"
 #include "../core/lrg-asset-manager.h"
 #include "../core/lrg-asset-meta.h"
 #include "../core/lrg-engine.h"
@@ -1797,6 +1799,80 @@ apply_project_physics (Instantiate3D *ctx)
 }
 
 /*
+ * apply_level_navigation:
+ *
+ * The level's `navigation:` block (0.9.0 M6), after the entities exist:
+ * the baked mesh of `data:` is loaded (lrg_nav_poly_mesh_load()) and
+ * given the area costs of the `settings:` .rnav; when there is no data,
+ * or it does not load, and `bake_on_load:` is set, the mesh is baked from
+ * the instantiated world with the settings.  The mesh becomes the
+ * world's (lrg_world3d_set_navigation()).  Every failure is a warning:
+ * the level still loads, without navigation.
+ */
+static void
+apply_level_navigation (Instantiate3D *ctx,
+                        LrgLevel      *level)
+{
+	const gchar              *settings_ref = lrg_level_get_nav_settings_ref (level);
+	const gchar              *data_ref = lrg_level_get_nav_data_ref (level);
+	g_autoptr(LrgNavBake)     settings = NULL;
+	g_autoptr(LrgNavPolyMesh) mesh = NULL;
+
+	if (!lrg_level_has_navigation (level))
+		return;
+
+	/* the .rnav settings (area costs, and the bake on load) */
+	if (settings_ref != NULL)
+	{
+		g_autofree gchar  *path = resolve_asset_ref (ctx->assets, ctx->base_dir, settings_ref);
+		g_autoptr(GError)  error = NULL;
+
+		if (path != NULL)
+			settings = lrg_nav_bake_new_from_file (path, &error);
+		if (settings == NULL)
+			g_warning ("lrg_level_instantiate_3d: navigation settings '%s' did not load: %s", settings_ref,
+			           error != NULL ? error->message : "not found");
+	}
+
+	/* the baked mesh */
+	if (data_ref != NULL)
+	{
+		g_autofree gchar  *path = resolve_asset_ref (ctx->assets, ctx->base_dir, data_ref);
+		g_autoptr(GError)  error = NULL;
+		g_autofree gchar  *bytes = NULL;
+		gsize              len = 0;
+
+		if (path != NULL && g_file_get_contents (path, &bytes, &len, &error))
+		{
+			g_autoptr(GBytes) data = g_bytes_new_take (g_steal_pointer (&bytes), len);
+
+			mesh = lrg_nav_poly_mesh_new ();
+			if (!lrg_nav_poly_mesh_load (mesh, data, &error))
+				g_clear_object (&mesh);
+		}
+		if (mesh == NULL)
+			g_warning ("lrg_level_instantiate_3d: navigation data '%s' did not load: %s", data_ref,
+			           error != NULL ? error->message : "not found");
+		else if (settings != NULL)
+			lrg_nav_bake_apply_costs (settings, mesh);
+	}
+
+	/* no data: bake from what was just instantiated */
+	if (mesh == NULL && lrg_level_get_nav_bake_on_load (level))
+	{
+		g_autoptr(GError) error = NULL;
+
+		if (settings == NULL)
+			settings = lrg_nav_bake_new ();
+		mesh = lrg_nav_bake_bake (settings, ctx->world, NULL, &error);
+		if (mesh == NULL)
+			g_warning ("lrg_level_instantiate_3d: navigation bake on load failed: %s", error->message);
+	}
+	if (mesh != NULL)
+		lrg_world3d_set_navigation (ctx->world, mesh);
+}
+
+/*
  * lrg_level_instantiate_3d:
  *
  * One entity per node under the world root, see the header.
@@ -1849,6 +1925,9 @@ lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
 	/* The level's implicit root is not an entity: its children are the
 	 * world's top-level entities. */
 	instantiate_children_3d (&ctx, lrg_level_get_root (level), world_root);
+
+	/* navigation last: a bake on load needs the geometry */
+	apply_level_navigation (&ctx, level);
 
 	g_hash_table_unref (ctx.used_guids);
 	return TRUE;

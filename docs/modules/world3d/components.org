@@ -16,6 +16,8 @@
 
 libregnum 0.9 adds a runtime 3D world: an [[file:world3d.org][LrgWorld3D]] owning a tree of [[file:entity3d.org][LrgEntity3D]] entities. An entity is only a transform with a name, tags, a layer and flags; everything it does comes from its components, the same #LrgComponent base class the 2D ECS uses, with the 0.9 3D hooks (=attached_entity=, =fixed_update=, =late_update=, =collect_render=, =get_bounds=, =world_entered=, =world_exited=).
 
+=LrgParticleComponent= (=.rparticles= effects on an entity, drawn in the transparent pass) has its own page: [[file:particle-component.org][LrgParticleComponent]].
+
 This page documents the ten built-in 3D components, which live in =src/world3d/components/=:
 
 | Component                    | What it is                                              | Editor visual it comes from |
@@ -33,6 +35,7 @@ This page documents the ten built-in 3D components, which live in =src/world3d/c
 | =LrgRigidBodyComponent=      | a physics body (0.9.0 M5)                                | the node's =physics:= block |
 | =LrgColliderComponent3D=     | one collision shape, or a trigger volume                 | =physics: shapes:=          |
 | =LrgJointComponent=          | a joint to another body or the world                     | =physics: joints:=          |
+| =LrgNavAgentComponent=       | a navigation agent of the world's crowd (0.9.0 M6)       | (none: add it in the components list) |
 
 Three rules hold for all of them:
 
@@ -1298,12 +1301,33 @@ lrg_destructible_component_prepare (breakable, NULL);   /* at load time */
 
 *Pitfalls:* derived fractures need a cube primitive (use =set_fracture= for anything else, convex only); a queued break happens in the destructible's =fixed_update=, before the entity-to-body sync of the same fixed update drops the intact body, so the chunks never meet it in a step; a direct =lrg_destructible_component_fracture()= call from game code outside the fixed update leaves the intact body in place until the next sync; a hit must start a new contact to be seen (a resting heavy object never breaks its support); without a rigid body, call =report_impact()= or =fracture()= yourself.
 
+** LrgNavAgentComponent
+:PROPERTIES:
+:CUSTOM_ID: nav-agent-component
+:END:
+Makes its entity a navigation agent (0.9.0 M6). While the entity is in a world the component's #LrgNavAgent is in the world's crowd (=lrg_world3d_get_nav_crowd()=) and walks the world's mesh (=lrg_world3d_set_navigation()=): =lrg_nav_agent_component_set_destination()= plans a path, the crowd steers it around other agents and walls with ORCA every fixed substep, and the component writes the agent back to the entity (position = feet + =base-offset=, yaw towards the velocity at =angular-speed=) or, with a dynamic #LrgRigidBodyComponent on the entity, sets the body's horizontal velocity. A kinematic body follows the entity. Game code that moves the entity teleports the agent.
+
+| Property | Default | |
+|-+-+-|
+| =speed= | 3.5 | m/s (the agent's =max-speed=) |
+| =acceleration= | 8 | m/s² |
+| =radius= | 0.3 | avoidance radius |
+| =height= | 1.8 | |
+| =avoidance-priority= | 0.5 | 0 .. 1, higher gives way less |
+| =avoidance-enabled= | =TRUE= | |
+| =stopping-distance= | 0.1 | |
+| =base-offset= | 0 | pivot height above the feet |
+| =update-rotation= | =TRUE= | face the velocity (+Z forward) |
+| =angular-speed= | 720 | degrees per second |
+
+API: =lrg_nav_agent_component_new()=, =lrg_nav_agent_component_get_agent()=, =lrg_nav_agent_component_set_destination()= / =lrg_nav_agent_component_get_destination()= (a destination set before the world has a mesh waits for it), =lrg_nav_agent_component_stop()=, =lrg_nav_agent_component_get_state()=, =lrg_nav_agent_component_has_arrived()=, =lrg_nav_agent_component_get_remaining_distance()=, and getters / setters for =speed=, =acceleration=, =radius=, =height= and =avoidance-priority= (=lrg_nav_agent_component_get_speed()= ... =lrg_nav_agent_component_set_avoidance_priority()=). Signals =arrived= and =path-failed=. Full reference: [[file:../pathfinding/nav-agent.org::#api-component][nav-agent]].
+
 ** Type functions
 :PROPERTIES:
 :CUSTOM_ID: type-functions
 :END:
 
-=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()=, =lrg_reflection_probe_component_get_type()=, =lrg_rigid_body_component_get_type()=, =lrg_collider_component3d_get_type()=, =lrg_joint_component_get_type()=, =lrg_cloth_component_get_type()= and =lrg_destructible_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=); =lrg_collider3d_kind_get_type()= registers #LrgCollider3DKind (=sphere=, =capsule=, =cylinder=, =box=, =convex=, =mesh=, =plane=).
+=lrg_mesh_renderer_component_get_type()=, =lrg_light_component_get_type()=, =lrg_camera_component_get_type()=, =lrg_audio_source_component_get_type()=, =lrg_audio_listener_component_get_type()=, =lrg_billboard_component_get_type()=, =lrg_tilemap_component_get_type()=, =lrg_spawn_component_get_type()=, =lrg_trigger_component_get_type()=, =lrg_skinned_model_component_get_type()=, =lrg_lod_component_get_type()=, =lrg_decal_component_get_type()=, =lrg_reflection_probe_component_get_type()=, =lrg_rigid_body_component_get_type()=, =lrg_collider_component3d_get_type()=, =lrg_joint_component_get_type()=, =lrg_cloth_component_get_type()=, =lrg_destructible_component_get_type()= and =lrg_nav_agent_component_get_type()= register the final component types (all derive from #LrgComponent, so =g_type_from_name("LrgLightComponent")= works for data-driven creation). =lrg_billboard_facing_get_type()= and =lrg_trigger_shape_get_type()= register the two enums (nicks =spherical=, =axis-y=, =fixed= and =box=, =sphere=); =lrg_collider3d_kind_get_type()= registers #LrgCollider3DKind (=sphere=, =capsule=, =cylinder=, =box=, =convex=, =mesh=, =plane=).
 
 ** Using it from the editor
 :PROPERTIES:
