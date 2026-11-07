@@ -565,3 +565,22 @@ Looked at and left:
 - *Event bus per-emission refs.* The bus and the event are referenced across each emission (and matching registrations through the snapshot) for the lifetime guarantees; those stay.
 
 Found on the way: =g_object_class_find_property()= returns the redirect target of an overridden property, so writing through the found pspec would have set the parent's property; the write path keeps overrides on the by-name path and a regression test (=/tween/property/override=) pins it. GLib reports an out-of-range property value with a critical, not a warning.
+
+** The v0.8.5 UI paint pass
+:PROPERTIES:
+:CUSTOM_ID: perf-ui-cull
+:END:
+
+Found by clawtilla's libregnum client against a real fleet: 3 fps and a pegged core in a chat with a few hundred messages, against a steady 60 fps on a scratch fleet with three, so the cost was proportional to content, not to the screen.
+
+*Nothing was culled.*  =lrg_widget_paint()= recorded every visible widget every frame whether or not it could reach the screen, so a scroll box holding 300 messages laid out and recorded all 300 (text shaping included) to draw the ten in its viewport, and the clip then threw the rest away on the GPU.  A widget wholly outside the current clip, by more than =PAINT_CULL_MARGIN= (64 px, for shadows, focus rings and glows), is no longer recorded.  The default clip is unbounded, so only clipped regions -- scroll boxes, and anything a widget clips itself -- are affected, and nothing on screen changes because every shape was already cut to the clip.  A widget whose painted position is still moving (layout glide, an appear animation) is never culled.
+
+*=LrgMarkdownLabel= re-wrapped on every measure.*  =measure()= called =relayout()= unconditionally while paint and arrange went through the cache, and =lrg_container_add_child()= lays out the box at once (legacy callers expect it), measuring every child: appending N messages shaped every earlier one N times.  Measure now uses the same cache, which is keyed on the theme and its generation as well as width, body size and loaded faces, since a re-themed label with the same body size must still re-wrap.
+
+| Measured (clawtilla-lrg against a real fleet, Wayland, AMD Radeon 890M) | Before | After |
+|---+---+---|
+| Steady frame, CPU side | 7.7 ms | 1.1 ms |
+| Client CPU, idle window | 36 % | 5 % |
+| Worst frame while the transcript loads | 3.2 s | 0.17-0.37 s |
+
+Tests: =/ui/scroll-box/culls= (200 rows, at most a viewport and its margin recorded, at the top and after scrolling to the end) and =/ui/pickers/markdown/measure-cache= (a measure still follows a text change and a re-theme).
