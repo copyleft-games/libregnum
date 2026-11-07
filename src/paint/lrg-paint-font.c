@@ -2393,13 +2393,13 @@ lrg_paint_font_draw_text (LrgPaintFont            *self,
                           const LrgPaintTextStyle *style)
 {
 	g_autoptr(GArray) placed = NULL;
+	g_autofree guint *textures = NULL;
 	LrgPaintTextStyle plain;
 	gboolean          has_shadow;
 	gboolean          window;
 	gfloat            origin_x;
 	gfloat            origin_y;
 	gfloat            em;
-	guint            *textures;
 	guint             n_pages;
 	guint             i;
 	gint              pass;
@@ -2445,7 +2445,9 @@ lrg_paint_font_draw_text (LrgPaintFont            *self,
 	/* 3. One texture lookup (and upload) per page */
 	window = IsWindowReady ();
 	n_pages = lrg_paint_font_atlas_get_n_pages ();
-	textures = g_newa (guint, MAX (n_pages, 1));
+	/* Heap, not g_newa(): GCC 13 (the AppImage base) refuses a
+	 * variable-length stack buffer under -Wstack-protector */
+	textures = g_new (guint, MAX (n_pages, 1));
 	for (i = 0; i < n_pages; i++)
 		textures[i] = atlas_page_texture (i);
 
