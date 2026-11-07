@@ -382,7 +382,7 @@ The document does not need the writers (it saves the YAML tree), but =*_from_dat
 :PROPERTIES:
 :CUSTOM_ID: data-editors-ipc
 :END:
-These are wired in the editor server in a later wave; documents are identified by their path.
+The shapes first proposed for the model; the implemented methods (with =data.close= and =data.reveal= added, and =path= optional: it defaults to the focused data editor) are documented with the [[#data-editors-panel-base-ipc][base panel]].
 
 | Method | Params | Result |
 |--------+--------+--------|
@@ -533,58 +533,505 @@ The sections below are written with the editor UI (Wave 5). Each describes its p
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-base
 :END:
-/To be written with the UI./
+=LrgEditorDataEditor= (=src/editor/ui/data/lrg-editor-data-editor.h=) is the derivable =LrgContainer= every data editor subclasses. It owns one =LrgEditorDocument= and draws everything the eight editors share, so a subclass only fills its content area and reacts to document changes.
+
+**** Layout
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-layout
+:END:
+From top to bottom:
+
+| Part | Widget names | What it does |
+|------+--------------+--------------|
+| Toolbar | =data-toolbar=, =data-title=, =data-save=, =data-revert=, =data-validate=, =data-issues= | The format icon (accent), the file name, a warning-coloured dirty dot and the format name; Save (enabled while dirty), Revert, Validate and the issue chip (a green "Valid" check, or the worst severity's icon and colour with the issue count as a badge); then the subclass's own tools (=lrg_editor_data_editor_add_tool()=). Chips compact to icons when the panel is narrow. |
+| Banner | =data-banner=, =data-banner-text=, =data-banner-reload=, =data-banner-keep= | Shown when the file changed on disk while there are unsaved edits: a warning-tinted strip with an accent bar, the message, Reload and Keep mine. |
+| Content | the subclass widget | Everything between the banner and the issues (=lrg_editor_data_editor_set_content()=). |
+| Issues | =data-issues-list= | A list of the last validation's issues, opened by the issue chip or by Validate when there are issues: a severity icon (cross / warning / info in danger / warning / link colours), the YAML path in the mono face, the message, and a "line N" chip. At most six rows tall (40% of the panel). |
+
+The tab title (and the dock tab) is the file name plus " •" while dirty (=LrgEditorDataEditor:title=).
+
+**** Opening, the registry and docking
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-open
+:END:
+- =lrg_editor_data_editor_open (app, path, &error)= takes an absolute path or one relative to the project, reuses an open tab of the same file, otherwise loads the document (=lrg_editor_document_new_from_file()=, file monitoring on), picks the editor type registered for its format and docks it with the panel id ="data:<absolute path>"=.
+- *Where it docks*: next to an open data tab (so data tabs stay together wherever they were moved); else next to the code panel when that sits in the viewport's tab stack; else in the center stack, as a tab beside the viewport. (The default layout keeps the code panel in the short bottom stack, too cramped for a table editor.)
+- *Registry*: =lrg_editor_data_editor_register_type (format, type)= maps a format to a subclass; =lrg_editor_data_editor_lookup_type()= reads it. The eight built-in editors register themselves lazily on first use, and only when their type really derives from =LrgEditorDataEditor=. Registering again replaces an editor (a plugin can provide its own).
+- =lrg_editor_data_editor_can_open (path)= is true for a =.yaml= / =.yml= file whose name and content =lrg_editor_document_detect_format()= recognises and whose format has an editor. Levels, prefabs and projects never match.
+- =lrg_editor_data_editor_find (app, path)= returns the open editor of a file; with =NULL= it returns the *focused* data editor: the one that last got a click or a key, else the one opened last. =lrg_editor_data_editor_list (app)= lists them in opening order.
+- *Assets panel*: opening (double click, Enter, Open) a file =can_open()= accepts opens it here; a file that does not parse falls through to the usual handling (the code panel or the external editor). The assets panel's constructor also calls =lrg_editor_data_editor_install()=, so the IPC methods exist from start-up.
+
+**** Undo, save, revert, close
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-undo
+:END:
+- Every edit goes through the document; the panel never edits the level. Inside a data editor (focus anywhere in it) the accelerators of =edit.undo= / =edit.redo= (Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y by default) undo and redo the *document's* stack, =file.save= (Ctrl+S) saves the file and =code.close-tab= (Ctrl+W) closes the tab. Text inputs inside the panel keep their own Ctrl+Z.
+- The panel is focusable, so a click on empty space in it is enough to route the keys there.
+- Save writes the file (=LrgEditorDataEditorClass.save=; the locale editor saves every dirty language), hides the banner and validates again. Revert asks first when there are unsaved changes, then reloads.
+- Closing a dirty tab (its dock close button, Ctrl+W, =data.close=) asks Save / Don't Save / Cancel through the editor's dialog protocol. =lrg_editor_data_editor_close (self, TRUE)= closes without asking.
+
+**** External changes
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-external
+:END:
+The document monitors its file. When another program changes it: a clean document reloads silently; a dirty one shows the banner. *Reload* drops the edits and re-reads the file; *Keep mine* hides the banner and the next save overwrites the file. =lrg_editor_data_editor_check_disk()= runs the same check on demand (e.g. on window focus).
+
+**** Validation
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-validation
+:END:
+- Validation runs on open, on save and reload, on Validate, and half a second (canvas time, so tests stay deterministic) after the last edit.
+- It is the document's validation (the engine loader plus structural checks) followed by =LrgEditorDataEditorClass.validate=, where subclasses append their own issues (missing translations, missing sound files).
+- =lrg_editor_data_editor_get_issues()= returns the issues; the array is refilled in place, so holding it is safe.
+- Clicking an issue row (or =lrg_editor_data_editor_activate_issue()=) emits =::reveal= with the issue's path and line; each editor selects and scrolls to what shows that path (=LrgEditorDataEditorClass.reveal=).
+
+**** Writing a data editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-subclass
+:END:
+#+begin_src c
+/* constructed (): the document and the app are set by now */
+G_OBJECT_CLASS (my_editor_parent_class)->constructed (object);
+lrg_editor_data_editor_set_content (LRG_EDITOR_DATA_EDITOR (self), my_content);
+lrg_editor_data_editor_add_tool (LRG_EDITOR_DATA_EDITOR (self), LRG_WIDGET (lrg_button_new ("Thing")));
+
+/* class_init */
+data_class->refresh = my_refresh;      /* LrgEditorDocument::changed, path or "" */
+data_class->reveal = my_reveal;        /* issue click: select what shows path */
+data_class->validate = my_validate;    /* optional: extra issues */
+data_class->get_state = my_get_state;  /* optional: one line for data.list */
+#+end_src
+| Virtual method | Default | Purpose |
+|----------------+---------+---------|
+| =refresh (self, path)= | nothing | Update the content after =LrgEditorDocument::changed= (=""= after a reload or a structural edit). Do not destroy the widget that is being edited from inside this call: defer rebuilds to =step()= (the input map, sound bank and theme editors do). |
+| =reveal (self, path, line)= | nothing | Class handler of =::reveal=. |
+| =validate (self, issues)= | nothing | Append =LrgEditorDocumentIssue= items. |
+| =get_state (self)= | =NULL= | A short line for =data.list= and tests. |
+| =save (self, error)= | save the document | Save companion documents too. |
+| =undo= / =redo (self)= | the document's | Several documents: undo where the last edit went. |
+| =get_dirty (self)= | the document's | The dirty dot and the close prompt. |
+Helpers for subclasses: =lrg_editor_data_editor_new_gesture()= (a gesture id so a drag merges into one undo step), =lrg_editor_data_editor_report_error()= (an error toast), =lrg_editor_data_editor_sync_title()= (after a companion document changed).
+
+**** LrgEditorDataSource: document fields in a property grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-source
+:END:
+=LrgEditorDataSource= is an =LrgPropertySource= whose properties are YAML paths of the editor's document, so an =LrgPropertyGrid= edits the file directly:
+- =lrg_editor_data_source_add_field (source, name, path, type, label, group, hint, default)=: =type= is string, boolean, int64 or double; =hint= picks the grid editor (="color"=, ="asset"=, ="range:0:1:0.05"=, ="enum-strings:a,b"=); =default= (YAML text) is shown while the path is missing, and such a row reads as default (Reset removes the key).
+- Every write is one document command; missing parent mappings (=/colors= of =/colors/text=) are created in the same undo group. =lrg_editor_data_source_bind_grid()= follows the grid's =edit-begin= / =edit-end= so a slider drag or a typing session is one undo step, and a cancelled gesture (Escape) is undone.
+- A *read hook* supplies values that are not a scalar at a path (an action's name, a modifier flag that is membership in a sequence); a *write hook* rewrites a value before it is written (a dropped project-relative asset made bank-relative) or does a structural edit itself (rename, type change) and stops the plain write.
+- From =refresh=, call =lrg_editor_data_source_document_changed (source, path)= to update the affected rows.
+
+**** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-base-ipc
+:END:
+Registered by =lrg_editor_data_editor_install()= (idempotent; called by the assets panel and by =open()=). =path= is a file path (absolute or project-relative); when it is omitted the focused data editor is used. Errors use the server's codes: =not-found= for no such editor or node, =invalid-params= for bad paths and arguments, =failed= otherwise.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =data.open= | =path= | the editor status (below) |
+| =data.list= | — | an array of editor statuses |
+| =data.get= | =path?=, =at= (YAML path, default root), =as?= (="yaml"=) | =at=, =kind= (=null=, =scalar=, =mapping=, =sequence=), =value= (typed JSON) for scalars, =keys= for mappings, =length= for sequences, =yaml= for collections or with =as=, =line= |
+| =data.set= | =path?=, =at=, =value= (JSON: string, number, boolean, null; an object or array replaces the subtree) or =yaml=, =gesture?= | status + =ok= |
+| =data.edit= | =path?=, =op=, =at=, op arguments: =insert= (=index?=, =yaml=), =move= (=from=, =to=), =add_key= (=key=, =yaml=, =position?=), =rename_key= (=old=, =new=), =remove= | status + =ok= |
+| =data.undo= / =data.redo= | =path?= | status + =ok= (whether anything changed) |
+| =data.validate= | =path?= | =ok= (no errors), =errors=, =issues= (=severity=, =path=, =line=, =column=, =message=) |
+| =data.save= | =path?=, =save_as?= | status + =ok= |
+| =data.reload= | =path?= | status + =ok= |
+| =data.close= | =path?=, =force?= | =closed= (=false= while the unsaved prompt is up) |
+| =data.reveal= | =path?=, =at=, =line?= | status, after doing what clicking an issue with that path does |
+
+The *editor status* object: =path=, =panel= (dock id), =format= (nick), =editor= (type name), =dirty=, =read_only=, =focused=, =changed_on_disk= (banner shown), =issues=, =errors=, =undo_label=, =redo_label= and, when the editor has one, =state= (e.g. ="actions=2 selected=jump slot=0 capturing=no"=).
+
+The palette also gets =data.save=, =data.revert=, =data.validate= and =data.close= actions (on the focused data editor), and the canvas a ="data"= action group with =data.open(s)=.
 
 *** Input map editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-input-map
 :END:
-/To be written with the UI./
+=LrgEditorInputMapEditor= (=src/editor/ui/data/lrg-editor-input-map-editor.h=) edits =LrgInputMap= files (see [[#data-editors-input-maps][Input maps]]). The content is a table of actions beside a property grid, with a capture veil over both while it waits for a key.
+
+**** The actions table
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-input-table
+:END:
+- One row per action, in file order (=lrg_editor_document_input_actions()=): the action name, then its bindings as *chips*: keyboard bindings in the accent colour, mouse buttons in the link colour, gamepad buttons and axes in the success colour, an unknown type in warning. Chip text is readable: =Ctrl+S=, =Shift+Mouse Left=, =Pad A=, =D-pad Up=, =Left Stick X+=.
+- A trailing hollow *+* chip adds a binding by capture.
+- Clicking a chip selects that binding; clicking the selected chip again (or Enter) re-captures it; clicking the row elsewhere selects the action. Delete removes the selection.
+- Toolbar tools: *Action* (add =action_N= with no bindings and select it), *Capture* (re-capture the selected binding, or add one when the action is selected), *Remove* (the selected binding, else the action).
+
+**** The grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-input-grid
+:END:
+- With an action selected: its *Name*. Typing a new name renames the key (=rename_key=, the action keeps its place and its other keys).
+- With a binding selected: *Type* (keyboard, mouse_button, gamepad_button, gamepad_axis). Changing the type replaces the binding with the new type's defaults (one undo step). Then per type: *Key* or *Button* (the engine's names as a dropdown) and the *Ctrl / Alt / Shift* modifier flags, which write the =modifiers= sequence (removed when empty); *Gamepad* and *Button*; or *Gamepad*, *Axis*, *Threshold* (0..1) and *Positive*.
+- Other keys of an action (a =description=, comments) are never touched.
+
+**** Capture ("press a key or button")
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-input-capture
+:END:
+- While capturing, the chip reads "Press a key…" and a veil (=input-capture=) dims the content with a prompt; the editor takes keyboard focus.
+- The next key press becomes ={ type: keyboard, key: NAME, modifiers: [...] }= with the held Ctrl / Alt / Shift; a lone modifier key waits for the real key. A mouse press on the veil becomes a =mouse_button= binding (left, right, middle, side, extra, forward, back) with the held modifiers. Escape (or the cancel event) leaves without a change.
+- Gamepad bindings are set in the grid (the canvas has no gamepad events).
+- A capture replaces the binding (or appends one for *+*) as one undo step and selects it.
+- API: =lrg_editor_input_map_editor_start_capture (self, action, slot)= (=-1= appends), =cancel_capture()=, =get_capturing()=; =select()=, =add_action()=, =remove_selected()=, =describe_binding()=, and =get_chip_rect()= for tests and automation.
+
+**** Issues
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-input-issues
+:END:
+An issue under =/actions/<name>/bindings/<i>= selects that binding; one under =/actions/<name>= selects the action.
 
 *** Locale editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-locale
 :END:
-/To be written with the UI./
+=LrgEditorLocaleEditor= (=src/editor/ui/data/lrg-editor-locale-editor.h=) edits a set of locale files (see [[#data-editors-locales][Locales]]) as one key × language grid.
+
+**** Languages and the reference
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-locale-languages
+:END:
+- The opened file is the *reference* language (first column, titled "en (reference)"). Every other =.yaml= / =.yml= file in its folder that is a locale is loaded beside it, sorted by file name, as its own =LrgEditorDocument= with the reference set. A column's code is the file's =code:= key, else its file name without the extension.
+- Only the opened file is a docked tab; the others are companions: Save writes every dirty language, the dirty dot covers all of them, and Revert / the banner act on the opened file.
+
+**** The grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-locale-grid
+:END:
+- One row per key of any language, the reference's order first, then keys only other languages have. A plural entry (a mapping of forms) gives a row per form, named =key[form]= (=items[one]=, =items[other]=).
+- *Missing cells* (the reference has the key, the language does not) are tinted with the danger colour, carry a danger bar on the left and read "missing". A dash marks a key no language must have (only another non-reference language has it).
+- Clicking a cell selects it (accent border) and focuses the *edit bar* below the table (=locale-edit-label=, =locale-edit-input=). Enter writes the text and moves down a row, like a spreadsheet; an empty text removes the entry. Writing a missing cell creates =strings= and the plural mapping as needed, as one undo step.
+- Toolbar tools: *Key* (a new =new_key_N= in the reference), *Import CSV*, *Export CSV* (file dialogs opened in the locale folder).
+
+**** Undo across languages
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-locale-undo
+:END:
+Each language has its own document stack. The editor remembers which language each of its writes went to, so Ctrl+Z undoes the last write wherever it went and Ctrl+Shift+Z redoes in order. Edits made to the reference by other means (IPC =data.set=) fall back to the reference's own stack.
+
+**** Missing keys as issues
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-locale-issues
+:END:
+Besides the reference's own issues, every missing cell is a warning ="'farewell' is missing in fr (fr.yaml)"= with the path =/strings/farewell= and the line of the reference's entry; clicking it selects the first language lacking the key. A companion's own structural issues are listed with its file name in front.
+
+**** CSV
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-locale-csv
+:END:
+- *Export* (=lrg_editor_locale_editor_export_csv()=) writes RFC 4180 CSV with =,=: a header =key,en,fr,...= and one row per grid row (plural forms as =key[form]=); a missing entry is an empty field; fields with a comma, a quote, a line break or edge spaces are quoted.
+- *Import* (=lrg_editor_locale_editor_import_csv()=) reads with =lrg_csv_parse()= and writes every non-empty field of each column whose header is a loaded language code, as one undo step per language; empty fields and unchanged texts are skipped, an unknown code is skipped with a warning. It returns the number of cells written. Exporting and importing the result writes nothing.
 
 *** Sound bank editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-sound-bank
 :END:
-/To be written with the UI./
+=LrgEditorSoundBankEditor= (=src/editor/ui/data/lrg-editor-sound-bank-editor.h=) edits =LrgSoundBank= manifests (see [[#data-editors-sound-banks][Sound banks]]): a sound table beside a property grid.
+
+**** Sounds
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-sound-table
+:END:
+- The table (=sound-list=) lists the =sounds= entries: name, file, and a status mark: a success check when the file resolves (=lrg_editor_document_sound_bank_resolve()=: the manifest's folder joined with =base_path=), a danger cross when it is missing. Double click (or Enter) previews.
+- *Dropping audio assets*: drag files from the assets panel onto the table. Each becomes a sound named after its file (=boom.wav= → =boom=, made unique with a number) whose path is made relative to the bank's sound folder (=fx/boom.wav=, or with =../= steps when it lies outside). The assets panel drags project-relative paths; absolute paths work too.
+- Toolbar tools: *Sound* (add a placeholder entry), *Play*, *Remove* (the next sound is selected).
+
+**** The grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-sound-grid
+:END:
+- *Bank*: =name= and =base_path= ("Sound folder").
+- *Sound* (when one is selected): its *Name* (renames the key) and its *File*, an asset reference: drop an audio asset on it, pick from the audio files of the sound folder, or type. A project-relative asset is rewritten bank-relative unless the text already resolves.
+
+**** Preview and checks
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-sound-preview
+:END:
+- *Play* (=lrg_editor_sound_bank_editor_play()=) opens the default audio device on first use and plays the resolved file; the previous preview stops. A missing file fails before audio is touched (=G_FILE_ERROR_NOENT=).
+- A sound whose file does not exist is a warning on =/sounds/<name>= (unless the document already reported it); clicking it selects the sound.
 
 *** Theme editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-theme
 :END:
-/To be written with the UI./
+=LrgEditorThemeEditor= (=src/editor/ui/data/lrg-editor-theme-editor.h=) edits =LrgTheme= files (see [[file:../guides/theming.org][Theming]]): a property grid beside a live gallery.
+
+**** The grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-theme-grid
+:END:
+A filterable grid (=theme-grid=) in three sections:
+- *General*: Name, Based on (=preset=, the built-in presets), Dark, Motion (=none=, =snappy=, =smooth=, =bouncy=, =wobbly=), Accent (colour) and Font file (asset).
+- *Colors*: one colour row per role (=window=, =panel=, =surface=, =border=, =text=, =text-muted=, =accent= family, =success=, =warning=, =danger=, =link=, ...), written to =colors.<role>=.
+- *Metrics*: one number per metric (=font-size=, =corner-radius=, =control-height=, =padding-x=, =spacing=, =row-height=, ...), written to =metrics.<metric>=.
+A key the file does not set shows the value the theme would use (taken from the preview, so it follows =preset=, =accent= and =dark=) and is marked as a default; editing it adds the key (and =colors= / =metrics= when missing, in the same undo step); Reset removes it again. =styles= rules are kept as written; the gallery header counts them, and an issue inside them opens the line in the code panel.
+
+**** Live preview
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-theme-preview
+:END:
+- After every change the document's text is loaded with =lrg_theme_new_from_data()= and set on the gallery (=theme-gallery=), whose widgets inherit it: a heading, body and muted text, primary / secondary / disabled buttons, checkboxes, a combo box, a slider, a progress bar and a text input, on the theme's window colour with a panel card.
+- When the text does not load (an unknown motion, a bad colour), the last good theme stays and the loader's message is shown above the gallery (=lrg_editor_theme_editor_get_preview_error()=).
+
+**** Use for editor
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-theme-use
+:END:
+*Use for editor* (=lrg_editor_theme_editor_use_for_editor()=) saves the file if needed, sets the editor's =theme= setting to its path and applies it to the whole editor. While the file is the editor's theme, every later save re-applies it, so the editor restyles itself as you tune it. A theme that does not load is refused.
 
 *** HUD layout editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-hud-layout
 :END:
-/To be written with the UI./
+=LrgEditorHudLayoutEditor= (=src/editor/ui/data/lrg-editor-hud-layout-editor.h=) edits the player-state file of =LrgHudLayout=. The content is a /stage/ beside a property grid: the stage simulates a game screen (1280 x 720 by default; the screen chip in the toolbar cycles 1280x720, 1920x1080, 1024x768, 800x600 and 720x1280) and draws every piece of =pieces:= as a rectangle exactly where the game puts it, through =lrg_hud_layout_resolve()=.
+
+**** What the stage shows
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-stage
+:END:
+- *The screen* with its thirds drawn as guides and the nine anchor points as dots. The thirds are the regions =lrg_hud_layout_place_rect()= uses to pick an anchor, so the guides show where a drop re-anchors a piece.
+- *Placed pieces* (with an =anchor=) as rounded accent rectangles with their id; the selected one gets a thicker accent border, four corner handles and an /anchor line/ from the screen's anchor point to the piece's own anchor point.
+- *Unplaced pieces* (no =anchor=: the game's default applies, which the file does not know) stacked up from the bottom-left corner with a dashed outline and the word "default", drawn under the placed pieces.
+- *Flags*: a lock icon on locked pieces, an eye icon and 40% opacity on hidden ones.
+
+**** Interaction
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-input
+:END:
+| Input | Effect |
+|-------+--------|
+| Click a piece | selects it (property grid shows it); click empty stage clears the selection |
+| Drag a piece | moves it; on release the anchor becomes the third holding the piece's centre and the offset follows (the engine's own rule, computed by a scratch =LrgHudLayout= with =place_rect=), written as one undo step "Move HUD piece" |
+| Drag a corner handle | resizes the /preview/ rectangle; the anchor is kept and only the offset changes when the anchor point moved (a top-left piece keeps =x=/=y=, a top-right piece grown to the right moves =x=) |
+| Arrow keys / Shift+arrows | nudge the selected piece by 1 / 10 units |
+| Escape during a drag | cancels it |
+| Locked pieces | can be selected but not dragged or resized (the engine refuses to place them too) |
+
+**** Property grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-grid
+:END:
+With a piece selected: /Placement/ (=anchor= as an =LrgHudAnchor= combo, =x=, =y=), /Player/ (=locked=, =hidden=) and /Preview (editor only)/ (=width=, =height=). Changing the anchor converts the offset so the piece stays where it is on screen; =x= and =y= always write the anchor with them (an offset without an anchor is an error of the format). Without a selection the grid shows the file's =version=.
+
+**** Toolbar
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-toolbar
+:END:
+=hud-add= (Add Piece: =piece-N= at =top-left 16,16=, selected), =hud-reset= (removes =anchor=, =x=, =y= of the selection: back to the game default), =hud-remove= (removes the piece) and =hud-screen= (the screen size chip).
+
+**** Sizes are not saved
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-sizes
+:END:
+The format has no size: a HUD piece is as large as the game draws it. The editor keeps a preview size per piece (160 x 48 until resized) for the lifetime of the editor, so the anchoring rules can be seen with realistic rectangles; =lrg_editor_hud_layout_editor_set_piece_size()= sets one from code. The loader rejects unknown keys, so the size can never be written into the file.
+
+**** API
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-hud-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_hud_layout_editor_new (app, document)= | create (normally =lrg_editor_data_editor_open()= does) |
+| =lrg_editor_hud_layout_editor_get_selected= / =lrg_editor_hud_layout_editor_select= | the selected piece id |
+| =lrg_editor_hud_layout_editor_get_piece_rect= | where the stage draws a piece, in canvas coordinates |
+| =lrg_editor_hud_layout_editor_get_piece_size= / =lrg_editor_hud_layout_editor_set_piece_size= | the preview size (anchor kept) |
+| =lrg_editor_hud_layout_editor_get_screen_size= / =lrg_editor_hud_layout_editor_set_screen_size= | the simulated screen |
+| =lrg_editor_hud_layout_editor_add_piece= | add a placed piece (one undo step) |
+
+=data.list= reports the state line =pieces=N selected=ID screen=WxH=; an issue path =/pieces/<id>/...= selects that piece.
 
 *** UI layout editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-ui-layout
 :END:
-/To be written with the UI./
+=LrgEditorUiLayoutEditor= (=src/editor/ui/data/lrg-editor-ui-layout-editor.h=) edits =LrgUILoader= documents. Three panes side by side: an /outline/ of the built widgets (=LrgTreeView=), the /YAML/ (=LrgTextEditor= with the YAML syntax and line numbers) and a /live preview/ built by an =LrgUILoader= with source tracking on.
+
+**** Text flow and undo
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-ui-flow
+:END:
+- Typing restarts a 0.35 s debounce timer on the canvas clock (the preview frame's =step=), so tests and replays drive it with frames. =lrg_editor_ui_layout_editor_get_pending()= tells whether text waits; =lrg_editor_ui_layout_editor_apply()= (and the Apply chip) apply it now.
+- When it fires, the text is loaded by a fresh loader. On success the new root replaces the preview and the outline is rebuilt (the selection is kept by its path). On failure the previous preview stays and the error is shown.
+- Text that is valid YAML is then written into the document with one =lrg_editor_document_replace()= of the root: one undo step per pause in typing. Broken YAML is never written (the document keeps its last valid text); valid YAML the loader refuses (an unknown property, a bad value) is written, so validation, save and undo see what the user typed.
+- Any other change of the document (undo, redo, the IPC =data.*= methods, a reload) replaces the pane's text with the document's serialization, keeping the caret line, and rebuilds the preview.
+
+**** Errors
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-ui-errors
+:END:
+The loader's message (which starts with the node path and ends with "(at line L, column C)") is shown in a banner over the bottom of the preview, wrapped, with a warning icon; the line it names gets a danger band and a gutter bar in the YAML pane. The document's own validation issues are marked the same way (warning or danger colour) while the pane shows the document's text. =lrg_editor_ui_layout_editor_get_error()= returns the message and line.
+
+**** Handlers in the preview
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-ui-handlers
+:END:
+=on:= entries name C handlers that only the game registers. The preview registers a no-op handler under every name the loader reports as unknown and loads again (up to 64 names per load), so documents with handlers preview without changes; action handlers (=action: prefix.name=) need nothing.
+
+**** Selection across the panes
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-ui-selection
+:END:
+| From | Does |
+|------+------|
+| Click in the preview (Pick mode, the default) | picks the deepest widget with a source pointer under the pointer (=lrg_ui_loader_get_source_path()=), selects its outline row and puts the caret on its node (=lrg_ui_loader_get_source_location()=) |
+| Hover in the preview (Pick mode) | outlines the widget under the pointer |
+| Click an outline row | selects the widget in the preview and puts the caret on its node |
+| Move the caret | selects the deepest node starting at or before the caret line (outline row and preview), without moving the caret |
+| Pick chip off | clicks reach the preview widgets (buttons press, sliders drag); the selection stays |
+
+The selected widget gets an accent outline, a tint and a type tag in the preview, and its first line a soft accent band in the YAML. Paths are the loader's JSON pointers (="/children/1"=), which are also =LrgEditorDocument= paths, so =lrg_editor_ui_layout_editor_select_path()= and issue paths use the same strings. Widgets of a component body or an included file select their use site; =repeat= / =for-each= copies share their template's pointer.
+
+**** API
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-ui-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_ui_layout_editor_new (app, document)= | create |
+| =lrg_editor_ui_layout_editor_get_text_editor= | the YAML pane |
+| =lrg_editor_ui_layout_editor_get_loader= | the loader of the current preview (source queries) |
+| =lrg_editor_ui_layout_editor_get_preview= | the preview's root widget |
+| =lrg_editor_ui_layout_editor_apply= / =lrg_editor_ui_layout_editor_get_pending= | apply typed text now / whether text waits |
+| =lrg_editor_ui_layout_editor_get_error= | the load error and its line |
+| =lrg_editor_ui_layout_editor_get_selected_path= / =lrg_editor_ui_layout_editor_select_path= | the shared selection |
+| =lrg_editor_ui_layout_editor_get_pick_mode= / =lrg_editor_ui_layout_editor_set_pick_mode= | pick or interact |
+| =lrg_editor_ui_layout_editor_get_n_outline_rows= | outline size |
+
+Pitfall: the YAML pane's Ctrl+Z is the text editor's own undo (it edits text that has not been applied yet); the document's undo is the toolbar's / =data.undo=. =include:= paths in the preview resolve against the current directory.
 
 *** Dialog tree editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-dialog-tree
 :END:
-/To be written with the UI./
+=LrgEditorDialogTreeEditor= (=src/editor/ui/data/lrg-editor-dialog-tree-editor.h=) edits =LrgDialogTree= definitions as an =LrgNodeGraph= beside a property grid and a play-test pane.
+
+**** The graph
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-graph
+:END:
+- *Cards*: one per node, the id in the header, the =speaker= as the category, the start of the =text= (one line, ellipsized) as the body. The start node (=start=, or the first node) is tinted with the success colour.
+- *Ports*: an input =in= (several links) and either one output per response (="1  Friend"=, ="2  Foe"=, the response text cut to 18 characters) or a single =next= output for a node without responses. Outputs take one link: wiring an output that has one replaces it.
+- *Links* are the =next= references (=lrg_editor_document_dialog_edges()=). The loader's implicit chain (a node with neither =next= nor responses continues with the following node) is drawn dimmed and cannot be deleted (it is not in the file). A reference to a node that does not exist ends at a red card ="missing:<id>"= titled "<id> (missing)".
+- *Positions* come from an editor-only =editor: {x, y}= key of the node (the dialog loader ignores unknown keys, so the file still loads in games); nodes without one are laid out in layers: the column is the breadth-first depth from the start node, unreachable nodes get a column after the last. The first layout frames every card.
+
+**** Editing in the graph
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-edits
+:END:
+| Gesture | Document edit |
+|---------+---------------|
+| Drag a wire from an output to a card's =in= | sets that =next= (the node's own or the response's) |
+| Drag a wire off a port / delete a link | removes that =next= |
+| Drop a wire on empty canvas | adds a node there and links it |
+| Drag cards | writes =editor/x= and =editor/y= of each moved node |
+| Delete on selected cards | removes the nodes (links into them stay and show as missing) |
+| Ctrl+D | duplicates the node's YAML under a free id |
+
+The graph emits its signals in the middle of its own input handling and, for one gesture, in pieces (a reconnect is link-removed then link-added), so the editor queues them and writes them from an idle as one group, "Edit dialog graph": one undo step per gesture, with the queue coalesced (a removal followed by an addition on the same port is just the addition). =lrg_editor_dialog_tree_editor_flush()= writes the queue at once.
+
+**** Property grid
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-grid
+:END:
+With one card selected: /Node/ (=id=, =speaker=, =text= (multi-line), and =next= for a node without responses) and one /Response N/ group per response (=text=, =next=); =next= rows offer the node ids. Renaming the id renames every reference and =start= along with it in one undo step. Without a selection: the tree's =id=, =title= and =start=. The rows are rebuilt only when their shape changes (another node, a response added or removed, a node id added or renamed), so typing keeps focus.
+
+**** Toolbar
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-toolbar
+:END:
+=dialog-add-node= (a node at the view centre), =dialog-add-response= (a response on the selected node; a node's own =next= moves onto its first response), =dialog-delete= and =dialog-layout= (removes every =editor:= position, one undo step, and frames the result).
+
+**** Play test
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-play
+:END:
+The pane under the grid runs the document as it is now through the engine's =LrgDialogRunner= (a fresh =lrg_dialog_tree_new_from_data()= per Play, so it walks what the game would load). Play starts at the start node, From Selected at the selected card. It shows a short transcript, the speaker in the accent colour and the wrapped text; responses are buttons (=dialog-choice-1=, ...; a response whose conditions fail is disabled), a node without responses gets Continue (=dialog-choice-0=), and the last node End. The current node is selected in the graph as the walk goes. The engine runner ends as soon as it enters a terminal node; the pane keeps that node on screen until End. A tree the loader rejects shows its error in the pane.
+
+**** API
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dialog-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_dialog_tree_editor_new (app, document)= | create |
+| =lrg_editor_dialog_tree_editor_get_graph= | the graph (card ids are node ids) |
+| =lrg_editor_dialog_tree_editor_get_selected= / =lrg_editor_dialog_tree_editor_select= | the node in the grid |
+| =lrg_editor_dialog_tree_editor_add_node= | append a node (returns its id) |
+| =lrg_editor_dialog_tree_editor_add_response= | append a response |
+| =lrg_editor_dialog_tree_editor_link= | set or remove one =next= |
+| =lrg_editor_dialog_tree_editor_remove_node= | remove a node |
+| =lrg_editor_dialog_tree_editor_flush= | write queued graph edits now |
+| =lrg_editor_dialog_tree_editor_play= / =lrg_editor_dialog_tree_editor_play_choose= / =lrg_editor_dialog_tree_editor_get_play_node= | drive the play test |
+
+An issue path =/nodes/<i>/...= selects and frames that card; =data.list= reports =cards=, =links=, the selection and the play-test node.
 
 *** Procgen dungeon editor
 :PROPERTIES:
 :CUSTOM_ID: data-editors-panel-dungeon
 :END:
-/To be written with the UI./
+=LrgEditorDungeonEditor= (=src/editor/ui/data/lrg-editor-dungeon-editor.h=) edits =LrgProcgenDungeon= recipes: a parameter form beside a map preview.
+
+**** The form
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dungeon-form
+:END:
+An =LrgPropertyGrid= over the document, in groups:
+- /Recipe/: =generator= (bsp, caves, wfc, drunkard, noise), =width=, =height=, =seed=.
+- /Generator: <name>/: every writable, non-construct-only property of the generator class the recipe names, under =params:= (rows are named =param-<property>= so caves' own =connect= and =keep-largest= never clash with the post-processing rows). Switching the generator rebuilds this group.
+- /Post-processing/: =cull-min-size=, =keep-largest=, =connect=, =start-exit=.
+- /Spawn N/: =kind=, =count=, =min-distance=, =rooms-only= of each spawn rule.
+
+Rows whose key is missing show the loader's default and are reported as default; Reset removes the key. Tile rules and wave function collapse models are edited in the YAML (the code panel), the preview uses them.
+
+**** The preview
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dungeon-preview
+:END:
+The editor runs the engine on the serialized document, =lrg_procgen_dungeon_new_from_data()= then =lrg_procgen_dungeon_generate()= with the document's seed, so the preview is exactly the map a game gets for that seed (the tests compare grid hashes). It draws walls (surface), floors and corridors (accent tints), doors (warning), water (link colour), custom tags, room outlines, the start (success dot), the exit (danger square) and the spawn points coloured by kind, with a statistics line (size, seed, rooms, regions, walkable share, spawns); hovering a cell shows its coordinates, tag and room. Cells are drawn as runs of equal tags per row, so large maps stay cheap. A recipe the loader rejects keeps the last map and shows the error over it.
+
+**** Toolbar
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dungeon-toolbar
+:END:
+| Chip | Does |
+|------+------|
+| =dungeon-generate= | generate now |
+| =dungeon-randomize= | write a new random seed (31 bits) into the document (one undo step) and generate |
+| =dungeon-add-spawn= | append a spawn rule (=enemy= x 4) |
+| =dungeon-auto= | regenerate after each edit (on by default); the regeneration waits for 0.25 s of quiet on the canvas clock, so dragging a spin box does not generate a map per frame |
+
+**** API
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-dungeon-api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_editor_dungeon_editor_new (app, document)= | create |
+| =lrg_editor_dungeon_editor_get_form= | the parameter grid |
+| =lrg_editor_dungeon_editor_generate= | generate now |
+| =lrg_editor_dungeon_editor_randomize= | new seed, generate |
+| =lrg_editor_dungeon_editor_get_seed= / =lrg_editor_dungeon_editor_get_grid= / =lrg_editor_dungeon_editor_get_error= | the result |
+| =lrg_editor_dungeon_editor_get_pending=, =lrg_editor_dungeon_editor_get_auto= / =lrg_editor_dungeon_editor_set_auto= | automatic regeneration |
+| =lrg_editor_dungeon_editor_add_spawn= | append a spawn rule |
+
+An issue path focuses the form row editing it; =data.list= reports generator, seed, map size, rooms and the last error.
+
+*** Shared pieces of the HUD, UI, dialog and dungeon editors
+:PROPERTIES:
+:CUSTOM_ID: data-editors-panel-shared-db
+:END:
+The four editors share an internal property source, =EditorDataFields= (declared under =LRG_EDITOR_DATA_INTERNAL= in =lrg-editor-hud-layout-editor.h=, not public API). Like the public =LrgEditorDataSource= its rows are document paths read and written through =LrgEditorDocument= with the grid's gesture ids, but it also has /virtual rows/ served by callbacks: the HUD editor's anchor (which converts the offset), offset (which always writes the anchor) and preview size, and the dialog editor's id (which renames references). Rows take any =GParamSpec= (enums, unsigned 64-bit seeds, cloned generator properties).
+
+=tests/test-editor-app-data-2.c= drives the four editors through the canvas of a headless app: HUD drags (re-anchoring, one undo step, a locked piece that does not move, save then =LrgHudLayout= reading the placement back), corner resizes keeping the anchor, the anchor row keeping the rectangle, toolbar add/remove; UI preview clicks selecting the YAML path and caret line, outline clicks, caret moves, pick/interact, typed text applied after the debounce, broken YAML keeping the preview and the document, a loader error written and marked, undo restoring the text; dialog wires dragged between ports, card drags, missing targets and their issues, grid rename with references, Add Response, Delete on cards, the play test through Continue and End; dungeon preview hashes against the engine, Randomize and its undo, form rows (width, generator switch), a rejected recipe and Add Spawn; and a paint pass over all four.
 
 ** Tests
 :PROPERTIES:
 :CUSTOM_ID: data-editors-tests
 :END:
 =tests/test-editor-document.c= runs headless (no window, no audio device): path escaping, format detection, every skeleton validating, open errors, gesture merging, nested groups, dirty tracking across save/undo/redo/limit/clear, typed values, comment and unknown-key preservation through save, external-change detection and reload, line mapping and duplicate keys, and for each of the eight formats a real-format fixture that is loaded, edited, undone, saved, reloaded and validated both passing and failing with the expected message and path.
+
+=tests/test-editor-app-data-1.c= drives the base panel and the input map, locale, sound bank and theme editors through the canvas of a headless =LrgEditorApp= (=tests/editor-app-fixture.h=) and the IPC: opening each format from a temporary project (=data.open=, tab reuse, =data.list=), edits through the UI with undo / redo going to the document only (the level's history stays empty), Save keeping comments and unknown keys, Revert, the external-change banner (a clean reload, Keep mine, Reload), issue rows revealing their path in the editor, the unsaved-changes prompt on close, input map key capture (a chord, a mouse button on the veil, Escape) and grid edits (rename, type change), the locale grid's missing-cell highlight, edit bar, cross-language undo and CSV round trip, a sound asset dropped on the sound list and on the File row, the theme preview following grid edits and "Use for editor", the assets panel opening a data file, and every =data.*= method with its errors.
