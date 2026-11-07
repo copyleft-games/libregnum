@@ -1729,7 +1729,8 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-document.h \
 	src/editor/lrg-editor-settings-migrate.h \
 	src/editor/lrg-editor-node-model.h \
-	src/editor/lrg-editor-node-source.h
+	src/editor/lrg-editor-node-source.h \
+	src/editor/lrg-asset-source.h
 SOURCES += \
 	src/editor/lrg-scene-import.c \
 	src/editor/lrg-editor-command.c \
@@ -1757,7 +1758,8 @@ SOURCES += \
 	src/editor/lrg-editor-document.c \
 	src/editor/lrg-editor-settings-migrate.c \
 	src/editor/lrg-editor-node-model.c \
-	src/editor/lrg-editor-node-source.c
+	src/editor/lrg-editor-node-source.c \
+	src/editor/lrg-asset-source.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-data-editor.h \
@@ -1792,6 +1794,7 @@ PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-skeleton2d-editor.h \
 	src/editor/ui/data/lrg-editor-material-editor.h \
 	src/editor/ui/data/lrg-editor-post-stack-editor.h \
+	src/editor/ui/lrg-editor-sources-panel.h \
 	src/editor/ui/lrg-editor-palette.h \
 	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
@@ -1829,12 +1832,14 @@ SOURCES += \
 	src/editor/ui/data/lrg-editor-skeleton2d-editor.c \
 	src/editor/ui/data/lrg-editor-material-editor.c \
 	src/editor/ui/data/lrg-editor-post-stack-editor.c \
+	src/editor/ui/lrg-editor-sources-panel.c \
 	src/editor/ui/lrg-editor-palette.c \
 	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \
 	src/editor/ui/lrg-editor-dialogs.c \
 	src/editor/ui/lrg-editor-play.c \
-	src/editor/ui/lrg-editor-thumbnails.c
+	src/editor/ui/lrg-editor-thumbnails.c \
+	src/editor/ui/lrg-editor-sources.c
 endif
 endif
 

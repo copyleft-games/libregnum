@@ -69,6 +69,7 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:editor/tutorial.org][Editor Tutorial]]* - a first session in =lrgeditor= with screenshots, then the same level from C
 - *[[file:editor/editor-app.org][Editor Application]]* - =lrgeditor=, the level/scene/world editor built from libregnum on the retained UI toolkit
 - *[[file:editor/view-model.org][View Model]]* - headless =LrgEditorViewState=, =LrgEditorViewportNav= and =LrgEditorPlaySession=
+- *[[file:editor/asset-sources.org][Asset Sources]]* - =LrgAssetSource=: game modules expose assets that are not project files (game archives) to lrgeditor's Sources panel; cached exports, imports, =source.*= IPC
 - *[[file:editor/data-editors.org][Data Editors]]* - =LrgEditorDocument= and the input map, locale, sound bank, theme, HUD, UI layout, dialog tree and dungeon editors
 - *[[file:editor/material-editor.org][Material Editor]]* - .rmat preview, instances, uniform inspector
 - *[[file:editor/shader-graph-editor.org][Shader Graph Editor]]* - .rshadergraph node shaders

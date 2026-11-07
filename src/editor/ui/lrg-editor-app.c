@@ -31,6 +31,7 @@
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-profiler-panel.h"
 #include "lrg-editor-code-panel.h"
+#include "lrg-editor-sources-panel.h"
 #include "../../ui/lrg-label.h"
 #include "../../ui/lrg-toast-queue.h"
 #include "../../core/lrg-engine.h"
@@ -97,6 +98,7 @@ lrg_editor_app_dispose (GObject *object)
 		g_clear_object (&self->level_monitor);
 	}
 	editor_thumbnails_dispose (self);
+	editor_sources_dispose (self);
 
 	/* The widgets point back at us: drop them first */
 	if (self->window != NULL)
@@ -140,6 +142,7 @@ lrg_editor_app_finalize (GObject *object)
 	g_free (self->level_dir);
 	g_ptr_array_unref (self->problems);
 	g_ptr_array_unref (self->asset_monitors);
+	g_clear_pointer (&self->sources, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_editor_app_parent_class)->finalize (object);
 }
@@ -165,6 +168,7 @@ lrg_editor_app_init (LrgEditorApp *self)
 	self->applied_scale = -1.0;
 	lrg_canvas_input_init (&self->last_input);
 	editor_thumbnails_init (self);
+	self->sources = g_ptr_array_new_with_free_func (g_object_unref);
 }
 
 /* ==========================================================================
@@ -210,6 +214,7 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
 	make_panel (self, "environment", "Environment", "star", LRG_WIDGET (lrg_editor_environment_panel_new (self)), TRUE);
 	make_panel (self, LRG_EDITOR_BAKE_PANEL_ID, "Lighting", "refresh", LRG_WIDGET (lrg_editor_bake_panel_new (self)), TRUE);
+	make_panel (self, "sources", "Sources", "folder", LRG_WIDGET (lrg_editor_sources_panel_new (self)), TRUE);
 }
 
 static LrgDockPanel *
@@ -239,6 +244,7 @@ dock_default (LrgEditorApp *self,
 		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "environment", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "bake", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "sources", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 	};
 	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
 	LrgDockPanel *p = panel (self, id);
@@ -271,7 +277,7 @@ editor_app_reset_layout (LrgEditorApp *self)
 {
 	static const gchar *order[] = {
 		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
-		"timeline", "sequencer", "profiler", "code", "tiles", "environment", "bake", NULL
+		"timeline", "sequencer", "profiler", "code", "tiles", "environment", "bake", "sources", NULL
 	};
 	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
 	GList         *docked = lrg_dock_area_get_panels (dock);
@@ -423,6 +429,7 @@ lrg_editor_app_new (LrgEditor *editor)
 	/* Actions first: the window builds its menus from them */
 	editor_app_register_actions (self);
 	editor_app_register_methods (self);
+	editor_sources_init (self);
 
 	/* The UI: canvas, window, panels, toasts */
 	self->canvas = g_object_ref_sink (lrg_canvas_new ());
@@ -1479,6 +1486,79 @@ editor_app_create_node_kind (LrgEditorApp *self,
 		return node;
 	}
 	return NULL;
+}
+
+/*
+ * editor_app_place_asset:
+ * @path: an asset file (absolute, or relative to the project)
+ *
+ * "Place in Scene" for the Assets and Sources panels: a prefab becomes a
+ * linked instance, a model / texture / CAD part a node showing it (mesh
+ * asset, sprite, CAD part), placed at the active camera's target point
+ * as one undo step and selected. Paths inside the project are stored
+ * relative to it.
+ *
+ * Returns: (transfer none) (nullable): the new node (the level holds it),
+ *   or %NULL with @error set; %G_IO_ERROR_NOT_SUPPORTED for a file type
+ *   that cannot be placed
+ */
+LrgNode *
+editor_app_place_asset (LrgEditorApp  *self,
+                        const gchar   *path,
+                        GError       **error)
+{
+	g_autofree gchar    *abs = editor_app_project_path (self, path);
+	LrgAssetType         type = lrg_asset_database_classify (abs);
+	LrgEditorViewCamera *cam;
+	g_autofree gchar    *rel = NULL;
+	g_autofree gchar    *stem = NULL;
+	LrgNode             *node = NULL;
+	gchar               *dot;
+
+	if (type != LRG_ASSET_TYPE_PREFAB && type != LRG_ASSET_TYPE_MODEL && type != LRG_ASSET_TYPE_TEXTURE &&
+	    type != LRG_ASSET_TYPE_CAD)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "%s cannot be placed in the scene", abs);
+		return NULL;
+	}
+	rel = (self->project_dir != NULL) ? editor_app_relative_path (self, abs) : g_strdup (abs);
+	stem = g_path_get_basename (abs);
+	dot = strrchr (stem, '.');
+	if (dot != NULL)
+		*dot = '\0';
+	cam = lrg_editor_view_state_get_camera (self->view, -1);
+
+	/* One undo step: create (or instantiate), set the asset, move */
+	lrg_editor_begin_group (self->editor, "Place Asset");
+	if (type == LRG_ASSET_TYPE_PREFAB)
+		node = lrg_editor_instantiate_prefab (self->editor, abs, NULL, error);
+	else
+	{
+		LrgNodeVisualKind kind = (type == LRG_ASSET_TYPE_MODEL) ? LRG_NODE_VISUAL_MESH_ASSET
+		                       : (type == LRG_ASSET_TYPE_CAD) ? LRG_NODE_VISUAL_CAD_PART
+		                                                      : LRG_NODE_VISUAL_SPRITE;
+
+		node = editor_app_create_node (self, stem, kind, 0, NULL);
+		if (node != NULL && lrg_node_get_visual (node) != NULL)
+		{
+			g_autoptr(LrgNode) before = lrg_editor_snapshot_node (node);
+
+			lrg_node_visual_set_asset (lrg_node_get_visual (node), rel);
+			lrg_editor_commit_node_state (self->editor, node, before, "Set Asset", FALSE);
+		}
+	}
+	if (node != NULL && cam != NULL)
+		lrg_editor_transform_node (self->editor, node, cam->view.target, NULL, NULL, FALSE);
+	lrg_editor_end_group (self->editor);
+
+	if (node == NULL)
+	{
+		if (error != NULL && *error == NULL)
+			g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "Could not place %s", stem);
+		return NULL;
+	}
+	lrg_editor_select (self->editor, node, FALSE);
+	return node;
 }
 
 gchar *

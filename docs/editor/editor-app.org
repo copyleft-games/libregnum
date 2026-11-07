@@ -179,6 +179,7 @@ Rendering: primitives are unit-sized meshes matching the picking bounds (cube, s
 - *Hierarchy*: tree with kind glyphs, visibility/lock toggles, inline rename (F2 or double click), drag to reparent (drop on a row) or reorder (drop between rows), Shift-click range and Ctrl-click toggle selection, filter by name or GUID (Ctrl+F), context menu (create submenu, copy GUID/path...), and the selection is revealed and scrolled to when it changes elsewhere.
 - *Inspector*: name, flags, path, GUID; transform with world readout (edits apply to every selected node); visual kind, primitive, asset path (with picker and drop target), material colour/roughness/metallic/emission, custom parameters (number, text, bool, colour); components (add with a searchable list of registered types, edit properties with type-aware widgets, remove); scripts (new script from a template, attach existing, open in the external editor, enable, remove); prefab instances can open their prefab or be reverted to it. Drags merge into a single undo step.
 - *Tiles* and *Timeline*: see [[file:editor-tools.org][Editor Tools]] (View > Panels; Tiles docks next to the inspector, Timeline next to Assets).
+- *Sources* (0.8.3): the asset sources registered by game modules (assets that are not project files, such as models in game archives): browse, filter or search, preview through a cached export, Import into =assets/<source>/=, Place in the scene, Export to a folder. See [[file:asset-sources.org][Asset Sources]].
 - *Assets*: breadcrumb navigation, list or grid view (with generated thumbnails, see [[file:editor-tools.org::#asset-thumbnails][Asset thumbnails]]), name filter and type filter, double click to open (levels and prefabs open in the editor, media in the desktop application, everything else in the external editor), drag into the viewport or the inspector, rename, move to the trash (never deleted), copy path, new folder, new script; refreshes itself through a file monitor.
 
 ** Console, history, problems
@@ -450,6 +451,7 @@ The menu bar's =GMenuModel= (=lrg_editor_window_get_menu_model()=) has the 0.8.0
 | =timeline=  | =LrgEditorTimelinePanel=   | tab next to assets            |
 | =profiler=  | =LrgEditorProfilerPanel=   | tab next to assets            |
 | =code=      | =LrgEditorCodePanel=       | tab next to assets            |
+| =sources=   | =LrgEditorSourcesPanel=    | tab next to assets (0.8.3)    |
 
 Every panel widget is created with =lrg_<panel>_new (app)=. The app keeps a reference to every =LrgDockPanel=, docked or closed, so View > Panels can re-dock a closed panel where the default layout has it.
 
@@ -533,6 +535,9 @@ Custom actions get a mirror =editor.<id>= action and their shortcut immediately,
 | =lrg_editor_gui_input_to_canvas (input, previous, out)=, =lrg_editor_gui_key_to_grl (key)= | 0.8.1 | Translate a 0.8.0 =LrgGuiInput= frame |
 | =lrg_editor_app_frame (app, gui_input, w, h)= | deprecated 0.8.1 | Routed through the translation above, then =process_frame= |
 | =lrg_editor_app_get_gui (app)= | deprecated 0.8.1 | Returns =NULL= |
+| =lrg_editor_app_add_asset_source (app, source)=, =remove_asset_source=, =get_asset_sources=, =lookup_asset_source= | 0.8.3 | Register an =LrgAssetSource= (shown in the Sources panel, reachable over =source.*=); see [[file:asset-sources.org][Asset Sources]] |
+| =lrg_editor_app_export_source_entry=, =import_source_entry=, =place_source_entry= | 0.8.3 | Cached export (optionally copied to a folder), import into =assets/<id>/=, import and place |
+| =lrg_editor_app_init_module (app, game, error)= | 0.8.3 | Run a loaded game module's editor hook (=LRG_DEFINE_GAME_MODULE_EDITOR=); =lrgeditor --module= does this after loading the preferences |
 
 *** Migrating from LrgGui embedding
 :PROPERTIES:

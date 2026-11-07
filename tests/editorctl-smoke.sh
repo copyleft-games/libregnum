@@ -400,6 +400,12 @@ then
 else
 	skip 'bonemap'
 fi
+# 0.8.3: asset sources (none registered without a game module).
+check 'source list empty' "$(ctl source list -o json)" '[]'
+"${ctl}" source ls nope >/dev/null 2>&1 && status=0 || status=$?
+check 'unknown source exits 1' "status=${status}" 'status=1'
+"${ctl}" source frobnicate >/dev/null 2>&1 && status=0 || status=$?
+check 'source usage error exits 2' "status=${status}" 'status=2'
 
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
@@ -456,6 +462,7 @@ else
 	check 'mcp bake_progress is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"bake_progress"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'
+	check 'mcp 0.8.3 source tools' "${out}" '"name":"source_import"'
 	check 'mcp inspector_state is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"inspector_state"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'

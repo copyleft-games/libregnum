@@ -507,6 +507,7 @@
 #include "editor/lrg-editor-viewport-nav.h"
 #include "editor/lrg-editor-vcs.h"
 #include "editor/lrg-editor-document.h"
+#include "editor/lrg-asset-source.h"
 #ifdef LRG_BUILD_EDITOR_UI
 #include "editor/ui/lrg-editor-app.h"
 #include "editor/ui/data/lrg-editor-data-editor.h"
@@ -541,6 +542,7 @@
 #include "editor/ui/data/lrg-editor-skeleton2d-editor.h"
 #include "editor/ui/data/lrg-editor-material-editor.h"
 #include "editor/ui/data/lrg-editor-post-stack-editor.h"
+#include "editor/ui/lrg-editor-sources-panel.h"
 #include "editor/ui/lrg-editor-palette.h"
 #include "editor/ui/lrg-editor-preferences.h"
 #endif

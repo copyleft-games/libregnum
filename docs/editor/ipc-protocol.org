@@ -97,7 +97,7 @@ Start with =hello=:
 :PROPERTIES:
 :CUSTOM_ID: method-index
 :END:
-Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Registered by/ says which object adds it: =server= methods exist on every =LrgEditorServer= (headless, no app), =app= methods on every =LrgEditorApp= (also =--headless=), and the panel methods once that panel has been constructed (the default window builds all of them; a custom embedding that leaves a panel out does not get its methods, and a method whose panel was destroyed fails with =failed=). The parameters, results and errors are in the linked section; every section ends with a link to the feature documentation that explains the behaviour in depth.
+Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Registered by/ says which object adds it: =server= methods exist on every =LrgEditorServer= (headless, no app), =app= methods on every =LrgEditorApp= (also =--headless=), and the panel methods once that panel has been constructed (the default window builds all of them; a custom embedding that leaves a panel out does not get its methods, and a method whose panel was destroyed fails with =failed=). The parameters, results and errors are in the linked section; every section ends with a link to the feature documentation that explains the behaviour in depth.
 
 | Method | Since | Registered by | Section |
 |-+-+-+-|
@@ -193,6 +193,12 @@ Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Regi
 | =timeline.stop= | 0.8.0 | app | [[#app-methods][Application]] |
 | =timeline.state= | 0.8.0 | app | [[#app-methods][Application]] |
 | =asset.thumbnail= | 0.8.0 | app | [[#app-methods][Application]] |
+| =source.list= | 0.8.3 | app | [[#source-methods][Asset source]] |
+| =source.ls= | 0.8.3 | app | [[#source-methods][Asset source]] |
+| =source.search= | 0.8.3 | app | [[#source-methods][Asset source]] |
+| =source.export= | 0.8.3 | app | [[#source-methods][Asset source]] |
+| =source.import= | 0.8.3 | app | [[#source-methods][Asset source]] |
+| =source.place= | 0.8.3 | app | [[#source-methods][Asset source]] |
 | =view.layout= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
 | =view.render_mode= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
 | =view.overlay= | 0.8.1 | viewport split | [[#viewport-methods][Viewport layout]] |
@@ -588,6 +594,23 @@ Registered by the assets panel; thin wrappers on =LrgAssetDatabase= that keep th
 | =asset.orphans=   | =trash= (optional boolean)               | ={orphans}= (sidecars whose asset is gone), with =trash: true= also =trashed= | =failed= on a trash failure |
 
 Details: [[file:editor-app.org::#editor-panel-assets-ipc][Assets panel IPC]], [[file:projects-and-assets.org][Projects and Assets]].
+
+** Asset source methods
+:PROPERTIES:
+:CUSTOM_ID: source-methods
+:END:
+Registered by every =LrgEditorApp= (0.8.3). They reach the =LrgAssetSource= objects registered with =lrg_editor_app_add_asset_source()= (typically by a game module's editor hook). =source= is a source id; =path= and =folder= are '/'-separated virtual paths of that source. Entries are ={path, name, folder, type, size, description?}= with =type= the nick of the asset type the entry exports to (=model=, =texture=, ...) or =folder=.
+
+| Method          | Params                                                  | Result | Errors |
+|-----------------+---------------------------------------------------------+--------+--------|
+| =source.list=   |                                                         | =[{id, title, search}]= (=search=: the source has its own search) | none |
+| =source.ls=     | =source=, =folder= (optional, default the root)          | ={source, folder, entries}= | unknown source or folder =not-found=; a "." / ".." component =invalid-params= |
+| =source.search= | =source=, =pattern=, =limit= (optional, default 200, max 5000) | ={source, pattern, entries}= (a source without its own search is walked folder by folder) | a missing =pattern= is =invalid-params= |
+| =source.export= | =source=, =path=, =dest= (optional absolute folder)      | ={source, path, file}=: the main file of the cached export, or of its copy in =dest= | unknown entry =not-found=; a folder =invalid-params=; the source failing =failed= |
+| =source.import= | =source=, =path=                                        | ={source, path, asset, file}=: copied to =<project>/assets/<source>/<folder>/=; =asset= is project relative | as =source.export=; no open project =failed= |
+| =source.place=  | =source=, =path=                                        | ={asset, node, name}=: imported, then placed like "Place in Scene" (one undo step, selected) | as =source.import=; a type that cannot be placed =failed= |
+
+The first export of an entry runs the source's converter and may take seconds (the reply waits); later exports reuse the cache in =$XDG_CACHE_HOME/libregnum/editor/sources/<source>/=. Details: [[file:asset-sources.org::#asset-sources-ipc][Asset Sources]].
 
 ** Code editor, palette and preferences methods
 :PROPERTIES:

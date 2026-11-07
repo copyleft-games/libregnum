@@ -13,6 +13,15 @@ One release that closes every engine and editor row of `docs/editor/gap-analysis
 
 ## Recently Shipped
 
+### v0.8.3: asset sources and the game module editor hook (`src/editor/`, `src/editor/ui/`, `src/gamemodule/`)
+
+A tool release for game modules whose assets are not project files (librewow's WoW client archives).
+
+- **`LrgAssetSource`**: a GObject interface for virtual asset trees (`get_id`, `get_title`, `list`, optional `search`, `export_entry`) with `LrgAssetSourceEntry` (path, name, folder flag, the asset type the export produces, size, description); path normalisation, a fallback search that walks `list`, and an export cache (`lrg_asset_source_export_cached()`: one folder per entry under `$XDG_CACHE_HOME/libregnum/editor/sources/<id>/`, a marker file, reused across runs, `invalidate_cache`).
+- **Editor registry and Sources panel**: `lrg_editor_app_add_asset_source()` / `remove` / `get` / `lookup`, cached export (optionally to a folder), import into `<project>/assets/<id>/<folder>/` and place in the scene (the Assets panel's "Place in Scene" factored into a shared helper); `LrgEditorSourcesPanel` (dock id `sources`): source chooser, Up and path, folder filter or whole-source search, list with type and size, preview through the thumbnail cache, Import, Place, Export to.
+- **Game module editor hook**: `LRG_DEFINE_GAME_MODULE_EDITOR (func)` exports `lrg_game_module_editor_init` in module builds; `lrg_loaded_game_lookup_symbol()`; `lrg_editor_app_init_module()`, which `lrgeditor --module` calls after loading the preferences (a failing hook exits 1).
+- **Automation**: six IPC methods (`source.list`, `source.ls`, `source.search`, `source.export`, `source.import`, `source.place`), the `lrgeditorctl source` verb and six MCP tools. See `docs/editor/asset-sources.org`.
+
 ### v0.8.2: texture panels and new 3D modes (`src/term/`)
 
 A runtime release for hosts that composite their own windows in 3D (gsurf's `--lrg=3d`, cmacs lrgterm).

@@ -1,0 +1,471 @@
+#+title: Asset Sources
+#+description: LrgAssetSource: virtual asset trees (game archives, generated content) browsed, previewed, imported and placed from lrgeditor, registered by game modules through the editor hook
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-11-07T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
+#+version: 0.8.3
+
+* Asset Sources
+:PROPERTIES:
+:CUSTOM_ID: asset-sources
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Asset Sources
+
+#+end_quote
+
+An /asset source/ is a tree of assets that are not files in the project: the models and textures packed in a game's archives, content a tool generates on demand, a remote catalogue. A source lists its tree as '/'-separated virtual paths and converts an entry into real files (a =.glb=, a =.png=, an =.obj= with its =.mtl=) when asked. The editor shows every registered source in its *Sources* panel, previews entries through the normal thumbnail cache, and imports them into the project's =assets/= folder, from where levels reference them like any other asset.
+
+Sources are usually registered by a game module: a module built with =LRG_DEFINE_GAME_MODULE= can also export an editor entry point with =LRG_DEFINE_GAME_MODULE_EDITOR=, which =lrgeditor --module SO= calls once the editor exists. librewow uses this to expose the WoW client's MPQ archives (thousands of M2 and WMO models and BLP textures) converted on demand to =.glb= and =.png=.
+
+New in 0.8.3.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-overview
+:END:
+#+begin_example
+ game module (.so)                         lrgeditor
+ ------------------                        ------------------------------------------------
+ LRG_DEFINE_GAME_MODULE_EDITOR (init)  --> lrg_editor_app_init_module ()
+   init (app):                               |
+     lrg_editor_app_add_asset_source ----->  registry (LrgEditorApp)  <-- source.* IPC, lrgeditorctl source, MCP
+                                             |
+ LrgAssetSource                              v
+   list ("World/Azeroth")            <-- Sources panel: chooser, folder, filter / search
+   search ("tree", 500)              <--   select entry -> export (cached) -> thumbnail
+   export_entry (path, dest_dir)     <--   Import   -> <project>/assets/<id>/<folder>/
+                                           Place    -> import + mesh / sprite node in the level
+                                           Export to... -> any folder
+#+end_example
+
+| Piece | Where | Role |
+|-------+-------+------|
+| =LrgAssetSource= | =src/editor/lrg-asset-source.{h,c}= | GObject interface: =get_id=, =get_title=, =list=, =search= (optional), =export_entry= |
+| =LrgAssetSourceEntry= | same | One folder or asset: path, name, folder flag, the =LrgAssetType= its export produces, size, description |
+| Export cache | same (=lrg_asset_source_export_cached()=) | One folder per entry under =$XDG_CACHE_HOME/libregnum/editor/sources/<id>/=, a marker naming the main file |
+| Registry, import, place | =src/editor/ui/lrg-editor-sources.c= | =lrg_editor_app_add_asset_source()= and friends, the "source.*" IPC methods, the module hook |
+| Sources panel | =src/editor/ui/lrg-editor-sources-panel.{h,c}= | =LrgEditorSourcesPanel=, dock id =sources= |
+| Module hook | =src/gamemodule/lrg-game-module-macros.h=, =lrg-loaded-game.h= | =LRG_DEFINE_GAME_MODULE_EDITOR=, =LRG_GAME_MODULE_EDITOR_SYMBOL=, =lrg_loaded_game_lookup_symbol()= |
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-concepts
+:END:
+*** Virtual paths
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-paths
+:END:
+Entries are addressed by virtual paths: components separated by '/', no leading or trailing '/', the root is the empty string. Every wrapper normalises a path before it reaches the implementation (=lrg_asset_source_normalize_path()=): leading, trailing and doubled slashes are dropped, and "." or ".." components or backslashes are refused with =G_IO_ERROR_INVALID_FILENAME=, so a source only ever sees "" or "a/b/c" and a path can never climb out of the cache or the project's import folder.
+
+Paths keep the case the source gives them. A source whose underlying store is case-insensitive (MPQ archives are) should pick one spelling (the one its listing returns) and accept it back.
+
+*** Entries and types
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-entries
+:END:
+=LrgAssetSourceEntry= is a small final GObject with read-only properties =path=, =name= (the last component), =is-folder=, =asset-type= and =size=, and a writable =description=. The type is the type of the file the entry /exports to/, not of its raw data: an M2 model that exports a =.glb= is =LRG_ASSET_TYPE_MODEL=, a BLP texture that exports a =.png= is =LRG_ASSET_TYPE_TEXTURE=. The panel shows it in the Type column and IPC returns its nick (=model=, =texture=, ...). =size= is the size of the source data in bytes, 0 when unknown (the panel then leaves the Size column empty). The description is one line for the preview ("M2 model, 3 textures").
+
+*** Exports and the cache
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-cache
+:END:
+=export_entry= writes the converted asset into an existing folder it is given: the main file and any side files it needs (textures next to a =.gltf=, the =.mtl= of an =.obj=), and returns the main file. Exports may take seconds for a large model, so the editor never exports speculatively and caches every export:
+
+- =lrg_asset_source_export_cached()= gives every entry its own folder: the cache root plus the virtual path (=.../sources/librewow/World/Azeroth/tree.m2/=), so side files of different entries never collide.
+- After a successful export it writes =.lrg-export= (=LRG_ASSET_SOURCE_CACHE_MARKER=) into that folder: one line, the main file relative to the folder. A folder without the marker is an interrupted or failed export and is exported again.
+- The next call returns the recorded file without calling the source, first from an in-process memo, then (in a later run of the editor) from the marker. Failures are not cached.
+- =lrg_asset_source_invalidate_cache()= forgets one entry (or every entry this process exported) by removing the marker; the next call exports again and overwrites the files. Call it when the data behind an entry changed (a patched archive).
+
+The default cache root is =$XDG_CACHE_HOME/libregnum/editor/sources/<id>= (=lrg_asset_source_get_cache_dir()=; the id with anything but letters, digits, '-', '_' and '.' replaced by '_'). It is a cache: deleting it costs only re-exports.
+
+*** Imports
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-imports
+:END:
+Importing copies an entry's cached export into the open project, at =<project>/assets/<id>/<virtual folder>/=: =librewow:World/Azeroth/tree.m2= becomes =assets/librewow/World/Azeroth/tree.glb= plus its side files. From there the asset is an ordinary project file: the Assets panel lists it, it gets a =.meta= sidecar with a GUID on the next scan, levels store it relative to the project and the game loads it without the source. Importing again overwrites the copy (and drops its stale thumbnails). Without an open project an import fails with =G_IO_ERROR_NOT_INITIALIZED= ("Open a project first").
+
+"Place" is an import followed by what the Assets panel's "Place in Scene" does (=editor_app_place_asset()=, shared by both panels): a model becomes a mesh-asset node, a texture a sprite, a prefab a linked instance, a CAD part a CAD node, at the active camera's target point, as one undo step, selected.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-api
+:END:
+*** LrgAssetSource
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-api-interface
+:END:
+#+begin_src c
+struct _LrgAssetSourceInterface
+{
+	GTypeInterface parent_iface;
+
+	const gchar * (*get_id)       (LrgAssetSource *self);                       /* required */
+	const gchar * (*get_title)    (LrgAssetSource *self);                       /* optional: id */
+	GPtrArray *   (*list)         (LrgAssetSource *self, const gchar *folder,
+	                               GError **error);                             /* required */
+	GPtrArray *   (*search)       (LrgAssetSource *self, const gchar *pattern,
+	                               guint limit, GError **error);                /* optional */
+	gboolean      (*export_entry) (LrgAssetSource *self, const gchar *path,
+	                               const gchar *dest_dir, gchar **out_file,
+	                               GError **error);                             /* required */
+};
+#+end_src
+
+| Function | Does |
+|----------+------|
+| =lrg_asset_source_get_id (self)= | The stable id (cache folder, import folder, IPC =source= parameter) |
+| =lrg_asset_source_get_title (self)= | The display name, the id when the source has none |
+| =lrg_asset_source_list (self, folder, error)= | The entries of one folder (=GPtrArray= of =LrgAssetSourceEntry=, transfer full); a missing folder should fail with =G_IO_ERROR_NOT_FOUND= |
+| =lrg_asset_source_implements_search (self)= | Whether the source has its own search; the panel only offers a whole-source search then |
+| =lrg_asset_source_search (self, pattern, limit, error)= | Up to =limit= (0: no limit) matches anywhere; without a =search= vfunc a breadth-first walk with =list= matching a case-insensitive substring of names (depth capped at 64; folders that fail to list are skipped). The limit is enforced even when the source ignores it |
+| =lrg_asset_source_find_entry (self, path, error)= | One entry, by listing its parent |
+| =lrg_asset_source_export_entry (self, path, dest_dir, out_file, error)= | Uncached export; the main file must exist afterwards (a relative =out_file= is taken relative to =dest_dir=) |
+| =lrg_asset_source_get_cache_dir (self)= | The default cache root |
+| =lrg_asset_source_get_cache_entry_dir (self, path, cache_dir)= | The folder of one entry's cached export |
+| =lrg_asset_source_export_cached (self, path, cache_dir, error)= | Export once, reuse after (see [[#asset-sources-cache][the cache]]); =cache_dir= =NULL= is the default root |
+| =lrg_asset_source_invalidate_cache (self, path, cache_dir)= | Forget one cached export (or all with =path= =NULL=) |
+| =lrg_asset_source_normalize_path (path, error)= | The path rules above |
+
+Every function runs on the calling thread. The editor calls them on its UI thread, so a source does not need to be thread-safe, but =list= and =search= should be fast (an index built when the source is created, not a scan per call).
+
+*** LrgAssetSourceEntry
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-api-entry
+:END:
+| Function | Does |
+|----------+------|
+| =lrg_asset_source_entry_new (path, is_folder, type, size)= | A new entry; =type= is =LRG_ASSET_TYPE_UNKNOWN= for folders |
+| =lrg_asset_source_entry_get_path=, =lrg_asset_source_entry_get_name=, =lrg_asset_source_entry_is_folder=, =lrg_asset_source_entry_get_asset_type=, =lrg_asset_source_entry_get_size= | The construct-time values |
+| =lrg_asset_source_entry_get_description=, =lrg_asset_source_entry_set_description= | The one-line description |
+
+*** The editor application
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-api-app
+:END:
+| Function | Does |
+|----------+------|
+| =lrg_editor_app_add_asset_source (app, source)= | Registers (keeps a reference); a source with the same id replaces the earlier one in place |
+| =lrg_editor_app_remove_asset_source (app, id)= | Unregisters; imported files stay |
+| =lrg_editor_app_get_asset_sources (app)= | The sources in registration order (transfer container) |
+| =lrg_editor_app_lookup_asset_source (app, id)= | One source, or =NULL= |
+| =lrg_editor_app_export_source_entry (app, id, path, dest_dir, error)= | Cached export; with =dest_dir= also copied there (created if needed). Returns the main file |
+| =lrg_editor_app_import_source_entry (app, id, path, error)= | Import into the project; returns the project-relative main file |
+| =lrg_editor_app_place_source_entry (app, id, path, error)= | Import and place; returns the node |
+| =lrg_editor_app_init_module (app, game, error)= | Runs a loaded module's editor hook (absent hook: success) |
+
+Errors from these functions are in the =G_IO_ERROR= domain: =NOT_FOUND= for an unknown source, folder or entry, =INVALID_FILENAME= for a bad path, =IS_DIRECTORY= for exporting the root, =NOT_INITIALIZED= for an import without a project, and the source's own errors (=FAILED= unless it says otherwise).
+
+*** The Sources panel
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-api-panel
+:END:
+=LrgEditorSourcesPanel= has a small public API for embedding and tests; everything it does from the UI goes through it.
+
+| Function | Does |
+|----------+------|
+| =lrg_editor_sources_panel_new (app)= | The panel (the app creates it as dock panel =sources=) |
+| =lrg_editor_sources_panel_get_source (self)=, =lrg_editor_sources_panel_set_source (self, id)= | The source shown |
+| =lrg_editor_sources_panel_get_folder (self)=, =lrg_editor_sources_panel_set_folder (self, folder, error)=, =lrg_editor_sources_panel_go_up (self)= | Navigation; going up from search results returns to the folder the search started in |
+| =lrg_editor_sources_panel_get_filter (self)=, =lrg_editor_sources_panel_set_filter (self, text)= | The folder-local name filter (case-insensitive substring) |
+| =lrg_editor_sources_panel_search (self, pattern, error)=, =lrg_editor_sources_panel_is_searching (self)= | A whole-source search (only for sources that implement =search=; =G_IO_ERROR_NOT_SUPPORTED= otherwise) |
+| =lrg_editor_sources_panel_refresh (self)= | List again (or repeat the search) |
+| =lrg_editor_sources_panel_get_n_entries (self)=, =lrg_editor_sources_panel_get_entry (self, index)=, =lrg_editor_sources_panel_find_entry (self, path)= | The rows, in display order (folders first, then names) |
+| =lrg_editor_sources_panel_select (self, path)=, =lrg_editor_sources_panel_get_selected (self)=, =lrg_editor_sources_panel_activate (self, index)= | Selection; activating a folder opens it, activating an asset selects it |
+| =lrg_editor_sources_panel_update_preview (self)=, =lrg_editor_sources_panel_get_preview_file (self)= | Run the pending preview export now; the cached export of the selection |
+| =lrg_editor_sources_panel_import_selected (self, error)=, =lrg_editor_sources_panel_place_selected (self, error)=, =lrg_editor_sources_panel_export_selected (self, dest_dir, error)= | The Import, Place and Export to... buttons |
+
+** The Sources panel
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-api-panel
+:END:
+=LrgEditorSourcesPanel= has a small public API for embedding and tests; everything it does from the UI goes through it.
+
+| Function | Does |
+|----------+------|
+| =lrg_editor_sources_panel_new (app)= | The panel (the app creates it as dock panel =sources=) |
+| =_get_source=, =_set_source (id)= | The source shown |
+| =_get_folder=, =_set_folder (folder, error)=, =_go_up= | Navigation; =go_up= from search results returns to the folder the search started in |
+| =_get_filter=, =_set_filter (text)= | The folder-local name filter (case-insensitive substring) |
+| =_search (pattern, error)=, =_is_searching= | A whole-source search (only for sources that implement =search=; =G_IO_ERROR_NOT_SUPPORTED= otherwise) |
+| =_refresh= | List again (or repeat the search) |
+| =_get_n_entries=, =_get_entry (index)=, =_find_entry (path)= | The rows, in display order (folders first, then names) |
+| =_select (path)=, =_get_selected=, =_activate (index)= | Selection; activating a folder opens it |
+| =_update_preview=, =_get_preview_file= | Run the pending preview export now; the cached export of the selection |
+| =_import_selected (error)=, =_place_selected (error)=, =_export_selected (dest_dir, error)= | The three buttons |
+
+** The Sources panel
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-panel
+:END:
+View > Panels > Sources (dock id =sources=, a tab next to Assets in the default layout). Without a registered source it shows a hint; a source registered or removed later appears or disappears on the next frame (the panel follows the app's registry like the Assets panel follows the open project).
+
+#+begin_example
++------------------------------------------------------------------+
+| [WoW Client v] [^ Up]  WoW Client / World / Azeroth               |
+| [Filter this folder (Enter: search the source)......] [Search]    |
++----------------------------------------+-------------------------+
+| Name               Type       Size     |  +-------------------+  |
+| Elwynn/            Folder              |  |    thumbnail      |  |
+| tree01.m2          Model      48.2 kB  |  +-------------------+  |
+| grass.blp          Texture    16.0 kB  |  tree01.m2              |
+|                                        |  Model, 48.2 kB - M2... |
+|                                        |  Cached: tree01.glb     |
+|                                        |  [Import][Place][Export to...] |
++----------------------------------------+-------------------------+
+| 3 items                                                          |
++------------------------------------------------------------------+
+#+end_example
+
+- *Source chooser* (=sources-source=): only shown when more than one source is registered.
+- *Up* (=sources-up=) and the *path* (=sources-path=): "Title / a / b", or "Title: search "x"" while search results are shown.
+- *Filter* (=sources-filter=): typing narrows the current folder (or the search results) by a case-insensitive substring of the name; the footer then says "N of M items". Enter, or the *Search* button (=sources-search=, only for sources that implement =search=), searches the whole source for the text (up to 500 results) and shows the results in place of the folder; Up goes back.
+- *List* (=sources-list=, an =LrgTable=): Name (folders end in '/'), Type and Size. Double click or Enter on a folder opens it.
+- *Preview* (=sources-preview=): selecting an asset schedules its export for the next frame, so the "Exporting..." line paints before a slow first export blocks; then the thumbnail of the exported file is requested from the editor's thumbnail cache. Textures show directly; models render a thumbnail while a window (and so the scene renderer) exists, and show their type otherwise. Below it: the name, type, size and description, and the export state ("Cached: tree01.glb", or the error).
+- *Import* (=sources-import=) imports the selection into the project and says "Imported assets/<id>/..." in the status bar; without a project the status bar says to open one. *Place* (=sources-place=) imports and places. *Export to...* (=sources-export=) asks for a folder in the editor's folder dialog and copies the export there. Errors are toasts and console lines. The three buttons are disabled for folders.
+
+Exports run synchronously on the UI thread, on explicit user action only (selecting an entry, a button, an IPC call). The first export of a big model can freeze the window for a moment; every later selection of the same entry is instant, also across editor sessions. Background exports are a possible later improvement.
+
+** IPC methods
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-ipc
+:END:
+Registered by every =LrgEditorApp= (also =--headless=). =source= is a source id; =path= and =folder= are virtual paths. Entries are reported as ={path, name, folder, type, size, description?}= with =type= the asset type nick (=model=, =texture=, ...) or =folder=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =source.list= | none | =[{id, title, search}]= (=search=: the source has its own search) |
+| =source.ls= | =source=, =folder= (optional, default the root) | ={source, folder, entries}= (=folder= normalised) |
+| =source.search= | =source=, =pattern=, =limit= (optional, default 200, at most 5000) | ={source, pattern, entries}= |
+| =source.export= | =source=, =path=, =dest= (optional absolute folder) | ={source, path, file}=: the cached main file, or its copy in =dest= |
+| =source.import= | =source=, =path= | ={source, path, asset, file}=: =asset= project relative, =file= absolute |
+| =source.place= | =source=, =path= | ={asset, node, name}=: the new node's GUID and name |
+
+Errors: a missing parameter, a path with "." or "..", or exporting a folder is =invalid-params=; an unknown source, folder or entry =not-found=; an export the source could not do, or an import without a project, =failed= with the reason in =message=.
+
+#+begin_src sh
+# Over the socket (one JSON object per line)
+printf '%s\n' '{"id":1,"method":"source.ls","params":{"source":"librewow","folder":"World/Azeroth"}}' \
+	| socat - UNIX-CONNECT:"$LRG_EDITOR_SOCKET"
+#+end_src
+
+** lrgeditorctl and MCP
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-ctl
+:END:
+| Verb | Method | Notes |
+|------+--------+-------|
+| =source list= | =source.list= | An ID / TITLE / SEARCH table |
+| =source ls SOURCE [FOLDER]= | =source.ls= | A NAME / TYPE / SIZE table (=-o wide= adds PATH and DESCRIPTION) |
+| =source search SOURCE PATTERN [limit=N]= | =source.search= | Same table |
+| =source export SOURCE PATH [DEST]= | =source.export= | =DEST= is made absolute against the current directory |
+| =source import SOURCE PATH= | =source.import= | |
+| =source place SOURCE PATH= | =source.place= | |
+
+=sources= is an alias of =source=. Virtual paths are passed unchanged (they never name local files). The MCP server has one tool per method: =source_list=, =source_ls= and =source_search= (read-only), =source_export=, =source_import= and =source_place=.
+
+#+begin_src sh
+lrgeditorctl source list
+lrgeditorctl source ls librewow World/Azeroth/Elwynn
+lrgeditorctl source search librewow "elwynntree" limit=20 -o wide
+lrgeditorctl source place librewow World/Azeroth/Elwynn/elwynntree01.m2
+lrgeditorctl source export librewow Textures/grass.blp ./out
+#+end_src
+
+** Writing a source in a game module
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-module
+:END:
+A game module gets an editor entry point with one more macro next to =LRG_DEFINE_GAME_MODULE=:
+
+#+begin_src c
+LRG_DEFINE_GAME_MODULE (MY_TYPE_GAME, "com.example.game", "My Game", "1.0.0")
+LRG_DEFINE_GAME_MODULE_EDITOR (my_editor_init)
+#+end_src
+
+In the module build (=-DLRG_GAME_BUILD_MODULE=) the macro exports =lrg_game_module_editor_init= (=LRG_GAME_MODULE_EDITOR_SYMBOL=); in the standalone build it emits no symbol. =lrgeditor --module my-game.so= loads the module, creates the application, loads the preferences and then calls the hook through =lrg_editor_app_init_module()=; a hook that returns =FALSE= makes lrgeditor print the error and exit with status 1. A module without the macro loads as before. The hook's type is =LrgGameModuleEditorInit=: =gboolean (*) (LrgEditorApp *app, GError **error)=.
+
+A complete source over a directory of raw files that "converts" by copying (replace =list=, =search= and =export_entry= with real archive code):
+
+#+begin_src c
+/* my-source.c - an asset source over a folder of models and textures */
+
+#include <libregnum.h>
+#include <gio/gio.h>
+#include <glib/gstdio.h>
+#include <string.h>
+
+/* MY_TYPE_GAME: the game's LrgGameTemplate subclass, defined as usual */
+
+#define MY_TYPE_SOURCE (my_source_get_type ())
+G_DECLARE_FINAL_TYPE (MySource, my_source, MY, SOURCE, GObject)
+
+struct _MySource
+{
+	GObject  parent_instance;
+	gchar   *root;   /* the real folder behind the virtual tree */
+};
+
+static void my_source_iface_init (LrgAssetSourceInterface *iface);
+
+G_DEFINE_FINAL_TYPE_WITH_CODE (MySource, my_source, G_TYPE_OBJECT,
+                               G_IMPLEMENT_INTERFACE (LRG_TYPE_ASSET_SOURCE, my_source_iface_init))
+
+static const gchar *
+my_source_get_id (LrgAssetSource *source)
+{
+	return "mygame";
+}
+
+static const gchar *
+my_source_get_title (LrgAssetSource *source)
+{
+	return "My Game Data";
+}
+
+/* What a raw file exports to: .mdl -> model (.obj), .img -> texture (.png) */
+static LrgAssetType
+type_of (const gchar *name)
+{
+	if (g_str_has_suffix (name, ".mdl"))
+		return LRG_ASSET_TYPE_MODEL;
+	if (g_str_has_suffix (name, ".img"))
+		return LRG_ASSET_TYPE_TEXTURE;
+	return LRG_ASSET_TYPE_UNKNOWN;
+}
+
+/* One folder: the real directory's entries, as virtual paths */
+static GPtrArray *
+my_source_list (LrgAssetSource  *source,
+                const gchar     *folder,
+                GError         **error)
+{
+	MySource            *self = MY_SOURCE (source);
+	g_autofree gchar    *dir = g_build_filename (self->root, folder, NULL);
+	g_autoptr(GDir)      d = g_dir_open (dir, 0, error);
+	g_autoptr(GPtrArray) entries = g_ptr_array_new_with_free_func (g_object_unref);
+	const gchar         *name;
+
+	if (d == NULL)
+		return NULL;   /* G_FILE_ERROR_NOENT: the panel shows the message */
+	while ((name = g_dir_read_name (d)) != NULL)
+	{
+		g_autofree gchar *real = g_build_filename (dir, name, NULL);
+		g_autofree gchar *path = (*folder != '\0') ? g_strconcat (folder, "/", name, NULL) : g_strdup (name);
+		gboolean          is_dir = g_file_test (real, G_FILE_TEST_IS_DIR);
+		LrgAssetType      type = type_of (name);
+		struct stat       st;
+
+		if (!is_dir && type == LRG_ASSET_TYPE_UNKNOWN)
+			continue;   /* nothing we can convert */
+		g_ptr_array_add (entries, lrg_asset_source_entry_new (path, is_dir, type,
+		                                                      (!is_dir && g_stat (real, &st) == 0)
+		                                                      ? (guint64) st.st_size : 0));
+	}
+	return g_steal_pointer (&entries);
+}
+
+/* Convert into dest_dir; here a copy with the target extension */
+static gboolean
+my_source_export (LrgAssetSource  *source,
+                  const gchar     *path,
+                  const gchar     *dest_dir,
+                  gchar          **out_file,
+                  GError         **error)
+{
+	MySource         *self = MY_SOURCE (source);
+	g_autofree gchar *real = g_build_filename (self->root, path, NULL);
+	g_autofree gchar *base = g_path_get_basename (path);
+	gchar            *dot = strrchr (base, '.');
+	g_autofree gchar *out_name = NULL;
+	g_autofree gchar *out = NULL;
+	g_autoptr(GFile)  from = g_file_new_for_path (real);
+	g_autoptr(GFile)  to = NULL;
+
+	if (dot != NULL)
+		*dot = '\0';
+	out_name = g_strconcat (base, type_of (path) == LRG_ASSET_TYPE_MODEL ? ".obj" : ".png", NULL);
+	out = g_build_filename (dest_dir, out_name, NULL);
+	to = g_file_new_for_path (out);
+	if (!g_file_copy (from, to, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, error))
+		return FALSE;
+	*out_file = g_steal_pointer (&out);
+	return TRUE;
+}
+
+static void
+my_source_iface_init (LrgAssetSourceInterface *iface)
+{
+	iface->get_id = my_source_get_id;
+	iface->get_title = my_source_get_title;
+	iface->list = my_source_list;
+	iface->export_entry = my_source_export;
+	/* iface->search: add one when the tree is large (an index lookup);
+	 * without it the panel only filters the current folder */
+}
+
+static void
+my_source_finalize (GObject *object)
+{
+	g_free (MY_SOURCE (object)->root);
+	G_OBJECT_CLASS (my_source_parent_class)->finalize (object);
+}
+
+static void
+my_source_class_init (MySourceClass *klass)
+{
+	G_OBJECT_CLASS (klass)->finalize = my_source_finalize;
+}
+
+static void
+my_source_init (MySource *self)
+{
+}
+
+/* The editor hook: register the source (and panels or actions) */
+static gboolean
+my_editor_init (LrgEditorApp  *app,
+                GError       **error)
+{
+	g_autoptr(MySource) source = g_object_new (MY_TYPE_SOURCE, NULL);
+	const gchar        *root = g_getenv ("MYGAME_DATA");
+
+	if (root == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Set MYGAME_DATA to the game's data folder");
+		return FALSE;
+	}
+	source->root = g_strdup (root);
+	lrg_editor_app_add_asset_source (app, LRG_ASSET_SOURCE (source));
+	return TRUE;
+}
+
+LRG_DEFINE_GAME_MODULE (MY_TYPE_GAME, "com.example.game", "My Game", "1.0.0")
+LRG_DEFINE_GAME_MODULE_EDITOR (my_editor_init)
+#+end_src
+
+Notes for real sources:
+
+- Build an index once (in the hook, or lazily on the first =list=) so =list= and =search= are lookups; the editor calls them on its UI thread.
+- Return =G_IO_ERROR_NOT_FOUND= for folders and entries that do not exist: IPC maps it to =not-found=.
+- Write every side file the main file references into =dest_dir= with relative references, so an import (which copies the whole folder) stays loadable.
+- Prefer self-contained formats (=.glb= with embedded textures) for models: imports stay one file per entry.
+- Keep the id stable: it names the cache folder and the project's =assets/<id>/= folder that levels reference.
+- A module that does not need the editor simply omits =LRG_DEFINE_GAME_MODULE_EDITOR=.
+
+** Testing
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-testing
+:END:
+=tests/test-editor-sources.c= covers path rules, listing, both search paths, the cache (one export, reuse across instances, invalidation, failures not cached), the registry, the panel driven headless with =lrg_editor_app_process_frame()= (hint, navigation, typed filter, Enter to search, chooser, preview), import / place / export, every IPC method and error, and the module hook against =tests/fixtures/test-editor-module.c= (a module with =LRG_DEFINE_GAME_MODULE_EDITOR= that registers a one-model source). =tests/editorctl-smoke.sh= checks the =source= verbs and the MCP tools against a headless editor.
+
+** Related documentation
+:PROPERTIES:
+:CUSTOM_ID: asset-sources-related
+:END:
+- [[file:../modules/gamemodule/index.org][Game modules]]: =LRG_DEFINE_GAME_MODULE=, =LrgLoadedGame=, the editor hook
+- [[file:projects-and-assets.org][Projects and Assets]]: where imports land (=.meta= sidecars, the asset database)
+- [[file:editor-app.org][The Editor Application]]: panels, embedding
+- [[file:editor-tools.org::#asset-thumbnails][Asset thumbnails]]: the cache the preview uses
+- [[file:ipc-protocol.org][IPC Protocol]] and [[file:lrgeditorctl.org][lrgeditorctl and MCP]]

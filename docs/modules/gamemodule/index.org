@@ -10,7 +10,8 @@ host links and drives, or run as a standalone binary — from one source set via
 - the *loader* (=LrgLoadedGame=) that opens and validates a module,
 - the *=LrgConfigurable= interface* that lets a loader/host configure a module
   from a CLI-style argument vector, and
-- *=lrgldr=*, the generic loader binary.
+- *=lrgldr=*, the generic loader binary, and
+- the optional *editor hook* (=LRG_DEFINE_GAME_MODULE_EDITOR=, since 0.8.3) that lets a module run code inside =lrgeditor=, e.g. to register asset sources.
 
 * Loading a module (LrgLoadedGame)
 
@@ -82,6 +83,30 @@ See [[file:../replay/determinism.org::#template][Determinism, "The game template
 with no window and a fixed frame delta: =lrg_headless_host_new (engine, 1.0 / 60.0)=,
 then =lrg_game_template_startup()= and =lrg_game_template_update()= in a loop. Headless
 replay playback uses it, and so can simulation servers and tests.
+
+* The editor hook (LRG_DEFINE_GAME_MODULE_EDITOR)
+:PROPERTIES:
+:CUSTOM_ID: editor-hook
+:END:
+A module can export a second, optional entry point that the editor calls: =lrgeditor --module game.so= loads the module (so levels can use its component types), creates the editor application, loads the preferences and then runs the hook with the application. The hook typically registers *asset sources* (=lrg_editor_app_add_asset_source()=: assets that are not project files, such as models and textures in the game's archives, browsed and imported in the editor's Sources panel), dock panels (=lrg_editor_app_add_panel()=) and actions. See [[file:../../editor/asset-sources.org][Asset Sources]] for the interface and a complete module example.
+
+#+begin_src c
+static gboolean
+my_editor_init (LrgEditorApp *app, GError **error)
+{
+    g_autoptr(MySource) source = my_source_new ();
+
+    lrg_editor_app_add_asset_source (app, LRG_ASSET_SOURCE (source));
+    return TRUE;   /* FALSE with error set: lrgeditor prints it and exits 1 */
+}
+
+LRG_DEFINE_GAME_MODULE (MY_TYPE_GAME, "com.example.game", "My Game", "1.0.0")
+LRG_DEFINE_GAME_MODULE_EDITOR (my_editor_init)
+#+end_src
+
+- In the module build (=-DLRG_GAME_BUILD_MODULE=) the macro exports =lrg_game_module_editor_init= (=LRG_GAME_MODULE_EDITOR_SYMBOL=), of type =LrgGameModuleEditorInit= (=gboolean (*) (LrgEditorApp *app, GError **error)=). In the standalone build it emits no symbol. Use it without a trailing semicolon, like =LRG_DEFINE_GAME_MODULE=.
+- The game module layer does not depend on the editor: the macro only forward-declares the application type, =LrgLoadedGame= only looks the symbol up (=lrg_loaded_game_lookup_symbol (game, name)=, which works for any exported symbol of a loaded module), and the editor calls it (=lrg_editor_app_init_module (app, game, error)=, defined with =LrgGameModuleEditorInit= in =src/editor/ui/lrg-editor-app.h=).
+- A module without the hook loads exactly as before; =lrg_editor_app_init_module()= then succeeds without doing anything. =lrgldr= never calls the hook.
 
 * lrgldr — the generic loader binary
 
