@@ -175,4 +175,5 @@ On one core of the release build (=taskset -c 2=): a blob47 full refresh of a 25
 - [[file:../modules/atlas/index.org][Atlas module]]
 - [[file:../modules/lighting/index.org][Lighting module]]
 - [[file:../editor/editor-tools.org][Editor tools]] (tile painting)
+- [[file:../editor/2d-tools.org][2D Tools in the editor]] (rule tile painting, iso/hex grids, the .rtileset and .rsprite editors)
 - [[file:writing-a-data-format.org][Writing a data format]]

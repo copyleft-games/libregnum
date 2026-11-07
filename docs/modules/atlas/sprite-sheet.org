@@ -164,7 +164,7 @@ Frames are an array and a name hash table: index and name lookups are O(1). Alph
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-Hooks for the sprite slicer of the next editor wave: grid mode calls =lrg_sprite_sheet_slice_grid()= live as the fields change; auto mode calls =lrg_sprite_sheet_slice_alpha()= on the image's pixels; manual mode adds and edits rectangles with =lrg_sprite_sheet_add_frame_rect()= / =lrg_sprite_sheet_replace_frame()= / =lrg_sprite_sheet_remove_frame()=; pivots are dragged with =lrg_atlas_region_set_pivot()=; the document saves with =lrg_sprite_sheet_save_rsprite_to_data()= and validates with =lrg_sprite_sheet_new_from_rsprite_data()=.
+The =.rsprite= editor ([[file:../../editor/2d-tools.org::#editor-2d-sprite-editor][2D Tools > The sprite editor]]) slices sheets with these functions: Grid mode calls =lrg_sprite_sheet_slice_grid()=, Auto mode =lrg_sprite_sheet_slice_alpha()= on the decoded image, Manual mode drags rectangles in with =lrg_sprite_sheet_add_frame_rect()=; frame names, rectangles and pivots (dragged on the canvas) go through =lrg_sprite_sheet_replace_frame()=, removals through =lrg_sprite_sheet_remove_frame()=. Every edit is written with =lrg_sprite_sheet_save_rsprite_to_data()= as one undo step and validated with =lrg_sprite_sheet_new_from_rsprite_data()=. "Slice Sprite Sheet" on a =.png= in the Assets panel and =sprite.create= write new sheets; =sprite.slice= and =sprite.frame= script the slicer.
 
 ** See also
 :PROPERTIES:

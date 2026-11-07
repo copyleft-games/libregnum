@@ -255,12 +255,7 @@ Advancing a player is O(frames in the clip) (a walk over the durations to find t
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-Hooks for the sprite slicer and frame animation editor of the next editor wave:
-- *Slicer*: see [[file:sprite-sheet.org::#editor][LrgSpriteSheet]].
-- *Clip list*: =lrg_sprite_sheet_get_n_clips()= / =lrg_sprite_sheet_get_clip_at()=, add/remove with =lrg_sprite_sheet_add_clip()= / =lrg_sprite_sheet_remove_clip()=.
-- *Timeline strip*: one cell per =lrg_sprite_animation_get_frame()=, widths from =lrg_sprite_animation_get_frame_duration()=; drag-reorder with =insert_frame= / =remove_frame=; event markers from =lrg_sprite_animation_get_event()=; refresh on =changed=.
-- *Preview*: a stand-alone =LrgSpriteAnimationPlayer= advanced by the editor clock, or scrubbing with =lrg_sprite_animation_sample()=.
-- *Document*: =lrg_sprite_sheet_save_rsprite_to_data()= / =lrg_sprite_sheet_new_from_rsprite_data()= for saving and validation with key paths.
+The =.rsprite= editor ([[file:../../editor/2d-tools.org::#editor-2d-sprite-editor][2D Tools > The sprite editor]]) edits the clips: a clip combo with New / Remove, fps and loop mode, a strip with one cell per clip position (as wide as =lrg_sprite_animation_get_frame_duration()=, event flags from =lrg_sprite_animation_get_event()=), insert / move / remove positions and per-position durations, named events on positions, and a preview that samples the selected clip with =lrg_sprite_animation_sample()= at its own clock (what =LrgSpriteAnimationPlayer= shows), drawn on its pivot. IPC: =sprite.clip=, =sprite.clip_frame=, =sprite.event=, =sprite.play=.
 
 ** See also
 :PROPERTIES:

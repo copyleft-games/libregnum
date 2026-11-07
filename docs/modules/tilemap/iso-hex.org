@@ -206,10 +206,7 @@ Drawing is one textured quad per visible non-empty cell through raylib's batch; 
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The tile painter works on orthogonal level tilemaps today; the hooks for grid modes:
-- *Grid overlay and hover*: =lrg_tilemap_get_cell_polygon()= per visible cell, =lrg_tilemap_world_to_cell()= under the mouse.
-- *Brush stamping*: brush cells map through the same cell coordinates; the painter's rectangle and fill tools operate on cell coordinates unchanged.
-- *Level data*: the level tilemap node needs =orientation=, =stagger_axis=, =stagger_index=, =hex_side_length= and the cell size keys to round-trip a non-orthogonal map; =lrg_node_tilemap_to_runtime()= then sets them on the runtime map (planned for the editor wave).
+The Tiles panel's Layout combo sets a level tilemap node's orientation, stagger axis and index, hexagon side and cell size (=lrg_node_tilemap_set_grid()=, one undo step; saved in the =.rlevel=). The editor builds a geometry =LrgTilemap= of the node grid (=lrg_editor_tiles_panel_get_geometry()=) and uses this module for everything grid-shaped: the viewport picks the cell under the mouse with =lrg_tilemap_world_to_cell()= (=lrg_editor_tiles_panel_cell_at()=), outlines the hovered cell and draws the grid overlay with =lrg_tilemap_get_cell_polygon()=, draws the tiles in =lrg_tilemap_get_draw_order()= and paints rule tiles with =lrg_tilemap_get_neighbor_layout()=. The brush, rectangle and fill tools work on cell coordinates unchanged. IPC: =tiles.grid=, =tiles.cell_at=. See [[file:../../editor/2d-tools.org::#editor-2d-grids][2D Tools > Grid layouts]].
 
 ** See also
 :PROPERTIES:

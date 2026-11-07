@@ -305,11 +305,9 @@ Per-tile data lives in a sparse array of tile slots; a tile without data costs o
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The 0.9.0 editor wave (tile properties panel, rule tile editor) builds on these hooks; until then the tile painter writes the transform bits through the layer API.
-- *Tile properties panel*: select a tile in the palette; flags via =lrg_tileset_set_tile_properties()=, a polygon editor over the tile image with =lrg_tileset_add_tile_collision_polygon()= / =lrg_tileset_clear_tile_collision()=, a key/value table on =lrg_tileset_get_tile_data_keys()= / =lrg_tileset_set_tile_data()=, a frame strip on =lrg_tileset_set_tile_animation()=. Refresh on =LrgTileset::changed=.
-- *Painter flips/rotation*: rotate and flip keys compose with =lrg_tile_rotate()= / =lrg_tile_flip_horizontally()= / =lrg_tile_flip_vertically()= on the brush value; previews draw through the normal tilemap path, which honours the bits.
-- *Validation*: the document editor runs =lrg_tileset_new_from_asset_data()= (=load_texture= FALSE) on the =.rtileset= text; messages carry the key path.
-- *Saving*: =lrg_tileset_save_to_data()= gives the text the document model diffs and writes.
+- *Tiles panel*: an =.rtileset= dropped on the tileset zone becomes the node's tileset (the grid takes its tile size); the palette shows its tiles with badges for collision, data, animation and rule ownership, and the tile under the pointer's properties. The brush carries transform bits: X, Shift+X and Z compose =lrg_tile_flip_horizontally()=, =lrg_tile_flip_vertically()= and =lrg_tile_rotate()= on the brush value, and every tool paints them; the viewport draws them like =LrgTilemap= does.
+- *Tileset editor*: the =.rtileset= data tab ([[file:../../editor/2d-tools.org::#editor-2d-tileset-editor][2D Tools > The tileset editor]]): the tile sheet, layout fields, flags (=lrg_tileset_set_tile_properties()=), a polygon editor over the magnified tile (=lrg_tileset_add_tile_collision_polygon()=, =lrg_tileset_clear_tile_collision()=), a key/value table (=lrg_tileset_set_tile_data()=), animation frames (=lrg_tileset_set_tile_animation()=) and the rule tiles. Every edit parses the document with =lrg_tileset_new_from_asset_data()= and writes =lrg_tileset_save_to_data()= as one undo step; parse errors show with their key path.
+- *IPC*: =tileset.*= (create, get, set, tile, collision, rule_tile, rule, preview, save) and =tiles.tile_info=.
 
 ** See also
 :PROPERTIES:

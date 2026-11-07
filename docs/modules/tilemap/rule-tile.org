@@ -260,13 +260,9 @@ Resolution walks the rules in order with two mask comparisons each, so a cell co
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-Hooks for the rule tile editor of the next editor wave:
-- *Rule list*: =lrg_rule_tile_get_n_rules()=, =lrg_rule_tile_get_rule()=, =lrg_rule_tile_insert_rule()=, =lrg_rule_tile_move_rule()=, =lrg_rule_tile_remove_rule()=; refresh on =changed=.
-- *3x3 pattern widget*: cycle each neighbour with =lrg_tile_rule_set_neighbor()= (any, this, not this), then =lrg_rule_tile_changed()=; grey out directions missing from =lrg_tile_neighbor_layout_get_mask()=.
-- *Outputs*: =lrg_tile_rule_add_output()= / =lrg_tile_rule_remove_output()= with weight spinners; transform toggles build values with =lrg_tile_make()=.
-- *Presets*: "16 tiles" / "47 tiles" buttons call the preset constructors; a template image can be drawn from =lrg_rule_tile_blob47_mask()=.
-- *Live preview*: run =lrg_rule_tile_apply()= on a scratch array; "why this tile" uses the =rule= out-parameter of =lrg_rule_tile_resolve()= with =lrg_rule_tile_compute_mask()=.
-- *Tile painter*: a rule tile brush calls =lrg_rule_tile_paint()= / =lrg_rule_tile_erase()= on a copy of the node layer's cells and commits only when the returned count is non-zero (one undo group per stroke).
+- *Rule tile editor*: the Rule tiles page of the =.rtileset= editor ([[file:../../editor/2d-tools.org::#editor-2d-tileset-editor][2D Tools > The tileset editor]]): a rule list (=lrg_rule_tile_insert_rule()=, =lrg_rule_tile_move_rule()=, =lrg_rule_tile_remove_rule()=), a clickable 3x3 mask per rule (=lrg_tile_rule_set_neighbor()=: any, this, not this), the transform, weighted outputs (=lrg_tile_rule_add_output()= / =lrg_tile_rule_remove_output()=), the 16 / 47 presets (=lrg_rule_tile_new_edges16()=, =lrg_rule_tile_new_blob47()=), seed, default tile and border, and a preview grid resolved with =lrg_rule_tile_paint()= on a scratch map.
+- *Painting*: picking a rule tile in the Tiles panel makes it the brush; the viewport wraps every tool gesture so the painted cells and their neighbours are re-resolved with =lrg_rule_tile_apply()= on a copy of the layer and committed in the same undo step ([[file:../../editor/2d-tools.org::#editor-2d-rules][2D Tools > Rule tile painting]]). "Refresh all" runs =lrg_tileset_apply_rule_tiles()= over the whole map.
+- *IPC*: =tiles.paint= with =rule_tile=, =tiles.refresh=, =tileset.rule_tile=, =tileset.rule=, =tileset.preview=.
 
 ** See also
 :PROPERTIES:
