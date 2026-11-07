@@ -101,3 +101,9 @@ Editor data editors validate with these from-data loaders (no temp files) but sa
 - .rtileset: version, name, image, tile_size, columns, tile_count, margin, spacing, offset; `tiles: [{id, flags, collision: [polygons], data: {k: v}, animation: [{tile, duration ms}]}]`; `rule_tiles: [{name, default, seed, border_is_this, match_tiles, rules: [{pattern: ["#.#", "-@-", "..."], transform, tiles: [index | {tile, weight, rotate, flip}]}]}]`. Tile references in the file are 0-based (cells in code are 1-based).
 - .rsprite: version, name, image, image_size; `grid: {frame_size, columns, rows, count, margin, spacing, pivot}`; `frames: [{index override (name/pivot) | name, rect, pivot}]`; `animations: [{name, fps, loop, frames: [index | name | {frame, duration}], events: [{frame, name}]}]`.
 - Both: unknown keys kept, strict errors with key paths, byte-stable save.
+
+## Terrain (.rterrain) and water (.rwater), 0.9.0
+- .rterrain: `version, name, grid {resolution, chunk_size, chunks[2]}, heights {file, format: png16|r32, range[2]}, splat {mode: weights|ids, files [RGBA png, 4 layers each], ids_file}, layers [{name, texture, material, tiling, color}], holes {file}, lod {levels, distances[], skirt}, bake_resolution, foliage {seed, patch_cells, layers [{name, kind, mesh, lod_mesh, lod_distance, texture, color, density, material_density[], scale, slope, height, align, size, fade, seed, density_file}]}`. Sidecars sit next to the file named after its stem; unknown keys kept at every level.
+- .rwater: `version, name, shape (plane|lake|river), level, size, points ([x,z] lakes, [x,y,z,w] rivers), cell_size, foam[2], waves [{direction, amplitude, wavelength, speed, steepness}], wave_scale, colors {shallow, deep, foam}, optics {transparency, reflection, refraction, reflect_distance}`; unknown keys kept at the root only.
+- Both strict (`file: /key/path: problem`) and byte-stable.
+

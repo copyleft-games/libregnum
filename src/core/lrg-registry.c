@@ -102,6 +102,13 @@
 #include "../ai/lrg-bt-composite.h"
 #include "../ai/lrg-bt-decorator.h"
 #include "../ai/lrg-bt-leaf.h"
+#include "../graphics/lrg-terrain-asset.h"
+#include "../graphics/lrg-terrain-brush.h"
+#include "../graphics/lrg-foliage.h"
+#include "../graphics/lrg-water-body.h"
+#include "../world3d/components/lrg-terrain-component.h"
+#include "../world3d/components/lrg-foliage-component.h"
+#include "../world3d/components/lrg-water-component.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -526,6 +533,15 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "shadow-occluder2d",          lrg_shadow_occluder2d_get_type },
     { "sprite-animation",           lrg_sprite_animation_get_type },
     { "sprite-animation-player",    lrg_sprite_animation_player_get_type },
+    { "terrain-asset",              lrg_terrain_asset_get_type },
+    { "terrain-layer",              lrg_terrain_layer_get_type },
+    { "terrain-brush",              lrg_terrain_brush_get_type },
+    { "foliage",                    lrg_foliage_get_type },
+    { "foliage-layer",              lrg_foliage_layer_get_type },
+    { "water-body",                 lrg_water_body_get_type },
+    { "terrain3d",                  lrg_terrain_component_get_type },
+    { "foliage3d",                  lrg_foliage_component_get_type },
+    { "water3d",                    lrg_water_component_get_type },
     { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */

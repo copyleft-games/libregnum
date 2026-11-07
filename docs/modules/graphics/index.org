@@ -760,3 +760,7 @@ Helpers for games that render many glTF characters and props with raylib:
 - [[../ecs/index.md][ECS Module]] - Components use LrgDrawable
 - [[../ui/index.md][UI Module]] - UI widgets
 - [[../world3d/index.md][World3D Module]] - 3D level management
+- *[[file:terrain-asset.org][LrgTerrainAsset]]* - .rterrain terrain: chunk grid, height/splat/hole sidecars, LOD, edits, splat bake, heightfield physics; LrgTerrainComponent (0.9.0)
+- *[[file:terrain-brush.org][LrgTerrainBrush]]* - sculpt, smooth, flatten, noise, paint, holes and foliage brushes with undo records (0.9.0)
+- *[[file:foliage.org][LrgFoliage]]* - scattered mesh/billboard/grass layers with density maps and slope/height rules (0.9.0)
+- *[[file:water-body.org][LrgWaterBody]]* - .rwater planes, lakes and rivers; LrgWaterComponent (0.9.0)
