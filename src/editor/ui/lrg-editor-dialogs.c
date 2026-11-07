@@ -169,15 +169,21 @@ typedef enum
 	FILE_OPEN_PROJECT,
 	FILE_IMPORT_SCENE,
 	FILE_SAVE_PREFAB,
-	FILE_INSTANTIATE_PREFAB
+	FILE_INSTANTIATE_PREFAB,
+	FILE_SELECT_FOLDER       /* generic: editor_dialog_select_folder() */
 } FileMode;
 
 typedef struct
 {
-	LrgEditorApp  *self;     /* weak */
-	FileMode       mode;
-	LrgFileDialog *dialog;
-	gchar         *node_guid;
+	LrgEditorApp     *self;     /* weak */
+	FileMode          mode;
+	LrgFileDialog    *dialog;
+	gchar            *node_guid;
+
+	/* FILE_SELECT_FOLDER: called with the folder (NULL when cancelled) */
+	EditorFolderFunc  folder_func;
+	gpointer          folder_data;
+	GDestroyNotify    folder_destroy;
 } FileRequest;
 
 static void
@@ -186,6 +192,8 @@ file_request_free (FileRequest *req)
 	g_clear_weak_pointer (&req->self);
 	g_clear_object (&req->dialog);
 	g_free (req->node_guid);
+	if (req->folder_destroy != NULL)
+		req->folder_destroy (req->folder_data);
 	g_free (req);
 }
 
@@ -207,6 +215,7 @@ on_file_chosen (GObject      *source,
 		file = lrg_file_dialog_save_finish (req->dialog, result, &error);
 		break;
 	case FILE_OPEN_PROJECT:
+	case FILE_SELECT_FOLDER:
 		file = lrg_file_dialog_select_folder_finish (req->dialog, result, &error);
 		break;
 	default:
@@ -222,6 +231,16 @@ on_file_chosen (GObject      *source,
 	g_object_set_data (G_OBJECT (self), "lrg-editor-file-cancel", NULL);
 	if (g_strcmp0 (lrg_editor_view_state_get_dialog (self->view), "file") == 0)
 		dialog_finished (self);
+	if (req->mode == FILE_SELECT_FOLDER)
+	{
+		/* The caller handles both outcomes (NULL: cancelled) */
+		if (file != NULL)
+			path = g_file_get_path (file);
+		if (req->folder_func != NULL)
+			req->folder_func (self, path, req->folder_data);
+		file_request_free (req);
+		return;
+	}
 	if (file == NULL || (path = g_file_get_path (file)) == NULL)
 	{
 		/* Cancelled: an action waiting on a Save As is dropped too */
@@ -322,12 +341,15 @@ levels_dir (LrgEditorApp *self,
 }
 
 static void
-run_file_dialog (LrgEditorApp *self,
-                 FileMode      mode,
-                 const gchar  *title,
-                 const gchar  *dir,
-                 const gchar  *suffix,
-                 const gchar  *name)
+run_file_dialog_full (LrgEditorApp     *self,
+                      FileMode          mode,
+                      const gchar      *title,
+                      const gchar      *dir,
+                      const gchar      *suffix,
+                      const gchar      *name,
+                      EditorFolderFunc  folder_func,
+                      gpointer          folder_data,
+                      GDestroyNotify    folder_destroy)
 {
 	FileRequest            *req = g_new0 (FileRequest, 1);
 	g_autoptr(GFile)        folder = g_file_new_for_path (dir);
@@ -335,6 +357,9 @@ run_file_dialog (LrgEditorApp *self,
 
 	editor_dialog_close_all (self);
 	req->mode = mode;
+	req->folder_func = folder_func;
+	req->folder_data = folder_data;
+	req->folder_destroy = folder_destroy;
 	g_set_weak_pointer (&req->self, self);
 	req->dialog = lrg_file_dialog_new ();
 	lrg_file_dialog_set_title (req->dialog, title);
@@ -369,12 +394,46 @@ run_file_dialog (LrgEditorApp *self,
 		lrg_file_dialog_save (req->dialog, LRG_WIDGET (self->canvas), cancel, on_file_chosen, req);
 		break;
 	case FILE_OPEN_PROJECT:
+	case FILE_SELECT_FOLDER:
 		lrg_file_dialog_select_folder (req->dialog, LRG_WIDGET (self->canvas), cancel, on_file_chosen, req);
 		break;
 	default:
 		lrg_file_dialog_open (req->dialog, LRG_WIDGET (self->canvas), cancel, on_file_chosen, req);
 		break;
 	}
+}
+
+static void
+run_file_dialog (LrgEditorApp *self,
+                 FileMode      mode,
+                 const gchar  *title,
+                 const gchar  *dir,
+                 const gchar  *suffix,
+                 const gchar  *name)
+{
+	run_file_dialog_full (self, mode, title, dir, suffix, name, NULL, NULL, NULL);
+}
+
+/*
+ * editor_dialog_select_folder:
+ *
+ * A folder chooser (the editor's LrgFileDialog, like Open Project) for
+ * callers outside this file, e.g. the Sources panel's "Export to...".
+ * @func runs once with the chosen folder, or %NULL when cancelled;
+ * @destroy frees @data afterwards.
+ */
+void
+editor_dialog_select_folder (LrgEditorApp     *self,
+                             const gchar      *title,
+                             const gchar      *dir,
+                             EditorFolderFunc  func,
+                             gpointer          data,
+                             GDestroyNotify    destroy)
+{
+	g_autofree gchar *start = (dir != NULL) ? g_strdup (dir)
+	                         : (self->project_dir != NULL) ? g_strdup (self->project_dir) : g_get_current_dir ();
+
+	run_file_dialog_full (self, FILE_SELECT_FOLDER, title, start, NULL, NULL, func, data, destroy);
 }
 
 void

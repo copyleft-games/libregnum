@@ -1588,6 +1588,7 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-settings-migrate.h \
 	src/editor/lrg-editor-node-model.h \
 	src/editor/lrg-editor-node-source.h \
+	src/editor/lrg-asset-source.h \
 	src/editor/lrg-prefab.h
 SOURCES += \
 	src/editor/lrg-component-desc.c \
@@ -1627,6 +1628,7 @@ SOURCES += \
 	src/editor/lrg-editor-settings-migrate.c \
 	src/editor/lrg-editor-node-model.c \
 	src/editor/lrg-editor-node-source.c \
+	src/editor/lrg-asset-source.c \
 	src/editor/lrg-prefab.c
 ifeq ($(BUILD_EDITOR_UI),1)
 PUBLIC_HEADERS += \
@@ -1653,6 +1655,7 @@ PUBLIC_HEADERS += \
 	src/editor/ui/lrg-editor-timeline-panel.h \
 	src/editor/ui/lrg-editor-profiler-panel.h \
 	src/editor/ui/lrg-editor-code-panel.h \
+	src/editor/ui/lrg-editor-sources-panel.h \
 	src/editor/ui/lrg-editor-palette.h \
 	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
@@ -1681,12 +1684,14 @@ SOURCES += \
 	src/editor/ui/lrg-editor-timeline-panel.c \
 	src/editor/ui/lrg-editor-profiler-panel.c \
 	src/editor/ui/lrg-editor-code-panel.c \
+	src/editor/ui/lrg-editor-sources-panel.c \
 	src/editor/ui/lrg-editor-palette.c \
 	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \
 	src/editor/ui/lrg-editor-dialogs.c \
 	src/editor/ui/lrg-editor-play.c \
-	src/editor/ui/lrg-editor-thumbnails.c
+	src/editor/ui/lrg-editor-thumbnails.c \
+	src/editor/ui/lrg-editor-sources.c
 endif
 endif
 

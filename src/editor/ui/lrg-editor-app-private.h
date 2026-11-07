@@ -17,6 +17,9 @@
  *   lrg-editor-play.c           play-session glue, Run Game, timeline
  *                               preview and the tile tool state
  *   lrg-editor-thumbnails.c     asset thumbnails (cache, uploads, GPU renders)
+ *   lrg-editor-sources.c        asset sources: registry, cached exports,
+ *                               imports, game module editor hook,
+ *                               the "source.*" IPC methods
  *   lrg-editor-legacy-input.c   LrgGuiInput -> LrgCanvasInput (deprecated path)
  *
  * Since 0.8.1 the application is drawn with the retained src/ui toolkit
@@ -183,6 +186,10 @@ struct _LrgEditorApp
 	GHashTable           *thumb_entries;  /* abs path -> EditorThumb* */
 	guint64               thumb_upload_frame;
 	guint                 thumb_uploads;
+
+	/* Asset sources (lrg-editor-sources.c) */
+	GPtrArray            *sources;        /* LrgAssetSource* (owned refs) */
+	guint                 sources_serial; /* bumped on add / remove (panels poll it) */
 };
 
 /* --- lrg-editor-app.c --- */
@@ -203,6 +210,7 @@ G_GNUC_INTERNAL void     editor_app_open_asset      (LrgEditorApp *self, const g
 G_GNUC_INTERNAL LrgNode * editor_app_create_node    (LrgEditorApp *self, const gchar *name, LrgNodeVisualKind kind,
                                                      LrgPrimitiveType primitive, LrgNode *parent);
 G_GNUC_INTERNAL LrgNode * editor_app_create_node_kind (LrgEditorApp *self, const gchar *kind, LrgNode *parent);
+G_GNUC_INTERNAL LrgNode * editor_app_place_asset    (LrgEditorApp *self, const gchar *path, GError **error);
 G_GNUC_INTERNAL gchar *  editor_app_create_script   (LrgEditorApp *self, const gchar *name, LrgScriptLanguage lang,
                                                      GError **error);
 G_GNUC_INTERNAL void     editor_app_apply_settings  (LrgEditorApp *self);
@@ -232,6 +240,10 @@ typedef struct
 G_GNUC_INTERNAL const EditorCreateItem * editor_create_items (guint *n_items);
 
 /* --- lrg-editor-dialogs.c --- */
+typedef void (*EditorFolderFunc) (LrgEditorApp *self, const gchar *folder, gpointer data);
+
+G_GNUC_INTERNAL void     editor_dialog_select_folder (LrgEditorApp *self, const gchar *title, const gchar *dir,
+                                                      EditorFolderFunc func, gpointer data, GDestroyNotify destroy);
 G_GNUC_INTERNAL void     editor_dialog_confirm      (LrgEditorApp *self, const gchar *message);
 G_GNUC_INTERNAL void     editor_dialog_open_level   (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_dialog_save_level_as (LrgEditorApp *self);
@@ -275,6 +287,11 @@ G_GNUC_INTERNAL void     editor_thumbnails_file_changed (LrgEditorApp *self, con
 G_GNUC_INTERNAL void     editor_thumbnails_window_opened (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_thumbnails_window_closing (LrgEditorApp *self);
 G_GNUC_INTERNAL void     editor_thumbnails_clear    (LrgEditorApp *self);
+
+/* --- lrg-editor-sources.c --- */
+G_GNUC_INTERNAL void     editor_sources_init        (LrgEditorApp *self);
+G_GNUC_INTERNAL void     editor_sources_dispose     (LrgEditorApp *self);
+G_GNUC_INTERNAL const gchar * editor_entry_type_name (LrgAssetType type, gboolean is_folder);
 
 /* --- lrg-editor-legacy-input.c --- */
 typedef struct _EditorLegacyInput EditorLegacyInput;

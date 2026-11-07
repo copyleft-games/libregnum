@@ -58,7 +58,8 @@ static const GOptionEntry entries[] = {
 	  "External code editor for this session: auto, emacsclient, nvim, codium... or a command "
 	  "template with {file} {line} {col}", "EDITOR" },
 	{ "module", 'm', 0, G_OPTION_ARG_FILENAME, &opt_module,
-	  "Load a game module (.so) so its component types can be edited and played", "SO" },
+	  "Load a game module (.so) so its component types can be edited and played, and run its editor "
+	  "hook (asset sources, panels)", "SO" },
 	{ "socket", 0, 0, G_OPTION_ARG_FILENAME, &opt_socket,
 	  "IPC socket path (default $XDG_RUNTIME_DIR/libregnum/editor-PID.sock)", "PATH" },
 	{ "no-server", 0, 0, G_OPTION_ARG_NONE, &opt_no_server,
@@ -90,6 +91,7 @@ static const gchar *examples =
 	"  lrgeditor -p ~/games/mygame -l levels/arena.rlevel\n"
 	"  lrgeditor --new-project ~/games/newgame --name \"New Game\"\n"
 	"  lrgeditor --editor emacsclient ~/games/mygame\n"
+	"  lrgeditor --module build/librewow.so ~/games/mygame   module types + its asset sources\n"
 	"  lrgeditor --editor 'codium --goto {file}:{line}:{col}' .\n"
 	"  lrgeditor --headless --socket /tmp/lrg.sock ~/games/mygame\n"
 	"  lrgeditor --validate levels/arena.rlevel  (CI: exit status 1 on errors)\n"
@@ -338,6 +340,15 @@ main (int    argc,
 		/* A broken preferences file must not lock anyone out. */
 		g_printerr ("lrgeditor: preferences: %s (using defaults)\n", error->message);
 		g_clear_error (&error);
+	}
+
+	/* The module's editor hook (asset sources, panels, actions) runs
+	 * once the app and its preferences exist; a failing hook is fatal,
+	 * the module's editor integration would be half set up. */
+	if (game != NULL && !lrg_editor_app_init_module (app, game, &error))
+	{
+		g_printerr ("lrgeditor: module %s: editor setup failed: %s\n", opt_module, error->message);
+		return 1;
 	}
 	if (opt_editor != NULL)
 	{
