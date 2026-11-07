@@ -527,6 +527,7 @@ Custom actions get a mirror =editor.<id>= action and their shortcut immediately,
 | =lrg_editor_app_get_view_state (app)= | 0.8.1 | Cameras, layout, render modes, dialog, timeline playhead, tile tool |
 | =lrg_editor_app_get_viewport_nav (app)= | 0.8.1 | Viewport navigation |
 | =lrg_editor_app_get_play_session (app)= | 0.8.1 | Play-in-editor |
+| =lrg_editor_app_get_scene_renderer (app)= | 0.9.0 | The renderer every viewport draws through (baked lighting, play world, thumbnails) |
 | =lrg_editor_window_get_menu_bar=, =get_menu_model=, =get_toasts=, =get_widget (window, name)= | 0.8.1 | The chrome's widgets (=get_widget= takes =toolbar=, =statusbar=, =status-reload=, =status-keep=, =status-counters=, =snap-move=, =snap-rotate=, =snap-scale=, =viewport-layout= or =tool:<action-id>=) |
 | =lrg_editor_viewport_panel_get_viewport (panel)= | 0.8.1 | The =LrgViewport= of the viewport panel |
 | =lrg_editor_gui_input_to_canvas (input, previous, out)=, =lrg_editor_gui_key_to_grl (key)= | 0.8.1 | Translate a 0.8.0 =LrgGuiInput= frame |
@@ -1077,6 +1078,9 @@ Actions registered by the panel: =timeline.rename= and =timeline.delete= (the cu
 | =lrg_editor_timeline_panel_find_track (self, guid, channel)= | The view track of a channel (=NULL= channel: the node's group) |
 | =lrg_editor_timeline_panel_find_keyframe (self, guid, channel, time)= | The view keyframe id of a key, or =LRG_EDITOR_TIMELINE_PANEL_INVALID_KEY= |
 | =lrg_editor_timeline_panel_set_key_easing (self, easing)= | Easing of new keys and of the selected keys (one step) |
+| =lrg_editor_timeline_panel_set_key_tangents (self, bezier, mode)= | (0.9.0) Makes the selected keys Bézier keys of /mode/ (keeping their drawn slopes) or eased keys again (one step) |
+
+Since 0.9.0 the panel also has the Tangent picker (=timeline-tangent=), Curves (=timeline-curves=: channel rows become curve lanes), the Bone field and Key Bone (=timeline-bone=, =timeline-key-bone=), To Sequence (=timeline-to-sequence=, action =timeline.to-sequence=), a Key Tangents submenu and Convert to Sequence in the context menu, and the =timeline.tangent= IPC method; Bézier keys are drawn with their slopes and keep their handles when dragged. Bone channels read =bone  group.axis=. See [[file:editor-tools.org::#timeline-panel][Editor Tools > The Timeline panel]].
 
 ** Tiles panel
 :PROPERTIES:
@@ -1638,12 +1642,66 @@ Registry actions (category Code, no default shortcuts; bind them in Preferences)
 :END:
 Since 0.9.0. The window creates the Environment panel (=lrg_editor_environment_panel_new()=, dock id "environment", a tab of the Inspector's stack; View > Panels > Environment) and the data editor registry opens =.rpost= files in the post-stack editor. The viewport header gains the debug view modes in its render-mode combo and a render-layer picker button; the viewport draws volume gizmos for the selected light, decal or reflection probe and accepts =.rmat= drops on meshes; the inspector gains light rows by kind, decal and probe params and a LOD preview section; the Create menus offer spot and directional lights, decals and reflection probes. All of it is described in [[file:environment.org][Level Look]].
 
+** Lighting panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-bake
+:END:
+Since 0.9.0 M3. =LrgEditorBakePanel= (=src/editor/ui/lrg-editor-bake-panel.{h,c}=, dock id =bake=, =LRG_EDITOR_BAKE_PANEL_ID=; View > Panels > Lighting, a tab of the Inspector's stack) bakes the level's lighting; the tool is described in [[file:bake.org][Lighting Bake in the Editor]]. Widget names for tests and =ui.state=: =bake-top= with =bake-header= (=bake-title=, the status pill =bake-status=, =bake-bake= (Bake, Cancel while running), =bake-save=, =bake-preview= (eye: baked lighting in the viewport), =bake-clear=), =bake-progress= and =bake-phase= (visible while baking or after a failure), =bake-summary= (objects, texels, probes, seconds); the scrolled =bake-scroll= with =bake-atlas-row= (=bake-atlas=, =bake-page-prev=, =bake-page-next=; shown when there is a lightmap), =bake-cursor-row= (=bake-sample=, =bake-cursor=) and the settings grid =bake-grid=; =bake-empty= without a level. The header folds into icon chips in narrow docks. It registers the =bake.*= actions and IPC methods from its own file; the inspector's Lighting rows, the probe-volume node kind (Create > Probe Volume, its hierarchy icon and volume gizmo) and the viewport's baked lighting come with it. The app's scene renderer is reachable with =lrg_editor_app_get_scene_renderer()=.
+
+** Sequencer panel
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-sequencer
+:END:
+Since 0.9.0. =LrgEditorSequencerPanel= (=src/editor/ui/lrg-editor-sequencer-panel.{h,c}=, dock id =sequencer=, =LRG_EDITOR_SEQUENCER_PANEL_ID=) edits one =.rseq= sequence on an =LrgTimelineView= with a Bézier curve editor under it. The tool itself (tracks, keys, sections, preview, IPC) is described in [[file:sequencer.org][Sequencer]]; this section covers the widget.
+
+- *Rows* (top): =sequencer-toolbar= (title =sequencer-title=, path field =sequencer-path=, =sequencer-new=, =sequencer-open=, =sequencer-save=, =sequencer-length=, =sequencer-fps=, =sequencer-undo=, =sequencer-redo=) and =sequencer-transport= (=sequencer-prev=, =sequencer-play=, =sequencer-stop=, =sequencer-next=, the preview mode =sequencer-mode=, the toggles =sequencer-snap=, =sequencer-pilot=, =sequencer-curves=, then =sequencer-add-track= (opens a menu of track kinds), =sequencer-bind=, =sequencer-key=, =sequencer-delete= and the readout =sequencer-time=). Both rows fold into compact chips when the panel is narrow.
+- *View* (=sequencer-view=): group rows per binding, a row per track, a child row per keyed transform channel, clips for sections, bar keys and ruler flags for events. Edits made in the view (key, clip and flag drags, Delete, double click on a curve lane) are queued and applied on the panel's next step as one undo step; selection picks the detail strip's track, section and curve. The hint =sequencer-empty= replaces the view while there are no tracks.
+- *Strip* (=sequencer-strip=, 214 units high): the curve editor =sequencer-curve= (an =LrgCustomWidget=, focusable for Delete) and the key fields (=sequencer-key-row=: =sequencer-key-time=, =sequencer-key-value=, =sequencer-key-tangent=, =sequencer-key-in=, =sequencer-key-out=) on the left; =sequencer-detail= on the right with =sequencer-detail-title= and either =sequencer-track-box= (=sequencer-track-name=, =sequencer-track-binding=, =sequencer-track-bone=, =sequencer-track-component=, =sequencer-track-property=, =sequencer-track-mute=) or =sequencer-section-box= (=sequencer-section-name=, =-start=, =-duration=, =-offset=, =-rate=, =-weight=, =-loop=, =-payload=). Text fields apply on Enter, spins on change.
+- *Theme.* Everything uses theme colours and metrics (the curve editor draws with the =input=, =border=, =track=, =accent=, =handle=, =warning= and =text-muted= roles); track and clip colours come from a fixed wheel readable in dark and light themes.
+- *Step.* Per frame the panel applies queued view edits, advances the preview player while playing (posing the level), rebuilds the view after a change (never during a curve drag) and mirrors the playhead into the view.
+
+The shell creates it in =create_panels()= and docks it as a tab of the bottom stack (next to Timeline); View > Panels lists it as "Sequencer". Embedders that build their own window add it with =lrg_editor_app_add_panel()= (see [[file:sequencer.org::#sequencer-c][Sequencer > Using it from C]]).
+
+** 2D rig editor
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-skel2d
+:END:
+Since 0.9.0. =LrgEditorSkeleton2DEditor= (=src/editor/ui/data/lrg-editor-skeleton2d-editor.{h,c}=) is the data editor of =.rskel2d= files: a tab with the id =data:<absolute path>= docked next to the other data editors. The tool (modes, tools, undo model, animation, IPC) is described in [[file:skeleton2d-editor.org][2D Rig Editor]]; this section lists the widgets for tests and =ui.state=.
+
+- *Content* =skel-split= (an =LrgSplitter=, 72% / 28%): =skel-left= and =skel-side=. The data toolbar gains =skel-frame=.
+- *Left*: =skel-canvas-bar= (=skel-mode-setup=, =skel-mode-animate=, =skel-tool-select=, =skel-tool-bone=, =skel-tool-mesh=, =skel-tool-weights=, =skel-auto-weights=, =skel-triangulate=; the last two only in setup mode; labels fold into icons when narrow), the canvas =skel-canvas= (an =LrgCustomWidget=, focusable, accepts Tab, an asset drop target for images) and, in animation mode, =skel-anim=: the transport (=skel-play=, =skel-loop=, =skel-key=, =skel-add-clip-2=), the dope sheet =skel-dope= (=LrgTimelineView=, no play button, 30 fps, snapping to frames) and the curve view =skel-curves= (=LrgCurveEdit=, full mode, at least 240 wide).
+- *Side*: the command row (=skel-add-slot=, =skel-add-skin=, =skel-add-clip=, =skel-slot-up=, =skel-slot-down=, =skel-delete=), the outline =skel-outline= inside =skel-outline-scroll= (rows of 22, section headers of 26; a click selects, the eye at the right of an attachment row toggles it as the slot's setup attachment) and the property grid =skel-grid= (rows =bone-name=, =bone-x=, =bone-y=, =bone-rotation=, =bone-scale-x=, =bone-scale-y=, =bone-length=, =slot-name=, =slot-attachment=, =slot-color-r= ... =slot-color-a=, =attachment-image=, =clip-name=, =clip-duration=, =clip-loop=, =rig-name=, =brush-radius=, =brush-strength=).
+- *Theme.* The canvas uses the =window= colour with a =border= grid and =accent= axes, bones in =text-muted= / =accent= with =text= edges, the HUD on a =surface= pill, errors on =danger=; the weight heat ramp is fixed (blue, green, yellow, red) and reads on dark and light themes.
+- *Step.* Per frame the editor advances the preview while playing (mirroring the playhead into the dope sheet), applies the dope sheet's queued key drags and deletions as one undo step, fits the chip rows and rebuilds the grid after a selection change.
+- *State line* (=lrg_editor_data_editor_get_state()=, =data.list=): =mode= =tool= =bones= =slots= =skins= =clips= =bone= =slot= =attachment= =skin= =clip= =time= =playing=.
+
+** Animation tools
+:PROPERTIES:
+:CUSTOM_ID: editor-panel-animation
+:END:
+Since 0.9.0 M4. The animation tools are described in [[file:animation-editor.org][Animation Tools in the Editor]]; this section lists what they add to the window and the widgets for tests and =ui.state=.
+
+- *Formats.* The data editor registry opens =.ranim= in =LrgEditorAnimGraphEditor= and =.rbonemap= in =LrgEditorBoneMapEditor= (tabs =data:<absolute path>=); =.rskel2d= opens in the 2D rig editor, =.rseq= in the sequencer. =LrgEditorDocument= knows the four formats (=anim-graph=, =bone-map=, =sequence=, =skeleton2d=) with new-document skeletons the engine loaders accept.
+- *Animation graph editor.* Content =anim-split= (=anim-left-scroll= | =anim-inner=: the canvas column and =anim-side=). Left: =anim-left= with =anim-params= (rows =anim-param-<name>=, controls =anim-param-<name>-value=, =anim-param-<name>-remove=), =anim-add-float=, =anim-add-int=, =anim-add-bool=, =anim-add-trigger=, =anim-clips= (labels =anim-clip-<key>=) and =anim-clips-from-model=. Centre: =anim-topbar= (=anim-layers= with =anim-layer-<i>= and =anim-layer-add=, the breadcrumb =anim-crumbs=) over =anim-canvas=. Side: the preview =anim-preview= (chips =anim-preview-play=, =anim-preview-bones=, =anim-preview-turntable=; =anim-preview-viewport=) with =anim-model= and =anim-scrub= under it, then =anim-inspector-scroll= / =anim-inspector=: =anim-inspector-title=, =anim-blend-space=, =anim-grid=, =anim-conditions= (rows =anim-cond-<i>= with =-param=, =-op=, =-value=, =-remove=; =anim-cond-add=). Toolbar: =anim-restart=. The theme drives everything: card categories take the canvas palette, highlights the =success= / =warning= roles, missing clips =warning=, card body lines =text-muted= / =link= / =accent= / =danger=; the preview's backdrop is a fixed dark slate that reads under both light and dark themes.
+- *Bone map editor.* Content =bonemap-split= (=bonemap-top= over the previews): =bonemap-source=, =bonemap-target=, =bonemap-rows-scroll= / =bonemap-rows= (rows =bonemap-row-<bone>=, combos =bonemap-row-<bone>-source=), the rules grid =bonemap-rules=, =bonemap-auto=, =bonemap-unmapped=; =bonemap-source-preview=, =bonemap-target-preview=, =bonemap-clip=.
+- *Assets panel.* An Animation section in the background menu (=assets.new-anim-graph=, =assets.new-bone-map=, =assets.new-sequence=, =assets.new-skeleton2d=), =assets.preview-clips= and =assets.anim-graph-from-model= on glTF entries, glyphs for the four formats, and the Animations dialog =assets-clip-dialog= (=assets-clip-box=: =assets-clip-preview=, =assets-clip-list=, =assets-clip-scrub=, =assets-clip-info=, =assets-clip-morph-<i>=).
+- *Inspector.* The Animator section =inspector-section-animator= (=inspector-animator-graph=, =inspector-animator-open=, the painted list =inspector-animator-list=) for one node with an =animator3d= component.
+- *Viewport.* The overlays menu's Animation section: =vp.anim-bones= (Bones) and =vp.anim-ik= (IK Targets), per viewport.
+- *IPC.* =anim.*=, =bonemap.*= and =clip.*= ([[file:ipc-protocol.org::#ipc-animation][IPC: animation methods]]), registered when the Assets panel is created.
+
 ** API index
 :PROPERTIES:
 :CUSTOM_ID: editor-app-api-index
 :END:
 
 Every public function of the editor application widget headers that the sections above do not walk through, with the one-line summary from its header. The GIR comments in the headers are the full reference (parameters, ownership, nullability); this index exists so each symbol can be found from the docs.
+
+*** =lrg-editor-sequencer-panel.h=
+:PROPERTIES:
+:CUSTOM_ID: editor-app-api-lrg-editor-sequencer-panel
+:END:
+
+The full table with one line per function is in [[file:sequencer.org::#sequencer-api][Sequencer > API reference]].
 
 *** =lrg-editor-window.h=
 :PROPERTIES:

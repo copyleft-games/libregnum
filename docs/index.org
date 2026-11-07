@@ -72,7 +72,10 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:editor/data-editors.org][Data Editors]]* - =LrgEditorDocument= and the input map, locale, sound bank, theme, HUD, UI layout, dialog tree and dungeon editors
 - *[[file:editor/material-editor.org][Material Editor]]* - .rmat preview, instances, uniform inspector
 - *[[file:editor/shader-graph-editor.org][Shader Graph Editor]]* - .rshadergraph node shaders
+- *[[file:editor/bake.org][Lighting Bake]]* - the Lighting panel: bake lightmaps and probe grids from the editor, probe volumes, baked lighting while authoring (0.9.0)
 - *[[file:editor/environment.org][Level Look]]* - the Environment panel, =.rpost= post-stack editor, debug view modes, render layers, volume gizmos and LOD preview (0.9.0)
+- *[[file:editor/sequencer.org][Sequencer]]* - =.rseq= cinematics: tracks by binding, Bézier curve editor, camera cuts, audio, events, preview with camera piloting (0.9.0)
+- *[[file:editor/skeleton2d-editor.org][2D Rig Editor]]* - =.rskel2d= 2D rigging and animation: bone tool, slots and image drops, mesh tool with triangulation, weight painting, skins, dope sheet, curves, play/loop (0.9.0)
 - *[[file:editor/gap-analysis.org][Gap Analysis]]* - the editor and engine against Godot 4, Unity 6 and Unreal 5, with the engine roadmap
 - *[[file:editor/editor-tools.org][Editor Tools]]* - tilemap painting, keyframe timelines, asset thumbnails
 - *[[file:editor/emacs.org][Emacs Integration]]* - =libregnum.el=; [[file:editor/external-editor.org][External code editor]]; [[file:editor/ipc-protocol.org][IPC protocol]]

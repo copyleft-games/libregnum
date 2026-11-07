@@ -103,3 +103,10 @@ Shader graphs: shadergraph_open, _create, _node_types (ro), _get (ro), _add_node
 Level look: environment_get (ro), environment_set{key,value|values}, environment_reset (destructive), environment_bake then poll environment_progress (ro), environment_show.
 Post stacks: post_effect_types (ro), post_open, post_create, post_get (ro), post_add, post_remove (destructive), post_move, post_set, post_save, post_preview, post_save_look, post_assign.
 LOD and views: lod_get (ro), lod_force{node,level (-1 auto)}, set_view_layers{viewport?,mask?,layer?,enabled?}; set_render_mode also takes overdraw, uv, light-complexity, ao, reflections.
+
+## 0.9.0 tools (M3/M4)
+Lighting bake: bake_get, bake_progress, bake_evaluate{position?,normal?} (ro); bake_set{key,value|values|reset|auto_save}; bake_start{save?} then poll bake_progress; bake_cancel; bake_save{dir?}; bake_clear (destructive); bake_preview{show?,page?}; bake_show.
+Sequences: sequence_list/sequence_get (ro), sequence_open, sequence_create, sequence_set, sequence_add_track, sequence_add_key, sequence_set_key, sequence_add_section, sequence_remove (destructive), sequence_bind, sequence_play, sequence_scrub, sequence_save, sequence_undo, sequence_from_timeline; timeline_tangent.
+2D skeletons: skel2d_get/skel2d_pick (ro), skel2d_create/open/add_bone/set_bone/remove_bone (destructive)/add_slot/set_slot/remove_slot (destructive)/draw_order/attach/detach (destructive)/mesh/auto_weights/paint_weights/skin/clip/key/play/mode/save.
+Animation: anim_get/anim_validate (ro), anim_open/create/enter/add_layer/remove_layer (destructive)/add_state/remove_state (destructive)/set_state/add_transition/set_transition/remove_transition (destructive)/add_parameter/remove_parameter (destructive)/set_parameter/set_blend_tree/preview/save; bonemap_get (ro), bonemap_open/create/set/auto_fill/set_rules/set_models/preview/save; clip_list/clip_info (ro), clip_preview, clip_set_morph.
+anim_preview takes {path, model?, restart?, play?, advance?, scrub?}.

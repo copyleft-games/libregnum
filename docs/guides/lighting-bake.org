@@ -166,7 +166,7 @@ The =lighting: settings:= keys are the properties of =LrgLightmapBakeSettings= w
 - *Emissive surfaces* (material emission x strength) light the scene like area lights, sampled directly, and *the sky* reaches every texel that sees it.
 - *Bounced light* of =baked= and =mixed= lights, emissive surfaces and the sky, up to =bounces= reflections, tinted by each surface's albedo (colour bleeding).
 - *Probes*: the same tracer around each probe, projected onto L2 SH (no direct light of any light: dynamic objects keep realtime lights).
-- Meshes without uv2 are unwrapped automatically ([[file:../modules/graphics/uv-unwrap.org][LrgUvUnwrap]]); texels inside other geometry are detected and refilled; noise is filtered with a normal-, position- and variance-guided a-trous filter; the gutters are dilated and uv seams stitched so bilinear filtering shows no lines.
+- Meshes without uv2 are unwrapped automatically ([[file:../modules/graphics/uv-unwrap.org][LrgUvUnwrap]]; the renderer draws the same unwrap, see the pitfalls); texels inside other geometry are detected and refilled; noise is filtered with a normal-, position- and variance-guided a-trous filter; the gutters are dilated and uv seams stitched so bilinear filtering shows no lines.
 
 Details, units and formulas: [[file:../modules/lighting/lightmap-baker.org::#lightmap-baker-concepts][the baker's concepts]].
 
@@ -210,14 +210,22 @@ lrg_probe_grid_sample (lrg_world3d_find_probe_grid (world, p), p, up, rgb);   /*
 - Do not mark lights that the game switches off as =baked=: their light stays in the lightmap.
 - An object outside every probe grid and without a lightmap entry is lit by the environment or the ambient only: leave no gaps.
 - Step the world once after loading before =lrg_lightmap_baker_add_world()=: lights register with the world when their entity enters it.
-- Primitives and models without =TEXCOORD_1= are lightmapped through the baker's own unwrap: draw them with that uv2 (=lrg_uv_unwrap_new_lightmap_primitive()=, =lrg_lightmap_baker_get_object_mesh()=).
+- Primitives and models without =TEXCOORD_1= are lightmapped through the baker's own unwrap. =LrgWorld3DRenderer= handles it: a lightmapped primitive item draws a cached =lrg_uv_unwrap_new_lightmap_primitive (prim, item->params)= mesh with the world matrix alone, a lightmapped model whose meshes lack =texcoords2= draws the baker's merge-and-unwrap of it (split back per mesh, materials kept, cached on the =GrlModel=). Custom renderers do the same (=lrg_uv_unwrap_new_lightmap_primitive()=, =lrg_lightmap_baker_get_object_mesh()=).
 - Custom lit shaders must call =lrg_baked_set_uv2(fragTexCoord2)= to read lightmaps (see [[file:../modules/graphics/light-set.org::#glsl-library][the GLSL library]]).
 
 ** Using it from the editor
 :PROPERTIES:
 :CUSTOM_ID: lighting-bake-editor
 :END:
-The editor tools come in the next 0.9.0 wave: a bake panel (settings, bake / cancel, progress), the lightmap scale and static lighting toggles in the inspector, a bake mode field on lights, probe volume nodes with a probe visualisation, and a lightmap texel-density view. Until then the node params and the =lighting:= block can be edited in the inspector's raw params and the =.rlevel= text, and play-in-editor shows the baked result.
+=lrgeditor= does the whole flow (details in [[file:../editor/bake.org][Lighting Bake in the Editor]]):
+
+1. Inspector > Lighting: tick *Static lighting* on static geometry, set *Lightmap scale*; on lights set *Bake mode*.
+2. Create > Probe Volume and size it with the gizmo's extent handles.
+3. View > Panels > Lighting: set the settings (a property grid over =lighting: settings:=, every change undoable), press *Bake*. The bake runs on worker threads with a progress bar per phase and *Cancel*; the viewport shows the result as soon as it finishes.
+4. With a saved level the panel writes =<level>.rlightmap= and =<level>-<n>.rprobes= next to it and sets =lighting: lightmap:= / =probes:= in one undo step (*Save* does it for an unsaved result). *Clear* drops the references.
+5. The atlas preview shows the pages, *Sample* reads the light under the viewport centre, the eye chip compares with realtime lighting.
+
+From scripts: =lrgeditorctl bake set samples 256; lrgeditorctl bake start --wait=, or the =bake_*= MCP tools. Play-in-editor and the game load the same files.
 
 ** See also
 :PROPERTIES:

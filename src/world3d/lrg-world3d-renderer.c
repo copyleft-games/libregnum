@@ -60,6 +60,7 @@
 #include "../graphics/lrg-light-set-private.h"
 #include "../lighting/lrg-environment-glsl-private.h"
 #include "../lighting/lrg-baked-glsl-private.h"
+#include "../graphics/lrg-uv-unwrap.h"
 #include <math.h>
 #include <string.h>
 #include <raylib.h>
@@ -289,6 +290,7 @@ struct _LrgWorld3DRenderer
 	LrgVolumetricFog        *vfog;
 	LrgCamera               *view_camera;       /* begins a LrgWorld3DView for the prepass */
 	GHashTable              *custom_shaders;    /* abs .rshader path -> LrgShaderAsset, NULL = failed */
+	GHashTable              *lightmap_prims;    /* "prim:params" -> LightmapMesh (0.9.0 M3 uv2 fix) */
 	gfloat                   cur_proj[16];
 
 	/* Per-pass timing (lrg_world3d_renderer_set_timing()) */
@@ -1000,6 +1002,10 @@ release_resources (LrgWorld3DRenderer *self,
 	}
 	g_clear_object (&self->active_env);
 	clear_object_cache (self->custom_shaders, gl);
+	/* the unwrapped lightmap primitives: GPU buffers with a context,
+	 * CPU arrays only otherwise (lightmap_mesh_free() checks) */
+	if (self->lightmap_prims != NULL)
+		g_hash_table_remove_all (self->lightmap_prims);
 	if (self->faded != NULL)
 		g_hash_table_remove_all (self->faded);
 	self->m3d_shader = 0;
@@ -1547,6 +1553,375 @@ primitive_mesh (LrgWorld3DRenderer *self,
 	}
 }
 
+/* ==========================================================================
+ * Lightmap uv2 for geometry without one (0.9.0 M3)
+ *
+ * The lightmap baker unwraps every mesh that has no second UV set
+ * (LrgUvUnwrap, default settings, deterministic) and bakes into that
+ * layout.  raylib's GenMesh* primitives and glTF models without
+ * TEXCOORD_1 have no uv2, so a lightmapped draw of them would read the
+ * single texel at (0, 0).  The renderer therefore regenerates the exact
+ * mesh the baker baked and draws that instead, for lightmapped items
+ * only:
+ *
+ *   primitives  lrg_uv_unwrap_new_lightmap_primitive (prim, params): the
+ *               size is in the vertices, so the draw uses the item's
+ *               world matrix alone; cached per (primitive, params)
+ *   models      every mesh merged in object space through the model's
+ *               transform (the baker's merge, bit for bit), unwrapped as
+ *               one object, then split back per source mesh (the unwrap
+ *               keeps the triangle order) so each keeps its material;
+ *               cached on the GrlModel (qdata), drawn with the world
+ *               matrix alone.  A model whose meshes all carry texcoords2
+ *               is drawn as it is (the baker used its uv2).
+ *
+ * Shadow and depth passes keep the plain meshes: the geometry is the
+ * same, only the uv2 differ.
+ * ========================================================================== */
+
+typedef struct
+{
+	Mesh     mesh;
+	gboolean uploaded;
+} LightmapMesh;
+
+/* Frees @m's GPU buffers (with a context) and CPU arrays. */
+static void
+lightmap_mesh_release (Mesh *m)
+{
+	if (IsWindowReady ())
+	{
+		UnloadMesh (*m);
+	}
+	else
+	{
+		/* no context: GL calls would crash; the driver reclaimed the
+		 * buffers with the context, only the CPU side is ours */
+		MemFree (m->vertices);
+		MemFree (m->normals);
+		MemFree (m->texcoords);
+		MemFree (m->texcoords2);
+		MemFree (m->indices);
+		MemFree (m->vboId);
+	}
+	memset (m, 0, sizeof (Mesh));
+}
+
+static void
+lightmap_mesh_free (gpointer data)
+{
+	LightmapMesh *lm = (LightmapMesh *) data;
+
+	if (lm == NULL)
+		return;
+	if (lm->uploaded)
+		lightmap_mesh_release (&lm->mesh);
+	g_free (lm);
+}
+
+/* Uploads @uv (copied into raylib arrays) as a static mesh. */
+static gboolean
+lightmap_mesh_upload (LrgUvMesh *uv,
+                      Mesh      *out)
+{
+	lrg_uv_mesh_to_raylib (uv, out);
+	if (out->vertexCount <= 0 || out->vertices == NULL)
+	{
+		memset (out, 0, sizeof (Mesh));
+		return FALSE;
+	}
+	UploadMesh (out, FALSE);
+	return TRUE;
+}
+
+/*
+ * The unwrapped mesh of a lightmapped primitive item, made and uploaded
+ * on first use.  NULL for primitives without a surface or when the
+ * unwrap fails (the caller then draws the plain mesh).
+ */
+static Mesh *
+lightmap_primitive_mesh (LrgWorld3DRenderer  *self,
+                         const LrgRenderItem *item)
+{
+	g_autofree gchar *key = NULL;
+	LightmapMesh     *lm;
+
+	key = g_strdup_printf ("%d:%a:%a:%a:%a", (gint) item->primitive, (gdouble) item->params[0],
+	                       (gdouble) item->params[1], (gdouble) item->params[2], (gdouble) item->params[3]);
+	lm = g_hash_table_lookup (self->lightmap_prims, key);
+	if (lm == NULL)
+	{
+		g_autoptr(LrgUvMesh) uv = lrg_uv_unwrap_new_lightmap_primitive (item->primitive, item->params);
+
+		lm = g_new0 (LightmapMesh, 1);
+		if (uv != NULL)
+			lm->uploaded = lightmap_mesh_upload (uv, &lm->mesh);
+		/* failures are cached too: the plain mesh is drawn from then on */
+		g_hash_table_insert (self->lightmap_prims, g_steal_pointer (&key), lm);
+	}
+	return lm->uploaded ? &lm->mesh : NULL;
+}
+
+/* The unwrapped meshes of one model, one per model mesh (index order). */
+typedef struct
+{
+	gint      n;
+	Mesh     *meshes;      /* n entries; vertexCount 0 = nothing to draw */
+	gboolean  unwrapped;   /* FALSE: the model has uv2 or the unwrap failed */
+} LightmapModel;
+
+static void
+lightmap_model_free (gpointer data)
+{
+	LightmapModel *lm = (LightmapModel *) data;
+	gint           i;
+
+	for (i = 0; i < lm->n; i++)
+		if (lm->meshes[i].vertexCount > 0)
+			lightmap_mesh_release (&lm->meshes[i]);
+	g_free (lm->meshes);
+	g_free (lm);
+}
+
+static GQuark
+lightmap_model_quark (void)
+{
+	return g_quark_from_static_string ("lrg-world3d-renderer-lightmap-model");
+}
+
+/*
+ * Triangles [@t0, @t1) of @uv as a raylib mesh with its own compact
+ * vertex range (16-bit indices; one vertex per corner when the range
+ * has more than 65535 vertices), uploaded.  Positions, normals, uvs and
+ * uv2 are copied through.
+ */
+static gboolean
+lightmap_submesh_upload (LrgUvMesh *uv,
+                         guint      t0,
+                         guint      t1,
+                         Mesh      *out)
+{
+	gsize            n_pos = 0;
+	gsize            n_idx = 0;
+	const gfloat    *pos = lrg_uv_mesh_get_positions (uv, &n_pos);
+	const guint32   *idx = lrg_uv_mesh_get_indices (uv, &n_idx);
+	const gfloat    *nrm = lrg_uv_mesh_get_normals (uv, NULL);
+	const gfloat    *tex = lrg_uv_mesh_get_uvs (uv, NULL);
+	const gfloat    *tex2 = lrg_uv_mesh_get_uv2 (uv, NULL);
+	g_autoptr(GHashTable) remap = NULL;
+	GArray          *order;
+	guint            nt = t1 - t0;
+	guint            c, nv, k;
+
+	memset (out, 0, sizeof (Mesh));
+	if (nt == 0 || (gsize) t1 * 3u > n_idx || pos == NULL)
+		return FALSE;
+
+	/* the vertices the range uses, in first-use order */
+	remap = g_hash_table_new (g_direct_hash, g_direct_equal);
+	order = g_array_new (FALSE, FALSE, sizeof (guint32));
+	for (c = t0 * 3u; c < t1 * 3u; c++)
+	{
+		if (!g_hash_table_contains (remap, GUINT_TO_POINTER (idx[c] + 1u)))
+		{
+			g_hash_table_insert (remap, GUINT_TO_POINTER (idx[c] + 1u), GUINT_TO_POINTER (order->len));
+			g_array_append_val (order, idx[c]);
+		}
+	}
+
+	nv = (order->len <= 65535u) ? order->len : nt * 3u;
+	out->vertexCount = (gint) nv;
+	out->triangleCount = (gint) nt;
+	out->vertices = (gfloat *) MemAlloc ((guint) ((gsize) nv * 3u * sizeof (gfloat)));
+	if (nrm != NULL)
+		out->normals = (gfloat *) MemAlloc ((guint) ((gsize) nv * 3u * sizeof (gfloat)));
+	if (tex != NULL)
+		out->texcoords = (gfloat *) MemAlloc ((guint) ((gsize) nv * 2u * sizeof (gfloat)));
+	if (tex2 != NULL)
+		out->texcoords2 = (gfloat *) MemAlloc ((guint) ((gsize) nv * 2u * sizeof (gfloat)));
+
+	for (k = 0; k < nv; k++)
+	{
+		/* indexed: the k-th used vertex; de-indexed: the k-th corner */
+		guint32 v = (order->len <= 65535u) ? g_array_index (order, guint32, k) : idx[t0 * 3u + k];
+
+		memcpy (out->vertices + (gsize) k * 3u, pos + (gsize) v * 3u, 3 * sizeof (gfloat));
+		if (out->normals != NULL)
+			memcpy (out->normals + (gsize) k * 3u, nrm + (gsize) v * 3u, 3 * sizeof (gfloat));
+		if (out->texcoords != NULL)
+			memcpy (out->texcoords + (gsize) k * 2u, tex + (gsize) v * 2u, 2 * sizeof (gfloat));
+		if (out->texcoords2 != NULL)
+			memcpy (out->texcoords2 + (gsize) k * 2u, tex2 + (gsize) v * 2u, 2 * sizeof (gfloat));
+	}
+	if (order->len <= 65535u)
+	{
+		out->indices = (unsigned short *) MemAlloc ((guint) ((gsize) nt * 3u * sizeof (unsigned short)));
+		for (c = 0; c < nt * 3u; c++)
+			out->indices[c] = (unsigned short) GPOINTER_TO_UINT (
+				g_hash_table_lookup (remap, GUINT_TO_POINTER (idx[t0 * 3u + c] + 1u)));
+	}
+	g_array_unref (order);
+	UploadMesh (out, FALSE);
+	return TRUE;
+}
+
+/*
+ * The baker's object-space merge of @model (positions and normals through
+ * model->transform, indices or sequential triangles), plus the uvs when
+ * every mesh has them; @first_tri gets the first merged triangle of each
+ * mesh (model->meshCount + 1 entries).  NULL when there is no geometry.
+ */
+static LrgUvMesh *
+lightmap_model_merge (const Model *model,
+                      guint       *first_tri)
+{
+	gfloat    mt[16];
+	GArray   *pos = g_array_new (FALSE, FALSE, sizeof (gfloat));
+	GArray   *nrm = g_array_new (FALSE, FALSE, sizeof (gfloat));
+	GArray   *tex = g_array_new (FALSE, FALSE, sizeof (gfloat));
+	GArray   *ind = g_array_new (FALSE, FALSE, sizeof (guint32));
+	gboolean  all_nrm = TRUE, all_tex = TRUE;
+	LrgUvMesh *mesh = NULL;
+	gint      i;
+
+	mt[0] = model->transform.m0;   mt[1] = model->transform.m1;
+	mt[2] = model->transform.m2;   mt[3] = model->transform.m3;
+	mt[4] = model->transform.m4;   mt[5] = model->transform.m5;
+	mt[6] = model->transform.m6;   mt[7] = model->transform.m7;
+	mt[8] = model->transform.m8;   mt[9] = model->transform.m9;
+	mt[10] = model->transform.m10; mt[11] = model->transform.m11;
+	mt[12] = model->transform.m12; mt[13] = model->transform.m13;
+	mt[14] = model->transform.m14; mt[15] = model->transform.m15;
+
+	for (i = 0; i < model->meshCount; i++)
+	{
+		const Mesh *me = &model->meshes[i];
+		guint       base = pos->len / 3u;
+		guint       nv, k;
+
+		first_tri[i] = ind->len / 3u;
+		if (me->vertices == NULL || me->vertexCount <= 0)
+			continue;
+		nv = (guint) me->vertexCount;
+		for (k = 0; k < nv; k++)
+		{
+			gfloat p[3];
+
+			lrg_math3d_transform_point (mt, me->vertices + (gsize) k * 3u, p);
+			g_array_append_vals (pos, p, 3);
+			if (me->normals != NULL)
+			{
+				gfloat n[3], len;
+
+				lrg_math3d_transform_direction (mt, me->normals + (gsize) k * 3u, n);
+				len = sqrtf (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+				if (len > 1e-30f)
+				{
+					n[0] /= len;
+					n[1] /= len;
+					n[2] /= len;
+				}
+				g_array_append_vals (nrm, n, 3);
+			}
+			if (me->texcoords != NULL)
+				g_array_append_vals (tex, me->texcoords + (gsize) k * 2u, 2);
+		}
+		if (me->normals == NULL)
+			all_nrm = FALSE;
+		if (me->texcoords == NULL)
+			all_tex = FALSE;
+		if (me->indices != NULL)
+		{
+			for (k = 0; k < (guint) MAX (me->triangleCount, 0) * 3u; k++)
+			{
+				guint32 v = base + me->indices[k];
+
+				g_array_append_val (ind, v);
+			}
+		}
+		else
+		{
+			for (k = 0; k < nv - nv % 3u; k++)
+			{
+				guint32 v = base + k;
+
+				g_array_append_val (ind, v);
+			}
+		}
+	}
+	first_tri[model->meshCount] = ind->len / 3u;
+
+	if (ind->len >= 3u)
+	{
+		mesh = lrg_uv_mesh_new ((const gfloat *) (gpointer) pos->data, pos->len,
+		                        (const guint32 *) (gpointer) ind->data, ind->len);
+		if (mesh != NULL && all_nrm && nrm->len == pos->len)
+			lrg_uv_mesh_set_normals (mesh, (const gfloat *) (gpointer) nrm->data, nrm->len);
+		if (mesh != NULL && all_tex && tex->len * 3u == pos->len * 2u)
+			lrg_uv_mesh_set_uvs (mesh, (const gfloat *) (gpointer) tex->data, tex->len);
+	}
+	g_array_unref (pos);
+	g_array_unref (nrm);
+	g_array_unref (tex);
+	g_array_unref (ind);
+	return mesh;
+}
+
+/*
+ * The lightmap meshes of @grl (made on first use and kept on the model).
+ * Returns NULL when the model is drawn as it is: every mesh has uv2, or
+ * the unwrap failed.
+ */
+static LightmapModel *
+lightmap_model (GrlModel *grl)
+{
+	LightmapModel *lm = g_object_get_qdata (G_OBJECT (grl), lightmap_model_quark ());
+	const Model   *model;
+
+	if (lm != NULL)
+		return lm->unwrapped ? lm : NULL;
+
+	model = (const Model *) grl_model_get_handle (grl);
+	lm = g_new0 (LightmapModel, 1);
+	if (model != NULL && model->meshCount > 0)
+	{
+		gboolean all_uv2 = TRUE;
+		gint     i;
+
+		for (i = 0; i < model->meshCount; i++)
+			if (model->meshes[i].vertices != NULL && model->meshes[i].vertexCount > 0 &&
+			    model->meshes[i].texcoords2 == NULL)
+				all_uv2 = FALSE;
+		if (!all_uv2)
+		{
+			g_autofree guint      *first = g_new0 (guint, (gsize) model->meshCount + 1u);
+			g_autoptr(LrgUvMesh)   merged = lightmap_model_merge (model, first);
+			g_autoptr(LrgUvUnwrap) unwrap = lrg_uv_unwrap_new ();
+			g_autoptr(LrgUvMesh)   out = NULL;
+			g_autoptr(GError)      error = NULL;
+
+			if (merged != NULL)
+				out = lrg_uv_unwrap_run (unwrap, merged, &error);
+			if (out != NULL)
+			{
+				lm->n = model->meshCount;
+				lm->meshes = g_new0 (Mesh, (gsize) lm->n);
+				for (i = 0; i < model->meshCount; i++)
+					lightmap_submesh_upload (out, first[i], first[i + 1], &lm->meshes[i]);
+				lm->unwrapped = TRUE;
+			}
+			else if (merged != NULL)
+				g_message ("lightmap uv2 for a model failed: %s", error != NULL ? error->message : "?");
+		}
+	}
+	g_object_set_qdata_full (G_OBJECT (grl), lightmap_model_quark (), lm, lightmap_model_free);
+	return lm->unwrapped ? lm : NULL;
+}
+
+static LrgLightmap3D *item_lightmap (const LrgRenderItem *item,
+                                     guint               *page,
+                                     gfloat              *scale_offset);
+
 static void
 draw_primitive (LrgWorld3DRenderer  *self,
                 const LrgRenderItem *item,
@@ -1557,6 +1932,18 @@ draw_primitive (LrgWorld3DRenderer  *self,
 	Mesh     mesh;
 	gboolean has_pre;
 
+	/* a lightmapped primitive draws the baker's unwrapped mesh (its uv2
+	 * address the lightmap entry); size is in its vertices */
+	if (!casters_only && primitive_is_solid (item->primitive) && item_lightmap (item, NULL, NULL) != NULL)
+	{
+		Mesh *lm = lightmap_primitive_mesh (self, item);
+
+		if (lm != NULL)
+		{
+			draw_mesh (self, *lm, to_matrix (item->world_matrix), item_color (item), item_texture (self, item));
+			return;
+		}
+	}
 	if (primitive_mesh (self, item->primitive, &mesh, &pre, &has_pre))
 	{
 		draw_mesh (self, mesh, has_pre ? mat_mul (pre, m) : m, item_color (item), item_texture (self, item));
@@ -1585,6 +1972,7 @@ draw_model (LrgWorld3DRenderer  *self,
 	Matrix     m = to_matrix (item->world_matrix);
 	Color      tint = item_color (item);
 	Texture2D *override = item_texture (self, item);
+	LightmapModel *lmodel;
 	gint       i, first, last;
 
 	grl = (item->model != NULL && GRL_IS_MODEL (item->model)) ? GRL_MODEL (item->model) : NULL;
@@ -1619,7 +2007,11 @@ draw_model (LrgWorld3DRenderer  *self,
 		last = first + 1;
 	}
 
-	m = mat_mul (model->transform, m);
+	/* a lightmapped model without uv2 draws the baker's unwrap of it
+	 * (object space through model->transform already) */
+	lmodel = (!casters_only && item_lightmap (item, NULL, NULL) != NULL) ? lightmap_model (grl) : NULL;
+	if (lmodel == NULL)
+		m = mat_mul (model->transform, m);
 	for (i = first; i < last; i++)
 	{
 		Material    mat = model->materials[model->meshMaterial[i]];
@@ -1651,7 +2043,13 @@ draw_model (LrgWorld3DRenderer  *self,
 			maps[MATERIAL_MAP_DIFFUSE].texture = self->white;
 		else if (override != NULL)
 			maps[MATERIAL_MAP_DIFFUSE].texture = *override;
-		DrawMesh (model->meshes[i], mat, m);
+		if (lmodel != NULL && i < lmodel->n)
+		{
+			if (lmodel->meshes[i].vertexCount > 0)
+				DrawMesh (lmodel->meshes[i], mat, m);
+		}
+		else
+			DrawMesh (model->meshes[i], mat, m);
 		self->drawn++;
 	}
 }
@@ -3392,6 +3790,7 @@ lrg_world3d_renderer_finalize (GObject *object)
 	g_clear_object (&self->vfog);
 	g_clear_object (&self->view_camera);
 	g_clear_pointer (&self->custom_shaders, g_hash_table_unref);
+	g_clear_pointer (&self->lightmap_prims, g_hash_table_unref);
 	g_clear_pointer (&self->faded, g_hash_table_unref);
 
 	G_OBJECT_CLASS (lrg_world3d_renderer_parent_class)->finalize (object);
@@ -3632,6 +4031,7 @@ lrg_world3d_renderer_init (LrgWorld3DRenderer *self)
 	self->faded = g_hash_table_new (g_direct_hash, g_direct_equal);
 	self->cur_layers = LRG_RENDER_LAYERS_MASK_ALL;
 	self->custom_shaders = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
+	self->lightmap_prims = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, lightmap_mesh_free);
 	self->sun_dir[0] = DEFAULT_SUN_X;
 	self->sun_dir[1] = DEFAULT_SUN_Y;
 	self->sun_dir[2] = DEFAULT_SUN_Z;

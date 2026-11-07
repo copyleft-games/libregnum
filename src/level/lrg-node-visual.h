@@ -20,6 +20,14 @@
  *  - REFLECTION_PROBE (0.9.0): params extents_x / extents_y / extents_z
  *    (half sizes, default 5), blend_distance, intensity, box_projection,
  *    resolution (default 128), near_clip, far_clip, auto_recapture
+ *  - PROBE_VOLUME (0.9.0 M3): a world-axis-aligned box of baked SH light
+ *    probes centred on the node (rotation and scale are ignored, like a
+ *    reflection probe); params extents_x / extents_y / extents_z (half
+ *    sizes, default 5), spacing (distance between probes; 0 = the level's
+ *    `lighting: settings: probe_spacing`, else 2) and resolution (probes
+ *    per axis, 2 .. 64; 0 = from the spacing).  Instantiated into an
+ *    unbaked #LrgProbeGrid on the world, which the lightmap baker bakes
+ *    (see lrg_node_visual_get_probe_volume())
  *
  * Kind-specific scalar settings (light intensity, camera fov, audio volume,
  * sprite source rectangle, etc.) live in a typed parameter bag, mirroring the
@@ -306,5 +314,34 @@ LrgNodeVisual * lrg_node_visual_copy (LrgNodeVisual *self);
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_node_visual_equal (LrgNodeVisual *a,
                                 LrgNodeVisual *b);
+
+/**
+ * lrg_node_visual_get_probe_volume:
+ * @self: an #LrgNodeVisual of kind %LRG_NODE_VISUAL_PROBE_VOLUME
+ * @world: (array fixed-size=16): the node's world matrix (column-major)
+ * @default_spacing: the probe spacing when the node sets neither spacing
+ *   nor resolution (the level's `probe_spacing`; 0 or less = 2)
+ * @out_min: (out caller-allocates) (array fixed-size=3): the box's lower
+ *   corner in world space
+ * @out_max: (out caller-allocates) (array fixed-size=3): the upper corner
+ * @out_resolution: (out caller-allocates) (array fixed-size=3): probes
+ *   along X, Y and Z (2 .. %LRG_PROBE_GRID_MAX_RESOLUTION)
+ *
+ * The probe grid a probe-volume node stands for: the box of half sizes
+ * `extents_x/y/z` around the node's world position (axis aligned) and
+ * its probe counts, from `resolution` when set, else
+ * floor (size / spacing) + 1 per axis (the lightmap baker's rule).  Level
+ * instantiation, the editor viewport and the bake panel all use it, so
+ * they agree on where the probes are.
+ *
+ * Returns: %FALSE when @self is not a probe volume
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_visual_get_probe_volume (LrgNodeVisual *self,
+                                           const gfloat  *world,
+                                           gfloat         default_spacing,
+                                           gfloat        *out_min,
+                                           gfloat        *out_max,
+                                           guint         *out_resolution);
 
 G_END_DECLS

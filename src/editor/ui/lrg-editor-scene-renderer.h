@@ -29,6 +29,7 @@
 #include "../../lighting/lrg-shadow-renderer.h"
 #include "../../graphics/lrg-sky-dome.h"
 #include "../../graphics/lrg-lod-group.h"
+#include "../../lighting/lrg-lightmap3d.h"
 #include "../../postprocess/lrg-post-processor.h"
 #include "../../world3d/lrg-world3d-renderer.h"
 #include "../lrg-editor-play-session.h"
@@ -438,6 +439,82 @@ LrgLodGroup * lrg_editor_scene_renderer_get_lod_group (LrgEditorSceneRenderer *s
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_scene_renderer_recapture_probes (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_set_show_baked:
+ * @self: an #LrgEditorSceneRenderer
+ * @show: whether the authoring view applies the level's baked lighting
+ *
+ * While authoring, the viewport applies the level's `lighting:` block
+ * (its `.rlightmap` and `.rprobes`, or the bake panel's unsaved result,
+ * see lrg_editor_scene_renderer_set_baked_override()) to the nodes the
+ * way a game draws them: lightmapped nodes read their lightmap entry,
+ * other geometry inside a baked probe volume its probe grid.  %FALSE
+ * draws realtime lighting only (to compare).  On by default.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_show_baked (LrgEditorSceneRenderer *self,
+                                               gboolean                show);
+
+/**
+ * lrg_editor_scene_renderer_get_show_baked:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Returns: whether the authoring view applies baked lighting
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_scene_renderer_get_show_baked (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_set_baked_override:
+ * @self: an #LrgEditorSceneRenderer
+ * @lightmap: (nullable): a lightmap to show instead of the level's
+ * @grids: (nullable) (element-type LrgProbeGrid): probe grids to show
+ *   instead of the level's
+ *
+ * Shows a bake that is not on disk yet (the bake panel's result before it
+ * is saved next to the level) instead of the level's `lighting:`
+ * references.  Both %NULL / empty go back to the references.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_set_baked_override (LrgEditorSceneRenderer *self,
+                                                   LrgLightmap3D          *lightmap,
+                                                   GPtrArray              *grids);
+
+/**
+ * lrg_editor_scene_renderer_reload_lighting:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * Reloads the level's `.rlightmap` and `.rprobes` before the next frame
+ * (the viewport reloads by itself when the references change; call this
+ * after rewriting the files under the same names).
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_scene_renderer_reload_lighting (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_baked_lightmap:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The lightmap the authoring view applies (loaded now if needed).
+ *
+ * Returns: (transfer none) (nullable): the lightmap, or %NULL
+ */
+LRG_AVAILABLE_IN_ALL
+LrgLightmap3D * lrg_editor_scene_renderer_get_baked_lightmap (LrgEditorSceneRenderer *self);
+
+/**
+ * lrg_editor_scene_renderer_get_baked_probe_grids:
+ * @self: an #LrgEditorSceneRenderer
+ *
+ * The probe grids the authoring view applies (loaded now if needed);
+ * probe-volume nodes colour their probe dots from the grid baked for
+ * their box.
+ *
+ * Returns: (transfer none) (element-type LrgProbeGrid): the grids
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_editor_scene_renderer_get_baked_probe_grids (LrgEditorSceneRenderer *self);
 
 /**
  * lrg_editor_scene_renderer_get_generation:

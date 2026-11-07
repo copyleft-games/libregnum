@@ -185,6 +185,19 @@ static const struct
 	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "box_projection", 1.0, "range:0,1,1",
 	  "1 = parallax-correct reflections against the box, 0 = infinitely far" },
 	{ LRG_NODE_VISUAL_REFLECTION_PROBE, "resolution", 128.0, "range:16,1024,16", "Cubemap edge of a capture, in pixels" },
+	/* 0.9.0 M3: the lighting bake (LrgMeshRendererComponent:lightmap-scale)
+	 * and probe volumes (lrg_node_visual_get_probe_volume()) */
+	{ LRG_NODE_VISUAL_PRIMITIVE, "lightmap_scale", 1.0, "range:0,16,0.05",
+	  "Lightmap resolution relative to the bake's texels per unit; 0 = lit by probes only" },
+	{ LRG_NODE_VISUAL_MESH_ASSET, "lightmap_scale", 1.0, "range:0,16,0.05",
+	  "Lightmap resolution relative to the bake's texels per unit; 0 = lit by probes only" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "extents_x", 5.0, "range:0.05,1000,0.05", "Half size of the probe box along X" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "extents_y", 5.0, "range:0.05,1000,0.05", "Half size of the probe box along Y" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "extents_z", 5.0, "range:0.05,1000,0.05", "Half size of the probe box along Z" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "spacing", 0.0, "range:0,64,0.05",
+	  "Distance between probes; 0 = the level's probe spacing (Bake panel)" },
+	{ LRG_NODE_VISUAL_PROBE_VOLUME, "resolution", 0.0, "range:0,64,1",
+	  "Probes along each axis (2 .. 64); 0 = from the spacing" },
 	{ LRG_NODE_VISUAL_CAMERA, "fov", 60.0, "range:1,179,0.5", "Vertical field of view in degrees" },
 	{ LRG_NODE_VISUAL_CAMERA, "near", 0.1, "range:0.001,100,0.01", "Near clip plane" },
 	{ LRG_NODE_VISUAL_CAMERA, "far", 1000.0, "range:1,100000,1", "Far clip plane" },
@@ -206,9 +219,49 @@ static const struct
 } suggested_strings[] = {
 	{ LRG_NODE_VISUAL_LIGHT, "light_type", "point", "enum-strings:point,spot,directional",
 	  "Point, spot (a cone down local -Z) or directional (a sun shining down local -Z)" },
+	{ LRG_NODE_VISUAL_LIGHT, "bake_mode", "realtime", "enum-strings:realtime,mixed,baked",
+	  "Lighting bake: realtime (not baked), mixed (bounce baked, direct light realtime) or baked "
+	  "(direct and bounce in lightmaps)" },
 	{ LRG_NODE_VISUAL_DECAL, "normal", "", "asset:texture", "Normal map the decal blends in" },
 	{ LRG_NODE_VISUAL_DECAL, "orm", "", "asset:texture", "Occlusion / roughness / metallic map" },
 };
+
+/* Boolean params a kind usually has (listed even when unset). */
+static const struct
+{
+	LrgNodeVisualKind  kind;
+	const gchar       *param;
+	gboolean           value;
+	const gchar       *tooltip;
+} suggested_bools[] = {
+	{ LRG_NODE_VISUAL_PRIMITIVE, "static_lighting", FALSE,
+	  "Takes part in the lighting bake: blocks and bounces light and gets a lightmap" },
+	{ LRG_NODE_VISUAL_MESH_ASSET, "static_lighting", FALSE,
+	  "Takes part in the lighting bake: blocks and bounces light and gets a lightmap" },
+};
+
+static gint
+find_suggested_bool (LrgNodeVisualKind  kind,
+                     const gchar       *param)
+{
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (suggested_bools); i++)
+		if (suggested_bools[i].kind == kind && g_strcmp0 (suggested_bools[i].param, param) == 0)
+			return (gint) i;
+	return -1;
+}
+
+/* The inspector group of a param row: the bake's switches go under
+ * "Lighting", everything else under "Parameters". */
+static const gchar *
+param_group (const gchar *key)
+{
+	if (g_strcmp0 (key, "static_lighting") == 0 || g_strcmp0 (key, "lightmap_scale") == 0 ||
+	    g_strcmp0 (key, "bake_mode") == 0)
+		return "Lighting";
+	return "Parameters";
+}
 
 /* A row label for a well-known param: "blend_distance" -> "Blend distance",
  * "size_x" -> "Size X". Custom keys keep their raw name. */
@@ -1107,6 +1160,10 @@ build_visual (Builder *b)
 		if (suggested_strings[i].kind == kind &&
 		    !g_ptr_array_find_with_equal_func (keys, suggested_strings[i].param, g_str_equal, NULL))
 			g_ptr_array_add (keys, g_strdup (suggested_strings[i].param));
+	for (i = 0; i < G_N_ELEMENTS (suggested_bools); i++)
+		if (suggested_bools[i].kind == kind &&
+		    !g_ptr_array_find_with_equal_func (keys, suggested_bools[i].param, g_str_equal, NULL))
+			g_ptr_array_add (keys, g_strdup (suggested_bools[i].param));
 	g_ptr_array_sort_values (keys, (GCompareFunc) g_strcmp0);
 
 	for (i = 0; i < keys->len; i++)
@@ -1115,18 +1172,27 @@ build_visual (Builder *b)
 		const GValue     *stored = lrg_node_visual_get_param (visual, key);
 		gint              sug = find_suggested (kind, key);
 		gint              ssug = find_suggested_string (kind, key);
-		GType             type = (stored != NULL) ? G_VALUE_TYPE (stored) : (ssug >= 0) ? G_TYPE_STRING : G_TYPE_DOUBLE;
+		gint              bsug = find_suggested_bool (kind, key);
+		GType             type = (stored != NULL) ? G_VALUE_TYPE (stored)
+		                         : (ssug >= 0) ? G_TYPE_STRING : (bsug >= 0) ? G_TYPE_BOOLEAN : G_TYPE_DOUBLE;
 		g_autofree gchar *name = unique_name (b, "param-", key);
 		GParamSpec       *pspec = make_pspec_for_type (name, type, FALSE);
-		g_autofree gchar *label = (sug >= 0 || ssug >= 0) ? pretty_param (key) : g_strdup (key);
+		g_autofree gchar *label = (sug >= 0 || ssug >= 0 || bsug >= 0) ? pretty_param (key) : g_strdup (key);
 
 		if (pspec == NULL)
 			continue;
-		e = add_entry (b, SLOT_PARAM, pspec, label, "Parameters",
+		e = add_entry (b, SLOT_PARAM, pspec, label, param_group (key),
 		               sug >= 0 ? suggested_params[sug].hint : ssug >= 0 ? suggested_strings[ssug].hint : NULL,
-		               sug >= 0 ? suggested_params[sug].tooltip : ssug >= 0 ? suggested_strings[ssug].tooltip : NULL);
+		               sug >= 0 ? suggested_params[sug].tooltip : ssug >= 0 ? suggested_strings[ssug].tooltip
+		               : bsug >= 0 ? suggested_bools[bsug].tooltip : NULL);
 		e->key = g_strdup (key);
-		if (sug >= 0)
+		if (bsug >= 0 && G_TYPE_FUNDAMENTAL (type) == G_TYPE_BOOLEAN)
+		{
+			g_value_init (&e->def, G_TYPE_BOOLEAN);
+			g_value_set_boolean (&e->def, suggested_bools[bsug].value);
+			e->has_default = TRUE;
+		}
+		else if (sug >= 0)
 			default_double (e, suggested_params[sug].value);
 		else if (ssug >= 0 && G_TYPE_FUNDAMENTAL (type) == G_TYPE_STRING)
 		{

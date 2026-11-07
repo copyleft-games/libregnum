@@ -379,6 +379,19 @@ paint_kind_glyph (LrgWidget    *widget,
 			lrg_paint_list_circle (list, cx - r * 0.25f, cy - r * 0.25f, r * 0.22f, &hi);
 		}
 		break;
+	case LRG_NODE_VISUAL_PROBE_VOLUME:
+		{
+			/* light probes (0.9.0 M3): a 3 x 3 lattice of dots in a box */
+			gint ix, iy;
+
+			c.r = 0xf9; c.g = 0xe2; c.b = 0xaf; c.a = 0xff;
+			lrg_paint_list_border (list, cx - r * 1.15f, cy - r * 1.15f, r * 2.3f, r * 2.3f, r * 0.25f, t * 0.8f, &c);
+			for (iy = -1; iy <= 1; iy++)
+				for (ix = -1; ix <= 1; ix++)
+					lrg_paint_list_circle (list, cx + (gfloat) ix * r * 0.6f, cy + (gfloat) iy * r * 0.6f,
+					                       r * (ix == 0 && iy == 0 ? 0.28f : 0.2f), &c);
+		}
+		break;
 	case LRG_NODE_VISUAL_CAMERA:
 		c = *theme_color (widget, LRG_THEME_COLOR_LINK);
 		lrg_paint_list_rect (list, cx - r * 1.1f, cy - r * 0.6f, r * 1.4f, r * 1.2f, r * 0.2f, &c);

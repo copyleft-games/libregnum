@@ -26,6 +26,8 @@
 #include "lrg-editor-console-panel.h"
 #include "lrg-editor-tiles-panel.h"
 #include "lrg-editor-environment-panel.h"
+#include "lrg-editor-bake-panel.h"
+#include "lrg-editor-sequencer-panel.h"
 #include "lrg-editor-timeline-panel.h"
 #include "lrg-editor-profiler-panel.h"
 #include "lrg-editor-code-panel.h"
@@ -202,10 +204,12 @@ create_panels (LrgEditorApp *self)
 	make_panel (self, "problems", "Problems", "warning", LRG_WIDGET (lrg_editor_problems_panel_new (self)), TRUE);
 	make_panel (self, "history", "History", "undo", LRG_WIDGET (lrg_editor_history_panel_new (self)), TRUE);
 	make_panel (self, "timeline", "Timeline", "play", LRG_WIDGET (lrg_editor_timeline_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_SEQUENCER_PANEL_ID, "Sequencer", "clock", LRG_WIDGET (lrg_editor_sequencer_panel_new (self)), TRUE);
 	make_panel (self, "profiler", "Profiler", "chart", LRG_WIDGET (lrg_editor_profiler_panel_new (self)), TRUE);
 	make_panel (self, "code", "Code", "code", LRG_WIDGET (lrg_editor_code_panel_new (self)), TRUE);
 	make_panel (self, "tiles", "Tiles", "grid", LRG_WIDGET (lrg_editor_tiles_panel_new (self)), TRUE);
 	make_panel (self, "environment", "Environment", "star", LRG_WIDGET (lrg_editor_environment_panel_new (self)), TRUE);
+	make_panel (self, LRG_EDITOR_BAKE_PANEL_ID, "Lighting", "refresh", LRG_WIDGET (lrg_editor_bake_panel_new (self)), TRUE);
 }
 
 static LrgDockPanel *
@@ -229,10 +233,12 @@ dock_default (LrgEditorApp *self,
 		{ "problems", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "history", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "timeline", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "sequencer", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "profiler", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "code", "assets", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "tiles", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 		{ "environment", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
+		{ "bake", "inspector", LRG_DOCK_POSITION_CENTER, 0.0f },
 	};
 	LrgDockArea  *dock = lrg_editor_window_get_dock (self->window);
 	LrgDockPanel *p = panel (self, id);
@@ -265,7 +271,7 @@ editor_app_reset_layout (LrgEditorApp *self)
 {
 	static const gchar *order[] = {
 		"viewport", "hierarchy", "inspector", "assets", "console", "problems", "history",
-		"timeline", "profiler", "code", "tiles", "environment", NULL
+		"timeline", "sequencer", "profiler", "code", "tiles", "environment", "bake", NULL
 	};
 	LrgDockArea   *dock = lrg_editor_window_get_dock (self->window);
 	GList         *docked = lrg_dock_area_get_panels (dock);
@@ -1314,6 +1320,10 @@ editor_app_open_asset (LrgEditorApp *self,
 	LrgAssetType      type = lrg_asset_database_classify (path);
 	g_autofree gchar *abs = editor_app_project_path (self, path);
 
+	/* .rseq sequences open in the docked sequencer panel */
+	if (g_str_has_suffix (abs, ".rseq") && lrg_editor_sequencer_panel_open_file (self, abs, NULL))
+		return;
+
 	switch (type)
 	{
 	case LRG_ASSET_TYPE_LEVEL:
@@ -1370,6 +1380,7 @@ editor_create_items (guint *n_items)
 		{ "-", NULL, NULL, 0, 0 },
 		{ "decal", "Decal", "Decal", LRG_NODE_VISUAL_DECAL, 0 },
 		{ "reflection-probe", "Reflection Probe", "Reflection Probe", LRG_NODE_VISUAL_REFLECTION_PROBE, 0 },
+		{ "probe-volume", "Probe Volume", "Probe Volume", LRG_NODE_VISUAL_PROBE_VOLUME, 0 },
 	};
 
 	*n_items = G_N_ELEMENTS (items);
@@ -2082,4 +2093,12 @@ lrg_editor_app_run_headless (LrgEditorApp *self)
 	g_source_remove (sigint);
 	g_source_remove (sigterm);
 	return 0;
+}
+
+LrgEditorSceneRenderer *
+lrg_editor_app_get_scene_renderer (LrgEditorApp *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_APP (self), NULL);
+
+	return self->renderer;
 }

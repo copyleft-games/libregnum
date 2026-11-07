@@ -76,7 +76,7 @@ static const GOptionEntry entries[] = {
 	{ "tail", 0, 0, G_OPTION_ARG_INT, &opt_tail, "Log records to show first (default 50)", "N" },
 	{ "window", 0, 0, G_OPTION_ARG_NONE, &opt_window, "Screenshot the whole window, not just the viewport", NULL },
 	{ "force", 0, 0, G_OPTION_ARG_NONE, &opt_force, "Discard unsaved changes (open, new, quit)", NULL },
-	{ "wait", 0, 0, G_OPTION_ARG_NONE, &opt_wait, "Wait for a started job to finish (env bake)", NULL },
+	{ "wait", 0, 0, G_OPTION_ARG_NONE, &opt_wait, "Wait for a started job to finish (env bake, bake start)", NULL },
 	{ "level", 'l', 0, G_OPTION_ARG_STRING, &opt_level,
 	  "Toast level for notify: info, success, warning, error (or 0-3)", "LEVEL" },
 	{ "type", 't', 0, G_OPTION_ARG_STRING, &opt_type, "Asset type filter for get assets", "TYPE" },
@@ -110,7 +110,7 @@ static const gchar *description =
 	"  view [top|front|right|bottom|back|left|persp|all] | view focus NAME | view set key=value...\n"
 	"  screenshot FILE.png [--window]\n"
 	"  tiles NODE [ACTION key=value...] tilemap grid; ACTION: paint rect fill pick configure\n"
-	"  timeline [list|get|add|rm|key|play|stop|seek|state] ...  keyframe timelines\n"
+	"  timeline [list|get|add|rm|key|tangent|play|stop|seek|state] ...  keyframe timelines\n"
 	"  thumbnail PATH                   generate/print an asset's cached thumbnail\n"
 	"  meta get PATH | meta set PATH key=value... [guid=G]  asset .meta sidecar\n"
 	"  vcs [PATH]                       git branch and file status (badges)\n"
@@ -135,6 +135,17 @@ static const gchar *description =
 	"  env [get|set KEY VALUE|reset|bake [--wait]|progress|show]  the level environment block\n"
 	"  post types|open|create|get|add|remove|move|set|save|preview|look|assign ...  .rpost post stacks\n"
 	"  lod get NODE | lod force NODE LEVEL|auto   LOD preview of a mesh node\n"
+	"  bake [get|set KEY VALUE|reset|start [--wait]|progress|cancel|save [DIR]|clear|evaluate [X Y Z [NX NY NZ]]\n"
+	"       |preview on|off|page N|show]  the level's lighting bake (lightmaps, probe grids)\n"
+	"  seq list|open|create|get|set|add-track|add-key|set-key|add-section|remove|bind|play|scrub|save|undo|from-timeline ...\n"
+	"                                   .rseq sequences (path=... for one that is not open)\n"
+	"  skel2d create|open|get|add-bone|set-bone|remove-bone|add-slot|set-slot|remove-slot|draw-order|attach|detach\n"
+	"         |mesh|auto-weights|paint-weights|skin|clip|key|play|mode|pick|save PATH ...  .rskel2d 2D skeletons\n"
+	"  anim open|create|get|enter|add-layer|remove-layer|add-state|remove-state|set-state|add-transition\n"
+	"       |set-transition|remove-transition|add-param|remove-param|set-param|blend-tree|preview|validate|save PATH ...\n"
+	"                                   .ranim animation graphs\n"
+	"  bonemap open|create|get|set|auto-fill|rules|models|preview|save PATH ...  .rbonemap retarget maps\n"
+	"  clip list|info|preview|morph MODEL ...  glTF clips and morph targets of a model\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
 	"  call METHOD [key=value...|JSON]  any IPC method\n"
@@ -173,6 +184,14 @@ static const gchar *description =
 	"  lrgeditorctl env set fog.density 0.02; lrgeditorctl env bake --wait\n"
 	"  lrgeditorctl post add looks/night.rpost vignette; lrgeditorctl post set looks/night.rpost 0 intensity 0.4\n"
 	"  lrgeditorctl lod force Props/Statue 2\n"
+	"  lrgeditorctl bake set samples 256; lrgeditorctl bake start --wait\n"
+	"  lrgeditorctl bake evaluate 0 0.01 0 0 1 0\n"
+	"  lrgeditorctl seq create seq/intro.rseq length=8; lrgeditorctl seq add-track transform binding=Props/Crate\n"
+	"  lrgeditorctl seq add-key 0 1.5 2 channel=location.y; lrgeditorctl seq scrub 1.5\n"
+	"  lrgeditorctl skel2d add-bone rigs/hero.rskel2d arm parent=root length=40\n"
+	"  lrgeditorctl anim add-transition anims/hero.ranim idle walk conditions='[{\"parameter\":\"speed\",\"op\":\">\",\"value\":0.1}]'\n"
+	"  lrgeditorctl bonemap auto-fill maps/mixamo.rbonemap\n"
+	"  lrgeditorctl clip list models/hero.glb\n"
 	"  lrgeditorctl notify 'Build finished' --level success\n"
 	"  claude mcp add libregnum -- lrgeditorctl mcp\n";
 
@@ -1531,7 +1550,8 @@ cmd_tiles (gchar  **args,
 
 /*
  * timeline [list] | get NAME | add NAME [key=value...] | rm NAME |
- * key NAME NODE key=value... | play [NAME] | stop | seek TIME [NAME] | state
+ * key NAME NODE key=value... | tangent NODE TIME MODE [key=value...] |
+ * play [NAME] | stop | seek TIME [NAME] | state
  */
 static gboolean
 cmd_timeline (gchar  **args,
@@ -1564,6 +1584,16 @@ cmd_timeline (gchar  **args,
 		if (!lrg_ctl_parse_assignments (args + 3, p, error))
 			return FALSE;
 	}
+	else if (g_strcmp0 (what, "tangent") == 0 && args[1] != NULL && args[2] != NULL && args[3] != NULL)
+	{
+		/* tangent NODE TIME MODE [name=TL] [channel=C] [slope=S | in=I out=O] */
+		method = "timeline.tangent";
+		json_object_set_string_member (p, "node", args[1]);
+		json_object_set_double_member (p, "time", g_ascii_strtod (args[2], NULL));
+		json_object_set_string_member (p, "tangent", args[3]);
+		if (!lrg_ctl_parse_assignments (args + 4, p, error))
+			return FALSE;
+	}
 	else if (g_strcmp0 (what, "play") == 0)
 	{
 		method = "timeline.play";
@@ -1579,6 +1609,7 @@ cmd_timeline (gchar  **args,
 	}
 	if (method == NULL)
 		return usage_error (error, "timeline [list|get NAME|add NAME|rm NAME|key NAME NODE key=value...|"
+		                           "tangent NODE TIME MODE [name=TL] [channel=C] [slope=S]|"
 		                           "play [NAME]|stop|seek TIME [NAME]|state]");
 
 	r = call (method, p, error);
@@ -2114,7 +2145,7 @@ typedef struct
 {
 	const gchar *verb;
 	const gchar *method;
-	const gchar *keys[6];
+	const gchar *keys[8];
 } CtlVerb;
 
 /* A typed positional value: on/off as booleans, else lrg_ctl_parse_value(). */
@@ -2423,6 +2454,301 @@ cmd_lod (gchar  **args,
 	return run_family ("lod", table, G_N_ELEMENTS (table), args, error);
 }
 
+/* ==========================================================================
+ * 0.9.0 M3/M4 editor verbs: bake, seq, skel2d, anim, bonemap, clip
+ * ========================================================================== */
+
+/*
+ * bake start --wait: start the lighting bake, then poll bake.progress
+ * until it stops.  Exits 1 when the bake failed or was cancelled.
+ */
+static gboolean
+bake_start_wait (gchar  **args,
+                 GError **error)
+{
+	static const CtlVerb start = { "start", "bake.start", { NULL } };
+	g_autoptr(JsonObject) p = family_params (&start, args, error);
+	g_autoptr(JsonNode)   started = NULL;
+	gint64                deadline;
+
+	if (p == NULL)
+		return FALSE;
+	started = call ("bake.start", p, error);
+	if (started == NULL)
+		return FALSE;
+	/* the baker runs on the CPU: large levels take minutes */
+	deadline = g_get_monotonic_time () + (gint64) MAX (opt_timeout, 3600) * G_USEC_PER_SEC;
+	while (g_get_monotonic_time () < deadline)
+	{
+		g_autoptr(JsonNode) r = call ("bake.progress", NULL, error);
+		JsonObject         *o;
+
+		if (r == NULL)
+			return FALSE;
+		o = JSON_NODE_HOLDS_OBJECT (r) ? json_node_get_object (r) : NULL;
+		if (o == NULL || !json_object_get_boolean_member_with_default (o, "baking", FALSE))
+		{
+			const gchar *err = str_member (o, "error");
+			const gchar *phase = str_member (o, "phase");
+
+			if (err != NULL)
+			{
+				g_set_error (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "bake failed: %s", err);
+				return FALSE;
+			}
+			if (g_strcmp0 (phase, "cancelled") == 0)
+			{
+				g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "bake cancelled");
+				return FALSE;
+			}
+			{
+				g_autoptr(JsonNode) state = call ("bake.get", NULL, error);
+
+				if (state == NULL)
+					return FALSE;
+				lrg_ctl_print (state, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+			}
+			return TRUE;
+		}
+		g_usleep (200 * 1000);
+	}
+	g_set_error_literal (error, LRG_CTL_ERROR, LRG_CTL_ERROR_REMOTE, "timed out waiting for the bake");
+	return FALSE;
+}
+
+/* "X Y Z" positionals as a JSON array member @key of @p. */
+static gboolean
+xyz_member (JsonObject   *p,
+            const gchar  *key,
+            gchar       **args,
+            GError      **error)
+{
+	JsonArray *a = json_array_new ();
+	guint      k;
+
+	for (k = 0; k < 3; k++)
+	{
+		gchar   *end = NULL;
+		gdouble  v;
+
+		if (args[k] == NULL)
+		{
+			json_array_unref (a);
+			return usage_error (error, "%s needs three numbers", key);
+		}
+		v = g_ascii_strtod (args[k], &end);
+		if (end == args[k] || *end != '\0')
+		{
+			json_array_unref (a);
+			return usage_error (error, "%s: '%s' is not a number", key, args[k]);
+		}
+		json_array_add_double_element (a, v);
+	}
+	json_object_set_array_member (p, key, a);
+	return TRUE;
+}
+
+/*
+ * bake [get] | set KEY VALUE | reset | start [--wait] [save=false] |
+ * progress | cancel | save [DIR] | clear | evaluate [X Y Z [NX NY NZ]] |
+ * preview on|off | page N | show
+ */
+static gboolean
+cmd_bake (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "get", "bake.get", { NULL } },
+		{ "set", "bake.set", { "key", "~value", NULL } },
+		{ "start", "bake.start", { NULL } },
+		{ "progress", "bake.progress", { NULL } },
+		{ "cancel", "bake.cancel", { NULL } },
+		{ "save", "bake.save", { "@dir", NULL } },
+		{ "clear", "bake.clear", { NULL } },
+		{ "evaluate", "bake.evaluate", { NULL } },
+		{ "preview", "bake.preview", { "~show", NULL } },
+		{ "page", "bake.preview", { "~page", NULL } },
+		{ "show", "bake.show", { NULL } },
+		{ "reset", "bake.set", { NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *get[] = { (gchar *) "get", NULL };
+
+		return run_family ("bake", table, G_N_ELEMENTS (table), get, error);
+	}
+	if (g_strcmp0 (args[0], "start") == 0 && opt_wait)
+		return bake_start_wait (args + 1, error);
+	if (g_strcmp0 (args[0], "reset") == 0)
+	{
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		json_object_set_boolean_member (p, "reset", TRUE);
+		r = call ("bake.set", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	if (g_strcmp0 (args[0], "evaluate") == 0 && args[1] != NULL && strchr (args[1], '=') == NULL)
+	{
+		/* evaluate X Y Z [NX NY NZ]: a point (and normal); without
+		 * numbers the surface under the viewport centre */
+		g_autoptr(JsonObject) p = json_object_new ();
+		g_autoptr(JsonNode)   r = NULL;
+
+		if (!xyz_member (p, "position", args + 1, error))
+			return FALSE;
+		if (args[4] != NULL && !xyz_member (p, "normal", args + 4, error))
+			return FALSE;
+		r = call ("bake.evaluate", p, error);
+		if (r == NULL)
+			return FALSE;
+		lrg_ctl_print (r, output == LRG_CTL_FORMAT_DEFAULT ? LRG_CTL_FORMAT_YAML : output);
+		return TRUE;
+	}
+	return run_family ("bake", table, G_N_ELEMENTS (table), args, error);
+}
+
+/*
+ * seq list | open PATH | create PATH | get | set | add-track KIND |
+ * add-key TRACK TIME [VALUE] | set-key TRACK | add-section TRACK START |
+ * remove | bind NODE | play | scrub TIME | save | undo [redo=true] |
+ * from-timeline TL PATH
+ * (path=... picks a sequence other than the open one)
+ */
+static gboolean
+cmd_seq (gchar  **args,
+         GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "list", "sequence.list", { NULL } },
+		{ "open", "sequence.open", { "@path", NULL } },
+		{ "create", "sequence.create", { "@path", NULL } },
+		{ "get", "sequence.get", { NULL } },
+		{ "set", "sequence.set", { NULL } },
+		{ "add-track", "sequence.add_track", { "kind", NULL } },
+		{ "add-key", "sequence.add_key", { "~track", "~time", "~value", NULL } },
+		{ "set-key", "sequence.set_key", { "~track", NULL } },
+		{ "add-section", "sequence.add_section", { "~track", "~start", NULL } },
+		{ "remove", "sequence.remove", { NULL } },
+		{ "bind", "sequence.bind", { "node", NULL } },
+		{ "play", "sequence.play", { NULL } },
+		{ "scrub", "sequence.scrub", { "~time", NULL } },
+		{ "save", "sequence.save", { NULL } },
+		{ "undo", "sequence.undo", { NULL } },
+		{ "from-timeline", "sequence.from_timeline", { "timeline", "@path", NULL } },
+	};
+
+	if (args[0] == NULL)
+	{
+		gchar *list[] = { (gchar *) "list", NULL };
+
+		return run_family ("seq", table, G_N_ELEMENTS (table), list, error);
+	}
+	return run_family ("seq", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* skel2d VERB PATH ...: the .rskel2d editor (every verb names the file) */
+static gboolean
+cmd_skel2d (gchar  **args,
+            GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "create", "skel2d.create", { "@path", NULL } },
+		{ "open", "skel2d.open", { "@path", NULL } },
+		{ "get", "skel2d.get", { "@path", NULL } },
+		{ "add-bone", "skel2d.add_bone", { "@path", "name", NULL } },
+		{ "set-bone", "skel2d.set_bone", { "@path", "bone", NULL } },
+		{ "remove-bone", "skel2d.remove_bone", { "@path", "bone", NULL } },
+		{ "add-slot", "skel2d.add_slot", { "@path", "name", "bone", NULL } },
+		{ "set-slot", "skel2d.set_slot", { "@path", "slot", NULL } },
+		{ "remove-slot", "skel2d.remove_slot", { "@path", "slot", NULL } },
+		{ "draw-order", "skel2d.draw_order", { "@path", "~order", NULL } },
+		{ "attach", "skel2d.attach", { "@path", "slot", "name", NULL } },
+		{ "detach", "skel2d.detach", { "@path", "slot", "name", NULL } },
+		{ "mesh", "skel2d.mesh", { "@path", "slot", "name", NULL } },
+		{ "auto-weights", "skel2d.auto_weights", { "@path", "slot", "name", NULL } },
+		{ "paint-weights", "skel2d.paint_weights", { "@path", "slot", "name", "bone", "~x", "~y", NULL } },
+		{ "skin", "skel2d.skin", { "@path", "name", "op", NULL } },
+		{ "clip", "skel2d.clip", { "@path", "name", "op", NULL } },
+		{ "key", "skel2d.key", { "@path", "target", "channel", "~time", NULL } },
+		{ "play", "skel2d.play", { "@path", NULL } },
+		{ "mode", "skel2d.mode", { "@path", "mode", NULL } },
+		{ "pick", "skel2d.pick", { "@path", "~x", "~y", NULL } },
+		{ "save", "skel2d.save", { "@path", NULL } },
+	};
+
+	return run_family ("skel2d", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* anim VERB PATH ...: the .ranim animation graph editor */
+static gboolean
+cmd_anim (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "anim.open", { "@path", NULL } },
+		{ "create", "anim.create", { "@path", NULL } },
+		{ "get", "anim.get", { "@path", NULL } },
+		{ "enter", "anim.enter", { "@path", NULL } },
+		{ "add-layer", "anim.add_layer", { "@path", "name", NULL } },
+		{ "remove-layer", "anim.remove_layer", { "@path", "name", NULL } },
+		{ "add-state", "anim.add_state", { "@path", "name", NULL } },
+		{ "remove-state", "anim.remove_state", { "@path", "name", NULL } },
+		{ "set-state", "anim.set_state", { "@path", "name", NULL } },
+		{ "add-transition", "anim.add_transition", { "@path", "from", "to", NULL } },
+		{ "set-transition", "anim.set_transition", { "@path", "from", "to", NULL } },
+		{ "remove-transition", "anim.remove_transition", { "@path", "from", "to", NULL } },
+		{ "add-param", "anim.add_parameter", { "@path", "name", "type", NULL } },
+		{ "remove-param", "anim.remove_parameter", { "@path", "name", NULL } },
+		{ "set-param", "anim.set_parameter", { "@path", "name", "~value", NULL } },
+		{ "blend-tree", "anim.set_blend_tree", { "@path", "state", NULL } },
+		{ "preview", "anim.preview", { "@path", NULL } },
+		{ "validate", "anim.validate", { "@path", NULL } },
+		{ "save", "anim.save", { "@path", NULL } },
+	};
+
+	return run_family ("anim", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* bonemap VERB PATH ...: the .rbonemap retarget map editor */
+static gboolean
+cmd_bonemap (gchar  **args,
+             GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "open", "bonemap.open", { "@path", NULL } },
+		{ "create", "bonemap.create", { "@path", NULL } },
+		{ "get", "bonemap.get", { "@path", NULL } },
+		{ "set", "bonemap.set", { "@path", "source", "~target", NULL } },
+		{ "auto-fill", "bonemap.auto_fill", { "@path", NULL } },
+		{ "rules", "bonemap.set_rules", { "@path", NULL } },
+		{ "models", "bonemap.set_models", { "@path", NULL } },
+		{ "preview", "bonemap.preview", { "@path", NULL } },
+		{ "save", "bonemap.save", { "@path", NULL } },
+	};
+
+	return run_family ("bonemap", table, G_N_ELEMENTS (table), args, error);
+}
+
+/* clip list|info|preview|morph MODEL ...: glTF clips and morph targets */
+static gboolean
+cmd_clip (gchar  **args,
+          GError **error)
+{
+	static const CtlVerb table[] = {
+		{ "list", "clip.list", { "@model", NULL } },
+		{ "info", "clip.info", { "@model", "clip", NULL } },
+		{ "preview", "clip.preview", { "@model", "clip", NULL } },
+		{ "morph", "clip.set_morph", { "@model", "target", "~weight", NULL } },
+	};
+
+	return run_family ("clip", table, G_N_ELEMENTS (table), args, error);
+}
+
 /*
  * view layers [MASK | LAYER on|off] [viewport=N]: a viewport's render
  * layer cull mask. MASK is a number (0x... hex too), "all" or "none";
@@ -2525,7 +2851,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences material shader shadergraph env post lod' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -2560,6 +2886,12 @@ static const gchar *completion_script =
 	"\t\tenv) mapfile -t COMPREPLY < <(compgen -W 'get set reset bake progress show' -- \"${cur}\") ;;\n"
 	"\t\tpost) mapfile -t COMPREPLY < <(compgen -W 'types open create get add remove move set save preview look assign' -- \"${cur}\") ;;\n"
 	"\t\tlod) mapfile -t COMPREPLY < <(compgen -W 'get force' -- \"${cur}\") ;;\n"
+	"\t\tbake) mapfile -t COMPREPLY < <(compgen -W 'get set reset start progress cancel save clear evaluate preview page show' -- \"${cur}\") ;;\n"
+	"\t\tseq|sequence) mapfile -t COMPREPLY < <(compgen -W 'list open create get set add-track add-key set-key add-section remove bind play scrub save undo from-timeline' -- \"${cur}\") ;;\n"
+	"\t\tskel2d) mapfile -t COMPREPLY < <(compgen -W 'create open get add-bone set-bone remove-bone add-slot set-slot remove-slot draw-order attach detach mesh auto-weights paint-weights skin clip key play mode pick save' -- \"${cur}\") ;;\n"
+	"\t\tanim) mapfile -t COMPREPLY < <(compgen -W 'open create get enter add-layer remove-layer add-state remove-state set-state add-transition set-transition remove-transition add-param remove-param set-param blend-tree preview validate save' -- \"${cur}\") ;;\n"
+	"\t\tbonemap) mapfile -t COMPREPLY < <(compgen -W 'open create get set auto-fill rules models preview save' -- \"${cur}\") ;;\n"
+	"\t\tclip) mapfile -t COMPREPLY < <(compgen -W 'list info preview morph' -- \"${cur}\") ;;\n"
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
 	"\t\tcode) mapfile -t COMPREPLY < <(compgen -W 'open list save' -- \"${cur}\") ;;\n"
@@ -2627,6 +2959,18 @@ dispatch (gchar  **argv,
 		return cmd_post (rest, error);
 	if (g_strcmp0 (verb, "lod") == 0)
 		return cmd_lod (rest, error);
+	if (g_strcmp0 (verb, "bake") == 0)
+		return cmd_bake (rest, error);
+	if (g_strcmp0 (verb, "seq") == 0 || g_strcmp0 (verb, "sequence") == 0)
+		return cmd_seq (rest, error);
+	if (g_strcmp0 (verb, "skel2d") == 0)
+		return cmd_skel2d (rest, error);
+	if (g_strcmp0 (verb, "anim") == 0)
+		return cmd_anim (rest, error);
+	if (g_strcmp0 (verb, "bonemap") == 0)
+		return cmd_bonemap (rest, error);
+	if (g_strcmp0 (verb, "clip") == 0)
+		return cmd_clip (rest, error);
 	if (g_strcmp0 (verb, "get") == 0)
 		return cmd_get (rest, error);
 	if (g_strcmp0 (verb, "describe") == 0)

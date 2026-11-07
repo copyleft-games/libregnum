@@ -51,6 +51,8 @@
 #include "../../graphics/lrg-decal.h"
 #include "../../graphics/lrg-material.h"
 #include "../../lighting/lrg-reflection-probe.h"
+#include "../../lighting/lrg-lightmap3d.h"
+#include "../../lighting/lrg-probe-grid.h"
 #include "../../postprocess/lrg-post-stack.h"
 #include <math.h>
 #include <string.h>
@@ -156,6 +158,22 @@ struct _LrgEditorSceneRenderer
 	LrgEnvironment       *probe_env;       /* the environment they are on (ref) */
 	GHashTable           *post_stacks;     /* abs .rpost path -> LrgPostStack, NULL = failed */
 	gboolean              recapture;       /* recapture every probe next frame */
+
+	/* Baked lighting while authoring (0.9.0 M3): a private world holds the
+	 * level's lightmap and probe grids, with one bare entity per node GUID
+	 * so the runtime renderer finds each item's lightmap entry or grid */
+	gboolean              show_baked;
+	LrgWorld3D           *baked_world;
+	GHashTable           *baked_entities;  /* guid -> LrgEntity3D (the world owns them) */
+	LrgLightmap3D        *baked_lightmap;  /* what the viewport shows (ref) */
+	GPtrArray            *baked_grids;     /* LrgProbeGrid (refs) */
+	LrgLightmap3D        *override_lightmap;
+	GPtrArray            *override_grids;
+	gboolean              has_override;
+	gchar                *baked_sig;       /* what baked_world was loaded for */
+	guint                 baked_generation;
+	gboolean              baked_active;    /* this frame's walk binds it */
+	gfloat                probe_spacing;   /* this frame's level probe_spacing */
 
 	gboolean              draw_overlays;
 	guint                 generation;
@@ -409,6 +427,16 @@ node_light_desc (LrgNodeVisual  *visual,
 	out->intensity = (gfloat) lrg_node_visual_get_param_double (visual, "intensity", 1.0);
 	out->range = (gfloat) lrg_node_visual_get_param_double (visual, "range", 10.0);
 	out->cast_shadows = param_bool (visual, "cast_shadows", FALSE);
+	/* the bake mode: baked lights are skipped on lightmapped draws, like
+	 * the runtime's LrgLightComponent does */
+	{
+		const gchar *mode = param_string (visual, "bake_mode");
+
+		if (g_strcmp0 (mode, "baked") == 0)
+			out->bake_mode = LRG_LIGHT_MODE_BAKED;
+		else if (g_strcmp0 (mode, "mixed") == 0)
+			out->bake_mode = LRG_LIGHT_MODE_MIXED;
+	}
 	spot = (gfloat) lrg_node_visual_get_param_double (visual, "spot_angle", 0.0);
 	out->position[0] = world[12];
 	out->position[1] = world[13];
@@ -584,6 +612,260 @@ add_node_probe (LrgEditorSceneRenderer *self,
 	g_ptr_array_add (self->frame_probes, probe);
 }
 
+/* ==========================================================================
+ * Baked lighting while authoring (0.9.0 M3)
+ *
+ * The level's `lighting:` block (or the bake panel's fresh, unsaved
+ * result, lrg_editor_scene_renderer_set_baked_override()) is loaded into
+ * a private LrgWorld3D.  Every geometry item of the walk then gets a bare
+ * LrgEntity3D of that world carrying its node's GUID, which is all the
+ * runtime renderer needs to bind the item's lightmap entry, else the
+ * probe grid around it (lrg-world3d-renderer.c bind_baked()).  The world
+ * reloads when the references, the level's directory or the generation
+ * (lrg_editor_scene_renderer_reload_lighting()) change.
+ * ========================================================================== */
+
+/* The bare entity standing for @node's GUID in the baked world. */
+static LrgEntity3D *
+baked_entity (LrgEditorSceneRenderer *self,
+              LrgNode                *node)
+{
+	const gchar *guid = lrg_node_get_guid (node);
+	LrgEntity3D *entity;
+
+	if (guid == NULL || *guid == '\0' || self->baked_world == NULL)
+		return NULL;
+	entity = g_hash_table_lookup (self->baked_entities, guid);
+	if (entity == NULL)
+	{
+		g_autoptr(LrgEntity3D) fresh = lrg_entity3d_new ();
+
+		lrg_entity3d_set_guid (fresh, guid);
+		lrg_world3d_add_entity (self->baked_world, fresh);
+		entity = fresh;
+		g_hash_table_insert (self->baked_entities, g_strdup (guid), entity);
+	}
+	return entity;
+}
+
+/* A lighting reference as a file: guid: through the runtime renderer's
+ * resolver, absolute as is, relative to the level's directory first (the
+ * runtime's rule), then the renderer's base directory. */
+static gchar *
+baked_resolve (LrgEditorSceneRenderer *self,
+               const gchar            *level_dir,
+               const gchar            *ref)
+{
+	if (ref == NULL || *ref == '\0')
+		return NULL;
+	if (g_path_is_absolute (ref))
+		return g_strdup (ref);
+	if (level_dir != NULL && !g_str_has_prefix (ref, "guid:"))
+	{
+		g_autofree gchar *path = g_build_filename (level_dir, ref, NULL);
+
+		if (g_file_test (path, G_FILE_TEST_IS_REGULAR))
+			return g_steal_pointer (&path);
+	}
+	return lrg_world3d_renderer_resolve_asset (self->runtime, ref);
+}
+
+/* Drops the loaded lightmap, grids and stand-in entities. */
+static void
+baked_clear (LrgEditorSceneRenderer *self)
+{
+	g_clear_object (&self->baked_lightmap);
+	g_ptr_array_set_size (self->baked_grids, 0);
+	g_hash_table_remove_all (self->baked_entities);
+	g_clear_object (&self->baked_world);
+	g_clear_pointer (&self->baked_sig, g_free);
+	self->baked_active = FALSE;
+}
+
+/*
+ * Brings the baked world up to date with @level before the walk and
+ * decides whether this frame binds it.
+ */
+static void
+baked_sync (LrgEditorSceneRenderer *self,
+            LrgLevel               *level)
+{
+	const gchar      *path = (self->editor != NULL) ? lrg_editor_get_path (self->editor) : NULL;
+	g_autofree gchar *level_dir = (path != NULL) ? g_path_get_dirname (path) : NULL;
+	GString          *sig;
+	GPtrArray        *refs;
+	gdouble           spacing = 0.0;
+	guint             i;
+
+	self->baked_active = FALSE;
+	self->probe_spacing = 0.0f;
+	if (level == NULL)
+		return;
+	if (lrg_level_get_bake_setting (level, "probe_spacing", &spacing))
+		self->probe_spacing = (gfloat) spacing;
+
+	/* What the world must hold */
+	sig = g_string_new (NULL);
+	refs = lrg_level_get_probe_refs (level);
+	if (self->has_override)
+		g_string_append_printf (sig, "override:%p", (gpointer) self->override_lightmap);
+	else
+	{
+		g_string_append_printf (sig, "%s|%s", level_dir != NULL ? level_dir : "",
+		                        lrg_level_get_lightmap_ref (level) != NULL ? lrg_level_get_lightmap_ref (level) : "");
+		for (i = 0; i < refs->len; i++)
+			g_string_append_printf (sig, "|%s", (const gchar *) g_ptr_array_index (refs, i));
+	}
+	g_string_append_printf (sig, "#%u", self->baked_generation);
+
+	if (g_strcmp0 (sig->str, self->baked_sig) != 0)
+	{
+		baked_clear (self);
+		self->baked_world = lrg_world3d_new ();
+		if (self->has_override)
+		{
+			if (self->override_lightmap != NULL)
+				self->baked_lightmap = g_object_ref (self->override_lightmap);
+			for (i = 0; self->override_grids != NULL && i < self->override_grids->len; i++)
+				g_ptr_array_add (self->baked_grids, g_object_ref (g_ptr_array_index (self->override_grids, i)));
+		}
+		else
+		{
+			g_autofree gchar *lm = baked_resolve (self, level_dir, lrg_level_get_lightmap_ref (level));
+
+			if (lm != NULL)
+			{
+				g_autoptr(GError) error = NULL;
+
+				self->baked_lightmap = lrg_lightmap3d_new_from_file (lm, &error);
+				if (self->baked_lightmap == NULL)
+					g_message ("Level lightmap %s: %s", lm, error->message);
+			}
+			for (i = 0; i < refs->len; i++)
+			{
+				g_autofree gchar *pg = baked_resolve (self, level_dir, g_ptr_array_index (refs, i));
+				g_autoptr(GError) error = NULL;
+				LrgProbeGrid     *grid = (pg != NULL) ? lrg_probe_grid_new_from_file (pg, &error) : NULL;
+
+				if (grid != NULL)
+					g_ptr_array_add (self->baked_grids, grid);
+				else if (pg != NULL)
+					g_message ("Level probe grid %s: %s", pg, error->message);
+			}
+		}
+		if (self->baked_lightmap != NULL)
+			lrg_world3d_set_lightmap (self->baked_world, self->baked_lightmap);
+		for (i = 0; i < self->baked_grids->len; i++)
+			lrg_world3d_add_probe_grid (self->baked_world, g_ptr_array_index (self->baked_grids, i));
+		self->baked_sig = g_strdup (sig->str);
+	}
+	g_string_free (sig, TRUE);
+
+	self->baked_active = self->show_baked && self->baked_world != NULL &&
+	                     (self->baked_lightmap != NULL || self->baked_grids->len > 0);
+}
+
+/* The loaded grid baked for the box @mn .. @mx, or NULL. */
+static LrgProbeGrid *
+baked_grid_for_box (LrgEditorSceneRenderer *self,
+                    const gfloat           *mn,
+                    const gfloat           *mx)
+{
+	guint i;
+	gint  k;
+
+	for (i = 0; i < self->baked_grids->len; i++)
+	{
+		LrgProbeGrid *g = g_ptr_array_index (self->baked_grids, i);
+		gfloat        gmn[3], gmx[3];
+		gboolean      same = TRUE;
+
+		lrg_probe_grid_get_bounds (g, gmn, gmx);
+		for (k = 0; k < 3; k++)
+			if (fabsf (gmn[k] - mn[k]) > 1e-3f || fabsf (gmx[k] - mx[k]) > 1e-3f)
+				same = FALSE;
+		if (same)
+			return g;
+	}
+	return NULL;
+}
+
+/* Linear irradiance / pi -> a display byte (soft tone map, sRGB).  Probes
+ * hold indirect light only, which is dim: a gain makes it readable, and a
+ * floor keeps dark probes visible against dark geometry. */
+static guchar
+probe_byte (gfloat v)
+{
+	v = MAX (v, 0.0f) * 1.5f + 0.02f;
+	v = v / (1.0f + v);
+	return (guchar) CLAMP (powf (v, 1.0f / 2.2f) * 255.0f + 0.5f, 0.0f, 255.0f);
+}
+
+/*
+ * A probe-volume node: its box, and a dot per probe (up to 4096),
+ * coloured by the baked grid's irradiance towards +Y when the volume has
+ * been baked, grey otherwise.  Selected volumes draw brighter.
+ */
+static void
+draw_probe_volume (LrgEditorSceneRenderer *self,
+                   LrgNodeVisual          *visual,
+                   const gfloat           *world,
+                   gboolean                selected)
+{
+	LrgProbeGrid *grid;
+	gfloat        mn[3], mx[3], c[3], step[3], dot;
+	guint         n[3], x, y, z, total;
+	Color         box = selected ? (Color) { 250, 179, 135, 255 } : (Color) { 249, 226, 175, 200 };
+	const gfloat  up[3] = { 0.0f, 1.0f, 0.0f };
+	gint          k;
+
+	if (!lrg_node_visual_get_probe_volume (visual, world, self->probe_spacing, mn, mx, n))
+		return;
+	for (k = 0; k < 3; k++)
+	{
+		c[k] = (mn[k] + mx[k]) * 0.5f;
+		step[k] = (mx[k] - mn[k]) / (gfloat) MAX (n[k] - 1u, 1u);
+	}
+	DrawCubeWires ((Vector3) { c[0], c[1], c[2] }, mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2], box);
+
+	total = n[0] * n[1] * n[2];
+	if (total > 4096u)
+		return;
+	grid = baked_grid_for_box (self, mn, mx);
+	if (grid != NULL)
+	{
+		guint gn[3];
+
+		lrg_probe_grid_get_resolution (grid, &gn[0], &gn[1], &gn[2]);
+		if (gn[0] != n[0] || gn[1] != n[1] || gn[2] != n[2])
+			grid = NULL;   /* baked with another layout: stale */
+	}
+	dot = MIN (MIN (step[0], step[1]), step[2]) * 0.12f;
+	dot = CLAMP (dot, 0.02f, 0.25f);
+	for (z = 0; z < n[2]; z++)
+	{
+		for (y = 0; y < n[1]; y++)
+		{
+			for (x = 0; x < n[0]; x++)
+			{
+				gfloat p[3] = { mn[0] + step[0] * (gfloat) x, mn[1] + step[1] * (gfloat) y,
+				                mn[2] + step[2] * (gfloat) z };
+				gfloat rgb[3];
+				Color  col = { 150, 150, 160, 200 };
+
+				if (grid != NULL && lrg_probe_grid_sample (grid, p, up, rgb))
+				{
+					col.r = probe_byte (rgb[0]);
+					col.g = probe_byte (rgb[1]);
+					col.b = probe_byte (rgb[2]);
+					col.a = 255;
+				}
+				DrawCube ((Vector3) { p[0], p[1], p[2] }, dot, dot, dot, col);
+			}
+		}
+	}
+}
+
 /*
  * The render item of one node's geometry: primitives, models (from the
  * runtime renderer's cache), sprites (a textured quad keeping the image's
@@ -645,6 +927,8 @@ add_node_item (NodeWalk      *walk,
 				if (models == NULL || models->len == 0)
 					break;
 				item.material = lrg_node_visual_get_material (visual);
+				if (self->baked_active)
+					item.entity = baked_entity (self, node);
 				for (k = 0; k < models->len; k++)
 				{
 					item.model = g_ptr_array_index (models, k);
@@ -738,6 +1022,10 @@ add_node_item (NodeWalk      *walk,
 	/* Translucent materials blend after the opaque pass */
 	if (item.color[3] < 1.0f)
 		item.flags |= LRG_RENDER_ITEM_FLAG_TRANSPARENT;
+	/* Baked lighting: the node's stand-in entity carries its GUID into the
+	 * world holding the lightmap and probe grids */
+	if (self->baked_active)
+		item.entity = baked_entity (self, node);
 	lrg_render_list_add (walk->list, &item);
 }
 
@@ -1620,6 +1908,10 @@ draw_node_overlay (LrgEditorSceneRenderer *self,
 			rlPopMatrix ();
 			break;
 
+		case LRG_NODE_VISUAL_PROBE_VOLUME:
+			draw_probe_volume (self, visual, entry->world, entry->selected);
+			break;
+
 		case LRG_NODE_VISUAL_PREFAB_INSTANCE:
 			push_local (entry->world);
 			draw_unit_wire_box (0.5f, 0.5f, 0.5f, (Color) { 137, 220, 235, 255 });
@@ -1746,6 +2038,12 @@ lrg_editor_scene_renderer_finalize (GObject *object)
 	g_clear_pointer (&self->node_probes, g_hash_table_unref);
 	g_clear_pointer (&self->decal_pool, g_ptr_array_unref);
 	g_clear_pointer (&self->post_stacks, g_hash_table_unref);
+	if (self->baked_grids != NULL)
+		baked_clear (self);
+	g_clear_pointer (&self->baked_grids, g_ptr_array_unref);
+	g_clear_pointer (&self->baked_entities, g_hash_table_unref);
+	g_clear_object (&self->override_lightmap);
+	g_clear_pointer (&self->override_grids, g_ptr_array_unref);
 
 	G_OBJECT_CLASS (lrg_editor_scene_renderer_parent_class)->finalize (object);
 }
@@ -1832,6 +2130,9 @@ lrg_editor_scene_renderer_init (LrgEditorSceneRenderer *self)
 	self->frame_probes = g_ptr_array_new ();
 	self->post_stacks = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, object_unref_nullable);
 	self->overlay = g_array_new (FALSE, FALSE, sizeof (OverlayEntry));
+	self->show_baked = TRUE;
+	self->baked_entities = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	self->baked_grids = g_ptr_array_new_with_free_func (g_object_unref);
 	self->bg_handler = g_signal_connect (self->runtime, "draw-background", G_CALLBACK (on_draw_background), self);
 	self->overlay_handler = g_signal_connect (self->runtime, "draw-overlay", G_CALLBACK (on_draw_overlay), self);
 	for (i = 0; i < N_POST_SLOTS; i++)
@@ -2093,6 +2394,7 @@ render_core (LrgEditorSceneRenderer    *self,
 		lrg_render_list_set_view (self->list, v.position, LRG_RENDER_LAYERS_MASK_ALL, NULL);
 		lrg_decal_set_clear (lrg_world3d_renderer_get_decal_set (self->runtime));
 		self->decals_used = 0;
+		baked_sync (self, level);
 		if (level != NULL)
 		{
 			NodeWalk walk;
@@ -2375,6 +2677,84 @@ lrg_editor_scene_renderer_recapture_probes (LrgEditorSceneRenderer *self)
 
 	self->recapture = TRUE;
 	self->generation++;
+}
+
+void
+lrg_editor_scene_renderer_set_show_baked (LrgEditorSceneRenderer *self,
+                                          gboolean                show)
+{
+	g_return_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self));
+
+	show = !!show;
+	if (self->show_baked == show)
+		return;
+	self->show_baked = show;
+	self->generation++;
+}
+
+gboolean
+lrg_editor_scene_renderer_get_show_baked (LrgEditorSceneRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), FALSE);
+	return self->show_baked;
+}
+
+void
+lrg_editor_scene_renderer_set_baked_override (LrgEditorSceneRenderer *self,
+                                              LrgLightmap3D          *lightmap,
+                                              GPtrArray              *grids)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self));
+	g_return_if_fail (lightmap == NULL || LRG_IS_LIGHTMAP3D (lightmap));
+
+	g_clear_object (&self->override_lightmap);
+	g_clear_pointer (&self->override_grids, g_ptr_array_unref);
+	self->has_override = lightmap != NULL || (grids != NULL && grids->len > 0);
+	if (self->has_override)
+	{
+		if (lightmap != NULL)
+			self->override_lightmap = g_object_ref (lightmap);
+		self->override_grids = g_ptr_array_new_with_free_func (g_object_unref);
+		for (i = 0; grids != NULL && i < grids->len; i++)
+			g_ptr_array_add (self->override_grids, g_object_ref (g_ptr_array_index (grids, i)));
+	}
+	lrg_editor_scene_renderer_reload_lighting (self);
+}
+
+void
+lrg_editor_scene_renderer_reload_lighting (LrgEditorSceneRenderer *self)
+{
+	g_return_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self));
+
+	self->baked_generation++;
+	self->generation++;
+}
+
+LrgLightmap3D *
+lrg_editor_scene_renderer_get_baked_lightmap (LrgEditorSceneRenderer *self)
+{
+	LrgLevel *level;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	/* load now when no frame did yet (headless callers, tests) */
+	level = (self->editor != NULL) ? lrg_editor_get_level (self->editor) : NULL;
+	baked_sync (self, level);
+	return self->baked_lightmap;
+}
+
+GPtrArray *
+lrg_editor_scene_renderer_get_baked_probe_grids (LrgEditorSceneRenderer *self)
+{
+	LrgLevel *level;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_SCENE_RENDERER (self), NULL);
+
+	level = (self->editor != NULL) ? lrg_editor_get_level (self->editor) : NULL;
+	baked_sync (self, level);
+	return self->baked_grids;
 }
 
 LrgLodGroup *

@@ -68,3 +68,47 @@ lod.get {node} -> {node, asset, available, levels:[{level,triangles,screen_size,
 view.layers {viewport?, mask? (n|"all"|"none"|"0x.."), layer? (0..31|name), enabled?} -> {viewport, mask, layers:[{index,name,enabled}]}
 view.render_mode {viewport?, mode?} -> {viewport, mode, modes[]}; modes lit unlit wireframe normals lighting-only overdraw uv light-complexity ao reflections
 Actions: environment.show/add/remove/bake, post.save-look, inspector.show
+
+## Lighting bake (0.9.0)
+bake.get {} -> {settings{key:value}, set_keys, lightmap|null, probes[], baking, phase, progress, auto_save, preview, result{present,unsaved,objects,lights,texels,entries,pages,grids,probes,seconds}}
+bake.set {key,value}|{values:{k:v}}|{reset:true}|{auto_save} -> as get (one undo step; keys texels_per_unit samples bounces max_lightmap_size padding denoise probe_spacing probe_samples auto_probe_volume seed threads light_radius sun_angle)
+bake.start {save?} -> {started,objects,lights} (async, CPU, headless ok) ; bake.progress {} -> {baking, phase idle|prepare|lightmaps|postprocess|probes|done|cancelled|failed, progress, error, unsaved} ; bake.cancel {} -> {cancelled}
+bake.save {dir?} -> as get (files next to the level + refs, one undo step) ; bake.clear {} -> {cleared} ; bake.evaluate {position?,normal?} -> {position,normal,rgb,luminance} (no position: viewport centre) ; bake.preview {show?,page?} -> {show,page,pages} ; bake.show {}
+Actions: bake.show/start/cancel/save/clear/toggle-preview. Node kind probe-volume (extents_x/y/z, spacing, resolution).
+
+## Sequence methods (0.9.0, Sequencer panel)
+path = .rseq (abs or project relative; opened when not the open one; omitted = open sequence). track = index from sequence.get. Errors: invalid-params / not-found / failed. Every edit is one step of the panel's own undo.
+- sequence.list {} -> {open, dirty, tracks}; sequence.open {path} -> {path, panel}; sequence.create {path, name?, length?=5, fps?=30, play_mode?} -> {path} (existing file = failed)
+- sequence.get {path?} -> {path,name,length,fps,play_mode,dirty,time,playing,bindings:[{guid,name}],tracks:[{index,kind,name,binding,binding_name,muted,bone?,channels?:{ch:[key]},component?,property?,keys?,sections?:[{index,start,duration,end,name,payload?,offset,rate,loop,weight}]}]}; key={index,time,value,tangent,in,out}
+- sequence.set {path?, name?, length?, fps?, play_mode?}; sequence.add_track {kind, name?, binding?, bone?, component?, property?} -> {index}
+- sequence.add_key {track, channel?, time, value?, tangent?, slope? | in?/out?} -> {index}; sequence.set_key {track, channel?, key | at, time?, value?, tangent?, slope?/in?/out?} -> {index}
+- sequence.add_section {track, start, name, duration?, payload?, offset?, rate?, loop?, weight?/volume?} -> {index}; sequence.remove {track [+ section | + channel? + key/at | + channel] | binding} -> {removed}; sequence.bind {node, name?, track?} -> {guid, name}
+- sequence.play {playing?=true, stop?, mode?: once|loop|ping-pong, pilot?} -> {time, frame, playing, mode, camera, events}; sequence.scrub {time | frame} -> {time, frame, playing, mode, camera, events:[{name,payload,time,reverse}]}
+- sequence.save {path?, save_as?} -> {path}; sequence.undo {redo?} -> {ok, dirty}; sequence.from_timeline {timeline, path, fps?} -> {path}
+- timeline.tangent {name?, node, time, channel?, tangent: eased|auto|user|broken|linear|constant, slope? | in?/out?} -> {changed} (level undo step)
+
+## 2D skeletons (0.9.0)
+Registered by the 2D rig editor (assets panel at startup); full table in docs/editor/ipc-protocol.org#ipc-skel2d. Every method takes {path} (.rskel2d, project-relative ok; opens the tab). Bones/slots by name. Each mutation = one undo step of the rig document.
+skel2d.create {path, name?} -> {path}; skel2d.open {path} -> {path,panel}; skel2d.save {path}
+skel2d.get {path} -> {name, dirty, mode, tool, skin, clip, time, playing, loop, selected:{bone,slot,attachment}, bones:[{name,parent,x,y,rotation,scale:[x,y],length}], slots:[{name,bone,attachment,color}], draw_order:[], skins:[{name,attachments:[{slot,name,image,vertices,triangles,weighted}]}], clips:[{name,duration,loop,bones,slots}]}
+skel2d.add_bone {name?, parent?, x?, y?, rotation?, length?} -> {bone,index}; skel2d.set_bone {bone, x?,y?,rotation?,scale_x?,scale_y?,length?, name?}; skel2d.remove_bone {bone} -> {removed:[...]}
+skel2d.add_slot {name?, bone, attachment?} -> {slot,index}; skel2d.set_slot {slot, attachment? (null hides), color? [r,g,b(,a)], name?}; skel2d.remove_slot {slot}; skel2d.draw_order {order:[slot...]} back to front
+skel2d.attach {slot, name?, image?, skin?, x?, y?, width?, height?, columns?=1, rows?=1} -> {slot,name,vertices,triangles,weighted}; skel2d.detach {slot,name,skin?}
+skel2d.mesh {slot,name,skin?, add?:[[x,y]], move?:{index,x,y}, remove?:index, triangulate?:true}; skel2d.auto_weights {slot,name,skin?, bones?, falloff?=4, max_influences?=2, smooth?=1}; skel2d.paint_weights {slot,name,skin?, bone, x, y, radius?=20, strength?=0.5, erase?} -> {changed}
+skel2d.skin {name, op?: activate|add|remove} -> {skins,active}; skel2d.clip {name, op?: select|add|remove|set, duration?, loop?} -> {clips,clip}
+skel2d.key {target, channel: translate|rotate|scale|color|attachment, time, clip?, values?, attachment? (null hides), curve?: "linear"|"stepped"|[x1,y1,x2,y2], remove?} -> {target,channel,keys:[{time,values|attachment,curve}]}
+skel2d.play {clip?, time?, playing?, loop?} -> {clip,time,playing,loop}; skel2d.mode {mode?: setup|animate, tool?: select|bone|mesh|weights, bone?, slot?} -> {mode,tool,selected}; skel2d.pick {x,y,radius?=8} -> {bone|null}
+
+## Animation (0.9.0)
+Registered at startup by the assets panel. `path` is a .ranim/.rbonemap (opens the tab); `model` is a .glb/.gltf; every edit is one undo step of that file's document. Full tables: docs/editor/ipc-protocol.org#ipc-animation.
+anim.open {path} -> {path,panel}; anim.create {path, model?} -> {path}
+anim.get {path, machine?} -> {name, machine, breadcrumbs, layers[], states:[{name,kind,clip?,default,x,y,active}], transitions:[{from ("*"=any),to,duration,exit_time?,offset,priority,interruption,conditions}], parameters:[{name,type,default?,value}], clips:[{name,source,animation,missing}], preview}
+anim.enter {path, layer?|state?|up?} -> {machine, breadcrumbs}; anim.add_layer|remove_layer {path,name}
+anim.add_state {path,name,kind?,clip?,x?,y?}; anim.remove_state {path,name}; anim.set_state {path,name,rename?,clip?,speed?,speed_parameter?,mirror?,default?,x?,y?}
+anim.add_transition|set_transition {path,from,to,duration?,exit_time? (null clears),offset?,priority?,interruption?,can_transition_to_self?,conditions?}; anim.remove_transition {path,from,to}
+anim.add_parameter {path,name,type,default?}; anim.remove_parameter {path,name}; anim.set_parameter {path,name,value} (live only)
+anim.set_blend_tree {path,state,type?,parameter?,parameter_y?,sync?,children?}
+anim.preview {path,model?,restart?,play?,advance?,scrub?} -> {model,playing,time,states:{layer:state},transition|null}; anim.validate {path} -> {ok,issues[]}; anim.save {path}
+bonemap.open|create {path,source?,target?,auto_fill?} -> {path,added}; bonemap.get {path} -> {rules,pairs,source_model,target_model,clip,mapping:[{target,source|null,explicit}],unmapped_target,unmapped_source}
+bonemap.set {path,source,target|null}; bonemap.auto_fill {path} -> {added}; bonemap.set_rules {path,ignore_case?,normalize_separators?,normalize_sides?,strip_prefixes?}; bonemap.set_models {path,source?,target?,clip?}; bonemap.preview {path,clip?,time?,play?}; bonemap.save {path}
+clip.list {model} -> {clips:[{name,duration,tracks,loop}],bones,morph_targets:[{name,group,weight}]}; clip.info {model,clip} -> {tracks:[{bone,channels:[{kind,interpolation,keys}]}],events}; clip.preview {model,clip?,time?,play?}; clip.set_morph {model,target,weight}

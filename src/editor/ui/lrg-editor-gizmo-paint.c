@@ -773,7 +773,8 @@ lrg_editor_gizmo_paint_active_outline (LrgPaintList *list,
  *                 size_y, size_z); it projects along local -Y
  *   probe         an axis-aligned world box of half sizes extents_x/y/z at
  *                 the node position (probes ignore rotation and scale), with
- *                 the blend band "blend_distance" inside it
+ *                 the blend band "blend_distance" inside it; probe volumes
+ *                 (light probe grids, 0.9.0 M3) the same box without a band
  *
  * Handles are world points; hit testing projects them through the same
  * LrgEditorView the paint uses. A drag turns the pointer ray into a value
@@ -862,6 +863,9 @@ volume_kind (LrgNode *node)
 	case LRG_NODE_VISUAL_DECAL:
 		return VOL_DECAL;
 	case LRG_NODE_VISUAL_REFLECTION_PROBE:
+	case LRG_NODE_VISUAL_PROBE_VOLUME:
+		/* a probe volume (0.9.0 M3) is the same axis-aligned box of
+		 * extents_x/y/z, without a blend band */
 		return VOL_PROBE;
 	default:
 		return VOL_NONE;
@@ -1052,7 +1056,8 @@ volume_get (LrgNode *node,
 		vol->half[0] = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "extents_x", 5.0), 0.01);
 		vol->half[1] = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "extents_y", 5.0), 0.01);
 		vol->half[2] = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "extents_z", 5.0), 0.01);
-		vol->blend = (gfloat) MAX (lrg_node_visual_get_param_double (visual, "blend_distance", 1.0), 0.0);
+		vol->blend = (lrg_node_visual_get_kind (visual) == LRG_NODE_VISUAL_PROBE_VOLUME) ? 0.0f
+		             : (gfloat) MAX (lrg_node_visual_get_param_double (visual, "blend_distance", 1.0), 0.0);
 		for (k = 0; k < 3; k++)
 		{
 			memset (vol->axes[k], 0, sizeof vol->axes[k]);

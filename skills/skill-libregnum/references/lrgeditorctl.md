@@ -142,3 +142,13 @@ Positionals fill named params in order; file args are sent absolute when they ex
 - lod get NODE | lod force NODE LEVEL|auto
 - view layers [MASK|all|none|0xHEX] | view layers LAYER on|off [viewport=N]; view render-mode|mode MODE (10 modes)
 Examples: lrgeditorctl material set materials/steel.rmat metallic 1; lrgeditorctl env set fog.density 0.02 && lrgeditorctl env bake --wait; lrgeditorctl post add looks/night.rpost vignette; lrgeditorctl view mode light-complexity viewport=1
+
+## 0.9.0 bake, sequence, 2D skeleton, animation and clip verbs
+- bake [get] | bake set KEY VALUE | bake reset | bake start [--wait] [save=false] | bake progress | bake cancel | bake save [DIR] | bake clear | bake evaluate [X Y Z [NX NY NZ]] | bake preview on|off | bake page N | bake show
+- seq list|open PATH|create PATH [length= fps= play_mode=]|get|set|add-track KIND [binding=]|add-key TRACK TIME [VALUE] [channel=]|set-key TRACK key=N|at=T ...|add-section TRACK START name=|remove ...|bind NODE|play|scrub TIME|save [save_as=]|undo [redo=true]|from-timeline TL PATH   (path=P for a sequence other than the open one)
+- timeline tangent NODE TIME MODE [name=TL channel=C slope=S]  (MODE eased|auto|user|broken|linear|constant)
+- skel2d create|open|get|save PATH; add-bone PATH NAME; set-bone|remove-bone PATH BONE; add-slot PATH NAME BONE; set-slot|remove-slot PATH SLOT; draw-order PATH '[..]'; attach|detach|mesh|auto-weights PATH SLOT NAME; paint-weights PATH SLOT NAME BONE X Y; skin|clip PATH NAME OP; key PATH TARGET CHANNEL TIME; play|mode PATH; pick PATH X Y
+- anim open|create|get|enter|preview|validate|save PATH; add-layer|remove-layer|add-state|remove-state|set-state PATH NAME; add-transition|set-transition|remove-transition PATH FROM TO; add-param PATH NAME TYPE; remove-param PATH NAME; set-param PATH NAME VALUE; blend-tree PATH STATE
+- bonemap open|create|get|auto-fill|rules|models|preview|save PATH; bonemap set PATH SOURCE TARGET|null
+- clip list|info|preview MODEL [CLIP]; clip morph MODEL TARGET WEIGHT
+Examples: lrgeditorctl bake set samples 256 && lrgeditorctl bake start --wait; lrgeditorctl bake evaluate 0 0.01 0 0 1 0

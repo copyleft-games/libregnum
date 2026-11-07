@@ -35,6 +35,7 @@
 #include "../world3d/components/lrg-reflection-probe-component.h"
 #include "../world3d/components/lrg-lod-component.h"
 #include "../lighting/lrg-environment.h"
+#include "../lighting/lrg-probe-grid.h"
 #include "../postprocess/lrg-post-stack.h"
 #include "../core/lrg-asset-manager.h"
 #include "../core/lrg-asset-meta.h"
@@ -43,6 +44,7 @@
 #include "../lrg-enums.h"
 #include "../ui/lrg-property-source.h"
 #include <graylib.h>
+#include <math.h>
 
 /* ==========================================================================
  * Bake: level -> scene
@@ -360,6 +362,8 @@ typedef struct
 	LrgAssetManager *assets;  /* nullable: material references load through it */
 	const gchar *base_dir;    /* nullable: relative references are tried here first */
 	GHashTable  *used_guids;  /* GUIDs given out by this call (set) */
+	gboolean     probe_volumes;  /* probe-volume nodes add unbaked grids */
+	gfloat       probe_spacing;  /* the level's probe_spacing (0 = unset) */
 } Instantiate3D;
 
 /*
@@ -1367,6 +1371,86 @@ instantiate_node_3d (Instantiate3D *ctx,
                      LrgNode       *node,
                      LrgEntity3D   *parent);
 
+/* --------------------------------------------------------------------------
+ * Probe volumes (0.9.0 M3)
+ * -------------------------------------------------------------------------- */
+
+/* floor (extent / spacing) + 1, clamped: the lightmap baker's axis rule */
+static guint
+probe_axis_count (gfloat extent,
+                  gfloat spacing)
+{
+	guint n = (guint) floorf (extent / MAX (spacing, 1e-3f)) + 1u;
+
+	return CLAMP (n, 2u, (guint) LRG_PROBE_GRID_MAX_RESOLUTION);
+}
+
+gboolean
+lrg_node_visual_get_probe_volume (LrgNodeVisual *self,
+                                  const gfloat  *world,
+                                  gfloat         default_spacing,
+                                  gfloat        *out_min,
+                                  gfloat        *out_max,
+                                  guint         *out_resolution)
+{
+	gfloat half[3];
+	gfloat spacing;
+	gint   res;
+	gint   k;
+
+	g_return_val_if_fail (LRG_IS_NODE_VISUAL (self), FALSE);
+	g_return_val_if_fail (world != NULL && out_min != NULL && out_max != NULL && out_resolution != NULL, FALSE);
+
+	if (lrg_node_visual_get_kind (self) != LRG_NODE_VISUAL_PROBE_VOLUME)
+		return FALSE;
+
+	/* an axis-aligned box around the node position (rotation and scale
+	 * ignored, like reflection probes and the gizmo) */
+	half[0] = (gfloat) MAX (lrg_node_visual_get_param_double (self, "extents_x", 5.0), 0.01);
+	half[1] = (gfloat) MAX (lrg_node_visual_get_param_double (self, "extents_y", 5.0), 0.01);
+	half[2] = (gfloat) MAX (lrg_node_visual_get_param_double (self, "extents_z", 5.0), 0.01);
+	spacing = (gfloat) lrg_node_visual_get_param_double (self, "spacing", 0.0);
+	if (spacing <= 0.0f)
+		spacing = default_spacing > 0.0f ? default_spacing : 2.0f;
+	res = (gint) lrg_node_visual_get_param_double (self, "resolution", 0.0);
+	for (k = 0; k < 3; k++)
+	{
+		out_min[k] = world[12 + k] - half[k];
+		out_max[k] = world[12 + k] + half[k];
+		out_resolution[k] = (res > 0) ? (guint) CLAMP (res, 2, LRG_PROBE_GRID_MAX_RESOLUTION)
+		                              : probe_axis_count (2.0f * half[k], spacing);
+	}
+	return TRUE;
+}
+
+/*
+ * add_probe_volume:
+ *
+ * A probe-volume node becomes an unbaked LrgProbeGrid on the world (every
+ * probe invalid, so the renderer ignores it), which
+ * lrg_lightmap_baker_add_world() bakes as a volume.  Skipped when the
+ * level already lists baked grids (`lighting: probes:`): those stand for
+ * the volumes, and the baker would bake every box twice.
+ */
+static void
+add_probe_volume (Instantiate3D *ctx,
+                  LrgNode       *node,
+                  LrgEntity3D   *entity)
+{
+	LrgNodeVisual          *visual = lrg_node_get_visual (node);
+	g_autoptr(LrgProbeGrid) grid = NULL;
+	gfloat                  world[16], mn[3], mx[3];
+	guint                   n[3];
+
+	if (!ctx->probe_volumes || visual == NULL || lrg_node_visual_get_kind (visual) != LRG_NODE_VISUAL_PROBE_VOLUME)
+		return;
+	lrg_entity3d_get_world_matrix (entity, world);
+	if (!lrg_node_visual_get_probe_volume (visual, world, ctx->probe_spacing, mn, mx, n))
+		return;
+	grid = lrg_probe_grid_new_with_bounds (mn, mx, n[0], n[1], n[2]);
+	lrg_world3d_add_probe_grid (ctx->world, grid);
+}
+
 /*
  * instantiate_children_3d:
  *
@@ -1414,6 +1498,7 @@ instantiate_node_3d (Instantiate3D *ctx,
 	 * the authored registry components and the scripts, in that order, so
 	 * game components can find the visual component in their attach. */
 	add_visual_component (ctx, node, entity);
+	add_probe_volume (ctx, node, entity);
 	create_registry_components (ctx, node, entity);
 	create_script_components (node, entity);
 
@@ -1434,6 +1519,8 @@ instantiate_3d_init (Instantiate3D *ctx,
 	ctx->assets = NULL;
 	ctx->base_dir = NULL;
 	ctx->used_guids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+	ctx->probe_volumes = TRUE;
+	ctx->probe_spacing = 0.0f;
 
 	if (engine == NULL)
 		engine = lrg_engine_get_default ();
@@ -1652,6 +1739,15 @@ lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
 	instantiate_3d_init (&ctx, world, engine);
 	ctx.base_dir = base_dir;
 	world_root = lrg_world3d_get_root (world);
+
+	/* probe-volume nodes stand in for baked grids until the first bake */
+	{
+		gdouble spacing = 0.0;
+
+		ctx.probe_volumes = lrg_level_get_probe_refs (level)->len == 0;
+		if (lrg_level_get_bake_setting (level, "probe_spacing", &spacing))
+			ctx.probe_spacing = (gfloat) spacing;
+	}
 
 	/* The look first, so probe components entering the world find the
 	 * environment to register with. */

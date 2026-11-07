@@ -280,7 +280,7 @@ void lrg_editor_gizmo_paint_active_outline (LrgPaintList *list,
  * @LRG_EDITOR_VOLUME_HANDLE_SIZE_Y: a decal box's projection depth
  *   ("size_y")
  * @LRG_EDITOR_VOLUME_HANDLE_SIZE_Z: a decal box's height ("size_z")
- * @LRG_EDITOR_VOLUME_HANDLE_EXTENT_X: a reflection probe's half size
+ * @LRG_EDITOR_VOLUME_HANDLE_EXTENT_X: a reflection probe's or probe volume's half size
  *   along X ("extents_x")
  * @LRG_EDITOR_VOLUME_HANDLE_EXTENT_Y: half size along Y ("extents_y")
  * @LRG_EDITOR_VOLUME_HANDLE_EXTENT_Z: half size along Z ("extents_z")
@@ -327,8 +327,9 @@ const gchar * lrg_editor_volume_handle_get_param (LrgEditorVolumeHandle handle);
  * @node: a node
  *
  * Whether @node shows a volume gizmo when selected: point and spot
- * lights (range sphere, cones), decals (projection box) and reflection
- * probes (influence box). Directional lights have none.
+ * lights (range sphere, cones), decals (projection box), reflection
+ * probes (influence box) and probe volumes (light probe box, the
+ * extent handles). Directional lights have none.
  *
  * Returns: %TRUE when @node has volume handles
  */

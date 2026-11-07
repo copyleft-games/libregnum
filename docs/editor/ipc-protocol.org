@@ -217,6 +217,23 @@ Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Regi
 | =post.assign= | 0.9.0 | post-stack editor | [[#ipc-level-look][Level look]] |
 | =lod.get= | 0.9.0 | inspector panel | [[#ipc-level-look][Level look]] |
 | =lod.force= | 0.9.0 | inspector panel | [[#ipc-level-look][Level look]] |
+| =sequence.list= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.open= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.create= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.get= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.set= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.add_track= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.add_key= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.set_key= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.add_section= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.remove= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.bind= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.play= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.scrub= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.save= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.undo= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =sequence.from_timeline= | 0.9.0 | sequencer panel | [[#sequence-methods][Sequence]] |
+| =timeline.tangent= | 0.9.0 | timeline panel | [[#sequence-methods][Sequence]] |
 | =hierarchy.reveal= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
 | =hierarchy.rename= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
 | =hierarchy.filter= | 0.8.1 | hierarchy panel | [[#hierarchy-methods][Hierarchy]] |
@@ -280,6 +297,48 @@ Every method an =lrgeditor= window serves in 0.8.1, in registration order. /Regi
 | =shadergraph.glsl= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
 | =shadergraph.save= | 0.9.0 | assets panel (shader graph editor) | [[#material-methods][Material, shader, shader graph]] |
 | =profiler.sample= | 0.8.1 | profiler panel | [[#profiler-methods][Profiler]] |
+| =bake.get= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.set= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.start= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.progress= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.cancel= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.save= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.clear= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.evaluate= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.preview= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =bake.show= | 0.9.0 | lighting (bake) panel | [[#ipc-bake][Lighting bake]] |
+| =anim.open= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.create= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.get= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.enter= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.add_layer= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.remove_layer= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.add_state= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.remove_state= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.set_state= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.add_transition= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.set_transition= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.remove_transition= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.add_parameter= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.remove_parameter= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.set_parameter= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.set_blend_tree= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.preview= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.validate= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =anim.save= | 0.9.0 | animation graph editor | [[#ipc-animation][Animation]] |
+| =bonemap.open= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.create= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.get= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.set= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.auto_fill= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.set_rules= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.set_models= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.preview= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =bonemap.save= | 0.9.0 | bone map editor | [[#ipc-animation][Animation]] |
+| =clip.list= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
+| =clip.info= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
+| =clip.preview= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
+| =clip.set_morph= | 0.9.0 | assets panel | [[#ipc-animation][Animation]] |
 
 Errors are the codes of the [[#messages][message table]] everywhere: a missing or mistyped parameter is =invalid-params=, an unknown node, file, path or panel item =not-found=, and an operation that could not be carried out =failed= with the reason in =message=. The sections below name the cases that are specific to a method.
 
@@ -648,6 +707,146 @@ Registered by the profiler panel.
 | =profiler.sample= | =frames= (recent frame times, default 60), =enable= (=true= pins the profiler on, =false= unpins it) | ={enabled, pinned, paused, frame_ms, frames, sections: [{name, last_ms, avg_ms, min_ms, max_ms, count}]}= |
 
 No method-specific errors. Details: [[file:editor-app.org::#editor-panel-profiler][Profiler panel]].
+
+** Sequence methods
+:PROPERTIES:
+:CUSTOM_ID: sequence-methods
+:END:
+Since 0.9.0. Registered by the Sequencer panel ([[file:sequencer.org][Sequencer]]), which edits one =.rseq= file at a time. =path= is a =.rseq= file, absolute or project relative; given and not the open file, it is opened first (the open file's unsaved edits are dropped); omitted, the open sequence is used. =track= is a track index as =sequence.get= lists them; =channel= is a transform channel (=location.x= ... =scale.z=) of a transform track (property tracks have one curve and need none). Times are seconds and snap to the sequence's frames while the panel's Snap is on. Every edit is one step of the panel's own undo stack (=sequence.undo=), separate from the level's. Errors: missing or mistyped parameters are =invalid-params=, a missing file, track, key or node =not-found=, anything else =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =sequence.list= | | ={open (path or null), dirty, tracks}= |
+| =sequence.open= | =path= | ={path, panel: "sequencer"}=; presents the panel |
+| =sequence.create= | =path= (=.rseq= added when missing), =name?=, =length?= (5), =fps?= (30), =play_mode?= (=once loop ping-pong=) | ={path}=; writes and opens it; an existing file is =failed= |
+| =sequence.get= | =path?= | ={path, name, length, fps, play_mode, dirty, time, playing, bindings: [{guid, name}], tracks: [{index, kind, name, binding, binding_name, muted, bone?, channels?: {channel: [key]}, component?, property?, keys?: [key], sections?: [{index, start, duration, end, name, payload?, offset, rate, loop, weight}]}]}=; key = ={index, time, value, tangent, in, out}= (=in= / =out= are the resolved slopes) |
+| =sequence.set= | =path?=, any of =name length fps play_mode= | as =sequence.get= (one undo step); =play_mode= also sets the preview mode |
+| =sequence.add_track= | =path?=, =kind= (=transform property camera-cut audio event animation subsequence=), =name?=, =binding?= (node GUID, name path, or an override name such as =self=; a node becomes a binding), =bone?= (transform), =component?=, =property?= (property) | ={index}=; without =binding= an entity track binds to the selected track's binding or the selected node |
+| =sequence.add_key= | =path?=, =track=, =channel?=, =time=, =value?= (default: the bound node's current channel value, else the curve's value), =tangent?=, =slope?= or =in?= / =out?= | ={index}= |
+| =sequence.set_key= | =path?=, =track=, =channel?=, =key= (index) or =at= (time), any of =time= (retime, handles kept), =value=, =tangent=, =slope=, =in=, =out= | ={index}= (the key's new index) |
+| =sequence.add_section= | =path?=, =track= (camera cut, audio, event, animation or sub-sequence), =start=, =name= (camera: a node name / GUID becomes its GUID and a binding; sound; event name; clip; sequence name or path), =duration?=, =payload?= (events), =offset?=, =rate?=, =loop?=, =weight?= or =volume?= | ={index}= |
+| =sequence.remove= | =path?=, =track= alone (the track), or =track= + =section= (index), or =track= + =channel?= + =key= / =at= (a key), or =track= + =channel= (that channel's curve), or =binding= alone (a binding) | ={removed}= |
+| =sequence.bind= | =path?=, =node= (GUID, name path or override name), =name?= (display name), =track?= (also rebinds that track) | ={guid, name}= |
+| =sequence.play= | =path?=, =playing?= (default true; false pauses), =stop?= (true: stop, rewind and restore the level), =mode?= (=once loop ping-pong=, the preview mode), =pilot?= | ={time, frame, playing, mode, camera, events}= |
+| =sequence.scrub= | =path?=, =time= or =frame= | ={time, frame, playing, mode, camera (binding of the cut at the playhead, or null), events: [{name, payload, time, reverse}]}= (events crossed; the level's bound nodes are posed; sounds stay silent) |
+| =sequence.save= | =path?=, =save_as?= | ={path}= |
+| =sequence.undo= | =redo?= (true redoes) | ={ok, dirty}= |
+| =sequence.from_timeline= | =timeline= (a level timeline name), =path=, =fps?= (30) | ={path}=; converts with =lrg_sequence_new_from_timeline()=, writes and opens it; an unknown timeline is =not-found= |
+| =timeline.tangent= | =name?= (default the current timeline), =node=, =time=, =channel?= (default every track of the node), =tangent= (=eased auto user broken linear constant=), =slope?= or =in?= / =out?= (default: the slopes the key is drawn with) | ={changed}=; registered by the Timeline panel, one level undo step |
+
+Playback (=sequence.play=) advances with the editor's frames; poll =sequence.get= for =time= and =playing=. A level save, play-in-editor or loading a level ends the preview and restores the posed nodes.
+
+** Lighting bake methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-bake
+:END:
+Since 0.9.0. Registered by the Lighting panel ([[file:bake.org][Lighting Bake in the Editor]]). They edit the open level's =lighting:= block (settings and references) with undo and run =LrgLightmapBaker= on the CPU, so they work in headless editors too. Setting keys are the =LrgLightmapBakeSettings= properties with =_= (=texels_per_unit=, =samples=, =bounces=, =max_lightmap_size=, =padding=, =denoise=, =probe_spacing=, =probe_samples=, =auto_probe_volume=, =seed=, =threads=, =light_radius=, =sun_angle=); =-= works too. Errors: a bad key or value is =invalid-params=; no level, a bake already running, nothing static to bake, nothing to save or a write failure is =failed=.
+
+| Method | Params | Result | Notes |
+|--------+--------+--------+-------|
+| =bake.get= | | ={settings: {key: value}, set_keys: [key], lightmap (reference or null), probes: [reference], baking, phase, progress, auto_save, preview, result: {present, unsaved, objects, lights, texels, entries, pages, grids, probes, seconds}}= | =settings= lists every key (defaults included), =set_keys= those in the =.rlevel= |
+| =bake.set= | =key= + =value= (number or boolean), or =values: {key: value}=, or =reset: true=, and/or =auto_save= | as =bake.get= | one undo step per call; values are clamped to the setting's range; =reset= drops every key |
+| =bake.start= | =save?= (sets auto save) | ={started: true, objects, lights}= | asynchronous: poll =bake.progress=; with auto save and a level file the result is saved when done |
+| =bake.progress= | | ={baking, phase (idle prepare lightmaps postprocess probes done cancelled failed), progress (0..1), error (string or null), unsaved}= | |
+| =bake.cancel= | | ={cancelled}= | false when nothing was running |
+| =bake.save= | =dir?= (default the level's directory) | as =bake.get= | writes =<level>.rlightmap= (+ =.hdr= pages) and =<level>-<n>.rprobes=, sets the references (one undo step) |
+| =bake.clear= | | ={cleared}= | drops the references and the unsaved result (undoable; files and settings stay) |
+| =bake.evaluate= | =position?= ([x, y, z]), =normal?= ([x, y, z], default up) | ={position, normal, rgb, luminance}= | linear irradiance / pi at a surface point; without =position= the surface under the active viewport's centre (=failed= when the ray hits nothing) |
+| =bake.preview= | =show?= (bool), =page?= | ={show, page, pages}= | whether the authoring viewport applies the baked lighting; the atlas page the panel shows |
+| =bake.show= | | ={panel: "bake", shown}= | brings the panel to the front |
+
+#+begin_src json
+{"id": 1, "method": "bake.set", "params": {"values": {"texels_per_unit": 4, "samples": 64}}}
+{"id": 2, "method": "bake.start"}
+{"id": 3, "method": "bake.progress"}
+{"id": 3, "result": {"baking": true, "phase": "lightmaps", "progress": 0.42, "error": null, "unsaved": false}}
+{"id": 4, "method": "bake.evaluate", "params": {"position": [0, 0.01, 0], "normal": [0, 1, 0]}}
+#+end_src
+
+** 2D skeleton methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-skel2d
+:END:
+Since 0.9.0. Registered by the 2D rig editor ([[file:skeleton2d-editor.org][2D Rig Editor]]; =lrg_editor_skeleton2d_editor_install()=, called by the Assets panel at startup and by every rig editor). Every method takes =path= (a =.rskel2d=, absolute or project relative) and opens its tab when needed; they read and edit the open editor's unsaved state. Bones and slots are given by name (an integer index works too). Every mutating call is one undo step of the rig's own document (=data.undo= undoes it). Optional =skin= on attachment methods activates that skin first (new attachments go into the active skin). Times are seconds; rotations degrees, clockwise on screen; positions are setup space (y down). Errors: missing or mistyped parameters are =invalid-params=; an unknown file, bone, slot, skin, clip, attachment or key is =not-found=; a rig that does not load, a name in use or an invalid edit is =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =skel2d.create= | =path=, =name?= | ={path}=; writes a rig with one =root= bone; an existing file is =failed= |
+| =skel2d.open= | =path= | ={path, panel}= |
+| =skel2d.get= | =path= | ={path, name, dirty, mode (setup animate), tool (select bone mesh weights), skin, clip, time, playing, loop, selected: {bone, slot, attachment}, bones: [{name, parent, x, y, rotation, scale: [x, y], length}], slots: [{name, bone, attachment, color: [r, g, b, a]}], draw_order: [slot], skins: [{name, attachments: [{slot, name, image, vertices, triangles, weighted}]}], clips: [{name, duration, loop, bones: [name], slots: [name]}]}= (setup values) |
+| =skel2d.add_bone= | =name?= (default =boneN=), =parent?= (default: a root bone), =x?=, =y?=, =rotation?=, =length?= | ={bone, index}= |
+| =skel2d.set_bone= | =bone=, any of =x y rotation scale_x scale_y length=, =name?= (renames everywhere) | the bone as in =skel2d.get= plus ={bone}= |
+| =skel2d.remove_bone= | =bone= | ={removed: [names]}= (the bone and its descendants, with their slots, attachments, weights and timelines) |
+| =skel2d.add_slot= | =name?=, =bone=, =attachment?= | ={slot, index}= (front of the draw order) |
+| =skel2d.set_slot= | =slot=, =attachment?= (string or null: hidden), =color?= ([r, g, b] or [r, g, b, a], 0..1), =name?= | the slot as in =skel2d.get= plus ={slot}= |
+| =skel2d.remove_slot= | =slot= | ={removed}= |
+| =skel2d.draw_order= | =order= (every slot name once, back to front) | ={order}= |
+| =skel2d.attach= | =slot=, =name?= (default: the image's base name), =image?= (stored relative to the rig), =skin?=, =x?=, =y?= (top left), =width?=, =height?= (default the image size), =columns?=, =rows?= (1, 1: a quad) | ={slot, name, vertices, triangles, weighted}=; becomes the slot's setup attachment when it showed none |
+| =skel2d.detach= | =slot=, =name=, =skin?= | ={removed}= |
+| =skel2d.mesh= | =slot=, =name=, =skin?=, any of =add= ([[x, y], ...]: vertices, UV fitted, retriangulated), =move= ({index, x, y}), =remove= (index), =triangulate= (true) | ={slot, name, vertices, triangles, weighted}= |
+| =skel2d.auto_weights= | =slot=, =name=, =skin?=, =bones?= ([names], default all), =falloff?= (4), =max_influences?= (2), =smooth?= (1) | as =skel2d.mesh= |
+| =skel2d.paint_weights= | =slot=, =name=, =skin?=, =bone=, =x=, =y=, =radius?= (20), =strength?= (0.5), =erase?= | ={changed}= (vertices changed by one brush dab) |
+| =skel2d.skin= | =name=, =op?= (=activate= (default), =add=, =remove=) | ={skins, active}= |
+| =skel2d.clip= | =name=, =op?= (=select= (default), =add=, =remove=, =set=), =duration?=, =loop?= | ={clips, clip}= |
+| =skel2d.key= | =target= (bone, or slot for =color= / =attachment=), =channel= (=translate rotate scale color attachment=), =time=, =clip?= (selects it; default the selected clip), =values?= (x, y / degrees / r, g, b, a; offsets from setup for bones), =attachment?= (string or null), =curve?= (="linear"=, ="stepped"= or [x1, y1, x2, y2]), =remove?= (true: delete the key at =time=) | ={target, channel, keys: [{time, values or attachment, curve (linear stepped bezier)}]}= |
+| =skel2d.play= | =clip?=, =time?=, =playing?=, =loop?= | ={clip, time, playing, loop}=; switches to animation mode; playback advances with the editor's frames |
+| =skel2d.mode= | =mode?= (=setup animate=), =tool?= (=select bone mesh weights=), =bone?=, =slot?= (null clears) | ={mode, tool, selected}= |
+| =skel2d.pick= | =x=, =y=, =radius?= (8) | ={bone}= (name or null) at a setup-space point in the shown pose |
+| =skel2d.save= | | ={path}= |
+
+#+begin_src json
+{"id": 1, "method": "skel2d.create", "params": {"path": "rigs/hero.rskel2d", "name": "hero"}}
+{"id": 2, "method": "skel2d.add_bone", "params": {"path": "rigs/hero.rskel2d", "name": "spine", "parent": "root", "rotation": -90, "length": 60}}
+{"id": 3, "method": "skel2d.add_slot", "params": {"path": "rigs/hero.rskel2d", "name": "body", "bone": "spine"}}
+{"id": 4, "method": "skel2d.attach", "params": {"path": "rigs/hero.rskel2d", "slot": "body", "image": "art/body.png", "x": -20, "y": -60, "rows": 3}}
+{"id": 5, "method": "skel2d.auto_weights", "params": {"path": "rigs/hero.rskel2d", "slot": "body", "name": "body"}}
+{"id": 6, "method": "skel2d.clip", "params": {"path": "rigs/hero.rskel2d", "name": "idle", "op": "add", "duration": 2, "loop": true}}
+{"id": 7, "method": "skel2d.key", "params": {"path": "rigs/hero.rskel2d", "target": "spine", "channel": "rotate", "time": 1, "values": [6], "curve": [0.42, 0, 0.58, 1]}}
+{"id": 8, "method": "skel2d.save", "params": {"path": "rigs/hero.rskel2d"}}
+#+end_src
+
+** Animation methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-animation
+:END:
+Since 0.9.0. The =anim.*= methods are registered by the animation graph editor (=lrg_editor_anim_graph_editor_install()=), the =bonemap.*= methods by the bone map editor (=lrg_editor_bone_map_editor_install()=), both called by the Assets panel at startup; the =clip.*= methods by the Assets panel. =path= is a =.ranim= / =.rbonemap= file, absolute or project relative; the methods open its tab when needed and act on the open editor (unsaved state). =model= is a glTF file (=.glb= / =.gltf=), project relative or absolute. Every editing method is one undo step of the file's document (=data.undo= undoes it). The =anim.*= methods act on the state machine shown on the canvas; =machine= (a YAML path such as =/layers/0= or =/layers/0/states/2/machine=) switches the canvas to that machine first. =from= ="*"= names the machine's any-state transitions. Errors: missing or mistyped parameters, unknown kinds, operators or types are =invalid-params=; an unknown file, layer, state, transition, parameter, clip or morph target is =not-found=; anything else (a name in use, a file that exists, a model without a skin) =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =anim.open= | =path= | ={path, panel}= |
+| =anim.create= | =path=, =model?= | ={path}=; with =model= one clip slot and one state per animation, the model remembered as =editor_preview= |
+| =anim.get= | =path=, =machine?= | ={name, machine, breadcrumbs: [label], load_error?, layers: [{name, weight, blend, enabled}], states: [{name, kind (clip blend_tree machine empty), clip?, default, x, y, active}], transitions: [{from, to, duration, exit_time?, offset, priority, interruption, conditions: [{parameter, op?, value?}]}] (any-state ones first, =from= ="*"=), parameters: [{name, type, default?, value}], clips: [{name, source, animation, missing}], preview: {model, playing, time, states: {layer: state}, transition: {from, to, progress} or null}}= |
+| =anim.enter= | =path=, =layer?= (name), =state?= (a state with a nested machine), =up?= (bool) | ={machine, breadcrumbs}= |
+| =anim.add_layer= | =path=, =name= | ={name}= |
+| =anim.remove_layer= | =path=, =name= | ={removed}= (the last layer stays) |
+| =anim.add_state= | =path=, =name=, =kind?= (=clip blend_tree machine empty=), =clip?=, =x?=, =y?=, =machine?= | ={name}=; the first state of a machine becomes its default |
+| =anim.remove_state= | =path=, =name=, =machine?= | ={removed}=; its transitions and =default:= go too |
+| =anim.set_state= | =path=, =name=, =machine?=, =rename?=, =clip?=, =speed?=, =speed_parameter?=, =mirror?=, =default?= (true), =x?=, =y?= (a member set to null removes the key) | ={name}= |
+| =anim.add_transition= | =path=, =from=, =to=, =machine?=, =duration?= (0.25), =exit_time?=, =offset?=, =priority?=, =interruption?=, =can_transition_to_self?=, =conditions?= | ={from, to}= |
+| =anim.set_transition= | =path=, =from=, =to=, =machine?=, the keys of =add_transition= (=exit_time: null= removes the exit time; =conditions= replaces the list) | ={from, to}= |
+| =anim.remove_transition= | =path=, =from=, =to=, =machine?= | ={removed}= |
+| =anim.add_parameter= | =path=, =name=, =type= (=float int bool trigger=), =default?= | ={name}= |
+| =anim.remove_parameter= | =path=, =name= | ={removed}= |
+| =anim.set_parameter= | =path=, =name=, =value= (number, or bool for bools and triggers: =true= fires) | ={name, value}=; a live preview value, not saved |
+| =anim.set_blend_tree= | =path=, =state=, =machine?=, =type?= (=1d 2d_directional 2d_cartesian direct=), =parameter?=, =parameter_y?=, =sync?=, =children?= ([{clip, threshold? or position? [x, y] or parameter? or weight?, speed?}], replaces the list) | ={state}=; converts the state to a blend tree when needed |
+| =anim.preview= | =path=, =model?=, =restart?= (bool), =play?= (bool), =advance?= (seconds stepped now, also while paused), =scrub?= (0..1 through the base layer's state; pauses) | ={model, playing, time, states: {layer: state}, transition}= |
+| =anim.validate= | =path= | ={ok, issues: [{severity, path, line, message}]}= |
+| =anim.save= | =path= | ={path}= |
+| =bonemap.open= | =path= | ={path, panel}= |
+| =bonemap.create= | =path=, =source?=, =target?=, =auto_fill?= | ={path, added}= |
+| =bonemap.get= | =path= | ={rules: {ignore_case, normalize_separators, normalize_sides, strip_prefixes: []}, pairs: [{source, target}], source_model, target_model, clip, mapping: [{target, source or null, explicit}], unmapped_target: [], unmapped_source: [], load_error?}= |
+| =bonemap.set= | =path=, =source=, =target= (a bone name, or null to remove =source='s explicit pair) | ={source, target}= |
+| =bonemap.auto_fill= | =path= | ={added}= |
+| =bonemap.set_rules= | =path=, =ignore_case?=, =normalize_separators?=, =normalize_sides?=, =strip_prefixes?= ([string], replaces the list) | ={rules}= |
+| =bonemap.set_models= | =path=, =source?=, =target?=, =clip?= | ={source_model, target_model, clip}= |
+| =bonemap.preview= | =path=, =clip?=, =time?= (seconds; pauses), =play?= | ={clip, time, playing}= |
+| =bonemap.save= | =path= | ={path}= |
+| =clip.list= | =model= | ={clips: [{name, duration, tracks, loop}], bones: [name] (skin 0), morph_targets: [{name, group, weight}]}= |
+| =clip.info= | =model=, =clip= | ={name, duration, loop, tracks: [{bone, channels: [{kind (translation rotation scale), interpolation (linear step cubic_spline), keys}]}], events: [{time, name}]}= |
+| =clip.preview= | =model=, =clip?=, =time?= (seconds; pauses), =play?= | ={model, clip, time, playing}=; opens (or drives) the Animations dialog |
+| =clip.set_morph= | =model=, =target= (morph target name), =weight= (0..1) | ={target, weight}=; opens the dialog when needed |
+
+Details: [[file:animation-editor.org][Animation tools in the editor]].
 
 ** Examples
 :PROPERTIES:

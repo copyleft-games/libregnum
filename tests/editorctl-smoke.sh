@@ -21,7 +21,8 @@
 # validate, logs, call, events, the 0.8.1 verbs (meta, vcs, prefab, code,
 # data, palette, preferences, hierarchy filter, notify --level), the
 # 0.9.0 rendering verbs (material, shader, shadergraph, env, post, lod,
-# view layers; skipped until the editor registers their methods)
+# view layers; skipped until the editor registers their methods), the
+# 0.9.0 M3/M4 verbs (bake, seq, skel2d, anim, bonemap; likewise skipped)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -323,6 +324,83 @@ else
 	skip 'view layers'
 fi
 
+# 0.9.0 M3/M4 editor wave: the lighting bake (EDBAKE), sequences (EDSEQ),
+# 2D skeletons (EDRIG) and animation graphs / bone maps / clips (EDANIM).
+"${ctl}" bake frobnicate >/dev/null 2>&1 && status=0 || status=$?
+check 'bake usage error exits 2' "status=${status}" 'status=2'
+"${ctl}" bake evaluate 1 2 >/dev/null 2>&1 && status=0 || status=$?
+check 'bake evaluate needs three numbers' "status=${status}" 'status=2'
+if has_method bake.get
+then
+	check 'bake set' "$(ctl bake set samples 8 -o json)" '"samples"'
+	check 'bake set writes the level' "$(ctl bake -o json)" '"set_keys" : ['
+	check 'bake set texels' "$(ctl bake set texels_per_unit 2 -o json)" '"texels_per_unit" : 2'
+	# nothing static yet: the bake refuses, exit 1
+	"${ctl}" bake start >/dev/null 2>&1 && status=0 || status=$?
+	check 'bake without static geometry fails' "status=${status}" 'status=1'
+	ctl call node.create name=BakeFloor kind=primitive primitive=cube >/dev/null
+	ctl call node.set node=BakeFloor 'visual={"params":{"static_lighting":true}}' >/dev/null 2>&1 || \
+		ctl call inspector.set node=BakeFloor section=visual name=param-static_lighting value=true >/dev/null 2>&1 || true
+	check 'bake start --wait' "$(ctl bake start --wait -o json 2>&1)" '"entries" : 1'
+	check 'bake progress' "$(ctl bake progress -o json)" '"phase" : "done"'
+	check 'bake saved next to the level' "$(ls "${work}/game/levels")" 'main.rlightmap'
+	check 'bake evaluate' "$(ctl bake evaluate 0 0.6 0 0 1 0 -o json)" '"luminance"'
+	check 'bake preview off' "$(ctl bake preview off -o json)" '"show" : false'
+	ctl bake preview on >/dev/null
+	check 'bake clear' "$(ctl bake clear -o json)" '"cleared" : true'
+	check 'bake clear undo' "$(ctl undo && ctl bake -o json)" 'main.rlightmap'
+	check 'bake reset' "$(ctl bake reset -o json | tr -d ' \n')" '"set_keys":[]'
+else
+	skip 'bake'
+fi
+if has_method sequence.create
+then
+	seqf="${work}/game/smoke.rseq"
+	check 'seq create' "$(ctl seq create "${seqf}" length=4)" 'smoke.rseq'
+	check 'seq list' "$(ctl seq -o json)" 'smoke.rseq'
+	check 'seq add-track' "$(ctl seq add-track event -o json)" '"index" : 0'
+	check 'seq add-section' "$(ctl seq add-section 0 1 name=boom -o json)" '"index"'
+	check 'seq get' "$(ctl seq get -o json)" '"kind" : "event"'
+	check 'seq scrub' "$(ctl seq scrub 2 -o json)" 'boom'
+	check 'seq save' "$(ctl seq save)" 'smoke.rseq'
+else
+	skip 'seq'
+fi
+if has_method skel2d.create
+then
+	rig="${work}/game/smoke.rskel2d"
+	check 'skel2d create' "$(ctl skel2d create "${rig}")" 'smoke.rskel2d'
+	check 'skel2d add-bone' "$(ctl skel2d add-bone "${rig}" arm length=40 -o json)" '"bone" : "arm"'
+	check 'skel2d get' "$(ctl skel2d get "${rig}" -o json)" '"arm"'
+	check 'skel2d save' "$(ctl skel2d save "${rig}")" 'smoke.rskel2d'
+	ctl data close "${rig}" --force >/dev/null 2>&1 || true
+else
+	skip 'skel2d'
+fi
+if has_method anim.create
+then
+	graphf="${work}/game/smoke.ranim"
+	check 'anim create' "$(ctl anim create "${graphf}")" 'smoke.ranim'
+	check 'anim add-param' "$(ctl anim add-param "${graphf}" speed float -o json)" 'speed'
+	check 'anim add-state' "$(ctl anim add-state "${graphf}" idle -o json)" 'idle'
+	check 'anim get' "$(ctl anim get "${graphf}" -o json)" '"idle"'
+	check 'anim validate' "$(ctl anim validate "${graphf}" -o json)" '"ok"'
+	check 'anim save' "$(ctl anim save "${graphf}")" 'smoke.ranim'
+	ctl data close "${graphf}" --force >/dev/null 2>&1 || true
+else
+	skip 'anim'
+fi
+if has_method bonemap.create
+then
+	mapf="${work}/game/smoke.rbonemap"
+	check 'bonemap create' "$(ctl bonemap create "${mapf}")" 'smoke.rbonemap'
+	check 'bonemap set' "$(ctl bonemap set "${mapf}" Hips hips -o json 2>&1)" 'Hips'
+	check 'bonemap get' "$(ctl bonemap get "${mapf}" -o json)" '"pairs"'
+	ctl data close "${mapf}" --force >/dev/null 2>&1 || true
+else
+	skip 'bonemap'
+fi
+
 # Persistence and validation.
 check 'save' "$(ctl save)" 'saved'
 check 'saved file has the nodes' "$(cat "${work}/game/levels/main.rlevel")" 'Barrel'
@@ -370,6 +448,14 @@ else
 	check 'mcp environment tools' "${out}" '"name":"environment_set"'
 	check 'mcp post tools' "${out}" '"name":"post_save_look"'
 	check 'mcp lod and layer tools' "${out}" '"name":"set_view_layers"'
+	check 'mcp bake tools' "${out}" '"name":"bake_start"'
+	check 'mcp sequence tools' "${out}" '"name":"sequence_add_key"'
+	check 'mcp skel2d tools' "${out}" '"name":"skel2d_paint_weights"'
+	check 'mcp anim tools' "${out}" '"name":"anim_add_transition"'
+	check 'mcp bonemap and clip tools' "${out}" '"name":"clip_set_morph"'
+	check 'mcp bake_progress is read-only and takes no params' \
+		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"bake_progress"[^]]*' | head -n 1)" \
+		'"properties":{}},"annotations":{"readOnlyHint":true'
 	check 'mcp inspector_state is read-only and takes no params' \
 		"$(grep -F '"id":2,' <<<"${out}" | tr -d '\n' | grep -o '"name":"inspector_state"[^]]*' | head -n 1)" \
 		'"properties":{}},"annotations":{"readOnlyHint":true'

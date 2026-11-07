@@ -153,6 +153,7 @@ For =tilemap= nodes, =asset= is the tileset image and =params.tile_size= the wor
 | =prefab-instance= | =LRG_NODE_VISUAL_PREFAB_INSTANCE= |
 | =decal= | =LRG_NODE_VISUAL_DECAL= (0.9.0) |
 | =reflection-probe= | =LRG_NODE_VISUAL_REFLECTION_PROBE= (0.9.0) |
+| =probe-volume= | =LRG_NODE_VISUAL_PROBE_VOLUME= (0.9.0 M3: a box of baked light probes) |
 
 **** Decal and reflection-probe nodes (0.9.0)
 :PROPERTIES:
@@ -209,6 +210,11 @@ Two node kinds shape a level's look together with the [[#environment][environmen
 | reflection-probe | =box_projection= | bool | true | box projection |
 | reflection-probe | =resolution= | int | 128 | cubemap edge |
 | reflection-probe | =near_clip=, =far_clip=, =auto_recapture= | double / bool | 0.05, 1000, true | capture planes, recapture after moves |
+| probe-volume | =extents_x=, =extents_y=, =extents_z= | double | 5 | half sizes of the world-aligned probe box around the node |
+| probe-volume | =spacing= | double | 0 | distance between probes; 0 = =lighting: settings: probe_spacing= (else 2) |
+| probe-volume | =resolution= | int | 0 | probes per axis (2 .. 64); 0 = from the spacing |
+
+Probe volumes become unbaked =LrgProbeGrid= boxes on the world (=lrg_node_visual_get_probe_volume()=) for the lightmap baker, unless the level already lists baked grids; see [[file:bake.org::#editor-bake-probe-volumes][Lighting Bake > Probe volumes]].
 
 *** Components
 :PROPERTIES:
@@ -501,7 +507,7 @@ lighting:
 
 =lrg_level_clear_lighting()= drops the block. At runtime =lrg_level_instantiate_3d()= loads the lightmap into =lrg_world3d_set_lightmap()= and each grid into =lrg_world3d_add_probe_grid()=; a reference that does not resolve or load logs a warning and is skipped (the level still loads, lit by realtime lights and the environment).
 
-Node params that steer the bake (they map onto component properties by name): =static_lighting= and =lightmap_scale= on primitive and mesh-asset visuals (=LrgMeshRendererComponent:static-lighting= / =lightmap-scale=), =bake_mode= (=realtime= / =mixed= / =baked=) on lights (=LrgLightComponent:bake-mode=). Lightmap entries are keyed by node GUID, which is why GUIDs must stay stable.
+Node params that steer the bake (they map onto component properties by name): =static_lighting= and =lightmap_scale= on primitive and mesh-asset visuals (=LrgMeshRendererComponent:static-lighting= / =lightmap-scale=), =bake_mode= (=realtime= / =mixed= / =baked=) on lights (=LrgLightComponent:bake-mode=). Lightmap entries are keyed by node GUID, which is why GUIDs must stay stable. The editor's Lighting panel writes the whole block ([[file:bake.org][Lighting Bake in the Editor]]).
 
 ** Notes
 :PROPERTIES:
