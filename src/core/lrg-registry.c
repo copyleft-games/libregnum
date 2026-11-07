@@ -112,6 +112,8 @@
 #include "../world3d/components/lrg-particle-component.h"
 #include "../particles/lrg-particle-asset.h"
 #include "../core/lrg-color-gradient.h"
+#include "../particles/lrg-gpu-particles.h"
+#include "../weather/lrg-weather-asset.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -550,6 +552,9 @@ static const LrgRegistryBuiltin builtin_catalog[] = {
     { "particle-asset-emitter",     lrg_particle_asset_emitter_get_type },
     { "particle-render-settings",   lrg_particle_render_settings_get_type },
     { "color-gradient",             lrg_color_gradient_get_type },
+    { "gpu-particles",              lrg_gpu_particles_get_type },
+    { "weather-wind",               lrg_weather_wind_get_type },
+    { "weather-particles",          lrg_weather_particles_get_type },
     { "skeleton2d",                lrg_skeleton2d_component_get_type },
 
     /* Scenes and 3D levels */

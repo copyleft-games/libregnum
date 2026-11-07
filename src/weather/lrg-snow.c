@@ -557,3 +557,22 @@ lrg_snow_get_flake (LrgSnow    *self,
     out_position->z = 0.0f;
     return TRUE;
 }
+
+void
+lrg_snow_get_area (LrgSnow *self,
+                   gfloat  *x,
+                   gfloat  *y,
+                   gfloat  *width,
+                   gfloat  *height)
+{
+    g_return_if_fail (LRG_IS_SNOW (self));
+
+    if (x != NULL)
+        *x = self->area_x;
+    if (y != NULL)
+        *y = self->area_y;
+    if (width != NULL)
+        *width = self->area_width;
+    if (height != NULL)
+        *height = self->area_height;
+}

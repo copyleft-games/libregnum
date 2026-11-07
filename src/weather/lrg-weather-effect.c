@@ -35,6 +35,7 @@ typedef struct
     gfloat   volume_radius;
     gfloat   volume_height;
     gfloat   camera[3];
+    gfloat   level;          /* full-strength intensity, < 0 when unset */
 } LrgWeatherEffectPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgWeatherEffect, lrg_weather_effect, G_TYPE_OBJECT)
@@ -51,6 +52,7 @@ enum
     PROP_WIND_Y,
     PROP_RENDER_LAYER,
     PROP_SPACE,
+    PROP_LEVEL,
     N_PROPS
 };
 
@@ -218,6 +220,9 @@ lrg_weather_effect_get_property (GObject    *object,
     case PROP_SPACE:
         g_value_set_enum (value, priv->space);
         break;
+    case PROP_LEVEL:
+        g_value_set_float (value, priv->level);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
     }
@@ -258,6 +263,9 @@ lrg_weather_effect_set_property (GObject      *object,
         break;
     case PROP_SPACE:
         lrg_weather_effect_set_space (self, g_value_get_enum (value));
+        break;
+    case PROP_LEVEL:
+        lrg_weather_effect_set_level (self, g_value_get_float (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -336,6 +344,23 @@ lrg_weather_effect_class_init (LrgWeatherEffectClass *klass)
                             "Target intensity for transitions",
                             0.0f, 1.0f, 0.5f,
                             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+    /**
+     * LrgWeatherEffect:level:
+     *
+     * The intensity this effect has when its weather is fully on (an
+     * #LrgWeatherAsset layer's `intensity`). #LrgWeatherManager crossfades
+     * between 0 and the level, and an instant switch sets the intensity
+     * to it. Negative (the default) keeps the old behaviour: crossfades
+     * run between 0 and 1 and an instant switch leaves the intensity as
+     * it is.
+     */
+    properties[PROP_LEVEL] =
+        g_param_spec_float ("level",
+                            "Level",
+                            "Full-strength intensity, negative when unset",
+                            -1.0f, 1.0f, -1.0f,
+                            G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
 
     /**
      * LrgWeatherEffect:transition-speed:
@@ -471,6 +496,7 @@ lrg_weather_effect_init (LrgWeatherEffect *self)
     priv->space = LRG_WEATHER_SPACE_SCREEN;
     priv->volume_radius = LRG_WEATHER_DEFAULT_VOLUME_RADIUS;
     priv->volume_height = LRG_WEATHER_DEFAULT_VOLUME_HEIGHT;
+    priv->level = -1.0f;
 }
 
 /* Public API */
@@ -969,4 +995,42 @@ lrg_weather_emit_sprite (const gfloat *centre,
     rlVertex3f (q[0][0], q[0][1], q[0][2]);
     rlVertex3f (q[2][0], q[2][1], q[2][2]);
     rlVertex3f (q[3][0], q[3][1], q[3][2]);
+}
+
+gfloat
+lrg_weather_effect_get_level (LrgWeatherEffect *self)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_WEATHER_EFFECT (self), -1.0f);
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    return priv->level;
+}
+
+void
+lrg_weather_effect_set_level (LrgWeatherEffect *self,
+                              gfloat            level)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    level = level < 0.0f ? -1.0f : MIN (level, 1.0f);
+    if (priv->level == level)
+        return;
+    priv->level = level;
+    g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LEVEL]);
+}
+
+gfloat
+lrg_weather_effect_get_full_intensity (LrgWeatherEffect *self)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_val_if_fail (LRG_IS_WEATHER_EFFECT (self), 1.0f);
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    return priv->level < 0.0f ? 1.0f : priv->level;
 }

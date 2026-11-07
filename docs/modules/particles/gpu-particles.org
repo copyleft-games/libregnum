@@ -1,0 +1,396 @@
+#+title: GPU particles (LrgGpuParticles)
+#+description: Transform-feedback particle simulation on GL 3.3 with a bit-identical CPU twin, the supported .rparticles subset and the fallback rules
+* LrgGpuParticles
+:PROPERTIES:
+:CUSTOM_ID: lrg-gpu-particles
+:END:
+=LrgGpuParticles= is one particle emitter simulated on the GPU. GL 3.3 has no compute shaders, so the simulation is a vertex shader run once per particle slot with rasterisation turned off; it reads the slot from one vertex buffer and writes the stepped particle into a second buffer through transform feedback, and the two buffers swap every update (ping-pong). Emission, motion and death all happen in that one shader, the particles are drawn as one instanced draw of camera-facing quads, and nothing is ever read back or sorted, so 100 000 particles and more cost one draw for the update and one for the render.
+
+The same simulation is written a second time in C. It is the fallback when there is no GL context (servers, headless tests, a driver without transform feedback) or when the caller turns the GPU off, and it is the reference the tests compare the GPU against: both draw exactly the same random numbers and agree on positions to float rounding.
+
+Header: =src/particles/lrg-gpu-particles.h=. See also [[file:system.org][LrgParticleSystem]] (the CPU particle system), [[file:particle-asset.org][.rparticles]] (the authored format, whose GPU-capable subset this runs) and [[file:../weather/weather-asset.org][.rweather]] (whose =particles= layers are GPU emitters).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Slots and the emission ring
+:PROPERTIES:
+:CUSTOM_ID: slots-ring
+:END:
+An emitter has a fixed =capacity= of slots. Every slot always holds a particle record; it is live while its age is below its lifetime (a slot never used has lifetime 0). An update that emits n particles hands the shader the n slots after the ring head; the shader spawns a fresh particle in each and the head moves on. When the capacity is smaller than rate × lifetime the ring wraps and the oldest particles are replaced first. Size the capacity as =emission-rate × lifetime-max= plus the largest burst.
+
+Dead particles stay in their slots; the render pass collapses them to a point outside the clip volume. There is no compaction, no atomic counter and no query, so the CPU never waits for the GPU (except in the explicit read-back calls).
+
+*** The record
+:PROPERTIES:
+:CUSTOM_ID: record
+:END:
+Each slot is =LRG_GPU_PARTICLES_FLOATS_PER_PARTICLE= (12) floats, also the layout of =lrg_gpu_particles_read_back()=:
+
+| Floats | Meaning                                                    |
+|--------+------------------------------------------------------------|
+| 0 .. 2 | world position                                             |
+| 3      | age in seconds                                             |
+| 4 .. 6 | velocity in units per second                               |
+| 7      | lifetime in seconds                                        |
+| 8      | rotation in radians                                        |
+| 9      | spin in radians per second                                 |
+| 10, 11 | spawn index, low and high 16 bits (exact as floats)        |
+
+*** Random numbers and determinism
+:PROPERTIES:
+:CUSTOM_ID: determinism
+:END:
+Particle number n of a run (the spawn index, =lrg_gpu_particles_get_emitted_total()= before it was born) draws its random numbers as =hash(seed ^ hash(n * 16 + channel))= with a 32-bit integer hash (lowbias32) and takes the top 24 bits as a float in [0, 1). Integer arithmetic is identical on the CPU and the GPU, so the two backends spawn identical particles. Channels: 0-2 shape position, 3-4 cone direction, 5 speed, 6 lifetime, 7 start rotation, 8 spin, 9 size variation (render). The same seed, parameters and update steps give the same particles; =lrg_gpu_particles_clear()= rewinds the spawn counter.
+
+Motion agrees between the backends to float rounding of =sin=, =pow= and =sqrt= (the GPU-vs-CPU test measures it: a few 1e-5 after a second of a busy effect).
+
+*** Emission timing
+:PROPERTIES:
+:CUSTOM_ID: emission-timing
+:END:
+- *Rate*: =emission-rate= particles per second, fractional remainders carried between updates.
+- *Bursts*: =lrg_gpu_particles_add_burst (time, count)=; with =loop= every =duration= seconds, without it once. A single long update fires every burst it crosses.
+- *On demand*: =lrg_gpu_particles_emit (count)= queues count particles for the next update, whatever =emitting= says.
+- *Sub-frame spread*: the k-th of n particles born in an update of length dt is born (n - k - 0.5) / n × dt early and starts that far along its velocity, at the emitter position interpolated between the previous and the current one. A moving emitter (a camera-following weather layer, a projectile) leaves a continuous stream instead of clumps.
+
+*** Simulation step
+:PROPERTIES:
+:CUSTOM_ID: step
+:END:
+For a live particle, per update (semi-implicit Euler):
+
+1. acceleration = gravity + turbulence(position, time) + attractor + vortex;
+2. velocity += acceleration × dt;
+3. velocity += (wind − velocity) × min(drag × dt, 1) (drag pulls toward the air velocity; with no wind it is plain linear drag);
+4. position += velocity × dt;
+5. with =collide=, a particle below =plane-height= moving down is reflected: height mirrored above the plane scaled by =bounce=, vertical speed × −bounce, horizontal speed × (1 − friction);
+6. rotation += spin × dt, age += dt.
+
+The turbulence field is a cheap divergence-light sum of six sines of the position at =turbulence-frequency=, scrolled by =turbulence-speed= × time (its phase wraps every 3600 s). The attractor pulls toward =attractor-x/y/z= with =attractor-strength= (negative repels), fading as (1 − d / radius)^falloff inside =attractor-radius= (0: everywhere, no falloff). The vortex swirls around the vertical axis through the emitter position.
+
+*** Rendering
+:PROPERTIES:
+:CUSTOM_ID: rendering
+:END:
+=lrg_gpu_particles_draw()= draws every slot as an instanced quad (4 vertices × capacity instances) inside =BeginMode3D()=, after the opaque geometry:
+
+- *billboard*: a camera-facing quad of the particle's size turned by its rotation;
+- *stretched*: a quad along the on-screen velocity, =stretch= seconds of travel long plus its size, head at the particle (rain, sparks);
+- colour and size come from 16-sample tables baked from the colour ramp/gradient and the size ramp/curve, blended linearly by life fraction (=lrg_gpu_particles_sample_color()= and =lrg_gpu_particles_sample_size()= evaluate them exactly as the shader does); =size-random= shrinks each particle by up to that fraction (channel 9);
+- without a texture each quad is a soft round dot (a soft streak when stretched); =lrg_gpu_particles_set_texture()= multiplies a sprite instead;
+- depth test on, depth writes off, culling off, the =blend-mode= (=additive= is order independent; =alpha= of overlapping particles depends on slot order, since nothing is sorted; =multiply= darkens);
+- rlgl's batch is flushed first; afterwards depth writes, back-face culling and alpha blending are back to raylib's 3D defaults;
+- a =layer= outside =lrg_render_layers_get_active_mask()= skips the draw ([[file:../graphics/render-layers.org][render layers]]).
+
+The CPU backend draws through the same path: it uploads its records (once per update) and draws them instanced.
+
+*** Backends
+:PROPERTIES:
+:CUSTOM_ID: backends
+:END:
+The backend is chosen at the first update, draw or =lrg_gpu_particles_prepare()=: the GPU when =prefer-gpu= is set (the default) and =lrg_gpu_particles_is_gpu_available()= and both programs compile, otherwise the CPU. =lrg_gpu_particles_prepare()= reports why the GPU was not taken. Switching =prefer-gpu= later migrates the live particles (a buffer read-back or upload), so an editor can toggle it on a running effect. =lrg_gpu_particles_get_backend()= tells which runs.
+
+An emitter is =LrgPrewarmable=: a loading screen draining the prewarm queue compiles its programs and allocates its buffers before the first frame ([[file:../core/prewarm.org][prewarm]]).
+
+** Parameters
+:PROPERTIES:
+:CUSTOM_ID: parameters
+:END:
+Every parameter is a GObject property (=G_PARAM_EXPLICIT_NOTIFY=), so an inspector can build its form from the class; =lrg_gpu_particles_list_parameters()= lists the description parameters in display order and =lrg_gpu_particles_copy_parameters()= copies them (plus bursts, size curve, texture) between emitters.
+
+| Property                | Type        | Default        | Meaning                                                        |
+|-------------------------+-------------+----------------+----------------------------------------------------------------|
+| =capacity=              | uint        | 65536          | slots, construct only (=lrg_gpu_particles_new()=), max 4194304 |
+| =seed=                  | uint        | 1              | random seed                                                    |
+| =emission-rate=         | float       | 100            | particles per second                                           |
+| =duration=              | float       | 5              | seconds per emission cycle                                     |
+| =loop=                  | bool        | true           | repeat the cycle (else rate and bursts stop after one)         |
+| =emitting=              | bool        | true           | rate and bursts emit                                           |
+| =time-scale=            | float       | 1              | multiplier of the update delta                                 |
+| =position-x/y/z=        | float       | 0              | emitter position (=lrg_gpu_particles_set_position()=)          |
+| =shape=                 | enum        | =point=        | =point=, =sphere=, =box=, =cone= (=LrgGpuParticlesShape=)      |
+| =shape-radius=          | float       | 1              | sphere radius, cone base radius                                |
+| =box-x/y/z=             | float       | 1              | box size                                                       |
+| =direction-x/y/z=       | float       | 0, 1, 0        | cone axis (=lrg_gpu_particles_set_direction()=)                |
+| =cone-angle=            | float (deg) | 25             | half angle of the velocity cone (0: exactly along the axis)    |
+| =speed-min/max=         | float       | 1, 2           | start speed                                                    |
+| =lifetime-min/max=      | float       | 1, 2           | lifetime in seconds                                            |
+| =start-color=           | GrlColor    | white          | colour at birth (without a gradient)                           |
+| =end-color=             | GrlColor    | white, alpha 0 | colour at death (without a gradient)                           |
+| =color-gradient=        | LrgGradientStops | none      | colour over life, overrides the two colours                    |
+| =size-start/end=        | float       | 0.2, 0.05      | size over life (linear)                                        |
+| =size-curve=            | LrgKeyframeCurve | none      | multiplier of =size-start= over life, overrides the ramp       |
+| =size-random=           | float 0..1  | 0              | per-particle size reduction                                    |
+| =rotation-min/max=      | float (deg) | 0              | start rotation                                                 |
+| =spin-min/max=          | float (deg/s) | 0            | spin                                                           |
+| =gravity-x/y/z=         | float       | 0              | constant acceleration (=lrg_gpu_particles_set_gravity()=)      |
+| =wind-x/y/z=            | float       | 0              | air velocity (=lrg_gpu_particles_set_wind()=)                  |
+| =drag=                  | float       | 0              | per-second pull toward the air velocity                        |
+| =turbulence-strength=   | float       | 0              | turbulence acceleration                                        |
+| =turbulence-frequency=  | float       | 0.5            | spatial frequency                                              |
+| =turbulence-speed=      | float       | 1              | how fast the field changes                                     |
+| =attractor-x/y/z=       | float       | 0              | attractor position                                             |
+| =attractor-strength=    | float       | 0              | acceleration toward it (negative repels; 0 off)                |
+| =attractor-radius=      | float       | 0              | reach (0 unlimited)                                            |
+| =attractor-falloff=     | float       | 1              | exponent of (1 − d / radius)                                   |
+| =vortex-strength=       | float       | 0              | swirl around the emitter's vertical axis                       |
+| =collide=               | bool        | false          | bounce off the plane                                           |
+| =plane-height=          | float       | 0              | collision plane height                                         |
+| =bounce=                | float 0..1  | 0.4            | restitution                                                    |
+| =friction=              | float 0..1  | 0.1            | horizontal speed lost per bounce                               |
+| =render-mode=           | enum        | =billboard=    | =billboard= or =stretched= (=LrgGpuParticlesRenderMode=)       |
+| =stretch=               | float       | 0.05           | seconds of travel a stretched particle shows                   |
+| =blend-mode=            | LrgParticleBlendMode | =additive= | =additive=, =alpha=, =multiply=                           |
+| =layer=                 | uint 0..31  | 0              | render layer                                                   |
+| =prefer-gpu=            | bool        | true           | simulate on the GPU when available                             |
+
+** The .rparticles subset and the CPU fallback
+:PROPERTIES:
+:CUSTOM_ID: rparticles-subset
+:END:
+=lrg_gpu_particles_new_from_asset (asset, emitter, capacity, &error)= turns one emitter of an [[file:particle-asset.org][.rparticles]] asset into a GPU emitter; =lrg_gpu_particles_check_emitter()= only validates. Anything outside the subset fails with =LRG_GPU_PARTICLES_ERROR_UNSUPPORTED= and a message naming the emitter, the module and the parameter; the caller then plays the asset on the CPU (=lrg_particle_asset_instantiate()=). That is the whole fallback rule: validate, then pick the backend per emitter. Disabled modules are ignored. Every module must also report =lrg_particle_module_get_gpu_capable()=.
+
+| Module               | On the GPU                                                                | Falls back to the CPU when                                     |
+|----------------------+---------------------------------------------------------------------------+----------------------------------------------------------------|
+| =spawn-rate=         | =rate= → =emission-rate=                                                  | =rate-curve= set, =per-distance= ≠ 0, a second spawn-rate      |
+| =burst=              | timed burst                                                               | random =count=, =probability= < 1, repeats other than once or once per loop |
+| =shape=              | point, sphere, cone (=radius=, =angle=), box (=size=); =offset= → position | hemisphere, circle, mesh; =arc= < 360; =randomize-direction= > 0 |
+| =velocity=           | =speed= range, =direction=, =spread= → =cone-angle=                       | =inherit= ≠ 0                                                  |
+| =lifetime=           | =lifetime= range                                                          | never                                                          |
+| =size=               | max → =size-start=, min/max → =size-random=                               | never                                                          |
+| =rotation=           | =rotation=, =angular-velocity= ranges                                     | never                                                          |
+| =color=              | constant start colour                                                     | =color-max= or =gradient= (random start colour)                |
+| =size-over-life=     | =curve= → =size-curve=, =multiplier= scales =size-start=                  | never                                                          |
+| =color-over-life=    | baked with the start colour and alpha curve into =color-gradient=         | never                                                          |
+| =alpha-over-life=    | baked into =color-gradient=                                               | never                                                          |
+| =gravity=            | summed into =gravity-x/y/z=                                               | never                                                          |
+| =wind=               | =velocity= → =wind=, =strength= → =drag=                                  | =turbulence= > 0; wind and drag with different strengths       |
+| =drag=               | =drag=                                                                    | (see wind)                                                     |
+| =turbulence=         | amplitude, frequency, scroll speed (the GPU's own noise field)            | =octaves= > 1, a second turbulence                             |
+| =vortex=             | =strength= around the vertical axis through the emitter                   | a tilted axis, a =center= offset, =pull= ≠ 0                   |
+| =attractor=          | position, strength, radius, falloff                                       | =kill-radius= > 0, a second attractor                          |
+| =collision=          | horizontal plane, =bounce=, =friction=                                    | world mode, a tilted plane, =kill=, =lifetime-loss=            |
+| =rotation-over-life=, =sub-emitter=, custom kinds | -                                            | always                                                         |
+
+Emitter and asset settings: the asset =seed= (low 32 bits) → =seed=, =duration= and =loop= copied, =max-particles= → capacity when 0 is passed; a =start-delay= or a renderer other than billboard (ribbon, mesh) stays on the CPU; the renderer's =blend= is copied; its texture is not loaded (call =lrg_gpu_particles_set_texture()=).
+
+The noise field and the attractor's falloff shape follow the same parameters as the CPU modules but are the GPU's own formulas: an effect looks the same in kind, not particle for particle.
+
+=lrg_gpu_particles_new_from_system()= does the same for a code-built [[file:system.org][LrgParticleSystem]] with one emitter: point, rectangle (box), cone and circle (as a sphere) shapes, gravity and plain wind (summed as constant acceleration), one attractor, one turbulence; mesh shapes, several emitters, gusty wind and custom forces fail.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Construction and backend
+:PROPERTIES:
+:CUSTOM_ID: api-construction
+:END:
+| Function                                   | Purpose                                                              |
+|--------------------------------------------+----------------------------------------------------------------------|
+| =lrg_gpu_particles_new (capacity)=         | an emitter with default parameters; no GL work yet                   |
+| =lrg_gpu_particles_new_from_asset (asset, emitter, capacity, &error)= | from an =.rparticles= emitter (the subset above) |
+| =lrg_gpu_particles_check_emitter (asset, emitter, &error)= | whether that conversion succeeds, and why not        |
+| =lrg_gpu_particles_new_from_system (system, capacity, &error)= | from a CPU =LrgParticleSystem=                     |
+| =lrg_gpu_particles_is_gpu_available ()=    | a context and every GL 3.3 entry point the GPU path needs            |
+| =lrg_gpu_particles_prepare (self, &error)= | choose the backend now; =error= says why the GPU was not taken       |
+| =lrg_gpu_particles_get_backend (self)=     | =LRG_PARTICLE_BACKEND_GPU= or =_CPU=                                 |
+| =lrg_gpu_particles_get_prefer_gpu=, =lrg_gpu_particles_set_prefer_gpu=     | the backend preference; switching migrates live particles            |
+| =lrg_gpu_particles_get_capacity (self)=    | slots                                                                |
+
+*** Simulation
+:PROPERTIES:
+:CUSTOM_ID: api-simulation
+:END:
+| Function                                         | Purpose                                                          |
+|--------------------------------------------------+------------------------------------------------------------------|
+| =lrg_gpu_particles_update (self, dt)=            | emit and step every slot (one transform-feedback draw on the GPU) |
+| =lrg_gpu_particles_emit (self, count)=           | queue a burst for the next update                                 |
+| =lrg_gpu_particles_clear (self)=                 | kill all, rewind clock, bursts and spawn counter                  |
+| =lrg_gpu_particles_add_burst (self, time, count)= | a timed burst in the cycle                                       |
+| =lrg_gpu_particles_clear_bursts (self)=          | remove the timed bursts                                           |
+| =lrg_gpu_particles_get_burst_count (self)=       | number of timed bursts                                            |
+| =lrg_gpu_particles_get_burst (self, i, &time, &count)= | one timed burst                                             |
+| =lrg_gpu_particles_get_time (self)=              | simulated seconds                                                 |
+| =lrg_gpu_particles_get_emitted_total (self)=     | the spawn counter                                                 |
+| =lrg_gpu_particles_count_alive (self)=           | live particles (GPU: a full read-back, a stall)                   |
+| =lrg_gpu_particles_read_back (self, &n_floats)=  | a copy of every record (GPU: a read-back)                         |
+| =lrg_gpu_particles_get_particle (self, slot, &pos, &vel, &age, &life)= | one record; TRUE when live                   |
+
+*** Rendering
+:PROPERTIES:
+:CUSTOM_ID: api-rendering
+:END:
+| Function                                   | Purpose                                          |
+|--------------------------------------------+--------------------------------------------------|
+| =lrg_gpu_particles_draw (self)=            | one instanced draw inside =BeginMode3D()=        |
+| =lrg_gpu_particles_set_texture (self, tex)= | sprite multiplied with the colour; NULL: soft dot |
+| =lrg_gpu_particles_get_texture (self)=     | the sprite                                       |
+| =lrg_gpu_particles_get_draw_count (self)=  | draws issued so far (stats, tests)               |
+
+*** Parameters
+:PROPERTIES:
+:CUSTOM_ID: api-parameters
+:END:
+| Function                                                  | Purpose                                         |
+|-----------------------------------------------------------+-------------------------------------------------|
+| =lrg_gpu_particles_set_position=, =lrg_gpu_particles_get_position=           | emitter position                                |
+| =lrg_gpu_particles_set_direction=                         | cone axis                                       |
+| =lrg_gpu_particles_set_gravity=                           | constant acceleration                           |
+| =lrg_gpu_particles_set_wind=                              | air velocity                                    |
+| =lrg_gpu_particles_set_colors (self, &start, &end)=       | two-stop ramp (clears the gradient)             |
+| =lrg_gpu_particles_set_color_gradient=, =lrg_gpu_particles_get_color_gradient= | colour over life                              |
+| =lrg_gpu_particles_set_size_curve=, =lrg_gpu_particles_get_size_curve=       | size multiplier over life                       |
+| =lrg_gpu_particles_sample_color (self, t, &color)=        | the baked colour at life fraction t             |
+| =lrg_gpu_particles_sample_size (self, t)=                 | the baked size at life fraction t               |
+| =lrg_gpu_particles_list_parameters ()=                    | description property names                      |
+| =lrg_gpu_particles_copy_parameters (self, source)=        | copy a description                              |
+
+*** Types and errors
+:PROPERTIES:
+:CUSTOM_ID: api-types
+:END:
+- =LrgGpuParticlesShape= (=lrg_gpu_particles_shape_get_type()=): =LRG_GPU_PARTICLES_SHAPE_POINT=, =_SPHERE=, =_BOX=, =_CONE=.
+- =LrgGpuParticlesRenderMode= (=lrg_gpu_particles_render_mode_get_type()=): =LRG_GPU_PARTICLES_RENDER_BILLBOARD=, =_STRETCHED=.
+- =LRG_GPU_PARTICLES_ERROR= (=lrg_gpu_particles_error_quark()=, =LrgGpuParticlesError=, =lrg_gpu_particles_error_get_type()=): =LRG_GPU_PARTICLES_ERROR_UNSUPPORTED=, =_NO_GPU=, =_SHADER=.
+- =LRG_GPU_PARTICLES_FLOATS_PER_PARTICLE= (12), =LRG_GPU_PARTICLES_TABLE_SIZE= (16).
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A 100 000-particle fountain
+:PROPERTIES:
+:CUSTOM_ID: example-fountain
+:END:
+#+begin_src C
+g_autoptr(LrgGpuParticles) fountain = lrg_gpu_particles_new (100000);
+GrlColor hot = { 255, 200, 90, 255 };
+GrlColor cold = { 255, 60, 20, 0 };
+g_autoptr(GError) why = NULL;
+
+g_object_set (fountain,
+              "emission-rate", 50000.0f,
+              "lifetime-min", 1.5f, "lifetime-max", 2.0f,
+              "cone-angle", 15.0f,
+              "speed-min", 6.0f, "speed-max", 9.0f,
+              "size-start", 0.06f, "size-end", 0.02f,
+              "collide", TRUE, "bounce", 0.3f,
+              NULL);
+lrg_gpu_particles_set_gravity (fountain, 0.0f, -9.81f, 0.0f);
+lrg_gpu_particles_set_colors (fountain, &hot, &cold);
+lrg_gpu_particles_prepare (fountain, &why);           /* optional */
+if (why != NULL)
+    g_message ("GPU particles on the CPU: %s", why->message);
+
+/* each frame */
+lrg_gpu_particles_update (fountain, GetFrameTime ());
+BeginMode3D (camera);
+/* ... opaque geometry ... */
+lrg_gpu_particles_draw (fountain);
+EndMode3D ();
+#+end_src
+
+*** An .rparticles effect on the GPU when it can be
+:PROPERTIES:
+:CUSTOM_ID: example-asset
+:END:
+#+begin_src C
+g_autoptr(LrgParticleAsset) asset = lrg_particle_asset_new_from_file ("fx/sparks.rparticles", &error);
+g_autoptr(GError) why = NULL;
+g_autoptr(LrgGpuParticles) gpu = NULL;
+g_autoptr(LrgParticleEffect) cpu = NULL;
+
+if (lrg_particle_asset_get_n_emitters (asset) == 1)
+    gpu = lrg_gpu_particles_new_from_asset (asset, 0, 0, &why);
+if (gpu == NULL)
+{
+    /* why->message names the module that needs the CPU */
+    cpu = lrg_particle_asset_instantiate (asset);
+}
+#+end_src
+
+*** Rain streaks that follow the camera
+:PROPERTIES:
+:CUSTOM_ID: example-rain
+:END:
+#+begin_src C
+g_autoptr(LrgGpuParticles) rain = lrg_gpu_particles_new (60000);
+GrlColor drop = { 170, 185, 210, 150 };
+
+g_object_set (rain,
+              "shape", LRG_GPU_PARTICLES_SHAPE_BOX,
+              "box-x", 60.0f, "box-y", 1.0f, "box-z", 60.0f,
+              "direction-y", -1.0f, "cone-angle", 0.0f,
+              "speed-min", 14.0f, "speed-max", 18.0f,
+              "lifetime-min", 1.4f, "lifetime-max", 1.4f,
+              "emission-rate", 40000.0f,
+              "render-mode", LRG_GPU_PARTICLES_RENDER_STRETCHED,
+              "stretch", 0.04f, "size-start", 0.02f, "size-end", 0.02f,
+              "blend-mode", LRG_PARTICLE_BLEND_ALPHA,
+              NULL);
+lrg_gpu_particles_set_colors (rain, &drop, &drop);
+
+/* each frame: the box rides 20 m above the eye */
+lrg_gpu_particles_set_position (rain, eye.x, eye.y + 20.0f, eye.z);
+lrg_gpu_particles_update (rain, dt);
+#+end_src
+
+A [[file:../weather/weather-asset.org][.rweather]] =particles= layer does exactly this (plus intensity-scaled emission and the weather's wind) without code.
+
+*** Checking a GPU effect against the CPU
+:PROPERTIES:
+:CUSTOM_ID: example-compare
+:END:
+#+begin_src C
+g_autoptr(LrgGpuParticles) cpu = lrg_gpu_particles_new (capacity);
+guint n = 0;
+g_autofree gfloat *a = NULL;
+g_autofree gfloat *b = NULL;
+
+lrg_gpu_particles_copy_parameters (cpu, gpu);
+lrg_gpu_particles_set_prefer_gpu (cpu, FALSE);
+/* ... run both with the same updates ... */
+a = lrg_gpu_particles_read_back (gpu, &n);
+b = lrg_gpu_particles_read_back (cpu, &n);
+/* records match: spawn indices exactly, motion to float rounding */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- The update is one =glDrawArrays(GL_POINTS, capacity)= with rasterisation discarded; the render is one =glDrawArraysInstanced= of 4 vertices × capacity. Both cost per slot, live or dead: size the capacity to the effect.
+- No per-frame read-back, query or sort. =count_alive=, =read_back= and =get_particle= read the buffer back and stall; keep them out of the frame loop (tests, editor stats on demand).
+- The uniforms are about 30 values per update; the baked colour and size tables upload with the draw.
+- Memory: 48 bytes per slot × 2 GPU buffers plus a 48-byte CPU mirror (4.8 MB each for 100 000 slots).
+- The CPU backend touches every slot per update in plain C (a few ns per particle) and re-uploads the whole state once per frame to draw.
+- Measured with =taskset -c 2= under =build-aux/xrun.sh= (Xvfb, Mesa llvmpipe: the GPU path runs on a software rasteriser pinned to one core, so these are worst-case numbers; a hardware GPU runs the same 100 000-slot pass in well under a millisecond), 100 000 slots at 60 000 particles/s with gravity and turbulence (=tests/test-gpu-particles.c=):
+
+| Backend                              | ms per update |
+|--------------------------------------+---------------|
+| GPU (transform feedback, llvmpipe)   | 7.3 - 14.4    |
+| CPU twin (one core, -O2)             | 15.5          |
+
+- GPU vs CPU agreement after one second of the busy test effect (sphere shape, drag, wind, turbulence, attractor, vortex, collision, moving emitter): largest position/velocity difference 1.4e-6.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- =lrg_gpu_particles_update()= issues GL calls: call it on the GL thread with the context current (the main thread of a raylib game), not from a worker.
+- Draw inside =BeginMode3D()=: the view and projection come from rlgl's current matrices. Particles are in world space; rlgl's model transform (=rlTranslatef()=) is not applied.
+- The draw leaves alpha blending, depth writes and back-face culling on (raylib's 3D defaults). If you had another blend mode set, set it again.
+- Alpha-blended particles are not sorted; prefer =additive= for dense effects.
+- A capacity below rate × lifetime replaces the oldest particles early: the effect looks thinner, it does not grow.
+- =size-curve= is sampled when set; changing the curve's keys afterwards needs another =lrg_gpu_particles_set_size_curve()=.
+- The turbulence phase wraps every 3600 s of emitter time (a one-frame jump in the field).
+- Freeing an emitter after =CloseWindow()= leaks nothing visible but cannot delete its GL objects; free emitters while the window exists.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The 0.9.x particle editor (next wave) shows a GPU toggle per emitter: it calls =lrg_gpu_particles_check_emitter()= and shows the error message next to the toggle when the emitter needs the CPU, previews with =lrg_gpu_particles_new_from_asset()= when it can, and uses =prefer-gpu= to flip a running preview between backends. Its stats line reads =lrg_gpu_particles_get_backend()=, =get_emitted_total()= and (on demand) =count_alive()=. The inspector form comes from =lrg_gpu_particles_list_parameters()= and the class's =GParamSpec=s. In a level, GPU particles reach the scene through the weather's =particles= layers ([[file:../weather/weather-asset.org][.rweather]]) and through the particle component.

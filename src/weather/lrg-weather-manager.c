@@ -331,10 +331,18 @@ lrg_weather_manager_set_weather (LrgWeatherManager *self,
         if (self->active_weather != NULL)
             lrg_weather_deactivate (self->active_weather);
 
-        /* Activate new */
+        /* Activate new; effects with a level (set by an LrgWeatherAsset
+         * layer's intensity) start at it, the others keep theirs */
         self->active_weather = new_weather;
         if (new_weather != NULL)
         {
+            GList *effects = lrg_weather_get_effects (new_weather);
+            GList *l;
+
+            for (l = effects; l != NULL; l = l->next)
+                if (lrg_weather_effect_get_level (l->data) >= 0.0f)
+                    lrg_weather_effect_set_intensity (l->data, lrg_weather_effect_get_level (l->data));
+            g_list_free (effects);
             lrg_weather_set_wind (new_weather, self->wind_x, self->wind_y);
             lrg_weather_activate (new_weather);
         }
@@ -549,7 +557,10 @@ lrg_weather_manager_update (LrgWeatherManager *self,
             for (l = effects; l != NULL; l = l->next)
             {
                 LrgWeatherEffect *effect = l->data;
-                lrg_weather_effect_set_intensity (effect, 1.0f - t);
+
+                /* fade from the effect's full strength (1 or its level) */
+                lrg_weather_effect_set_intensity (effect,
+                                                  (1.0f - t) * lrg_weather_effect_get_full_intensity (effect));
             }
 
             g_list_free (effects);
@@ -563,7 +574,9 @@ lrg_weather_manager_update (LrgWeatherManager *self,
             for (l = effects; l != NULL; l = l->next)
             {
                 LrgWeatherEffect *effect = l->data;
-                lrg_weather_effect_set_intensity (effect, t);
+
+                lrg_weather_effect_set_intensity (effect,
+                                                  t * lrg_weather_effect_get_full_intensity (effect));
             }
 
             g_list_free (effects);

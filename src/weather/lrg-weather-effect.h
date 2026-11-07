@@ -432,4 +432,40 @@ LRG_AVAILABLE_IN_ALL
 void                lrg_weather_effect_set_render_layer     (LrgWeatherEffect *self,
                                                              gint              layer);
 
+/**
+ * lrg_weather_effect_get_level:
+ * @self: A #LrgWeatherEffect
+ *
+ * Gets the full-strength intensity (see #LrgWeatherEffect:level).
+ *
+ * Returns: the level from 0.0 to 1.0, or -1.0 when unset
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_weather_effect_get_level            (LrgWeatherEffect *self);
+
+/**
+ * lrg_weather_effect_set_level:
+ * @self: A #LrgWeatherEffect
+ * @level: intensity from 0.0 to 1.0 at full weather strength, or a
+ *   negative value to unset it
+ *
+ * Sets the intensity the weather manager crossfades this effect to (see
+ * #LrgWeatherEffect:level). Does not change the current intensity.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_set_level            (LrgWeatherEffect *self,
+                                                             gfloat            level);
+
+/**
+ * lrg_weather_effect_get_full_intensity:
+ * @self: A #LrgWeatherEffect
+ *
+ * The intensity the effect reaches when its weather is fully on: the
+ * level, or 1.0 when it is unset.
+ *
+ * Returns: the full-strength intensity
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat              lrg_weather_effect_get_full_intensity   (LrgWeatherEffect *self);
+
 G_END_DECLS

@@ -1,0 +1,396 @@
+#+title: Weather assets (.rweather)
+#+description: The structured weather format: presets of rain, snow, fog, lightning, wind and GPU particle layers with intensities and transitions, its runtime and its inspector hooks
+* LrgWeatherAsset and the .rweather format
+:PROPERTIES:
+:CUSTOM_ID: lrg-weather-asset
+:END:
+A =.rweather= file describes a game's weather as data: a list of *presets* (clear, overcast, storm, blizzard, ...), each a stack of *layers* (rain, snow, fog, lightning, wind, GPU particles or a game's own effect type) with a full-strength intensity and parameters, plus *transition rules* saying how long the crossfade between two presets takes. =LrgWeatherAsset= loads and saves it (a byte-stable round trip that keeps unknown keys), builds one [[file:index.org][LrgWeather]] per preset, registers them on an =LrgWeatherManager=, crossfades between them with the right durations, and live-syncs a playing weather after edits, which is what the editor's weather inspector is built on.
+
+Before this format, weather could only be built in code or as single registry objects (a flat =type: weather= YAML document); layer intensities were lost on crossfades (every effect faded to 1).
+
+Header: =src/weather/lrg-weather-asset.h= (=LrgWeatherAsset=, =LrgWeatherWind=, =LrgWeatherParticles=). See also [[file:index.org][the weather module]] (the effects themselves) and [[file:../particles/gpu-particles.org][GPU particles]].
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Presets, layers, levels
+:PROPERTIES:
+:CUSTOM_ID: presets-layers
+:END:
+- A *preset* becomes an =LrgWeather= with the preset id as its weather id, an optional ambient tint and brightness, and one effect per enabled layer.
+- A *layer* has a =kind= (which effect type), an =id= (the effect id inside the weather, unique in the preset, the kind when omitted), an =intensity= and =params=.
+- The layer intensity is the effect's *level* (=LrgWeatherEffect:level=, new in 0.9.0): the intensity the effect has when its weather is fully on. =LrgWeatherManager= crossfades each effect between 0 and its level (instead of 0 and 1), and an instant switch sets it straight to the level. Effects without a level (everything built in code) keep the old behaviour.
+- Disabled layers (=enabled: false=) stay in the file and in the inspector but are not built.
+
+*** Layer kinds and parameters
+:PROPERTIES:
+:CUSTOM_ID: kinds
+:END:
+| Kind        | Effect type            | Parameters                                                                                                     |
+|-------------+------------------------+----------------------------------------------------------------------------------------------------------------|
+| =rain=      | =LrgRain=              | its properties (=drop-count=, =drop-speed=, =drop-speed-variation=, =drop-length=, =drop-thickness=, =splash-enabled=, =splash-height=) + =color=, =seed=, =area-x/y/width/height=, =volume-radius/height= |
+| =snow=      | =LrgSnow=              | its properties (=flake-count=, =flake-speed=, =flake-size=, =flake-size-variation=, =sway-amount=, =sway-speed=, =accumulation-enabled=) + =color=, =area-*=, =volume-*= |
+| =fog=       | =LrgFog=               | its properties (=fog-type=, =density=, =start-distance=, =end-distance=, =height-falloff=, =base-height=, =animated=, =scroll-speed-x/y=, =veil-opacity=) + =color= |
+| =lightning= | =LrgLightning=         | its properties (=min-interval=, =max-interval=, =flash-duration=, =flash-count=, =flash-intensity=, =thunder-enabled=, =thunder-delay=, =thunder-from-distance=, =bolts-enabled=) + =color= (alpha ignored), =bolt-distance=, =bolt-height=, =bolt-width= |
+| =wind=      | =LrgWeatherWind=       | =speed-x=, =speed-y=, =gust-strength=, =gust-frequency=, =seed=                                                |
+| =particles= | =LrgWeatherParticles=  | =capacity=, =gpu=, =follow-camera=, =offset-x/y/z=, =asset= + every [[file:../particles/gpu-particles.org#parameters][LrgGpuParticles description parameter]] |
+| (registered) | a game's effect type  | its writable properties                                                                                        |
+
+Every kind also takes the =LrgWeatherEffect= properties =space= (=screen= / =world=), =render-layer= and =transition-speed=. The format manages =id=, =active=, =intensity=, =target-intensity=, =level= and =wind-x/y= itself; they are not parameters.
+
+Every parameter is described by a =GParamSpec= (the effect's own property, or a synthesised one for the format-only parameters), so the type, range, default and description of each comes from one place: =lrg_weather_asset_list_kind_params (kind, &n)=. =space= is applied first because switching the space resets the unit-dependent settings.
+
+Values are scalars in the file syntax: numbers, =true=/=false=, enum nicks (=world=, =exponential=, =stretched=), colours as quoted ="#rrggbb"= or ="#rrggbbaa"=, gradients as ="0 #rrggbbaa; 1 #rrggbbaa"=, paths as strings. Numbers outside a property's range clamp.
+
+*** Wind layers
+:PROPERTIES:
+:CUSTOM_ID: wind-layers
+:END:
+=LrgWeatherWind= contributes a steady wind (=speed-x=, =speed-y=) plus gusts along it (=gust-strength= at =gust-frequency= Hz, two mixed sines with seeded phases), times its intensity. Every update an =LrgWeather= adds the current wind of its wind layers to its own wind (the manager's) and hands the sum to all its other effects: the storm's wind rises with the storm, the rain slants with the gusts, and a GPU particle layer drifts with it. =lrg_weather_get_effective_wind()= reads the sum (foliage, cloth and flags can follow it). A weather without wind layers behaves as before.
+
+*** Particle layers
+:PROPERTIES:
+:CUSTOM_ID: particle-layers
+:END:
+=LrgWeatherParticles= owns an [[file:../particles/gpu-particles.org][LrgGpuParticles]] emitter (GPU when available, its CPU twin otherwise; =gpu: false= forces the CPU). It always lives in world space, sits at the camera plus =offset-x/y/z= (=follow-camera=) or at the offset, emits =emission-rate × intensity= particles per second itself (so crossfades thin it out smoothly; the emitter's own bursts and duration do not apply), takes the weather wind as its air velocity (=drag= sets how strongly) and draws in the weather's world pass. Dense GPU rain, blowing snow, ash, embers, pollen, sand.
+
+With =asset: fx/ash.rparticles= the layer plays an [[file:../particles/particle-asset.org][.rparticles]] file instead (path relative to the =.rweather=): a one-emitter asset inside the [[file:../particles/gpu-particles.org#rparticles-subset][GPU subset]] is copied into the layer's emitter and keeps the intensity-scaled emission; any other asset plays on the CPU as an =LrgParticleEffect= at the emitter position with its own rates, drawn while the intensity is above 0.01 (=lrg_weather_particles_set_asset()= reports why).
+
+*** Transitions
+:PROPERTIES:
+:CUSTOM_ID: transitions
+:END:
+=transitions= is a list of =from= / =to= / =duration= rules; =from= and =to= are preset ids, =*= (any) or =none= (no weather). =lrg_weather_asset_resolve_transition (from, to)= picks the first match of: exact from/to, from/=*=, =*=/to, =*=/=*=, else =default-transition=. =lrg_weather_asset_transition (asset, manager, "storm")= crossfades the manager from its active weather to the preset with that duration.
+
+** The format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+*** Annotated example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+This file is in the canonical form: loading and saving it gives the same bytes (it is the round-trip fixture of =tests/test-weather-asset.c=).
+
+#+begin_src yaml
+version: 1                        # format version (this build reads 1)
+name: Coastal weather             # display name (optional)
+default-preset: clear             # lrg_weather_asset_apply() switches to it instantly
+default-transition: 6             # seconds, when no rule matches
+editor-notes: kept as is          # unknown keys survive a load/save at every level
+presets:
+- id: clear                       # weather id, unique
+  name: Clear sky
+  ambient-color: '#fff4e0'        # LrgWeather ambient tint (written with brightness)
+  ambient-brightness: 1           # 0 .. 2
+  layers:
+  - kind: wind                    # id defaults to the kind: "wind"
+    intensity: 0.3                # level: full-strength intensity, 0 .. 1
+    params:
+      speed-x: 1.5
+- id: storm
+  name: Thunderstorm
+  ambient-color: '#5a5f6e'
+  ambient-brightness: 0.55
+  layers:
+  - kind: rain
+    intensity: 0.9
+    params:
+      space: world                # applied first: it resets unit-dependent defaults
+      drop-count: 4000
+      drop-speed: 12
+      color: '#a0aabeaa'          # rrggbbaa; quoted, '#' starts a YAML comment
+      volume-radius: 30           # format-only: lrg_weather_effect_set_volume()
+      seed: 7                     # format-only: lrg_rain_set_seed()
+  - kind: fog
+    intensity: 1
+    params:
+      fog-type: exponential       # enum nick
+      density: 0.03
+      color: '#5a5f69ff'
+      veil-opacity: 0             # 3D: the shader fogs (lrg_weather_manager_apply_fog())
+  - kind: lightning
+    intensity: 1
+    params:
+      min-interval: 3
+      max-interval: 9
+      bolts-enabled: true
+      bolt-distance: 120          # format-only: lrg_lightning_set_bolt_shape()
+  - kind: wind
+    id: gusts                     # a second wind layer needs its own id
+    intensity: 1
+    params:
+      speed-x: 6
+      gust-strength: 3
+      gust-frequency: 0.4
+    mixer-bus: weather            # unknown layer key: kept
+  - kind: particles
+    id: spray
+    intensity: 0.5
+    enabled: false                # kept, not built
+    params:
+      capacity: 50000
+      emission-rate: 8000         # at full intensity
+      render-mode: stretched
+      start-color: '#c8d2e6b4'
+transitions:
+- from: clear
+  to: storm
+  duration: 8
+- from: '*'                       # any preset (quoted: '*' is a YAML alias marker)
+  to: clear
+  duration: 12
+#+end_src
+
+*** Schema
+:PROPERTIES:
+:CUSTOM_ID: schema
+:END:
+| Key                              | Type              | Default | Notes                                                           |
+|----------------------------------+-------------------+---------+-----------------------------------------------------------------|
+| =version=                        | int               | 1       | newer than the build reads is an error                          |
+| =name=                           | string            | none    |                                                                 |
+| =default-preset=                 | preset id         | none    | must exist                                                      |
+| =default-transition=             | float s ≥ 0       | 5       |                                                                 |
+| =presets[]=                      | list              | empty   |                                                                 |
+| =presets[].id=                   | string            | -       | required, unique; not =*= or =none= through the API             |
+| =presets[].name=                 | string            | the id  | the built weather's name                                        |
+| =presets[].ambient-color=        | "#rrggbb"         | none    | written together with brightness once either is set             |
+| =presets[].ambient-brightness=   | float 0 .. 2      | 1       |                                                                 |
+| =presets[].layers[]=             | list              | empty   | effect order = layer order (within a render layer)              |
+| =layers[].kind=                  | registered kind   | -       | required                                                        |
+| =layers[].id=                    | string            | kind    | unique in the preset                                            |
+| =layers[].intensity=             | float 0 .. 1      | 1       | clamps                                                          |
+| =layers[].enabled=               | bool              | true    | written only when false                                         |
+| =layers[].params=                | mapping           | empty   | names from the kind's schema; unknown names are errors          |
+| =transitions[]=                  | list              | empty   | written only when not empty                                     |
+| =transitions[].from= / =.to=     | preset id, =*=, =none= | -  | required, must resolve                                          |
+| =transitions[].duration=         | float s ≥ 0       | -       | required                                                        |
+
+Any other key at the top level, in a preset, a layer or a transition is kept verbatim and written back after the known keys of its mapping. Unknown keys inside =params= are errors (a typo would otherwise silently do nothing).
+
+*** Errors
+:PROPERTIES:
+:CUSTOM_ID: errors
+:END:
+Loading is strict; every message starts with the key path:
+
+| Code                                     | Example message                                                              |
+|------------------------------------------+------------------------------------------------------------------------------|
+| =LRG_WEATHER_ASSET_ERROR_PARSE=          | =presets[0]: missing 'id'=, =version: 99 is newer than this build reads (1)= |
+| =LRG_WEATHER_ASSET_ERROR_INVALID_VALUE=  | =presets[0].layers[0].params.drop-count: 'lots' is not a valid guint=        |
+| =LRG_WEATHER_ASSET_ERROR_UNKNOWN_KIND=   | =presets[0].layers[0].kind: unknown layer kind 'hail'=                       |
+| =LRG_WEATHER_ASSET_ERROR_UNKNOWN_PARAM=  | =presets[0].layers[0].params.drops: 'rain' layers have no parameter 'drops'= |
+| =LRG_WEATHER_ASSET_ERROR_DUPLICATE=      | =presets[0].layers[1]: a second layer with id 'rain' (give it an 'id')=      |
+| =LRG_WEATHER_ASSET_ERROR_NOT_FOUND=      | =default-preset: no preset 'b'=, =transitions[0]: 'b' is not a preset, '*' or 'none'= |
+| =LRG_WEATHER_ASSET_ERROR_IO=             | the file could not be read or written                                        |
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Kinds
+:PROPERTIES:
+:CUSTOM_ID: api-kinds
+:END:
+| Function                                              | Purpose                                                   |
+|-------------------------------------------------------+-----------------------------------------------------------|
+| =lrg_weather_asset_register_kind (kind, effect_type)= | add (or replace) a layer kind for a game's effect type    |
+| =lrg_weather_asset_lookup_kind (kind)=                | the effect type, or =G_TYPE_INVALID=                      |
+| =lrg_weather_asset_list_kinds ()=                     | every registered kind, sorted                             |
+| =lrg_weather_asset_list_kind_params (kind, &n)=       | the kind's parameter schema as =GParamSpec=s              |
+
+*** Loading and saving
+:PROPERTIES:
+:CUSTOM_ID: api-io
+:END:
+| Function                                                      | Purpose                                        |
+|---------------------------------------------------------------+------------------------------------------------|
+| =lrg_weather_asset_new ()=                                    | an empty asset                                 |
+| =lrg_weather_asset_new_from_data (data, length, base_dir, &error)= | parse YAML text                           |
+| =lrg_weather_asset_new_from_file (path, &error)=              | load a file (relative paths from its folder)   |
+| =lrg_weather_asset_to_data (self, &error)=                    | YAML text                                      |
+| =lrg_weather_asset_save_to_file (self, path, &error)=         | write a file                                   |
+| =lrg_weather_asset_copy (self)=                               | deep copy (undo snapshots)                     |
+| =lrg_weather_asset_get_base_dir (self)=                       | the directory paths resolve against            |
+| =lrg_weather_asset_get_name=, =lrg_weather_asset_set_name=                              | display name                                   |
+| =lrg_weather_asset_get_default_preset=, =lrg_weather_asset_set_default_preset=                    | starting preset                                |
+| =lrg_weather_asset_get_default_transition=, =lrg_weather_asset_set_default_transition=                | fallback crossfade                             |
+
+*** Presets and layers
+:PROPERTIES:
+:CUSTOM_ID: api-presets
+:END:
+| Function                                                         | Purpose                                         |
+|------------------------------------------------------------------+-------------------------------------------------|
+| =lrg_weather_asset_get_preset_count (self)=                      | number of presets                               |
+| =lrg_weather_asset_find_preset (self, id)=                       | index or -1                                     |
+| =lrg_weather_asset_add_preset (self, id, name, &error)=          | append an empty preset                          |
+| =lrg_weather_asset_remove_preset (self, preset)=                 | remove                                          |
+| =lrg_weather_asset_get_preset_id (self, preset)=                 | id                                              |
+| =lrg_weather_asset_get_preset_name=, =lrg_weather_asset_set_preset_name=                          | display name                                    |
+| =lrg_weather_asset_get_preset_ambient=, =lrg_weather_asset_set_preset_ambient=                       | ambient tint and brightness                     |
+| =lrg_weather_asset_get_layer_count (self, preset)=               | layers in a preset                              |
+| =lrg_weather_asset_add_layer (self, preset, kind, id, &error)=   | append a layer (id numbered when NULL and taken) |
+| =lrg_weather_asset_remove_layer=, =lrg_weather_asset_move_layer=                    | edit the stack                                  |
+| =lrg_weather_asset_find_layer (self, preset, id)=                | index or -1                                     |
+| =lrg_weather_asset_get_layer_kind=, =lrg_weather_asset_get_layer_id=                | identity                                        |
+| =lrg_weather_asset_get_layer_intensity=, =lrg_weather_asset_set_layer_intensity=                      | the level                                       |
+| =lrg_weather_asset_get_layer_enabled=, =lrg_weather_asset_set_layer_enabled=                        | build it or not                                 |
+| =lrg_weather_asset_set_layer_param (self, p, l, name, &value, &error)= | set a parameter (typed or file-syntax string) |
+| =lrg_weather_asset_get_layer_param (self, p, l, name, &value)=   | read one back (FALSE when unset)                |
+| =lrg_weather_asset_unset_layer_param=                            | back to the effect default                      |
+| =lrg_weather_asset_get_layer_param_names=                        | the set parameters in file order                |
+
+*** Transitions
+:PROPERTIES:
+:CUSTOM_ID: api-transitions
+:END:
+| Function                                                     | Purpose                         |
+|--------------------------------------------------------------+---------------------------------|
+| =lrg_weather_asset_set_transition (self, from, to, seconds)= | add or replace a rule           |
+| =lrg_weather_asset_remove_transition (self, from, to)=       | remove a rule                   |
+| =lrg_weather_asset_get_transition_count=, =lrg_weather_asset_get_transition=    | list the rules                  |
+| =lrg_weather_asset_resolve_transition (self, from, to)=      | the crossfade the rules give    |
+
+*** Runtime
+:PROPERTIES:
+:CUSTOM_ID: api-runtime
+:END:
+| Function                                                     | Purpose                                                          |
+|--------------------------------------------------------------+------------------------------------------------------------------|
+| =lrg_weather_asset_build_weather (self, preset, &error)=     | a new =LrgWeather= for a preset                                  |
+| =lrg_weather_asset_sync_weather (self, preset, weather, &error)= | bring a live weather in line without restarting it            |
+| =lrg_weather_asset_apply (self, manager, &error)=            | register (or sync) every preset; start the default               |
+| =lrg_weather_asset_transition (self, manager, id, &error)=   | crossfade to a preset (NULL: clear) with the resolved duration   |
+
+Signal =LrgWeatherAsset::changed (preset, layer)=: emitted after every edit through the API (-1 for "the asset" / "the preset itself").
+
+*** Wind and particle layers, levels
+:PROPERTIES:
+:CUSTOM_ID: api-effects
+:END:
+| Function                                                  | Purpose                                                           |
+|-----------------------------------------------------------+-------------------------------------------------------------------|
+| =lrg_weather_wind_new ()=                                 | a wind layer                                                      |
+| =lrg_weather_wind_get_current (self, &x, &y)=             | its contribution now                                              |
+| =lrg_weather_particles_new ()=                            | a particle layer                                                  |
+| =lrg_weather_particles_get_emitter (self)=                | its =LrgGpuParticles=                                             |
+| =lrg_weather_particles_set_asset (self, asset, &error)=   | play an =.rparticles= (GPU when it can, CPU fallback)             |
+| =lrg_weather_particles_get_effect (self)=                 | the CPU fallback effect, if any                                   |
+| =lrg_weather_effect_get_level=, =lrg_weather_effect_set_level=                        | full-strength intensity (-1 unset)                                |
+| =lrg_weather_effect_get_full_intensity=                   | the level, or 1 when unset                                        |
+| =lrg_weather_get_effective_wind (weather, &x, &y)=        | the weather wind plus its wind layers                             |
+| =lrg_snow_get_area=                                       | the snow's screen area (used by the =area-*= parameters)          |
+
+Types: =LRG_TYPE_WEATHER_ASSET=, =LRG_TYPE_WEATHER_WIND= (=lrg_weather_wind_get_type()=), =LRG_TYPE_WEATHER_PARTICLES= (=lrg_weather_particles_get_type()=), =LRG_WEATHER_ASSET_ERROR= (=lrg_weather_asset_error_quark()=, =lrg_weather_asset_error_get_type()=), =LRG_WEATHER_ASSET_FORMAT_VERSION=.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: worked-examples
+:END:
+*** Load a game's weather and change it from gameplay
+:PROPERTIES:
+:CUSTOM_ID: example-load
+:END:
+#+begin_src C
+g_autoptr(GError) error = NULL;
+g_autoptr(LrgWeatherAsset) weather_asset =
+    lrg_weather_asset_new_from_file ("data/coast.rweather", &error);
+LrgWeatherManager *weather = lrg_weather_manager_new ();
+
+if (weather_asset == NULL || !lrg_weather_asset_apply (weather_asset, weather, &error))
+    g_error ("weather: %s", error->message);
+
+/* later: a storm rolls in, as slowly as the rules say */
+lrg_weather_asset_transition (weather_asset, weather, "storm", NULL);
+
+/* each frame, exactly as for hand-built weather */
+lrg_weather_manager_update (weather, dt);
+lrg_weather_manager_apply_fog (weather, lights);
+BeginMode3D (camera);
+/* ... */
+lrg_weather_manager_render_world (weather, &eye);
+EndMode3D ();
+lrg_weather_manager_render_overlay (weather, GetScreenWidth (), GetScreenHeight ());
+#+end_src
+
+*** Build a preset in code and save it
+:PROPERTIES:
+:CUSTOM_ID: example-build
+:END:
+#+begin_src C
+g_autoptr(LrgWeatherAsset) a = lrg_weather_asset_new ();
+g_auto(GValue) v = G_VALUE_INIT;
+gint p, l;
+
+p = lrg_weather_asset_add_preset (a, "blizzard", "Blizzard", NULL);
+l = lrg_weather_asset_add_layer (a, p, "snow", NULL, NULL);
+g_value_init (&v, G_TYPE_STRING);
+g_value_set_string (&v, "world");
+lrg_weather_asset_set_layer_param (a, p, l, "space", &v, NULL);
+g_value_set_string (&v, "6000");                 /* file syntax works too */
+lrg_weather_asset_set_layer_param (a, p, l, "flake-count", &v, NULL);
+
+l = lrg_weather_asset_add_layer (a, p, "wind", NULL, NULL);
+g_value_set_string (&v, "9");
+lrg_weather_asset_set_layer_param (a, p, l, "speed-x", &v, NULL);
+lrg_weather_asset_set_layer_intensity (a, p, l, 0.8f);
+
+lrg_weather_asset_set_transition (a, "*", "blizzard", 20.0f);
+lrg_weather_asset_save_to_file (a, "data/winter.rweather", NULL);
+#+end_src
+
+*** A GPU ash fall from an .rparticles file
+:PROPERTIES:
+:CUSTOM_ID: example-ash
+:END:
+#+begin_src yaml
+- kind: particles
+  id: ash
+  intensity: 0.7
+  params:
+    asset: fx/ash.rparticles      # GPU when the emitter fits the subset
+    capacity: 30000
+    offset-y: 12
+#+end_src
+
+*** A game's own effect as a layer kind
+:PROPERTIES:
+:CUSTOM_ID: example-custom
+:END:
+#+begin_src C
+/* MyHeatHaze derives LrgWeatherEffect with a "strength" property */
+lrg_weather_asset_register_kind ("heat-haze", MY_TYPE_HEAT_HAZE);
+/* now `kind: heat-haze` with `params: { strength: 0.4 }` loads, saves
+ * and syncs like a built-in layer */
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Loading parses every parameter once (validation) and stores its text; building parses it again into the effect. Both are microseconds per layer; nothing is retained per frame.
+- =lrg_weather_asset_sync_weather()= re-applies every parameter of the preset (property sets, no reallocation unless a capacity changes or a parameter was unset, which rebuilds that one effect). Calling it on every inspector edit is fine.
+- Wind layers cost two =sin= per update; the summed wind is pushed to each effect of the weather per update.
+- A particle layer costs what its [[file:../particles/gpu-particles.org#performance][emitter]] costs; its capacity is allocated when the layer is built, whether the weather is active or not. Keep capacities of inactive presets modest or build those presets lazily.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Quote colours (='#a0aabe'=): an unquoted =#= starts a YAML comment and the value is empty (an error).
+- Quote ='*'= in transitions: a bare =*= is a YAML alias.
+- Two layers of one kind need explicit ids.
+- =space= resets the rain/snow speeds and sizes to that space's defaults; the asset applies it first, but code setting parameters on a built effect must do the same.
+- The manager's wind is the base; a preset's wind belongs in a =wind= layer. Setting =wind-x= as a parameter is rejected (the weather overwrites it every update).
+- Inactive weathers are not updated: a particle layer's particles freeze while its weather is not playing and are cleared by nothing; they resume when it plays again.
+- =lrg_weather_asset_apply()= on a manager that already has a weather active does not switch to the default preset.
+- A particle layer whose =.rparticles= falls back to the CPU uses that effect's own rates: crossfades only show or hide it (above an intensity of 0.01).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The weather inspector (next wave) edits an =.rweather= through this API only: the preset list and layer stack from =get_preset_count= / =get_layer_count=, add/remove/move, a per-layer form generated from =lrg_weather_asset_list_kind_params()= (spin buttons with the spec ranges, enum combos from nicks, colour pickers for =GrlColor=, gradient editors for =LrgGradientStops=), intensity sliders and enable toggles, and a transition table. Each edit goes through =set_layer_param= & co., the =changed= signal redraws the form, and the live preview calls =lrg_weather_asset_sync_weather()= on the previewed preset (or =lrg_weather_asset_apply()= on the viewport's manager) so rain keeps falling while a slider moves. A preset can be previewed with =lrg_weather_asset_transition()= to check the crossfade durations. Undo stores =lrg_weather_asset_copy()= snapshots or the YAML text; saving writes canonical YAML that diffs cleanly.

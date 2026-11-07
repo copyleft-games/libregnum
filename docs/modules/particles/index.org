@@ -100,4 +100,5 @@ lrg_particle_system_play (system);
 | [[file:particle-asset.org]] | =.rparticles=: LrgParticleAsset, emitters, the 20 module kinds, LrgParticleEffect (0.9.0) |
 | [[file:ribbon-renderer.org]] | LrgParticleRibbonRenderer: trails and ribbons (0.9.0) |
 | [[file:mesh-renderer.org]] | LrgParticleMeshRenderer: instanced mesh particles (0.9.0) |
+| [[file:gpu-particles.org]] | LrgGpuParticles: transform-feedback GPU emitter (100k+) with a CPU twin; runs the GPU subset of .rparticles (0.9.0) |
 

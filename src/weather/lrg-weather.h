@@ -154,4 +154,19 @@ void                lrg_weather_render_overlay          (LrgWeather *self,
                                                          gint        width,
                                                          gint        height);
 
+/**
+ * lrg_weather_get_effective_wind:
+ * @self: an #LrgWeather
+ * @wind_x: (out) (optional): wind X its effects get
+ * @wind_y: (out) (optional): wind Y its effects get
+ *
+ * The wind the effects received at the last update: the weather's wind
+ * plus the current wind of its wind layers (#LrgWeatherWind, gusts and
+ * intensity included). Without wind layers this is lrg_weather_get_wind().
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_get_effective_wind      (LrgWeather *self,
+                                                         gfloat     *wind_x,
+                                                         gfloat     *wind_y);
+
 G_END_DECLS
