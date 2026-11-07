@@ -22,6 +22,7 @@
 #include "../ui/lrg-property-source.h"
 #include <graylib.h>
 #include <yaml-glib.h>
+#include "../lighting/lrg-environment-glsl-private.h"
 #include <string.h>
 
 /* The level / project key naming how linked instances are stored. The
@@ -490,6 +491,21 @@ build_material_mapping (LrgMaterial3D *material)
 	yaml_mapping_set_double_member (map, "metallic",
 	                                (gdouble) lrg_material3d_get_metallic (material));
 
+	/* Emission only when it glows, so older levels stay unchanged. */
+	if (lrg_material3d_get_emission_strength (material) > 0.0f)
+	{
+		g_autoptr(YamlSequence) emission_seq = yaml_sequence_new ();
+		gfloat                  er = 0.0f, eg = 0.0f, eb = 0.0f;
+
+		lrg_material3d_get_emission_color (material, &er, &eg, &eb, NULL);
+		yaml_sequence_add_double_element (emission_seq, (gdouble) er);
+		yaml_sequence_add_double_element (emission_seq, (gdouble) eg);
+		yaml_sequence_add_double_element (emission_seq, (gdouble) eb);
+		yaml_mapping_set_sequence_member (map, "emission", emission_seq);
+		yaml_mapping_set_double_member (map, "emission_strength",
+		                                (gdouble) lrg_material3d_get_emission_strength (material));
+	}
+
 	return map;
 }
 
@@ -563,8 +579,12 @@ build_visual_mapping (LrgNodeVisual *visual)
 	if (asset != NULL)
 		yaml_mapping_set_string_member (map, "asset", asset);
 
+	/* A material asset reference (`material: guid:...` or a .rmat path)
+	 * wins over the inline block, which then stays in memory only. */
 	material = lrg_node_visual_get_material (visual);
-	if (material != NULL)
+	if (lrg_node_visual_get_material_ref (visual) != NULL)
+		yaml_mapping_set_string_member (map, "material", lrg_node_visual_get_material_ref (visual));
+	else if (material != NULL)
 	{
 		g_autoptr(YamlMapping) mat_map = build_material_mapping (material);
 		yaml_mapping_set_mapping_member (map, "material", mat_map);
@@ -995,6 +1015,15 @@ build_level_yaml (LrgLevel         *level,
 
 	yaml_mapping_set_sequence_member (root_map, "nodes", nodes_seq);
 
+	/* Additive (0.9.0): levels without an environment keep their shape. */
+	if (lrg_level_get_environment (level) != NULL)
+	{
+		g_autoptr(YamlMapping) env_map =
+			lrg_environment_to_yaml_private (lrg_level_get_environment (level));
+
+		yaml_mapping_set_mapping_member (root_map, "environment", env_map);
+	}
+
 	/* Additive: files without timelines keep their old shape. */
 	if (lrg_level_get_n_timelines (level) > 0)
 	{
@@ -1037,6 +1066,22 @@ parse_material (YamlMapping *map)
 	if (yaml_mapping_has_member (map, "metallic"))
 		lrg_material3d_set_metallic (material,
 		                             (gfloat) yaml_mapping_get_double_member (map, "metallic"));
+
+	/* emission: [r, g, b] and emission_strength (0.9.0) */
+	color_node = yaml_mapping_get_member (map, "emission");
+	if (color_node != NULL && yaml_node_get_node_type (color_node) == YAML_NODE_SEQUENCE)
+	{
+		YamlSequence *seq = yaml_node_get_sequence (color_node);
+
+		lrg_material3d_set_emission_color (material,
+		                                   (gfloat) seq_get_double (seq, 0, 0.0),
+		                                   (gfloat) seq_get_double (seq, 1, 0.0),
+		                                   (gfloat) seq_get_double (seq, 2, 0.0),
+		                                   1.0f);
+	}
+	if (yaml_mapping_has_member (map, "emission_strength"))
+		lrg_material3d_set_emission_strength (material,
+		                                      (gfloat) yaml_mapping_get_double_member (map, "emission_strength"));
 
 	return material;
 }
@@ -1187,12 +1232,15 @@ parse_visual (YamlMapping *map)
 	if (asset != NULL)
 		lrg_node_visual_set_asset (visual, asset);
 
+	/* material: an inline block, or a .rmat path / guid: reference */
 	material_node = yaml_mapping_get_member (map, "material");
 	if (material_node != NULL && yaml_node_get_node_type (material_node) == YAML_NODE_MAPPING)
 	{
 		g_autoptr(LrgMaterial3D) material = parse_material (yaml_node_get_mapping (material_node));
 		lrg_node_visual_set_material (visual, material);
 	}
+	else if (material_node != NULL && yaml_node_get_node_type (material_node) == YAML_NODE_SCALAR)
+		lrg_node_visual_set_material_ref (visual, yaml_node_get_scalar (material_node));
 
 	params_node = yaml_mapping_get_member (map, "params");
 	if (params_node != NULL && yaml_node_get_node_type (params_node) == YAML_NODE_MAPPING)
@@ -1686,6 +1734,7 @@ parse_level_from_root (YamlNode  *root,
 	const gchar *view;
 	YamlNode    *nodes_node;
 	YamlNode    *timelines_node;
+	YamlNode    *env_node;
 
 	if (yaml_node_get_node_type (root) != YAML_NODE_MAPPING)
 	{
@@ -1731,6 +1780,23 @@ parse_level_from_root (YamlNode  *root,
 	timelines_node = yaml_mapping_get_member (root_map, "timelines");
 	if (timelines_node != NULL && yaml_node_get_node_type (timelines_node) == YAML_NODE_SEQUENCE)
 		parse_timelines (level, yaml_node_get_sequence (timelines_node));
+
+	/* The environment block (0.9.0); a malformed one fails the load. */
+	env_node = yaml_mapping_get_member (root_map, "environment");
+	if (env_node != NULL && yaml_node_get_node_type (env_node) == YAML_NODE_MAPPING)
+	{
+		g_autoptr(LrgEnvironment) env = lrg_environment_new ();
+		g_autoptr(GError)         env_error = NULL;
+
+		if (!lrg_environment_from_yaml_private (env, yaml_node_get_mapping (env_node), &env_error))
+		{
+			g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+			             "environment: %s", env_error->message);
+			g_object_unref (level);
+			return NULL;
+		}
+		lrg_level_set_environment (level, env);
+	}
 
 	return level;
 }

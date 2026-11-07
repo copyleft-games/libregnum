@@ -89,6 +89,10 @@ nodes:                      # top-level nodes (children of the implicit root)
       source: prefabs/crate.rprefab
       map: { <instance guid>: <source guid> }
     children: []            # nested nodes, same schema
+environment:                # optional (0.9.0) LrgEnvironment block, see below
+  sky: { source: equirect, path: skies/noon.hdr, exposure: 0.0, rotation: 0.0 }
+  ambient: { color: [0.2, 0.2, 0.2], intensity: 1.0 }
+  post_stack: post/day.rpost
 timelines:                  # optional LrgTimeline list
   - name: DoorOpen
     length: 1.0
@@ -97,6 +101,8 @@ timelines:                  # optional LrgTimeline list
         channel: rotation.y
         keys: [ { time: 0.0, value: 0.0 }, { time: 1.0, value: 1.5 } ]
 #+end_src
+
+The =environment:= block (sky source, image-based lighting, ambient, fog, volumetrics and the =.rpost= post stack) is read into an [[file:../lighting/environment.org][LrgEnvironment]] held by the level (=lrg_level_get_environment=, =lrg_level_set_environment=, =lrg_level_ensure_environment=, property =LrgLevel:environment=); levels without the block (every 0.8 file) load with no environment and are written back without it. Its full schema is [[file:../../editor/yaml-format.org::#environment][.rlevel: environment]].
 
 Tilemap visuals store their layers inline (see [[file:../../editor/editor-tools.org::#tilemap-yaml][tilemap saved format]]); timeline channels and easing are in [[file:../../editor/editor-tools.org::#timeline-yaml][timeline saved format]].
 
@@ -331,7 +337,7 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 
 | Header | Types / functions | In-depth documentation |
 |--------+-------------------+------------------------|
-| =lrg-level.h= | =LrgLevel=: =lrg_level_new=, =lrg_level_get_root=, =lrg_level_add_node=, =lrg_level_insert_node=, =lrg_level_remove_node=, =lrg_level_find_node=, =lrg_level_count_nodes=, =lrg_level_notify_node_changed=, timelines (=lrg_level_get_n_timelines=, =lrg_level_get_timeline=, =lrg_level_find_timeline=, =lrg_level_insert_timeline=, =lrg_level_remove_timeline=) | [[file:../../editor/level-model.org::#lrglevel][Level Model: LrgLevel]] |
+| =lrg-level.h= | =LrgLevel=: =lrg_level_new=, =lrg_level_get_root=, =lrg_level_add_node=, =lrg_level_insert_node=, =lrg_level_remove_node=, =lrg_level_find_node=, =lrg_level_count_nodes=, =lrg_level_notify_node_changed=, timelines (=lrg_level_get_n_timelines=, =lrg_level_get_timeline=, =lrg_level_find_timeline=, =lrg_level_insert_timeline=, =lrg_level_remove_timeline=), environment (=lrg_level_get_environment=, =lrg_level_set_environment=, =lrg_level_ensure_environment=) | [[file:../../editor/level-model.org::#lrglevel][Level Model: LrgLevel]], [[file:../lighting/environment.org][LrgEnvironment]] |
 | =lrg-node.h= | =LrgNode= (derivable, =instantiate= and =instantiate_3d= vfuncs, =lrg_node_instantiate_3d=): identity, flags, transform, =lrg_node_get_local_matrix=, =lrg_node_get_world_matrix=, hierarchy, visual, components, scripts, paths, =lrg_node_foreach=, prefab link | [[file:../../editor/level-model.org::#lrgnode][Level Model: LrgNode]], [[file:../../editor/editor-runtime.org::#lrgnode-tree-helpers][Node tree helpers]] |
 | =lrg-node-visual.h= | =LrgNodeVisual=, =LrgNodeVisualKind= | [[file:../../editor/level-model.org::#lrgnodevisual][Level Model: LrgNodeVisual]] |
 | =lrg-node-tilemap.h= | =LrgNodeTilemap=, =lrg_node_tilemap_to_runtime= | [[file:../../editor/editor-tools.org::#tilemap-model][Tilemap data model]], [[file:../../editor/editor-tools.org::#editor-tools-api-lrg-node-tilemap][API]] |

@@ -1,0 +1,187 @@
+* LrgHdrImage - Radiance RGBE (.hdr) Images
+:PROPERTIES:
+:CUSTOM_ID: lrghdrimage
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Graphics]]* > HDR image
+#+end_quote
+
+=LrgHdrImage= is a linear floating-point RGB image with a reader and a writer for the Radiance picture format (=.hdr=, "RGBE"), the usual container of HDR sky panoramas. raylib's own HDR loader is disabled in our build, so the [[file:../lighting/environment.org][environment]] loads its equirectangular skies through this type. Everything is headless.
+
+- *Type* - =LrgHdrImage=, final GObject, =LRG_TYPE_HDR_IMAGE=, GIR =Libregnum.HdrImage=
+- *Header* - =graphics/lrg-hdr-image.h=
+- *Errors* - domain =LRG_HDR_IMAGE_ERROR=, enum =LrgHdrImageError= (=LRG_TYPE_HDR_IMAGE_ERROR=): =FAILED=, =IO=, =FORMAT=, =TRUNCATED=, =SIZE=
+- *Since* - 0.9.0
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-concepts
+:END:
+*** Pixels
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-pixels
+:END:
+Three =gfloat= per pixel (linear R, G, B), rows from the top, =width x height x 3= floats in one block (=lrg_hdr_image_get_data()=, writable). Sampling (=lrg_hdr_image_sample()=) is bilinear with pixel centres at =(i + 0.5) / size=, wrapping horizontally and clamping vertically, which suits panoramas.
+
+*** The RGBE encoding
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-rgbe
+:END:
+Each pixel is stored in four bytes: three 8-bit mantissas sharing one exponent (Greg Ward, "Real Pixels", Graphics Gems II). Encoding (=lrg_hdr_rgbe_encode()=): v = max (r, g, b); if v < 1e-32 the pixel is (0, 0, 0, 0); else v = m x 2^e with m in [0.5, 1), the mantissas are =floor (c x m x 256 / v)= and the exponent byte is e + 128. Decoding (=lrg_hdr_rgbe_decode()=): an exponent byte of 0 is black; otherwise each non-zero mantissa m gives =(m + 0.5) x 2^(e - 136)= (the +0.5 recentres the encoder's truncation, as Radiance does) and a zero mantissa stays 0. Negative, NaN and infinite components are written as 0. Precision is about 1/256 of the brightest channel of each pixel, over a range of 2^-128..2^127.
+
+*** The file format
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-format
+:END:
+#+begin_example
+#?RADIANCE                     <- signature ("#?" + program name; "#?RGBE" accepted)
+# written by libregnum         <- comments and variables until a blank line
+FORMAT=32-bit_rle_rgbe         <- required if present (32-bit_rle_xyze is refused)
+EXPOSURE=1.0                   <- optional, may repeat (factors multiply)
+                               <- blank line ends the header
+-Y 512 +X 1024                 <- resolution: height, then width; -Y = top row first
+<scanlines>                    <- binary
+#+end_example
+
+| Part | Reader | Writer |
+|------+--------+--------|
+| orientation | =-Y H +X W= (top-down) and =+Y H +X W= (bottom-up, flipped on read); others (rotated, mirrored X) fail with =FORMAT= | =-Y H +X W= |
+| =EXPOSURE= | multiplied together and divided out of the pixels (=lrg_hdr_image_get_exposure()= keeps the product) | not written (pixels are radiance) |
+| flat scanlines | yes (four bytes per pixel) | for widths below 8 or above 32767 |
+| old run-length (=1 1 1 n= repeats the previous pixel, consecutive records shift by 8 bits) | yes | no |
+| adaptive run-length (=2 2 W_hi W_lo=, then each of the four channels separately: count > 128 repeats one byte count - 128 times, count <= 128 copies count bytes) | yes | yes, for widths 8..32767 |
+| size | 1..=LRG_HDR_IMAGE_MAX_SIZE= (16384) per side, else =SIZE= | |
+
+A scanline whose run-length width differs from the image width fails with =FORMAT=; data ending early or a run overflowing its scanline fails with =TRUNCATED=.
+
+*** Panorama mapping
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-mapping
+:END:
+=lrg_hdr_image_direction_to_uv()= defines the equirectangular mapping used by the engine: u = 0.5 + atan2 (x, -z) / 2 pi (the centre column looks down -Z, the camera's forward; +X is a quarter to the right), v = acos (y) / pi (top row straight up). =lrg_hdr_image_sample_direction()= samples a panorama along a world direction.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-api
+:END:
+#+begin_src C
+#define LRG_HDR_IMAGE_MAX_SIZE (16384)
+
+GType  lrg_hdr_image_error_get_type (void);
+GQuark lrg_hdr_image_error_quark (void);
+
+LrgHdrImage *lrg_hdr_image_new            (guint width, guint height);           /* black */
+LrgHdrImage *lrg_hdr_image_new_from_data  (guint width, guint height, const gfloat *rgb);
+LrgHdrImage *lrg_hdr_image_new_from_bytes (GBytes *data, GError **error);
+LrgHdrImage *lrg_hdr_image_new_from_file  (const gchar *path, GError **error);
+
+guint    lrg_hdr_image_get_width    (LrgHdrImage *self);
+guint    lrg_hdr_image_get_height   (LrgHdrImage *self);
+gfloat   lrg_hdr_image_get_exposure (LrgHdrImage *self);
+gfloat  *lrg_hdr_image_get_data     (LrgHdrImage *self, gsize *n_floats);
+void     lrg_hdr_image_get_pixel    (LrgHdrImage *self, guint x, guint y, gfloat *out_rgb);
+void     lrg_hdr_image_set_pixel    (LrgHdrImage *self, guint x, guint y, const gfloat *rgb);
+void     lrg_hdr_image_sample       (LrgHdrImage *self, gfloat u, gfloat v, gfloat *out_rgb);
+void     lrg_hdr_image_direction_to_uv  (const gfloat *direction, gfloat *out_u, gfloat *out_v);
+void     lrg_hdr_image_sample_direction (LrgHdrImage *self, const gfloat *direction, gfloat *out_rgb);
+void     lrg_hdr_image_get_average  (LrgHdrImage *self, gfloat *out_rgb);
+void     lrg_hdr_image_scale        (LrgHdrImage *self, gfloat factor);
+LrgHdrImage *lrg_hdr_image_resize   (LrgHdrImage *self, guint width, guint height);
+
+GBytes  *lrg_hdr_image_save_to_bytes (LrgHdrImage *self);
+gboolean lrg_hdr_image_save_to_file  (LrgHdrImage *self, const gchar *path, GError **error);
+
+void     lrg_hdr_rgbe_encode (const gfloat *rgb, guint8 *out_rgbe);
+void     lrg_hdr_rgbe_decode (const guint8 *rgbe, gfloat *out_rgb);
+#+end_src
+
+| Function | Notes |
+|----------+-------|
+| =lrg_hdr_image_new()= | sizes clamped into 1..16384 |
+| =lrg_hdr_image_new_from_data()= | copies =rgb= (only when the size was not clamped) |
+| =lrg_hdr_image_get_pixel()= | coordinates clamped into the image |
+| =lrg_hdr_image_set_pixel()= | ignored outside the image |
+| =lrg_hdr_image_get_average()= | plain mean, not solid-angle weighted |
+| =lrg_hdr_image_resize()= | box filter for whole-factor shrinks (energy kept), bilinear otherwise; returns a new image |
+| =lrg_hdr_image_save_to_file()= | atomic replace (=g_file_set_contents()=), =IO= error on failure |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-examples
+:END:
+*** Load a sky and check its brightness
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-example-load
+:END:
+#+begin_src C
+g_autoptr(GError)      error = NULL;
+g_autoptr(LrgHdrImage) sky = lrg_hdr_image_new_from_file ("skies/noon.hdr", &error);
+gfloat                 mean[3];
+
+if (sky == NULL)
+{
+    g_warning ("%s", error->message);   /* LRG_HDR_IMAGE_ERROR_* */
+    return;
+}
+lrg_hdr_image_get_average (sky, mean);
+g_print ("%ux%u, mean radiance %.2f %.2f %.2f\n", lrg_hdr_image_get_width (sky),
+         lrg_hdr_image_get_height (sky), mean[0], mean[1], mean[2]);
+#+end_src
+
+*** Write a procedural panorama
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-example-write
+:END:
+#+begin_src C
+g_autoptr(LrgHdrImage) pano = lrg_hdr_image_new (256, 128);
+guint x;
+guint y;
+
+for (y = 0; y < 128; y++)
+    for (x = 0; x < 256; x++)
+    {
+        gfloat c[3] = { 0.2f, 0.4f, 1.0f - (gfloat)y / 128.0f };
+
+        lrg_hdr_image_set_pixel (pano, x, y, c);
+    }
+lrg_hdr_image_save_to_file (pano, "skies/generated.hdr", NULL);
+#+end_src
+
+*** Use it as the environment's sky
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-example-env
+:END:
+#+begin_src C
+lrg_environment_set_sky_source (env, LRG_ENVIRONMENT_SKY_EQUIRECT);
+lrg_environment_set_equirect (env, sky);   /* or set_sky_path + load_sources */
+lrg_environment_bake (env, NULL);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-performance
+:END:
+- Decoding is a single pass over the file (about 4 bytes per pixel before run-length compression); a 4096 x 2048 panorama (8M pixels) decodes in well under a second and occupies 96 MB of floats: reduce it (=lrg_hdr_image_resize()=, the environment does so automatically before a bake) if you keep it around.
+- The writer allocates one scanline of RGBE plus the output buffer.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-pitfalls
+:END:
+- Pixels are *linear*; do not gamma-decode them again. Display them through the lit shader or a tonemapper.
+- =EXPOSURE= is divided out on read: re-saving a file that had =EXPOSURE=2= writes pixel values half as bright with no =EXPOSURE= line, which describes the same radiance.
+- Only RGBE pixels in the two vertical orientations are read; XYZE files and rotated pictures are refused.
+- RGBE cannot store negative values; they are clamped to 0 on write.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-editor
+:END:
+=.hdr= files under the project's asset directories are ordinary assets with a =.meta= guid, so an environment can reference them as =sky.path: guid:<uuid>=. Wave 2b's environment page picks them for an equirect sky; the asset browser shows them like other images.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: hdr-image-see-also
+:END:
+- [[file:../lighting/environment.org][LrgEnvironment]] - uses HDR panoramas as sky sources
+- [[file:dds-image.org][LrgDdsImage]] - the other image decoder raylib does not cover

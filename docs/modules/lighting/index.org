@@ -22,6 +22,12 @@ The lighting system renders lights to a texture that composites with the scene:
 
 For 3D, [[file:shadow-renderer.org][LrgShadowRenderer]] renders cascaded sun shadows and point light cube shadows for [[file:../graphics/light-set.org][LrgLightSet]].
 
+The 3D scene's indirect light (0.9.0):
+
+- [[file:environment.org][LrgEnvironment]] - sky source (colour, gradient, sky dome, cubemap, equirect HDR), image-based lighting (L2 irradiance harmonics, GGX-prefiltered specular cubemap, BRDF table), ambient fallback, fog, volumetric parameters and the level's =environment:= block
+- [[file:reflection-probe.org][LrgReflectionProbe]] - box-projected local reflection cubemaps blended into the environment's specular light
+- [[file:volumetric-fog.org][LrgVolumetricFog]] - screen-space ray-marched height fog with sun shafts, half-resolution with a bilateral upsample
+
 ** Quick Start
 :PROPERTIES:
 :CUSTOM_ID: quick-start

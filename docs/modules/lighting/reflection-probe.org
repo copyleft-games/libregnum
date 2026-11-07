@@ -1,0 +1,189 @@
+* LrgReflectionProbe - Box-Projected Local Reflections
+:PROPERTIES:
+:CUSTOM_ID: lrgreflectionprobe
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Lighting]]* > Reflection probe
+#+end_quote
+
+A reflection probe captures the scene around a point into a cubemap, prefilters it for every roughness like the [[file:environment.org][environment's]] sky, and replaces the sky's reflections for surfaces inside its box. Indoors this is what makes a metal floor reflect the room instead of the sky.
+
+- *Type* - =LrgReflectionProbe=, final GObject, =LRG_TYPE_REFLECTION_PROBE=, GIR =Libregnum.ReflectionProbe=
+- *Header* - =lighting/lrg-reflection-probe.h=
+- *Callback* - =LrgReflectionProbeDrawFunc=
+- *Signal* - =changed= (no arguments): a setting changed or a capture finished; an =LrgEnvironment= holding the probe re-emits its own =changed=
+- *Since* - 0.9.0
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-concepts
+:END:
+*** Box, influence and blending
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-influence
+:END:
+The probe has a position (the capture point, also the centre of its box) and extents (half sizes along X, Y, Z). The box is both the *influence volume* and the *projection volume*. A point's influence is 0 outside the box and, inside, the distance to the nearest face divided by the blend distance, clamped to 1 (=lrg_reflection_probe_get_influence()=): with a blend distance of 1 the probe fades in over the outermost unit of the box. A blend distance of 0 is a hard edge.
+
+The environment's binder picks the two ready probes with the largest influence at its reference point; the shader then weights each probe at the shaded point, normalizes when the two weights sum above 1, and lets the global sky fill the rest. Overlapping probes therefore cross-fade, and leaving every probe's box returns to the sky.
+
+*** Box projection (parallax correction)
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-box-projection
+:END:
+A cubemap captured at one point is correct only for reflections seen from that point. For a surface at =p= with reflection direction =r=, box projection intersects the ray =p + t r= with the box from inside (the nearest of the far slab planes, =t = min over axes of max ((max - p) / r, (min - p) / r)=) and looks the cubemap up toward =hit - position=. Reflections of walls, which are roughly on the box faces, then line up with the walls wherever the viewer stands. Turn it off (=lrg_reflection_probe_set_box_projection()=) for probes in open areas, where the captured scene is far away. =lrg_reflection_probe_box_project()= is the CPU mirror of the shader.
+
+*** Capture
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-capture
+:END:
+=lrg_reflection_probe_capture()= renders six 90-degree views into an RGBA16F cubemap with a depth buffer. For each face the framebuffer is bound and cleared to the clear colour (=lrg_reflection_probe_set_clear_color()=), the rlgl projection and modelview matrices are loaded with the face's 90-degree projection and its view (forward +X, -X, +Y, -Y, +Z, -Z with the OpenGL cubemap up vectors -Y, -Y, +Z, -Z, -Y, -Y), and the callback draws. The scene is drawn with the normal lit shader, which writes display-encoded colour, so the capture is decoded to linear radiance and then prefiltered exactly like the environment's sky (mip m = roughness m / (mips - 1), down to 1 x 1). The callback must not call =BeginMode3D()= (it would replace the matrices) or =BeginDrawing()=.
+
+=lrg_environment_fill_probe()= captures the environment's sky alone into a probe: a cheap placeholder before the scene exists, and what an empty level reflects.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-api
+:END:
+#+begin_src C
+LRG_REFLECTION_PROBE_DEFAULT_RESOLUTION   /* 128 */
+
+typedef void (*LrgReflectionProbeDrawFunc) (LrgReflectionProbe *probe, guint face,
+                                            const gfloat *view, const gfloat *projection,
+                                            gpointer user_data);
+
+LrgReflectionProbe *lrg_reflection_probe_new (void);
+
+void     lrg_reflection_probe_set_position       (LrgReflectionProbe *self, gfloat x, gfloat y, gfloat z);
+void     lrg_reflection_probe_get_position       (LrgReflectionProbe *self, gfloat *out_position);
+void     lrg_reflection_probe_set_extents        (LrgReflectionProbe *self, gfloat x, gfloat y, gfloat z);
+void     lrg_reflection_probe_get_extents        (LrgReflectionProbe *self, gfloat *out_extents);
+void     lrg_reflection_probe_set_blend_distance (LrgReflectionProbe *self, gfloat distance);
+gfloat   lrg_reflection_probe_get_blend_distance (LrgReflectionProbe *self);
+void     lrg_reflection_probe_set_intensity      (LrgReflectionProbe *self, gfloat intensity);
+gfloat   lrg_reflection_probe_get_intensity      (LrgReflectionProbe *self);
+void     lrg_reflection_probe_set_box_projection (LrgReflectionProbe *self, gboolean enabled);
+gboolean lrg_reflection_probe_get_box_projection (LrgReflectionProbe *self);
+void     lrg_reflection_probe_set_resolution     (LrgReflectionProbe *self, guint size);
+guint    lrg_reflection_probe_get_resolution     (LrgReflectionProbe *self);
+void     lrg_reflection_probe_set_clip           (LrgReflectionProbe *self, gfloat near_plane,
+                                                  gfloat far_plane);
+void     lrg_reflection_probe_set_clear_color    (LrgReflectionProbe *self, const gfloat *rgb);
+
+/* headless box maths */
+gboolean lrg_reflection_probe_contains      (LrgReflectionProbe *self, const gfloat *point);
+gfloat   lrg_reflection_probe_get_influence (LrgReflectionProbe *self, const gfloat *point);
+void     lrg_reflection_probe_box_project   (LrgReflectionProbe *self, const gfloat *point,
+                                             const gfloat *direction, gfloat *out_direction);
+
+/* GPU */
+gboolean lrg_reflection_probe_capture       (LrgReflectionProbe *self,
+                                             LrgReflectionProbeDrawFunc draw_func,
+                                             gpointer user_data, GError **error);
+gboolean lrg_reflection_probe_is_ready      (LrgReflectionProbe *self);
+guint    lrg_reflection_probe_get_texture_id    (LrgReflectionProbe *self);
+guint    lrg_reflection_probe_get_mip_count     (LrgReflectionProbe *self);
+guint    lrg_reflection_probe_get_capture_count (LrgReflectionProbe *self);
+gfloat  *lrg_reflection_probe_read_face     (LrgReflectionProbe *self, guint mip, guint face,
+                                             guint *out_size);
+void     lrg_reflection_probe_release_gpu   (LrgReflectionProbe *self);
+#+end_src
+
+| Setting | Default | Notes |
+|---------+---------+-------|
+| position | (0, 0, 0) | capture point and box centre, world space |
+| extents | (5, 5, 5) | half sizes, at least 0.001 |
+| blend distance | 1 | fade band inside the faces |
+| intensity | 1 | multiplied by the environment's specular intensity in the shader (not by its exposure: the capture is already lit) |
+| box projection | on | |
+| resolution | 128 | power of two 16..1024, applies to the next capture |
+| clip | 0.05 / 1000 | capture near / far planes |
+| clear colour | black | linear; 8-bit precision |
+
+Errors use the =LRG_ENVIRONMENT_ERROR= domain (=LRG_ENVIRONMENT_ERROR_GPU= without a context or when a framebuffer is incomplete).
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-examples
+:END:
+*** Capturing a room
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-example-room
+:END:
+#+begin_src C
+static void
+draw_room (LrgReflectionProbe *probe, guint face, const gfloat *view,
+           const gfloat *projection, gpointer user_data)
+{
+    Game *game = user_data;
+
+    /* the matrices are loaded: draw like inside BeginMode3D(), minus the
+     * player and anything that moves */
+    lrg_environment_draw_sky (game->env, &(GrlVector3){ 0, 2, 0 });
+    lrg_light_set_apply (game->lights, 0, 2, 0);
+    draw_static_world (game);
+}
+
+g_autoptr(LrgReflectionProbe) probe = lrg_reflection_probe_new ();
+
+lrg_reflection_probe_set_position (probe, 0.0f, 2.0f, 0.0f);   /* room centre */
+lrg_reflection_probe_set_extents (probe, 6.0f, 2.0f, 4.0f);    /* the walls */
+lrg_reflection_probe_set_blend_distance (probe, 0.5f);
+if (!lrg_reflection_probe_capture (probe, draw_room, game, &error))
+    g_warning ("probe: %s", error->message);
+lrg_environment_add_probe (game->env, probe);
+#+end_src
+
+*** Choosing probes per object
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-example-select
+:END:
+#+begin_src C
+/* before each object's draw: its bounds centre picks the probes */
+lrg_environment_set_reference_point (env, centre[0], centre[1], centre[2]);
+lrg_light_set_apply (lights, eye.x, eye.y, eye.z);   /* runs the binder */
+DrawMesh (mesh, material, transform);
+#+end_src
+
+*** Checking coverage on the CPU
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-example-cpu
+:END:
+#+begin_src C
+LrgReflectionProbe *first;
+LrgReflectionProbe *second;
+guint n = lrg_environment_select_probes (env, player_pos, &first, &second);
+
+g_print ("%u probes, strongest %.2f\n", n,
+         n > 0 ? lrg_reflection_probe_get_influence (first, player_pos) : 0.0f);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-performance
+:END:
+- *Capture*: six full scene draws at the probe resolution plus the decode pass and the prefilter (the same cost as an environment bake of that resolution). Capture at load time or when the static scene changes; spread several probes over frames if needed.
+- *Memory*: like the environment's prefiltered map: 128 is about 1 MB per probe; capture-time transients about twice that.
+- *Shading*: per fragment inside a probe's box, one ray-box intersection and one cube fetch per bound probe (at most two).
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-pitfalls
+:END:
+- Probes are bound only when ready (captured) and only with a full hook window: on a 16-unit driver no probes are bound (see [[file:environment.org::#environment-hook][texture units]]).
+- The shader needs the shaded point (=lrg_env_set_point()=); otherwise the environment's reference point decides the weights for the whole draw.
+- Keep the box close to the room's real walls: box projection assumes the reflected surfaces lie on the box.
+- The capture includes whatever the callback draws: hide the probe's own gizmo and dynamic objects, or they freeze into the reflections.
+- Probe positions are world positions; with a floating origin, set =lrg_environment_set_origin()= to the light set's origin.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-editor
+:END:
+Wave 2b of 0.9.0 adds reflection-probe gizmos to the editor viewport (box handles for the extents, a sphere at the capture point showing the captured cubemap, the blend band drawn inset) and a "Capture probes" action that captures every probe of the level through the same draw path as the viewport. Until then, create and capture probes from code as above.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: reflection-probe-see-also
+:END:
+- [[file:environment.org][LrgEnvironment]] - binds the probes and owns the sky they fall back to
+- [[file:../graphics/light-set.org][LrgLightSet]] - the lit shader

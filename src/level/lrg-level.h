@@ -26,6 +26,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lighting/lrg-environment.h"
 
 G_BEGIN_DECLS
 
@@ -90,6 +91,44 @@ gboolean lrg_level_get_default_2d (LrgLevel *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_level_set_default_2d (LrgLevel *self,
                                gboolean  default_2d);
+
+/**
+ * lrg_level_get_environment:
+ * @self: an #LrgLevel
+ *
+ * The level's `environment:` block (sky, image-based lighting, ambient,
+ * fog, volumetrics, post stack), %NULL for levels without one (every
+ * level written before 0.9.0).
+ *
+ * Returns: (transfer none) (nullable): the environment
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEnvironment *lrg_level_get_environment (LrgLevel *self);
+
+/**
+ * lrg_level_set_environment:
+ * @self: an #LrgLevel
+ * @environment: (nullable) (transfer none): the new environment (a
+ *   reference is kept), %NULL to drop the block
+ *
+ * Sets #LrgLevel:environment.  Changes made to the environment object
+ * afterwards are saved with the level as well.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_environment (LrgLevel       *self,
+                                LrgEnvironment *environment);
+
+/**
+ * lrg_level_ensure_environment:
+ * @self: an #LrgLevel
+ *
+ * Returns the level's environment, creating a default one
+ * (lrg_environment_new()) first when there is none.
+ *
+ * Returns: (transfer none): the environment
+ */
+LRG_AVAILABLE_IN_ALL
+LrgEnvironment *lrg_level_ensure_environment (LrgLevel *self);
 
 /**
  * lrg_level_get_root:

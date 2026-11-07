@@ -101,3 +101,19 @@ nodes:
 - tilemap: `tile_size`
 - `visual.material` is either the inline block (`color`, `roughness`, `metallic`, since 0.9.0 `emission: [r,g,b]` + `emission_strength`) mapped to the mesh renderer's scalar properties, or a scalar reference to a `.rmat` asset (`material: guid:3f0c…` or `material: materials/crate.rmat`, `LrgNodeVisual:material-ref`), loaded through the engine's asset manager into the component's `material` slot (shared by every node naming it). An unresolvable reference falls back to the scalar material with a debug message.
 - primitive/mesh: `size_x..z`, `radius`, `cast_shadows`, `receive_shadows`, `unlit`, `double_sided`
+
+## environment: (0.9.0, optional)
+Top-level block read into an LrgEnvironment (lrg_level_get_environment / lrg_level_ensure_environment). Every key optional, unknown keys kept on save, absent block = 0.8 behaviour (file written back without it).
+```yaml
+environment:
+  sky: { source: gradient|color|sky_dome|cubemap|equirect, color: [r,g,b], zenith: [..], horizon: [..], ground: [..],
+         path: skies/noon.hdr | guid:<uuid>,   # equirect panorama or cubemap cross
+         faces: [px, nx, py, ny, pz, nz], exposure: 0, rotation: 0 }   # exposure in stops; rotation deg about +Y (ignored for sky_dome)
+  ibl: { enabled: true, diffuse_intensity: 1, specular_intensity: 1, resolution: 128 }
+  ambient: { color: [0.2,0.2,0.2], intensity: 1 }          # flat fallback when IBL is off/unbaked
+  fog: { enabled: false, type: uniform|linear|exponential|height, color: [r,g,b,a], density, start, end, height_base, height_falloff }
+  volumetric: { enabled: false, density: 0.02, anisotropy: 0.6, steps: 32, max_distance: 100, intensity: 1 }
+  post_stack: post/day.rpost | guid:<uuid>
+```
+Colours are sRGB 0..1 (like all engine colours); .hdr pixels are linear. An unknown sky source / fog type fails the level load (LRG_LEVEL_ERROR_PARSE).
+Runtime: lrg_environment_load_sources(env, asset_manager, level_dir, &err); lrg_environment_bake(env, &err) (needs GL); lrg_light_set_set_environment(lights, env); lrg_environment_apply_to_light_set(env, lights); lrg_environment_draw_sky(env, &eye) first inside BeginMode3D; lrg_volumetric_fog_set_from_environment(fog, env).

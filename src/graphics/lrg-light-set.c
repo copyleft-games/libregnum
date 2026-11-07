@@ -419,6 +419,7 @@ static const gchar light_vs[] =
     "    float occ = ao * lrg_ssao();\n" \
     "    vec3 ind;\n" \
     "    if (lrg_env_active()) {\n" \
+    "        lrg_env_set_point(p);\n" \
     "        float nv = max(dot(n, v), 1e-4);\n" \
     "        vec2 brdf = lrg_env_brdf(nv, rough);\n" \
     "        vec3 F0 = mix(vec3(0.04), alb, metal);\n" \

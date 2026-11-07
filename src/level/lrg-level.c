@@ -25,6 +25,7 @@ struct _LrgLevel
 	LrgNode  *root;
 	gboolean  default_2d;
 	GPtrArray *timelines;  /* LrgTimeline* (owned) */
+	LrgEnvironment *environment;  /* nullable, owned */
 };
 
 G_DEFINE_FINAL_TYPE (LrgLevel, lrg_level, G_TYPE_OBJECT)
@@ -34,6 +35,7 @@ enum
 	PROP_0,
 	PROP_NAME,
 	PROP_DEFAULT_2D,
+	PROP_ENVIRONMENT,
 	N_PROPS
 };
 
@@ -60,6 +62,7 @@ lrg_level_finalize (GObject *object)
 	g_clear_pointer (&self->name, g_free);
 	g_clear_object (&self->root);
 	g_clear_pointer (&self->timelines, g_ptr_array_unref);
+	g_clear_object (&self->environment);
 
 	G_OBJECT_CLASS (lrg_level_parent_class)->finalize (object);
 }
@@ -79,6 +82,9 @@ lrg_level_get_property (GObject    *object,
 		break;
 	case PROP_DEFAULT_2D:
 		g_value_set_boolean (value, self->default_2d);
+		break;
+	case PROP_ENVIRONMENT:
+		g_value_set_object (value, self->environment);
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -102,6 +108,9 @@ lrg_level_set_property (GObject      *object,
 		break;
 	case PROP_DEFAULT_2D:
 		self->default_2d = g_value_get_boolean (value);
+		break;
+	case PROP_ENVIRONMENT:
+		lrg_level_set_environment (self, g_value_get_object (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -145,6 +154,21 @@ lrg_level_class_init (LrgLevelClass *klass)
 		                      G_PARAM_READWRITE |
 		                      G_PARAM_CONSTRUCT |
 		                      G_PARAM_STATIC_STRINGS);
+
+	/**
+	 * LrgLevel:environment:
+	 *
+	 * The level's environment block (#LrgEnvironment), %NULL when the
+	 * level has none.
+	 */
+	properties[PROP_ENVIRONMENT] =
+		g_param_spec_object ("environment",
+		                     "Environment",
+		                     "Sky, lighting and fog of the level",
+		                     LRG_TYPE_ENVIRONMENT,
+		                     G_PARAM_READWRITE |
+		                     G_PARAM_EXPLICIT_NOTIFY |
+		                     G_PARAM_STATIC_STRINGS);
 
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
@@ -421,4 +445,40 @@ lrg_level_remove_timeline (LrgLevel *self,
 		return FALSE;
 	g_ptr_array_remove_index (self->timelines, index);
 	return TRUE;
+}
+
+/* ==========================================================================
+ * Environment
+ * ========================================================================== */
+
+LrgEnvironment *
+lrg_level_get_environment (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return self->environment;
+}
+
+void
+lrg_level_set_environment (LrgLevel       *self,
+                           LrgEnvironment *environment)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+	g_return_if_fail (environment == NULL || LRG_IS_ENVIRONMENT (environment));
+
+	if (g_set_object (&self->environment, environment))
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ENVIRONMENT]);
+}
+
+LrgEnvironment *
+lrg_level_ensure_environment (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+
+	if (self->environment == NULL)
+	{
+		g_autoptr(LrgEnvironment) env = lrg_environment_new ();
+
+		lrg_level_set_environment (self, env);
+	}
+	return self->environment;
 }
