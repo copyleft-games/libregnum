@@ -222,4 +222,4 @@ On one core of an i7-1280P (=taskset=): a 65-node tree ticks in 2.9 µs (5.1 µs
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-0.9.0's engine wave adds the formats and the hooks; the BT editor with live state, the state-machine editor and the LLM decisions inspector follow in the next wave and read the running component during play-in-editor (=lrg_ai_component_get_runner()=, =lrg_ai_component_get_machine()=, the brain's topic API). Until then =.rbt= and =.rfsm= files are written by hand or generated through the C API, and a level attaches them with an =ai= component (=tree-path=, =machine-path=).
+The BT editor with live state, the state-machine editor and the AI panel (live blackboards, events, the decisions inspector) are described in [[file:../editor/ai.org][AI in the Editor]]. They read the running component during play-in-editor (=lrg_ai_component_get_runner()=, =lrg_ai_component_get_machine()=, the brain's topic API); a level attaches trees and machines with an =ai= component (=tree-path=, =machine-path=).

@@ -460,7 +460,7 @@ Measured on an i7-1280P pinned to one core (=taskset -c 3=), release build, a 65
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The 0.9.0 engine wave ships the format and the hooks; the BT editor with live state comes in the next wave. What it builds on:
+The editor's tools are described in [[file:../../editor/ai.org][AI in the Editor]] (the BT editor with live state). What they build on:
 
 - *Graph model.* The node tree is =LrgBtAssetNode= (children, kinds, properties, parameters, ids); =lrg_bt_dup_node_type_names()=, =lrg_bt_lookup_node_type()=, =lrg_bt_dup_action_names()= and =lrg_bt_dup_condition_names()= fill the palette; =lrg_bt_asset_validate()= and =lrg_bt_asset_dup_unbound()= drive the problems list; unknown keys (an =editor:= block with node positions) survive saves.
 - *Preview without game code.* =lrg_bt_asset_set_allow_unbound (asset, TRUE)= builds trees whose game actions are not registered in the editor process.

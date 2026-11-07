@@ -410,7 +410,7 @@ On an i7-1280P pinned to one core (=taskset -c 3=), release build, a two-level m
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The state-machine editor arrives in the next wave; the engine side is ready for it:
+The editor's tools are described in [[file:../../editor/ai.org][AI in the Editor]] (the state-machine editor). What it builds on:
 
 - *Graph.* =lrg_logic_machine_get_root()= and the state/transition accessors give nodes (states, nested) and edges (transitions with their event, timer, conditions and actions); every mutation an editor needs (add/remove states, transitions, conditions, actions; rename; set initial) exists; unknown keys (an =editor:= block with positions) survive saves; =lrg_logic_machine_validate()= and =lrg_logic_machine_dup_unbound()= drive the problems list.
 - *Live state.* In play-in-editor =lrg_ai_component_get_machine()= is the running instance: =state-entered=, =state-exited= and =transitioned= drive highlighting, =lrg_logic_machine_get_state_time()= shows timers, =lrg_logic_transition_get_fire_count()= heats edges, =lrg_logic_machine_dup_debug_state()= (or =lrg_ai_component_dup_debug_state()=) is the IPC payload, and =lrg_logic_machine_send_event()= lets a tool poke the machine.
