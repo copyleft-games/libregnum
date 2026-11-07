@@ -1,0 +1,147 @@
+#+title: LrgTerrainBrush - Terrain Sculpt and Paint Brushes
+#+description: Engine-side terrain editing: raise, lower, flatten, smooth, noise, paint, holes and foliage density, with falloff curves and undo-friendly edits
+
+* LrgTerrainBrush - Terrain Sculpt and Paint Brushes
+:PROPERTIES:
+:CUSTOM_ID: lrgterrainbrush
+:END:
+=LrgTerrainBrush= (0.9.0) is the engine side of terrain editing: everything a sculpt, paint or foliage tool does to an [[file:terrain-asset.org][LrgTerrainAsset]], without any UI. A brush is an operation, a radius, a strength and a falloff. =lrg_terrain_brush_apply()= runs one dab at a local position and returns the touched region before and after as an =LrgTerrainEdit=; a stroke (=lrg_terrain_brush_begin_stroke()=, dabs, =lrg_terrain_brush_end_stroke()=) returns one edit for the whole stroke. Everything is headless and deterministic, so editor tools, scripts, procedural generators and tests share one implementation.
+
+- *Type* - =LrgTerrainBrush=, final GObject
+- *Header* - =graphics/lrg-terrain-brush.h=
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** Operations
+:PROPERTIES:
+:CUSTOM_ID: concepts-ops
+:END:
+With w the falloff weight at a sample (or cell centre), s the strength and a the dab's amount (1 for a click, the frame time for a held brush), k = min (1, s x a x w):
+
+| =LrgTerrainBrushOp= | Data | Effect |
+|---------------------+------+--------|
+| =LRG_TERRAIN_BRUSH_RAISE= | heights | h += s a w |
+| =LRG_TERRAIN_BRUSH_LOWER= | heights | h -= s a w |
+| =LRG_TERRAIN_BRUSH_FLATTEN= | heights | h += (target - h) k |
+| =LRG_TERRAIN_BRUSH_SMOOTH= | heights | h += (mean of its 3 x 3 neighbourhood before the dab - h) k |
+| =LRG_TERRAIN_BRUSH_NOISE= | heights | h += s a w (2 n - 1), n a smooth value noise of the seed at the noise scale |
+| =LRG_TERRAIN_BRUSH_PAINT= | weights (ids) | the brush layer's weight moves towards 1 by k (at least one step of 1/255), the others shrink in proportion, the sum stays 1; in ids mode cells with w >= 0.5 take the layer |
+| =LRG_TERRAIN_BRUSH_HOLE= / =LRG_TERRAIN_BRUSH_FILL= | holes | cells with w >= 0.5 become / stop being holes |
+| =LRG_TERRAIN_BRUSH_FOLIAGE_PAINT= / =LRG_TERRAIN_BRUSH_FOLIAGE_ERASE= | foliage density of the brush layer | moves towards 1 / 0 by k (at least one step) |
+
+Height and weight ops work on samples within the radius; the others on cells whose centre is within it. =lrg_terrain_brush_get_edit_kind()= says which data set a brush edits on an asset (paint depends on the asset's splat mode), =lrg_terrain_brush_get_region()= which rows and columns a dab would touch.
+
+*** Falloff
+:PROPERTIES:
+:CUSTOM_ID: concepts-falloff
+:END:
+=lrg_terrain_brush_get_weight()= evaluates the falloff at a distance, t = distance / radius, 0 at and past the radius:
+
+| =LrgTerrainBrushFalloff= | w (t) |
+|--------------------------+-------|
+| =LRG_TERRAIN_BRUSH_FALLOFF_LINEAR= | 1 - t |
+| =LRG_TERRAIN_BRUSH_FALLOFF_SMOOTH= (default) | 1 - t² (3 - 2t) |
+| =LRG_TERRAIN_BRUSH_FALLOFF_SPHERE= | sqrt (1 - t²) |
+| =LRG_TERRAIN_BRUSH_FALLOFF_SHARP= | (1 - t)² |
+| =LRG_TERRAIN_BRUSH_FALLOFF_CONSTANT= | 1 |
+| =LRG_TERRAIN_BRUSH_FALLOFF_CURVE= | the =LrgKeyframeCurve= sampled at t (=lrg_terrain_brush_set_falloff_curve()=), clamped to 0 .. 1; linear without a curve |
+
+*** Dabs, strokes and undo
+:PROPERTIES:
+:CUSTOM_ID: concepts-strokes
+:END:
+A dab snapshots its region, changes the data, captures it again and emits =LrgTerrainAsset::region-changed= once; it returns =NULL= when nothing changed (a dab off the grid, smoothing a plane, painting a full layer). =lrg_terrain_brush_begin_stroke()= snapshots the whole data set the brush edits (and, with =sample-target= on a flatten brush, takes the target from the terrain under the first position); every dab of the brush on that asset grows the stroke's region; =lrg_terrain_brush_end_stroke()= returns one edit of the union with "before" from the snapshot, which is what goes on an undo stack. =lrg_terrain_brush_is_stroking()= tells whether a stroke is open; beginning a new stroke drops an open one.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_terrain_brush_new (op)= | radius 4, strength 1, smooth falloff, target 0, layer 0, noise scale 8, seed 0 |
+| =lrg_terrain_brush_get_op= / =lrg_terrain_brush_set_op= | operation (=LrgTerrainBrushOp=, =lrg_terrain_brush_op_get_type ()=) |
+| =lrg_terrain_brush_get_radius= / =lrg_terrain_brush_set_radius= | local world units |
+| =lrg_terrain_brush_get_strength= / =lrg_terrain_brush_set_strength= | height per dab or blend rate |
+| =lrg_terrain_brush_get_falloff= / =lrg_terrain_brush_set_falloff= | shape (=LrgTerrainBrushFalloff=, =lrg_terrain_brush_falloff_get_type ()=) |
+| =lrg_terrain_brush_get_falloff_curve= / =lrg_terrain_brush_set_falloff_curve= | curve of the CURVE falloff |
+| =lrg_terrain_brush_get_target_height= / =lrg_terrain_brush_set_target_height= | flatten target |
+| =lrg_terrain_brush_get_sample_target= / =lrg_terrain_brush_set_sample_target= | flatten samples its target at the stroke start |
+| =lrg_terrain_brush_get_layer= / =lrg_terrain_brush_set_layer= | surface layer (paint) or foliage layer |
+| =lrg_terrain_brush_get_noise_scale= / =lrg_terrain_brush_set_noise_scale= | noise feature size |
+| =lrg_terrain_brush_get_seed= / =lrg_terrain_brush_set_seed= | noise seed |
+| =lrg_terrain_brush_get_weight (self, distance)= | falloff value |
+| =lrg_terrain_brush_get_region (self, asset, x, z, ...)= | rows and columns a dab touches |
+| =lrg_terrain_brush_get_edit_kind (self, asset)= | data set the brush edits |
+| =lrg_terrain_brush_apply (self, asset, x, z, amount)= | one dab, returns its edit |
+| =lrg_terrain_brush_begin_stroke= / =lrg_terrain_brush_is_stroking= / =lrg_terrain_brush_end_stroke= | strokes |
+
+Properties: =op=, =radius=, =strength=, =falloff=, =falloff-curve=, =target-height=, =sample-target=, =layer=, =noise-scale=, =seed= (all notify).
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** A held sculpt brush in a tool
+:PROPERTIES:
+:CUSTOM_ID: example-tool
+:END:
+#+begin_src C
+/* mouse down */
+gfloat hit[3], local[3];
+
+if (lrg_terrain_component_raycast (terrain, ray_origin, ray_dir, 1000.0f, hit, local))
+	lrg_terrain_brush_begin_stroke (brush, asset, local[0], local[2]);
+
+/* every frame while held */
+if (lrg_terrain_component_raycast (terrain, ray_origin, ray_dir, 1000.0f, hit, local))
+	lrg_terrain_edit_free (lrg_terrain_brush_apply (brush, asset, local[0], local[2], dt));
+
+/* mouse up */
+LrgTerrainEdit *stroke = lrg_terrain_brush_end_stroke (brush);
+if (stroke != NULL)
+	push_undo (stroke);   /* undo: lrg_terrain_edit_apply (stroke, asset, FALSE) */
+#+end_src
+
+*** Procedural terrain from brushes
+:PROPERTIES:
+:CUSTOM_ID: example-procedural
+:END:
+#+begin_src C
+g_autoptr(LrgTerrainBrush) b = lrg_terrain_brush_new (LRG_TERRAIN_BRUSH_NOISE);
+
+lrg_terrain_brush_set_falloff (b, LRG_TERRAIN_BRUSH_FALLOFF_CONSTANT);
+lrg_terrain_brush_set_radius (b, 1000.0f);        /* the whole terrain */
+lrg_terrain_brush_set_noise_scale (b, 60.0f);
+lrg_terrain_brush_set_strength (b, 10.0f);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, asset, 128.0f, 128.0f, 1.0f));
+lrg_terrain_brush_set_op (b, LRG_TERRAIN_BRUSH_SMOOTH);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, asset, 128.0f, 128.0f, 1.0f));
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+A dab costs O(region) plus the edit copies; a stroke's snapshot costs one copy of the edited data set at its start (4 bytes per sample for heights, 8 for weights, 1 per cell otherwise). A dab whose radius covers the whole terrain copies the whole data set twice (before and after); for whole-terrain generation prefer =lrg_terrain_asset_set_heights()=.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Positions are *asset-local*: convert world hits with =lrg_terrain_component_raycast()='s local output.
+- Dabs emit the change signal: a renderer re-meshes the touched chunks per dab. That is cheap for brush-sized regions; generators touching everything should batch.
+- Edits record their region at dab time: resizing the asset invalidates stored edits (=lrg_terrain_edit_apply()= then refuses).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+The next editor wave's sculpt / paint / foliage brushes are thin UI over this API: the cursor rings come from =lrg_terrain_brush_get_weight()=, the affected area from =lrg_terrain_brush_get_region()=, the undo entry from =lrg_terrain_brush_end_stroke()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:terrain-asset.org][LrgTerrainAsset]], [[file:foliage.org][LrgFoliage]], [[file:../../guides/terrain.org][Terrain guide]].

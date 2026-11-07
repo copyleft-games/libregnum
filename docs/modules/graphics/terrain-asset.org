@@ -1,0 +1,291 @@
+#+title: LrgTerrainAsset - Terrain Assets (.rterrain)
+#+description: The .rterrain heightfield terrain: chunk grid, height sidecar, splat layers, holes, LOD, edits, splat bake, heightfield physics and the terrain component
+
+* LrgTerrainAsset - Terrain Assets (.rterrain)
+:PROPERTIES:
+:CUSTOM_ID: lrgterrainasset
+:END:
+=LrgTerrainAsset= (0.9.0) is the authored terrain of a level: a rectangular grid of chunks of heights, a set of surface layers blended by splat weights (or picked per cell by material ids), a hole flag per cell, level-of-detail settings and the [[file:foliage.org][foliage]] scattered on it. It loads from and saves to a small YAML document with the =.rterrain= extension; the big grids live next to it in binary sidecars (a 16-bit PNG or raw float file for the heights, RGBA PNGs for the splat weights, gray PNGs for ids, holes and foliage density) so the text stays small and diffable and the images open in any image editor.
+
+Everything about the asset is headless: loading, saving, sampling, editing, chunk meshes, the splat bake, the physics heightfield and the ray pick. =LrgTerrainComponent= draws an asset on an entity through =LrgWorld3DRenderer= (one mesh item per chunk at its distance LOD, textured with a baked splat albedo), draws its foliage and owns a static heightfield body in the world's physics. Editing goes through [[file:terrain-brush.org][LrgTerrainBrush]], whose dabs and strokes return undo-friendly =LrgTerrainEdit= records.
+
+The older [[file:terrain.org][LrgTerrain]] (per-cell tile materials, streamed chunk by chunk from game code) stays for tile worlds; =.rterrain= is the authored, sculpted kind the editor works on.
+
+- *Types* - =LrgTerrainAsset=, =LrgTerrainLayer= (final GObjects), =LrgTerrainEdit= (boxed), =LrgTerrainComponent= (an =LrgComponent=)
+- *Headers* - =graphics/lrg-terrain-asset.h=, =world3d/components/lrg-terrain-component.h= (through =<libregnum.h>=)
+- *Format* - =.rterrain= (YAML), version =LRG_TERRAIN_ASSET_FORMAT_VERSION= (1)
+- *Limits* - =LRG_TERRAIN_ASSET_MAX_RESOLUTION= (128 cells per chunk side), =LRG_TERRAIN_ASSET_MAX_CHUNKS= (256 per side), =LRG_TERRAIN_ASSET_MAX_LAYERS= (8), =LRG_TERRAIN_ASSET_MAX_LOD= (6)
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+*** The grid
+:PROPERTIES:
+:CUSTOM_ID: concepts-grid
+:END:
+A terrain has =chunks_x= x =chunks_z= chunks of =resolution= x =resolution= cells, each chunk =chunk_size= world units wide. Neighbouring chunks share their border samples, so the whole terrain is a single grid of =(chunks_x * resolution + 1) x (chunks_z * resolution + 1)= height samples (=lrg_terrain_asset_get_samples()=) and one fewer cells in each direction (=lrg_terrain_asset_get_cells()=). Sample (x, z) sits at local =(x * cell_size, height, z * cell_size)=: the grid starts at the asset's local origin and grows towards +X and +Z (=lrg_terrain_asset_get_size()=). Because the grid is shared, a brush across a chunk border never opens a seam and normals are continuous.
+
+Arrays are row major: index =z * samples_x + x= for samples, =z * cells_x + x= for cells.
+
+*** Heights
+:PROPERTIES:
+:CUSTOM_ID: concepts-heights
+:END:
+=lrg_terrain_asset_get_height()= / =lrg_terrain_asset_set_height()= address one sample, =lrg_terrain_asset_get_heights()= / =lrg_terrain_asset_set_heights()= the whole grid. =lrg_terrain_asset_sample_height()= interpolates bilinearly at any local position (=FALSE= off the grid and over holes) and =lrg_terrain_asset_sample_normal()= blends the central-difference normals of the four samples around it.
+
+The height sidecar is a 16-bit gray PNG (=LRG_TERRAIN_HEIGHT_FORMAT_PNG16=, the default) whose 0 .. 65535 map linearly onto the asset's height range (=lrg_terrain_asset_get_height_range()= / =lrg_terrain_asset_set_height_range()=; saving widens it to the data when a height lies outside), or raw little-endian floats (=LRG_TERRAIN_HEIGHT_FORMAT_R32=, exact). =lrg_terrain_asset_get_height_format()= / =lrg_terrain_asset_set_height_format()= pick it. A PNG16 heightfield loses 1/65535 of its range per sample; once saved, reloading and saving again is byte stable.
+
+*** Surface layers and splat
+:PROPERTIES:
+:CUSTOM_ID: concepts-layers
+:END:
+A terrain has 1 .. 8 =LrgTerrainLayer= s (=lrg_terrain_asset_get_n_layers()=, =lrg_terrain_asset_get_layer()=, =lrg_terrain_asset_add_layer()=, =lrg_terrain_asset_remove_layer()=). A layer has a name (=lrg_terrain_layer_get_name()= / =lrg_terrain_layer_set_name()=), an albedo texture (=lrg_terrain_layer_get_texture()= / =lrg_terrain_layer_set_texture()=, relative to the asset's directory), a colour multiplying it (=lrg_terrain_layer_get_color()= / =lrg_terrain_layer_set_color()=), a world tiling (=lrg_terrain_layer_get_tiling()= / =lrg_terrain_layer_set_tiling()=: world units per texture repeat) and an optional =.rmat= reference kept for tools and future shading (=lrg_terrain_layer_get_material()= / =lrg_terrain_layer_set_material()=). =lrg_terrain_layer_new()= makes a free-standing layer. =lrg_terrain_layer_set_pixels()= gives a layer in-memory RGBA pixels (procedural textures, editor previews, tests) used instead of the file; =lrg_terrain_layer_has_pixels()= tells whether pixels are loaded.
+
+The splat mode (=lrg_terrain_asset_get_splat_mode()= / =lrg_terrain_asset_set_splat_mode()=) picks how layers are assigned:
+
+| Mode | Data | Look |
+|------+------+------|
+| =LRG_TERRAIN_SPLAT_MODE_WEIGHTS= | a byte weight per layer per sample, always summing to 255 | smooth blends |
+| =LRG_TERRAIN_SPLAT_MODE_IDS= | one layer id per cell | hard, tile-like edges |
+
+=lrg_terrain_asset_get_weight()= reads a weight (0 .. 1), =lrg_terrain_asset_set_weights()= sets a sample's weights (normalised and quantised; all zero means layer 0), =lrg_terrain_asset_sample_weights()= interpolates them at a local position (in ids mode it returns 1 for the cell's layer). =lrg_terrain_asset_get_cell_material()= / =lrg_terrain_asset_set_cell_material()= address the ids. Both data sets are kept; the mode decides which one is drawn and saved.
+
+*** Holes
+:PROPERTIES:
+:CUSTOM_ID: concepts-holes
+:END:
+A hole cell (=lrg_terrain_asset_get_hole()= / =lrg_terrain_asset_set_hole()=, =lrg_terrain_asset_get_hole_count()=) is not drawn, is not ground for sampling, scattering or picking, and loses its collision: a heightfield sample becomes =LRG_PHYSICS_HEIGHTFIELD_HOLE= when every cell around it is a hole, so hole regions at least two cells wide (cave mouths, pits) lose their collision exactly while a single-cell hole keeps it.
+
+*** Level of detail
+:PROPERTIES:
+:CUSTOM_ID: concepts-lod
+:END:
+LOD level n draws every 2^n-th sample (the finest step that divides the resolution). =lrg_terrain_asset_get_lod_levels()= / =lrg_terrain_asset_set_lod_levels()= set how many levels exist, =lrg_terrain_asset_get_lod_distance()= / =lrg_terrain_asset_set_lod_distance()= the distance from the eye to a chunk's box at which level n takes over (kept increasing), and =lrg_terrain_asset_select_lod()= applies them. Neighbouring chunks at different levels would leave cracks; every chunk mesh hangs a skirt of =lrg_terrain_asset_get_skirt_depth()= / =lrg_terrain_asset_set_skirt_depth()= below its borders to hide them (0 turns skirts off). A coarse cell is dropped when any fine cell under it is a hole, so holes grow slightly with distance. =lrg_terrain_asset_get_chunk_mesh_counts()= reports the vertices and triangles of a chunk at a level.
+
+*** The splat bake
+:PROPERTIES:
+:CUSTOM_ID: concepts-bake
+:END:
+The terrain draws with the renderer's ordinary lit shader, so the layers are combined on the CPU: =lrg_terrain_asset_bake_chunk()= computes a chunk's albedo at =lrg_terrain_asset_get_bake_resolution()= texels per side (=lrg_terrain_asset_set_bake_resolution()=, 16 .. 2048, default 256): at each texel centre the layer weights mix every layer's colour times its texture sampled bilinearly at its world tiling. The component re-bakes only the chunks a splat change touched. The result is lit, shadowed, fogged and post-processed like any mesh; the price is texel density (a 256-texel bake over a 32-unit chunk is 8 texels per unit) and that layers share the renderer's default roughness and metallic values.
+
+*** Changes and edits
+:PROPERTIES:
+:CUSTOM_ID: concepts-edits
+:END:
+Every change emits =LrgTerrainAsset::region-changed= (kind, foliage layer, x, z, width, height) once. The kinds (=LrgTerrainEditKind=) are =LRG_TERRAIN_EDIT_HEIGHTS= and =LRG_TERRAIN_EDIT_SPLAT= (regions in samples) and =LRG_TERRAIN_EDIT_MATERIAL_IDS=, =LRG_TERRAIN_EDIT_HOLES= and =LRG_TERRAIN_EDIT_FOLIAGE= (regions in cells). The terrain component re-meshes, re-bakes and rebuilds its body from it; the foliage marks the patches around the region for re-scattering.
+
+An =LrgTerrainEdit= is a region of one data set before and after a change, for undo. =lrg_terrain_asset_capture_edit()= snapshots a region (before = after = now), =lrg_terrain_edit_capture_after()= refreshes the "after" side after a tool changed the data itself, =lrg_terrain_edit_apply()= writes either side back (and emits the signal). Accessors: =lrg_terrain_edit_get_kind()=, =lrg_terrain_edit_get_layer()=, =lrg_terrain_edit_get_region()=, =lrg_terrain_edit_get_before()=, =lrg_terrain_edit_get_after()= (=GBytes=: native floats for heights, 8 bytes per sample for weights, one byte per cell otherwise), =lrg_terrain_edit_is_empty()=, =lrg_terrain_edit_copy()=, =lrg_terrain_edit_free()=. Brushes return edits directly (see [[file:terrain-brush.org][LrgTerrainBrush]]).
+
+=lrg_terrain_asset_resize()= grows or shrinks the chunk grid at its +X / +Z edges (new samples copy the nearest old edge sample).
+
+*** Physics and picking
+:PROPERTIES:
+:CUSTOM_ID: concepts-physics
+:END:
+=lrg_terrain_asset_build_physics_shape()= returns a heightfield =LrgPhysicsShape= of the whole grid (see [[file:../physics/physics-shape.org::#heightfield][Heightfield]]), with per-axis scales so an entity's world scale can be baked in. =lrg_terrain_asset_raycast()= marches a local ray in half-cell steps and bisects the crossing to a thousandth of a cell: this is the brush cursor's pick.
+
+*** The terrain component
+:PROPERTIES:
+:CUSTOM_ID: concepts-component
+:END:
+=LrgTerrainComponent= (=lrg_terrain_component_new()=, =lrg_terrain_component_new_with_asset()=) draws an asset set with =lrg_terrain_component_set_asset()= or loaded on first use from =lrg_terrain_component_set_asset_path()= (=lrg_terrain_component_get_asset()=, =lrg_terrain_component_get_asset_path()=). Per frame it adds one =LRG_RENDER_ITEM_MESH= item per chunk that the camera's cull mask and frustum accept, at the LOD of the distance from the eye to the chunk's world box (=lrg_terrain_component_get_chunk_lod()= reports the last one, -1 when culled), with the baked splat texture as the albedo. Chunk meshes are built per LOD on first use and kept until a change invalidates them; without a window (headless renders, tests) items carry no mesh and no texture. Properties: =asset=, =asset-path=, =cast-shadows= (=lrg_terrain_component_get_cast_shadows()= / =lrg_terrain_component_set_cast_shadows()=), =physics= (=lrg_terrain_component_get_physics()= / =lrg_terrain_component_set_physics()=), =foliage= (draw the asset's foliage, =lrg_terrain_component_get_foliage()= / =lrg_terrain_component_set_foliage()=), =layer= (render layer override, -1 = the entity's).
+
+In a world with physics the component is a physics client: before a step it builds one static body with the heightfield (entity world scale baked in, =lrg_terrain_component_get_body_id()=), teleports it when the entity moves and rebuilds it after height or hole changes. =lrg_terrain_component_height_at()= and =lrg_terrain_component_raycast()= answer world-space queries through the entity's transform (rotation and scale included); the raycast also returns the asset-local hit a brush takes. =lrg_terrain_component_release_gpu()= drops meshes, bakes and foliage GPU data while the context lives.
+
+** The .rterrain format
+:PROPERTIES:
+:CUSTOM_ID: format
+:END:
+#+begin_src yaml
+version: 1                    # LRG_TERRAIN_ASSET_FORMAT_VERSION
+name: island                  # display name (optional)
+grid:                         # required, read first
+  resolution: 32              # cells per chunk side, 1 .. 128
+  chunk_size: 32              # world units per chunk side
+  chunks: [8, 8]              # chunks along X and Z, 1 .. 256 each
+heights:
+  file: island.heights.png    # sidecar, relative to this file
+  format: png16               # png16 | r32
+  range: [-4, 40]             # png16 only: what 0 and 65535 mean
+splat:                        # written with 2+ layers or in ids mode
+  mode: weights               # weights | ids
+  files: [island.splat0.png, island.splat1.png]   # RGBA = layers 4k .. 4k+3
+  ids_file: island.ids.png    # ids mode: gray, one byte per cell
+layers:                       # 1 .. 8
+- name: grass
+  texture: textures/grass.png # optional; relative to this file
+  material: materials/grass.rmat   # optional, kept
+  tiling: 6                   # world units per texture repeat
+  color: [1, 1, 1, 1]         # multiplies the texture
+holes:                        # written only when a cell is a hole
+  file: island.holes.png      # gray, 255 = hole, one byte per cell
+lod:
+  levels: 3
+  distances: [64, 128]        # levels 1 .. levels-1 take over here
+  skirt: 3.2                  # skirt depth
+bake_resolution: 256          # written when not 256
+foliage:                      # see foliage.org; written when there are layers
+  seed: 2026
+  layers: [...]
+#+end_src
+
+Rules:
+- *Sidecars* are resolved against the document's directory. =lrg_terrain_asset_new_from_data()= with a =NULL= base directory reads the document only (heights 0, first layer at full weight, no holes, full foliage density) and keeps the names: what editor validation needs.
+- *Sizes*: heights and splat images are samples_x x samples_z, ids, holes and foliage density images cells_x x cells_z. A wrong size is an =LRG_TERRAIN_ASSET_ERROR_INVALID= naming both sizes; a missing file is =LRG_TERRAIN_ASSET_ERROR_IO=.
+- *Readers*: 8 or 16-bit gray, gray-alpha, RGB and RGBA non-interlaced PNGs are accepted (8-bit heights are widened); the writer produces 16-bit gray heights, 8-bit RGBA splat and 8-bit gray masks with deterministic bytes.
+- *Names*: =lrg_terrain_asset_save_to_file()= writes every sidecar into the target directory, named after the file's stem (=island.rterrain= -> =island.heights.png=, =island.splat0.png=, =island.ids.png=, =island.holes.png=, =island.foliage0.png=); names loaded from a file are kept while the stem stays the same. Sidecars holding only default data (no hole, full foliage density, a single layer) are not written.
+- *Strict values*: a value of the wrong kind or out of range fails with =file: /key/path: problem= (=<data>= for text): =/grid/resolution: expected a whole number from 1 to 128=, =/layers[1]/tiling: expected a number from 0.001 to 100000=, =/heights/format: expected one of png16, r32=.
+- *Unknown keys* at the root and inside =grid=, =heights=, =splat=, =holes=, =lod=, every layer, =foliage= and every foliage layer are kept and written back at the end of their mapping.
+- *Round trip*: load, save, load, save gives the same bytes (the writer's output is a fixed point; =tests/test-terrain-asset.c= checks the document and the sidecars).
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+*** Construction and files
+:PROPERTIES:
+:CUSTOM_ID: api-files
+:END:
+| Function | Purpose |
+|----------+---------|
+| =lrg_terrain_asset_new (resolution, chunk_size, chunks_x, chunks_z)= | flat terrain, one "base" layer, 3 LOD levels at 2 and 4 chunk sizes, skirt a tenth of a chunk, 256-texel bake |
+| =lrg_terrain_asset_new_from_file (path, error)= | load with sidecars |
+| =lrg_terrain_asset_new_from_data (data, length, base_dir, error)= | load text; sidecars from =base_dir= (nullable) |
+| =lrg_terrain_asset_save_to_file (self, path, error)= | YAML + sidecars |
+| =lrg_terrain_asset_to_data (self, length, error)= | the YAML only |
+| =lrg_terrain_asset_get_name= / =lrg_terrain_asset_set_name=, =lrg_terrain_asset_get_base_dir= / =lrg_terrain_asset_set_base_dir= | name; where textures resolve |
+| =lrg_terrain_asset_error_quark ()=, =LRG_TERRAIN_ASSET_ERROR=, =LrgTerrainAssetError= (=LRG_TERRAIN_ASSET_ERROR_PARSE=, =LRG_TERRAIN_ASSET_ERROR_INVALID=, =LRG_TERRAIN_ASSET_ERROR_IO=), =lrg_terrain_asset_error_get_type ()= | errors |
+
+*** Grid and heights
+:PROPERTIES:
+:CUSTOM_ID: api-grid
+:END:
+=lrg_terrain_asset_get_resolution=, =lrg_terrain_asset_get_chunk_size=, =lrg_terrain_asset_get_cell_size=, =lrg_terrain_asset_get_chunks=, =lrg_terrain_asset_get_samples=, =lrg_terrain_asset_get_cells=, =lrg_terrain_asset_get_size=, =lrg_terrain_asset_resize=, =lrg_terrain_asset_get_height=, =lrg_terrain_asset_set_height=, =lrg_terrain_asset_get_heights=, =lrg_terrain_asset_set_heights=, =lrg_terrain_asset_sample_height=, =lrg_terrain_asset_sample_normal=, =lrg_terrain_asset_get_height_range=, =lrg_terrain_asset_set_height_range=, =lrg_terrain_asset_get_height_format=, =lrg_terrain_asset_set_height_format= (=LrgTerrainHeightFormat=, =lrg_terrain_height_format_get_type ()=).
+
+*** Layers, splat, holes
+:PROPERTIES:
+:CUSTOM_ID: api-layers
+:END:
+=lrg_terrain_asset_get_n_layers=, =lrg_terrain_asset_get_layer=, =lrg_terrain_asset_add_layer=, =lrg_terrain_asset_remove_layer=, =lrg_terrain_asset_get_splat_mode=, =lrg_terrain_asset_set_splat_mode= (=LrgTerrainSplatMode=, =lrg_terrain_splat_mode_get_type ()=), =lrg_terrain_asset_get_weight=, =lrg_terrain_asset_set_weights=, =lrg_terrain_asset_sample_weights=, =lrg_terrain_asset_get_cell_material=, =lrg_terrain_asset_set_cell_material=, =lrg_terrain_asset_get_hole=, =lrg_terrain_asset_set_hole=, =lrg_terrain_asset_get_hole_count=.
+
+=LrgTerrainLayer=: =lrg_terrain_layer_new=, =lrg_terrain_layer_get_name= / =lrg_terrain_layer_set_name=, =lrg_terrain_layer_get_texture= / =lrg_terrain_layer_set_texture=, =lrg_terrain_layer_get_material= / =lrg_terrain_layer_set_material=, =lrg_terrain_layer_get_tiling= / =lrg_terrain_layer_set_tiling=, =lrg_terrain_layer_get_color= / =lrg_terrain_layer_set_color=, =lrg_terrain_layer_set_pixels=, =lrg_terrain_layer_has_pixels=. Properties: =name=, =texture=, =material=, =tiling=.
+
+*** LOD, meshes, bake
+:PROPERTIES:
+:CUSTOM_ID: api-lod
+:END:
+=lrg_terrain_asset_get_lod_levels=, =lrg_terrain_asset_set_lod_levels=, =lrg_terrain_asset_get_lod_distance=, =lrg_terrain_asset_set_lod_distance=, =lrg_terrain_asset_select_lod=, =lrg_terrain_asset_get_skirt_depth=, =lrg_terrain_asset_set_skirt_depth=, =lrg_terrain_asset_get_chunk_mesh_counts=, =lrg_terrain_asset_get_bake_resolution=, =lrg_terrain_asset_set_bake_resolution=, =lrg_terrain_asset_bake_chunk=.
+
+*** Physics, picking, foliage
+:PROPERTIES:
+:CUSTOM_ID: api-physics
+:END:
+=lrg_terrain_asset_build_physics_shape=, =lrg_terrain_asset_raycast=, =lrg_terrain_asset_get_foliage=, =lrg_terrain_asset_scatter_foliage= (see [[file:foliage.org][LrgFoliage]]).
+
+*** Edits and signal
+:PROPERTIES:
+:CUSTOM_ID: api-edits
+:END:
+=lrg_terrain_asset_capture_edit=, =LrgTerrainEdit= (=lrg_terrain_edit_get_type ()=), =lrg_terrain_edit_copy=, =lrg_terrain_edit_free=, =lrg_terrain_edit_get_kind=, =lrg_terrain_edit_get_layer=, =lrg_terrain_edit_get_region=, =lrg_terrain_edit_is_empty=, =lrg_terrain_edit_get_before=, =lrg_terrain_edit_get_after=, =lrg_terrain_edit_apply=, =lrg_terrain_edit_capture_after=; =LrgTerrainEditKind= (=lrg_terrain_edit_kind_get_type ()=). Signal =LrgTerrainAsset::region-changed (kind, layer, x, z, width, height)=.
+
+*** LrgTerrainComponent
+:PROPERTIES:
+:CUSTOM_ID: api-component
+:END:
+=lrg_terrain_component_new=, =lrg_terrain_component_new_with_asset=, =lrg_terrain_component_get_asset=, =lrg_terrain_component_set_asset=, =lrg_terrain_component_get_asset_path=, =lrg_terrain_component_set_asset_path=, =lrg_terrain_component_get_cast_shadows=, =lrg_terrain_component_set_cast_shadows=, =lrg_terrain_component_get_physics=, =lrg_terrain_component_set_physics=, =lrg_terrain_component_get_foliage=, =lrg_terrain_component_set_foliage=, =lrg_terrain_component_get_body_id=, =lrg_terrain_component_get_chunk_lod=, =lrg_terrain_component_height_at=, =lrg_terrain_component_raycast=, =lrg_terrain_component_release_gpu=. Properties: =asset=, =asset-path=, =cast-shadows=, =physics=, =foliage=, =layer=.
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: examples
+:END:
+*** Make, sculpt, paint and save a terrain
+:PROPERTIES:
+:CUSTOM_ID: example-make
+:END:
+#+begin_src C
+g_autoptr(LrgTerrainAsset) t = lrg_terrain_asset_new (32, 32.0f, 4, 4);   /* 128 x 128 units */
+g_autoptr(LrgTerrainBrush) b = lrg_terrain_brush_new (LRG_TERRAIN_BRUSH_RAISE);
+g_autoptr(GError)          error = NULL;
+LrgTerrainLayer           *rock = lrg_terrain_asset_add_layer (t, "rock");
+
+lrg_terrain_layer_set_texture (rock, "textures/rock.png");
+lrg_terrain_layer_set_tiling (rock, 8.0f);
+
+lrg_terrain_brush_set_radius (b, 20.0f);
+lrg_terrain_brush_set_strength (b, 12.0f);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, t, 64.0f, 64.0f, 1.0f));   /* a hill */
+
+lrg_terrain_brush_set_op (b, LRG_TERRAIN_BRUSH_PAINT);
+lrg_terrain_brush_set_layer (b, 1);
+lrg_terrain_edit_free (lrg_terrain_brush_apply (b, t, 64.0f, 64.0f, 1.0f));   /* rock on top */
+
+if (!lrg_terrain_asset_save_to_file (t, "levels/hill.rterrain", &error))
+	g_warning ("%s", error->message);
+#+end_src
+
+*** Put it in a world with collision
+:PROPERTIES:
+:CUSTOM_ID: example-world
+:END:
+#+begin_src C
+g_autoptr(LrgEntity3D)         ground = lrg_entity3d_new_with_name ("ground");
+g_autoptr(LrgTerrainComponent) tc = lrg_terrain_component_new ();
+gfloat                         h;
+
+lrg_terrain_component_set_asset_path (tc, "levels/hill.rterrain");
+lrg_entity3d_set_position_xyz (ground, -64.0f, 0.0f, -64.0f);   /* centre it */
+lrg_entity3d_add_component (ground, LRG_COMPONENT (tc));
+lrg_world3d_ensure_physics (world);
+lrg_world3d_add_entity (world, ground);
+
+/* the renderer draws it; physics gets a heightfield body on the next step */
+if (lrg_terrain_component_height_at (tc, 0.0f, 0.0f, &h))
+	g_print ("ground at the origin: %g\n", h);
+#+end_src
+
+*** Undo a stroke
+:PROPERTIES:
+:CUSTOM_ID: example-undo
+:END:
+#+begin_src C
+lrg_terrain_brush_begin_stroke (brush, asset, x, z);
+while (dragging)
+	lrg_terrain_edit_free (lrg_terrain_brush_apply (brush, asset, x, z, frame_time));
+stroke = lrg_terrain_brush_end_stroke (brush);   /* one edit for the stroke */
+/* undo / redo */
+lrg_terrain_edit_apply (stroke, asset, FALSE);
+lrg_terrain_edit_apply (stroke, asset, TRUE);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+- Chunk meshes are built once per LOD and cached; an edit rebuilds only the chunks it touches (heights also the neighbours whose normals change). A 32-cell chunk at LOD 0 is 1 089 vertices plus 132 skirt vertices.
+- The splat bake costs bake_resolution² x layers bilinear samples per chunk: measured 23 ms per 256-texel, four-layer chunk (release build, one core with =taskset -c 2=). Painting re-bakes only the touched chunks; a whole 8 x 8 terrain bakes in about 1.5 s on first draw. Lower =bake_resolution= for big terrains or faster loads.
+- The heightfield body is rebuilt after height or hole edits, once before the next physics step (not per dab).
+- Measured on the showcase of =tests/test-terrain-asset.c= (8 x 8 chunks of 32 cells, 4 layers, two tree layers and a grass layer, 126 933 foliage instances, a lake), =taskset -c 2=, release build: building, sculpting and painting the asset 64 ms, scattering the foliage 113 ms, =lrg_world3d_collect_render()= of the whole scene with cached meshes 0.04 ms. Frame times under the isolated Xvfb (llvmpipe software GL, 1920 x 1080) are about 400 ms and say nothing about a GPU.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- *PNG16 heights are quantised* to 1/65535 of the range: use =r32= for exact heights (procedural pipelines, tests).
+- *The bake is albedo only*: layer materials are kept but not bound; normal and ORM maps of layers are not applied to the terrain in 0.9.0.
+- *Single-cell holes keep their collision* (see [[#concepts-holes][Holes]]); make physics holes at least two cells wide.
+- *Headless items have no mesh*: tests can count and cull items, not draw them.
+- *Resolution must be a power of two* for every LOD level to coarsen; others fall back to the finest dividing step.
+- *Layer textures resolve relative to the asset directory*; =guid:= texture references are not resolved by the bake (use paths).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor
+:END:
+In 0.9.0 a terrain is a level node of kind =terrain= whose asset is the =.rterrain= (see [[file:../../editor/yaml-format.org][the level format]]); the runtime turns it into an =LrgTerrainComponent=. The sculpt, paint and foliage brushes of the next editor wave call =lrg_terrain_component_raycast()= for the cursor, =lrg_terrain_brush_get_region()= / =lrg_terrain_brush_get_weight()= to draw it, =lrg_terrain_brush_begin_stroke()= / =lrg_terrain_brush_apply()= / =lrg_terrain_brush_end_stroke()= while dragging, push the stroke's =LrgTerrainEdit= on the undo stack and save with =lrg_terrain_asset_save_to_file()=.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:terrain-brush.org][LrgTerrainBrush]], [[file:foliage.org][LrgFoliage]], [[file:water-body.org][LrgWaterBody]], [[file:terrain.org][LrgTerrain]], [[file:../../guides/terrain.org][Terrain guide]], [[file:../world3d/renderer.org][LrgWorld3DRenderer]], [[file:../physics/physics-shape.org][LrgPhysicsShape]].
