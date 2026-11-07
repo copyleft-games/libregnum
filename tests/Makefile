@@ -93,6 +93,14 @@ TEST_SOURCES := \
 	test-post-stack.c \
 	test-render-pipeline.c \
 	test-level-look.c \
+	test-shape.c \
+	test-broadphase.c \
+	test-physics-solver.c \
+	test-joint.c \
+	test-ragdoll.c \
+	test-physics-bodies.c \
+	test-cloth.c \
+	test-fracture.c \
 	test-lightmap-bake.c \
 	test-probe-grid.c \
 	test-gltf-animation.c \

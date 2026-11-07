@@ -113,6 +113,27 @@ G_BEGIN_DECLS
 #endif
 
 /**
+ * LRG_DEPRECATED_IN_0_9_0:
+ *
+ * Marks a function as deprecated since Libregnum 0.9.0 (see
+ * %LRG_DEPRECATED_IN_0_8_1 for how the warning behaves).
+ */
+
+/**
+ * LRG_DEPRECATED_IN_0_9_0_FOR:
+ * @f: the replacement
+ *
+ * Like %LRG_DEPRECATED_IN_0_9_0, naming the replacement in the warning.
+ */
+#if defined(LIBREGNUM_COMPILATION)
+#  define LRG_DEPRECATED_IN_0_9_0 LRG_AVAILABLE_IN_ALL
+#  define LRG_DEPRECATED_IN_0_9_0_FOR(f) LRG_AVAILABLE_IN_ALL
+#else
+#  define LRG_DEPRECATED_IN_0_9_0 G_DEPRECATED
+#  define LRG_DEPRECATED_IN_0_9_0_FOR(f) G_DEPRECATED_FOR (f)
+#endif
+
+/**
  * lrg_get_major_version:
  *
  * Gets the major version of the Libregnum library at runtime.

@@ -395,6 +395,16 @@
 #include "physics/lrg-collision-model.h"
 #include "physics/lrg-character-controller.h"
 #include "physics/lrg-dynamics.h"
+#include "physics/lrg-physics-shape.h"
+#include "physics/lrg-collide.h"
+#include "physics/lrg-broadphase.h"
+#include "physics/lrg-physics-layers.h"
+#include "physics/lrg-contact-solver.h"
+#include "physics/lrg-island.h"
+#include "physics/lrg-joint.h"
+#include "physics/lrg-ragdoll.h"
+#include "physics/lrg-cloth.h"
+#include "physics/lrg-fracture.h"
 
 /* Debug module */
 #include "debug/lrg-profiler.h"
@@ -445,6 +455,11 @@
 #include "world3d/components/lrg-lod-component.h"
 #include "world3d/components/lrg-animator-component3d.h"
 #include "world3d/components/lrg-sequence-component.h"
+#include "world3d/components/lrg-rigid-body-component.h"
+#include "world3d/components/lrg-collider-component3d.h"
+#include "world3d/components/lrg-joint-component.h"
+#include "world3d/components/lrg-cloth-component.h"
+#include "world3d/components/lrg-destructible-component.h"
 #include "world3d/components/lrg-reflection-probe-component.h"
 #include "world3d/lrg-portal-system.h"
 
