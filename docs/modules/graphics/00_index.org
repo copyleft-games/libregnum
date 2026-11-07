@@ -8,3 +8,4 @@
 - [[file:aux-uv-contract.org][Auxiliary UV integration and verification contract]]
 - [[file:upstream-merge-verification.org][Upstream merge resolution, fresh verification and native cleanup findings]]
 - [[file:skinned-sprite.org][LrgSkinnedSprite]] - deformable 2D sprite meshes
+- [[file:uv-unwrap.org][LrgUvUnwrap / LrgUvMesh]] - lightmap UV2 chart unwrapper, headless CPU mesh, renderer primitives, rect packer

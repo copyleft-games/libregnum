@@ -424,3 +424,4 @@ on_time_changed (LrgDayNightCycle   *cycle,
 | =src/lighting/lrg-lightmap.h=            | Baked lighting    |
 | =src/lighting/lrg-light-probe.h=         | Light probe       |
 | =src/lighting/lrg-lighting-manager.h=    | Manager           |
+- [[file:lightmap-baker.org][LrgLightmapBaker]] - CPU path-traced lightmaps and SH probe grids (multithreaded, async with progress/cancel); LrgBakeBvh ray-tracing BVH

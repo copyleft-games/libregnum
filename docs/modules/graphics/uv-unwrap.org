@@ -1,0 +1,213 @@
+* LrgUvUnwrap and LrgUvMesh - Lightmap UV Charts
+:PROPERTIES:
+:CUSTOM_ID: lrguvunwrap
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Graphics]]* > UV unwrap
+#+end_quote
+
+A lightmap needs a second UV set (uv2: glTF =TEXCOORD_1=, raylib =texcoords2=, =vertexTexCoord2= in shaders) in which no two triangles overlap and charts sit a few texels apart. Imported meshes often have one; built-in primitives and many props do not. =LrgUvUnwrap= makes one: it cuts a mesh into charts, flattens them and packs them into the unit square. =LrgUvMesh= is the small headless CPU triangle mesh it works on (positions, normals, uvs, uv2, 32-bit indices), with generators for the 3D renderer's primitives and conversion to and from raylib meshes.
+
+The [[file:../lighting/lightmap-baker.org][lightmap baker]] unwraps every lightmapped mesh without uv2 with the default settings. The result is deterministic, so a renderer regenerates the same uv2 at load time instead of storing it.
+
+- *Types* - =LrgUvMesh= (final GObject, =LRG_TYPE_UV_MESH=, GIR =Libregnum.UvMesh=), =LrgUvUnwrap= (final GObject, =LRG_TYPE_UV_UNWRAP=, GIR =Libregnum.UvUnwrap=)
+- *Enum* - =LrgUvUnwrapError= (=LRG_TYPE_UV_UNWRAP_ERROR=, domain =LRG_UV_UNWRAP_ERROR=)
+- *Header* - =graphics/lrg-uv-unwrap.h=
+- *Properties* (=LrgUvUnwrap=) - =resolution= (guint, 8 .. 8192, default 64), =padding= (guint, 0 .. 16, default 2), =max-chart-angle= (gfloat degrees, 1 .. 85, default 50)
+- *Since* - 0.9.0
+- *Credits* - the concepts (chart growing by normal deviation, planar projection, minimum-area rotation, padded packing) follow xatlas (MIT, Jonathan Young) and Thekla (Ignacio Castano); no code is taken from either.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-concepts
+:END:
+*** The unwrap pipeline
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-pipeline
+:END:
+=lrg_uv_unwrap_run()= runs six steps:
+
+1. *Weld*: positions are quantized (a millionth of the mesh's extent) so triangles that share a corner position share an id even where the mesh split the vertex for hard normals or uv seams.
+2. *Adjacency*: an edge of exactly two triangles links them; edges of one triangle are borders, edges of three or more are cut for all.
+3. *Charts*: unassigned triangles seed charts in decreasing area (ties by index). A breadth-first flood across linked edges adds a neighbour when its normal is within =max-chart-angle= of the *seed's* normal and its projection onto the seed's plane does not overlap the chart (a separating-axis test against the chart's triangles found through a 2D grid). The fixed seed plane keeps every chart triangle front-facing in projection (counter-clockwise stays counter-clockwise); refused triangles seed later charts. Degenerate triangles join any neighbour.
+4. *Rotate*: each chart turns to its minimum-area bounding rectangle (rotating calipers over its convex hull), wide side along u.
+5. *Pack*: a bisection (24 steps) finds the largest uniform scale, in texels per world unit, at which every chart rectangle plus =padding= texels on each side fits a =resolution= x =resolution= map with =lrg_uv_unwrap_pack_rects()=. All charts share the scale, so texel density is uniform across the mesh.
+6. *Output*: one vertex per (chart, input vertex) pair in first-use order; normals and uvs are copied, uv2 = (rectangle corner + padding + rotated position x scale) / resolution.
+
+*** Guarantees
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-guarantees
+:END:
+- Same triangles in the same order; vertices duplicated only along chart seams (=lrg_uv_unwrap_get_xrefs()= maps each back to its input vertex).
+- uv2 inside [padding / resolution, 1 - padding / resolution].
+- No two triangles overlap; triangles of different charts are at least 2 x padding texels (of a =resolution= map) apart.
+- Bit-for-bit deterministic for the same mesh and settings.
+- Texel density varies inside a chart by up to =1 / cos (max-chart-angle)= (1.56 at 50 degrees) and is uniform across charts.
+
+The tests check every one of these on all primitives and a curved height field.
+
+*** Resolution and padding
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-resolution
+:END:
+Padding is measured in texels of a =resolution= map. If the mesh is later given fewer texels the gaps shrink proportionally, which is why the lightmap baker gives unwrapped meshes at least =resolution / padding= texels (32 with the defaults): the gaps then stay at least 2 texels wide, enough for bilinear filtering plus dilation. Raise =resolution= for meshes that will always get many texels to waste less space in gaps.
+
+*** The primitives
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-primitives
+:END:
+=lrg_uv_mesh_new_primitive (primitive, params)= builds the shape =LrgWorld3DRenderer= draws for a mesh renderer component, already scaled by the render item parameters (=LrgRenderItem.params=), in object space:
+
+| Primitive | params | Shape |
+|-+-+-|
+| =LRG_PRIMITIVE_CUBE= | x, y, z size (1) | box centred on the origin, 6 faces |
+| =LRG_PRIMITIVE_UV_SPHERE=, =LRG_PRIMITIVE_ICO_SPHERE= | radius (0.5) | 16 rings x 24 slices UV sphere |
+| =LRG_PRIMITIVE_PLANE= | x, z size (1) | quad on XZ facing +Y |
+| =LRG_PRIMITIVE_CYLINDER= | radius (0.5), height (1) | 24 sides, capped, centred |
+| =LRG_PRIMITIVE_CONE= | radius (0.5), height (1) | 24 sides, base cap, centred |
+| =LRG_PRIMITIVE_CIRCLE= | radius (0.5) | 32-sided disc facing +Y |
+| =LRG_PRIMITIVE_TORUS= | major radius (0.375) | 32 x 12 torus around Y, tube radius major / 3 (the renderer scales a 0.375 / 0.125 torus uniformly) |
+| =LRG_PRIMITIVE_RECTANGLE_2D= | width, height (1) | quad facing +Z |
+| =LRG_PRIMITIVE_CIRCLE_2D= | radius (0.5) | disc facing +Z |
+
+Grids and custom meshes return =NULL=. Faces are split at hard edges, triangles face along their vertex normals, and vertices carry normals and uvs.
+
+*** Drawing lightmapped primitives
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-runtime
+:END:
+raylib's =GenMesh*()= primitives have no uv2. For an item with a lightmap entry a renderer draws instead:
+
+#+begin_src C
+/* once per (primitive, params): the exact mesh the baker baked */
+g_autoptr(LrgUvMesh) lm = lrg_uv_unwrap_new_lightmap_primitive (item->primitive, item->params);
+Mesh mesh;
+
+lrg_uv_mesh_to_raylib (lm, &mesh);
+UploadMesh (&mesh, false);
+/* draw it with the item's world matrix alone: the size is in the vertices */
+#+end_src
+
+For a model without =TEXCOORD_1= the baker's =lrg_lightmap_baker_get_object_mesh()= returns the unwrapped mesh to upload (or run =lrg_uv_unwrap_run()= with the defaults over the same merged mesh).
+
+** Errors
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-errors
+:END:
+| Code | When |
+|-+-|
+| =LRG_UV_UNWRAP_ERROR_EMPTY= | the mesh has no triangle |
+| =LRG_UV_UNWRAP_ERROR_INVALID= | a position is not finite |
+| =LRG_UV_UNWRAP_ERROR_NO_FIT= | even at the smallest scale the charts (each at least 1 + 2 x padding texels) do not fit the map: raise =resolution=, lower =padding= or =max-chart-angle= produced too many charts |
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-api
+:END:
+*** LrgUvMesh
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-api-mesh
+:END:
+| Function | Description |
+|-+-|
+| =lrg_uv_mesh_new (positions, n_floats, indices, n_indices)= | copies the arrays (=indices= =NULL= = consecutive triangles); =NULL= on an out-of-range index |
+| =lrg_uv_mesh_new_primitive (primitive, params)= | a renderer primitive (see [[#uv-unwrap-primitives][the primitives]]) |
+| =lrg_uv_mesh_new_from_raylib (mesh)= | copies a raylib =Mesh *='s CPU arrays (vertices, normals, texcoords, texcoords2, indices) |
+| =lrg_uv_mesh_to_raylib (mesh, out_mesh)= | fills a raylib =Mesh= with =MemAlloc= arrays (=UnloadMesh()= frees them); over 65535 vertices it is written without indices |
+| =lrg_uv_mesh_get_n_vertices (mesh)= / =lrg_uv_mesh_get_n_triangles (mesh)= | counts |
+| =lrg_uv_mesh_get_positions (mesh, &n)= / =lrg_uv_mesh_get_indices (mesh, &n)= | the arrays (transfer none) |
+| =lrg_uv_mesh_get_normals= / =lrg_uv_mesh_set_normals= | 3 floats per vertex (=NULL= drops) |
+| =lrg_uv_mesh_compute_normals (mesh)= | area-weighted normals over triangles sharing each vertex index |
+| =lrg_uv_mesh_get_uvs= / =lrg_uv_mesh_set_uvs= | first texture coordinates |
+| =lrg_uv_mesh_get_uv2= / =lrg_uv_mesh_set_uv2= | lightmap coordinates (v = 0 on the first atlas row) |
+| =lrg_uv_mesh_get_surface_area (mesh, matrix)= | summed triangle area, optionally after a column-major transform |
+| =lrg_uv_mesh_get_uv2_area (mesh)= | fraction of the unit square the uv2 triangles cover |
+| =lrg_uv_mesh_get_type ()= | the GType |
+
+The setters return =FALSE= when the float count is not the right multiple of the vertex count.
+
+*** LrgUvUnwrap
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-api-unwrap
+:END:
+| Function | Description |
+|-+-|
+| =lrg_uv_unwrap_new (void)= | the defaults =LRG_UV_UNWRAP_DEFAULT_RESOLUTION= (64), =LRG_UV_UNWRAP_DEFAULT_PADDING= (2), =LRG_UV_UNWRAP_DEFAULT_MAX_CHART_ANGLE= (50) |
+| =lrg_uv_unwrap_get_resolution= / =lrg_uv_unwrap_set_resolution= | =resolution= |
+| =lrg_uv_unwrap_get_padding= / =lrg_uv_unwrap_set_padding= | =padding= |
+| =lrg_uv_unwrap_get_max_chart_angle= / =lrg_uv_unwrap_set_max_chart_angle= | =max-chart-angle= |
+| =lrg_uv_unwrap_run (unwrap, mesh, error)= | a new mesh with uv2 (transfer full), or =NULL= with an error |
+| =lrg_uv_unwrap_get_n_charts (unwrap)= | charts of the last run |
+| =lrg_uv_unwrap_get_xrefs (unwrap, &n)= | input vertex of every output vertex |
+| =lrg_uv_unwrap_get_chart_ids (unwrap, &n)= | chart of every triangle |
+| =lrg_uv_unwrap_get_utilization (unwrap)= | covered fraction of the unit square |
+| =lrg_uv_unwrap_new_lightmap_primitive (primitive, params)= | =lrg_uv_mesh_new_primitive()= unwrapped with the defaults |
+| =lrg_uv_unwrap_pack_rects (sizes, n_sizes, page_size, max_pages, placements, &n_pages)= | skyline bottom-left packing of width / height pairs into square pages, tallest first; =placements= gets x, y, page per rectangle; =FALSE= when one is bigger than a page or =max_pages= (0 = unlimited) is not enough |
+| =lrg_uv_unwrap_get_type ()=, =lrg_uv_unwrap_error_get_type ()=, =lrg_uv_unwrap_error_quark ()= | types and the error domain |
+
+** Worked examples
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-examples
+:END:
+*** Unwrap a glTF prop for the lightmap
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-example-gltf
+:END:
+#+begin_src C
+g_autoptr(LrgGltfGeometry) geo = lrg_gltf_geometry_new_from_file ("props/crate.glb", &error);
+guint                      n_floats = 0, n_indices = 0;
+const gfloat              *pos = lrg_gltf_geometry_get_positions (geo, 0, &n_floats);
+const guint32             *idx = lrg_gltf_geometry_get_indices (geo, 0, &n_indices);
+g_autoptr(LrgUvMesh)       mesh = lrg_uv_mesh_new (pos, n_floats, idx, n_indices);
+g_autoptr(LrgUvUnwrap)     unwrap = lrg_uv_unwrap_new ();
+g_autoptr(LrgUvMesh)       out = NULL;
+
+lrg_uv_mesh_set_normals (mesh, lrg_gltf_geometry_get_normals (geo, 0), n_floats);
+lrg_uv_unwrap_set_resolution (unwrap, 256);     /* a prop that always gets >= 128 texels */
+out = lrg_uv_unwrap_run (unwrap, mesh, &error);
+g_print ("%u charts, %.0f %% used\n", lrg_uv_unwrap_get_n_charts (unwrap),
+         lrg_uv_unwrap_get_utilization (unwrap) * 100.0);
+#+end_src
+
+*** Pack rectangles
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-example-pack
+:END:
+#+begin_src C
+guint sizes[] = { 100, 40, 60, 60, 30, 90 };    /* w, h pairs */
+guint place[9];
+guint pages;
+
+if (lrg_uv_unwrap_pack_rects (sizes, G_N_ELEMENTS (sizes), 128, 0, place, &pages))
+	g_print ("first at %u,%u on page %u of %u\n", place[0], place[1], place[2], pages);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-performance
+:END:
+Unwrapping the ten Cornell-box meshes of the baker test (1608 triangles) takes well under the 30 - 40 ms of the baker's whole prepare phase on an i7-1280P. Costs: welding and adjacency are hash-table passes (O(n)); chart growing is O(n) with a 2D-grid overlap test per added triangle (a triangle covering more than 256 grid cells is tested against the whole chart, which is quadratic only for meshes of huge, very unequal triangles); packing is 24 bisection steps of a skyline pack over the charts (O(steps x charts x skyline segments)). A mesh with thousands of tiny charts (a noisy scan) packs slowly and badly: simplify it or author its uv2.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-pitfalls
+:END:
+- The unwrap only knows geometry: two meshes with different positions get different uv2. A renderer must regenerate uv2 from exactly the mesh the baker used, with the same settings (the defaults for everything the baker unwraps).
+- Primitive sizes are in the vertices: a non-uniformly scaled *entity* still stretches texels; prefer the component's size parameters for walls and slabs.
+- Smooth curved surfaces become several charts (one per =max-chart-angle= cone of normals); a raised angle gives fewer seams but more stretch.
+- raylib meshes use 16-bit indices: =lrg_uv_mesh_to_raylib()= un-indexes meshes of more than 65535 vertices (3 vertices per triangle).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-editor
+:END:
+The next 0.9.0 editor wave shows lightmap texel density in the viewport (a checker through uv2) and a "generate lightmap UVs" import option on mesh assets that runs =lrg_uv_unwrap_run()= and writes =TEXCOORD_1=. Until then the bake unwraps on the fly.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: uv-unwrap-see-also
+:END:
+- [[file:../lighting/lightmap-baker.org][LrgLightmapBaker]] - the user of the charts
+- [[file:../lighting/lightmap3d.org][LrgLightmap3D]] - entries map uv2 into atlas pages
+- [[file:gltf-geometry.org][LrgGltfGeometry]] - headless glTF geometry
+- [[file:../../guides/lighting-bake.org][Lighting bake guide]]
