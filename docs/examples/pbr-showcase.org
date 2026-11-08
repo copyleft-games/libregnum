@@ -48,7 +48,9 @@ cd examples
 ./build/release/examples/pbr-showcase
 #+end_src
 
-Run it from =examples/=: the default level path is =data/pbr-showcase/pbr-showcase.rlevel= and every asset reference in it is relative to the level file. The first run writes the binary assets the level names into =examples/data/pbr-showcase/= when they are missing: =skies/showcase-sky.hdr= (a 512 x 256 Radiance HDR sky with the sun where the level's Sun light comes from, written with =lrg_hdr_image_save_to_file()=), =textures/showcase-decal.png= (the emblem), =models/knot.obj= (a trefoil knot of about 5000 triangles, 1.4 MB of OBJ text, raylib's =GenMeshKnot()=) and =models/knot.obj.meta= (=lod-levels: 3=, ratios =1.0, 0.3, 0.08=, screen sizes =0.12, 0.04, 0.0=). Delete them to regenerate.
+The default level, =examples/data/pbr-showcase/pbr-showcase.rlevel=, is found from the repository root, from =examples/= or beside the binary. The generated assets (sky, decal, knot) are written next to that level and nowhere else. When no level is found the example exits with status 1 before it writes anything.
+
+Every asset reference in the level is relative to the level file. The first run writes the binary assets the level names into =examples/data/pbr-showcase/= when they are missing: =skies/showcase-sky.hdr= (a 512 x 256 Radiance HDR sky with the sun where the level's Sun light comes from, written with =lrg_hdr_image_save_to_file()=), =textures/showcase-decal.png= (the emblem), =models/knot.obj= (a trefoil knot of about 5000 triangles, 1.4 MB of OBJ text, raylib's =GenMeshKnot()=) and =models/knot.obj.meta= (=lod-levels: 3=, ratios =1.0, 0.3, 0.08=, screen sizes =0.12, 0.04, 0.0=). Delete them to regenerate.
 
 *** Command-line options
 :PROPERTIES:

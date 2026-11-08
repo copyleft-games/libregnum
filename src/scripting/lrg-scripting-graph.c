@@ -996,6 +996,20 @@ eval_pure (LrgScriptingGraph *self,
 			cache_put (self, self->pure_cache, graph, id, "result", &out);
 		}
 	}
+	else if (g_strcmp0 (kind, "string.from") == 0)
+	{
+		g_autofree gchar *text = NULL;
+
+		/* any value as its text form (the same text debug.log prints) */
+		if (!pull_input (self, graph, node, "value", &a, error))
+			ok = FALSE;
+		else
+		{
+			text = lrg_vscript_priv_value_to_string (&a);
+			set_string (&out, text);
+			cache_put (self, self->pure_cache, graph, id, "result", &out);
+		}
+	}
 	else if (g_strcmp0 (kind, "string.length") == 0)
 	{
 		g_autofree gchar *text = NULL;

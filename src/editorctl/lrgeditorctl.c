@@ -220,7 +220,7 @@ static const gchar *description =
 	"                                   tool script (console panel)\n"
 	"  vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|\n"
 	"          set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|\n"
-	"          validate|run|live|breakpoint|continue|save ... [key=value...]\n"
+	"          frame|validate|run|live|breakpoint|continue|save ... [key=value...]\n"
 	"                                   visual script (visual script editor)\n"
 	"  memory status|types|resources|snapshot|snapshots|diff|clear-snapshots|history|show ... [key=value...]\n"
 	"                                   memory profiler (Memory panel)\n"
@@ -3821,7 +3821,7 @@ static const M67Verb m67_script_verbs[] = {
 	{ "editor-running", "script.editor_running", { NULL }, NULL, { NULL }, FALSE },
 };
 
-/* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|validate|run|live|breakpoint|continue|save */
+/* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|frame|validate|run|live|breakpoint|continue|save */
 static const M67Verb m67_vscript_verbs[] = {
 	{ "create", "vscript.create", { "@path", NULL }, NULL, { NULL }, FALSE },
 	{ "open", "vscript.open", { "@path", NULL }, NULL, { NULL }, FALSE },
@@ -3840,6 +3840,7 @@ static const M67Verb m67_vscript_verbs[] = {
 	{ "remove-comment", "vscript.remove_comment", { "id", NULL }, NULL, { NULL }, FALSE },
 	{ "set-program", "vscript.set_program", { NULL }, NULL, { NULL }, FALSE },
 	{ "select", "vscript.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "frame", "vscript.frame", { NULL }, NULL, { NULL }, FALSE },
 	{ "validate", "vscript.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
 	{ "run", "vscript.run", { NULL }, NULL, { NULL }, FALSE },
 	{ "live", "vscript.live", { "@path", NULL }, NULL, { NULL }, FALSE },

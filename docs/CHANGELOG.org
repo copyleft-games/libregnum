@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum changelog
 #+created: 2026-11-07T12:00:00-05:00
-#+updated: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-08T12:30:00-05:00
 #+version: 0.1
 
 * Changelog
@@ -15,6 +15,20 @@
 #+end_quote
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
+
+** 0.9.1
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-9-1
+:END:
+Fixes to the visual-script (blueprint) editor and the 3D examples. No 0.9.0 symbol is renamed or removed.
+
+- The visual-script canvas draws every link the program holds. It asks the program's type rule (=any= meets anything, =int= widens to =float=) instead of the canvas's equal-type default, so a =string= output into an =any= input (Concat into Log) is no longer stored but invisible. A link the canvas still refuses is logged.
+- Comment frames are drawn on the canvas. =LrgNodeGraph= gains notes: =lrg_node_graph_add_note()=, =lrg_node_graph_clear_notes()=, =lrg_node_graph_get_n_notes()=. They paint under the wires, take no input, count towards =lrg_node_graph_frame_all()= and go with =lrg_node_graph_clear()=.
+- Cards show their parameters and unlinked literals on a value line (Get Variable ="health"=, a Float =5=, a Log's text).
+- The canvas fits the graph when a file is opened or a subgraph is shown. =lrg_node_graph_frame_all()= before the first layout now runs on the first sized step instead of doing nothing. New IPC method =vscript.frame= (=lrgeditorctl vscript frame=, MCP =vscript_frame=) fits all nodes or the selection.
+- New node =string.from= (To String): any value in, its text out, so a number can feed a string input.
+- =pbr-showcase= and =level-3d-runtime= find their default level from the repository root, from =examples/= or beside the binary. =pbr-showcase= exits before writing its generated assets when no level is found, instead of creating a stray =data/pbr-showcase/= in the working directory. Its key legend widens to fit the longest view-mode name.
+- The 3D example docs give the right binary path (=examples/build/release/examples/=).
 
 ** 0.9.0
 :PROPERTIES:

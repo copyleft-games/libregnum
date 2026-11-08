@@ -60,7 +60,7 @@ screen = widget_centre + (graph - centre) * zoom
 Zoom and centre are springs (=LRG_MOTION_SMOOTH=, or none when the widget's motion is =NONE=):
 - =lrg_node_graph_set_view (graph, cx, cy, zoom, animate)= moves the three independently.
 - =lrg_node_graph_zoom_at (graph, x, y, zoom, animate)= is /anchored/: only the zoom glides and the centre is recomputed every frame so the graph point under (=x=, =y=) stays exactly under it for the whole glide. The mouse wheel uses it about the pointer.
-- =lrg_node_graph_frame_all()= (Home) and =lrg_node_graph_frame_selection()= (F) fit the nodes with a 48-unit margin, zooming in at most to 1.
+- =lrg_node_graph_frame_all()= (Home) and =lrg_node_graph_frame_selection()= (F) fit the nodes with a 48-unit margin, zooming in at most to 1. =frame_all= also fits comment frames. Called before the graph has a size (right after building it, before the first layout), =frame_all= is remembered and runs on the first step that has one, so an editor can frame a freshly opened graph without waiting a frame itself (0.9.1).
 - =lrg_node_graph_pan_by()= scrolls like a drag; a running glide continues relative to the content.
 - =lrg_node_graph_set_zoom()= zooms about the widget centre without animation.
 
@@ -182,6 +182,16 @@ lrg_widget_set_min_size (LRG_WIDGET (speed), 120.0f, 24.0f);
 lrg_graph_node_set_body (time_node, LRG_WIDGET (speed));
 #+end_src
 The body becomes a child of the graph (=LrgNodeGraph= is an =LrgContainer=) while its node is in it. It is allocated over the card's body slot at the card's /on-screen/ size, so the canvas hit-tests it and sends it events like any widget (its text keeps its size; only the slot scales). Culled cards and every card below a zoom of 0.45 give their body an empty rectangle, so it is neither painted nor reachable. The card grows to the body's preferred size, which is re-read on every layout.
+
+** Comment frames
+:PROPERTIES:
+:CUSTOM_ID: node-graph-notes
+:END:
+#+begin_src C
+lrg_node_graph_add_note (graph, "c1", "Drain health while alive",
+                         -560.0f, 270.0f, 1100.0f, 60.0f, "#7c5cff");
+#+end_src
+A note is a tinted, rounded rectangle in graph units with its text along the top edge. Notes are painted after the grid and before the wires and cards, take no input, and are not part of the selection. =color= is any string =lrg_color_parse()= takes; =NULL= (or an unparsable string) uses the look's selection colour. =lrg_node_graph_frame_all()= fits them with the nodes. =lrg_node_graph_clear()= removes them; =lrg_node_graph_clear_notes()= removes only them; =lrg_node_graph_get_n_notes()= counts them. Added in 0.9.1 for the visual-script editor's comment frames.
 
 ** Properties and signals
 :PROPERTIES:
@@ -457,6 +467,7 @@ Enums and errors:
 
 =LrgNodeGraph= model:
 - =lrg_node_graph_new=, =lrg_node_graph_add_node (graph, id, title, x, y)=, =lrg_node_graph_append_node=, =lrg_node_graph_remove_node=, =lrg_node_graph_clear=
+- =lrg_node_graph_add_note=, =lrg_node_graph_clear_notes=, =lrg_node_graph_get_n_notes= (comment frames, 0.9.1)
 - =lrg_node_graph_get_n_nodes=, =lrg_node_graph_get_nth_node=, =lrg_node_graph_get_node (graph, id)=, =lrg_node_graph_get_nodes=
 - =lrg_node_graph_can_connect=, =lrg_node_graph_connect=, =lrg_node_graph_connect_by_name=, =lrg_node_graph_disconnect=, =lrg_node_graph_disconnect_port=
 - =lrg_node_graph_get_n_links=, =lrg_node_graph_get_nth_link=, =lrg_node_graph_get_links=, =lrg_node_graph_get_port_links=, =lrg_node_graph_find_link=

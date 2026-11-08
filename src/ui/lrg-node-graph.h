@@ -1013,10 +1013,61 @@ void lrg_node_graph_remove_node (LrgNodeGraph *self,
  * lrg_node_graph_clear:
  * @self: an #LrgNodeGraph
  *
- * Removes every link and node, emitting the removal signals.
+ * Removes every link and node, emitting the removal signals, and every
+ * comment frame.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_node_graph_clear (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_add_note:
+ * @self: an #LrgNodeGraph
+ * @id: (nullable): an id for the caller's bookkeeping
+ * @text: (nullable): the caption drawn along the top edge
+ * @x: left edge in graph units
+ * @y: top edge in graph units
+ * @width: width in graph units
+ * @height: height in graph units
+ * @color: (nullable): "#rrggbb" (or any form lrg_color_parse() takes);
+ *   %NULL uses the look's selection colour
+ *
+ * Adds a comment frame: a tinted rectangle with a caption, drawn under
+ * the wires and the cards. Frames take no input and count towards
+ * lrg_node_graph_frame_all().
+ *
+ * Since: 0.9.1
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_add_note (LrgNodeGraph *self,
+                              const gchar  *id,
+                              const gchar  *text,
+                              gfloat        x,
+                              gfloat        y,
+                              gfloat        width,
+                              gfloat        height,
+                              const gchar  *color);
+
+/**
+ * lrg_node_graph_clear_notes:
+ * @self: an #LrgNodeGraph
+ *
+ * Removes every comment frame.
+ *
+ * Since: 0.9.1
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_graph_clear_notes (LrgNodeGraph *self);
+
+/**
+ * lrg_node_graph_get_n_notes:
+ * @self: an #LrgNodeGraph
+ *
+ * Returns: the number of comment frames
+ *
+ * Since: 0.9.1
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_node_graph_get_n_notes (LrgNodeGraph *self);
 
 /**
  * lrg_node_graph_get_n_nodes:
@@ -1404,7 +1455,9 @@ void lrg_node_graph_pan_by (LrgNodeGraph *self,
  * @self: an #LrgNodeGraph
  * @animate: glide there
  *
- * Fits every node in the view (zooming in at most to 1). Home key.
+ * Fits every node and comment frame in the view (zooming in at most
+ * to 1). Home key. Called before the graph has been laid out, the fit
+ * runs on the first step that has a size.
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_node_graph_frame_all (LrgNodeGraph *self,

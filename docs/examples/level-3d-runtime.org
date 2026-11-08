@@ -43,7 +43,7 @@ cd examples
 ./build/release/examples/level-3d-runtime
 #+end_src
 
-Run it from =examples/=: the default level path is =data/levels/level-3d-runtime.rlevel=, and the level's assets (=assets/crystal.obj=, =assets/hum.wav=) are relative to the level file.
+The default level is =examples/data/levels/level-3d-runtime.rlevel=. It is found from the repository root, from =examples/=, or beside the binary (=examples/build/<config>/examples/=), so the working directory does not matter. The level's assets (=assets/crystal.obj=, =assets/hum.wav=) are relative to the level file.
 
 *** Command-line options
 :PROPERTIES:

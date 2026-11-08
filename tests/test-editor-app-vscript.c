@@ -48,6 +48,92 @@ log_has (JsonObject  *obj,
 	return FALSE;
 }
 
+/*
+ * The canvas mirrors the program: every link the program accepted is
+ * drawn (string into an "any" input, int into float), comment frames
+ * become canvas notes, a node with literals gets a value line, the
+ * first show fits the graph, and vscript.frame answers with the view.
+ * string.from turns a number into text a Concat takes.
+ */
+static void
+test_vscript_canvas (EditorAppFixture *f,
+                     gconstpointer     data)
+{
+	g_autoptr(JsonNode)     result = NULL;
+	g_autofree gchar       *reply = NULL;
+	LrgEditorVscriptEditor *editor;
+	LrgNodeGraph           *canvas;
+	JsonObject             *obj;
+	guint                   links;
+
+	(void) data;
+	g_free (write_project_file (f, "readme.txt", "x"));
+	result = efx_ipc_result (f, "{'id':1,'method':'vscript.create','params':{'path':'scripts/canvas.rvscript'}}");
+	g_clear_pointer (&result, json_node_unref);
+
+	/* --- num (float) -> conv (To String) -> fmt.b; fmt (string) -> log.text (any) --- */
+	result = efx_ipc_result (f, "{'id':2,'method':'vscript.add_node','params':{'path':'scripts/canvas.rvscript',"
+	                            "'type':'value.float','id':'num','x':40,'y':200,'params':{'value':5}}}");
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':3,'method':'vscript.add_node','params':{'path':'scripts/canvas.rvscript',"
+	                            "'type':'string.from','id':'conv','x':260,'y':200}}");
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':4,'method':'vscript.add_node','params':{'path':'scripts/canvas.rvscript',"
+	                            "'type':'string.concat','id':'fmt','x':480,'y':200,'inputs':{'a':'hp: '}}}");
+	g_clear_pointer (&result, json_node_unref);
+
+	/* a float straight into Concat stays a type error */
+	reply = efx_ipc (f, "{'id':5,'method':'vscript.connect','params':{'path':'scripts/canvas.rvscript',"
+	                    "'from':'num.value','to':'fmt.b'}}");
+	g_assert_nonnull (strstr (reply, "invalid-params"));
+	g_clear_pointer (&reply, g_free);
+
+	result = efx_ipc_result (f, "{'id':6,'method':'vscript.connect','params':{'path':'scripts/canvas.rvscript',"
+	                            "'from':'num.value','to':'conv.value'}}");
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':7,'method':'vscript.connect','params':{'path':'scripts/canvas.rvscript',"
+	                            "'from':'conv.result','to':'fmt.b'}}");
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':8,'method':'vscript.connect','params':{'path':'scripts/canvas.rvscript',"
+	                            "'from':'fmt.result','to':'log.text'}}");
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':9,'method':'vscript.add_comment','params':{'path':'scripts/canvas.rvscript',"
+	                            "'text':'format the value','x':20,'y':170,'width':640,'height':140}}");
+	g_clear_pointer (&result, json_node_unref);
+
+	/* --- the canvas draws what the program holds --- */
+	editor = lrg_editor_vscript_editor_open (f->app, "scripts/canvas.rvscript", NULL);
+	g_assert_nonnull (editor);
+	canvas = lrg_editor_vscript_editor_get_canvas (editor);
+	links = lrg_vscript_graph_get_links (lrg_vscript_program_get_main (lrg_editor_vscript_editor_get_program (editor)))->len;
+	g_assert_cmpuint (links, ==, 4);
+	g_assert_cmpuint (lrg_node_graph_get_n_links (canvas), ==, links);
+	g_assert_cmpuint (lrg_node_graph_get_n_notes (canvas), ==, 1);
+
+	/* literals show; a node with none has no body; a linked input's literal is hidden */
+	g_assert_nonnull (lrg_graph_node_get_body (lrg_node_graph_get_node (canvas, "num")));
+	g_assert_nonnull (lrg_graph_node_get_body (lrg_node_graph_get_node (canvas, "fmt")));
+	g_assert_null (lrg_graph_node_get_body (lrg_node_graph_get_node (canvas, "start")));
+	g_assert_null (lrg_graph_node_get_body (lrg_node_graph_get_node (canvas, "log")));
+
+	/* --- vscript.frame: Home over IPC --- */
+	result = efx_ipc_result (f, "{'id':10,'method':'vscript.frame','params':{'path':'scripts/canvas.rvscript'}}");
+	obj = json_node_get_object (result);
+	g_assert_true (json_object_has_member (obj, "zoom"));
+	g_assert_cmpfloat (json_object_get_double_member (obj, "zoom"), >, 0.0);
+	g_clear_pointer (&result, json_node_unref);
+	result = efx_ipc_result (f, "{'id':11,'method':'vscript.frame','params':{'path':'scripts/canvas.rvscript',"
+	                            "'selection':true,'animate':true}}");
+	g_clear_pointer (&result, json_node_unref);
+
+	/* --- string.from runs: 5 becomes text --- */
+	result = efx_ipc_result (f, "{'id':12,'method':'vscript.run','params':{'path':'scripts/canvas.rvscript'}}");
+	obj = json_node_get_object (result);
+	g_assert_true (json_object_get_boolean_member (obj, "ok"));
+	g_assert_true (log_has (obj, "hp: 5"));
+	g_clear_pointer (&result, json_node_unref);
+}
+
 static void
 test_vscript_ipc (EditorAppFixture *f,
                   gconstpointer     data)
@@ -222,5 +308,6 @@ main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
 	g_test_add ("/editor-app/vscript/ipc", EditorAppFixture, NULL, efx_setup, test_vscript_ipc, efx_teardown);
+	g_test_add ("/editor-app/vscript/canvas", EditorAppFixture, NULL, efx_setup, test_vscript_canvas, efx_teardown);
 	return g_test_run ();
 }

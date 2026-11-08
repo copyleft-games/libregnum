@@ -642,6 +642,7 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =vscript.remove_comment= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.set_program= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.select= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.frame= | 0.9.1 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.validate= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.run= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.live= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
@@ -1537,6 +1538,7 @@ Registered by the visual script editor (=src/editor/ui/data/lrg-editor-vscript-e
 | =vscript.remove_comment= | =path?=, =graph?=, =id= | ={removed: true}= |
 | =vscript.set_program= | =path?=, =name?=, =description?=, =seed?=, =step_budget?=, =fixed_step?= | as =vscript.get= |
 | =vscript.select= | =path?=, =nodes= | ={selected}= |
+| =vscript.frame= | =path?=, =selection?=, =animate?= | ={zoom, x, y}= |
 | =vscript.validate= | =path?= | ={ok, issues}= |
 | =vscript.run= | =path?=, =frames?=, =dt?=, =event?=, =args?=, =variables?= | ={ok, steps, time, log, variables, error}= |
 | =vscript.live= | =path?= | ={playing, instances, active, hits, paused_at}= |

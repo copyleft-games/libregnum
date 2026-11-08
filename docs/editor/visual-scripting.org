@@ -52,6 +52,7 @@ Errors use the editor server nicks. =invalid-params= is a missing or bad paramet
 | =vscript.remove_comment= | by id |
 | =vscript.set_program= | =name=, =description=, =seed=, =step_budget=, =fixed_step=; returns =vscript.get= |
 | =vscript.select= | =nodes= is an array of ids; empty clears; not an undo step |
+| =vscript.frame= | fits the shown graph in the canvas (Home); =selection: true= fits the selected nodes (F); =animate= glides; returns the target ={zoom, x, y}=; not an undo step (0.9.1) |
 | =vscript.validate= | =ok= and =issues=; read-only |
 | =vscript.run= | a copy: start, then =frames= updates (default 1, =dt= default 1/60), then an optional custom =event= with =args=; =variables= overlay the copy; =steps= sums each dispatch; =time= is completed frames times =dt=; =ok: false= is still a successful reply |
 | =vscript.live= | instances whose path is this file; =hits= counts main-graph nodes; =paused_at= is omitted when nothing is paused |
@@ -66,6 +67,13 @@ The shell verbs are the method tail with underscores turned into dashes: =lrgedi
 :CUSTOM_ID: views
 :END:
 
-The graph view clears the canvas and adds one node per program node, with a port per pin, then reconnects by pin name. Selection is reapplied after the rebuild. The blocks view clears its program, defines a block kind per catalogue kind it has not defined yet, and creates one block per node. Events are hat blocks. Pure logic and comparison nodes are boolean blocks. Other pure nodes are reporter blocks. Everything else is a statement. Comment frames are stored and returned by =vscript.get=; the canvas does not draw them.
+The graph view clears the canvas and adds one node per program node, with a port per pin, then reconnects by pin name. Selection is reapplied after the rebuild.
+
+- *Links.* The canvas asks the program's type rule before it draws a link (its =::can-connect= handler calls the same check =vscript.connect= uses): exec meets exec, =any= and =object= meet anything, =int= widens to =float=, everything else must match. Every link the program holds is therefore drawn. A link the canvas still refuses is logged as a warning naming both pins, never dropped silently. Before 0.9.1 the canvas used its default equal-type rule, so a =string= output into an =any= input (Concat into Log) was stored but not drawn.
+- *Values.* A node with parameters or literal inputs shows them on one line under its pins. A =name= or =value= parameter is shown bare (Get Variable shows ="health"=, a Float shows =5=); other parameters are =key: value=; a literal input is =pin = value= and is hidden while a link feeds that pin. Strings are quoted. A line wider than the card ends in an ellipsis. A node with nothing to show has no value line.
+- *Comment frames.* Each comment becomes a canvas note (=lrg_node_graph_add_note()=): a tinted rectangle in the comment's colour (the theme's selection colour when it has none) with the text along its top edge, drawn under the wires and the cards.
+- *Framing.* The first time a graph is shown (opening the file, or switching to another subgraph) the canvas fits every node and comment frame. Later edits keep the view. Home and F in the canvas, and =vscript.frame= over IPC, fit again.
+
+The blocks view clears its program, defines a block kind per catalogue kind it has not defined yet, and creates one block per node. Events are hat blocks. Pure logic and comparison nodes are boolean blocks. Other pure nodes are reporter blocks. Everything else is a statement. Comment frames are stored and returned by =vscript.get=; the graph view draws them, the blocks view does not.
 
 A headless game that does not open the editor uses =LrgVscriptProgram= and =LrgScriptingGraph= directly. =examples/visual-script.c= is that program.

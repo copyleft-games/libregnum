@@ -943,6 +943,7 @@ lrgeditorctl script run-in-editor Spinner enabled=true; lrgeditorctl script edit
 | =vscript remove-comment ID [key=value...]= | =vscript.remove_comment= |
 | =vscript set-program [key=value...]= | =vscript.set_program= |
 | =vscript select [key=value...]= | =vscript.select= |
+| =vscript frame [key=value...]= | =vscript.frame= |
 | =vscript validate PATH [key=value...]= | =vscript.validate= |
 | =vscript run [key=value...]= | =vscript.run= |
 | =vscript live PATH [key=value...]= | =vscript.live= |

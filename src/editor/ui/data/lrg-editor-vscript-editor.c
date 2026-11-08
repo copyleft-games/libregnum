@@ -15,12 +15,15 @@
 
 #include "config.h"
 
+#define LRG_VSCRIPT_PRIVATE 1   /* lrg_vscript_priv_types_compatible () */
 #define LRG_EDITOR_PANEL_INTERNAL
 #include "lrg-editor-vscript-editor.h"
 #include "../lrg-editor-app-private.h"
 #include "../../lrg-editor-server.h"
 #include "../../../scripting/lrg-scripting-graph.h"
 
+#include "../../../paint/lrg-paint-list.h"
+#include "../../../ui/lrg-custom-widget.h"
 #include <errno.h>
 #include <string.h>
 #include <json-glib/json-glib.h>
@@ -35,11 +38,16 @@ struct _LrgEditorVscriptEditor
 	gchar               *shown;
 	gboolean             kinds_ready;
 	gboolean             rebuilding;
+	gboolean             framed;        /* the shown graph was fitted once */
+	gchar               *framed_graph;  /* which graph that was */
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorVscriptEditor, lrg_editor_vscript_editor, LRG_TYPE_EDITOR_DATA_EDITOR)
 
 static const gchar *INSTALLED_KEY = "lrg-editor-vscript-installed";
+
+#define CARD_BODY_W (168.0f)   /* the value line under a card's pins */
+#define CARD_BODY_H (20.0f)
 
 /* ==========================================================================
  * Small helpers
@@ -640,13 +648,189 @@ ensure_kinds (LrgEditorVscriptEditor *self)
 		define_kind (self, types[i]);
 }
 
+/*
+ * on_can_connect:
+ *
+ * The canvas asks before it draws a link (and before a drag may land).
+ * Its default rule only knows equal types or an untyped port; a visual
+ * script also widens int to float and lets "any" and "object" meet
+ * anything, so the program's own rule answers. Exec pins only meet exec
+ * pins.
+ */
+static gboolean
+on_can_connect (LrgNodeGraph *graph,
+                LrgGraphPort *output,
+                LrgGraphPort *input,
+                gpointer      user_data)
+{
+	(void) graph;
+	(void) user_data;
+	return lrg_vscript_priv_types_compatible (lrg_graph_port_get_type_name (output),
+	                                          lrg_graph_port_get_type_name (input));
+}
+
+/* value_text: a literal as a card shows it (strings quoted) */
+static gchar *
+value_text (GVariant *value)
+{
+	if (value == NULL)
+		return g_strdup ("null");
+	if (g_variant_is_of_type (value, G_VARIANT_TYPE_STRING))
+		return g_strdup_printf ("\xe2\x80\x9c%s\xe2\x80\x9d", g_variant_get_string (value, NULL));
+	if (g_variant_is_of_type (value, G_VARIANT_TYPE_DOUBLE))
+		return g_strdup_printf ("%g", g_variant_get_double (value));
+	if (g_variant_is_of_type (value, G_VARIANT_TYPE_BOOLEAN))
+		return g_strdup (g_variant_get_boolean (value) ? "true" : "false");
+	if (g_variant_is_of_type (value, G_VARIANT_TYPE_VARIANT))
+	{
+		g_autoptr(GVariant) inner = g_variant_get_variant (value);
+
+		return value_text (inner);
+	}
+	return g_variant_print (value, FALSE);
+}
+
+/* input_linked: whether a link feeds this input (its literal is unused) */
+static gboolean
+input_linked (LrgVscriptGraph *graph,
+              const gchar     *node_id,
+              const gchar     *pin)
+{
+	GPtrArray *wire = lrg_vscript_graph_get_links (graph);
+	guint      i;
+
+	for (i = 0; wire != NULL && i < wire->len; i++)
+	{
+		LrgVscriptLink *link = (LrgVscriptLink *) g_ptr_array_index (wire, i);
+
+		if (g_strcmp0 (link->to_node, node_id) == 0 && g_strcmp0 (link->to_pin, pin) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/*
+ * node_summary:
+ *
+ * The one line a card shows under its pins: its parameters, then the
+ * literal of every input no link feeds. A "name" or "value" parameter
+ * is shown bare (Get Variable reads "health", a Float is "5"); other
+ * entries are "key: value". Returns %NULL when there is nothing to show.
+ */
+static gchar *
+node_summary (LrgVscriptGraph *graph,
+              LrgVscriptNode  *node)
+{
+	g_auto(GStrv)      params = lrg_vscript_node_dup_param_keys (node);
+	g_auto(GStrv)      inputs = lrg_vscript_node_dup_input_keys (node);
+	g_autoptr(GString) line = g_string_new (NULL);
+	const gchar       *id = lrg_vscript_node_get_id (node);
+	guint              i;
+
+	/* --- parameters --- */
+	for (i = 0; params != NULL && params[i] != NULL; i++)
+	{
+		g_autofree gchar *text = value_text (lrg_vscript_node_get_param (node, params[i]));
+
+		if (line->len > 0)
+			g_string_append (line, "  \xc2\xb7  ");
+		if (g_strcmp0 (params[i], "name") == 0 || g_strcmp0 (params[i], "value") == 0)
+			g_string_append (line, text);
+		else
+			g_string_append_printf (line, "%s: %s", params[i], text);
+	}
+
+	/* --- literals of unlinked inputs --- */
+	for (i = 0; inputs != NULL && inputs[i] != NULL; i++)
+	{
+		g_autofree gchar *text = NULL;
+
+		if (input_linked (graph, id, inputs[i]))
+			continue;
+		text = value_text (lrg_vscript_node_get_input (node, inputs[i]));
+		if (line->len > 0)
+			g_string_append (line, "  \xc2\xb7  ");
+		g_string_append_printf (line, "%s = %s", inputs[i], text);
+	}
+	return line->len > 0 ? g_string_free (g_steal_pointer (&line), FALSE) : NULL;
+}
+
+/* summary_paint: one muted line, ellipsized to the body width */
+static void
+summary_paint (LrgCustomWidget *widget,
+               LrgPaintList    *list,
+               gfloat           x,
+               gfloat           y,
+               gfloat           width,
+               gfloat           height,
+               gpointer         user_data)
+{
+	LrgTheme          *theme = lrg_widget_get_theme (LRG_WIDGET (widget));
+	GrlFont           *font = lrg_theme_get_ui_font (theme);
+	gfloat             fs = lrg_theme_get_metric (theme, LRG_THEME_METRIC_FONT_SIZE_SMALL);
+	const gchar       *text = (const gchar *) user_data;
+	g_autoptr(GString) shown = g_string_new (text != NULL ? text : "");
+	gfloat             w = 0.0f;
+
+	/* --- drop characters from the end until the line plus an ellipsis
+	 *     fits (the whole line when it fits as it is) --- */
+	lrg_paint_measure_text (font, shown->str, fs, 0.0f, &w, NULL);
+	if (w > width - 4.0f)
+	{
+		do
+		{
+			const gchar *last = g_utf8_find_prev_char (shown->str, shown->str + shown->len);
+
+			g_string_truncate (shown, last != NULL ? (gsize) (last - shown->str) : 0);
+			while (shown->len > 0 && shown->str[shown->len - 1] == ' ')
+				g_string_truncate (shown, shown->len - 1);
+			g_string_append (shown, "\xe2\x80\xa6");
+			lrg_paint_measure_text (font, shown->str, fs, 0.0f, &w, NULL);
+			if (w <= width - 4.0f || shown->len <= strlen ("\xe2\x80\xa6"))
+				break;
+			g_string_truncate (shown, shown->len - strlen ("\xe2\x80\xa6"));
+		}
+		while (shown->len > 0);
+	}
+	lrg_paint_list_push_clip (list, x, y, width, height);
+	lrg_paint_list_text (list, font, shown->str, x + 2.0f, y + (height - fs) * 0.5f, fs, 0.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED));
+	lrg_paint_list_pop_clip (list);
+}
+
+/* summary_new: the body widget carrying @text (copied) */
+static LrgWidget *
+summary_new (const gchar *text)
+{
+	static const LrgCustomWidgetFuncs funcs = { NULL, summary_paint, NULL, NULL, { NULL } };
+	LrgCustomWidget                  *body = lrg_custom_widget_new ();
+
+	lrg_custom_widget_set_preferred_width (body, CARD_BODY_W);
+	lrg_custom_widget_set_preferred_height (body, CARD_BODY_H);
+	lrg_custom_widget_set_funcs (body, &funcs, g_strdup (text), g_free);
+	lrg_widget_set_pointer_transparent (LRG_WIDGET (body), TRUE);
+	return LRG_WIDGET (body);
+}
+
 static void
 rebuild_canvas (LrgEditorVscriptEditor *self,
                 LrgVscriptGraph        *graph)
 {
-	guint i;
+	GPtrArray *frames;
+	guint      i;
 
 	lrg_node_graph_clear (self->canvas);
+
+	/* --- comment frames first: the canvas draws them under the cards --- */
+	frames = lrg_vscript_graph_get_comments (graph);
+	for (i = 0; frames != NULL && i < frames->len; i++)
+	{
+		LrgVscriptComment *c = (LrgVscriptComment *) g_ptr_array_index (frames, i);
+
+		lrg_node_graph_add_note (self->canvas, c->id, c->text, (gfloat) c->x, (gfloat) c->y,
+		                         (gfloat) c->width, (gfloat) c->height, c->color);
+	}
+
 	for (i = 0; i < lrg_vscript_graph_get_n_nodes (graph); i++)
 	{
 		LrgVscriptNode       *node = lrg_vscript_graph_get_nth_node (graph, i);
@@ -663,6 +847,20 @@ rebuild_canvas (LrgEditorVscriptEditor *self,
 		                                title != NULL ? title : kind, (gfloat) x, (gfloat) y);
 		if (card == NULL)
 			continue;
+
+		/* --- the node's parameters and literals, under its pins --- */
+		{
+			g_autofree gchar *summary = node_summary (graph, node);
+
+			if (summary != NULL)
+			{
+				LrgWidget *body = summary_new (summary);
+
+				lrg_graph_node_set_body (card, body);
+				g_object_unref (body);
+				lrg_graph_node_set_min_width (card, CARD_BODY_W + 24.0f);
+			}
+		}
 		pins = lrg_vscript_program_dup_node_pins (self->program, graph, node);
 		for (p = 0; pins != NULL && p < pins->len; p++)
 		{
@@ -682,8 +880,12 @@ rebuild_canvas (LrgEditorVscriptEditor *self,
 			LrgVscriptLink    *link = (LrgVscriptLink *) g_ptr_array_index (wire, i);
 			g_autoptr(GError)  err = NULL;
 
-			lrg_node_graph_connect_by_name (self->canvas, link->from_node, link->from_pin,
-			                                link->to_node, link->to_pin, &err);
+			/* the program already accepted this link: a refusal here is
+			 * a canvas/program rule mismatch and must not hide silently */
+			if (lrg_node_graph_connect_by_name (self->canvas, link->from_node, link->from_pin,
+			                                    link->to_node, link->to_pin, &err) == NULL)
+				g_warning ("vscript canvas: link %s.%s -> %s.%s not drawn: %s", link->from_node,
+				           link->from_pin, link->to_node, link->to_pin, err->message);
 		}
 	}
 	lrg_node_graph_unselect_all (self->canvas);
@@ -756,8 +958,20 @@ vscript_refresh (LrgEditorDataEditor *editor,
 	}
 	else
 	{
+		const gchar *name = self->shown != NULL ? self->shown : "";
+
 		rebuild_canvas (self, graph);
 		content = LRG_WIDGET (self->canvas);
+
+		/* --- fit the graph the first time it is shown (open, or a
+		 *     switch to another subgraph); later edits keep the view --- */
+		if (!self->framed || g_strcmp0 (self->framed_graph, name) != 0)
+		{
+			self->framed = TRUE;
+			g_free (self->framed_graph);
+			self->framed_graph = g_strdup (name);
+			lrg_node_graph_frame_all (self->canvas, FALSE);
+		}
 	}
 	lrg_editor_data_editor_set_content (editor, content);
 	self->rebuilding = FALSE;
@@ -813,6 +1027,7 @@ lrg_editor_vscript_editor_constructed (GObject *object)
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->canvas), 1.0f);
 	lrg_widget_set_fill_weight (LRG_WIDGET (self->blocks), 1.0f);
 	lrg_node_graph_set_snap_to_grid (self->canvas, TRUE);
+	g_signal_connect_object (self->canvas, "can-connect", G_CALLBACK (on_can_connect), self, 0);
 	ensure_kinds (self);
 	vscript_refresh (LRG_EDITOR_DATA_EDITOR (self), NULL);
 	if (lrg_editor_data_editor_get_content (LRG_EDITOR_DATA_EDITOR (self)) == NULL)
@@ -838,6 +1053,7 @@ lrg_editor_vscript_editor_finalize (GObject *object)
 
 	g_clear_pointer (&self->selected, g_ptr_array_unref);
 	g_free (self->shown);
+	g_free (self->framed_graph);
 	G_OBJECT_CLASS (lrg_editor_vscript_editor_parent_class)->finalize (object);
 }
 
@@ -1834,6 +2050,43 @@ m_select (LrgEditorServer  *server,
 	return object_node (o);
 }
 
+/*
+ * m_frame:
+ *
+ * vscript.frame: fits the shown graph in the canvas, as Home does, or
+ * the selected nodes, as F does, when selection is true. animate glides
+ * there (default false). Returns {zoom, x, y}: the target view.
+ */
+static JsonNode *
+m_frame (LrgEditorServer  *server,
+         JsonObject       *params,
+         gpointer          user_data,
+         GError          **error)
+{
+	LrgEditorVscriptEditor *self = need_editor (LRG_EDITOR_APP (user_data), params, error);
+	gboolean                animate = FALSE;
+	gboolean                selection = FALSE;
+	JsonObject             *o;
+	gfloat                  cx = 0.0f;
+	gfloat                  cy = 0.0f;
+
+	(void) server;
+	if (self == NULL || self->program == NULL)
+		return NULL;
+	(void) param_bool (params, "animate", &animate);
+	(void) param_bool (params, "selection", &selection);
+	if (selection)
+		lrg_node_graph_frame_selection (self->canvas, animate);
+	else
+		lrg_node_graph_frame_all (self->canvas, animate);
+	lrg_node_graph_get_center (self->canvas, &cx, &cy);
+	o = json_object_new ();
+	json_object_set_double_member (o, "zoom", lrg_node_graph_get_zoom (self->canvas));
+	json_object_set_double_member (o, "x", cx);
+	json_object_set_double_member (o, "y", cy);
+	return object_node (o);
+}
+
 static JsonNode *
 m_validate (LrgEditorServer  *server,
             JsonObject       *params,
@@ -2238,6 +2491,7 @@ lrg_editor_vscript_editor_install (LrgEditorApp *app)
 		{ "vscript.remove_comment", m_remove_comment },
 		{ "vscript.set_program", m_set_program },
 		{ "vscript.select", m_select },
+		{ "vscript.frame", m_frame },
 		{ "vscript.validate", m_validate },
 		{ "vscript.run", m_run },
 		{ "vscript.live", m_live },

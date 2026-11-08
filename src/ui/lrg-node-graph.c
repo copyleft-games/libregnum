@@ -45,6 +45,7 @@
 #include <yaml-glib.h>
 
 #include "lrg-node-graph.h"
+#include "lrg-style.h"
 #include "../tween/lrg-spring.h"
 #include "../lrg-log.h"
 
@@ -778,6 +779,34 @@ typedef enum
 	DRAG_MINIMAP    /* scrubbing the minimap */
 } DragMode;
 
+/*
+ * Note:
+ *
+ * A comment frame: a tinted rectangle in graph units with a caption
+ * along its top edge. Notes sit under the wires and the cards, take no
+ * input and count towards frame_all.
+ */
+typedef struct
+{
+	gchar    *id;
+	gchar    *text;
+	gfloat    x;
+	gfloat    y;
+	gfloat    w;
+	gfloat    h;
+	GrlColor  color;
+	gboolean  has_color;
+} Note;
+
+static void
+note_clear (gpointer data)
+{
+	Note *note = (Note *) data;
+
+	g_clear_pointer (&note->id, g_free);
+	g_clear_pointer (&note->text, g_free);
+}
+
 struct _LrgNodeGraph
 {
 	LrgContainer      parent_instance;
@@ -803,6 +832,11 @@ struct _LrgNodeGraph
 	gfloat            anchor_rx;       /* anchor offset from the widget centre */
 	gfloat            anchor_ry;
 	gboolean          stepped;         /* first step snaps */
+	gboolean          frame_pending;   /* frame_all waits for a size */
+	gboolean          frame_pending_animate;
+
+	/* comment frames (Note), painted under the wires */
+	GArray           *notes;
 
 	/* settings */
 	gfloat            min_zoom;
@@ -2428,6 +2462,26 @@ nodes_bounds (LrgNodeGraph *self,
 		*x1 = MAX (*x1, n->x + n->w);
 		*y1 = MAX (*y1, n->y + n->h);
 	}
+
+	/* --- comment frames count as content when framing everything --- */
+	for (i = 0; !selected_only && i < self->notes->len; i++)
+	{
+		const Note *note = &g_array_index (self->notes, Note, i);
+
+		if (!any)
+		{
+			*x0 = note->x;
+			*y0 = note->y;
+			*x1 = note->x + note->w;
+			*y1 = note->y + note->h;
+			any = TRUE;
+			continue;
+		}
+		*x0 = MIN (*x0, note->x);
+		*y0 = MIN (*y0, note->y);
+		*x1 = MAX (*x1, note->x + note->w);
+		*y1 = MAX (*y1, note->y + note->h);
+	}
 	return any;
 }
 
@@ -2972,6 +3026,46 @@ lrg_node_graph_clear (LrgNodeGraph *self)
 		remove_link_at (self, self->links->len - 1);
 	while (self->nodes->len > 0)
 		lrg_node_graph_remove_node (self, g_ptr_array_index (self->nodes, self->nodes->len - 1));
+	g_array_set_size (self->notes, 0);
+}
+
+void
+lrg_node_graph_add_note (LrgNodeGraph *self,
+                         const gchar  *id,
+                         const gchar  *text,
+                         gfloat        x,
+                         gfloat        y,
+                         gfloat        width,
+                         gfloat        height,
+                         const gchar  *color)
+{
+	Note note;
+
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+
+	memset (&note, 0, sizeof note);
+	note.id = g_strdup (id);
+	note.text = g_strdup (text != NULL ? text : "");
+	note.x = x;
+	note.y = y;
+	note.w = MAX (1.0f, width);
+	note.h = MAX (1.0f, height);
+	note.has_color = color != NULL && lrg_color_parse (color, &note.color);
+	g_array_append_val (self->notes, note);
+}
+
+void
+lrg_node_graph_clear_notes (LrgNodeGraph *self)
+{
+	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
+	g_array_set_size (self->notes, 0);
+}
+
+guint
+lrg_node_graph_get_n_notes (LrgNodeGraph *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE_GRAPH (self), 0);
+	return self->notes->len;
 }
 
 guint
@@ -3545,6 +3639,16 @@ lrg_node_graph_frame_all (LrgNodeGraph *self,
 
 	g_return_if_fail (LRG_IS_NODE_GRAPH (self));
 
+	/* Before the first layout the widget has no size to fit into: keep
+	 * the request and run it from the first step that has one */
+	if (lrg_widget_get_width (LRG_WIDGET (self)) <= FRAME_MARGIN * 2.0f + 1.0f ||
+	    lrg_widget_get_height (LRG_WIDGET (self)) <= FRAME_MARGIN * 2.0f + 1.0f)
+	{
+		self->frame_pending = TRUE;
+		self->frame_pending_animate = animate;
+		return;
+	}
+	self->frame_pending = FALSE;
 	if (nodes_bounds (self, FALSE, &x0, &y0, &x1, &y1))
 		frame_rect (self, x0, y0, x1, y1, animate);
 }
@@ -5460,6 +5564,60 @@ paint_minimap (LrgNodeGraph *self,
                const View   *v,
                const Looks  *k);
 
+/*
+ * paint_notes:
+ *
+ * Each comment frame is a translucent rectangle in its own colour (the
+ * look's selection colour when it has none), a stronger strip along the
+ * top and the text in that strip, ellipsized to the frame's width.
+ */
+static void
+paint_notes (LrgNodeGraph *self,
+             LrgPaintList *list,
+             const View   *v,
+             const Looks  *k)
+{
+	const LrgCanvasLookParts *p = &k->p;
+	guint                     i;
+
+	for (i = 0; i < self->notes->len; i++)
+	{
+		const Note *note = &g_array_index (self->notes, Note, i);
+		gfloat      sx = to_sx (v, note->x);
+		gfloat      sy = to_sy (v, note->y);
+		gfloat      sw = note->w * v->z;
+		gfloat      sh = note->h * v->z;
+		gfloat      r = p->node_radius * v->z;
+		gfloat      fs = k->fs * v->z;
+		gfloat      strip = MIN (sh, (k->fs + 12.0f) * v->z);
+		GrlColor    base = note->has_color ? note->color : p->selection;
+		GrlColor    fill;
+		GrlColor    head;
+		GrlColor    edge;
+
+		if (!rects_overlap (sx, sy, sw, sh, v->wx, v->wy, v->w, v->h))
+			continue;
+
+		/* --- frame body, header strip and outline --- */
+		lrg_paint_color_with_alpha (&base, 0.10f, &fill);
+		lrg_paint_color_with_alpha (&base, 0.28f, &head);
+		lrg_paint_color_with_alpha (&base, 0.55f, &edge);
+		lrg_paint_list_rect_ex (list, sx, sy, sw, sh, &(LrgCornerRadii){ r, r, r, r },
+		                        &fill, NULL, 1.0f, &edge);
+		lrg_paint_list_rect_ex (list, sx, sy, sw, strip, &(LrgCornerRadii){ r, r, 0.0f, 0.0f },
+		                        &head, NULL, 0.0f, NULL);
+
+		/* --- caption, clipped to the frame --- */
+		if (v->z >= TEXT_MIN_ZOOM && note->text != NULL && *note->text != '\0')
+		{
+			lrg_paint_list_push_clip (list, sx, sy, sw, strip);
+			lrg_paint_list_text (list, k->font, note->text, roundf (sx + 8.0f * v->z),
+			                     roundf (sy + (strip - fs) * 0.5f), fs, 0.0f, &k->text);
+			lrg_paint_list_pop_clip (list);
+		}
+	}
+}
+
 static void
 lrg_node_graph_paint (LrgWidget    *widget,
                       LrgPaintList *list)
@@ -5481,6 +5639,9 @@ lrg_node_graph_paint (LrgWidget    *widget,
 
 	lrg_paint_list_push_clip (list, v.wx, v.wy, v.w, v.h);
 	paint_grid (self, list, &v, &k);
+
+	/* --- comment frames under everything else --- */
+	paint_notes (self, list, &v, &k);
 
 	/* --- wires under the cards --- */
 	paint_links (self, list, &v, &k);
@@ -5675,6 +5836,11 @@ lrg_node_graph_step (LrgWidget *widget,
 
 	if (delta_time > 0.0f)
 		self->clock += (gdouble) delta_time;
+
+	/* --- a frame_all asked for before the widget had a size --- */
+	if (self->frame_pending && lrg_widget_get_width (widget) > FRAME_MARGIN * 2.0f + 1.0f &&
+	    lrg_widget_get_height (widget) > FRAME_MARGIN * 2.0f + 1.0f)
+		lrg_node_graph_frame_all (self, self->frame_pending_animate);
 
 	/* --- first frame: everything at rest --- */
 	if (!self->stepped)
@@ -7203,6 +7369,7 @@ lrg_node_graph_finalize (GObject *object)
 	g_clear_pointer (&self->links, g_ptr_array_unref);
 	g_clear_pointer (&self->nodes, g_ptr_array_unref);
 	g_clear_pointer (&self->by_id, g_hash_table_unref);
+	g_clear_pointer (&self->notes, g_array_unref);
 	g_clear_pointer (&self->compatible, g_hash_table_unref);
 	g_clear_pointer (&self->box_base, g_hash_table_unref);
 	G_OBJECT_CLASS (lrg_node_graph_parent_class)->finalize (object);
@@ -7662,6 +7829,8 @@ lrg_node_graph_init (LrgNodeGraph *self)
 	self->nodes = g_ptr_array_new_with_free_func (g_object_unref);
 	self->links = g_ptr_array_new_with_free_func (g_object_unref);
 	self->by_id = g_hash_table_new (g_str_hash, g_str_equal);
+	self->notes = g_array_new (FALSE, TRUE, sizeof (Note));
+	g_array_set_clear_func (self->notes, note_clear);
 	self->min_zoom = 0.2f;
 	self->max_zoom = 2.5f;
 	self->grid_size = 24.0f;

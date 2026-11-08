@@ -222,6 +222,43 @@ write_knot (const gchar  *path,
 	return lrg_asset_meta_save_to_file (meta, meta_path, error);
 }
 
+/*
+ * default_level_path:
+ * @rel: the level's path under examples/ (e.g. "data/levels/x.rlevel")
+ *
+ * The bundled level, whether the working directory is the repository
+ * root, examples/, or anywhere else (found beside this binary, which
+ * lives in examples/build/<config>/examples/). Falls back to @rel so
+ * the error names the path that was looked for.
+ *
+ * Returns: (transfer full): a path to the level
+ */
+static gchar *
+default_level_path (const gchar *rel)
+{
+	g_autofree gchar *from_root = g_build_filename ("examples", rel, NULL);
+	g_autofree gchar *exe = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *beside = NULL;
+
+	/* --- the repository root, then examples/ --- */
+	if (g_file_test (from_root, G_FILE_TEST_IS_REGULAR))
+		return g_canonicalize_filename (from_root, NULL);
+	if (g_file_test (rel, G_FILE_TEST_IS_REGULAR))
+		return g_canonicalize_filename (rel, NULL);
+
+	/* --- examples/build/<config>/examples/<exe> -> examples/<rel> --- */
+	exe = g_file_read_link ("/proc/self/exe", NULL);
+	if (exe != NULL)
+	{
+		dir = g_path_get_dirname (exe);
+		beside = g_build_filename (dir, "..", "..", "..", rel, NULL);
+		if (g_file_test (beside, G_FILE_TEST_IS_REGULAR))
+			return g_canonicalize_filename (beside, NULL);
+	}
+	return g_strdup (rel);
+}
+
 /* Writes every missing generated asset under @dir. */
 static void
 ensure_assets (const gchar *dir)
@@ -498,7 +535,17 @@ draw_legend (Showcase *s)
 	else
 		lod_state = g_strdup ("none");
 
-	DrawRectangle (x - 8, y - 8, 300, dy * 12 + 12, (Color) { 12, 14, 20, 175 });
+	/* The box fits the longest state any row can show (the view mode
+	 * names are the long ones), so it does not change width as V cycles */
+	{
+		gint  box_w = 300;
+		guint m;
+
+		for (m = 0; m < G_N_ELEMENTS (view_modes); m++)
+			box_w = MAX (box_w, 200 + MeasureText (view_modes[m].name, 18) + 16);
+		box_w = MAX (box_w, 200 + MeasureText (lod_state, 18) + 16);
+		DrawRectangle (x - 8, y - 8, box_w, dy * 12 + 12, (Color) { 12, 14, 20, 175 });
+	}
 	DrawText ("libregnum 0.9 PBR showcase", x, y, 20, RAYWHITE);
 	y += dy + 6;
 	legend_row (x, y, "1", "image-based light", lrg_world3d_renderer_get_ibl_enabled (r) ? "on" : "off",
@@ -603,7 +650,17 @@ main (int   argc,
 	if (opt_frames < 1)
 		opt_frames = 1;
 	if (opt_level == NULL)
-		opt_level = g_strdup (DEFAULT_LEVEL);
+		opt_level = default_level_path (DEFAULT_LEVEL);
+
+	/* The generated assets are written next to the level: with no level
+	 * there, stop before anything is written (a wrong working directory
+	 * must not leave a stray data/ tree behind) */
+	if (!g_file_test (opt_level, G_FILE_TEST_IS_REGULAR))
+	{
+		g_printerr ("pbr-showcase: no level at %s (run from the repository root or examples/, "
+		            "or pass --level)\n", opt_level);
+		return 1;
+	}
 	level_dir = g_path_get_dirname (opt_level);
 
 	/* 1. The engine: its asset manager loads the .rmat materials and the

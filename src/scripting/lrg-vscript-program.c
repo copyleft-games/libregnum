@@ -1142,6 +1142,7 @@ static const KindInfo KIND_TABLE[] = {
 	{ "compare.gt", "Greater", "Compare", "a > b", KIND_PURE, "i:a:any i:b:any o:result:bool" },
 	{ "compare.ge", "Greater Or Equal", "Compare", "a >= b", KIND_PURE, "i:a:any i:b:any o:result:bool" },
 	{ "string.concat", "Concat", "String", "a followed by b", KIND_PURE, "i:a:string i:b:string o:result:string" },
+	{ "string.from", "To String", "String", "Any value as text", KIND_PURE, "i:value:any o:result:string" },
 	{ "string.length", "Length", "String", "UTF-8 character length", KIND_PURE, "i:text:string o:result:int" },
 	{ "string.contains", "Contains", "String", "Whether text contains part", KIND_PURE, "i:text:string i:part:string o:result:bool" },
 	{ "string.format", "Format", "String", "Replaces {name} placeholders", KIND_PURE, NULL },

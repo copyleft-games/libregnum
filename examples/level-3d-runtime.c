@@ -286,6 +286,43 @@ find_camera_entity (LrgWorld3D *world)
  * Main
  * ========================================================================== */
 
+/*
+ * default_level_path:
+ * @rel: the level's path under examples/ (e.g. "data/levels/x.rlevel")
+ *
+ * The bundled level, whether the working directory is the repository
+ * root, examples/, or anywhere else (found beside this binary, which
+ * lives in examples/build/<config>/examples/). Falls back to @rel so
+ * the error names the path that was looked for.
+ *
+ * Returns: (transfer full): a path to the level
+ */
+static gchar *
+default_level_path (const gchar *rel)
+{
+	g_autofree gchar *from_root = g_build_filename ("examples", rel, NULL);
+	g_autofree gchar *exe = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *beside = NULL;
+
+	/* --- the repository root, then examples/ --- */
+	if (g_file_test (from_root, G_FILE_TEST_IS_REGULAR))
+		return g_canonicalize_filename (from_root, NULL);
+	if (g_file_test (rel, G_FILE_TEST_IS_REGULAR))
+		return g_canonicalize_filename (rel, NULL);
+
+	/* --- examples/build/<config>/examples/<exe> -> examples/<rel> --- */
+	exe = g_file_read_link ("/proc/self/exe", NULL);
+	if (exe != NULL)
+	{
+		dir = g_path_get_dirname (exe);
+		beside = g_build_filename (dir, "..", "..", "..", rel, NULL);
+		if (g_file_test (beside, G_FILE_TEST_IS_REGULAR))
+			return g_canonicalize_filename (beside, NULL);
+	}
+	return g_strdup (rel);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -361,7 +398,7 @@ main (int   argc,
 
 	/* 3. Load the level into a 3D world: one entity per node. */
 	if (opt_level == NULL)
-		opt_level = g_strdup (DEFAULT_LEVEL);
+		opt_level = default_level_path (DEFAULT_LEVEL);
 	world = lrg_world3d_new ();
 	level = lrg_level_load_world3d (opt_level, world, &error);
 	if (level == NULL)

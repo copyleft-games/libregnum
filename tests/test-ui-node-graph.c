@@ -1022,6 +1022,75 @@ test_frame_all (Fixture       *f,
 	g_assert_cmpfloat_with_epsilon (y0, 300.0f, 0.05f);
 }
 
+/* Comment frames paint under the cards, count towards Home and go with clear */
+static void
+test_notes (Fixture       *f,
+            gconstpointer  data)
+{
+	LrgPaintList *list;
+	gfloat        x0;
+	gfloat        y0;
+	gfloat        x1;
+	gfloat        y1;
+
+	(void) data;
+	lrg_node_graph_add_note (f->graph, "c1", "far away note", 2000.0f, 1500.0f, 400.0f, 120.0f, "#3366cc");
+	lrg_node_graph_add_note (f->graph, NULL, NULL, -50.0f, -50.0f, 0.0f, 0.0f, "not a colour");
+	g_assert_cmpuint (lrg_node_graph_get_n_notes (f->graph), ==, 2);
+
+	/* Home now has to take in the far frame */
+	lrg_node_graph_frame_all (f->graph, FALSE);
+	settle (f->canvas, 5);
+	g_assert_cmpfloat (lrg_node_graph_get_zoom (f->graph), <, 0.4f);
+	lrg_node_graph_graph_to_screen (f->graph, 2000.0f, 1500.0f, &x0, &y0);
+	lrg_node_graph_graph_to_screen (f->graph, 2400.0f, 1620.0f, &x1, &y1);
+	g_assert_cmpfloat (x0, >=, 0.0f);
+	g_assert_cmpfloat (y0, >=, 0.0f);
+	g_assert_cmpfloat (x1, <=, 800.0f);
+	g_assert_cmpfloat (y1, <=, 600.0f);
+
+	/* In view, a frame adds paint */
+	lrg_node_graph_set_view (f->graph, 2200.0f, 1560.0f, 1.0f, FALSE);
+	settle (f->canvas, 5);
+	list = lrg_canvas_record (f->canvas);
+	g_assert_cmpuint (lrg_paint_list_get_n_instances (list), >, 0);
+
+	/* clear takes the frames with the nodes; clear_notes alone keeps nodes */
+	lrg_node_graph_add_note (f->graph, "c3", "x", 0.0f, 0.0f, 10.0f, 10.0f, NULL);
+	lrg_node_graph_clear_notes (f->graph);
+	g_assert_cmpuint (lrg_node_graph_get_n_notes (f->graph), ==, 0);
+	g_assert_cmpuint (lrg_node_graph_get_n_nodes (f->graph), ==, 3);
+	lrg_node_graph_add_note (f->graph, "c4", "y", 0.0f, 0.0f, 10.0f, 10.0f, NULL);
+	lrg_node_graph_clear (f->graph);
+	g_assert_cmpuint (lrg_node_graph_get_n_notes (f->graph), ==, 0);
+}
+
+/* frame_all before the graph has a size waits for the first sized step */
+static void
+test_frame_deferred (void)
+{
+	g_autoptr(LrgCanvas) canvas = canvas_new ();
+	LrgNodeGraph        *graph = lrg_node_graph_new ();
+	gfloat               cx = 0.0f;
+	gfloat               cy = 0.0f;
+
+	lrg_container_add_child (LRG_CONTAINER (canvas), LRG_WIDGET (graph));
+	g_object_unref (graph);
+	lrg_node_graph_add_node (graph, "n", "Far", 5000.0f, 4000.0f);
+
+	/* no size yet: nothing to fit into, the view stays put */
+	lrg_node_graph_frame_all (graph, FALSE);
+	lrg_node_graph_get_center (graph, &cx, &cy);
+	g_assert_cmpfloat (fabsf (cx - 5000.0f), >, 100.0f);
+
+	/* sized: the next step runs the fit */
+	lrg_widget_allocate (LRG_WIDGET (graph), 0.0f, 0.0f, 800.0f, 600.0f);
+	settle (canvas, 5);
+	lrg_node_graph_get_center (graph, &cx, &cy);
+	g_assert_cmpfloat (fabsf (cx - 5000.0f), <, 200.0f);
+	g_assert_cmpfloat (fabsf (cy - 4000.0f), <, 200.0f);
+}
+
 /* ==========================================================================
  * Culling and scale
  * ========================================================================== */
@@ -1413,11 +1482,13 @@ main (int   argc,
 	ADD ("box-select", test_box_select);
 	ADD ("keyboard", test_keyboard);
 	ADD ("frame-all", test_frame_all);
+	ADD ("notes", test_notes);
 	ADD ("body", test_body);
 	ADD ("yaml", test_yaml);
 	ADD ("presets", test_presets_smoke);
 #undef ADD
 	g_test_add_func ("/ui/node-graph/culling", test_culling);
+	g_test_add_func ("/ui/node-graph/frame-deferred", test_frame_deferred);
 	g_test_add_func ("/ui/node-graph/gpu-presets", test_gpu_presets);
 
 	result = g_test_run ();

@@ -20,14 +20,17 @@
 :PROPERTIES:
 :CUSTOM_ID: game-showcase-3d-build
 :END:
-From the repository root, =make examples=. Then, from the repository root or from =examples/=:
+From the repository root, =make examples=. The binaries land in =examples/build/release/examples/=. From =examples/=:
 
 #+begin_src sh
+cd examples
 ./build/release/examples/game-showcase-3d --self-test
 ./build/release/examples/game-showcase-3d --help
 ./build/release/examples/game-showcase-3d --license
 ./build/release/examples/game-showcase-3d --level data/levels/level-3d-runtime.rlevel --frames 120
 #+end_src
+
+From the repository root the same binary is =./examples/build/release/examples/game-showcase-3d=; the default level is found either way.
 
 =--frames N= closes the window after N frames. No display runs the self-test and exits 0.
 
