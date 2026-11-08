@@ -287,6 +287,7 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-midi-sequencer.h \
 	src/audio/lrg-foley.h \
 	src/audio/lrg-audio-source.h \
+	src/audio/lrg-foley-patch.h \
 	src/audio/lrg-limiter.h \
 	src/audio/lrg-distortion.h \
 	src/audio/lrg-equalizer.h \
@@ -1103,6 +1104,8 @@ SOURCES := \
 	src/audio/lrg-midi-sequencer.c \
 	src/audio/lrg-foley.c \
 	src/audio/lrg-audio-source.c \
+	src/audio/lrg-foley-patch.c \
+	src/audio/lrg-audio-yaml-private.c \
 	src/audio/lrg-limiter.c \
 	src/audio/lrg-distortion.c \
 	src/audio/lrg-equalizer.c \

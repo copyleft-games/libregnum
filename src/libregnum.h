@@ -350,6 +350,7 @@
 #include "audio/lrg-midi-sequencer.h"
 #include "audio/lrg-foley.h"
 #include "audio/lrg-audio-source.h"
+#include "audio/lrg-foley-patch.h"
 #include "audio/lrg-limiter.h"
 #include "audio/lrg-distortion.h"
 #include "audio/lrg-equalizer.h"

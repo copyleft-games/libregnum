@@ -221,6 +221,8 @@ TEST_SOURCES := \
 	test-midi-synth.c \
 	test-audio-effects.c \
 	test-audio-dynamics.c \
+	test-foley.c \
+	test-foley-patch.c \
 	test-audio-bus.c \
 	test-audio-robustness.c \
 	test-midi-output.c \

@@ -1,9 +1,9 @@
 #+title: Synthesized foley
-#+description: LrgFoley: footsteps, armour clinks and a looping rain made by code as WAV images
+#+description: LrgFoley and LrgFoleyPatch: footsteps, armour clinks, rain, lasers and whooshes made by code, as WAV images or editable .rfoley patches
 #+authors: Zach Podbielniak
 #+categories: libregnum audio
 #+created: 2026-10-18T15:00:00-04:00
-#+updated: 2026-10-18T15:00:00-04:00
+#+updated: 2026-11-08T16:00:00-05:00
 #+version: 0.1.0
 
 * LrgFoley
@@ -37,4 +37,71 @@ The /variant/ seeds the noise (and so the pitches, grains and gaps): the same ki
 An unknown kind or a rate outside 8000 .. 96000 returns =NULL= with =G_IO_ERROR_INVALID_ARGUMENT=.
 
 ** Tests
-=tests/test-foley.c=: the WAV header of every kind, the lengths and the peak; determinism and variants; the decaying envelopes and quiet ends; the loop's steady level and its seam; other sample rates and the errors; snow against stone in zero crossings.
+=tests/test-foley-patch.c= pins the SHA-256 of every kind (four variants, two rates) as 0.9.2 produced them. =tests/test-foley.c=: the WAV header of every kind, the lengths and the peak; determinism and variants; the decaying envelopes and quiet ends; the loop's steady level and its seam; other sample rates and the errors; snow against stone in zero crossings.
+
+* LrgFoleyPatch (0.10.0)
+:PROPERTIES:
+:CUSTOM_ID: foley-patch
+:END:
+A patch is an editable recipe for a sound effect. It has a few global settings and an ordered list of layers, and it is saved as a =.rfoley= YAML file. Since 0.10.0 =lrg_foley_synthesize()= builds the kind's patch and renders it, and the result is the same bytes 0.9 produced. So every built-in kind is a starting point: =lrg_foley_patch_new_from_kind (kind, variant, rate, &error)=. The editor's Foley designer edits patches ([[file:../../editor/foley.org][Foley designer]]).
+
+** How a patch renders
+1. Every layer that is not muted is mixed into a mono float buffer. Each layer has its own noise state: its =seed=, or, when that is 0, a state derived from the patch =seed= and the layer's index. Changing one layer never changes another.
+2. A layer with =count= above 1 is repeated: the first copy plays at =at=, the others at random places up to =spread= seconds later. =jitter= (0 to 1) varies each copy's level (down to half), pitch (up to an octave either way) and length (by up to a half).
+3. A looping patch (=loop=) is rendered =loop-tail= seconds longer, and that tail is crossfaded onto the head, so the last sample leads into the first. Otherwise the ends get =fade=-second fades.
+4. With =normalize= (the default) the peak is scaled to =peak= (0.8); then every sample is clamped to [-1, 1].
+
+The same patch always renders the same samples. =lrg_foley_patch_render()= returns the float samples, =lrg_foley_patch_render_wave()= an =LrgWaveData= (32-bit float, mono) and =lrg_foley_patch_render_wav()= a 16-bit WAV file image.
+
+** Layer types and parameters
+Every layer has =at= (seconds), =amp= (0 to 4), =mute=, =seed=, =count=, =spread= and =jitter=. =lrg_foley_layer_type_list_params()= and =lrg_foley_layer_type_get_param_info()= list each type's parameters with their ranges, defaults and descriptions. =lrg_foley_patch_set_layer_param()= clamps values to the range.
+
+| Type | Own parameters (default) | Sounds |
+|------+--------------------------+--------|
+| =body= | =freq= Hz (120), =sweep= (1, frequency multiplier over the decay), =decay= s (0.05) | Thuds, knocks, rings, bubbles (a damped sine) |
+| =grain= | =length= s (0.02), =low= / =high= Hz (500 / 4000) | Scrapes, crunches, ticks (raised-cosine band of noise) |
+| =wash= | =decay= s (0.05), =cutoff= Hz (1000) | Soft impacts, splashes |
+| =bed= | =low= / =high= Hz (600 / 7000), =drift= Hz (0.7), =base= (0.55), =depth= (0.6), =droplets= per second (73.5) | Rain, static, wind (runs from =at= to the end) |
+| =tone= | =freq= / =freq-end= Hz (880, exponential sweep), =waveform= (0 sine, 1 triangle, 2 square, 3 saw), =duty= (0.5), =length= s (0.25), =attack= s (0.002), =decay= s (0 = hold), =vibrato-rate= Hz, =vibrato-depth= semitones | Lasers, beeps, power-ups, alarms |
+| =noise= | =length= s (0.4), =attack= s (0.005), =decay= s (0.12), =cutoff= / =cutoff-end= Hz (8000, exponential sweep), =highpass= Hz (0 = off) | Whooshes, explosions, risers |
+
+** The .rfoley format
+#+begin_src yaml
+version: 1
+foley:
+  name: laser
+  duration: 0.4
+  sample_rate: 44100
+  seed: 1
+  loop: false
+  fade: 0.004
+  peak: 0.8
+  normalize: true
+layers:
+  - type: tone
+    freq: 1800
+    freq-end: 200
+    waveform: 2
+    decay: 0.1
+  - type: noise
+    amp: 0.5
+    cutoff-end: 300
+#+end_src
+
+Layer parameters that hold their default are not written. Numbers are written with the shortest text that reads back to the same value, so a patch read and written again produces the same text and the same sound. A wrong key or value is reported by its path, for example =<file>: layers[0].freq: -5 is out of range (10 .. 20000)=, in =LRG_FOLEY_PATCH_ERROR=.
+
+** Example
+#+begin_src c
+g_autoptr(GError)        error = NULL;
+g_autoptr(LrgFoleyPatch) zap = lrg_foley_patch_new ();
+gint                     t = lrg_foley_patch_add_layer (zap, LRG_FOLEY_LAYER_TONE);
+g_autoptr(GBytes)        wav = NULL;
+
+lrg_foley_patch_set_global (zap, "duration", 0.4);
+lrg_foley_patch_set_layer_param (zap, t, "freq", 1800);
+lrg_foley_patch_set_layer_param (zap, t, "freq-end", 200);
+lrg_foley_patch_set_layer_param (zap, t, "waveform", 2);
+lrg_foley_patch_set_layer_param (zap, t, "decay", 0.1);
+wav = lrg_foley_patch_render_wav (zap, &error);
+lrg_foley_patch_save_to_file (zap, "sfx/zap.rfoley", &error);
+#+end_src
