@@ -43,7 +43,7 @@ An unknown kind or a rate outside 8000 .. 96000 returns =NULL= with =G_IO_ERROR_
 :PROPERTIES:
 :CUSTOM_ID: foley-patch
 :END:
-A patch is an editable recipe for a sound effect. It has a few global settings and an ordered list of layers, and it is saved as a =.rfoley= YAML file. Since 0.10.0 =lrg_foley_synthesize()= builds the kind's patch and renders it, and the result is the same bytes 0.9 produced. So every built-in kind is a starting point: =lrg_foley_patch_new_from_kind (kind, variant, rate, &error)=. The editor's Foley designer edits patches ([[file:../../editor/foley.org][Foley designer]]).
+A patch is an editable recipe for a sound effect. It has a few global settings and an ordered list of layers, and it is saved as a =.rfoley= YAML file. Since 0.10.0 =lrg_foley_synthesize()= builds the kind's patch and renders it, and the result is the same bytes 0.9 produced. So every built-in kind is a starting point: =lrg_foley_patch_new_from_kind (kind, variant, rate, &error)=. The editor's Foley designer edits patches ([[file:../../editor/music.org::#editor-music-foley][Foley designer]]).
 
 ** How a patch renders
 1. Every layer that is not muted is mixed into a mono float buffer. Each layer has its own noise state: its =seed=, or, when that is 0, a state derived from the patch =seed= and the layer's index. Changing one layer never changes another.

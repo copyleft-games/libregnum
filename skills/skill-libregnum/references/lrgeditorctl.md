@@ -171,7 +171,7 @@ Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --
 - `terrain get | brush | stroke | sample X Z | add-layer | remove-layer INDEX | set-layer INDEX | add-foliage | remove-foliage INDEX | set-foliage INDEX | rebake | save | create | show` [key=value..]
 - `water get | set | set-wave | add-point X Z | set-point INDEX | remove-point INDEX | save` [key=value..]
 - `mixer show | open | create PATH | set-default PATH | get | effect-types | add-bus NAME | remove-bus NAME | set-bus NAME | set-send SOURCE TARGET LEVEL | remove-send SOURCE TARGET | add-effect BUS TYPE | remove-effect BUS ID | move-effect BUS ID INDEX | set-effect BUS ID | add-snapshot NAME | remove-snapshot NAME | set-snapshot NAME | capture-snapshot NAME | set-duck TRIGGER TARGET | remove-duck TRIGGER TARGET | preview | meters | save` [key=value..]
-- `audio get NODE | set NODE | curve NODE | buses` [key=value..]
+- `audio get NODE | set NODE | curve NODE | buses | formats` [key=value..]
 - `tiles state | grid | brush | autopaint | refresh | cell-at | tile-info TILE` [key=value..]
 - `tileset create PATH | open PATH | get | set | select | tile TILE | collision TILE OP | rule-tile OP NAME | rule RULE_TILE OP | preview RULE_TILE | save` [key=value..]
 - `sprite create PATH | open PATH | get | slice MODE | frame OP | clip OP NAME | clip-frame CLIP OP | event CLIP OP FRAME | play | save` [key=value..]
@@ -181,6 +181,8 @@ Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --
 - `frame capture | status | calls | call INDEX | scrub INDEX | texture PATH | save PATH | load PATH | show` [key=value..]
 - `script run CODE | languages | tools | run-tool ID | reload | run-in-editor NODE | editor-running` [key=value..]
 - `vscript create PATH | open PATH | get PATH | node-types QUERY | gi-search QUERY | add-node TYPE | remove-node ID | set-node ID | connect FROM TO | disconnect FROM TO | set-variable NAME | add-subgraph NAME | remove-subgraph NAME | add-comment TEXT | remove-comment ID | set-program | select | frame | validate PATH | run | live PATH | breakpoint NODE | continue | save PATH` [key=value..]
+- `song new PATH | get | apply | validate | render | export FILE | export-midi FILE | import-midi FILE PATH | play | stop | seek BEAT | select TRACK CLIP | state | instruments | set | set-tempo BPM | set-marker NAME BEAT | remove-marker NAME | set-instrument ID TYPE SOURCE | remove-instrument ID | add-pattern ID LENGTH | set-notes PATTERN | set-lanes PATTERN | remove-pattern ID | add-track ID INSTRUMENT | set-track ID | remove-track ID | move-track ID INDEX | add-clip TRACK SOURCE START LENGTH | set-clip TRACK INDEX | remove-clip TRACK INDEX | set-automation TARGET | set-bus NAME | remove-bus NAME | set-effect BUS ID TYPE | remove-effect BUS ID | set-send SOURCE TARGET LEVEL | set-duck TRIGGER TARGET` [key=value..] (see `music.md`)
+- `foley new PATH KIND | get | set | add-layer TYPE | set-layer INDEX | remove-layer INDEX | move-layer FROM TO | from-kind KIND VARIANT | render | export FILE | play | layer-types` [key=value..] (`set` wraps key=value into settings, `set-layer` into params)
 - `memory status | types | resources | snapshot | snapshots | diff FROM | clear-snapshots | history | show` [key=value..]
 - `network stats | history METRIC | enable | reset | show` [key=value..]
 <!-- m67e-generated: end -->

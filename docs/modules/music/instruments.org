@@ -16,6 +16,8 @@
 
 An instrument turns notes into sound. Every instrument is an =LrgInstrument=, and =LrgInstrument= implements =LrgAudioSource=, so an =LrgAudioMixer= plays it as a voice (=lrg_audio_mixer_play_source()=, [[file:../audio/mixer.org::#source-voices][mixer.org]]). An instrument can also be rendered on its own with =lrg_instrument_render()=. A song ([[file:song.org][LrgSong]]) creates one instrument per track and schedules the notes of its clips. Everything is headless and deterministic: the same notes always render the same samples.
 
+In the editor, the song editor shows every numeric parameter of the selected track's instrument as a grid and =song.instruments= lists them all with their ranges ([[file:../../editor/music.org][Music in the editor]]).
+
 | Class | Sound | Notes |
 |-------+-------+-------|
 | =LrgSynth= | Subtractive and FM synthesizer | Any key; presets for basses, pads, leads, plucks, brass, bells, strings |

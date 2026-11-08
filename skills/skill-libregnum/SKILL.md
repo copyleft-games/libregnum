@@ -20,6 +20,7 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 - `references/ipc-protocol.md`: the socket protocol under both
 - `references/level-format.md`: projects, `.rlevel`/`.rprefab` YAML, validation codes
 - `references/engine.md`: building, testing, conventions and traps when changing libregnum's code
+- `references/music.md`: composing songs and sound effects through the editor (song.*, foley.*): discovery, `song.apply` batches, mixing by render numbers, export
 
 ## When to Use
 

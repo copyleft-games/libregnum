@@ -16,6 +16,8 @@
 
 =LrgSongPlayer= plays an [[file:song.org][LrgSong]] in real time, in a game or in the editor. It compiles the song exactly as =lrg_song_render()= does, so what you hear is what you export. The tests check that the player renders the same samples as the offline render.
 
+The editor's song editor plays through one =LrgSongPlayer= and swaps in every edited version of the song while it plays ([[file:../../editor/music.org::#editor-music-song-playback][Music in the editor: playback]]).
+
 ** Threads
 - *The caller* (the main thread) sends commands: play, pause, stop, seek, loop, a new song, a section jump, a layer, a stinger, a live note. Commands go through a queue and take effect at the start of the next rendered block (or on their exact frame, for jumps and stingers).
 - *The render thread* (started by =lrg_song_player_start_output()=) owns the compiled song and keeps a ring buffer of =LRG_SONG_PLAYER_RING_FRAMES= frames (4096, about 85 ms at 48 kHz) full, one 256-frame block at a time. The ring's length is the latency of commands.

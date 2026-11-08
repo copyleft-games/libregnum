@@ -650,6 +650,57 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =vscript.breakpoint= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.continue= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
 | =vscript.save= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =song.new= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.get= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.apply= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.validate= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.render= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.export= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.export_midi= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.import_midi= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.play= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.stop= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.seek= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.select= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.state= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.instruments= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_tempo= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_marker= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_marker= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_instrument= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_instrument= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.add_pattern= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_notes= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_lanes= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_pattern= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.add_track= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_track= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_track= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.move_track= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.add_clip= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_clip= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_clip= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_automation= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_bus= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_bus= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_effect= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.remove_effect= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_send= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =song.set_duck= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =audio.formats= | 0.10.0 | song editor | [[#ipc-song][Song methods]] |
+| =foley.new= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.get= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.set= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.add_layer= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.set_layer= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.remove_layer= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.move_layer= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.from_kind= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.render= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.export= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.play= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
+| =foley.layer_types= | 0.10.0 | Foley designer | [[#ipc-foley][Foley methods]] |
 | =memory.status= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
 | =memory.types= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
 | =memory.resources= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
@@ -1547,6 +1598,75 @@ Registered by the visual script editor (=src/editor/ui/data/lrg-editor-vscript-e
 | =vscript.breakpoint= | =path?=, =graph?=, =node=, =enabled= | ={node, enabled}= |
 | =vscript.continue= | =path?= | ={resumed}= |
 | =vscript.save= | =path?= | ={path}= |
+
+** Song methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-song
+:END:
+Registered by =lrg_editor_song_editor_install()= (=src/editor/ui/data/lrg-editor-song-editor.c=; the Assets panel and every song editor call it). Every method takes an optional =path= (a =.rsong=, absolute or project relative, opened as a tab when needed); without it the focused song editor, else =not-found= "No song is open". The edit methods (=song.set= through =song.set_duck=) are the shared song operations of =src/editor/ui/data/lrg-editor-song-ops.c=: each is one undo step, and each returns its own results plus the /state/ ={beat, playing, selected_track, selected_clip, length_beats, duration}=. =song.apply= runs a list of them as one undo step and changes nothing when one fails. An edit whose YAML would not load back is refused (=invalid-params= "The edit would not load back: ..."). Keys are note names (="A2"=, C4 = 60) or MIDI numbers; /notes/ are =[beat, key, length, velocity?]= arrays, ={beat, key, length, velocity?}= objects or ="beat key length velocity"= strings (velocity 0 .. 1, default 0.8); /lanes/ are ={piece-or-note: "x... x..."}= with =.= or =-= rest, =g= 0.3, =o= 0.5, =x= 0.8, =X= 1.0 (spaces and =|= ignored; =null= removes a lane). Errors: missing or bad parameters =invalid-params=; an unknown file, editor, track, pattern, instrument, marker, bus or effect =not-found=; render, encode and load failures =failed=. Details: [[file:music.org::#editor-music][Music in the editor]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =song.new= | =path=, =empty?= | ={path}=; the starter loop (drums and bass) unless =empty= |
+| =song.get= | =path?=, =section?= (=settings=, =instruments=, =patterns=, =tracks=, =mixer=, =automation=) | ={title, artist, bpm, time_signature, sample_rate, seed, length, length_beats, duration, loop_start, loop_end, tempo: [{beat, bpm, ramp}], markers: [{beat, name}], instruments: {id: {type, source, params}}, patterns: {id: {length, steps, notes: [[beat, name, length, velocity]], lanes}}, tracks: [{id, kind, name, instrument, bus, volume, pan, mute, solo, clips: [{index, source, start, length, offset, transpose, gain, fade_in, fade_out, mute}], automation: [{target, points}]}], automation, mixer: {buses: [{name, parent, volume, mute, solo, effects: [{id, type, enabled}], sends: [{target, level}]}], ducking: [{trigger, target, threshold, depth, attack, release}]}}= plus the state |
+| =song.apply= | =path?=, =ops= (=[{op, ...the op's params}]=), =label?= | ={results: [{op, ...}]}= plus the state |
+| =song.validate= | =path?= | ={valid, issues: ["path: message"]}= (warnings start with =warning:=) |
+| =song.render= | =path?=, =start?=, =end?= (beats), =tail?=, =normalize?= (=none=, =peak=, =loudness=), =target?=, =ceiling?=, =sample_rate?=, =mute?=, =solo?=, =tracks?=, =bins?= (64) | ={duration, peak_db, true_peak_db, rms_db, integrated_lufs, short_term_max_lufs, momentary_max_lufs, loudness_range, dc_offset, clipped_samples, frames, sample_rate, envelope, tracks?: {id: analysis}}= |
+| =song.export= | =path?=, =file=, =formats?=, =stems?=, the render params, =bitrate?=, =bit_depth?= | ={files: [{file, bytes?, stem?, error?}], duration}=; default -14 LUFS, -1 dBTP |
+| =song.export_midi= | =path?=, =file= | ={file}= |
+| =song.import_midi= | =file= (=.mid=), =path= (the new =.rsong=) | ={path}=; opened |
+| =song.play= | =path?=, =beat?=, =marker?= | the state; opens the audio device |
+| =song.stop= | =path?= | the state |
+| =song.seek= | =path?=, =beat= or =marker= | the state |
+| =song.select= | =path?=, =track?=, =clip?= | the state |
+| =song.state= | =path?= | the state, plus =master_peak=, =master_rms=, =underruns= once a player exists |
+| =song.instruments= |  | ={instrument_types: {synth: {source, presets: {name: description}, params}, drums: {source, pieces: [{name, key}], params}, sampler, soundfont, foley}, effects: {type: params}, foley_kinds, steps, notes, automation_targets, ops}=; =params= are =[{name, min, max, default, values?, description}]= |
+| =audio.formats= |  | ={formats: [{format, extension, lossless, backend, available}]}= (=backend=: =native=, =libav=, =ffmpeg= (the program), =none=) |
+| =song.set= | =path?=, =title?=, =artist?=, =bpm?=, =time_signature?= ("4/4"), =beats_per_bar?=, =beat_unit?=, =length?=, =loop_start?=, =loop_end?=, =sample_rate?=, =seed?= (or all inside =settings=) | the state |
+| =song.set_tempo= | =path?=, =bpm?=, =changes?= (=[{beat, bpm, ramp?}]=, replaces the map after beat 0) | the state |
+| =song.set_marker= | =path?=, =name=, =beat= | the state |
+| =song.remove_marker= | =path?=, =name= | the state |
+| =song.set_instrument= | =path?=, =id=, =type?= (=synth=, =drums=, =sampler=, =soundfont=, =foley=; needed for a new one), =source?= (preset, kit 808/909/linn, or file), =params?= (={name: value or null}=) | the state |
+| =song.remove_instrument= | =path?=, =id= | the state |
+| =song.add_pattern= | =path?=, =id=, =length?= (beats, 4), =steps?= (16), =notes?=, =lanes?= | the state |
+| =song.set_notes= | =path?=, =pattern=, =notes=, =replace?= (true), =length?= | ={notes}= plus the state |
+| =song.set_lanes= | =path?=, =pattern=, =lanes=, =steps?= | the state |
+| =song.remove_pattern= | =path?=, =id= | the state |
+| =song.add_track= | =path?=, =id=, =kind?= (=instrument=, =audio=), =instrument?=, =name?=, =bus?=, =volume?= (dB), =pan?=, =mute?=, =solo?= | the state |
+| =song.set_track= | =path?=, =id=, =name?=, =instrument?=, =bus?=, =volume?=, =pan?=, =mute?=, =solo?= | the state |
+| =song.remove_track= | =path?=, =id= | the state |
+| =song.move_track= | =path?=, =id=, =index= | the state |
+| =song.add_clip= | =path?=, =track=, =start=, =source= (or =pattern= or =file=), =length?= (or =end=), =offset?=, =transpose?=, =gain?=, =fade_in?=, =fade_out?=, =mute?= | ={index}= plus the state |
+| =song.set_clip= | =path?=, =track=, =index=, =source?=, =start?=, =length?=, =offset?=, =transpose?=, =gain?=, =fade_in?=, =fade_out?=, =mute?= | the state |
+| =song.remove_clip= | =path?=, =track=, =index= | the state |
+| =song.set_automation= | =path?=, =track?=, =target=, =points= (=[[beat, value]]=; empty removes), =step?= | the state; targets: track =volume=, =pan=, =param.<name>=; song =bus.<bus>.volume=, =effect.<bus>.<id>.<property>= |
+| =song.set_bus= | =path?=, =name=, =parent?=, =volume?=, =mute?=, =solo?= | the state; adds the bus when new |
+| =song.remove_bus= | =path?=, =name= | the state |
+| =song.set_effect= | =path?=, =bus=, =id?= (default the type), =type?= (needed for a new one), =enabled?=, =params?= | the state |
+| =song.remove_effect= | =path?=, =bus=, =id= | the state |
+| =song.set_send= | =path?=, =source=, =target=, =level= (dB; =null= removes) | the state |
+| =song.set_duck= | =path?=, =trigger=, =target=, =threshold?= (-30), =depth?= (-6; =null= removes), =attack?= (0.005), =release?= (0.15) | the state |
+
+** Foley methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-foley
+:END:
+Registered by =lrg_editor_foley_editor_install()= (=src/editor/ui/data/lrg-editor-foley-editor.c=). Every method takes an optional =path= (a =.rfoley=, opened when needed); without it the focused Foley designer, else =not-found= "No Foley patch is open". Edits are one undo step each. The /patch/ is ={name, duration, sample_rate, seed, variation, loop, loop_tail, fade, peak, normalize, layers: [{index, type, params: {name: value}}], selected}=. Errors: bad parameters, an unknown layer parameter or kind =invalid-params=; no such layer or file =not-found=; render or encode failures =failed=. Details: [[file:music.org::#editor-music-foley][Foley designer]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =foley.new= | =path=, =kind?= (a built-in kind such as =footstep-stone=; default a short tone) | ={path}=; opened |
+| =foley.get= | =path?= | the patch |
+| =foley.set= | =path?=, =settings= (={name?, duration?, sample-rate?, seed?, variation?, loop?, loop-tail?, fade?, peak?, normalize?}=) | the patch |
+| =foley.add_layer= | =path?=, =type= (=body=, =grain=, =wash=, =bed=, =tone=, =noise=), =params?= | ={index}=; selected |
+| =foley.set_layer= | =path?=, =index=, =params= | the patch |
+| =foley.remove_layer= | =path?=, =index= | ={removed: true}= |
+| =foley.move_layer= | =path?=, =from=, =to= | the patch |
+| =foley.from_kind= | =path?=, =kind=, =variant?= | the patch (replaced by the kind's recipe) |
+| =foley.render= | =path?=, =bins?= (48) | the analysis (as =song.render=) plus =frames=, =sample_rate=, =envelope= |
+| =foley.export= | =path?=, =file= | ={file, bytes}= |
+| =foley.play= | =path?= | ={playing: true}=; opens the audio device |
+| =foley.layer_types= |  | ={layer_types: {type: [{name, min, max, default, description}]}, kinds}= |
 
 ** Memory profiler methods
 :PROPERTIES:
