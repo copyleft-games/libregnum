@@ -282,6 +282,51 @@ is_vcs_dir (const gchar *name)
 	return g_str_equal (name, ".git") || g_str_equal (name, ".hg") || g_str_equal (name, ".svn");
 }
 
+/* Another repository inside the project (a git submodule or a nested
+ * checkout): its files belong to it, so the scan does not descend. */
+static gboolean
+is_nested_repo (const gchar *dir)
+{
+	g_autofree gchar *git = g_build_filename (dir, ".git", NULL);
+
+	return g_file_test (git, G_FILE_TEST_EXISTS);
+}
+
+gboolean
+lrg_asset_database_wants_sidecar (const gchar *path)
+{
+	static const gchar * const names[] = {
+		"readme", "license", "licence", "copying", "authors", "changelog", "news", "makefile",
+		"gnumakefile", "containerfile", "dockerfile", "justfile", NULL
+	};
+	static const gchar * const exts[] = {
+		".md", ".org", ".txt", ".rst", ".adoc", ".h", ".hpp", ".mk", ".o", ".a", ".so", ".la", ".lo",
+		".d", ".gir", ".typelib", ".pc", ".log", ".in", ".patch", ".diff", NULL
+	};
+	g_autofree gchar *base = NULL;
+	g_autofree gchar *lower = NULL;
+	const gchar      *dot;
+	guint             i;
+
+	g_return_val_if_fail (path != NULL, FALSE);
+	base = g_path_get_basename (path);
+	lower = g_ascii_strdown (base, -1);
+
+	/* README, README.org, LICENSE.txt ...: the name before any extension */
+	for (i = 0; names[i] != NULL; i++)
+		if (g_str_has_prefix (lower, names[i])
+		    && (lower[strlen (names[i])] == '\0' || lower[strlen (names[i])] == '.'))
+			return FALSE;
+	dot = strrchr (lower, '.');
+	for (i = 0; dot != NULL && exts[i] != NULL; i++)
+		if (g_str_equal (dot, exts[i]))
+			return FALSE;
+	/* shared libraries with versions: libfoo.so.1.2 */
+	if (strstr (lower, ".so.") != NULL)
+		return FALSE;
+	return TRUE;
+}
+
 /* realpath(3) into a g_malloc'd string, NULL if it does not resolve. */
 static gchar *
 real_path (const gchar *path)
@@ -465,7 +510,7 @@ scan_dir (LrgAssetDatabase *self,
 
 		if (g_file_test (child_full, G_FILE_TEST_IS_DIR))
 		{
-			if (!is_vcs_dir (child))
+			if (!is_vcs_dir (child) && !is_nested_repo (child_full))
 				scan_dir (self, base, child_rel, metas);
 		}
 		else if (g_file_test (child_full, G_FILE_TEST_IS_REGULAR))
@@ -546,6 +591,9 @@ lrg_asset_database_write_pending_metas (LrgAssetDatabase  *self,
 		if (e->meta == NULL || e->full_path == NULL)
 			continue;
 		if (e->meta_on_disk && !lrg_asset_meta_is_dirty (e->meta))
+			continue;
+		/* documents and build files never get one written for them */
+		if (!e->meta_on_disk && !lrg_asset_database_wants_sidecar (e->full_path))
 			continue;
 		meta_path = lrg_asset_meta_path_for_asset (e->full_path);
 		if (!lrg_asset_database_is_writable_path (self, meta_path))
