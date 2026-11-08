@@ -220,6 +220,7 @@ TEST_SOURCES := \
 	test-audio-positional.c \
 	test-midi-synth.c \
 	test-audio-effects.c \
+	test-audio-dynamics.c \
 	test-audio-bus.c \
 	test-audio-robustness.c \
 	test-midi-output.c \

@@ -286,6 +286,14 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-midi-output-alsa.h \
 	src/audio/lrg-midi-sequencer.h \
 	src/audio/lrg-foley.h \
+	src/audio/lrg-audio-source.h \
+	src/audio/lrg-limiter.h \
+	src/audio/lrg-distortion.h \
+	src/audio/lrg-equalizer.h \
+	src/audio/lrg-stereo-widener.h \
+	src/audio/lrg-filter.h \
+	src/audio/lrg-gate.h \
+	src/audio/lrg-compressor.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -1094,6 +1102,14 @@ SOURCES := \
 	src/audio/lrg-midi-output-alsa.c \
 	src/audio/lrg-midi-sequencer.c \
 	src/audio/lrg-foley.c \
+	src/audio/lrg-audio-source.c \
+	src/audio/lrg-limiter.c \
+	src/audio/lrg-distortion.c \
+	src/audio/lrg-equalizer.c \
+	src/audio/lrg-stereo-widener.c \
+	src/audio/lrg-filter.c \
+	src/audio/lrg-gate.c \
+	src/audio/lrg-compressor.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \

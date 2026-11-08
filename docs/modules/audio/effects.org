@@ -115,6 +115,51 @@ The classic two-head delay-line shifter, which keeps the duration.  The input go
 | =set_ratio= / =get_ratio= | =LRG_PITCH_SHIFT_MIN_RATIO= (0.5, an octave down) .. =LRG_PITCH_SHIFT_MAX_RATIO= (2); exactly 1 passes the samples untouched (the ring keeps filling) |
 | =set_window= / =get_window= | 5 ms .. 0.2 s; longer windows flutter less on steady tones and smear transients more; a new window forgets the ring |
 
+* Mixing and mastering effects (0.10.0)
+:PROPERTIES:
+:CUSTOM_ID: mastering-effects
+:END:
+Seven effects for building a mix, added for the song engine ([[file:../music/song.org][LrgSong]]) and usable on any bus. Each one is a GObject whose parameters are double properties with a range and a default, so the =.rmixer= format, mixer ramps (=lrg_audio_mixer_ramp_effect_param()=), song automation, the editor's property grids and the IPC all set them by name. Out-of-range values given to a constructor are clamped. Their =.rmixer= type names are in the last column.
+
+| Effect | Parameters (default) | Use | =.rmixer= type |
+|--------+----------------------+-----+----------------|
+| =LrgCompressor= | =threshold= dBFS (-18), =ratio= (4), =knee= dB (6), =attack= s (0.005), =release= s (0.12), =makeup= dB (0), =mix= (1) | Stereo-linked feed-forward compressor with a soft knee (Giannoulis, Massberg and Reiss). =mix= below 1 is parallel compression. =lrg_compressor_get_gain_reduction()= feeds a meter. | =compressor= |
+| =LrgLimiter= | =ceiling= dBFS (-1), =release= s (0.08), =lookahead= s (0.0015) | Look-ahead brick-wall limiter for the end of a master chain: the output never exceeds the ceiling. It delays the audio by the look-ahead (=lrg_limiter_get_latency()=). | =limiter= |
+| =LrgDistortion= | =mode= (=tanh=, =soft-clip=, =hard-clip=, =fold=, =bitcrush=), =drive= dB (12), =tone= Hz (12000), =output= dB (-6), =mix= (1), =bits= (8), =downsample= (1) | Saturation, clipping, wave folding and bit reduction, with a tone low-pass after the shaper. | =distortion= |
+| =LrgEqualizer= | =low-cut= Hz (0 = off), =low-freq= / =low-gain=, =mid1-freq= / =mid1-gain= / =mid1-q=, =mid2-freq= / =mid2-gain= / =mid2-q=, =high-freq= / =high-gain=, =high-cut= Hz (0 = off) | Six cookbook biquads. A band at 0 dB is skipped, so a flat equalizer is exact. | =equalizer= |
+| =LrgStereoWidener= | =width= (1; 0 = mono, 2 = twice as wide), =bass-mono= Hz (0 = off) | Mid/side width. =bass-mono= keeps the low end centred. Mono buffers pass untouched. | =stereo-widener= |
+| =LrgFilter= | =mode= (=lowpass=, =highpass=, =bandpass=, =notch=, =peak=, =lowshelf=, =highshelf=), =frequency= Hz (1000), =q= (0.7071), =gain= dB (0), =stages= (1 to 4), =mix= (1) | A general biquad. Each stage adds 12 dB per octave. Automate =frequency= for a filter sweep. | =filter= |
+| =LrgGate= | =threshold= dBFS (-40), =attack= s (0.0005), =hold= s (0.02), =release= s (0.06), =range= dB (-90) | Noise gate. Put it after a reverb on a snare's effect bus for the 1980s gated snare. | =gate= |
+
+A master chain for a song:
+
+#+begin_src c
+LrgAudioEffectChain *master = lrg_audio_mixer_get_bus_chain (mixer, "master");
+g_autoptr(LrgEqualizer)  eq = lrg_equalizer_new ();
+g_autoptr(LrgCompressor) glue = lrg_compressor_new (-14.0, 2.0);
+g_autoptr(LrgLimiter)    lim = lrg_limiter_new (-1.0);
+
+g_object_set (eq, "low-cut", 30.0, "high-gain", 2.0, NULL);
+g_object_set (glue, "attack", 0.02, "release", 0.25, "makeup", 2.0, NULL);
+lrg_audio_effect_chain_add (master, LRG_AUDIO_EFFECT (eq));
+lrg_audio_effect_chain_add (master, LRG_AUDIO_EFFECT (glue));
+lrg_audio_effect_chain_add (master, LRG_AUDIO_EFFECT (lim));
+lrg_audio_mixer_set_clip (mixer, FALSE);   /* the limiter owns the ceiling */
+#+end_src
+
+The same chain in a =.rmixer= file:
+
+#+begin_src yaml
+buses:
+  - name: master
+    effects:
+      - { type: equalizer, params: { low-cut: 30, high-gain: 2 } }
+      - { type: compressor, params: { threshold: -14, ratio: 2, attack: 0.02, release: 0.25, makeup: 2 } }
+      - { type: limiter, params: { ceiling: -1 } }
+#+end_src
+
+Tests: =tests/test-audio-dynamics.c=.
+
 * The device rate (gaps G8)
 
 raylib opens the device at the system's rate and does not report it.  =lrg_audio_effect_chain_attach_mix (chain, 0)= assumes =LRG_AUDIO_EFFECT_DEFAULT_SAMPLE_RATE= (48000) and the mix callback then counts the frames it is handed against the monotonic clock: after two windows of two seconds that snap (=lrg_audio_snap_sample_rate()=: the nearest of 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000 within 6 percent) to the same rate, that rate replaces the guess.  =lrg_audio_effect_chain_get_mix_rate (chain, &measured)= reports the rate in use and whether it was measured.  Naming a rate in =attach_mix()= turns the measurement off.  =tests/test-audio-effects.c= covers the snapping and the unattached chain.

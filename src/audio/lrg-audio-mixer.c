@@ -130,6 +130,7 @@ typedef struct
 	gdouble  lp_alpha;   /* 0: off */
 	gdouble  lp[2];
 	gboolean loop, paused;
+	LrgAudioSource *source;  /* a pull-source voice (no samples), owned ref */
 } Voice;
 
 struct _LrgAudioMixer
@@ -152,6 +153,9 @@ struct _LrgAudioMixer
 	gsize      fx_len;
 	gfloat    *out;
 	gsize      out_len;
+	gfloat    *src;          /* a source voice's block */
+	gsize      src_len;
+	gboolean   clip;         /* clamp master to [-1, 1] */
 };
 G_DEFINE_TYPE (LrgAudioMixer, lrg_audio_mixer, G_TYPE_OBJECT)
 
@@ -173,6 +177,7 @@ voice_free (gpointer data)
 	Voice *voice = data;
 
 	g_free (voice->samples);
+	g_clear_object (&voice->source);
 	g_free (voice);
 }
 
@@ -198,6 +203,7 @@ lrg_audio_mixer_finalize (GObject *object)
 	g_free (self->mix);
 	g_free (self->fx);
 	g_free (self->out);
+	g_free (self->src);
 	G_OBJECT_CLASS (lrg_audio_mixer_parent_class)->finalize (object);
 }
 
@@ -226,6 +232,7 @@ lrg_audio_mixer_init (LrgAudioMixer *self)
 {
 	self->rate = 48000;
 	self->channels = 2;
+	self->clip = TRUE;
 	self->buses = g_ptr_array_new_with_free_func (bus_free);
 	self->voices = g_ptr_array_new_with_free_func (voice_free);
 	self->ducks = g_array_new (FALSE, FALSE, sizeof (Duck));
@@ -1226,6 +1233,45 @@ lrg_audio_mixer_play (LrgAudioMixer *self,
 	return voice->id;
 }
 
+guint64
+lrg_audio_mixer_play_source (LrgAudioMixer  *self,
+                             LrgAudioSource *source,
+                             const gchar    *bus,
+                             gdouble         gain)
+{
+	Voice *voice;
+	gint   index;
+
+	g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), 0);
+	g_return_val_if_fail (LRG_IS_AUDIO_SOURCE (source), 0);
+	index = find_bus (self, bus);
+	if (index < 0 || !valid_gain (gain) || self->last_id == G_MAXUINT64)
+		return 0;
+	voice = g_new0 (Voice, 1);
+	voice->source = g_object_ref (source);
+	voice->id = ++self->last_id;
+	voice->bus = (guint) index;
+	voice->gain = gain;
+	voice->pitch = 1.0;
+	g_ptr_array_add (self->voices, voice);
+	return voice->id;
+}
+
+void
+lrg_audio_mixer_set_clip (LrgAudioMixer *self,
+                          gboolean       clip)
+{
+	g_return_if_fail (LRG_IS_AUDIO_MIXER (self));
+	self->clip = clip ? TRUE : FALSE;
+}
+
+gboolean
+lrg_audio_mixer_get_clip (LrgAudioMixer *self)
+{
+	g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), TRUE);
+	return self->clip;
+}
+
 gboolean
 lrg_audio_mixer_stop_voice (LrgAudioMixer *self,
                             guint64        id)
@@ -1319,7 +1365,7 @@ lrg_audio_mixer_set_voice_pitch (LrgAudioMixer *self,
 
 	g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), FALSE);
 	voice = find_voice (self, id);
-	if (voice == NULL || !isfinite (pitch) || pitch < MIN_PITCH || pitch > MAX_PITCH)
+	if (voice == NULL || voice->source != NULL || !isfinite (pitch) || pitch < MIN_PITCH || pitch > MAX_PITCH)
 		return FALSE;
 	voice->pitch = pitch;
 	return TRUE;
@@ -1334,7 +1380,7 @@ lrg_audio_mixer_set_voice_lowpass (LrgAudioMixer *self,
 
 	g_return_val_if_fail (LRG_IS_AUDIO_MIXER (self), FALSE);
 	voice = find_voice (self, id);
-	if (voice == NULL || !isfinite (cutoff) || cutoff < 0.0 || cutoff >= self->rate * 0.5)
+	if (voice == NULL || voice->source != NULL || !isfinite (cutoff) || cutoff < 0.0 || cutoff >= self->rate * 0.5)
 		return FALSE;
 	if (cutoff == 0.0)
 	{
@@ -1404,6 +1450,44 @@ mix_voice (LrgAudioMixer *self,
 {
 	guint ch = self->channels;
 	guint f, c;
+
+	/*
+	 * A pull source: the source renders the block into scratch (silence
+	 * first, a source adds), then gain and balance apply per frame like
+	 * the general loop below.  A finished source ends the voice after
+	 * this block, so its last samples are still heard.
+	 */
+	if (voice->source != NULL)
+	{
+		gsize    count = (gsize) frames * ch;
+		gboolean alive;
+
+		self->src = scratch_reserve (self->src, &self->src_len, count, sizeof (gfloat));
+		memset (self->src, 0, count * sizeof (gfloat));
+		alive = lrg_audio_source_render (voice->source, self->src, frames, ch, self->rate);
+		for (f = 0; f < frames; f++)
+		{
+			gdouble gain = ramp_step (&voice->gain_ramp, &voice->gain);
+			gdouble pan = ramp_step (&voice->pan_ramp, &voice->pan);
+
+			for (c = 0; c < ch; c++)
+			{
+				gdouble s = (gdouble) self->src[f * ch + c];
+
+				if (!isfinite (s))
+					s = 0.0;
+				if (ch == 2)
+				{
+					if (c == 0 && pan > 0.0)
+						s *= 1.0 - pan;
+					else if (c == 1 && pan < 0.0)
+						s *= 1.0 + pan;
+				}
+				dest[f * ch + c] += s * gain;
+			}
+		}
+		return alive;
+	}
 
 	/*
 	 * Fast path, the common case: unpitched, unfiltered, centred, no ramp
@@ -1650,8 +1734,12 @@ render_block (LrgAudioMixer  *self,
 			if (g_array_index (self->ducks, Duck, j).trigger == i)
 				indegree[g_array_index (self->ducks, Duck, j).target]--;
 	}
-	for (k = 0; k < count; k++)
-		output[k] = (gfloat) CLAMP (buffers[k], -1.0, 1.0);
+	if (self->clip)
+		for (k = 0; k < count; k++)
+			output[k] = (gfloat) CLAMP (buffers[k], -1.0, 1.0);
+	else
+		for (k = 0; k < count; k++)
+			output[k] = (gfloat) buffers[k];
 }
 
 /*

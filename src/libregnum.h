@@ -349,6 +349,14 @@
 #include "audio/lrg-midi-output-alsa.h"
 #include "audio/lrg-midi-sequencer.h"
 #include "audio/lrg-foley.h"
+#include "audio/lrg-audio-source.h"
+#include "audio/lrg-limiter.h"
+#include "audio/lrg-distortion.h"
+#include "audio/lrg-equalizer.h"
+#include "audio/lrg-stereo-widener.h"
+#include "audio/lrg-filter.h"
+#include "audio/lrg-gate.h"
+#include "audio/lrg-compressor.h"
 
 /* Inventory module */
 #include "inventory/lrg-item-def.h"

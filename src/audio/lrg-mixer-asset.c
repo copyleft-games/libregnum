@@ -57,6 +57,13 @@
 #include "lrg-reverb.h"
 #include "lrg-chorus.h"
 #include "lrg-pitch-shift.h"
+#include "lrg-compressor.h"
+#include "lrg-limiter.h"
+#include "lrg-distortion.h"
+#include "lrg-equalizer.h"
+#include "lrg-stereo-widener.h"
+#include "lrg-filter.h"
+#include "lrg-gate.h"
 #include "../core/lrg-data-loader.h"
 #include "../physics/lrg-physics-layers.h"
 #include <yaml-glib.h>
@@ -549,6 +556,13 @@ ensure_registry_locked (void)
 	REG ("reverb", LRG_TYPE_REVERB);
 	REG ("chorus", LRG_TYPE_CHORUS);
 	REG ("pitch-shift", LRG_TYPE_PITCH_SHIFT);
+	REG ("compressor", LRG_TYPE_COMPRESSOR);
+	REG ("limiter", LRG_TYPE_LIMITER);
+	REG ("distortion", LRG_TYPE_DISTORTION);
+	REG ("equalizer", LRG_TYPE_EQUALIZER);
+	REG ("stereo-widener", LRG_TYPE_STEREO_WIDENER);
+	REG ("filter", LRG_TYPE_FILTER);
+	REG ("gate", LRG_TYPE_GATE);
 #undef REG
 }
 
