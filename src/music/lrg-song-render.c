@@ -700,6 +700,43 @@ lrg_song_engine_set_layer_gain (LrgSongEngine *engine,
 }
 
 void
+lrg_song_engine_play_note (LrgSongEngine *engine,
+                           guint          track,
+                           guint64        at,
+                           gint           key,
+                           gdouble        velocity,
+                           guint64        length)
+{
+	ETrack *t;
+	guint64 when;
+
+	if (track >= engine->tracks->len)
+		return;
+	t = g_ptr_array_index (engine->tracks, track);
+	if (t->instrument == NULL)
+		return;
+	when = MAX (at, engine->frame) - engine->origin;
+	lrg_instrument_schedule (t->instrument, when, LRG_INSTRUMENT_EVENT_NOTE_ON, key, velocity);
+	if (length > 0)
+		lrg_instrument_schedule (t->instrument, when + length, LRG_INSTRUMENT_EVENT_NOTE_OFF, key, 0.0);
+}
+
+void
+lrg_song_engine_release_note (LrgSongEngine *engine,
+                              guint          track,
+                              gint           key)
+{
+	ETrack *t;
+
+	if (track >= engine->tracks->len)
+		return;
+	t = g_ptr_array_index (engine->tracks, track);
+	if (t->instrument != NULL)
+		lrg_instrument_schedule (t->instrument, engine->frame - engine->origin, LRG_INSTRUMENT_EVENT_NOTE_OFF,
+		                         key, 0.0);
+}
+
+void
 lrg_song_engine_seek (LrgSongEngine *engine,
                       guint64        frame)
 {

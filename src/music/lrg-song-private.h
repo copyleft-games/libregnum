@@ -210,6 +210,24 @@ G_GNUC_INTERNAL void lrg_song_engine_set_layer_gain (LrgSongEngine *engine,
                                                      gdouble        gain,
                                                      gdouble        seconds);
 
+/*
+ * lrg_song_engine_play_note:
+ * Plays @key on track @track's instrument from song frame @at for
+ * @length frames (0: until a note-off), outside the song's own notes
+ * (stingers, previews).  Frames before the current one play at once.
+ */
+G_GNUC_INTERNAL void lrg_song_engine_play_note (LrgSongEngine *engine,
+                                                guint          track,
+                                                guint64        at,
+                                                gint           key,
+                                                gdouble        velocity,
+                                                guint64        length);
+
+/* releases @key on track @track's instrument now */
+G_GNUC_INTERNAL void lrg_song_engine_release_note (LrgSongEngine *engine,
+                                                   guint          track,
+                                                   gint           key);
+
 /* the instrument of track @track (NULL for audio tracks), for live notes */
 G_GNUC_INTERNAL LrgInstrument *lrg_song_engine_get_instrument (LrgSongEngine *engine,
                                                                guint          track);

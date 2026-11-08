@@ -363,6 +363,7 @@
 #include "music/lrg-foley-instrument.h"
 #include "music/lrg-song.h"
 #include "music/lrg-midi-file.h"
+#include "music/lrg-song-player.h"
 #include "audio/lrg-limiter.h"
 #include "audio/lrg-distortion.h"
 #include "audio/lrg-equalizer.h"
