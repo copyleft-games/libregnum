@@ -750,8 +750,10 @@ guint lrg_nav_bake_collect_world (LrgNavBake     *self,
  * lrg_nav_bake_configure(), lrg_nav_bake_collect_world() (with @world),
  * the explicit triangles, then lrg_nav_poly_mesh_bake_cached(); last the
  * regions smaller than #LrgNavBake:min-region-area are disabled.  The
- * same settings and geometry always give the same mesh.  On error the
- * mesh keeps its previous bake.
+ * same settings and geometry always give the same mesh.  A positive
+ * tile extent (lrg_nav_bake_set_tile_extent()) splits the X/Z bounds
+ * into squares and unions those bakes; extent 0 is this one bake.  On
+ * error the mesh keeps its previous bake.
  *
  * Returns: %TRUE on success
  *
@@ -793,5 +795,45 @@ LrgNavPolyMesh * lrg_nav_bake_bake (LrgNavBake           *self,
  */
 LRG_AVAILABLE_IN_ALL
 guint lrg_nav_bake_get_last_triangle_count (LrgNavBake *self);
+
+/**
+ * lrg_nav_bake_set_tile_extent:
+ * @self: an #LrgNavBake
+ * @extent: tile size in metres on X and Z, or 0 for one bake
+ *
+ * When @extent is greater than zero and bounds are set,
+ * lrg_nav_bake_bake_into() splits those bounds into squares of this
+ * size (Y stays the full range), bakes each square and unions the
+ * walkable polygons. Empty squares are skipped. 0 keeps the single
+ * bake. The value is not written to `.rnav`.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_nav_bake_set_tile_extent (LrgNavBake *self,
+                                   gfloat      extent);
+
+/**
+ * lrg_nav_bake_get_tile_extent:
+ * @self: an #LrgNavBake
+ *
+ * Returns: the tile extent in metres, or 0 for one bake
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gfloat lrg_nav_bake_get_tile_extent (LrgNavBake *self);
+
+/**
+ * lrg_nav_bake_get_last_tile_count:
+ * @self: an #LrgNavBake
+ *
+ * Returns: how many tiles the last bake covered, including empty ones
+ *   (1 when the extent is 0)
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+guint lrg_nav_bake_get_last_tile_count (LrgNavBake *self);
 
 G_END_DECLS

@@ -468,4 +468,50 @@ void                lrg_weather_effect_set_level            (LrgWeatherEffect *s
 LRG_AVAILABLE_IN_ALL
 gfloat              lrg_weather_effect_get_full_intensity   (LrgWeatherEffect *self);
 
+/**
+ * lrg_weather_effect_set_viewport:
+ * @self: a #LrgWeatherEffect
+ * @width: render-target width in pixels, or 0 to unset
+ * @height: render-target height in pixels, or 0 to unset
+ *
+ * Stores the framebuffer the 2D pass should cover. The weather manager
+ * sets this from lrg_weather_manager_set_render_size() before each
+ * render, including when no window exists. Zero on either axis unsets
+ * it, and drawing then falls back to the live render target.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_set_viewport         (LrgWeatherEffect *self,
+                                                             gint              width,
+                                                             gint              height);
+
+/**
+ * lrg_weather_effect_get_viewport:
+ * @self: a #LrgWeatherEffect
+ * @width: (out) (nullable): stored width, 0 when unset
+ * @height: (out) (nullable): stored height, 0 when unset
+ *
+ * Reads the viewport stored by lrg_weather_effect_set_viewport().
+ * Headless.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_get_viewport         (LrgWeatherEffect *self,
+                                                             gint             *width,
+                                                             gint             *height);
+
+/**
+ * lrg_weather_effect_resolve_viewport:
+ * @self: a #LrgWeatherEffect
+ * @width: (out) (nullable): width to draw, or 0
+ * @height: (out) (nullable): height to draw, or 0
+ *
+ * The size a 2D overlay should use: the stored viewport when both axes
+ * are positive, otherwise the live render target when a window is
+ * ready, otherwise 0. Headless callers observe 0 until a viewport is
+ * stored.
+ */
+LRG_AVAILABLE_IN_ALL
+void                lrg_weather_effect_resolve_viewport     (LrgWeatherEffect *self,
+                                                             gint             *width,
+                                                             gint             *height);
+
 G_END_DECLS

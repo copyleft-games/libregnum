@@ -38,6 +38,7 @@ PUBLIC_HEADERS := \
 	src/core/lrg-asset-meta.h \
 	src/core/lrg-asset-manager.h \
 	src/core/lrg-asset-pack.h \
+	src/core/lrg-pack-writer.h \
 	src/core/lrg-event.h \
 	src/core/lrg-event-listener.h \
 	src/core/lrg-event-bus.h \
@@ -148,6 +149,7 @@ PUBLIC_HEADERS := \
 	src/paint/lrg-paint-icons.h \
 	src/paint/lrg-paint-font.h \
 	src/ui/lrg-ui-event.h \
+	src/ui/lrg-ui-author.h \
 	src/ui/lrg-widget.h \
 	src/ui/lrg-container.h \
 	src/ui/lrg-label.h \
@@ -215,6 +217,7 @@ PUBLIC_HEADERS := \
 	src/ui/lrg-drop-target.h \
 	src/ui/lrg-property-source.h \
 	src/ui/lrg-property-grid.h \
+	src/ui/lrg-inspector-nested.h \
 	src/ui/lrg-vector-edit.h \
 	src/ui/lrg-curve-edit.h \
 	src/ui/lrg-gradient-edit.h \
@@ -290,6 +293,7 @@ PUBLIC_HEADERS := \
 	src/i18n/lrg-locale.h \
 	src/i18n/lrg-csv.h \
 	src/i18n/lrg-localization.h \
+	src/i18n/lrg-po.h \
 	src/pathfinding/lrg-nav-cell.h \
 	src/pathfinding/lrg-path.h \
 	src/pathfinding/lrg-nav-grid.h \
@@ -839,6 +843,7 @@ SOURCES := \
 	src/core/lrg-asset-meta.c \
 	src/core/lrg-asset-manager.c \
 	src/core/lrg-asset-pack.c \
+	src/core/lrg-pack-writer.c \
 	src/core/lrg-event.c \
 	src/core/lrg-event-listener.c \
 	src/core/lrg-event-bus.c \
@@ -950,6 +955,7 @@ SOURCES := \
 	src/paint/lrg-paint-icons.c \
 	src/paint/lrg-paint-font.c \
 	src/ui/lrg-ui-event.c \
+	src/ui/lrg-ui-author.c \
 	src/ui/lrg-widget.c \
 	src/ui/lrg-container.c \
 	src/ui/lrg-label.c \
@@ -1017,6 +1023,7 @@ SOURCES := \
 	src/ui/lrg-drop-target.c \
 	src/ui/lrg-property-source.c \
 	src/ui/lrg-property-grid.c \
+	src/ui/lrg-inspector-nested.c \
 	src/ui/lrg-vector-edit.c \
 	src/ui/lrg-curve-edit.c \
 	src/ui/lrg-gradient-edit.c \
@@ -1094,6 +1101,7 @@ SOURCES := \
 	src/i18n/lrg-locale.c \
 	src/i18n/lrg-csv.c \
 	src/i18n/lrg-localization.c \
+	src/i18n/lrg-po.c \
 	src/pathfinding/lrg-nav-cell.c \
 	src/pathfinding/lrg-path.c \
 	src/pathfinding/lrg-nav-grid.c \
@@ -1763,6 +1771,7 @@ PUBLIC_HEADERS += \
 	src/level/lrg-node.h \
 	src/level/lrg-level.h \
 	src/level/lrg-level-serializer.h \
+	src/level/lrg-level-stream.h \
 	src/level/lrg-level-instantiate.h \
 	src/level/lrg-prefab.h
 SOURCES += \
@@ -1775,6 +1784,7 @@ SOURCES += \
 	src/level/lrg-node.c \
 	src/level/lrg-level.c \
 	src/level/lrg-level-serializer.c \
+	src/level/lrg-level-stream.c \
 	src/level/lrg-level-instantiate.c \
 	src/level/lrg-prefab.c
 
@@ -1822,13 +1832,24 @@ PUBLIC_HEADERS += \
 	src/editor/lrg-editor-play-session.h \
 	src/editor/lrg-editor-viewport-nav.h \
 	src/editor/lrg-editor-vcs.h \
+	src/editor/lrg-transform-tools.h \
+	src/editor/lrg-level-merge.h \
+	src/editor/lrg-collab.h \
+	src/editor/lrg-editor-scenes.h \
+	src/editor/lrg-game-view.h \
 	src/editor/lrg-editor-document.h \
 	src/editor/lrg-lsp-client.h \
 	src/editor/lrg-editor-script-api.h \
 	src/editor/lrg-editor-settings-migrate.h \
 	src/editor/lrg-editor-node-model.h \
 	src/editor/lrg-editor-node-source.h \
-	src/editor/lrg-asset-source.h
+	src/editor/lrg-asset-source.h \
+	src/editor/lrg-asset-refs.h \
+	src/editor/lrg-asset-importer.h \
+	src/editor/lrg-editor-plugin.h \
+	src/editor/lrg-project-config.h \
+	src/editor/lrg-project-template.h \
+	src/editor/lrg-editor-export.h
 SOURCES += \
 	src/editor/lrg-scene-import.c \
 	src/editor/lrg-editor-command.c \
@@ -1849,10 +1870,23 @@ SOURCES += \
 	src/editor/lrg-editor-validate.c \
 	src/editor/lrg-asset-database.c \
 	src/editor/lrg-project.c \
+	src/editor/lrg-asset-refs.c \
+	src/editor/lrg-asset-importer.c \
+	src/editor/lrg-fbx-ufbx.c \
+	deps/ufbx/ufbx.c \
+	src/editor/lrg-editor-plugin.c \
+	src/editor/lrg-project-config.c \
+	src/editor/lrg-project-template.c \
+	src/editor/lrg-editor-export.c \
 	src/editor/lrg-editor-view-state.c \
 	src/editor/lrg-editor-play-session.c \
 	src/editor/lrg-editor-viewport-nav.c \
 	src/editor/lrg-editor-vcs.c \
+	src/editor/lrg-transform-tools.c \
+	src/editor/lrg-level-merge.c \
+	src/editor/lrg-collab.c \
+	src/editor/lrg-editor-scenes.c \
+	src/editor/lrg-game-view.c \
 	src/editor/lrg-editor-document.c \
 	src/editor/lrg-lsp-client.c \
 	src/editor/lrg-editor-script-api.c \
@@ -1915,6 +1949,7 @@ PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-material-editor.h \
 	src/editor/ui/data/lrg-editor-post-stack-editor.h \
 	src/editor/ui/lrg-editor-sources-panel.h \
+	src/editor/ui/lrg-editor-m10-panels.h \
 	src/editor/ui/lrg-editor-palette.h \
 	src/editor/ui/lrg-editor-preferences.h \
 	src/editor/ui/lrg-editor-app.h
@@ -1973,6 +2008,7 @@ SOURCES += \
 	src/editor/ui/data/lrg-editor-material-editor.c \
 	src/editor/ui/data/lrg-editor-post-stack-editor.c \
 	src/editor/ui/lrg-editor-sources-panel.c \
+	src/editor/ui/lrg-editor-m10-panels.c \
 	src/editor/ui/lrg-editor-palette.c \
 	src/editor/ui/lrg-editor-preferences.c \
 	src/editor/ui/lrg-editor-app-actions.c \
@@ -2074,6 +2110,7 @@ ifeq ($(BUILD_GIR),1)
 endif
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
+	@$(MAKE) --no-print-directory lrgpack
 ifeq ($(BUILD_EDITOR_UI),1)
 	@$(MAKE) --no-print-directory lrgeditor
 endif
@@ -2450,6 +2487,17 @@ $(LRGLDR_BIN): src/launcher/lrgldr.c $(LIBOUTDIR)/$(LIB_SHARED)
 	@$(MKDIR_P) $(dir $@)
 	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
 
+# lrgpack: project packer. Same shared-library linkage as lrgldr.
+LRGPACK_BIN := $(BUILDDIR)/lrgpack$(EXE_EXT)
+
+.PHONY: lrgpack
+lrgpack: lib-shared $(LRGPACK_BIN)
+
+$(LRGPACK_BIN): src/launcher/lrgpack.c $(LIBOUTDIR)/$(LIB_SHARED)
+	$(call print_link,lrgpack)
+	@$(MKDIR_P) $(dir $@)
+	@$(CC) $(LRGLDR_CFLAGS) -o $@ $< $(LRGLDR_LIBS)
+
 # =============================================================================
 # lrgeditor (the level / scene / world editor application)
 # =============================================================================
@@ -2584,7 +2632,7 @@ uninstall-skills:
 test-emacs: lrgeditor
 	@if command -v emacs >/dev/null 2>&1; then \
 		emacs -Q --batch -L editors/emacs --eval '(setq byte-compile-error-on-warn t)' \
-			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el && \
+			-f batch-byte-compile editors/emacs/libregnum.el editors/emacs/libregnum-tests.el editors/emacs/libregnum-dape.el && \
 		LRG_EDITOR=$(LRG_EDITOR_BIN) emacs -Q --batch -L editors/emacs -l libregnum-tests.el \
 			-f ert-run-tests-batch-and-exit < /dev/null; \
 		status=$$?; rm -f editors/emacs/*.elc; exit $$status; \
@@ -2635,13 +2683,13 @@ $(REEL_CLI_BIN): src/reel-cli/lrg-reel-cli.c $(LIBOUTDIR)/$(LIB_SHARED)
 
 # Every public symbol of the paint, spring and retained UI modules must
 # be mentioned somewhere under docs/ (org pages)
-DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-script-reloader.h src/scripting/lrg-dap-server.h src/scripting/lrg-scripting-graph.h src/scripting/lrg-vscript-program.h src/debug/lrg-gpu-timer.h src/debug/lrg-frame-capture.h src/debug/lrg-memory-profiler.h src/net/lrg-net-stats.h $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h \
+DOCS_CHECK_HEADERS := src/scripting/lrg-script-debugger.h src/scripting/lrg-script-reloader.h src/scripting/lrg-dap-server.h src/scripting/lrg-scripting-graph.h src/scripting/lrg-vscript-program.h src/debug/lrg-gpu-timer.h src/debug/lrg-frame-capture.h src/debug/lrg-memory-profiler.h src/net/lrg-net-stats.h $(wildcard src/paint/*.h) $(wildcard src/ui/*.h) src/tween/lrg-spring.h src/i18n/lrg-po.h \
 	$(filter-out %-private.h,$(wildcard src/level/*.h)) src/core/lrg-math3d.h \
 	$(wildcard src/editor/*.h) $(wildcard src/editor/ui/*.h) $(wildcard src/editor/ui/data/*.h) \
 	src/debug/lrg-debug-draw.h src/graphics/lrg-camera.h src/graphics/lrg-static-batch.h src/graphics/lrg-billboard-batch.h src/graphics/lrg-terrain.h src/lighting/lrg-shadow-renderer.h src/particles/lrg-particle-system.h src/particles/lrg-particle-billboard-renderer.h \
 	src/world3d/lrg-entity3d.h src/world3d/lrg-world3d.h src/ecs/lrg-component.h \
 	$(wildcard src/world3d/components/*.h) \
-	src/core/lrg-asset-meta.h src/core/lrg-asset-manager.h \
+	src/core/lrg-asset-meta.h src/core/lrg-pack-writer.h src/core/lrg-asset-manager.h \
 	$(wildcard src/ai/*.h) \
 	src/graphics/lrg-light-set.h src/scene/lrg-material3d.h src/postprocess/lrg-post-processor.h src/postprocess/lrg-post-effect.h \
 	src/pathfinding/lrg-nav-bake.h src/pathfinding/lrg-nav-agent.h src/ai/lrg-bt-asset.h src/ai/lrg-logic-machine.h src/particles/lrg-particle-asset.h src/particles/lrg-particle-ribbon-renderer.h src/particles/lrg-particle-mesh-renderer.h src/particles/lrg-gpu-particles.h src/core/lrg-color-gradient.h src/weather/lrg-weather-asset.h src/graphics/lrg-terrain-asset.h src/graphics/lrg-terrain-brush.h src/graphics/lrg-foliage.h src/graphics/lrg-water-body.h src/audio/lrg-mixer-asset.h src/tilemap/lrg-rule-tile.h src/atlas/lrg-sprite-animation.h src/world3d/components/lrg-nav-agent-component.h src/world3d/components/lrg-ai-component.h src/world3d/components/lrg-particle-component.h src/world3d/components/lrg-terrain-component.h src/world3d/components/lrg-foliage-component.h src/world3d/components/lrg-water-component.h \
@@ -2705,8 +2753,10 @@ endif
 	# Install the generic loader binary (needs the shared library)
 ifeq ($(BUILD_SHARED),1)
 	@$(MAKE) --no-print-directory lrgldr
+	@$(MAKE) --no-print-directory lrgpack
 	@$(MKDIR_P) $(DESTDIR)$(BINDIR)
 	$(INSTALL_PROGRAM) $(LRGLDR_BIN) $(DESTDIR)$(BINDIR)/
+	$(INSTALL_PROGRAM) $(LRGPACK_BIN) $(DESTDIR)$(BINDIR)/
 ifeq ($(BUILD_EDITOR_UI),1)
 	@$(MAKE) --no-print-directory lrgeditor
 	$(INSTALL_PROGRAM) $(LRG_EDITOR_BIN) $(DESTDIR)$(BINDIR)/
@@ -2754,6 +2804,7 @@ uninstall:
 	$(RMDIR) $(DESTDIR)$(INCLUDEDIR)/libregnum
 	$(RM) $(DESTDIR)$(PKGCONFIGDIR)/$(PC_FILE)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgldr$(EXE_EXT)
+	$(RM) $(DESTDIR)$(BINDIR)/lrgpack$(EXE_EXT)
 	$(RM) $(DESTDIR)$(BINDIR)/lrgeditor$(EXE_EXT)
 	$(RM) $(DESTDIR)$(DATADIR)/emacs/site-lisp/libregnum.el
 	$(RM) $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-macchiato.yaml $(DESTDIR)$(DATADIR)/libregnum/editor/themes/catppuccin-frappe.yaml
@@ -2816,6 +2867,21 @@ $(OBJDIR)/src/%.o: src/%.c | $(OBJDIR)
 	@$(MKDIR_P) $(dir $@)
 	$(call print_compile,$<)
 	@$(CC) $(LIB_CFLAGS) -MMD -MP -c -o $@ $<
+
+# Vendored ufbx is C99 (MIT, deps/ufbx/LICENSE). The wrapper includes
+# ufbx.h, so it cannot be gnu89 either. -std=gnu11 is last so it wins
+# over BASE_CFLAGS, and -w is last so the third-party translation unit
+# is not held to -Werror. Do not append these to LIB_CFLAGS: a target
+# that references $(LIB_CFLAGS) in its own LIB_CFLAGS assignment recurses.
+$(OBJDIR)/src/editor/lrg-fbx-ufbx.o: src/editor/lrg-fbx-ufbx.c | $(OBJDIR)
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -std=gnu11 -w -I$(CURDIR)/deps/ufbx -MMD -MP -c -o $@ $<
+
+$(OBJDIR)/deps/ufbx/ufbx.o: deps/ufbx/ufbx.c | $(OBJDIR)
+	@$(MKDIR_P) $(dir $@)
+	$(call print_compile,$<)
+	@$(CC) $(LIB_CFLAGS) -std=gnu11 -w -I$(CURDIR)/deps/ufbx -MMD -MP -c -o $@ $<
 
 # Header dependencies: the compiler writes one .d file per object (-MMD -MP
 # above, system headers left out), so editing a header (a private one included)

@@ -1,0 +1,79 @@
+#+title: Visual Scripting
+#+description: Build and run a .rvscript program, in C and in the editor
+#+authors: Zach Podbielniak
+#+categories: libregnum guides
+#+created: 2026-11-07T18:40:00-05:00
+#+updated: 2026-11-07T18:40:00-05:00
+#+version: 1.0
+
+* Visual Scripting
+:PROPERTIES:
+:CUSTOM_ID: guide-visual-scripting
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:../modules/scripting/visual-scripting.org][Visual Scripting]]*
+#+end_quote
+
+A =.rvscript= file is a graph of events, statements and pure value nodes. The editor shows it as a node graph or as blocks. A game runs it with =LrgScriptingGraph=, which is a =LrgScripting= backend: load the text, and =event.start= has already run.
+
+** A program in C
+:PROPERTIES:
+:CUSTOM_ID: in-c
+:END:
+
+Create the program, add nodes on the main graph, set literals, connect pins, write the canonical YAML, then load that text into a graph.
+
+#+begin_src C
+g_autoptr(LrgVscriptProgram) program = lrg_vscript_program_new ();
+g_autoptr(GError) error = NULL;
+LrgVscriptGraph *graph = lrg_vscript_program_get_main (program);
+LrgVscriptNode *log_node;
+
+lrg_vscript_graph_create_node (graph, "event.start", "start", 40, 40, &error);
+lrg_vscript_graph_create_node (graph, "math.add", "sum", 40, 160, &error);
+log_node = lrg_vscript_graph_create_node (graph, "debug.log", "log", 280, 40, &error);
+lrg_vscript_node_set_input (lrg_vscript_graph_get_node (graph, "sum"), "a", g_variant_new_double (2));
+lrg_vscript_node_set_input (lrg_vscript_graph_get_node (graph, "sum"), "b", g_variant_new_double (3));
+lrg_vscript_program_connect (program, NULL, "start", "then", "log", "exec", &error);
+lrg_vscript_program_connect (program, NULL, "sum", "result", "log", "text", &error);
+#+end_src
+
+=lrg_vscript_node_set_input()= consumes the floating variant. =lrg_vscript_program_connect()= checks types and replaces a data input's previous link. =lrg_vscript_program_to_data()= is the bytes to save. =lrg_vscript_program_new_from_data()= reads them back, and a second =to_data= matches the first.
+
+#+begin_src C
+g_autoptr(LrgScriptingGraph) running = lrg_scripting_graph_new ();
+g_autofree gchar *text = lrg_vscript_program_to_data (program, &error);
+GValue dt = G_VALUE_INIT;
+
+lrg_scripting_load_string (LRG_SCRIPTING (running), "hello", text, &error);
+g_value_init (&dt, G_TYPE_DOUBLE);
+g_value_set_double (&dt, 1.0 / 60.0);
+lrg_scripting_call_function (LRG_SCRIPTING (running), "update", NULL, 1, &dt, &error);
+g_value_unset (&dt);
+#+end_src
+
+=load_string= dispatches =event.start=, so the log already holds the sum (=5=) before =update=. =lrg_scripting_graph_dup_log()= returns those lines. =lrg_scripting_graph_get_steps()= is only the last dispatch; add it up if you need a total. =examples/visual-script.c= is this program as a small executable.
+
+Variables are =lrg_vscript_program_set_variable()= with a type name and a default. The graph copies them in when it adopts the program. =lrg_scripting_graph_dup_variables()= reads them back as an =a{sv}=. Object values are left out.
+
+** In the editor
+:PROPERTIES:
+:CUSTOM_ID: in-the-editor
+:END:
+
+Assets > New Visual Script, or =lrgeditorctl vscript create scripts/hello.rvscript=. The file opens on the next =vscript.get= or =vscript.open=. Add a node with =vscript add-node math.add id=sum x=40 y=200=, connect with =vscript connect sum.result log.text=, and save with =vscript save=. Each of those edits is one undo step. =lrgeditorctl call data.undo '{"path":"scripts/hello.rvscript"}'= reverts the last one.
+
+=vscript run= executes a copy. It does not mark the document dirty and it does not need a window. =frames= and =dt= advance time after start. =variables= overlays that copy. =vscript validate= is the error list. =view=blocks= on =vscript open= switches the same file to blocks, which is also one undo step.
+
+Breakpoints are per node id and file path: =vscript breakpoint node=start enabled=true=, then =vscript continue=. =vscript live= reports instances that were loaded from that path. A graph loaded with =lrg_scripting_load_string()= has no path, so it does not appear there.
+
+** Rules that keep a graph deterministic
+:PROPERTIES:
+:CUSTOM_ID: rules
+:END:
+
+Do not read the wall clock inside a graph. Pass =dt= into =update=. Seed randomness with =lrg_vscript_program_set_seed()= before you save, and the same calls produce the same log. A dispatch that would loop forever stops at the step budget (=lrg_vscript_program_set_step_budget()=, default 100000) and returns =LRG_VSCRIPT_ERROR_BUDGET=.
+
+Subgraphs are functions of the program. =vscript add-subgraph name=util= creates =subgraph.input= and =subgraph.output=. Interface pins are =inputs= and =outputs= arrays of ={name, type}=. The main graph calls that subgraph by the catalogue's subgraph-call kind.
+
+The catalogue is closed. =vscript node-types query=math.add= lists what you can place. GI calls need a build with girepository; =vscript gi-search query=Object limit=5= says =available: false= when it does not have one.

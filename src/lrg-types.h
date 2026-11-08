@@ -57,6 +57,9 @@ typedef struct _LrgAssetManagerClass  LrgAssetManagerClass;
 /* LrgAssetPack is a final type - no Class forward declaration needed */
 typedef struct _LrgAssetPack       LrgAssetPack;
 
+/* LrgAssetMeta is a final type - no Class forward declaration needed */
+typedef struct _LrgAssetMeta       LrgAssetMeta;
+
 /* Event system interfaces */
 typedef struct _LrgEvent                  LrgEvent;
 typedef struct _LrgEventInterface         LrgEventInterface;
@@ -1442,6 +1445,19 @@ typedef struct _LrgAssetDatabase  LrgAssetDatabase;
 
 /* LrgProject is a final type - no Class forward declaration needed */
 typedef struct _LrgProject  LrgProject;
+
+/* Pack writer, reference index, importers, plugins, project extras (0.9.0) */
+typedef struct _LrgPackWriter              LrgPackWriter;
+typedef struct _LrgAssetRefs               LrgAssetRefs;
+typedef struct _LrgAssetImporter           LrgAssetImporter;
+typedef struct _LrgAssetImporterClass      LrgAssetImporterClass;
+typedef struct _LrgAssetImporterRegistry   LrgAssetImporterRegistry;
+typedef struct _LrgEditorPluginManager     LrgEditorPluginManager;
+typedef struct _LrgProjectConfig           LrgProjectConfig;
+typedef struct _LrgLevelStream             LrgLevelStream;
+typedef struct _LrgCollabSession           LrgCollabSession;
+typedef struct _LrgEditorScenes            LrgEditorScenes;
+typedef struct _LrgUiAnimation             LrgUiAnimation;
 
 /* LrgEditorApp is a final type - no Class forward declaration needed */
 typedef struct _LrgEditorApp  LrgEditorApp;

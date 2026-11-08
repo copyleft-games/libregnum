@@ -66,6 +66,7 @@
 #include "../lrg-editor-command.h"
 #include "../../tilemap/lrg-rule-tile.h"
 #include "../../tilemap/lrg-tilemap-layer.h"
+#include "../../ui/lrg-ui-actions.h"
 #include "../../ui/lrg-label.h"
 #include "../../ui/lrg-hbox.h"
 #include "../../ui/lrg-vbox.h"
@@ -172,6 +173,12 @@ struct _LrgEditorTilesPanel
 	guint                 gesture_layer;
 	guint                *gesture_cells;
 	gsize                 gesture_n;
+
+	/* editor.tilemap.flip-y shares Y with tool.toggle-snap. The window
+	 * rebinds every action with lrg_canvas_add_shortcut(), which drops
+	 * the other binding of the chord, so the panel puts flip-y back. */
+
+	gchar               **flip_accels;  /* chords this panel last ensured */
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorTilesPanel, lrg_editor_tiles_panel, LRG_TYPE_CONTAINER)
@@ -2288,6 +2295,110 @@ on_editor_changed (LrgEditorTilesPanel *self)
 	self->dirty = TRUE;
 }
 
+/* The action the window binds as "editor." + the registry id */
+#define FLIP_Y_ACTION "editor.tilemap.flip-y"
+
+/* Tried before tool.toggle-snap, which the window binds at priority 0 */
+#define FLIP_Y_PRIORITY (10)
+
+/* chord_equal: two accelerator spellings of the same key and modifiers */
+static gboolean
+chord_equal (const gchar *a,
+             const gchar *b)
+{
+	GrlKey            ka;
+	GrlKey            kb;
+	LrgInputModifiers ma;
+	LrgInputModifiers mb;
+
+	if (a == NULL || b == NULL)
+		return a == b;
+	if (!lrg_accel_parse (a, &ka, &ma) || !lrg_accel_parse (b, &kb, &mb))
+		return g_strcmp0 (a, b) == 0;
+	return ka == kb && ma == mb;
+}
+
+/* list_has: @action is one of the names in a NULL-terminated list */
+static gboolean
+list_has (gchar       **names,
+          const gchar  *action)
+{
+	guint i;
+
+	if (names == NULL)
+		return FALSE;
+	for (i = 0; names[i] != NULL; i++)
+		if (g_strcmp0 (names[i], action) == 0)
+			return TRUE;
+	return FALSE;
+}
+
+/*
+ * tiles_ensure_flip_shortcut:
+ *
+ * Puts editor.tilemap.flip-y back on every chord the registry currently
+ * gives it, at FLIP_Y_PRIORITY, without disturbing another action that
+ * already shares the key. Chords this panel added and the user has since
+ * unbound are removed. The window's shortcut sync uses
+ * lrg_canvas_add_shortcut(), which replaces the whole chord, so this runs
+ * from an idle (the run loop iterates the main context before the frame
+ * that reads keys) and again from step.
+ */
+static void
+tiles_ensure_flip_shortcut (LrgEditorTilesPanel *self)
+{
+	LrgCanvas        *canvas;
+	LrgEditorActions *actions;
+	g_auto(GStrv)     accels = NULL;
+	guint             i;
+
+	if (self->app == NULL)
+		return;
+	canvas = lrg_editor_app_get_canvas (self->app);
+	actions = lrg_editor_app_get_actions (self->app);
+	if (canvas == NULL || actions == NULL)
+		return;
+
+	accels = lrg_editor_actions_get_accels (actions, "tilemap.flip-y");
+
+	if (self->flip_accels != NULL)
+	{
+		for (i = 0; self->flip_accels[i] != NULL; i++)
+		{
+			gboolean still = FALSE;
+			guint    j;
+
+			if (accels != NULL)
+			{
+				for (j = 0; accels[j] != NULL; j++)
+					if (chord_equal (self->flip_accels[i], accels[j]))
+						still = TRUE;
+			}
+			if (!still)
+				lrg_canvas_remove_shortcut_for_action (canvas, self->flip_accels[i],
+				                                       FLIP_Y_ACTION, NULL);
+		}
+	}
+
+	if (accels != NULL)
+	{
+		for (i = 0; accels[i] != NULL; i++)
+		{
+			g_auto(GStrv) bound = NULL;
+
+			if (accels[i][0] == '\0')
+				continue;
+			bound = lrg_canvas_list_shortcut_actions (canvas, accels[i]);
+			if (!list_has (bound, FLIP_Y_ACTION))
+				lrg_canvas_add_shortcut_full (canvas, accels[i], FLIP_Y_ACTION, NULL,
+				                              FLIP_Y_PRIORITY);
+		}
+	}
+
+	g_strfreev (self->flip_accels);
+	self->flip_accels = g_strdupv (accels);
+}
+
 /* ==========================================================================
  * Widget
  * ========================================================================== */
@@ -2299,6 +2410,12 @@ lrg_editor_tiles_panel_step (LrgWidget *widget,
 	LrgEditorTilesPanel *self = LRG_EDITOR_TILES_PANEL (widget);
 	LrgNode             *node = (self->app != NULL) ? editor_tiles_target (self->app) : NULL;
 	LrgEditorTileTool    tool = lrg_editor_view_state_get_tile_tool (self->view_state);
+
+	/* The window sync stacks shared keys. This puts flip-y back if a
+	 * rebind replaced the chord. A permanent idle cannot do it: the
+	 * frame loop drains the main context until it is empty, and an
+	 * idle that stays ready never lets a frame run. */
+	tiles_ensure_flip_shortcut (self);
 
 	/* Cheap checks for state other code changes without a signal */
 	if (node != self->target ||
@@ -2366,6 +2483,7 @@ lrg_editor_tiles_panel_finalize (GObject *object)
 	LrgEditorTilesPanel *self = LRG_EDITOR_TILES_PANEL (object);
 
 	g_free (self->target_guid);
+	g_strfreev (self->flip_accels);
 	g_free (self->layers_sig);
 	g_free (self->rules_sig);
 	g_free (self->palette_path);
@@ -3274,10 +3392,12 @@ lrg_editor_tiles_panel_new (LrgEditorApp *app)
 	                        has_grid, NULL, self);
 	lrg_editor_actions_add (actions, "tilemap.flip-x", "Flip Tile Horizontally", "Tilemap", "X", a_flip_x, painting,
 	                        NULL, self);
-	/* Y is shared with tool.toggle-snap: the canvas tries the bindings
-	 * of a key in order and fires the first ENABLED one, and this one is
-	 * only enabled while painting tiles, so Y flips the brush then and
-	 * toggles snapping everywhere else. Shift+X stays as an alternative */
+	/* Y is shared with tool.toggle-snap. The canvas tries the bindings
+	 * of a key in priority order and fires the first ENABLED one, and
+	 * this one is only enabled while painting tiles, so Y flips the
+	 * brush then and toggles snapping everywhere else. Shift+X stays
+	 * as an alternative. The window sync stacks both at priority 0;
+	 * step() also re-asserts this one at a higher priority. */
 	lrg_editor_actions_add (actions, "tilemap.flip-y", "Flip Tile Vertically", "Tilemap", "Y|Shift+X", a_flip_y,
 	                        painting, NULL, self);
 	lrg_editor_actions_add (actions, "tilemap.rotate", "Rotate Tile Clockwise", "Tilemap", "Z", a_rotate, painting,

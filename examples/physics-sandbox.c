@@ -7,14 +7,15 @@
  * A 3D physics playground built only from LrgEntity3D components: every
  * object is an entity with an LrgMeshRendererComponent (what you see), an
  * LrgRigidBodyComponent (the body) and LrgColliderComponent3D (its
- * shapes); joints are LrgJointComponents.  LrgWorld3D owns the
+ * shapes); joints are LrgJointComponents.  The ragdoll is an
+ * LrgRagdoll built from a skeleton.  LrgWorld3D owns the
  * LrgDynamicsWorld and steps it in its fixed updates, so the game loop is
  * lrg_world3d_step() + LrgWorld3DRenderer, as in any other 3D game.
  *
  * The scene:
  *   - a box pyramid and a tall tower to knock over,
  *   - two ramps with balls and a crate sliding down,
- *   - a ragdoll made of box limbs and swing-twist / hinge joints,
+ *   - a passive ragdoll (LrgPhysicsAsset from a short skeleton),
  *   - a chain of ten links hanging from a fixed point (point joints),
  *   - a breakable wall: bricks welded by fixed joints with a break force,
  *   - a cloth flag (LrgCloth, position-based dynamics) waving in the wind.
@@ -25,7 +26,8 @@
  *   F1 shapes  F2 contacts  F3 AABBs  F4 joints   (physics debug draw)
  *   G  wind on/off   P  pause   R  rebuild the scene   Esc  quit
  *
- * Run with --help for options (--screenshot for an unattended capture).
+ * Run with --help for options (--screenshot for an unattended capture,
+ * --self-test builds the scene without a window).
  */
 
 #include <libregnum.h>
@@ -65,6 +67,7 @@ static const gchar *license_text =
 typedef struct
 {
 	LrgWorld3D   *world;
+	LrgRagdoll   *ragdoll;
 	LrgCamera3D  *camera;
 	LrgCloth     *flag;
 	GPtrArray    *shots;          /* LrgEntity3D, borrowed (world owns them) */
@@ -195,7 +198,6 @@ static const gfloat COL_GREY[3]   = { 0.55f, 0.56f, 0.58f };
 static const gfloat COL_SAND[3]   = { 0.86f, 0.72f, 0.48f };
 static const gfloat COL_TEAL[3]   = { 0.20f, 0.62f, 0.66f };
 static const gfloat COL_BRICK[3]  = { 0.72f, 0.30f, 0.22f };
-static const gfloat COL_SKIN[3]   = { 0.93f, 0.76f, 0.62f };
 static const gfloat COL_CLOTHC[3] = { 0.25f, 0.35f, 0.75f };
 static const gfloat COL_STEEL[3]  = { 0.70f, 0.72f, 0.78f };
 static const gfloat COL_GOLD[3]   = { 0.95f, 0.75f, 0.25f };
@@ -350,78 +352,74 @@ build_chain (Sandbox *sb)
 	}
 }
 
+/* Pelvis at the origin; the root transform stands the doll in the scene. */
+static const struct
+{
+	const gchar *name;
+	gint         parent;
+	gfloat       x;
+	gfloat       y;
+	gfloat       z;
+} ragdoll_bones[] = {
+	{ "pelvis", -1, 0.0f, 0.0f, 0.0f },
+	{ "spine", 0, 0.0f, 0.40f, 0.0f },
+	{ "head", 1, 0.0f, 0.35f, 0.0f },
+	{ "thigh_l", 0, 0.12f, -0.05f, 0.0f },
+	{ "shin_l", 3, 0.0f, -0.45f, 0.0f },
+};
+
 /*
  * build_ragdoll:
  *
- * A box ragdoll (pelvis, torso, head, upper / lower arms and legs) built
- * from components: swing-twist joints at the shoulders, hips and neck,
- * hinges at the elbows and knees, all with limits.  (A skinned character
- * would use LrgRagdoll with a .rphysasset instead.)
+ * A passive LrgRagdoll: one capsule per bone from
+ * lrg_physics_asset_new_from_skeleton(), posed where the old box doll
+ * stood, in the world's dynamics world.
  */
-static LrgEntity3D *
-limb (Sandbox     *sb,
-      const gchar *name,
-      gfloat       x,
-      gfloat       y,
-      gfloat       z,
-      gfloat       hx,
-      gfloat       hy,
-      gfloat       hz,
-      gfloat       mass)
-{
-	const gfloat he[3] = { hx, hy, hz };
-
-	return spawn_box (sb, name, x, y, z, he, LRG_DYNAMICS_BODY_DYNAMIC, mass, COL_SKIN);
-}
-
-static void
-connect_limb (LrgEntity3D  *child,
-              LrgEntity3D  *parent,
-              LrgJointKind  kind,
-              gfloat        anchor_y,
-              gfloat        lo,
-              gfloat        hi)
-{
-	LrgJointComponent *j = add_joint (child, lrg_joint_component_new (kind));
-
-	lrg_joint_component_set_target (j, parent);
-	lrg_joint_component_set_anchor (j, 0.0f, anchor_y, 0.0f);
-	if (kind == LRG_JOINT_HINGE)
-		lrg_joint_component_set_axis (j, 1.0f, 0.0f, 0.0f);
-	lrg_joint_component_set_limits (j, TRUE, lo, hi);
-}
-
 static void
 build_ragdoll (Sandbox *sb)
 {
-	const gfloat ox = 9.5f;
-	const gfloat oy = 9.0f;
-	const gfloat oz = -6.0f;
-	LrgEntity3D *pelvis, *torso, *head;
-	LrgEntity3D *ua_l, *la_l, *ua_r, *la_r, *ul_l, *ll_l, *ul_r, *ll_r;
+	g_autoptr(LrgSkeleton)     skel = lrg_skeleton_new ();
+	g_autoptr(LrgPhysicsAsset) asset = NULL;
+	g_autoptr(GError)          error = NULL;
+	LrgBonePose                root;
+	LrgDynamicsWorld          *physics;
+	guint                      i;
 
-	pelvis = limb (sb, "rd-pelvis", ox, oy, oz, 0.25f, 0.15f, 0.15f, 6.0f);
-	torso  = limb (sb, "rd-torso", ox, oy + 0.45f, oz, 0.28f, 0.3f, 0.16f, 10.0f);
-	head   = limb (sb, "rd-head", ox, oy + 0.95f, oz, 0.13f, 0.15f, 0.13f, 3.0f);
-	ua_l   = limb (sb, "rd-upper-arm-l", ox - 0.45f, oy + 0.55f, oz, 0.08f, 0.18f, 0.08f, 2.0f);
-	la_l   = limb (sb, "rd-lower-arm-l", ox - 0.45f, oy + 0.17f, oz, 0.07f, 0.17f, 0.07f, 1.5f);
-	ua_r   = limb (sb, "rd-upper-arm-r", ox + 0.45f, oy + 0.55f, oz, 0.08f, 0.18f, 0.08f, 2.0f);
-	la_r   = limb (sb, "rd-lower-arm-r", ox + 0.45f, oy + 0.17f, oz, 0.07f, 0.17f, 0.07f, 1.5f);
-	ul_l   = limb (sb, "rd-upper-leg-l", ox - 0.14f, oy - 0.42f, oz, 0.1f, 0.24f, 0.1f, 4.0f);
-	ll_l   = limb (sb, "rd-lower-leg-l", ox - 0.14f, oy - 0.92f, oz, 0.09f, 0.23f, 0.09f, 3.0f);
-	ul_r   = limb (sb, "rd-upper-leg-r", ox + 0.14f, oy - 0.42f, oz, 0.1f, 0.24f, 0.1f, 4.0f);
-	ll_r   = limb (sb, "rd-lower-leg-r", ox + 0.14f, oy - 0.92f, oz, 0.09f, 0.23f, 0.09f, 3.0f);
+	for (i = 0; i < G_N_ELEMENTS (ragdoll_bones); i++)
+	{
+		g_autoptr(LrgBone) bone = lrg_bone_new (ragdoll_bones[i].name, (gint) i);
+		LrgBonePose        pose;
 
-	connect_limb (torso, pelvis, LRG_JOINT_SWING_TWIST, -0.3f, -0.3f, 0.5f);
-	connect_limb (head, torso, LRG_JOINT_SWING_TWIST, -0.16f, -0.6f, 0.6f);
-	connect_limb (ua_l, torso, LRG_JOINT_SWING_TWIST, 0.18f, -0.5f, 1.4f);
-	connect_limb (ua_r, torso, LRG_JOINT_SWING_TWIST, 0.18f, -0.5f, 1.4f);
-	connect_limb (la_l, ua_l, LRG_JOINT_HINGE, 0.18f, -2.4f, 0.0f);
-	connect_limb (la_r, ua_r, LRG_JOINT_HINGE, 0.18f, -2.4f, 0.0f);
-	connect_limb (ul_l, pelvis, LRG_JOINT_SWING_TWIST, 0.24f, -0.3f, 0.9f);
-	connect_limb (ul_r, pelvis, LRG_JOINT_SWING_TWIST, 0.24f, -0.3f, 0.9f);
-	connect_limb (ll_l, ul_l, LRG_JOINT_HINGE, 0.23f, 0.0f, 2.4f);
-	connect_limb (ll_r, ul_r, LRG_JOINT_HINGE, 0.23f, 0.0f, 2.4f);
+		lrg_bone_pose_set_identity (&pose);
+		pose.position_x = ragdoll_bones[i].x;
+		pose.position_y = ragdoll_bones[i].y;
+		pose.position_z = ragdoll_bones[i].z;
+		lrg_bone_set_parent_index (bone, ragdoll_bones[i].parent);
+		lrg_bone_set_bind_pose (bone, &pose);
+		lrg_bone_set_local_pose (bone, &pose);
+		lrg_skeleton_add_bone (skel, bone);
+	}
+	lrg_skeleton_calculate_world_poses (skel);
+	asset = lrg_physics_asset_new_from_skeleton (skel, 70.0f, 0.22f);
+	g_clear_object (&sb->ragdoll);
+	sb->ragdoll = lrg_ragdoll_new (asset, skel, &error);
+	if (sb->ragdoll == NULL)
+	{
+		g_printerr ("physics-sandbox: ragdoll: %s\n", error->message);
+		return;
+	}
+	lrg_bone_pose_set_identity (&root);
+	root.position_x = 9.5f;
+	root.position_y = 9.0f;
+	root.position_z = -6.0f;
+	lrg_ragdoll_set_root_transform (sb->ragdoll, &root);
+	lrg_ragdoll_set_mode (sb->ragdoll, LRG_RAGDOLL_PASSIVE);
+	physics = lrg_world3d_get_physics (sb->world);
+	if (!lrg_ragdoll_add_to_world (sb->ragdoll, physics, &error))
+	{
+		g_printerr ("physics-sandbox: ragdoll: %s\n", error->message);
+		g_clear_object (&sb->ragdoll);
+	}
 }
 
 /* The flag pole (a static body) and its cloth. */
@@ -462,6 +460,8 @@ build_flag (Sandbox *sb)
 static void
 build_scene (Sandbox *sb)
 {
+	/* The ragdoll's dispose removes its bodies, so it goes before the world. */
+	g_clear_object (&sb->ragdoll);
 	g_clear_object (&sb->world);
 	sb->world = lrg_world3d_new ();
 	lrg_world3d_set_fixed_step (sb->world, FIXED_DT);
@@ -669,6 +669,7 @@ main (int   argc,
 	g_autofree gchar             *opt_screenshot = NULL;
 	gint                          opt_frames = 150;
 	gboolean                      opt_license = FALSE;
+	gboolean                      opt_self_test = FALSE;
 	gint                          frame = 0;
 	Sandbox                       sb;
 
@@ -678,6 +679,8 @@ main (int   argc,
 		{ "frames", 'f', 0, G_OPTION_ARG_INT, &opt_frames,
 		  "Frames simulated before --screenshot (default 150)", "N" },
 		{ "license", 0, 0, G_OPTION_ARG_NONE, &opt_license, "Show the license and exit", NULL },
+		{ "self-test", 0, 0, G_OPTION_ARG_NONE, &opt_self_test,
+		  "Build the scene without a window and exit", NULL },
 		{ NULL }
 	};
 
@@ -689,6 +692,7 @@ main (int   argc,
 		"R reset, Esc quit.\n\n"
 		"Examples (from the examples/ directory):\n"
 		"  physics-sandbox\n"
+		"  physics-sandbox --self-test\n"
 		"  physics-sandbox --screenshot sandbox.png --frames 150\n");
 	if (!g_option_context_parse (ctx, &argc, &argv, &error))
 	{
@@ -712,6 +716,22 @@ main (int   argc,
 	sb.pitch = 0.42f;
 	sb.distance = 21.0f;
 	sb.wind = TRUE;
+
+	if (opt_self_test)
+	{
+		build_scene (&sb);
+		if (sb.ragdoll == NULL ||
+		    lrg_ragdoll_get_part_count (sb.ragdoll) < 2 ||
+		    lrg_ragdoll_get_world (sb.ragdoll) != lrg_world3d_get_physics (sb.world))
+		{
+			g_printerr ("physics-sandbox: self-test failed\n");
+			return 1;
+		}
+		g_clear_object (&sb.ragdoll);
+		g_clear_object (&sb.world);
+		g_ptr_array_unref (sb.shots);
+		return 0;
+	}
 
 	SetConfigFlags (FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
 	window = grl_window_new (WINDOW_W, WINDOW_H, "libregnum - physics-sandbox");

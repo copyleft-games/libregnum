@@ -1,0 +1,53 @@
+#+title: DAP Server
+#+description: Debug Adapter Protocol server over TCP or stdio, driving LrgScriptDebugger
+#+authors: Zach Podbielniak
+#+categories: libregnum scripting debug
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 1.0
+
+* DAP Server
+:PROPERTIES:
+:CUSTOM_ID: dap-server
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:index.org][Scripting]]* > DAP Server
+#+end_quote
+
+=LrgDapServer= (=lrg_dap_server_get_type=) speaks the Debug Adapter Protocol (Content-Length framing, one JSON object per message) and turns each request into a call on an =LrgScriptDebugger=. The editor listens on TCP. Stdio exists for a process whose stdin and stdout are free; =lrgeditor= cannot use it because the in-process MCP server owns stdout.
+
+The type is final. Errors use the =LRG_DAP_SERVER_ERROR= domain (=lrg_dap_server_error_quark=, =lrg_dap_server_error_get_type=): =LRG_DAP_SERVER_ERROR_FAILED=, =LRG_DAP_SERVER_ERROR_BIND=, =LRG_DAP_SERVER_ERROR_PROTOCOL=.
+
+** Construction
+:PROPERTIES:
+:CUSTOM_ID: dap-server-construction
+:END:
+=lrg_dap_server_new= creates a server bound to =lrg_script_debugger_get_default=. =lrg_dap_server_new_for_debugger= refs the debugger you pass (or stores %NULL). =lrg_dap_server_set_debugger= replaces it without dropping clients. =lrg_dap_server_get_debugger= returns the current debugger (transfer none).
+
+Nothing listens until start. =lrg_dap_server_start= binds =host= (default =127.0.0.1=) and =port= (=0= picks a free port). A second start while already listening keeps the existing socket and returns %TRUE. =lrg_dap_server_get_listening=, =lrg_dap_server_get_port=, =lrg_dap_server_get_host= and =lrg_dap_server_get_n_clients= report the transport. =lrg_dap_server_stop= closes every client and the listening socket and leaves the debugger attached to whatever it was attached to. =lrg_dap_server_start_stdio= attaches one client to stdin/stdout and is Unix-only.
+
+Requests are dispatched on the thread-default =GMainContext= of the thread that called start. That context must keep iterating. A synchronous read on the same context that accepts the socket never runs the request.
+
+** Inspection while stopped
+:PROPERTIES:
+:CUSTOM_ID: dap-server-inspection
+:END:
+Stack, scopes, variables and evaluate go through the debugger. On the thread that owns the stop they run inline, so a DAP callback on that thread is not a deadlock. From any other thread the debugger posts the request and waits up to five seconds while the stopped thread's stop loop answers it. The DAP poll therefore belongs on a context the stopped script is not blocked inside. A client that connects with a blocking =g_socket_client_connect_to_host= on that same context deadlocks, because accept runs there too; connect asynchronously and pump the context.
+
+=stackTrace= while nothing is paused is an empty success. =scopes=, =variables= and =evaluate= while not paused fail with "Not paused". =continue=, =next=, =stepIn=, =stepOut= and =pause= succeed even when no debugger is set; =continue= reports =allThreadsContinued= true.
+
+** Protocol
+:PROPERTIES:
+:CUSTOM_ID: dap-server-protocol
+:END:
+Sequence numbers start at 1. A request that arrives before =initialize= fails with "Expected initialize". =initialize= answers with =supportsConfigurationDoneRequest=, =supportsEvaluateForHovers=, =supportsTerminateRequest=, =supportsConditionalBreakpoints=, =supportsHitConditionalBreakpoints=, =supportsLogPoints=, =supportTerminateDebuggee= (all true) and =supportsExceptionOptions= false. =exceptionBreakpointFilters= lists =uncaught= ("Uncaught Exceptions") and =raised= ("All Exceptions"), both defaulting off. The =initialized= event follows the initialize response.
+
+=launch= and =attach= succeed and do not spawn a process: the debuggee is whatever the =LrgScriptDebugger= is already attached to (the editor sets auto-attach). =setBreakpoints= clears that source, then adds each breakpoint. The source is =source.path=, or a =file://= URI with the seven-character scheme stripped. A legacy =lines= array is accepted. =condition=, =hitCondition= and =logMessage= are copied onto the breakpoint. =verified= comes from the debugger. Lines are 1-based. No =stopped= event is emitted before =configurationDone=.
+
+=threads= lists each attached scripting whose thread id is not 0. With nothing attached it returns one dummy thread, id 1, name "script". =stackTrace= uses DAP lines (a 0 from the runtime is sent as 1) and column 1. =scopes= reports =expensive= from the scope. =evaluate= evaluates in the requested frame. =cancel= is a success and does nothing. =disconnect= detaches only when =terminateDebuggee= is true. =terminate= always detaches and emits =terminated=. =stopped= reasons are the debugger's strings: =breakpoint=, =step=, =pause=, =exception=. A paused stop whose reason is none is reported as =pause=. The adapter does not emit =entry=. =output= is forwarded when the debugger's =output= signal has two string parameters. An unknown command is a failed response. A body larger than 8 MiB, or more than 32 header lines, is a protocol error.
+
+** Editor
+:PROPERTIES:
+:CUSTOM_ID: dap-server-editor
+:END:
+The Debug panel holds one server and does not listen until =debug.dap_start=. The default port is the =debug.dap-port= setting, 4711, on =127.0.0.1=. Emacs attaches with =libregnum-dape= (see [[file:../../editor/debugging.org][Debugging]]).

@@ -35,6 +35,7 @@
 #include "lrg-editor-ui-layout-editor.h"
 #include "lrg-editor-hud-layout-editor.h"
 #include "../lrg-editor-console-panel.h"
+#include "../../../ui/lrg-ui-author.h"
 #include "../../../ui/lrg-custom-widget.h"
 #include "../../../ui/lrg-splitter.h"
 #include "../../../ui/lrg-tree-view.h"
@@ -162,6 +163,12 @@ struct _LrgEditorUiLayoutEditor
 	gboolean             syncing;        /* setting the text from the document */
 	gboolean             writing;        /* writing the text into the document */
 	gboolean             pick_mode;
+
+	gchar               *drag_name;
+	gfloat               drag_px;
+	gfloat               drag_py;
+	gfloat               drag_ox;
+	gfloat               drag_oy;
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorUiLayoutEditor, lrg_editor_ui_layout_editor, LRG_TYPE_EDITOR_DATA_EDITOR)
@@ -720,12 +727,35 @@ shield_event (LrgCustomWidget  *widget,
 	case LRG_UI_EVENT_MOUSE_BUTTON_DOWN:
 		if (lrg_ui_event_get_button (event) == 0)
 		{
-			LrgWidget *hit = pick_widget (self, self->root, x, y);
+			LrgWidget   *hit = pick_widget (self, self->root, x, y);
+			const gchar *name = (hit != NULL) ? lrg_widget_get_name (hit) : NULL;
 
 			select_item (self, item_for_widget (self, hit), TRUE, TRUE);
+			g_clear_pointer (&self->drag_name, g_free);
+			if (name != NULL && name[0] != '\0')
+			{
+				self->drag_name = g_strdup (name);
+				self->drag_px = x;
+				self->drag_py = y;
+				self->drag_ox = lrg_widget_get_x (hit);
+				self->drag_oy = lrg_widget_get_y (hit);
+			}
 		}
 		return TRUE;
 	case LRG_UI_EVENT_MOUSE_BUTTON_UP:
+		if (self->drag_name != NULL)
+		{
+			gfloat dx = x - self->drag_px;
+			gfloat dy = y - self->drag_py;
+
+			if (dx > 2.0f || dx < -2.0f || dy > 2.0f || dy < -2.0f)
+				lrg_editor_ui_layout_editor_place (self, self->drag_name,
+				                                   self->drag_ox + dx,
+				                                   self->drag_oy + dy,
+				                                   NULL);
+			g_clear_pointer (&self->drag_name, g_free);
+		}
+		return TRUE;
 	case LRG_UI_EVENT_SCROLL:
 		return TRUE;
 	default:
@@ -1142,6 +1172,7 @@ lrg_editor_ui_layout_editor_finalize (GObject *object)
 	g_clear_object (&self->outline);
 	g_free (self->error);
 	g_free (self->selected_path);
+	g_free (self->drag_name);
 	G_OBJECT_CLASS (lrg_editor_ui_layout_editor_parent_class)->finalize (object);
 }
 
@@ -1179,6 +1210,38 @@ lrg_editor_ui_layout_editor_new (LrgEditorApp      *app,
 	g_return_val_if_fail (LRG_IS_EDITOR_DOCUMENT (document), NULL);
 
 	return g_object_new (LRG_TYPE_EDITOR_UI_LAYOUT_EDITOR, "app", app, "document", document, NULL);
+}
+
+gboolean
+lrg_editor_ui_layout_editor_place (LrgEditorUiLayoutEditor  *self,
+                                   const gchar              *widget,
+                                   gfloat                    x,
+                                   gfloat                    y,
+                                   GError                  **error)
+{
+	LrgEditorDocument *doc;
+	g_autofree gchar  *yaml = NULL;
+	g_autofree gchar  *next = NULL;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_UI_LAYOUT_EDITOR (self), FALSE);
+	g_return_val_if_fail (widget != NULL, FALSE);
+
+	doc = lrg_editor_data_editor_get_document (LRG_EDITOR_DATA_EDITOR (self));
+	if (doc == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no document");
+		return FALSE;
+	}
+	yaml = lrg_editor_document_get_yaml (doc, "");
+	if (yaml == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "document has no YAML");
+		return FALSE;
+	}
+	next = lrg_ui_layout_place (yaml, widget, x, y, error);
+	if (next == NULL)
+		return FALSE;
+	return lrg_editor_document_replace (doc, "", next, error);
 }
 
 LrgTextEditor *

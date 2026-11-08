@@ -939,6 +939,14 @@ test_script_component (void)
 	g_assert_cmpint (lrg_script_component_get_language (comp), ==, LRG_SCRIPT_LANGUAGE_LUA);
 	g_assert_cmpstr (lrg_script_component_get_script (comp), ==, "scripts/x.lua");
 
+	/* Playing updates every script; authoring only run-in-editor ones. */
+	g_assert_false (lrg_script_component_get_run_in_editor (comp));
+	g_assert_true (lrg_script_component_should_update (comp, FALSE));
+	g_assert_false (lrg_script_component_should_update (comp, TRUE));
+	lrg_script_component_set_run_in_editor (comp, TRUE);
+	g_assert_true (lrg_script_component_get_run_in_editor (comp));
+	g_assert_true (lrg_script_component_should_update (comp, TRUE));
+
 	/* Attaching with an unavailable language is inert, not fatal. */
 	lrg_game_object_add_component (go, LRG_COMPONENT (comp));
 	lrg_component_update (LRG_COMPONENT (comp), 0.016f);

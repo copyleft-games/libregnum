@@ -39,6 +39,8 @@ static gboolean  opt_mcp         = FALSE;
 static gboolean  opt_validate    = FALSE;
 static gboolean  opt_license     = FALSE;
 static gboolean  opt_version     = FALSE;
+static gboolean  opt_merge       = FALSE;
+static gboolean  opt_merge_install = FALSE;
 static gint      opt_width       = 1600;
 static gint      opt_height      = 960;
 static gchar   **opt_rest        = NULL;
@@ -79,6 +81,10 @@ static const GOptionEntry entries[] = {
 	  "Print the license and exit", NULL },
 	{ "version", 'v', 0, G_OPTION_ARG_NONE, &opt_version,
 	  "Print the version and exit", NULL },
+	{ "merge", 0, 0, G_OPTION_ARG_NONE, &opt_merge,
+	  "Three-way merge BASE OURS THEIRS and write the result into OURS", NULL },
+	{ "merge-install", 0, 0, G_OPTION_ARG_NONE, &opt_merge_install,
+	  "Install the git merge driver for *.rlevel (optional DIR, default .)", NULL },
 	{ G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_rest,
 	  NULL, "[PROJECT-DIR | LEVEL-FILE]" },
 	G_OPTION_ENTRY_NULL
@@ -96,6 +102,8 @@ static const gchar *examples =
 	"  lrgeditor --headless --socket /tmp/lrg.sock ~/games/mygame\n"
 	"  lrgeditor --validate levels/arena.rlevel  (CI: exit status 1 on errors)\n"
 	"  lrgeditor --mcp ~/games/mygame            AI agent drives it (claude mcp add ...)\n"
+	"  lrgeditor --merge BASE OURS THEIRS       git merge driver (writes OURS)\n"
+	"  lrgeditor --merge-install [DIR]          git config merge.rlevel.driver\n"
 	"\n"
 	"Code opens in $VISUAL/$EDITOR unless preferences or --editor choose\n"
 	"another; with Emacs, load editors/emacs/libregnum.el and run\n"
@@ -263,6 +271,24 @@ main (int    argc,
 	McpStdioTransport        *mcp_transport = NULL;
 	gint                      mcp_out_fd = -1;
 #endif
+	const gchar              *gobject_debug;
+	g_autofree gchar         *gobject_debug_next = NULL;
+
+	/* GObject samples GOBJECT_DEBUG when the type system initialises.
+	 * A library constructor is already too late, and so is this if a
+	 * constructor ran before main (libregnum's G_DEFINE_TYPE
+	 * constructors usually have). Set the variable in the process
+	 * environment before exec when the counts must be reliable.
+	 * This is still the first work in main, before
+	 * g_option_context_new() and before any GObject call. */
+	gobject_debug = g_getenv ("GOBJECT_DEBUG");
+	if (gobject_debug == NULL)
+		g_setenv ("GOBJECT_DEBUG", "instance-count", TRUE);
+	else if (g_strstr_len (gobject_debug, -1, "instance-count") == NULL)
+	{
+		gobject_debug_next = g_strdup_printf ("%s,instance-count", gobject_debug);
+		g_setenv ("GOBJECT_DEBUG", gobject_debug_next, TRUE);
+	}
 
 	ctx = g_option_context_new ("[PROJECT-DIR | LEVEL-FILE] - edit libregnum levels, scenes and worlds");
 	g_option_context_add_main_entries (ctx, entries, NULL);
@@ -304,6 +330,53 @@ main (int    argc,
 	if (opt_version)
 	{
 		g_print ("lrgeditor %d.%d.%d\n", LRG_VERSION_MAJOR, LRG_VERSION_MINOR, LRG_VERSION_MICRO);
+		return 0;
+	}
+
+	/*
+	 * Git's merge driver is `lrgeditor --merge %O %A %B`. The result is
+	 * written into OURS (%A). Conflicts keep ours and are printed; the
+	 * process still exits 0 so git accepts the file.
+	 */
+	if (opt_merge)
+	{
+		g_auto(GStrv) conflicts = NULL;
+		guint         i;
+
+		if (opt_rest == NULL || opt_rest[0] == NULL || opt_rest[1] == NULL ||
+		    opt_rest[2] == NULL || opt_rest[3] != NULL)
+		{
+			g_printerr ("lrgeditor: --merge BASE OURS THEIRS\n");
+			return 2;
+		}
+		if (!lrg_level_merge_files (opt_rest[0], opt_rest[1], opt_rest[2], opt_rest[1],
+		                            &conflicts, &error))
+		{
+			g_printerr ("lrgeditor: %s\n", error->message);
+			return 1;
+		}
+		for (i = 0; conflicts != NULL && conflicts[i] != NULL; i++)
+			g_printerr ("conflict: %s\n", conflicts[i]);
+		return 0;
+	}
+	if (opt_merge_install)
+	{
+		const gchar *dir = ".";
+
+		if (opt_rest != NULL && opt_rest[0] != NULL)
+		{
+			if (opt_rest[1] != NULL)
+			{
+				g_printerr ("lrgeditor: --merge-install [DIR]\n");
+				return 2;
+			}
+			dir = opt_rest[0];
+		}
+		if (!lrg_level_merge_install_driver (dir, NULL, &error))
+		{
+			g_printerr ("lrgeditor: %s\n", error->message);
+			return 1;
+		}
 		return 0;
 	}
 

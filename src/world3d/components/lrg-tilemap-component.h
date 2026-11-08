@@ -239,4 +239,31 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_tilemap_component_get_local_bounds (LrgTilemapComponent *self,
                                                  LrgBoundingBox3D    *out);
 
+/**
+ * lrg_tilemap_component_get_cell_quad:
+ * @self: an #LrgTilemapComponent
+ * @layer: a tile layer index
+ * @x: cell column
+ * @y: cell row
+ * @out_xy: (out) (nullable) (array fixed-size=8): local XY of the four
+ *   corners, TL, BL, BR, TR
+ * @out_uv: (out) (nullable) (array fixed-size=8): texture coordinates of
+ *   those corners
+ *
+ * The quad draw_layer emits for one cell: the cell's bounding box in
+ * the tilemap's orientation (orthogonal, isometric, staggered or hex),
+ * scaled by the world tile size and flipped in Y, with the cell's
+ * mirror and rotation applied to the texture coordinates. Empty and
+ * out-of-range cells return %FALSE. Headless.
+ *
+ * Returns: %TRUE when the cell draws a quad
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_tilemap_component_get_cell_quad (LrgTilemapComponent *self,
+                                              guint                layer,
+                                              guint                x,
+                                              guint                y,
+                                              gfloat              *out_xy,
+                                              gfloat              *out_uv);
+
 G_END_DECLS

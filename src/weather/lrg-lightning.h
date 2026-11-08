@@ -280,4 +280,26 @@ gboolean            lrg_lightning_get_bolt_point        (LrgLightning *self,
                                                          guint         index,
                                                          GrlVector3   *out_position);
 
+/**
+ * lrg_lightning_get_bolt_layers:
+ * @self: a #LrgLightning
+ * @core_alpha: (out) (nullable): core ribbon alpha, 255 when drawn
+ * @core_width: (out) (nullable): core ribbon width
+ * @halo_alpha: (out) (nullable): halo ribbon alpha
+ * @halo_width: (out) (nullable): halo ribbon width, wider than the core
+ *
+ * The two ribbons lrg_weather_effect_render_world() emits for a live
+ * bolt: a wide halo at the flash alpha, then a full-bright core.
+ * Headless. Returns %FALSE unless the effect is active, flashing, bolts
+ * are enabled, a bolt exists and the flash level is above zero.
+ *
+ * Returns: %TRUE when a bolt would be drawn
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean            lrg_lightning_get_bolt_layers       (LrgLightning *self,
+                                                         guint8       *core_alpha,
+                                                         gfloat       *core_width,
+                                                         guint8       *halo_alpha,
+                                                         gfloat       *halo_width);
+
 G_END_DECLS

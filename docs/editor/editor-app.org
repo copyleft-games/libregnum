@@ -424,7 +424,7 @@ LrgEditorApp
 4. Tick navigation (held fly keys), the play session, timeline playback, thumbnails, autosave and the debounced validation; update the window title.
 5. Headless (no window), record the canvas so popups and widgets are laid out for =ui.state=.
 
-=lrg_editor_app_run_headless()= runs step 4 every 100 ms from a GLib timeout instead.
+=lrg_editor_app_run_headless()= runs step 4 every 100 ms from a GLib timeout instead, and that tick is also one profiler frame (=editor.tick=) and one =lrg_editor_script_api_tick()= so tool scripts and =profiler.capture= work without a window. The project directory is pushed to the script API when the project opens, because the console widget step that used to do it only runs from a UI frame.
 
 *** Actions, menus and shortcuts
 :PROPERTIES:
@@ -1037,12 +1037,13 @@ Actions registered by the panel: =console.copy=, =console.copy-all=, =console.cl
 :PROPERTIES:
 :CUSTOM_ID: editor-panel-problems
 :END:
-=LrgEditorProblemsPanel= shows the app's validation results (=lrg_editor_validate_level()=, re-run automatically, debounced, after every edit): one row per problem with a severity icon and colour, the node path, the message and the problem code as a chip. The toolbar shows error / warning / info counts and *Validate Now* (=problems-validate=). With no problems the panel says so. A click selects the problem's node; a double click (or Enter) opens the file of a script problem at line 1 (through the =code.open= IPC method when the code panel registered it, else the external editor) or frames the node (=view.focus=).
+=LrgEditorProblemsPanel= shows the app's validation results (=lrg_editor_validate_level()=, re-run automatically, debounced, after every edit): one row per problem with a severity icon and colour, the node path, the message and the problem code as a chip. The toolbar shows error / warning / info counts and *Validate Now* (=problems-validate=). With no problems the panel says so. A click selects the problem's node; a double click (or Enter) opens the file of a script or shader problem at its stored line (=lrg_editor_problems_panel_get_row_location()=, or line 1 when the line is 0) through the =code.open= IPC method when the code panel registered it, else the external editor, or frames the node (=view.focus=).
 
 | API | Use |
 |-----+-----|
 | =lrg_editor_problems_panel_new (app)= | Creates the panel |
 | =lrg_editor_problems_panel_get_n_rows (self)= | Problems listed (syncs with the last validation) |
+| =lrg_editor_problems_panel_get_row_location (self, i, line, column)= | 1-based source line and column copied onto the row (0 when unknown) |
 | =lrg_editor_problems_panel_activate_row (self, i, open)= | Click (=open= =FALSE=) or double click (=TRUE=) |
 
 ** Profiler panel
@@ -1063,7 +1064,7 @@ Actions: =profiler.pause= (checked while paused) and =profiler.clear=.
 *IPC* =profiler.sample= (params optional): =frames= (how many recent frame times, default 60, at most what was recorded) and =enable= (=true= pins the profiler on, =false= unpins it). The reply:
 
 #+begin_src json
-{ "enabled": true, "pinned": false, "paused": false, "frame_ms": 16.67,
+{ "enabled": true, "pinned": false, "paused": false, "gpu": false, "frame_ms": 16.67,
   "frames": [16.67, 16.67, 16.9],
   "sections": [ { "name": "play.tick", "last_ms": 0.21, "avg_ms": 0.2, "min_ms": 0.18, "max_ms": 0.4, "count": 120 } ] }
 #+end_src
@@ -1077,6 +1078,10 @@ Actions: =profiler.pause= (checked while paused) and =profiler.clear=.
 | =lrg_editor_profiler_panel_get_frames (self, &n)= | The recorded frame times in ms, oldest first (free with =g_free()=) |
 | =lrg_editor_profiler_panel_get_n_sections (self)= | Sections in the table (refreshes it) |
 | =lrg_editor_profiler_panel_get_hovered_frame (self)= | The frame under the pointer, or -1 |
+| =lrg_editor_profiler_panel_get_capture (self)= | The =.rprof= capture the panel is showing, or =NULL= |
+| =lrg_editor_profiler_panel_get_view_mode (self)= | ="timeline"=, ="flame"=, ="table"= or ="compare"= |
+
+0.9.0 adds thread and GPU lanes, a flame graph, capture / save / load of =.rprof=, and a compare view. The Frame Debugger is a separate widget (=lrg_editor_frame_debugger_new()=) presented by =frame.show=. Both are specified in [[file:profiling.org][Profiling]].
 
 The editor's own phases (=ui.input=, =ui.update=, =viewport.render[i]=, =play.tick=) appear in the table once the frame loop wraps them in =lrg_profiler_begin_section()= / =lrg_profiler_end_section()= on the default profiler.
 

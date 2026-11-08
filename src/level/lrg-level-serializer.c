@@ -707,6 +707,60 @@ parse_navigation (LrgLevel  *level,
 }
 
 /* ==========================================================================
+ * The `audio:` block
+ *
+ * audio:
+ *   mixer: audio/game.rmixer    # path or guid:
+ * ========================================================================== */
+
+/* reads an `audio:` node into @level; FALSE with @error when malformed */
+static gboolean
+parse_audio (LrgLevel  *level,
+             YamlNode  *node,
+             GError   **error)
+{
+	YamlMapping      *map;
+	g_autoptr(GList)  keys = NULL;
+	GList            *l;
+
+	if (yaml_node_get_node_type (node) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, "audio: must be a mapping");
+		return FALSE;
+	}
+	map = yaml_node_get_mapping (node);
+	keys = yaml_mapping_get_members (map);
+	for (l = keys; l != NULL; l = l->next)
+	{
+		const gchar *key = l->data;
+		YamlNode    *member = yaml_mapping_get_member (map, key);
+		const gchar *s = NULL;
+
+		if (yaml_node_is_null (member))
+			continue;
+		if (yaml_node_get_node_type (member) == YAML_NODE_SCALAR)
+			s = yaml_node_get_scalar (member);
+		if (g_strcmp0 (key, "mixer") == 0)
+		{
+			if (s == NULL || *s == '\0')
+			{
+				g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+				                     "audio.mixer: must be a path or guid: reference");
+				return FALSE;
+			}
+			lrg_level_set_audio_mixer (level, s);
+		}
+		else
+		{
+			g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE,
+			             "audio.%s: unknown key (mixer)", key);
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+/* ==========================================================================
  * Build (write) path
  * ========================================================================== */
 
@@ -1434,6 +1488,23 @@ build_node_state (LrgNode     *node,
 	yaml_mapping_set_boolean_member (map, "visible", lrg_node_get_visible (node));
 	yaml_mapping_set_boolean_member (map, "locked", lrg_node_get_locked (node));
 
+	{
+		g_auto(GStrv) tags = lrg_node_get_tags (node);
+		const gchar  *level_path = lrg_node_get_level_path (node);
+
+		if (tags != NULL && tags[0] != NULL)
+		{
+			g_autoptr(YamlSequence) tag_seq = yaml_sequence_new ();
+			guint t;
+
+			for (t = 0; tags[t] != NULL; t++)
+				yaml_sequence_add_string_element (tag_seq, tags[t]);
+			yaml_mapping_set_sequence_member (map, "tags", tag_seq);
+		}
+		if (level_path != NULL && level_path[0] != '\0')
+			yaml_mapping_set_string_member (map, "level", level_path);
+	}
+
 	loc_seq = build_vector3_sequence (lrg_node_get_location (node));
 	rot_seq = build_vector3_sequence (lrg_node_get_rotation (node));
 	scl_seq = build_vector3_sequence (lrg_node_get_scale (node));
@@ -1703,6 +1774,15 @@ build_level_yaml (LrgLevel         *level,
 		g_autoptr(YamlMapping) nav_map = build_navigation_mapping (level);
 
 		yaml_mapping_set_mapping_member (root_map, "navigation", nav_map);
+	}
+
+	/* Additive: the audio block, only when the level names a mixer. */
+	if (lrg_level_get_audio_mixer (level) != NULL)
+	{
+		g_autoptr(YamlMapping) audio_map = yaml_mapping_new ();
+
+		yaml_mapping_set_string_member (audio_map, "mixer", lrg_level_get_audio_mixer (level));
+		yaml_mapping_set_mapping_member (root_map, "audio", audio_map);
 	}
 
 	/* Additive: files without timelines keep their old shape. */
@@ -2221,6 +2301,8 @@ parse_node (YamlMapping *map,
 	YamlNode *scripts_node;
 	YamlNode *children_node;
 	YamlNode *prefab_node;
+	YamlNode *tags_node;
+	const gchar *level_path;
 	gboolean  is_reference = FALSE;
 
 	node = lrg_node_new (yaml_mapping_get_string_member (map, "name"));
@@ -2235,6 +2317,26 @@ parse_node (YamlMapping *map,
 		lrg_node_set_visible (node, yaml_mapping_get_boolean_member (map, "visible"));
 	if (yaml_mapping_has_member (map, "locked"))
 		lrg_node_set_locked (node, yaml_mapping_get_boolean_member (map, "locked"));
+
+	level_path = yaml_mapping_get_string_member (map, "level");
+	if (level_path != NULL)
+		lrg_node_set_level_path (node, level_path);
+
+	tags_node = yaml_mapping_get_member (map, "tags");
+	if (tags_node != NULL && yaml_node_get_node_type (tags_node) == YAML_NODE_SEQUENCE)
+	{
+		YamlSequence *seq = yaml_node_get_sequence (tags_node);
+		guint         i;
+		guint         n = yaml_sequence_get_length (seq);
+
+		for (i = 0; i < n; i++)
+		{
+			const gchar *tag = yaml_sequence_get_string_element (seq, i);
+
+			if (tag != NULL && tag[0] != '\0')
+				lrg_node_add_tag (node, tag);
+		}
+	}
 
 	transform_node = yaml_mapping_get_member (map, "transform");
 	if (transform_node != NULL && yaml_node_get_node_type (transform_node) == YAML_NODE_MAPPING)
@@ -2561,6 +2663,20 @@ parse_level_from_root (YamlNode  *root,
 		    && !parse_navigation (level, nav_node, &nav_error))
 		{
 			g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, nav_error->message);
+			g_object_unref (level);
+			return NULL;
+		}
+	}
+
+	/* The audio block; a malformed one fails the load. */
+	{
+		YamlNode         *audio_node = yaml_mapping_get_member (root_map, "audio");
+		g_autoptr(GError) audio_error = NULL;
+
+		if (audio_node != NULL && !yaml_node_is_null (audio_node)
+		    && !parse_audio (level, audio_node, &audio_error))
+		{
+			g_set_error_literal (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE, audio_error->message);
 			g_object_unref (level);
 			return NULL;
 		}

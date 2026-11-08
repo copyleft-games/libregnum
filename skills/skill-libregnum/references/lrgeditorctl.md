@@ -180,4 +180,7 @@ Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --
 - `profiler set | capture | save PATH | load PATH | frames | frame | compare | view` [key=value..]
 - `frame capture | status | calls | call INDEX | scrub INDEX | texture PATH | save PATH | load PATH | show` [key=value..]
 - `script run CODE | languages | tools | run-tool ID | reload | run-in-editor NODE | editor-running` [key=value..]
+- `vscript create PATH | open PATH | get PATH | node-types QUERY | gi-search QUERY | add-node TYPE | remove-node ID | set-node ID | connect FROM TO | disconnect FROM TO | set-variable NAME | add-subgraph NAME | remove-subgraph NAME | add-comment TEXT | remove-comment ID | set-program | select | validate PATH | run | live PATH | breakpoint NODE | continue | save PATH` [key=value..]
+- `memory status | types | resources | snapshot | snapshots | diff FROM | clear-snapshots | history | show` [key=value..]
+- `network stats | history METRIC | enable | reset | show` [key=value..]
 <!-- m67e-generated: end -->

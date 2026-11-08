@@ -625,6 +625,43 @@ Every method an =lrgeditor= window serves in 0.8.3, in registration order. /Regi
 | =script.reload= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
 | =script.run_in_editor= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
 | =script.editor_running= | 0.9.0 | console panel | [[#ipc-script][Tool script methods]] |
+| =vscript.create= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.open= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.get= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.node_types= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.gi_search= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.add_node= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.remove_node= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.set_node= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.connect= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.disconnect= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.set_variable= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.add_subgraph= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.remove_subgraph= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.add_comment= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.remove_comment= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.set_program= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.select= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.validate= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.run= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.live= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.breakpoint= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.continue= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =vscript.save= | 0.9.0 | visual script editor | [[#ipc-vscript][Visual script methods]] |
+| =memory.status= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.types= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.resources= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.snapshot= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.snapshots= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.diff= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.clear_snapshots= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.history= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =memory.show= | 0.9.0 | Memory panel | [[#ipc-memory][Memory profiler methods]] |
+| =network.stats= | 0.9.0 | Network panel | [[#ipc-network][Network stats methods]] |
+| =network.history= | 0.9.0 | Network panel | [[#ipc-network][Network stats methods]] |
+| =network.enable= | 0.9.0 | Network panel | [[#ipc-network][Network stats methods]] |
+| =network.reset= | 0.9.0 | Network panel | [[#ipc-network][Network stats methods]] |
+| =network.show= | 0.9.0 | Network panel | [[#ipc-network][Network stats methods]] |
 | =terrain.layers.add= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
 | =terrain.layers.remove= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
 | =terrain.layers.set= | 0.9.0 | Terrain panel | [[#ipc-terrain][Terrain methods]] |
@@ -1474,6 +1511,70 @@ Registered by the console panel (=src/editor/ui/lrg-editor-console-panel.c=): ed
 | =script.reload= |  | ={dir, loaded, failed: [{path, message}]}= |
 | =script.run_in_editor= | =node=, =index?=, =enabled= | =true=; one undo step |
 | =script.editor_running= |  | =[{node, script, language, error}]= |
+
+** Visual script methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-vscript
+:END:
+Registered by the visual script editor (=src/editor/ui/data/lrg-editor-vscript-editor.c=). =path= is a =.rvscript= file, absolute or project relative (default: the focused visual script editor). The tab is opened when a method needs it. =graph= is a subgraph name (missing or "" is the main graph). Pins are addressed =node.pin= (split on the first dot). Every mutating method except =vscript.select= is one undo step (=data.undo= reverts it). =vscript.run= and =vscript.live= do not write the document. Errors: missing or bad parameters, a bad pin or an incompatible link =invalid-params=; no such file, editor, node, variable, subgraph or comment =not-found=; load, save or runtime failures =failed=. A missing link from =vscript.disconnect= returns =removed: false= and is not an error. Details: [[file:visual-scripting.org::#vscript-ipc][Visual scripting]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =vscript.create= | =path=, =name?=, =view?= | ={path, view}= |
+| =vscript.open= | =path=, =view?= | ={path, panel, view}= |
+| =vscript.get= | =path?=, =graph?= | ={path, dirty, view, name, description, seed, step_budget, fixed_step, variables, subgraphs, graph, interface, nodes, links, comments, selected, issues}= |
+| =vscript.node_types= | =query?=, =category?= | ={types: [{type, title, category, description, event, pure}]}= |
+| =vscript.gi_search= | =query=, =limit?= | ={available, results}= |
+| =vscript.add_node= | =path?=, =graph?=, =type=, =id?=, =x?=, =y?=, =params?=, =inputs?= | ={id, pins}= |
+| =vscript.remove_node= | =path?=, =graph?=, =id= | ={removed: true}= |
+| =vscript.set_node= | =path?=, =graph?=, =id=, =x?=, =y?=, =params?=, =inputs?=, =rename?= | ={id, pins}= |
+| =vscript.connect= | =path?=, =graph?=, =from=, =to= | ={from, to}= |
+| =vscript.disconnect= | =path?=, =graph?=, =from=, =to= | ={removed}= |
+| =vscript.set_variable= | =path?=, =name=, =type?=, =default?=, =remove?= | ={name, type, default}= or ={removed: true}= |
+| =vscript.add_subgraph= | =path?=, =name=, =inputs?=, =outputs?= | ={name}= |
+| =vscript.remove_subgraph= | =path?=, =name= | ={removed: true}= |
+| =vscript.add_comment= | =path?=, =graph?=, =text=, =x?=, =y?=, =width?=, =height?=, =color?= | ={id}= |
+| =vscript.remove_comment= | =path?=, =graph?=, =id= | ={removed: true}= |
+| =vscript.set_program= | =path?=, =name?=, =description?=, =seed?=, =step_budget?=, =fixed_step?= | as =vscript.get= |
+| =vscript.select= | =path?=, =nodes= | ={selected}= |
+| =vscript.validate= | =path?= | ={ok, issues}= |
+| =vscript.run= | =path?=, =frames?=, =dt?=, =event?=, =args?=, =variables?= | ={ok, steps, time, log, variables, error}= |
+| =vscript.live= | =path?= | ={playing, instances, active, hits, paused_at}= |
+| =vscript.breakpoint= | =path?=, =graph?=, =node=, =enabled= | ={node, enabled}= |
+| =vscript.continue= | =path?= | ={resumed}= |
+| =vscript.save= | =path?= | ={path}= |
+
+** Memory profiler methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-memory
+:END:
+Registered by the Memory panel (=src/editor/ui/lrg-editor-memory-panel.c=) on its first =new()= for the app. Instance counts need =GOBJECT_DEBUG=instance-count= (lrgeditor sets that in =main=, which is still too late for a constructor that already ran) or =lrg_memory_profiler_watch_type()=. JSON integers are gint64; values above that clamp. Errors: bad parameters =invalid-params=; an unknown snapshot id =not-found=. Details: [[file:memory-and-network.org][Memory and network]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =memory.status= |  | ={instance_counts, tracked, asset_manager, hint}= |
+| =memory.types= | =filter?=, =limit?=, =sort?= | ={source, types, totals}= |
+| =memory.resources= | =kind?= | ={resources, totals}= |
+| =memory.snapshot= | =label?= | ={id, label, time, totals}= |
+| =memory.snapshots= |  | ={snapshots}= |
+| =memory.diff= | =from=, =to?=, =limit?= | ={from, to, types, resources}= |
+| =memory.clear_snapshots= |  | ={removed}= |
+| =memory.history= | =type?=, =samples?= | ={interval, instances, cpu_bytes, gpu_bytes, type}= |
+| =memory.show= |  | ={panel, shown}= |
+
+** Network stats methods
+:PROPERTIES:
+:CUSTOM_ID: ipc-network
+:END:
+Registered by the Network panel (=src/editor/ui/lrg-editor-network-panel.c=) on its first =new()=. =LrgNetStats= stays off until =LRG_NET_STATS=1= or =network.enable=. Rates are window counters divided by the requested seconds. Errors: bad parameters =invalid-params=; an unknown peer =not-found=. An unknown message type returns zeros. Details: [[file:memory-and-network.org][Memory and network]].
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =network.stats= | =peer?=, =window?= | ={enabled, window, totals, rates, peers, messages}= |
+| =network.history= | =peer?=, =type?=, =metric=, =seconds?= | ={metric, interval, values}= |
+| =network.enable= | =enabled= | ={enabled}= |
+| =network.reset= |  | ={reset: true}= |
+| =network.show= |  | ={panel, shown}= |
 
 # m67e-generated: end
 

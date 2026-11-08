@@ -110,6 +110,8 @@ struct _LrgNavBake
 	GArray   *walkable;   /* guint8 per triangle */
 
 	guint     last_triangles;
+	gfloat    tile_extent;    /* 0 = one bake; otherwise X/Z tile size */
+	guint     last_tiles;
 };
 
 G_DEFINE_FINAL_TYPE (LrgNavBake, lrg_nav_bake, G_TYPE_OBJECT)
@@ -564,6 +566,7 @@ lrg_nav_bake_init (LrgNavBake *self)
 	self->max_drop = 0.0f;
 	self->cell_size = 0.25f;
 	self->cell_height = 0.1f;
+	self->tile_extent = 0.0f;
 	self->include_meshes = TRUE;
 	self->include_colliders = TRUE;
 	self->layer_mask = G_MAXUINT32;
@@ -807,6 +810,30 @@ lrg_nav_bake_get_last_triangle_count (LrgNavBake *self)
 {
 	g_return_val_if_fail (LRG_IS_NAV_BAKE (self), 0);
 	return self->last_triangles;
+}
+
+void
+lrg_nav_bake_set_tile_extent (LrgNavBake *self,
+                              gfloat      extent)
+{
+	g_return_if_fail (LRG_IS_NAV_BAKE (self));
+
+	/* 0 (and anything that is not a positive size) is one bake. */
+	self->tile_extent = extent > 0.0f ? extent : 0.0f;
+}
+
+gfloat
+lrg_nav_bake_get_tile_extent (LrgNavBake *self)
+{
+	g_return_val_if_fail (LRG_IS_NAV_BAKE (self), 0.0f);
+	return self->tile_extent;
+}
+
+guint
+lrg_nav_bake_get_last_tile_count (LrgNavBake *self)
+{
+	g_return_val_if_fail (LRG_IS_NAV_BAKE (self), 0);
+	return self->last_tiles;
 }
 
 /* ==========================================================================
@@ -2038,6 +2065,7 @@ lrg_nav_bake_copy (LrgNavBake *self)
 	set_strv (&copy->exclude_tags, (const gchar *const *) self->exclude_tags);
 	set_strv (&copy->physics_layers, (const gchar *const *) self->physics_layers);
 	copy->has_bounds = self->has_bounds;
+	copy->tile_extent = self->tile_extent;
 	memcpy (copy->bounds_min, self->bounds_min, sizeof (self->bounds_min));
 	memcpy (copy->bounds_max, self->bounds_max, sizeof (self->bounds_max));
 	for (i = 0; i < self->areas->len; i++)
@@ -2711,12 +2739,79 @@ filter_regions (LrgNavBake     *self,
 	}
 }
 
-gboolean
-lrg_nav_bake_bake_into (LrgNavBake           *self,
-                        LrgNavPolyMesh       *mesh,
-                        LrgWorld3D           *world,
-                        LrgNavPolyMeshCache  *cache,
-                        GError              **error)
+/* How many tiles cover @span at @extent. 20 / 10 is exactly 2. */
+static guint
+tile_span_count (gfloat span,
+                 gfloat extent)
+{
+	guint n;
+
+	if (!(extent > 0.0f) || !(span > 0.0f))
+		return 1;
+	n = (guint) floor ((double) span / (double) extent + 1e-4);
+	if (n < 1)
+		n = 1;
+	if ((gfloat) n * extent < span - 1e-3f)
+		n++;
+	return n;
+}
+
+/* One explicit triangle, clipped to the X/Z box and dropped outside Y. */
+static void
+append_clipped_triangle (GArray       *tris,
+                         GArray       *walk,
+                         const gfloat *t,
+                         guint8        w,
+                         const gfloat *mn,
+                         const gfloat *mx)
+{
+	gfloat a[16 * 3];
+	gfloat b[16 * 3];
+	guint  n = 3;
+	guint  k;
+
+	if (MAX (MAX (t[1], t[4]), t[7]) < mn[1] || MIN (MIN (t[1], t[4]), t[7]) > mx[1])
+		return;
+	memcpy (a, t, sizeof (gfloat) * 9);
+	n = clip_axis (a, n, 0, mn[0], TRUE, b);
+	n = n >= 3 ? clip_axis (b, n, 0, mx[0], FALSE, a) : 0;
+	n = n >= 3 ? clip_axis (a, n, 2, mn[2], TRUE, b) : 0;
+	n = n >= 3 ? clip_axis (b, n, 2, mx[2], FALSE, a) : 0;
+	for (k = 1; n >= 3 && k + 1 < n; k++)
+	{
+		g_array_append_vals (tris, a, 3);
+		g_array_append_vals (tris, a + k * 3, 3);
+		g_array_append_vals (tris, a + (k + 1) * 3, 3);
+		g_array_append_val (walk, w);
+	}
+}
+
+static void
+clip_explicit (GArray       *src_tris,
+               GArray       *src_walk,
+               const gfloat *mn,
+               const gfloat *mx,
+               GArray       *out_tris,
+               GArray       *out_walk)
+{
+	guint i;
+
+	for (i = 0; i < src_walk->len; i++)
+	{
+		const gfloat *t = &g_array_index (src_tris, gfloat, i * 9);
+		guint8        w = g_array_index (src_walk, guint8, i);
+
+		append_clipped_triangle (out_tris, out_walk, t, w, mn, mx);
+	}
+}
+
+/* The one-shot bake. tile_extent is ignored here. */
+static gboolean
+bake_one (LrgNavBake           *self,
+          LrgNavPolyMesh       *mesh,
+          LrgWorld3D           *world,
+          LrgNavPolyMeshCache  *cache,
+          GError              **error)
 {
 	guint i;
 	guint staged = 0;
@@ -2727,6 +2822,7 @@ lrg_nav_bake_bake_into (LrgNavBake           *self,
 	g_return_val_if_fail (cache == NULL || LRG_IS_NAV_POLY_MESH_CACHE (cache), FALSE);
 	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
+	self->last_tiles = 1;
 	lrg_nav_bake_configure (self, mesh);
 	if (world != NULL)
 		staged += lrg_nav_bake_collect_world (self, world, mesh);
@@ -2754,6 +2850,174 @@ lrg_nav_bake_bake_into (LrgNavBake           *self,
 		return FALSE;
 	filter_regions (self, mesh);
 	return TRUE;
+}
+
+/*
+ * bake_tiled:
+ *
+ * Splits the X/Z bounds into squares, bakes each with tile_extent forced
+ * to 0 (so this does not recurse) and unions the enabled polygons. The
+ * destination mesh is not configured until that union is ready. Empty
+ * tiles are skipped. On a hard error the caller's bounds, triangle
+ * arrays and last-bake counters are put back.
+ */
+static gboolean
+bake_tiled (LrgNavBake           *self,
+            LrgNavPolyMesh       *mesh,
+            LrgWorld3D           *world,
+            LrgNavPolyMeshCache  *cache,
+            GError              **error)
+{
+	gfloat  saved_min[3];
+	gfloat  saved_max[3];
+	gfloat  extent;
+	guint   saved_last_triangles;
+	guint   saved_last_tiles;
+	guint   nx;
+	guint   nz;
+	guint   ix;
+	guint   iz;
+	GArray *orig_tris;
+	GArray *orig_walk;
+	GArray *union_tris;
+	GArray *union_walk;
+
+	extent = self->tile_extent;
+	saved_last_triangles = self->last_triangles;
+	saved_last_tiles = self->last_tiles;
+	memcpy (saved_min, self->bounds_min, sizeof (saved_min));
+	memcpy (saved_max, self->bounds_max, sizeof (saved_max));
+	orig_tris = self->triangles;
+	orig_walk = self->walkable;
+	union_tris = g_array_new (FALSE, FALSE, sizeof (gfloat));
+	union_walk = g_array_new (FALSE, FALSE, sizeof (guint8));
+	nx = tile_span_count (saved_max[0] - saved_min[0], extent);
+	nz = tile_span_count (saved_max[2] - saved_min[2], extent);
+	self->tile_extent = 0.0f;
+
+	for (iz = 0; iz < nz; iz++)
+	{
+		for (ix = 0; ix < nx; ix++)
+		{
+			g_autoptr(LrgNavPolyMesh) tile = lrg_nav_poly_mesh_new ();
+			g_autoptr(GArray)         clipped = g_array_new (FALSE, FALSE, sizeof (gfloat));
+			g_autoptr(GArray)         clipped_w = g_array_new (FALSE, FALSE, sizeof (guint8));
+			g_autoptr(GError)         local = NULL;
+			gfloat                    tmin[3];
+			gfloat                    tmax[3];
+			guint                     p;
+			guint                     npoly;
+
+			tmin[0] = saved_min[0] + (gfloat) ix * extent;
+			tmin[1] = saved_min[1];
+			tmin[2] = saved_min[2] + (gfloat) iz * extent;
+			tmax[0] = tmin[0] + extent;
+			tmax[1] = saved_max[1];
+			tmax[2] = tmin[2] + extent;
+			if (tmax[0] > saved_max[0])
+				tmax[0] = saved_max[0];
+			if (tmax[2] > saved_max[2])
+				tmax[2] = saved_max[2];
+			memcpy (self->bounds_min, tmin, sizeof (tmin));
+			memcpy (self->bounds_max, tmax, sizeof (tmax));
+			clip_explicit (orig_tris, orig_walk, tmin, tmax, clipped, clipped_w);
+			self->triangles = clipped;
+			self->walkable = clipped_w;
+			if (!bake_one (self, tile, world, NULL, &local))
+			{
+				self->triangles = orig_tris;
+				self->walkable = orig_walk;
+				if (g_error_matches (local, LRG_NAV_BAKE_ERROR, LRG_NAV_BAKE_ERROR_NO_GEOMETRY))
+				{
+					g_clear_error (&local);
+					continue;
+				}
+				g_propagate_error (error, g_steal_pointer (&local));
+				goto fail;
+			}
+			self->triangles = orig_tris;
+			self->walkable = orig_walk;
+
+			npoly = lrg_nav_poly_mesh_get_polygon_count (tile);
+			for (p = 0; p < npoly; p++)
+			{
+				gfloat c[12];
+				guint8 one = 1;
+
+				if (!lrg_nav_poly_mesh_get_polygon_enabled (tile, p))
+					continue;
+				if (!lrg_nav_poly_mesh_get_polygon_corners (tile, p, c))
+					continue;
+				g_array_append_vals (union_tris, c, 3);
+				g_array_append_vals (union_tris, c + 3, 3);
+				g_array_append_vals (union_tris, c + 6, 3);
+				g_array_append_val (union_walk, one);
+				g_array_append_vals (union_tris, c, 3);
+				g_array_append_vals (union_tris, c + 6, 3);
+				g_array_append_vals (union_tris, c + 9, 3);
+				g_array_append_val (union_walk, one);
+			}
+		}
+	}
+
+	memcpy (self->bounds_min, saved_min, sizeof (saved_min));
+	memcpy (self->bounds_max, saved_max, sizeof (saved_max));
+	self->tile_extent = extent;
+	self->triangles = orig_tris;
+	self->walkable = orig_walk;
+
+	if (union_tris->len == 0)
+	{
+		g_set_error_literal (error, LRG_NAV_BAKE_ERROR, LRG_NAV_BAKE_ERROR_NO_GEOMETRY,
+		                     "navigation bake: no geometry (check the sources, filters and bounds)");
+		goto fail_counts;
+	}
+
+	self->triangles = union_tris;
+	self->walkable = union_walk;
+	if (!bake_one (self, mesh, NULL, cache, error))
+	{
+		self->triangles = orig_tris;
+		self->walkable = orig_walk;
+		goto fail_counts;
+	}
+	self->triangles = orig_tris;
+	self->walkable = orig_walk;
+	self->last_tiles = nx * nz;
+	g_array_unref (union_tris);
+	g_array_unref (union_walk);
+	return TRUE;
+
+fail:
+	memcpy (self->bounds_min, saved_min, sizeof (saved_min));
+	memcpy (self->bounds_max, saved_max, sizeof (saved_max));
+	self->tile_extent = extent;
+	self->triangles = orig_tris;
+	self->walkable = orig_walk;
+fail_counts:
+	self->last_triangles = saved_last_triangles;
+	self->last_tiles = saved_last_tiles;
+	g_array_unref (union_tris);
+	g_array_unref (union_walk);
+	return FALSE;
+}
+
+gboolean
+lrg_nav_bake_bake_into (LrgNavBake           *self,
+                        LrgNavPolyMesh       *mesh,
+                        LrgWorld3D           *world,
+                        LrgNavPolyMeshCache  *cache,
+                        GError              **error)
+{
+	g_return_val_if_fail (LRG_IS_NAV_BAKE (self), FALSE);
+	g_return_val_if_fail (LRG_IS_NAV_POLY_MESH (mesh), FALSE);
+	g_return_val_if_fail (world == NULL || LRG_IS_WORLD3D (world), FALSE);
+	g_return_val_if_fail (cache == NULL || LRG_IS_NAV_POLY_MESH_CACHE (cache), FALSE);
+	g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+	if (self->tile_extent > 0.0f && self->has_bounds)
+		return bake_tiled (self, mesh, world, cache, error);
+	return bake_one (self, mesh, world, cache, error);
 }
 
 LrgNavPolyMesh *

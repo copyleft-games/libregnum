@@ -298,4 +298,77 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_vcs_directory_has_changes (LrgEditorVcs *self,
                                                const gchar  *path);
 
+/**
+ * lrg_editor_vcs_diff:
+ * @self: an #LrgEditorVcs
+ * @error: (nullable): return location for a #GError
+ *
+ * Runs `git diff HEAD` in the project directory. A clean tree is an
+ * empty string. Cancellation is the only error.
+ *
+ * Returns: (transfer full) (nullable): the diff text
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_vcs_diff (LrgEditorVcs  *self,
+                             GError       **error);
+
+/**
+ * lrg_editor_vcs_log:
+ * @self: an #LrgEditorVcs
+ * @error: (nullable): return location for a #GError
+ *
+ * The last 20 commits, subject then the paths each commit touched.
+ *
+ * Returns: (transfer full) (nullable): the log text
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_vcs_log (LrgEditorVcs  *self,
+                            GError       **error);
+
+/**
+ * lrg_editor_vcs_commit:
+ * @self: an #LrgEditorVcs
+ * @message: commit subject
+ * @error: (nullable): return location for a #GError
+ *
+ * Stages everything (`git add -A`) and commits it. The author is
+ * libregnum, so a project without `user.name` still commits. Nothing
+ * to commit is an error.
+ *
+ * Returns: (transfer full) (nullable): git's stdout, or %NULL on error
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_vcs_commit (LrgEditorVcs  *self,
+                               const gchar   *message,
+                               GError       **error);
+
+/**
+ * lrg_editor_vcs_lfs_locks:
+ * @self: an #LrgEditorVcs
+ * @available: (out) (optional): %TRUE when `git lfs locks` ran
+ * @error: (nullable): return location for a #GError
+ *
+ * Runs `git lfs locks`. A missing `git-lfs` or a repository that does
+ * not use LFS leaves @available %FALSE and returns an empty string.
+ * That is not an error.
+ *
+ * Returns: (transfer full) (nullable): the lock listing
+ */
+LRG_AVAILABLE_IN_ALL
+gchar * lrg_editor_vcs_lfs_locks (LrgEditorVcs  *self,
+                                  gboolean      *available,
+                                  GError       **error);
+
+/**
+ * lrg_editor_vcs_magit_handoff:
+ * @self: an #LrgEditorVcs
+ *
+ * The Emacs form a host can eval to open Magit on this project.
+ * Libregnum does not start Emacs.
+ *
+ * Returns: (transfer none): the constant "(magit-status)"
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_editor_vcs_magit_handoff (LrgEditorVcs *self);
+
 G_END_DECLS

@@ -791,6 +791,148 @@ test_store_property (void)
 	}
 }
 
+/* A level mixer is loaded only when named. A bad file fails and leaves
+ * the manager's mixer alone. No name leaves it alone too. */
+static void
+test_level_audio_mixer (void)
+{
+	static const gchar *good_mixer =
+		"version: 1\n"
+		"buses:\n"
+		"  - name: sfx\n"
+		"    volume: -6\n"
+		"  - name: weapons\n"
+		"    parent: sfx\n"
+		"    volume: -3\n"
+		"    sends:\n"
+		"      - target: fx\n"
+		"        level: -12\n"
+		"  - name: fx\n"
+		"    volume: 0\n";
+	static const gchar *plain =
+		"type: level\n"
+		"name: plain\n"
+		"default_view: 3d\n"
+		"nodes: []\n";
+	static const gchar *named =
+		"type: level\n"
+		"name: mixed\n"
+		"default_view: 3d\n"
+		"audio:\n"
+		"  mixer: mix.rmixer\n"
+		"nodes: []\n";
+	static const gchar *broken_level =
+		"type: level\n"
+		"name: broken\n"
+		"default_view: 3d\n"
+		"audio:\n"
+		"  mixer: bad.rmixer\n"
+		"nodes: []\n";
+	static const gchar *missing_level =
+		"type: level\n"
+		"name: missing\n"
+		"default_view: 3d\n"
+		"audio:\n"
+		"  mixer: no-such.rmixer\n"
+		"nodes: []\n";
+	static const gchar *bad_block =
+		"type: level\n"
+		"name: bad-block\n"
+		"default_view: 3d\n"
+		"audio:\n"
+		"  volume: 1\n"
+		"nodes: []\n";
+	LrgAudioManager          *mgr = lrg_audio_manager_get_default ();
+	LrgAudioMixer            *previous = lrg_audio_manager_get_mixer (mgr);
+	g_autoptr(LrgAudioMixer)  held = previous != NULL ? g_object_ref (previous) : NULL;
+	g_autoptr(LrgLevelSerializer) ser = lrg_level_serializer_new ();
+	g_autoptr(LrgLevel)       round = NULL;
+	g_autoptr(LrgWorld3D)     world = lrg_world3d_new ();
+	g_autoptr(LrgLevel)       level = NULL;
+	g_autoptr(GError)         error = NULL;
+	g_autofree gchar         *dir = g_dir_make_tmp ("lrg-level-mixer-XXXXXX", NULL);
+	g_autofree gchar         *mix_path = NULL;
+	g_autofree gchar         *bad_path = NULL;
+	g_autofree gchar         *level_path = NULL;
+	g_autofree gchar         *round_path = NULL;
+	LrgAudioMixer            *current;
+
+	g_assert_nonnull (dir);
+	mix_path = g_build_filename (dir, "mix.rmixer", NULL);
+	bad_path = g_build_filename (dir, "bad.rmixer", NULL);
+	level_path = g_build_filename (dir, "level.rlevel", NULL);
+	round_path = g_build_filename (dir, "round.rlevel", NULL);
+	g_assert_true (g_file_set_contents (mix_path, good_mixer, -1, &error));
+	g_assert_no_error (error);
+	g_assert_true (g_file_set_contents (bad_path, "buses: 3\n", -1, &error));
+	g_assert_no_error (error);
+
+	/* Saving the path round-trips as audio.mixer. */
+	{
+		g_autoptr(LrgLevel) src = lrg_level_new ("round");
+
+		lrg_level_set_audio_mixer (src, "mix.rmixer");
+		g_assert_true (lrg_level_serializer_save_to_file (ser, src, round_path, &error));
+		g_assert_no_error (error);
+	}
+	round = lrg_level_serializer_load_from_file (ser, round_path, &error);
+	g_assert_no_error (error);
+	g_assert_cmpstr (lrg_level_get_audio_mixer (round), ==, "mix.rmixer");
+
+	/* No mixer named: the manager's mixer stays. */
+	g_assert_true (g_file_set_contents (level_path, plain, -1, &error));
+	g_assert_no_error (error);
+	level = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_no_error (error);
+	g_assert_true (lrg_audio_manager_get_mixer (mgr) == held);
+	g_clear_object (&level);
+
+	/* A good .rmixer replaces it and keeps the fx bus. */
+	g_assert_true (g_file_set_contents (level_path, named, -1, &error));
+	g_assert_no_error (error);
+	level = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_no_error (error);
+	g_assert_cmpstr (lrg_level_get_audio_mixer (level), ==, "mix.rmixer");
+	current = lrg_audio_manager_get_mixer (mgr);
+	g_assert_nonnull (current);
+	g_assert_true (current != held);
+	g_assert_true (lrg_audio_mixer_has_bus (current, "fx"));
+	g_clear_object (&level);
+
+	/* A parse error does not replace that mixer. */
+	g_assert_true (g_file_set_contents (level_path, broken_level, -1, &error));
+	g_assert_no_error (error);
+	level = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_null (level);
+	g_assert_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_FAILED);
+	g_assert_true (lrg_audio_manager_get_mixer (mgr) == current);
+	g_clear_error (&error);
+
+	/* A missing file does not replace it either. */
+	g_assert_true (g_file_set_contents (level_path, missing_level, -1, &error));
+	g_assert_no_error (error);
+	level = lrg_level_load_world3d (level_path, world, &error);
+	g_assert_null (level);
+	g_assert_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_FAILED);
+	g_assert_true (lrg_audio_manager_get_mixer (mgr) == current);
+	g_clear_error (&error);
+
+	/* An unknown key fails the load before instantiate. */
+	g_assert_true (g_file_set_contents (level_path, bad_block, -1, &error));
+	g_assert_no_error (error);
+	level = lrg_level_serializer_load_from_file (ser, level_path, &error);
+	g_assert_null (level);
+	g_assert_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_PARSE);
+	g_clear_error (&error);
+
+	lrg_audio_manager_set_mixer (mgr, held);
+	g_unlink (mix_path);
+	g_unlink (bad_path);
+	g_unlink (level_path);
+	g_unlink (round_path);
+	g_rmdir (dir);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -813,6 +955,7 @@ main (int   argc,
 	g_test_add_func ("/level/instantiate-3d/guid-conflicts", test_guid_conflicts);
 	g_test_add_func ("/level/instantiate-3d/instantiate-node", test_instantiate_node);
 	g_test_add_func ("/level/instantiate-3d/load-world3d", test_load_world3d);
+	g_test_add_func ("/level/instantiate-3d/audio-mixer", test_level_audio_mixer);
 	g_test_add_func ("/level/instantiate-3d/store-property", test_store_property);
 
 	return g_test_run ();

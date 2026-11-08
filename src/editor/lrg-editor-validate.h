@@ -51,8 +51,11 @@ typedef enum
  * @node_path: (nullable): that node's name path (for display)
  * @message: human-readable description
  * @file: (nullable): a related file (missing asset, script)
+ * @line: 1-based source line, or 0 when the finding has no line
+ * @column: 1-based source column, or 0 when the finding has no column
  *
- * One validation finding.
+ * One validation finding. @line and @column are filled by the reporter
+ * when the source location is known (a script diagnostic, a YAML line).
  */
 typedef struct
 {
@@ -62,6 +65,8 @@ typedef struct
 	gchar                    *node_path;
 	gchar                    *message;
 	gchar                    *file;
+	gint                      line;
+	gint                      column;
 } LrgEditorProblem;
 
 LRG_AVAILABLE_IN_ALL

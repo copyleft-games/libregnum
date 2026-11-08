@@ -209,4 +209,24 @@ LRG_AVAILABLE_IN_ALL
 LrgInputSoftware *
 lrg_game_host_get_input_source (LrgGameHost *self);
 
+/**
+ * lrg_game_host_load_autoloads:
+ * @self: a game host
+ * @project_dir: (type filename): directory that contains project.ryaml
+ * @error: (nullable): return location for a #GError
+ *
+ * Loads every path in the root `autoloads:` sequence through the host
+ * engine's data loader. Relative paths resolve from @project_dir. A
+ * manifest with no `autoloads:` key returns an empty array. The objects
+ * stay alive only as long as the returned array does; keep it for the
+ * session.
+ *
+ * Returns: (transfer full) (element-type GObject): the loaded objects
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray *
+lrg_game_host_load_autoloads (LrgGameHost  *self,
+                              const gchar  *project_dir,
+                              GError      **error);
+
 G_END_DECLS

@@ -36,6 +36,9 @@ struct _LrgLevel
 	gchar      *nav_settings_ref; /* nullable: a .rnav */
 	gchar      *nav_data_ref;     /* nullable: a baked mesh */
 	gboolean    nav_bake_on_load;
+
+	/* optional `audio: mixer:` (.rmixer), loaded on instantiate */
+	gchar      *audio_mixer;
 };
 
 G_DEFINE_FINAL_TYPE (LrgLevel, lrg_level, G_TYPE_OBJECT)
@@ -78,6 +81,7 @@ lrg_level_finalize (GObject *object)
 	g_clear_pointer (&self->bake_settings, g_hash_table_unref);
 	g_clear_pointer (&self->nav_settings_ref, g_free);
 	g_clear_pointer (&self->nav_data_ref, g_free);
+	g_clear_pointer (&self->audio_mixer, g_free);
 
 	G_OBJECT_CLASS (lrg_level_parent_class)->finalize (object);
 }
@@ -722,4 +726,25 @@ lrg_level_clear_navigation (LrgLevel *self)
 	g_clear_pointer (&self->nav_settings_ref, g_free);
 	g_clear_pointer (&self->nav_data_ref, g_free);
 	self->nav_bake_on_load = FALSE;
+}
+
+/* ==========================================================================
+ * Audio (the `audio:` block)
+ * ========================================================================== */
+
+const gchar *
+lrg_level_get_audio_mixer (LrgLevel *self)
+{
+	g_return_val_if_fail (LRG_IS_LEVEL (self), NULL);
+	return self->audio_mixer;
+}
+
+void
+lrg_level_set_audio_mixer (LrgLevel    *self,
+                           const gchar *path)
+{
+	g_return_if_fail (LRG_IS_LEVEL (self));
+
+	g_free (self->audio_mixer);
+	self->audio_mixer = (path != NULL && *path != '\0') ? g_strdup (path) : NULL;
 }

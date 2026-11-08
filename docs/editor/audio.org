@@ -301,7 +301,7 @@ lrg_editor_mixer_strips_get_part_rect (strips, "sfx", LRG_EDITOR_MIXER_STRIP_FAD
 - *Comments do not survive.* The editor writes the engine's canonical text on every edit and save. Keep notes in unknown keys (they round-trip), not in YAML comments.
 - *Re-applying restarts effect tails.* Every edit re-applies the layout to the preview mixer, rebuilding effect chains; a long reverb restarts. Snapshots ramp without that.
 - *Preview is not sound.* The editor renders offline and never plays the preview through a device; use play-in-editor to hear the game's mixer.
-- *Default max distance.* An emitter without a =radius= param plays with the component's default max distance (50), which is what the gizmo and the Audio Source section show; the generic Visual section lists =radius= with a suggested 10 that is only written when edited there.
+- *Default max distance.* An emitter without a =radius= param plays with the component's default max distance (50), which is what the gizmo, the Audio Source section and the suggested Visual value show. =lrg_editor_node_source_get_suggested_double()= reads that suggestion; for an audio emitter and ="radius"= it returns 50.
 - *Cones point down local -Z.* Rotate the emitter node to aim the cone; angles are full angles (360: no cone), and the inner angle never exceeds the outer one.
 - *A bus that the game does not have.* An emitter routed to a bus the project mixer lacks plays nothing at runtime; the bus picker only lists the project mixer's buses, but a typed name is accepted.
 

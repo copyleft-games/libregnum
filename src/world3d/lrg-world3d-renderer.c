@@ -34,6 +34,7 @@
 #include "config.h"
 
 #include "lrg-world3d-renderer.h"
+#include "../debug/lrg-profiler.h"
 #include "../core/lrg-math3d.h"
 #include "../graphics/lrg-camera.h"
 #include "../graphics/lrg-camera3d.h"
@@ -304,6 +305,14 @@ struct _LrgWorld3DRenderer
 	GPtrArray               *records[LRG_WORLD3D_RENDER_PASS_COUNT];
 	guint                    shadow_passes;
 	guint                    batched;
+
+	/* Frame debugger (0.9.0).  capture is reffed; replay_rt is ours. */
+	LrgFrameCapture         *capture;
+	LrgRenderList           *last_list;     /* borrowed: the list of the last render */
+	LrgWorld3DView           last_view;
+	gboolean                 have_view;
+	gboolean                 in_render;
+	RenderTexture2D          replay_rt;
 };
 
 enum
@@ -982,6 +991,11 @@ release_resources (LrgWorld3DRenderer *self,
 
 	if (gl)
 		release_post_targets (self);
+	if (gl && self->replay_rt.id != 0)
+	{
+		UnloadRenderTexture (self->replay_rt);
+		memset (&self->replay_rt, 0, sizeof self->replay_rt);
+	}
 
 	/* The 0.9.0 passes: prepass, SSAO, decal textures, volumetric fog,
 	 * the stack's processor, the environment maps, custom and debug
@@ -2394,6 +2408,231 @@ pick_probes (LrgWorld3DRenderer  *self,
 	rlActiveTextureSlot (0);
 }
 
+/* ==========================================================================
+ * Profiler sections and frame capture
+ *
+ * Sections are the default profiler's.  Disabled, each is a flag test
+ * (the singleton already exists once anything has asked for it).  GPU
+ * sections go through the profiler's timer, which does not wait.
+ *
+ * Frame capture notes only while recording or replaying.  note() FALSE
+ * means this call is past the scrub: the caller skips the draw.
+ * ========================================================================== */
+
+static void
+prof_begin (const gchar *name)
+{
+	LrgProfiler *profiler = lrg_profiler_get_default ();
+
+	if (G_UNLIKELY (lrg_profiler_is_enabled (profiler)))
+		lrg_profiler_begin_section (profiler, name);
+	if (G_UNLIKELY (lrg_profiler_get_gpu_enabled (profiler)))
+		lrg_profiler_begin_gpu_section (profiler, name);
+}
+
+static void
+prof_end (const gchar *name)
+{
+	LrgProfiler *profiler = lrg_profiler_get_default ();
+
+	if (G_UNLIKELY (lrg_profiler_get_gpu_enabled (profiler)))
+		lrg_profiler_end_gpu_section (profiler);
+	if (G_UNLIKELY (lrg_profiler_is_enabled (profiler)))
+		lrg_profiler_end_section (profiler, name);
+}
+
+static const gchar *
+pass_nick (LrgWorld3DRenderPass pass)
+{
+	switch (pass)
+	{
+	case LRG_WORLD3D_RENDER_PASS_SHADOW:
+		return "shadow";
+	case LRG_WORLD3D_RENDER_PASS_SKY:
+		return "sky";
+	case LRG_WORLD3D_RENDER_PASS_OPAQUE:
+		return "opaque";
+	case LRG_WORLD3D_RENDER_PASS_CUTOUT:
+		return "cutout";
+	case LRG_WORLD3D_RENDER_PASS_TRANSPARENT:
+		return "transparent";
+	case LRG_WORLD3D_RENDER_PASS_POST:
+		return "post";
+	case LRG_WORLD3D_RENDER_PASS_PREPASS:
+		return "prepass";
+	case LRG_WORLD3D_RENDER_PASS_SSAO:
+		return "ssao";
+	case LRG_WORLD3D_RENDER_PASS_VOLUMETRIC:
+		return "volumetric";
+	default:
+		return "opaque";
+	}
+}
+
+static const gchar *
+primitive_nick (LrgPrimitiveType primitive)
+{
+	switch (primitive)
+	{
+	case LRG_PRIMITIVE_PLANE:
+		return "plane";
+	case LRG_PRIMITIVE_CUBE:
+		return "cube";
+	case LRG_PRIMITIVE_CIRCLE:
+		return "circle";
+	case LRG_PRIMITIVE_UV_SPHERE:
+		return "uv-sphere";
+	case LRG_PRIMITIVE_ICO_SPHERE:
+		return "ico-sphere";
+	case LRG_PRIMITIVE_CYLINDER:
+		return "cylinder";
+	case LRG_PRIMITIVE_CONE:
+		return "cone";
+	case LRG_PRIMITIVE_TORUS:
+		return "torus";
+	case LRG_PRIMITIVE_GRID:
+		return "grid";
+	case LRG_PRIMITIVE_MESH:
+		return "mesh";
+	case LRG_PRIMITIVE_RECTANGLE_2D:
+		return "rectangle";
+	case LRG_PRIMITIVE_CIRCLE_2D:
+		return "circle-2d";
+	default:
+		return "primitive";
+	}
+}
+
+/* TRUE when the caller should draw.  Idle captures return TRUE without
+ * filling a call. */
+static gboolean
+capture_note_special (LrgWorld3DRenderer *self,
+                      const gchar        *pass,
+                      LrgFrameCallKind    kind,
+                      const gchar        *shader,
+                      guint               shader_id,
+                      guint               framebuffer)
+{
+	LrgFrameCall call;
+
+	if (self->capture == NULL || !lrg_frame_capture_is_active (self->capture))
+		return TRUE;
+	memset (&call, 0, sizeof call);
+	call.pass = pass;
+	call.kind = kind;
+	call.shader = shader;
+	call.shader_id = shader_id;
+	call.instances = 1;
+	call.color[0] = call.color[1] = call.color[2] = call.color[3] = 1.0f;
+	call.transform[0] = call.transform[5] = call.transform[10] = call.transform[15] = 1.0f;
+	call.depth_test = TRUE;
+	call.depth_write = TRUE;
+	call.cull = TRUE;
+	call.framebuffer = framebuffer;
+	return lrg_frame_capture_note (self->capture, &call);
+}
+
+static gboolean
+capture_note_item (LrgWorld3DRenderer  *self,
+                   const Replay        *r,
+                   const LrgRenderItem *item)
+{
+	LrgFrameCall  call;
+	const gchar  *shader_name;
+	guint         shader_id = 0;
+	guint         texture_id = 0;
+	guint         vertices = 0;
+	guint         triangles = 0;
+
+	if (self->capture == NULL || !lrg_frame_capture_is_active (self->capture))
+		return TRUE;
+
+	memset (&call, 0, sizeof call);
+	call.pass = pass_nick (r->pass);
+	call.instances = 1;
+	call.depth_test = TRUE;
+	call.depth_write = (r->pass != LRG_WORLD3D_RENDER_PASS_TRANSPARENT);
+	call.cull = (item->flags & LRG_RENDER_ITEM_FLAG_DOUBLE_SIDED) == 0;
+	call.blend = (item->flags & LRG_RENDER_ITEM_FLAG_TRANSPARENT) != 0 ||
+	             r->pass == LRG_WORLD3D_RENDER_PASS_TRANSPARENT;
+	call.wireframe = (self->mode == LRG_WORLD3D_RENDER_MODE_WIREFRAME);
+	if (self->gpu)
+		call.framebuffer = rlGetActiveFramebuffer ();
+	memcpy (call.color, item->color, sizeof call.color);
+	memcpy (call.transform, item->world_matrix, sizeof call.transform);
+
+	shader_name = r->casters_only ? "caster" : "lit";
+	if (self->gpu)
+	{
+		if (r->casters_only)
+			shader_id = r->lit_shader.id;
+		else if ((item->flags & LRG_RENDER_ITEM_FLAG_UNLIT) != 0)
+		{
+			shader_name = "unlit";
+			shader_id = r->unlit_shader.id;
+		}
+		else
+			shader_id = r->lit_shader.id;
+	}
+	else if ((item->flags & LRG_RENDER_ITEM_FLAG_UNLIT) != 0 && !r->casters_only)
+		shader_name = "unlit";
+	call.shader = shader_name;
+	call.shader_id = shader_id;
+
+	switch (item->kind)
+	{
+	case LRG_RENDER_ITEM_PRIMITIVE:
+		call.kind = LRG_FRAME_CALL_KIND_PRIMITIVE;
+		call.mesh = primitive_nick (item->primitive);
+		break;
+	case LRG_RENDER_ITEM_MESH:
+		call.kind = LRG_FRAME_CALL_KIND_MESH;
+		call.mesh = "mesh";
+		if (item->mesh != NULL && GRL_IS_MESH (item->mesh))
+		{
+			vertices = (guint) MAX (grl_mesh_get_vertex_count (GRL_MESH (item->mesh)), 0);
+			triangles = (guint) MAX (grl_mesh_get_triangle_count (GRL_MESH (item->mesh)), 0);
+		}
+		break;
+	case LRG_RENDER_ITEM_MODEL:
+		call.kind = LRG_FRAME_CALL_KIND_MODEL;
+		call.mesh = "model";
+		break;
+	case LRG_RENDER_ITEM_BILLBOARD:
+		call.kind = LRG_FRAME_CALL_KIND_BILLBOARD;
+		call.mesh = "billboard";
+		vertices = 4;
+		triangles = 2;
+		break;
+	case LRG_RENDER_ITEM_CUSTOM:
+		call.kind = LRG_FRAME_CALL_KIND_CUSTOM;
+		break;
+	default:
+		call.kind = LRG_FRAME_CALL_KIND_CUSTOM;
+		break;
+	}
+	call.vertices = vertices;
+	call.triangles = triangles;
+
+	if (item->texture != NULL && GRL_IS_TEXTURE (item->texture))
+	{
+		Texture2D *handle = (Texture2D *) grl_texture_get_handle (GRL_TEXTURE (item->texture));
+
+		if (handle != NULL)
+			texture_id = handle->id;
+	}
+	call.texture_id = texture_id;
+
+	if (item->material != NULL && LRG_IS_MATERIAL (item->material))
+		call.material = lrg_material_get_name (LRG_MATERIAL (item->material));
+	if (item->entity != NULL && LRG_IS_ENTITY3D (item->entity))
+	{
+		call.entity = lrg_entity3d_get_name (item->entity);
+		call.guid = lrg_entity3d_get_guid (item->entity);
+	}
+	return lrg_frame_capture_note (self->capture, &call);
+}
+
 static void
 replay_item (const LrgRenderItem *item,
              LrgRenderCategory    category,
@@ -2420,6 +2659,11 @@ replay_item (const LrgRenderItem *item,
 		if (item->kind == LRG_RENDER_ITEM_PRIMITIVE && !primitive_is_solid (item->primitive))
 			return;
 	}
+
+	/* Past the frame-debugger scrub this draw does not happen, and it
+	 * is not counted in the pass.  Idle captures return before any work. */
+	if (!capture_note_item (self, r, item))
+		return;
 
 	record_item (self, r->pass, item);
 	if (!self->gpu)
@@ -2627,7 +2871,8 @@ static gboolean
 draw_static_batch (LrgWorld3DRenderer *self,
                    LrgRenderList      *list,
                    guint32             mask,
-                   GrlShader          *light_shader)
+                   GrlShader          *light_shader,
+                   gboolean            draw)
 {
 	guint64 sig = G_GUINT64_CONSTANT (14695981039346656037);
 	guint   i, n, count = 0;
@@ -2655,7 +2900,9 @@ draw_static_batch (LrgWorld3DRenderer *self,
 	self->batched = count;
 	if (count == 0)
 		return FALSE;
-	if (!self->gpu)
+	/* Headless, or a scrubbed replay: the batch still owns those items
+	 * (skip_batched) but nothing is drawn. */
+	if (!self->gpu || !draw)
 		return TRUE;
 
 	/* Rebuild on change: CPU merge, then upload */
@@ -2942,7 +3189,12 @@ render_prepass (LrgWorld3DRenderer   *self,
 		lrg_render_list_foreach (list, LRG_RENDER_CATEGORY_OPAQUE, replay_item, &r);
 		lrg_render_list_foreach (list, LRG_RENDER_CATEGORY_CUTOUT, replay_item, &r);
 		if (want_ssao)
-			self->pass_counts[LRG_WORLD3D_RENDER_PASS_SSAO] = 1;
+		{
+			prof_begin ("world3d.ssao");
+			if (capture_note_special (self, "ssao", LRG_FRAME_CALL_KIND_SSAO, "ssao", 0, 0))
+				self->pass_counts[LRG_WORLD3D_RENDER_PASS_SSAO] = 1;
+			prof_end ("world3d.ssao");
+		}
 		self->list_in_flight = NULL;
 		return TRUE;
 	}
@@ -2966,11 +3218,16 @@ render_prepass (LrgWorld3DRenderer   *self,
 
 	if (ok && want_ssao)
 	{
+		prof_begin ("world3d.ssao");
 		t0 = pass_clock (self);
-		*out_ssao = lrg_ssao_render (self->ssao, self->prepass);
-		if (*out_ssao)
-			self->pass_counts[LRG_WORLD3D_RENDER_PASS_SSAO] = 1;
+		if (capture_note_special (self, "ssao", LRG_FRAME_CALL_KIND_SSAO, "ssao", 0, outer))
+		{
+			*out_ssao = lrg_ssao_render (self->ssao, self->prepass);
+			if (*out_ssao)
+				self->pass_counts[LRG_WORLD3D_RENDER_PASS_SSAO] = 1;
+		}
 		pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_SSAO, t0);
+		prof_end ("world3d.ssao");
 	}
 	enter_target (outer, w, h);
 	return ok;
@@ -3276,15 +3533,21 @@ render_core (LrgWorld3DRenderer   *self,
 	gint              iw, ih;
 	gint64            t0;
 
+	self->in_render = TRUE;
 	stats_reset (self);
 	memset (self->pass_time, 0, sizeof self->pass_time);
 	self->gpu = !self->headless && ensure_gl (self);
+	self->last_list = list;
 
 	v = *in_view;
 	v.width = MAX (v.width, 1.0f);
 	v.height = MAX (v.height, 1.0f);
 	iw = (gint) v.width;
 	ih = (gint) v.height;
+	self->last_view = v;
+	self->have_view = TRUE;
+	if (self->capture != NULL)
+		lrg_frame_capture_begin_frame (self->capture, iw, ih);
 	wire = (self->mode == LRG_WORLD3D_RENDER_MODE_WIREFRAME);
 	overdraw = (self->mode == LRG_WORLD3D_RENDER_MODE_OVERDRAW);
 	debug_view = overdraw || self->mode == LRG_WORLD3D_RENDER_MODE_UV || mode_is_lit_debug (self->mode);
@@ -3315,7 +3578,11 @@ render_core (LrgWorld3DRenderer   *self,
 	t0 = pass_clock (self);
 	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_SHADOWS) && lit_mode && perspective &&
 	    (!self->gpu || light_shader != NULL))
+	{
+		prof_begin ("world3d.shadow");
 		shadows_ok = render_shadows (self, list, &v, outer, iw, ih);
+		prof_end ("world3d.shadow");
+	}
 	if (self->gpu)
 		lrg_light_set_set_shadow_renderer (self->lights, shadows_ok ? self->shadows : NULL);
 	pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_SHADOW, t0);
@@ -3327,7 +3594,11 @@ render_core (LrgWorld3DRenderer   *self,
 	if (env != NULL && self->volumetric_enabled && lit_mode && perspective)
 		want_volumetric = lrg_volumetric_fog_set_from_environment (self->vfog, env);
 	if (want_ssao || want_volumetric)
+	{
+		prof_begin ("world3d.prepass");
 		prepass_ok = render_prepass (self, list, &v, proj_m, want_ssao, outer, iw, ih, &ssao_ok);
+		prof_end ("world3d.prepass");
+	}
 	if (self->gpu)
 	{
 		lrg_ssao_set_viewport (self->ssao, 0, 0, 0, 0);
@@ -3351,7 +3622,8 @@ render_core (LrgWorld3DRenderer   *self,
 		/* Debug views clear to black so their colours read */
 		if (debug_view)
 			bg = (Color) { 0, 0, 0, 255 };
-		ClearBackground (bg);
+		if (capture_note_special (self, "clear", LRG_FRAME_CALL_KIND_CLEAR, "clear", 0, target))
+			ClearBackground (bg);
 	}
 
 	/* --- 3D pass ----------------------------------------------------------
@@ -3363,11 +3635,15 @@ render_core (LrgWorld3DRenderer   *self,
 	 * views): the environment's sky, else the sky dome */
 	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_SKY) && perspective && !debug_view)
 	{
-		self->pass_counts[LRG_WORLD3D_RENDER_PASS_SKY] = 1;
-		if (self->gpu)
+		gboolean draw_sky = capture_note_special (self, "sky", LRG_FRAME_CALL_KIND_SKY, "sky", 0, target);
+
+		if (draw_sky)
+			self->pass_counts[LRG_WORLD3D_RENDER_PASS_SKY] = 1;
+		if (self->gpu && draw_sky)
 		{
 			GrlVector3 eye;
 
+			prof_begin ("world3d.sky");
 			t0 = pass_clock (self);
 			eye.x = v.position[0];
 			eye.y = v.position[1];
@@ -3390,6 +3666,12 @@ render_core (LrgWorld3DRenderer   *self,
 			rlEnableDepthTest ();
 			rlEnableDepthMask ();
 			pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_SKY, t0);
+			prof_end ("world3d.sky");
+		}
+		else if (draw_sky)
+		{
+			prof_begin ("world3d.sky");
+			prof_end ("world3d.sky");
 		}
 	}
 
@@ -3440,14 +3722,31 @@ render_core (LrgWorld3DRenderer   *self,
 	}
 
 	/* Opaque: the static batch first, then the rest front to back */
+	prof_begin ("world3d.opaque");
 	if ((self->flags & LRG_WORLD3D_RENDER_FLAG_BATCH_STATIC) && self->mode == LRG_WORLD3D_RENDER_MODE_LIT &&
 	    (!self->gpu || light_shader != NULL))
-		batched = draw_static_batch (self, list, v.cull_mask, light_shader);
+	{
+		guint    batch_shader = 0;
+		gboolean draw_batch;
+
+		if (self->gpu && light_shader != NULL)
+		{
+			Shader *sh = (Shader *) grl_shader_get_handle (light_shader);
+
+			if (sh != NULL)
+				batch_shader = sh->id;
+		}
+		draw_batch = capture_note_special (self, "batch", LRG_FRAME_CALL_KIND_BATCH, "lit",
+		                                   batch_shader, self->gpu ? rlGetActiveFramebuffer () : 0);
+		batched = draw_static_batch (self, list, v.cull_mask, light_shader, draw_batch);
+	}
 	r.skip_batched = batched;
 	replay_category (self, list, LRG_RENDER_CATEGORY_OPAQUE, LRG_WORLD3D_RENDER_PASS_OPAQUE, &r);
+	prof_end ("world3d.opaque");
 	r.skip_batched = FALSE;
 
 	/* Cutout: alpha tested at 0.5 by the light-set shader */
+	prof_begin ("world3d.cutout");
 	if (light_shader != NULL && lrg_render_list_get_n_items (list, LRG_RENDER_CATEGORY_CUTOUT) > 0)
 	{
 		r.cutoff = CUTOUT_ALPHA;
@@ -3474,12 +3773,18 @@ render_core (LrgWorld3DRenderer   *self,
 	}
 	else
 		replay_category (self, list, LRG_RENDER_CATEGORY_CUTOUT, LRG_WORLD3D_RENDER_PASS_CUTOUT, &r);
+	prof_end ("world3d.cutout");
 
 	/* Volumetric fog over the opaque scene, before the blended items */
 	if (want_volumetric && prepass_ok)
 	{
-		self->pass_counts[LRG_WORLD3D_RENDER_PASS_VOLUMETRIC] = 1;
-		if (self->gpu)
+		gboolean draw_vol = capture_note_special (self, "volumetric", LRG_FRAME_CALL_KIND_VOLUMETRIC,
+		                                          "volumetric", 0, target);
+
+		prof_begin ("world3d.volumetric");
+		if (draw_vol)
+			self->pass_counts[LRG_WORLD3D_RENDER_PASS_VOLUMETRIC] = 1;
+		if (self->gpu && draw_vol)
 		{
 			g_autoptr(GError) error = NULL;
 
@@ -3495,17 +3800,22 @@ render_core (LrgWorld3DRenderer   *self,
 			begin_3d (proj_m, self->cur_view);
 			pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_VOLUMETRIC, t0);
 		}
+		prof_end ("world3d.volumetric");
 	}
 
 	/* Transparent: back to front, blended, without depth writes */
+	prof_begin ("world3d.transparent");
 	if (self->gpu && !overdraw)
 		rlDisableDepthMask ();
 	replay_category (self, list, LRG_RENDER_CATEGORY_TRANSPARENT, LRG_WORLD3D_RENDER_PASS_TRANSPARENT, &r);
 	if (self->gpu && !overdraw)
 		rlEnableDepthMask ();
+	prof_end ("world3d.transparent");
 
 	if (self->gpu)
 	{
+		gboolean draw_debug = FALSE;
+
 		if (overdraw)
 		{
 			rlDrawRenderBatchActive ();
@@ -3531,7 +3841,13 @@ render_core (LrgWorld3DRenderer   *self,
 			rlDisableWireMode ();
 
 		if ((self->flags & LRG_WORLD3D_RENDER_FLAG_DEBUG_DRAW) && self->debug_draw != NULL)
-			lrg_debug_draw_draw_3d (self->debug_draw);
+		{
+			prof_begin ("world3d.debug");
+			draw_debug = capture_note_special (self, "debug", LRG_FRAME_CALL_KIND_DEBUG, "debug", 0, target);
+			if (draw_debug)
+				lrg_debug_draw_draw_3d (self->debug_draw);
+			prof_end ("world3d.debug");
+		}
 
 		self->white_albedo = FALSE;
 		self->cur_shader = self->has_lit ? self->lit : self->flat;
@@ -3539,18 +3855,97 @@ render_core (LrgWorld3DRenderer   *self,
 		/* Back to the target's 2D projection (EndMode3D pops ours) */
 		EndMode3D ();
 
-		if ((self->flags & LRG_WORLD3D_RENDER_FLAG_DEBUG_DRAW) && self->debug_draw != NULL)
+		if (draw_debug)
 			lrg_debug_draw_draw_labels (self->debug_draw);
 
 		if (post != NULL)
 		{
+			prof_begin ("world3d.post");
 			t0 = pass_clock (self);
-			apply_post (self, processor, post, outer, iw, ih);
+			if (capture_note_special (self, "post", LRG_FRAME_CALL_KIND_POST, "post", 0, outer))
+				apply_post (self, processor, post, outer, iw, ih);
+			else
+				enter_target (outer, iw, ih);
 			pass_clock_end (self, LRG_WORLD3D_RENDER_PASS_POST, t0);
+			prof_end ("world3d.post");
 		}
 		rlDrawRenderBatchActive ();
 	}
+	if (self->capture != NULL)
+	{
+		/* Idle (not recording, replaying or holding a list) publishes
+		 * nothing: set_named_texture would touch the hash every frame. */
+		if (self->gpu && (lrg_frame_capture_is_active (self->capture) ||
+		                  lrg_frame_capture_is_captured (self->capture)))
+		{
+			if (self->prepass != NULL)
+			{
+				lrg_frame_capture_set_named_texture (self->capture, "depth",
+				                                     lrg_depth_prepass_get_depth_texture_id (self->prepass), iw, ih);
+				lrg_frame_capture_set_named_texture (self->capture, "normal",
+				                                     lrg_depth_prepass_get_normal_texture_id (self->prepass), iw, ih);
+			}
+			if (ssao_ok && self->ssao != NULL)
+				lrg_frame_capture_set_named_texture (self->capture, "ssao",
+				                                     lrg_ssao_get_texture_id (self->ssao), iw, ih);
+		}
+		lrg_frame_capture_end_frame (self->capture);
+	}
+	if (G_UNLIKELY (lrg_profiler_is_enabled (lrg_profiler_get_default ())))
+	{
+		LrgProfiler *profiler = lrg_profiler_get_default ();
+
+		lrg_profiler_set_counter (profiler, "world3d.draws", (gdouble) self->drawn);
+		lrg_profiler_set_counter (profiler, "world3d.shadow_passes", (gdouble) self->shadow_passes);
+	}
+	self->in_render = FALSE;
 	return self->gpu;
+}
+
+/* Re-renders the last view into a private target so the frame debugger
+ * can show calls 0..scrub.  Not called from begin_frame (that would
+ * recurse); lrg_frame_capture_replay() is the only caller. */
+static gboolean
+renderer_replay (LrgFrameCapture *capture,
+                 gint             up_to,
+                 gpointer         data,
+                 GError         **error)
+{
+	LrgWorld3DRenderer *self = (LrgWorld3DRenderer *) data;
+	gint                w;
+	gint                h;
+
+	(void) up_to;
+	if (self->in_render || self->headless || !self->have_view || self->last_list == NULL || !IsWindowReady ())
+	{
+		g_set_error (error, LRG_FRAME_CAPTURE_ERROR, LRG_FRAME_CAPTURE_ERROR_GPU,
+		             "Replaying a frame needs a window and a finished render");
+		return FALSE;
+	}
+	w = (gint) self->last_view.width;
+	h = (gint) self->last_view.height;
+	if (w < 1)
+		w = 1;
+	if (h < 1)
+		h = 1;
+	if (self->replay_rt.id == 0 || self->replay_rt.texture.width != w || self->replay_rt.texture.height != h)
+	{
+		if (self->replay_rt.id != 0)
+			UnloadRenderTexture (self->replay_rt);
+		memset (&self->replay_rt, 0, sizeof self->replay_rt);
+		self->replay_rt = LoadRenderTexture (w, h);
+	}
+	if (self->replay_rt.id == 0 || self->replay_rt.texture.id == 0)
+	{
+		g_set_error (error, LRG_FRAME_CAPTURE_ERROR, LRG_FRAME_CAPTURE_ERROR_GPU,
+		             "Could not create the replay target");
+		return FALSE;
+	}
+	BeginTextureMode (self->replay_rt);
+	render_core (self, self->last_list, &self->last_view);
+	EndTextureMode ();
+	lrg_frame_capture_set_replay_image (capture, self->replay_rt.texture.id, w, h);
+	return TRUE;
 }
 
 /* ==========================================================================
@@ -3748,6 +4143,9 @@ lrg_world3d_renderer_dispose (GObject *object)
 
 	/* GPU objects only with a live context; otherwise drop bookkeeping. */
 	release_resources (self, IsWindowReady ());
+	if (self->capture != NULL)
+		lrg_frame_capture_set_replay_func (self->capture, NULL, NULL);
+	g_clear_object (&self->capture);
 	release_post_targets (self);
 	g_clear_object (&self->post);
 	g_clear_object (&self->stack_post);
@@ -4906,6 +5304,29 @@ lrg_world3d_renderer_release (LrgWorld3DRenderer *self)
 	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
 
 	release_resources (self, IsWindowReady ());
+}
+
+void
+lrg_world3d_renderer_set_frame_capture (LrgWorld3DRenderer *self,
+                                        LrgFrameCapture    *capture)
+{
+	g_return_if_fail (LRG_IS_WORLD3D_RENDERER (self));
+	g_return_if_fail (capture == NULL || LRG_IS_FRAME_CAPTURE (capture));
+
+	if (self->capture == capture)
+		return;
+	if (self->capture != NULL)
+		lrg_frame_capture_set_replay_func (self->capture, NULL, NULL);
+	g_set_object (&self->capture, capture);
+	if (self->capture != NULL)
+		lrg_frame_capture_set_replay_func (self->capture, renderer_replay, self);
+}
+
+LrgFrameCapture *
+lrg_world3d_renderer_get_frame_capture (LrgWorld3DRenderer *self)
+{
+	g_return_val_if_fail (LRG_IS_WORLD3D_RENDERER (self), NULL);
+	return self->capture;
 }
 
 /* item_texture() runs before the public getter is defined. */

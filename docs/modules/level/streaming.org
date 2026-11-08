@@ -1,0 +1,54 @@
+#+title: Level Streaming and Instances
+#+description: Stream cells, async level load, level instances and node tags
+#+authors: Zach Podbielniak
+#+categories: libregnum level
+#+created: 2026-11-07T20:00:00-05:00
+#+updated: 2026-11-07T20:00:00-05:00
+#+version: 1.0
+
+* Level streaming and instances
+:PROPERTIES:
+:CUSTOM_ID: level-streaming
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Runtime Level]]* > Streaming
+#+end_quote
+
+=src/level/lrg-level-stream.h= decides which level files a point wants loaded, reads one file off the calling thread, and mounts a level under a host node. Nothing here draws a streaming overlay or unloads a level that is already in a running world. =LrgEditorScenes= (the open-level list) is documented in [[file:../../editor/workflows.org][Editor workflows]].
+
+** Cells
+:PROPERTIES:
+:CUSTOM_ID: stream-cells
+:END:
+
+=lrg_level_stream_new()= returns an empty stream. =lrg_level_stream_add_cell()= stores an axis-aligned box, a stable id and the =.rlevel= path to load. A second call with the same id replaces the cell.
+
+=lrg_level_stream_update()= compares the cells that contain the point (expanded by =margin=) with the set remembered from the previous call. =load= receives the ids that became wanted. =unload= receives the ids that are no longer wanted. Both are zero-terminated and may be empty. A second update at the same point returns two empty lists. The call does not read the files.
+
+** Async load and instances
+:PROPERTIES:
+:CUSTOM_ID: stream-load
+:END:
+
+=lrg_level_stream_load_async()= loads a =.rlevel= on a worker thread and invokes the callback on the thread-default main context. =lrg_level_stream_load_finish()= returns the level, or =NULL= with a =GError=.
+
+=lrg_level_instance_mount()= loads a =.rlevel= and copies the root's children under the host node. Each copy keeps the source GUID and the source state, including tags and the child's own level path. The host's level path is set to the file that was mounted. Mounting twice duplicates GUIDs. The return value is the number of top-level nodes copied.
+
+A node may also record a path with =lrg_node_set_level_path()= / =lrg_node_get_level_path()=. The serializer writes that path as =level:=. At play, =lrg_level_instantiate()= and =lrg_level_instantiate_3d()= load that file when the node has no children of its own, and instantiate the file's children in its place. The depth of nested instances stops at 8. A node that already has children is not expanded. Tags on the node are copied onto the =LrgGameObject= or =LrgEntity3D=.
+
+** Tags
+:PROPERTIES:
+:CUSTOM_ID: node-tags
+:END:
+
+=lrg_node_add_tag()=, =lrg_node_remove_tag()=, =lrg_node_has_tag()=, =lrg_node_get_tags()= and =lrg_node_set_tags()= are a set of strings on the node. =lrg_node_get_tags()= returns them sorted. Adding a tag that is already present does nothing. The serializer writes a non-empty set as a =tags:= sequence. =lrg_node_collect_tagged()= walks the subtree in depth-first pre-order and returns the borrowed nodes that have the tag. =lrg_node_copy_state()= copies the tag set and the level path.
+
+=lrg_game_object_add_tag()=, =lrg_game_object_remove_tag()=, =lrg_game_object_has_tag()= and =lrg_game_object_get_tags()= are the same set on a 2D game object. =LrgEntity3D= already had its own tag functions. There is no tag column and no hierarchy filter in the editor.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: streaming-see-also
+:END:
+
+- [[file:index.org][Runtime level module]]
+- [[file:../../editor/workflows.org][Editor workflows]]

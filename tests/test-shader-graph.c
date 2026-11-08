@@ -434,6 +434,26 @@ test_validation (void)
 	g_assert_error (error, LRG_SHADER_GRAPH_ERROR, LRG_SHADER_GRAPH_ERROR_INVALID);
 }
 
+/* Two added nodes do not share a point. The first stays at the origin. */
+static void
+test_default_layout (void)
+{
+	g_autoptr(LrgShaderGraph) graph = lrg_shader_graph_new ();
+	g_autoptr(GError) error = NULL;
+	gfloat x = -1.0f;
+	gfloat y = -1.0f;
+
+	g_assert_nonnull (lrg_shader_graph_add_node (graph, "add", "a", &error));
+	g_assert_nonnull (lrg_shader_graph_add_node (graph, "mul", "b", &error));
+	g_assert_no_error (error);
+	g_assert_true (lrg_shader_graph_get_node_position (graph, "a", &x, &y));
+	g_assert_cmpfloat (x, ==, 0.0f);
+	g_assert_cmpfloat (y, ==, 0.0f);
+	g_assert_true (lrg_shader_graph_get_node_position (graph, "b", &x, &y));
+	g_assert_cmpfloat (x, ==, 220.0f);
+	g_assert_cmpfloat (y, ==, 0.0f);
+}
+
 static void
 test_editing (void)
 {
@@ -569,6 +589,19 @@ test_format_round_trip (void)
 
 	graph = lrg_shader_graph_new_from_data (graph_fixture, -1, &error);
 	g_assert_no_error (error);
+	{
+		gfloat x = 0.0f;
+		gfloat y = 0.0f;
+
+		/* Authored position wins over the default grid. */
+		g_assert_true (lrg_shader_graph_get_node_position (graph, "tex", &x, &y));
+		g_assert_cmpfloat (x, ==, -200.0f);
+		g_assert_cmpfloat (y, ==, 40.0f);
+		/* sample is the second node and has no position in the file. */
+		g_assert_true (lrg_shader_graph_get_node_position (graph, "sample", &x, &y));
+		g_assert_cmpfloat (x, ==, 220.0f);
+		g_assert_cmpfloat (y, ==, 0.0f);
+	}
 	g_assert_cmpstr (lrg_shader_graph_get_name (graph), ==, "textured");
 	g_assert_cmpuint (lrg_shader_graph_get_n_nodes (graph), ==, 5);
 	g_assert_cmpuint (lrg_shader_graph_get_n_links (graph), ==, 5);
@@ -852,6 +885,7 @@ main (int   argc,
 	g_test_add_func ("/shader-graph/golden/split-swizzle", test_golden_split_swizzle);
 	g_test_add_func ("/shader-graph/validation", test_validation);
 	g_test_add_func ("/shader-graph/editing", test_editing);
+	g_test_add_func ("/shader-graph/layout", test_default_layout);
 	g_test_add_func ("/shader-graph/format/round-trip", test_format_round_trip);
 	g_test_add_func ("/shader-graph/format/file", test_format_file);
 	g_test_add_func ("/shader-graph/format/errors", test_format_errors);

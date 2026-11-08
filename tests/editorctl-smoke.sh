@@ -26,8 +26,8 @@
 # the 0.9.0 M5 physics verbs (physasset, physics layers, physics),
 # the 0.9.0 M6/M7 verbs (asset new, nav, bt, fsm, ai, particles, weather,
 # terrain, water, mixer, audio, tileset, sprite, tiles; likewise skipped),
-# the 0.9.0 M8 verbs (debug, lsp, profiler, frame, script, ...; likewise
-# skipped)
+# the 0.9.0 M8 verbs (debug, lsp, profiler, frame, script, vscript,
+# memory, network; likewise skipped)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -674,6 +674,33 @@ then
 	check 'script editor-running' "$(ctl script editor-running -o json)" '['
 else
 	skip 'script'
+fi
+if has_method vscript.create
+then
+	check 'vscript create' "$(ctl vscript create scripts/smoke.rvscript -o json)" '"view" : "graph"'
+	check 'vscript get' "$(ctl vscript get scripts/smoke.rvscript -o json)" '"nodes"'
+	check 'vscript node-types' "$(ctl vscript node-types query=math.add -o json)" 'math.add'
+	check 'vscript validate' "$(ctl vscript validate scripts/smoke.rvscript -o json)" '"ok" : true'
+	check 'vscript run' "$(ctl vscript run path=scripts/smoke.rvscript -o json)" 'hello'
+	"${ctl}" vscript create scripts/smoke.rvscript >/dev/null 2>&1 && status=0 || status=$?
+	check 'vscript create overwrite exits 1' "status=${status}" 'status=1'
+	ctl data close scripts/smoke.rvscript --force >/dev/null 2>&1 || true
+else
+	skip 'vscript'
+fi
+if has_method memory.status
+then
+	check 'memory status' "$(ctl memory status -o json)" '"tracked"'
+	check 'memory show' "$(ctl memory show -o json)" '"panel" : "memory"'
+else
+	skip 'memory'
+fi
+if has_method network.stats
+then
+	check 'network stats' "$(ctl network stats -o json)" '"enabled"'
+	check 'network show' "$(ctl network show -o json)" '"panel" : "network"'
+else
+	skip 'network'
 fi
 
 # 0.8.3: asset sources (none registered without a game module).

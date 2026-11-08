@@ -203,4 +203,46 @@ guint           lrg_game_object_get_component_count (LrgGameObject *self);
 #define lrg_game_object_get_component_of_type(obj, T, t) \
     ((T *)lrg_game_object_get_component ((obj), (t)))
 
+/**
+ * lrg_game_object_add_tag:
+ * @self: an #LrgGameObject
+ * @tag: a tag
+ *
+ * Adds a tag. Tags are a set: adding the same tag twice is a no-op.
+ */
+LRG_AVAILABLE_IN_ALL
+void            lrg_game_object_add_tag (LrgGameObject *self,
+                                         const gchar   *tag);
+
+/**
+ * lrg_game_object_remove_tag:
+ * @self: an #LrgGameObject
+ * @tag: a tag
+ *
+ * Returns: %TRUE if the tag was present
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_game_object_remove_tag (LrgGameObject *self,
+                                            const gchar   *tag);
+
+/**
+ * lrg_game_object_has_tag:
+ * @self: an #LrgGameObject
+ * @tag: a tag
+ *
+ * Returns: %TRUE if the object has @tag
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean        lrg_game_object_has_tag (LrgGameObject *self,
+                                         const gchar   *tag);
+
+/**
+ * lrg_game_object_get_tags:
+ * @self: an #LrgGameObject
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the tags, sorted
+ */
+LRG_AVAILABLE_IN_ALL
+gchar **        lrg_game_object_get_tags (LrgGameObject *self);
+
 G_END_DECLS

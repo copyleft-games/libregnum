@@ -5310,7 +5310,7 @@ GType lrg_editor_gizmo_handle_get_type (void) G_GNUC_CONST;
  * LrgAssetType:
  * @LRG_ASSET_TYPE_UNKNOWN: unrecognized asset
  * @LRG_ASSET_TYPE_TEXTURE: image/texture (png, jpg, tga, bmp)
- * @LRG_ASSET_TYPE_MODEL: 3D mesh/model (gltf, glb, obj, fbx, ply)
+ * @LRG_ASSET_TYPE_MODEL: 3D mesh/model (gltf, glb, obj, fbx)
  * @LRG_ASSET_TYPE_AUDIO: sound/music (wav, ogg, flac, mp3)
  * @LRG_ASSET_TYPE_FONT: font (ttf, otf)
  * @LRG_ASSET_TYPE_SCRIPT: script source (lua, py, js, c)

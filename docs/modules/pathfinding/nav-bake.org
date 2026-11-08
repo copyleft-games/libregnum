@@ -351,7 +351,9 @@ Bake time grows with the area in cells (halving the cell size quadruples it). An
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-The Navigation panel (see [[file:../../editor/navigation.org][Navigation in Levels]]) edits these settings and the level's =navigation:= block (the form maps one to one onto the properties and the area / link lists above), bakes with =lrg_nav_bake_bake()= on a worker thread, saves the =.rnav= and =.rnavmesh= next to the level, and draws the navmesh overlay; IPC =nav.*=.
+The Navigation panel (see [[file:../../editor/navigation.org][Navigation in Levels]] and [[file:../../editor/overview.org][the editor overview]]) edits these settings and the level's =navigation:= block (the form maps one to one onto the properties and the area / link lists above), bakes with =lrg_nav_bake_bake()= on a worker thread, saves the =.rnav= and =.rnavmesh= next to the level, and draws the navmesh overlay; IPC =nav.*=. The skill page "Bake navigation in the editor" is the same loop from the shell.
+
+=lrg_nav_bake_set_tile_extent()= splits a bounded bake into XZ squares of that size in metres (Y stays the full range). 0, the default, is one bake. =lrg_nav_bake_get_tile_extent()= reads it. =lrg_nav_bake_get_last_tile_count()= is how many tiles the last bake covered, including empty ones (1 when the extent is 0). The extent is not written to =.rnav=. Empty tiles are skipped as geometry and still count. A non-positive extent becomes 0.
 
 ** See also
 :PROPERTIES:

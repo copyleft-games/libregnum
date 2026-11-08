@@ -975,4 +975,53 @@ GObject * lrg_asset_manager_load_audio (LrgAssetManager  *self,
                                         const gchar      *name,
                                         GError          **error);
 
+/**
+ * LrgAssetManagerForeachFunc:
+ * @name: the cache key the asset is stored under (the name it was
+ *   loaded by, or its canonical path for models, animations, materials)
+ * @kind: what kind of cache holds it: `texture`, `font`, `sound`,
+ *   `music`, `model`, `animation`, `material` or `object`
+ * @asset: (nullable): the cached object; %NULL for `animation` entries
+ *   (an animation set is a plain array)
+ * @count: the number of items in the entry (animations in a set; 1
+ *   otherwise)
+ * @user_data: the data passed to lrg_asset_manager_foreach_cached()
+ *
+ * Called for each cached asset by lrg_asset_manager_foreach_cached().
+ *
+ * Since: 0.9.0
+ */
+typedef void (*LrgAssetManagerForeachFunc) (const gchar *name,
+                                            const gchar *kind,
+                                            GObject     *asset,
+                                            guint        count,
+                                            gpointer     user_data);
+
+/**
+ * LRG_ASSET_MANAGER_HAS_FOREACH_CACHED:
+ *
+ * Defined when lrg_asset_manager_foreach_cached() exists.
+ *
+ * Since: 0.9.0
+ */
+#define LRG_ASSET_MANAGER_HAS_FOREACH_CACHED (1)
+
+/**
+ * lrg_asset_manager_foreach_cached:
+ * @self: an #LrgAssetManager
+ * @func: (scope call) (closure user_data): called for every cached asset
+ * @user_data: data for @func
+ *
+ * Visits every asset the manager holds in its caches (what is resident),
+ * for memory profilers and asset browsers. @func must not load or unload
+ * assets through @self. Order is texture, font, sound, music, model,
+ * animation, material, object.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_asset_manager_foreach_cached (LrgAssetManager            *self,
+                                       LrgAssetManagerForeachFunc  func,
+                                       gpointer                    user_data);
+
 G_END_DECLS

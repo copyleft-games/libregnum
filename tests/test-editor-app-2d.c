@@ -97,14 +97,20 @@ find (EditorAppFixture *f,
 	return w;
 }
 
-/* Scrolls @name into view inside the scroll box @scroll. */
+/* Scrolls @name into view inside the scroll box @scroll.
+ * Kinetic scrolling is off: a spring can still be moving after a
+ * fixed number of frames, and a widget taller than the viewport must
+ * be placed exactly or the far edge stays clipped. */
 static void
 reveal (EditorAppFixture *f,
         const gchar      *scroll,
         const gchar      *name)
 {
-	lrg_scroll_box_scroll_to_widget (LRG_SCROLL_BOX (find (f, scroll)), find (f, name));
-	efx_frames (f, 40);   /* the scroll animates on a spring */
+	LrgScrollBox *box = LRG_SCROLL_BOX (find (f, scroll));
+
+	lrg_scroll_box_set_kinetic (box, FALSE);
+	lrg_scroll_box_scroll_to_widget (box, find (f, name));
+	efx_frames (f, 2);
 }
 
 static LrgWidget *
@@ -291,7 +297,8 @@ test_tiles_rules (EditorAppFixture *f,
 	g_assert_nonnull (efx_find (f, "tiles-rule-wall"));
 	g_assert_nonnull (efx_find (f, "tiles-rule-floor"));
 
-	/* Clicking the chip makes "wall" the brush */
+	/* The rule row sits below the fold in the inspector split */
+	reveal (f, "tiles-scroll", "tiles-rule-wall");
 	efx_click_widget (f, find (f, "tiles-rule-wall"));
 	efx_frames (f, 1);
 	g_assert_cmpstr (lrg_editor_tiles_panel_get_rule_tile (tiles), ==, "wall");
@@ -526,10 +533,12 @@ test_tiles_palette (EditorAppFixture *f,
 	g_assert_cmpuint (cols, ==, 4);
 	g_assert_cmpuint (rows, ==, 5);
 
-	/* Keep a transform, then click tile 18 (index 17: row 4, column 1) */
+	/* Keep a transform, then click tile 18 (index 17: row 4, column 1).
+	 * The info box sits under the palette. Scrolling it in keeps the
+	 * last row inside the viewport; scrolling the palette itself pins
+	 * the top and clips that row. */
 	ipc_ok (f, "{'id':4,'method':'tiles.brush','params':{'tile':2,'mirrored':true,'rotation':1}}");
 	reveal (f, "tiles-scroll", "tiles-tile-info");
-	reveal (f, "tiles-scroll", "tiles-palette");
 	efx_rect_of (find (f, "tiles-palette"), &x, &y, &w, &h);
 	cw = MIN (w / (gfloat) cols, 64.0f);   /* palette cells are at most 64 px */
 	efx_move (f, x + cw * 1.5f, y + cw * 4.5f);

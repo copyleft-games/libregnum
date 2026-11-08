@@ -202,7 +202,10 @@ static const struct
 	{ LRG_NODE_VISUAL_CAMERA, "near", 0.1, "range:0.001,100,0.01", "Near clip plane" },
 	{ LRG_NODE_VISUAL_CAMERA, "far", 1000.0, "range:1,100000,1", "Far clip plane" },
 	{ LRG_NODE_VISUAL_AUDIO_EMITTER, "volume", 1.0, "range:0,4,0.01", "Playback volume" },
-	{ LRG_NODE_VISUAL_AUDIO_EMITTER, "radius", 10.0, "range:0,1000,0.1", "Audible radius" },
+	/* Same default as LrgAudioSourceComponent:max-distance
+	 * (LRG_AUDIO_DEFAULT_MAX_DISTANCE). The node's radius is that
+	 * distance. */
+	{ LRG_NODE_VISUAL_AUDIO_EMITTER, "radius", 50.0, "range:0,1000,0.1", "Audible radius" },
 	{ LRG_NODE_VISUAL_SPRITE, "frame", 0.0, "range:0,10000,1", "Animation frame" },
 	{ LRG_NODE_VISUAL_SPRITE, "pixels_per_unit", 32.0, "range:1,4096,1", "Texture pixels per world unit" },
 	{ LRG_NODE_VISUAL_TILEMAP, "tile_size", 1.0, "range:0.01,100,0.01", "Tile size in world units" },
@@ -300,6 +303,23 @@ find_suggested (LrgNodeVisualKind  kind,
 		if (suggested_params[i].kind == kind && g_strcmp0 (suggested_params[i].param, param) == 0)
 			return (gint) i;
 	return -1;
+}
+
+gboolean
+lrg_editor_node_source_get_suggested_double (LrgNodeVisualKind  kind,
+                                            const gchar       *param,
+                                            gdouble           *out)
+{
+	gint i;
+
+	g_return_val_if_fail (param != NULL, FALSE);
+
+	i = find_suggested (kind, param);
+	if (i < 0)
+		return FALSE;
+	if (out != NULL)
+		*out = suggested_params[i].value;
+	return TRUE;
 }
 
 /*

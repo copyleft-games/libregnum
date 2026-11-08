@@ -256,7 +256,7 @@ g_signal_connect (canvas, "cancel", G_CALLBACK (on_ui_cancel), game);
 =lrg_canvas_add_shortcut (canvas, "<Ctrl>s", "doc.save", NULL)= binds a key combination to a GIO action (see [[file:actions.org][actions and shortcuts]] for actions, the built-in =app= / =ui= groups and the accelerator syntax). The rule, per key press:
 
 1. The focused widget (else the top popup) sees =KEY_DOWN= first; returning =TRUE= consumes the key and no shortcut fires. A text field thereby keeps Backspace, arrows, Ctrl+C ...
-2. Otherwise the shortcut with exactly these modifiers activates its action from the focused widget (widget-scoped groups apply), else from the canvas. If it ran, the defaults (navigation, activation, cancel) are skipped for that key.
+2. Otherwise every shortcut with exactly these modifiers is tried, higher priority first and earlier registrations first (=lrg_canvas_add_shortcut_full()=; =lrg_canvas_add_shortcut()= replaces the whole chord). The first action that resolves and is enabled runs, from the focused widget (widget-scoped groups apply), else from the canvas. If it ran, the defaults (navigation, activation, cancel) are skipped for that key. A disabled action is skipped so the next binding of the same key can run.
 3. Shortcuts on printable keys without Ctrl, Alt or Super wait until the frame's characters were delivered and only fire if no widget accepted a =TEXT_INPUT=, so typing never triggers them.
 
 Text-editing widgets should return =TRUE= for printable keys only when no Ctrl / Alt / Super is held (AltGr = Ctrl+Alt is text), so Ctrl+Q still quits from inside a text field; =LrgTextInput= does.

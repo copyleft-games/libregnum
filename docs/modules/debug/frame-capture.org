@@ -1,0 +1,192 @@
+* LrgFrameCapture
+:PROPERTIES:
+:CUSTOM_ID: lrgframecapture
+:END:
+=LrgFrameCapture= records one frame of draw calls (pass, entity, mesh, material, shader, GL state, counts) and can replay the list up to call N into a render target. Recording the list does not need GL. Replay does.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+A renderer asks =lrg_frame_capture_is_active()= before it builds an =LrgFrameCall=, then =lrg_frame_capture_note()=. While recording, note appends the call. While replaying, note returns whether this call index is still inside the scrub and does not append. While idle, note returns true and allocates nothing, even if the call pointer is NULL, so a renderer can leave the hook in the hot path.
+
+=LrgWorld3DRenderer= is the built-in producer. =lrg_world3d_renderer_set_frame_capture()= attaches a capture (NULL detaches). =lrg_world3d_renderer_get_frame_capture()= borrows it. The renderer does not call =lrg_profiler_begin_frame()=; it only opens per-pass profiler sections and notes draw calls. See [[file:profiler.org::#profiler-pitfalls][LrgProfiler pitfalls]].
+
+** State
+:PROPERTIES:
+:CUSTOM_ID: state
+:END:
+- Idle. =lrg_frame_capture_begin_frame()= and =lrg_frame_capture_end_frame()= return after a flag test. =lrg_frame_capture_note()= returns true.
+- Armed. =lrg_frame_capture_arm()= requests that the next =lrg_frame_capture_begin_frame()= start recording and clear the call list. =lrg_frame_capture_is_armed()= reads the flag.
+- Recording. =lrg_frame_capture_is_recording()= is true until =lrg_frame_capture_end_frame()=. Calls append up to =LRG_FRAME_CAPTURE_MAX_CALLS= (65536). Past the cap the draw still happens and note returns true. =width= and =height= come from the begin_frame arguments.
+- Captured. =lrg_frame_capture_is_captured()= is true after a recording ends. The call list is stable until the next recording or =lrg_frame_capture_clear()= / =lrg_frame_capture_load_file()=.
+- Replaying. If a capture is held and (=lrg_frame_capture_replay()= was requested or =lrg_frame_capture_get_scrub()= is >= 0), the next =lrg_frame_capture_begin_frame()= sets replaying and does not clear the calls. =lrg_frame_capture_note()= returns true while =scrub < 0= or the call index is <= scrub, then increments the replay cursor. =lrg_frame_capture_is_replaying()= reads the flag.
+- =lrg_frame_capture_is_active()= is recording or replaying. That is the check a renderer uses before it fills an =LrgFrameCall=.
+
+=lrg_frame_capture_set_scrub()= clamps values below -1 to -1. -1 means the full frame (every note returns true during replay). =lrg_frame_capture_get_scrub()= reads it.
+
+** Draw calls
+:PROPERTIES:
+:CUSTOM_ID: calls
+:END:
+=LrgFrameCallKind= is a hand-written GEnum: =lrg_frame_call_kind_get_type()=, =lrg_frame_call_kind_to_nick()=, =lrg_frame_call_kind_from_nick()=. Nicks, in enum order: =mesh=, =model=, =primitive=, =billboard=, =batch=, =sky=, =clear=, =post=, =debug=, =custom=, =ssao=, =volumetric=, =prepass=, =decal=.
+
+An =LrgFrameCall= carries =pass= (an interned nick; NULL becomes the interned string =opaque=), =kind=, =entity=, =guid=, =mesh=, =material=, =shader= (empty strings become NULL), =shader_id=, =texture_id=, =vertices=, =triangles=, =instances=, =color[4]=, =transform[16]=, and state: =blend=, =blend_mode=, =depth_test=, =depth_write=, =cull=, =wireframe=, =framebuffer=. The capture copies the struct and interns the strings. The caller keeps ownership of whatever it passed in.
+
+=lrg_frame_capture_get_n_calls()=, =lrg_frame_capture_get_call()= (borrowed, NULL if out of range), =lrg_frame_capture_get_width()=, =lrg_frame_capture_get_height()=, =lrg_frame_capture_count_pass()=, =lrg_frame_capture_get_passes()= (a =g_strdupv()= of the distinct pass nicks in first-seen order).
+
+Pass nicks the world renderer uses: =shadow=, =prepass=, =ssao=, =sky=, =opaque=, =cutout=, =volumetric=, =transparent=, =post=, =debug=, =batch=, =clear=.
+
+** Replay and textures
+:PROPERTIES:
+:CUSTOM_ID: replay
+:END:
+=lrg_frame_capture_set_replay_func()= installs =LrgFrameCaptureReplayFunc=. The world renderer installs one that re-enters =render_core= into a render texture. =lrg_frame_capture_replay()= returns false with =LRG_FRAME_CAPTURE_ERROR_GPU= when there is no capture, no replay func, or =IsWindowReady()= is false, and it does not call the func. Headless tests record and skip replay cleanly.
+
+=lrg_frame_capture_set_replay_image()= stores the GL texture the replay func produced. =lrg_frame_capture_get_replay_texture()= returns that id and optionally the width and height. 0 means there is no image.
+
+=lrg_frame_capture_set_named_texture()= publishes a nick (interned) to a GL id plus size. Id 0 removes it. =lrg_frame_capture_get_named_texture()= looks one up. The world renderer publishes =depth=, =normal= and =ssao= only when it has a GPU context and the capture is active or already captured. It never publishes the shadow atlas. A second publish of the same nick updates the record in place (no per-frame allocation).
+
+=lrg_frame_capture_save_texture()= reads the id with =LoadImageFromTexture= and writes a PNG with =ExportImage=. It needs =IsWindowReady()=. Failure is =LRG_FRAME_CAPTURE_ERROR_GPU= or =LRG_FRAME_CAPTURE_ERROR_IO=.
+
+** Files
+:PROPERTIES:
+:CUSTOM_ID: rframe
+:END:
+=lrg_frame_capture_save_to_data()= / =lrg_frame_capture_save_to_file()= write =.rframe=. =lrg_frame_capture_new_from_data()= / =lrg_frame_capture_new_from_file()= allocate a new capture. =lrg_frame_capture_load_file()= replaces the calls of an existing capture and leaves the replay func in place. =lrg_frame_capture_clear()= drops calls, scrub, named textures and the captured flag.
+
+Errors: =lrg_frame_capture_error_get_type()=, =lrg_frame_capture_error_quark()=, =LRG_FRAME_CAPTURE_ERROR= with =LRG_FRAME_CAPTURE_ERROR_IO=, =LRG_FRAME_CAPTURE_ERROR_PARSE=, =LRG_FRAME_CAPTURE_ERROR_INVALID=, =LRG_FRAME_CAPTURE_ERROR_GPU=. A missing file is wrapped as =LRG_FRAME_CAPTURE_ERROR_IO= with the GLib message ("Failed to open file …: No such file or directory"). The domain is not =G_FILE_ERROR=. =format= other than =rframe=, or =version= other than 1, is =LRG_FRAME_CAPTURE_ERROR_INVALID=.
+
+The writer starts with a comment, then the format line. Doubles use =%.9g=, then =%.17g= when a =gfloat= round-trip would change the value. Two saves of the same capture compare equal.
+
+#+begin_src yaml
+# libregnum frame capture: one frame of draw calls
+format: rframe
+version: 1
+width: 64
+height: 64
+scrub: -1
+calls:
+  - pass: "opaque"
+    kind: "primitive"
+    entity: "Cube"
+    guid: ~
+    mesh: ~
+    material: ~
+    shader: ~
+    shader_id: 0
+    texture_id: 0
+    vertices: 36
+    triangles: 12
+    instances: 1
+    color: [1, 1, 1, 1]
+    transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    state:
+      blend: false
+      blend_mode: 0
+      depth_test: true
+      depth_write: true
+      cull: true
+      wireframe: false
+      framebuffer: 0
+#+end_src
+
+Null strings are YAML nulls. Key order inside a call is fixed: pass, kind, entity, guid, mesh, material, shader, shader_id, texture_id, vertices, triangles, instances, color, transform, state.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Symbol | Role |
+|--------+------|
+| =lrg_frame_capture_error_get_type()= | Error enum GType |
+| =lrg_frame_capture_error_quark()= | =LRG_FRAME_CAPTURE_ERROR= domain |
+| =lrg_frame_call_kind_get_type()= | Kind enum GType |
+| =lrg_frame_call_kind_to_nick()= | Kind to nick |
+| =lrg_frame_call_kind_from_nick()= | Nick to kind; false if unknown |
+| =lrg_frame_capture_get_type()= | GObject type |
+| =lrg_frame_capture_new()= | Empty capture (transfer full) |
+| =lrg_frame_capture_get_default()= | Optional process singleton, separate from the editor's instance |
+| =lrg_frame_capture_arm()= | Record the next begin/end frame |
+| =lrg_frame_capture_is_armed()= | Arm flag |
+| =lrg_frame_capture_is_recording()= | Inside a recording frame |
+| =lrg_frame_capture_is_captured()= | A list is held |
+| =lrg_frame_capture_is_replaying()= | Inside a replay frame |
+| =lrg_frame_capture_is_active()= | Recording or replaying |
+| =lrg_frame_capture_begin_frame()= | Start recording or replaying; takes width and height |
+| =lrg_frame_capture_end_frame()= | Close recording or replaying |
+| =lrg_frame_capture_note()= | Append, or decide whether a replay index draws |
+| =lrg_frame_capture_get_n_calls()= | Call count |
+| =lrg_frame_capture_get_call()= | Borrowed call, or NULL |
+| =lrg_frame_capture_get_width()= | Framebuffer width of the capture |
+| =lrg_frame_capture_get_height()= | Framebuffer height |
+| =lrg_frame_capture_count_pass()= | Calls whose pass nick matches |
+| =lrg_frame_capture_get_passes()= | Distinct pass nicks (transfer full) |
+| =lrg_frame_capture_set_scrub()= | Last call index to replay; -1 is the full frame |
+| =lrg_frame_capture_get_scrub()= | Current scrub |
+| =lrg_frame_capture_set_replay_func()= | Producer callback used by =lrg_frame_capture_replay()= |
+| =lrg_frame_capture_replay()= | Run the callback into its render target; needs a window |
+| =lrg_frame_capture_set_replay_image()= | Store the replay texture id and size |
+| =lrg_frame_capture_get_replay_texture()= | That id, or 0 |
+| =lrg_frame_capture_set_named_texture()= | Publish or remove a nick |
+| =lrg_frame_capture_get_named_texture()= | Look up a nick |
+| =lrg_frame_capture_save_texture()= | Write a GL texture to a PNG; needs a window |
+| =lrg_frame_capture_save_to_data()= | =.rframe= bytes (transfer full) |
+| =lrg_frame_capture_save_to_file()= | Write those bytes |
+| =lrg_frame_capture_new_from_data()= | Parse bytes (transfer full) |
+| =lrg_frame_capture_new_from_file()= | Parse a path (transfer full) |
+| =lrg_frame_capture_load_file()= | Replace this capture's calls from a path |
+| =lrg_frame_capture_clear()= | Drop the list and the captured flag |
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+g_autoptr(LrgFrameCapture) cap = lrg_frame_capture_new ();
+g_autoptr(LrgWorld3DRenderer) renderer = lrg_world3d_renderer_new ();
+g_autoptr(GError) error = NULL;
+LrgFrameCall call;
+const LrgFrameCall *got;
+
+lrg_world3d_renderer_set_headless (renderer, TRUE);
+lrg_world3d_renderer_set_frame_capture (renderer, cap);
+lrg_frame_capture_arm (cap);
+/* render once; headless still notes sky and primitives */
+lrg_frame_capture_begin_frame (cap, 64, 64);
+memset (&call, 0, sizeof call);
+call.pass = "opaque";
+call.kind = LRG_FRAME_CALL_KIND_PRIMITIVE;
+call.entity = "Cube";
+call.triangles = 12;
+call.depth_test = TRUE;
+lrg_frame_capture_note (cap, &call);
+lrg_frame_capture_end_frame (cap);
+
+got = lrg_frame_capture_get_call (cap, 0);
+lrg_frame_capture_save_to_file (cap, "frame.rframe", &error);
+#+end_src
+
+=lrg_frame_capture_replay()= on that object returns false with =LRG_FRAME_CAPTURE_ERROR_GPU= until a window is current and a replay func is set. The world renderer sets the func itself when a capture is attached and a window exists.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Idle =lrg_frame_capture_note()= is a flag test and returns. Recording copies one struct and interns a handful of strings per draw. Named-texture updates of an existing nick do not allocate. Replay walks the same list and stops issuing draws after the scrub; it still has to enter the passes so GL state stays balanced (a skipped volumetric or post pass must not skip the matching target restore). The shadow atlas is not copied into the capture.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Building an =LrgFrameCall= before =lrg_frame_capture_is_active()= wastes the frame. The world renderer checks first.
+- If note returns false during replay, the renderer must skip the draw and still keep GL targets balanced. A false note while recording does not happen (the cap still returns true).
+- =lrg_frame_capture_replay()= without a window is a clean error, not a crash and not a skip-macro inside the library. Callers that are tests use =g_test_skip= themselves when they have no display.
+- There is no =lrg_world3d_renderer_new_headless()=. Use =lrg_world3d_renderer_new()= and =lrg_world3d_renderer_set_headless()=. Headless =render_list= returns false because nothing was drawn on the GPU; the capture list can still be non-empty.
+- The editor panel is [[file:../../editor/profiling.org::#editor-profiling-frame][the Frame Debugger]]. CPU sections for the same passes are [[file:profiler.org][LrgProfiler]].
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: from-the-editor
+:END:
+=frame.capture= arms the viewport renderer's capture. =frame.scrub= sets the scrub and, when a window is ready, replays. =frame.load= of a =.rframe= replaces the list for browsing; replay still needs the live renderer. The full method table is [[file:../../editor/profiling.org::#editor-profiling-ipc][Profiling IPC]].

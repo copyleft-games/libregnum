@@ -427,8 +427,12 @@ test_shapes (EditorAppFixture *f,
 		g_assert_cmpfloat (off[1], ==, 0.0f);
 	}
 
-	/* the list: click the second row to select it, then its remove button */
+	/* the list: click the second row to select it, then its remove button.
+	 * The list starts below the fold of the inspector split. */
 	present (f);
+	lrg_scroll_box_scroll_to_widget (LRG_SCROLL_BOX (efx_find (f, "physics-scroll")),
+	                                 efx_find (f, "physics-shape-list"));
+	efx_frames (f, 40);
 	efx_rect_of (efx_find (f, "physics-shape-list"), &x, &y, &w, &h);
 	g_assert_cmpfloat (h, >=, 3.0f * 24.0f);
 	efx_click (f, x + 40.0f, y + 1.0f + 24.0f * 1.5f);

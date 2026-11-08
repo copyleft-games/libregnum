@@ -11,7 +11,11 @@
 #define LRG_LOG_DOMAIN LRG_LOG_DOMAIN_GAMEMODULE
 
 #include "lrg-game-host.h"
+#include "../core/lrg-data-loader.h"
+#include "../core/lrg-engine.h"
 #include "../lrg-log.h"
+
+#include <yaml-glib.h>
 
 G_DEFINE_INTERFACE (LrgGameHost, lrg_game_host, G_TYPE_OBJECT)
 
@@ -150,4 +154,79 @@ lrg_game_host_get_input_source (LrgGameHost *self)
         return NULL;
 
     return iface->get_input_source (self);
+}
+
+GPtrArray *
+lrg_game_host_load_autoloads (LrgGameHost  *self,
+                              const gchar  *project_dir,
+                              GError      **error)
+{
+	g_autofree gchar     *manifest = NULL;
+	g_autoptr(YamlParser) parser = NULL;
+	g_autoptr(GPtrArray)  out = NULL;
+	LrgEngine            *engine;
+	LrgDataLoader        *loader;
+	YamlNode             *root;
+	YamlNode             *node;
+	guint                 i;
+	guint                 n;
+
+	g_return_val_if_fail (LRG_IS_GAME_HOST (self), NULL);
+	g_return_val_if_fail (project_dir != NULL, NULL);
+
+	engine = lrg_game_host_get_engine (self);
+	if (engine == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                     "Game host has no engine");
+		return NULL;
+	}
+	loader = lrg_engine_get_data_loader (engine);
+	if (!LRG_IS_DATA_LOADER (loader))
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                     "Engine data loader is not available");
+		return NULL;
+	}
+	manifest = g_build_filename (project_dir, "project.ryaml", NULL);
+	parser = yaml_parser_new ();
+	if (!yaml_parser_load_from_file (parser, manifest, error))
+		return NULL;
+	root = yaml_parser_get_root (parser);
+	if (root == NULL || yaml_node_get_node_type (root) != YAML_NODE_MAPPING)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                     "project.ryaml is not a mapping");
+		return NULL;
+	}
+
+	out = g_ptr_array_new_with_free_func (g_object_unref);
+	node = yaml_mapping_get_member (yaml_node_get_mapping (root), "autoloads");
+	if (node == NULL || yaml_node_get_node_type (node) != YAML_NODE_SEQUENCE)
+		return g_steal_pointer (&out);
+
+	n = yaml_sequence_get_length (yaml_node_get_sequence (node));
+	for (i = 0; i < n; i++)
+	{
+		YamlNode         *el;
+		const gchar      *rel;
+		g_autofree gchar *path = NULL;
+		GObject          *obj;
+
+		el = yaml_sequence_get_element (yaml_node_get_sequence (node), i);
+		if (el == NULL || yaml_node_get_node_type (el) != YAML_NODE_SCALAR)
+			continue;
+		rel = yaml_node_get_scalar (el);
+		if (rel == NULL || rel[0] == '\0')
+			continue;
+		if (g_path_is_absolute (rel))
+			path = g_strdup (rel);
+		else
+			path = g_build_filename (project_dir, rel, NULL);
+		obj = lrg_data_loader_load_file (loader, path, error);
+		if (obj == NULL)
+			return NULL;
+		g_ptr_array_add (out, obj);
+	}
+	return g_steal_pointer (&out);
 }

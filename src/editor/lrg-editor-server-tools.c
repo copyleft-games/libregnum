@@ -10,9 +10,15 @@
  *   timeline.list / get / add / remove / set / key / unkey / move-key /
  *            ease / sample
  *   asset.meta.get / set     (".meta" sidecars, see lrg-asset-meta.h)
- *   vcs.status               (git status of the project, lrg-editor-vcs.h)
+ *   vcs.status / diff / log / commit / locks / magit
  *   prefab.overrides / apply / revert / sync / relink / unlink
  *                            (linked prefab instances, lrg-prefab.h)
+ *   po.extract / pseudo / import / export
+ *   gizmo.apply / pivot / cursor / origin
+ *   view.letterbox
+ *   level.merge
+ *   collab.apply / get / lock / unlock / cursor / presence
+ *   scenes.list / open / active
  *
  * Every level mutation goes through LrgEditorTilePainter, the
  * lrg_editor_timeline_* or the lrg_editor_prefab_* API, so it is one undo
@@ -32,6 +38,14 @@
 #include "lrg-asset-meta.h"
 #include "lrg-editor-vcs.h"
 #include "lrg-prefab.h"
+#include "lrg-editor-gizmo.h"
+#include "lrg-transform-tools.h"
+#include "lrg-level-merge.h"
+#include "lrg-collab.h"
+#include "lrg-editor-scenes.h"
+#include "lrg-game-view.h"
+#include "../i18n/lrg-po.h"
+#include "../i18n/lrg-locale.h"
 #include "../lrg-enums.h"
 #include <math.h>
 #include <string.h>
@@ -977,6 +991,77 @@ tools_resolve_path (LrgEditorServer *server,
 	return g_canonicalize_filename (path, base);
 }
 
+/* A number, or a decimal string (lrgeditorctl positional args are strings). */
+static gboolean
+p_num_flex (JsonObject  *p,
+            const gchar *key,
+            gdouble     *out)
+{
+	JsonNode *n;
+
+	if (!has (p, key))
+		return FALSE;
+	n = json_object_get_member (p, key);
+	if (!JSON_NODE_HOLDS_VALUE (n))
+		return FALSE;
+	if (json_node_get_value_type (n) == G_TYPE_STRING)
+	{
+		*out = g_ascii_strtod (json_node_get_string (n), NULL);
+		return TRUE;
+	}
+	if (json_node_get_value_type (n) == G_TYPE_INT64 ||
+	    json_node_get_value_type (n) == G_TYPE_DOUBLE)
+	{
+		*out = json_node_get_double (n);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static gboolean
+p_u64 (JsonObject  *p,
+       const gchar *key,
+       guint64     *out)
+{
+	JsonNode *n;
+
+	if (!has (p, key))
+		return FALSE;
+	n = json_object_get_member (p, key);
+	if (!JSON_NODE_HOLDS_VALUE (n))
+		return FALSE;
+	if (json_node_get_value_type (n) == G_TYPE_STRING)
+	{
+		*out = g_ascii_strtoull (json_node_get_string (n), NULL, 10);
+		return TRUE;
+	}
+	if (json_node_get_value_type (n) == G_TYPE_INT64)
+	{
+		gint64 v = json_node_get_int (n);
+
+		if (v < 0)
+			return FALSE;
+		*out = (guint64) v;
+		return TRUE;
+	}
+	if (json_node_get_value_type (n) == G_TYPE_DOUBLE)
+	{
+		*out = (guint64) json_node_get_double (n);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+static JsonNode *
+text_node (const gchar *key,
+           const gchar *text)
+{
+	JsonObject *o = json_object_new ();
+
+	json_object_set_string_member (o, key, text != NULL ? text : "");
+	return obj_node (o);
+}
+
 /*
  * Reads "keys" (an optional array of strings) into a NULL-terminated strv.
  * Absent or null -> TRUE with *out = NULL ("all"); anything that is not
@@ -1656,6 +1741,596 @@ m_prefab_unlink (LrgEditorServer  *server,
 }
 
 /* ==========================================================================
+ * PO, gizmo, letterbox, merge, collab, scenes, VCS panel ops
+ * ========================================================================== */
+
+#define TOOLS_GIZMO_KEY  "lrg-editor-server-tools-gizmo"
+#define TOOLS_COLLAB_KEY "lrg-editor-server-tools-collab"
+
+static LrgEditorGizmo *
+server_gizmo (LrgEditorServer *server)
+{
+	LrgEditorGizmo *gizmo = g_object_get_data (G_OBJECT (server), TOOLS_GIZMO_KEY);
+
+	if (gizmo == NULL)
+	{
+		gizmo = lrg_editor_gizmo_new (lrg_editor_server_get_editor (server));
+		g_object_set_data_full (G_OBJECT (server), TOOLS_GIZMO_KEY, gizmo, g_object_unref);
+	}
+	return gizmo;
+}
+
+static LrgCollabSession *
+server_collab (LrgEditorServer *server)
+{
+	LrgCollabSession *session = g_object_get_data (G_OBJECT (server), TOOLS_COLLAB_KEY);
+
+	if (session == NULL)
+	{
+		session = lrg_collab_session_new ();
+		g_object_set_data_full (G_OBJECT (server), TOOLS_COLLAB_KEY, session, g_object_unref);
+	}
+	return session;
+}
+
+static gint
+pivot_from_name (const gchar *name)
+{
+	if (g_strcmp0 (name, "median") == 0)
+		return LRG_PIVOT_MEDIAN;
+	if (g_strcmp0 (name, "bounds") == 0)
+		return LRG_PIVOT_BOUNDS;
+	if (g_strcmp0 (name, "cursor") == 0)
+		return LRG_PIVOT_CURSOR;
+	if (g_strcmp0 (name, "active") == 0)
+		return LRG_PIVOT_ACTIVE;
+	return -1;
+}
+
+static JsonNode *
+m_po_extract (LrgEditorServer *server,
+              JsonObject      *params,
+              gpointer         user_data,
+              GError         **error)
+{
+	const gchar   *text = require_str (params, "text", error);
+	g_auto(GStrv)  keys = NULL;
+	JsonArray     *arr;
+	JsonObject    *o;
+	guint          i;
+
+	(void) server;
+	(void) user_data;
+	if (text == NULL)
+		return NULL;
+	keys = lrg_po_extract (text);
+	arr = json_array_new ();
+	for (i = 0; keys != NULL && keys[i] != NULL; i++)
+		json_array_add_string_element (arr, keys[i]);
+	o = json_object_new ();
+	json_object_set_array_member (o, "keys", arr);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_po_pseudo (LrgEditorServer *server,
+             JsonObject      *params,
+             gpointer         user_data,
+             GError         **error)
+{
+	const gchar          *text = require_str (params, "text", error);
+	g_autoptr(LrgLocale)  src = NULL;
+	g_autoptr(LrgLocale)  pseudo = NULL;
+
+	(void) server;
+	(void) user_data;
+	if (text == NULL)
+		return NULL;
+	src = lrg_locale_new ("en", "English");
+	lrg_locale_set_string (src, "s", text);
+	pseudo = lrg_po_pseudolocalize (src);
+	return text_node ("text", lrg_locale_get_string (pseudo, "s"));
+}
+
+static JsonNode *
+m_po_import (LrgEditorServer *server,
+             JsonObject      *params,
+             gpointer         user_data,
+             GError         **error)
+{
+	const gchar          *path = require_str (params, "path", error);
+	const gchar          *id = require_str (params, "id", error);
+	g_autofree gchar     *full = NULL;
+	g_autoptr(LrgLocale)  locale = NULL;
+	g_autoptr(GError)     local = NULL;
+	gint                  count;
+	JsonObject           *o;
+
+	(void) user_data;
+	if (path == NULL || id == NULL)
+		return NULL;
+	full = tools_resolve_path (server, path);
+	locale = lrg_locale_new ("en", "English");
+	count = lrg_po_import_file (locale, full, &local);
+	if (count < 0)
+		return failed_from (error, local);
+	o = json_object_new ();
+	json_object_set_int_member (o, "count", count);
+	set_str_or_null (o, "value", lrg_locale_get_string (locale, id));
+	return obj_node (o);
+}
+
+static JsonNode *
+m_po_export (LrgEditorServer *server,
+             JsonObject      *params,
+             gpointer         user_data,
+             GError         **error)
+{
+	const gchar          *path = require_str (params, "path", error);
+	const gchar          *id = require_str (params, "id", error);
+	const gchar          *text = require_str (params, "text", error);
+	g_autofree gchar     *full = NULL;
+	g_autoptr(LrgLocale)  locale = NULL;
+	g_autoptr(GError)     local = NULL;
+
+	(void) user_data;
+	if (path == NULL || id == NULL || text == NULL)
+		return NULL;
+	full = tools_resolve_path (server, path);
+	locale = lrg_locale_new ("en", "English");
+	lrg_locale_set_string (locale, id, text);
+	if (!lrg_po_export_file (locale, full, &local))
+		return failed_from (error, local);
+	return text_node ("path", full);
+}
+
+static JsonNode *
+m_gizmo_apply (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	const gchar *op = require_str (params, "op", error);
+	gdouble      axis = 0.0;
+	gdouble      value = 0.0;
+	JsonObject  *o;
+	gboolean     ok;
+
+	(void) user_data;
+	if (op == NULL)
+		return NULL;
+	if (has (params, "axis") && !p_num_flex (params, "axis", &axis))
+	{
+		invalid (error, "'%s' must be a number", "axis");
+		return NULL;
+	}
+	if (has (params, "value") && !p_num_flex (params, "value", &value))
+	{
+		invalid (error, "'%s' must be a number", "value");
+		return NULL;
+	}
+	ok = lrg_editor_gizmo_apply (server_gizmo (server), op, (gint) axis, (gfloat) value);
+	o = json_object_new ();
+	json_object_set_boolean_member (o, "ok", ok);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_gizmo_pivot (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	const gchar *mode = require_str (params, "mode", error);
+	gint         pivot;
+	gfloat       origin[3];
+	JsonObject  *o;
+
+	(void) user_data;
+	if (mode == NULL)
+		return NULL;
+	pivot = pivot_from_name (mode);
+	if (pivot < 0)
+	{
+		invalid (error, "Unknown pivot '%s'", mode);
+		return NULL;
+	}
+	lrg_editor_gizmo_set_pivot_mode (server_gizmo (server), pivot);
+	lrg_editor_gizmo_get_origin (server_gizmo (server), origin);
+	o = json_object_new ();
+	json_object_set_string_member (o, "mode", mode);
+	json_object_set_double_member (o, "x", origin[0]);
+	json_object_set_double_member (o, "y", origin[1]);
+	json_object_set_double_member (o, "z", origin[2]);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_gizmo_cursor (LrgEditorServer *server,
+                JsonObject      *params,
+                gpointer         user_data,
+                GError         **error)
+{
+	gdouble x = 0.0;
+	gdouble y = 0.0;
+	gdouble z = 0.0;
+
+	(void) user_data;
+	if (!p_num_flex (params, "x", &x) || !p_num_flex (params, "y", &y) || !p_num_flex (params, "z", &z))
+	{
+		invalid (error, "Need numbers x, y and z");
+		return NULL;
+	}
+	lrg_editor_gizmo_set_cursor (server_gizmo (server), (gfloat) x, (gfloat) y, (gfloat) z);
+	return text_node ("mode", "cursor");
+}
+
+static JsonNode *
+m_gizmo_origin (LrgEditorServer *server,
+                JsonObject      *params,
+                gpointer         user_data,
+                GError         **error)
+{
+	gfloat      origin[3];
+	JsonObject *o;
+
+	(void) params;
+	(void) user_data;
+	(void) error;
+	lrg_editor_gizmo_get_origin (server_gizmo (server), origin);
+	o = json_object_new ();
+	json_object_set_double_member (o, "x", origin[0]);
+	json_object_set_double_member (o, "y", origin[1]);
+	json_object_set_double_member (o, "z", origin[2]);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_view_letterbox (LrgEditorServer *server,
+                  JsonObject      *params,
+                  gpointer         user_data,
+                  GError         **error)
+{
+	const gchar *preset = require_str (params, "preset", error);
+	gdouble      w = 0.0;
+	gdouble      h = 0.0;
+	gint         x = 0;
+	gint         y = 0;
+	gint         rw = 0;
+	gint         rh = 0;
+	JsonObject  *o;
+
+	(void) server;
+	(void) user_data;
+	if (preset == NULL)
+		return NULL;
+	if (!p_num_flex (params, "w", &w) || !p_num_flex (params, "h", &h))
+	{
+		invalid (error, "Need numbers w and h");
+		return NULL;
+	}
+	lrg_game_view_letterbox (preset, (gint) w, (gint) h, &x, &y, &rw, &rh);
+	o = json_object_new ();
+	json_object_set_int_member (o, "x", x);
+	json_object_set_int_member (o, "y", y);
+	json_object_set_int_member (o, "w", rw);
+	json_object_set_int_member (o, "h", rh);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_level_merge (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	const gchar       *base = require_str (params, "base", error);
+	const gchar       *ours = require_str (params, "ours", error);
+	const gchar       *theirs = require_str (params, "theirs", error);
+	const gchar       *out = require_str (params, "out", error);
+	g_autofree gchar  *base_full = NULL;
+	g_autofree gchar  *ours_full = NULL;
+	g_autofree gchar  *theirs_full = NULL;
+	g_autofree gchar  *out_full = NULL;
+	g_auto(GStrv)      conflicts = NULL;
+	g_autoptr(GError)  local = NULL;
+	JsonArray         *arr;
+	JsonObject        *o;
+	guint              i;
+
+	(void) user_data;
+	if (base == NULL || ours == NULL || theirs == NULL || out == NULL)
+		return NULL;
+	base_full = tools_resolve_path (server, base);
+	ours_full = tools_resolve_path (server, ours);
+	theirs_full = tools_resolve_path (server, theirs);
+	out_full = tools_resolve_path (server, out);
+	if (!lrg_level_merge_files (base_full, ours_full, theirs_full, out_full, &conflicts, &local))
+		return failed_from (error, local);
+	arr = json_array_new ();
+	for (i = 0; conflicts != NULL && conflicts[i] != NULL; i++)
+		json_array_add_string_element (arr, conflicts[i]);
+	o = json_object_new ();
+	json_object_set_string_member (o, "out", out_full);
+	json_object_set_array_member (o, "conflicts", arr);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_collab_apply (LrgEditorServer *server,
+                JsonObject      *params,
+                gpointer         user_data,
+                GError         **error)
+{
+	const gchar       *user = require_str (params, "user", error);
+	const gchar       *guid = require_str (params, "guid", error);
+	const gchar       *prop = require_str (params, "prop", error);
+	const gchar       *value = require_str (params, "value", error);
+	guint64            revision = 0;
+	g_autoptr(GError)  local = NULL;
+
+	(void) user_data;
+	if (user == NULL || guid == NULL || prop == NULL || value == NULL)
+		return NULL;
+	if (!p_u64 (params, "revision", &revision))
+	{
+		invalid (error, "Missing number parameter '%s'", "revision");
+		return NULL;
+	}
+	if (!lrg_collab_apply (server_collab (server), user, guid, revision, prop, value, &local))
+		return failed_from (error, local);
+	return text_node ("value", value);
+}
+
+static JsonNode *
+m_collab_get (LrgEditorServer *server,
+              JsonObject      *params,
+              gpointer         user_data,
+              GError         **error)
+{
+	const gchar *guid = require_str (params, "guid", error);
+	const gchar *prop = require_str (params, "prop", error);
+	JsonObject  *o;
+
+	(void) user_data;
+	if (guid == NULL || prop == NULL)
+		return NULL;
+	o = json_object_new ();
+	set_str_or_null (o, "value", lrg_collab_get (server_collab (server), guid, prop));
+	return obj_node (o);
+}
+
+static JsonNode *
+m_collab_lock (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	const gchar       *user = require_str (params, "user", error);
+	const gchar       *guid = require_str (params, "guid", error);
+	g_autoptr(GError)  local = NULL;
+	gboolean           unlock;
+
+	if (user == NULL || guid == NULL)
+		return NULL;
+	/* collab.unlock is this function with user_data set. */
+	unlock = user_data != NULL;
+	if (unlock)
+	{
+		if (!lrg_collab_unlock (server_collab (server), user, guid, &local))
+			return failed_from (error, local);
+	}
+	else if (!lrg_collab_lock (server_collab (server), user, guid, &local))
+		return failed_from (error, local);
+	return text_node ("holder", lrg_collab_lock_holder (server_collab (server), guid));
+}
+
+static JsonNode *
+m_collab_cursor (LrgEditorServer *server,
+                 JsonObject      *params,
+                 gpointer         user_data,
+                 GError         **error)
+{
+	const gchar *user = require_str (params, "user", error);
+	gdouble      x = 0.0;
+	gdouble      y = 0.0;
+	gdouble      z = 0.0;
+
+	(void) user_data;
+	if (user == NULL)
+		return NULL;
+	if (!p_num_flex (params, "x", &x) || !p_num_flex (params, "y", &y) || !p_num_flex (params, "z", &z))
+	{
+		invalid (error, "Need numbers x, y and z");
+		return NULL;
+	}
+	lrg_collab_set_cursor (server_collab (server), user, (gfloat) x, (gfloat) y, (gfloat) z);
+	return count_node ("count", lrg_collab_presence_count (server_collab (server)));
+}
+
+static JsonNode *
+m_collab_presence (LrgEditorServer *server,
+                   JsonObject      *params,
+                   gpointer         user_data,
+                   GError         **error)
+{
+	LrgCollabSession *session = server_collab (server);
+	JsonArray        *users;
+	JsonObject       *o;
+	guint             i;
+	guint             n;
+
+	(void) params;
+	(void) user_data;
+	(void) error;
+	users = json_array_new ();
+	n = lrg_collab_presence_count (session);
+	for (i = 0; i < n; i++)
+	{
+		const gchar *user = NULL;
+		gfloat       x = 0.0f;
+		gfloat       y = 0.0f;
+		gfloat       z = 0.0f;
+		JsonObject  *row;
+
+		if (!lrg_collab_presence_get (session, i, &user, &x, &y, &z))
+			continue;
+		row = json_object_new ();
+		json_object_set_string_member (row, "user", user != NULL ? user : "");
+		json_object_set_double_member (row, "x", x);
+		json_object_set_double_member (row, "y", y);
+		json_object_set_double_member (row, "z", z);
+		json_array_add_object_element (users, row);
+	}
+	o = json_object_new ();
+	json_object_set_array_member (o, "users", users);
+	return obj_node (o);
+}
+
+static JsonNode *
+m_scenes_list (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	LrgEditorScenes *scenes;
+	JsonArray       *paths;
+	JsonObject      *o;
+	guint            i;
+	guint            n;
+
+	(void) params;
+	(void) user_data;
+	(void) error;
+	scenes = lrg_editor_scenes_ensure (G_OBJECT (lrg_editor_server_get_editor (server)));
+	paths = json_array_new ();
+	n = lrg_editor_scenes_get_count (scenes);
+	for (i = 0; i < n; i++)
+	{
+		const gchar *path = lrg_editor_scenes_get_path (scenes, i);
+
+		json_array_add_string_element (paths, path != NULL ? path : "");
+	}
+	o = json_object_new ();
+	json_object_set_array_member (o, "paths", paths);
+	json_object_set_int_member (o, "active", lrg_editor_scenes_get_active (scenes));
+	return obj_node (o);
+}
+
+static JsonNode *
+m_scenes_open (LrgEditorServer *server,
+               JsonObject      *params,
+               gpointer         user_data,
+               GError         **error)
+{
+	const gchar       *path = require_str (params, "path", error);
+	g_autofree gchar  *full = NULL;
+	g_autoptr(GError)  local = NULL;
+	LrgEditor         *editor;
+	LrgEditorScenes   *scenes;
+	guint              index;
+
+	(void) user_data;
+	if (path == NULL)
+		return NULL;
+	full = tools_resolve_path (server, path);
+	editor = lrg_editor_server_get_editor (server);
+	if (!lrg_editor_load_level (editor, full, &local))
+		return failed_from (error, local);
+	scenes = lrg_editor_scenes_ensure (G_OBJECT (editor));
+	index = lrg_editor_scenes_add (scenes, full);
+	return count_node ("index", index);
+}
+
+static JsonNode *
+m_scenes_active (LrgEditorServer *server,
+                 JsonObject      *params,
+                 gpointer         user_data,
+                 GError         **error)
+{
+	gdouble            index = 0.0;
+	LrgEditor         *editor;
+	LrgEditorScenes   *scenes;
+	const gchar       *path;
+	g_autoptr(GError)  local = NULL;
+
+	(void) user_data;
+	if (!p_num_flex (params, "index", &index))
+	{
+		invalid (error, "Missing number parameter '%s'", "index");
+		return NULL;
+	}
+	editor = lrg_editor_server_get_editor (server);
+	scenes = lrg_editor_scenes_ensure (G_OBJECT (editor));
+	path = lrg_editor_scenes_get_path (scenes, (guint) index);
+	if (path == NULL)
+	{
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "No scene %d", (gint) index);
+		return NULL;
+	}
+	if (!lrg_editor_load_level (editor, path, &local))
+		return failed_from (error, local);
+	lrg_editor_scenes_set_active (scenes, (guint) index);
+	return text_node ("path", path);
+}
+
+static JsonNode *
+m_vcs_text (LrgEditorServer *server,
+            JsonObject      *params,
+            gpointer         user_data,
+            GError         **error)
+{
+	const gchar       *which = user_data;
+	LrgEditorVcs      *vcs = server_vcs (server);
+	g_autoptr(GError)  local = NULL;
+	g_autofree gchar  *text = NULL;
+
+	(void) params;
+	if (g_strcmp0 (which, "diff") == 0)
+		text = lrg_editor_vcs_diff (vcs, &local);
+	else if (g_strcmp0 (which, "log") == 0)
+		text = lrg_editor_vcs_log (vcs, &local);
+	else if (g_strcmp0 (which, "magit") == 0)
+		return text_node ("form", lrg_editor_vcs_magit_handoff (vcs));
+	else if (g_strcmp0 (which, "locks") == 0)
+	{
+		gboolean    available = FALSE;
+		JsonObject *o;
+
+		text = lrg_editor_vcs_lfs_locks (vcs, &available, &local);
+		if (text == NULL)
+			return failed_from (error, local);
+		o = json_object_new ();
+		json_object_set_boolean_member (o, "available", available);
+		json_object_set_string_member (o, "text", text);
+		return obj_node (o);
+	}
+	if (text == NULL)
+		return failed_from (error, local);
+	return text_node ("text", text);
+}
+
+static JsonNode *
+m_vcs_commit (LrgEditorServer *server,
+              JsonObject      *params,
+              gpointer         user_data,
+              GError         **error)
+{
+	const gchar       *message = require_str (params, "message", error);
+	g_autoptr(GError)  local = NULL;
+	g_autofree gchar  *text = NULL;
+
+	(void) user_data;
+	if (message == NULL)
+		return NULL;
+	text = lrg_editor_vcs_commit (server_vcs (server), message, &local);
+	if (text == NULL)
+		return failed_from (error, local);
+	return text_node ("text", text);
+}
+
+/* ==========================================================================
  * Registration
  * ========================================================================== */
 
@@ -1692,9 +2367,47 @@ editor_server_register_tools (LrgEditorServer *self)
 		{ "prefab.sync", m_prefab_sync },
 		{ "prefab.relink", m_prefab_relink },
 		{ "prefab.unlink", m_prefab_unlink },
+		{ "po.extract", m_po_extract },
+		{ "po.pseudo", m_po_pseudo },
+		{ "po.import", m_po_import },
+		{ "po.export", m_po_export },
+		{ "gizmo.apply", m_gizmo_apply },
+		{ "gizmo.pivot", m_gizmo_pivot },
+		{ "gizmo.cursor", m_gizmo_cursor },
+		{ "gizmo.origin", m_gizmo_origin },
+		{ "view.letterbox", m_view_letterbox },
+		{ "level.merge", m_level_merge },
+		{ "collab.apply", m_collab_apply },
+		{ "collab.get", m_collab_get },
+		{ "collab.lock", m_collab_lock },
+		{ "collab.unlock", m_collab_lock },
+		{ "collab.cursor", m_collab_cursor },
+		{ "collab.presence", m_collab_presence },
+		{ "scenes.list", m_scenes_list },
+		{ "scenes.open", m_scenes_open },
+		{ "scenes.active", m_scenes_active },
+		{ "vcs.diff", m_vcs_text },
+		{ "vcs.log", m_vcs_text },
+		{ "vcs.locks", m_vcs_text },
+		{ "vcs.magit", m_vcs_text },
+		{ "vcs.commit", m_vcs_commit },
 	};
 	gsize i;
 
 	for (i = 0; i < G_N_ELEMENTS (table); i++)
-		lrg_editor_server_register_method (self, table[i].name, table[i].func, NULL, NULL);
+	{
+		gpointer data = NULL;
+
+		if (g_strcmp0 (table[i].name, "vcs.diff") == 0)
+			data = (gpointer) "diff";
+		else if (g_strcmp0 (table[i].name, "vcs.log") == 0)
+			data = (gpointer) "log";
+		else if (g_strcmp0 (table[i].name, "vcs.locks") == 0)
+			data = (gpointer) "locks";
+		else if (g_strcmp0 (table[i].name, "vcs.magit") == 0)
+			data = (gpointer) "magit";
+		else if (g_strcmp0 (table[i].name, "collab.unlock") == 0)
+			data = (gpointer) "unlock";
+		lrg_editor_server_register_method (self, table[i].name, table[i].func, data, NULL);
+	}
 }

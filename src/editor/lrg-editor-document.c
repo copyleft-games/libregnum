@@ -63,6 +63,7 @@
 #include "../atlas/lrg-sprite-animation.h"
 #include "../graphics/lrg-water-body.h"
 #include "../pathfinding/lrg-nav-bake.h"
+#include "../scripting/lrg-vscript-program.h"
 
 #define DEFAULT_UNDO_LIMIT (256)
 
@@ -104,6 +105,7 @@ lrg_editor_document_format_get_type (void)
 			{ LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, "LRG_EDITOR_DOCUMENT_FORMAT_SPRITE", "sprite" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, "LRG_EDITOR_DOCUMENT_FORMAT_WATER", "water" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, "LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS", "nav-settings" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, "LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT", "vscript" },
 			{ 0, NULL, NULL }
 		};
 		GType id;
@@ -175,7 +177,8 @@ static const struct
 	{ LRG_EDITOR_DOCUMENT_FORMAT_TILESET, ".rtileset" },
 	{ LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, ".rsprite" },
 	{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, ".rwater" },
-	{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, ".rnav" }
+	{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, ".rnav" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, ".rvscript" }
 };
 
 const gchar *
@@ -215,6 +218,8 @@ lrg_editor_document_format_get_object_type (LrgEditorDocumentFormat format)
 		return LRG_TYPE_WATER_BODY;
 	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
 		return LRG_TYPE_NAV_BAKE;
+	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
+		return LRG_TYPE_VSCRIPT_PROGRAM;
 	default:
 		return G_TYPE_INVALID;
 	}
@@ -4746,6 +4751,8 @@ engine_parse (LrgEditorDocumentFormat   format,
 		return (GObject *) lrg_water_body_new_from_data (text, length, error);
 	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
 		return (GObject *) lrg_nav_bake_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
+		return (GObject *) lrg_vscript_program_new_from_data (text, length, error);
 	default:
 		g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
 		             "%s documents have no engine object",
@@ -4781,6 +4788,8 @@ engine_write (GObject  *object,
 		return lrg_water_body_to_data (LRG_WATER_BODY (object), NULL, error);
 	if (LRG_IS_NAV_BAKE (object))
 		return lrg_nav_bake_to_data (LRG_NAV_BAKE (object));
+	if (LRG_IS_VSCRIPT_PROGRAM (object))
+		return lrg_vscript_program_to_data (LRG_VSCRIPT_PROGRAM (object), error);
 
 	g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
 	             "%s is not an engine-backed document object", G_OBJECT_TYPE_NAME (object));
@@ -4846,6 +4855,21 @@ engine_skeleton (LrgEditorDocumentFormat format)
 		break;
 	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
 		object = (GObject *) lrg_nav_bake_new ();
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
+		{
+			LrgVscriptProgram *program = lrg_vscript_program_new ();
+			LrgVscriptGraph *graph = lrg_vscript_program_get_main (program);
+			LrgVscriptNode *log_node;
+
+			lrg_vscript_program_set_name (program, "script");
+			lrg_vscript_graph_create_node (graph, "event.start", "start", 40.0, 40.0, NULL);
+			log_node = lrg_vscript_graph_create_node (graph, "debug.log", "log", 280.0, 40.0, NULL);
+			if (log_node != NULL)
+				lrg_vscript_node_set_input (log_node, "text", g_variant_new_string ("hello"));
+			lrg_vscript_program_connect (program, NULL, "start", "then", "log", "exec", NULL);
+			object = (GObject *) program;
+		}
 		break;
 	default:
 		return NULL;
@@ -5023,6 +5047,26 @@ validate_engine (Validation *v)
 		ok = lrg_particle_asset_validate (LRG_PARTICLE_ASSET (object), &error);
 	else if (LRG_IS_MIXER_ASSET (object))
 		ok = lrg_mixer_asset_validate (LRG_MIXER_ASSET (object), &error);
+	else if (LRG_IS_VSCRIPT_PROGRAM (object))
+	{
+		g_autoptr(GPtrArray) found = NULL;
+		guint j;
+
+		ok = lrg_vscript_program_validate (LRG_VSCRIPT_PROGRAM (object), &found);
+		if (!ok && found != NULL)
+		{
+			for (j = 0; j < found->len; j++)
+			{
+				LrgVscriptIssue *issue = (LrgVscriptIssue *) g_ptr_array_index (found, j);
+
+				if (issue->severity != LRG_VSCRIPT_SEVERITY_ERROR)
+					continue;
+				g_set_error (&error, LRG_VSCRIPT_ERROR, LRG_VSCRIPT_ERROR_INVALID,
+				             "%s", issue->message != NULL ? issue->message : "invalid visual script");
+				break;
+			}
+		}
+	}
 	if (!ok)
 		add_loader_error (v, error, DATA_SOURCE);
 }
@@ -5084,6 +5128,7 @@ lrg_editor_document_validate (LrgEditorDocument  *self,
 	case LRG_EDITOR_DOCUMENT_FORMAT_SPRITE:
 	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
 	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
+	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
 		validate_engine (&v);
 		break;
 	case LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN:

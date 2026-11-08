@@ -26,7 +26,7 @@ The weather system coordinates multiple effects for atmospheric immersion:
 - [[file:../graphics/sky-bodies.org][LrgSkyBodies]] (graphics) - Sun disc, phased moons and stars drawn over the sky dome
 - [[file:weather-asset.org][LrgWeatherAsset]] - The structured =.rweather= format: presets of layers (rain, snow, fog, lightning, wind, GPU particles) with intensities, crossfade rules and live sync for the weather inspector; also =LrgWeatherWind= (wind layers with gusts) and =LrgWeatherParticles= (camera-following [[file:../particles/gpu-particles.org][GPU particles]])
 
-Effects built from an =.rweather= carry a level (=lrg_weather_effect_set_level()=): the manager crossfades them between 0 and that level instead of 0 and 1, and an instant switch sets them to it. =lrg_weather_get_effective_wind()= is the weather wind plus its wind layers.
+Effects built from an =.rweather= carry a level (=lrg_weather_effect_set_level()=): the manager crossfades them between 0 and that level instead of 0 and 1, and an instant switch sets them to it. An instant switch while a crossfade is running restores both the fading weather and the fade target to their full levels, drops the crossfade, then applies the new weather. The 2D pass of fog and lightning covers the current framebuffer (=GetRenderWidth()=), so a render target is not drawn at the window size. =lrg_weather_get_effective_wind()= is the weather wind plus its wind layers.
 
 ** Spaces and render passes
 :PROPERTIES:

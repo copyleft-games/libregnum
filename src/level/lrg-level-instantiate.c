@@ -39,6 +39,8 @@
 #include "../postprocess/lrg-post-stack.h"
 #include "../pathfinding/lrg-nav-bake.h"
 #include "../pathfinding/lrg-nav-poly-mesh.h"
+#include "../audio/lrg-audio-manager.h"
+#include "../audio/lrg-mixer-asset.h"
 #include "../core/lrg-asset-manager.h"
 #include "../core/lrg-asset-meta.h"
 #include "../core/lrg-engine.h"
@@ -250,14 +252,17 @@ apply_component_props (GObject          *obj,
 static void
 instantiate_node (LrgNode     *node,
                   LrgWorld    *world,
-                  LrgRegistry *registry)
+                  LrgRegistry *registry,
+                  gint         depth)
 {
 	LrgGameObject *object = lrg_game_object_new ();
 	GrlVector3    *loc = lrg_node_get_location (node);
 	GPtrArray     *components;
 	GPtrArray     *scripts;
 	GPtrArray     *children;
+	g_auto(GStrv)  tags = NULL;
 	guint          i;
+	guint          t;
 
 	if (loc != NULL)
 		grl_entity_set_position_xy (GRL_ENTITY (object), loc->x, loc->y);
@@ -306,6 +311,10 @@ instantiate_node (LrgNode     *node,
 	 * objects back to their authoring nodes, then let node subclasses add
 	 * their own runtime pieces. */
 	grl_entity_set_tag (GRL_ENTITY (object), lrg_node_get_guid (node));
+	tags = lrg_node_get_tags (node);
+	if (tags != NULL)
+		for (t = 0; tags[t] != NULL; t++)
+			lrg_game_object_add_tag (object, tags[t]);
 	lrg_node_instantiate (node, object);
 
 	lrg_world_add_object (world, object);
@@ -313,7 +322,34 @@ instantiate_node (LrgNode     *node,
 
 	children = lrg_node_get_children (node);
 	for (i = 0; children != NULL && i < children->len; i++)
-		instantiate_node (g_ptr_array_index (children, i), world, registry);
+		instantiate_node (g_ptr_array_index (children, i), world, registry, depth);
+
+	/* A childless level instance is loaded here. Mounted children (the
+	 * editor already copied them in) are the ones walked above. */
+	if ((children == NULL || children->len == 0) && depth < 8)
+	{
+		const gchar *path = lrg_node_get_level_path (node);
+
+		if (path != NULL && path[0] != '\0')
+		{
+			g_autoptr(LrgLevelSerializer) ser = NULL;
+			g_autoptr(LrgLevel) sub = NULL;
+			LrgNode   *subroot;
+			GPtrArray *subchildren;
+			guint      j;
+
+			ser = lrg_level_serializer_new ();
+			sub = lrg_level_serializer_load_from_file (ser, path, NULL);
+			if (sub != NULL)
+			{
+				subroot = lrg_level_get_root (sub);
+				subchildren = lrg_node_get_children (subroot);
+				for (j = 0; subchildren != NULL && j < subchildren->len; j++)
+					instantiate_node (g_ptr_array_index (subchildren, j),
+					                  world, registry, depth + 1);
+			}
+		}
+	}
 }
 
 /*
@@ -349,7 +385,7 @@ lrg_level_instantiate (LrgLevel   *level,
 	root = lrg_level_get_root (level);
 	children = lrg_node_get_children (root);
 	for (i = 0; children != NULL && i < children->len; i++)
-		instantiate_node (g_ptr_array_index (children, i), world, registry);
+		instantiate_node (g_ptr_array_index (children, i), world, registry, 0);
 
 	return TRUE;
 }
@@ -1397,7 +1433,8 @@ add_visual_component (Instantiate3D *ctx,
 static LrgEntity3D *
 instantiate_node_3d (Instantiate3D *ctx,
                      LrgNode       *node,
-                     LrgEntity3D   *parent);
+                     LrgEntity3D   *parent,
+                     gint           depth);
 
 /*
  * add_physics_components:
@@ -1535,13 +1572,14 @@ add_probe_volume (Instantiate3D *ctx,
 static void
 instantiate_children_3d (Instantiate3D *ctx,
                          LrgNode       *node,
-                         LrgEntity3D   *entity)
+                         LrgEntity3D   *entity,
+                         gint           depth)
 {
 	GPtrArray *children = lrg_node_get_children (node);
 	guint      i;
 
 	for (i = 0; children != NULL && i < children->len; i++)
-		instantiate_node_3d (ctx, g_ptr_array_index (children, i), entity);
+		instantiate_node_3d (ctx, g_ptr_array_index (children, i), entity, depth);
 }
 
 /*
@@ -1557,9 +1595,12 @@ instantiate_children_3d (Instantiate3D *ctx,
 static LrgEntity3D *
 instantiate_node_3d (Instantiate3D *ctx,
                      LrgNode       *node,
-                     LrgEntity3D   *parent)
+                     LrgEntity3D   *parent,
+                     gint           depth)
 {
 	g_autoptr(LrgEntity3D) entity = lrg_entity3d_new_with_name (lrg_node_get_name (node));
+	g_auto(GStrv) tags = NULL;
+	guint t;
 
 	/* Identity, transform and flags first: they are what the world's
 	 * GUID map, octree and render lists see when the entity joins. */
@@ -1567,6 +1608,10 @@ instantiate_node_3d (Instantiate3D *ctx,
 	apply_node_transform (node, entity);
 	lrg_entity3d_set_visible (entity, lrg_node_get_visible (node));
 	lrg_entity3d_set_active (entity, TRUE);
+	tags = lrg_node_get_tags (node);
+	if (tags != NULL)
+		for (t = 0; tags[t] != NULL; t++)
+			lrg_entity3d_add_tag (entity, tags[t]);
 
 	lrg_entity3d_add_child (parent, entity);
 
@@ -1582,7 +1627,35 @@ instantiate_node_3d (Instantiate3D *ctx,
 	/* Custom node kinds add their own runtime pieces. */
 	lrg_node_instantiate_3d (node, entity, ctx->world);
 
-	instantiate_children_3d (ctx, node, entity);
+	instantiate_children_3d (ctx, node, entity, depth);
+
+	/* Same rule as the 2D path: a childless level instance is loaded. */
+	if (lrg_node_get_children (node)->len == 0 && depth < 8)
+	{
+		const gchar *path = lrg_node_get_level_path (node);
+
+		if (path != NULL && path[0] != '\0')
+		{
+			g_autoptr(LrgLevelSerializer) ser = NULL;
+			g_autoptr(LrgLevel) sub = NULL;
+			LrgNode   *subroot;
+			GPtrArray *subchildren;
+			guint      j;
+
+			ser = lrg_level_serializer_new ();
+			sub = lrg_level_serializer_load_from_file (ser, path, NULL);
+			if (sub != NULL)
+			{
+				subroot = lrg_level_get_root (sub);
+				subchildren = lrg_node_get_children (subroot);
+				for (j = 0; subchildren != NULL && j < subchildren->len; j++)
+					instantiate_node_3d (ctx,
+					                     g_ptr_array_index (subchildren, j),
+					                     entity,
+					                     depth + 1);
+			}
+		}
+	}
 	return entity;   /* the parent holds the reference */
 }
 
@@ -1899,6 +1972,55 @@ apply_level_navigation (Instantiate3D *ctx,
 }
 
 /*
+ * apply_level_mixer:
+ *
+ * The level's `audio: mixer:` (.rmixer), after the world exists. A level
+ * that names none leaves the manager's mixer alone and succeeds. A named
+ * mixer that cannot be resolved or parsed fails the instantiate and does
+ * not replace the current mixer. The project mixer
+ * (lrg_audio_manager_load_project_mixer()) stays the fallback for a
+ * level with no block of its own.
+ */
+static gboolean
+apply_level_mixer (Instantiate3D  *ctx,
+                   LrgLevel       *level,
+                   GError        **error)
+{
+	const gchar             *ref = lrg_level_get_audio_mixer (level);
+	g_autofree gchar        *path = NULL;
+	g_autoptr(LrgMixerAsset) asset = NULL;
+	g_autoptr(LrgAudioMixer) mixer = NULL;
+	g_autoptr(GError)        local = NULL;
+
+	if (ref == NULL || ref[0] == '\0')
+		return TRUE;
+
+	path = resolve_asset_ref (ctx->assets, ctx->base_dir, ref);
+	if (path == NULL)
+	{
+		g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_FAILED,
+		             "audio mixer '%s' was not found", ref);
+		return FALSE;
+	}
+	asset = lrg_mixer_asset_new_from_file (path, &local);
+	if (asset == NULL)
+	{
+		g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_FAILED,
+		             "audio mixer '%s': %s", ref, local != NULL ? local->message : "could not load");
+		return FALSE;
+	}
+	mixer = lrg_mixer_asset_create_mixer (asset, 48000, 2, &local);
+	if (mixer == NULL)
+	{
+		g_set_error (error, LRG_LEVEL_ERROR, LRG_LEVEL_ERROR_FAILED,
+		             "audio mixer '%s': %s", ref, local != NULL ? local->message : "could not create");
+		return FALSE;
+	}
+	lrg_audio_manager_set_mixer (lrg_audio_manager_get_default (), mixer);
+	return TRUE;
+}
+
+/*
  * lrg_level_instantiate_3d:
  *
  * One entity per node under the world root, see the header.
@@ -1950,10 +2072,17 @@ lrg_level_instantiate_3d_with_base_dir (LrgLevel     *level,
 
 	/* The level's implicit root is not an entity: its children are the
 	 * world's top-level entities. */
-	instantiate_children_3d (&ctx, lrg_level_get_root (level), world_root);
+	instantiate_children_3d (&ctx, lrg_level_get_root (level), world_root, 0);
 
 	/* navigation last: a bake on load needs the geometry */
 	apply_level_navigation (&ctx, level);
+
+	/* a named mixer replaces the manager's; a missing name does not */
+	if (!apply_level_mixer (&ctx, level, error))
+	{
+		g_hash_table_unref (ctx.used_guids);
+		return FALSE;
+	}
 
 	g_hash_table_unref (ctx.used_guids);
 	return TRUE;
@@ -1989,7 +2118,7 @@ lrg_level_instantiate_node_3d (LrgNode      *node,
 	}
 
 	instantiate_3d_init (&ctx, world, engine);
-	entity = instantiate_node_3d (&ctx, node, parent != NULL ? parent : lrg_world3d_get_root (world));
+	entity = instantiate_node_3d (&ctx, node, parent != NULL ? parent : lrg_world3d_get_root (world), 0);
 	g_hash_table_unref (ctx.used_guids);
 	return entity;
 }

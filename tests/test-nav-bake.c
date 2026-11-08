@@ -971,6 +971,44 @@ test_level_instantiate (void)
 	g_rmdir (dir);
 }
 
+/* A 20 m floor in 10 m tiles is four bakes. Extent 0 stays one bake. */
+static void
+test_tile_extent (void)
+{
+	g_autoptr(LrgNavBake)     bake = lrg_nav_bake_new ();
+	g_autoptr(GArray)         tris = g_array_new (FALSE, FALSE, sizeof (gfloat));
+	g_autoptr(LrgNavPolyMesh) mesh = NULL;
+	g_autoptr(GError)         error = NULL;
+	const gfloat              bmin[3] = { 0.0f, 0.0f, 0.0f };
+	const gfloat              bmax[3] = { 20.0f, 2.0f, 20.0f };
+	const gfloat              p0[3] = { 5.0f, 0.0f, 5.0f };
+	const gfloat              p1[3] = { 15.0f, 0.0f, 15.0f };
+	const gfloat              ext[3] = { 1.0f, 2.0f, 1.0f };
+	gfloat                    hit[3];
+
+	floor_rect (tris, 0.0f, 0.0f, 20.0f, 20.0f, 0.0f);
+	lrg_nav_bake_set_cell_size (bake, 1.0f);
+	lrg_nav_bake_set_bounds (bake, bmin, bmax);
+	lrg_nav_bake_set_tile_extent (bake, 10.0f);
+	g_assert_cmpfloat (lrg_nav_bake_get_tile_extent (bake), ==, 10.0f);
+	lrg_nav_bake_add_triangles (bake, (const gfloat *) tris->data, tris->len, TRUE);
+	mesh = lrg_nav_bake_bake (bake, NULL, NULL, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (mesh);
+	g_assert_cmpuint (lrg_nav_bake_get_last_tile_count (bake), ==, 4);
+	g_assert_true (lrg_nav_poly_mesh_find_nearest (mesh, p0, ext, hit, NULL));
+	g_assert_true (lrg_nav_poly_mesh_find_nearest (mesh, p1, ext, hit, NULL));
+
+	lrg_nav_bake_set_tile_extent (bake, 0.0f);
+	g_clear_object (&mesh);
+	mesh = lrg_nav_bake_bake (bake, NULL, NULL, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (mesh);
+	g_assert_cmpuint (lrg_nav_bake_get_last_tile_count (bake), ==, 1);
+	g_assert_true (lrg_nav_poly_mesh_find_nearest (mesh, p0, ext, hit, NULL));
+	g_assert_true (lrg_nav_poly_mesh_find_nearest (mesh, p1, ext, hit, NULL));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -981,6 +1019,7 @@ main (int   argc,
 	g_test_add_func ("/nav-bake/format/unknown-keys", test_unknown_keys);
 	g_test_add_func ("/nav-bake/format/errors", test_errors);
 	g_test_add_func ("/nav-bake/bake/determinism-and-cache", test_determinism_and_cache);
+	g_test_add_func ("/nav-bake/bake/tile-extent", test_tile_extent);
 	g_test_add_func ("/nav-bake/bake/slope-and-step", test_slope_and_step);
 	g_test_add_func ("/nav-bake/bake/links", test_links);
 	g_test_add_func ("/nav-bake/bake/area-costs", test_area_costs);

@@ -56,7 +56,7 @@ GType lrg_net_stats_metric_get_type (void) G_GNUC_CONST;
  * @lost: packets detected as lost (sequence gaps on datagram channels)
  *
  * A set of traffic counters, filled by lrg_net_stats_get_totals() and
- * lrg_net_stats_get_window().
+ * lrg_net_stats_get_window_counters().
  *
  * Since: 0.9.0
  */

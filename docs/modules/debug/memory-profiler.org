@@ -1,0 +1,137 @@
+* LrgMemoryProfiler
+:PROPERTIES:
+:CUSTOM_ID: lrgmemoryprofiler
+:END:
+=LrgMemoryProfiler= reports live GObject counts, the assets sitting in an =LrgAssetManager=, and byte estimates for textures, meshes and PCM. Snapshots and a short history live on each profiler instance. The toggle-ref registry that counts instances without =GOBJECT_DEBUG= is process-wide.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Two counters exist, and =lrg_memory_profiler_get_type_counts()= uses only one of them so a type is never listed twice.
+
+- Instance counts. =g_type_get_instance_count()= walks every instantiable =GObject= type. It returns a useful number only when the process environment contained =GOBJECT_DEBUG=instance-count= before GObject initialised the type system. =lrg_memory_profiler_instance_counts_available()= is the probe. Rows then use the source string =LRG_MEMORY_SOURCE_INSTANCE= (=instance-count=).
+- Tracked counts. =lrg_memory_profiler_watch_type()= and =lrg_memory_profiler_track()= attach a toggle reference. Tests and any host that cannot set the environment use this path. Rows then use =LRG_MEMORY_SOURCE_TRACKED= (=tracked=). =lrg_memory_profiler_get_tracked_count()= and =lrg_memory_profiler_get_tracked_instances()= always read this registry, even when instance counts are live and the type table hides those rows.
+
+When instance counts are live, =lrg_memory_profiler_get_type_counts()= emits only instance-count rows. The tracked getters stay available.
+
+** Instance counts and GOBJECT_DEBUG
+:PROPERTIES:
+:CUSTOM_ID: instance-counts
+:END:
+GObject reads =GOBJECT_DEBUG= once, inside type-system init. =g_type_get_instance_count()= returns =int=. A count of zero means either no instances or that the debug flag was never seen.
+
+Setting the variable from a library constructor is too late. =G_DEFINE_TYPE= constructors, and libgobject's own constructors, run when the shared library is loaded, which is before =main()=. By then the flag has already been sampled. Setting it from inside libregnum cannot turn the counter on for that process.
+
+The reliable place is the process environment before =exec=. The editor launcher can also append =instance-count= at the first statements of =main()=, before =g_option_context_new()= and before any GObject call. That patch lives in =handoff/v0.9.0/scratch/m8-patches/lrg-editor-main.MEMNET.patch= and is not applied in this tree. It is still late if a constructor already initialised GObject, which a process that links libregnum usually has done. Treat the launcher hook as best-effort. Hosts that need exact counts set =GOBJECT_DEBUG=instance-count= in the environment that starts the process. Hosts that cannot do that call =lrg_memory_profiler_watch_type()=.
+
+=lrg_memory_profiler_instance_counts_available()= probes once: it creates one =LrgMemoryProfiler=, asks =g_type_get_instance_count()= for =LRG_TYPE_MEMORY_PROFILER= while that object is alive, then drops it. Do not call the probe from instance init of =LrgMemoryProfiler= (the =g_once= would deadlock).
+
+** Toggle-ref registry
+:PROPERTIES:
+:CUSTOM_ID: toggle-ref
+:END:
+=lrg_memory_profiler_watch_type()= refs the class for the life of the process and replaces that exact class's =GObjectClass.constructor=. Each new instance receives =g_object_add_toggle_ref()=. The count is an atomic on the watch, incremented before the toggle is added. When the toggle notify says this is the last reference, the watch drops the count and removes the toggle, which finalises the object. A quark makes a second =lrg_memory_profiler_track()= on the same object a no-op.
+
+The constructor wrapper is re-entrant. Depth 0 calls the saved original constructor of that class. A constructor that chains to a parent by calling =G_OBJECT_CLASS(parent)->constructor= re-enters the wrapper; that re-entry calls the saved original of the parent type instead of wrapping again. The toggle is attached only at depth 0, after the object returns, and only for the exact watched type. Subclasses are not counted unless they are watched themselves.
+
+=lrg_memory_profiler_watch_type()= returns false for =G_TYPE_INVALID=, for non-instantiable types, for types that are not =GObject=, and for anything derived from =GInitiallyUnowned=. A toggle reference sinks a floating object, which would break =g_object_ref_sink()=. =lrg_memory_profiler_track()= refuses the same floating types. Watch a type before its instances are created. Instances that already exist need =lrg_memory_profiler_track()=.
+
+The registry is shared by every profiler. Snapshots and the history ring are not: =lrg_memory_profiler_new()= owns those, and =lrg_memory_profiler_get_default()= is a separate process-wide profiler. The editor memory panel keeps the instance from =lrg_editor_memory_panel_get_profiler()=, not the default, so its snapshot list stays private.
+
+** Asset residency
+:PROPERTIES:
+:CUSTOM_ID: asset-residency
+:END:
+=lrg_memory_profiler_set_asset_manager()= stores the manager (property =asset-manager=, explicit notify). =lrg_memory_profiler_get_asset_manager()= returns it, transfer none. =lrg_memory_profiler_get_resources()= walks that manager with =lrg_asset_manager_foreach_cached()= (=LRG_ASSET_MANAGER_HAS_FOREACH_CACHED=). The walk does not load or unload anything.
+
+Order and kind strings: =texture=, =font=, =sound=, =music=, =model=, =animation=, =material=, =object=. A null model or a null object is skipped. Animation rows have a null asset and =refs= equal to the clip count. =details= is a short note: mesh and material counts on a model, ="%u clips"= on an animation, the material path, the object type name, =PCM size is private to graylib= on a sound, and =streamed, duration %.3f s= on music.
+
+Model material-map textures are folded into that model's =gpu_bytes= and are not emitted again as texture-cache rows. The kind =mesh= exists for =lrg_memory_profiler_estimate_mesh()= and for IPC filters. Live caches do not emit separate mesh rows.
+
+** VRAM and size estimates
+:PROPERTIES:
+:CUSTOM_ID: estimates
+:END:
+=lrg_memory_profiler_estimate_texture()=, =lrg_memory_profiler_estimate_mesh()= and =lrg_memory_profiler_estimate_pcm()= are pure functions. Resident rows use the same formulas.
+
+Uncompressed bytes per pixel: grayscale 1, gray-alpha / R5G6B5 / R5G5B5A1 / R4G4B4A4 / R16 are 2, R8G8B8 is 3, R8G8B8A8 and R32 are 4, R16G16B16 is 6, R16G16B16A16 is 8, R32G32B32 is 12, R32G32B32A32 is 16. An unknown positive format is 4 bytes per pixel. Format 0, a non-positive dimension, or a negative mip count returns 0.
+
+Block compression: DXT1 RGB, DXT1 RGBA, ETC1, ETC2 RGB, PVRT RGB and PVRT RGBA are 8 bytes per 4×4 block. DXT3, DXT5, ETC2 EAC and ASTC 4×4 are 16 bytes per 4×4. ASTC 8×8 is 16 bytes per 8×8. Each mip rounds up to whole blocks. =mipmaps= of 0 means one level. The chain is clamped at 16 levels and each level is at least 1×1.
+
+Annotated examples =lrg_memory_profiler_estimate_texture()= and =lrg_memory_profiler_estimate_mesh()= and =lrg_memory_profiler_estimate_pcm()= return:
+
+- 64×64 RGBA8, one mip: 64 * 64 * 4 = 16384.
+- The same with two mips: 16384 + 32 * 32 * 4 = 20480.
+- DXT1 4×4: one block, 8 bytes.
+- DXT1 8×8: four blocks, 32 bytes.
+- ASTC 8×8 of an 8×8 image: one block, 16 bytes.
+- Three vertices, positions, not indexed: 3 * 12 = 36.
+- Three vertices, positions, indexed, one triangle: 36 + 3 * 2 = 42.
+- PCM, 100 frames, 16 bits, 2 channels: 100 * 2 * 2 = 400.
+
+Mesh attribute sizes, flags from =lrg_memory_mesh_attrs_get_type()= / =LrgMemoryMeshAttrs=: positions 12, texcoords 8, texcoords2 8, normals 12, tangents 16, colors 4, bones 20, anim 24 bytes per vertex. Indexed adds =triangle_count * 3 * 2= bytes. A negative vertex or triangle count returns 0.
+
+=lrg_memory_profiler_estimate_pcm()= is =frames * channels * (bits / 8)=. A negative frame count, a bit width that is not a positive multiple of 8, or a non-positive channel count returns 0.
+
+A cached =GrlTexture= with a non-zero GL id that is not the default texture counts the estimate as =gpu_bytes=. Otherwise the estimate is =cpu_bytes= (not uploaded). The default texture is reported as 0/0 with details =default texture=, and only compared against =rlGetTextureIdDefault()= when a window is ready. Headless runs treat id 0 as not on the GPU and do not call into rlgl.
+
+A mesh with =vaoId != 0= counts the same estimate as GPU. Otherwise it is CPU. Fonts count the atlas texture as GPU and glyph image bytes as CPU, not both for the atlas. =GrlSound= does not expose its PCM length, so a cached sound is 0/0 with the private-PCM note. Apply =lrg_memory_profiler_estimate_pcm()= yourself when you know the buffer. Music is streamed: CPU 0, duration in =details= from =grl_music_get_time_length()=. Materials and plain objects use =g_type_query()= instance size as CPU and 0 GPU.
+
+** Snapshots, diffs and history
+:PROPERTIES:
+:CUSTOM_ID: snapshots
+:END:
+=lrg_memory_profiler_snapshot()= stores type counts, resources and =LrgMemoryTotals=, and returns an id =m= plus a per-profiler counter (=m1=, =m2=, ...). A null label is stored as empty. =time_us= is =g_get_real_time()= in microseconds. =lrg_memory_profiler_list_snapshots()= returns =LrgMemorySnapshotInfo= rows, oldest first (transfer full). =lrg_memory_profiler_clear_snapshots()= drops them and returns how many.
+
+=lrg_memory_profiler_diff()= compares two stored ids. A null =to_id= captures a transient snapshot whose id is =live= and does not store it. An unknown id, including the literal =live= when it was not stored, sets =G_IO_ERROR_NOT_FOUND=. A null or empty =from_id= sets =G_IO_ERROR_INVALID_ARGUMENT=. On success both out arrays are non-null. Zero type deltas are omitted. Resources are keyed by kind and name. A refs-only change is =changed= with =bytes_delta= 0. =change= is =added=, =removed= or =changed=.
+
+=lrg_memory_profiler_record_sample()= appends totals and per-type counts. The ring keeps =LRG_MEMORY_HISTORY_CAP= (120) samples and drops the oldest. =lrg_memory_profiler_get_history()= returns oldest first. =max_samples= 0 means the whole ring. Otherwise it returns the newest tail. A null =type_name= leaves =type_counts= unset. A missing type in a sample is 0. Free the arrays with =g_free()=. =n_samples= 0 leaves the out pointers null.
+
+** Boxed types
+:PROPERTIES:
+:CUSTOM_ID: boxed-types
+:END:
+Each row type is a boxed GType with copy and free. =lrg_memory_type_count_get_type()=, =lrg_memory_type_count_copy()=, =lrg_memory_type_count_free()=. =lrg_memory_resource_get_type()=, =lrg_memory_resource_copy()=, =lrg_memory_resource_free()=. =lrg_memory_snapshot_info_get_type()=, =lrg_memory_snapshot_info_copy()=, =lrg_memory_snapshot_info_free()=. =lrg_memory_type_delta_get_type()=, =lrg_memory_type_delta_copy()=, =lrg_memory_type_delta_free()=. =lrg_memory_resource_delta_get_type()=, =lrg_memory_resource_delta_copy()=, =lrg_memory_resource_delta_free()=. =lrg_memory_mesh_attrs_get_type()= registers the flags. =lrg_memory_profiler_get_type()= is the profiler GType (=G_DECLARE_FINAL_TYPE=).
+
+=LrgMemoryTypeCount= fields: =type_name=, =count=, =instance_size=, =bytes= (=count= times =g_type_query()= instance size), =source=. =LrgMemoryResource= fields: =name=, =kind=, =refs=, =cpu_bytes=, =gpu_bytes=, =details=. =LrgMemoryTotals= fields: =instances=, =types=, =type_bytes=, =resources=, =cpu_bytes=, =gpu_bytes=. =LrgMemorySnapshotInfo= fields: =id=, =label=, =time_us=, =totals=. =LrgMemoryTypeDelta= fields: =type_name=, =before=, =after=, =delta=, =bytes_delta=. =LrgMemoryResourceDelta= fields: =name=, =kind=, =change=, =bytes_delta=.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+#+begin_src C
+LrgMemoryProfiler *profiler = lrg_memory_profiler_new ();
+LrgMemoryTotals totals;
+gchar *before;
+gchar *after;
+
+lrg_memory_profiler_watch_type (profiler, MY_TYPE_ACTOR);
+lrg_memory_profiler_set_asset_manager (profiler, manager);
+before = lrg_memory_profiler_snapshot (profiler, "boot");
+/* create actors, load assets */
+after = lrg_memory_profiler_snapshot (profiler, "loaded");
+lrg_memory_profiler_diff (profiler, before, after, &type_deltas, &resource_deltas, &error);
+lrg_memory_profiler_get_totals (profiler, &totals);
+lrg_memory_profiler_record_sample (profiler);
+g_free (before);
+g_free (after);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+=lrg_memory_profiler_get_type_counts()= walks =g_type_children(G_TYPE_OBJECT)= when instance counts are on. That walk is the cost. The tracked path only visits types that were watched. =lrg_memory_profiler_record_sample()= calls the type and resource scans once. It does not call =lrg_memory_profiler_get_totals()= on top of that. Asset walks are the size of the caches. Disabled network hooks are unrelated and stay one atomic read. See [[file:../net/net-stats.org][network statistics]].
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+A library constructor that calls =g_setenv("GOBJECT_DEBUG", "instance-count", TRUE)= does not enable instance counts. =main()= is often already late. =GInitiallyUnowned= derivatives cannot be watched or tracked. Subclasses of a watched type are not automatic. =GrlSound= PCM size is private, so resident sounds are 0 bytes. Music is streamed, so its CPU estimate is 0. A custom constructor that does not chain through =GObjectClass.constructor= is not seen by the watch. The editor panel binds an asset manager once at construction and does not replace one a caller set later on a different profiler.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: see-also
+:END:
+[[file:profiler.org][LrgProfiler]] times sections. [[file:../../editor/memory-and-network.org][Memory and network panels]] is the editor UI. [[file:../core/asset-manager.org][LrgAssetManager]] owns the caches =lrg_asset_manager_foreach_cached()= walks.

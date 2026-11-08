@@ -1,0 +1,71 @@
+#+title: Visual Scripting in the Editor
+#+description: The .rvscript data editor, the node graph, the blocks view and vscript.* IPC
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-11-07T18:40:00-05:00
+#+updated: 2026-11-07T18:40:00-05:00
+#+version: 1.0
+
+* Visual Scripting in the Editor
+:PROPERTIES:
+:CUSTOM_ID: editor-visual-scripting
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Visual Scripting
+#+end_quote
+
+=LrgEditorVscriptEditor= (=src/editor/ui/data/lrg-editor-vscript-editor.h=) edits an =LrgVscriptProgram= document. The format nick is =vscript= and the extension is =.rvscript=. The assets panel lists those files with the glyph =VS= and creates one from New Visual Script. Double-click opens the data editor. The program format itself is [[file:../modules/scripting/visual-scripting.org][Visual Scripting]].
+
+=lrg_editor_vscript_editor_new()= takes the app and the document (construct-only properties =app= and =document=). =lrg_editor_vscript_editor_install()= registers the =vscript.*= IPC methods once per app. The assets panel calls it next to the other data-editor installs. =lrg_editor_vscript_editor_open()= opens or focuses the tab (transfer none) and returns =NULL= with =LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND= when the file is not a visual script. =lrg_editor_vscript_editor_create()= writes a starter program at =path= and refuses to overwrite. It does not open a tab and it does not take a name: the IPC method =vscript.create= applies =name= itself after the file exists. The starter is an =event.start= node wired to a =debug.log= whose text is =hello=.
+
+=lrg_editor_vscript_editor_get_program()= is the program the editor last refreshed (transfer none). =lrg_editor_vscript_editor_get_canvas()= is the =LrgNodeGraph= and =lrg_editor_vscript_editor_get_blocks()= is the =LrgBlockEditor=. The content widget is one or the other, chosen by the program's =view=. Refresh rebuilds that widget from the document, so canvas gestures are not the mutation path. IPC commits are.
+
+=lrg_editor_blocks_editor_new()= constructs the separate =LrgEditorBlocksEditor= =GObject=. That type is not a document editor and it is not registered as a format. The blocks view of a =.rvscript= is this visual-script editor with =view= set to blocks.
+
+Undo, save and the dirty flag are the document's. Each IPC edit copies the program, changes the copy and commits it as one step (gesture 0). =data.undo= with the file's path reverts that step. =vscript.select= only changes which nodes are selected and is not a step.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: vscript-ipc
+:END:
+
+=path= is absolute or project-relative. When it is omitted the focused visual-script editor is used. A method that needs the file opens the tab. =graph= is a subgraph name; missing or =""= is the main graph. Mutating methods show that graph after the commit. =vscript.get= can read another graph without changing the one on screen. Pins are =node.pin=, split on the first dot.
+
+Errors use the editor server nicks. =invalid-params= is a missing or bad parameter, a pin that is not =node.pin=, or a link the type checker rejects. =not-found= is a missing file, editor, node, variable, subgraph or comment. =failed= is a load, save or runtime error. =vscript.disconnect= of a link that is not there returns =removed: false= and does not commit.
+
+| Method | Role |
+|--------+------|
+| =vscript.create= | write a starter; =view= =graph= or =blocks=; refuses to overwrite |
+| =vscript.open= | open the file; an optional =view= is one undo step |
+| =vscript.get= | snapshot: fields, variables, subgraphs, one graph's nodes, links, comments, selection, issues |
+| =vscript.node_types= | catalogue rows; =query= is a case-sensitive substring of type, title or description; =category= is exact |
+| =vscript.gi_search= | typelib search; =available= is false without a GI runtime; =limit= defaults to 50 |
+| =vscript.add_node= | =type=, optional =id=, =x=, =y=, =params=, =inputs= |
+| =vscript.remove_node= | drop a node and its links |
+| =vscript.set_node= | position, params, inputs (null removes), optional =rename= |
+| =vscript.connect= | =from= and =to= as =node.pin=; replaces a data input or an exec output |
+| =vscript.disconnect= | the same pair; =removed= is a bool |
+| =vscript.set_variable= | =name=, =type=, =default=; =remove: true= deletes it |
+| =vscript.add_subgraph= | =name= plus optional =inputs= and =outputs= arrays of ={name, type}= |
+| =vscript.remove_subgraph= | drop a named subgraph |
+| =vscript.add_comment= | =text=, =x=, =y=; =width= defaults to 240 and =height= to 120 |
+| =vscript.remove_comment= | by id |
+| =vscript.set_program= | =name=, =description=, =seed=, =step_budget=, =fixed_step=; returns =vscript.get= |
+| =vscript.select= | =nodes= is an array of ids; empty clears; not an undo step |
+| =vscript.validate= | =ok= and =issues=; read-only |
+| =vscript.run= | a copy: start, then =frames= updates (default 1, =dt= default 1/60), then an optional custom =event= with =args=; =variables= overlay the copy; =steps= sums each dispatch; =time= is completed frames times =dt=; =ok: false= is still a successful reply |
+| =vscript.live= | instances whose path is this file; =hits= counts main-graph nodes; =paused_at= is omitted when nothing is paused |
+| =vscript.breakpoint= | =node= and =enabled=; stored for this path and applied to matching live instances; =graph= is ignored |
+| =vscript.continue= | resumes paused instances; =resumed= is the count |
+| =vscript.save= | write the open document |
+
+The shell verbs are the method tail with underscores turned into dashes: =lrgeditorctl vscript add-node math.add id=sum=. The full tables are generated into [[file:ipc-protocol.org][the IPC protocol]] and [[file:lrgeditorctl.org][lrgeditorctl]].
+
+** What the views show
+:PROPERTIES:
+:CUSTOM_ID: views
+:END:
+
+The graph view clears the canvas and adds one node per program node, with a port per pin, then reconnects by pin name. Selection is reapplied after the rebuild. The blocks view clears its program, defines a block kind per catalogue kind it has not defined yet, and creates one block per node. Events are hat blocks. Pure logic and comparison nodes are boolean blocks. Other pure nodes are reporter blocks. Everything else is a statement. Comment frames are stored and returned by =vscript.get=; the canvas does not draw them.
+
+A headless game that does not open the editor uses =LrgVscriptProgram= and =LrgScriptingGraph= directly. =examples/visual-script.c= is that program.

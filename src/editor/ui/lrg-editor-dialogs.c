@@ -34,6 +34,8 @@
 #include "config.h"
 
 #include "lrg-editor-app-private.h"
+#include "../lrg-project-config.h"
+#include "../../core/lrg-pack-writer.h"
 #include "../../ui/lrg-dialog.h"
 #include "../../ui/lrg-file-dialog.h"
 #include "../../ui/lrg-file-browser.h"
@@ -1442,6 +1444,13 @@ editor_dialog_project_settings (LrgEditorApp *self)
 	GPtrArray            *pdirs;
 	LrgTextInput         *input;
 	LrgWidget            *physics;
+	g_autoptr(LrgVBox)    steam_box = NULL;
+	g_autoptr(LrgLabel)   steam_id = NULL;
+	g_autoptr(LrgLabel)   steam_ach = NULL;
+	g_autofree gchar     *steam_manifest = NULL;
+	g_autofree gchar     *steam_id_text = NULL;
+	g_autoptr(LrgProjectConfig) steam_cfg = NULL;
+	g_autoptr(GError)     steam_error = NULL;
 	gfloat                cw = 1600.0f, ch = 960.0f;
 	guint                 i;
 
@@ -1513,6 +1522,29 @@ editor_dialog_project_settings (LrgEditorApp *self)
 	physics = physics_page_new (self, dialog);
 	lrg_tab_view_add_tab (tabs, "Physics", physics);
 	g_object_unref (physics);
+
+	/* Steam page: display-only, bound to LrgProjectConfig on the manifest.
+	 * Save still writes LrgProject and does not round-trip this block. */
+	steam_box = lrg_vbox_new ();
+	steam_id = lrg_label_new ("0");
+	steam_ach = lrg_label_new ("false");
+	steam_manifest = g_build_filename (lrg_project_get_root (self->project), LRG_PROJECT_MANIFEST, NULL);
+	steam_cfg = lrg_project_config_new_from_file (steam_manifest, &steam_error);
+	if (steam_cfg != NULL)
+	{
+		steam_id_text = g_strdup_printf ("%" G_GINT64_FORMAT,
+		                                 lrg_project_config_get_steam_app_id (steam_cfg));
+		lrg_label_set_text (steam_id, steam_id_text);
+		lrg_label_set_text (steam_ach,
+		                    lrg_project_config_get_steam_achievements (steam_cfg) ? "true" : "false");
+	}
+	lrg_widget_set_name (LRG_WIDGET (steam_id), "project-steam-app-id");
+	lrg_widget_set_name (LRG_WIDGET (steam_ach), "project-steam-achievements");
+	lrg_container_set_spacing (LRG_CONTAINER (steam_box), 6.0f);
+	lrg_container_set_padding (LRG_CONTAINER (steam_box), 10.0f);
+	lrg_container_add_child (LRG_CONTAINER (steam_box), LRG_WIDGET (steam_id));
+	lrg_container_add_child (LRG_CONTAINER (steam_box), LRG_WIDGET (steam_ach));
+	lrg_tab_view_add_tab (tabs, "Steam", LRG_WIDGET (steam_box));
 	if (self->canvas != NULL && lrg_widget_get_width (LRG_WIDGET (self->canvas)) > 0.0f)
 	{
 		cw = lrg_widget_get_width (LRG_WIDGET (self->canvas));
@@ -1539,5 +1571,111 @@ editor_dialog_project_settings_page (LrgEditorApp *app,
 	dialog = g_object_get_data (G_OBJECT (app), DIALOG_KEY);
 	tabs = dialog != NULL ? g_object_get_data (dialog, "tabs") : NULL;
 	if (tabs != NULL && LRG_IS_TAB_VIEW (tabs))
-		lrg_tab_view_set_active_tab (LRG_TAB_VIEW (tabs), g_strcmp0 (page, "physics") == 0 ? 1 : 0);
+	{
+		gint index = 0;
+
+		if (g_strcmp0 (page, "physics") == 0)
+			index = 1;
+		else if (g_strcmp0 (page, "steam") == 0)
+			index = 2;
+		lrg_tab_view_set_active_tab (LRG_TAB_VIEW (tabs), index);
+	}
+}
+
+typedef struct
+{
+	LrgEditorApp *app;
+	LrgComboBox  *profile;
+	LrgTextInput *output;
+	LrgLabel     *log;
+} ExportRun;
+
+static void
+export_run_clicked (LrgButton *button,
+                    gpointer   user_data)
+{
+	ExportRun            *run = (ExportRun *) user_data;
+	const gchar          *profile;
+	const gchar          *output;
+	const gchar          *root;
+	const gchar          *log;
+	g_autoptr(LrgPackWriter) writer = NULL;
+	g_autoptr(GError)     error = NULL;
+	g_autofree gchar     *shown = NULL;
+
+	(void) button;
+	profile = lrg_combo_box_get_selected_text (run->profile);
+	output = lrg_text_input_get_text (run->output);
+	root = NULL;
+	if (run->app->project != NULL)
+		root = lrg_project_get_root (run->app->project);
+	if (root == NULL)
+		root = run->app->project_dir;
+	if (profile == NULL || output == NULL || output[0] == '\0' || root == NULL)
+	{
+		lrg_label_set_text (run->log, "export needs a profile, an output path and a project");
+		return;
+	}
+	writer = lrg_pack_writer_new ();
+	lrg_pack_writer_set_project (writer, root);
+	lrg_pack_writer_set_cook (writer, FALSE);
+	if (!lrg_pack_writer_scan (writer, &error) ||
+	    !lrg_pack_writer_export (writer, profile, output, &error))
+	{
+		lrg_label_set_text (run->log, (error != NULL) ? error->message : "export failed");
+		return;
+	}
+	log = lrg_pack_writer_get_log (writer);
+	if (log != NULL && log[0] != '\0')
+		shown = g_strdup (log);
+	else
+		shown = g_strdup_printf ("export: wrote %s\n", profile);
+	lrg_label_set_text (run->log, shown);
+}
+
+void
+editor_dialog_export (LrgEditorApp *self)
+{
+	g_autoptr(LrgDialog) dialog = NULL;
+	g_autoptr(LrgVBox) box = NULL;
+	g_autoptr(LrgComboBox) profile = NULL;
+	g_autoptr(LrgTextInput) output = NULL;
+	g_autoptr(LrgButton) run = NULL;
+	g_autoptr(LrgLabel) log = NULL;
+	const gchar * const *ids;
+	ExportRun *state;
+	guint i;
+
+	if (self->project == NULL)
+		return;
+	dialog = lrg_dialog_new ("Export", "Writes a pack with the chosen profile. Cooking is off.");
+	box = lrg_vbox_new ();
+	profile = lrg_combo_box_new ();
+	output = lrg_text_input_new_with_placeholder ("/tmp/game.rres");
+	run = lrg_button_new ("Run");
+	log = lrg_label_new ("");
+	lrg_widget_set_name (LRG_WIDGET (profile), "export-profile");
+	lrg_widget_set_name (LRG_WIDGET (output), "export-output");
+	lrg_widget_set_name (LRG_WIDGET (run), "export-run");
+	lrg_widget_set_name (LRG_WIDGET (log), "export-log");
+	ids = lrg_pack_writer_profile_ids ();
+	for (i = 0; ids != NULL && ids[i] != NULL; i++)
+		lrg_combo_box_append (profile, ids[i]);
+	lrg_combo_box_set_selected (profile, 0);
+	lrg_container_set_spacing (LRG_CONTAINER (box), 6.0f);
+	lrg_container_set_padding (LRG_CONTAINER (box), 10.0f);
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (profile));
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (output));
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (run));
+	lrg_container_add_child (LRG_CONTAINER (box), LRG_WIDGET (log));
+	state = g_new0 (ExportRun, 1);
+	state->app = self;
+	state->profile = profile;
+	state->output = output;
+	state->log = log;
+	g_object_set_data_full (G_OBJECT (dialog), "export-run-state", state, g_free);
+	g_signal_connect (run, "clicked", G_CALLBACK (export_run_clicked), state);
+	lrg_dialog_set_content (dialog, LRG_WIDGET (box));
+	lrg_dialog_add_button (dialog, "Close", LRG_DIALOG_RESPONSE_CANCEL, TRUE);
+	present (self, dialog, "export", NULL);
 }

@@ -202,8 +202,7 @@ draw_layer (const LrgRenderItem *item,
 	gboolean             visible = TRUE;
 	GrlTexture          *grl_tex = NULL;
 	Texture2D           *tex = NULL;
-	guint                w = 0, h = 0, tw = 0, th = 0, cols = 0, count = 0;
-	gfloat               ts = self->tile_size;
+	guint                w = 0, h = 0, tw = 0, th = 0;
 	guint                x, y;
 
 	(void) category;
@@ -223,12 +222,8 @@ draw_layer (const LrgRenderItem *item,
 	}
 	if (grl_tex != NULL)
 		tex = (Texture2D *) grl_texture_get_handle (grl_tex);
-	if (tex != NULL && tw > 0 && th > 0 && tex->width >= (gint) tw && tex->height >= (gint) th)
-	{
-		cols = (guint) tex->width / tw;
-		count = cols * ((guint) tex->height / th);
-	}
-	else
+	if (tex == NULL || tw == 0 || th == 0
+	    || tex->width < (gint) tw || tex->height < (gint) th)
 		tex = NULL;
 
 	rlPushMatrix ();
@@ -240,24 +235,16 @@ draw_layer (const LrgRenderItem *item,
 		rlBegin (RL_QUADS);
 		for (x = 0; x < w; x++)
 		{
-			guint  id = cells[(gsize) y * w + x];
-			gfloat x0 = (gfloat) x * ts, x1 = (gfloat) (x + 1) * ts;
-			gfloat y0 = -(gfloat) y * ts, y1 = -(gfloat) (y + 1) * ts;
-			gfloat u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+			gfloat xy[8];
+			gfloat uv[8];
 			guint8 c[4] = { 255, 255, 255, 255 };
+			guint  id;
+			guint  k;
 
-			if (id == 0)
+			if (!lrg_tilemap_component_get_cell_quad (self, ld->layer, x, y, xy, uv))
 				continue;
-			if (tex != NULL)
-			{
-				guint idx = (id - 1) % MAX (count, 1u);
-
-				u0 = (gfloat) ((idx % cols) * tw) / (gfloat) tex->width;
-				v0 = (gfloat) ((idx / cols) * th) / (gfloat) tex->height;
-				u1 = u0 + (gfloat) tw / (gfloat) tex->width;
-				v1 = v0 + (gfloat) th / (gfloat) tex->height;
-			}
-			else
+			id = lrg_tile_get_id (cells[(gsize) y * w + x]);
+			if (tex == NULL)
 				tile_swatch (id, c);
 			c[0] = (guint8) ((guint) c[0] * (guint) (item->color[0] * 255.0f) / 255u);
 			c[1] = (guint8) ((guint) c[1] * (guint) (item->color[1] * 255.0f) / 255u);
@@ -265,14 +252,11 @@ draw_layer (const LrgRenderItem *item,
 			c[3] = (guint8) ((guint) c[3] * (guint) (item->color[3] * 255.0f) / 255u);
 			rlColor4ub (c[0], c[1], c[2], c[3]);
 			rlNormal3f (0.0f, 0.0f, 1.0f);
-			rlTexCoord2f (u0, v0);
-			rlVertex3f (x0, y0, 0.0f);
-			rlTexCoord2f (u0, v1);
-			rlVertex3f (x0, y1, 0.0f);
-			rlTexCoord2f (u1, v1);
-			rlVertex3f (x1, y1, 0.0f);
-			rlTexCoord2f (u1, v0);
-			rlVertex3f (x1, y0, 0.0f);
+			for (k = 0; k < 4; k++)
+			{
+				rlTexCoord2f (uv[2 * k], uv[2 * k + 1]);
+				rlVertex3f (xy[2 * k], xy[2 * k + 1], 0.0f);
+			}
 		}
 		rlEnd ();
 	}
@@ -770,6 +754,178 @@ lrg_tilemap_component_get_layer_cells (LrgTilemapComponent *self,
 	if (out_visible != NULL)
 		*out_visible = visible;
 	return cells;
+}
+
+/* cell_quad_uv:
+ * Unit-square or atlas coordinates of the four image corners (TL, TR,
+ * BR, BL) after a horizontal mirror. */
+static void
+cell_quad_uv (guint    raw,
+              gfloat   u0,
+              gfloat   v0,
+              gfloat   u1,
+              gfloat   v1,
+              gfloat   uu[4],
+              gfloat   vv[4])
+{
+	if (lrg_tile_get_mirrored (raw))
+	{
+		gfloat t = u0;
+
+		u0 = u1;
+		u1 = t;
+	}
+	uu[0] = u0; vv[0] = v0;
+	uu[1] = u1; vv[1] = v0;
+	uu[2] = u1; vv[2] = v1;
+	uu[3] = u0; vv[3] = v1;
+}
+
+gboolean
+lrg_tilemap_component_get_cell_quad (LrgTilemapComponent *self,
+                                     guint                layer,
+                                     guint                x,
+                                     guint                y,
+                                     gfloat              *out_xy,
+                                     gfloat              *out_uv)
+{
+	const guint *cells;
+	guint        gw = 0, gh = 0;
+	guint        raw, id, rot, i, k;
+	LrgTilemap  *map;
+	GrlRectangle box;
+	gfloat       s, hw, hh, cx, cy;
+	gfloat       u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+	gfloat       px[4], py[4], uu[4], vv[4];
+	guint        tw = 1, th = 1;
+	gint         off_x = 0, off_y = 0;
+	gboolean     textured = FALSE;
+	static const guint order[4] = { 0, 3, 2, 1 };
+
+	g_return_val_if_fail (LRG_IS_TILEMAP_COMPONENT (self), FALSE);
+
+	cells = lrg_tilemap_component_get_layer_cells (self, layer, NULL);
+	lrg_tilemap_component_get_grid_size (self, &gw, &gh);
+	if (cells == NULL || x >= gw || y >= gh)
+		return FALSE;
+	raw = cells[(gsize) y * gw + x];
+	id = lrg_tile_get_id (raw);
+	if (id == 0)
+		return FALSE;
+
+	map = lrg_tilemap_component_get_tilemap (self);
+	if (map != NULL)
+	{
+		guint cw = MAX (lrg_tilemap_get_cell_width (map), 1u);
+
+		s = self->tile_size / (gfloat) cw;
+		lrg_tilemap_get_cell_bounds (map, (gint) x, (gint) y, &box);
+		tw = lrg_tilemap_get_cell_width (map);
+		th = lrg_tilemap_get_cell_height (map);
+	}
+	else
+	{
+		/* No runtime map yet: one orthogonal cell per world tile. */
+		s = self->tile_size;
+		box.x = (gfloat) x;
+		box.y = (gfloat) y;
+		box.width = 1.0f;
+		box.height = 1.0f;
+	}
+
+	if (self->tileset != NULL)
+	{
+		guint tsw = lrg_tileset_get_tile_width (self->tileset);
+		guint tsh = lrg_tileset_get_tile_height (self->tileset);
+		GrlTexture *grl_tex = lrg_tileset_get_texture (self->tileset);
+		Texture2D *tex = NULL;
+
+		if (tsw > 0 && tsh > 0)
+		{
+			tw = tsw;
+			th = tsh;
+		}
+		lrg_tileset_get_draw_offset (self->tileset, &off_x, &off_y);
+		if (grl_tex != NULL)
+			tex = (Texture2D *) grl_texture_get_handle (grl_tex);
+		if (tex != NULL && tex->id != 0 && tw > 0 && th > 0
+		    && tex->width >= (gint) tw && tex->height >= (gint) th)
+		{
+			guint cols = (guint) tex->width / tw;
+			guint count = cols * ((guint) tex->height / th);
+			guint idx = (id - 1) % MAX (count, 1u);
+			gfloat rx = (gfloat) ((idx % cols) * tw);
+			gfloat ry = (gfloat) ((idx / cols) * th);
+
+			textured = TRUE;
+			u0 = rx / (gfloat) tex->width;
+			v0 = ry / (gfloat) tex->height;
+			u1 = (rx + (gfloat) tw) / (gfloat) tex->width;
+			v1 = (ry + (gfloat) th) / (gfloat) tex->height;
+		}
+	}
+	if (!textured)
+	{
+		u0 = 0.0f;
+		v0 = 0.0f;
+		u1 = 1.0f;
+		v1 = 1.0f;
+	}
+	cell_quad_uv (raw, u0, v0, u1, v1, uu, vv);
+
+	/* A texture sits on the image rectangle; a swatch fills the cell. */
+	rot = textured ? lrg_tile_get_rotation (raw) : 0;
+	if (textured)
+	{
+		hw = (gfloat) tw * 0.5f;
+		hh = (gfloat) th * 0.5f;
+		cx = box.x + (gfloat) off_x + hw;
+		cy = box.y + box.height - (gfloat) th + (gfloat) off_y + hh;
+	}
+	else
+	{
+		hw = box.width * 0.5f;
+		hh = box.height * 0.5f;
+		cx = box.x + hw;
+		cy = box.y + hh;
+	}
+
+	{
+		const gfloat ox[4] = { -hw, hw, hw, -hw };
+		const gfloat oy[4] = { -hh, -hh, hh, hh };
+
+		for (i = 0; i < 4; i++)
+		{
+			gfloat ax = ox[i];
+			gfloat ay = oy[i];
+
+			for (k = 0; k < rot; k++)
+			{
+				gfloat t = ax;
+
+				ax = -ay;
+				ay = t;
+			}
+			px[i] = cx + ax;
+			py[i] = cy + ay;
+		}
+	}
+
+	/* Editor emit order: TL, BL, BR, TR, Y negated into local space. */
+	for (i = 0; i < 4; i++)
+	{
+		if (out_xy != NULL)
+		{
+			out_xy[2 * i] = px[order[i]] * s;
+			out_xy[2 * i + 1] = -py[order[i]] * s;
+		}
+		if (out_uv != NULL)
+		{
+			out_uv[2 * i] = uu[order[i]];
+			out_uv[2 * i + 1] = vv[order[i]];
+		}
+	}
+	return TRUE;
 }
 
 gboolean

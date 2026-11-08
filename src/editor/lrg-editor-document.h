@@ -80,6 +80,8 @@ G_BEGIN_DECLS
  * @LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS: an #LrgNavBake navigation bake
  *   settings file (a `.rnav` file; recognised by its extension only).
  *   Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT: an #LrgVscriptProgram (a `.rvscript`
+ *   file; recognised by its extension only). Since 0.9.0.
  *
  * The engine format a document holds. The formats from
  * %LRG_EDITOR_DOCUMENT_FORMAT_BT on are engine-backed: the document can
@@ -118,7 +120,8 @@ typedef enum
 	LRG_EDITOR_DOCUMENT_FORMAT_TILESET,
 	LRG_EDITOR_DOCUMENT_FORMAT_SPRITE,
 	LRG_EDITOR_DOCUMENT_FORMAT_WATER,
-	LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS
+	LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS,
+	LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT
 } LrgEditorDocumentFormat;
 
 #define LRG_TYPE_EDITOR_DOCUMENT_FORMAT (lrg_editor_document_format_get_type ())

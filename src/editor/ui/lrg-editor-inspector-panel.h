@@ -121,6 +121,18 @@ void lrg_editor_inspector_panel_set_locked (LrgEditorInspectorPanel *self,
                                             gboolean                 locked);
 
 /**
+ * lrg_editor_inspector_panel_add_plugin_type:
+ * @self: an inspector
+ * @type_name: the GType name a plugin registered
+ *
+ * Adds a labelled row named `plugin-inspector-` + @type_name so a plugin
+ * inspector is visible in the inspector panel.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_inspector_panel_add_plugin_type (LrgEditorInspectorPanel *self,
+                                                 const gchar             *type_name);
+
+/**
  * lrg_editor_inspector_panel_get_live_object:
  * @self: an #LrgEditorInspectorPanel
  *
@@ -200,5 +212,47 @@ gboolean lrg_editor_inspector_panel_attach_script (LrgEditorInspectorPanel *self
  */
 LRG_AVAILABLE_IN_ALL
 GStrv lrg_editor_inspector_panel_get_animator_rows (LrgEditorInspectorPanel *self);
+
+/**
+ * lrg_editor_inspector_panel_set_nested_root:
+ * @self: an inspector
+ * @root: (nullable): a nested dictionary or array
+ *
+ * Stores the document edited by lrg_editor_inspector_panel_edit_nested().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_editor_inspector_panel_set_nested_root (LrgEditorInspectorPanel *self,
+                                                 GVariant                *root);
+
+/**
+ * lrg_editor_inspector_panel_get_nested:
+ * @self: an inspector
+ * @path: a slash path such as "items/0/name"
+ * @error: (nullable): return location for a #GError
+ *
+ * Returns: (transfer full) (nullable): the value at @path
+ */
+LRG_AVAILABLE_IN_ALL
+GVariant * lrg_editor_inspector_panel_get_nested (LrgEditorInspectorPanel  *self,
+                                                  const gchar              *path,
+                                                  GError                  **error);
+
+/**
+ * lrg_editor_inspector_panel_edit_nested:
+ * @self: an inspector
+ * @path: a slash path such as "items/0/name"
+ * @value: (transfer none): the new leaf
+ * @error: (nullable): return location for a #GError
+ *
+ * Replaces the leaf through lrg_inspector_nested_set() and keeps the
+ * new tree on the panel.
+ *
+ * Returns: %TRUE when the tree was updated
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_inspector_panel_edit_nested (LrgEditorInspectorPanel  *self,
+                                                 const gchar              *path,
+                                                 GVariant                 *value,
+                                                 GError                  **error);
 
 G_END_DECLS

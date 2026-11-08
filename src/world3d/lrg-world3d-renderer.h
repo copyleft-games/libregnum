@@ -35,6 +35,7 @@
 #include "../graphics/lrg-decal.h"
 #include "../graphics/lrg-material.h"
 #include "../debug/lrg-debug-draw.h"
+#include "../debug/lrg-frame-capture.h"
 
 G_BEGIN_DECLS
 
@@ -1299,5 +1300,30 @@ void lrg_world3d_renderer_set_timing (LrgWorld3DRenderer *self,
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_world3d_renderer_release (LrgWorld3DRenderer *self);
+
+/**
+ * lrg_world3d_renderer_set_frame_capture:
+ * @self: an #LrgWorld3DRenderer
+ * @capture: (nullable) (transfer none): the capture to record into, or
+ *   %NULL to detach
+ *
+ * Attaches a frame capture.  While it is armed, the next render records
+ * every draw (pass, entity, mesh, material, shader, state).  While its
+ * scrub is set, that render draws only calls 0..N.  The renderer keeps
+ * a reference and installs itself as the capture's replay func.
+ * Headless renders still record; replay needs a window.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_world3d_renderer_set_frame_capture (LrgWorld3DRenderer *self,
+                                             LrgFrameCapture    *capture);
+
+/**
+ * lrg_world3d_renderer_get_frame_capture:
+ * @self: an #LrgWorld3DRenderer
+ *
+ * Returns: (transfer none) (nullable): the attached capture
+ */
+LRG_AVAILABLE_IN_ALL
+LrgFrameCapture * lrg_world3d_renderer_get_frame_capture (LrgWorld3DRenderer *self);
 
 G_END_DECLS

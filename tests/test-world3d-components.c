@@ -1080,6 +1080,51 @@ test_gpu_mesh_and_light (void)
 	lrg_world3d_renderer_release (renderer);
 }
 
+/* Isometric cells are not the orthogonal unit square, and a horizontal
+ * flip swaps the quad's U coordinates. Both are what draw_layer emits. */
+static void
+test_tilemap_cell_quad (void)
+{
+	g_autoptr(LrgTilemapComponent) comp = NULL;
+	g_autoptr(LrgTileset) tileset = NULL;
+	g_autoptr(LrgTilemap) map = NULL;
+	g_autoptr(LrgTilemapLayer) layer = NULL;
+	gfloat xy[8];
+	gfloat uv[8];
+	gfloat min_x;
+	gfloat max_y;
+	guint i;
+
+	comp = lrg_tilemap_component_new ();
+	lrg_tilemap_component_set_tile_size (comp, 1.0f);
+	tileset = lrg_tileset_new_empty (64, 32, 4, 16);
+	map = lrg_tilemap_new (tileset);
+	lrg_tilemap_set_orientation (map, LRG_TILEMAP_ORIENTATION_ISOMETRIC);
+	lrg_tilemap_set_cell_size (map, 64, 32);
+	layer = lrg_tilemap_layer_new (4, 4);
+	lrg_tilemap_layer_set_tile (layer, 1, 0, 1);
+	lrg_tilemap_layer_set_tile (layer, 0, 0, lrg_tile_make (1, TRUE, 0));
+	lrg_tilemap_add_layer (map, layer);
+	lrg_tilemap_component_set_tilemap (comp, map);
+
+	g_assert_true (lrg_tilemap_component_get_cell_quad (comp, 0, 1, 0, xy, uv));
+	min_x = xy[0];
+	max_y = xy[1];
+	for (i = 1; i < 4; i++)
+	{
+		if (xy[2 * i] < min_x)
+			min_x = xy[2 * i];
+		if (xy[2 * i + 1] > max_y)
+			max_y = xy[2 * i + 1];
+	}
+	/* Old draw put cell (1, 0) on x in [1, 2] and y in [-1, 0]. */
+	g_assert_cmpfloat (min_x, >, 1.5f);
+	g_assert_cmpfloat (max_y, <, -0.1f);
+
+	g_assert_true (lrg_tilemap_component_get_cell_quad (comp, 0, 0, 0, xy, uv));
+	g_assert_cmpfloat (uv[0], >, uv[4]);
+}
+
 /* A tilemap's custom items draw their swatch quads through the renderer. */
 static void
 test_gpu_tilemap (void)
@@ -1160,6 +1205,7 @@ main (int   argc,
 	g_test_add_func ("/world3d-components/audio/source-headless", test_audio_source_headless);
 	g_test_add_func ("/world3d-components/billboard/items", test_billboard_items);
 	g_test_add_func ("/world3d-components/tilemap/items", test_tilemap_items);
+	g_test_add_func ("/world3d-components/tilemap/cell-quad", test_tilemap_cell_quad);
 	g_test_add_func ("/world3d-components/spawn/find", test_spawn_points);
 	g_test_add_func ("/world3d-components/trigger/enter-exit", test_trigger_enter_exit);
 	g_test_add_func ("/world3d-components/trigger/one-shot", test_trigger_one_shot_unfiltered);

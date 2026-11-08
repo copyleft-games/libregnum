@@ -291,6 +291,7 @@ The Fedora packages the application needs beyond the base build are listed in [[
 - [[file:2d-tools.org][2D Tools]]: rule tile painting, tile transforms, iso/hex grids and tile properties in the Tiles panel, the =.rtileset= and =.rsprite= editors, =tiles.*= / =tileset.*= / =sprite.*= IPC
 - [[file:skeleton2d-editor.org][2D Rig Editor]]: =.rskel2d= rigs, the canvas tools, weights, skins, animation mode and =skel2d.*= IPC
 - [[file:shader-graph-editor.org][Shader Graph Editor]]: =.rshadergraph= node shaders
+- [[file:visual-scripting.org][Visual Scripting]]: =.rvscript= node graph and blocks, =vscript.*= IPC
 - [[file:prefabs.org][Prefabs]]: reusable node subtrees and linked instances
 - [[file:projects-and-assets.org][Projects and Assets]]: =LrgProject=, =LrgAssetDatabase=, =.meta= sidecars, thumbnails, git status
 - [[file:asset-sources.org][Asset Sources]]: =LrgAssetSource= virtual asset trees from game modules (game archives), the Sources panel, cached exports and imports

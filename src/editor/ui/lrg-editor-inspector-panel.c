@@ -61,6 +61,7 @@
 #include "../../world3d/lrg-entity3d.h"
 #include "../../world3d/lrg-world3d.h"
 #include "../../ui/lrg-label.h"
+#include "../../ui/lrg-inspector-nested.h"
 #include "../../ui/lrg-button.h"
 #include "../../ui/lrg-text-input.h"
 #include "../../ui/lrg-scroll-box.h"
@@ -6706,6 +6707,25 @@ lrg_editor_inspector_panel_set_locked (LrgEditorInspectorPanel *self,
 	refresh_all (self);
 }
 
+void
+lrg_editor_inspector_panel_add_plugin_type (LrgEditorInspectorPanel *self,
+                                            const gchar             *type_name)
+{
+	g_autofree gchar *name = NULL;
+	LrgLabel         *label;
+
+	g_return_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self));
+	g_return_if_fail (type_name != NULL);
+
+	/* The row stays in the container so lrg_widget_find sees it even when
+	 * the inspector's own layout only positions the built-in sections. */
+	name = g_strconcat ("plugin-inspector-", type_name, NULL);
+	label = lrg_label_new (type_name);
+	lrg_widget_set_name (LRG_WIDGET (label), name);
+	lrg_container_add_child (LRG_CONTAINER (self), LRG_WIDGET (label));
+	g_object_unref (label);
+}
+
 GObject *
 lrg_editor_inspector_panel_get_live_object (LrgEditorInspectorPanel *self)
 {
@@ -6785,5 +6805,66 @@ lrg_editor_inspector_panel_attach_script (LrgEditorInspectorPanel *self,
 	lrg_editor_end_group (self->editor);
 	if (self->app != NULL)
 		editor_app_set_status (self->app, "Attached %s", rel);
+	return TRUE;
+}
+
+#define INSPECTOR_NESTED_KEY "lrg-inspector-nested-root"
+
+void
+lrg_editor_inspector_panel_set_nested_root (LrgEditorInspectorPanel *self,
+                                            GVariant                *root)
+{
+	GVariant *held = NULL;
+
+	g_return_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self));
+	if (root != NULL)
+		held = g_variant_ref_sink (root);
+	g_object_set_data_full (G_OBJECT (self), INSPECTOR_NESTED_KEY, held,
+	                        (GDestroyNotify) g_variant_unref);
+}
+
+GVariant *
+lrg_editor_inspector_panel_get_nested (LrgEditorInspectorPanel  *self,
+                                       const gchar              *path,
+                                       GError                  **error)
+{
+	GVariant *root;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self), NULL);
+	g_return_val_if_fail (path != NULL, NULL);
+
+	root = g_object_get_data (G_OBJECT (self), INSPECTOR_NESTED_KEY);
+	if (root == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no nested document");
+		return NULL;
+	}
+	return lrg_inspector_nested_get (root, path, error);
+}
+
+gboolean
+lrg_editor_inspector_panel_edit_nested (LrgEditorInspectorPanel  *self,
+                                        const gchar              *path,
+                                        GVariant                 *value,
+                                        GError                  **error)
+{
+	GVariant *root;
+	GVariant *next;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_INSPECTOR_PANEL (self), FALSE);
+	g_return_val_if_fail (path != NULL, FALSE);
+	g_return_val_if_fail (value != NULL, FALSE);
+
+	root = g_object_get_data (G_OBJECT (self), INSPECTOR_NESTED_KEY);
+	if (root == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED, "no nested document");
+		return FALSE;
+	}
+	next = lrg_inspector_nested_set (root, path, value, error);
+	if (next == NULL)
+		return FALSE;
+	g_object_set_data_full (G_OBJECT (self), INSPECTOR_NESTED_KEY, next,
+	                        (GDestroyNotify) g_variant_unref);
 	return TRUE;
 }

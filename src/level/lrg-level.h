@@ -497,4 +497,31 @@ gboolean lrg_level_has_navigation (LrgLevel *self);
 LRG_AVAILABLE_IN_ALL
 void lrg_level_clear_navigation (LrgLevel *self);
 
+/**
+ * lrg_level_get_audio_mixer:
+ * @self: an #LrgLevel
+ *
+ * Returns: (nullable): the `audio: mixer:` path, or %NULL when the
+ *   level names no mixer
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar *lrg_level_get_audio_mixer (LrgLevel *self);
+
+/**
+ * lrg_level_set_audio_mixer:
+ * @self: an #LrgLevel
+ * @path: (nullable): a `.rmixer` path or `guid:` reference, or %NULL
+ *   to drop the block
+ *
+ * The mixer is loaded when the level is instantiated. A level with no
+ * mixer leaves the audio manager's current mixer in place.
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_level_set_audio_mixer (LrgLevel    *self,
+                                const gchar *path);
+
 G_END_DECLS

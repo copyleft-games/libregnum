@@ -27,6 +27,7 @@
 | =LrgPrefabLink= and =lrg_prefab_*= | =level/lrg-prefab.h= | Prefab load, nested resolution, clone, instantiate (linked or not), overrides, sync |
 | =lrg_level_instantiate_3d()=, =lrg_level_load_world3d()=, =lrg_level_instantiate_node_3d()= | =level/lrg-level-instantiate.h= | Level to =LrgWorld3D=: one =LrgEntity3D= per node, same GUID, full TRS, a component per visual (see [[#level-instantiate-3d][3D instantiation]]) |
 | =lrg_level_instantiate()=, =lrg_level_to_scene()= | =level/lrg-level-instantiate.h= | Level to the 2D =LrgWorld= (one =LrgGameObject= per node) and level to =LrgScene= (primitive bake) |
+| =LrgLevelStream=, =lrg_level_instance_mount()= | =level/lrg-level-stream.h= | Cells, async =.rlevel= load, and mounting a level under a host node (see [[file:streaming.org][Streaming]]) |
 
 The transforms use the shared core math, [[file:../core/math3d.org][lrg-math3d]]: =lrg_node_get_local_matrix()= and =lrg_node_get_world_matrix()= give a node's column-major 4x4 matrix exactly as the editor viewport computes it.
 
@@ -402,6 +403,7 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 | =lrg-level-serializer.h= | =LrgLevelSerializer=: load/save file and data | [[file:../../editor/yaml-format.org][.rlevel YAML Format]], [[file:../../editor/level-model.org::#level-model-api-lrg-level-serializer][API]] |
 | =lrg-prefab.h= | =LrgPrefabLink=, =lrg_prefab_load=, =lrg_prefab_load_resolved=, =lrg_prefab_instantiate=, =lrg_prefab_instantiate_linked=, overrides, sync, apply/revert | [[file:../../editor/prefabs.org][Prefabs]], [[file:../../editor/prefabs.org::#prefabs-api-lrg-prefab][API]] |
 | =lrg-level-instantiate.h= | =lrg_level_instantiate_3d=, =lrg_level_instantiate_3d_with_base_dir=, =lrg_level_instantiate_node_3d=, =lrg_level_load_world3d=, =lrg_level_visual_get_component_type=, =lrg_level_visual_create_component=, =lrg_level_visual_store_property=, =lrg_level_instantiate=, =lrg_level_to_scene= | [[#level-instantiate-3d][3D instantiation]], [[file:../editor/index.org::#bridge-functions][Bridge functions]] |
+| =lrg-level-stream.h= | =lrg_level_stream_new=, =lrg_level_stream_add_cell=, =lrg_level_stream_update=, =lrg_level_stream_load_async=, =lrg_level_stream_load_finish=, =lrg_level_instance_mount= | [[file:streaming.org][Streaming and level instances]] |
 
 ** Performance
 :PROPERTIES:
@@ -425,6 +427,8 @@ Every type of the module, with the page that documents it in depth. The GIR comm
 - *Relative prefab paths* in =prefab: source:= (and nested prefab sources inside a =.rprefab=) are canonicalised against the process working directory (=g_canonicalize_filename()=); run the game from the project root or load prefabs with absolute paths.
 - *Do not include =src/level/*.h= directly* from applications; =<libregnum.h>= is the only supported entry point.
 
+A level may name a mixer. =lrg_level_get_audio_mixer()= is the =audio: mixer:= path, or =NULL= when the level names none. =lrg_level_set_audio_mixer()= sets it (empty or =NULL= drops the block). The serializer writes the block only when a path is set. =lrg_level_instantiate_3d()= loads that path on the default audio manager (48000 Hz, 2 channels). A level with no mixer leaves the current mixer in place. A named mixer that fails to load fails the instantiate. The project-wide default mixer is a different path; see [[file:../../editor/projects-and-assets.org][Projects and assets]].
+
 ** Using it from the editor
 :PROPERTIES:
 :CUSTOM_ID: level-from-editor
@@ -439,6 +443,7 @@ Everything the editor saves is this module's data: =LrgEditor= owns an =LrgLevel
 - [[file:../core/math3d.org][3D Math (lrg-math3d)]]
 - [[file:../editor/index.org][Editor Module Reference]]
 - [[file:../../editor/level-model.org][Level Model]] · [[file:../../editor/yaml-format.org][.rlevel YAML Format]] · [[file:../../editor/prefabs.org][Prefabs]]
+- [[file:streaming.org][Streaming and level instances]]
 - [[file:../../guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]]
 
 A level stores each prefab instance expanded (default) or, since 0.9.0, as a reference expanded at load time; prefabs may be variants. See [[file:prefabs-runtime.org][Prefabs at Runtime]].

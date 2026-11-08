@@ -936,6 +936,13 @@ test_code_shader_diagnostics (EditorAppFixture *f,
 	                                                                       "diagnostics")), ==, 1);
 	g_clear_pointer (&r, json_node_unref);
 	g_assert_cmpuint (lrg_editor_problems_panel_get_n_rows (problems), ==, n0 + 1);
+	{
+		gint line = 0;
+		gint column = 0;
+
+		g_assert_true (lrg_editor_problems_panel_get_row_location (problems, n0, &line, &column));
+		g_assert_cmpint (line, >, 0);
+	}
 
 	/* a level validation replaces the problems: ours come back */
 	validate = lrg_widget_find (LRG_WIDGET (problems), "problems-validate");

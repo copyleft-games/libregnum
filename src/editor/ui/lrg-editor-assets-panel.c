@@ -93,6 +93,7 @@
 #include "data/lrg-editor-mixer-editor.h"
 #include "data/lrg-editor-bt-editor.h"
 #include "data/lrg-editor-fsm-editor.h"
+#include "data/lrg-editor-vscript-editor.h"
 #include "data/lrg-editor-water-editor.h"
 #include "lrg-editor-sequencer-panel.h"
 #include "../lrg-editor-document.h"
@@ -597,7 +598,8 @@ typedef enum
 	SPECIAL_SPRITE,
 	SPECIAL_WATER,
 	SPECIAL_NAV,
-	SPECIAL_TERRAIN
+	SPECIAL_TERRAIN,
+	SPECIAL_VSCRIPT
 } SpecialKind;
 
 /* The M6/M7 kinds by extension (glyph, type name) */
@@ -617,7 +619,8 @@ static const struct
 	{ SPECIAL_SPRITE, ".rsprite", "Sp", "Sprite sheet" },
 	{ SPECIAL_WATER, ".rwater", "Wa", "Water body" },
 	{ SPECIAL_NAV, ".rnav", "Nv", "Navigation settings" },
-	{ SPECIAL_TERRAIN, ".rterrain", "Tr", "Terrain" }
+	{ SPECIAL_TERRAIN, ".rterrain", "Tr", "Terrain" },
+	{ SPECIAL_VSCRIPT, ".rvscript", "VS", "Visual script" }
 };
 
 static gboolean open_nav_settings (LrgEditorApp *app, const gchar *path);
@@ -2814,7 +2817,8 @@ static const struct
 	{ "new-sprite", "New Sprite Sheet", "sprite", "new_sprite", "rsprite" },
 	{ "new-water", "New Water Body", "water", "new_water", "rwater" },
 	{ "new-terrain", "New Terrain", "terrain", "new_terrain", "rterrain" },
-	{ "new-nav-settings", "New Navigation Settings", "nav-settings", "new_navigation", "rnav" }
+	{ "new-nav-settings", "New Navigation Settings", "nav-settings", "new_navigation", "rnav" },
+	{ "new-vscript", "New Visual Script", "vscript", "new_visual_script", "rvscript" }
 };
 
 /* The extension (without the dot) of an asset.new kind, or NULL. */
@@ -2924,7 +2928,7 @@ lrg_editor_assets_panel_create_asset (const gchar  *path,
 	{
 		g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		             "Unknown asset kind '%s' (a document format such as bt, fsm, particles, weather, "
-		             "mixer, tileset, sprite, water, nav-settings, or terrain)", kind);
+		             "mixer, tileset, sprite, water, nav-settings, terrain, or vscript)", kind);
 		return FALSE;
 	}
 	{
@@ -3467,6 +3471,7 @@ NEW_GAMEPLAY_ACTION (new_sprite, 6)
 NEW_GAMEPLAY_ACTION (new_water, 7)
 NEW_GAMEPLAY_ACTION (new_terrain, 8)
 NEW_GAMEPLAY_ACTION (new_nav_settings, 9)
+NEW_GAMEPLAY_ACTION (new_vscript, 10)
 #undef NEW_GAMEPLAY_ACTION
 
 static void
@@ -3593,6 +3598,7 @@ static const GActionEntry action_entries[] = {
 	{ "new-water", act_new_water, NULL, NULL, NULL, { 0 } },
 	{ "new-terrain", act_new_terrain, NULL, NULL, NULL, { 0 } },
 	{ "new-nav-settings", act_new_nav_settings, NULL, NULL, NULL, { 0 } },
+	{ "new-vscript", act_new_vscript, NULL, NULL, NULL, { 0 } },
 	{ "slice-sprite-sheet", act_slice_sprite_sheet, NULL, NULL, NULL, { 0 } },
 	{ "preview-clips", act_preview_clips, NULL, NULL, NULL, { 0 } },
 	{ "create-variant", act_create_variant, NULL, NULL, NULL, { 0 } },
@@ -5897,6 +5903,7 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 	lrg_editor_mixer_editor_install (app); /* mixer.*, actions mixer.new / mixer.open */
 	lrg_editor_bt_editor_install (app); /* bt.* (and ai.*) */
 	lrg_editor_fsm_editor_install (app); /* fsm.* (and ai.*) */
+	lrg_editor_vscript_editor_install (app); /* vscript.* */
 	lrg_editor_water_editor_install (app); /* water.* (EDTERR) */
 	register_with_app (self);
 	sync_app (self);

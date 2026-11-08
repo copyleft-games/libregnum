@@ -1,0 +1,74 @@
+#+title: Debugging
+#+description: The Debug panel, the code-panel debugger, DAP and the debug.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor debug
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 1.0
+
+* Debugging
+:PROPERTIES:
+:CUSTOM_ID: editor-debugging
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Debugging
+#+end_quote
+
+Script debugging is an =LrgScriptDebugger= (the scripting module owns that type) plus two editor surfaces: the code panel, which sets breakpoints and shows the stopped line, and the Debug panel, which shows the stack, variables, watches and a console. A =LrgDapServer= on that debugger is what Emacs and any other DAP client attach to. See [[file:../modules/scripting/dap-server.org][DAP Server]] and [[file:code-intelligence.org][Code Intelligence]].
+
+** Debug panel
+:PROPERTIES:
+:CUSTOM_ID: editor-debug-panel
+:END:
+=LrgEditorDebugPanel= (=lrg_editor_debug_panel_get_type=) is an =LrgContainer=. =lrg_editor_debug_panel_new= takes the =LrgEditorApp=, keeps a weak pointer, builds a =LrgDapServer= with =lrg_dap_server_new_for_debugger= on the default debugger, and does not listen. =lrg_editor_debug_panel_get_app= returns the application until it is gone. =lrg_editor_debug_panel_get_dap= returns the server (transfer none). The panel does not dock itself and does not detach every script on dispose. Dispose stops the DAP server only.
+
+The window is what docks it. Until that lands, construct the panel yourself; the actions and IPC methods register from =lrg_editor_debug_panel_new=. The toolbar buttons are Continue, Pause, Over, In, Out and Stop (widget names =debug-continue=, =debug-pause=, =debug-step-over=, =debug-step-in=, =debug-step-out=, =debug-stop=). Below them: the call stack (=debug-stack=), the variables tree (=debug-variables=), watches (=debug-watches=), the breakpoint list (=debug-breakpoints=) and the evaluate console (=debug-console=, =debug-evaluate=, =debug-scroll=), under =debug-toolbar=. Watches live on the panel and are not saved.
+
+Actions, all with no parameter: =debug.show=, =debug.continue=, =debug.pause=, =debug.step-over=, =debug.step-in=, =debug.step-out=, =debug.stop=. =debug.show= asks the application to present the panel id =debug=. That is a no-op until the panel is in the application's panel table, and the method still returns an empty object.
+
+** Code panel
+:PROPERTIES:
+:CUSTOM_ID: editor-debug-code
+:END:
+The code gutter is the text editor's marker column. A click, or F9, toggles a breakpoint on that line through the default debugger. The path is normalized the same way the debugger normalizes chunk names. The toolbar buttons =code-debug-continue=, =code-debug-over=, =code-debug-in=, =code-debug-out= and =code-debug-stop= continue, step over, step in, step out and detach. The stopped line is =lrg_text_editor_set_execution_line=. Marks are refreshed from the debugger, throttled to 100 ms while stepping.
+
+Saving a buffer calls =lrg_script_reloader_reload_file= on the default reloader after the file is on disk. A reload error is reported and does not roll back the save.
+
+** State and the stop
+:PROPERTIES:
+:CUSTOM_ID: editor-debug-state
+:END:
+=debug.state= is =paused= when the debugger is paused, =running= when any scripting is attached or auto-attach is on, otherwise =idle=. =reason= is null when nothing is paused. A paused stop whose reason is none is reported as =pause=. The adapter and the IPC method do not emit =entry=; that word is unused. The other reasons are =breakpoint=, =step= and =exception=, the same strings =lrg_script_stop_reason_to_string= returns. =path= and =line= are the top frame (line 1-based). =message= is the stop description.
+
+Stack, scopes, variables and evaluate require a pause. The IPC error is =failed= / "not paused". On the thread that owns the stop the debugger runs the inspection inline. From any other thread it posts the request and waits up to five seconds while the stopped thread answers. The DAP server's main context has to be pumping for a client on that context to be served. Calling these from the stopped thread is not a deadlock.
+
+=debug.stop= is detach-all. The script keeps running. The panel does not detach on dispose.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-debug-ipc
+:END:
+Registered by the Debug panel. =path= is absolute or project-relative and defaults to the code panel's active tab. =line= and =column= are 1-based. =invalid-params= is a bad argument, =not-found= is a missing breakpoint, frame, variable reference, file or server, =failed= is an engine error.
+
+- =debug.state= returns state, reason, path, line, language, message, and =dap= with listening, port and clients.
+- =debug.show= presents the panel.
+- =debug.breakpoints= lists id, path, line, condition, hit_condition, log_message, enabled, verified, hits.
+- =debug.set_breakpoint= replaces the breakpoint at that path and line. Optional condition, hit_condition, log_message and enabled.
+- =debug.remove_breakpoint= returns removed.
+- =debug.toggle_breakpoint= returns set, and the breakpoint or null.
+- =debug.clear_breakpoints= returns the number removed. A path limits the clear to that file.
+- =debug.continue=, =debug.pause=, =debug.step_over=, =debug.step_in=, =debug.step_out= and =debug.stop= return a =debug.state= object.
+- =debug.stack= returns id, name, path, line, column and language. Paused only.
+- =debug.scopes= takes an optional frame id (default the top frame) and returns name, reference and expensive.
+- =debug.variables= takes a reference and returns name, value, type and reference (0 is a leaf).
+- =debug.evaluate= takes an expression and an optional frame id and returns result, type and reference.
+- =debug.watches= lists expression, value, type and error.
+- =debug.add_watch= and =debug.remove_watch= take an expression and return the watch list.
+- =debug.dap_start= takes an optional port (0 picks a free port; the default is the =debug.dap-port= setting, 4711) and an optional host (default =127.0.0.1=) and returns the port. Already listening returns the current port and does not rebind.
+- =debug.dap_stop= closes the adapter and returns an empty object.
+
+** Emacs
+:PROPERTIES:
+:CUSTOM_ID: editor-debug-emacs
+:END:
+=editors/emacs/libregnum-dape.el= provides =libregnum-dape=. It does not load dape until the command runs. When =libregnum-connected-p= is true it calls =debug.dap_start= through =libregnum-request= and uses the returned port. Otherwise it uses =libregnum-dape-port= (4711) and =libregnum-dape-host= (=127.0.0.1=). The dape plist is modes (lua, python, c, js, typescript), host, port, =:request "attach"= and =:type "libregnum"=. =libregnum-dape-config= returns that plist.

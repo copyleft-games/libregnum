@@ -38,6 +38,7 @@ cd examples
 | `game-meta-arcade` | Meta-game/arcade collection | - |
 | `game-effects-gallery` | Visual effects showcase | - |
 | `game-settings-demo` | Settings/options menu demo | - |
+| `game-showcase-3d` | 0.9.0 level plus physics, nav, a clip, streaming and a UI animation (`--self-test` is headless) | [docs](../docs/examples/game-showcase-3d.org) |
 
 ### DLC and Modding
 

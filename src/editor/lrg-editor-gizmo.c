@@ -17,6 +17,7 @@
 #include "lrg-editor-command.h"
 #include "lrg-editor-selection.h"
 #include "lrg-node.h"
+#include "lrg-transform-tools.h"
 #include <graylib.h>
 #include <math.h>
 #include <string.h>
@@ -61,6 +62,9 @@ struct _LrgEditorGizmo
 	gboolean              screen_rotate; /* edge-on ring fallback */
 
 	gfloat                delta[3];
+
+	LrgPivotMode          pivot_mode;
+	gfloat                cursor[3];
 };
 
 G_DEFINE_FINAL_TYPE (LrgEditorGizmo, lrg_editor_gizmo, G_TYPE_OBJECT)
@@ -235,22 +239,66 @@ void
 lrg_editor_gizmo_get_origin (LrgEditorGizmo *self,
                              gfloat         *out)
 {
-	LrgNode *primary;
+	LrgNode   *primary;
+	GPtrArray *nodes;
+	gfloat    *xs;
+	gfloat    *ys;
+	gfloat    *zs;
+	gfloat     active[3];
+	guint      n;
+	guint      i;
 
 	g_return_if_fail (LRG_IS_EDITOR_GIZMO (self));
+	g_return_if_fail (out != NULL);
 
-	/* During a drag the gizmo follows the primary node. */
 	primary = primary_node (self);
-	if (primary == NULL)
+
+	/* A drag keeps the pivot it captured. Active mode is the primary. */
+	if (self->dragging || self->pivot_mode == LRG_PIVOT_ACTIVE)
 	{
-		if (self->dragging)
-			memcpy (out, self->pivot0, 3 * sizeof (gfloat));
-		else
-			out[0] = out[1] = out[2] = 0.0f;
+		if (primary == NULL)
+		{
+			if (self->dragging)
+				memcpy (out, self->pivot0, 3 * sizeof (gfloat));
+			else
+				out[0] = out[1] = out[2] = 0.0f;
+			return;
+		}
+		lrg_editor_node_get_world_position (primary, out);
 		return;
 	}
 
-	lrg_editor_node_get_world_position (primary, out);
+	nodes = lrg_editor_selection_get_nodes (lrg_editor_get_selection (self->editor));
+	n = (nodes != NULL) ? nodes->len : 0;
+	xs = g_new (gfloat, n > 0 ? n : 1);
+	ys = g_new (gfloat, n > 0 ? n : 1);
+	zs = g_new (gfloat, n > 0 ? n : 1);
+	for (i = 0; i < n; i++)
+	{
+		gfloat p[3];
+
+		lrg_editor_node_get_world_position (g_ptr_array_index (nodes, i), p);
+		xs[i] = p[0];
+		ys[i] = p[1];
+		zs[i] = p[2];
+	}
+	if (primary != NULL)
+		lrg_editor_node_get_world_position (primary, active);
+	else
+	{
+		active[0] = 0.0f;
+		active[1] = 0.0f;
+		active[2] = 0.0f;
+	}
+
+	lrg_transform_pivot (self->pivot_mode,
+	                     xs, ys, zs, n,
+	                     active[0], active[1], active[2],
+	                     self->cursor[0], self->cursor[1], self->cursor[2],
+	                     &out[0], &out[1], &out[2]);
+	g_free (xs);
+	g_free (ys);
+	g_free (zs);
 }
 
 static LrgEditorTool
@@ -1161,4 +1209,168 @@ lrg_editor_gizmo_get_drag_delta (LrgEditorGizmo *self,
 	g_return_if_fail (LRG_IS_EDITOR_GIZMO (self));
 
 	memcpy (out, self->delta, sizeof self->delta);
+}
+
+void
+lrg_editor_gizmo_set_pivot_mode (LrgEditorGizmo *self,
+                                 gint            mode)
+{
+	g_return_if_fail (LRG_IS_EDITOR_GIZMO (self));
+	self->pivot_mode = (LrgPivotMode) mode;
+}
+
+void
+lrg_editor_gizmo_set_cursor (LrgEditorGizmo *self,
+                             gfloat          x,
+                             gfloat          y,
+                             gfloat          z)
+{
+	g_return_if_fail (LRG_IS_EDITOR_GIZMO (self));
+	self->cursor[0] = x;
+	self->cursor[1] = y;
+	self->cursor[2] = z;
+}
+
+gboolean
+lrg_editor_gizmo_apply (LrgEditorGizmo *self,
+                        const gchar    *op,
+                        gint            axis,
+                        gfloat          value)
+{
+	GPtrArray *nodes;
+	LrgNode   *primary;
+	gfloat    *xs = NULL;
+	gfloat    *ys = NULL;
+	gfloat    *zs = NULL;
+	gfloat    *min_x = NULL;
+	gfloat    *min_y = NULL;
+	gfloat    *min_z = NULL;
+	gfloat    *max_x = NULL;
+	gfloat    *max_y = NULL;
+	gfloat    *max_z = NULL;
+	guint      n;
+	guint      i;
+	guint      others;
+	guint      primary_index;
+	gboolean   ok;
+	gboolean   known;
+	gfloat     hx;
+	gfloat     hy;
+	gfloat     hz;
+
+	g_return_val_if_fail (LRG_IS_EDITOR_GIZMO (self), FALSE);
+	g_return_val_if_fail (op != NULL, FALSE);
+
+	nodes = lrg_editor_selection_get_nodes (lrg_editor_get_selection (self->editor));
+	n = (nodes != NULL) ? nodes->len : 0;
+	if (n == 0)
+		return FALSE;
+
+	xs = g_new (gfloat, n);
+	ys = g_new (gfloat, n);
+	zs = g_new (gfloat, n);
+	primary = primary_node (self);
+	primary_index = 0;
+	for (i = 0; i < n; i++)
+	{
+		LrgNode *node = g_ptr_array_index (nodes, i);
+		gfloat   p[3];
+
+		lrg_editor_node_get_world_position (node, p);
+		xs[i] = p[0];
+		ys[i] = p[1];
+		zs[i] = p[2];
+		if (node == primary)
+			primary_index = i;
+	}
+
+	ok = TRUE;
+	known = TRUE;
+	others = 0;
+	hx = 0.0f;
+	hy = 0.0f;
+	hz = 0.0f;
+	if (g_strcmp0 (op, "snap") == 0)
+	{
+		for (i = 0; i < n; i++)
+			lrg_transform_snap_position (&xs[i], &ys[i], &zs[i], value);
+	}
+	else if (g_strcmp0 (op, "drop") == 0)
+	{
+		for (i = 0; i < n; i++)
+			lrg_transform_drop (&xs[i], &ys[i], &zs[i], axis, value);
+	}
+	else if (g_strcmp0 (op, "align-min") == 0)
+		lrg_transform_align (LRG_TRANSFORM_ALIGN_MIN, axis, xs, ys, zs, n);
+	else if (g_strcmp0 (op, "align-center") == 0)
+		lrg_transform_align (LRG_TRANSFORM_ALIGN_CENTER, axis, xs, ys, zs, n);
+	else if (g_strcmp0 (op, "align-max") == 0)
+		lrg_transform_align (LRG_TRANSFORM_ALIGN_MAX, axis, xs, ys, zs, n);
+	else if (g_strcmp0 (op, "distribute") == 0)
+		lrg_transform_distribute (axis, xs, ys, zs, n);
+	else if (g_strcmp0 (op, "surface") == 0)
+	{
+		if (primary == NULL || n < 2)
+			ok = FALSE;
+		else
+		{
+			min_x = g_new (gfloat, n);
+			min_y = g_new (gfloat, n);
+			min_z = g_new (gfloat, n);
+			max_x = g_new (gfloat, n);
+			max_y = g_new (gfloat, n);
+			max_z = g_new (gfloat, n);
+			for (i = 0; i < n; i++)
+			{
+				if (g_ptr_array_index (nodes, i) == primary)
+					continue;
+				min_x[others] = xs[i];
+				min_y[others] = ys[i];
+				min_z[others] = zs[i];
+				max_x[others] = xs[i] + 1.0f;
+				max_y[others] = ys[i] + 1.0f;
+				max_z[others] = zs[i] + 1.0f;
+				others++;
+			}
+			ok = lrg_transform_snap_surface (xs[primary_index],
+			                                 ys[primary_index] + 8.0f,
+			                                 zs[primary_index],
+			                                 0.0f, -1.0f, 0.0f,
+			                                 min_x, min_y, min_z,
+			                                 max_x, max_y, max_z,
+			                                 others,
+			                                 &hx, &hy, &hz);
+			if (ok)
+			{
+				xs[primary_index] = hx;
+				ys[primary_index] = hy;
+				zs[primary_index] = hz;
+			}
+		}
+	}
+	else
+		known = FALSE;
+
+	if (ok && known)
+	{
+		for (i = 0; i < n; i++)
+		{
+			LrgNode *node = g_ptr_array_index (nodes, i);
+
+			if (g_strcmp0 (op, "surface") == 0 && node != primary)
+				continue;
+			lrg_node_set_location_xyz (node, xs[i], ys[i], zs[i]);
+		}
+	}
+
+	g_free (xs);
+	g_free (ys);
+	g_free (zs);
+	g_free (min_x);
+	g_free (min_y);
+	g_free (min_z);
+	g_free (max_x);
+	g_free (max_y);
+	g_free (max_z);
+	return ok && known;
 }

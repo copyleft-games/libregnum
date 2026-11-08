@@ -20,7 +20,7 @@ Header: =src/weather/lrg-weather-asset.h= (=LrgWeatherAsset=, =LrgWeatherWind=, 
 :END:
 - A *preset* becomes an =LrgWeather= with the preset id as its weather id, an optional ambient tint and brightness, and one effect per enabled layer.
 - A *layer* has a =kind= (which effect type), an =id= (the effect id inside the weather, unique in the preset, the kind when omitted), an =intensity= and =params=.
-- The layer intensity is the effect's *level* (=LrgWeatherEffect:level=, new in 0.9.0): the intensity the effect has when its weather is fully on. =LrgWeatherManager= crossfades each effect between 0 and its level (instead of 0 and 1), and an instant switch sets it straight to the level. Effects without a level (everything built in code) keep the old behaviour.
+- The layer intensity is the effect's *level* (=LrgWeatherEffect:level=, new in 0.9.0): the intensity the effect has when its weather is fully on. =LrgWeatherManager= crossfades each effect between 0 and its level (instead of 0 and 1), and an instant switch sets it straight to the level. An instant switch during a crossfade first restores the fading preset and the fade target to those levels and clears the crossfade, so neither side stays at the partial intensity. Effects without a level (everything built in code) keep the old behaviour, with 1 standing in for the level.
 - Disabled layers (=enabled: false=) stay in the file and in the inspector but are not built.
 
 *** Layer kinds and parameters

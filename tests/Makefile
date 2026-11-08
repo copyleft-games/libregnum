@@ -162,6 +162,8 @@ TEST_SOURCES := \
 	test-script-debugger.c \
 	test-dap-server.c \
 	test-vscript.c \
+	test-pack-writer.c \
+	test-workflows.c \
 	test-profiler-capture.c \
 	test-frame-capture.c \
 	test-memory-profiler.c \

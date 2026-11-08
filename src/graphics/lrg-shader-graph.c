@@ -721,6 +721,16 @@ lookup_node (LrgShaderGraph *self,
 	return g_hash_table_lookup (self->by_id, id);
 }
 
+/* Default card slot: four across, then the next row. Min card width is 150. */
+static void
+grid_position (guint   index,
+               gfloat *x,
+               gfloat *y)
+{
+	*x = (gfloat) (index % 4) * 220.0f;
+	*y = (gfloat) (index / 4) * 160.0f;
+}
+
 const gchar *
 lrg_shader_graph_add_node (LrgShaderGraph  *self,
                            const gchar     *type,
@@ -772,6 +782,8 @@ lrg_shader_graph_add_node (LrgShaderGraph  *self,
 	node->def = def;
 	g_ptr_array_add (self->nodes, node);
 	g_hash_table_insert (self->by_id, node->id, node);
+	/* A loaded document overwrites this when its YAML has a position. */
+	grid_position (self->nodes->len - 1, &node->x, &node->y);
 	return node->id;
 }
 
@@ -2587,16 +2599,21 @@ set_numbers (YamlMapping   *map,
 }
 
 static YamlNode *
-node_to_yaml (Node *node)
+node_to_yaml (Node  *node,
+              guint  index)
 {
 	g_autoptr(YamlMapping) map = yaml_mapping_new ();
 	g_autoptr(YamlMapping) params = yaml_mapping_new ();
 	g_autoptr(YamlMapping) inputs = yaml_mapping_new ();
 	guint i;
+	gfloat gx;
+	gfloat gy;
 
 	set_string (map, "id", node->id);
 	set_string (map, "type", node->def->type);
-	if (node->x != 0.0f || node->y != 0.0f)
+	/* The automatic grid is not part of the file. An authored position is. */
+	grid_position (index, &gx, &gy);
+	if (node->x != gx || node->y != gy)
 	{
 		Numbers pos;
 
@@ -2654,7 +2671,7 @@ graph_to_node (LrgShaderGraph *self)
 
 		for (i = 0; i < self->nodes->len; i++)
 		{
-			g_autoptr(YamlNode) item = node_to_yaml (g_ptr_array_index (self->nodes, i));
+			g_autoptr(YamlNode) item = node_to_yaml (g_ptr_array_index (self->nodes, i), i);
 
 			yaml_sequence_add_element (seq, item);
 		}

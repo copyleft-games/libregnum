@@ -16,7 +16,7 @@ Libregnum provides multiple scripting backends:
 
 See [[#scripting-manager][Scripting Manager]] below for the editor-facing API that enumerates and
 creates backends dynamically. See [[#script-component][LrgScriptComponent]] for the runtime ECS
-component that attaches a script to a game object.
+component that attaches a script to a game object. Visual scripts (=.rvscript=) are [[file:visual-scripting.org][Visual Scripting]].
 - *Gjs* (GNOME JavaScript) - Full GObject Introspection access from JavaScript
 
 All backends implement the same abstract interface (=LrgScripting=), making them interchangeable at the API level. GI-based backends (PyGObject, Gjs) additionally inherit from =LrgScriptingGI= for typelib and object exposure support.

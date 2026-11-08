@@ -1,0 +1,203 @@
+* Script debugger
+:PROPERTIES:
+:CUSTOM_ID: script-debugger
+:END:
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-overview
+:END:
+
+=LrgScriptDebugger= is a backend-neutral source debugger: breakpoints with conditions, hit counts and log points, pause, continue, step in, step over and step out, stack frames, scopes, lazily expanded variables, evaluate in a frame, and exception stops. Lua installs =lua_sethook=. Python 3.12 and newer uses =sys.monitoring=. GJS and Crispy report unsupported and keep running. The game thread blocks in the stop while the debugger serves inspection requests. There is no =stopped= signal. The stop runs an idle function, and other threads poll.
+
+Create one with lrg_script_debugger_new. The process-wide instance is lrg_script_debugger_get_default. lrg_script_debugger_supports is true only for a context that implements =LrgScriptDebuggable= (Lua and Python in this tree).
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-concepts
+:END:
+
+*** State, reasons and errors
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-state
+:END:
+
+lrg_script_debugger_state_get_type registers =LrgScriptDebuggerState=: running, or paused while a script thread sits in the stop. lrg_script_debugger_get_state reads it. lrg_script_debugger_is_paused is the paused check.
+
+lrg_script_stop_reason_get_type registers =LrgScriptStopReason=. lrg_script_stop_reason_to_string returns the Debug Adapter Protocol names ="none"=, ="breakpoint"=, ="step"=, ="pause"= and ="exception"=. lrg_script_debugger_get_stop_reason is the reason of the current stop. lrg_script_debugger_dup_stop_description is a =file:line= or node sentence and is cleared on resume, so copy it inside the idle function. lrg_script_debugger_dup_stopped_scripting and lrg_script_debugger_dup_stopped_breakpoint are the context and the breakpoint (transfer full, or =NULL=). lrg_script_debugger_get_stopped_thread_id is the id assigned at attach, or 0 when nothing is stopped.
+
+lrg_script_exception_mode_get_type registers =LrgScriptExceptionMode=. lrg_script_debugger_set_exception_mode and lrg_script_debugger_get_exception_mode use it. The default is =LRG_SCRIPT_EXCEPTION_MODE_NEVER=. =UNCAUGHT= stops when an error is about to leave the script. =ALL= stops at every Python raise. Lua only observes errors that reach the host protected call, so =ALL= behaves like =UNCAUGHT= and the stop is reported uncaught. Evaluate failures are =LRG_SCRIPT_DEBUGGER_ERROR_EVALUATE=, not exception stops.
+
+lrg_script_debugger_error_quark and lrg_script_debugger_error_get_type are the =GError= domain. Codes include unsupported, already attached, not paused, invalid reference, evaluate and timeout (a cross-thread request waited 5 seconds).
+
+*** Backends
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-backends
+:END:
+
+Lua arms =LUA_MASKLINE= while lrg_script_debugger_wants_line_events is true, and forces the JIT off for that stretch unless the context had already disabled it. The hook runs before the line. Locals and upvalues are read with =lua_getlocal= / =lua_getupvalue=. Evaluate compiles in a proxy environment whose =__index= falls through to =_G=; assignments in the expression do not write Lua locals back.
+
+Python registers one process-global =sys.monitoring= tool (id 0) on 3.12+. A second debugger gets =ALREADY_ATTACHED=. The same debugger may attach two Python contexts; the callback uses the context that is currently executing. =LINE= stops before the line. =RAISE= serves =ALL= (caught raises included). =PY_UNWIND= serves =UNCAUGHT= when the frame has no Python caller, plus a host-boundary fallback. A callback that raises disables the tool, so callbacks clear the error and return =None=. Builds older than 3.12, or a build without Python, still have the C entry points and return unsupported with the version in the message. This tree's Python is 3.14. =PyFrame_GetLocals= is a =FrameLocalsProxy=, not a dict. Variable listing uses the mapping protocol. Evaluate copies that proxy into a real dict, so an assignment in the expression does not write the frame. Nested dict, list and tuple values expand. The child cap is 500.
+
+GJS does not expose SpiderMonkey's Debugger object to C (=gjs_context_eval= is the public entry). lrg_script_debugger_attach fails with =LRG_SCRIPT_DEBUGGER_ERROR_UNSUPPORTED= and a message that names SpiderMonkey. Crispy compiles C ahead of time and has no line hook; the message names Crispy. A native module's message says native modules have no script-level line events. Any other non-debuggable backend gets "this backend does not implement LrgScriptDebuggable".
+
+lrg_script_debugger_report_line, lrg_script_debugger_report_node and lrg_script_debugger_report_exception are the entry points a backend, a VSCRIPT program or a future DAP adapter calls. They do not require the source language to implement =LrgScriptDebuggable= beyond being passed as the source object. Node breakpoints are how a graph stops without a source line.
+
+*** Breakpoints
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-breakpoints
+:END:
+
+lrg_script_debugger_add_breakpoint takes a file and a 1-based line. lrg_script_debugger_add_node_breakpoint takes a file and a node id (VSCRIPT). Adding the same file and line, or the same file and node id, again returns the existing breakpoint. Paths go through lrg_script_debugger_normalize_path: a leading =@= is stripped, the path is canonicalized, and a chunk name that starts with =[= stays as it is. An unverified breakpoint still fires. New breakpoints are enabled and verified.
+
+lrg_script_breakpoint_get_id, lrg_script_breakpoint_get_file, lrg_script_breakpoint_get_line and lrg_script_breakpoint_get_node_id read the identity. lrg_script_breakpoint_get_condition and lrg_script_breakpoint_set_condition are an expression in the stopped frame. A false condition does not increment the hit count and does not stop. An evaluate error while testing the condition does stop, and emits =output=. lrg_script_breakpoint_get_hit_condition and lrg_script_breakpoint_set_hit_condition accept =N= or ===N=, =>N=, =>=N=, =<N=, =<=N= and =%N= (hit count after the condition passed, =N > 0=). lrg_script_breakpoint_get_hit_count and lrg_script_breakpoint_reset_hit_count read and clear it. lrg_script_breakpoint_get_log_message and lrg_script_breakpoint_set_log_message are a log point: ={expression}= is evaluated, the line is emitted on =output= with category ="console"=, the hit count increments, and the script does not stop. lrg_script_breakpoint_get_enabled, lrg_script_breakpoint_set_enabled and lrg_script_breakpoint_get_verified are the flags.
+
+lrg_script_debugger_remove_breakpoint removes one id. lrg_script_debugger_clear_breakpoints clears every breakpoint, or only those whose file is =path= when =path= is non-NULL. lrg_script_debugger_get_breakpoints returns a new array (transfer full, elements transfer none). lrg_script_debugger_find_breakpoint is transfer none: the pointer is the debugger's object, or =NULL=.
+
+lrg_script_debugger_line_may_break is a cheap prefilter (that file and line, or a node breakpoint on that file). lrg_script_debugger_wants_line_events is true when any enabled breakpoint exists, a step is armed, a pause is requested, or a host return asked for one more line. Exception mode alone does not turn line events on.
+
+*** Stop, step and threads
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-stop
+:END:
+
+The script thread enters a wait. It calls the idle function about every 10 ms and, unless lrg_script_debugger_set_iterate_main_context was set false, tries to iterate the thread-default main context. lrg_script_debugger_set_stopped_idle_func is that callback. It runs on the stopped thread, so it may call get-stack, get-scopes, get-variables and evaluate directly. Other threads post the same requests and block up to 5 seconds (=LRG_SCRIPT_DEBUGGER_ERROR_TIMEOUT=). One script thread is paused at a time. A nested report from the owner returns immediately.
+
+lrg_script_debugger_pause requests a stop at the next line (call it before the script runs to stop on entry). lrg_script_debugger_resume continues and also cancels a pause that has not fired yet. lrg_script_debugger_step_in stops at the next line at any depth. lrg_script_debugger_step_over stops at the next line whose depth is less than or equal to the stopped frame. lrg_script_debugger_step_out stops when the depth is shallower. All three are no-ops when the debugger is not stopped. Frame depth counts non-C frames and is at least 1. Leaving the host call while a step-over or step-out is still armed stops at the next line instead of running away.
+
+Variable references from lrg_script_debugger_alloc_reference die when the stop ends. Their destroy notify runs on the stopped thread after the mutex is released. lrg_script_debugger_emit_output sends =category= (=console=, =stdout=, =stderr=, =important=) and =text= on the =output= signal.
+
+lrg_script_debugger_attach and lrg_script_debugger_detach bind one context. lrg_script_debugger_detach_all resumes a stop, detaches every context, and turns auto-attach off. lrg_script_debugger_is_attached and lrg_script_debugger_get_attached report the set (the array is transfer full, elements transfer none). lrg_script_debugger_get_thread_id is the id for one context. lrg_script_debugger_set_auto_attach and lrg_script_debugger_get_auto_attach attach future debuggable contexts, and the ones that already exist when it is turned on. Turning it off does not detach. Failures are debug logs. Finalizing a context clears its own hook; the weak notify does not call detach on the dying object.
+
+*** Frames, scopes, variables
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-frames
+:END:
+
+lrg_script_stack_frame_new builds a frame. A =NULL= name becomes ="main chunk"=. The file is normalized. lrg_script_stack_frame_get_id is assigned by the debugger after it collects frames (1 is the innermost). lrg_script_stack_frame_get_level is the backend level (0 innermost). lrg_script_stack_frame_get_name, lrg_script_stack_frame_get_file and lrg_script_stack_frame_get_line are the location. There is no column.
+
+lrg_script_debugger_get_stack_frames is valid while paused. lrg_script_debugger_get_scopes takes a frame id, or 0 for the innermost. Lua scopes are Locals, Upvalues and Globals (globals are expensive). Python scopes are Locals and Globals. lrg_script_scope_new, lrg_script_scope_get_name, lrg_script_scope_get_variables_reference and lrg_script_scope_get_expensive are the scope object. lrg_script_debugger_get_variables expands a reference, including a scope reference or a structured value's reference.
+
+lrg_script_variable_new, lrg_script_variable_get_name, lrg_script_variable_get_value, lrg_script_variable_get_type_name, lrg_script_variable_get_variables_reference, lrg_script_variable_get_truthy and lrg_script_variable_set_truthy are one value. A non-zero variables reference means the value can be expanded. Because the line hook fires before the line runs, a local assigned on the stopped line is not visible yet. Step to the next line to read it.
+
+lrg_script_debugger_evaluate runs an expression in a frame (0 is innermost) and returns one =LrgScriptVariable=. It does not stop on an exception inside the expression.
+
+** API reference
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-api
+:END:
+
+The names above are the whole public surface. Grouped:
+
+- Types: lrg_script_debugger_state_get_type, lrg_script_stop_reason_get_type, lrg_script_stop_reason_to_string, lrg_script_exception_mode_get_type, lrg_script_debugger_error_quark, lrg_script_debugger_error_get_type.
+- Lifetime: lrg_script_debugger_new, lrg_script_debugger_get_default, lrg_script_debugger_supports, lrg_script_debugger_attach, lrg_script_debugger_detach, lrg_script_debugger_detach_all, lrg_script_debugger_is_attached, lrg_script_debugger_get_attached, lrg_script_debugger_get_thread_id, lrg_script_debugger_set_auto_attach, lrg_script_debugger_get_auto_attach.
+- Breakpoints: lrg_script_debugger_add_breakpoint, lrg_script_debugger_add_node_breakpoint, lrg_script_debugger_remove_breakpoint, lrg_script_debugger_clear_breakpoints, lrg_script_debugger_get_breakpoints, lrg_script_debugger_find_breakpoint, lrg_script_breakpoint_get_id, lrg_script_breakpoint_get_file, lrg_script_breakpoint_get_line, lrg_script_breakpoint_get_node_id, lrg_script_breakpoint_get_condition, lrg_script_breakpoint_set_condition, lrg_script_breakpoint_get_hit_condition, lrg_script_breakpoint_set_hit_condition, lrg_script_breakpoint_get_log_message, lrg_script_breakpoint_set_log_message, lrg_script_breakpoint_get_enabled, lrg_script_breakpoint_set_enabled, lrg_script_breakpoint_get_verified, lrg_script_breakpoint_get_hit_count, lrg_script_breakpoint_reset_hit_count.
+- Control: lrg_script_debugger_set_exception_mode, lrg_script_debugger_get_exception_mode, lrg_script_debugger_pause, lrg_script_debugger_resume, lrg_script_debugger_step_in, lrg_script_debugger_step_over, lrg_script_debugger_step_out, lrg_script_debugger_get_state, lrg_script_debugger_is_paused, lrg_script_debugger_get_stop_reason, lrg_script_debugger_dup_stop_description, lrg_script_debugger_dup_stopped_scripting, lrg_script_debugger_get_stopped_thread_id, lrg_script_debugger_dup_stopped_breakpoint, lrg_script_debugger_set_stopped_idle_func, lrg_script_debugger_set_iterate_main_context.
+- Inspection: lrg_script_debugger_get_stack_frames, lrg_script_debugger_get_scopes, lrg_script_debugger_get_variables, lrg_script_debugger_evaluate, lrg_script_stack_frame_new, lrg_script_stack_frame_get_id, lrg_script_stack_frame_get_level, lrg_script_stack_frame_get_name, lrg_script_stack_frame_get_file, lrg_script_stack_frame_get_line, lrg_script_scope_new, lrg_script_scope_get_name, lrg_script_scope_get_variables_reference, lrg_script_scope_get_expensive, lrg_script_variable_new, lrg_script_variable_get_name, lrg_script_variable_get_value, lrg_script_variable_get_type_name, lrg_script_variable_get_variables_reference, lrg_script_variable_get_truthy, lrg_script_variable_set_truthy.
+- Hooks for backends and VSCRIPT: lrg_script_debugger_wants_line_events, lrg_script_debugger_line_may_break, lrg_script_debugger_report_line, lrg_script_debugger_report_node, lrg_script_debugger_report_exception, lrg_script_debugger_alloc_reference, lrg_script_debugger_emit_output, lrg_script_debugger_normalize_path.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-example
+:END:
+
+Stop on the call, read =value=, evaluate =value + 1=, step into the callee, then continue. The idle runs on the script thread.
+
+#+begin_src C
+static void
+on_stop (LrgScriptDebugger *debugger,
+         gpointer           user_data)
+{
+	GPtrArray *frames;
+	LrgScriptVariable *sum;
+	GError *error = NULL;
+	gint *hits = user_data;
+
+	frames = lrg_script_debugger_get_stack_frames (debugger, &error);
+	g_assert_no_error (error);
+	sum = lrg_script_debugger_evaluate (debugger, 0, "value + 1", &error);
+	if (sum != NULL)
+		g_print ("%s\n", lrg_script_variable_get_value (sum));
+	g_clear_object (&sum);
+	g_clear_pointer (&frames, g_ptr_array_unref);
+	g_clear_error (&error);
+	*hits += 1;
+	if (*hits == 1)
+		lrg_script_debugger_step_in (debugger);
+	else
+		lrg_script_debugger_resume (debugger);
+}
+
+static void
+debug_call (LrgScripting *scripting,
+            const gchar *path)
+{
+	LrgScriptDebugger *debugger;
+	LrgScriptBreakpoint *bp;
+	gint hits = 0;
+	GError *error = NULL;
+
+	debugger = lrg_script_debugger_new ();
+	lrg_script_debugger_set_iterate_main_context (debugger, FALSE);
+	lrg_script_debugger_attach (debugger, scripting, &error);
+	lrg_script_debugger_set_exception_mode (debugger,
+	                                        LRG_SCRIPT_EXCEPTION_MODE_UNCAUGHT);
+	bp = lrg_script_debugger_add_breakpoint (debugger, path, 8);
+	lrg_script_breakpoint_set_condition (bp, "True");
+	lrg_script_debugger_set_stopped_idle_func (debugger, on_stop, &hits, NULL);
+	lrg_scripting_call_function (scripting, "outer", NULL, 0, NULL, &error);
+	lrg_script_debugger_detach (debugger, scripting);
+	g_object_unref (debugger);
+}
+#+end_src
+
+A graph stop from the VSCRIPT runner, with no source line:
+
+#+begin_src C
+lrg_script_debugger_add_node_breakpoint (debugger, "graph.vscript", "gate");
+lrg_script_debugger_report_node (debugger,
+                                 LRG_SCRIPT_DEBUGGABLE (scripting),
+                                 "graph.vscript",
+                                 "gate",
+                                 1);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-performance
+:END:
+
+Line hooks run only while lrg_script_debugger_wants_line_events is true. lrg_script_debugger_line_may_break avoids taking the debugger lock on lines that cannot hit. Lua's JIT stays off only while those events are armed, then the previous mode is restored. Python installs =LINE= only when a line stop is possible, and adds =RAISE= or =PY_UNWIND= only for the exception mode. One Python tool id is shared by every context of that debugger. Stack walks and variable expansion happen on demand during the stop, not on every line. Expansion stops at 500 children. Globals are marked expensive so a front end can skip them until asked. The stop loop sleeps about 10 ms between idle calls. Cross-thread inspection waits on a condition instead of spinning, and gives up after 5 seconds. References are dropped on resume so a front end cannot pin a frame's locals for the rest of the session.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-pitfalls
+:END:
+
+- The idle function must resume, step or detach. Returning without one of those leaves the script thread in the stop.
+- lrg_script_debugger_dup_stop_description is =NULL= after resume. Copy the text before continuing.
+- Do not call lrg_script_debugger_get_scopes from a thread other than the stopped one without expecting to block, and do not call it when lrg_script_debugger_is_paused is false.
+- Lock order is the Python GIL, then the debugger mutex. A line callback releases the GIL before reporting so the stop can take the GIL to read frames.
+- Lua evaluate and Python evaluate both read locals. Neither writes them back. Assign through a host function or step until the script does the store.
+- =%N= compares the hit count after the increment. =%2= stops on hits 2, 4, 6, not on hit 1.
+- A log point is not a stop. Connect to =output= or the message is discarded.
+- GJS and Crispy attach on purpose fails. Do not treat that =GError= as a broken install.
+- One Python tool id means one debugger process-wide for CPython. Detach the first before attaching a second.
+- Auto-attach skips contexts that lrg_script_debugger_supports rejects. It does not detach them later when turned off.
+- Frames have a line and no column. A DAP =column= field has nothing to fill from this API.
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-editor
+:END:
+
+The code panel and play-in-editor drive lrg_script_debugger_get_default. Call lrg_script_debugger_set_auto_attach so a context created for play mode is attached when lrg_script_debugger_supports is true. Breakpoints added before play are already on the debugger. The panel's stopped callback is lrg_script_debugger_set_stopped_idle_func; from it, fill the stack with lrg_script_debugger_get_stack_frames, scopes with lrg_script_debugger_get_scopes and values with lrg_script_debugger_get_variables, then step or lrg_script_debugger_resume. Polling lrg_script_debugger_is_paused from the UI thread is the notification. There is no =stopped= signal to connect. Exception filters map onto lrg_script_debugger_set_exception_mode. Node breakpoints in a graph use lrg_script_debugger_add_node_breakpoint; the runner calls lrg_script_debugger_report_node. The public API is enough for that panel. No editor source patch is applied here.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: script-debugger-see-also
+:END:
+
+- [[file:hot-reload.org][Hot reload]] for editing a file the debugger is attached to
+- [[file:scripting.org][LrgScripting]] for the contexts attach accepts
+- [[file:scripting-native.org][Native and Crispy]] for why those backends have no line events

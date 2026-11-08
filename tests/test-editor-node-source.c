@@ -1133,6 +1133,19 @@ test_gesture_api (void)
  * Main
  * ========================================================================== */
 
+/* The audio emitter's suggested radius is the audible distance (50). */
+static void
+test_suggested_audio_radius (void)
+{
+	gdouble radius = 0.0;
+
+	g_assert_true (lrg_editor_node_source_get_suggested_double (LRG_NODE_VISUAL_AUDIO_EMITTER,
+	                                                           "radius", &radius));
+	g_assert_cmpfloat (radius, ==, 50.0);
+	g_assert_false (lrg_editor_node_source_get_suggested_double (LRG_NODE_VISUAL_AUDIO_EMITTER,
+	                                                            "no-such", &radius));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -1151,6 +1164,7 @@ main (int   argc,
 	g_test_add_func ("/editor/node-source/invalid-asset", test_invalid_asset);
 	g_test_add_func ("/editor/node-source/change-emission", test_change_emission);
 	g_test_add_func ("/editor/node-source/gesture-api", test_gesture_api);
+	g_test_add_func ("/editor/node-source/suggested-audio-radius", test_suggested_audio_radius);
 
 	return g_test_run ();
 }

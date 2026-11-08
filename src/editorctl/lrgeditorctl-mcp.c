@@ -35,7 +35,8 @@ typedef enum
 	TOOL_RUN,         /* stop -> run.stop, else run.start */
 	TOOL_SCREENSHOT,  /* view.screenshot to a temp file, returned as an image */
 	TOOL_SESSIONS,    /* running editors on this machine */
-	TOOL_RAW          /* any method */
+	TOOL_RAW,         /* any method */
+	TOOL_MERGE        /* spawn lrgeditor --merge; no editor session */
 } ToolKind;
 
 typedef struct
@@ -1621,6 +1622,193 @@ static const ToolSpec tools[] = {
 	{ "script_editor_running", "script.editor_running", TOOL_PASS, TRUE, FALSE,
 	  "The script bindings ticking in the editor (run-in-editor), with their last error.",
 	  "", NULL },
+	/* 0.9.0 M8 vscript: visual script methods */
+	{ "vscript_create", "vscript.create", TOOL_PASS, FALSE, FALSE,
+	  "Write a starter .rvscript (event.start wired to debug.log \"hello\") and refuse to overwrite. view is graph (default) or blocks. name, when set, is stored on the program. Does not open a tab.",
+	  MAT_PATH_ARG "," "\"name\":{\"type\":\"string\"}" "," "\"view\":{\"type\":\"string\"}", "[\"path\"]" },
+	{ "vscript_open", "vscript.open", TOOL_PASS, FALSE, FALSE,
+	  "Open the file. view, when set, switches the program view key (one undo step) and shows that editor.",
+	  MAT_PATH_ARG "," "\"view\":{\"type\":\"string\"}", "[\"path\"]" },
+	{ "vscript_get", "vscript.get", TOOL_PASS, TRUE, FALSE,
+	  "The program snapshot. graph selects which graph's nodes, links and comments are listed and does not change the graph the canvas shows.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}", NULL },
+	{ "vscript_node_types", "vscript.node_types", TOOL_PASS, TRUE, FALSE,
+	  "The node catalogue. query is a case-sensitive substring of the type, title or description. category is an exact category name.",
+	  "\"query\":{\"type\":\"string\"}" "," "\"category\":{\"type\":\"string\"}", NULL },
+	{ "vscript_gi_search", "vscript.gi_search", TOOL_PASS, TRUE, FALSE,
+	  "Search loaded typelibs (GLib, GObject, Gio, Libregnum, Graylib) for functions and methods. limit defaults to 50. available is false when this build has no GI repository.",
+	  "\"query\":{\"type\":\"string\"}" "," "\"limit\":{\"type\":\"integer\"}", "[\"query\"]" },
+	{ "vscript_add_node", "vscript.add_node", TOOL_PASS, FALSE, FALSE,
+	  "Add a catalogue node. id is optional (a free id is chosen). params and inputs are applied before the undo step is recorded.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"type\":{\"type\":\"string\"}" "," "\"id\":{\"type\":\"string\"}" "," "\"x\":{\"type\":\"number\"}" "," "\"y\":{\"type\":\"number\"}" "," "\"params\":{\"type\":\"object\"}" "," "\"inputs\":{\"type\":\"object\"}", "[\"type\"]" },
+	{ "vscript_remove_node", "vscript.remove_node", TOOL_PASS, FALSE, TRUE,
+	  "Remove a node and the links that touch it.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"id\":{\"type\":\"string\"}", "[\"id\"]" },
+	{ "vscript_set_node", "vscript.set_node", TOOL_PASS, FALSE, FALSE,
+	  "Move a node, set parameters or literal inputs (null removes a key) and optionally rename it. Pins are recomputed.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"id\":{\"type\":\"string\"}" "," "\"x\":{\"type\":\"number\"}" "," "\"y\":{\"type\":\"number\"}" "," "\"params\":{\"type\":\"object\"}" "," "\"inputs\":{\"type\":\"object\"}" "," "\"rename\":{\"type\":\"string\"}", "[\"id\"]" },
+	{ "vscript_connect", "vscript.connect", TOOL_PASS, FALSE, FALSE,
+	  "Link node.pin to node.pin. Type-checked. Replaces the link into a data input or out of an exec output.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"from\":{\"type\":\"string\"}" "," "\"to\":{\"type\":\"string\"}", "[\"from\",\"to\"]" },
+	{ "vscript_disconnect", "vscript.disconnect", TOOL_PASS, FALSE, FALSE,
+	  "Remove that link. removed is false when it was not there, and nothing is recorded.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"from\":{\"type\":\"string\"}" "," "\"to\":{\"type\":\"string\"}", "[\"from\",\"to\"]" },
+	{ "vscript_set_variable", "vscript.set_variable", TOOL_PASS, FALSE, FALSE,
+	  "Create or replace a graph variable (type bool, int, float, string, object, list or any; default is the zero of that type when omitted). remove: true deletes it.",
+	  MAT_PATH_ARG "," "\"name\":{\"type\":\"string\"}" "," "\"type\":{\"type\":\"string\"}" "," "\"default\":{}" "," "\"remove\":{\"type\":\"boolean\"}", "[\"name\"]" },
+	{ "vscript_add_subgraph", "vscript.add_subgraph", TOOL_PASS, FALSE, FALSE,
+	  "Add a subgraph with subgraph.input and subgraph.output nodes. inputs and outputs are [{name, type}] interface pins.",
+	  MAT_PATH_ARG "," "\"name\":{\"type\":\"string\"}" "," "\"inputs\":{\"type\":\"array\"}" "," "\"outputs\":{\"type\":\"array\"}", "[\"name\"]" },
+	{ "vscript_remove_subgraph", "vscript.remove_subgraph", TOOL_PASS, FALSE, TRUE,
+	  "Remove a named subgraph. The main graph cannot be removed this way.",
+	  MAT_PATH_ARG "," "\"name\":{\"type\":\"string\"}", "[\"name\"]" },
+	{ "vscript_add_comment", "vscript.add_comment", TOOL_PASS, FALSE, FALSE,
+	  "Add a comment frame. width defaults to 240 and height to 120 when omitted.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"text\":{\"type\":\"string\"}" "," "\"x\":{\"type\":\"number\"}" "," "\"y\":{\"type\":\"number\"}" "," "\"width\":{\"type\":\"number\"}" "," "\"height\":{\"type\":\"number\"}" "," "\"color\":{\"type\":\"string\"}", "[\"text\"]" },
+	{ "vscript_remove_comment", "vscript.remove_comment", TOOL_PASS, FALSE, TRUE,
+	  "Remove a comment frame.",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," "\"id\":{\"type\":\"string\"}", "[\"id\"]" },
+	{ "vscript_set_program", "vscript.set_program", TOOL_PASS, FALSE, FALSE,
+	  "Set program fields that were given (one undo step) and return the snapshot.",
+	  MAT_PATH_ARG "," "\"name\":{\"type\":\"string\"}" "," "\"description\":{\"type\":\"string\"}" "," "\"seed\":{\"type\":\"integer\"}" "," "\"step_budget\":{\"type\":\"integer\"}" "," "\"fixed_step\":{\"type\":\"number\"}", NULL },
+	{ "vscript_select", "vscript.select", TOOL_PASS, FALSE, FALSE,
+	  "Select those node ids on the canvas. An empty array clears the selection. Not an undo step. An unknown id is not-found.",
+	  MAT_PATH_ARG "," "\"nodes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}", "[\"nodes\"]" },
+	{ "vscript_validate", "vscript.validate", TOOL_PASS, TRUE, FALSE,
+	  "Validate the program. ok is false when any issue has error severity. Read-only.",
+	  MAT_PATH_ARG, NULL },
+	{ "vscript_run", "vscript.run", TOOL_PASS, TRUE, FALSE,
+	  "Run a copy of the unsaved program headless: event.start, then frames updates (default 1, dt default 1/60), then the named custom event with args. variables overlay the copy and are not saved. steps is the sum of each dispatch. time is completed frames times dt. ok false is still a successful IPC reply.",
+	  MAT_PATH_ARG "," "\"frames\":{\"type\":\"integer\"}" "," "\"dt\":{\"type\":\"number\"}" "," "\"event\":{\"type\":\"string\"}" "," "\"args\":{\"type\":\"array\"}" "," "\"variables\":{\"type\":\"object\"}", NULL },
+	{ "vscript_live", "vscript.live", TOOL_PASS, TRUE, FALSE,
+	  "Running LrgScriptingGraph instances whose path is this file. hits counts executions of main-graph nodes. paused_at is omitted when nothing is paused.",
+	  MAT_PATH_ARG, NULL },
+	{ "vscript_breakpoint", "vscript.breakpoint", TOOL_PASS, FALSE, FALSE,
+	  "Set a node breakpoint for this file's path, including instances already running. graph is accepted and ignored (breakpoints are by node id and path).",
+	  MAT_PATH_ARG "," "\"graph\":{\"type\":\"string\"}" "," NODE_ARG "," "\"enabled\":{\"type\":\"boolean\"}", "[\"node\",\"enabled\"]" },
+	{ "vscript_continue", "vscript.continue", TOOL_PASS, FALSE, FALSE,
+	  "Resume paused instances of this file. resumed is how many were paused.",
+	  MAT_PATH_ARG, NULL },
+	{ "vscript_save", "vscript.save", TOOL_PASS, FALSE, FALSE,
+	  "Save the open document.",
+	  MAT_PATH_ARG, NULL },
+	/* 0.9.0 M8 memory: memory profiler methods */
+	{ "memory_status", "memory.status", TOOL_PASS, TRUE, FALSE,
+	  "Whether instance counts are on, how many types are tracked, whether an asset manager is attached, and a hint.",
+	  "", NULL },
+	{ "memory_types", "memory.types", TOOL_PASS, TRUE, FALSE,
+	  "Live type rows. sort is count (default, descending), bytes or name. filter is a case-sensitive substring and does not change totals. limit defaults to 200.",
+	  "\"filter\":{\"type\":\"string\"}" "," "\"limit\":{\"type\":\"integer\"}" "," "\"sort\":{\"type\":\"string\"}", NULL },
+	{ "memory_resources", "memory.resources", TOOL_PASS, TRUE, FALSE,
+	  "Cached asset resources. kind filters to one known kind; an unknown kind is invalid-params.",
+	  "\"kind\":{\"type\":\"string\"}", NULL },
+	{ "memory_snapshot", "memory.snapshot", TOOL_PASS, FALSE, FALSE,
+	  "Store a snapshot in the panel. id is m1, m2, ... time is microseconds.",
+	  "\"label\":{\"type\":\"string\"}", NULL },
+	{ "memory_snapshots", "memory.snapshots", TOOL_PASS, TRUE, FALSE,
+	  "The stored snapshots.",
+	  "", NULL },
+	{ "memory_diff", "memory.diff", TOOL_PASS, TRUE, FALSE,
+	  "Diff snapshot from against to (default a fresh live snapshot that is not stored; result to is \"live\"). Zero deltas are omitted. limit defaults to 200.",
+	  "\"from\":{\"type\":\"string\"}" "," "\"to\":{\"type\":\"string\"}" "," "\"limit\":{\"type\":\"integer\"}", "[\"from\"]" },
+	{ "memory_clear_snapshots", "memory.clear_snapshots", TOOL_PASS, FALSE, TRUE,
+	  "Drop every stored snapshot. removed is the count.",
+	  "", NULL },
+	{ "memory_history", "memory.history", TOOL_PASS, TRUE, FALSE,
+	  "Sample ring, oldest first. interval is 1. samples 0 returns empty arrays.",
+	  "\"type\":{\"type\":\"string\"}" "," "\"samples\":{\"type\":\"integer\"}", NULL },
+	{ "memory_show", "memory.show", TOOL_PASS, FALSE, FALSE,
+	  "Show and raise the Memory panel. shown is false when the panel was never docked.",
+	  "", NULL },
+	/* 0.9.0 M8 network: network stats methods */
+	{ "network_stats", "network.stats", TOOL_PASS, TRUE, FALSE,
+	  "Totals, per-second rates over window (default 10) and per-peer and per-message rows. An unknown peer is not-found.",
+	  "\"peer\":{\"type\":\"string\"}" "," "\"window\":{\"type\":\"integer\"}", NULL },
+	{ "network_history", "network.history", TOOL_PASS, TRUE, FALSE,
+	  "One series, oldest first. metric is bytes_in, bytes_out, packets_in, packets_out, rtt or lost (dashes or underscores). interval is 1.",
+	  "\"peer\":{\"type\":\"string\"}" "," "\"type\":{\"type\":\"string\"}" "," "\"metric\":{\"type\":\"string\"}" "," "\"seconds\":{\"type\":\"integer\"}", "[\"metric\"]" },
+	{ "network_enable", "network.enable", TOOL_PASS, FALSE, FALSE,
+	  "Turn the collector on or off and pin that choice.",
+	  "\"enabled\":{\"type\":\"boolean\"}", "[\"enabled\"]" },
+	{ "network_reset", "network.reset", TOOL_PASS, FALSE, TRUE,
+	  "Clear the collector's counters.",
+	  "", NULL },
+	{ "network_show", "network.show", TOOL_PASS, FALSE, FALSE,
+	  "Show and raise the Network panel.",
+	  "", NULL },
+	/* 0.9.0 M10: PO, gizmo, letterbox, merge, collab, scenes, VCS */
+	{ "po_extract", "po.extract", TOOL_PASS, TRUE, FALSE,
+	  "Extract @key, tr() and _() translation keys from source text.",
+	  "\"text\":{\"type\":\"string\"}", "[\"text\"]" },
+	{ "po_pseudo", "po.pseudo", TOOL_PASS, TRUE, FALSE,
+	  "Wrap text in a qps-ploc pseudolocale string.",
+	  "\"text\":{\"type\":\"string\"}", "[\"text\"]" },
+	{ "po_import", "po.import", TOOL_PASS, TRUE, FALSE,
+	  "Import a gettext .po file and return one id's translation.",
+	  "\"path\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"}", "[\"path\",\"id\"]" },
+	{ "po_export", "po.export", TOOL_PASS, FALSE, FALSE,
+	  "Write one string into a gettext .po file.",
+	  "\"path\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"text\":{\"type\":\"string\"}", "[\"path\",\"id\",\"text\"]" },
+	{ "gizmo_apply", "gizmo.apply", TOOL_PASS, FALSE, FALSE,
+	  "Snap, drop, align, distribute or surface-snap the selection.",
+	  "\"op\":{\"type\":\"string\"},\"axis\":{\"type\":\"number\"},\"value\":{\"type\":\"number\"}", "[\"op\"]" },
+	{ "gizmo_pivot", "gizmo.pivot", TOOL_PASS, FALSE, FALSE,
+	  "Set the transform pivot to active, median, bounds or cursor.",
+	  "\"mode\":{\"type\":\"string\"}", "[\"mode\"]" },
+	{ "gizmo_cursor", "gizmo.cursor", TOOL_PASS, FALSE, FALSE,
+	  "Set the cursor pivot point.",
+	  "\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"},\"z\":{\"type\":\"number\"}", "[\"x\",\"y\",\"z\"]" },
+	{ "gizmo_origin", "gizmo.origin", TOOL_PASS, TRUE, FALSE,
+	  "The current gizmo origin.",
+	  "", NULL },
+	{ "view_letterbox", "view.letterbox", TOOL_PASS, TRUE, FALSE,
+	  "Fit a game-view preset inside a panel, preserving aspect.",
+	  "\"preset\":{\"type\":\"string\"},\"w\":{\"type\":\"number\"},\"h\":{\"type\":\"number\"}", "[\"preset\",\"w\",\"h\"]" },
+	{ "merge_level", NULL, TOOL_MERGE, FALSE, FALSE,
+	  "Three-way merge a .rlevel by GUID. Writes the result into ours. Conflicts keep ours and are listed. Does not need a running editor.",
+	  "\"base\":{\"type\":\"string\"},\"ours\":{\"type\":\"string\"},\"theirs\":{\"type\":\"string\"}", "[\"base\",\"ours\",\"theirs\"]" },
+	{ "collab_apply", "collab.apply", TOOL_PASS, FALSE, FALSE,
+	  "Apply one multi-user edit. Last writer wins. Older revisions are stale. A lock held by someone else is rejected.",
+	  "\"user\":{\"type\":\"string\"},\"guid\":{\"type\":\"string\"},\"revision\":{\"type\":\"integer\"},\"prop\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}", "[\"user\",\"guid\",\"revision\",\"prop\",\"value\"]" },
+	{ "collab_get", "collab.get", TOOL_PASS, TRUE, FALSE,
+	  "Read one property from the shared op log.",
+	  "\"guid\":{\"type\":\"string\"},\"prop\":{\"type\":\"string\"}", "[\"guid\",\"prop\"]" },
+	{ "collab_lock", "collab.lock", TOOL_PASS, FALSE, FALSE,
+	  "Lock a node for one user.",
+	  "\"user\":{\"type\":\"string\"},\"guid\":{\"type\":\"string\"}", "[\"user\",\"guid\"]" },
+	{ "collab_unlock", "collab.unlock", TOOL_PASS, FALSE, FALSE,
+	  "Release a node lock.",
+	  "\"user\":{\"type\":\"string\"},\"guid\":{\"type\":\"string\"}", "[\"user\",\"guid\"]" },
+	{ "collab_cursor", "collab.cursor", TOOL_PASS, FALSE, FALSE,
+	  "Record a user's presence cursor.",
+	  "\"user\":{\"type\":\"string\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"},\"z\":{\"type\":\"number\"}", "[\"user\",\"x\",\"y\",\"z\"]" },
+	{ "collab_presence", "collab.presence", TOOL_PASS, TRUE, FALSE,
+	  "Users who have a cursor in this session.",
+	  "", NULL },
+	{ "scenes_list", "scenes.list", TOOL_PASS, TRUE, FALSE,
+	  "Open scenes and which one is active.",
+	  "", NULL },
+	{ "scenes_open", "scenes.open", TOOL_PASS, FALSE, FALSE,
+	  "Open a level and make it the active scene.",
+	  "\"path\":{\"type\":\"string\"}", "[\"path\"]" },
+	{ "scenes_active", "scenes.active", TOOL_PASS, FALSE, FALSE,
+	  "Switch the active scene by index and load it.",
+	  "\"index\":{\"type\":\"integer\"}", "[\"index\"]" },
+	{ "vcs_diff", "vcs.diff", TOOL_PASS, TRUE, FALSE,
+	  "git diff HEAD of the project.",
+	  "", NULL },
+	{ "vcs_log", "vcs.log", TOOL_PASS, TRUE, FALSE,
+	  "The last 20 commits.",
+	  "", NULL },
+	{ "vcs_commit", "vcs.commit", TOOL_PASS, FALSE, FALSE,
+	  "Stage everything and commit. The author is libregnum.",
+	  "\"message\":{\"type\":\"string\"}", "[\"message\"]" },
+	{ "vcs_locks", "vcs.locks", TOOL_PASS, TRUE, FALSE,
+	  "git lfs locks. A missing git-lfs is not an error; available is false.",
+	  "", NULL },
+	{ "vcs_magit", "vcs.magit", TOOL_PASS, TRUE, FALSE,
+	  "The Emacs form that opens Magit. Libregnum does not start Emacs.",
+	  "", NULL },
 	/* m67e-generated: end */
 	{ "call_method", NULL, TOOL_RAW, FALSE, TRUE,
 	  "Escape hatch: call any editor IPC method (see docs/editor/ipc-protocol.org or the methods list) with raw params.",
@@ -1882,6 +2070,87 @@ tool_sessions (void)
 	return json_result (node);
 }
 
+/* lrgeditor beside this process, else the one on PATH. */
+static gchar *
+mcp_find_lrgeditor (void)
+{
+	g_autofree gchar *exe = g_file_read_link ("/proc/self/exe", NULL);
+	g_autofree gchar *dir = NULL;
+	gchar            *beside;
+
+	if (exe != NULL)
+	{
+		dir = g_path_get_dirname (exe);
+		beside = g_build_filename (dir, "lrgeditor", NULL);
+		if (g_file_test (beside, G_FILE_TEST_IS_EXECUTABLE))
+			return beside;
+		g_free (beside);
+	}
+	return g_find_program_in_path ("lrgeditor");
+}
+
+static const gchar *
+mcp_arg (JsonObject  *arguments,
+         const gchar *key)
+{
+	if (arguments == NULL || !json_object_has_member (arguments, key))
+		return NULL;
+	if (!JSON_NODE_HOLDS_VALUE (json_object_get_member (arguments, key)))
+		return NULL;
+	if (json_node_get_value_type (json_object_get_member (arguments, key)) != G_TYPE_STRING)
+		return NULL;
+	return json_object_get_string_member (arguments, key);
+}
+
+/* Three-way merge without an editor session. */
+static McpToolResult *
+tool_merge (JsonObject *arguments)
+{
+	const gchar          *base = mcp_arg (arguments, "base");
+	const gchar          *ours = mcp_arg (arguments, "ours");
+	const gchar          *theirs = mcp_arg (arguments, "theirs");
+	g_autofree gchar     *bin = NULL;
+	g_autofree gchar     *err_text = NULL;
+	g_autoptr(GError)     error = NULL;
+	g_autoptr(JsonNode)   node = NULL;
+	gchar                *argv[6];
+	gint                  status = 0;
+	JsonObject           *o;
+	JsonArray            *conflicts;
+	gchar               **lines = NULL;
+	guint                 i;
+
+	if (base == NULL || ours == NULL || theirs == NULL)
+		return error_result ("base, ours and theirs are required");
+	bin = mcp_find_lrgeditor ();
+	if (bin == NULL)
+		return error_result ("lrgeditor is not installed");
+	argv[0] = bin;
+	argv[1] = (gchar *) "--merge";
+	argv[2] = (gchar *) base;
+	argv[3] = (gchar *) ours;
+	argv[4] = (gchar *) theirs;
+	argv[5] = NULL;
+	if (!g_spawn_sync (NULL, argv, NULL, 0, NULL, NULL, NULL, &err_text, &status, &error))
+		return error_result (error->message);
+	if (!g_spawn_check_wait_status (status, &error))
+		return error_result (error != NULL ? error->message : "merge failed");
+
+	o = json_object_new ();
+	conflicts = json_array_new ();
+	if (err_text != NULL)
+		lines = g_strsplit (err_text, "\n", -1);
+	for (i = 0; lines != NULL && lines[i] != NULL; i++)
+		if (g_str_has_prefix (lines[i], "conflict: "))
+			json_array_add_string_element (conflicts, lines[i] + strlen ("conflict: "));
+	g_strfreev (lines);
+	json_object_set_boolean_member (o, "ok", TRUE);
+	json_object_set_array_member (o, "conflicts", conflicts);
+	node = json_node_new (JSON_NODE_OBJECT);
+	json_node_take_object (node, o);
+	return json_result (node);
+}
+
 /* ==========================================================================
  * Dispatch
  * ========================================================================== */
@@ -1922,6 +2191,8 @@ handle_tool (McpServer   *server,
 		                    json_object_get_boolean_member (arguments, "stop")) ? "run.stop" : "run.start");
 		params = json_object_new ();
 		break;
+	case TOOL_MERGE:
+		return tool_merge (arguments);
 	case TOOL_RAW:
 		if (arguments == NULL || !json_object_has_member (arguments, "method"))
 			return error_result ("method is required");

@@ -1,0 +1,62 @@
+#+title: Assets, Export, Projects and Plugins
+#+description: Reference scan, importers, project config and templates, editor plugins, and the export IPC
+#+authors: Zach Podbielniak
+#+categories: libregnum editor
+#+created: 2026-11-07T18:10:00-05:00
+#+updated: 2026-11-07T18:10:00-05:00
+#+version: 1.0
+
+* Assets, Export, Projects and Plugins
+:PROPERTIES:
+:CUSTOM_ID: assets-and-export
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Assets and Export
+#+end_quote
+
+0.9.0 adds the pieces a project needs past the asset browser: a reference index that can rename and delete safely, an importer registry, the extra =project.ryaml= blocks =LrgProject= does not own, two project templates, a C plugin loader, and export IPC on top of =LrgPackWriter= (see [[file:../modules/core/pack-writer.org][Pack Writer]]). The =lrgpack= binary drives the same API from the shell.
+
+** References
+:PROPERTIES:
+:CUSTOM_ID: references
+:END:
+
+=LrgAssetRefs= (=src/editor/lrg-asset-refs.h=) walks text files under a project and records every quoted relative path that names a file which exists. Text means =.yaml=, =.yml=, =.ryaml=, =.lua=, =.py=, =.js=, =.org=, =.json=, =.txt=, =.c=, and any extension that starts with =r= (so =.rlevel= and =.rprefab= count). =.git=, =.hg=, =.svn=, and =build= are skipped.
+
+=lrg_asset_refs_error_quark()= is the domain. Codes are =FAILED=, =IN_USE=, and =EXISTS=. =lrg_asset_refs_new()= makes an empty index. =lrg_asset_refs_scan()= replaces it from a root. =lrg_asset_refs_get_referrers()= returns the files that quote a relative path (transfer full, empty when nothing does). =lrg_asset_refs_rename()= rewrites double-quoted and single-quoted mentions, moves the file and its =.meta= sidecar, then scans again. The destination must not already exist. =lrg_asset_refs_delete()= refuses with =IN_USE= while any quote still points at the path, and otherwise deletes the file and its sidecar.
+
+** Importers
+:PROPERTIES:
+:CUSTOM_ID: importers
+:END:
+
+=LrgAssetImporter= (=src/editor/lrg-asset-importer.h=) is derivable. The =import= vfunc turns a source file into a cooked file. =lrg_asset_importer_error_quark()= covers =FAILED= and =UNSUPPORTED=. =lrg_asset_importer_import()= calls the vfunc. =lrg_asset_importer_model_loadable()= is true for the meshes raylib loads (=.gltf=, =.glb=, =.obj=, =.iqm=, =.vox=, =.m3d=). It is false for =.ply= and =.fbx=. =.ply= is not classified as a model at all: raylib cannot load it, so =lrg_asset_meta_classify()= leaves it unknown. =.fbx= stays a model because an importer is expected to write a glTF or OBJ next to it.
+
+=LrgAssetImporterRegistry= holds importers by name. =lrg_asset_importer_registry_get_default()= and =lrg_asset_importer_registry_new()= both ship =copy= and =generic= (byte copy) and =fbx=. =lrg_asset_importer_registry_register()= takes ownership of the importer. =lrg_asset_importer_registry_lookup()= borrows it. =lrg_asset_importer_registry_names()= lists the names. =lrg_asset_importer_registry_import()= looks a name up and imports. The built-in =fbx= importer calls vendored ufbx (MIT, Copyright (c) 2020 Samuli Raivio, =deps/ufbx/=) and writes an OBJ. =lrg_asset_importer_model_loadable()= stays false for =.fbx= and =.ply= until that OBJ exists, because raylib still cannot load those files itself. =lrg_asset_importer_registry_reimport_if_changed()= skips the import when =dest= exists and =dest.stamp= still holds the source mtime, and otherwise imports and rewrites the stamp. =*changed= is the out flag.
+
+** Project config and templates
+:PROPERTIES:
+:CUSTOM_ID: project-config
+:END:
+
+=LrgProjectConfig= (=src/editor/lrg-project-config.h=) reads the blocks =LrgProject= does not own. =lrg_project_config_error_quark()= has a single =FAILED= code. =lrg_project_config_new_from_file()= parses a =project.ryaml=. =lrg_project_config_get_autoloads()= is the =autoloads:= sequence of script paths. The game host loads that same top-level list with =lrg_game_host_load_autoloads()=: each relative path is joined to the project directory and passed to the engine data loader. A missing =autoloads= key is an empty array. A failed file returns =NULL= and sets the error. =lrg_project_config_get_platform_setting()= looks up a key. A platform of =linux= or =windows= returns that platform's override when the key is set there, otherwise the default =settings:= value. A =NULL= platform reads only the default layer. The returned string is owned by the config. =lrg_project_config_get_steam_app_id()= and =lrg_project_config_get_steam_achievements()= read the =steam:= page (=app-id=, =achievements=).
+
+=lrg_project_template_error_quark()= covers =FAILED=, =EXISTS=, and =UNKNOWN=. =lrg_project_template_count()= and =lrg_project_template_get()= walk the built-in list. Each entry is an =LrgProjectTemplateInfo= with =id=, =title=, and =summary=. =lrg_project_template_instantiate()= writes a project into a directory that does not yet contain =project.ryaml=. =empty= writes the manifest, an =assets/= directory, and =levels/main.rlevel= (one =Root= node, =type: level=). =mod= adds =mods/example/mod.yaml= (=type: script=, =entry_point: mod.lua=) and the script. The manifest includes an empty =autoloads:= list, default and =linux= settings, and a steam page with app id 0.
+
+** Plugins
+:PROPERTIES:
+:CUSTOM_ID: plugins
+:END:
+
+=LrgEditorPluginManager= (=src/editor/lrg-editor-plugin.h=) loads a directory that contains =plugin.yaml= (=name=, =entry=) and a shared object. =lrg_editor_plugin_error_quark()= covers =FAILED= and =UNSUPPORTED=. =lrg_editor_plugin_manager_new()= makes a manager. =lrg_editor_plugin_manager_load()= opens =entry= with =GModule= and calls =lrg_plugin_init=. The symbol receives the manager and an =LrgEditorPluginApi=. Field order is ABI: =add_action=, =add_panel=, =add_inspector=. Do not reorder it. A plugin built this way does not link libregnum; it only calls the three function pointers.
+
+=lrg_editor_plugin_manager_add_action()=, =lrg_editor_plugin_manager_add_panel()=, and =lrg_editor_plugin_manager_add_inspector()= are what those pointers call, and what C code in-process can call directly. =lrg_editor_plugin_manager_list_actions()=, =lrg_editor_plugin_manager_list_panels()=, and =lrg_editor_plugin_manager_list_inspectors()= return the ids. =lrg_editor_plugin_manager_action_label()= is the label registered with an action. =lrg_editor_plugin_manager_panel_title()= is the title registered with a panel id. The manager does not touch the widget tree. Opening a project scans =plugins/*/plugin.yaml= and installs each list: a dock panel whose child is a label named with the panel id, an editor action (no shortcut) plus a Plugins menu row, and an inspector label named =plugin-inspector-= plus the type name (=lrg_editor_inspector_panel_add_plugin_type()=). A second open does not add the panel or the action again. Modules stay open until the manager is disposed.
+
+** Export IPC and lrgpack
+:PROPERTIES:
+:CUSTOM_ID: export-ipc
+:END:
+
+=lrg_editor_export_register()= (=src/editor/lrg-editor-export.h=) registers two methods on an =LrgEditorServer=. =export.profiles= returns the profile ids. =export.run= takes =profile=, =output=, and =project= (the project falls back to the directory given at registration). It scans with cooking off and returns =ok=, =profile=, =output=, and =log=. A missing field is =invalid-params=. =lrgeditor= registers this when the server is created and again whenever the project directory changes, so the fallback tracks the open project. File > Export (=file.export=, no shortcut) opens the same writer in a dialog: a profile combo, an output path, a Run button that leaves the dialog open, and a log label named =export-log=. Project Settings has a Steam tab. Its labels =project-steam-app-id= and =project-steam-achievements= show =lrg_project_config_get_steam_app_id()= and =lrg_project_config_get_steam_achievements()= from the manifest.
+
+=lrgpack= speaks the same operations: =pack=, =export=, =template=, =refs=, =rename=, plus =--help=, =--license=, and =--version= (the library version). =pack= writes an rres. =export= takes =--profile=. =--no-cook= packs original bytes.

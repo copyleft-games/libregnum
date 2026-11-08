@@ -1,0 +1,88 @@
+* LrgNetStats
+:PROPERTIES:
+:CUSTOM_ID: lrgnetstats
+:END:
+=LrgNetStats= counts messages and bytes in each direction, per peer and per message type, keeps a rolling per-second history, and tracks round-trip time and loss. Every method is thread safe.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+=lrg_net_stats_new()= returns an enabled collector (transfer full) with a =LRG_NET_STATS_DEFAULT_WINDOW= (60) second history. =lrg_net_stats_get_default()= returns the process-wide collector (transfer none). That one starts disabled unless the environment variable =LRG_NET_STATS= is =1=. =LrgNetServer=, =LrgNetClient=, =lrg_net_peer_update_rtt()=, the MMO protocol codec and =LrgMmoDatagram= feed the default instance. =lrg_net_stats_new()= counts only what the caller records.
+
+=lrg_net_stats_get_type()= is the GType (=G_DECLARE_FINAL_TYPE=). Properties =enabled= and =window= notify only on change.
+
+** Enabling
+:PROPERTIES:
+:CUSTOM_ID: enabling
+:END:
+=lrg_net_stats_get_enabled()= and =lrg_net_stats_set_enabled()= read and write the flag. A disabled collector ignores every =lrg_net_stats_record_sent()=, =lrg_net_stats_record_received()=, =lrg_net_stats_record_rtt()=, =lrg_net_stats_record_lost()=, =lrg_net_stats_record_ping()= and =lrg_net_stats_record_pong()= and keeps what it already counted. On the default collector, =lrg_net_stats_set_enabled()= also updates the atomic the wire hooks read, so a disabled default costs one atomic load per message and does not take the collector lock.
+
+** Peers and message types
+:PROPERTIES:
+:CUSTOM_ID: peers
+:END:
+A peer key is =address:port=. Message types are the transport nicks =data=, =ping=, =pong=, =handshake= and =disconnect=, plus =mmo:<opcode>= for =lrg_mmo_protocol_encode()= frames and =dtls= for =LrgMmoDatagram= records. A null message type is stored as =unknown=.
+
+=lrg_net_stats_set_peer_connected()= records connect and disconnect. Peers stay listed, with their counters, after they disconnect, until =lrg_net_stats_reset()=. =lrg_net_stats_get_peer_connected()= is true when the last recorded state is connected. A peer that only exchanged traffic counts as connected. =lrg_net_stats_get_peers()= and =lrg_net_stats_get_message_types()= return a sorted, zero-terminated strv (transfer full). An unknown peer's message-type list is an empty strv, not null.
+
+** Counters
+:PROPERTIES:
+:CUSTOM_ID: counters
+:END:
+=LrgNetCounters= holds =packets_in=, =packets_out=, =bytes_in=, =bytes_out= and =lost=. Bytes are the whole frame (header plus payload). =lrg_net_counters_get_type()=, =lrg_net_counters_copy()= and =lrg_net_counters_free()= are the boxed type.
+
+=lrg_net_stats_get_totals()= reads running totals for a peer, a message type, a type on one peer, or everything (both filters null). It returns false, and zeroes the out struct, when that peer or type is unknown. =lrg_net_stats_get_window_counters()= adds the newest history buckets. =seconds= is clamped to the collector window. When both a peer and a message type are passed, only the peer is used: per-peer type traffic has no history. Divide the window counters by the requested seconds for a rate. =lrg_net_stats_get_window()= is the bucket count. =lrg_net_stats_set_window()= clamps to 1 .. =LRG_NET_STATS_MAX_WINDOW= (3600) and drops the history. Totals stay.
+
+=lrg_net_stats_record_lost()= adds to the loss counters. A negative count is a late arrival that had been counted as lost. Totals never go below zero. =lrg_net_stats_get_loss()= is =lost / (lost + packets_in)=, in 0.0 .. 1.0.
+
+** Round trip
+:PROPERTIES:
+:CUSTOM_ID: rtt
+:END:
+=lrg_net_stats_record_ping()= remembers the monotonic time of a sequence. =lrg_net_stats_record_pong()= with the same sequence completes it and records the RTT. An unknown sequence is ignored. The transports call both for ping and pong messages, so a peer that echoes the sequence is enough. =lrg_net_stats_record_rtt()= stores a sample directly: last, minimum, maximum, and an exponentially smoothed average with alpha 1/8. =lrg_net_stats_get_rtt()= writes those four out parameters (any may be null) and returns false when the peer has no sample.
+
+=lrg_net_stats_set_time()= overrides the monotonic clock the buckets and ping timing use. A negative value returns to =g_get_monotonic_time()=. Tests and replays use this so a second of history does not need a second of wall time.
+
+** History
+:PROPERTIES:
+:CUSTOM_ID: history
+:END:
+=lrg_net_stats_metric_get_type()= registers =LrgNetStatsMetric=: =LRG_NET_STATS_METRIC_BYTES_IN=, =LRG_NET_STATS_METRIC_BYTES_OUT=, =LRG_NET_STATS_METRIC_PACKETS_IN=, =LRG_NET_STATS_METRIC_PACKETS_OUT=, =LRG_NET_STATS_METRIC_RTT= (average of the samples in that second, else 0) and =LRG_NET_STATS_METRIC_LOST=. Enum nicks use dashes (=bytes-in=, =bytes-out=, =packets-in=, =packets-out=, =rtt=, =lost=).
+
+=lrg_net_stats_get_history()= returns one double per second for the whole window, oldest first (transfer full). The last value is the current partial second. Seconds without traffic are 0. A set peer ignores the message type. =n_values= is the window length. =lrg_net_stats_reset()= forgets peers, types, counters and buckets.
+
+** Hooks
+:PROPERTIES:
+:CUSTOM_ID: hooks
+:END:
+The wire path does not call the public record functions on every byte when the default collector is disabled. =src/net/lrg-net-buffer-private.h= exposes =_lrg_net_stats_hooks_active()=, =_lrg_net_stats_hook_message()=, =_lrg_net_stats_hook_frame()=, =_lrg_net_stats_hook_peer()=, =_lrg_net_stats_hook_rtt()= and =_lrg_net_stats_hook_lost()=. Send and receive in =lrg-net-buffer.c= hook messages. Server and client connect and disconnect hook the peer. =lrg_net_peer_update_rtt()= hooks RTT. =lrg_mmo_protocol_encode()= and both successful decode paths hook a frame as =mmo:<opcode>= with a null peer. =LrgMmoDatagram= hooks connect, the =dtls= frame (payload plus 12), sequence-gap loss, late arrivals (lost -1) and receives. The replicator does not send bytes itself and has no hook.
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: worked-example
+:END:
+#+begin_src C
+LrgNetStats *stats = lrg_net_stats_get_default ();
+LrgNetCounters window;
+gdouble *bytes_in;
+guint n = 0;
+
+lrg_net_stats_set_enabled (stats, TRUE);
+lrg_net_stats_get_window_counters (stats, NULL, NULL, 10, &window);
+bytes_in = lrg_net_stats_get_history (stats, NULL, NULL,
+                                      LRG_NET_STATS_METRIC_BYTES_IN, &n);
+g_free (bytes_in);
+#+end_src
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+Disabled default hooks are one atomic read. Enabled hooks take the collector lock per message. History is a ring of one-second buckets, not a sample per packet. =lrg_net_stats_get_history()= always returns the full window. Callers that want a shorter tail slice it.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+=lrg_net_stats_get_window()= reads the window length without the collector lock. =lrg_net_stats_get_window_counters()= is the locked sum. Do not confuse the two. Per-peer message-type history is not kept. =get_window_counters= with both filters set follows the peer only. Loss is =lost / (lost + packets_in)=, not sent. The editor network panel borrows =lrg_net_stats_get_default()= and does not unref it. See [[file:../../editor/memory-and-network.org][Memory and network panels]] and [[file:../debug/memory-profiler.org][LrgMemoryProfiler]].

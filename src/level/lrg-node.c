@@ -36,6 +36,8 @@ typedef struct
 	LrgNodePhysics *physics;   /* owned, nullable (0.9.0) */
 	GPtrArray     *components; /* owned LrgComponentDesc* */
 	GPtrArray     *scripts;    /* owned LrgScriptBinding* */
+	GHashTable    *tags;       /* owned set of strings, nullable until first tag */
+	gchar         *level_path; /* owned, nullable: instanced .rlevel */
 
 	LrgPrefabLink *prefab_link; /* owned, nullable: prefab instance roots */
 } LrgNodePrivate;
@@ -55,6 +57,8 @@ enum
 	PROP_VISUAL,
 	PROP_PHYSICS,
 	PROP_PREFAB_LINK,
+	PROP_TAGS,
+	PROP_LEVEL_PATH,
 	N_PROPS
 };
 
@@ -96,6 +100,8 @@ lrg_node_finalize (GObject *object)
 	g_clear_object (&priv->physics);
 	g_clear_pointer (&priv->components, g_ptr_array_unref);
 	g_clear_pointer (&priv->scripts, g_ptr_array_unref);
+	g_clear_pointer (&priv->tags, g_hash_table_unref);
+	g_clear_pointer (&priv->level_path, g_free);
 	g_clear_object (&priv->prefab_link);
 	tree_changed ();
 
@@ -136,6 +142,12 @@ lrg_node_get_property (GObject    *object,
 		break;
 	case PROP_PREFAB_LINK:
 		g_value_set_object (value, priv->prefab_link);
+		break;
+	case PROP_TAGS:
+		g_value_take_boxed (value, lrg_node_get_tags (self));
+		break;
+	case PROP_LEVEL_PATH:
+		g_value_set_string (value, priv->level_path);
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -184,6 +196,12 @@ lrg_node_set_property (GObject      *object,
 		break;
 	case PROP_PREFAB_LINK:
 		lrg_node_set_prefab_link (self, g_value_get_object (value));
+		break;
+	case PROP_TAGS:
+		lrg_node_set_tags (self, g_value_get_boxed (value));
+		break;
+	case PROP_LEVEL_PATH:
+		lrg_node_set_level_path (self, g_value_get_string (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -314,6 +332,34 @@ lrg_node_class_init (LrgNodeClass *klass)
 		                     "Prefab Link",
 		                     "Link of a prefab instance root",
 		                     LRG_TYPE_PREFAB_LINK,
+		                     G_PARAM_READWRITE |
+		                     G_PARAM_STATIC_STRINGS |
+		                     G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNode:tags:
+	 *
+	 * The node's tag set. Empty when the node has no tags.
+	 */
+	properties[PROP_TAGS] =
+		g_param_spec_boxed ("tags",
+		                    "Tags",
+		                    "Tag set",
+		                    G_TYPE_STRV,
+		                    G_PARAM_READWRITE |
+		                    G_PARAM_STATIC_STRINGS |
+		                    G_PARAM_EXPLICIT_NOTIFY);
+
+	/**
+	 * LrgNode:level-path:
+	 *
+	 * Path of a `.rlevel` this node instances, or %NULL.
+	 */
+	properties[PROP_LEVEL_PATH] =
+		g_param_spec_string ("level-path",
+		                     "Level Path",
+		                     "Instanced .rlevel path",
+		                     NULL,
 		                     G_PARAM_READWRITE |
 		                     G_PARAM_STATIC_STRINGS |
 		                     G_PARAM_EXPLICIT_NOTIFY);
@@ -479,6 +525,173 @@ lrg_node_set_is_2d (LrgNode  *self,
 	priv = lrg_node_get_instance_private (self);
 	priv->is_2d = is_2d;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_2D]);
+}
+
+/* ==========================================================================
+ * Tags and level instances
+ * ========================================================================== */
+
+static void
+ensure_tags (LrgNodePrivate *priv)
+{
+	if (priv->tags == NULL)
+		priv->tags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+}
+
+static gint
+tag_cmp (gconstpointer a,
+         gconstpointer b)
+{
+	return g_strcmp0 (*(const gchar * const *) a, *(const gchar * const *) b);
+}
+
+void
+lrg_node_add_tag (LrgNode     *self,
+                  const gchar *tag)
+{
+	LrgNodePrivate *priv;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+	g_return_if_fail (tag != NULL && tag[0] != '\0');
+
+	priv = NODE_PRIV (self);
+	ensure_tags (priv);
+	if (g_hash_table_contains (priv->tags, tag))
+		return;
+	g_hash_table_add (priv->tags, g_strdup (tag));
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TAGS]);
+}
+
+gboolean
+lrg_node_remove_tag (LrgNode     *self,
+                     const gchar *tag)
+{
+	LrgNodePrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_NODE (self), FALSE);
+	g_return_val_if_fail (tag != NULL, FALSE);
+
+	priv = NODE_PRIV (self);
+	if (priv->tags == NULL || !g_hash_table_remove (priv->tags, tag))
+		return FALSE;
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TAGS]);
+	return TRUE;
+}
+
+gboolean
+lrg_node_has_tag (LrgNode     *self,
+                  const gchar *tag)
+{
+	LrgNodePrivate *priv;
+
+	g_return_val_if_fail (LRG_IS_NODE (self), FALSE);
+	g_return_val_if_fail (tag != NULL, FALSE);
+
+	priv = NODE_PRIV (self);
+	return priv->tags != NULL && g_hash_table_contains (priv->tags, tag);
+}
+
+gchar **
+lrg_node_get_tags (LrgNode *self)
+{
+	LrgNodePrivate *priv;
+	GPtrArray      *out;
+	GHashTableIter  iter;
+	gpointer        key;
+
+	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
+
+	priv = NODE_PRIV (self);
+	out = g_ptr_array_new ();
+	if (priv->tags != NULL)
+	{
+		g_hash_table_iter_init (&iter, priv->tags);
+		while (g_hash_table_iter_next (&iter, &key, NULL))
+			g_ptr_array_add (out, g_strdup ((const gchar *) key));
+	}
+	g_ptr_array_sort (out, tag_cmp);
+	g_ptr_array_add (out, NULL);
+	return (gchar **) g_ptr_array_free (out, FALSE);
+}
+
+void
+lrg_node_set_tags (LrgNode             *self,
+                   const gchar * const *tags)
+{
+	LrgNodePrivate *priv;
+	guint           i;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+
+	priv = NODE_PRIV (self);
+	g_clear_pointer (&priv->tags, g_hash_table_unref);
+	if (tags != NULL)
+	{
+		ensure_tags (priv);
+		for (i = 0; tags[i] != NULL; i++)
+		{
+			if (tags[i][0] == '\0' || g_hash_table_contains (priv->tags, tags[i]))
+				continue;
+			g_hash_table_add (priv->tags, g_strdup (tags[i]));
+		}
+	}
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TAGS]);
+}
+
+void
+lrg_node_set_level_path (LrgNode     *self,
+                         const gchar *path)
+{
+	LrgNodePrivate *priv;
+
+	g_return_if_fail (LRG_IS_NODE (self));
+
+	priv = NODE_PRIV (self);
+	if (g_strcmp0 (priv->level_path, path) == 0)
+		return;
+	g_free (priv->level_path);
+	priv->level_path = g_strdup (path);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LEVEL_PATH]);
+}
+
+const gchar *
+lrg_node_get_level_path (LrgNode *self)
+{
+	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
+
+	return NODE_PRIV (self)->level_path;
+}
+
+typedef struct
+{
+	const gchar *tag;
+	GPtrArray   *out;
+} TagCollect;
+
+static gboolean
+collect_tag (LrgNode  *node,
+             gpointer  user_data)
+{
+	TagCollect *collect = user_data;
+
+	if (lrg_node_has_tag (node, collect->tag))
+		g_ptr_array_add (collect->out, node);
+	return TRUE;
+}
+
+GPtrArray *
+lrg_node_collect_tagged (LrgNode     *self,
+                         const gchar *tag)
+{
+	TagCollect collect;
+
+	g_return_val_if_fail (LRG_IS_NODE (self), NULL);
+	g_return_val_if_fail (tag != NULL, NULL);
+
+	collect.tag = tag;
+	collect.out = g_ptr_array_new ();
+	lrg_node_foreach (self, collect_tag, &collect);
+	return collect.out;
 }
 
 /* ==========================================================================
@@ -1130,6 +1343,20 @@ lrg_node_copy_state (LrgNode *self,
 	dst->locked  = src->locked;
 	dst->is_2d   = src->is_2d;
 
+	g_free (dst->level_path);
+	dst->level_path = g_strdup (src->level_path);
+	g_clear_pointer (&dst->tags, g_hash_table_unref);
+	if (src->tags != NULL)
+	{
+		GHashTableIter iter;
+		gpointer       key;
+
+		dst->tags = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+		g_hash_table_iter_init (&iter, src->tags);
+		while (g_hash_table_iter_next (&iter, &key, NULL))
+			g_hash_table_add (dst->tags, g_strdup ((const gchar *) key));
+	}
+
 	/* Transform. */
 	lrg_node_set_location_xyz (self, src->location->x, src->location->y, src->location->z);
 	lrg_node_set_rotation_xyz (self, src->rotation->x, src->rotation->y, src->rotation->z);
@@ -1159,8 +1386,32 @@ lrg_node_copy_state (LrgNode *self,
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VISIBLE]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LOCKED]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_IS_2D]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TAGS]);
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_LEVEL_PATH]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_VISUAL]);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_PHYSICS]);
+}
+
+static gboolean
+tags_equal (GHashTable *a,
+            GHashTable *b)
+{
+	GHashTableIter iter;
+	gpointer       key;
+	guint          na = (a != NULL) ? g_hash_table_size (a) : 0;
+	guint          nb = (b != NULL) ? g_hash_table_size (b) : 0;
+
+	if (na != nb)
+		return FALSE;
+	if (na == 0)
+		return TRUE;
+	g_hash_table_iter_init (&iter, a);
+	while (g_hash_table_iter_next (&iter, &key, NULL))
+	{
+		if (!g_hash_table_contains (b, key))
+			return FALSE;
+	}
+	return TRUE;
 }
 
 static gboolean
@@ -1187,7 +1438,9 @@ lrg_node_state_equal (LrgNode *self,
 	if (g_strcmp0 (a->name, b->name) != 0 ||
 	    !a->visible != !b->visible ||
 	    !a->locked != !b->locked ||
-	    !a->is_2d != !b->is_2d)
+	    !a->is_2d != !b->is_2d ||
+	    g_strcmp0 (a->level_path, b->level_path) != 0 ||
+	    !tags_equal (a->tags, b->tags))
 		return FALSE;
 
 	if (!vec3_equal (a->location, b->location) ||

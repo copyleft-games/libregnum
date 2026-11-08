@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum guide migration
 #+created: 2026-11-06T23:59:00-05:00
-#+updated: 2026-11-06T23:59:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
 #+version: 0.1
 
 * Migrating from 0.8 to 0.9
@@ -105,14 +105,6 @@ The editor's matrix helpers moved to core as [[file:../modules/core/math3d.org][
 :END:
 The =Libregnum-1= namespace keeps every type and function name. New in M0: namespace functions =Libregnum.math3d_*= (fixed-size float arrays) and the =Libregnum.Node= methods =get_local_matrix= / =get_world_matrix=. A typelib from a =BUILD_EDITOR=0= build now contains =Level=, =Node=, =LevelSerializer=, =PrefabLink= and the prefab functions as well.
 
-** See also
-:PROPERTIES:
-:CUSTOM_ID: migration-0-9-see-also
-:END:
-- [[file:../modules/level/index.org][Runtime Level Module]]
-- [[file:../modules/core/math3d.org][3D Math (lrg-math3d)]]
-- [[file:editor-migration-0-8-1.org][Migrating to the 0.8.1 Editor]]
-
 ** Play-in-editor objects
 :PROPERTIES:
 :CUSTOM_ID: migration-play-objects
@@ -142,3 +134,30 @@ The =Libregnum-1= namespace keeps every type and function name. New in M0: names
 | A contact at depth exactly 0 counts as touching | resting contacts are reported | none |
 | Shape bodies default to friction 0.5, restitution 0, damping 0.05; 0.8 primitives keep the world material and zero damping | new bodies slide less | set materials explicitly |
 | =get_contact()= keeps the "pushes A out" normal; =LrgDynamicsContact= uses the A-to-B normal | two conventions | read the docs of the call you use |
+
+** Added in 0.9.0, no 0.8 caller has to change
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-additions
+:END:
+These are new. Old calls keep their meaning. The pages have the schemas.
+
+| Area | What you can call | Notes |
+|------+--------------------+-------|
+| Levels | =lrg_node_add_tag()=, =lrg_node_set_level_path()=, =lrg_level_instance_mount()=, =LrgLevelStream= | =level:= and =tags:= are written by the serializer. Childless sub-levels instantiate to depth 8. |
+| Packs | =LrgPackWriter=, =lrgpack=, IPC =export.profiles= / =export.run= | [[file:../modules/core/pack-writer.org][pack writer]] |
+| Locales | =lrg_po_import_file()=, =lrg_po_export_file()=, =lrg_po_extract()=, =lrg_po_pseudolocalize()= | [[file:../modules/i18n/po.org][PO]] |
+| Editor-only (=BUILD_EDITOR=1=) | =lrg_editor_gizmo_apply()=, =lrg_level_merge_files()=, =lrg_level_merge_install_driver()=, =LrgCollabSession=, =lrg_editor_scenes_ensure()=, =lrg_game_view_letterbox()=, =lrg_editor_vcs_panel_new()= | [[file:../editor/workflows.org][workflows]]. These are IPC methods (=gizmo.*=, =scenes.*=, =collab.*=, =po.*=, =export.*=) and =lrgeditorctl= verbs. =lrgeditorctl merge= installs =lrgeditor --merge %O %A %B=. |
+| UI documents | =lrg_ui_layout_place()=, =lrg_editor_ui_layout_editor_place()=, =lrg_ui_animation_sample()=, =lrg_inspector_nested_get()= | [[file:../editor/workflows.org][workflows]] |
+| Level audio and nav | =lrg_level_set_audio_mixer()=, nav-agent =destination-x= / =target-node=, =lrg_nav_bake_set_tile_extent()= | A named mixer that fails to load fails instantiate. Tile extent 0 is one bake and is not stored in =.rnav=. |
+
+A game that only loads levels can ignore every row except the level one. =examples/game-showcase-3d --self-test= exercises the set without a window.
+
+** See also
+:PROPERTIES:
+:CUSTOM_ID: migration-0-9-see-also
+:END:
+- [[file:../modules/level/index.org][Runtime Level Module]]
+- [[file:../modules/level/streaming.org][Streaming and instances]]
+- [[file:../modules/core/math3d.org][3D Math (lrg-math3d)]]
+- [[file:../CHANGELOG.org][Changelog]]
+- [[file:editor-migration-0-8-1.org][Migrating to the 0.8.1 Editor]]

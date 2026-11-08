@@ -221,6 +221,98 @@ void lrg_node_set_is_2d (LrgNode  *self,
                          gboolean  is_2d);
 
 /* ==========================================================================
+ * Tags and level instances
+ * ========================================================================== */
+
+/**
+ * lrg_node_add_tag:
+ * @self: an #LrgNode
+ * @tag: a tag
+ *
+ * Adds a tag. Tags are a set: adding the same tag twice is a no-op.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_add_tag (LrgNode     *self,
+                       const gchar *tag);
+
+/**
+ * lrg_node_remove_tag:
+ * @self: an #LrgNode
+ * @tag: a tag
+ *
+ * Returns: %TRUE if the tag was present
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_remove_tag (LrgNode     *self,
+                              const gchar *tag);
+
+/**
+ * lrg_node_has_tag:
+ * @self: an #LrgNode
+ * @tag: a tag
+ *
+ * Returns: %TRUE if the node has @tag
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_node_has_tag (LrgNode     *self,
+                           const gchar *tag);
+
+/**
+ * lrg_node_get_tags:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer full) (array zero-terminated=1): the tags, sorted
+ */
+LRG_AVAILABLE_IN_ALL
+gchar ** lrg_node_get_tags (LrgNode *self);
+
+/**
+ * lrg_node_set_tags:
+ * @self: an #LrgNode
+ * @tags: (array zero-terminated=1) (nullable) (transfer none): the new set
+ *
+ * Replaces the tag set. %NULL clears it.
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_tags (LrgNode             *self,
+                        const gchar * const *tags);
+
+/**
+ * lrg_node_set_level_path:
+ * @self: an #LrgNode
+ * @path: (nullable) (type filename): a `.rlevel` this node instances
+ *
+ * Records the level file this node stands for. Play loads that file
+ * when the node has no children; the editor mounts the children with
+ * lrg_level_instance_mount().
+ */
+LRG_AVAILABLE_IN_ALL
+void lrg_node_set_level_path (LrgNode     *self,
+                              const gchar *path);
+
+/**
+ * lrg_node_get_level_path:
+ * @self: an #LrgNode
+ *
+ * Returns: (transfer none) (nullable): the instanced level path
+ */
+LRG_AVAILABLE_IN_ALL
+const gchar * lrg_node_get_level_path (LrgNode *self);
+
+/**
+ * lrg_node_collect_tagged:
+ * @self: the subtree root
+ * @tag: the tag to match
+ *
+ * Returns: (transfer container) (element-type LrgNode): @self and every
+ *   descendant that has @tag, in depth-first pre-order. The nodes are
+ *   borrowed.
+ */
+LRG_AVAILABLE_IN_ALL
+GPtrArray * lrg_node_collect_tagged (LrgNode     *self,
+                                     const gchar *tag);
+
+/* ==========================================================================
  * Transform (local TRS)
  * ========================================================================== */
 
@@ -625,9 +717,9 @@ LrgNode * lrg_node_find_by_path (LrgNode     *self,
  * @source: the node to copy from
  *
  * Copies the node's own editable state from @source into @self: name, flags,
- * local transform, and deep copies of the visual payload, component
- * descriptions and script bindings. The GUID, parent and children of @self
- * are left untouched, and so is the prefab link (#LrgNode:prefab-link).
+ * tags, level path, local transform, and deep copies of the visual payload,
+ * component descriptions and script bindings. The GUID, parent and children
+ * of @self are left untouched, and so is the prefab link (#LrgNode:prefab-link).
  * This is the primitive behind the editor's
  * snapshot-based undo (see lrg_editor_snapshot_node()).
  */

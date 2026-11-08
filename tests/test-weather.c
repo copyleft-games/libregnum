@@ -733,6 +733,167 @@ test_manager_transition (void)
     g_assert_cmpstr (lrg_weather_manager_get_active_weather_id (manager), ==, "rainy");
 }
 
+/* A crossfade leaves both sides part way to their level. An instant
+ * switch has to put those back, or the next time they run they stay faded. */
+static void
+test_manager_instant_during_transition (void)
+{
+    g_autoptr(LrgWeatherManager) manager = NULL;
+    g_autoptr(LrgWeather) clear = NULL;
+    g_autoptr(LrgWeather) rainy = NULL;
+    g_autoptr(LrgWeather) storm = NULL;
+    g_autoptr(LrgFog) clear_fog = NULL;
+    g_autoptr(LrgFog) rainy_fog = NULL;
+    g_autoptr(LrgFog) storm_fog = NULL;
+
+    manager = lrg_weather_manager_new ();
+    clear = lrg_weather_new ("clear", "Clear");
+    rainy = lrg_weather_new ("rainy", "Rainy");
+    storm = lrg_weather_new ("storm", "Storm");
+    clear_fog = lrg_fog_new ();
+    rainy_fog = lrg_fog_new ();
+    storm_fog = lrg_fog_new ();
+    lrg_weather_effect_set_level (LRG_WEATHER_EFFECT (clear_fog), 0.4f);
+    lrg_weather_effect_set_level (LRG_WEATHER_EFFECT (rainy_fog), 0.8f);
+    lrg_weather_effect_set_level (LRG_WEATHER_EFFECT (storm_fog), 1.0f);
+    lrg_weather_add_effect (clear, LRG_WEATHER_EFFECT (clear_fog));
+    lrg_weather_add_effect (rainy, LRG_WEATHER_EFFECT (rainy_fog));
+    lrg_weather_add_effect (storm, LRG_WEATHER_EFFECT (storm_fog));
+    lrg_weather_manager_register_weather (manager, clear);
+    lrg_weather_manager_register_weather (manager, rainy);
+    lrg_weather_manager_register_weather (manager, storm);
+
+    lrg_weather_manager_set_weather (manager, "clear", 0.0f);
+    lrg_weather_manager_set_weather (manager, "rainy", 2.0f);
+    lrg_weather_manager_update (manager, 1.0f);
+
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (clear_fog)), 0.2f, 1e-4f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (rainy_fog)), 0.4f, 1e-4f);
+
+    /* Snap onto the fade target. */
+    lrg_weather_manager_set_weather (manager, "rainy", 0.0f);
+    g_assert_false (lrg_weather_manager_is_transitioning (manager));
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (clear_fog)), 0.4f, 1e-4f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (rainy_fog)), 0.8f, 1e-4f);
+    g_assert_false (lrg_weather_is_active (clear));
+    g_assert_true (lrg_weather_is_active (rainy));
+
+    /* And cut a fade off onto a third weather. */
+    lrg_weather_manager_set_weather (manager, "clear", 2.0f);
+    lrg_weather_manager_update (manager, 1.0f);
+    lrg_weather_manager_set_weather (manager, "storm", 0.0f);
+
+    g_assert_false (lrg_weather_manager_is_transitioning (manager));
+    g_assert_cmpstr (lrg_weather_manager_get_active_weather_id (manager), ==, "storm");
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (clear_fog)), 0.4f, 1e-4f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (rainy_fog)), 0.8f, 1e-4f);
+    g_assert_cmpfloat_with_epsilon (
+        lrg_weather_effect_get_intensity (LRG_WEATHER_EFFECT (storm_fog)), 1.0f, 1e-4f);
+    g_assert_false (lrg_weather_is_active (clear));
+    g_assert_false (lrg_weather_is_active (rainy));
+    g_assert_true (lrg_weather_is_active (storm));
+}
+
+/* The 2D pass covers the stored render target, and screen-space rain
+ * with the stock 1280x720 area adopts it. A custom area and world-space
+ * rain do not. Headless: nothing is drawn. */
+static void
+test_manager_render_size (void)
+{
+    g_autoptr(LrgWeatherManager) manager = NULL;
+    g_autoptr(LrgWeather) rainy = NULL;
+    g_autoptr(LrgRain) rain = NULL;
+    g_autoptr(LrgFog) fog = NULL;
+    g_autoptr(LrgRain) world_rain = NULL;
+    gint vw = 0;
+    gint vh = 0;
+    gint mw = 0;
+    gint mh = 0;
+    gfloat x = -1.0f;
+    gfloat y = -1.0f;
+    gfloat w = 0.0f;
+    gfloat h = 0.0f;
+
+    manager = lrg_weather_manager_new ();
+    rainy = lrg_weather_new ("rainy", "Rainy");
+    rain = lrg_rain_new ();
+    fog = lrg_fog_new ();
+    world_rain = lrg_rain_new ();
+    lrg_weather_add_effect (rainy, LRG_WEATHER_EFFECT (rain));
+    lrg_weather_add_effect (rainy, LRG_WEATHER_EFFECT (fog));
+    lrg_weather_manager_register_weather (manager, rainy);
+    lrg_weather_manager_set_render_size (manager, 1920, 1080);
+    lrg_weather_manager_get_render_size (manager, &mw, &mh);
+    g_assert_cmpint (mw, ==, 1920);
+    g_assert_cmpint (mh, ==, 1080);
+
+    lrg_weather_manager_set_weather (manager, "rainy", 0.0f);
+    lrg_weather_manager_render (manager);
+
+    lrg_weather_effect_get_viewport (LRG_WEATHER_EFFECT (rain), &vw, &vh);
+    g_assert_cmpint (vw, ==, 1920);
+    g_assert_cmpint (vh, ==, 1080);
+    lrg_weather_effect_get_viewport (LRG_WEATHER_EFFECT (fog), &vw, &vh);
+    g_assert_cmpint (vw, ==, 1920);
+    g_assert_cmpint (vh, ==, 1080);
+
+    lrg_rain_get_area (rain, &x, &y, &w, &h);
+    g_assert_cmpfloat (x, ==, 0.0f);
+    g_assert_cmpfloat (y, ==, 0.0f);
+    g_assert_cmpfloat (w, ==, 1920.0f);
+    g_assert_cmpfloat (h, ==, 1080.0f);
+
+    /* A caller-chosen area is left alone. */
+    lrg_rain_set_area (rain, 100.0f, 100.0f, 50.0f, 50.0f);
+    lrg_weather_manager_render (manager);
+    lrg_rain_get_area (rain, &x, &y, &w, &h);
+    g_assert_cmpfloat (x, ==, 100.0f);
+    g_assert_cmpfloat (y, ==, 100.0f);
+    g_assert_cmpfloat (w, ==, 50.0f);
+    g_assert_cmpfloat (h, ==, 50.0f);
+
+    /* World-space rain keeps the 1280x720 default. */
+    lrg_weather_effect_set_space (LRG_WEATHER_EFFECT (world_rain), LRG_WEATHER_SPACE_WORLD);
+    lrg_rain_set_area (world_rain, 0.0f, 0.0f, 1280.0f, 720.0f);
+    lrg_weather_add_effect (rainy, LRG_WEATHER_EFFECT (world_rain));
+    lrg_weather_manager_render (manager);
+    lrg_rain_get_area (world_rain, &x, &y, &w, &h);
+    g_assert_cmpfloat (w, ==, 1280.0f);
+    g_assert_cmpfloat (h, ==, 720.0f);
+    lrg_weather_effect_get_viewport (LRG_WEATHER_EFFECT (world_rain), &vw, &vh);
+    g_assert_cmpint (vw, ==, 1920);
+    g_assert_cmpint (vh, ==, 1080);
+}
+
+/* A live bolt is a full-bright core inside a wider halo, not one dull ribbon. */
+static void
+test_lightning_bolt_layers (void)
+{
+    g_autoptr(LrgLightning) bolt = NULL;
+    guint8 core_a = 0;
+    guint8 halo_a = 0;
+    gfloat core_w = 0.0f;
+    gfloat halo_w = 0.0f;
+
+    bolt = lrg_lightning_new ();
+    g_assert_false (lrg_lightning_get_bolt_layers (bolt, &core_a, &core_w, &halo_a, &halo_w));
+
+    lrg_weather_effect_activate (LRG_WEATHER_EFFECT (bolt));
+    lrg_lightning_set_bolts_enabled (bolt, TRUE);
+    lrg_lightning_trigger_flash (bolt);
+
+    g_assert_true (lrg_lightning_get_bolt_layers (bolt, &core_a, &core_w, &halo_a, &halo_w));
+    g_assert_cmpuint (core_a, ==, 255);
+    g_assert_cmpfloat (halo_w, >, core_w);
+    g_assert_cmpfloat (core_w, >, 0.0f);
+}
+
 static void
 test_manager_update (void)
 {
@@ -845,6 +1006,7 @@ main (int   argc,
     g_test_add_func ("/weather/lightning/flash", test_lightning_flash);
     g_test_add_func ("/weather/lightning/thunder", test_lightning_thunder);
     g_test_add_func ("/weather/lightning/trigger", test_lightning_trigger);
+    g_test_add_func ("/weather/lightning/bolt-layers", test_lightning_bolt_layers);
 
     /* Weather state tests */
     g_test_add_func ("/weather/state/new", test_weather_new);
@@ -873,6 +1035,8 @@ main (int   argc,
     g_test_add_func ("/weather/manager/day-night-cycle", test_manager_day_night_cycle);
     g_test_add_func ("/weather/manager/combined-ambient", test_manager_combined_ambient);
     g_test_add_func ("/weather/manager/transition", test_manager_transition);
+    g_test_add_func ("/weather/manager/instant-during-transition", test_manager_instant_during_transition);
+    g_test_add_func ("/weather/manager/render-size", test_manager_render_size);
     g_test_add_func ("/weather/manager/update", test_manager_update);
 
     /* Weather effect base tests */

@@ -12,8 +12,12 @@
 #include "lrg-level.h"
 #include "lrg-node.h"
 #include "lrg-node-visual.h"
+#include "lrg-node-tilemap.h"
+#include "../tilemap/lrg-tilemap.h"
+#include "../graphics/lrg-terrain-asset.h"
 #include "../lrg-enums.h"
 #include <graylib.h>
+#include <glib/gstdio.h>
 #include <math.h>
 #include <string.h>
 
@@ -212,6 +216,71 @@ lrg_editor_world_to_local (LrgNode      *parent,
 	return lrg_editor_math_decompose (local, location, rotation, scale);
 }
 
+/* tilemap_local_bounds:
+ * A TILEMAP node covers its grid, not a unit sprite. Orthogonal cells
+ * are tile_size world units (row 0 along y = 0, rows down -Y). Other
+ * orientations use the same pixel map size as LrgTilemap, scaled by
+ * tile_size / cell width and flipped in Y. */
+static gboolean
+tilemap_local_bounds (LrgNodeVisual *visual,
+                      gfloat        *min,
+                      gfloat        *max)
+{
+	LrgNodeTilemap        *grid;
+	LrgTilemapOrientation  orientation;
+	LrgTilemapStaggerAxis  axis;
+	guint                  hex = 0, cw = 0, ch = 0;
+	guint                  w, h;
+	gdouble                size;
+	gfloat                 ts, s, pw, ph, along, side, side_offset;
+
+	grid = lrg_node_visual_get_tilemap (visual);
+	if (grid == NULL)
+		return FALSE;
+	w = lrg_node_tilemap_get_width (grid);
+	h = lrg_node_tilemap_get_height (grid);
+	if (w == 0 || h == 0)
+		return FALSE;
+
+	size = lrg_node_visual_get_param_double (visual, "tile_size", 1.0);
+	ts = (size > 0.0) ? (gfloat) size : 1.0f;
+	lrg_node_tilemap_get_grid (grid, &orientation, &axis, NULL, &hex, &cw, &ch);
+
+	if (orientation == LRG_TILEMAP_ORIENTATION_ORTHOGONAL || cw == 0 || ch == 0)
+	{
+		v3_set (min, 0.0f, -(gfloat) h * ts, -THIN_HALF_EXTENT);
+		v3_set (max, (gfloat) w * ts, 0.0f, THIN_HALF_EXTENT);
+		return TRUE;
+	}
+
+	s = ts / (gfloat) cw;
+	if (orientation == LRG_TILEMAP_ORIENTATION_ISOMETRIC)
+	{
+		pw = (gfloat) (w + h) * (gfloat) cw * 0.5f;
+		ph = (gfloat) (w + h) * (gfloat) ch * 0.5f;
+	}
+	else
+	{
+		along = (axis == LRG_TILEMAP_STAGGER_AXIS_X) ? (gfloat) cw : (gfloat) ch;
+		side = (hex > 0) ? MIN ((gfloat) hex, along) : along * 0.5f;
+		side_offset = (along - side) * 0.5f;
+		if (axis == LRG_TILEMAP_STAGGER_AXIS_X)
+		{
+			pw = (gfloat) w * (side_offset + side) + side_offset;
+			ph = (gfloat) h * (gfloat) ch + ((w > 1) ? (gfloat) ch * 0.5f : 0.0f);
+		}
+		else
+		{
+			pw = (gfloat) w * (gfloat) cw + ((h > 1) ? (gfloat) cw * 0.5f : 0.0f);
+			ph = (gfloat) h * (side_offset + side) + side_offset;
+		}
+	}
+
+	v3_set (min, 0.0f, -ph * s, -THIN_HALF_EXTENT);
+	v3_set (max, pw * s, 0.0f, THIN_HALF_EXTENT);
+	return TRUE;
+}
+
 gboolean
 lrg_editor_node_get_local_bounds (LrgNode *node,
                                   gfloat  *min,
@@ -248,7 +317,11 @@ lrg_editor_node_get_local_bounds (LrgNode *node,
 		}
 		break;
 	case LRG_NODE_VISUAL_SPRITE:
+		hz = THIN_HALF_EXTENT;
+		break;
 	case LRG_NODE_VISUAL_TILEMAP:
+		if (tilemap_local_bounds (visual, min, max))
+			return TRUE;
 		hz = THIN_HALF_EXTENT;
 		break;
 	case LRG_NODE_VISUAL_MESH_ASSET:
@@ -761,6 +834,117 @@ lrg_editor_ray_plane (const gfloat *origin,
 	return TRUE;
 }
 
+typedef struct
+{
+	gchar           *path;
+	gint64           mtime;
+	LrgTerrainAsset *asset;
+} TerrainPick;
+
+static void
+terrain_pick_free (gpointer data)
+{
+	TerrainPick *pick = data;
+
+	g_free (pick->path);
+	g_clear_object (&pick->asset);
+	g_free (pick);
+}
+
+/* The .rterrain for a terrain node, or NULL when there is nothing to
+ * raycast (not a terrain, no asset, or the file did not load). A loaded
+ * asset is kept on the node and replaced when the file's mtime changes. */
+static LrgTerrainAsset *
+terrain_asset_for_node (LrgNode *node)
+{
+	LrgNodeVisual *visual;
+	const gchar   *ref;
+	const gchar   *level_path;
+	g_autofree gchar *path = NULL;
+	TerrainPick   *pick;
+	GStatBuf       st;
+
+	visual = lrg_node_get_visual (node);
+	if (visual == NULL || lrg_node_visual_get_kind (visual) != LRG_NODE_VISUAL_TERRAIN)
+		return NULL;
+	ref = lrg_node_visual_get_asset (visual);
+	if (ref == NULL || ref[0] == '\0')
+		return NULL;
+
+	if (g_path_is_absolute (ref))
+		path = g_strdup (ref);
+	else
+	{
+		g_autofree gchar *dir = NULL;
+
+		level_path = lrg_node_get_level_path (node);
+		if (level_path == NULL || level_path[0] == '\0')
+			return NULL;
+		dir = g_path_get_dirname (level_path);
+		path = g_build_filename (dir, ref, NULL);
+	}
+	if (!g_file_test (path, G_FILE_TEST_IS_REGULAR) || g_stat (path, &st) != 0)
+		return NULL;
+
+	pick = g_object_get_data (G_OBJECT (node), "lrg-editor-terrain-pick");
+	if (pick != NULL && g_strcmp0 (pick->path, path) == 0
+	    && pick->mtime == (gint64) st.st_mtime && pick->asset != NULL)
+		return pick->asset;
+
+	{
+		g_autoptr(GError) error = NULL;
+		LrgTerrainAsset *asset = lrg_terrain_asset_new_from_file (path, &error);
+
+		if (asset == NULL)
+			return NULL;
+		if (pick == NULL)
+		{
+			pick = g_new0 (TerrainPick, 1);
+			g_object_set_data_full (G_OBJECT (node), "lrg-editor-terrain-pick",
+			                        pick, terrain_pick_free);
+		}
+		else
+		{
+			g_free (pick->path);
+			g_clear_object (&pick->asset);
+		}
+		pick->path = g_strdup (path);
+		pick->mtime = (gint64) st.st_mtime;
+		pick->asset = asset;
+		return pick->asset;
+	}
+}
+
+/* Heightfield hit in local ray units. *handled is TRUE when an asset
+ * loaded, so a miss is a miss (the node box is not a stand-in). */
+static gboolean
+terrain_ray_t (LrgNode      *node,
+               const gfloat *origin,
+               const gfloat *direction,
+               gfloat       *t,
+               gboolean     *handled)
+{
+	LrgTerrainAsset *asset;
+	gfloat           hit[3];
+	gfloat           diff[3];
+	gfloat           denom;
+
+	*handled = FALSE;
+	asset = terrain_asset_for_node (node);
+	if (asset == NULL)
+		return FALSE;
+
+	*handled = TRUE;
+	if (!lrg_terrain_asset_raycast (asset, origin, direction, 1.0e6f, hit))
+		return FALSE;
+	v3_sub (hit, origin, diff);
+	denom = v3_dot (direction, direction);
+	if (denom < 1e-12f)
+		return FALSE;
+	*t = v3_dot (diff, direction) / denom;
+	return *t >= 0.0f;
+}
+
 gboolean
 lrg_editor_ray_node (LrgNode      *node,
                      const gfloat *origin,
@@ -784,10 +968,22 @@ lrg_editor_ray_node (LrgNode      *node,
 	 * point back to measure the world distance. */
 	lrg_editor_math_transform_point (inv, origin, lo);
 	lrg_editor_math_transform_direction (inv, direction, ld);
+
+	{
+		gboolean handled = FALSE;
+
+		if (terrain_ray_t (node, lo, ld, &t, &handled))
+			goto have_hit;
+		if (handled)
+			return FALSE;
+	}
+
 	lrg_editor_node_get_local_bounds (node, min, max);
 
 	if (!lrg_editor_ray_aabb (lo, ld, min, max, &t))
 		return FALSE;
+
+have_hit:
 
 	if (distance != NULL)
 	{

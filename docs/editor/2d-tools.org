@@ -375,7 +375,7 @@ lrgeditorctl call sprite.save
 - *Y is snap.* Vertical flip is Shift+X; rebind it if you prefer (Preferences > Keybindings), but a duplicate chord makes one of the two actions unreachable.
 - *Grid frames have no own rectangle.* Edit the grid (and re-slice) or add explicit frames; removing grid frames means re-slicing.
 - *Re-slicing keeps clips* by frame index: check the clips after changing the frame count.
-- *The runtime 3D tilemap component draws orthogonal grids without transform bits* as of 0.9.0; 2D games drawing with =LrgTilemap= get orientations, transforms and animated tiles.
+- *The runtime 3D tilemap component draws orthogonal, isometric, staggered and hexagonal cells and honors flip and rotation bits.* =lrg_tilemap_component_get_cell_quad()= is the quad =draw_layer= emits, headless. A dedicated second shortcut that flips a tile vertically without sharing the snap chord is left for a later release. Y while a tilemap stroke is active is the vertical flip that is already registered.
 
 ** Using it from code and the runtime
 :PROPERTIES:

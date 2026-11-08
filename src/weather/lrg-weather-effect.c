@@ -36,6 +36,8 @@ typedef struct
     gfloat   volume_height;
     gfloat   camera[3];
     gfloat   level;          /* full-strength intensity, < 0 when unset */
+    gint     viewport_w;     /* 2D overlay size; 0 = unset */
+    gint     viewport_h;
 } LrgWeatherEffectPrivate;
 
 G_DEFINE_TYPE_WITH_PRIVATE (LrgWeatherEffect, lrg_weather_effect, G_TYPE_OBJECT)
@@ -1033,4 +1035,74 @@ lrg_weather_effect_get_full_intensity (LrgWeatherEffect *self)
 
     priv = lrg_weather_effect_get_instance_private (self);
     return priv->level < 0.0f ? 1.0f : priv->level;
+}
+
+void
+lrg_weather_effect_set_viewport (LrgWeatherEffect *self,
+                                 gint              width,
+                                 gint              height)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    /* A non-positive axis means "no explicit target". */
+    if (width <= 0 || height <= 0)
+    {
+        priv->viewport_w = 0;
+        priv->viewport_h = 0;
+        return;
+    }
+    priv->viewport_w = width;
+    priv->viewport_h = height;
+}
+
+void
+lrg_weather_effect_get_viewport (LrgWeatherEffect *self,
+                                 gint             *width,
+                                 gint             *height)
+{
+    LrgWeatherEffectPrivate *priv;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    if (width != NULL)
+        *width = priv->viewport_w;
+    if (height != NULL)
+        *height = priv->viewport_h;
+}
+
+void
+lrg_weather_effect_resolve_viewport (LrgWeatherEffect *self,
+                                     gint             *width,
+                                     gint             *height)
+{
+    LrgWeatherEffectPrivate *priv;
+    gint w;
+    gint h;
+
+    g_return_if_fail (LRG_IS_WEATHER_EFFECT (self));
+
+    priv = lrg_weather_effect_get_instance_private (self);
+    w = priv->viewport_w;
+    h = priv->viewport_h;
+    if (w <= 0 || h <= 0)
+    {
+        if (lrg_weather_can_draw ())
+        {
+            w = GetRenderWidth ();
+            h = GetRenderHeight ();
+        }
+        else
+        {
+            w = 0;
+            h = 0;
+        }
+    }
+    if (width != NULL)
+        *width = w;
+    if (height != NULL)
+        *height = h;
 }

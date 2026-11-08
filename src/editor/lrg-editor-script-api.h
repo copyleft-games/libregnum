@@ -234,11 +234,15 @@ gboolean lrg_editor_script_api_run_string (LrgEditorScriptApi  *self,
  *   project directory
  * @language: its language, or %LRG_SCRIPT_LANGUAGE_NONE to pick one from
  *   the file extension
+ * @result: (out) (optional) (nullable) (transfer full): the value of the
+ *   chunk when it returns one (Lua: every returned value, tab-separated;
+ *   Python: repr()), %NULL for a statement or in Gjs
  * @error: return location for an error
  *
  * Runs a script file in a fresh context (the "Run Script..." command), as
  * one undo step labelled "Run <basename>". A file run again replaces its
- * previous context; menu items it registers stay until then.
+ * previous context; menu items it registers stay until then. The return
+ * value is captured the same way as lrg_editor_script_api_run_string().
  *
  * Returns: %TRUE on success
  */
@@ -246,6 +250,7 @@ LRG_AVAILABLE_IN_ALL
 gboolean lrg_editor_script_api_run_file (LrgEditorScriptApi  *self,
                                          const gchar         *path,
                                          LrgScriptLanguage    language,
+                                         gchar              **result,
                                          GError             **error);
 
 /**

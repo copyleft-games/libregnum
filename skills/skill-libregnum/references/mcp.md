@@ -136,4 +136,7 @@ Language server: lsp_servers (ro), lsp_status (ro), lsp_diagnostics (ro), lsp_co
 Profiler capture: profiler_set, profiler_capture, profiler_save, profiler_load, profiler_frames (ro), profiler_frame (ro), profiler_compare (ro), profiler_view.
 Frame debugger: frame_capture, frame_status (ro), frame_calls (ro), frame_call (ro), frame_scrub, frame_texture, frame_save, frame_load, frame_show.
 Tool script: script_run, script_languages (ro), script_tools (ro), script_run_tool, script_reload, script_run_in_editor, script_editor_running (ro).
+Visual script: vscript_create, vscript_open, vscript_get (ro), vscript_node_types (ro), vscript_gi_search (ro), vscript_add_node, vscript_remove_node (destructive), vscript_set_node, vscript_connect, vscript_disconnect, vscript_set_variable, vscript_add_subgraph, vscript_remove_subgraph (destructive), vscript_add_comment, vscript_remove_comment (destructive), vscript_set_program, vscript_select, vscript_validate (ro), vscript_run (ro), vscript_live (ro), vscript_breakpoint, vscript_continue, vscript_save.
+Memory profiler: memory_status (ro), memory_types (ro), memory_resources (ro), memory_snapshot, memory_snapshots (ro), memory_diff (ro), memory_clear_snapshots (destructive), memory_history (ro), memory_show.
+Network stats: network_stats (ro), network_history (ro), network_enable, network_reset (destructive), network_show.
 <!-- m67e-generated: end -->

@@ -1,0 +1,91 @@
+* LrgGpuTimer
+:PROPERTIES:
+:CUSTOM_ID: lrggputimer
+:END:
+=LrgGpuTimer= times GPU sections with =glQueryCounter(GL_TIMESTAMP)=. Queries stay in a ring and are read only after the driver says the result is available, so a frame never waits on the GPU.
+
+** Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
+Each =lrg_gpu_timer_begin()= / =lrg_gpu_timer_end()= pair records two timestamps. The timer keeps =LRG_GPU_TIMER_FRAMES_IN_FLIGHT= (4) frames of queries. =lrg_gpu_timer_collect()= copies the ones the driver has finished and leaves the rest. A slot that is still pending when the ring needs it again is dropped; =lrg_gpu_timer_get_dropped()= counts those, plus sections past =LRG_GPU_TIMER_MAX_SECTIONS= (512) in one frame.
+
+GPU timestamps are mapped onto the monotonic clock with one =GL_TIMESTAMP= read at the start of each frame, so a GPU section lines up with the CPU sections of the same =frame_index= in an =LrgProfiler= timeline. =LrgProfiler= owns one timer when =lrg_profiler_set_gpu_enabled()= is true and feeds =lrg_gpu_timer_collect()= into =lrg_profiler_add_gpu_event()=. The timer also works on its own.
+
+There is no =glFinish= and no wait on =GL_QUERY_RESULT=. =GL_QUERY_RESULT_AVAILABLE= is the only poll.
+
+** Concepts
+:PROPERTIES:
+:CUSTOM_ID: concepts
+:END:
+- =lrg_gpu_timer_new()= allocates the object and does not touch GL.
+- =lrg_gpu_timer_is_supported()= resolves =glQueryCounter=, =glGetQueryObjectui64v= and friends through =rlGetProcAddress= (the same path as =lrg-gpu-particles.c=). It needs a current context. Called before =IsWindowReady()=, it returns false and does not set the internal "tried" flag, so a later call with a window tries again. GL 3.3 timestamp queries or =ARB_timer_query= are required.
+- =lrg_gpu_timer_begin_frame()= claims the next slot. If that slot's results are still in flight they are dropped, not stalled. =frame_index= is the number later results carry.
+- =lrg_gpu_timer_end_frame()= closes the slot. Sections still open are ended.
+- =lrg_gpu_timer_begin()= / =lrg_gpu_timer_end()= push and pop a section name. =lrg_gpu_timer_begin()= returns immediately when no frame is open (=!in_frame=). Names are interned. Nesting sets =depth= (0 is the outermost).
+- =lrg_gpu_timer_collect()= invokes =LrgGpuTimerResultFunc= once per finished section: =frame_index=, interned =name=, =depth=, =start_us= on the monotonic clock, =duration_us=. It returns how many sections it delivered this call. It does not block.
+- =lrg_gpu_timer_get_last_frame_us()= is the sum of the depth-0 sections of the last collected frame, or -1 before any result has been collected. A 0 means a result arrived and the GPU work measured 0 µs, which is different from -1.
+- =lrg_gpu_timer_release()= deletes query objects. Call it before the window closes. It is safe when GL was never loaded.
+
+** API
+:PROPERTIES:
+:CUSTOM_ID: api
+:END:
+| Symbol | Role |
+|--------+------|
+| =lrg_gpu_timer_get_type()= | GObject type |
+| =lrg_gpu_timer_new()= | New timer, no GL yet (transfer full) |
+| =lrg_gpu_timer_is_supported()= | True when a context can do timestamp queries |
+| =lrg_gpu_timer_begin_frame()= | Open a query slot for =frame_index= |
+| =lrg_gpu_timer_end_frame()= | Close the slot |
+| =lrg_gpu_timer_begin()= | Start a named section |
+| =lrg_gpu_timer_end()= | End the current section |
+| =lrg_gpu_timer_collect()= | Deliver finished sections; returns the count |
+| =lrg_gpu_timer_get_last_frame_us()= | Last collected depth-0 total, or -1 |
+| =lrg_gpu_timer_get_dropped()= | Slots and sections discarded instead of waited on |
+| =lrg_gpu_timer_release()= | Delete GL query objects |
+
+** Worked example
+:PROPERTIES:
+:CUSTOM_ID: example
+:END:
+#+begin_src C
+static void
+on_gpu (guint64 frame_index, const gchar *name, guint depth,
+        gint64 start_us, gint64 duration_us, gpointer user_data)
+{
+    (void) user_data;
+    g_print ("frame %" G_GUINT64_FORMAT " %s depth %u %lld us\n",
+             frame_index, name, depth, (long long) duration_us);
+}
+
+void
+frame (LrgGpuTimer *timer, guint64 index)
+{
+    lrg_gpu_timer_begin_frame (timer, index);
+    lrg_gpu_timer_begin (timer, "opaque");
+    /* draw */
+    lrg_gpu_timer_end (timer);
+    lrg_gpu_timer_end_frame (timer);
+    lrg_gpu_timer_collect (timer, on_gpu, NULL);
+}
+#+end_src
+
+From a profiler, prefer =lrg_profiler_set_gpu_enabled()=, =lrg_profiler_begin_gpu_section()= and =lrg_profiler_end_gpu_section()=. The profiler calls begin/end frame on the timer from =lrg_profiler_begin_frame()= / =lrg_profiler_end_frame()= and collects into the GPU lane.
+
+** Performance
+:PROPERTIES:
+:CUSTOM_ID: performance
+:END:
+The hot path is two =glQueryCounter= calls per section and a non-blocking availability check at collect time. Nothing in =lrg_gpu_timer_begin()=, =lrg_gpu_timer_end()=, =lrg_gpu_timer_begin_frame()= or =lrg_gpu_timer_collect()= calls =glFinish= or =glFlush= in order to wait. Under llvmpipe in a hidden 64×64 window (=tests/test-frame-capture.c= =/frame-capture/replay-window=, six begin/end/collect cycles) the result callback ran 0 times, so the printed duration stayed at its zero initialiser. =lrg_gpu_timer_get_last_frame_us()= stays -1 until a slot is actually collected. The queries were still in flight and the test does not fail on that. A real GPU delivers them two or three frames later. If a slot is reused first, =lrg_gpu_timer_get_dropped()= goes up and that frame is simply missing.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: pitfalls
+:END:
+- Do not read =GL_QUERY_RESULT= yourself to "make the test see a number". That stalls the frame, which this type exists to avoid.
+- =lrg_gpu_timer_is_supported()= before a window is false and is not sticky. Call it again after =InitWindow=.
+- =lrg_gpu_timer_begin()= outside a frame is a silent no-op.
+- More than 512 sections in one frame are ignored and counted as dropped.
+- =lrg_gpu_timer_release()= before =CloseWindow=. Query objects are GL names.
+- Headless recording of CPU sections does not need this type. See [[file:profiler.org][LrgProfiler]] and [[file:frame-capture.org][LrgFrameCapture]]. The editor lanes are in [[file:../../editor/profiling.org][Profiling]].

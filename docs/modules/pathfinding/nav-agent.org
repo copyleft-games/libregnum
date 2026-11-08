@@ -348,7 +348,18 @@ The ORCA routines in =src/pathfinding/lrg-nav-agent.c= (obstacle and agent half-
 :PROPERTIES:
 :CUSTOM_ID: editor
 :END:
-=LrgNavAgentComponent= is a regular component: add it to a node's components in the inspector (or a level's =components:= list) and set =speed=, =radius=, =base-offset= and the rest as params; in play-in-editor the agents walk the level's mesh. The agent debug view (paths, velocities, the selected agent's ORCA lines) and the bake-and-test loop come with the next 0.9.0 editor wave and are built on =lrg_world3d_debug_draw_navigation()= and =lrg_nav_crowd_set_debug_agent()=.
+=LrgNavAgentComponent= is a regular component: add it to a node's components in the inspector (or a level's =components:= list) and set =speed=, =radius=, =base-offset= and the rest as params; in play-in-editor the agents walk the level's mesh. The Navigation panel lists the crowd and can draw one agent's ORCA lines (=lrg_world3d_debug_draw_navigation()=, =lrg_nav_crowd_set_debug_agent()=). See [[file:../../editor/navigation.org][Navigation in Levels]].
+
+The component properties =destination-x=, =destination-y= and =destination-z= are the pending destination. They are not construct properties, so a new agent does not store (0, 0, 0). =target-node= is another entity's name. When the agent enters a world, a non-empty =target-node= wins: the destination becomes that entity's local position. A missing name does not apply the numeric pending destination. YAML:
+
+#+begin_src yaml
+components:
+  - type: nav-agent
+    props:
+      destination-x: 8
+      destination-z: 2
+      target-node: Marker
+#+end_src
 
 ** Tests
 :PROPERTIES:

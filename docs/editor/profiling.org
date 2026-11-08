@@ -1,0 +1,105 @@
+* Profiling
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling
+:END:
+The Profiler panel and the Frame Debugger show the 0.9.0 capture tools: hierarchical CPU sections, a GPU lane, and one frame of draw calls. The engine types are [[file:../modules/debug/profiler.org][LrgProfiler]], [[file:../modules/debug/gpu-timer.org][LrgGpuTimer]] and [[file:../modules/debug/frame-capture.org][LrgFrameCapture]]. Method tables that match the IPC document are [[#editor-profiling-ipc][below]].
+
+** Profiler panel
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-panel
+:END:
+=LrgEditorProfilerPanel= (=lrg_editor_profiler_panel_new()=, panel id =profiler=) watches =lrg_profiler_get_default()=. The panel enables that profiler while its tab is showing, while play-in-editor runs, or while =profiler.sample= / =profiler.set= pinned it, and disables it again only if the panel was the one that enabled it. Enable, disable and clear from the toolbar go through an idle so they never land inside an open section. =profiler.set= with =enable= applies synchronously so the reply's =enabled= field is already true.
+
+=lrg_editor_profiler_panel_get_profiler()= borrows the default profiler. =lrg_editor_profiler_panel_get_paused()= / =lrg_editor_profiler_panel_set_paused()= freeze the ring and the table. =lrg_editor_profiler_panel_clear()= empties both; the profiler's own samples clear on the next idle. =lrg_editor_profiler_panel_get_frames()= returns the frame-time ring in milliseconds, oldest first (free with =g_free()=). =lrg_editor_profiler_panel_get_n_sections()= is the table row count. =lrg_editor_profiler_panel_get_hovered_frame()= is the bar under the pointer, or -1. =lrg_editor_profiler_panel_get_capture()= borrows the =.rprof= snapshot the panel holds (the last =profiler.capture= or =profiler.load=), or NULL. =lrg_editor_profiler_panel_get_view_mode()= returns =timeline=, =flame=, =table= or =compare=.
+
+Widgets that tests already name stay: =profiler-graph= (the frame-time bars; hover text is unchanged), =profiler-status=, =profiler-pause=, =profiler-clear=, =profiler-table= (columns Section, Last, Avg, Max, Calls; sort column 2 is still Avg). New widgets: =profiler-lanes= under the graph, and mode chips =profiler-mode-timeline=, =profiler-mode-flame=, =profiler-mode-table=, =profiler-mode-compare=. Timeline is the default. Flame and compare give the graph no height and paint in the lane area. Table gives both a zero height. Compare paints the hint "Compare: section deltas are in profiler.compare"; the sorted numbers come from the IPC method, not from bars.
+
+The lane widget reads a snapshot taken at most four times a second. It does not call =lrg_profiler_capture()= on every paint. With no held capture the snapshot is the live ring. =view_frame= and the compare partner start at -1 because 0 is a valid frame index.
+
+Actions: =profiler.pause=, =profiler.clear=, =profiler.show-panel=, =profiler.capture=, =profiler.view-timeline=, =profiler.view-flame=, =profiler.view-table=, =profiler.view-compare=. None of them use Alt+letter.
+
+** CPU timeline, flame, table
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-cpu
+:END:
+The graph is one bar per canvas frame, newest on the right, green within 16.6 ms, amber within 33.3 ms, red above, with guides at those two lines. The lane under it is one row per thread name from the capture (or the live snapshot) plus a GPU row when the frame has GPU events. A section is a box from =start_us= to =start_us + duration_us= across the frame. Nested sections stack by =depth=. The flame view draws the same tree as icicle bars, widest at the root. The table is the flat =lrg_profiler_get_average_ms()= statistics the 0.8 panel already showed: name, last, average, max, call count.
+
+World-renderer sections that show up once a scene renders inside a profiler frame: =world3d.shadow=, =world3d.prepass=, =world3d.ssao=, =world3d.sky=, =world3d.opaque=, =world3d.cutout=, =world3d.volumetric=, =world3d.transparent=, =world3d.debug=, =world3d.post=. Counters =world3d.draws= and =world3d.shadow_passes= land on the same frame. The editor's own =ui.input= and =ui.update= sections stay as they were.
+
+** GPU lane
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-gpu
+:END:
+=profiler.set= =gpu=true= calls =lrg_profiler_set_gpu_enabled()=, which creates the timer immediately so =gpu_supported= in the reply is meaningful before the next frame. The lane is =LrgGpuTimer= results copied in by =lrg_profiler_add_gpu_event()=, thread =LRG_PROFILER_GPU_THREAD=, displayed as "GPU". Results are a few frames late and a late slot is dropped rather than stalled. On a software GL context the lane can stay empty for the first frames; that is the timer waiting, not a failed capture. See [[file:../modules/debug/gpu-timer.org][LrgGpuTimer]].
+
+** Compare
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-compare
+:END:
+=profiler.compare= takes two monotonic frame indices in the selected source and returns one row per section name. =a_ms= / =b_ms= are =lrg_profiler_capture_get_section_total_us()= converted to milliseconds (inclusive outermost time, a same-name ancestor is not double-counted). =a_calls= / =b_calls= count events with that name. =delta_ms= is =b_ms - a_ms=. Rows are sorted by absolute delta, largest first (insertion sort; no =qsort_r=). =profiler.view= =mode=compare= =frame== =compare== points the panel at the same pair.
+
+** Frame debugger
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-frame
+:END:
+=LrgEditorFrameDebugger= is constructed with =lrg_editor_frame_debugger_new (app)= from the profiler panel, which holds the only reference. It is not in the dock and not in the panel hash until =frame.show=. That method creates a dock panel id =frame=, title "Frame Debugger", icon eye, closable, child = the debugger, docks it as a tab of =assets= via =lrg_editor_app_add_panel()=, then =editor_app_show_panel()=. A later =frame.show= only presents. =lrg_editor_frame_debugger_get_capture()= borrows the capture (the debugger creates one in instance init). =lrg_editor_frame_debugger_get_scrub()= is the current scrub, -1 for the full frame.
+
+The toolbar chips are =frame-capture= (=LRG_ICON_EYE=) and =frame-full= (=LRG_ICON_STOP=). The table =frame-calls= has columns #, Pass, Kind, Entity, Tris. Selecting a row sets the scrub. =frame-detail= prints the selected call's shader, material, mesh, state and counts. Rebuilds of the table are guarded so selection does not recurse.
+
+=frame.capture= arms the capture and binds it to the viewport's =LrgWorld3DRenderer= when that renderer exists. The next viewport render records. Until the first scene render the renderer may be NULL; status, capture and a canvas tap named =frame-tap= try the bind again. Replay runs only when =IsWindowReady()=. A headless =frame.scrub= still stores the scrub and returns success when replay cannot run.
+
+The default layout does not list this panel until the shell patch in =handoff/v0.9.0/scratch/m8-patches/lrg-editor-window.PROF.patch= is applied. That patch adds the View menu entry and a layout slot. It must not construct a second debugger. =dock_default= ignores an id that is not in the panel hash, so the layout line is a no-op until =frame.show= inserts the panel.
+
+Actions: =frame.capture=, =frame.show=, =frame.scrub-full=.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-ipc
+:END:
+Registered by =src/editor/ui/lrg-editor-profiler-panel.c= and =src/editor/ui/lrg-editor-frame-debugger.c=. =user_data= is the panel, not the app. Frame =index= is the profiler's monotonic frame number, not a ring slot. Times are =*_us= integer microseconds from the frame start and =*_ms= doubles. =source= is =live= or =capture=. The default is =capture= when the panel holds one, otherwise =live=. =path= is absolute, or relative to =lrg_editor_app_get_project_dir()=. Error codes are the editor server nicks: =invalid-params=, =not-found=, =failed=.
+
+=profiler.frames= returns a JSON array, not an object. Newest frame is last. =frame.calls= puts the =calls= array before =total= in the object; =total= is the filtered count, and an unknown pass is =total= 0 with an empty array, not an error. =frame.call= includes =shader_id=, =color=, =transform= and =state=; the short list from =frame.calls= does not. Null strings are JSON null.
+
+A missing =.rprof= (=profiler.load=) and a missing =.rframe= (=frame.load=) are =failed=, not =not-found=. Both loaders wrap =G_FILE_ERROR= into =LRG_PROFILER_ERROR_IO= or =LRG_FRAME_CAPTURE_ERROR_IO= before the IPC layer sees them, so the =G_FILE_ERROR_NOENT= branch in the method never matches. The message still contains "No such file". =not-found= is for no capture held (=profiler.save=), no such frame index, no such draw call, no such named texture, and =frame.texture= =target=shadow= (the shadow atlas id is not public). =frame.texture= =target=replay= saves the partial frame at the current scrub. =depth=, =normal= and =ssao= are the named targets the renderer publishes. =frame.texture= without a matching texture is =not-found=; a read-back or write failure is =failed=.
+
+| Method | Params | Result |
+|--------+--------+--------|
+| =profiler.sample= | =frames?= (default 60), =enable?= | ={enabled, pinned, paused, gpu, frame_ms, frames, sections}=. =sections= is ={name, last_ms, avg_ms, min_ms, max_ms, count}=. =gpu= was added after =paused=. |
+| =profiler.set= | =enable?=, =gpu?=, =paused?=, =ring?= (8..4096) | ={enabled, pinned, paused, gpu, gpu_supported, ring}=. =ring= outside 8..4096 is =invalid-params= ("ring must be from 8 to 4096") and is rejected before enable. =gpu_supported= is false when the timer is still NULL, otherwise =lrg_gpu_timer_is_supported()=. |
+| =profiler.capture= | =frames?= (default 120), =path?= | ={frames, first, last, events, threads, path}=. Snapshots the last N finished ring frames. Saves when =path= is set. |
+| =profiler.save= | =path= | ={path, frames, events}=. =not-found= ("no capture is held") without one. |
+| =profiler.load= | =path= | ={path, frames, first, last, events, threads}=. Becomes the panel's capture. Missing file is =failed=. |
+| =profiler.frames= | =source?=, =count?= (default 60) | JSON array of ={index, start_us, duration_ms, gpu_ms, events, counters}=, newest last. =gpu_ms= is null when the frame has no GPU time. |
+| =profiler.frame= | =source?=, =index?= (default newest) | ={index, start_us, duration_ms, gpu_ms, threads: [{id, name}], events: [{name, thread, depth, parent, start_us, duration_us}], gpu: [{name, depth, start_us, duration_us}], counters: [{name, value}]}=. =parent= is -1 at the root. |
+| =profiler.compare= | =source?=, =a=, =b= | ={a: {index, duration_ms}, b: {index, duration_ms}, sections: [{name, a_ms, b_ms, delta_ms, a_calls, b_calls}]}= sorted by absolute delta descending. |
+| =profiler.view= | =mode?= (=timeline=, =flame=, =table=, =compare=), =frame?=, =compare?=, =show?= | ={mode, frame, compare, source}=. =show= true presents the panel. |
+| =frame.capture= |  | ={armed: true}= |
+| =frame.status= |  | ={armed, captured, calls, width, height, scrub, passes: [{pass, calls}]}= |
+| =frame.calls= | =pass?=, =offset?=, =limit?= (default 200) | ={calls, total}= with =calls= written first. Each call is ={index, pass, kind, entity, guid, mesh, material, shader, vertices, triangles}=. |
+| =frame.call= | =index= | The short fields plus =shader_id=, =texture_id=, =instances=, =color= (4), =transform= (16), =state: {blend, blend_mode, depth_test, depth_write, cull, wireframe, framebuffer}=. |
+| =frame.scrub= | =index= (-1 = full frame) | ={scrub, calls}=. Headless: the scrub is stored even when replay has no window. |
+| =frame.texture= | =path=, =id?=, =target?= (=replay=, =shadow=, =depth=, =normal=, =ssao=) | ={path, width, height}= |
+| =frame.save= | =path= | ={path, calls}= as =.rframe= |
+| =frame.load= | =path= | Same object as =frame.status=. Missing file is =failed=. |
+| =frame.show= |  | ={}= and the panel is presented |
+
+The same tables are summarised in [[file:ipc-protocol.org::#ipc-frame][the IPC protocol]] (that page is owned by the plumbing pass; this page is the one those links name).
+
+** Using it from the editor
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-using
+:END:
+Open View > Panels > Profiler, or =profiler.view= =show=true=. Switch modes with the chips or =profiler.view= =mode=flame=. Capture with the capture action or =profiler.capture= =path=captures/a.rprof=, then =profiler.load= the same path in another session. Compare two indices with =profiler.compare= =a== =b== after =profiler.view= =mode=compare=.
+
+For draw calls, =frame.show=, then =frame.capture=, then poll =frame.status= until =captured= is true (the viewport has to render a frame). =frame.calls= =pass=opaque= lists that pass. =frame.scrub= =index=40= leaves calls 0..40 in the replay target when a window is up. =frame.save= =path=captures/a.rframe= writes the list for a machine that will only browse it.
+
+** Pitfalls
+:PROPERTIES:
+:CUSTOM_ID: editor-profiling-pitfalls
+:END:
+- The panel's capture is not the open frame. =profiler.capture= copies finished ring frames only.
+- =strstr= for =not-found= also matches =method-not-found=. Match the =code= field.
+- Do not =g_object_ref_sink()= the frame debugger. =LrgWidget= is a plain =GObject=, not initially unowned. The profiler panel's dispose is the one unref.
+- =tests/test-editor-app-frame.c= steps =lrg_editor_app_process_frame()= directly. =efx_frames()= drains the default main context, and the tiles panel currently keeps an idle that returns =G_SOURCE_CONTINUE=, so that drain does not return. The same drain is at the top of =lrg_editor_app_run()=, which is why a live =lrgeditor= screenshot was not taken from this change.
+- Replay and =frame.texture= need a window. Recording a list and saving =.rframe= do not.
+- CPU overhead, measured with the profiler disabled and then with a nested pair, is in [[file:../modules/debug/profiler.org::#performance-notes][LrgProfiler performance notes]].

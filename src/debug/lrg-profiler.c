@@ -1472,12 +1472,17 @@ lrg_profiler_set_thread_name (LrgProfiler *self,
                               const gchar *name)
 {
 	Lane *lane;
+	guint li;
 
 	g_return_if_fail (LRG_IS_PROFILER (self));
 	g_return_if_fail (name != NULL);
 
+	/* lane_index() may grow the lane array.  g_ptr_array_index() reads
+	 * pdata before its argument is evaluated, so the two must not be
+	 * combined: the index would land in the array from before the grow. */
 	g_mutex_lock (&self->lock);
-	lane = g_ptr_array_index (self->lanes, lane_index (self));
+	li = lane_index (self);
+	lane = g_ptr_array_index (self->lanes, li);
 	g_free (lane->name);
 	lane->name = g_strdup (name);
 	g_mutex_unlock (&self->lock);
@@ -1887,6 +1892,11 @@ lrg_profiler_set_gpu_enabled (LrgProfiler *self,
 	if (self->gpu_enabled == enabled)
 		return;
 	self->gpu_enabled = enabled;
+	/* The timer exists as soon as the lane is on, so is_supported()
+	 * can be asked before the next begin_frame().  Created idle: no
+	 * GL until begin_frame / is_supported, and never a glFinish. */
+	if (enabled && self->gpu_timer == NULL)
+		self->gpu_timer = lrg_gpu_timer_new ();
 	if (!enabled && self->gpu_timer != NULL)
 		lrg_gpu_timer_end_frame (self->gpu_timer);
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_GPU_ENABLED]);

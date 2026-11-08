@@ -68,6 +68,9 @@
 /* Space either side of the line numbers */
 #define GUTTER_PAD (10.0f)
 
+/* Width of the breakpoint column, only when show-gutter-marks is on */
+#define MARKER_W (14.0f)
+
 /* Caret thickness */
 #define CARET_WIDTH (2.0f)
 
@@ -262,6 +265,17 @@ struct _LrgTextEditor
 	gboolean       highlight_line;
 	gboolean       auto_indent;
 
+	/* Gutter marks, diagnostics, completion, hover (0-based lines) */
+	gboolean       show_gutter_marks;
+	GHashTable    *gutter_marks;   /* GUINT line -> flags */
+	gint           execution_line; /* -1 = none */
+	GPtrArray     *diagnostics;    /* LrgTextDiagnostic* */
+	GPtrArray     *completions;    /* LrgTextCompletion* */
+	gint           completion_selected;
+	gboolean       completion_visible;
+	gboolean       completion_hold; /* accept() is inserting; keep the popup */
+	gchar         *hover_text;
+
 	GString       *scratch;        /* painting buffer */
 };
 
@@ -285,6 +299,7 @@ enum
 	PROP_FONT_SIZE,
 	PROP_HIGHLIGHT_CURRENT_LINE,
 	PROP_AUTO_INDENT,
+	PROP_SHOW_GUTTER_MARKS,
 	N_PROPS
 };
 
@@ -293,6 +308,8 @@ enum
 	SIGNAL_CHANGED,
 	SIGNAL_CURSOR_MOVED,
 	SIGNAL_SUBMIT,
+	SIGNAL_GUTTER_CLICKED,
+	SIGNAL_GOTO_DEFINITION,
 	N_SIGNALS
 };
 
@@ -653,9 +670,11 @@ geometry (LrgTextEditor *self,
 	g->cell = cell_width (self, g->font, g->size);
 	g->line_h = roundf (g->size * LINE_SPACING);
 	g->border = lrg_theme_get_metric (theme, LRG_THEME_METRIC_BORDER_WIDTH);
-	g->gutter = self->show_line_numbers
-	            ? roundf ((gfloat) MAX (3, digits (n_lines (self))) * g->cell + GUTTER_PAD * 2.0f)
-	            : 0.0f;
+	g->gutter = 0.0f;
+	if (self->show_line_numbers)
+		g->gutter += roundf ((gfloat) MAX (3, digits (n_lines (self))) * g->cell + GUTTER_PAD * 2.0f);
+	if (self->show_gutter_marks)
+		g->gutter += MARKER_W;
 	g->vx = g->border + g->gutter;
 	g->vy = g->border;
 	g->vw = MAX (0.0f, lrg_widget_get_width (w) - g->border * 2.0f - g->gutter);
@@ -1154,6 +1173,15 @@ buffer_replace (LrgTextEditor *self,
 			e.inserted = g_strdup (text);
 			g_array_append_val (edits, e);
 		}
+	}
+	/* Typing dismisses the popup. completion_accept() holds it across
+	 * the replacement it just inserted. */
+	if (!self->completion_hold && self->completion_visible)
+	{
+		self->completion_visible = FALSE;
+		self->completion_selected = -1;
+		if (self->completions != NULL)
+			g_ptr_array_set_size (self->completions, 0);
 	}
 	return end;
 }
@@ -2779,7 +2807,7 @@ paint_selection_row (LrgTextEditor     *self,
 	paint_cells (self, pt, look, l, rs, from, to, extra, y);
 }
 
-/* paint_gutter: background, separator and the visible line numbers */
+/* paint_gutter: background, separator, marker column and line numbers */
 static void
 paint_gutter (LrgTextEditor *self,
               Painter       *pt,
@@ -2790,10 +2818,12 @@ paint_gutter (LrgTextEditor *self,
               gfloat         top)
 {
 	LrgWidget   *widget = LRG_WIDGET (self);
+	LrgTheme    *theme = lrg_widget_get_theme (widget);
 	LrgPartLook  look;
 	LrgPartLook  cur;
 	gfloat       gx = wx + pt->g.border;
 	gfloat       gy = wy + pt->g.border;
+	gfloat       mark_w = self->show_gutter_marks ? MARKER_W : 0.0f;
 	gchar        num[16];
 	guint        row;
 
@@ -2814,13 +2844,205 @@ paint_gutter (LrgTextEditor *self,
 
 		if (sub != 0)
 			continue;
+		if (self->show_gutter_marks)
+		{
+			gpointer found = NULL;
+
+			if (g_hash_table_lookup_extended (self->gutter_marks, GUINT_TO_POINTER (line), NULL, &found))
+			{
+				LrgTextGutterMark flags = (LrgTextGutterMark) GPOINTER_TO_UINT (found);
+				const GrlColor   *color = NULL;
+
+				if ((flags & LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED) != 0)
+					color = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+				else if ((flags & LRG_TEXT_GUTTER_MARK_BREAKPOINT) != 0)
+					color = lrg_theme_get_color (theme, LRG_THEME_COLOR_DANGER);
+				if (color != NULL)
+					lrg_paint_list_rect (pt->list, gx + 3.0f, y + (pt->g.line_h - 8.0f) * 0.5f,
+					                     8.0f, 8.0f, 4.0f, color);
+				if ((flags & LRG_TEXT_GUTTER_MARK_CURRENT) != 0)
+					lrg_paint_list_rect (pt->list, gx + 1.0f, y + 2.0f, 3.0f, pt->g.line_h - 4.0f, 1.0f,
+					                     lrg_theme_get_color (theme, LRG_THEME_COLOR_ACCENT));
+			}
+		}
+		if (!self->show_line_numbers)
+			continue;
 		n = (gsize) g_snprintf (num, sizeof num, "%u", line + 1);
 		lrg_paint_list_text (pt->list, pt->g.font, num,
-		                     gx + pt->g.gutter - GUTTER_PAD - (gfloat) n * pt->g.cell,
+		                     gx + mark_w + (pt->g.gutter - mark_w) - GUTTER_PAD - (gfloat) n * pt->g.cell,
 		                     y + (pt->g.line_h - pt->g.size) * 0.5f, pt->g.size, 0.0f,
 		                     line == self->cursor.line ? &cur.foreground : &look.foreground);
 	}
 	lrg_paint_list_pop_clip (pt->list);
+}
+
+/* paint_squiggle: a one-pixel wave under a span of one row */
+static void
+paint_squiggle (LrgPaintList   *list,
+                gfloat          x0,
+                gfloat          x1,
+                gfloat          y,
+                const GrlColor *color)
+{
+	gfloat x;
+
+	if (x1 < x0 + 2.0f)
+		x1 = x0 + 2.0f;
+	for (x = x0; x < x1; x += 4.0f)
+	{
+		gfloat w = MIN (3.0f, x1 - x);
+		gfloat dy = (((gint) (x / 4.0f)) & 1) != 0 ? 2.0f : 0.0f;
+
+		lrg_paint_list_rect (list, x, y + dy, w, 1.5f, 0.0f, color);
+	}
+}
+
+/* paint_diagnostics_row: squiggles of the diagnostics that touch this row */
+static void
+paint_diagnostics_row (LrgTextEditor *self,
+                       Painter       *pt,
+                       guint          line,
+                       Line          *l,
+                       guint          rs,
+                       guint          re,
+                       gfloat         y)
+{
+	LrgTheme *theme = lrg_widget_get_theme (LRG_WIDGET (self));
+	guint     i;
+
+	if (self->diagnostics == NULL)
+		return;
+	for (i = 0; i < self->diagnostics->len; i++)
+	{
+		LrgTextDiagnostic *d = g_ptr_array_index (self->diagnostics, i);
+		guint              a_byte;
+		guint              b_byte;
+		guint              from;
+		guint              to;
+		LrgThemeColor      which;
+		const GrlColor    *color;
+
+		if (line < d->line || line > d->end_line)
+			continue;
+		a_byte = line == d->line ? char_to_byte (l, d->column) : 0;
+		if (line == d->end_line)
+			b_byte = char_to_byte (l, d->end_column);
+		else
+			b_byte = (guint) l->text->len;
+		if (line == d->line && line == d->end_line && b_byte <= a_byte)
+			b_byte = next_byte (l, a_byte);
+		from = MAX (a_byte, rs);
+		to = MIN (b_byte, re);
+		if (to <= from && !(line == d->line && a_byte >= rs && a_byte <= re))
+			continue;
+		if (to <= from)
+		{
+			from = MIN (a_byte, re);
+			to = MIN (next_byte (l, from), re);
+			if (to <= from)
+				to = from + 1;
+		}
+		switch (d->severity)
+		{
+		case LRG_TEXT_DIAGNOSTIC_WARNING:
+			which = LRG_THEME_COLOR_WARNING;
+			break;
+		case LRG_TEXT_DIAGNOSTIC_INFO:
+			which = LRG_THEME_COLOR_ACCENT;
+			break;
+		case LRG_TEXT_DIAGNOSTIC_HINT:
+			which = LRG_THEME_COLOR_TEXT_MUTED;
+			break;
+		case LRG_TEXT_DIAGNOSTIC_ERROR:
+		default:
+			which = LRG_THEME_COLOR_DANGER;
+			break;
+		}
+		color = lrg_theme_get_color (theme, which);
+		paint_squiggle (pt->list,
+		                pt->ox + (gfloat) col_at (self, l, from) * pt->g.cell -
+		                    (gfloat) col_at (self, l, rs) * pt->g.cell,
+		                pt->ox + (gfloat) col_at (self, l, to) * pt->g.cell -
+		                    (gfloat) col_at (self, l, rs) * pt->g.cell,
+		                y + pt->g.line_h - 3.0f, color);
+	}
+}
+
+/* paint_overlays: completion popup and hover, outside the text clip */
+static void
+paint_overlays (LrgTextEditor *self,
+                Painter       *pt,
+                gfloat         wx,
+                gfloat         wy)
+{
+	LrgWidget      *widget = LRG_WIDGET (self);
+	LrgTheme       *theme = lrg_widget_get_theme (widget);
+	const GrlColor *bg;
+	const GrlColor *fg;
+	const GrlColor *muted;
+	const GrlColor *sel;
+	gfloat          x;
+	gfloat          y;
+	gfloat          row_h;
+	guint           i;
+	guint           shown;
+	guint           start;
+
+	if (self->hover_text != NULL && self->hover_text[0] != '\0')
+	{
+		gfloat w = 0.0f;
+		gfloat h = 0.0f;
+
+		bg = lrg_theme_get_color (theme, LRG_THEME_COLOR_TOOLTIP);
+		fg = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+		lrg_paint_measure_text (pt->g.font, self->hover_text, pt->g.size, 0.0f, &w, &h);
+		w = MIN (w + 16.0f, pt->g.vw);
+		h = MAX (h, pt->g.size) + 10.0f;
+		x = wx + pt->g.vx + self->caret_x.value;
+		y = wy + pt->g.vy + self->caret_y.value - h - 4.0f;
+		if (y < wy)
+			y = wy + pt->g.vy + self->caret_y.value + pt->g.line_h + 2.0f;
+		lrg_paint_list_rect (pt->list, x, y, w, h, 4.0f, bg);
+		lrg_paint_list_rect (pt->list, x, y, w, 1.0f, 0.0f,
+		                     lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+		lrg_paint_list_text (pt->list, pt->g.font, self->hover_text, x + 8.0f,
+		                     y + (h - pt->g.size) * 0.5f, pt->g.size, 0.0f, fg);
+	}
+
+	if (!self->completion_visible || self->completions == NULL || self->completions->len == 0)
+		return;
+
+	bg = lrg_theme_get_color (theme, LRG_THEME_COLOR_POPUP);
+	fg = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT);
+	muted = lrg_theme_get_color (theme, LRG_THEME_COLOR_TEXT_MUTED);
+	sel = lrg_theme_get_color (theme, LRG_THEME_COLOR_SELECTION);
+	row_h = pt->g.line_h;
+	shown = MIN (self->completions->len, 8);
+	start = 0;
+	if (self->completion_selected >= (gint) shown)
+		start = (guint) self->completion_selected - shown + 1;
+	x = wx + pt->g.vx + PAD_X;
+	y = wy + pt->g.vy + self->caret_y.value + pt->g.line_h;
+	if (y + row_h * (gfloat) shown > wy + lrg_widget_get_height (widget))
+		y = wy + pt->g.vy + self->caret_y.value - row_h * (gfloat) shown;
+	lrg_paint_list_rect (pt->list, x, y, MIN (360.0f, pt->g.vw), row_h * (gfloat) shown, 4.0f, bg);
+	lrg_paint_list_rect (pt->list, x, y, MIN (360.0f, pt->g.vw), 1.0f, 0.0f,
+	                     lrg_theme_get_color (theme, LRG_THEME_COLOR_BORDER));
+	for (i = 0; i < shown && start + i < self->completions->len; i++)
+	{
+		LrgTextCompletion *item = g_ptr_array_index (self->completions, start + i);
+		gfloat             ry = y + (gfloat) i * row_h;
+		const gchar       *label = item->label != NULL ? item->label : "";
+
+		if ((gint) (start + i) == self->completion_selected)
+			lrg_paint_list_rect (pt->list, x + 2.0f, ry + 1.0f, MIN (356.0f, pt->g.vw - 4.0f),
+			                     row_h - 2.0f, 3.0f, sel);
+		lrg_paint_list_text (pt->list, pt->g.font, label, x + 8.0f,
+		                     ry + (row_h - pt->g.size) * 0.5f, pt->g.size, 0.0f, fg);
+		if (item->detail != NULL)
+			lrg_paint_list_text (pt->list, pt->g.font, item->detail, x + 180.0f,
+			                     ry + (row_h - pt->g.size) * 0.5f, pt->g.size, 0.0f, muted);
+	}
 }
 
 /* paint_matches_row: find-match washes on one row */
@@ -2932,7 +3154,7 @@ lrg_text_editor_paint (LrgWidget    *widget,
 			lrg_syntax_get_token_color (self->syntax, theme, (LrgSyntaxToken) t, &pt.colors[t]);
 	}
 
-	if (self->show_line_numbers)
+	if (pt.g.gutter > 0.0f)
 		paint_gutter (self, &pt, wx, wy, row0, row1, top);
 
 	/* 3. Text viewport */
@@ -2954,6 +3176,20 @@ lrg_text_editor_paint (LrgWidget    *widget,
 		layout_line (self, cl);
 		lrg_widget_paint_box (widget, list, &band, wx + pt.g.vx, y, pt.g.vw,
 		                      (gfloat) line_rows (cl) * pt.g.line_h);
+	}
+
+	/* 3a2. Stopped-line band (ITEM, selected), independent of the caret */
+	if (self->execution_line >= 0 && (guint) self->execution_line < n_lines (self))
+	{
+		LrgPartLook exec;
+		Line       *el = get_line (self, (guint) self->execution_line);
+		guint       fr = first_row (self, (guint) self->execution_line);
+		gfloat      y = top + (gfloat) fr * pt.g.line_h;
+
+		lrg_widget_resolve_look_for_state (widget, LRG_UI_PART_ITEM, LRG_WIDGET_STATE_SELECTED, &exec);
+		layout_line (self, el);
+		lrg_widget_paint_box (widget, list, &exec, wx + pt.g.vx, y, pt.g.vw,
+		                      (gfloat) line_rows (el) * pt.g.line_h);
 	}
 
 	for (row = row0; row <= row1; row++)
@@ -2983,6 +3219,7 @@ lrg_text_editor_paint (LrgWidget    *widget,
 		}
 		paint_row_text (self, &pt, l, line_spans (self, line), rs, re,
 		                y + (pt.g.line_h - pt.g.size) * 0.5f);
+		paint_diagnostics_row (self, &pt, line, l, rs, re, y);
 	}
 
 	/* 3b. Placeholder while empty */
@@ -3018,6 +3255,9 @@ lrg_text_editor_paint (LrgWidget    *widget,
 	lrg_scroll_bar_paint (widget, list, &self->ay, TRUE, self->fx.fade.value);
 	if (!self->wrap)
 		lrg_scroll_bar_paint (widget, list, &self->ax, FALSE, self->fx.fade.value);
+
+	/* 5. Completion and hover sit above the scrollbars */
+	paint_overlays (self, &pt, wx, wy);
 }
 
 /* ==========================================================================
@@ -3091,12 +3331,36 @@ extend_drag (LrgTextEditor *self,
 	self->break_coalesce = TRUE;
 }
 
+/* line_at_y: the document line under a world y (clamped) */
+static guint
+line_at_y (LrgTextEditor *self,
+           gfloat         y)
+{
+	Geo    g;
+	gfloat rel_y;
+	gint64 row;
+	guint  sub;
+
+	geometry (self, &g);
+	ensure_rows (self);
+	rel_y = y - (lrg_widget_get_world_y (LRG_WIDGET (self)) + g.vy + PAD_Y) +
+	        lrg_scroll_axis_get_value (&self->ay);
+	row = (gint64) floorf (rel_y / g.line_h);
+	if (row < 0)
+		return 0;
+	if (self->n_rows == 0 || row >= (gint64) self->n_rows)
+		return n_lines (self) - 1;
+	return line_of_row (self, (guint) row, &sub);
+}
+
 /*
  * handle_press:
  *
  * Counts multi-clicks on the canvas clock: one places the caret (Shift
  * extends), two select a word, three a line; the drag that follows
- * extends in the same unit.
+ * extends in the same unit. A click in the marker column emits
+ * ::gutter-clicked. Ctrl+click emits ::goto-definition when a handler
+ * is connected.
  */
 static void
 handle_press (LrgTextEditor     *self,
@@ -3104,7 +3368,25 @@ handle_press (LrgTextEditor     *self,
               gfloat             y,
               LrgInputModifiers  mods)
 {
-	Pos p = pos_at_point (self, x, y);
+	Geo   g;
+	gfloat wx;
+	Pos   p;
+
+	geometry (self, &g);
+	wx = lrg_widget_get_world_x (LRG_WIDGET (self));
+	if (self->show_gutter_marks && x >= wx + g.border && x < wx + g.border + MARKER_W)
+	{
+		g_signal_emit (self, signals[SIGNAL_GUTTER_CLICKED], 0, line_at_y (self, y));
+		return;
+	}
+	p = pos_at_point (self, x, y);
+	if ((mods & LRG_INPUT_MODIFIER_CTRL) != 0 &&
+	    g_signal_has_handler_pending (G_OBJECT (self), signals[SIGNAL_GOTO_DEFINITION], 0, FALSE))
+	{
+		g_signal_emit (self, signals[SIGNAL_GOTO_DEFINITION], 0, p.line,
+		               byte_to_char (get_line (self, p.line), p.byte));
+		return;
+	}
 
 	if (self->clicks > 0 && self->clock - self->last_click_time <= MULTI_CLICK_TIME &&
 	    fabsf (x - self->last_click_x) <= MULTI_CLICK_SLOP && fabsf (y - self->last_click_y) <= MULTI_CLICK_SLOP)
@@ -3174,6 +3456,30 @@ handle_key (LrgTextEditor     *self,
 	gboolean typing = !(mods & LRG_INPUT_MODIFIER_SUPER) && (ctrl == alt);
 	Pos      a;
 	Pos      b;
+
+	if (self->completion_visible && !ctrl && !alt)
+	{
+		if (key == GRL_KEY_UP)
+		{
+			lrg_text_editor_completion_move (self, -1);
+			return TRUE;
+		}
+		if (key == GRL_KEY_DOWN)
+		{
+			lrg_text_editor_completion_move (self, 1);
+			return TRUE;
+		}
+		if (key == GRL_KEY_ENTER || key == GRL_KEY_KP_ENTER || key == GRL_KEY_TAB)
+		{
+			lrg_text_editor_completion_accept (self);
+			return TRUE;
+		}
+		if (key == GRL_KEY_ESCAPE)
+		{
+			lrg_text_editor_hide_completion (self);
+			return TRUE;
+		}
+	}
 
 	sel_range (self, &a, &b);
 
@@ -3345,6 +3651,26 @@ handle_key (LrgTextEditor     *self,
 		if (edit)
 			lrg_text_editor_redo (self);
 		return TRUE;
+
+	case GRL_KEY_F9:
+		if (self->show_gutter_marks &&
+		    g_signal_has_handler_pending (G_OBJECT (self), signals[SIGNAL_GUTTER_CLICKED], 0, FALSE))
+		{
+			g_signal_emit (self, signals[SIGNAL_GUTTER_CLICKED], 0, self->cursor.line);
+			return TRUE;
+		}
+		return FALSE;
+
+	case GRL_KEY_F12:
+		if (g_signal_has_handler_pending (G_OBJECT (self), signals[SIGNAL_GOTO_DEFINITION], 0, FALSE))
+		{
+			Line *l = get_line (self, self->cursor.line);
+
+			g_signal_emit (self, signals[SIGNAL_GOTO_DEFINITION], 0, self->cursor.line,
+			               byte_to_char (l, self->cursor.byte));
+			return TRUE;
+		}
+		return FALSE;
 
 	default:
 		/*
@@ -3557,6 +3883,10 @@ lrg_text_editor_finalize (GObject *object)
 	g_string_free (self->fold_text, TRUE);
 	g_array_unref (self->fold_map);
 	g_array_unref (self->bracket_spans);
+	g_clear_pointer (&self->gutter_marks, g_hash_table_unref);
+	g_clear_pointer (&self->diagnostics, g_ptr_array_unref);
+	g_clear_pointer (&self->completions, g_ptr_array_unref);
+	g_free (self->hover_text);
 
 	G_OBJECT_CLASS (lrg_text_editor_parent_class)->finalize (object);
 }
@@ -3615,6 +3945,9 @@ lrg_text_editor_get_property (GObject    *object,
 		break;
 	case PROP_AUTO_INDENT:
 		g_value_set_boolean (value, self->auto_indent);
+		break;
+	case PROP_SHOW_GUTTER_MARKS:
+		g_value_set_boolean (value, self->show_gutter_marks);
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -3675,6 +4008,9 @@ lrg_text_editor_set_property (GObject      *object,
 		break;
 	case PROP_AUTO_INDENT:
 		lrg_text_editor_set_auto_indent (self, g_value_get_boolean (value));
+		break;
+	case PROP_SHOW_GUTTER_MARKS:
+		lrg_text_editor_set_show_gutter_marks (self, g_value_get_boolean (value));
 		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -3838,6 +4174,17 @@ lrg_text_editor_class_init (LrgTextEditorClass *klass)
 	properties[PROP_AUTO_INDENT] =
 		g_param_spec_boolean ("auto-indent", "Auto indent", "Keep indentation on Enter", TRUE, rw);
 
+	/**
+	 * LrgTextEditor:show-gutter-marks:
+	 *
+	 * Whether the gutter reserves a column for breakpoint markers.
+	 * Off by default, so editors that only show line numbers keep
+	 * their layout.
+	 */
+	properties[PROP_SHOW_GUTTER_MARKS] =
+		g_param_spec_boolean ("show-gutter-marks", "Show gutter marks",
+		                      "Reserve a column for breakpoint markers", FALSE, rw);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
 	/**
@@ -3873,6 +4220,32 @@ lrg_text_editor_class_init (LrgTextEditorClass *klass)
 	signals[SIGNAL_SUBMIT] =
 		g_signal_new ("submit", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
 		              0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+
+	/**
+	 * LrgTextEditor::gutter-clicked:
+	 * @self: the editor
+	 * @line: the 0-based line under the click (or the caret line for F9)
+	 *
+	 * The marker column was clicked, or F9 was pressed while a handler
+	 * is connected and #LrgTextEditor:show-gutter-marks is set. The
+	 * caret does not move.
+	 */
+	signals[SIGNAL_GUTTER_CLICKED] =
+		g_signal_new ("gutter-clicked", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_UINT);
+
+	/**
+	 * LrgTextEditor::goto-definition:
+	 * @self: the editor
+	 * @line: the 0-based line
+	 * @column: the 0-based character column
+	 *
+	 * F12 or Ctrl+click, only when a handler is connected. The editor
+	 * does not look the symbol up; the handler does.
+	 */
+	signals[SIGNAL_GOTO_DEFINITION] =
+		g_signal_new ("goto-definition", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+		              0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_UINT);
 }
 
 static void
@@ -3897,6 +4270,11 @@ lrg_text_editor_init (LrgTextEditor *self)
 	self->tab_width = 4;
 	self->highlight_line = TRUE;
 	self->auto_indent = TRUE;
+	self->execution_line = -1;
+	self->completion_selected = -1;
+	self->gutter_marks = g_hash_table_new (g_direct_hash, g_direct_equal);
+	self->diagnostics = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_text_diagnostic_free);
+	self->completions = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_text_completion_free);
 
 	lrg_scroll_axis_init (&self->ax);
 	lrg_scroll_axis_init (&self->ay);
@@ -4796,4 +5174,352 @@ lrg_text_editor_set_auto_indent (LrgTextEditor *self,
 		return;
 	self->auto_indent = auto_indent;
 	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_AUTO_INDENT]);
+}
+
+/* ==========================================================================
+ * Gutter marks, diagnostics, completion, hover
+ * ========================================================================== */
+
+GType
+lrg_text_gutter_mark_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GFlagsValue values[] = {
+			{ LRG_TEXT_GUTTER_MARK_NONE, "LRG_TEXT_GUTTER_MARK_NONE", "none" },
+			{ LRG_TEXT_GUTTER_MARK_BREAKPOINT, "LRG_TEXT_GUTTER_MARK_BREAKPOINT", "breakpoint" },
+			{ LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED, "LRG_TEXT_GUTTER_MARK_BREAKPOINT_DISABLED", "breakpoint-disabled" },
+			{ LRG_TEXT_GUTTER_MARK_CURRENT, "LRG_TEXT_GUTTER_MARK_CURRENT", "current" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_flags_register_static (g_intern_static_string ("LrgTextGutterMark"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+GType
+lrg_text_diagnostic_severity_get_type (void)
+{
+	static gsize type_id = 0;
+
+	if (g_once_init_enter (&type_id))
+	{
+		static const GEnumValue values[] = {
+			{ LRG_TEXT_DIAGNOSTIC_ERROR, "LRG_TEXT_DIAGNOSTIC_ERROR", "error" },
+			{ LRG_TEXT_DIAGNOSTIC_WARNING, "LRG_TEXT_DIAGNOSTIC_WARNING", "warning" },
+			{ LRG_TEXT_DIAGNOSTIC_INFO, "LRG_TEXT_DIAGNOSTIC_INFO", "info" },
+			{ LRG_TEXT_DIAGNOSTIC_HINT, "LRG_TEXT_DIAGNOSTIC_HINT", "hint" },
+			{ 0, NULL, NULL }
+		};
+		GType id = g_enum_register_static (g_intern_static_string ("LrgTextDiagnosticSeverity"), values);
+
+		g_once_init_leave (&type_id, id);
+	}
+	return (GType) type_id;
+}
+
+LrgTextDiagnostic *
+lrg_text_diagnostic_copy (const LrgTextDiagnostic *diagnostic)
+{
+	LrgTextDiagnostic *copy;
+
+	g_return_val_if_fail (diagnostic != NULL, NULL);
+	copy = g_new0 (LrgTextDiagnostic, 1);
+	*copy = *diagnostic;
+	copy->message = g_strdup (diagnostic->message);
+	return copy;
+}
+
+void
+lrg_text_diagnostic_free (LrgTextDiagnostic *diagnostic)
+{
+	if (diagnostic == NULL)
+		return;
+	g_free (diagnostic->message);
+	g_free (diagnostic);
+}
+
+G_DEFINE_BOXED_TYPE (LrgTextDiagnostic, lrg_text_diagnostic, lrg_text_diagnostic_copy, lrg_text_diagnostic_free)
+
+LrgTextCompletion *
+lrg_text_completion_copy (const LrgTextCompletion *item)
+{
+	LrgTextCompletion *copy;
+
+	g_return_val_if_fail (item != NULL, NULL);
+	copy = g_new0 (LrgTextCompletion, 1);
+	copy->label = g_strdup (item->label);
+	copy->detail = g_strdup (item->detail);
+	copy->insert_text = g_strdup (item->insert_text);
+	return copy;
+}
+
+void
+lrg_text_completion_free (LrgTextCompletion *item)
+{
+	if (item == NULL)
+		return;
+	g_free (item->label);
+	g_free (item->detail);
+	g_free (item->insert_text);
+	g_free (item);
+}
+
+G_DEFINE_BOXED_TYPE (LrgTextCompletion, lrg_text_completion, lrg_text_completion_copy, lrg_text_completion_free)
+
+gboolean
+lrg_text_editor_get_show_gutter_marks (LrgTextEditor *self)
+{
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), FALSE);
+	return self->show_gutter_marks;
+}
+
+void
+lrg_text_editor_set_show_gutter_marks (LrgTextEditor *self,
+                                       gboolean       show)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	show = !!show;
+	if (self->show_gutter_marks == show)
+		return;
+	self->show_gutter_marks = show;
+	lrg_widget_queue_layout (LRG_WIDGET (self));
+	g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_SHOW_GUTTER_MARKS]);
+}
+
+void
+lrg_text_editor_set_gutter_mark (LrgTextEditor     *self,
+                                 guint              line,
+                                 LrgTextGutterMark  mark)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	if (mark == LRG_TEXT_GUTTER_MARK_NONE)
+		g_hash_table_remove (self->gutter_marks, GUINT_TO_POINTER (line));
+	else
+		g_hash_table_insert (self->gutter_marks, GUINT_TO_POINTER (line), GUINT_TO_POINTER (mark));
+}
+
+LrgTextGutterMark
+lrg_text_editor_get_gutter_mark (LrgTextEditor *self,
+                                 guint          line)
+{
+	gpointer found = NULL;
+
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), LRG_TEXT_GUTTER_MARK_NONE);
+	if (!g_hash_table_lookup_extended (self->gutter_marks, GUINT_TO_POINTER (line), NULL, &found))
+		return LRG_TEXT_GUTTER_MARK_NONE;
+	return (LrgTextGutterMark) GPOINTER_TO_UINT (found);
+}
+
+void
+lrg_text_editor_clear_gutter_marks (LrgTextEditor *self)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+	g_hash_table_remove_all (self->gutter_marks);
+}
+
+void
+lrg_text_editor_set_execution_line (LrgTextEditor *self,
+                                    gint           line)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	if (line < 0)
+		line = -1;
+	self->execution_line = line;
+}
+
+gint
+lrg_text_editor_get_execution_line (LrgTextEditor *self)
+{
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), -1);
+	return self->execution_line;
+}
+
+void
+lrg_text_editor_set_diagnostics (LrgTextEditor *self,
+                                 GPtrArray     *diagnostics)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	g_ptr_array_set_size (self->diagnostics, 0);
+	if (diagnostics == NULL)
+		return;
+	for (i = 0; i < diagnostics->len; i++)
+	{
+		LrgTextDiagnostic *d = g_ptr_array_index (diagnostics, i);
+
+		if (d != NULL)
+			g_ptr_array_add (self->diagnostics, lrg_text_diagnostic_copy (d));
+	}
+}
+
+GPtrArray *
+lrg_text_editor_get_diagnostics (LrgTextEditor *self)
+{
+	GPtrArray *out;
+	guint      i;
+
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), NULL);
+
+	out = g_ptr_array_new_with_free_func ((GDestroyNotify) lrg_text_diagnostic_free);
+	for (i = 0; i < self->diagnostics->len; i++)
+		g_ptr_array_add (out, lrg_text_diagnostic_copy (g_ptr_array_index (self->diagnostics, i)));
+	return out;
+}
+
+void
+lrg_text_editor_show_completion (LrgTextEditor *self,
+                                 GPtrArray     *items)
+{
+	guint i;
+
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	g_ptr_array_set_size (self->completions, 0);
+	self->completion_selected = 0;
+	self->completion_visible = FALSE;
+	if (items == NULL || items->len == 0)
+		return;
+	for (i = 0; i < items->len; i++)
+	{
+		LrgTextCompletion *item = g_ptr_array_index (items, i);
+
+		if (item != NULL)
+			g_ptr_array_add (self->completions, lrg_text_completion_copy (item));
+	}
+	if (self->completions->len == 0)
+		return;
+	self->completion_visible = TRUE;
+	self->completion_selected = 0;
+}
+
+void
+lrg_text_editor_hide_completion (LrgTextEditor *self)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	self->completion_visible = FALSE;
+	self->completion_selected = -1;
+	if (self->completions != NULL)
+		g_ptr_array_set_size (self->completions, 0);
+}
+
+gboolean
+lrg_text_editor_get_completion_visible (LrgTextEditor *self)
+{
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), FALSE);
+	return self->completion_visible;
+}
+
+gint
+lrg_text_editor_get_completion_selected (LrgTextEditor *self)
+{
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), -1);
+	if (!self->completion_visible)
+		return -1;
+	return self->completion_selected;
+}
+
+void
+lrg_text_editor_completion_move (LrgTextEditor *self,
+                                 gint           delta)
+{
+	gint n;
+	gint next;
+
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	if (!self->completion_visible || self->completions == NULL || self->completions->len == 0)
+		return;
+	n = (gint) self->completions->len;
+	next = self->completion_selected + delta;
+	if (next < 0)
+		next = 0;
+	if (next >= n)
+		next = n - 1;
+	self->completion_selected = next;
+}
+
+gboolean
+lrg_text_editor_completion_accept (LrgTextEditor *self)
+{
+	LrgTextCompletion *item;
+	Line              *line;
+	const gchar       *text;
+	const gchar       *caret;
+	const gchar       *start;
+	const gchar       *insert;
+	guint              a;
+	guint              b;
+
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), FALSE);
+
+	if (!self->completion_visible || self->completions == NULL || self->completions->len == 0)
+		return FALSE;
+	if (self->completion_selected < 0 || (guint) self->completion_selected >= self->completions->len)
+		self->completion_selected = 0;
+	item = g_ptr_array_index (self->completions, (guint) self->completion_selected);
+	insert = item->insert_text != NULL ? item->insert_text : item->label;
+	if (insert == NULL)
+		insert = "";
+
+	line = get_line (self, self->cursor.line);
+	text = line->text->str;
+	caret = text + MIN (self->cursor.byte, (guint) line->text->len);
+	start = caret;
+	while (start > text)
+	{
+		const gchar *prev = g_utf8_prev_char (start);
+		gunichar     ch = g_utf8_get_char (prev);
+
+		if (!g_unichar_isalnum (ch) && ch != '_')
+			break;
+		start = prev;
+	}
+	a = byte_to_char (line, (guint) (start - text));
+	b = byte_to_char (line, (guint) (caret - text));
+	self->completion_hold = TRUE;
+	lrg_text_editor_select_range (self, self->cursor.line, a, self->cursor.line, b);
+	lrg_text_editor_insert_text (self, insert);
+	self->completion_hold = FALSE;
+	lrg_text_editor_hide_completion (self);
+	return TRUE;
+}
+
+void
+lrg_text_editor_show_hover (LrgTextEditor *self,
+                            const gchar   *text)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+
+	if (text == NULL || text[0] == '\0')
+	{
+		lrg_text_editor_hide_hover (self);
+		return;
+	}
+	g_free (self->hover_text);
+	self->hover_text = g_strdup (text);
+}
+
+void
+lrg_text_editor_hide_hover (LrgTextEditor *self)
+{
+	g_return_if_fail (LRG_IS_TEXT_EDITOR (self));
+	g_clear_pointer (&self->hover_text, g_free);
+}
+
+const gchar *
+lrg_text_editor_get_hover_text (LrgTextEditor *self)
+{
+	g_return_val_if_fail (LRG_IS_TEXT_EDITOR (self), NULL);
+	return self->hover_text;
 }

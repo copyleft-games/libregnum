@@ -165,7 +165,7 @@ LrgAssetType type = lrg_asset_database_classify ("door.glb");
 |------+------------|
 | =LRG_ASSET_TYPE_UNKNOWN= | anything unrecognized |
 | =LRG_ASSET_TYPE_TEXTURE= | =.png=, =.jpg=, =.jpeg=, =.tga=, =.bmp=, =.pep= (raylib 6.2 pixel art, decoded by graylib) |
-| =LRG_ASSET_TYPE_MODEL= | =.gltf=, =.glb=, =.obj=, =.fbx=, =.ply= |
+| =LRG_ASSET_TYPE_MODEL= | =.gltf=, =.glb=, =.obj=, =.fbx= (=.ply= is unknown: raylib cannot load it) |
 | =LRG_ASSET_TYPE_AUDIO= | =.wav=, =.ogg=, =.flac=, =.mp3= |
 | =LRG_ASSET_TYPE_FONT= | =.ttf=, =.otf= |
 | =LRG_ASSET_TYPE_SCRIPT= | =.lua=, =.py=, =.js=, =.c= |

@@ -67,8 +67,9 @@ G_DECLARE_FINAL_TYPE (LrgEditorTilesPanel, lrg_editor_tiles_panel, LRG, EDITOR_T
  * @app: the editor application it presents
  *
  * Creates the Tiles panel. It registers the "tilemap.rename-layer",
- * "tilemap.flip-x" (X), "tilemap.flip-y" (Shift+X), "tilemap.rotate" (Z),
- * "tilemap.rotate-back" (Shift+Z), "tilemap.reset-transform" and
+ * "tilemap.flip-x" (X), "tilemap.flip-y" (Y while painting tiles, and
+ * Shift+X; Y is shared with tool.toggle-snap, which keeps it everywhere
+ * else), "tilemap.rotate" (Z), "tilemap.rotate-back", "tilemap.reset-transform" and
  * "tilemap.refresh-rules" actions, the tiles.* IPC methods, and installs
  * the tileset.* and sprite.* methods of the `.rtileset` and `.rsprite`
  * editors.

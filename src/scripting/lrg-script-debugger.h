@@ -1214,4 +1214,15 @@ void lrg_script_debugger_emit_output (LrgScriptDebugger *self,
 LRG_AVAILABLE_IN_ALL
 gchar * lrg_script_debugger_normalize_path (const gchar *path);
 
+#ifdef LRG_SCRIPTING_PRIVATE
+
+/* A step-over/out whose frame returned to C stops at the next script line. */
+G_GNUC_INTERNAL void lrg_script_debugger_note_host_return (LrgScriptDebugger *self);
+
+/* The debugger assigns frame ids after debug_get_frames() returns. */
+G_GNUC_INTERNAL void lrg_script_stack_frame_set_id (LrgScriptStackFrame *self,
+                                                    guint                id);
+
+#endif /* LRG_SCRIPTING_PRIVATE */
+
 G_END_DECLS

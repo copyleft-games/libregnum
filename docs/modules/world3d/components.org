@@ -468,7 +468,7 @@ The custom curve is set as an object (=lrg_audio_source_component_set_rolloff_cu
 | =audio-manager= | #LrgAudioManager | NULL                     | NULL for =lrg_audio_manager_get_default()=      |
 | =playing=       | boolean (read-only) |                       | the voice is audible                            |
 
-Every property is a level visual param of an AUDIO_EMITTER node by its snake-case name (=cone_inner_angle=, =bus=, =rolloff_mode: logarithmic=, =rolloff_curve_keys=); the node's =radius= maps to =max-distance=.
+Every property is a level visual param of an AUDIO_EMITTER node by its snake-case name (=cone_inner_angle=, =bus=, =rolloff_mode: logarithmic=, =rolloff_curve_keys=); the node's =radius= maps to =max-distance=. A new emitter's radius is 50, the same default as =max-distance=.
 
 *** API
 :PROPERTIES:
@@ -598,7 +598,8 @@ A tile grid in the entity's local XY plane: cell (x, y) spans x .. x+1 tiles rig
 | =lrg_tilemap_component_get_tile_size()= / =lrg_tilemap_component_set_tile_size()= | tile size |
 | =lrg_tilemap_component_get_grid_size()= / =lrg_tilemap_component_get_n_layers()= | dimensions |
 | =lrg_tilemap_component_get_layer_cells()= | one layer's cells and visibility |
-| =lrg_tilemap_component_get_local_bounds()= | the grid's local AABB |
+| =lrg_tilemap_component_get_local_bounds()= | the grid's local AABB (orthogonal span: x 0 .. width * tile size, y -height * tile size .. 0) |
+| =lrg_tilemap_component_get_cell_quad()= | one cell's drawn quad (TL, BL, BR, TR) in the tilemap's orientation, with mirror and rotation on the UVs; headless |
 
 ** LrgSpawnComponent
 :PROPERTIES:

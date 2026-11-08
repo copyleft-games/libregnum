@@ -1,0 +1,76 @@
+#+title: Code Intelligence
+#+description: The editor's Language Server Protocol client and the lsp.* IPC methods
+#+authors: Zach Podbielniak
+#+categories: libregnum editor lsp
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 1.0
+
+* Code intelligence
+:PROPERTIES:
+:CUSTOM_ID: editor-code-intelligence
+:END:
+#+begin_quote
+*[[file:../index.org][Home]]* > *[[file:overview.org][Editor Module]]* > Code Intelligence
+#+end_quote
+
+=LrgLspClient= (=lrg_lsp_client_get_type=) is a Language Server Protocol client over stdio. The code panel keeps one client per language and paints the results on the text editor. A missing binary, or a server that fails to start, leaves that language without a client. The editor keeps editing.
+
+** Symbols
+:PROPERTIES:
+:CUSTOM_ID: editor-lsp-symbols
+:END:
+Types and errors: =lrg_lsp_severity_get_type=, =lrg_lsp_client_state_get_type=, =lrg_lsp_client_error_quark=, =lrg_lsp_diagnostic_get_type=, =lrg_lsp_diagnostic_copy=, =lrg_lsp_diagnostic_free=, =lrg_lsp_location_get_type=, =lrg_lsp_location_copy=, =lrg_lsp_location_free=, =lrg_lsp_completion_item_get_type=, =lrg_lsp_completion_item_copy=, =lrg_lsp_completion_item_free=, =lrg_lsp_text_edit_get_type=, =lrg_lsp_text_edit_copy=, =lrg_lsp_text_edit_free=.
+
+Lifecycle: =lrg_lsp_client_new=, =lrg_lsp_client_get_language_id=, =lrg_lsp_client_get_argv=, =lrg_lsp_client_set_root_path=, =lrg_lsp_client_get_root_path=, =lrg_lsp_client_get_state=, =lrg_lsp_client_start=, =lrg_lsp_client_wait_ready=, =lrg_lsp_client_stop=, =lrg_lsp_client_get_server_name=, =lrg_lsp_client_has_capability=, =lrg_lsp_client_get_trigger_characters=.
+
+Documents: =lrg_lsp_client_did_open=, =lrg_lsp_client_did_change=, =lrg_lsp_client_did_save=, =lrg_lsp_client_did_close=, =lrg_lsp_client_is_open=, =lrg_lsp_client_get_version=, =lrg_lsp_client_get_diagnostics=.
+
+Requests: =lrg_lsp_client_notify=, =lrg_lsp_client_request_async=, =lrg_lsp_client_request_finish=, =lrg_lsp_client_request_sync=, =lrg_lsp_client_completion_async=, =lrg_lsp_client_completion_finish=, =lrg_lsp_client_completion_sync=, =lrg_lsp_client_hover_async=, =lrg_lsp_client_hover_finish=, =lrg_lsp_client_hover_sync=, =lrg_lsp_client_definition_async=, =lrg_lsp_client_definition_finish=, =lrg_lsp_client_definition_sync=, =lrg_lsp_client_references_sync=, =lrg_lsp_client_rename_sync=, =lrg_lsp_client_formatting_sync=.
+
+Helpers: =lrg_lsp_language_for_path=, =lrg_lsp_find_server=, =lrg_lsp_apply_edits=.
+
+** Language and server
+:PROPERTIES:
+:CUSTOM_ID: editor-lsp-language
+:END:
+=lrg_lsp_language_for_path= maps the extension: =.c= and =.h= to =c=, =.lua= to =lua=, =.py= and =.pyw= to =python=, =.js= and =.mjs= to =javascript=, =.ts= to =typescript=. Anything else, including a path with no extension, is %NULL.
+
+=lrg_lsp_find_server= returns the first installed argv for that language id, or %NULL. The candidates, in order, are =clangd=; =lua-language-server=; =pylsp=, =pyright-langserver --stdio=, =basedpyright-langserver --stdio=, =jedi-language-server=; =typescript-language-server --stdio= for both JavaScript and TypeScript. =lrg_lsp_client_new= takes a language id and an argv (the program plus arguments). =lrg_lsp_client_start= spawns it. A missing binary returns %FALSE, sets a =GError= in =LRG_LSP_CLIENT_ERROR= (=lrg_lsp_client_error_quark=: not running, timed out, exited, protocol, unsupported) and leaves the state stopped. =lrg_lsp_client_wait_ready= waits for the initialize result. =lrg_lsp_client_stop= sends =shutdown= and =exit= when the client is ready, joins the writer and reader, and ends stopped.
+
+=initialize= offers position encodings =utf-32= and =utf-16=. The public API speaks characters. When the server stays on UTF-16 the column is converted with the open document's text, or the file on disk. Messages sent before the initialize result are held and flushed, after the =initialized= notification, when that result arrives, so =lrg_lsp_client_did_open= may run immediately after start.
+
+The reader and writer are helper threads. The client never blocks the caller on a pipe write. Server notifications are re-emitted on the =GMainContext= the client started in. =textDocument/publishDiagnostics= updates the document and emits =diagnostics-changed=. Callers that read =lrg_lsp_client_get_diagnostics= from a test must iterate that context. The getter always returns a new array, possibly empty. The hash key is the path after a URI round trip. Positions in results are 0-based characters.
+
+** Documents and features
+:PROPERTIES:
+:CUSTOM_ID: editor-lsp-documents
+:END:
+=lrg_lsp_client_did_open=, =lrg_lsp_client_did_change=, =lrg_lsp_client_did_save= and =lrg_lsp_client_did_close= are the text-document notifications. =lrg_lsp_client_is_open= and =lrg_lsp_client_get_version= report the client's view of one path. =lrg_lsp_client_get_server_name= is the name from =serverInfo=, or the basename of argv until initialize answers. =lrg_lsp_client_has_capability= and =lrg_lsp_client_get_trigger_characters= read the initialize result.
+
+=lrg_lsp_client_completion_sync= (and the async pair =lrg_lsp_client_completion_async= / =lrg_lsp_client_completion_finish=) returns =LrgLspCompletionItem= rows: label, kind, detail, insert text. =lrg_lsp_client_hover_sync= (=lrg_lsp_client_hover_async=, =lrg_lsp_client_hover_finish=) returns markup with fences stripped. =lrg_lsp_client_definition_sync= (=lrg_lsp_client_definition_async=, =lrg_lsp_client_definition_finish=) and =lrg_lsp_client_references_sync= return =LrgLspLocation= values (path, 0-based line and column). =lrg_lsp_client_rename_sync= returns a workspace edit as =LrgLspTextEdit= rows. =lrg_lsp_client_formatting_sync= returns text edits for one path. =lrg_lsp_apply_edits= applies a set of edits to a string, last range first, in characters. =lrg_lsp_client_request_sync=, =lrg_lsp_client_request_async=, =lrg_lsp_client_request_finish= and =lrg_lsp_client_notify= are the generic JSON-RPC calls. Boxed copy and free are =lrg_lsp_diagnostic_copy= / =lrg_lsp_diagnostic_free=, =lrg_lsp_location_copy= / =lrg_lsp_location_free=, =lrg_lsp_completion_item_copy= / =lrg_lsp_completion_item_free=, =lrg_lsp_text_edit_copy= / =lrg_lsp_text_edit_free=. Severities (=lrg_lsp_severity_get_type=) are error, warning, information and hint, numbered as the protocol numbers them.
+
+** Code panel
+:PROPERTIES:
+:CUSTOM_ID: editor-lsp-panel
+:END:
+The code panel starts a client the first time a buffer of that language is shown. The root is the project directory. =didOpen= goes out with the buffer text. Edits are sent as =didChange= after 200 ms. Save sends =didSave=. Closing the tab sends =didClose=. Diagnostics land on the editor as squiggles (see [[file:../modules/ui/text-editor.org][text editor marks]]). Completion is requested at the caret and shown in the popup; a generation counter drops a late answer. Hover is requested after the caret has been still for 400 ms. Go to definition uses =lrg_lsp_client_definition_sync= with a 2 second timeout, opens the path at the 1-based line and then sets the 0-based cursor. References include the declaration. Rename applies one select-all plus insert per open buffer, so each buffer is one undo step, and writes unopened files. Format applies the edits in the buffer.
+
+Saving a script also calls =lrg_script_reloader_reload_file= on =lrg_script_reloader_get_default=. A failure is an editor error notification. The reload does not depend on a language server being installed.
+
+** IPC
+:PROPERTIES:
+:CUSTOM_ID: editor-lsp-ipc
+:END:
+The code panel registers these methods. =path= is absolute or project-relative and defaults to the active tab. =line= and =column= are 1-based. A missing file is =failed= / "no file open". Line 0 is =invalid-params=. =lsp.status= does not start a server. =lsp.restart= of an unknown language is =invalid-params=. =lsp.restart= with no language restarts only clients the panel already holds. A missing binary is =failed= / "no language server", not a crash.
+
+- =lsp.servers= returns one row per known language: language, command, available, running, initialized, binary.
+- =lsp.status= returns path, language, server, running, initialized, version and a diagnostic count.
+- =lsp.diagnostics= returns line, column, end_line, end_column, severity (=error=, =warning=, =info=, =hint=), message, source and code. Positions are 1-based.
+- =lsp.complete= returns label, kind, detail and insert_text for the caret, or for the given position.
+- =lsp.hover= returns contents, or null.
+- =lsp.definition= returns locations. =jump= (default false) also opens the first one.
+- =lsp.references= returns locations.
+- =lsp.rename= takes =new_name= and returns files and edits.
+- =lsp.format= returns the edit count.
+- =lsp.restart= takes an optional language and returns the =lsp.servers= shape.

@@ -36,6 +36,8 @@ lrg_editor_problem_copy (const LrgEditorProblem *problem)
 	copy->node_path = g_strdup (problem->node_path);
 	copy->message = g_strdup (problem->message);
 	copy->file = g_strdup (problem->file);
+	copy->line = problem->line;
+	copy->column = problem->column;
 	return copy;
 }
 

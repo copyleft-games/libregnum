@@ -523,6 +523,16 @@ G_GNUC_INTERNAL void           lrg_scripting_priv_set_error_location   (LrgScrip
 G_GNUC_INTERNAL void           lrg_scripting_priv_note_loaded          (LrgScripting             *self,
                                                                         const gchar              *path);
 
+/* fired when a context loads a file or gains a search path (canonical) */
+typedef void (*LrgScriptingPathHook) (LrgScripting *scripting,
+                                      const gchar  *path,
+                                      gpointer      user_data);
+
+G_GNUC_INTERNAL void           lrg_scripting_priv_add_path_hook        (LrgScriptingPathHook      hook,
+                                                                        gpointer                  user_data);
+G_GNUC_INTERNAL void           lrg_scripting_priv_remove_path_hook     (LrgScriptingPathHook      hook,
+                                                                        gpointer                  user_data);
+
 #endif /* LRG_SCRIPTING_PRIVATE */
 
 G_END_DECLS

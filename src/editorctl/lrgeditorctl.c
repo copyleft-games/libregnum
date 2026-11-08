@@ -55,6 +55,7 @@ static gchar    *opt_target   = NULL;
 static gboolean  opt_license  = FALSE;
 static gboolean  opt_version  = FALSE;
 static gchar   **opt_args     = NULL;
+static const gchar *ctl_argv0 = NULL;
 
 static LrgCtlFormat output = LRG_CTL_FORMAT_DEFAULT;
 
@@ -119,6 +120,13 @@ static const gchar *description =
 	"  thumbnail PATH                   generate/print an asset's cached thumbnail\n"
 	"  meta get PATH | meta set PATH key=value... [guid=G]  asset .meta sidecar\n"
 	"  vcs [PATH]                       git branch and file status (badges)\n"
+	"  vcs diff|log|locks|magit | vcs commit MESSAGE\n"
+	"  merge BASE OURS THEIRS | merge install [DIR]   .rlevel merge driver\n"
+	"  po extract|pseudo TEXT | po import PATH ID | po export PATH ID TEXT\n"
+	"  collab apply USER GUID REV PROP VALUE | collab get GUID PROP\n"
+	"  collab lock|unlock USER GUID | collab cursor USER X Y Z | collab presence\n"
+	"  scenes list | scenes open PATH | scenes active INDEX\n"
+	"  gizmo apply OP [axis=N] [value=N] | gizmo pivot MODE | gizmo cursor X Y Z | gizmo origin\n"
 	"  prefab overrides|apply|revert|relink|unlink NODE [keys=a,b] | prefab sync [PATH]\n"
 	"  code open PATH[:LINE] | code list | code save [PATH]   built-in code editor\n"
 	"  inspector list|get|set|reset|state|apply-override|revert-override [NODE] [NAME] [key=value...]\n"
@@ -210,6 +218,14 @@ static const gchar *description =
 	"                                   frame debugger (Frame Debugger panel)\n"
 	"  script run|languages|tools|run-tool|reload|run-in-editor|editor-running ... [key=value...]\n"
 	"                                   tool script (console panel)\n"
+	"  vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|\n"
+	"          set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|\n"
+	"          validate|run|live|breakpoint|continue|save ... [key=value...]\n"
+	"                                   visual script (visual script editor)\n"
+	"  memory status|types|resources|snapshot|snapshots|diff|clear-snapshots|history|show ... [key=value...]\n"
+	"                                   memory profiler (Memory panel)\n"
+	"  network stats|history|enable|reset|show ... [key=value...]\n"
+	"                                   network stats (Network panel)\n"
 	/* m67e-usage: end */
 	"  asset new KIND [path=P] [name=N] [image=I]  a new asset file (bt fsm particles weather mixer tileset\n"
 	"                                   sprite water nav-settings terrain ...)\n"
@@ -1802,7 +1818,155 @@ cmd_meta (gchar  **args,
 	return TRUE;
 }
 
-/* vcs [PATH]: the project's git status, or one path's badge */
+/* lrgeditor next to this binary, else the one on PATH. */
+static gchar *
+find_lrgeditor (void)
+{
+	g_autofree gchar *dir = NULL;
+	gchar            *beside;
+
+	if (ctl_argv0 != NULL)
+	{
+		dir = g_path_get_dirname (ctl_argv0);
+		beside = g_build_filename (dir, "lrgeditor", NULL);
+		if (g_file_test (beside, G_FILE_TEST_IS_EXECUTABLE))
+			return beside;
+		g_free (beside);
+	}
+	return g_find_program_in_path ("lrgeditor");
+}
+
+/* Runs lrgeditor with @argv[1...] (argv[0] is replaced). Prints stderr. */
+static gboolean
+spawn_lrgeditor (gchar  **argv,
+                 GError **error)
+{
+	g_autofree gchar *bin = find_lrgeditor ();
+	g_autofree gchar *err_text = NULL;
+	gint              status = 0;
+
+	if (bin == NULL)
+	{
+		g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                     "lrgeditor is not installed");
+		return FALSE;
+	}
+	argv[0] = bin;
+	if (!g_spawn_sync (NULL, argv, NULL, 0, NULL, NULL, NULL, &err_text, &status, error))
+		return FALSE;
+	if (err_text != NULL && err_text[0] != '\0')
+		fputs (err_text, stderr);
+	return g_spawn_check_wait_status (status, error);
+}
+
+/* merge BASE OURS THEIRS | merge install [DIR] */
+static gboolean
+cmd_merge (gchar  **args,
+           GError **error)
+{
+	gchar *argv[6];
+
+	if (g_strcmp0 (args[0], "install") == 0)
+	{
+		if (args[1] != NULL && args[2] != NULL)
+			return usage_error (error, "merge install [DIR]");
+		argv[0] = NULL;
+		argv[1] = (gchar *) "--merge-install";
+		argv[2] = (args[1] != NULL) ? args[1] : (gchar *) ".";
+		argv[3] = NULL;
+		return spawn_lrgeditor (argv, error);
+	}
+	if (args[0] == NULL || args[1] == NULL || args[2] == NULL || args[3] != NULL)
+		return usage_error (error, "merge BASE OURS THEIRS | merge install [DIR]");
+	argv[0] = NULL;
+	argv[1] = (gchar *) "--merge";
+	argv[2] = args[0];
+	argv[3] = args[1];
+	argv[4] = args[2];
+	argv[5] = NULL;
+	return spawn_lrgeditor (argv, error);
+}
+
+static gboolean
+cmd_po (gchar  **args,
+        GError **error)
+{
+	static const gchar * const text_keys[] = { "text", NULL };
+	static const gchar * const import_keys[] = { "path", "id", NULL };
+	static const gchar * const export_keys[] = { "path", "id", "text", NULL };
+
+	if (g_strcmp0 (args[0], "extract") == 0)
+		return passthrough ("po.extract", text_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "pseudo") == 0)
+		return passthrough ("po.pseudo", text_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "import") == 0)
+		return passthrough ("po.import", import_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "export") == 0)
+		return passthrough ("po.export", export_keys, args + 1, error);
+	return usage_error (error, "po extract|pseudo TEXT | po import PATH ID | po export PATH ID TEXT");
+}
+
+static gboolean
+cmd_collab (gchar  **args,
+            GError **error)
+{
+	static const gchar * const apply_keys[] = { "user", "guid", "revision", "prop", "value", NULL };
+	static const gchar * const get_keys[] = { "guid", "prop", NULL };
+	static const gchar * const lock_keys[] = { "user", "guid", NULL };
+	static const gchar * const cursor_keys[] = { "user", "x", "y", "z", NULL };
+
+	if (g_strcmp0 (args[0], "apply") == 0)
+		return passthrough ("collab.apply", apply_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "get") == 0)
+		return passthrough ("collab.get", get_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "lock") == 0)
+		return passthrough ("collab.lock", lock_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "unlock") == 0)
+		return passthrough ("collab.unlock", lock_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "cursor") == 0)
+		return passthrough ("collab.cursor", cursor_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "presence") == 0)
+		return passthrough ("collab.presence", NULL, args + 1, error);
+	return usage_error (error, "collab apply|get|lock|unlock|cursor|presence ...");
+}
+
+static gboolean
+cmd_scenes (gchar  **args,
+            GError **error)
+{
+	static const gchar * const path_keys[] = { "path", NULL };
+	static const gchar * const index_keys[] = { "index", NULL };
+
+	if (args[0] == NULL || g_strcmp0 (args[0], "list") == 0)
+		return passthrough ("scenes.list", NULL, args[0] != NULL ? args + 1 : args, error);
+	if (g_strcmp0 (args[0], "open") == 0)
+		return passthrough ("scenes.open", path_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "active") == 0)
+		return passthrough ("scenes.active", index_keys, args + 1, error);
+	return usage_error (error, "scenes list | scenes open PATH | scenes active INDEX");
+}
+
+static gboolean
+cmd_gizmo (gchar  **args,
+           GError **error)
+{
+	static const gchar * const apply_keys[] = { "op", NULL };
+	static const gchar * const pivot_keys[] = { "mode", NULL };
+	static const gchar * const cursor_keys[] = { "x", "y", "z", NULL };
+
+	if (g_strcmp0 (args[0], "apply") == 0)
+		return passthrough ("gizmo.apply", apply_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "pivot") == 0)
+		return passthrough ("gizmo.pivot", pivot_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "cursor") == 0)
+		return passthrough ("gizmo.cursor", cursor_keys, args + 1, error);
+	if (g_strcmp0 (args[0], "origin") == 0)
+		return passthrough ("gizmo.origin", NULL, args + 1, error);
+	return usage_error (error, "gizmo apply OP [axis=N] [value=N] | gizmo pivot MODE | gizmo cursor X Y Z | gizmo origin");
+}
+
+/* vcs [PATH]: the project's git status, or one path's badge.
+ * vcs diff|log|locks|magit | vcs commit MESSAGE */
 static gboolean
 cmd_vcs (gchar  **args,
          GError **error)
@@ -1814,6 +1978,27 @@ cmd_vcs (gchar  **args,
 		{ "STATUS", "status", FALSE }, { "LETTER", "letter", TRUE }, { "PATH", "path", FALSE }
 	};
 
+	if (g_strcmp0 (args[0], "diff") == 0)
+		return passthrough ("vcs.diff", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "log") == 0)
+		return passthrough ("vcs.log", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "locks") == 0)
+		return passthrough ("vcs.locks", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "magit") == 0)
+		return passthrough ("vcs.magit", NULL, args + 1, error);
+	if (g_strcmp0 (args[0], "commit") == 0)
+	{
+		static const gchar * const message_keys[] = { "message", NULL };
+		g_autofree gchar           *msg = NULL;
+		gchar                      *one[2];
+
+		if (args[1] == NULL)
+			return usage_error (error, "vcs commit MESSAGE");
+		msg = g_strjoinv (" ", args + 1);
+		one[0] = msg;
+		one[1] = NULL;
+		return passthrough ("vcs.commit", message_keys, one, error);
+	}
 	if (args[0] != NULL)
 		return passthrough ("vcs.status", keys, args, error);
 	r = call ("vcs.status", p, error);
@@ -3636,6 +3821,55 @@ static const M67Verb m67_script_verbs[] = {
 	{ "editor-running", "script.editor_running", { NULL }, NULL, { NULL }, FALSE },
 };
 
+/* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|validate|run|live|breakpoint|continue|save */
+static const M67Verb m67_vscript_verbs[] = {
+	{ "create", "vscript.create", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "open", "vscript.open", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "vscript.get", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "node-types", "vscript.node_types", { "query", NULL }, NULL, { NULL }, FALSE },
+	{ "gi-search", "vscript.gi_search", { "query", NULL }, NULL, { NULL }, FALSE },
+	{ "add-node", "vscript.add_node", { "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-node", "vscript.remove_node", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-node", "vscript.set_node", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "connect", "vscript.connect", { "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "disconnect", "vscript.disconnect", { "from", "to", NULL }, NULL, { NULL }, FALSE },
+	{ "set-variable", "vscript.set_variable", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "add-subgraph", "vscript.add_subgraph", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-subgraph", "vscript.remove_subgraph", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "add-comment", "vscript.add_comment", { "text", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-comment", "vscript.remove_comment", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-program", "vscript.set_program", { NULL }, NULL, { NULL }, FALSE },
+	{ "select", "vscript.select", { NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "vscript.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "run", "vscript.run", { NULL }, NULL, { NULL }, FALSE },
+	{ "live", "vscript.live", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "breakpoint", "vscript.breakpoint", { "node", NULL }, NULL, { NULL }, TRUE },
+	{ "continue", "vscript.continue", { NULL }, NULL, { NULL }, FALSE },
+	{ "save", "vscript.save", { "@path", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* memory status|types|resources|snapshot|snapshots|diff|clear-snapshots|history|show */
+static const M67Verb m67_memory_verbs[] = {
+	{ "status", "memory.status", { NULL }, NULL, { NULL }, FALSE },
+	{ "types", "memory.types", { NULL }, NULL, { NULL }, FALSE },
+	{ "resources", "memory.resources", { NULL }, NULL, { NULL }, FALSE },
+	{ "snapshot", "memory.snapshot", { NULL }, NULL, { NULL }, FALSE },
+	{ "snapshots", "memory.snapshots", { NULL }, NULL, { NULL }, FALSE },
+	{ "diff", "memory.diff", { "from", NULL }, NULL, { NULL }, FALSE },
+	{ "clear-snapshots", "memory.clear_snapshots", { NULL }, NULL, { NULL }, FALSE },
+	{ "history", "memory.history", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "memory.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
+/* network stats|history|enable|reset|show */
+static const M67Verb m67_network_verbs[] = {
+	{ "stats", "network.stats", { NULL }, NULL, { NULL }, FALSE },
+	{ "history", "network.history", { "metric", NULL }, NULL, { NULL }, FALSE },
+	{ "enable", "network.enable", { NULL }, NULL, { NULL }, FALSE },
+	{ "reset", "network.reset", { NULL }, NULL, { NULL }, FALSE },
+	{ "show", "network.show", { NULL }, NULL, { NULL }, FALSE },
+};
+
 /* the M6/M7/M8 families: lrgeditorctl FAMILY VERB ... */
 static const struct
 {
@@ -3661,6 +3895,9 @@ static const struct
 	{ "profiler", m67_profiler_verbs, G_N_ELEMENTS (m67_profiler_verbs) },
 	{ "frame", m67_frame_verbs, G_N_ELEMENTS (m67_frame_verbs) },
 	{ "script", m67_script_verbs, G_N_ELEMENTS (m67_script_verbs) },
+	{ "vscript", m67_vscript_verbs, G_N_ELEMENTS (m67_vscript_verbs) },
+	{ "memory", m67_memory_verbs, G_N_ELEMENTS (m67_memory_verbs) },
+	{ "network", m67_network_verbs, G_N_ELEMENTS (m67_network_verbs) },
 };
 /* m67e-generated: end */
 
@@ -3966,7 +4203,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite debug lsp frame script' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite debug lsp frame script vscript memory network merge po collab scenes gizmo' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -4028,6 +4265,15 @@ static const gchar *completion_script =
 	"\t\tprofiler) mapfile -t COMPREPLY < <(compgen -W 'sample set capture save load frames frame compare view' -- \"${cur}\") ;;\n"
 	"\t\tframe) mapfile -t COMPREPLY < <(compgen -W 'capture status calls call scrub texture save load show' -- \"${cur}\") ;;\n"
 	"\t\tscript) mapfile -t COMPREPLY < <(compgen -W 'run languages tools run-tool reload run-in-editor editor-running' -- \"${cur}\") ;;\n"
+	"\t\tvscript) mapfile -t COMPREPLY < <(compgen -W 'create open get node-types gi-search add-node remove-node set-node connect disconnect set-variable add-subgraph remove-subgraph add-comment remove-comment set-program select validate run live breakpoint continue save' -- \"${cur}\") ;;\n"
+	"\t\tmemory) mapfile -t COMPREPLY < <(compgen -W 'status types resources snapshot snapshots diff clear-snapshots history show' -- \"${cur}\") ;;\n"
+	"\t\tnetwork) mapfile -t COMPREPLY < <(compgen -W 'stats history enable reset show' -- \"${cur}\") ;;\n"
+	"\t\tmerge) mapfile -t COMPREPLY < <(compgen -W 'install' -- \"${cur}\") ;;\n"
+	"\t\tpo) mapfile -t COMPREPLY < <(compgen -W 'extract pseudo import export' -- \"${cur}\") ;;\n"
+	"\t\tcollab) mapfile -t COMPREPLY < <(compgen -W 'apply get lock unlock cursor presence' -- \"${cur}\") ;;\n"
+	"\t\tscenes) mapfile -t COMPREPLY < <(compgen -W 'list open active' -- \"${cur}\") ;;\n"
+	"\t\tgizmo) mapfile -t COMPREPLY < <(compgen -W 'apply pivot cursor origin' -- \"${cur}\") ;;\n"
+	"\t\tvcs|git) mapfile -t COMPREPLY < <(compgen -W 'diff log commit locks magit' -- \"${cur}\") ;;\n"
 	/* m67e-completion: end */
 	"\t\tmeta) mapfile -t COMPREPLY < <(compgen -W 'get set' -- \"${cur}\") ;;\n"
 	"\t\tprefab) mapfile -t COMPREPLY < <(compgen -W 'overrides apply revert sync relink unlink' -- \"${cur}\") ;;\n"
@@ -4067,6 +4313,16 @@ dispatch (gchar  **argv,
 		return cmd_meta (rest, error);
 	if (g_strcmp0 (verb, "vcs") == 0 || g_strcmp0 (verb, "git") == 0)
 		return cmd_vcs (rest, error);
+	if (g_strcmp0 (verb, "merge") == 0)
+		return cmd_merge (rest, error);
+	if (g_strcmp0 (verb, "po") == 0)
+		return cmd_po (rest, error);
+	if (g_strcmp0 (verb, "collab") == 0)
+		return cmd_collab (rest, error);
+	if (g_strcmp0 (verb, "scenes") == 0)
+		return cmd_scenes (rest, error);
+	if (g_strcmp0 (verb, "gizmo") == 0)
+		return cmd_gizmo (rest, error);
 	if (g_strcmp0 (verb, "prefab") == 0)
 		return cmd_prefab (rest, error);
 	if (g_strcmp0 (verb, "code") == 0)
@@ -4323,6 +4579,7 @@ main (int    argc,
 	g_autoptr(GError)         error = NULL;
 	gboolean                  ok;
 
+	ctl_argv0 = argv[0];
 	ctx = g_option_context_new ("- control running libregnum editors");
 	g_option_context_add_main_entries (ctx, entries, NULL);
 	g_option_context_set_description (ctx, description);

@@ -638,7 +638,7 @@ lrg_asset_meta_classify (const gchar *path)
 	g_autofree gchar *lower = NULL;
 
 	static const gchar * const tex[]   = { ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".pep", NULL };
-	static const gchar * const model[] = { ".gltf", ".glb", ".obj", ".fbx", ".ply",
+	static const gchar * const model[] = { ".gltf", ".glb", ".obj", ".fbx",
 	                                       ".stl", ".step", ".stp", ".iges", ".igs",
 	                                       ".3mf", NULL };
 	static const gchar * const cad[]   = { ".cad", ".ccad", NULL };

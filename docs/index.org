@@ -59,7 +59,7 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - [[file:modules/mmo/index.org][MMO foundations]] - Sessions, zones, interest replication, groups and persistence
 - *Debug Tools* - Profiling, console, overlay, and inspector
 - *Modding* - Complete mod system with dependencies
-- *Localization* - Multi-language support with CLDR plural rules
+- *Localization* - Multi-language support with CLDR plural rules ([[file:modules/i18n/po.org][gettext PO]])
 
 *** Editor and Level Authoring
 :PROPERTIES:
@@ -95,6 +95,8 @@ Libregnum is a GObject-based game engine library built on top of [[https://githu
 - *[[file:editor/prefabs.org][Prefabs]]* - Reusable saved node subtrees (=.rprefab=) and linked instances with overrides
 - *[[file:editor/editor-runtime.org][Editor Runtime]]* - =LrgEditor=, undo/redo commands, =LrgEditorHost= embedding
 - *[[file:editor/projects-and-assets.org][Projects and Assets]]* - =LrgProject= manifest, =LrgAssetDatabase= scanner, =.meta= sidecars, git status
+- *[[file:editor/assets-and-export.org][Assets and Export]]* - reference scan, importers, project templates, plugins, =lrgpack= and =export.*= IPC (0.9.0)
+- *[[file:editor/workflows.org][Editor Workflows]]* - transform math, GUID merge, collaboration, open scenes, game-view presets, UI place and animation, git diff and commit (0.9.0)
 - *Scripting Manager* - =LrgScriptingManager=, =LrgScriptComponent=, Crispy C backend
 - *Build flags* - =BUILD_EDITOR=1= for the editor subsystem; =CRISPY=1= for compiled-C scripts
 
@@ -165,6 +167,8 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/level-3d-runtime.org][Level 3D Runtime]]* - A standalone game playing an lrgeditor level with LrgWorld3D and LrgWorld3DRenderer
 - *[[file:examples/pbr-showcase.org][PBR Showcase]]* - Every 0.9.0 rendering feature in one level: environment/IBL, .rmat materials, spot/point shadows, decal, reflection probe, LOD, .rpost, with toggles
 - *[[file:examples/physics-sandbox.org][Physics Sandbox]]* - 3D physics from components: stacks, ramps, a ragdoll, a joint chain, a breakable wall, a cloth flag, CCD shots, debug draw toggles
+- *[[file:examples/game-showcase-3d.org][3D Showcase]]* - One program for a 0.9.0 level plus physics, nav, a clip, streaming cells and a UI animation (=--self-test= is headless)
+- *[[file:CHANGELOG.org][Changelog]]* - Release notes, including what 0.9.0 ships and what it leaves partial
 - *[[file:examples/ui-studio.org][UI Studio]]* - A docked tool application loaded from YAML: menu bar, 3D viewport, node graph, a timeline whose curves animate the scene, script editor, console, global shortcuts, theme switching and a dock layout saved as YAML
 - *[[file:examples/ui-theme-editor.org][UI Theme Editor]]* - Live theme designer: palette generation from an accent with tint and depth, all 27 colour roles and metrics, a live widget preview, WCAG contrast badges with auto-fix, YAML export
 - *[[file:examples/ui-game-menu.org][Game UI Menu]]* - Game menus over a live scene: YAML theme, virtual resolution with a pointer transform, gamepad navigation, pause modal and achievement toasts
@@ -250,8 +254,10 @@ User shaders are =.rshader= assets ([[file:modules/graphics/shader-asset.org][Lr
 - [[file:guides/audio.org][Audio]] - The audio stack: manager, mixer graph and .rmixer, snapshots/ducking, spatial sources (rolloff curves, cones, doppler, occlusion)
 - [[file:guides/vfx.org][Visual effects]] - .rparticles effects: module stacks, seeds, billboards, trails, ribbons, mesh debris, sub-emitters, collisions, live editing (0.9.0)
 - [[file:guides/ai.org][AI]] - .rbt behaviour trees, .rfsm logic state machines, LrgAiComponent and LLM decisions (0.9.0)
+- [[file:guides/visual-scripting.org][Visual scripting]] - .rvscript programs: events, flow, variables, GI calls, the graph and blocks editors (0.9.0)
 - [[file:guides/terrain.org][Terrain]] - .rterrain sculpt/paint/holes, foliage scattering, .rwater lakes and rivers (0.9.0)
-- [[file:guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]] - The runtime level module (=src/level/=), include paths, shared 3D math
+- [[file:guides/migration-0-8-to-0-9.org][Migrating from 0.8 to 0.9]] - The runtime level module (=src/level/=), include paths, shared 3D math, and the 0.9.0 additions
+- [[file:CHANGELOG.org][Changelog]] - Release notes
 - [[file:guides/editor-migration-0-8-1.org][Editor 0.8.1 Migration]] - Embeddings, settings, prefab instances and assets from the 0.8.0 editor
 - [[file:guides/implementing-saveable.org][Implementing Saveable]] - Save/load support
 - [[file:guides/template-best-practices.org][Template Best Practices]] - Coordinate spaces, async resize, common pitfalls

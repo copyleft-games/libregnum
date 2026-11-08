@@ -29,6 +29,9 @@ struct _LrgWeatherManager
 
     LrgDayNightCycle *day_night_cycle;
     gboolean          day_night_enabled;
+
+    gint              render_width;   /* 0 = unset; pushed onto effects */
+    gint              render_height;
 };
 
 G_DEFINE_FINAL_TYPE (LrgWeatherManager, lrg_weather_manager, G_TYPE_OBJECT)
@@ -226,6 +229,8 @@ lrg_weather_manager_init (LrgWeatherManager *self)
     self->wind_y = 0.0f;
     self->day_night_cycle = lrg_day_night_cycle_new ();
     self->day_night_enabled = TRUE;
+    self->render_width = 0;
+    self->render_height = 0;
 }
 
 /* Public API */
@@ -279,6 +284,45 @@ lrg_weather_manager_unregister_weather (LrgWeatherManager *self,
     return g_hash_table_remove (self->registered_weather, weather_id);
 }
 
+/* set_effects_full:
+ * Puts every effect back at the intensity it has when its weather is
+ * fully on (its level, or 1). A crossfade leaves both sides part way
+ * there; an instant switch has to undo that or the next time those
+ * weathers run they stay faded. */
+static void
+set_effects_full (LrgWeather *weather)
+{
+    GList *effects;
+    GList *l;
+
+    if (weather == NULL)
+        return;
+
+    effects = lrg_weather_get_effects (weather);
+    for (l = effects; l != NULL; l = l->next)
+        lrg_weather_effect_set_intensity (l->data,
+                                          lrg_weather_effect_get_full_intensity (l->data));
+    g_list_free (effects);
+}
+
+/* finish_transition_full:
+ * Ends a crossfade. The fading weather and the fade target both go
+ * back to full strength; the fading one is deactivated. */
+static void
+finish_transition_full (LrgWeatherManager *self)
+{
+    if (self->previous_weather != NULL)
+    {
+        set_effects_full (self->previous_weather);
+        lrg_weather_deactivate (self->previous_weather);
+        self->previous_weather = NULL;
+    }
+
+    set_effects_full (self->active_weather);
+    self->transitioning = FALSE;
+    self->transition_progress = 0.0f;
+}
+
 LrgWeather *
 lrg_weather_manager_get_weather (LrgWeatherManager *self,
                                  const gchar       *weather_id)
@@ -318,16 +362,29 @@ lrg_weather_manager_set_weather (LrgWeatherManager *self,
         }
     }
 
-    /* Check if already active */
-    if (new_weather == self->active_weather)
+    /* Already there, and no crossfade to cut short. */
+    if (new_weather == self->active_weather && !self->transitioning)
         return;
 
     prev_id = self->active_weather ? lrg_weather_get_id (self->active_weather) : NULL;
 
-    /* Handle instant transition */
+    /* Handle instant transition. A crossfade in progress has left the
+     * fading weather and the fade target below their levels; put both
+     * back before switching, or that partial intensity sticks. */
     if (transition_duration <= 0.0f)
     {
-        /* Deactivate previous */
+        finish_transition_full (self);
+
+        /* Snapping onto the fade target: it is already active, now at
+         * full strength, and the source has been restored and stopped. */
+        if (new_weather == self->active_weather)
+        {
+            g_signal_emit (self, signals[SIGNAL_TRANSITION_COMPLETED], 0);
+            g_signal_emit (self, signals[SIGNAL_WEATHER_CHANGED], 0,
+                           NULL, weather_id);
+            return;
+        }
+
         if (self->active_weather != NULL)
             lrg_weather_deactivate (self->active_weather);
 
@@ -351,9 +408,13 @@ lrg_weather_manager_set_weather (LrgWeatherManager *self,
         return;
     }
 
-    /* Start gradual transition */
+    /* Start gradual transition. A fade already running has a source
+     * that is about to be abandoned; put it back to full first. */
     if (self->previous_weather != NULL)
+    {
+        set_effects_full (self->previous_weather);
         lrg_weather_deactivate (self->previous_weather);
+    }
 
     self->previous_weather = self->active_weather;
     self->active_weather = new_weather;
@@ -535,9 +596,11 @@ lrg_weather_manager_update (LrgWeatherManager *self,
             t = 1.0f;
             self->transitioning = FALSE;
 
-            /* Deactivate previous weather */
+            /* Deactivate previous weather, back at its full level
+             * so the fade does not stick to it. */
             if (self->previous_weather != NULL)
             {
+                set_effects_full (self->previous_weather);
                 lrg_weather_deactivate (self->previous_weather);
                 self->previous_weather = NULL;
             }
@@ -591,10 +654,67 @@ lrg_weather_manager_update (LrgWeatherManager *self,
         lrg_weather_update (self->active_weather, delta_time);
 }
 
+/* push_render_size:
+ * Copies the manager's render-target size onto every effect of
+ * @weather. Runs even when nothing can draw, so a headless test sees
+ * the size the 2D pass would have used. */
+static void
+push_render_size (LrgWeather *weather,
+                  gint        width,
+                  gint        height)
+{
+    GList *effects;
+    GList *l;
+
+    if (weather == NULL)
+        return;
+
+    effects = lrg_weather_get_effects (weather);
+    for (l = effects; l != NULL; l = l->next)
+        lrg_weather_effect_set_viewport (LRG_WEATHER_EFFECT (l->data), width, height);
+    g_list_free (effects);
+}
+
+void
+lrg_weather_manager_set_render_size (LrgWeatherManager *self,
+                                     gint               width,
+                                     gint               height)
+{
+    g_return_if_fail (LRG_IS_WEATHER_MANAGER (self));
+
+    if (width <= 0 || height <= 0)
+    {
+        self->render_width = 0;
+        self->render_height = 0;
+        return;
+    }
+    self->render_width = width;
+    self->render_height = height;
+}
+
+void
+lrg_weather_manager_get_render_size (LrgWeatherManager *self,
+                                     gint              *width,
+                                     gint              *height)
+{
+    g_return_if_fail (LRG_IS_WEATHER_MANAGER (self));
+
+    if (width != NULL)
+        *width = self->render_width;
+    if (height != NULL)
+        *height = self->render_height;
+}
+
 void
 lrg_weather_manager_render (LrgWeatherManager *self)
 {
     g_return_if_fail (LRG_IS_WEATHER_MANAGER (self));
+
+    /* Size first, then draw. Effects adopt it even with no window. */
+    if (self->previous_weather != NULL && self->transitioning)
+        push_render_size (self->previous_weather, self->render_width, self->render_height);
+    if (self->active_weather != NULL)
+        push_render_size (self->active_weather, self->render_width, self->render_height);
 
     /* Render previous weather (during transition) */
     if (self->previous_weather != NULL && self->transitioning)

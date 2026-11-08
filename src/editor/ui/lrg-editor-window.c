@@ -55,7 +55,8 @@ static const gchar * const panel_entries[][2] = {
 	{ "hierarchy", "Hierarchy" }, { "inspector", "Inspector" }, { "viewport", "Viewport" },
 	{ "assets", "Assets" }, { "console", "Console" }, { "history", "History" },
 	{ "problems", "Problems" }, { "tiles", "Tiles" }, { "environment", "Environment" }, { "bake", "Lighting" }, { "physics", "Physics" }, { "terrain", "Terrain" }, { "navigation", "Navigation" }, { "ai", "AI" }, { "mixer", "Mixer" }, { "timeline", "Timeline" }, { "sequencer", "Sequencer" },
-	{ "profiler", "Profiler" }, { "code", "Code" }, { "sources", "Sources" }
+	{ "profiler", "Profiler" }, { "frame", "Frame Debugger" }, { "code", "Code" },
+	{ "debug", "Debug" }, { "memory", "Memory" }, { "network", "Network" }, { "sources", "Sources" }
 };
 
 /* Toolbar toggle buttons: label and the action they run and reflect. */
@@ -384,7 +385,7 @@ build_menu_model (LrgEditorWindow *self)
 {
 	static const gchar *file_items[] = {
 		"file.new-level", "file.open-level", "-", "file.save", "file.save-as", "file.reload", "-",
-		"file.new-project", "file.open-project", "file.project-settings", "-",
+		"file.new-project", "file.open-project", "file.project-settings", "file.export", "-",
 		"file.import-scene", "-", "file.quit", NULL
 	};
 	static const gchar *edit_items[] = {
@@ -493,6 +494,31 @@ build_menu_model (LrgEditorWindow *self)
 		g_menu_append (section, "Navigation Panel", "editor.nav.show");
 		g_menu_append (section, "Bake Navigation", "editor.nav.bake");
 		g_menu_append (section, "Save Navigation", "editor.nav.save");
+		g_menu_append_section (menus[6], NULL, G_MENU_MODEL (section));
+	}
+	{
+		/* Tool scripts fill this submenu after the window exists. The
+		 * GMenu stays on the app; append_submenu holds its own ref. */
+		GMenu *scripts;
+		g_autoptr(GMenu) section = g_menu_new ();
+
+		scripts = g_menu_new ();
+		g_object_set_data_full (G_OBJECT (self->app), "lrg-editor-scripts-menu",
+		                        scripts, g_object_unref);
+		g_menu_append_submenu (section, "Scripts", G_MENU_MODEL (scripts));
+		g_menu_append (section, "Run Script...", "editor.script.run");
+		g_menu_append (section, "Reload Tool Scripts", "editor.script.reload");
+		g_menu_append_section (menus[6], NULL, G_MENU_MODEL (section));
+	}
+	{
+		/* Plugin actions fill this submenu when a project opens. */
+		GMenu *plugins;
+		g_autoptr(GMenu) section = g_menu_new ();
+
+		plugins = g_menu_new ();
+		g_object_set_data_full (G_OBJECT (self->app), "lrg-editor-plugins-menu",
+		                        plugins, g_object_unref);
+		g_menu_append_submenu (section, "Plugins", G_MENU_MODEL (plugins));
 		g_menu_append_section (menus[6], NULL, G_MENU_MODEL (section));
 	}
 	append_items (menus[7], actions, help_items);
@@ -736,7 +762,11 @@ build_statusbar (LrgEditorWindow *self)
  *
  * (Re)registers every accelerator of every registry action as a canvas
  * shortcut on "editor.<id>". Cheap enough to redo whenever a binding
- * changes; the canvas keeps no other shortcuts of ours.
+ * changes; the canvas keeps no other shortcuts of ours. Priority 0
+ * stacks bindings of one key in list order (lrg_editor_actions_list()
+ * is category, then label) instead of replacing the chord, so
+ * editor.tilemap.flip-y is tried before tool.toggle-snap and a
+ * disabled flip falls through to snap.
  */
 void
 editor_window_sync_shortcuts (LrgEditorWindow *self)
@@ -759,7 +789,7 @@ editor_window_sync_shortcuts (LrgEditorWindow *self)
 
 		for (i = 0; accels != NULL && accels[i] != NULL; i++)
 			if (accels[i][0] != '\0')
-				lrg_canvas_add_shortcut (canvas, accels[i], action, NULL);
+				lrg_canvas_add_shortcut_full (canvas, accels[i], action, NULL, 0);
 	}
 	g_list_free (ids);
 	self->shortcuts_dirty = FALSE;

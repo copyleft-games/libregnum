@@ -557,13 +557,20 @@ test_panel (EditorAppFixture *f,
 	g_assert_true (lrg_editor_app_activate_action (f->app, "terrain.tool-smooth"));
 	g_assert_cmpint (lrg_editor_terrain_panel_get_tool (panel), ==, LRG_EDITOR_TERRAIN_TOOL_SMOOTH);
 
-	/* Add layer chip; a click on a row selects it */
+	/* Add layer chip; a click on a row selects it.
+	 * The chip is below the fold of the inspector split. */
 	undo = undo_count (f);
 	efx_frames (f, 2);
+	lrg_scroll_box_scroll_to_widget (LRG_SCROLL_BOX (efx_find (f, "terrain-scroll")),
+	                                 efx_find (f, "terrain-add-layer"));
+	efx_frames (f, 40);
 	efx_click_widget (f, efx_find (f, "terrain-add-layer"));
 	g_assert_cmpuint (lrg_terrain_asset_get_n_layers (lrg_editor_terrain_panel_get_asset (panel)), ==, 3);
 	g_assert_cmpuint (undo_count (f), ==, undo + 1);
 	efx_frames (f, 2);
+	lrg_scroll_box_scroll_to_widget (LRG_SCROLL_BOX (efx_find (f, "terrain-scroll")),
+	                                 efx_find (f, "terrain-layer-list"));
+	efx_frames (f, 40);
 	efx_rect_of (efx_find (f, "terrain-layer-list"), &x, &y, &w, &h);
 	efx_click (f, x + 40.0f, y + 1.0f + 24.0f * 0.5f);
 	g_assert_cmpint (lrg_editor_terrain_panel_get_selected_layer (panel), ==, 0);
@@ -571,6 +578,9 @@ test_panel (EditorAppFixture *f,
 
 	/* foliage Add chip with the kind picker */
 	efx_frames (f, 2);
+	lrg_scroll_box_scroll_to_widget (LRG_SCROLL_BOX (efx_find (f, "terrain-scroll")),
+	                                 efx_find (f, "terrain-add-foliage"));
+	efx_frames (f, 40);
 	efx_click_widget (f, efx_find (f, "terrain-add-foliage"));
 	g_assert_cmpint (lrg_editor_terrain_panel_get_selected_foliage (panel), ==, 0);
 	efx_frames (f, 2);

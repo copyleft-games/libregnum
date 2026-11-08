@@ -159,7 +159,8 @@ LrgScriptBinding * lrg_script_binding_copy (LrgScriptBinding *self);
  * @a: (nullable): an #LrgScriptBinding
  * @b: (nullable): another #LrgScriptBinding
  *
- * Returns: %TRUE if both bind the same script, language and enabled state
+ * Returns: %TRUE if both bind the same script, language, enabled state and
+ *   run-in-editor flag
  */
 LRG_AVAILABLE_IN_ALL
 gboolean lrg_script_binding_equal (LrgScriptBinding *a,

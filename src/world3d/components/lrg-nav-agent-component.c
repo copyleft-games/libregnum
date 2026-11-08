@@ -43,6 +43,7 @@ struct _LrgNavAgentComponent
 
 	gboolean      has_pending;
 	gfloat        pending[3];
+	gchar        *target_node;    /* nullable: an entity name that wins */
 
 	gboolean      has_written;
 	gfloat        written[3];     /* the entity position we wrote last */
@@ -63,6 +64,10 @@ enum
 	PROP_BASE_OFFSET,
 	PROP_UPDATE_ROTATION,
 	PROP_ANGULAR_SPEED,
+	PROP_DESTINATION_X,
+	PROP_DESTINATION_Y,
+	PROP_DESTINATION_Z,
+	PROP_TARGET_NODE,
 	N_PROPS
 };
 
@@ -138,6 +143,8 @@ read_yaw (LrgNavAgentComponent *self,
 	self->yaw = atan2f (fx, fz);
 }
 
+static void resolve_target (LrgNavAgentComponent *self);
+
 /* entity -> agent: called before the crowd steps */
 static void
 lrg_nav_agent_component_fixed_update (LrgComponent *component,
@@ -151,8 +158,12 @@ lrg_nav_agent_component_fixed_update (LrgComponent *component,
 	if (entity == NULL || self->crowd == NULL)
 		return;
 
-	/* a destination waiting for a mesh */
-	if (self->has_pending && lrg_nav_agent_get_mesh (self->agent) != NULL)
+	/* A named target wins, even before it exists: the numeric pending
+	 * destination stays stored and is not planned. A missing name does
+	 * not skip the rest of the update. */
+	if (self->target_node != NULL && self->target_node[0] != '\0')
+		resolve_target (self);
+	else if (self->has_pending && lrg_nav_agent_get_mesh (self->agent) != NULL)
 	{
 		self->has_pending = FALSE;
 		if (!lrg_nav_agent_set_destination (self->agent, self->pending))
@@ -265,7 +276,9 @@ lrg_nav_agent_component_world_entered (LrgComponent *component,
 		read_yaw (self, entity);
 	}
 	self->has_written = FALSE;
-	if (self->has_pending && lrg_nav_agent_get_mesh (self->agent) != NULL)
+	if (self->target_node != NULL && self->target_node[0] != '\0')
+		resolve_target (self);
+	else if (self->has_pending && lrg_nav_agent_get_mesh (self->agent) != NULL)
 	{
 		self->has_pending = FALSE;
 		lrg_nav_agent_set_destination (self->agent, self->pending);
@@ -323,6 +336,7 @@ lrg_nav_agent_component_dispose (GObject *object)
 		g_signal_handlers_disconnect_by_data (self->agent, self);
 		g_clear_object (&self->agent);
 	}
+	g_clear_pointer (&self->target_node, g_free);
 	G_OBJECT_CLASS (lrg_nav_agent_component_parent_class)->dispose (object);
 }
 
@@ -345,6 +359,19 @@ lrg_nav_agent_component_get_property (GObject    *object,
 	case PROP_BASE_OFFSET:     g_value_set_float (value, self->base_offset); break;
 	case PROP_UPDATE_ROTATION: g_value_set_boolean (value, self->update_rotation); break;
 	case PROP_ANGULAR_SPEED:   g_value_set_float (value, self->angular_speed); break;
+	case PROP_DESTINATION_X:
+	case PROP_DESTINATION_Y:
+	case PROP_DESTINATION_Z:
+	{
+		gfloat dest[3] = { 0.0f, 0.0f, 0.0f };
+
+		lrg_nav_agent_component_get_destination (self, dest);
+		g_value_set_float (value, dest[prop_id - PROP_DESTINATION_X]);
+		break;
+	}
+	case PROP_TARGET_NODE:
+		g_value_set_string (value, self->target_node);
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -396,6 +423,42 @@ lrg_nav_agent_component_set_property (GObject      *object,
 			g_object_notify_by_pspec (object, pspec);
 		}
 		break;
+	case PROP_DESTINATION_X:
+	case PROP_DESTINATION_Y:
+	case PROP_DESTINATION_Z:
+	{
+		gfloat dest[3] = { 0.0f, 0.0f, 0.0f };
+		gfloat v = g_value_get_float (value);
+		guint  axis = prop_id - PROP_DESTINATION_X;
+
+		lrg_nav_agent_component_get_destination (self, dest);
+		if (dest[axis] != v)
+		{
+			dest[axis] = v;
+			lrg_nav_agent_component_set_destination (self, dest);
+			g_object_notify_by_pspec (object, pspec);
+		}
+		break;
+	}
+	case PROP_TARGET_NODE:
+	{
+		const gchar *s = g_value_get_string (value);
+		gchar       *copy = (s != NULL && s[0] != '\0') ? g_strdup (s) : NULL;
+		LrgEntity3D *entity;
+
+		if (g_strcmp0 (self->target_node, copy) == 0)
+		{
+			g_free (copy);
+			break;
+		}
+		g_free (self->target_node);
+		self->target_node = copy;
+		g_object_notify_by_pspec (object, pspec);
+		entity = lrg_component_get_entity (LRG_COMPONENT (self));
+		if (entity != NULL && lrg_entity3d_get_world (entity) != NULL)
+			resolve_target (self);
+		break;
+	}
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 	}
@@ -522,6 +585,47 @@ lrg_nav_agent_component_class_init (LrgNavAgentComponentClass *klass)
 	 */
 	properties[PROP_ANGULAR_SPEED] = comp_float ("angular-speed", "Angular speed", 0.0f, 100000.0f, 720.0f);
 
+	/**
+	 * LrgNavAgentComponent:destination-x:
+	 *
+	 * World X of the destination. Setting one axis keeps the other two
+	 * (or zero when no destination is stored yet).
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_DESTINATION_X] = comp_float ("destination-x", "Destination X", -1.0e8f, 1.0e8f, 0.0f);
+
+	/**
+	 * LrgNavAgentComponent:destination-y:
+	 *
+	 * World Y of the destination.
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_DESTINATION_Y] = comp_float ("destination-y", "Destination Y", -1.0e8f, 1.0e8f, 0.0f);
+
+	/**
+	 * LrgNavAgentComponent:destination-z:
+	 *
+	 * World Z of the destination.
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_DESTINATION_Z] = comp_float ("destination-z", "Destination Z", -1.0e8f, 1.0e8f, 0.0f);
+
+	/**
+	 * LrgNavAgentComponent:target-node:
+	 *
+	 * Name of an entity in the same world. While set, the agent walks
+	 * to that entity's local position and a numeric destination is not
+	 * planned, even when the name is not in the world yet.
+	 *
+	 * Since: 0.9.0
+	 */
+	properties[PROP_TARGET_NODE] =
+		g_param_spec_string ("target-node", NULL, "Entity to walk to", NULL,
+		                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+
 	g_object_class_install_properties (object_class, N_PROPS, properties);
 
 	/**
@@ -605,6 +709,39 @@ lrg_nav_agent_component_get_destination (LrgNavAgentComponent *self,
 		return TRUE;
 	}
 	return lrg_nav_agent_get_destination (self->agent, out);
+}
+
+/* Walk to target-node's local position when that entity is in the world. */
+static void
+resolve_target (LrgNavAgentComponent *self)
+{
+	LrgEntity3D *entity;
+	LrgWorld3D  *world;
+	LrgEntity3D *target;
+	gfloat       pos[3];
+	gfloat       cur[3];
+	gboolean     have;
+
+	if (self->target_node == NULL || self->target_node[0] == '\0')
+		return;
+	entity = lrg_component_get_entity (LRG_COMPONENT (self));
+	world = entity != NULL ? lrg_entity3d_get_world (entity) : NULL;
+	target = world != NULL ? lrg_world3d_find_by_name (world, self->target_node) : NULL;
+	if (target == NULL)
+		return;
+
+	lrg_entity3d_get_position (target, pos);
+	have = lrg_nav_agent_component_get_destination (self, cur);
+	if (have && cur[0] == pos[0] && cur[1] == pos[1] && cur[2] == pos[2])
+		return;
+	if (!lrg_nav_agent_component_set_destination (self, pos))
+		return;
+	if (properties[PROP_DESTINATION_X] != NULL)
+	{
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DESTINATION_X]);
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DESTINATION_Y]);
+		g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_DESTINATION_Z]);
+	}
 }
 
 void

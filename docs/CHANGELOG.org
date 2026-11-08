@@ -1,0 +1,39 @@
+#+title: Changelog
+#+description: Notes for libregnum releases. 0.9.0 is the branch feat/v0.9.0; the version number is set in the landing commit.
+#+authors: Zach Podbielniak
+#+categories: libregnum changelog
+#+created: 2026-11-07T12:00:00-05:00
+#+updated: 2026-11-07T12:00:00-05:00
+#+version: 0.1
+
+* Changelog
+:PROPERTIES:
+:CUSTOM_ID: changelog
+:END:
+#+begin_quote
+*[[file:index.org][Home]]* > Changelog
+#+end_quote
+
+The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
+
+** 0.9.0
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-9-0
+:END:
+Not tagged until the landing commit. graylib's =MAJOR.MINOR= moves to 0.9 in that same commit.
+
+- Runtime levels live in =src/level/= and build with =BUILD_EDITOR=0=. =lrg_level_load_world3d()= is the game entry point. Shared math is =lrg_math3d_*()=.
+- 3D runtime: =LrgEntity3D=, =LrgWorld3D=, =LrgWorld3DRenderer=, materials (=.rmat=), user shaders, PBR, environment and probes, lightmaps and probe grids, decals, post stacks (=.rpost=).
+- Animation: glTF skins and clips, =.ranim= graphs, retargeting, IK, root motion, =.rseq= sequences, 2D skeletons.
+- Physics: =LrgDynamicsWorld= (shapes, joints, CCD, islands), ragdolls, cloth, fracture. Navigation: =.rnav= bakes, =LrgNavAgent=, ORCA crowds. AI: =.rbt=, =.rfsm=.
+- Terrain, foliage, water, particles (CPU and GPU), weather, mixer and spatial audio, rule tiles and =.rsprite=.
+- Scripting: =.rvscript=, hot reload, Lua/Python debugger, DAP, LSP client, editor tool scripts. Profiling: hierarchical profiler, GPU timer, frame debugger, memory and network panels.
+- Assets and export: =LrgPackWriter= and =lrgpack= (rres, content-addressed VFS, ustar, store-only zip, Flatpak manifest, AppDir, Windows zip). Cooking applies import settings and DXT1 when the sidecar asks. =LrgAssetRefs= refuses a rename or delete while quotes remain. Reimport uses =dest.stamp=. The =fbx= importer writes an OBJ through vendored ufbx (MIT, =deps/ufbx=). =.ply= is not a model. =LrgGameHost= loads top-level =autoloads:=. Per-platform =platforms:= overrides layer over =settings:=. =empty= and =mod= templates. File > Export runs a profile and shows =export-log=. Project Settings has a Steam tab. A plugin's panel, menu, action and inspector are installed into the dock. Flatpak does not run flatpak-builder. AppImage runs =appimagetool= only when it is on =PATH=.
+- Editor workflows, each one an =lrgeditorctl= verb and an MCP tool: scene bar (=scenes.open=, =scenes.active=), =tag:= outliner filter, one gizmo (=gizmo.pivot=, =gizmo.apply= for snap, drop, align, distribute, surface), game-view letterbox, nested inspector and =inspector-2=, UI drag-to-place and =lrg_ui_animation_sample()=, =po.import= / =po.export= / =po.extract= / =po.pseudo=, VCS panel (diff, history, commit, git-lfs locks, Magit handoff that does not start Emacs), =lrgeditorctl merge= and =lrg_level_merge_install_driver()=, =collab.*= (GUID op log, last-writer-wins, locks, presence).
+- Follow-ups in the same release: an instant weather change restores both levels of a crossfade; the 2D weather overlay uses the render-target size; lightning bolts draw a core and a halo; tilemap cell quads follow iso, hex and flip bits; the audio emitter suggestion is radius 50; a nav agent takes =destination-x= / =destination-y= / =destination-z= and =target-node= from YAML; terrain picks hit the heightfield; shader-graph nodes sit on a grid; problems carry a line and column; the physics sandbox ragdoll is an =LrgRagdoll=; a level's =audio: mixer:= loads on instantiate; a nav bake can run in tiles (=lrg_nav_bake_set_tile_extent()=). A second shortcut that flips a tile vertically without sharing the snap chord is left for later.
+
+** 0.8.x
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-8
+:END:
+0.8.3 added asset sources and the game-module editor hook. 0.8.2 added texture panels. 0.8.1 rebuilt =lrgeditor= on the retained UI toolkit. 0.8.0 was the paint-based UI framework. Detail is in =ROADMAP.md=.

@@ -3028,3 +3028,87 @@ lrg_asset_manager_load_audio (LrgAssetManager  *self,
         return (GObject *) lrg_asset_manager_load_music (self, norm, error);
     return (GObject *) lrg_asset_manager_load_sound (self, norm, error);
 }
+
+/*
+ * lrg_asset_manager_foreach_cached:
+ *
+ * Walks every cache table in a fixed order (texture, font, sound, music,
+ * model, animation, material, object). Animation entries have no single
+ * GObject (the value is a GPtrArray of clips). A model entry whose
+ * GrlModel was cleared is skipped rather than handed out as NULL.
+ */
+void
+lrg_asset_manager_foreach_cached (LrgAssetManager            *self,
+                                  LrgAssetManagerForeachFunc  func,
+                                  gpointer                    user_data)
+{
+    LrgAssetManagerPrivate *priv;
+    GHashTableIter          iter;
+    gpointer                key;
+    gpointer                value;
+    guint                   i;
+    struct { GHashTable *table; const gchar *kind; } plain[4];
+
+    g_return_if_fail (LRG_IS_ASSET_MANAGER (self));
+    g_return_if_fail (func != NULL);
+
+    priv = lrg_asset_manager_get_instance_private (self);
+
+    plain[0].table = priv->texture_cache;
+    plain[0].kind = "texture";
+    plain[1].table = priv->font_cache;
+    plain[1].kind = "font";
+    plain[2].table = priv->sound_cache;
+    plain[2].kind = "sound";
+    plain[3].table = priv->music_cache;
+    plain[3].kind = "music";
+
+    for (i = 0; i < G_N_ELEMENTS (plain); i++)
+    {
+        g_hash_table_iter_init (&iter, plain[i].table);
+        while (g_hash_table_iter_next (&iter, &key, &value))
+        {
+            if (value == NULL)
+                continue;
+            func ((const gchar *) key, plain[i].kind, G_OBJECT (value), 1, user_data);
+        }
+    }
+
+    g_hash_table_iter_init (&iter, priv->model_cache);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        ModelAsset *asset = value;
+
+        if (asset == NULL || asset->model == NULL)
+            continue;
+        func ((const gchar *) key, "model", G_OBJECT (asset->model), 1, user_data);
+    }
+
+    g_hash_table_iter_init (&iter, priv->animation_cache);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        GPtrArray *clips = value;
+
+        if (clips == NULL)
+            continue;
+        func ((const gchar *) key, "animation", NULL, clips->len, user_data);
+    }
+
+    g_hash_table_iter_init (&iter, priv->material_cache);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        if (value == NULL)
+            continue;
+        func ((const gchar *) key, "material", G_OBJECT (value), 1, user_data);
+    }
+
+    g_hash_table_iter_init (&iter, priv->object_cache);
+    while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+        ObjectAsset *asset = value;
+
+        if (asset == NULL || asset->object == NULL)
+            continue;
+        func ((const gchar *) key, "object", asset->object, 1, user_data);
+    }
+}

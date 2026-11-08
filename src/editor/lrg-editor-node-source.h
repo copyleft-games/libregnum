@@ -21,6 +21,7 @@
 #include <glib-object.h>
 #include "../lrg-version.h"
 #include "../lrg-types.h"
+#include "../lrg-enums.h"
 #include "../ui/lrg-property-source.h"
 #include "../ui/lrg-property-grid.h"
 
@@ -326,5 +327,24 @@ void lrg_editor_node_source_connect_grid (LrgPropertyGrid *grid,
  */
 LRG_AVAILABLE_IN_ALL
 void lrg_editor_node_source_disconnect_grid (LrgPropertyGrid *grid);
+
+/**
+ * lrg_editor_node_source_get_suggested_double:
+ * @kind: a visual kind
+ * @param: a parameter name (for example "radius")
+ * @out: (out) (optional): the suggested value
+ *
+ * Reads the inspector's suggested numeric parameter for @kind. The
+ * audio emitter's "radius" is the audible distance, the same default
+ * as #LrgAudioSourceComponent:max-distance (50).
+ *
+ * Returns: %TRUE when @kind lists @param
+ *
+ * Since: 0.9.0
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_editor_node_source_get_suggested_double (LrgNodeVisualKind  kind,
+                                                      const gchar       *param,
+                                                      gdouble           *out);
 
 G_END_DECLS

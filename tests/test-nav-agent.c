@@ -12,6 +12,7 @@
  */
 
 #include <libregnum.h>
+#include <glib/gstdio.h>
 #include <math.h>
 #include <string.h>
 
@@ -613,6 +614,83 @@ test_component (void)
 	g_assert_cmpuint (lrg_nav_crowd_get_n_agents (lrg_world3d_get_nav_crowd (world)), ==, 0);
 }
 
+/* destination-x/y/z merge one axis at a time. target-node, loaded from
+ * a level, sends the agent to that entity and wins over destination-x. */
+static void
+test_destination_properties (void)
+{
+	static const gchar *yaml =
+		"type: level\n"
+		"name: nav-goals\n"
+		"default_view: 3d\n"
+		"nodes:\n"
+		"  - name: Marker\n"
+		"    transform:\n"
+		"      location: [3.0, 1.0, 5.0]\n"
+		"  - name: Walker\n"
+		"    components:\n"
+		"      - type: nav-agent\n"
+		"        props:\n"
+		"          destination-x: 8.0\n"
+		"          destination-z: 2.0\n"
+		"  - name: Follower\n"
+		"    components:\n"
+		"      - type: nav-agent\n"
+		"        props:\n"
+		"          destination-x: 1.0\n"
+		"          target-node: Marker\n";
+	g_autoptr(LrgNavAgentComponent) alone = lrg_nav_agent_component_new ();
+	g_autoptr(LrgWorld3D)           world = lrg_world3d_new ();
+	g_autoptr(LrgLevel)             level = NULL;
+	g_autoptr(GError)               error = NULL;
+	g_autofree gchar               *dir = NULL;
+	g_autofree gchar               *path = NULL;
+	LrgEntity3D                    *walker;
+	LrgEntity3D                    *follower;
+	LrgNavAgentComponent           *wcomp;
+	LrgNavAgentComponent           *fcomp;
+	gfloat                          dest[3];
+
+	g_object_set (alone, "destination-x", 8.0f, NULL);
+	g_object_set (alone, "destination-z", 2.0f, NULL);
+	g_assert_true (lrg_nav_agent_component_get_destination (alone, dest));
+	g_assert_cmpfloat (dest[0], ==, 8.0f);
+	g_assert_cmpfloat (dest[1], ==, 0.0f);
+	g_assert_cmpfloat (dest[2], ==, 2.0f);
+
+	/* builtins, including nav-agent, register during startup */
+	g_assert_true (lrg_engine_startup (lrg_engine_get_default (), &error));
+	g_assert_no_error (error);
+	dir = g_dir_make_tmp ("lrg-nav-agent-XXXXXX", NULL);
+	g_assert_nonnull (dir);
+	path = g_build_filename (dir, "goals.rlevel", NULL);
+	g_assert_true (g_file_set_contents (path, yaml, -1, &error));
+	g_assert_no_error (error);
+	level = lrg_level_load_world3d (path, world, &error);
+	g_assert_no_error (error);
+	g_assert_nonnull (level);
+
+	walker = lrg_world3d_find_by_name (world, "Walker");
+	follower = lrg_world3d_find_by_name (world, "Follower");
+	g_assert_nonnull (walker);
+	g_assert_nonnull (follower);
+	wcomp = LRG_NAV_AGENT_COMPONENT (lrg_entity3d_get_component (walker, LRG_TYPE_NAV_AGENT_COMPONENT));
+	fcomp = LRG_NAV_AGENT_COMPONENT (lrg_entity3d_get_component (follower, LRG_TYPE_NAV_AGENT_COMPONENT));
+	g_assert_nonnull (wcomp);
+	g_assert_nonnull (fcomp);
+	g_assert_true (lrg_nav_agent_component_get_destination (wcomp, dest));
+	g_assert_cmpfloat (dest[0], ==, 8.0f);
+	g_assert_cmpfloat (dest[1], ==, 0.0f);
+	g_assert_cmpfloat (dest[2], ==, 2.0f);
+	g_assert_true (lrg_nav_agent_component_get_destination (fcomp, dest));
+	g_assert_cmpfloat (dest[0], ==, 3.0f);
+	g_assert_cmpfloat (dest[1], ==, 1.0f);
+	g_assert_cmpfloat (dest[2], ==, 5.0f);
+
+	g_unlink (path);
+	g_rmdir (dir);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -630,6 +708,7 @@ main (int   argc,
 	g_test_add_func ("/nav-agent/crowd/perf", test_perf);
 	g_test_add_func ("/nav-agent/crowd/membership-and-debug", test_crowd_membership_and_debug);
 	g_test_add_func ("/nav-agent/component", test_component);
+	g_test_add_func ("/nav-agent/destination-properties", test_destination_properties);
 
 	return g_test_run ();
 }

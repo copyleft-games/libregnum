@@ -321,8 +321,9 @@
                                    (libregnum-request "script.languages")))
                 (with-temp-buffer
                   (insert "return 20 + 22")
+                  ;; script.run returns the value as text (Lua print form).
                   (should (equal (alist-get 'result (libregnum-eval-tool-script (point-min) (point-max) "lua"))
-                                 42)))))
+                                 "42")))))
             (libregnum-request "editor.quit"))
         (libregnum-disconnect)
         (when (and proc (process-live-p proc))

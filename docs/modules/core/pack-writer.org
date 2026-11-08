@@ -1,0 +1,43 @@
+#+title: Pack Writer
+#+description: LrgPackWriter cooks a project and writes rres, a content-addressed VFS, and export bundles
+#+authors: Zach Podbielniak
+#+categories: libregnum core
+#+created: 2026-11-07T18:10:00-05:00
+#+updated: 2026-11-07T18:10:00-05:00
+#+version: 1.0
+
+* Pack Writer
+:PROPERTIES:
+:CUSTOM_ID: pack-writer
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > *[[file:../index.org][Modules]]* > *[[file:index.org][Core]]* > Pack Writer
+#+end_quote
+
+=LrgPackWriter= (=src/core/lrg-pack-writer.h=) is the writer that matches =LrgAssetPack=. It holds a list of relative forward-slash paths and their bytes, optionally cooks textures, and writes an rres file, a content-addressed directory, or one of the export profiles. =lrgpack= (=src/launcher/lrgpack.c=) is the command-line front end. The editor registers the same writer on IPC through =lrg_editor_export_register()=.
+
+The rres layout follows graylib's reader (raysan5 =rres=, RAWD chunks plus a central directory). After the 16-byte header the reader seeks with =SEEK_CUR=, so the stored directory offset is the absolute chunk position minus 16. An empty pack stores offset 0, which that reader treats as "no directory": a directory that started at byte 16 would be indistinguishable from "none". Resource ids are the CRC32 of the relative path. Id 0 and the directory id are rewritten to 1, because the reader treats 0 as missing. Two files that hash to the same id fail the write.
+
+** Construction and the file list
+:PROPERTIES:
+:CUSTOM_ID: file-list
+:END:
+
+=lrg_pack_writer_error_quark()= is the =GQuark= for =LRG_PACK_WRITER_ERROR= (=FAILED=, =EXISTS=, =UNSUPPORTED=). =lrg_pack_writer_new()= returns a writer with cooking on and an empty list.
+
+=lrg_pack_writer_set_project()= / =lrg_pack_writer_get_project()= are the root =lrg_pack_writer_scan()= walks. =lrg_pack_writer_set_module()= is a game module copied into bundle profiles as =game.so=. =lrg_pack_writer_set_launcher()= is an =lrgldr= binary copied into those bundles; when it is set, =run.sh= invokes =./lrgldr=, otherwise it expects =lrgldr= on =PATH=. =lrg_pack_writer_set_app_id()= overrides the Flatpak id (default =org.libregnum.Game=).
+
+=lrg_pack_writer_set_cook()= turns texture cooking on or off. Cooking is on by default. A texture whose =.meta= sidecar sets a max edge is decoded with =GrlImage=, resized, and re-encoded. The log line is =cook: resized texture to max-size=. A sidecar key =compression= of =dxt1= (any ASCII case) replaces the bytes with a DXT1 block: the four bytes =DXT1=, then little-endian width and height, then 8-byte 4x4 blocks. The log line is =cook: compressed texture dxt1=. A decode or encode failure keeps the original bytes and appends a line to the log. =lrg_pack_writer_add_bytes()= items have no source path and are never cooked. Calling =lrg_pack_writer_add_bytes()= twice with the same name replaces the first entry. Names must be relative, use forward slashes, and must not contain =..=, a backslash, or a newline.
+
+=lrg_pack_writer_scan()= replaces the whole list, including anything added with =lrg_pack_writer_add_bytes()=, with the regular files under the project. It skips =.git=, =.hg=, =.svn=, and =build=, skips symlinks, and skips files larger than 64 MiB (those are logged and left out). =lrg_pack_writer_get_count()= and =lrg_pack_writer_get_files()= report the list. =lrg_pack_writer_get_log()= is the cook and export log, possibly empty.
+
+** Profiles
+:PROPERTIES:
+:CUSTOM_ID: profiles
+:END:
+
+=lrg_pack_writer_profile_ids()= is the zero-terminated list =lrg_pack_writer_export()= accepts: =rres=, =vfs=, =linux-tar=, =flatpak=, =appimage=, =windows-zip=.
+
+=lrg_pack_writer_write_rres()= writes one =.rres=. =LrgAssetPack= opens it and loads each file by the pack path (=lrg_asset_pack_contains()=, =lrg_asset_pack_load_raw()=). =lrg_pack_writer_write_vfs()= creates =index.yaml= plus =objects/<sha256>=, one object per distinct payload. The manifest lists path, sha256, size, and whether the file was cooked.
+
+=lrg_pack_writer_export()= dispatches on the profile name. =rres= and =vfs= are the two writers above. =linux-tar= is a gzip ustar of the pack, a small manifest, =run.sh=, and =run.bat=. =windows-zip= is a store-only zip (local headers and an end-of-central-directory record; CRC32 comes from graylib). =flatpak= writes a directory with =manifest.yaml= and =pack.rres=. It does not run =flatpak-builder=. =appimage= writes an AppDir (=AppRun=, =game.desktop=, =pack.rres=). When =appimagetool= is on =PATH= it is spawned and the AppImage is written next to the directory; otherwise the log says so and the AppDir is left in place. A launcher or module path that was set but cannot be read fails the export.

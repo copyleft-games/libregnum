@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum ui actions
 #+created: 2026-11-06T00:00:00-05:00
-#+updated: 2026-11-06T00:00:00-05:00
+#+updated: 2026-11-07T00:00:00-05:00
 #+version: 1.0
 
 * UI Actions and Shortcuts
@@ -114,17 +114,22 @@ Every =LrgCanvas= installs these at construction. They hold only a weak referenc
 :END:
 | Function | Purpose |
 |----------+---------|
-| =lrg_canvas_add_shortcut (canvas, accel, action, target)= | Bind; returns =FALSE= (warning) for an accelerator that does not parse; rebinding the same keys replaces |
-| =lrg_canvas_remove_shortcut (canvas, accel)= | Unbind (any spelling of the same keys) |
+| =lrg_canvas_add_shortcut (canvas, accel, action, target)= | Bind at priority 0; returns =FALSE= (warning) for an accelerator that does not parse. Rebinding the same keys with this function replaces *every* binding of that chord |
+| =lrg_canvas_add_shortcut_full (canvas, accel, action, target, priority)= | Bind *alongside* other bindings of the same key. Higher =priority= is tried first; equal priorities stay in registration order. Adding the same action and target again only moves that binding |
+| =lrg_canvas_remove_shortcut_for_action (canvas, accel, action, target)= | Remove that one binding and leave the rest of the chord |
+| =lrg_canvas_list_shortcut_actions (canvas, accel)= | The actions bound to that key, in the order a key press tries them |
+| =lrg_canvas_remove_shortcut (canvas, accel)= | Unbind the whole chord (any spelling of the same keys) |
 | =lrg_canvas_remove_all_shortcuts (canvas)= | Unbind everything |
-| =lrg_canvas_get_n_shortcuts (canvas)= | Count |
+| =lrg_canvas_get_n_shortcuts (canvas)= | Count of bindings (two actions on one key count as two) |
 | =lrg_canvas_get_accel_for_action (canvas, action, target)= | The accelerator bound to =action= with exactly =target= (both =NULL= or =g_variant_equal=), as it was added |
 
 *The dispatch rule.* For every key press in a frame (see [[file:input-and-focus.org::#input-shortcuts][input and focus]]):
 
 1. The focused widget (or the top popup) gets =KEY_DOWN= first, bubbling. If any handler returns =TRUE=, the key is consumed: no shortcut, no navigation.
-2. Otherwise a shortcut whose key and modifiers match *exactly* (Shift, Ctrl, Alt, Super all compared) activates its action, resolved from the focused widget (so groups scoped to the focused subtree apply) and then from the canvas. If the action ran, the key is done.
-3. Otherwise the defaults run: arrows navigate, Enter / Space activate, Escape cancels. A shortcut whose action is missing or disabled falls through to them.
+2. Otherwise every binding whose key and modifiers match *exactly* (Shift, Ctrl, Alt, Super all compared) is tried in priority order, then registration order. The first whose action resolves and is enabled runs, from the focused widget (so groups scoped to the focused subtree apply) and then from the canvas. A disabled or missing action is skipped and the next binding of that key is tried. If one ran, the key is done.
+3. Otherwise the defaults run: arrows navigate, Enter / Space activate, Escape cancels. A chord whose every action is missing or disabled falls through to them.
+
+Several actions may share a key. The editor uses that so Tiles vertical-flip and =tool.toggle-snap= can both be Y: flip is enabled only while painting tiles and is tried first, and snap runs everywhere else. Bind the pair with =lrg_canvas_add_shortcut_full()=. =lrg_canvas_add_shortcut()= would drop the other binding.
 
 *Printable shortcuts* (letters, digits, punctuation, Space, keypad digits without Ctrl, Alt or Super: ="q"=, ="<Shift>a"=, ="space"=) are held back until the frame's typed characters were delivered and fire only if no widget accepted a =TEXT_INPUT=; typing "q" into a text field never quits. Ctrl / Alt / Super shortcuts fire unless the focused widget consumes the key: =LrgTextInput= keeps Ctrl+A / C / X / V and its editing keys, and lets every other Ctrl, Alt or Super combination through. Widgets that edit text should follow the same rule: return =TRUE= for printable keys only when no Ctrl / Alt / Super is held (AltGr arrives as Ctrl+Alt and is text).
 

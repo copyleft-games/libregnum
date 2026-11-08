@@ -47,6 +47,13 @@ typedef struct
 static GMutex     instances_lock;
 static GPtrArray *instances = NULL;       /* LrgScripting * (no ref) */
 static GArray    *instance_hooks = NULL;  /* InstanceHook */
+static GArray    *path_hooks = NULL;      /* PathHook */
+
+typedef struct
+{
+    LrgScriptingPathHook hook;
+    gpointer             user_data;
+} PathHook;
 
 /* per-thread stack of executing contexts (innermost last) */
 static GPrivate current_stack = G_PRIVATE_INIT ((GDestroyNotify) g_ptr_array_unref);
@@ -105,6 +112,83 @@ lrg_scripting_priv_remove_instance_hook (LrgScriptingInstanceHook hook,
         if (entry->hook == hook && entry->user_data == user_data)
         {
             g_array_remove_index (instance_hooks, i);
+            break;
+        }
+    }
+    g_mutex_unlock (&instances_lock);
+}
+
+/* copy the path hooks so a hook may add or remove hooks */
+static GArray *
+copy_path_hooks (void)
+{
+    GArray *hooks = NULL;
+
+    g_mutex_lock (&instances_lock);
+    if (path_hooks != NULL && path_hooks->len > 0)
+    {
+        hooks = g_array_sized_new (FALSE, FALSE, sizeof (PathHook), path_hooks->len);
+        g_array_append_vals (hooks, path_hooks->data, path_hooks->len);
+    }
+    g_mutex_unlock (&instances_lock);
+    return hooks;
+}
+
+static void
+fire_path_hooks (LrgScripting *self,
+                 const gchar  *path)
+{
+    g_autoptr(GArray) hooks = NULL;
+    guint i;
+
+    hooks = copy_path_hooks ();
+    for (i = 0; hooks != NULL && i < hooks->len; i++)
+    {
+        PathHook *entry = &g_array_index (hooks, PathHook, i);
+
+        entry->hook (self, path, entry->user_data);
+    }
+}
+
+/*
+ * lrg_scripting_priv_add_path_hook:
+ * @hook: called with a canonical path a context loaded or will search
+ * @user_data: data for @hook
+ */
+void
+lrg_scripting_priv_add_path_hook (LrgScriptingPathHook hook,
+                                  gpointer             user_data)
+{
+    PathHook entry;
+
+    entry.hook = hook;
+    entry.user_data = user_data;
+    g_mutex_lock (&instances_lock);
+    if (path_hooks == NULL)
+        path_hooks = g_array_new (FALSE, FALSE, sizeof (PathHook));
+    g_array_append_val (path_hooks, entry);
+    g_mutex_unlock (&instances_lock);
+}
+
+/*
+ * lrg_scripting_priv_remove_path_hook:
+ * @hook: a hook given to lrg_scripting_priv_add_path_hook()
+ * @user_data: its data
+ */
+void
+lrg_scripting_priv_remove_path_hook (LrgScriptingPathHook hook,
+                                     gpointer             user_data)
+{
+    guint i;
+
+    g_mutex_lock (&instances_lock);
+    for (i = 0; path_hooks != NULL && i < path_hooks->len; i++)
+    {
+        PathHook *entry = &g_array_index (path_hooks, PathHook, i);
+
+        if (entry->hook == hook && entry->user_data == user_data)
+        {
+            g_array_remove_index (path_hooks, i);
             break;
         }
     }
@@ -200,6 +284,7 @@ lrg_scripting_priv_note_loaded (LrgScripting *self,
 {
     LrgScriptingPrivate *priv = lrg_scripting_get_instance_private (self);
     g_autofree gchar *canon = canonical_path (path);
+    const gchar *stored = NULL;
     guint i;
 
     g_mutex_lock (&priv->lock);
@@ -211,8 +296,11 @@ lrg_scripting_priv_note_loaded (LrgScripting *self,
             return;
         }
     }
+    stored = canon;
     g_ptr_array_add (priv->loaded_files, g_steal_pointer (&canon));
     g_mutex_unlock (&priv->lock);
+
+    fire_path_hooks (self, stored);
 }
 
 /* ==========================================================================
@@ -292,8 +380,8 @@ lrg_scripting_real_reload_file (LrgScripting  *self,
                                          &state, 0, NULL, &save_error))
             have_state = G_IS_VALUE (&state);
         else
-            lrg_warning (LRG_LOG_DOMAIN_SCRIPTING, "%s: %s failed: %s", path,
-                         LRG_SCRIPT_HOOK_BEFORE_RELOAD, save_error->message);
+            lrg_debug (LRG_LOG_DOMAIN_SCRIPTING, "%s: %s failed: %s", path,
+                       LRG_SCRIPT_HOOK_BEFORE_RELOAD, save_error->message);
     }
 
     ok = lrg_scripting_load_file (self, path, error);
@@ -649,12 +737,20 @@ lrg_scripting_add_search_path (LrgScripting *self,
         guint i;
         gboolean known = FALSE;
 
+        const gchar *stored = NULL;
+
         g_mutex_lock (&priv->lock);
         for (i = 0; i < priv->search_paths->len; i++)
             known = known || g_strcmp0 (g_ptr_array_index (priv->search_paths, i), canon) == 0;
         if (!known)
+        {
+            stored = canon;
             g_ptr_array_add (priv->search_paths, g_steal_pointer (&canon));
+        }
         g_mutex_unlock (&priv->lock);
+
+        if (stored != NULL)
+            fire_path_hooks (self, stored);
     }
 }
 
@@ -687,6 +783,92 @@ lrg_scripting_has_function (LrgScripting *self,
 }
 
 /*
+ * Pull "File \"PATH\", line N" (Python) or "PATH:N:" out of a backend
+ * message when the backend did not record a line itself.
+ */
+static void
+capture_error_location (LrgScripting *self,
+                        const gchar  *path,
+                        const GError *error)
+{
+    gchar *existing = NULL;
+    gint line = 0;
+    const gchar *msg;
+    const gchar *marker;
+
+    if (error == NULL || error->message == NULL)
+        return;
+
+    if (lrg_scripting_get_error_location (self, &existing, &line) && line > 0)
+    {
+        g_free (existing);
+        return;
+    }
+    g_free (existing);
+
+    msg = error->message;
+    marker = strstr (msg, "File \"");
+    if (marker != NULL)
+    {
+        const gchar *start = marker + 6;
+        const gchar *end = strchr (start, '"');
+        const gchar *lp;
+
+        if (end != NULL)
+        {
+            g_autofree gchar *file = g_strndup (start, (gsize) (end - start));
+
+            lp = strstr (end, "line ");
+            if (lp != NULL && g_ascii_isdigit (lp[5]))
+            {
+                lrg_scripting_priv_set_error_location (self, file, atoi (lp + 5));
+                return;
+            }
+        }
+    }
+
+    /* PATH:N: — the first colon that introduces a positive line number. */
+    {
+        const gchar *cursor = msg;
+
+        while ((cursor = strchr (cursor, ':')) != NULL)
+        {
+            const gchar *digit = cursor + 1;
+            const gchar *start;
+            gint n = 0;
+
+            if (!g_ascii_isdigit (*digit))
+            {
+                cursor++;
+                continue;
+            }
+            while (g_ascii_isdigit (*digit))
+            {
+                n = n * 10 + (*digit - '0');
+                digit++;
+            }
+            if (*digit != ':' || n <= 0)
+            {
+                cursor++;
+                continue;
+            }
+            start = cursor;
+            while (start > msg &&
+                   start[-1] != ' ' && start[-1] != '\'' && start[-1] != '"')
+                start--;
+            {
+                g_autofree gchar *file = g_strndup (start, (gsize) (cursor - start));
+
+                lrg_scripting_priv_set_error_location (self, file, n);
+                return;
+            }
+        }
+    }
+
+    lrg_scripting_priv_set_error_location (self, path, 0);
+}
+
+/*
  * lrg_scripting_reload_file:
  * @self: an #LrgScripting
  * @path: (type filename): a script file
@@ -713,6 +895,9 @@ lrg_scripting_reload_file (LrgScripting  *self,
     lrg_scripting_priv_push_current (self);
     ok = klass->reload_file (self, path, error);
     lrg_scripting_priv_pop_current (self);
+
+    if (!ok)
+        capture_error_location (self, path, error != NULL ? *error : NULL);
     return ok;
 }
 

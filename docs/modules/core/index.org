@@ -20,6 +20,7 @@ The Core module provides:
 - *[[file:data-loader.org][LrgDataLoader]]* - YAML deserialization with GObject integration
 - *[[file:asset-manager.org][LrgAssetManager]]* - Asset caching with mod overlay support
 - *[[file:asset-pack.org][LrgAssetPack]]* - Resource pack (rres) loading and management
+- *[[file:pack-writer.org][LrgPackWriter]]* - rres and VFS writer, plus Linux tar, Flatpak, AppImage and zip export (0.9.0)
 - *[[file:event-bus.org][LrgEventBus]]* - Priority-based publish/subscribe event system
 
 - *[[file:timer-manager.org][LrgTimerManager]]* - Frame-driven gameplay and unscaled timers
