@@ -1,0 +1,591 @@
+version: 1
+song:
+  title: Black Monolith
+  artist: libregnum
+  bpm: 66
+  time_signature: 4/4
+  sample_rate: 48000
+  seed: 1970
+  length: 264
+  markers:
+  - beat: 0
+    name: Toll
+  - beat: 32
+    name: Riff
+  - beat: 96
+    name: Verse
+  - beat: 160
+    name: Crawl
+  - beat: 192
+    name: Riff 2
+  - beat: 240
+    name: Collapse
+instruments:
+  bass:
+    type: synth
+    source: init
+    params:
+      amp-release: 0.6
+      cutoff: 700
+      drive: 0.8
+      osc1-wave: 2
+      sub-level: 0.8
+  bell:
+    type: synth
+    source: bell
+    params:
+      amp-release: 4
+  choir:
+    type: synth
+    source: strings
+    params:
+      amp-attack: 1.5
+      amp-release: 3
+      cutoff: 2200
+  drone:
+    type: synth
+    source: organ
+    params:
+      amp-attack: 3
+      amp-release: 4
+      cutoff: 700
+  gtr-l:
+    type: synth
+    source: init
+    params:
+      amp-attack: 0.002
+      amp-decay: 0.5
+      amp-release: 0.5
+      amp-sustain: 0.85
+      cutoff: 3200
+      detune: 8
+      drive: 1
+      env-amount: 1.2
+      filter-attack: 0.001
+      filter-decay: 0.15
+      key-track: 0.3
+      osc1-wave: 2
+      osc2-fine: 11
+      osc2-level: 0.8
+      osc2-wave: 2
+      resonance: 0.12
+      unison: 2
+      velocity: 0.5
+  gtr-r:
+    type: synth
+    source: init
+    params:
+      amp-attack: 0.002
+      amp-decay: 0.5
+      amp-release: 0.5
+      amp-sustain: 0.85
+      cutoff: 3200
+      detune: 8
+      drive: 1
+      env-amount: 1.2
+      filter-attack: 0.001
+      filter-decay: 0.15
+      key-track: 0.3
+      osc1-wave: 2
+      osc2-fine: -11
+      osc2-level: 0.8
+      osc2-wave: 2
+      resonance: 0.12
+      unison: 2
+      velocity: 0.5
+  kit:
+    type: drums
+    source: 909
+    params:
+      crash-decay: 2
+      drive: 0.3
+      high-tom-decay: 2.5
+      high-tom-tune: -6
+      kick-decay: 2
+      kick-level: 2
+      kick-tune: -6
+      low-tom-decay: 2.5
+      low-tom-tune: -9
+      mid-tom-decay: 2.5
+      mid-tom-tune: -8
+      ride-decay: 1.6
+      snare-decay: 2.5
+      snare-level: 2
+      snare-tune: -6
+  lead:
+    type: synth
+    source: synthwave-lead
+    params:
+      amp-attack: 0.05
+      amp-release: 0.8
+      cutoff: 3500
+      drive: 0.75
+      glide: 0.12
+      lfo1-pitch: 0.35
+      lfo1-rate: 4.5
+  riser:
+    type: synth
+    source: noise-riser
+    params:
+      amp-attack: 4
+      cutoff: 1200
+patterns:
+  bass-crawl:
+    length: 16
+    notes:
+    - 0 D1 7.9 1
+    - 8 A#0 3.9 1
+    - 12 G#0 3.9 1
+  bass-riff:
+    length: 8
+    notes:
+    - 0 D1 1.9 1
+    - 2 F1 0.95 0.95
+    - 3 G#1 0.95 0.95
+    - 4 G1 2.9 1
+    - 7 F1 0.45 0.9
+  bass-verse:
+    length: 16
+    notes:
+    - 0 D1 3.9 1
+    - 4 D1 1.9 0.9
+    - 6 C1 1.9 0.9
+    - 8 A#0 3.9 1
+    - 12 A0 3.9 1
+  choir:
+    length: 16
+    notes:
+    - 0 D3 3.95 0.5
+    - 0 F3 3.95 0.5
+    - 0 A3 3.95 0.5
+    - 4 D3 3.95 0.5
+    - 4 F3 3.95 0.5
+    - 4 A3 3.95 0.5
+    - 8 A#3 3.95 0.5
+    - 8 D4 3.95 0.5
+    - 8 F4 3.95 0.5
+    - 12 A3 3.95 0.5
+    - 12 C#4 3.95 0.5
+    - 12 E4 3.95 0.5
+  choir-crawl:
+    length: 16
+    notes:
+    - 0 D3 3.95 0.55
+    - 0 F3 3.95 0.55
+    - 0 A3 3.95 0.55
+    - 4 D3 3.95 0.55
+    - 4 F3 3.95 0.55
+    - 4 A3 3.95 0.55
+    - 8 A#3 3.95 0.55
+    - 8 D4 3.95 0.55
+    - 8 F4 3.95 0.55
+    - 12 G#3 3.95 0.55
+    - 12 C4 3.95 0.55
+    - 12 D#4 3.95 0.55
+  crash:
+    length: 4
+    steps: 16
+    lanes:
+      crash: "X..............."
+  crawl:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "X..............."
+      snare: "................"
+      crash: "X..............."
+  crawl-2:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "........X......."
+      snare: "........X......."
+      ride: "x.......x......."
+  doom:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "X.......X......."
+      snare: "........X......."
+      ride: "x...x...x...x..."
+  doom-crash:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "X.......X.....x."
+      snare: "........X......."
+      crash: "X.......X......."
+  drone:
+    length: 32
+    notes:
+    - 0 D1 31.9 0.8
+    - 0 A1 31.9 0.5
+  end:
+    length: 24
+    notes:
+    - 0 D2 23.5 1
+    - 0 A2 23.5 1
+    - 0 D3 23.5 1
+  fill:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "X.X............."
+      high-tom: "....X.X........."
+      mid-tom: "........X.X....."
+      low-tom: "............X.XX"
+  lead:
+    length: 32
+    notes:
+    - 0 A4 3 0.85
+    - 3 G#4 1 0.8
+    - 4 G4 4 0.85
+    - 8 F4 2 0.8
+    - 10 E4 2 0.8
+    - 12 D4 4 0.9
+    - 16 D5 3 0.9
+    - 19 C5 1 0.8
+    - 20 A#4 4 0.85
+    - 24 A4 2 0.85
+    - 26 G#4 2 0.85
+    - 28 A4 4 0.95
+  riff:
+    length: 8
+    notes:
+    - 0 D2 1.9 1
+    - 0 A2 1.9 1
+    - 0 D3 1.9 1
+    - 2 F2 0.95 0.95
+    - 2 C3 0.95 0.95
+    - 2 F3 0.95 0.95
+    - 3 G#2 0.95 0.95
+    - 3 D#3 0.95 0.95
+    - 3 G#3 0.95 0.95
+    - 4 G2 2.9 1
+    - 4 D3 2.9 1
+    - 4 G3 2.9 1
+    - 7 F2 0.45 0.9
+    - 7 C3 0.45 0.9
+    - 7 F3 0.45 0.9
+    - 7.5 E2 0.45 0.9
+    - 7.5 B2 0.45 0.9
+    - 7.5 E3 0.45 0.9
+  swell:
+    length: 32
+    notes:
+    - 0 C4 31 0.9
+  toll:
+    length: 8
+    notes:
+    - 0 D3 4 0.8
+    - 0 D4 4 0.5
+    - 4 D3 4 0.7
+    - 4 A3 4 0.4
+  verse:
+    length: 16
+    notes:
+    - 0 D2 3.9 1
+    - 0 A2 3.9 1
+    - 0 D3 3.9 1
+    - 4 D2 1.9 0.9
+    - 4 A2 1.9 0.9
+    - 4 D3 1.9 0.9
+    - 6 C2 1.9 0.9
+    - 6 G2 1.9 0.9
+    - 6 C3 1.9 0.9
+    - 8 A#2 3.9 1
+    - 8 F3 3.9 1
+    - 8 A#3 3.9 1
+    - 12 A2 3.9 1
+    - 12 E3 3.9 1
+    - 12 A3 3.9 1
+tracks:
+- id: bell
+  instrument: bell
+  bus: bell
+  volume: -4
+  clips:
+  - pattern: toll
+    start: 0
+    length: 32
+  - pattern: toll
+    start: 240
+    length: 24
+- id: drone
+  instrument: drone
+  bus: pad
+  volume: -12
+  clips:
+  - pattern: drone
+    start: 0
+    length: 264
+  automation:
+  - target: param.cutoff
+    points:
+    - 0 200
+    - 32 700
+    - 160 1100
+    - 240 700
+    - 264 150
+- id: riser
+  instrument: riser
+  bus: pad
+  volume: -16
+  clips:
+  - pattern: swell
+    start: 0
+    length: 32
+- id: gtr-l
+  instrument: gtr-l
+  bus: guitars
+  pan: -0.8
+  clips:
+  - pattern: riff
+    start: 32
+    length: 64
+  - pattern: verse
+    start: 96
+    length: 64
+  - pattern: crawl
+    start: 160
+    length: 32
+  - pattern: riff
+    start: 192
+    length: 48
+  - pattern: end
+    start: 240
+    length: 24
+- id: gtr-r
+  instrument: gtr-r
+  bus: guitars
+  pan: 0.8
+  clips:
+  - pattern: riff
+    start: 64
+    length: 32
+  - pattern: verse
+    start: 96
+    length: 64
+  - pattern: crawl
+    start: 160
+    length: 32
+  - pattern: riff
+    start: 192
+    length: 48
+  - pattern: end
+    start: 240
+    length: 24
+- id: bass
+  instrument: bass
+  bus: bass
+  clips:
+  - pattern: bass-riff
+    start: 32
+    length: 64
+  - pattern: bass-verse
+    start: 96
+    length: 64
+  - pattern: bass-crawl
+    start: 160
+    length: 32
+  - pattern: bass-riff
+    start: 192
+    length: 48
+  - pattern: end
+    start: 240
+    length: 24
+    transpose: -24
+- id: choir
+  instrument: choir
+  bus: pad
+  volume: -6
+  clips:
+  - pattern: choir
+    start: 96
+    length: 64
+  - pattern: choir-crawl
+    start: 160
+    length: 32
+  - pattern: end
+    start: 240
+    length: 24
+    transpose: 12
+- id: lead
+  instrument: lead
+  bus: lead
+  clips:
+  - pattern: lead
+    start: 160
+    length: 32
+  - pattern: lead
+    start: 208
+    length: 32
+- id: drums
+  instrument: kit
+  bus: drums
+  clips:
+  - pattern: crash
+    start: 32
+    length: 4
+  - pattern: doom
+    start: 48
+    length: 44
+  - pattern: fill
+    start: 92
+    length: 4
+  - pattern: doom
+    start: 96
+    length: 60
+  - pattern: fill
+    start: 156
+    length: 4
+  - pattern: crawl
+    start: 160
+    length: 16
+  - pattern: crawl-2
+    start: 176
+    length: 12
+  - pattern: fill
+    start: 188
+    length: 4
+  - pattern: doom-crash
+    start: 192
+    length: 44
+  - pattern: fill
+    start: 236
+    length: 4
+  - pattern: crash
+    start: 240
+    length: 4
+automation:
+- target: bus.master.volume
+  points:
+  - 0 -20
+  - 24 0
+  - 248 0
+  - 264 -40
+mixer:
+  version: 1
+  buses:
+  - name: master
+    volume: 0
+    effects:
+    - type: equalizer
+      id: eq
+      params:
+        low-cut: 25
+        high-gain: 1
+    - type: compressor
+      id: glue
+      params:
+        threshold: -16
+        ratio: 2.5
+        attack: 0.02
+        release: 0.25
+        makeup: 1
+    - type: limiter
+      id: limit
+      params:
+        ceiling: -1
+  - name: drums
+    parent: master
+    volume: -2
+    sends:
+    - target: fx
+      level: -5
+    effects:
+    - type: compressor
+      id: punch
+      params:
+        threshold: -20
+        ratio: 4
+        attack: 0.01
+        release: 0.2
+  - name: guitars
+    parent: master
+    volume: -3
+    sends:
+    - target: fx
+      level: -16
+    effects:
+    - type: distortion
+      id: amp
+      params:
+        mode: hard-clip
+        drive: 32
+        tone: 3600
+        output: -17.6
+        mix: 1
+    - type: equalizer
+      id: cab
+      params:
+        low-cut: 60
+        mid1-freq: 600
+        mid1-gain: -2
+        mid1-q: 0.9
+        high-cut: 5000
+  - name: bass
+    parent: master
+    volume: -3
+    effects:
+    - type: distortion
+      id: fuzz
+      params:
+        mode: soft-clip
+        drive: 12
+        tone: 1800
+        output: -6
+        mix: 0.6
+  - name: pad
+    parent: master
+    volume: -4
+    sends:
+    - target: fx
+      level: -4
+  - name: bell
+    parent: master
+    volume: -3
+    sends:
+    - target: fx
+      level: -2
+  - name: lead
+    parent: master
+    volume: -7
+    sends:
+    - target: fx
+      level: -6
+    effects:
+    - type: distortion
+      id: amp
+      params:
+        mode: tanh
+        drive: 20
+        tone: 6000
+        output: -11
+        mix: 1
+    - type: equalizer
+      id: cab
+      params:
+        low-cut: 90
+        mid1-freq: 1000
+        mid1-gain: 3
+        mid1-q: 0.9
+        high-cut: 7000
+    - type: echo
+      id: delay
+      params:
+        delay: 0.6818
+        feedback: 0.45
+        dry: 1
+        wet: 0.3
+  - name: fx
+    parent: master
+    volume: -4
+    effects:
+    - type: reverb
+      id: hall
+      params:
+        room-size: 0.96
+        damping: 0.4
+        wet: 1
+        dry: 0
