@@ -60,6 +60,8 @@
 #include "lrg-editor-water-editor.h"
 #include "../lrg-editor-shader-graph-editor.h"
 #include "lrg-editor-vscript-editor.h"
+#include "lrg-editor-foley-editor.h"
+#include "lrg-editor-song-editor.h"
 #include "../lrg-editor-app-private.h"
 #include "../lrg-editor-console-panel.h"
 #include "../../../ui/lrg-label.h"
@@ -258,6 +260,8 @@ registry_ensure (void)
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, LRG_TYPE_EDITOR_SPRITE_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_WATER, LRG_TYPE_EDITOR_WATER_EDITOR);
 	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, LRG_TYPE_EDITOR_VSCRIPT_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_FOLEY, LRG_TYPE_EDITOR_FOLEY_EDITOR);
+	registry_add_builtin (LRG_EDITOR_DOCUMENT_FORMAT_SONG, LRG_TYPE_EDITOR_SONG_EDITOR);
 	/* .rseq files are opened by the docked sequencer panel and .rnav bake
 	 * settings by the Navigation panel (action nav.open-settings), not a
 	 * data editor: SEQUENCE and NAV_SETTINGS have no builtin here */
@@ -457,6 +461,9 @@ format_icon (LrgEditorDocumentFormat format)
 		return LRG_ICON_REFRESH;
 	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
 		return LRG_ICON_ARROW_RIGHT;
+	case LRG_EDITOR_DOCUMENT_FORMAT_FOLEY:
+	case LRG_EDITOR_DOCUMENT_FORMAT_SONG:
+		return LRG_ICON_PLAY;
 	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
 		return LRG_ICON_MENU;
 	default:
@@ -522,6 +529,10 @@ format_label (LrgEditorDocumentFormat format)
 		return "Navigation settings";
 	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
 		return "Visual script";
+	case LRG_EDITOR_DOCUMENT_FORMAT_FOLEY:
+		return "Sound effect";
+	case LRG_EDITOR_DOCUMENT_FORMAT_SONG:
+		return "Song";
 	default:
 		return "Data";
 	}

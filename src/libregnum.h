@@ -629,6 +629,8 @@
 #include "editor/ui/data/lrg-editor-weather-editor.h"
 #include "editor/ui/data/lrg-editor-water-editor.h"
 #include "editor/ui/data/lrg-editor-mixer-editor.h"
+#include "editor/ui/data/lrg-editor-foley-editor.h"
+#include "editor/ui/data/lrg-editor-song-editor.h"
 #include "editor/ui/data/lrg-editor-vscript-editor.h"
 #include "editor/ui/data/lrg-editor-blocks-editor.h"
 #include "editor/ui/data/lrg-editor-tileset-editor.h"

@@ -27,7 +27,8 @@
 # the 0.9.0 M6/M7 verbs (asset new, nav, bt, fsm, ai, particles, weather,
 # terrain, water, mixer, audio, tileset, sprite, tiles; likewise skipped),
 # the 0.9.0 M8 verbs (debug, lsp, profiler, frame, script, vscript,
-# memory, network; likewise skipped)
+# memory, network; likewise skipped), the 0.10.0 music verbs (song,
+# foley, audio formats: a loop composed and exported over the CLI)
 # and the MCP bridge (lrgeditorctl mcp)
 # and in-process MCP (lrgeditor --mcp) when built in.
 
@@ -688,6 +689,41 @@ then
 else
 	skip 'vscript'
 fi
+if has_method song.new
+then
+	# compose four bars over the CLI only, then measure and export
+	check 'song new' "$(ctl song new music/smoke.rsong -o json)" 'smoke.rsong'
+	check 'song set' "$(ctl song set bpm=96 title=Smoke -o json)" '"duration"'
+	check 'song set-instrument' "$(ctl song set-instrument pad synth synthwave-pad -o json)" '"beat"'
+	check 'song add-pattern' \
+		"$(ctl song add-pattern chords 4 "notes=[[0,\"A3\",4,0.7],[0,\"C4\",4,0.7],[0,\"E4\",4,0.7]]" -o json)" '"beat"'
+	check 'song add-track' "$(ctl song add-track pad pad volume=-8 -o json)" '"beat"'
+	check 'song add-clip' "$(ctl song add-clip pad chords 0 16 -o json)" '"index"'
+	check 'song apply' \
+		"$(ctl song apply 'ops=[{"op":"set_marker","name":"A","beat":0},{"op":"set_bus","name":"verb"}]' -o json)" '"results"'
+	check 'song get' "$(ctl song get section=tracks -o json)" '"pad"'
+	check 'song validate' "$(ctl song validate -o json)" '"valid" : true'
+	check 'song render' "$(ctl song render end=16 -o json)" '"integrated_lufs"'
+	check 'song export' "$(ctl song export out/smoke.wav end=16 -o json)" '"bytes"'
+	check 'song export file' "$(test -s "${work}/game/out/smoke.wav" && echo written)" 'written'
+	check 'song instruments' "$(ctl song instruments -o json)" '"synthwave-bass"'
+	check 'audio formats' "$(ctl audio formats -o json)" '"flac"'
+	check 'asset new song' "$(ctl asset new song path=music/blank.rsong -o json)" 'blank.rsong'
+	ctl data close music/smoke.rsong --force >/dev/null 2>&1 || true
+else
+	skip 'song'
+fi
+if has_method foley.new
+then
+	check 'foley new' "$(ctl foley new sfx/smoke.rfoley footstep-gravel -o json)" 'smoke.rfoley'
+	check 'foley add-layer' "$(ctl foley add-layer tone -o json)" '"index"'
+	check 'foley set-layer' "$(ctl foley set-layer 0 at=0.01 -o json)" '"layers"'
+	check 'foley render' "$(ctl foley render -o json)" '"peak_db"'
+	check 'foley layer-types' "$(ctl foley layer-types -o json)" '"grain"'
+	ctl data close sfx/smoke.rfoley --force >/dev/null 2>&1 || true
+else
+	skip 'foley'
+fi
 if has_method memory.status
 then
 	check 'memory status' "$(ctl memory status -o json)" '"tracked"'
@@ -781,6 +817,9 @@ else
 	check 'mcp terrain tools' "${out}" '"name":"terrain_stroke"'
 	check 'mcp water tools' "${out}" '"name":"water_add_point"'
 	check 'mcp mixer tools' "${out}" '"name":"mixer_set_send"'
+	check 'mcp song tools' "${out}" '"name":"song_apply"'
+	check 'mcp foley tools' "${out}" '"name":"foley_add_layer"'
+	check 'mcp audio_formats' "${out}" '"name":"audio_formats"'
 	check 'mcp audio tools' "${out}" '"name":"audio_curve"'
 	check 'mcp tiles tools' "${out}" '"name":"tiles_refresh"'
 	check 'mcp tileset tools' "${out}" '"name":"tileset_rule_tile"'

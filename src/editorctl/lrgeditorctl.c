@@ -198,7 +198,7 @@ static const gchar *description =
 	"        remove-send|add-effect|remove-effect|move-effect|set-effect|add-snapshot|remove-snapshot|\n"
 	"        set-snapshot|capture-snapshot|set-duck|remove-duck|preview|meters|save ... [key=value...]\n"
 	"                                   mixer (mixer editor)\n"
-	"  audio get|set|curve|buses ... [key=value...]\n"
+	"  audio get|set|curve|buses|formats ... [key=value...]\n"
 	"                                   audio emitter (inspector)\n"
 	"  tiles state|grid|brush|autopaint|refresh|cell-at|tile-info ... [key=value...]\n"
 	"                                   tile painting (Tiles panel)\n"
@@ -222,12 +222,21 @@ static const gchar *description =
 	"          set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|\n"
 	"          frame|validate|run|live|breakpoint|continue|save ... [key=value...]\n"
 	"                                   visual script (visual script editor)\n"
+	"  song new|get|apply|validate|render|export|export-midi|import-midi|play|stop|seek|select|state|\n"
+	"       instruments|set|set-tempo|set-marker|remove-marker|set-instrument|remove-instrument|\n"
+	"       add-pattern|set-notes|set-lanes|remove-pattern|add-track|set-track|remove-track|move-track|\n"
+	"       add-clip|set-clip|remove-clip|set-automation|set-bus|remove-bus|set-effect|remove-effect|\n"
+	"       set-send|set-duck ... [key=value...]\n"
+	"                                   song (song editor: tracks, patterns, mixer, render, export)\n"
+	"  foley new|get|set|add-layer|set-layer|remove-layer|move-layer|from-kind|render|export|play|\n"
+	"        layer-types ... [key=value...]\n"
+	"                                   sound-effect patch (Foley designer)\n"
 	"  memory status|types|resources|snapshot|snapshots|diff|clear-snapshots|history|show ... [key=value...]\n"
 	"                                   memory profiler (Memory panel)\n"
 	"  network stats|history|enable|reset|show ... [key=value...]\n"
 	"                                   network stats (Network panel)\n"
 	/* m67e-usage: end */
-	"  asset new KIND [path=P] [name=N] [image=I]  a new asset file (bt fsm particles weather mixer tileset\n"
+	"  asset new KIND [path=P] [name=N] [image=I]  a new asset file (bt fsm particles weather mixer song foley tileset\n"
 	"                                   sprite water nav-settings terrain ...)\n"
 	"  logs [--tail N] [-w]             editor log; -w follows\n"
 	"  events [TYPE...]                 stream events (changed, selection, level, saved, log, ...)\n"
@@ -3697,12 +3706,13 @@ static const M67Verb m67_mixer_verbs[] = {
 	{ "save", "mixer.save", { NULL }, NULL, { NULL }, FALSE },
 };
 
-/* audio get|set|curve|buses */
+/* audio get|set|curve|buses|formats */
 static const M67Verb m67_audio_verbs[] = {
 	{ "get", "audio.get", { "node", NULL }, NULL, { NULL }, TRUE },
 	{ "set", "audio.set", { "node", NULL }, "params", { "node", "params", NULL }, TRUE },
 	{ "curve", "audio.curve", { "node", NULL }, NULL, { NULL }, TRUE },
 	{ "buses", "audio.buses", { NULL }, NULL, { NULL }, FALSE },
+	{ "formats", "audio.formats", { NULL }, NULL, { NULL }, FALSE },
 };
 
 /* tiles state|grid|brush|autopaint|refresh|cell-at|tile-info */
@@ -3821,6 +3831,64 @@ static const M67Verb m67_script_verbs[] = {
 	{ "editor-running", "script.editor_running", { NULL }, NULL, { NULL }, FALSE },
 };
 
+/* song new|get|apply|validate|render|export|export-midi|import-midi|play|stop|seek|select|state|instruments|set|set-tempo|set-marker|remove-marker|set-instrument|remove-instrument|add-pattern|set-notes|set-lanes|remove-pattern|add-track|set-track|remove-track|move-track|add-clip|set-clip|remove-clip|set-automation|set-bus|remove-bus|set-effect|remove-effect|set-send|set-duck */
+static const M67Verb m67_song_verbs[] = {
+	{ "new", "song.new", { "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "song.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "apply", "song.apply", { NULL }, NULL, { NULL }, FALSE },
+	{ "validate", "song.validate", { NULL }, NULL, { NULL }, FALSE },
+	{ "render", "song.render", { NULL }, NULL, { NULL }, FALSE },
+	{ "export", "song.export", { "@file", NULL }, NULL, { NULL }, FALSE },
+	{ "export-midi", "song.export_midi", { "@file", NULL }, NULL, { NULL }, FALSE },
+	{ "import-midi", "song.import_midi", { "@file", "@path", NULL }, NULL, { NULL }, FALSE },
+	{ "play", "song.play", { NULL }, NULL, { NULL }, FALSE },
+	{ "stop", "song.stop", { NULL }, NULL, { NULL }, FALSE },
+	{ "seek", "song.seek", { "~beat", NULL }, NULL, { NULL }, FALSE },
+	{ "select", "song.select", { "track", "~clip", NULL }, NULL, { NULL }, FALSE },
+	{ "state", "song.state", { NULL }, NULL, { NULL }, FALSE },
+	{ "instruments", "song.instruments", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "song.set", { NULL }, NULL, { NULL }, FALSE },
+	{ "set-tempo", "song.set_tempo", { "~bpm", NULL }, NULL, { NULL }, FALSE },
+	{ "set-marker", "song.set_marker", { "name", "~beat", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-marker", "song.remove_marker", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-instrument", "song.set_instrument", { "id", "type", "source", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-instrument", "song.remove_instrument", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "add-pattern", "song.add_pattern", { "id", "~length", NULL }, NULL, { NULL }, FALSE },
+	{ "set-notes", "song.set_notes", { "pattern", NULL }, NULL, { NULL }, FALSE },
+	{ "set-lanes", "song.set_lanes", { "pattern", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-pattern", "song.remove_pattern", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "add-track", "song.add_track", { "id", "instrument", NULL }, NULL, { NULL }, FALSE },
+	{ "set-track", "song.set_track", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-track", "song.remove_track", { "id", NULL }, NULL, { NULL }, FALSE },
+	{ "move-track", "song.move_track", { "id", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "add-clip", "song.add_clip", { "track", "source", "~start", "~length", NULL }, NULL, { NULL }, FALSE },
+	{ "set-clip", "song.set_clip", { "track", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-clip", "song.remove_clip", { "track", "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "set-automation", "song.set_automation", { "target", NULL }, NULL, { NULL }, FALSE },
+	{ "set-bus", "song.set_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-bus", "song.remove_bus", { "name", NULL }, NULL, { NULL }, FALSE },
+	{ "set-effect", "song.set_effect", { "bus", "id", "type", NULL }, NULL, { NULL }, FALSE },
+	{ "remove-effect", "song.remove_effect", { "bus", "id", NULL }, NULL, { NULL }, FALSE },
+	{ "set-send", "song.set_send", { "source", "target", "~level", NULL }, NULL, { NULL }, FALSE },
+	{ "set-duck", "song.set_duck", { "trigger", "target", NULL }, NULL, { NULL }, FALSE },
+};
+
+/* foley new|get|set|add-layer|set-layer|remove-layer|move-layer|from-kind|render|export|play|layer-types */
+static const M67Verb m67_foley_verbs[] = {
+	{ "new", "foley.new", { "@path", "kind", NULL }, NULL, { NULL }, FALSE },
+	{ "get", "foley.get", { NULL }, NULL, { NULL }, FALSE },
+	{ "set", "foley.set", { NULL }, "settings", { "path", NULL }, FALSE },
+	{ "add-layer", "foley.add_layer", { "type", NULL }, NULL, { NULL }, FALSE },
+	{ "set-layer", "foley.set_layer", { "~index", NULL }, "params", { "path", "index", "params", NULL }, FALSE },
+	{ "remove-layer", "foley.remove_layer", { "~index", NULL }, NULL, { NULL }, FALSE },
+	{ "move-layer", "foley.move_layer", { "~from", "~to", NULL }, NULL, { NULL }, FALSE },
+	{ "from-kind", "foley.from_kind", { "kind", "~variant", NULL }, NULL, { NULL }, FALSE },
+	{ "render", "foley.render", { NULL }, NULL, { NULL }, FALSE },
+	{ "export", "foley.export", { "@file", NULL }, NULL, { NULL }, FALSE },
+	{ "play", "foley.play", { NULL }, NULL, { NULL }, FALSE },
+	{ "layer-types", "foley.layer_types", { NULL }, NULL, { NULL }, FALSE },
+};
+
 /* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|frame|validate|run|live|breakpoint|continue|save */
 static const M67Verb m67_vscript_verbs[] = {
 	{ "create", "vscript.create", { "@path", NULL }, NULL, { NULL }, FALSE },
@@ -3898,6 +3966,8 @@ static const struct
 	{ "frame", m67_frame_verbs, G_N_ELEMENTS (m67_frame_verbs) },
 	{ "script", m67_script_verbs, G_N_ELEMENTS (m67_script_verbs) },
 	{ "vscript", m67_vscript_verbs, G_N_ELEMENTS (m67_vscript_verbs) },
+	{ "song", m67_song_verbs, G_N_ELEMENTS (m67_song_verbs) },
+	{ "foley", m67_foley_verbs, G_N_ELEMENTS (m67_foley_verbs) },
 	{ "memory", m67_memory_verbs, G_N_ELEMENTS (m67_memory_verbs) },
 	{ "network", m67_network_verbs, G_N_ELEMENTS (m67_network_verbs) },
 };
@@ -4205,7 +4275,7 @@ static const gchar *completion_script =
 	"\tesac\n"
 	"\tif [[ ${COMP_CWORD} -eq 1 ]]\n"
 	"\tthen\n"
-	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite debug lsp frame script vscript memory network merge po collab scenes gizmo' -- \"${cur}\")\n"
+	"\t\tmapfile -t COMPREPLY < <(compgen -W 'sessions get describe create delete set rename move duplicate edit apply select run play stop game undo redo save reload validate open new view screenshot logs events call notify quit mcp completion version tiles timeline thumbnail meta vcs prefab code inspector hierarchy asset source profiler data palette preferences material shader shadergraph env post lod bake seq skel2d anim bonemap clip physics physasset nav bt fsm ai particles weather terrain water mixer audio tileset sprite debug lsp frame script vscript song foley memory network merge po collab scenes gizmo' -- \"${cur}\")\n"
 	"\t\treturn\n"
 	"\tfi\n"
 	"\tcase \"${verb}\" in\n"
@@ -4258,7 +4328,7 @@ static const gchar *completion_script =
 	"\t\tterrain) mapfile -t COMPREPLY < <(compgen -W 'get brush stroke sample add-layer remove-layer set-layer add-foliage remove-foliage set-foliage rebake save create show' -- \"${cur}\") ;;\n"
 	"\t\twater) mapfile -t COMPREPLY < <(compgen -W 'get set set-wave add-point set-point remove-point save' -- \"${cur}\") ;;\n"
 	"\t\tmixer) mapfile -t COMPREPLY < <(compgen -W 'show open create set-default get effect-types add-bus remove-bus set-bus set-send remove-send add-effect remove-effect move-effect set-effect add-snapshot remove-snapshot set-snapshot capture-snapshot set-duck remove-duck preview meters save' -- \"${cur}\") ;;\n"
-	"\t\taudio) mapfile -t COMPREPLY < <(compgen -W 'get set curve buses' -- \"${cur}\") ;;\n"
+	"\t\taudio) mapfile -t COMPREPLY < <(compgen -W 'get set curve buses formats' -- \"${cur}\") ;;\n"
 	"\t\ttiles) mapfile -t COMPREPLY < <(compgen -W 'state grid brush autopaint refresh cell-at tile-info' -- \"${cur}\") ;;\n"
 	"\t\ttileset) mapfile -t COMPREPLY < <(compgen -W 'create open get set select tile collision rule-tile rule preview save' -- \"${cur}\") ;;\n"
 	"\t\tsprite) mapfile -t COMPREPLY < <(compgen -W 'create open get slice frame clip clip-frame event play save' -- \"${cur}\") ;;\n"
@@ -4267,6 +4337,8 @@ static const gchar *completion_script =
 	"\t\tprofiler) mapfile -t COMPREPLY < <(compgen -W 'sample set capture save load frames frame compare view' -- \"${cur}\") ;;\n"
 	"\t\tframe) mapfile -t COMPREPLY < <(compgen -W 'capture status calls call scrub texture save load show' -- \"${cur}\") ;;\n"
 	"\t\tscript) mapfile -t COMPREPLY < <(compgen -W 'run languages tools run-tool reload run-in-editor editor-running' -- \"${cur}\") ;;\n"
+	"\t\tsong) mapfile -t COMPREPLY < <(compgen -W 'new get apply validate render export export-midi import-midi play stop seek select state instruments set set-tempo set-marker remove-marker set-instrument remove-instrument add-pattern set-notes set-lanes remove-pattern add-track set-track remove-track move-track add-clip set-clip remove-clip set-automation set-bus remove-bus set-effect remove-effect set-send set-duck' -- \"${cur}\") ;;\n"
+	"\t\tfoley) mapfile -t COMPREPLY < <(compgen -W 'new get set add-layer set-layer remove-layer move-layer from-kind render export play layer-types' -- \"${cur}\") ;;\n"
 	"\t\tvscript) mapfile -t COMPREPLY < <(compgen -W 'create open get node-types gi-search add-node remove-node set-node connect disconnect set-variable add-subgraph remove-subgraph add-comment remove-comment set-program select validate run live breakpoint continue save' -- \"${cur}\") ;;\n"
 	"\t\tmemory) mapfile -t COMPREPLY < <(compgen -W 'status types resources snapshot snapshots diff clear-snapshots history show' -- \"${cur}\") ;;\n"
 	"\t\tnetwork) mapfile -t COMPREPLY < <(compgen -W 'stats history enable reset show' -- \"${cur}\") ;;\n"

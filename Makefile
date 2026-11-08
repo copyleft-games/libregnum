@@ -1981,6 +1981,8 @@ PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-weather-editor.h \
 	src/editor/ui/data/lrg-editor-water-editor.h \
 	src/editor/ui/data/lrg-editor-mixer-editor.h \
+	src/editor/ui/data/lrg-editor-foley-editor.h \
+	src/editor/ui/data/lrg-editor-song-editor.h \
 	src/editor/ui/data/lrg-editor-vscript-editor.h \
 	src/editor/ui/data/lrg-editor-blocks-editor.h \
 	src/editor/ui/data/lrg-editor-tileset-editor.h \
@@ -2040,6 +2042,9 @@ SOURCES += \
 	src/editor/ui/data/lrg-editor-weather-editor.c \
 	src/editor/ui/data/lrg-editor-water-editor.c \
 	src/editor/ui/data/lrg-editor-mixer-editor.c \
+	src/editor/ui/data/lrg-editor-foley-editor.c \
+	src/editor/ui/data/lrg-editor-song-editor.c \
+	src/editor/ui/data/lrg-editor-song-ops.c \
 	src/editor/ui/data/lrg-editor-vscript-editor.c \
 	src/editor/ui/data/lrg-editor-blocks-editor.c \
 	src/editor/ui/data/lrg-editor-tileset-editor.c \

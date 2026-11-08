@@ -336,6 +336,7 @@ TEST_SOURCES := \
 	test-editor-app-vfx.c \
 	test-editor-app-terrain.c \
 	test-editor-app-audio.c \
+	test-editor-app-music.c \
 	test-editor-app-2d.c \
 	test-lsp-client.c \
 	test-editor-app-debug.c \
