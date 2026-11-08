@@ -89,5 +89,17 @@ No audio device is needed. A render takes about 25 seconds on one core. Formats 
 - Play it in a game with =LrgSongPlayer=, and use =lrg_song_player_queue_section (player, "Chorus", LRG_SONG_QUANTIZE_BAR)= when the action starts ([[file:../modules/music/player.org][Playback]]).
 - Open the =.rsong= in =lrgeditor=: the arrangement, piano roll and step grid show what the code wrote ([[file:../editor/music.org][Music in the editor]]).
 
+** More songs
+:PROPERTIES:
+:CUSTOM_ID: synthwave-song-more
+:END:
+Eight more songs sit next to Neon Drive in =examples/data/music/=, written directly as =.rsong= files: epic and dark synthwave with heavy drums, peaceful chillwave and ambient pieces, an outrun track with a key change, and three metal and hard rock songs with guitars made from synths. [[file:../../examples/data/music/00_index.org][The index]] describes each one. =examples/song-render= renders any of them:
+
+#+begin_src sh
+./examples/build/release/examples/song-render examples/data/music/iron-choir.rsong
+./examples/build/release/examples/song-render -o out -f all --stems examples/data/music/thunder-grid.rsong
+./examples/build/release/examples/song-render --info examples/data/music/*.rsong
+#+end_src
+
 ** See also
-- [[file:../modules/music/song.org][Songs]], [[file:../modules/music/instruments.org][Instruments]], [[file:../modules/audio/encoder.org][Audio files]], [[file:../modules/audio/analysis.org][Loudness]]
+- [[file:../../examples/data/music/00_index.org][Example songs]], [[file:../modules/music/song.org][Songs]], [[file:../modules/music/instruments.org][Instruments]], [[file:../modules/audio/encoder.org][Audio files]], [[file:../modules/audio/analysis.org][Loudness]]

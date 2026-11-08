@@ -3889,7 +3889,7 @@ static const M67Verb m67_foley_verbs[] = {
 	{ "layer-types", "foley.layer_types", { NULL }, NULL, { NULL }, FALSE },
 };
 
-/* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|frame|validate|run|live|breakpoint|continue|save */
+/* vscript create|open|get|node-types|gi-search|add-node|remove-node|set-node|connect|disconnect|set-variable|add-subgraph|remove-subgraph|add-comment|remove-comment|set-program|select|frame|palette|validate|run|live|breakpoint|continue|save */
 static const M67Verb m67_vscript_verbs[] = {
 	{ "create", "vscript.create", { "@path", NULL }, NULL, { NULL }, FALSE },
 	{ "open", "vscript.open", { "@path", NULL }, NULL, { NULL }, FALSE },

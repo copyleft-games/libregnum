@@ -1,10 +1,22 @@
 # Libregnum Roadmap
 
-Last updated: 2026-11-07
+Last updated: 2026-11-08
 
-## In Progress: v0.9.0 (closing the gap analysis)
+## In Progress: v0.10.1
 
-One release that closes every engine and editor row of `docs/editor/gap-analysis.org`, built milestone by milestone on `feat/v0.9.0`.
+- **Asset sidecars**: a folder opened without `project.ryaml` gets nothing written; nested repositories (submodules) are not scanned; documents and build files get no `.meta`.
+- **Music examples**: eight more songs in `examples/data/music/` (synthwave, chillwave, ambient, outrun, heavy metal, hard rock, doom; 2:30 to 6:00) with `00_index.org`, rendered by the new `examples/song-render`.
+- **Skill**: the libregnum agent skill brought up to date with 0.9.x and 0.10.0.
+
+## Recently Shipped
+
+### v0.10.0: music and sound creation
+
+Mixer source voices and dynamics effects, Foley patches (`.rfoley`), synthesized instruments, songs (`.rsong`) with offline rendering, stems and MIDI, `LrgSongPlayer` with adaptive music, export to every common audio format with loudness analysis, the Foley designer and the song editor in `lrgeditor`, `song.*` / `foley.*` / `audio.formats` over IPC, `lrgeditorctl` and MCP, and the "Neon Drive" demo. See `docs/CHANGELOG.org`.
+
+### v0.9.0: closing the gap analysis
+
+One release that closed every engine and editor row of `docs/editor/gap-analysis.org`, built milestone by milestone on `feat/v0.9.0`.
 
 - **Done, M0 foundations**: runtime level module `src/level/` (levels load with `BUILD_EDITOR=0`), core `lrg-math3d`, composite YAML loader (sub-objects, lists, children, `{ref:}`, strict mode) with writers for locales, dialog trees, sound banks and input maps, `LrgDebugDraw`, render-layer cull masks.
 - **Done, M1 3D runtime**: `LrgEntity3D` + `LrgWorld3D`, 3D `LrgComponent` hooks, mesh/light/camera/audio/sprite/tilemap/spawn/trigger/skinned components, `LrgWorld3DRenderer` shared by editor and game, `lrg_level_instantiate_3d()`, 3D play-in-editor, runtime prefab references and variants, `guid:` resolution and runtime import settings.
@@ -18,8 +30,6 @@ One release that closes every engine and editor row of `docs/editor/gap-analysis
 - **Done, M9 assets and export**: `LrgPackWriter` (rres, content-addressed VFS, gzip ustar, store-only zip, Flatpak manifest, AppDir, Windows zip), `lrgpack`, File > Export, DXT1 and import-settings cooking, `LrgAssetRefs` rename/delete, reimport stamps, `LrgAssetImporter` (`copy`, and `fbx` through vendored ufbx writing OBJ), `.ply` is not a model, host autoloads, per-platform settings, Steam settings page, `empty` and `mod` templates, plugin panels docked with a menu, an action and an inspector. Flatpak does not run flatpak-builder. AppImage runs `appimagetool` only when it is on `PATH`.
 - **Done, M10 workflows**: scene bar, `tag:` filter, one gizmo (`gizmo.apply` / `gizmo.pivot`), game-view letterbox, nested inspector and `inspector-2`, UI drag-to-place and UI animation sample, PO import/export/extract/pseudolocale over IPC, VCS panel, `lrgeditorctl merge` and the git merge driver, `collab.*`. `magit_handoff` returns `(magit-status)` and does not start Emacs. Every new editor operation is an `lrgeditorctl` verb and an MCP tool.
 - **Done, M11 notes**: `docs/CHANGELOG.org`, migration additions, `examples/game-showcase-3d` (`--self-test` is headless). The M9 and M10 gap rows say `have (0.9.0)`. graylib 0.9.0 lockstep is the landing commit, not before. Confirm before push.
-
-## Recently Shipped
 
 ### v0.8.3: asset sources and the game module editor hook (`src/editor/`, `src/editor/ui/`, `src/gamemodule/`)
 
