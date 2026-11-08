@@ -143,3 +143,6 @@ Audio formats: audio_formats (ro).
 Memory profiler: memory_status (ro), memory_types (ro), memory_resources (ro), memory_snapshot, memory_snapshots (ro), memory_diff (ro), memory_clear_snapshots (destructive), memory_history (ro), memory_show.
 Network stats: network_stats (ro), network_history (ro), network_enable, network_reset (destructive), network_show.
 <!-- m67e-generated: end -->
+
+## Workflow tools (0.9.0) and asset sources (0.8.3)
+Scenes: scenes_list (ro), scenes_open, scenes_active. Gizmo: gizmo_apply {op, axis?, value?}, gizmo_pivot {mode}, gizmo_cursor {x,y,z}, gizmo_origin (ro); view_letterbox {preset,w,h} (ro). Locales: po_extract (ro), po_pseudo (ro), po_import (ro), po_export. Version control: vcs_status, vcs_diff, vcs_log, vcs_locks, vcs_magit (all ro), vcs_commit {message} (stages everything: ask first). Merge: merge_level {base, ours, theirs} (runs without an editor; writes into ours). Collaboration: collab_apply, collab_get (ro), collab_lock, collab_unlock, collab_cursor, collab_presence (ro). Asset sources: source_list (ro), source_ls (ro), source_search (ro), source_export, source_import, source_place.

@@ -17,6 +17,7 @@ Authoritative guide: `AGENTS.md` at the root of the checkout (read it before cha
 | `src/mcp/` | In-game MCP server (`MCP=1`): input injection and `lrg_input_get_state`, ECS, save, debug (profiler, overlay, console, inspector) tools; `libregnum://engine/{info,config,registry}` resources |
 | `src/launcher/` | `lrgldr` (game module runner), `lrgeditor` |
 | `src/scripting/` | Lua, Python, GJS, crispy (C) backends |
+| `src/audio/`, `src/music/` | Mixer, effects, Foley patches (`.rfoley`), encoder/decoder, loudness analysis (`src/audio/`); instruments, songs (`.rsong`), song player, MIDI files (`src/music/`, 0.10.0) |
 | `src/template/` | Genre game templates (FPS, third person, racing, tycoon...) |
 | `src/mmo/`, `src/net/` | Networking and MMO services |
 | `editors/emacs/` | `libregnum.el` (+ ERT tests) |
@@ -58,6 +59,8 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - **Input bugs** do not show in headless GUI tests (they inject input below raylib/GLFW): use `make test-editor-x11`. Under Xvfb by hand, point `XDG_RUNTIME_DIR` at an empty short directory or GLFW opens the window on your Wayland session.
 - **GPU tests, editor runs and screenshots: always `build-aux/xrun.sh`** (isolated Xvfb 1920x1200, `-noreset`, X11 forced, short `XDG_RUNTIME_DIR`, throwaway `XDG_CONFIG_HOME`/`DATA`/`CACHE` so runs never touch `~/.config/libregnum/editor.yaml`; `-k` keeps real dirs). Screenshots at **1920x1080**: `lrgeditor --width 1920 --height 1080`, `lrgeditorctl screenshot out.png --window`; theme via `$XDG_CONFIG_HOME/libregnum/editor.yaml` (`theme: catppuccin-latte`). Recipe: AGENTS.md > Testing > GPU tests, editor runs and screenshots. Without `-noreset` a second window in one process fails with "X11: Failed to open display".
 - **Level types are not editor code any more.** Put runtime level/prefab/serializer changes in `src/level/` (never in the `src/editor/` forwarders, which are excluded from the GIR scan); `src/level/` must not include editor headers. `tests/check-level-noeditor.sh` builds `BUILD_EDITOR=0` into `build/noeditor` and proves the level API is exported and runnable without the editor.
+- **Tests must never touch the desktop.** Every test binary links `tests/lrg-test-guard.c` (through `TEST_LDFLAGS`); its constructor sets `LRG_EXTERNAL_EDITOR=none` before `main()`, so `lrg_external_editor_open()` starts nothing (a connected Emacs IPC client may still take the file). Do not `g_setenv()` it in a test's `main()` (0.10.0 removed the 33 per-test calls); keep `$(TEST_LDFLAGS)` in any custom link rule; `/editor-tools/desktop-guard` checks the guard is linked. A test that must spawn a program unsets the variable around that one call. Tests using `GTestDBus` fork its watcher (a throwaway up/down) BEFORE creating the GL context (a watcher forked after Mesa's threads deadlocks in Mesa's atexit and leaves a stuck process), and notifications go to the private test bus only, never the session bus. `test-ui-file-browser` treats no display as a skip.
+- **libdex is initialized by libregnum (0.9.2).** Classes that hand out `DexFuture`s (`LrgAssetManager`, `LrgDataLoader`, `LrgSaveManager`, `LrgNetClient`, `LrgNetServer`) call `lrg_dex_ensure_init()` (`src/lrg-dex-private.h`, a once-guarded `dex_init()`) from their `class_init`. A new class that returns futures must do the same, or the first future aborts with "cannot create new instance of invalid type" unless the application called `dex_init()` itself. Applications may still call `dex_init()`.
 - **MCP over stdio owns stdout.** `lrgeditor --mcp` duplicates fd 1 for the protocol and points fd 1 at stderr; never `printf` to stdout in code paths that run under it.
 
 ## Registry built-ins
@@ -249,3 +252,50 @@ Options: `DEBUG=1`, `BUILD_GIR=0` (faster), `BUILD_EDITOR=0`, `BUILD_EDITOR_UI=0
 - LrgNavCrowd: deterministic with fixed steps, ORCA (RVO2 port) against agents and walls, corner skipping every 0.1 s, replans on blocked corners and mesh serial changes. Never call `lrg_nav_agent_update` for crowd agents. Bake for the largest agent radius.
 - Debug: `lrg_world3d_debug_draw_navigation (world, dd, LRG_NAV_DEBUG_DEFAULT | LRG_NAV_DEBUG_ORCA)`; `lrg_nav_crowd_set_debug_agent` limits ORCA detail to one agent.
 
+
+### Music, Foley patches and audio export (0.10.0)
+Docs: `docs/modules/music/` (song, instruments, player), `docs/modules/audio/{foley,encoder,analysis,effects}.org`, `docs/editor/music.org`; demo `examples/synthwave-song.c` ("Neon Drive", every format).
+- **Mixer.** `LrgAudioSource` is the pull interface (`lrg_audio_source_render (src, out, frames, channels, sample_rate)`, `_reset`); `lrg_audio_mixer_play_source (mixer, source, bus, gain)` plays one as a voice (returns a nonzero voice id; pitch and voice low-pass do not apply) beside WAV voices; `lrg_audio_mixer_set_clip()`. New effects (GObject properties and `.rmixer` types): `LrgCompressor`, `LrgLimiter` (lookahead brickwall), `LrgDistortion`, `LrgEqualizer`, `LrgStereoWidener`, `LrgFilter`, `LrgGate`.
+- **Instruments** (`src/music/`): `LrgInstrument` (sample-accurate queue: `lrg_instrument_schedule`, `_note_on`, `_note_off`, `_set_param`; `lrg_music_key_from_name ("A2")`), `LrgSynth` (`lrg_synth_load_preset (synth, "synthwave-bass")`), `LrgDrumMachine` (`lrg_drum_machine_set_kit (dm, LRG_DRUM_KIT_808|909|LINN)`), `LrgSampler`, `LrgSoundFontInstrument` (`.sf2`), `LrgFoleyInstrument`.
+- **Foley.** `LrgFoleyPatch` (`.rfoley`): `lrg_foley_patch_new_from_kind (LRG_FOLEY_FOOTSTEP_WOOD, variant, rate, &error)`, `_new_from_file`, `_add_layer (patch, LRG_FOLEY_LAYER_TONE)`, `_set_layer_param`, `_set_global`, `_render_wave`, `_save_to_file`. `lrg_foley_synthesize()` renders through patches and stays byte-identical to 0.9 (80 checksums pinned in tests: do not change its output).
+- **Songs.** `LrgSong` (`.rsong`): `lrg_song_new_from_file` (`base-path` = the file's folder for clips, samples, SoundFonts, patches), `_save_to_file`, `_validate (song, &issues)`; edit API `lrg_song_add_pattern`, `_pattern_add_note`, `_pattern_set_lane`, `_add_track`, `_set_track`, `_add_clip`, `_set_clip`, `_set_automation`, `_set_mixer`. `lrg_song_render (song, opts, cancellable, progress, data, &error)` is offline and deterministic (any thread; render a `lrg_song_copy()` to keep editing); `LrgSongRenderOptions` from `lrg_song_render_options_new()` (`normalize` NONE|PEAK|LOUDNESS, `target`, `true_peak_ceiling`, `mute`, `solo`, `start_beat`/`end_beat`); `lrg_song_render_stems()` keeps the mix's gain so stems sum to the mix. MIDI: `lrg_song_save_midi`, `lrg_song_new_from_midi_file` (`lrg-midi-file.h`).
+- **Playback.** `LrgSongPlayer`: `lrg_song_player_new (song, &error)` renders headless with `lrg_song_player_render (p, out, frames)` until `_start_output()` opens the device (then call `_update()` once a frame). Transport `_play`, `_pause`, `_stop`, `_seek (beat)`, `_set_loop`; `_set_song` swaps an edited song in at the current beat (a song that does not compile is refused, the old one keeps playing). Adaptive music: `_queue_section (p, "Chorus", LRG_SONG_QUANTIZE_BAR)`, `_set_layer (p, track, gain_db, seconds)`, `_play_stinger (p, track, pattern, quantize)`, live `_note_on`/`_note_off`; `_get_meter`, `_get_underruns`.
+- **Export and analysis.** `lrg_audio_encode_wave (wave, LRG_AUDIO_FILE_FORMAT_FLAC, opts, path, cancellable, &error)` writes WAV, AIFF, FLAC, MP3, OGG, OPUS, AAC, ALAC (`.m4a`), WAVPACK; `lrg_audio_encoder_get_backend (fmt)` says NATIVE, LIBAV (build with `FFMPEG=1`), FFMPEG (the program on `PATH`) or NONE; `lrg_audio_file_format_from_name|from_path`, `_get_extension`, `_is_lossless`; `lrg_audio_decode_file()` reads the same formats. `lrg_audio_analyze_wave (wave)` gives peak, true peak, RMS, BS.1770 integrated/short-term/momentary loudness, loudness range, clipped samples. AAC and ALAC share `.m4a`: pick by format, not by extension (0.10.0 export fix).
+- **Traps.** Only `play` opens the audio device (render, export and the editor preview never do): never start an output in tests. Song edits in the editor are validated by a save-and-reload round trip; a duck whose target feeds its trigger is refused.
+
+```c
+/* Render a song at streaming loudness and write it as FLAC. */
+static gboolean
+export_song_flac (
+	const gchar  *song_path,
+	const gchar  *out_path,
+	GError      **error
+){
+	g_autoptr(LrgSong)               song = NULL;
+	g_autoptr(LrgSongRenderOptions)  ropts = NULL;
+	g_autoptr(LrgAudioEncodeOptions) eopts = NULL;
+	g_autoptr(LrgWaveData)           mix = NULL;
+	g_autoptr(LrgAudioAnalysis)      a = NULL;
+
+	song = lrg_song_new_from_file (song_path, error);
+	if (song == NULL)
+		return FALSE;
+
+	/* -14 LUFS integrated, -1 dBTP ceiling */
+	ropts = lrg_song_render_options_new ();
+	ropts->normalize = LRG_SONG_NORMALIZE_LOUDNESS;
+	ropts->target = -14.0;
+	ropts->true_peak_ceiling = -1.0;
+	mix = lrg_song_render (song, ropts, NULL, NULL, NULL, error);
+	if (mix == NULL)
+		return FALSE;
+
+	/* measure before writing: an agent cannot listen */
+	a = lrg_audio_analyze_wave (mix);
+	g_message ("%.1f LUFS, %.2f dBTP", a->integrated_lufs, a->true_peak_db);
+
+	eopts = lrg_audio_encode_options_new ();
+	eopts->bit_depth = 24;
+	return lrg_audio_encode_wave (mix, LRG_AUDIO_FILE_FORMAT_FLAC, eopts, out_path, NULL, error);
+}
+```

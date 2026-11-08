@@ -180,9 +180,21 @@ Examples: lrgeditorctl physics add-joint hinge --target Door/Frame axis=0,1,0 --
 - `profiler set | capture | save PATH | load PATH | frames | frame | compare | view` [key=value..]
 - `frame capture | status | calls | call INDEX | scrub INDEX | texture PATH | save PATH | load PATH | show` [key=value..]
 - `script run CODE | languages | tools | run-tool ID | reload | run-in-editor NODE | editor-running` [key=value..]
-- `vscript create PATH | open PATH | get PATH | node-types QUERY | gi-search QUERY | add-node TYPE | remove-node ID | set-node ID | connect FROM TO | disconnect FROM TO | set-variable NAME | add-subgraph NAME | remove-subgraph NAME | add-comment TEXT | remove-comment ID | set-program | select | frame | validate PATH | run | live PATH | breakpoint NODE | continue | save PATH` [key=value..]
+- `vscript create PATH | open PATH | get PATH | node-types QUERY | gi-search QUERY | add-node TYPE | remove-node ID | set-node ID | connect FROM TO | disconnect FROM TO | set-variable NAME | add-subgraph NAME | remove-subgraph NAME | add-comment TEXT | remove-comment ID | set-program | select | frame | palette | validate PATH | run | live PATH | breakpoint NODE | continue | save PATH` [key=value..]
 - `song new PATH | get | apply | validate | render | export FILE | export-midi FILE | import-midi FILE PATH | play | stop | seek BEAT | select TRACK CLIP | state | instruments | set | set-tempo BPM | set-marker NAME BEAT | remove-marker NAME | set-instrument ID TYPE SOURCE | remove-instrument ID | add-pattern ID LENGTH | set-notes PATTERN | set-lanes PATTERN | remove-pattern ID | add-track ID INSTRUMENT | set-track ID | remove-track ID | move-track ID INDEX | add-clip TRACK SOURCE START LENGTH | set-clip TRACK INDEX | remove-clip TRACK INDEX | set-automation TARGET | set-bus NAME | remove-bus NAME | set-effect BUS ID TYPE | remove-effect BUS ID | set-send SOURCE TARGET LEVEL | set-duck TRIGGER TARGET` [key=value..] (see `music.md`)
 - `foley new PATH KIND | get | set | add-layer TYPE | set-layer INDEX | remove-layer INDEX | move-layer FROM TO | from-kind KIND VARIANT | render | export FILE | play | layer-types` [key=value..] (`set` wraps key=value into settings, `set-layer` into params)
 - `memory status | types | resources | snapshot | snapshots | diff FROM | clear-snapshots | history | show` [key=value..]
 - `network stats | history METRIC | enable | reset | show` [key=value..]
 <!-- m67e-generated: end -->
+
+## Workflow verbs (0.9.0) and asset sources (0.8.3)
+Positional arguments map to the method's keys; extra `key=value` pairs pass through (see `ipc-protocol.md`, "Workflow methods").
+- `scenes [list]`, `scenes open PATH`, `scenes active INDEX`
+- `gizmo apply OP [axis=N] [value=V]` (OP `snap drop align-min align-center align-max distribute surface`), `gizmo pivot active|median|bounds|cursor`, `gizmo cursor X Y Z`, `gizmo origin`
+- `po extract TEXT`, `po pseudo TEXT`, `po import PATH ID`, `po export PATH ID TEXT`
+- `vcs [PATH]` (status), `vcs diff`, `vcs log`, `vcs locks`, `vcs magit`, `vcs commit MESSAGE...` (words joined; stages everything)
+- `collab apply USER GUID REVISION PROP VALUE`, `collab get GUID PROP`, `collab lock|unlock USER GUID`, `collab cursor USER X Y Z`, `collab presence`
+- `merge BASE OURS THEIRS` (three-way `.rlevel` merge by GUID, runs `lrgeditor --merge`; no session needed), `merge install [DIR]` (git merge driver + `.gitattributes`)
+- `source list`, `source ls SOURCE [FOLDER]`, `source search SOURCE PATTERN [limit=N]`, `source export SOURCE PATH [DEST]`, `source import|place SOURCE PATH` (alias `sources`)
+- `asset new KIND [path=P] [name=N] [image=I]`: KIND `bt fsm particles weather mixer song foley tileset sprite water nav-settings terrain vscript`
+- `view.letterbox` has no verb: `lrgeditorctl call view.letterbox preset=NAME w=W h=H`
