@@ -1014,7 +1014,6 @@ main (int   argc,
 	gint result;
 
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	gpu_ready = gpu_init ();
 	g_test_add ("/editor-app/terrain/create", EditorAppFixture, NULL, efx_setup, test_create, efx_teardown);
 	g_test_add ("/editor-app/terrain/stroke", EditorAppFixture, NULL, efx_setup, test_stroke, efx_teardown);

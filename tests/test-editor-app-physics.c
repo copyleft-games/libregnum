@@ -1120,7 +1120,6 @@ main (int   argc,
 	gint result;
 
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	gpu_ready = gpu_init ();
 	g_test_add ("/editor-app/physics/body", EditorAppFixture, NULL, efx_setup, test_body, efx_teardown);
 	g_test_add ("/editor-app/physics/fields", EditorAppFixture, NULL, efx_setup, test_fields, efx_teardown);

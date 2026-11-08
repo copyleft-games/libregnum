@@ -1055,7 +1055,6 @@ main (int   argc,
 	g_autoptr(GError) error = NULL;
 
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	/* the registry that builds the level's `ai` component is made at
 	 * startup (headless-safe) */
 	if (!lrg_engine_startup (lrg_engine_get_default (), &error))

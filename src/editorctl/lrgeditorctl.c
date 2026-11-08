@@ -3841,6 +3841,7 @@ static const M67Verb m67_vscript_verbs[] = {
 	{ "set-program", "vscript.set_program", { NULL }, NULL, { NULL }, FALSE },
 	{ "select", "vscript.select", { NULL }, NULL, { NULL }, FALSE },
 	{ "frame", "vscript.frame", { NULL }, NULL, { NULL }, FALSE },
+	{ "palette", "vscript.palette", { NULL }, NULL, { NULL }, FALSE },
 	{ "validate", "vscript.validate", { "@path", NULL }, NULL, { NULL }, FALSE },
 	{ "run", "vscript.run", { NULL }, NULL, { NULL }, FALSE },
 	{ "live", "vscript.live", { "@path", NULL }, NULL, { NULL }, FALSE },

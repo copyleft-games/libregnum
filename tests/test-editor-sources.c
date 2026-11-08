@@ -1069,7 +1069,6 @@ main (int    argc,
 	g_setenv ("TMPDIR", test_root, TRUE);
 
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
 	g_test_add_func ("/editor/sources/paths", test_paths);
 	g_test_add_func ("/editor/sources/list-and-search", test_list_and_search);

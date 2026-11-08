@@ -41,6 +41,12 @@ TEST_CFLAGS += -I$(YAMLGLIB_DIR)/src
 TEST_LDFLAGS := -L../$(LIBOUTDIR)
 TEST_LDFLAGS += -Wl,-rpath,'$$ORIGIN/../$(LIBOUTDIR)'
 
+# Every test binary links lrg-test-guard.o: its constructor sets
+# LRG_EXTERNAL_EDITOR=none before main(), so no test can open an editor
+# window, whether it is run by `make run` or by hand.
+TEST_GUARD_OBJ := $(TEST_BUILDDIR)/lrg-test-guard.o
+TEST_LDFLAGS += $(TEST_GUARD_OBJ)
+
 # Test libraries (graylib and yaml-glib are embedded in libregnum)
 TEST_LIBS := -l$(LIB_NAME)
 TEST_LIBS += $(shell $(PKG_CONFIG) --libs glib-2.0 gobject-2.0 gio-2.0 libdex-1 girepository-2.0 json-glib-1.0)
@@ -465,7 +471,9 @@ check-sanitize-exit:
 	fi
 
 # No test may start an external editor ($VISUAL) or the desktop default:
-# lrg_external_editor_open() does nothing while this is "none".
+# lrg_external_editor_open() does nothing while this is "none". The test
+# binaries also set it themselves (lrg-test-guard.c); this covers anything
+# else `make run` starts.
 export LRG_EXTERNAL_EDITOR := none
 
 # MCP library path (conditional)
@@ -563,6 +571,13 @@ $(TEST_BUILDDIR)/test-%: test-%.c $(GENERATED_HEADERS) | $(TEST_BUILDDIR)
 
 -include $(wildcard $(TEST_BUILDDIR)/*.d)
 
+# The desktop guard every test binary links (see TEST_GUARD_OBJ).
+$(TEST_GUARD_OBJ): lrg-test-guard.c | $(TEST_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(TEST_CFLAGS) -c -o $@ $<
+
+$(TEST_BINARIES): $(TEST_GUARD_OBJ)
+
 # The replay tests share the deterministic scenario
 $(TEST_BUILDDIR)/test-replay $(TEST_BUILDDIR)/test-rollback: replay-scenario.h
 
@@ -625,5 +640,5 @@ $(TEST_BUILDDIR):
 
 clean:
 	$(call print_status,"Cleaning test artifacts...")
-	$(RM) $(TEST_BINARIES) $(FIXTURE_SO) $(NATIVE_FIXTURE_SO) $(EDITOR_FIXTURE_SO)
+	$(RM) $(TEST_BINARIES) $(TEST_GUARD_OBJ) $(FIXTURE_SO) $(NATIVE_FIXTURE_SO) $(EDITOR_FIXTURE_SO)
 	@if [ -d "$(TEST_BUILDDIR)" ]; then rmdir --ignore-fail-on-non-empty "$(TEST_BUILDDIR)"; fi

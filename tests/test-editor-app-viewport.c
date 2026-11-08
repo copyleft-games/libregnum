@@ -1172,7 +1172,6 @@ main (int   argc,
 	gint result;
 
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	gpu_ready = gpu_init ();
 
 	g_test_add ("/editor-app/viewport/layouts", EditorAppFixture, NULL, efx_setup, test_layouts, efx_teardown);

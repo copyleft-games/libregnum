@@ -434,14 +434,61 @@ test_vscript_ipc (EditorAppFixture *f,
 	g_assert_true (json_object_get_boolean_member (json_node_get_object (result), "removed"));
 }
 
+/*
+ * test_vscript_palette:
+ *
+ * vscript.palette opens the Add Node picker as the toolbar chip does,
+ * opens a category's submenu, rejects an unknown category and closes.
+ */
+static void
+test_vscript_palette (EditorAppFixture *f,
+                      gconstpointer     data)
+{
+	g_autoptr(JsonNode)  result = NULL;
+	g_autofree gchar    *reply = NULL;
+	JsonObject          *obj;
+	JsonArray           *entries;
+	guint                i;
+	gboolean             has_math = FALSE;
+
+	(void) data;
+	g_free (write_project_file (f, "readme.txt", "x"));
+	result = efx_ipc_result (f, "{'id':1,'method':'vscript.create','params':{'path':'scripts/pick.rvscript'}}");
+	g_clear_pointer (&result, json_node_unref);
+
+	/* --- open, with the Math submenu --- */
+	result = efx_ipc_result (f, "{'id':2,'method':'vscript.palette','params':{'path':'scripts/pick.rvscript',"
+	                            "'category':'Math'}}");
+	obj = json_node_get_object (result);
+	g_assert_true (json_object_get_boolean_member (obj, "open"));
+	entries = json_object_get_array_member (obj, "entries");
+	g_assert_cmpuint (json_array_get_length (entries), >, 1);
+	for (i = 0; i < json_array_get_length (entries); i++)
+		if (g_strcmp0 (json_array_get_string_element (entries, i), "Math") == 0)
+			has_math = TRUE;
+	g_assert_true (has_math);
+	g_clear_pointer (&result, json_node_unref);
+
+	/* --- an unknown category is not-found --- */
+	reply = efx_ipc (f, "{'id':3,'method':'vscript.palette','params':{'path':'scripts/pick.rvscript',"
+	                    "'category':'Nope'}}");
+	g_assert_nonnull (strstr (reply, "\"error\""));
+
+	/* --- close --- */
+	result = efx_ipc_result (f, "{'id':4,'method':'vscript.palette','params':{'path':'scripts/pick.rvscript',"
+	                            "'open':false}}");
+	g_assert_false (json_object_get_boolean_member (json_node_get_object (result), "open"));
+}
+
 int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add ("/editor-app/vscript/ipc", EditorAppFixture, NULL, efx_setup, test_vscript_ipc, efx_teardown);
 	g_test_add ("/editor-app/vscript/canvas", EditorAppFixture, NULL, efx_setup, test_vscript_canvas, efx_teardown);
 	g_test_add ("/editor-app/vscript/canvas-edits", EditorAppFixture, NULL, efx_setup, test_vscript_canvas_edits,
+	            efx_teardown);
+	g_test_add ("/editor-app/vscript/palette", EditorAppFixture, NULL, efx_setup, test_vscript_palette,
 	            efx_teardown);
 	return g_test_run ();
 }

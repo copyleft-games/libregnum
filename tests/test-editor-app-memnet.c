@@ -185,7 +185,6 @@ main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add ("/editor-app/memnet/panels", EditorAppFixture, NULL, efx_setup, test_memnet, efx_teardown);
 	return g_test_run ();
 }

@@ -905,7 +905,6 @@ main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
 #define ADD(path, fn) g_test_add (path, EditorAppFixture, NULL, efx_setup, fn, efx_teardown)
 	ADD ("/editor-app/panels/console/filters", test_console_filters);

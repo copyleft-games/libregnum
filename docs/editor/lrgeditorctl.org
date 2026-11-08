@@ -944,6 +944,7 @@ lrgeditorctl script run-in-editor Spinner enabled=true; lrgeditorctl script edit
 | =vscript set-program [key=value...]= | =vscript.set_program= |
 | =vscript select [key=value...]= | =vscript.select= |
 | =vscript frame [key=value...]= | =vscript.frame= |
+| =vscript palette [key=value...]= | =vscript.palette= |
 | =vscript validate PATH [key=value...]= | =vscript.validate= |
 | =vscript run [key=value...]= | =vscript.run= |
 | =vscript live PATH [key=value...]= | =vscript.live= |

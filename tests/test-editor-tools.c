@@ -583,13 +583,30 @@ test_validate_level (void)
 	g_rmdir (dir);
 }
 
+/* Defined in lrg-test-guard.c, which tests/Makefile links into every test. */
+extern const gchar lrg_test_guard_marker[];
+
+/*
+ * test_desktop_guard:
+ *
+ * The guard's constructor ran before main(): LRG_EXTERNAL_EDITOR is "none"
+ * without this test setting it, so no test can open an editor window.
+ * Fails to link if the guard object is missing from the build.
+ */
+static void
+test_desktop_guard (void)
+{
+	g_assert_cmpstr (lrg_test_guard_marker, ==, "lrg-test-guard");
+	g_assert_cmpstr (g_getenv ("LRG_EXTERNAL_EDITOR"), ==, "none");
+}
+
 int
 main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
+	g_test_add_func ("/editor-tools/desktop-guard", test_desktop_guard);
 	g_test_add_func ("/editor-tools/settings/defaults", test_settings_defaults);
 	g_test_add_func ("/editor-tools/settings/roundtrip", test_settings_roundtrip);
 	g_test_add_func ("/editor-tools/settings/tolerant-load", test_settings_tolerant_load);

@@ -938,7 +938,6 @@ main (int   argc,
       char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 
 #define ADD(path, fn) g_test_add (path, Fixture, NULL, fixture_setup, fn, fixture_teardown)
 	ADD ("/editor-server/protocol/basics", test_protocol_basics);

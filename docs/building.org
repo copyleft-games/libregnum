@@ -307,6 +307,12 @@ make test
 
 This builds and runs all unit tests using the GLib testing framework.
 
+*** Tests never touch the desktop
+:PROPERTIES:
+:CUSTOM_ID: testing-desktop-guard
+:END:
+Every test binary links =tests/lrg-test-guard.c=. Its constructor runs before =main()= and sets =LRG_EXTERNAL_EDITOR=none=, so no test opens =$VISUAL= or the desktop default application, whether the binary is run by =make test= or by hand. A new test needs nothing for this: =tests/Makefile= adds the object to =TEST_LDFLAGS= and makes every binary depend on it, so a custom link rule that uses =$(TEST_LDFLAGS)= gets it too. =/editor-tools/desktop-guard= fails (or the test does not link) if the guard is missing. A test that must really start a program unsets the variable around that one call, as =test-editor-tools= does. Since 0.9.2.
+
 Frame-time benchmarks live in =bench/= (=make -C bench run=); see [[file:performance.org][Performance]].
 
 *** GPU tests, editor runs and screenshots

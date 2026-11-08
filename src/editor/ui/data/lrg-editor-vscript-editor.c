@@ -51,6 +51,7 @@ struct _LrgEditorVscriptEditor
 
 	/* the Add Node picker */
 	LrgMenu             *palette;
+	LrgWidget           *add_chip;      /* the toolbar's Add Node chip (the toolbar owns it) */
 	gfloat               add_x;         /* where a picked node lands (graph units) */
 	gfloat               add_y;
 	gchar               *drop_node;     /* a wire dropped on empty canvas came from */
@@ -1644,6 +1645,7 @@ lrg_editor_vscript_editor_constructed (GObject *object)
 		self->palette = lrg_menu_new_from_model (model);
 		chip = editor_chip_new ("vscript-add-node", LRG_ICON_PLUS, "Add Node", on_add_chip, self);
 		lrg_editor_data_editor_add_tool (LRG_EDITOR_DATA_EDITOR (self), chip);
+		self->add_chip = chip;
 		g_object_unref (chip);
 	}
 	ensure_kinds (self);
@@ -2713,6 +2715,74 @@ m_frame (LrgEditorServer  *server,
 	return object_node (o);
 }
 
+/*
+ * m_palette:
+ *
+ * vscript.palette: opens the Add Node picker under the toolbar chip, as
+ * clicking Add Node does (a picked node lands at the view centre), or
+ * closes it when open is false. category names a top-level row (such as
+ * "Math") whose submenu is opened as well. Returns {open, entries}: the
+ * picker state and the labels of its top-level rows. Not an undo step.
+ */
+static JsonNode *
+m_palette (LrgEditorServer  *server,
+           JsonObject       *params,
+           gpointer          user_data,
+           GError          **error)
+{
+	LrgEditorVscriptEditor *self = need_editor (LRG_EDITOR_APP (user_data), params, error);
+	gboolean                open = TRUE;
+	const gchar            *category = NULL;
+	JsonArray              *entries;
+	JsonObject             *o;
+	guint                   i;
+	guint                   n;
+
+	(void) server;
+	if (self == NULL || self->program == NULL)
+		return NULL;
+	(void) param_bool (params, "open", &open);
+	if (params != NULL && json_object_has_member (params, "category"))
+		category = json_object_get_string_member (params, "category");
+
+	/* --- open (as the chip click) or close --- */
+	if (!open)
+		lrg_menu_close (self->palette);
+	else if (!lrg_menu_get_open (self->palette))
+		on_add_chip (self->add_chip, self);
+
+	/* --- the top-level rows; open the named category's submenu --- */
+	entries = json_array_new ();
+	n = lrg_menu_get_n_entries (self->palette);
+	for (i = 0; i < n; i++)
+	{
+		const gchar *label = lrg_menu_get_entry_label (self->palette, i);
+
+		if (lrg_menu_get_entry_kind (self->palette, i) != LRG_MENU_ENTRY_ITEM &&
+		    lrg_menu_get_entry_kind (self->palette, i) != LRG_MENU_ENTRY_SUBMENU)
+			continue;
+		json_array_add_string_element (entries, label);
+		if (open && category != NULL && g_strcmp0 (label, category) == 0 &&
+		    lrg_menu_get_entry_kind (self->palette, i) == LRG_MENU_ENTRY_SUBMENU)
+		{
+			lrg_menu_set_highlighted (self->palette, (gint) i);
+			lrg_menu_activate_entry (self->palette, i);
+			category = NULL;
+		}
+	}
+	if (category != NULL)
+	{
+		json_array_unref (entries);
+		g_set_error (error, LRG_EDITOR_SERVER_ERROR, LRG_EDITOR_SERVER_ERROR_NOT_FOUND,
+		             "No node category '%s'", category);
+		return NULL;
+	}
+	o = json_object_new ();
+	json_object_set_boolean_member (o, "open", lrg_menu_get_open (self->palette));
+	json_object_set_array_member (o, "entries", entries);
+	return object_node (o);
+}
+
 static JsonNode *
 m_validate (LrgEditorServer  *server,
             JsonObject       *params,
@@ -3118,6 +3188,7 @@ lrg_editor_vscript_editor_install (LrgEditorApp *app)
 		{ "vscript.set_program", m_set_program },
 		{ "vscript.select", m_select },
 		{ "vscript.frame", m_frame },
+		{ "vscript.palette", m_palette },
 		{ "vscript.validate", m_validate },
 		{ "vscript.run", m_run },
 		{ "vscript.live", m_live },

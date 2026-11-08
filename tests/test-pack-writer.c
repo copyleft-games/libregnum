@@ -649,7 +649,6 @@ int
 main (int argc, char *argv[])
 {
 	g_test_init (&argc, &argv, NULL);
-	g_setenv ("LRG_EXTERNAL_EDITOR", "none", TRUE);   /* no editor window from a test */
 	g_test_add_func ("/pack-writer/rres", test_rres_roundtrip);
 	g_test_add_func ("/pack-writer/scan", test_scan_skips_vcs);
 	g_test_add_func ("/pack-writer/vfs-tar-zip", test_vfs_tar_zip);

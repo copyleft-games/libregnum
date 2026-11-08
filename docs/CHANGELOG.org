@@ -3,7 +3,7 @@
 #+authors: Zach Podbielniak
 #+categories: libregnum changelog
 #+created: 2026-11-07T12:00:00-05:00
-#+updated: 2026-11-08T12:30:00-05:00
+#+updated: 2026-11-08T15:00:00-05:00
 #+version: 0.1
 
 * Changelog
@@ -15,6 +15,13 @@
 #+end_quote
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
+
+** Unreleased
+:PROPERTIES:
+:CUSTOM_ID: changelog-unreleased
+:END:
+- Tests: every test binary links =tests/lrg-test-guard.c=, which sets =LRG_EXTERNAL_EDITOR=none= before =main()=. The 33 per-test =g_setenv()= calls are gone; a new test is covered without doing anything, and =/editor-tools/desktop-guard= checks it.
+- Visual scripts: new =vscript.palette= IPC method (=lrgeditorctl vscript palette=, MCP =vscript_palette=) opens or closes the Add Node picker, optionally with one category's submenu, for scripts and screenshots.
 
 ** 0.9.2
 :PROPERTIES:
