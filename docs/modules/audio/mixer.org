@@ -76,6 +76,14 @@ A new ramp starts from wherever the running one has got to; =lrg_audio_mixer_set
 :END:
 =lrg_audio_mixer_get_bus_meter()= reports the peak (largest absolute sample) and RMS of a bus's output (after effects, ducking, fader, mute and solo: what reaches its parent) over the last =render()= or =pump()= call, per channel (0, 1) or for all channels (-1). Values are linear; =lrg_audio_gain_to_db()= converts for display. Master's meter is before the final clip.
 
+*** Pull-source voices and unclipped output (0.10.0)
+:PROPERTIES:
+:CUSTOM_ID: source-voices
+:END:
+=lrg_audio_mixer_play_source (mixer, source, bus, gain)= plays an =LrgAudioSource= as a voice. A source is any object that renders its next frames when asked, such as an instrument (=LrgSynth=, =LrgDrumMachine=, =LrgSampler=) or your own GObject that implements the interface's =render= and =reset=. Every block, the mixer zeroes a scratch buffer, asks the source to add the block at the mixer's rate and channel count, then applies the voice gain and balance exactly as for a wave voice. =lrg_audio_mixer_set_voice_pitch()= and =lrg_audio_mixer_set_voice_lowpass()= return =FALSE= for a source voice. The voice ends once the source's =render= returns =FALSE= (the last block is still heard) or with =lrg_audio_mixer_stop_voice()=. The mixer holds a reference to the source while the voice exists. Non-finite samples from a source become silence.
+
+=lrg_audio_mixer_set_clip (mixer, FALSE)= stops the clamp of the master output to [-1, 1]. Turn it off for offline renders that are measured and normalised afterwards, or when the master chain ends in an =LrgLimiter=, so that peaks are kept rather than flattened.
+
 *** Spatial voice controls
 :PROPERTIES:
 :CUSTOM_ID: voice-controls

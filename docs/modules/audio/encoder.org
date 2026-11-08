@@ -1,0 +1,63 @@
+#+title: Audio files: encoding and decoding
+#+description: LrgAudioEncoder: writing wav, aiff, flac, mp3, ogg, opus, m4a (aac, alac) and wavpack natively, through libav (FFMPEG=1) or the ffmpeg program, and decoding any of them
+#+authors: Zach Podbielniak
+#+categories: libregnum audio
+#+created: 2026-11-08T18:00:00-05:00
+#+updated: 2026-11-08T18:00:00-05:00
+#+version: 0.1
+
+* Audio files
+:PROPERTIES:
+:CUSTOM_ID: encoder
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Audio]] > Audio files
+#+end_quote
+
+=lrg_audio_encode_samples()= and =lrg_audio_encode_wave()= write interleaved float audio (mono or stereo) to a file. =lrg_audio_decode_file()= reads one back as 32-bit float. Song mixdowns, stems, Foley exports and the reel audio exporter all go through these.
+
+** Formats and backends
+| Format (=LrgAudioFileFormat=) | Extension | Kind | Written by |
+|-------------------------------+-----------+------+------------|
+| =WAV= | =.wav= | 16/24-bit integer (TPDF dither to 16) or 32-bit float | native |
+| =AIFF= | =.aiff=, =.aif= | 16/24-bit integer | native |
+| =FLAC= | =.flac= | lossless, 16/24-bit | FFmpeg =flac= |
+| =MP3= | =.mp3= | lossy, CBR bitrate or VBR quality | FFmpeg =libmp3lame= |
+| =OGG= | =.ogg=, =.oga= | Vorbis, lossy | FFmpeg =libvorbis= (else the native =vorbis=) |
+| =OPUS= | =.opus= | lossy, always 48 kHz | FFmpeg =libopus= (else =opus=) |
+| =AAC= | =.m4a= | lossy, MPEG-4 container | FFmpeg =aac= (else =libfdk_aac=) |
+| =ALAC= | =.alac.m4a= | Apple Lossless | FFmpeg =alac= |
+| =WAVPACK= | =.wv= | lossless | FFmpeg =wavpack= |
+
+=lrg_audio_encoder_get_backend (format)= tells what writes a format here:
+
+- =NATIVE=: libregnum itself (WAV, AIFF).
+- =LIBAV=: libavformat, libavcodec and libswresample, linked in when libregnum is built with =FFMPEG=1= and the encoder exists. The samples are converted to the encoder's own sample format, rate and channel layout and encoded in its frame size; a short last frame is padded with silence for encoders that need full frames.
+- =FFMPEG=: the =ffmpeg= program on the =PATH=, when it lists the encoder (=ffmpeg -encoders=, asked once). The samples are streamed to its standard input as raw float, with no temporary file, and its error output becomes the =GError= message.
+- =NONE=: the format cannot be written. =lrg_audio_encode_samples()= then fails with =G_IO_ERROR_NOT_SUPPORTED= and names the package to install.
+
+Fedora packages: =ffmpeg-free= (the program, with the lame, vorbis and opus encoders). For =FFMPEG=1= builds also =libavcodec-free-devel libavformat-free-devel libavutil-free-devel libswresample-free-devel libswscale-free-devel=.
+
+=lrg_audio_file_format_from_path()= picks the format from the extension (=.alac.m4a= is ALAC, any other =.m4a= is AAC). =lrg_audio_file_format_from_name()= accepts =wav=, =aiff=, =flac=, =mp3=, =ogg=, =opus=, =aac= / =m4a=, =alac= and =wavpack= / =wv=. =lrg_audio_file_format_get_extension()= and =lrg_audio_file_format_is_lossless()= describe a format.
+
+** Options
+=LrgAudioEncodeOptions= (=lrg_audio_encode_options_new()= for the defaults):
+
+| Field | Default | Meaning |
+|-------+---------+---------|
+| =sample_rate= | the input's | Resampled by FFmpeg. Opus is always 48 kHz; MP3 at most 48 kHz. Native formats keep the input rate. |
+| =channels= | the input's | 1 or 2 |
+| =bit_depth= | 16 | 16 or 24 for integer formats, 32 for float WAV |
+| =bitrate_kbps= | 192 (Opus 128) | Lossy CBR |
+| =quality= | -1 (use the bitrate) | 0 to 10 VBR for MP3 and Vorbis (10 is best) |
+| =dither= | on | Triangular (TPDF) dither when writing 16-bit WAV or AIFF |
+| =title=, =artist=, =album=, =comment=, =date= | none | Tags (FFmpeg formats) |
+
+** Decoding
+=lrg_audio_decode_file()= reads WAV, Ogg Vorbis, MP3 and QOA in-process through raylib's decoders. Everything else (FLAC, Opus, AAC, ALAC, AIFF, WavPack, ...) goes through libav when built in, otherwise the =ffmpeg= program (with =ffprobe= to learn the rate and channels). More than two channels are mixed down to stereo. Song audio clips and samplers load files this way, so a song can use any format FFmpeg reads.
+
+** The reel audio exporter
+Since 0.10.0 =LrgReelAudioExporter= writes everything except WAV through =lrg_audio_encode_wave()= and has two more formats, =LRG_REEL_AUDIO_FORMAT_OGG= and =LRG_REEL_AUDIO_FORMAT_OPUS=. A missing encoder is still reported as error code 1 of its own domain, as before.
+
+** Tests
+=tests/test-audio-encoder.c=: format names; native WAV (16, 24, 32 float) and AIFF round trips; every FFmpeg format encoded and decoded back with its length and level checked (skipped when there is no backend); error paths.

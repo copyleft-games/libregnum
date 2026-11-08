@@ -1,0 +1,44 @@
+#+title: Loudness and level analysis
+#+description: LrgAudioAnalysis: sample and true peak, RMS, DC offset, and ITU-R BS.1770-4 / EBU R128 loudness (integrated, momentary, short-term, loudness range)
+#+authors: Zach Podbielniak
+#+categories: libregnum audio
+#+created: 2026-11-08T18:00:00-05:00
+#+updated: 2026-11-08T18:00:00-05:00
+#+version: 0.1
+
+* Loudness and level analysis
+:PROPERTIES:
+:CUSTOM_ID: analysis
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Audio]] > Analysis
+#+end_quote
+
+=lrg_audio_analyze (samples, n_samples, channels, rate)= or =lrg_audio_analyze_wave (wave)= measures a buffer and returns an =LrgAudioAnalysis=. Song renders use it to normalise. The editor and the IPC (=song.render= with =analyze=) report it, so a person or an AI agent can judge a mix by its numbers.
+
+| Field | Unit | Meaning |
+|-------+------+---------|
+| =peak_db= | dBFS | The largest absolute sample |
+| =true_peak_db= | dBTP | The largest peak between samples: 4x oversampled with a 48-tap windowed-sinc filter (BS.1770-4 Annex 2). What a DAC or a lossy encoder will produce. |
+| =rms_db= | dBFS | Root mean square over every channel |
+| =dc_offset= | linear | The mean sample value, the largest of the channels |
+| =integrated_lufs= | LUFS | Gated programme loudness |
+| =momentary_max_lufs= | LUFS | The loudest 400 ms window |
+| =short_term_max_lufs= | LUFS | The loudest 3 s window |
+| =loudness_range= | LU | EBU R128 loudness range (LRA) |
+| =clipped_samples= | | Samples at or past full scale |
+
+** How loudness is measured
+1. Each channel goes through the K-weighting filter: a high shelf of about +4 dB above 1.5 kHz (the head's effect), then a 38 Hz high-pass. The coefficients are derived for any sample rate, the way libebur128 does.
+2. Mean squares are taken over 100 ms segments and summed over the channels. Every channel weighs 1, except in 6-channel (5.1) input, where the LFE is left out and the surrounds weigh 1.41.
+3. Momentary loudness uses 400 ms blocks (four segments, 75 % overlap). The integrated loudness averages the blocks louder than -70 LUFS (the absolute gate) and louder than 10 LU under the mean of those (the relative gate).
+4. Short-term loudness uses 3 s windows every 100 ms. The loudness range is the spread from the 10th to the 95th percentile of the windows above -70 LUFS and above 20 LU under their mean (EBU Tech 3342).
+5. Loudness = -0.691 + 10 log10 (mean square).
+
+A stereo 1 kHz sine at -20 dBFS measures -20.0 LUFS, which is the EBU calibration and a test case. Clips shorter than 400 ms (integrated) or 3 s (short-term, range) report =LRG_AUDIO_LOUDNESS_SILENCE= (-144) for those fields.
+
+** Normalisation
+=lrg_audio_analysis_normalize_gain (analysis, loudness, target, ceiling)= returns the linear gain that brings the audio to =target=: the integrated loudness in LUFS when =loudness= is set, otherwise the sample peak in dBFS. For loudness, the gain is lowered if the true peak would go above =ceiling= dBTP. Silence gets 1. Common targets: -14 LUFS / -1 dBTP for streaming services, -16 LUFS for podcasts, -23 LUFS for broadcast (EBU R128).
+
+** Tests
+=tests/test-audio-encoder.c=: the -20 dBFS sine reading -20.0 LUFS, peak, RMS, range, the normalisation gain with and without a ceiling, silence, bad layouts, and a true peak 3 dB above the sample peak (a sine at a quarter of the rate sampled 45 degrees off its crests).

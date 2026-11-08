@@ -284,6 +284,7 @@ The Fedora packages the application needs beyond the base build are listed in [[
 - [[file:ai.org][AI in the Editor]]: behaviour tree and state-machine editors with live state, the AI panel and decisions inspector, =bt.*= / =fsm.*= / =ai.*= IPC
 - [[file:vfx.org][Effects in the Editor]]: the particle and weather editors, =particles.*= / =weather.*= IPC
 - [[file:audio.org][Audio in the Editor]]: the mixer editor and Mixer panel, the attenuation gizmo, =mixer.*= / =audio.*= IPC
+- [[file:music.org][Music in the Editor]]: the =.rsong= song editor and the =.rfoley= Foley designer, =song.*= / =foley.*= / =audio.formats= IPC (0.10.0)
 - [[file:terrain.org][Terrain and Water in the Editor]]: Create > Terrain / Water, the Terrain panel and viewport brushes, foliage layers, water handles, the =.rwater= editor, =terrain.*= / =water.*= IPC
 - [[file:physics-asset-editor.org][Physics Asset Editor and Layers]]: =.rphysasset= ragdolls, Project Settings > Physics, =physasset.*= and =physics.layers.*= IPC
 - [[file:bake.org][Lighting Bake]]: the Lighting panel, static lighting rows, probe volumes, baked lighting in the viewport

@@ -1,0 +1,157 @@
+#+title: Instruments
+#+description: LrgInstrument and its subclasses: LrgSynth, LrgDrumMachine, LrgSampler, LrgSoundFontInstrument and LrgFoleyInstrument, sample-accurate note scheduling, parameters and presets
+#+authors: Zach Podbielniak
+#+categories: libregnum music audio
+#+created: 2026-11-08T17:00:00-05:00
+#+updated: 2026-11-08T17:00:00-05:00
+#+version: 0.1
+
+* Instruments
+:PROPERTIES:
+:CUSTOM_ID: instruments
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Music]] > Instruments
+#+end_quote
+
+An instrument turns notes into sound. Every instrument is an =LrgInstrument=, and =LrgInstrument= implements =LrgAudioSource=, so an =LrgAudioMixer= plays it as a voice (=lrg_audio_mixer_play_source()=, [[file:../audio/mixer.org::#source-voices][mixer.org]]). An instrument can also be rendered on its own with =lrg_instrument_render()=. A song ([[file:song.org][LrgSong]]) creates one instrument per track and schedules the notes of its clips. Everything is headless and deterministic: the same notes always render the same samples.
+
+In the editor, the song editor shows every numeric parameter of the selected track's instrument as a grid and =song.instruments= lists them all with their ranges ([[file:../../editor/music.org][Music in the editor]]).
+
+| Class | Sound | Notes |
+|-------+-------+-------|
+| =LrgSynth= | Subtractive and FM synthesizer | Any key; presets for basses, pads, leads, plucks, brass, bells, strings |
+| =LrgDrumMachine= | Synthesized drum kit (808, 909, Linn) | The General MIDI drum map |
+| =LrgSampler= | Recordings mapped over keys and velocities | Pitched from each zone's root key |
+| =LrgSoundFontInstrument= | One preset of a =.sf2= SoundFont | General MIDI |
+| =LrgFoleyInstrument= | A Foley patch ([[file:../audio/foley.org::#foley-patch][LrgFoleyPatch]]) as a one-shot | Pitched from =root-key= |
+
+** The clock and the queue
+An instrument keeps its own clock: the number of frames rendered since its last reset (=lrg_instrument_get_position()=). =lrg_instrument_schedule (inst, frame, type, key, value)= queues an event at a frame of that clock:
+
+| Type | =key= | =value= |
+|------+-------+---------|
+| =LRG_INSTRUMENT_EVENT_NOTE_ON= | MIDI key 0 to 127 | velocity 0 to 1 (0 is a note off, as in MIDI) |
+| =LRG_INSTRUMENT_EVENT_NOTE_OFF= | MIDI key | ignored |
+| =LRG_INSTRUMENT_EVENT_ALL_OFF= | ignored | non-zero cuts at once, 0 releases |
+| =LRG_INSTRUMENT_EVENT_PITCH_BEND= | ignored | semitones (-48 to 48) |
+
+During a render the instrument stops at every event's frame, applies it, and goes on, so a note starts on exactly the sample it was scheduled for, whatever the block size. An event for a frame that has already been rendered applies at the start of the next render. Events at the same frame apply in the order they were scheduled. =lrg_instrument_note_on()=, =lrg_instrument_note_off()= and =lrg_instrument_all_notes_off()= are shortcuts for "now". =lrg_instrument_reset()= silences everything, drops the queue and restarts the clock at 0.
+
+Instruments are not thread-safe: schedule events on the thread that renders. =LrgSongPlayer= queues commands to its render thread for this reason.
+
+** Parameters
+Every sound parameter is a GObject property (double, uint, boolean or enum). =lrg_instrument_set_param (inst, name, value)= sets one by name and clamps the value to its range (=g_object_set()= would refuse an out-of-range value). =lrg_instrument_get_param()= reads it, or returns NaN for an unknown name. Songs, automation, presets, the editor's property grids and the IPC all go through these two functions. Every instrument has:
+
+| Property | Range (default) | Meaning |
+|----------+-----------------+---------|
+| =polyphony= | 1 to 128 (16) | Most voices at once. Past it a voice is stolen: the quietest released voice, else the oldest. |
+| =volume= | -60 to 12 dB (0) | Output level |
+
+** Note names
+=lrg_music_key_from_name()= accepts scientific pitch names (=C4= is middle C, 60; =A4= is 69), with sharps (=#= or =s=), flats (=b=) and negative octaves (=C-1= is 0), and also plain MIDI numbers. =lrg_music_key_to_name()= writes sharps. =lrg_music_key_to_hz()= converts a key to a frequency (A4 = 440 Hz).
+
+* LrgSynth
+:PROPERTIES:
+:CUSTOM_ID: synth
+:END:
+A polyphonic synthesizer. Per voice: oscillator 2 (with unison) phase-modulates (=fm=) and ring-modulates (=ring=) oscillator 1 (with unison, or a supersaw). A sub sine an octave below oscillator 1 and white noise are added. The result goes through optional saturation (=drive=) and a resonant state-variable filter (Cytomic's trapezoidal SVF), then the amp envelope, velocity and volume. Saw and pulse are band-limited with PolyBLEP. Unison copies are detuned symmetrically over =detune= cents and spread across the stereo field by =spread=. Pitch, cut-off and filter coefficients update every 16 frames; oscillators and envelopes run every sample.
+
+| Group | Parameters |
+|-------+------------|
+| Oscillators | =osc1-wave=, =osc2-wave= (0 sine, 1 triangle, 2 saw, 3 pulse, 4 noise, 5 supersaw: at least 7 saws), =oscN-octave= (-3 to 3), =oscN-semi= (-12 to 12), =oscN-fine= (cents), =oscN-level=, =oscN-pw= (pulse width), =sub-level=, =noise-level= |
+| Unison | =unison= (1 to 8), =detune= (cents), =spread= (0 to 1) |
+| Modulation | =fm= (0 to 10), =ring= (0 to 1) |
+| Filter | =filter-mode= (0 low-pass, 1 high-pass, 2 band-pass), =cutoff= Hz, =resonance= (0 to 1), =key-track= (0 to 1, octaves per octave), =env-amount= (-8 to 8 octaves), =drive= |
+| Envelopes | =amp-attack=, =amp-decay=, =amp-sustain=, =amp-release=, =filter-attack=, =filter-decay=, =filter-sustain=, =filter-release= (seconds; linear attack, exponential decay and release) |
+| LFOs | =lfo1-rate=, =lfo2-rate= Hz, =lfoN-shape= (0 sine, 1 triangle, 2 square, 3 saw, 4 sample-and-hold), =lfoN-pitch= (semitones), =lfoN-cutoff= (octaves), =lfoN-amp= (tremolo), =lfoN-pw=, =lfo-retrigger= |
+| Play | =glide= (seconds), =mono=, =legato= (mono: held notes glide without retriggering), =velocity= (0 to 1 sensitivity) |
+
+A retriggered or stolen voice attacks from the level it is at, so it never clicks. In mono mode the voice follows the most recent held key; releasing it goes back to the key held before (last-note priority).
+
+** Presets
+=lrg_synth_new_preset (name)= or =lrg_synth_load_preset (synth, name)=. Loading a preset first resets every parameter, =polyphony= and =volume=. =lrg_synth_list_presets()= lists the names and =lrg_synth_get_preset_description()= describes each.
+
+| Preset | Sound |
+|--------+-------|
+| =init= | One saw through an open filter |
+| =synthwave-bass= | Saw and pulse an octave down with a plucky filter: the 80s octave bass |
+| =synthwave-pad= | Wide detuned saws with a slow filter swell |
+| =synthwave-lead= | Supersaw lead with vibrato and a short glide |
+| =arp-pluck= | Short resonant pulse pluck for arpeggios |
+| =brass-stab= | Detuned saws with a brassy filter envelope |
+| =sub-bass= | Mono sine sub |
+| =acid-bass= | Resonant, squelchy mono bass with slides |
+| =bell= | FM bell |
+| =strings= | Ensemble strings |
+| =noise-riser= | Band-passed noise sweeping up |
+| =organ= | Drawbar-style sine organ |
+
+On one core of the development machine, four notes of =synthwave-lead= render 33 times faster than realtime, and the bass 119 times.
+
+* LrgDrumMachine
+:PROPERTIES:
+:CUSTOM_ID: drum-machine
+:END:
+Thirteen synthesized pieces, played on the General MIDI drum map:
+
+| Piece | Keys | Alias | Model |
+|-------+------+-------+-------|
+| =kick= | 36, 35 | =bd= | Sine with a falling pitch envelope, a noise click (=snap=), saturation |
+| =snare= | 38, 40 | =sd= | Two damped sines (the head) and filtered noise (the wires); =snap= moves the balance toward the wires |
+| =clap= | 39 | =cp= | Band-passed noise in four quick bursts and a tail |
+| =rim= | 37 | =rs= | Two short inharmonic sines and a click |
+| =closed-hat= | 42 | =ch=, =hh= | Six square oscillators at the 808's metallic ratios, band- and high-passed, blended with noise (=snap=) |
+| =pedal-hat= | 44 | =ph= | The same, longer |
+| =open-hat= | 46 | =oh= | The same, long; the closed and pedal hats choke it |
+| =low-tom=, =mid-tom=, =high-tom= | 41/43, 45/47, 48/50 | =lt=, =mt=, =ht= | Sine with a short pitch drop and a little noise |
+| =crash= | 49, 52, 55, 57 | =cy= | Metallic squares and noise, long decay |
+| =ride= | 51, 53, 59 | =rd= | Metallic squares with a bell partial |
+| =cowbell= | 56 | =cb= | Two squares, band-passed |
+
+Every piece has six parameters, named =<piece>-tune= (semitones), =-decay= (length multiplier 0.1 to 4), =-tone= (brightness), =-snap= (attack or noise amount), =-level= (dB) and =-pan=. =drive= saturates the whole kit. The =kit= property (=LrgDrumKit=: =808=, =909=, =linn=) resets every piece parameter and selects the synthesis character: a long boomy 808 kick against a punchy clicky 909 kick, metallic or noisy hats, gated Linn toms. =lrg_drum_machine_piece_to_key()= and =lrg_drum_machine_key_to_piece()= convert between piece names (or aliases) and keys. Each piece has two voice slots used in turn, so a fast repeat lets the previous hit ring on instead of cutting it.
+
+* LrgSampler
+:PROPERTIES:
+:CUSTOM_ID: sampler
+:END:
+Zones map recordings (=LrgWaveData=, kept as float at their own rate) over key and velocity ranges: =lrg_sampler_add_zone (sampler, wave, root_key, low_key, high_key)=, then optionally =lrg_sampler_set_zone_velocity()=, =lrg_sampler_set_zone_loop()= (start and end frames: the note loops there while held and plays on past the end after release) and =lrg_sampler_set_zone_gain()= (dB and cents). A zone is read at a speed of 2^((key - root) / 12 x =pitch-track= + tune / 1200) times the recording rate over the output rate, with 4-point cubic Hermite interpolation. When several zones answer a key and velocity they alternate (round robin). Parameters: =attack=, =decay=, =sustain=, =release=, =one-shot= (ignore note-offs and play each sample to its end), =velocity=, =pitch-track= (0: every key at the root pitch). =lrg_sampler_new_from_wave()= is a one-zone sampler over every key.
+
+* LrgSoundFontInstrument
+:PROPERTIES:
+:CUSTOM_ID: sound-font
+:END:
+One preset of a SoundFont bank, played note by note through the vendored TinySoundFont. =LrgMidiSynth= plays whole MIDI files; this class plays individual notes from a song. =lrg_sound_font_instrument_new_from_file()= or =new_from_bytes()= checks the bank with the same validator as =LrgMidiSynth= (=LRG_MIDI_SYNTH_ERROR_INVALID= on a bad bank). =program= selects the preset by General MIDI program number, and =drums= switches to the percussion bank (channel 10). The bank is reloaded the first time the instrument renders at a new sample rate. A pitch bend is sent over the General MIDI wheel range of plus or minus 2 semitones.
+
+* LrgFoleyInstrument
+:PROPERTIES:
+:CUSTOM_ID: foley-instrument
+:END:
+A Foley patch played as a note: =lrg_foley_instrument_new (patch)= renders =takes= takes of the patch (its =variation= 0, 1, ... each moves every layer's noise) into an inner one-shot sampler that alternates them, so repeated hits do not sound identical. =root-key= (60) plays a take at its own pitch, and =pitch-track= (0 to 1) sets how far other keys move it. =lrg_foley_instrument_set_patch()= changes the sound. Use it for footsteps on a beat, zaps, impacts and risers on a song track.
+
+* Example
+#+begin_src c
+g_autoptr(LrgAudioMixer)  mixer = lrg_audio_mixer_new (48000, 2);
+g_autoptr(LrgSynth)       bass = lrg_synth_new_preset ("synthwave-bass");
+g_autoptr(LrgDrumMachine) drums = lrg_drum_machine_new (LRG_DRUM_KIT_808);
+guint64                   beat = 48000 * 60 / 110;   /* 110 BPM */
+guint                     i;
+
+lrg_audio_mixer_add_bus (mixer, "music", "master");
+lrg_audio_mixer_play_source (mixer, LRG_AUDIO_SOURCE (bass), "music", 1.0);
+lrg_audio_mixer_play_source (mixer, LRG_AUDIO_SOURCE (drums), "music", 1.0);
+for (i = 0; i < 8; i++)
+{
+	gint key = i % 2 ? 45 : 33;    /* A1, A2: octave bass on eighths */
+
+	lrg_instrument_schedule (LRG_INSTRUMENT (bass), i * beat / 2, LRG_INSTRUMENT_EVENT_NOTE_ON, key, 0.9);
+	lrg_instrument_schedule (LRG_INSTRUMENT (bass), i * beat / 2 + beat / 3, LRG_INSTRUMENT_EVENT_NOTE_OFF,
+	                         key, 0);
+	if (i % 2 == 0)
+		lrg_instrument_schedule (LRG_INSTRUMENT (drums), i * beat / 2, LRG_INSTRUMENT_EVENT_NOTE_ON, 36, 1.0);
+}
+/* lrg_audio_mixer_render (mixer, frames, &n) now renders the bar */
+#+end_src
+
+* Tests
+=tests/test-music-instruments.c= covers: notes landing on the exact sample across odd block sizes; note names; every synth preset rendering finite, audible and bounded; release; polyphony and stealing; mono legato; pitch (zero crossings of a sine, a +12 semitone bend); determinism; parameter clamping; every drum piece in every kit sounding and dying away; the hat choke; sampler pitch, loops and velocity zones; Foley takes; a SoundFont instrument (a bank written by =tests/lrg-test-midi.h=); and an instrument played in a mixer at an exact frame.

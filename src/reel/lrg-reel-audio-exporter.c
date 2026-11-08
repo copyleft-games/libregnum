@@ -8,6 +8,7 @@
 #include "config.h"
 #include "lrg-reel-audio-exporter.h"
 #include "../audio/lrg-wave-data.h"
+#include "../audio/lrg-audio-encoder.h"
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 
@@ -73,21 +74,25 @@ lrg_reel_audio_exporter_set_bitrate (LrgReelAudioExporter *self,
     self->bitrate_kbps = kbps;
 }
 
-/* Map the lossy/lossless format to the ffmpeg encoder name. */
-static const gchar *
-reel_audio_codec_name (LrgReelAudioFormat format)
+/* the encoder format of each reel format */
+static LrgAudioFileFormat
+reel_audio_file_format (LrgReelAudioFormat format)
 {
     switch (format)
     {
     case LRG_REEL_AUDIO_FORMAT_MP3:
-        return "libmp3lame";
+        return LRG_AUDIO_FILE_FORMAT_MP3;
     case LRG_REEL_AUDIO_FORMAT_AAC:
-        return "aac";
+        return LRG_AUDIO_FILE_FORMAT_AAC;
     case LRG_REEL_AUDIO_FORMAT_FLAC:
-        return "flac";
+        return LRG_AUDIO_FILE_FORMAT_FLAC;
+    case LRG_REEL_AUDIO_FORMAT_OGG:
+        return LRG_AUDIO_FILE_FORMAT_OGG;
+    case LRG_REEL_AUDIO_FORMAT_OPUS:
+        return LRG_AUDIO_FILE_FORMAT_OPUS;
     case LRG_REEL_AUDIO_FORMAT_WAV:
     default:
-        return "pcm_s16le";
+        return LRG_AUDIO_FILE_FORMAT_WAV;
     }
 }
 
@@ -96,61 +101,30 @@ lrg_reel_audio_exporter_export (LrgReelAudioExporter *self,
                                 LrgWaveData          *wave,
                                 GError              **error)
 {
-    g_autofree gchar *ffmpeg = NULL;
-    g_autofree gchar *tmp_dir = NULL;
-    g_autofree gchar *tmp_wav = NULL;
-    g_autoptr(GSubprocess) proc = NULL;
-    g_autoptr(GSubprocessLauncher) launcher = NULL;
-    const gchar *argv[16];
-    gboolean ok;
+    g_autoptr(LrgAudioEncodeOptions) options = NULL;
+    g_autoptr(GError)                local = NULL;
+    LrgAudioFileFormat               format;
 
     g_return_val_if_fail (LRG_IS_REEL_AUDIO_EXPORTER (self), FALSE);
     g_return_val_if_fail (LRG_IS_WAVE_DATA (wave), FALSE);
     g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
-    /* WAV is written directly with no external dependency. */
+    /* WAV is still written by the wave itself (raylib's ExportWave), as
+     * before 0.10.0; everything else goes through LrgAudioEncoder, which
+     * picks libav or the ffmpeg program */
     if (self->format == LRG_REEL_AUDIO_FORMAT_WAV)
         return lrg_wave_data_export_wav (wave, self->path, error);
 
-    ffmpeg = g_find_program_in_path ("ffmpeg");
-    if (ffmpeg == NULL)
-    {
-        g_set_error_literal (error, LRG_REEL_AUDIO_EXPORTER_ERROR, 1,
-                             "ffmpeg is required to encode this audio format");
-        return FALSE;
-    }
+    format = reel_audio_file_format (self->format);
+    options = lrg_audio_encode_options_new ();
+    options->bitrate_kbps = self->bitrate_kbps > 0 ? (guint) self->bitrate_kbps : 0;
+    if (lrg_audio_encode_wave (wave, format, options, self->path, NULL, &local))
+        return TRUE;
 
-    /* Stage a temp WAV, then transcode to the requested format. */
-    tmp_dir = g_dir_make_tmp ("lrg-reel-aexp-XXXXXX", error);
-    if (tmp_dir == NULL)
-        return FALSE;
-    tmp_wav = g_build_filename (tmp_dir, "mix.wav", NULL);
-
-    if (!lrg_wave_data_export_wav (wave, tmp_wav, error))
-    {
-        g_unlink (tmp_wav);
-        g_rmdir (tmp_dir);
-        return FALSE;
-    }
-
-    argv[0] = ffmpeg;
-    argv[1] = "-y";
-    argv[2] = "-loglevel"; argv[3] = "error";
-    argv[4] = "-i";        argv[5] = tmp_wav;
-    argv[6] = "-c:a";      argv[7] = reel_audio_codec_name (self->format);
-    argv[8] = "-b:a";      argv[9] = g_strdup_printf ("%dk", self->bitrate_kbps);
-    argv[10] = self->path;
-    argv[11] = NULL;
-
-    launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-                                          G_SUBPROCESS_FLAGS_STDERR_SILENCE);
-    proc = g_subprocess_launcher_spawnv (launcher, argv, error);
-
-    ok = (proc != NULL) && g_subprocess_wait_check (proc, NULL, error);
-
-    g_free ((gchar *) argv[9]);
-    g_unlink (tmp_wav);
-    g_rmdir (tmp_dir);
-
-    return ok;
+    /* keep the error 0.9 callers check for when no encoder exists */
+    if (g_error_matches (local, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED))
+        g_set_error (error, LRG_REEL_AUDIO_EXPORTER_ERROR, 1, "%s", local->message);
+    else
+        g_propagate_error (error, g_steal_pointer (&local));
+    return FALSE;
 }

@@ -220,6 +220,14 @@ TEST_SOURCES := \
 	test-audio-positional.c \
 	test-midi-synth.c \
 	test-audio-effects.c \
+	test-audio-dynamics.c \
+	test-foley.c \
+	test-foley-patch.c \
+	test-music-instruments.c \
+	test-music-song.c \
+	test-music-player.c \
+	test-music-demo.c \
+	test-audio-encoder.c \
 	test-audio-bus.c \
 	test-audio-robustness.c \
 	test-midi-output.c \
@@ -328,6 +336,7 @@ TEST_SOURCES := \
 	test-editor-app-vfx.c \
 	test-editor-app-terrain.c \
 	test-editor-app-audio.c \
+	test-editor-app-music.c \
 	test-editor-app-2d.c \
 	test-lsp-client.c \
 	test-editor-app-debug.c \

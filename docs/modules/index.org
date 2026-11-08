@@ -65,6 +65,11 @@ loaded module.
 
 =LrgBigNum=: immutable, reference-counted non-negative big integers over OpenSSL (bytes in either order, hex, random, modular arithmetic with a constant-time =mod_exp=, wiped on free).  =LrgSrp6Client=: the client side of SRP-6a with an =LrgSrp6Style= selecting RFC 5054 encodings or the World of Warcraft login variant (little-endian, k = 3, upper-cased credentials, interleaved-hash session key).  =LrgArc4=: the ARC4 stream cipher with drop-N, for legacy protocols.
 
+*** [[file:music/index.org][Music Module]] - Instruments, Songs and Rendering (0.10.0)
+- *[[file:music/instruments.org][Instruments]]* - LrgSynth, LrgDrumMachine, LrgSampler, LrgSoundFontInstrument, LrgFoleyInstrument, sample-accurate notes
+- *[[file:music/song.org][LrgSong]]* - multitrack =.rsong= arrangements, offline render, stems, loudness, MIDI import/export
+- *[[file:music/player.org][LrgSongPlayer]]* - realtime playback with live edits, adaptive game music
+
 *** [[file:reel/index.org][Reel Module]] - Programmatic Video Creation
 :PROPERTIES:
 :CUSTOM_ID: reel-module---programmatic-video-creation

@@ -5056,6 +5056,8 @@ lrg_reel_audio_format_get_type (void)
             { LRG_REEL_AUDIO_FORMAT_MP3, "LRG_REEL_AUDIO_FORMAT_MP3", "mp3" },
             { LRG_REEL_AUDIO_FORMAT_AAC, "LRG_REEL_AUDIO_FORMAT_AAC", "aac" },
             { LRG_REEL_AUDIO_FORMAT_FLAC, "LRG_REEL_AUDIO_FORMAT_FLAC", "flac" },
+            { LRG_REEL_AUDIO_FORMAT_OGG, "LRG_REEL_AUDIO_FORMAT_OGG", "ogg" },
+            { LRG_REEL_AUDIO_FORMAT_OPUS, "LRG_REEL_AUDIO_FORMAT_OPUS", "opus" },
             { 0, NULL, NULL }
         };
         GType g_define_type_id =

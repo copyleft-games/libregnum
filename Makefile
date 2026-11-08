@@ -286,6 +286,26 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-midi-output-alsa.h \
 	src/audio/lrg-midi-sequencer.h \
 	src/audio/lrg-foley.h \
+	src/audio/lrg-audio-source.h \
+	src/audio/lrg-foley-patch.h \
+	src/audio/lrg-audio-analysis.h \
+	src/audio/lrg-audio-encoder.h \
+	src/music/lrg-song.h \
+	src/music/lrg-midi-file.h \
+	src/music/lrg-song-player.h \
+	src/music/lrg-instrument.h \
+	src/music/lrg-synth.h \
+	src/music/lrg-drum-machine.h \
+	src/music/lrg-sampler.h \
+	src/music/lrg-sound-font-instrument.h \
+	src/music/lrg-foley-instrument.h \
+	src/audio/lrg-limiter.h \
+	src/audio/lrg-distortion.h \
+	src/audio/lrg-equalizer.h \
+	src/audio/lrg-stereo-widener.h \
+	src/audio/lrg-filter.h \
+	src/audio/lrg-gate.h \
+	src/audio/lrg-compressor.h \
 	src/inventory/lrg-item-def.h \
 	src/inventory/lrg-item-stack.h \
 	src/inventory/lrg-inventory.h \
@@ -1094,6 +1114,29 @@ SOURCES := \
 	src/audio/lrg-midi-output-alsa.c \
 	src/audio/lrg-midi-sequencer.c \
 	src/audio/lrg-foley.c \
+	src/audio/lrg-audio-source.c \
+	src/audio/lrg-foley-patch.c \
+	src/audio/lrg-audio-analysis.c \
+	src/audio/lrg-audio-encoder.c \
+	src/audio/lrg-audio-encoder-libav.c \
+	src/music/lrg-song.c \
+	src/music/lrg-song-render.c \
+	src/music/lrg-midi-file.c \
+	src/music/lrg-song-player.c \
+	src/music/lrg-instrument.c \
+	src/music/lrg-synth.c \
+	src/music/lrg-drum-machine.c \
+	src/music/lrg-sampler.c \
+	src/music/lrg-sound-font-instrument.c \
+	src/music/lrg-foley-instrument.c \
+	src/audio/lrg-audio-yaml-private.c \
+	src/audio/lrg-limiter.c \
+	src/audio/lrg-distortion.c \
+	src/audio/lrg-equalizer.c \
+	src/audio/lrg-stereo-widener.c \
+	src/audio/lrg-filter.c \
+	src/audio/lrg-gate.c \
+	src/audio/lrg-compressor.c \
 	src/inventory/lrg-item-def.c \
 	src/inventory/lrg-item-stack.c \
 	src/inventory/lrg-inventory.c \
@@ -1938,6 +1981,8 @@ PUBLIC_HEADERS += \
 	src/editor/ui/data/lrg-editor-weather-editor.h \
 	src/editor/ui/data/lrg-editor-water-editor.h \
 	src/editor/ui/data/lrg-editor-mixer-editor.h \
+	src/editor/ui/data/lrg-editor-foley-editor.h \
+	src/editor/ui/data/lrg-editor-song-editor.h \
 	src/editor/ui/data/lrg-editor-vscript-editor.h \
 	src/editor/ui/data/lrg-editor-blocks-editor.h \
 	src/editor/ui/data/lrg-editor-tileset-editor.h \
@@ -1997,6 +2042,9 @@ SOURCES += \
 	src/editor/ui/data/lrg-editor-weather-editor.c \
 	src/editor/ui/data/lrg-editor-water-editor.c \
 	src/editor/ui/data/lrg-editor-mixer-editor.c \
+	src/editor/ui/data/lrg-editor-foley-editor.c \
+	src/editor/ui/data/lrg-editor-song-editor.c \
+	src/editor/ui/data/lrg-editor-song-ops.c \
 	src/editor/ui/data/lrg-editor-vscript-editor.c \
 	src/editor/ui/data/lrg-editor-blocks-editor.c \
 	src/editor/ui/data/lrg-editor-tileset-editor.c \

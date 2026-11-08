@@ -64,6 +64,8 @@
 #include "../graphics/lrg-water-body.h"
 #include "../pathfinding/lrg-nav-bake.h"
 #include "../scripting/lrg-vscript-program.h"
+#include "../audio/lrg-foley-patch.h"
+#include "../music/lrg-song.h"
 
 #define DEFAULT_UNDO_LIMIT (256)
 
@@ -106,6 +108,8 @@ lrg_editor_document_format_get_type (void)
 			{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, "LRG_EDITOR_DOCUMENT_FORMAT_WATER", "water" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, "LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS", "nav-settings" },
 			{ LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, "LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT", "vscript" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_FOLEY, "LRG_EDITOR_DOCUMENT_FORMAT_FOLEY", "foley" },
+			{ LRG_EDITOR_DOCUMENT_FORMAT_SONG, "LRG_EDITOR_DOCUMENT_FORMAT_SONG", "song" },
 			{ 0, NULL, NULL }
 		};
 		GType id;
@@ -178,7 +182,9 @@ static const struct
 	{ LRG_EDITOR_DOCUMENT_FORMAT_SPRITE, ".rsprite" },
 	{ LRG_EDITOR_DOCUMENT_FORMAT_WATER, ".rwater" },
 	{ LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS, ".rnav" },
-	{ LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, ".rvscript" }
+	{ LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT, ".rvscript" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_FOLEY, ".rfoley" },
+	{ LRG_EDITOR_DOCUMENT_FORMAT_SONG, ".rsong" }
 };
 
 const gchar *
@@ -220,6 +226,10 @@ lrg_editor_document_format_get_object_type (LrgEditorDocumentFormat format)
 		return LRG_TYPE_NAV_BAKE;
 	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
 		return LRG_TYPE_VSCRIPT_PROGRAM;
+	case LRG_EDITOR_DOCUMENT_FORMAT_FOLEY:
+		return LRG_TYPE_FOLEY_PATCH;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SONG:
+		return LRG_TYPE_SONG;
 	default:
 		return G_TYPE_INVALID;
 	}
@@ -4753,6 +4763,17 @@ engine_parse (LrgEditorDocumentFormat   format,
 		return (GObject *) lrg_nav_bake_new_from_data (text, length, error);
 	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
 		return (GObject *) lrg_vscript_program_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_FOLEY:
+		return (GObject *) lrg_foley_patch_new_from_data (text, length, error);
+	case LRG_EDITOR_DOCUMENT_FORMAT_SONG:
+		{
+			/* clips, samples and patches resolve against the song's folder */
+			LrgSong *song = lrg_song_new_from_data (text, length, error);
+
+			if (song != NULL && base_dir != NULL)
+				g_object_set (song, "base-path", base_dir, NULL);
+			return (GObject *) song;
+		}
 	default:
 		g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
 		             "%s documents have no engine object",
@@ -4790,6 +4811,10 @@ engine_write (GObject  *object,
 		return lrg_nav_bake_to_data (LRG_NAV_BAKE (object));
 	if (LRG_IS_VSCRIPT_PROGRAM (object))
 		return lrg_vscript_program_to_data (LRG_VSCRIPT_PROGRAM (object), error);
+	if (LRG_IS_FOLEY_PATCH (object))
+		return lrg_foley_patch_to_data (LRG_FOLEY_PATCH (object), NULL, error);
+	if (LRG_IS_SONG (object))
+		return lrg_song_to_data (LRG_SONG (object), NULL, error);
 
 	g_set_error (error, LRG_EDITOR_DOCUMENT_ERROR, LRG_EDITOR_DOCUMENT_ERROR_WRONG_KIND,
 	             "%s is not an engine-backed document object", G_OBJECT_TYPE_NAME (object));
@@ -4869,6 +4894,42 @@ engine_skeleton (LrgEditorDocumentFormat format)
 				lrg_vscript_node_set_input (log_node, "text", g_variant_new_string ("hello"));
 			lrg_vscript_program_connect (program, NULL, "start", "then", "log", "exec", NULL);
 			object = (GObject *) program;
+		}
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_FOLEY:
+		{
+			/* a short blip: one tone, so a new patch already makes a sound */
+			LrgFoleyPatch *patch = lrg_foley_patch_new ();
+			gint           layer;
+
+			g_object_set (patch, "name", "sound", "duration", 0.3, NULL);
+			layer = lrg_foley_patch_add_layer (patch, LRG_FOLEY_LAYER_TONE);
+			lrg_foley_patch_set_layer_param (patch, (guint) layer, "freq-end", 440.0);
+			lrg_foley_patch_set_layer_param (patch, (guint) layer, "decay", 0.08);
+			object = (GObject *) patch;
+		}
+		break;
+	case LRG_EDITOR_DOCUMENT_FORMAT_SONG:
+		{
+			/* a drum machine and a bass on a bar-long loop */
+			LrgSong *song = lrg_song_new ();
+			guint    i;
+
+			g_object_set (song, "title", "song", "bpm", 110.0, NULL);
+			lrg_song_set_instrument (song, "drums", "drums", "808");
+			lrg_song_set_instrument (song, "bass", "synth", "synthwave-bass");
+			lrg_song_add_pattern (song, "beat", 4);
+			lrg_song_pattern_set_lane (song, "beat", "kick", "x...x...x...x...");
+			lrg_song_pattern_set_lane (song, "beat", "snare", "....x.......x...");
+			lrg_song_pattern_set_lane (song, "beat", "closed-hat", "..x...x...x...x.");
+			lrg_song_add_pattern (song, "bassline", 4);
+			for (i = 0; i < 8; i++)
+				lrg_song_pattern_add_note (song, "bassline", i * 0.5, i % 2 ? 45 : 33, 0.4, 0.85);
+			lrg_song_add_track (song, "drums", LRG_SONG_TRACK_INSTRUMENT, "drums");
+			lrg_song_add_track (song, "bass", LRG_SONG_TRACK_INSTRUMENT, "bass");
+			lrg_song_add_clip (song, "drums", "beat", 0, 16);
+			lrg_song_add_clip (song, "bass", "bassline", 0, 16);
+			object = (GObject *) song;
 		}
 		break;
 	default:
@@ -5067,6 +5128,23 @@ validate_engine (Validation *v)
 			}
 		}
 	}
+	else if (LRG_IS_SONG (object))
+	{
+		g_autoptr(GPtrArray) found = NULL;
+		guint j;
+
+		/* the first problem that is not a warning */
+		ok = lrg_song_validate (LRG_SONG (object), &found);
+		for (j = 0; !ok && found != NULL && j < found->len; j++)
+		{
+			const gchar *text = g_ptr_array_index (found, j);
+
+			if (g_str_has_prefix (text, "warning: "))
+				continue;
+			g_set_error (&error, LRG_SONG_ERROR, LRG_SONG_ERROR_INVALID_VALUE, "%s", text);
+			break;
+		}
+	}
 	if (!ok)
 		add_loader_error (v, error, DATA_SOURCE);
 }
@@ -5129,6 +5207,8 @@ lrg_editor_document_validate (LrgEditorDocument  *self,
 	case LRG_EDITOR_DOCUMENT_FORMAT_WATER:
 	case LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS:
 	case LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT:
+	case LRG_EDITOR_DOCUMENT_FORMAT_FOLEY:
+	case LRG_EDITOR_DOCUMENT_FORMAT_SONG:
 		validate_engine (&v);
 		break;
 	case LRG_EDITOR_DOCUMENT_FORMAT_UNKNOWN:

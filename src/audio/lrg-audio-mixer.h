@@ -5,6 +5,7 @@
 #endif
 #include "lrg-wave-data.h"
 #include "lrg-audio-effect.h"
+#include "lrg-audio-source.h"
 G_BEGIN_DECLS
 #define LRG_TYPE_AUDIO_MIXER (lrg_audio_mixer_get_type ())
 LRG_AVAILABLE_IN_ALL
@@ -711,5 +712,58 @@ LRG_AVAILABLE_IN_ALL
 const gchar *
 lrg_audio_mixer_get_voice_bus (LrgAudioMixer *self,
                                guint64        id);
+
+/* ==========================================================================
+ * 0.10.0: pull-source voices and unclipped output
+ * ========================================================================== */
+
+/**
+ * lrg_audio_mixer_play_source:
+ * @self: a mixer
+ * @source: an #LrgAudioSource (an instrument, a synthesizer)
+ * @bus: destination bus name
+ * @gain: finite voice gain from 0 to 4
+ *
+ * Plays @source as a voice: every block the mixer asks the source for the
+ * next frames at the mixer's rate and channel count, then applies the
+ * voice gain and pan (lrg_audio_mixer_set_voice_gain(),
+ * lrg_audio_mixer_set_voice_pan()) like a wave voice.  Pitch and the voice
+ * low-pass do not apply to source voices.  The voice ends when the source
+ * reports it is finished, or with lrg_audio_mixer_stop_voice().  The mixer
+ * keeps a reference to @source while the voice exists.
+ *
+ * Returns: a nonzero voice ID, or zero on failure
+ */
+LRG_AVAILABLE_IN_ALL
+guint64
+lrg_audio_mixer_play_source (LrgAudioMixer  *self,
+                             LrgAudioSource *source,
+                             const gchar    *bus,
+                             gdouble         gain);
+
+/**
+ * lrg_audio_mixer_set_clip:
+ * @self: a mixer
+ * @clip: whether the master output is clamped to [-1, 1]
+ *
+ * By default lrg_audio_mixer_render() and lrg_audio_mixer_pump() clamp the
+ * master output to [-1, 1].  An offline render that is measured and
+ * normalised afterwards (a song mixdown) turns the clamp off so peaks
+ * above full scale are kept instead of flattened.
+ */
+LRG_AVAILABLE_IN_ALL
+void
+lrg_audio_mixer_set_clip (LrgAudioMixer *self,
+                          gboolean       clip);
+
+/**
+ * lrg_audio_mixer_get_clip:
+ * @self: a mixer
+ *
+ * Returns: whether the master output is clamped (the default)
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean
+lrg_audio_mixer_get_clip (LrgAudioMixer *self);
 
 G_END_DECLS

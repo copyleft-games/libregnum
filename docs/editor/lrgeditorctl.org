@@ -384,11 +384,11 @@ lrgeditorctl physasset exclude chars/hero.rphysasset thigh_l thigh_r
 lrgeditorctl physasset simulate chars/hero.rphysasset advance=2; lrgeditorctl physasset save chars/hero.rphysasset
 #+end_src
 
-*** Navigation, AI, effects, terrain, audio, 2D, scripting, debugging and profiling (0.9.0)
+*** Navigation, AI, effects, terrain, audio, 2D, scripting, debugging and profiling (0.9.0), music (0.10.0)
 :PROPERTIES:
 :CUSTOM_ID: verbs-m67
 :END:
-One family per editor tool of the 0.9.0 navigation, AI, effects, terrain, audio and 2D wave (M6/M7) and the scripting, debugging and profiling wave (M8: =debug=, =lsp=, =profiler=, =frame=, =script=, ...), one verb per IPC method: the verb is the method name after the family with =.= and =_= turned into =-= (=nav.area.box.add= is =nav area-box-add=). Positional arguments fill the method's leading parameters (shown in capitals, a file path first where the method takes one); everything else is =key=value= (numbers, booleans, =null=, =x,y,z= vectors and JSON are parsed). =--node= (=-n=) fills =node= for the verbs that take one. A bare family runs its =get= (=tiles= has =state= for =tiles.get=, since =tiles NODE= still reads a tilemap). Results print as YAML unless =-o= says otherwise. =asset new KIND [path=P] [name=N] [image=I]= creates any of the new files (=asset.new=). =profiler= keeps its 0.8.1 form: a bare =profiler [frames=N] [enable=BOOL]= (or =profiler sample=) prints the section table; =code open|list|save= stay as they were.
+One family per editor tool of the 0.9.0 navigation, AI, effects, terrain, audio and 2D wave (M6/M7) and the scripting, debugging and profiling wave (M8: =debug=, =lsp=, =profiler=, =frame=, =script=, ...), one verb per IPC method: the verb is the method name after the family with =.= and =_= turned into =-= (=nav.area.box.add= is =nav area-box-add=). Positional arguments fill the method's leading parameters (shown in capitals, a file path first where the method takes one); everything else is =key=value= (numbers, booleans, =null=, =x,y,z= vectors and JSON are parsed). =--node= (=-n=) fills =node= for the verbs that take one. A bare family runs its =get= (=tiles= has =state= for =tiles.get=, since =tiles NODE= still reads a tilemap). Results print as YAML unless =-o= says otherwise. =asset new KIND [path=P] [name=N] [image=I]= creates any of the new files (=asset.new=; 0.10.0 adds =song= and =foley=). =profiler= keeps its 0.8.1 form: a bare =profiler [frames=N] [enable=BOOL]= (or =profiler sample=) prints the section table; =code open|list|save= stay as they were.
 
 # m67e-generated: begin
 **** nav
@@ -700,10 +700,12 @@ lrgeditorctl mixer meters
 | =audio set NODE [key=value...]= | =audio.set= |
 | =audio curve NODE [key=value...]= | =audio.curve= |
 | =audio buses [key=value...]= | =audio.buses= |
+| =audio formats [key=value...]= | =audio.formats= |
 
 #+begin_src sh
 lrgeditorctl audio set Speaker min_distance=2 max_distance=30 bus=sfx
 lrgeditorctl audio curve Speaker samples=16
+lrgeditorctl audio formats    # what song/foley export can write here
 #+end_src
 
 **** tiles
@@ -957,6 +959,94 @@ lrgeditorctl vscript create scripts/hello.rvscript
 lrgeditorctl vscript add-node math.add id=sum x=40 y=200
 lrgeditorctl vscript connect sum.result log.text
 lrgeditorctl vscript run; lrgeditorctl vscript save
+#+end_src
+
+**** song
+:PROPERTIES:
+:CUSTOM_ID: verbs-song
+:END:
+=song= composes, renders and exports =.rsong= songs in the song editor (0.10.0); =path== picks the file, default the focused song editor. Every edit verb is one undo step; =song apply ops='[...]'= runs a list of edits as one step and changes nothing when one fails. Notes are =[beat, key, length, velocity]= (keys as names such as =A2= or MIDI numbers); drum lanes are step strings (=x... x...=). Methods: [[file:ipc-protocol.org::#ipc-song][Song methods]]; the editor and an agent walkthrough: [[file:music.org][Music in the editor]].
+
+| Command | Method |
+|---------+--------|
+| =song new PATH [key=value...]= | =song.new= |
+| =song get [key=value...]= | =song.get= |
+| =song apply [key=value...]= | =song.apply= |
+| =song validate [key=value...]= | =song.validate= |
+| =song render [key=value...]= | =song.render= |
+| =song export FILE [key=value...]= | =song.export= |
+| =song export-midi FILE [key=value...]= | =song.export_midi= |
+| =song import-midi FILE PATH [key=value...]= | =song.import_midi= |
+| =song play [key=value...]= | =song.play= |
+| =song stop [key=value...]= | =song.stop= |
+| =song seek BEAT [key=value...]= | =song.seek= |
+| =song select TRACK CLIP [key=value...]= | =song.select= |
+| =song state [key=value...]= | =song.state= |
+| =song instruments [key=value...]= | =song.instruments= |
+| =song set [key=value...]= | =song.set= |
+| =song set-tempo BPM [key=value...]= | =song.set_tempo= |
+| =song set-marker NAME BEAT [key=value...]= | =song.set_marker= |
+| =song remove-marker NAME [key=value...]= | =song.remove_marker= |
+| =song set-instrument ID TYPE SOURCE [key=value...]= | =song.set_instrument= |
+| =song remove-instrument ID [key=value...]= | =song.remove_instrument= |
+| =song add-pattern ID LENGTH [key=value...]= | =song.add_pattern= |
+| =song set-notes PATTERN [key=value...]= | =song.set_notes= |
+| =song set-lanes PATTERN [key=value...]= | =song.set_lanes= |
+| =song remove-pattern ID [key=value...]= | =song.remove_pattern= |
+| =song add-track ID INSTRUMENT [key=value...]= | =song.add_track= |
+| =song set-track ID [key=value...]= | =song.set_track= |
+| =song remove-track ID [key=value...]= | =song.remove_track= |
+| =song move-track ID INDEX [key=value...]= | =song.move_track= |
+| =song add-clip TRACK SOURCE START LENGTH [key=value...]= | =song.add_clip= |
+| =song set-clip TRACK INDEX [key=value...]= | =song.set_clip= |
+| =song remove-clip TRACK INDEX [key=value...]= | =song.remove_clip= |
+| =song set-automation TARGET [key=value...]= | =song.set_automation= |
+| =song set-bus NAME [key=value...]= | =song.set_bus= |
+| =song remove-bus NAME [key=value...]= | =song.remove_bus= |
+| =song set-effect BUS ID TYPE [key=value...]= | =song.set_effect= |
+| =song remove-effect BUS ID [key=value...]= | =song.remove_effect= |
+| =song set-send SOURCE TARGET LEVEL [key=value...]= | =song.set_send= |
+| =song set-duck TRIGGER TARGET [key=value...]= | =song.set_duck= |
+
+#+begin_src sh
+lrgeditorctl song new music/loop.rsong empty=true
+lrgeditorctl song set bpm=108 title='Night Drive'
+lrgeditorctl song set-instrument pad synth synthwave-pad
+lrgeditorctl song add-pattern chords 4 'notes=[[0,"A3",4,0.7],[0,"C4",4,0.7],[0,"E4",4,0.7]]'
+lrgeditorctl song add-track pad pad volume=-8
+lrgeditorctl song add-clip pad chords 0 16
+lrgeditorctl song apply 'ops=[{"op":"set_bus","name":"kick"},{"op":"set_bus","name":"synths"},{"op":"set_track","id":"pad","bus":"synths"},{"op":"set_duck","trigger":"kick","target":"synths","depth":-4}]'
+lrgeditorctl song render end=16 tracks=true -o json
+lrgeditorctl song export out/loop.wav 'formats=["wav","flac","mp3","ogg"]' stems=true
+#+end_src
+
+**** foley
+:PROPERTIES:
+:CUSTOM_ID: verbs-foley
+:END:
+=foley= designs =.rfoley= sound-effect patches in the Foley designer (0.10.0). =foley set= puts its =key=value= arguments into =settings=, =foley set-layer INDEX= into =params=. Methods: [[file:ipc-protocol.org::#ipc-foley][Foley methods]].
+
+| Command | Method |
+|---------+--------|
+| =foley new PATH KIND [key=value...]= | =foley.new= |
+| =foley get [key=value...]= | =foley.get= |
+| =foley set [key=value...]= | =foley.set= |
+| =foley add-layer TYPE [key=value...]= | =foley.add_layer= |
+| =foley set-layer INDEX [key=value...]= | =foley.set_layer= |
+| =foley remove-layer INDEX [key=value...]= | =foley.remove_layer= |
+| =foley move-layer FROM TO [key=value...]= | =foley.move_layer= |
+| =foley from-kind KIND VARIANT [key=value...]= | =foley.from_kind= |
+| =foley render [key=value...]= | =foley.render= |
+| =foley export FILE [key=value...]= | =foley.export= |
+| =foley play [key=value...]= | =foley.play= |
+| =foley layer-types [key=value...]= | =foley.layer_types= |
+
+#+begin_src sh
+lrgeditorctl foley new sfx/step.rfoley footstep-gravel
+lrgeditorctl foley add-layer tone
+lrgeditorctl foley set-layer 0 at=0.01 amp=0.8
+lrgeditorctl foley set duration=0.6 variation=2
+lrgeditorctl foley render -o json; lrgeditorctl foley export sfx/step.ogg
 #+end_src
 
 **** memory

@@ -145,6 +145,7 @@ endif
 EXAMPLES += example-chart-2d example-chart-3d
 EXAMPLES += game-chair-simulator
 EXAMPLES += reel-hello reel-showcase
+EXAMPLES += synthwave-song
 EXAMPLES += ui-showcase game-ui-menu ui-theme-editor ui-studio ui-dnd ui-property-grid level-3d-runtime pbr-showcase physics-sandbox game-showcase-3d
 
 # Editor standalone (only built when BUILD_EDITOR_UI=1)
@@ -378,6 +379,12 @@ $(EXAMPLES_BUILDDIR)/reel-hello$(EXE_EXT): reel-hello.c | $(EXAMPLES_BUILDDIR)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 
 $(EXAMPLES_BUILDDIR)/reel-showcase$(EXE_EXT): reel-showcase.c | $(EXAMPLES_BUILDDIR)
+	$(call print_compile,$<)
+	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+# "Neon Drive": a 2:40 synthwave song built with the music module, rendered
+# and exported to every available audio format (no device, no data files)
+$(EXAMPLES_BUILDDIR)/synthwave-song$(EXE_EXT): synthwave-song.c | $(EXAMPLES_BUILDDIR)
 	$(call print_compile,$<)
 	@$(CC) $(EXAMPLE_CFLAGS) -o $@ $< $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
 

@@ -69,8 +69,9 @@
  * Gameplay and effect assets (0.9.0 M6/M7). Behaviour trees (.rbt),
  * state machines (.rfsm), particle effects (.rparticles), weather
  * (.rweather), mixers (.rmixer), tilesets (.rtileset), sprite sheets
- * (.rsprite), water bodies (.rwater), navigation bake settings (.rnav)
- * and terrains (.rterrain) get glyphs, type names and New entries
+ * (.rsprite), water bodies (.rwater), navigation bake settings (.rnav),
+ * terrains (.rterrain) and (0.10.0) songs (.rsong) and Foley sound
+ * effects (.rfoley) get glyphs, type names and New entries
  * (lrg_editor_assets_panel_create_asset(), also `asset.new` over IPC);
  * "Slice Sprite Sheet" on an image writes an auto-sliced .rsprite next
  * to it. Double-click opens them in their data editors; .rnav files go
@@ -94,6 +95,8 @@
 #include "data/lrg-editor-bt-editor.h"
 #include "data/lrg-editor-fsm-editor.h"
 #include "data/lrg-editor-vscript-editor.h"
+#include "data/lrg-editor-foley-editor.h"
+#include "data/lrg-editor-song-editor.h"
 #include "data/lrg-editor-water-editor.h"
 #include "lrg-editor-sequencer-panel.h"
 #include "../lrg-editor-document.h"
@@ -599,7 +602,9 @@ typedef enum
 	SPECIAL_WATER,
 	SPECIAL_NAV,
 	SPECIAL_TERRAIN,
-	SPECIAL_VSCRIPT
+	SPECIAL_VSCRIPT,
+	SPECIAL_SONG,
+	SPECIAL_FOLEY
 } SpecialKind;
 
 /* The M6/M7 kinds by extension (glyph, type name) */
@@ -620,7 +625,9 @@ static const struct
 	{ SPECIAL_WATER, ".rwater", "Wa", "Water body" },
 	{ SPECIAL_NAV, ".rnav", "Nv", "Navigation settings" },
 	{ SPECIAL_TERRAIN, ".rterrain", "Tr", "Terrain" },
-	{ SPECIAL_VSCRIPT, ".rvscript", "VS", "Visual script" }
+	{ SPECIAL_VSCRIPT, ".rvscript", "VS", "Visual script" },
+	{ SPECIAL_SONG, ".rsong", "Sg", "Song" },
+	{ SPECIAL_FOLEY, ".rfoley", "Fo", "Sound effect" }
 };
 
 static gboolean open_nav_settings (LrgEditorApp *app, const gchar *path);
@@ -737,7 +744,9 @@ special_role (SpecialKind kind)
 	case SPECIAL_FSM:          return LRG_THEME_COLOR_LINK;
 	case SPECIAL_PARTICLES:
 	case SPECIAL_WEATHER:      return LRG_THEME_COLOR_WARNING;
-	case SPECIAL_MIXER:        return LRG_THEME_COLOR_DANGER;
+	case SPECIAL_MIXER:
+	case SPECIAL_SONG:
+	case SPECIAL_FOLEY:        return LRG_THEME_COLOR_DANGER;
 	case SPECIAL_TILESET:
 	case SPECIAL_SPRITE:       return LRG_THEME_COLOR_DANGER;
 	case SPECIAL_WATER:
@@ -2818,7 +2827,9 @@ static const struct
 	{ "new-water", "New Water Body", "water", "new_water", "rwater" },
 	{ "new-terrain", "New Terrain", "terrain", "new_terrain", "rterrain" },
 	{ "new-nav-settings", "New Navigation Settings", "nav-settings", "new_navigation", "rnav" },
-	{ "new-vscript", "New Visual Script", "vscript", "new_visual_script", "rvscript" }
+	{ "new-vscript", "New Visual Script", "vscript", "new_visual_script", "rvscript" },
+	{ "new-song", "New Song", "song", "new_song", "rsong" },
+	{ "new-foley", "New Sound Effect", "foley", "new_sound_effect", "rfoley" }
 };
 
 /* The extension (without the dot) of an asset.new kind, or NULL. */
@@ -3472,6 +3483,8 @@ NEW_GAMEPLAY_ACTION (new_water, 7)
 NEW_GAMEPLAY_ACTION (new_terrain, 8)
 NEW_GAMEPLAY_ACTION (new_nav_settings, 9)
 NEW_GAMEPLAY_ACTION (new_vscript, 10)
+NEW_GAMEPLAY_ACTION (new_song, 11)
+NEW_GAMEPLAY_ACTION (new_foley, 12)
 #undef NEW_GAMEPLAY_ACTION
 
 static void
@@ -3599,6 +3612,8 @@ static const GActionEntry action_entries[] = {
 	{ "new-terrain", act_new_terrain, NULL, NULL, NULL, { 0 } },
 	{ "new-nav-settings", act_new_nav_settings, NULL, NULL, NULL, { 0 } },
 	{ "new-vscript", act_new_vscript, NULL, NULL, NULL, { 0 } },
+	{ "new-song", act_new_song, NULL, NULL, NULL, { 0 } },
+	{ "new-foley", act_new_foley, NULL, NULL, NULL, { 0 } },
 	{ "slice-sprite-sheet", act_slice_sprite_sheet, NULL, NULL, NULL, { 0 } },
 	{ "preview-clips", act_preview_clips, NULL, NULL, NULL, { 0 } },
 	{ "create-variant", act_create_variant, NULL, NULL, NULL, { 0 } },
@@ -5905,6 +5920,8 @@ lrg_editor_assets_panel_new (LrgEditorApp *app)
 	lrg_editor_fsm_editor_install (app); /* fsm.* (and ai.*) */
 	lrg_editor_vscript_editor_install (app); /* vscript.* */
 	lrg_editor_water_editor_install (app); /* water.* (EDTERR) */
+	lrg_editor_foley_editor_install (app); /* foley.* */
+	lrg_editor_song_editor_install (app); /* song.*, audio.formats */
 	register_with_app (self);
 	sync_app (self);
 	update_context_menu (self, TRUE);

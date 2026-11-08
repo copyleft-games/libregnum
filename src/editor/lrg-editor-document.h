@@ -82,6 +82,10 @@ G_BEGIN_DECLS
  *   Since 0.9.0.
  * @LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT: an #LrgVscriptProgram (a `.rvscript`
  *   file; recognised by its extension only). Since 0.9.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_FOLEY: an #LrgFoleyPatch sound effect (a
+ *   `.rfoley` file; recognised by its extension only). Since 0.10.0.
+ * @LRG_EDITOR_DOCUMENT_FORMAT_SONG: an #LrgSong (a `.rsong` file;
+ *   recognised by its extension only). Since 0.10.0.
  *
  * The engine format a document holds. The formats from
  * %LRG_EDITOR_DOCUMENT_FORMAT_BT on are engine-backed: the document can
@@ -121,7 +125,9 @@ typedef enum
 	LRG_EDITOR_DOCUMENT_FORMAT_SPRITE,
 	LRG_EDITOR_DOCUMENT_FORMAT_WATER,
 	LRG_EDITOR_DOCUMENT_FORMAT_NAV_SETTINGS,
-	LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT
+	LRG_EDITOR_DOCUMENT_FORMAT_VSCRIPT,
+	LRG_EDITOR_DOCUMENT_FORMAT_FOLEY,
+	LRG_EDITOR_DOCUMENT_FORMAT_SONG
 } LrgEditorDocumentFormat;
 
 #define LRG_TYPE_EDITOR_DOCUMENT_FORMAT (lrg_editor_document_format_get_type ())

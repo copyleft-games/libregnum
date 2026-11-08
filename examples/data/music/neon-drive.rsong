@@ -1,0 +1,618 @@
+version: 1
+song:
+  title: Neon Drive
+  artist: libregnum
+  bpm: 108
+  time_signature: 4/4
+  sample_rate: 48000
+  seed: 1985
+  length: 288
+  markers:
+  - beat: 0
+    name: Intro
+  - beat: 32
+    name: Verse
+  - beat: 96
+    name: Build
+  - beat: 128
+    name: Chorus
+  - beat: 192
+    name: Bridge
+  - beat: 224
+    name: Chorus 2
+  - beat: 256
+    name: Outro
+instruments:
+  arp:
+    type: synth
+    source: arp-pluck
+  bass:
+    type: synth
+    source: synthwave-bass
+  brass:
+    type: synth
+    source: brass-stab
+  impact:
+    type: foley
+    source: sfx/impact.rfoley
+    params:
+      pitch-track: 0
+  kit:
+    type: drums
+    source: 808
+  lead:
+    type: synth
+    source: synthwave-lead
+  pad:
+    type: synth
+    source: synthwave-pad
+  riser:
+    type: synth
+    source: noise-riser
+patterns:
+  arp:
+    length: 16
+    notes:
+    - 0 A4 0.2 0.95
+    - 0.25 C5 0.2 0.7
+    - 0.5 E5 0.2 0.7
+    - 0.75 A5 0.2 0.7
+    - 1 E5 0.2 0.95
+    - 1.25 C5 0.2 0.7
+    - 1.5 A4 0.2 0.7
+    - 1.75 C5 0.2 0.7
+    - 2 E5 0.2 0.95
+    - 2.25 A5 0.2 0.7
+    - 2.5 E5 0.2 0.7
+    - 2.75 C5 0.2 0.7
+    - 3 A4 0.2 0.95
+    - 3.25 C5 0.2 0.7
+    - 3.5 E5 0.2 0.7
+    - 3.75 C5 0.2 0.7
+    - 4 F4 0.2 0.95
+    - 4.25 A4 0.2 0.7
+    - 4.5 C5 0.2 0.7
+    - 4.75 F5 0.2 0.7
+    - 5 C5 0.2 0.95
+    - 5.25 A4 0.2 0.7
+    - 5.5 F4 0.2 0.7
+    - 5.75 A4 0.2 0.7
+    - 6 C5 0.2 0.95
+    - 6.25 F5 0.2 0.7
+    - 6.5 C5 0.2 0.7
+    - 6.75 A4 0.2 0.7
+    - 7 F4 0.2 0.95
+    - 7.25 A4 0.2 0.7
+    - 7.5 C5 0.2 0.7
+    - 7.75 A4 0.2 0.7
+    - 8 G4 0.2 0.95
+    - 8.25 C5 0.2 0.7
+    - 8.5 E5 0.2 0.7
+    - 8.75 G5 0.2 0.7
+    - 9 E5 0.2 0.95
+    - 9.25 C5 0.2 0.7
+    - 9.5 G4 0.2 0.7
+    - 9.75 C5 0.2 0.7
+    - 10 E5 0.2 0.95
+    - 10.25 G5 0.2 0.7
+    - 10.5 E5 0.2 0.7
+    - 10.75 C5 0.2 0.7
+    - 11 G4 0.2 0.95
+    - 11.25 C5 0.2 0.7
+    - 11.5 E5 0.2 0.7
+    - 11.75 C5 0.2 0.7
+    - 12 G4 0.2 0.95
+    - 12.25 B4 0.2 0.7
+    - 12.5 D5 0.2 0.7
+    - 12.75 G5 0.2 0.7
+    - 13 D5 0.2 0.95
+    - 13.25 B4 0.2 0.7
+    - 13.5 G4 0.2 0.7
+    - 13.75 B4 0.2 0.7
+    - 14 D5 0.2 0.95
+    - 14.25 G5 0.2 0.7
+    - 14.5 D5 0.2 0.7
+    - 14.75 B4 0.2 0.7
+    - 15 G4 0.2 0.95
+    - 15.25 B4 0.2 0.7
+    - 15.5 D5 0.2 0.7
+    - 15.75 B4 0.2 0.7
+  bass-octaves:
+    length: 16
+    notes:
+    - 0 A1 0.42 1
+    - 0.5 A2 0.42 0.72
+    - 1 A1 0.42 0.86
+    - 1.5 A2 0.42 0.72
+    - 2 A1 0.42 0.86
+    - 2.5 A2 0.42 0.72
+    - 3 A1 0.42 0.86
+    - 3.5 A2 0.42 0.72
+    - 4 F1 0.42 1
+    - 4.5 F2 0.42 0.72
+    - 5 F1 0.42 0.86
+    - 5.5 F2 0.42 0.72
+    - 6 F1 0.42 0.86
+    - 6.5 F2 0.42 0.72
+    - 7 F1 0.42 0.86
+    - 7.5 F2 0.42 0.72
+    - 8 C2 0.42 1
+    - 8.5 C3 0.42 0.72
+    - 9 C2 0.42 0.86
+    - 9.5 C3 0.42 0.72
+    - 10 C2 0.42 0.86
+    - 10.5 C3 0.42 0.72
+    - 11 C2 0.42 0.86
+    - 11.5 C3 0.42 0.72
+    - 12 G1 0.42 1
+    - 12.5 G2 0.42 0.72
+    - 13 G1 0.42 0.86
+    - 13.5 G2 0.42 0.72
+    - 14 G1 0.42 0.86
+    - 14.5 G2 0.42 0.72
+    - 15 G1 0.42 0.86
+    - 15.5 G2 0.42 0.72
+  bass-roots:
+    length: 16
+    notes:
+    - 0 A2 3.9 0.9
+    - 4 F2 3.9 0.9
+    - 8 C3 3.9 0.9
+    - 12 G2 3.9 0.9
+  chords:
+    length: 16
+    notes:
+    - 0 A3 3.95 0.7
+    - 0 C4 3.95 0.7
+    - 0 E4 3.95 0.7
+    - 4 F3 3.95 0.7
+    - 4 A3 3.95 0.7
+    - 4 C4 3.95 0.7
+    - 8 G3 3.95 0.7
+    - 8 C4 3.95 0.7
+    - 8 E4 3.95 0.7
+    - 12 G3 3.95 0.7
+    - 12 B3 3.95 0.7
+    - 12 D4 3.95 0.7
+  crash:
+    length: 4
+    steps: 16
+    lanes:
+      crash: "X..............."
+  fill:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "....x.......o.x."
+      high-tom: "........X..x...."
+      mid-tom: "..........x..x.."
+      low-tom: "............x..X"
+  groove:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "....x.......x..."
+      closed-hat: "g.x.g.x.g.x.g.x."
+  groove-chorus:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "....X.......X..."
+      clap: "....x.......x..."
+      closed-hat: "x...x...x...x..."
+      open-hat: "..o...o...o...o."
+  groove-light:
+    length: 4
+    steps: 16
+    lanes:
+      closed-hat: "..x...x...x...x."
+  hats-only:
+    length: 4
+    steps: 16
+    lanes:
+      closed-hat: "x.x.x.x.x.x.x.x."
+      rim: "....x.......x..."
+  hit:
+    length: 4
+    notes:
+    - 0 C4 1 1
+  kick-4:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "X...x...x...x..."
+  kick-half:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "x.......x......."
+  lead-a:
+    length: 16
+    notes:
+    - 0 E5 1.5 0.95
+    - 1.5 D5 0.5 0.85
+    - 2 C5 1 0.85
+    - 3 A4 1 0.85
+    - 4 C5 1.5 0.9
+    - 5.5 D5 0.5 0.85
+    - 6 E5 1 0.85
+    - 7 F5 1 0.85
+    - 8 G5 1.5 0.95
+    - 9.5 F5 0.5 0.85
+    - 10 E5 1 0.85
+    - 11 C5 1 0.85
+    - 12 D5 2 0.9
+    - 14 B4 1 0.85
+    - 15 D5 1 0.85
+  lead-b:
+    length: 16
+    notes:
+    - 0 A5 1.5 1
+    - 1.5 G5 0.5 0.85
+    - 2 E5 1.5 0.85
+    - 3.5 C5 0.5 0.85
+    - 4 F5 1.5 0.95
+    - 5.5 E5 0.5 0.85
+    - 6 C5 2 0.85
+    - 8 E5 1 0.85
+    - 9 G5 1 0.85
+    - 10 C6 1.5 1
+    - 11.5 B5 0.5 0.85
+    - 12 B5 1 0.95
+    - 13 A5 1 0.85
+    - 14 G5 2 0.85
+  roll-16:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "xxxxxxxxXXXXXXXX"
+  roll-8:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "o.o.o.o.x.x.x.x."
+      closed-hat: "..x...x...x...x."
+  stabs:
+    length: 16
+    notes:
+    - 0 A4 0.45 0.9
+    - 0 C5 0.45 0.9
+    - 0 E5 0.45 0.9
+    - 2.5 A4 0.45 0.75
+    - 2.5 C5 0.45 0.75
+    - 2.5 E5 0.45 0.75
+    - 4 F4 0.45 0.9
+    - 4 A4 0.45 0.9
+    - 4 C5 0.45 0.9
+    - 6.5 F4 0.45 0.75
+    - 6.5 A4 0.45 0.75
+    - 6.5 C5 0.45 0.75
+    - 8 G4 0.45 0.9
+    - 8 C5 0.45 0.9
+    - 8 E5 0.45 0.9
+    - 10.5 G4 0.45 0.75
+    - 10.5 C5 0.45 0.75
+    - 10.5 E5 0.45 0.75
+    - 12 G4 0.45 0.9
+    - 12 B4 0.45 0.9
+    - 12 D5 0.45 0.9
+    - 14.5 G4 0.45 0.75
+    - 14.5 B4 0.45 0.75
+    - 14.5 D5 0.45 0.75
+  swell:
+    length: 16
+    notes:
+    - 0 A3 15.75 1
+  tom-fill:
+    length: 4
+    steps: 16
+    lanes:
+      high-tom: "x.x.x.x........."
+      mid-tom: "........x.x....."
+      low-tom: "............x.X."
+tracks:
+- id: pad
+  instrument: pad
+  bus: pad
+  clips:
+  - pattern: chords
+    start: 0
+    length: 288
+  automation:
+  - target: param.cutoff
+    points:
+    - 0 400
+    - 32 2200
+    - 256 2200
+    - 288 600
+- id: arp
+  instrument: arp
+  bus: synths
+  volume: -4
+  pan: -0.25
+  clips:
+  - pattern: arp
+    start: 16
+    length: 80
+  - pattern: arp
+    start: 192
+    length: 32
+  - pattern: arp
+    start: 256
+    length: 32
+  automation:
+  - target: param.cutoff
+    points:
+    - 16 300
+    - 32 1100
+    - 192 700
+    - 224 1300
+- id: bass
+  instrument: bass
+  bus: bass
+  clips:
+  - pattern: bass-octaves
+    start: 32
+    length: 64
+  - pattern: bass-roots
+    start: 96
+    length: 32
+  - pattern: bass-octaves
+    start: 128
+    length: 64
+  - pattern: bass-roots
+    start: 192
+    length: 32
+  - pattern: bass-octaves
+    start: 224
+    length: 32
+  - pattern: bass-roots
+    start: 256
+    length: 16
+- id: lead
+  instrument: lead
+  bus: lead
+  clips:
+  - pattern: lead-a
+    start: 128
+    length: 16
+  - pattern: lead-b
+    start: 144
+    length: 16
+  - pattern: lead-a
+    start: 160
+    length: 16
+  - pattern: lead-b
+    start: 176
+    length: 16
+  - pattern: lead-a
+    start: 224
+    length: 16
+  - pattern: lead-b
+    start: 240
+    length: 16
+- id: brass
+  instrument: brass
+  bus: synths
+  volume: -5
+  pan: 0.2
+  clips:
+  - pattern: stabs
+    start: 128
+    length: 64
+  - pattern: stabs
+    start: 224
+    length: 32
+- id: riser
+  instrument: riser
+  bus: synths
+  clips:
+  - pattern: swell
+    start: 112
+    length: 16
+  automation:
+  - target: volume
+    points:
+    - 112 -34
+    - 127.5 -8
+- id: kick
+  instrument: kit
+  bus: kick
+  clips:
+  - pattern: kick-4
+    start: 32
+    length: 64
+  - pattern: kick-half
+    start: 96
+    length: 28
+  - pattern: kick-4
+    start: 128
+    length: 64
+  - pattern: kick-4
+    start: 224
+    length: 48
+- id: drums
+  instrument: kit
+  bus: drums
+  clips:
+  - pattern: groove-light
+    start: 24
+    length: 8
+  - pattern: groove
+    start: 32
+    length: 60
+  - pattern: fill
+    start: 92
+    length: 4
+  - pattern: groove-light
+    start: 96
+    length: 16
+  - pattern: roll-8
+    start: 112
+    length: 8
+  - pattern: roll-16
+    start: 120
+    length: 4
+  - pattern: groove-chorus
+    start: 128
+    length: 60
+  - pattern: fill
+    start: 188
+    length: 4
+  - pattern: hats-only
+    start: 192
+    length: 28
+  - pattern: tom-fill
+    start: 220
+    length: 4
+  - pattern: groove-chorus
+    start: 224
+    length: 28
+  - pattern: fill
+    start: 252
+    length: 4
+  - pattern: groove-light
+    start: 256
+    length: 12
+- id: cymbals
+  instrument: kit
+  bus: drums
+  volume: -4
+  clips:
+  - pattern: crash
+    start: 32
+    length: 4
+  - pattern: crash
+    start: 128
+    length: 4
+  - pattern: crash
+    start: 160
+    length: 4
+  - pattern: crash
+    start: 224
+    length: 4
+  - pattern: crash
+    start: 256
+    length: 4
+- id: impact
+  instrument: impact
+  bus: fx
+  volume: -2
+  clips:
+  - pattern: hit
+    start: 128
+    length: 4
+  - pattern: hit
+    start: 224
+    length: 4
+automation:
+- target: bus.master.volume
+  points:
+  - 0 0
+  - 268 0
+  - 288 -40
+mixer:
+  version: 1
+  buses:
+  - name: master
+    volume: 0
+    effects:
+    - type: equalizer
+      id: eq
+      params:
+        low-cut: 25
+        high-gain: 1.5
+    - type: compressor
+      id: glue
+      params:
+        threshold: -12
+        ratio: 2
+        attack: 0.02
+        release: 0.25
+        makeup: 1
+    - type: limiter
+      id: limit
+      params:
+        ceiling: -1
+  - name: kick
+    parent: master
+    volume: 0
+  - name: drums
+    parent: master
+    volume: -3
+    sends:
+    - target: fx
+      level: -16
+    effects:
+    - type: compressor
+      id: punch
+      params:
+        threshold: -16
+        ratio: 3
+        attack: 0.006
+        release: 0.1
+  - name: bass
+    parent: master
+    volume: -2
+    effects:
+    - type: equalizer
+      id: eq
+      params:
+        low-cut: 28
+        mid1-freq: 260
+        mid1-gain: -2.5
+  - name: synths
+    parent: master
+    volume: 0
+    effects:
+    - type: stereo-widener
+      id: wide
+      params:
+        width: 1.3
+        bass-mono: 150
+  - name: pad
+    parent: synths
+    volume: -3
+    sends:
+    - target: fx
+      level: -8
+    effects:
+    - type: chorus
+  - name: lead
+    parent: synths
+    volume: -1.5
+    sends:
+    - target: fx
+      level: -9
+    effects:
+    - type: echo
+      id: delay
+      params:
+        delay: 0.41666666
+        feedback: 0.38
+        dry: 1
+        wet: 0.28
+  - name: fx
+    parent: master
+    volume: -4
+    effects:
+    - type: reverb
+      id: hall
+      params:
+        room-size: 0.88
+        damping: 0.35
+        wet: 1
+        dry: 0
+  ducking:
+  - trigger: kick
+    target: pad
+    threshold: -30
+    depth: -7
+    attack: 0.003
+    release: 0.18
+  - trigger: kick
+    target: bass
+    threshold: -30
+    depth: -5
+    attack: 0.002
+    release: 0.12

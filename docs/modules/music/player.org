@@ -1,0 +1,73 @@
+#+title: Song playback and adaptive music
+#+description: LrgSongPlayer: realtime playback of songs on a render thread, live edits, live notes, and adaptive game music (sections, layers, stingers)
+#+authors: Zach Podbielniak
+#+categories: libregnum music audio
+#+created: 2026-11-08T19:00:00-05:00
+#+updated: 2026-11-08T19:00:00-05:00
+#+version: 0.1
+
+* Song playback
+:PROPERTIES:
+:CUSTOM_ID: player
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Music]] > Playback
+#+end_quote
+
+=LrgSongPlayer= plays an [[file:song.org][LrgSong]] in real time, in a game or in the editor. It compiles the song exactly as =lrg_song_render()= does, so what you hear is what you export. The tests check that the player renders the same samples as the offline render.
+
+The editor's song editor plays through one =LrgSongPlayer= and swaps in every edited version of the song while it plays ([[file:../../editor/music.org::#editor-music-song-playback][Music in the editor: playback]]).
+
+** Threads
+- *The caller* (the main thread) sends commands: play, pause, stop, seek, loop, a new song, a section jump, a layer, a stinger, a live note. Commands go through a queue and take effect at the start of the next rendered block (or on their exact frame, for jumps and stingers).
+- *The render thread* (started by =lrg_song_player_start_output()=) owns the compiled song and keeps a ring buffer of =LRG_SONG_PLAYER_RING_FRAMES= frames (4096, about 85 ms at 48 kHz) full, one 256-frame block at a time. The ring's length is the latency of commands.
+- *The audio device's thread* (graylib's stream callback) copies frames out of the ring and never waits. If the ring is empty it plays silence and counts an underrun (=lrg_song_player_get_underruns()=). When the device has no callback support, =lrg_song_player_update()= (call it every frame) refills the stream from the main thread.
+
+Without an output, =lrg_song_player_render (player, out, frames)= runs the render side on the calling thread. Tests, editor previews and offline captures of adaptive playback use this; it gives the same samples as the render thread.
+
+** Transport
+=lrg_song_player_play()=, =pause()= (holds the position), =stop()= (back to the loop start or beat 0), =seek (beat)=, =set_loop (enabled, start, end)= (the song's own loop range is the default), =is_playing()= (it stops by itself two seconds after the song's end when not looping) and =get_beat()= (the beat being heard: with an output, the ring's latency behind what the render thread has done).
+
+Seeking, looping and section jumps cut held notes and sound again every note that spans the new position, so a jump into the middle of a pad does not leave silence until the next chord.
+
+** Live edits
+=lrg_song_player_set_song (player, song, &error)= compiles the changed song on the calling thread and swaps it in at the beat being played. The editor calls it on every edit while playing. A song that does not compile (a missing instrument, file or bus) is refused and the old one keeps playing.
+
+** Live notes
+=lrg_song_player_note_on (player, track, key, velocity)= and =note_off()= play a track's instrument directly: auditioning in the piano roll, a keyboard, an AI trying a sound.
+
+** Adaptive music
+Games can steer the same song with the game state:
+
+| Call | What it does | Example |
+|------+--------------+---------|
+| =lrg_song_player_queue_section (player, "Combat", LRG_SONG_QUANTIZE_BAR)= | Jumps to a marker on the next bar line (or =BEAT=, or =NOW=) | The fight starts: go to the combat section in time |
+| =lrg_song_player_set_layer (player, "drums", -144, 2.0)= | Fades a track by an extra level over seconds (on top of its volume and automation) | Vertical layering: drums in only near enemies |
+| =lrg_song_player_play_stinger (player, "fx", "victory", LRG_SONG_QUANTIZE_BEAT)= | Plays a pattern once on a track's instrument from the next beat | A short phrase when a quest completes |
+
+Write the sections as markers and the layers as tracks in the song editor, then drive them from game code.
+
+** Meters
+=lrg_song_player_get_meter (player, bus, &peak, &rms)= reads a bus's level over the last rendered block, for VU meters.
+
+** Example
+#+begin_src c
+g_autoptr(GError)        error = NULL;
+g_autoptr(LrgSong)       song = lrg_song_new_from_file ("music/theme.rsong", &error);
+g_autoptr(LrgSongPlayer) music = lrg_song_player_new (song, &error);
+
+/* the audio device was opened by the game (LrgAudioManager) */
+lrg_song_player_start_output (music, &error);
+lrg_song_player_set_layer (music, "drums", -144.0, 0.0);
+lrg_song_player_play (music);
+
+/* every frame */
+lrg_song_player_update (music);
+if (enemies_near && !drums_in)
+	lrg_song_player_set_layer (music, "drums", 0.0, 1.5);
+if (boss_appears)
+	lrg_song_player_queue_section (music, "Boss", LRG_SONG_QUANTIZE_BAR);
+#+end_src
+
+** Tests
+=tests/test-music-player.c= (headless): the same samples as the offline render across odd call sizes; loop and seek; a section jump on the bar and at once; a layer silencing a track; a stinger and a live note on an idle track; meters; swapping an edited song at the same beat and refusing a broken one; stopping after the end. The real device is opt-in (=LRG_TEST_AUDIO_DEVICE=1=), as for the other device tests.

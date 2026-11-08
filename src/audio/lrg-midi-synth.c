@@ -1377,6 +1377,38 @@ lrg_midi_synth_load_soundfont (LrgMidiSynth  *self,
  * Validate, load, then swap: the old bank and its songs go only when
  * the new bank loaded.
  */
+/*
+ * lrg_midi_synth_font_load_checked:
+ * The whole SoundFont check, then the load (for LrgSoundFontInstrument,
+ * which shares this validator).  Errors are LRG_MIDI_SYNTH_ERROR_INVALID.
+ */
+LrgMidiSynthFont *
+lrg_midi_synth_font_load_checked (const guint8  *data,
+                                  gsize          size,
+                                  guint          sample_rate,
+                                  GError       **error)
+{
+    LrgMidiSynthFont *font;
+    guint32           sample_count;
+
+    if (data == NULL || size == 0)
+    {
+        sf2_invalid (error, "empty file");
+        return NULL;
+    }
+    if (size > (gsize)G_MAXINT)
+    {
+        sf2_invalid (error, "file too large");
+        return NULL;
+    }
+    if (!sf2_validate (data, size, &sample_count, error))
+        return NULL;
+    font = lrg_midi_synth_font_load (data, size, sample_count, sample_rate);
+    if (font == NULL)
+        sf2_invalid (error, "TinySoundFont rejected the bank");
+    return font;
+}
+
 gboolean
 lrg_midi_synth_load_soundfont_bytes (LrgMidiSynth  *self,
                                      GBytes        *sf2,
