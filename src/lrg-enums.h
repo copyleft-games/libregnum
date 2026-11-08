@@ -5453,6 +5453,8 @@ GType lrg_reel_video_codec_get_type (void) G_GNUC_CONST;
  * @LRG_REEL_AUDIO_FORMAT_MP3: MP3 (libmp3lame).
  * @LRG_REEL_AUDIO_FORMAT_AAC: AAC in an M4A container.
  * @LRG_REEL_AUDIO_FORMAT_FLAC: FLAC lossless.
+ * @LRG_REEL_AUDIO_FORMAT_OGG: Ogg Vorbis (0.10.0).
+ * @LRG_REEL_AUDIO_FORMAT_OPUS: Ogg Opus at 48 kHz (0.10.0).
  *
  * Output format for the audio-only exporter.
  *
@@ -5463,7 +5465,9 @@ typedef enum
     LRG_REEL_AUDIO_FORMAT_WAV,
     LRG_REEL_AUDIO_FORMAT_MP3,
     LRG_REEL_AUDIO_FORMAT_AAC,
-    LRG_REEL_AUDIO_FORMAT_FLAC
+    LRG_REEL_AUDIO_FORMAT_FLAC,
+    LRG_REEL_AUDIO_FORMAT_OGG,
+    LRG_REEL_AUDIO_FORMAT_OPUS
 } LrgReelAudioFormat;
 
 LRG_AVAILABLE_IN_ALL

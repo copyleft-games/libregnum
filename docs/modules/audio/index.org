@@ -25,6 +25,8 @@ The Audio module consists of these core classes:
 - *LrgFoleyPatch* - Editable sound-effect recipes (=.rfoley=): body, grain, wash, bed, tone and noise layers ([[file:foley.org::#foley-patch][foley.org]])
 - *LrgAudioSource* - Pull sources a mixer plays as voices: instruments and synthesizers ([[file:mixer.org::#source-voices][mixer.org]])
 - *LrgCompressor*, *LrgLimiter*, *LrgDistortion*, *LrgEqualizer*, *LrgStereoWidener*, *LrgFilter*, *LrgGate* - Mixing and mastering effects ([[file:effects.org::#mastering-effects][effects.org]])
+- *LrgAudioEncoder* - Writing wav, aiff, flac, mp3, ogg, opus, m4a and wavpack (native, libav or the ffmpeg program) and decoding them ([[file:encoder.org][encoder.org]])
+- *LrgAudioAnalysis* - Peak, true peak, RMS and BS.1770 / EBU R128 loudness ([[file:analysis.org][analysis.org]])
 - Instruments and songs are the [[file:../music/index.org][Music module]]
 
 ** Key Features

@@ -379,14 +379,15 @@ endif
 # stub and the decoder translation unit compiles to nothing.  Requires the
 # FFmpeg development packages (Fedora: ffmpeg-devel from RPM Fusion, or the
 # libav*-free-devel set; Debian/Ubuntu: libavformat-dev libavcodec-dev
-# libavutil-dev libswscale-dev).  HAS_FFMPEG is exported for the examples/tests
+# libavutil-dev libswscale-dev libswresample-dev).  Since 0.10.0 it also
+# gives LrgAudioEncoder its in-process encode/decode backend (libswresample).  HAS_FFMPEG is exported for the examples/tests
 # sub-makes, which need FFMPEG_LIBS on their link line (the static archive does
 # not carry its shared dependencies).
 
 FFMPEG ?= 0
 
 ifeq ($(FFMPEG),1)
-    FFMPEG_PKGS := libavformat libavcodec libavutil libswscale
+    FFMPEG_PKGS := libavformat libavcodec libavutil libswscale libswresample
     FFMPEG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(FFMPEG_PKGS)) -DLRG_HAS_FFMPEG=1
     FFMPEG_LIBS := $(shell $(PKG_CONFIG) --libs $(FFMPEG_PKGS))
     HAS_FFMPEG := 1

@@ -221,8 +221,9 @@ The output format is inferred from the file extension (=.png= → PNG, =.jpg=/=.
 :CUSTOM_ID: lrgreelaudioxporter
 :END:
 Write a mixed =LrgWaveData= to an audio file without rendering any video
-frames.  WAV is written in-process; MP3, AAC, and FLAC are transcoded via an
-ffmpeg subprocess.
+frames.  WAV is written in-process; since 0.10.0 every other format goes
+through =lrg_audio_encode_wave()= ([[file:../audio/encoder.org][audio files]]): in-process libav when libregnum
+is built with =FFMPEG=1=, otherwise the =ffmpeg= program fed through a pipe.
 
 #+begin_src c
 g_autoptr(LrgWaveData) mix = lrg_reel_audio_track_mix (audio_track, &error);
@@ -244,6 +245,8 @@ if (!lrg_reel_audio_exporter_export (ae, mix, &error))
 | =LRG_REEL_AUDIO_FORMAT_MP3=     | .mp3 | libmp3lame     |
 | =LRG_REEL_AUDIO_FORMAT_AAC=     | .m4a | AAC            |
 | =LRG_REEL_AUDIO_FORMAT_FLAC=    | .flac| FLAC lossless  |
+| =LRG_REEL_AUDIO_FORMAT_OGG=     | .ogg | Vorbis (0.10.0) |
+| =LRG_REEL_AUDIO_FORMAT_OPUS=    | .opus| Opus, 48 kHz (0.10.0) |
 
 ** Pitfalls
 :PROPERTIES:

@@ -351,6 +351,8 @@
 #include "audio/lrg-foley.h"
 #include "audio/lrg-audio-source.h"
 #include "audio/lrg-foley-patch.h"
+#include "audio/lrg-audio-analysis.h"
+#include "audio/lrg-audio-encoder.h"
 
 /* Music module (0.10.0) */
 #include "music/lrg-instrument.h"
@@ -359,6 +361,8 @@
 #include "music/lrg-sampler.h"
 #include "music/lrg-sound-font-instrument.h"
 #include "music/lrg-foley-instrument.h"
+#include "music/lrg-song.h"
+#include "music/lrg-midi-file.h"
 #include "audio/lrg-limiter.h"
 #include "audio/lrg-distortion.h"
 #include "audio/lrg-equalizer.h"

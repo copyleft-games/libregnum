@@ -1,0 +1,200 @@
+#+title: Songs
+#+description: LrgSong: multitrack songs in .rsong YAML (instruments, patterns, step lanes, tracks, clips, automation, tempo map, markers, embedded mixer), offline rendering with stems and loudness normalisation, and MIDI import/export
+#+authors: Zach Podbielniak
+#+categories: libregnum music audio
+#+created: 2026-11-08T18:00:00-05:00
+#+updated: 2026-11-08T18:00:00-05:00
+#+version: 0.1
+
+* Songs
+:PROPERTIES:
+:CUSTOM_ID: song
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:index.org][Music]] > Songs
+#+end_quote
+
+=LrgSong= is a multitrack arrangement, the data a DAW keeps in a project, saved as a =.rsong= YAML file:
+
+- *Instruments*, defined once by id: a synthesizer preset, a drum kit, a sampler (an audio file), a SoundFont preset or a Foley patch, plus parameter overrides ([[file:instruments.org][Instruments]]).
+- *Patterns*: notes (beat, key, length, velocity) and drum step lanes, a few beats long.
+- *Tracks*, in order. An instrument track plays pattern clips on one instrument. An audio track plays clips of audio files. Each track has a bus, volume, pan, mute and solo.
+- *Clips*: a pattern repeated to fill the clip's length (with an offset, transpose and gain), or a stretch of an audio file (with an offset, gain and fades).
+- *Automation*: per track (volume, pan, any instrument parameter) and song-wide (bus volumes, any effect parameter).
+- *Time*: a tempo (=bpm=), a tempo map with jumps and linear ramps, a time signature, markers and a loop range.
+- *Mixer*: an embedded mixer layout (the [[file:../audio/mixer-asset.org][.rmixer schema]]), with buses, sends, effect chains and ducking (sidechain). Tracks name its buses.
+
+Everything is addressed by id or index through =lrg_song_*= functions, and every change emits =LrgSong::changed=. The editor's song editor, =lrgeditorctl song ...= and the MCP =song_*= tools call these functions ([[file:../../editor/music.org][Music in the editor]]).
+
+** Time
+A beat is a quarter note, as in MIDI files; the time signature only says how beats group into bars. =bpm= is the tempo at beat 0. =lrg_song_add_tempo_change (song, beat, bpm, ramp)= adds a point: with =ramp=, the tempo moves linearly in beats from the previous point's tempo to this one; without it, the tempo jumps at the point. =lrg_song_beat_to_seconds()= and =lrg_song_seconds_to_beat()= integrate the map exactly (ramps analytically: over a ramp from tempo T0 to T1 across B beats, the time is 60 B / (T1 - T0) x ln (T1 / T0) seconds), so a note is placed on its exact sample even across ramps. =lrg_song_get_length_beats()= is =length= when it is set, otherwise the end of the last clip.
+
+** Patterns
+=lrg_song_add_pattern (song, id, length)= creates an empty pattern. =lrg_song_pattern_add_note (song, id, beat, key, length, velocity)= adds a note; notes stay sorted. Drum parts are easier as step lanes: =lrg_song_pattern_set_steps (song, id, 16)= divides the pattern into 16 steps, and =lrg_song_pattern_set_lane (song, id, "kick", "x...x...x...x...")= writes one lane per drum piece or note (piece names and aliases as in [[file:instruments.org::#drum-machine][LrgDrumMachine]], or a note such as =C3=). Step characters:
+
+| Character | Velocity |
+|-----------+----------|
+| =.= or =-= | rest |
+| =g= | 0.3 (ghost) |
+| =o= | 0.5 |
+| =x= | 0.8 |
+| =X= | 1.0 (accent) |
+| space, =\vert= | ignored, for readability: ="x... x... \vert x... x..."= |
+
+A pattern plays its notes and its lanes together. A note that starts at or after the pattern's length does not play (=lrg_song_validate()= warns).
+
+** Tracks and clips
+=lrg_song_add_track (song, id, kind, instrument)= appends a track on the =master= bus. =lrg_song_set_track (song, id, field, text, value)= sets =name=, =instrument=, =bus=, =volume= (dB), =pan=, =mute= or =solo=. When any track is soloed, only soloed tracks are heard.
+
+=lrg_song_add_clip (song, track, source, start, length)= places a clip, where =source= is a pattern id or an audio file (relative to =base-path=, the folder of the =.rsong=). A =length= of 0 means one pass of the pattern, or the whole file. =lrg_song_set_clip()= changes:
+
+| Field | Meaning |
+|-------+---------|
+| =start=, =length= | Beats |
+| =offset= | Beats into the pattern (so the clip can start mid-pattern), or seconds into the file |
+| =transpose= | Semitones added to every note |
+| =gain= | dB: scales note velocities, or audio clip samples |
+| =fade-in=, =fade-out= | Seconds, audio clips only |
+| =mute= | 1 silences the clip |
+
+** Automation
+=lrg_song_set_automation (song, track, target, points, n, step)= sets a lane from beat/value pairs (linear between points, or held when =step=; the first value holds before the first point and the last after the last). Targets:
+
+| Where | Target | Value |
+|-------+--------+-------|
+| Track | =volume= | dB; replaces the track's volume while the lane exists |
+| Track | =pan= | -1 to 1 |
+| Track | =param.<name>= | Any instrument parameter, such as =param.cutoff= for a filter sweep |
+| Song (=track= NULL) | =bus.<bus>.volume= | dB |
+| Song | =effect.<bus>.<effect id>.<property>= | Any effect property, such as =effect.fx.verb.wet= |
+
+During a render the volume, pan, bus and effect lanes ramp linearly across every 256-frame block, and parameter lanes are set at the start of each block.
+
+** The .rsong format
+#+begin_src yaml
+version: 1
+song:
+  title: Neon Drive
+  artist: libregnum
+  bpm: 108
+  time_signature: 4/4
+  sample_rate: 48000
+  seed: 1985
+  loop: { start: 64, end: 128 }
+  tempo:
+    - { beat: 256, bpm: 100, ramp: true }
+  markers:
+    - { beat: 0, name: Intro }
+    - { beat: 32, name: Verse }
+instruments:
+  bass:
+    type: synth
+    source: synthwave-bass
+    params:
+      cutoff: 420
+  kit:
+    type: drums
+    source: "808"
+  zap:
+    type: foley
+    source: sfx/zap.rfoley
+patterns:
+  bass-a:
+    length: 4
+    notes:
+      - 0 A1 0.4 0.95
+      - 0.5 A2 0.4 0.8
+  beat-a:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "x...x...x...x..."
+      snare: "....X.......X..."
+      closed-hat: "..x...x...x...x."
+tracks:
+  - id: bass
+    instrument: bass
+    bus: bass
+    volume: -3
+    clips:
+      - { pattern: bass-a, start: 32, length: 64 }
+    automation:
+      - target: param.cutoff
+        points:
+          - 32 300
+          - 96 1800
+  - id: vox
+    kind: audio
+    bus: fx
+    clips:
+      - { file: audio/vox.ogg, start: 64, fade_in: 0.05 }
+automation:
+  - target: effect.master.glue.threshold
+    points:
+      - 0 -18
+mixer:
+  buses:
+    - name: master
+      effects:
+        - { type: limiter, id: limit, params: { ceiling: -1 } }
+    - name: bass
+      parent: master
+  ducking:
+    - { trigger: drums, target: bass, threshold: -30, depth: -8, attack: 0.002, release: 0.12 }
+#+end_src
+
+Notes are written as one line each, ="beat key length velocity"=; keys are note names (=A1=) or MIDI numbers, and the velocity is optional (0.8). Automation points are ="beat value"=. The writer emits a stable order (instruments and patterns sorted by id, tracks and markers in order, defaults left out) and the shortest numbers that read back to the same value, so a song read and written again produces the same text. Errors name the YAML path, for example =<file>: patterns.bass-a.notes[3]: expected "beat key length [velocity]"=, in =LRG_SONG_ERROR=. =lrg_song_validate()= checks references (instruments, patterns, files, buses, effect ids, parameters) and warns about overlapping clips and notes past a pattern's end.
+
+** Rendering
+=lrg_song_render (song, options, cancellable, progress, data, &error)= mixes the song offline into stereo 32-bit float =LrgWaveData=:
+
+1. *Compile.* Each instrument is built with its overrides and plays as a source voice on its track's bus. Every note of every clip becomes a note-on and a note-off at an absolute frame of the tempo map; note-offs sort before note-ons at the same frame, so a repeated note retriggers. Audio files are decoded once, at the render rate. The mixer is built from the layout with its clamp off.
+2. *Render* in 256-frame blocks. Notes due in the block are scheduled on their instruments, which place them on the exact sample. Automation is applied, then the mixer renders the block.
+3. *Tail.* With =tail= below 0 (the default), rendering goes on after the end until the master has been silent (under about -90 dBFS) for a second, at most 15 s, so releases and reverbs ring out; a fixed =tail= renders that many seconds.
+4. *Normalise* (optional). =LRG_SONG_NORMALIZE_PEAK= scales the sample peak to =target= dBFS. =LRG_SONG_NORMALIZE_LOUDNESS= scales the integrated loudness to =target= LUFS (-14 is the usual streaming level), and lowers the gain if the true peak would pass =true_peak_ceiling= (-1 dBTP) ([[file:../audio/analysis.org][analysis]]).
+
+Other options: =start_beat= and =end_beat= (a range: with =preroll= the song still plays from the start and only the range is kept, so notes held into the range and effect tails are right), =sample_rate=, =mute= and =solo= track lists. The same song with the same options always renders the same samples. Rendering can run on a worker thread; render a =lrg_song_copy()= if the original keeps changing. =progress= is called with the fraction done, and =cancellable= stops the render with =LRG_SONG_ERROR_CANCELLED=.
+
+=lrg_song_render_stems()= renders every audible track alone, through its own buses and effects, and returns one wave per track and the track ids. With normalisation, every stem gets the gain the full mix would get, so the stems add up to the mix (the tests check this to 1e-5).
+
+Write the result in any format with [[file:../audio/encoder.org][lrg_audio_encode_wave()]].
+
+** MIDI files
+=lrg_song_new_from_midi()= (or =_file()=) imports a Standard MIDI File (format 0 or 1). Every channel with notes becomes a pattern, an instrument and a track. Channel 10 becomes an 808 drum machine; other channels get the synthesizer preset closest to their General MIDI program (basses, strings, brass, pads, leads, ...). The first tempo becomes the song's =bpm=, later tempos become tempo changes, and the time signature, markers and track names are kept. =lrg_song_to_midi()= / =lrg_song_save_midi()= write a type-1 file at 480 ticks per quarter note: a tempo track (ramps as sixteenth-note steps, the time signature, markers and title) and one track per instrument track, on its own channel (drum machines on channel 10), with a General MIDI program matching its preset. Audio tracks, automation and the mixer have no place in a MIDI file.
+
+** Example: a four-bar loop
+#+begin_src c
+g_autoptr(GError)               error = NULL;
+g_autoptr(LrgSong)              song = lrg_song_new ();
+g_autoptr(LrgSongRenderOptions) opts = lrg_song_render_options_new ();
+g_autoptr(LrgWaveData)          mix = NULL;
+gint                            i;
+
+g_object_set (song, "title", "Loop", "bpm", 110.0, NULL);
+lrg_song_set_instrument (song, "kit", "drums", "909");
+lrg_song_set_instrument (song, "bass", "synth", "synthwave-bass");
+
+lrg_song_add_pattern (song, "beat", 4);
+lrg_song_pattern_set_lane (song, "beat", "kick", "x...x...x...x...");
+lrg_song_pattern_set_lane (song, "beat", "snare", "....x.......x...");
+lrg_song_pattern_set_lane (song, "beat", "closed-hat", "xxxxxxxxxxxxxxxx");
+lrg_song_add_pattern (song, "bass", 4);
+for (i = 0; i < 8; i++)
+	lrg_song_pattern_add_note (song, "bass", i * 0.5, i % 2 ? 45 : 33, 0.4, 0.9);
+
+lrg_song_add_track (song, "drums", LRG_SONG_TRACK_INSTRUMENT, "kit");
+lrg_song_add_track (song, "bass", LRG_SONG_TRACK_INSTRUMENT, "bass");
+lrg_song_add_clip (song, "drums", "beat", 0, 16);
+lrg_song_add_clip (song, "bass", "bass", 0, 16);
+
+opts->normalize = LRG_SONG_NORMALIZE_LOUDNESS;
+opts->target = -14.0;
+mix = lrg_song_render (song, opts, NULL, NULL, NULL, &error);
+lrg_audio_encode_wave (mix, LRG_AUDIO_FILE_FORMAT_MP3, NULL, "loop.mp3", NULL, &error);
+lrg_song_save_to_file (song, "loop.rsong", &error);
+#+end_src
+
+The complete 2:40 synthwave song in [[file:../../examples/synthwave-song.org][examples/synthwave-song]] builds every part this way.
+
+** Tests
+=tests/test-music-song.c= covers: the tempo map (constant, ramp, jump, both directions) and markers; the =.rsong= round trip and error paths; validation; a note landing on its exact frame; deterministic renders and the automatic tail; volume automation; an audio clip on its frame with its fade and level; ranges; stems summing to the mix; peak and loudness normalisation; cancellation; files; and MIDI export and import.

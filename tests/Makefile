@@ -224,6 +224,8 @@ TEST_SOURCES := \
 	test-foley.c \
 	test-foley-patch.c \
 	test-music-instruments.c \
+	test-music-song.c \
+	test-audio-encoder.c \
 	test-audio-bus.c \
 	test-audio-robustness.c \
 	test-midi-output.c \
