@@ -66,7 +66,7 @@ Errors use the editor server nicks. =invalid-params= is a missing or bad paramet
 | =vscript.set_program= | =name=, =description=, =seed=, =step_budget=, =fixed_step=; returns =vscript.get= |
 | =vscript.select= | =nodes= is an array of ids; empty clears; not an undo step |
 | =vscript.frame= | fits the shown graph in the canvas (Home); =selection: true= fits the selected nodes (F); =animate= glides; returns the target ={zoom, x, y}=; not an undo step (0.9.1) |
-| =vscript.palette= | opens the Add Node picker under the toolbar chip, as clicking Add Node does; =category= (such as =Math=) opens that submenu too; =open: false= closes it; returns ={open, entries}= (the top-level rows); not an undo step (0.9.2) |
+| =vscript.palette= | opens the Add Node picker under the toolbar chip, as clicking Add Node does; =category= (such as =Math=) opens that submenu too; =open: false= closes it; returns ={open, entries}= (the top-level rows); not an undo step (0.10.0) |
 | =vscript.validate= | =ok= and =issues=; read-only |
 | =vscript.run= | a copy: start, then =frames= updates (default 1, =dt= default 1/60), then an optional custom =event= with =args=; =variables= overlay the copy; =steps= sums each dispatch; =time= is completed frames times =dt=; =ok: false= is still a successful reply |
 | =vscript.live= | instances whose path is this file; =hits= counts main-graph nodes; =paused_at= is omitted when nothing is paused |

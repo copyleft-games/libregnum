@@ -654,6 +654,69 @@ test_trash (Fixture       *f,
 	g_assert_cmpuint (lrg_asset_database_get_orphaned_metas (db)->len, ==, 0);
 }
 
+/* What scans write: documents and build files get no sidecar, nested
+ * repositories (submodules) are not scanned, a database without
+ * write-meta (a loose folder in the editor) writes nothing. */
+static void
+test_sidecar_policy (Fixture       *f,
+                     gconstpointer  data)
+{
+	static const gchar * const skipped[] = {
+		"README.org", "LICENSE", "Makefile", "notes.md", "lib/foo.h", "build/foo.o", "build/libfoo.so.1.2", NULL
+	};
+	g_autoptr(LrgAssetDatabase) db = NULL;
+	g_autofree gchar           *png = write_file (f->assets, "hero.png", "x");
+	g_autofree gchar           *song = write_file (f->assets, "music/theme.rsong", "x");
+	g_autofree gchar           *script = write_file (f->assets, "scripts/door.c", "x");
+	g_autofree gchar           *sub = write_file (f->assets, "deps/lib/inner.png", "x");
+	g_autofree gchar           *git = write_file (f->assets, "deps/lib/.git", "gitdir: ../../.git/modules/lib");
+	guint                       i;
+
+	g_assert_true (lrg_asset_database_wants_sidecar ("hero.png"));
+	g_assert_true (lrg_asset_database_wants_sidecar ("x/theme.rsong"));
+	g_assert_true (lrg_asset_database_wants_sidecar ("readmeish.png"));
+	for (i = 0; skipped[i] != NULL; i++)
+	{
+		g_autofree gchar *path = write_file (f->assets, skipped[i], "x");
+
+		g_assert_false (lrg_asset_database_wants_sidecar (path));
+	}
+
+	/* read-only (a loose folder): nothing at all */
+	db = make_db (f, FALSE);
+	{
+		g_autofree gchar *meta = lrg_asset_meta_path_for_asset (png);
+
+		g_assert_false (g_file_test (meta, G_FILE_TEST_EXISTS));
+	}
+	g_assert_nonnull (lrg_asset_database_lookup_path (db, png));
+	g_clear_object (&db);
+
+	/* writing (a project): assets yes, documents and build files no */
+	db = make_db (f, TRUE);
+	for (i = 0; skipped[i] != NULL; i++)
+	{
+		g_autofree gchar *path = g_build_filename (f->assets, skipped[i], NULL);
+		g_autofree gchar *meta = lrg_asset_meta_path_for_asset (path);
+
+		g_assert_false (g_file_test (meta, G_FILE_TEST_EXISTS));
+	}
+	{
+		g_autofree gchar *m1 = lrg_asset_meta_path_for_asset (png);
+		g_autofree gchar *m2 = lrg_asset_meta_path_for_asset (song);
+		g_autofree gchar *m3 = lrg_asset_meta_path_for_asset (script);
+		g_autofree gchar *m4 = lrg_asset_meta_path_for_asset (sub);
+
+		g_assert_true (g_file_test (m1, G_FILE_TEST_IS_REGULAR));
+		g_assert_true (g_file_test (m2, G_FILE_TEST_IS_REGULAR));
+		g_assert_true (g_file_test (m3, G_FILE_TEST_IS_REGULAR));
+		/* the submodule is neither scanned nor written into */
+		g_assert_false (g_file_test (m4, G_FILE_TEST_EXISTS));
+		g_assert_null (lrg_asset_database_lookup_path (db, sub));
+	}
+	(void) git;
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -684,6 +747,7 @@ main (int   argc,
 	ADD ("/asset-meta/orphans-and-guard", test_orphans_and_guard);
 	ADD ("/asset-meta/broken-and-duplicate-guid", test_broken_and_duplicate_guid);
 	ADD ("/asset-meta/trash", test_trash);
+	ADD ("/asset-meta/sidecar-policy", test_sidecar_policy);
 #undef ADD
 
 	status = g_test_run ();

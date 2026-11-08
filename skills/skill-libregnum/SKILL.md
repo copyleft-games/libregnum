@@ -7,19 +7,24 @@ description: >
   (lrgeditorctl mcp, lrgeditor --mcp) and its JSON-lines IPC socket.
   Trigger when the user mentions libregnum, lrgeditor, lrgeditorctl,
   .rlevel/.rprefab/project.ryaml files, building or editing levels, scenes
-  or worlds for a libregnum game, controlling or scripting the editor,
-  or hacking on the libregnum codebase itself.
+  or worlds for a libregnum game, authoring engine assets in the editor
+  (materials, animation, physics, navigation, AI, VFX, terrain, audio,
+  2D, visual scripts), composing songs (.rsong) or sound effects
+  (.rfoley), controlling or scripting the editor, or hacking on the
+  libregnum codebase itself.
 ---
 
 # Skill: libregnum
 
-libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObject wrapper for raylib) and yaml-glib, with ECS, rendering, audio, UI, scripting, networking/MMO, modding and a full editor. This skill covers two jobs: **using the editor** to build and change game content (levels of nodes saved as `.rlevel` YAML), mostly through `lrgeditorctl`, a kubectl-style CLI that controls a running `lrgeditor` over its socket, or through the editor's MCP tools; and **working on libregnum itself** without tripping over its conventions. This page is the workflow; the details live next to it:
+libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObject wrapper for raylib) and yaml-glib, with ECS, rendering, audio, UI, scripting, networking/MMO, modding and a full editor. This skill covers two jobs: **using the editor** to build and change game content (levels of nodes saved as `.rlevel` YAML), mostly through `lrgeditorctl`, a kubectl-style CLI that controls a running `lrgeditor` over its socket, or through the editor's MCP tools; and **working on libregnum itself** without tripping over its conventions. This page is the workflow; the details live next to it. Current as of libregnum 0.10.1.
 
 - `references/lrgeditorctl.md`: every command, flag, output format and scripting pattern
 - `references/mcp.md`: the MCP server, client setup, and the tool list
 - `references/ipc-protocol.md`: the socket protocol under both
 - `references/level-format.md`: projects, `.rlevel`/`.rprefab` YAML, validation codes
 - `references/engine.md`: building, testing, conventions and traps when changing libregnum's code
+- `references/workflows.md`: step-by-step recipes for every 0.9.x/0.10.x authoring tool (look, materials, bake, animation, sequences, 2D rigs, physics, navigation, AI, VFX, terrain, audio, 2D tiles, debugging/profiling, visual scripts, scenes/gizmo/VCS/collab)
+- `references/formats.md`: engine YAML formats (.rmat, .ranim, .rbt, .rnav, .rparticles, .rsong, .rfoley, ...)
 - `references/music.md`: composing songs and sound effects through the editor (song.*, foley.*): discovery, `song.apply` batches, mixing by render numbers, export
 
 ## When to Use
@@ -28,14 +33,15 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 - The user mentions `lrgeditor`, `lrgeditorctl`, the libregnum editor, `.rlevel`, `.rprefab` or `project.ryaml`.
 - An AI agent should drive the editor (set up or use the MCP server).
 - The user wants to script the editor from bash, Emacs or another program (IPC socket).
-- Building, testing or changing libregnum's C code (engine, editor, GUI toolkit, tools).
+- The user wants to author a material, animation graph, cutscene, ragdoll, navmesh, behaviour tree, particle effect, terrain, mixer, tileset, visual script, song or sound effect for a libregnum game.
+- Building, testing or changing libregnum's C code (engine, editor, GUI toolkit, music/audio, tools).
 
 ## Prerequisites
 
 - libregnum built from its checkout (`make -j"$(nproc)"`) or installed (`make install`): provides `lrgeditor`, `lrgeditorctl` and `lrgldr` (in `build/release/` when not installed).
 - For the editor's MCP server: built with mcp-glib's dependencies (`libsoup3-devel`, `libdex-devel`); `lrgeditorctl mcp` prints a clear error otherwise.
 - A running editor for `lrgeditorctl` (windowed `lrgeditor PROJECT`, or `lrgeditor --headless PROJECT` without a display).
-- Fedora build packages if building: `gcc make pkgconf glib2-devel json-glib-devel libyaml-devel libdex-devel libsoup3-devel gobject-introspection-devel mesa-libGL-devel libglvnd-devel wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel sqlite-devel libpq-devel openssl-devel zlib-devel` (plus `luajit-devel python3-devel gjs-devel` for scripting backends). On an immutable host, list these for the image build rather than running `dnf`.
+- Fedora build packages if building: `gcc make pkgconf glib2-devel json-glib-devel libyaml-devel libdex-devel libsoup3-devel gobject-introspection-devel mesa-libGL-devel libglvnd-devel wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel sqlite-devel libpq-devel openssl-devel zlib-devel` (plus `luajit-devel python3-devel gjs-devel` for scripting backends; the libav `-free-devel` set (`libavformat libavcodec libavutil libswscale libswresample`) for `FFMPEG=1`, the in-process video decoder and audio encoder; without it, MP3/AAC/Opus/... export needs the `ffmpeg` program on `PATH`). On an immutable host, list these for the image build rather than running `dnf`.
 
 ## Instructions
 
@@ -60,6 +66,7 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
    - Many nodes at once: write YAML documents (`node:` plus fields; missing nodes are created under the parent in the path) and `lrgeditorctl apply -f file.yaml`.
    - Anything else (components, scripts, prefabs, play mode, camera): `lrgeditorctl run ACTION`, `play`, `view`, or `call METHOD key=value`.
    - Editor 0.8.1 additions: `inspector set NODE NAME section=... value=...` edits a property exactly as the inspector would (several nodes in one undo step); `prefab overrides|apply|revert|sync` manages linked prefab instances (apply overwrites the prefab file: ask first); `meta get|set PATH` reads and changes an asset's `.meta` import settings; `asset rename|move|duplicate|trash PATH` keeps sidecars and GUIDs with their assets (never move asset files with `mv` while an editor runs); data files (input maps, locales, dialog trees, ...) are edited with `data open PATH`, then `data get|set|edit|validate|save` by YAML path (MCP: `data_*` tools).
+   - Engine assets (0.9.0+): `lrgeditorctl asset new KIND` (`bt fsm particles weather mixer tileset sprite water terrain nav-settings vscript song foley`), then the family verbs in `references/workflows.md`.
    - Units: metres; `rotation_degrees` is Euler XYZ in degrees (`rotation` is radians); primitives are 1 m unit shapes, so size them with `scale`.
 
 5. **Verify.** `lrgeditorctl get node PATH`, `get problems` / `validate` (exit 1 on errors). With a windowed editor, `lrgeditorctl screenshot /tmp/v.png [--window]` and look at it (MCP: the `screenshot` tool returns the image); `view layout quad` shows perspective, top, front and right at once and `view render-mode wireframe viewport=1` helps with overlaps. `lrgeditorctl undo` reverts a mistake.
@@ -68,152 +75,35 @@ libregnum is a GObject-based game engine in C (gnu89) built on graylib (a GObjec
 
 7. **Set up MCP when asked to let an agent drive the editor.** `claude mcp add libregnum -- lrgeditorctl mcp` (bridge to whatever editor is running, survives restarts), or `claude mcp add libregnum -- lrgeditor --mcp ~/path/to/project` (the agent launches its own editor; headless without a display). Details and other clients in `references/mcp.md`.
 
-8. **Working on libregnum's code.** Read `AGENTS.md` in the checkout first, then `references/engine.md`. Essentials: gnu89 C, tabs, GNU-style `func (args)` calls, `/* */` comments, gtk-doc/GIR comments in headers (once per identifier), zero warnings (`-Werror`, never silence a warning), no `memcpy` into raylib `Matrix`, raylib calls rely on `-include stdbool.h`; work in a git worktree under `./trees/`; build with `make -j"$(nproc)"`; test with `make test`, plus `make test-editorctl`, `make test-emacs` and `make test-editor-x11` for editor work; update the org docs under `docs/` in the same change; Conventional Commits.
+8. **Working on libregnum's code.** Read `AGENTS.md` in the checkout first, then `references/engine.md`. Essentials: gnu89 C, tabs, GNU-style `func (args)` calls, `/* */` comments, gtk-doc/GIR comments in headers (once per identifier), zero warnings (`-Werror`, never silence a warning), no `memcpy` into raylib `Matrix`, raylib calls rely on `-include stdbool.h`; work in a git worktree under `./trees/`; build with `make -j"$(nproc)"`; test with `make test`, plus `make test-editorctl`, `make test-emacs` and `make test-editor-x11` for editor work; update the org docs under `docs/` in the same change; Conventional Commits. Tests never touch the desktop: `tests/lrg-test-guard.c` sets `LRG_EXTERNAL_EDITOR=none` in every test binary (do not set it yourself), GPU/editor runs go through `build-aux/xrun.sh`, and nothing in a test opens the audio device.
 
-## Workflows (0.9.0)
+## Workflows (index)
 
-### Give a level a look
-1. Add an `environment:` block to the .rlevel (sky source/path, ibl, ambient, fog, volumetric, `post_stack: look.rpost`) — or use the editor's environment panel.
-2. Point nodes at `.rmat` materials (`material: materials/x.rmat`); add `kind: decal` / `kind: reflection-probe` nodes; add `lod-levels: 3` to a model's `.meta` for LOD.
-3. Game: `lrg_engine_startup()`, add the level dir as an asset search path, `lrg_level_load_world3d()`, set `LRG_WORLD3D_RENDER_FLAG_POST`, `lrg_world3d_renderer_bake_environment()`, `lrg_world3d_renderer_capture_probes(renderer, world)`; recapture when `lrg_reflection_probe_component_count_pending(world) > 0`.
-4. Play-in-editor applies the same look automatically. Reference: examples/pbr-showcase.c.
+Step-by-step recipes live in `references/workflows.md` (music in `references/music.md`). Pick the one that matches the request, read it, then use the verbs it names:
 
-### Edit a material
-1. Create one: `lrgeditorctl call material.create path=materials/crate.rmat shading_model=lit`, or a variant with `material.create_variant path=materials/crate.rmat`.
-2. Open and edit: `material.open path=...`, then `material.set path=... key=metallic value=0.8`. Keys are dotted `.rmat` keys: `base_color` ([r,g,b,a]), `textures.albedo` ("tex.png" or "guid:…"), `render_state.blend` or `blend`, `uniforms.<name>`. Each set is one undo step in the material's own history.
-3. On an instance, keys the file sets are overrides; `material.revert path=... key=...` makes a key inherit again. `material.get` returns effective values plus `overrides`.
-4. `material.save path=...`, then `material.assign node=<guid|name path> path=materials/crate.rmat` (sets the node's `material-ref`, undoable; only primitive and mesh nodes take materials).
-5. Custom shading: `shader.create path=shaders/fx.rshader` writes the document plus `fx.frag`; set `shading_model` custom and `shader` "../shaders/fx.rshader"; after editing the `.frag`, `shader.compile path=shaders/fx.frag` and fix the reported `file:line` errors.
-6. Node shaders: `shadergraph.create path=shaders/glow.rshadergraph`, add_node/connect/set_param/set_input, `shadergraph.validate`, `shadergraph.save` (writes glow.rshader for a custom material).
+| Task | Section in `references/workflows.md` | Key verbs / methods |
+|------|------|------|
+| Level look: sky, fog, IBL, post stack, LOD, view modes | Give a level a look; Light and look a level | `env set`, `post create`, `view mode`, `lod force` |
+| Materials, shaders, shader graphs | Edit a material | `material.*`, `shader.compile`, `shadergraph.*` |
+| Baked lightmaps and probe volumes | Bake a level's lighting | `bake set`, `bake start --wait` |
+| Character animation graphs, retargeting | Animate a character | `anim.*`, `bonemap.*`, `clip list` |
+| Cutscenes (`.rseq`) | Make a cutscene | `sequence.*` |
+| 2D skeletal rigs (`.rskel2d`) | Rig a 2D character | `skel2d.*` |
+| Physics bodies, joints, layers, ragdolls | Add physics / Edit physics in the editor | `physics.*`, `physics layers`, `physasset` |
+| Navigation meshes and agents | Add navigation / Bake navigation in the editor | `nav.*` |
+| Behaviour trees, state machines, AI debugging | Behaviour trees, state machines and AI debugging | `bt`, `fsm`, `ai` |
+| Particles and weather | Author VFX in the editor | `particles.*`, `weather.*` |
+| Terrain, foliage, water | Terrain and water | `terrain.stroke`, `water.set` |
+| Mixer buses, effects, snapshots, 3D emitters | Mix and spatialise audio | `mixer.*`, `audio.set` |
+| Tiles, rule tiles, sprite sheets | 2D tools | `tiles.*`, `tileset.*`, `sprite.*` |
+| Debugger, LSP, profiler, frame debugger, memory/network, tool scripts | Debug, profile and tool scripts | `debug.*`, `lsp.*`, `profiler.*`, `frame.*`, `memory.*`, `network.*`, `script.*` |
+| Visual scripts (`.rvscript`), blueprint canvas | Visual scripts: the blueprint canvas | `vscript ...`, `vscript frame`, `vscript palette` |
+| Export packs, locales, merge, scenes, gizmo, VCS, collaboration | Packs, locales and level merge; Scenes, gizmo, locales, version control and collaboration | `export.run`, `po`, `merge`, `scenes`, `gizmo`, `vcs`, `collab` |
+| Songs and sound effects (`.rsong`, `.rfoley`) | `references/music.md` | `song.apply`, `song.render`, `song.export`, `foley.*` |
+| New engine-backed asset of any kind | Engine-backed assets | `asset new KIND` |
 
-### Light and look a level (0.9.0)
-1. Lights/volumes: the Create menu (and `lrgeditorctl create node Key --kind light`) has Point Light, Spot Light, Sun, Decal and Reflection Probe; spot `spot_angle` = full cone degrees, `range`; decal params `size_x/y/z`; probe `extents_x/y/z` (half sizes). The inspector edits lights by kind.
-2. Environment: `lrgeditorctl env set sky.source gradient`; `env set fog.density 0.02` (dotted block keys or panel field names; one undo step each); `env set post_stack looks/dusk.rpost`. `env bake --wait` needs the window (headless: edits only; the viewport bakes lazily anyway).
-3. Look: `post create looks/dusk.rpost` (bloom, tonemap, vignette, fxaa), `post add|move|set|remove`, `post save`, `post assign looks/dusk.rpost`. Opening a .rpost previews it in the viewport (renderer override > world > level); `post look PATH` saves what the viewport shows.
-4. Inspect: `view mode overdraw|uv|light-complexity|ao|reflections viewport=N`, `view layers water off`, `lod get NODE`, `lod force NODE 2|auto`.
-5. Verify: `screenshot shot.png --window`; the level file stores `environment:` (the game loads the same look).
-Traps: an equirect/cubemap sky without `sky.path` bakes the gradient with a warning; LOD force is a shared preview of every instance of the asset; render-layer masks are per viewport and not saved.
+Common rules across these tools: every edit is one undo step (file documents: `data undo PATH`; level edits: `undo`); saves write the engine's canonical bytes (YAML comments in those files are not kept); textures, bakes that need GL, and screenshots need a windowed editor; never call `song.play` / `foley.play` / `play start` in CI unless asked. Play-in-editor uses the same runtime renderer games use (section "Play-in-editor" in `references/workflows.md`).
 
-### Bake a level's lighting (0.9.0)
-1. Mark static geometry: inspector Lighting > Static lighting, or `lrgeditorctl call inspector.set '{"node":"Floor","section":"visual","name":"param-static-lighting","value":true}'`; `param-lightmap-scale` (0 = probe-lit only). Lights: `param-bake-mode` realtime|mixed|baked (baked = direct+bounce in lightmaps; mixed = bounce only).
-2. Probe volumes: `lrgeditorctl create node Probes --kind probe-volume location=0,1.5,0`, then `param-extents-x/y/z` (half sizes), `param-spacing` (0 = the bake's probe_spacing) or `param-resolution`.
-3. Settings: `lrgeditorctl bake set texels_per_unit 4; lrgeditorctl bake set samples 64` (each an undoable `lighting: settings:` key; `bake reset` drops them).
-4. Bake: `lrgeditorctl bake start --wait` (CPU, works headless; exits 1 on failure or cancel). A saved level gets `<level>.rlightmap` (+ .hdr) and `<level>-<n>.rprobes` next to it and its `lighting:` refs (one undo step); an unsaved one keeps the result until `bake save DIR`.
-5. Check: the viewport shows the bake while authoring (`bake preview off` compares with realtime); `bake evaluate X Y Z NX NY NZ` reads the light at a point; `screenshot --window`.
-Traps: nothing marked static_lighting gives "Nothing to bake"; moving static geometry or duplicating nodes (new GUIDs) needs a re-bake; undo drops the refs but not the files; probe dots stay grey when a volume changed since the bake; straight light/dark lines on walls usually come from a realtime (mixed) light's or the default editor sun's shadows (add a directional light to replace the default sun), not from lightmap charts.
-
-### Animate a character (0.9.0)
-1. Import: put the character's `.glb` in the project. Assets panel "Preview Animations..." shows its clips (or `lrgeditorctl clip list chars/hero.glb`; `clip info MODEL CLIP` lists tracks and channels).
-2. Graph: "New Animation Graph from Model" on the .glb (or `lrgeditorctl call anim.create path=chars/hero.ranim model=chars/hero.glb`) gives one clip slot and one state per animation. Then `anim.add_parameter {path,name,type:float|int|bool|trigger}`, `anim.add_state {path,name,kind:clip|blend_tree|machine|empty,clip?}`, `anim.set_blend_tree {path,state,type:1d|2d_cartesian|2d_directional|direct,parameter,parameter_y?,children:[{clip,threshold|position:[x,y]}]}`, `anim.add_transition {path,from,to,duration?,exit_time?,conditions:[{parameter,op:'>',value:0.1}]}` (`from:"*"` = any state; a bool/trigger condition is just `{parameter}`); `anim.enter {path,state}` shows a nested machine.
-3. Preview: `anim.set_parameter {path,name,value}` (live only; `true` fires a trigger), then `anim.preview {path,advance:0.5}` (returns state per layer and the running transition). `anim.validate`, then `anim.save`.
-4. Retarget shared clips: `bonemap.create {path:chars/hero.rbonemap, source:anims/mocap.glb, target:chars/hero.glb, auto_fill:true}`; fix gaps with `bonemap.set {path,source,target|null}` and `bonemap.set_rules {strip_prefixes:["mixamorig:"]}`; `bonemap.get` lists `unmapped_target`; check with `bonemap.preview {path,clip:Walk,time:0.5}`; save.
-5. On a node: a mesh-asset node with an `animator3d` component, `graph-path` = the .ranim. The inspector's Animator section shows parameters, layers and IK goals live while playing; viewport overlay Animation > Bones / IK Targets.
-Traps: live values aren't defaults (set `default:` in the file); the canvas draws one wire per from->to pair; the editor preview ignores root motion and IK; removing a parameter that conditions use breaks loading until fixed (issues list points at it).
-
-### Make a cutscene (.rseq sequence)
-1. Create the actors and cameras in the level (`lrgeditorctl create node Hero --primitive cube`, `... CamA --kind camera`).
-2. `lrgeditorctl call sequence.create '{"path":"sequences/intro.rseq","length":8,"fps":24}'` (opens the Sequencer panel; an existing file is refused, use sequence.open).
-3. Bind and add tracks: `sequence.bind {"node":"Hero"}`, `sequence.add_track {"kind":"transform","binding":"Hero"}` (kinds: transform, property, camera-cut, audio, event, animation, subsequence; `bone` for bone tracks; `property` + optional `component` for property tracks).
-4. Keys: `sequence.add_key {"track":0,"channel":"location.x","time":4,"value":6,"tangent":"broken","in":1.5,"out":0}` (value defaults to the node's current value; tangents auto|user|broken|linear|constant; slopes are value per second). Retime with `sequence.set_key {"track":0,"channel":"location.x","at":4,"time":3.5}` (handles kept).
-5. Sections: `sequence.add_section {"track":1,"start":0,"name":"CamA"}` (a camera node name becomes its GUID), events `{"track":2,"start":3.5,"name":"door-open","payload":"slow"}`, audio `name: "bank:sound"`, clips `name: "Walk", duration, rate, loop, weight`.
-6. Check it: `sequence.scrub {"time":3.6}` poses the level (not saved, not undoable) and returns `{time, frame, camera, events}`; `sequence.play {"mode":"loop"}` / `{"stop":true}` (stop restores the level). `sequence.get` dumps tracks, keys with resolved slopes, sections.
-7. `sequence.save {}`. In the game: `LrgSequenceComponent` (component `sequence`, params `sequence_path`, `autoplay`) or `LrgSequencePlayer`.
-Traps: the sequence has its own undo (`sequence.undo`), separate from Ctrl+Z; opening another file drops unsaved edits; bindings are GUIDs (use override names like `self` for reusable sequences); audio/animation/sub-sequence/component-property tracks do not preview on level nodes; a level timeline converts with `sequence.from_timeline {"timeline":"Bounce","path":"sequences/bounce.rseq"}`. Level timeline keys can be Bézier keys: `timeline.tangent` (or the Timeline panel's Tangent picker); moving a key keeps its handles; picking an easing makes it eased again; the Bone field + Key Bone keys `bone.NAME.*` offsets.
-
-### Rig a 2D character (0.9.0)
-1. Make a rig: `lrgeditorctl call skel2d.create path=rigs/hero.rskel2d name=hero` (one `root` bone; never overwrites), then `skel2d.open path=...` (or double-click the .rskel2d). Every skel2d.* call takes `path`; each edit is one undo step in the rig's own history (`data undo`), never the level's.
-2. Bones (setup space: x right, y DOWN, degrees CLOCKWISE; x/y/rotation relative to the parent; length along local +X): `skel2d.add_bone path=... name=torso parent=root rotation=-90 length=80` (rotation -90 points up). Fix with `skel2d.set_bone bone=torso x=.. rotation=.. length=.. name=..` (a rename fixes every reference); `skel2d.remove_bone` also removes descendants, their slots, weights and timelines.
-3. Images: `skel2d.add_slot name=torso bone=torso`, then `skel2d.attach slot=torso image=art/torso.png x=-35 y=-108 rows=3` (x/y = top-left in SETUP space; size defaults to the image size; columns/rows > 1 makes a deformable grid; image stored relative to the rig). In the editor, dropping an image from Assets on the canvas does the same on the selected slot or bone.
-4. Weights: `skel2d.auto_weights slot=torso name=torso bones='["hip","torso"]'` (falloff 4, 2 influences); touch up with `skel2d.paint_weights slot=.. name=.. bone=.. x=.. y=.. radius=20 strength=0.5 [erase=true]`. Mesh: `skel2d.mesh slot=.. name=.. add='[[x,y]]' triangulate=true` (UVs fitted automatically).
-5. Draw order = slots list, back to front: `skel2d.draw_order order='["leg_l","torso","arm_r"]'`. Skins: `skel2d.skin name=gold op=add` (becomes active; new attachments go into the active skin; lookups fall back to default).
-6. Animate: `skel2d.clip name=wave op=add duration=1.2 loop=true`, then `skel2d.key target=fore_r channel=rotate time=0.6 values='[60]' curve='[0.42,0,0.58,1]'`. Bone values are OFFSETS from the setup pose (rotate added, translate added, scale multiplied); color/attachment keys target slots. `skel2d.play clip=wave time=0.6` poses the preview; `skel2d.get` reads everything back.
-7. `skel2d.save path=...`; check with `screenshot shot.png --window`. Play it in a game with LrgSkeleton2DComponent (`lrg_skeleton2d_component_load` + `_play`).
-Traps: a positive rotation turns clockwise on screen; rotation keys are not wrapped (350 -> 10 spins backwards); a draw-order key must name every slot; textures only show with a window (headless editors still edit everything).
-
-### Add physics to a level (0.9.0)
-1. Static geometry: a `physics:` block with `body: static` and `box`/`mesh` shapes (mesh without `mesh:` uses the node's model).
-2. Props: `body: dynamic`, a mass, and a box/convex/sphere shape; `trigger: true` for volumes.
-3. Joints go on the child node with `target:` = the other node's GUID.
-4. Layer names and `no_collide` pairs go in the `project.ryaml` root `physics:` block.
-5. In the game `lrg_level_load_world3d()` attaches physics; just step the world. (Editor gizmos, inspector and layer matrix arrive with the M5 editor tools; until then edit the block in the `.rlevel`.)
-
-### Edit physics in the editor (0.9.0)
-1. Select the node, open the Physics panel (`lrgeditorctl run physics.show` or View > Panels > Physics).
-2. Add a body: `lrgeditorctl call physics.add_body '{"node":"Crate","kind":"dynamic"}'` (comes with a shape fitted to the geometry: sphere for spheres, cylinder for cylinders/cones, convex hull (dynamic) or triangle mesh (static/kinematic) for mesh assets, a box otherwise).
-3. Set fields with `physics.set_body` / `physics.set_shape` / `physics.set_joint` `{"index":i,"values":{...}}`: field names are the LrgNodePhysics / LrgNodePhysicsShape / LrgNodePhysicsJoint property names; enums are nicks; vectors `[x,y,z]` (half-extents, offset, rotation in degrees, anchor, axis). Joint `target` is a node path or GUID, "" = the world. Limits are radians for hinge/cone/swing-twist, metres for slider/distance.
-4. `physics.add_shape {"kind":"sphere","values":{"radius":2,"trigger":true}}`; `physics.add_joint {"kind":"hinge","target":"Frame","values":{...}}`; `physics.fit {"index":0,"kind":"capsule"}`. Every call is one undo step; check with `physics.get`.
-5. Show physics: `physics.overlay '{"flags":["shapes","joints"]}'` (shapes, aabbs, contacts, joints, sleeping, com, velocity, broadphase, all, none). Play (`lrgeditorctl play start`) and read the live body with `physics.state`.
-6. In the viewport drag the selected node's collider handles (face centres, radius, cap tip, joint anchor): one undo step per drag, Escape cancels. 2D nodes use a `collider` component (shape box|circle, width, height, radius, offset_x, offset_y), with handles too.
-Part 2: collision layers, world settings and ragdolls.
-- Layers and world settings are project data in the project.ryaml `physics:` block (32 named layers, symmetric collide matrix, `gravity`, `fixed_dt`, `max_substeps`, `iterations`, `sleep_threshold`, `sleep_substeps`). UI: File > Project Settings > Physics (matrix upper triangle, click toggles; applied on Save). Script: `lrgeditorctl physics layers [get]`, `physics layers name 9 water` (`-` unnames), `physics layers collide water debris off`, `physics layers settings gravity=0,-3.7,0 iterations=12`, `physics layers reset`, `physics layers open`. These IPC writes save project.ryaml immediately and cannot be undone.
-- The runtime applies that block: `lrg_level_load_world3d()` / `lrg_level_instantiate_3d*()` find the `project.ryaml` above the level (then the asset manager's project root) and set up the world's physics from it (gravity, fixed step and substep cap -> `LrgWorld3D:fixed-step`/`max-substeps`, iterations, sleep, layer table, so level `layer:` names resolve against the project's layers). Play-in-editor uses the open project's current settings (unsaved edits included); a built game only sees what is saved. Override with `lrg_world3d_set_physics_settings (world, &settings, layers, &err)` before instantiating. C: `LrgPhysicsSettings` (`lrg_physics_settings_load_from_file`, `_save_to_file` keeps other keys), `lrg_dynamics_world_apply_settings()`, `lrg_project_get_physics_settings()` (edit in place, then `lrg_project_save()`).
-- Ragdolls (.rphysasset): one part per bone (capsule/box/sphere, offset, rotation, mass) with a joint to its parent part (swing-twist, cone, hinge, point, fixed; limits in radians) plus exclusions. Create: right-click a skinned .glb > New Physics Asset from Model, or `lrgeditorctl physasset create chars/hero.rphysasset model=chars/hero.glb total_mass=80`. Tune: `physasset set-part PATH shin_l joint=hinge twist_degrees=0,140`, `physasset set-part PATH head shape=sphere radius=0.12`, `physasset exclude PATH thigh_l thigh_r`, `physasset stabilize PATH`. Try: `physasset simulate PATH advance=2` (passive drop; `run=false` returns to bind pose); `physasset save PATH`. Each edit is one undo step of the file (`data undo PATH`). The preview model lives in the `.meta` sidecar (`physasset model PATH chars/hero.glb`). Keys must match the shape and joint kind (no `radius` on a box, no `twist` on a cone).
-
-### Add navigation to a level (0.9.0)
-
-1. Write `nav/<level>.rnav` (agent radius = the largest walker; exclude moving props with a `no-nav` tag).
-2. Bake headless: `lrg_level_load_world3d` -> `lrg_nav_bake_bake` -> `lrg_nav_poly_mesh_save` to `nav/<level>.rnavmesh`.
-3. Add `navigation: {settings, data}` to the `.rlevel` (or `bake_on_load: true` for prototypes).
-4. Give walkers a `nav-agent` component and call `lrg_nav_agent_component_set_destination`.
-5. Check with `lrg_world3d_debug_draw_navigation`. Format details: `references/formats.md`, `references/level-format.md`.
-
-### Engine-backed assets (0.9.0)
-Gameplay and effect assets (.rbt .rfsm .rparticles .rweather .rmixer .rtileset .rsprite .rwater .rnav) are engine-backed documents: create them with `lrgeditorctl asset new KIND [path=]` (also `terrain`, and `sprite image=X.png` to auto-slice) or Assets > New ...; edit them with the family verbs (nav, bt, fsm, ai, particles, weather, terrain, water, mixer, audio, tiles, tileset, sprite: one verb per IPC method, `-` for `_`; MCP tools are the method names with `_`, e.g. `bt_add_node`). Every edit is one undo step (`data.undo {path}` for files, `undo` for level edits). Saves write the engine's canonical bytes, so YAML comments in these files are not kept.
-
-### Bake navigation in the editor (0.9.0)
-1. Open the Navigation panel (`lrgeditorctl call nav.show`); save the level once (files go next to it).
-2. Settings: `nav.set '{"values":{"agent_radius":0.4,"max_slope":45,"cell_size":0.2,"exclude_tags":["no-nav"]}}'` (keys = .rnav fields with `_`; `settings` loads another .rnav, `data`/`bake_on_load` edit the level block; one undo step).
-3. Areas/links: `nav.area.add {name,cost,tag?}`, `nav.area.box.add {area,min,max}`, `nav.link.add {start,end,bidirectional?,cost?,area?}`; `*.set` / `*.remove` by index (areas also by name).
-4. `nav.bake '{"save":true}'` writes <level>.rnav + <level>.rnavmesh and sets the level's `navigation:` refs (save the level after). `nav.get` shows everything; `nav.clear` drops the mesh and data ref.
-5. Overlay: `nav.overlay '{"flags":["polygons","areas","boundaries","links","handles"]}'`; `nav.select '{"area":"mud","link":0}'` puts drag handles on that box/link (Ctrl snaps 0.25 m, one undo per drag).
-6. While playing: `nav.agents` lists the crowd (state, path, remaining); `nav.debug_agent '{"node":"Guard"}'` draws its ORCA planes. Unsaved bakes are pushed into the play world.
-
-### Behaviour trees, state machines and AI debugging (0.9.0)
-- `.rbt` / `.rfsm` open in data-editor tabs (`bt open PATH`, `fsm open PATH`, `bt create`, `fsm create`). Trees: `bt get`, `add-node parent=ID type=T id=X props.KEY=V`, `set-node`, `move-node`, `remove-node`, `layout`, `add-key`, `set-subtree`, `validate`, `save`. Machines: states are paths (`a/b`, "" = top), `from=""` = any-state transitions; `fsm add-state`, `rename-state` (rewrites targets), `add-transition from=A to=B event=E after=S`, `set-transition` / `set-actions` with JSON lists. Card positions live in the file's `editor: positions:` block.
-- Playing (`run play.start`): `ai entities`, `ai select entity=NAME` (editors follow that agent), `ai state`, `ai set-key key=K value=V`, `ai send-event event=E`; `bt live PATH` / `fsm live PATH` give node statuses / active states. `ai brains`, `ai topic`, `ai log` show decision brains a game registered with `lrg_editor_ai_debug_panel_watch_brain()`.
-- Actions and conditions are registered by the game, not the editor: missing bindings are info issues, not errors.
-
-### Author VFX in the editor (0.9.0)
-1. `particles.create '{"path":"fx/fire.rparticles"}'` (template `default` or `empty`) or double-click the file; `particles.get`, `particles.kinds`.
-2. Structure: `particles.add_emitter {name}`, `duplicate_emitter`, `remove_emitter`, `move_emitter {from,to}`; `particles.add_module {emitter, kind}` (placed after its stage), `move_module`, `remove_module`.
-3. Values: `particles.set {path, emitter?, module?, renderer?:true, key, value}` in file syntax (`"[4, 8]"`, `"#ffc040"`, `"0 1; 1 0 ease-out-quad"`, `"0 #ffffffff; 1 #00000000"`); `null` resets; bad values fail with the key path. Mute with `key:"enabled", value:false`.
-4. Preview only: `particles.seek {time}` (deterministic), `particles.play`, `particles.restart`, `particles.preview {speed, seed, ground, background, gpu}`, `particles.solo`, `particles.stats` (counts, bounds, `gpu_ok`, `gpu_message`).
-5. Weather: `weather.create`, `weather.kinds {kind}` (param schema), `add_preset`, `set_preset`, `add_layer {preset, kind, id?}`, `set_layer`, `set_param {preset, layer, name, value|null}`, `set_transition {from,to,duration}` (`*` / `none` allowed); `weather.preview {preset, transition_to, advance}` returns the rule's crossfade.
-
-### Terrain and water (0.9.0)
-- Create > Terrain / Water or `terrain.create '{"name":"Valley"}'` (`kind: water` for a lake) writes `terrain/<name>.rterrain|.rwater` and adds the node.
-- Sculpt/paint: `terrain.stroke {tool: raise|lower|flatten|smooth|noise|paint|hole|fill|foliage-paint|foliage-erase, points: [[x,z],...] (world; local:true for asset-local), radius, strength, falloff, target_height, invert, smooth}`: one undo step per stroke. Layers: `terrain.add_layer`, `set_layer`, `remove_layer`; paint layer via `terrain.brush {layer}`. Foliage: `terrain.add_foliage {kind: mesh|billboard|grass, density, slope, height}`, `set_foliage`, `terrain.rebake`. Inspect: `terrain.get`, `terrain.sample {x,z}`.
-- Water: `water.set {node|path, level, shape, colors}`, `water.set_wave`, `water.add_point`. Terrain and water files save with the level (or `terrain.save` / `water.save`).
-- GUI: Terrain panel tool strip, then left-drag in the viewport (Ctrl inverts, Shift smooths, `[` `]` radius, Escape cancels); select a lake/river to drag outline points (Ctrl+click adds, Shift+click removes).
-
-### Mix and spatialise audio (0.9.0)
-1. `mixer.create '{"path":"audio/main.rmixer","buses":["music","sfx","dialogue"],"set_default":true}'` (writes project.ryaml `audio.mixer`; Tools > New Mixer does the same).
-2. Edit (one undo step each): `mixer.set_bus {name, volume, mute}`, `mixer.add_effect {bus, type, id}`, `mixer.set_effect {bus, id, params}` (`mixer.effect_types` lists params), `mixer.set_send {source, target, level}`, `mixer.set_duck {trigger, target, depth}`.
-3. Snapshots: `mixer.add_snapshot {name, blend}`, `mixer.set_snapshot {name, volumes, params}` (null removes) or set faders and `mixer.capture_snapshot`.
-4. Without a device: `mixer.preview {playing, snapshot}` then `mixer.meters`; `mixer.save`. Without `path` every mixer.* method uses the project's default mixer.
-5. Emitters: `audio.set {node, params:{min_distance, max_distance, rolloff_mode, rolloff_curve_keys, cone_outer_angle, cone_inner_angle, bus, occlusion}}` (max_distance is stored as the node's `radius`); `audio.curve {node}`, `audio.buses`. The viewport shows min/max spheres and the cone with drag handles.
-
-### 2D tools (0.9.0)
-- Tiles panel: drop an .rtileset on the tileset zone; pick a rule tile chip to paint with autotiling (one undo step per gesture); "Refresh all" = `tiles.refresh`. Brush transforms: X mirror, Shift+X vertical flip, Z rotate (Y stays snap). Grid layout (orthogonal / isometric / staggered / hexagonal) = `tiles.grid`. Script: `tiles.paint '{"cells":[3,3,4,3],"rule_tile":"plateau"}'`, `tiles.brush`, `tiles.cell_at`.
-- .rtileset editor: Tile page (flags, collision polygons, custom data, animation) and Rule tiles page (3x3 masks, outputs + weights, 16/47 presets, preview). `tileset.*` uses 0-based tile indices; map cells and `tiles.*` use 1-based ids.
-- .rsprite editor: Grid / Auto (alpha islands) / Manual slicing, pivot drag, clips with fps/loop, strip with durations and events, preview. IPC `sprite.slice|frame|clip|clip_frame|event|play|save`.
-- Pitfalls: plain tiles inside a rule tile's range need Refresh all; the 3D runtime tilemap draws iso, staggered and hex cells and honors flip bits (`lrg_tilemap_component_get_cell_quad`). Y flips a tile vertically while a tilemap stroke is active and toggles snap otherwise. A second shortcut that flips vertically without sharing that chord is left for a later release.
-
-### Debug, profile and tool scripts (0.9.0)
-- Dock strips that overflow keep each tab at least 96px and add scroll arrows plus a list of every tab. The wheel scrolls the strip. `lrg_canvas_add_shortcut_full` stacks actions on one chord: the first enabled action runs, higher priority first, then registration order. `lrg_canvas_add_shortcut` replaces the chord. Tool panels (tiles, environment, navigation, lighting, physics, AI) are tabs under Terrain, which sits under the Inspector.
-- Debug panel (View > Panels > Debug): `debug.state`, breakpoints, continue/pause/step, stack, scopes, variables, evaluate, watches, `debug.dap_start` / `debug.dap_stop`. `lsp.*` covers servers, diagnostics, complete, hover, definition, references, rename, format. Emacs attaches with `libregnum-dape` (`editors/emacs/libregnum-dape.el`); the editor's DAP port is 4711. Lua (`lua_sethook`) and Python 3.12+ (`sys.monitoring`) can be stepped. GJS and Crispy `attach` return unsupported.
-- Hot reload is `LrgScriptReloader` (`watch_path`, `process_pending` once a frame when there is no main loop, `reload_file`). Scripts keep state through `on_before_reload` / `on_reload`. There is no `stopped` signal: `set_stopped_idle_func` runs on the script thread, and other threads poll `is_paused`.
-- Profiler panel and Frame Debugger are in the default layout (`profiler`, `frame`). `profiler.set` takes `enable`, `gpu`, `paused`, `ring` (8..4096). Captures are `.rprof` (`profiler.capture` / `save` / `load`). `profiler.view` mode is `timeline`, `flame`, `table`, or `compare`. `frame.capture` arms the viewport; `frame.scrub` `-1` is the whole frame; `.rframe` is the capture file. A missing file is error `failed` ("No such file"). Replay and `frame.texture` need a window. Keep the profiler an early-out when it is disabled. Do not `glFinish` in the GPU timer path.
-- Memory and Network panels are docked (`memory`, `network`). Methods: `memory.status`, `memory.types`, `memory.resources`, `memory.snapshot`, `memory.snapshots`, `memory.diff`, `memory.clear_snapshots`, `memory.history`, `memory.show`, `network.stats`, `network.history`, `network.enable`, `network.reset`, `network.show`. Instance counts need `GOBJECT_DEBUG=instance-count` in the environment before the process starts; `lrgeditor` sets that at the start of `main`, which is still too late if a constructor ran first. `lrg_memory_profiler_watch_type()` counts without that variable. `LrgNetStats` stays off until `LRG_NET_STATS=1` or `network.enable`.
-- Tool scripts: Tools > Run Script... and Tools > Reload Tool Scripts. A project's `editor_scripts/` (not recursive) loads on open, basename order, and registers menu rows under Tools > Scripts. IPC: `script.run`, `script.languages`, `script.tools`, `script.run_tool`, `script.reload`, `script.run_in_editor`, `script.editor_running`. The console REPL cycles none / Lua / Python / Gjs; a trailing `\` continues the chunk.
-- Visual scripts are `.rvscript` documents (`vscript create PATH`, then `add-node`, `connect`, `set-variable`, `add-subgraph`, `validate`, `run`, `save`). `view=blocks` opens the same file as blocks. `vscript.run` executes a copy (start, then `frames` updates) and does not save. `vscript.select` is not an undo step. Pins are `node.pin`. `data.undo` with the file path reverts one edit.
-
-### Packs, locales and level merge (0.9.0)
-- Pack from a running editor: File > Export, or `lrgeditorctl call export.profiles` then `lrgeditorctl call export.run profile=rres output=build/game.rres`. Profiles include `rres`, `vfs`, `tar`, `zip`, `flatpak`, `appimage`. The dialog shows the log (`export-log`). Flatpak writes a manifest and does not run flatpak-builder. AppImage runs `appimagetool` only when it is on `PATH`. Cooking writes DXT1 when the sidecar `compression` is `dxt1`. The CLI is `lrgpack` (see `docs/modules/core/pack-writer.org`). FBX imports through vendored ufbx and writes an OBJ. `.ply` is not a model.
-- Node tags filter the outliner with the `tag:` prefix. `scenes.open` / `scenes.active` keep more than one level open and load the active one. `lrg_level_stream_load_async()` loads a stream cell.
-- These are IPC methods and `lrgeditorctl` verbs (see `docs/editor/workflows.org`): `po.import`, `po.export`, `po.extract`, `po.pseudo`, `gizmo.apply`, `gizmo.pivot`, `collab.apply`, `collab.lock`, `collab.presence`, and `lrgeditorctl merge` (three-way by GUID; it can install `lrgeditor --merge %O %A %B`). `lrg_editor_vcs_magit_handoff()` returns the string `(magit-status)` and does not launch Emacs.
-- A level's `audio: mixer:` path loads on instantiate (`lrg_level_set_audio_mixer`). A nav agent takes `destination-x`, `destination-y`, `destination-z` and `target-node`. `lrg_nav_bake_set_tile_extent` splits a large bake; 0 is one bake. The editor bake loop is "Bake navigation in the editor" above and `docs/editor/navigation.org`.
-- `examples/game-showcase-3d --self-test` checks tags, a stream cell, a game-view preset, a UI animation sample, a clip, physics and nav with no window.
 
 ## Output Format
 
@@ -283,8 +173,5 @@ lrgeditorctl validate && lrgeditorctl save
 - Prefer node paths for readability but use GUIDs (`-o wide`) when renaming/moving several nodes in one script, since paths change.
 - Do not hand-edit an `.rlevel` file while an editor has the same level open with unsaved changes; use `lrgeditorctl` (or save first; the editor reloads clean levels changed on disk).
 - On immutable hosts do not install packages with `dnf` or run `bootc usr-overlay`; list the Fedora packages instead.
+- Never `vcs commit`, `prefab apply`, `physics layers ...` (saves project.ryaml at once) or `merge` into the user's files without asking.
 - When changing libregnum code: zero warnings, no `//` comments, no silencing warnings, docs in org-mode under `docs/`, commit only when asked.
-
-## Play-in-editor (0.9.0)
-
-Play uses 3D when the level's `default_view` is `3d` (the default) and 2D otherwise. During 3D play the viewport draws the runtime world (the same renderer games use). The hierarchy Live tab shows the entity tree; the inspector shows the entity's transform and components, and "Apply to Level" writes component values back. Simulated transforms sync back field by field and are restored on Stop.

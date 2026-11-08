@@ -16,6 +16,19 @@
 
 The annotated git tag is the release. This page is the human notes. =ROADMAP.md= is the same history in milestone order. Nothing here renames or removes a 0.8 symbol.
 
+** 0.10.1
+:PROPERTIES:
+:CUSTOM_ID: changelog-0-10-1
+:END:
+Opening a source checkout in the editor no longer fills it with sidecars, and eight more example songs.
+
+- Editor: a folder opened without =project.ryaml= is browsed with its asset guids kept in memory; nothing is written into it. Opening the libregnum checkout wrote 17,235 =.meta= files into it and its submodules.
+- Asset database: scans skip nested repositories (a directory with a =.git= file or folder: submodules, vendored checkouts), and documents and build files (README, LICENSE, Makefile, =*.md=, =*.org=, =*.txt=, =*.h=, =*.mk=, objects and libraries) never get a sidecar written for them. New =lrg_asset_database_wants_sidecar()=.
+- Examples: eight songs in =examples/data/music/= with an [[file:../examples/data/music/00_index.org][index]] that explains each style: /Thunder Grid/ (epic synthwave, heavy drums), /Steel Horizon/ (darksynth), /Night Runner/ (outrun with a key change), /Moonlit Shoreline/ (chillwave), /Glass Arcology/ (ambient), /Iron Choir/ (heavy metal), /Rust Belt Boogie/ (hard rock on a 12-bar blues) and /Black Monolith/ (doom). From 2:30 to 6:00; =test-music-demo= checks every one.
+- Examples: =examples/song-render= renders any =.rsong= at -14 LUFS to any format, with stems, or only checks it (=--info=).
+- The libregnum agent skill covers everything through 0.10.1; =SKILL.md= is an index and the recipes moved to =references/workflows.md=.
+- Docs: =vscript.palette= is listed as 0.10.0 (it landed after the 0.9.2 tag); the 0.10.0 notes count 38 =song.*= methods; =ROADMAP.md= shows 0.10.0 as shipped.
+
 ** 0.10.0
 :PROPERTIES:
 :CUSTOM_ID: changelog-0-10-0
@@ -29,9 +42,8 @@ Music and sound creation: a song engine with synthesized instruments, a Foley de
 - Playback: =LrgSongPlayer= plays a song on the device from a render thread, follows edits from the beat it is at, and does adaptive game music: =queue_section()= on the next beat or bar, layer fades, stingers, live notes.
 - Export and analysis: =LrgAudioEncoder= writes WAV, AIFF, FLAC, MP3, Ogg Vorbis, Opus, AAC and ALAC (=.m4a=) and WavPack with in-process libav (=FFMPEG=1=) or the =ffmpeg= program, and decodes the same formats for audio clips. =LrgAudioAnalysis= measures peak, true peak, RMS and BS.1770 loudness. The reel audio exporter gains OGG and Opus and uses the encoder.
 - Editor: the Foley designer (=.rfoley=) and the song editor (=.rsong=): arrangement with ruler, markers, loop and playhead; step grid and piano roll; song, track and instrument parameter grids; live preview while editing; export. Every edit is one undo step. New Song and Sound effect entries in the assets panel.
-- Agents: =song.*= (39 methods, among them =song.apply= for a batch of edits as one undo step and =song.render= with per-track loudness so a mix can be balanced without ears), =foley.*= (12) and =audio.formats=; the same as =lrgeditorctl song|foley= verbs and MCP tools.
+- Agents: =song.*= (38 methods, among them =song.apply= for a batch of edits as one undo step and =song.render= with per-track loudness so a mix can be balanced without ears), =foley.*= (12) and =audio.formats=; the same as =lrgeditorctl song|foley= verbs and MCP tools.
 - Demo: =examples/synthwave-song.c= builds "Neon Drive" (108 BPM, 2:40, ten tracks with kick-ducked synths) and exports it in every available format; the song opens in =lrgeditor= from =examples/data/music/=.
-- Tests: every test binary links =tests/lrg-test-guard.c=, which sets =LRG_EXTERNAL_EDITOR=none= before =main()=. The 33 per-test =g_setenv()= calls are gone; a new test is covered without doing anything, and =/editor-tools/desktop-guard= checks it.
 - Tests: every test binary links =tests/lrg-test-guard.c=, which sets =LRG_EXTERNAL_EDITOR=none= before =main()=. The 33 per-test =g_setenv()= calls are gone; a new test is covered without doing anything, and =/editor-tools/desktop-guard= checks it.
 - Visual scripts: new =vscript.palette= IPC method (=lrgeditorctl vscript palette=, MCP =vscript_palette=) opens or closes the Add Node picker, optionally with one category's submenu, for scripts and screenshots.
 

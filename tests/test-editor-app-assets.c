@@ -789,6 +789,49 @@ test_new_folder (EditorAppFixture *f,
 	g_assert_true (g_file_test (named, G_FILE_TEST_IS_DIR));
 }
 
+/* A folder opened without a project.ryaml (a source checkout) is browsed
+ * but nothing is written into it: no .meta sidecars anywhere. */
+static void
+test_loose_folder_untouched (EditorAppFixture *f,
+                             gconstpointer     data)
+{
+	g_autoptr(GError) error = NULL;
+	g_autofree gchar *loose = g_build_filename (f->dir, "checkout", NULL);
+	g_autofree gchar *png = g_build_filename (loose, "art", "logo.png", NULL);
+	g_autofree gchar *readme = g_build_filename (loose, "README.org", NULL);
+	g_autofree gchar *song = g_build_filename (loose, "music", "theme.rsong", NULL);
+	g_autoptr(GDir)   dir = NULL;
+	const gchar      *name;
+	gchar            *art = g_path_get_dirname (png);
+	gchar            *music = g_path_get_dirname (song);
+
+	g_mkdir_with_parents (art, 0755);
+	g_mkdir_with_parents (music, 0755);
+	g_free (art);
+	g_free (music);
+	write_png (png, 16);
+	write_text (readme, "#+title: x\n");
+	write_text (song, "version: 1\n");
+
+	g_assert_true (lrg_editor_app_open_project (f->app, loose, &error));
+	g_assert_no_error (error);
+	efx_frames (f, 3);
+
+	/* browsed, but nothing was written */
+	{
+		g_autofree gchar *m1 = g_strconcat (png, ".meta", NULL);
+		g_autofree gchar *m2 = g_strconcat (readme, ".meta", NULL);
+		g_autofree gchar *m3 = g_strconcat (song, ".meta", NULL);
+
+		g_assert_false (g_file_test (m1, G_FILE_TEST_EXISTS));
+		g_assert_false (g_file_test (m2, G_FILE_TEST_EXISTS));
+		g_assert_false (g_file_test (m3, G_FILE_TEST_EXISTS));
+	}
+	dir = g_dir_open (loose, 0, NULL);
+	while (dir != NULL && (name = g_dir_read_name (dir)) != NULL)
+		g_assert_false (g_str_has_suffix (name, ".meta"));
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -832,6 +875,7 @@ main (int   argc,
 	ADD ("/editor-app/assets/ipc", test_ipc);
 	ADD ("/editor-app/assets/script-tile", test_script_tile);
 	ADD ("/editor-app/assets/new-folder", test_new_folder);
+	ADD ("/editor-app/assets/loose-folder-untouched", test_loose_folder_untouched);
 #undef ADD
 
 	status = g_test_run ();

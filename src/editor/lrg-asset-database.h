@@ -236,6 +236,23 @@ void lrg_asset_database_set_write_meta (LrgAssetDatabase *self,
                                         gboolean          write_meta);
 
 /**
+ * lrg_asset_database_wants_sidecar:
+ * @path: a file name or path
+ *
+ * Whether a scan writes a sidecar for @path on its own: documents and
+ * build files (README, LICENSE, Makefile, *.md, *.org, *.txt, *.h, *.mk,
+ * objects and libraries) are never assets, so they get none.  Their
+ * entries still have a stable guid (derived from the path), and an
+ * explicit lrg_asset_database_set_meta() still writes one.
+ *
+ * Returns: %TRUE when scans may write a sidecar for @path
+ *
+ * Since: 0.10.1
+ */
+LRG_AVAILABLE_IN_ALL
+gboolean lrg_asset_database_wants_sidecar (const gchar *path);
+
+/**
  * lrg_asset_database_lookup_guid:
  * @self: an #LrgAssetDatabase
  * @guid: an asset guid

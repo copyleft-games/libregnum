@@ -117,4 +117,8 @@ lrgeditorctl song apply "ops=$(cat verse.json)"
 lrgeditorctl song render end=32 tracks=true -o json
 lrgeditorctl song export out/night.wav 'formats=["wav","mp3"]' stems=true
 lrgeditorctl foley new sfx/door.rfoley footstep-wood
+lrgeditorctl audio formats            # which export formats this build can write
+lrgeditorctl asset new song name=night  # starter loop (808 + synthwave-bass), like Assets > New Song
 ```
+
+In a game (C): load the `.rsong` with `lrg_song_new_from_file()` and play it with `LrgSongPlayer` (adaptive sections, layers, stingers), or render and encode it offline; see `engine.md`, "Music, Foley patches and audio export".

@@ -1,0 +1,126 @@
+#+title: Example songs
+#+description: The example songs of libregnum's music module: what each one is, its style, and how it is built.
+#+authors: Zach Podbielniak
+#+categories: libregnum examples music
+#+created: 2026-11-08T18:00:00-05:00
+#+updated: 2026-11-08T18:00:00-05:00
+#+version: 0.10.1
+
+* Example songs
+:PROPERTIES:
+:CUSTOM_ID: music-examples
+:END:
+Nine complete songs made only with libregnum's own synthesizers, drum machine and mixer: no samples, no audio files. Each is a =.rsong= file (YAML) that opens in =lrgeditor='s song editor, renders with =examples/song-render=, and plays in a game through =LrgSongPlayer=. They run from 2:30 to 6:00 and cover synthwave (driving, epic, dark, peaceful, ambient) and metal and hard rock, to show how far the same instruments go.
+
+| Song | File | Style | BPM | Key | Length | Tracks |
+|------+------+-------+-----+-----+--------+--------|
+| Neon Drive | =neon-drive.rsong= | classic synthwave | 108 | A minor | 2:40 | 10 |
+| Night Runner | =night-runner.rsong= | outrun, uptempo | 128 | A minor, then B minor | 2:30 | 9 |
+| Thunder Grid | =thunder-grid.rsong= | epic synthwave, heavy drums | 118 | D minor | 4:08 | 13 |
+| Steel Horizon | =steel-horizon.rsong= | darksynth, heavy and industrial | 100 | E Phrygian | 3:12 | 9 |
+| Moonlit Shoreline | =moonlit-shoreline.rsong= | chillwave, peaceful | 82 | F major | 5:16 | 8 |
+| Glass Arcology | =glass-arcology.rsong= | ambient, almost no drums | 70 | C Lydian | 6:00 | 8 |
+| Iron Choir | =iron-choir.rsong= | heavy metal | 150 | E minor | 3:36 | 12 |
+| Rust Belt Boogie | =rust-belt-boogie.rsong= | hard rock, 12-bar blues | 124 | A (blues) | 3:00 | 7 |
+| Black Monolith | =black-monolith.rsong= | doom metal | 66 | D minor | 4:00 | 9 |
+
+** Listening and editing
+:PROPERTIES:
+:CUSTOM_ID: music-examples-use
+:END:
+- Render: =./examples/build/release/examples/song-render examples/data/music/iron-choir.rsong= writes =songs/iron-choir.wav= and =.mp3= at streaming loudness (-14 LUFS integrated, -1 dBTP ceiling). =-f all= writes every format (WAV, AIFF, FLAC, MP3, Ogg, Opus, AAC, ALAC, WavPack; the compressed ones need =ffmpeg-free=), =--stems= adds one WAV per track, =--info= only checks and describes.
+- Edit: open the folder in =lrgeditor= (=lrgeditor -p examples/data/music=) and double-click a song. The arrangement shows every section marker; click a clip to edit its pattern in the step grid (drums) or piano roll (notes); Play / pause plays it while you edit.
+- Neon Drive is also built in C, step by step, by =examples/synthwave-song.c= (see =docs/examples/synthwave-song.org=); the others are written directly as =.rsong= files.
+- Every song is checked by =tests/test-music-demo.c=: it loads without a warning, writes back byte for byte, has the length stated here, and eight bars of one section render with sound and without clipping.
+
+** How the sounds are made
+:PROPERTIES:
+:CUSTOM_ID: music-examples-sounds
+:END:
+- *Synths*: the =synth= instrument with a preset (=synthwave-bass=, =synthwave-pad=, =synthwave-lead=, =arp-pluck=, =brass-stab=, =sub-bass=, =acid-bass=, =bell=, =strings=, =noise-riser=, =organ=, =init=) and parameter overrides in =params:= (=cutoff=, =drive=, =amp-attack=, =glide=, =lfo1-pitch=, ...).
+- *Drums*: the =drums= instrument with a kit (=808=, =909=, =linn=) and per-piece overrides (=kick-tune=, =snare-decay=, =low-tom-tune=, =drive=, ...). Patterns are step lanes: =.= rest, =g= ghost, =o= soft, =x= normal, =X= accent. Kick, snare, toms and cymbals usually sit on separate tracks and buses so each gets its own processing.
+- *Guitars* (the metal songs): a synth with two detuned saws (=init= with =osc1-wave: 2=, =osc2-wave: 2=, =unison: 2=) driven hard, playing power chords (root, fifth, octave), into a bus with a =distortion= effect (the amp) followed by an =equalizer= with a low cut, a mid boost and a high cut at 5 to 6.5 kHz (the speaker cabinet). Palm-muted chugs are a second voice with a low cut-off and a short envelope. Left and right guitars are separate instruments, slightly detuned against each other and panned hard: double tracking.
+- *Mixing*: each song has a master chain (=equalizer=, glue =compressor=, =limiter=), a reverb return (=fx=), echoes timed to the tempo, sidechain ducking from the kick bus where it pumps (synthwave), and filter or volume automation for intros, builds and fades.
+
+* The songs
+:PROPERTIES:
+:CUSTOM_ID: music-examples-songs
+:END:
+
+** Neon Drive (synthwave, 2:40)
+:PROPERTIES:
+:CUSTOM_ID: neon-drive
+:END:
+The reference song, built in C by =examples/synthwave-song.c=. 108 BPM in A minor over Am, F, C, G. An 808 kit, octave bass, a pad that swells open, a plucked arpeggio, a supersaw lead with a dotted echo, brass stabs, a noise riser before the chorus and a Foley impact on the drops (=sfx/impact.rfoley=). The kick ducks the pad and the bass: the synthwave pump.
+- Sections: Intro, Verse, Build, Chorus, Bridge, Chorus 2, Outro.
+- Shows: every part of the song API; a Foley patch played as an instrument.
+
+** Night Runner (outrun, 2:30)
+:PROPERTIES:
+:CUSTOM_ID: night-runner
+:END:
+Fast and bright: driving at night with the windows down. 128 BPM, Am, F, C, G with a sixteenth-note bass, a sixteenth arpeggio, a supersaw hook and brass answering on the off-beats. A Linn kit with a gated-reverb snare (the snare's reverb is cut off by a gate: the 1980s sound). After a two-bar snare roll, the final chorus goes up a whole tone to B minor through clip =transpose: 2=.
+- Sections: Start, Verse, Chorus, Verse 2, Chorus 2, Lift, Final Chorus, Finish.
+- Shows: a key change without new patterns; gated reverb; a short, complete song structure.
+
+** Thunder Grid (epic synthwave with heavy drums, 4:08)
+:PROPERTIES:
+:CUSTOM_ID: thunder-grid
+:END:
+A film trailer in neon. 118 BPM in D minor; the verse rides Dm, Bb, F, C and the chorus climbs Bb, C, Dm, Gm to an A major chord for tension, resolving to D minor only at the very end. The drums carry it: a 909 tuned down with long decays and kit drive, tribal tom patterns in the intro, half-time verses (kick on one, gated snare on three), snare rolls that speed up from quarters to sixteenths before each chorus, a four-on-the-floor chorus with crashes every bar, and tom fills between sections. Kick, snare, toms and cymbals each have a bus under a drum bus with compression and saturation; the snare and toms feed a gated reverb. A string "choir" doubles the chorus pad, and the bridge is a running eighth-note lead over toms.
+- Sections: Intro, Rise, Verse, Build, Chorus, Break, Verse 2, Build 2, Chorus 2, Bridge, Finale.
+- Shows: big drums from a synthesized kit; buses and sends per drum; rolls and fills as short patterns.
+
+** Steel Horizon (darksynth, 3:12)
+:PROPERTIES:
+:CUSTOM_ID: steel-horizon
+:END:
+Dark, heavy and mechanical. 100 BPM in E Phrygian (the flat second, F over E, gives the menace). A two-bar sixteenth-note acid bass riff (=acid-bass= with drive and resonance) through a hard-clipping fuzz bus, its filter opening from 220 Hz in the intro to 2.2 kHz in the last section. A distorted 909 with a bit-crushed drum bus and claps, a gliding mono lead with vibrato and a dotted echo, and stabs on syncopated off-beats. The kick ducks the bass and the synths.
+- Sections: Ignition, Assembly, Patrol, Breach, Overdrive, Shutdown.
+- Shows: distortion modes (=hard-clip=, =bitcrush=, =tanh=); a riff written as sixteenth notes; long filter automation.
+
+** Moonlit Shoreline (peaceful chillwave, 5:16)
+:PROPERTIES:
+:CUSTOM_ID: moonlit-shoreline
+:END:
+Slow and warm: a beach at night. 82 BPM in F major over Fmaj7, Am7, Dm7, Bbmaj7, with a longer Bbmaj7, C, Am7, Dm7, Gm7, C, Fmaj7 phrase near the end. Soft electric-piano chords (a sine and triangle synth with tremolo), FM bells arpeggiated through a long echo, strings and a pad on a large reverb, a sine sub, and a gentle pulse lead. "Waves" are filtered noise with slow attack and release and a very slow tremolo. The Linn kit is played quietly: ghost notes, a rim instead of a snare. Notes are slightly humanized (velocity varies) and the song fades in and out on the master volume.
+- Sections: Tide, Drift, Melody, Interlude, Drift 2, Melody 2, Shore, Coda.
+- Shows: seventh chords; humanized velocities; noise as an ambience; master fades with song automation.
+
+** Glass Arcology (ambient, 6:00)
+:PROPERTIES:
+:CUSTOM_ID: glass-arcology
+:END:
+A slow walk through a city of glass. 70 BPM in C Lydian (the raised fourth, a D major chord over C, sounds bright and suspended). An organ drone on C and G holds the whole song; a pad with a three-second attack, strings, an echoed pluck arpeggio and glassy FM bell melodies come and go, their filters opening and closing over minutes. Drums are only a whispered pulse in the middle third. Nearly everything sends to a reverb with a 0.97 room size.
+- Sections: Dawn, Atrium, Spire, Garden, Dusk.
+- Shows: music with little or no percussion; very long notes and automation; a song length set by a fade.
+
+** Iron Choir (heavy metal, 3:36)
+:PROPERTIES:
+:CUSTOM_ID: iron-choir
+:END:
+Classic heavy metal at 150 BPM in E minor. A galloping main riff (eighth, two sixteenths) on palm-muted E chugs with G, A and F# power-chord accents; verses of sixteenth chugs answered by C, D and B stabs; a pre-chorus of eighth-note power chords; and a big chorus on Em, C, G, D, Em, C, D, B with a string choir and a pad behind a singing lead hook. Double-kick sixteenths drive the choruses and the 16-bar solo (runs in E harmonic minor, a held peak every four bars); a half-time breakdown precedes the last chorus. Four guitar voices (open and muted, left and right) play through one amp bus; the lead has its own amp and an echo.
+- Sections: Intro, Riff, Verse, Pre-chorus, Chorus, Riff 2, Verse 2, Chorus 2, Solo, Breakdown, Final Chorus, End.
+- Shows: guitars from synths; double tracking; double kick; a generated solo.
+
+** Rust Belt Boogie (hard rock, 3:00)
+:PROPERTIES:
+:CUSTOM_ID: rust-belt-boogie
+:END:
+Bar-room hard rock at 124 BPM in A. The verses are a 12-bar blues (A, A, A, A, D, D, A, A, E, D, A, E) played as a boogie: root and fifth alternating with root and sixth in eighth notes, a walking bass, and an organ comping on the off-beats through a soft-clipping "Leslie". The chorus hits D, A, E with open power chords. Twelve bars of guitar solo and twelve bars of organ solo (blues scale, with rests), then two last choruses and a stop-time ending.
+- Sections: Intro, Verse, Chorus, Riff, Verse 2, Chorus 2, Guitar Solo, Organ Solo, Last Chorus, Ending.
+- Shows: a 12-bar form; a lighter crunch (=soft-clip=, less drive); ride and cowbell grooves.
+
+** Black Monolith (doom metal, 4:00)
+:PROPERTIES:
+:CUSTOM_ID: black-monolith
+:END:
+Slow, enormous and bleak at 66 BPM in D minor. It opens and closes with a tolling bell over a low organ drone and a noise swell. The riff falls D, F, G# (the tritone), G, F, E; the verse walks D, C, Bb, A under a string choir; the "Crawl" slows the drums to a beat every two and adds a gliding, crying lead. Guitars are a hard-clipped fuzz with a dark cabinet and a long release; the 909 is tuned far down with long decays and a lot of reverb.
+- Sections: Toll, Riff, Verse, Crawl, Riff 2, Collapse.
+- Shows: very slow tempos; long notes on drums and guitars; tuning a kit down; a song that fades on a held chord.
+
+* Writing your own
+:PROPERTIES:
+:CUSTOM_ID: music-examples-own
+:END:
+Copy the closest song, open it in =lrgeditor=, and change one thing at a time: the tempo and title in the Song grid, an instrument's parameters in the Track grid, steps in the step grid, notes in the piano roll. An AI agent can do the same over IPC or MCP (=song.instruments= to discover, =song.apply= to edit, =song.render= with =tracks: true= to balance the mix by numbers); =docs/editor/music.org= walks through it. The format itself is described in =docs/modules/music/song.org=.

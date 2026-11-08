@@ -931,7 +931,14 @@ scan_project (LrgEditorApp *self)
 		return;
 
 	self->assets = lrg_asset_database_new ();
-	lrg_asset_database_set_write_meta (self->assets, TRUE);
+	{
+		/* Sidecars only in real projects: a folder opened without a
+		 * project.ryaml (a source checkout, a downloads folder) keeps its
+		 * guids in memory and gets nothing written into it. */
+		g_autofree gchar *manifest = g_build_filename (self->project_dir, LRG_PROJECT_MANIFEST, NULL);
+
+		lrg_asset_database_set_write_meta (self->assets, g_file_test (manifest, G_FILE_TEST_IS_REGULAR));
+	}
 	lrg_asset_database_add_search_dir (self->assets, self->project_dir);
 	if (!lrg_asset_database_scan (self->assets, &error))
 		lrg_editor_log_append (self->log, G_LOG_LEVEL_WARNING, "editor", error->message);

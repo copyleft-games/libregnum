@@ -1,0 +1,1547 @@
+version: 1
+song:
+  title: Iron Choir
+  artist: libregnum
+  bpm: 150
+  time_signature: 4/4
+  sample_rate: 48000
+  seed: 1980
+  length: 540
+  markers:
+  - beat: 0
+    name: Intro
+  - beat: 32
+    name: Riff
+  - beat: 64
+    name: Verse
+  - beat: 128
+    name: Pre-chorus
+  - beat: 160
+    name: Chorus
+  - beat: 224
+    name: Riff 2
+  - beat: 256
+    name: Verse 2
+  - beat: 320
+    name: Chorus 2
+  - beat: 384
+    name: Solo
+  - beat: 448
+    name: Breakdown
+  - beat: 480
+    name: Final Chorus
+  - beat: 528
+    name: End
+instruments:
+  bass:
+    type: synth
+    source: init
+    params:
+      amp-decay: 0.6
+      amp-release: 0.08
+      amp-sustain: 0.8
+      cutoff: 1400
+      drive: 0.6
+      osc1-wave: 2
+      sub-level: 0.6
+  choir:
+    type: synth
+    source: strings
+    params:
+      amp-attack: 0.3
+      amp-release: 1.2
+  gtr-l:
+    type: synth
+    source: init
+    params:
+      amp-attack: 0.002
+      amp-decay: 0.5
+      amp-release: 0.06
+      amp-sustain: 0.85
+      cutoff: 5000
+      detune: 8
+      drive: 0.85
+      env-amount: 1.2
+      filter-attack: 0.001
+      filter-decay: 0.15
+      key-track: 0.3
+      osc1-wave: 2
+      osc2-fine: 9
+      osc2-level: 0.8
+      osc2-wave: 2
+      resonance: 0.12
+      unison: 2
+      velocity: 0.5
+  gtr-r:
+    type: synth
+    source: init
+    params:
+      amp-attack: 0.002
+      amp-decay: 0.5
+      amp-release: 0.06
+      amp-sustain: 0.85
+      cutoff: 5000
+      detune: 8
+      drive: 0.85
+      env-amount: 1.2
+      filter-attack: 0.001
+      filter-decay: 0.15
+      key-track: 0.3
+      osc1-wave: 2
+      osc2-fine: -9
+      osc2-level: 0.8
+      osc2-wave: 2
+      resonance: 0.12
+      unison: 2
+      velocity: 0.5
+  kit:
+    type: drums
+    source: 909
+    params:
+      closed-hat-level: -4
+      crash-decay: 1.5
+      drive: 0.2
+      high-tom-decay: 1.2
+      high-tom-tune: 1
+      kick-decay: 0.45
+      kick-level: 2
+      kick-snap: 1
+      kick-tone: 0.8
+      kick-tune: 3
+      low-tom-decay: 1.2
+      low-tom-tune: -3
+      mid-tom-decay: 1.2
+      mid-tom-tune: -1
+      ride-level: -2
+      snare-decay: 1.1
+      snare-level: 3
+      snare-snap: 0.9
+      snare-tune: 2
+  lead:
+    type: synth
+    source: synthwave-lead
+    params:
+      amp-release: 0.25
+      cutoff: 5000
+      drive: 0.9
+      glide: 0.04
+      lfo1-pitch: 0.25
+      lfo1-rate: 5.5
+  mute-l:
+    type: synth
+    source: init
+    params:
+      amp-attack: 0.002
+      amp-decay: 0.13
+      amp-release: 0.04
+      amp-sustain: 0.15
+      cutoff: 1300
+      detune: 8
+      drive: 0.85
+      env-amount: 2.2
+      filter-attack: 0.001
+      filter-decay: 0.15
+      key-track: 0.3
+      osc1-wave: 2
+      osc2-fine: 7
+      osc2-level: 0.8
+      osc2-wave: 2
+      resonance: 0.12
+      unison: 2
+      velocity: 0.5
+  mute-r:
+    type: synth
+    source: init
+    params:
+      amp-attack: 0.002
+      amp-decay: 0.13
+      amp-release: 0.04
+      amp-sustain: 0.15
+      cutoff: 1300
+      detune: 8
+      drive: 0.85
+      env-amount: 2.2
+      filter-attack: 0.001
+      filter-decay: 0.15
+      key-track: 0.3
+      osc1-wave: 2
+      osc2-fine: -7
+      osc2-level: 0.8
+      osc2-wave: 2
+      resonance: 0.12
+      unison: 2
+      velocity: 0.5
+  organ:
+    type: synth
+    source: synthwave-pad
+    params:
+      amp-attack: 0.4
+      cutoff: 2400
+patterns:
+  bass-break:
+    length: 8
+    notes:
+    - 0 E1 0.2 1
+    - 0.75 E1 0.2 0.8
+    - 1 E1 0.2 1
+    - 2 E1 0.2 1
+    - 2.5 E1 0.2 0.8
+    - 4 E1 0.2 1
+    - 4.75 E1 0.2 0.8
+    - 5 E1 0.2 1
+    - 6 E1 0.2 1
+    - 6.5 E1 0.2 0.8
+    - 7 E1 0.2 1
+    - 7.25 E1 0.2 0.8
+    - 7.5 E1 0.2 0.8
+    - 7.75 E1 0.2 0.8
+  bass-chorus:
+    length: 32
+    notes:
+    - 0 E1 0.4 0.9
+    - 0.5 E1 0.4 0.72
+    - 1 E1 0.4 0.9
+    - 1.5 E1 0.4 0.72
+    - 2 E1 0.4 0.9
+    - 2.5 E1 0.4 0.72
+    - 3 E1 0.4 0.9
+    - 3.5 E1 0.4 0.72
+    - 4 C1 0.4 0.9
+    - 4.5 C1 0.4 0.72
+    - 5 C1 0.4 0.9
+    - 5.5 C1 0.4 0.72
+    - 6 C1 0.4 0.9
+    - 6.5 C1 0.4 0.72
+    - 7 C1 0.4 0.9
+    - 7.5 C1 0.4 0.72
+    - 8 G1 0.4 0.9
+    - 8.5 G1 0.4 0.72
+    - 9 G1 0.4 0.9
+    - 9.5 G1 0.4 0.72
+    - 10 G1 0.4 0.9
+    - 10.5 G1 0.4 0.72
+    - 11 G1 0.4 0.9
+    - 11.5 G1 0.4 0.72
+    - 12 D1 0.4 0.9
+    - 12.5 D1 0.4 0.72
+    - 13 D1 0.4 0.9
+    - 13.5 D1 0.4 0.72
+    - 14 D1 0.4 0.9
+    - 14.5 D1 0.4 0.72
+    - 15 D1 0.4 0.9
+    - 15.5 D1 0.4 0.72
+    - 16 E1 0.4 0.9
+    - 16.5 E1 0.4 0.72
+    - 17 E1 0.4 0.9
+    - 17.5 E1 0.4 0.72
+    - 18 E1 0.4 0.9
+    - 18.5 E1 0.4 0.72
+    - 19 E1 0.4 0.9
+    - 19.5 E1 0.4 0.72
+    - 20 C1 0.4 0.9
+    - 20.5 C1 0.4 0.72
+    - 21 C1 0.4 0.9
+    - 21.5 C1 0.4 0.72
+    - 22 C1 0.4 0.9
+    - 22.5 C1 0.4 0.72
+    - 23 C1 0.4 0.9
+    - 23.5 C1 0.4 0.72
+    - 24 D1 0.4 0.9
+    - 24.5 D1 0.4 0.72
+    - 25 D1 0.4 0.9
+    - 25.5 D1 0.4 0.72
+    - 26 D1 0.4 0.9
+    - 26.5 D1 0.4 0.72
+    - 27 D1 0.4 0.9
+    - 27.5 D1 0.4 0.72
+    - 28 B1 0.4 0.9
+    - 28.5 B1 0.4 0.72
+    - 29 B1 0.4 0.9
+    - 29.5 B1 0.4 0.72
+    - 30 B1 0.4 0.9
+    - 30.5 B1 0.4 0.72
+    - 31 B1 0.4 0.9
+    - 31.5 B1 0.4 0.72
+  bass-pre:
+    length: 16
+    notes:
+    - 0 C1 0.4 0.9
+    - 0.5 C1 0.4 0.72
+    - 1 C1 0.4 0.9
+    - 1.5 C1 0.4 0.72
+    - 2 C1 0.4 0.9
+    - 2.5 C1 0.4 0.72
+    - 3 C1 0.4 0.9
+    - 3.5 C1 0.4 0.72
+    - 4 D1 0.4 0.9
+    - 4.5 D1 0.4 0.72
+    - 5 D1 0.4 0.9
+    - 5.5 D1 0.4 0.72
+    - 6 D1 0.4 0.9
+    - 6.5 D1 0.4 0.72
+    - 7 D1 0.4 0.9
+    - 7.5 D1 0.4 0.72
+    - 8 E1 0.4 0.9
+    - 8.5 E1 0.4 0.72
+    - 9 E1 0.4 0.9
+    - 9.5 E1 0.4 0.72
+    - 10 E1 0.4 0.9
+    - 10.5 E1 0.4 0.72
+    - 11 E1 0.4 0.9
+    - 11.5 E1 0.4 0.72
+    - 12 B1 0.4 0.9
+    - 12.5 B1 0.4 0.72
+    - 13 B1 0.4 0.9
+    - 13.5 B1 0.4 0.72
+    - 14 B1 0.4 0.9
+    - 14.5 B1 0.4 0.72
+    - 15 B1 0.4 0.9
+    - 15.5 B1 0.4 0.72
+  bass-riff:
+    length: 8
+    notes:
+    - 0 E1 0.2 0.85
+    - 0.5 E1 0.2 0.68
+    - 0.75 E1 0.2 0.68
+    - 1 E1 0.2 0.85
+    - 1.5 E1 0.2 0.68
+    - 1.75 E1 0.2 0.68
+    - 2 G1 0.9 0.95
+    - 3 E1 0.2 0.85
+    - 3.5 F#1 0.45 0.85
+    - 4 E1 0.2 0.85
+    - 4.5 E1 0.2 0.68
+    - 4.75 E1 0.2 0.68
+    - 5 E1 0.2 0.85
+    - 5.5 E1 0.2 0.68
+    - 5.75 E1 0.2 0.68
+    - 6 A1 1 0.95
+    - 7 G1 0.5 0.85
+    - 7.5 F#1 0.45 0.85
+  bass-verse:
+    length: 16
+    notes:
+    - 0 E1 0.45 0.85
+    - 0.5 E1 0.2 0.68
+    - 0.75 E1 0.2 0.68
+    - 1 E1 0.45 0.85
+    - 1.5 E1 0.2 0.68
+    - 1.75 E1 0.2 0.68
+    - 2 E1 0.45 0.85
+    - 2.5 E1 0.2 0.68
+    - 2.75 E1 0.2 0.68
+    - 3 E1 0.45 0.85
+    - 3.5 E1 0.2 0.68
+    - 3.75 E1 0.2 0.68
+    - 4 E1 0.45 0.85
+    - 4.5 E1 0.2 0.68
+    - 4.75 E1 0.2 0.68
+    - 5 E1 0.45 0.85
+    - 5.5 E1 0.2 0.68
+    - 5.75 E1 0.2 0.68
+    - 6 E1 0.45 0.85
+    - 6.5 E1 0.2 0.68
+    - 6.75 E1 0.2 0.68
+    - 7 E1 0.45 0.85
+    - 7.5 E1 0.2 0.68
+    - 7.75 E1 0.2 0.68
+    - 8 E1 0.45 0.85
+    - 8.5 E1 0.2 0.68
+    - 8.75 E1 0.2 0.68
+    - 9 E1 0.45 0.85
+    - 9.5 E1 0.2 0.68
+    - 9.75 E1 0.2 0.68
+    - 10 E1 0.45 0.85
+    - 10.5 E1 0.2 0.68
+    - 10.75 E1 0.2 0.68
+    - 11 E1 0.45 0.85
+    - 11.5 E1 0.2 0.68
+    - 11.75 E1 0.2 0.68
+    - 12 E1 0.45 0.85
+    - 12.5 E1 0.2 0.68
+    - 12.75 E1 0.2 0.68
+    - 13 E1 0.45 0.85
+    - 13.5 E1 0.2 0.68
+    - 13.75 E1 0.2 0.68
+    - 14 E1 0.45 0.85
+    - 14.5 E1 0.2 0.68
+    - 14.75 E1 0.2 0.68
+    - 15 E1 0.45 0.85
+    - 15.5 E1 0.2 0.68
+    - 15.75 E1 0.2 0.68
+  break-mute:
+    length: 8
+    notes:
+    - 0 E2 0.2 1
+    - 0 B2 0.2 0.9
+    - 0.75 E2 0.2 0.8
+    - 0.75 B2 0.2 0.72
+    - 1 E2 0.2 1
+    - 1 B2 0.2 0.9
+    - 2 E2 0.2 1
+    - 2 B2 0.2 0.9
+    - 2.5 E2 0.2 0.8
+    - 2.5 B2 0.2 0.72
+    - 4 E2 0.2 1
+    - 4 B2 0.2 0.9
+    - 4.75 E2 0.2 0.8
+    - 4.75 B2 0.2 0.72
+    - 5 E2 0.2 1
+    - 5 B2 0.2 0.9
+    - 6 E2 0.2 1
+    - 6 B2 0.2 0.9
+    - 6.5 E2 0.2 0.8
+    - 6.5 B2 0.2 0.72
+    - 7 E2 0.2 1
+    - 7 B2 0.2 0.9
+    - 7.25 E2 0.2 0.8
+    - 7.25 B2 0.2 0.72
+    - 7.5 E2 0.2 0.8
+    - 7.5 B2 0.2 0.72
+    - 7.75 E2 0.2 0.8
+    - 7.75 B2 0.2 0.72
+  chorus-choir:
+    length: 32
+    notes:
+    - 0 E4 3.95 0.65
+    - 0 G4 3.95 0.65
+    - 0 B4 3.95 0.65
+    - 4 C4 3.95 0.65
+    - 4 E4 3.95 0.65
+    - 4 G4 3.95 0.65
+    - 8 G4 3.95 0.65
+    - 8 B4 3.95 0.65
+    - 8 D5 3.95 0.65
+    - 12 D4 3.95 0.65
+    - 12 F#4 3.95 0.65
+    - 12 A4 3.95 0.65
+    - 16 E4 3.95 0.65
+    - 16 G4 3.95 0.65
+    - 16 B4 3.95 0.65
+    - 20 C4 3.95 0.65
+    - 20 E4 3.95 0.65
+    - 20 G4 3.95 0.65
+    - 24 D4 3.95 0.65
+    - 24 F#4 3.95 0.65
+    - 24 A4 3.95 0.65
+    - 28 B4 3.95 0.65
+    - 28 D#5 3.95 0.65
+    - 28 F#5 3.95 0.65
+  chorus-gtr:
+    length: 32
+    notes:
+    - 0 E2 2.4 1
+    - 0 B2 2.4 1
+    - 0 E3 2.4 1
+    - 2.5 E2 1.4 0.85
+    - 2.5 B2 1.4 0.85
+    - 2.5 E3 1.4 0.85
+    - 4 C2 2.4 1
+    - 4 G2 2.4 1
+    - 4 C3 2.4 1
+    - 6.5 C2 1.4 0.85
+    - 6.5 G2 1.4 0.85
+    - 6.5 C3 1.4 0.85
+    - 8 G2 2.4 1
+    - 8 D3 2.4 1
+    - 8 G3 2.4 1
+    - 10.5 G2 1.4 0.85
+    - 10.5 D3 1.4 0.85
+    - 10.5 G3 1.4 0.85
+    - 12 D2 2.4 1
+    - 12 A2 2.4 1
+    - 12 D3 2.4 1
+    - 14.5 D2 1.4 0.85
+    - 14.5 A2 1.4 0.85
+    - 14.5 D3 1.4 0.85
+    - 16 E2 2.4 1
+    - 16 B2 2.4 1
+    - 16 E3 2.4 1
+    - 18.5 E2 1.4 0.85
+    - 18.5 B2 1.4 0.85
+    - 18.5 E3 1.4 0.85
+    - 20 C2 2.4 1
+    - 20 G2 2.4 1
+    - 20 C3 2.4 1
+    - 22.5 C2 1.4 0.85
+    - 22.5 G2 1.4 0.85
+    - 22.5 C3 1.4 0.85
+    - 24 D2 2.4 1
+    - 24 A2 2.4 1
+    - 24 D3 2.4 1
+    - 26.5 D2 1.4 0.85
+    - 26.5 A2 1.4 0.85
+    - 26.5 D3 1.4 0.85
+    - 28 B2 2.4 1
+    - 28 F#3 2.4 1
+    - 28 B3 2.4 1
+    - 30.5 B2 1.4 0.85
+    - 30.5 F#3 1.4 0.85
+    - 30.5 B3 1.4 0.85
+  chorus-organ:
+    length: 32
+    notes:
+    - 0 E3 3.95 0.5
+    - 0 G3 3.95 0.5
+    - 0 B3 3.95 0.5
+    - 4 C3 3.95 0.5
+    - 4 E3 3.95 0.5
+    - 4 G3 3.95 0.5
+    - 8 G3 3.95 0.5
+    - 8 B3 3.95 0.5
+    - 8 D4 3.95 0.5
+    - 12 D3 3.95 0.5
+    - 12 F#3 3.95 0.5
+    - 12 A3 3.95 0.5
+    - 16 E3 3.95 0.5
+    - 16 G3 3.95 0.5
+    - 16 B3 3.95 0.5
+    - 20 C3 3.95 0.5
+    - 20 E3 3.95 0.5
+    - 20 G3 3.95 0.5
+    - 24 D3 3.95 0.5
+    - 24 F#3 3.95 0.5
+    - 24 A3 3.95 0.5
+    - 28 B3 3.95 0.5
+    - 28 D#4 3.95 0.5
+    - 28 F#4 3.95 0.5
+  crash:
+    length: 4
+    steps: 16
+    lanes:
+      crash: "X..............."
+  crash-2:
+    length: 4
+    steps: 16
+    lanes:
+      crash: "X.......X......."
+  end:
+    length: 16
+    notes:
+    - 0 E2 15 1
+    - 0 B2 15 1
+    - 0 E3 15 1
+  fill:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "XxXx............"
+      high-tom: "....xxxx........"
+      mid-tom: "........xxxx...."
+      low-tom: "............xxXX"
+  fill-snare:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "x.x.x.x.xxxxXXXX"
+  hats-8:
+    length: 4
+    steps: 16
+    lanes:
+      closed-hat: "x.o.x.o.x.o.x.o."
+  hook:
+    length: 32
+    notes:
+    - 0 E5 2 1
+    - 2 G5 1 0.9
+    - 3 A5 1 0.9
+    - 4 G5 2 0.95
+    - 6 E5 2 0.9
+    - 8 D5 2 0.95
+    - 10 G5 1 0.9
+    - 11 B5 1 0.9
+    - 12 A5 4 1
+    - 16 E5 2 1
+    - 18 G5 1 0.9
+    - 19 A5 1 0.9
+    - 20 C6 2 1
+    - 22 B5 1 0.9
+    - 23 A5 1 0.9
+    - 24 A5 2 0.95
+    - 26 F#5 2 0.9
+    - 28 D#5 2 0.95
+    - 30 F#5 2 0.95
+  kick-8:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "x.x.x.x.x.x.x.x."
+  kick-break:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "X..XX...X.X....."
+  kick-double:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "XxxxXxxxXxxxXxxx"
+  kick-gallop:
+    length: 4
+    steps: 16
+    lanes:
+      kick: "X.xxX.xxX.xxX.xx"
+  pre:
+    length: 16
+    notes:
+    - 0 C2 0.45 0.9
+    - 0 G2 0.45 0.9
+    - 0 C3 0.45 0.9
+    - 0.5 C2 0.45 0.75
+    - 0.5 G2 0.45 0.75
+    - 0.5 C3 0.45 0.75
+    - 1 C2 0.45 0.9
+    - 1 G2 0.45 0.9
+    - 1 C3 0.45 0.9
+    - 1.5 C2 0.45 0.75
+    - 1.5 G2 0.45 0.75
+    - 1.5 C3 0.45 0.75
+    - 2 C2 0.45 0.9
+    - 2 G2 0.45 0.9
+    - 2 C3 0.45 0.9
+    - 2.5 C2 0.45 0.75
+    - 2.5 G2 0.45 0.75
+    - 2.5 C3 0.45 0.75
+    - 3 C2 0.45 0.9
+    - 3 G2 0.45 0.9
+    - 3 C3 0.45 0.9
+    - 3.5 C2 0.45 0.75
+    - 3.5 G2 0.45 0.75
+    - 3.5 C3 0.45 0.75
+    - 4 D2 0.45 0.9
+    - 4 A2 0.45 0.9
+    - 4 D3 0.45 0.9
+    - 4.5 D2 0.45 0.75
+    - 4.5 A2 0.45 0.75
+    - 4.5 D3 0.45 0.75
+    - 5 D2 0.45 0.9
+    - 5 A2 0.45 0.9
+    - 5 D3 0.45 0.9
+    - 5.5 D2 0.45 0.75
+    - 5.5 A2 0.45 0.75
+    - 5.5 D3 0.45 0.75
+    - 6 D2 0.45 0.9
+    - 6 A2 0.45 0.9
+    - 6 D3 0.45 0.9
+    - 6.5 D2 0.45 0.75
+    - 6.5 A2 0.45 0.75
+    - 6.5 D3 0.45 0.75
+    - 7 D2 0.45 0.9
+    - 7 A2 0.45 0.9
+    - 7 D3 0.45 0.9
+    - 7.5 D2 0.45 0.75
+    - 7.5 A2 0.45 0.75
+    - 7.5 D3 0.45 0.75
+    - 8 E2 0.45 0.9
+    - 8 B2 0.45 0.9
+    - 8 E3 0.45 0.9
+    - 8.5 E2 0.45 0.75
+    - 8.5 B2 0.45 0.75
+    - 8.5 E3 0.45 0.75
+    - 9 E2 0.45 0.9
+    - 9 B2 0.45 0.9
+    - 9 E3 0.45 0.9
+    - 9.5 E2 0.45 0.75
+    - 9.5 B2 0.45 0.75
+    - 9.5 E3 0.45 0.75
+    - 10 E2 0.45 0.9
+    - 10 B2 0.45 0.9
+    - 10 E3 0.45 0.9
+    - 10.5 E2 0.45 0.75
+    - 10.5 B2 0.45 0.75
+    - 10.5 E3 0.45 0.75
+    - 11 E2 0.45 0.9
+    - 11 B2 0.45 0.9
+    - 11 E3 0.45 0.9
+    - 11.5 E2 0.45 0.75
+    - 11.5 B2 0.45 0.75
+    - 11.5 E3 0.45 0.75
+    - 12 B2 0.45 0.9
+    - 12 F#3 0.45 0.9
+    - 12 B3 0.45 0.9
+    - 12.5 B2 0.45 0.75
+    - 12.5 F#3 0.45 0.75
+    - 12.5 B3 0.45 0.75
+    - 13 B2 0.45 0.9
+    - 13 F#3 0.45 0.9
+    - 13 B3 0.45 0.9
+    - 13.5 B2 0.45 0.75
+    - 13.5 F#3 0.45 0.75
+    - 13.5 B3 0.45 0.75
+    - 14 B2 0.45 0.9
+    - 14 F#3 0.45 0.9
+    - 14 B3 0.45 0.9
+    - 14.5 B2 0.45 0.75
+    - 14.5 F#3 0.45 0.75
+    - 14.5 B3 0.45 0.75
+    - 15 B2 0.45 0.9
+    - 15 F#3 0.45 0.9
+    - 15 B3 0.45 0.9
+    - 15.5 B2 0.45 0.75
+    - 15.5 F#3 0.45 0.75
+    - 15.5 B3 0.45 0.75
+  ride-4:
+    length: 4
+    steps: 16
+    lanes:
+      ride: "X...X...X...X..."
+  ride-8:
+    length: 4
+    steps: 16
+    lanes:
+      ride: "x.x.x.x.x.x.x.x."
+  riff-mute:
+    length: 8
+    notes:
+    - 0 E2 0.2 0.85
+    - 0 B2 0.2 0.77
+    - 0.5 E2 0.2 0.68
+    - 0.5 B2 0.2 0.61
+    - 0.75 E2 0.2 0.68
+    - 0.75 B2 0.2 0.61
+    - 1 E2 0.2 0.85
+    - 1 B2 0.2 0.77
+    - 1.5 E2 0.2 0.68
+    - 1.5 B2 0.2 0.61
+    - 1.75 E2 0.2 0.68
+    - 1.75 B2 0.2 0.61
+    - 3 E2 0.2 0.85
+    - 3 B2 0.2 0.77
+    - 4 E2 0.2 0.85
+    - 4 B2 0.2 0.77
+    - 4.5 E2 0.2 0.68
+    - 4.5 B2 0.2 0.61
+    - 4.75 E2 0.2 0.68
+    - 4.75 B2 0.2 0.61
+    - 5 E2 0.2 0.85
+    - 5 B2 0.2 0.77
+    - 5.5 E2 0.2 0.68
+    - 5.5 B2 0.2 0.61
+    - 5.75 E2 0.2 0.68
+    - 5.75 B2 0.2 0.61
+  riff-open:
+    length: 8
+    notes:
+    - 2 G2 0.9 0.95
+    - 2 D3 0.9 0.95
+    - 2 G3 0.9 0.95
+    - 3.5 F#2 0.45 0.85
+    - 3.5 C#3 0.45 0.85
+    - 3.5 F#3 0.45 0.85
+    - 6 A2 1 0.95
+    - 6 E3 1 0.95
+    - 6 A3 1 0.95
+    - 7 G2 0.5 0.85
+    - 7 D3 0.5 0.85
+    - 7 G3 0.5 0.85
+    - 7.5 F#2 0.45 0.85
+    - 7.5 C#3 0.45 0.85
+    - 7.5 F#3 0.45 0.85
+  snare-24:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "....X.......X..."
+  snare-3:
+    length: 4
+    steps: 16
+    lanes:
+      snare: "........X......."
+  solo:
+    length: 64
+    notes:
+    - 0 C5 0.45 0.95
+    - 0.5 D#5 0.45 0.82
+    - 1 E5 0.45 0.82
+    - 1.5 F#5 0.45 0.82
+    - 2 A5 0.45 0.95
+    - 2.5 B5 0.45 0.82
+    - 3 C6 0.45 0.82
+    - 3.5 D#6 0.45 0.82
+    - 4 C6 0.45 0.95
+    - 4.5 B5 0.45 0.82
+    - 5 A5 0.45 0.82
+    - 5.5 G5 0.45 0.82
+    - 6 E5 0.45 0.95
+    - 6.5 D#5 0.45 0.82
+    - 7 C5 0.45 0.82
+    - 7.5 B4 0.45 0.82
+    - 8 C5 0.225 0.95
+    - 8.25 D#5 0.225 0.82
+    - 8.5 E5 0.225 0.82
+    - 8.75 F#5 0.225 0.82
+    - 9 G5 0.225 0.95
+    - 9.25 A5 0.225 0.82
+    - 9.5 B5 0.225 0.82
+    - 9.75 C6 0.225 0.82
+    - 10 D#6 0.225 0.95
+    - 10.25 E6 0.225 0.82
+    - 10.5 C6 0.225 0.82
+    - 10.75 A5 0.225 0.82
+    - 11 G5 0.225 0.95
+    - 11.25 E5 0.225 0.82
+    - 11.5 D#5 0.225 0.82
+    - 11.75 C5 0.225 0.82
+    - 12 F#5 0.5 0.9
+    - 12.5 G5 3.4 1
+    - 16 F#5 0.45 0.95
+    - 16.5 G5 0.45 0.82
+    - 17 A5 0.45 0.82
+    - 17.5 B5 0.45 0.82
+    - 18 C6 0.45 0.95
+    - 18.5 D#6 0.45 0.82
+    - 19 E6 0.45 0.82
+    - 19.5 C6 0.45 0.82
+    - 20 B5 0.45 0.95
+    - 20.5 A5 0.45 0.82
+    - 21 G5 0.45 0.82
+    - 21.5 F#5 0.45 0.82
+    - 22 E5 0.45 0.95
+    - 22.5 D#5 0.45 0.82
+    - 23 C5 0.45 0.82
+    - 23.5 B4 0.45 0.82
+    - 24 C5 0.225 0.95
+    - 24.25 D#5 0.225 0.82
+    - 24.5 E5 0.225 0.82
+    - 24.75 G5 0.225 0.82
+    - 25 B5 0.225 0.95
+    - 25.25 D#6 0.225 0.82
+    - 25.5 E6 0.225 0.82
+    - 25.75 D#6 0.225 0.82
+    - 26 C6 0.225 0.95
+    - 26.25 A5 0.225 0.82
+    - 26.5 G5 0.225 0.82
+    - 26.75 F#5 0.225 0.82
+    - 27 E5 0.225 0.95
+    - 27.25 C5 0.225 0.82
+    - 27.5 B4 0.225 0.82
+    - 27.75 A4 0.225 0.82
+    - 28 G#5 0.5 0.9
+    - 28.5 A5 3.4 1
+    - 32 G5 0.45 0.95
+    - 32.5 A5 0.45 0.82
+    - 33 B5 0.45 0.82
+    - 33.5 D#6 0.45 0.82
+    - 34 E6 0.45 0.95
+    - 34.5 D#6 0.45 0.82
+    - 35 C6 0.45 0.82
+    - 35.5 B5 0.45 0.82
+    - 36 A5 0.45 0.95
+    - 36.5 F#5 0.45 0.82
+    - 37 E5 0.45 0.82
+    - 37.5 D#5 0.45 0.82
+    - 38 C5 0.45 0.95
+    - 38.5 B4 0.45 0.82
+    - 39 A4 0.45 0.82
+    - 39.5 G4 0.45 0.82
+    - 40 B4 0.225 0.95
+    - 40.25 C5 0.225 0.82
+    - 40.5 E5 0.225 0.82
+    - 40.75 F#5 0.225 0.82
+    - 41 G5 0.225 0.95
+    - 41.25 A5 0.225 0.82
+    - 41.5 B5 0.225 0.82
+    - 41.75 D#6 0.225 0.82
+    - 42 E6 0.225 0.95
+    - 42.25 C6 0.225 0.82
+    - 42.5 B5 0.225 0.82
+    - 42.75 A5 0.225 0.82
+    - 43 F#5 0.225 0.95
+    - 43.25 E5 0.225 0.82
+    - 43.5 C5 0.225 0.82
+    - 43.75 A4 0.225 0.82
+    - 44 A#5 0.5 0.9
+    - 44.5 B5 3.4 1
+    - 48 F#5 0.45 0.95
+    - 48.5 G5 0.45 0.82
+    - 49 A5 0.45 0.82
+    - 49.5 B5 0.45 0.82
+    - 50 C6 0.45 0.95
+    - 50.5 D#6 0.45 0.82
+    - 51 E6 0.45 0.82
+    - 51.5 D#6 0.45 0.82
+    - 52 B5 0.45 0.95
+    - 52.5 A5 0.45 0.82
+    - 53 G5 0.45 0.82
+    - 53.5 F#5 0.45 0.82
+    - 54 D#5 0.45 0.95
+    - 54.5 C5 0.45 0.82
+    - 55 B4 0.45 0.82
+    - 55.5 G4 0.45 0.82
+    - 56 A4 0.225 0.95
+    - 56.25 B4 0.225 0.82
+    - 56.5 D#5 0.225 0.82
+    - 56.75 E5 0.225 0.82
+    - 57 G5 0.225 0.95
+    - 57.25 A5 0.225 0.82
+    - 57.5 C6 0.225 0.82
+    - 57.75 D#6 0.225 0.82
+    - 58 E6 0.225 0.95
+    - 58.25 D#6 0.225 0.82
+    - 58.5 C6 0.225 0.82
+    - 58.75 B5 0.225 0.82
+    - 59 A5 0.225 0.95
+    - 59.25 G5 0.225 0.82
+    - 59.5 E5 0.225 0.82
+    - 59.75 D#5 0.225 0.82
+    - 60 B5 0.5 0.9
+    - 60.5 C6 3.4 1
+  verse-mute:
+    length: 16
+    notes:
+    - 0 E2 0.2 0.85
+    - 0 B2 0.2 0.77
+    - 0.5 E2 0.2 0.68
+    - 0.5 B2 0.2 0.61
+    - 0.75 E2 0.2 0.68
+    - 0.75 B2 0.2 0.61
+    - 1 E2 0.2 0.85
+    - 1 B2 0.2 0.77
+    - 1.5 E2 0.2 0.68
+    - 1.5 B2 0.2 0.61
+    - 1.75 E2 0.2 0.68
+    - 1.75 B2 0.2 0.61
+    - 2 E2 0.2 0.85
+    - 2 B2 0.2 0.77
+    - 2.5 E2 0.2 0.68
+    - 2.5 B2 0.2 0.61
+    - 2.75 E2 0.2 0.68
+    - 2.75 B2 0.2 0.61
+    - 3 E2 0.2 0.85
+    - 3 B2 0.2 0.77
+    - 3.5 E2 0.2 0.68
+    - 3.5 B2 0.2 0.61
+    - 3.75 E2 0.2 0.68
+    - 3.75 B2 0.2 0.61
+    - 4 E2 0.2 0.85
+    - 4 B2 0.2 0.77
+    - 4.5 E2 0.2 0.68
+    - 4.5 B2 0.2 0.61
+    - 4.75 E2 0.2 0.68
+    - 4.75 B2 0.2 0.61
+    - 5 E2 0.2 0.85
+    - 5 B2 0.2 0.77
+    - 5.5 E2 0.2 0.68
+    - 5.5 B2 0.2 0.61
+    - 5.75 E2 0.2 0.68
+    - 5.75 B2 0.2 0.61
+    - 8 E2 0.2 0.85
+    - 8 B2 0.2 0.77
+    - 8.5 E2 0.2 0.68
+    - 8.5 B2 0.2 0.61
+    - 8.75 E2 0.2 0.68
+    - 8.75 B2 0.2 0.61
+    - 9 E2 0.2 0.85
+    - 9 B2 0.2 0.77
+    - 9.5 E2 0.2 0.68
+    - 9.5 B2 0.2 0.61
+    - 9.75 E2 0.2 0.68
+    - 9.75 B2 0.2 0.61
+    - 10 E2 0.2 0.85
+    - 10 B2 0.2 0.77
+    - 10.5 E2 0.2 0.68
+    - 10.5 B2 0.2 0.61
+    - 10.75 E2 0.2 0.68
+    - 10.75 B2 0.2 0.61
+    - 11 E2 0.2 0.85
+    - 11 B2 0.2 0.77
+    - 11.5 E2 0.2 0.68
+    - 11.5 B2 0.2 0.61
+    - 11.75 E2 0.2 0.68
+    - 11.75 B2 0.2 0.61
+    - 12 E2 0.2 0.85
+    - 12 B2 0.2 0.77
+    - 12.5 E2 0.2 0.68
+    - 12.5 B2 0.2 0.61
+    - 12.75 E2 0.2 0.68
+    - 12.75 B2 0.2 0.61
+  verse-open:
+    length: 16
+    notes:
+    - 6 C2 1.9 0.9
+    - 6 G2 1.9 0.9
+    - 6 C3 1.9 0.9
+    - 13 D2 1 0.9
+    - 13 A2 1 0.9
+    - 13 D3 1 0.9
+    - 14 C2 1 0.9
+    - 14 G2 1 0.9
+    - 14 C3 1 0.9
+    - 15 B2 1 0.9
+    - 15 F#3 1 0.9
+    - 15 B3 1 0.9
+tracks:
+- id: gtr-l
+  instrument: gtr-l
+  bus: guitars
+  pan: -0.75
+  clips:
+  - pattern: riff-open
+    start: 0
+    length: 64
+  - pattern: verse-open
+    start: 64
+    length: 64
+  - pattern: pre
+    start: 128
+    length: 32
+  - pattern: chorus-gtr
+    start: 160
+    length: 64
+  - pattern: riff-open
+    start: 224
+    length: 32
+  - pattern: verse-open
+    start: 256
+    length: 48
+  - pattern: pre
+    start: 304
+    length: 16
+  - pattern: chorus-gtr
+    start: 320
+    length: 64
+  - pattern: riff-open
+    start: 384
+    length: 64
+  - pattern: chorus-gtr
+    start: 480
+    length: 48
+  - pattern: end
+    start: 528
+    length: 12
+- id: gtr-r
+  instrument: gtr-r
+  bus: guitars
+  pan: 0.75
+  clips:
+  - pattern: riff-open
+    start: 16
+    length: 48
+  - pattern: verse-open
+    start: 64
+    length: 64
+  - pattern: pre
+    start: 128
+    length: 32
+  - pattern: chorus-gtr
+    start: 160
+    length: 64
+  - pattern: riff-open
+    start: 224
+    length: 32
+  - pattern: verse-open
+    start: 256
+    length: 48
+  - pattern: pre
+    start: 304
+    length: 16
+  - pattern: chorus-gtr
+    start: 320
+    length: 64
+  - pattern: riff-open
+    start: 384
+    length: 64
+  - pattern: chorus-gtr
+    start: 480
+    length: 48
+  - pattern: end
+    start: 528
+    length: 12
+- id: mute-l
+  instrument: mute-l
+  bus: guitars
+  pan: -0.7
+  clips:
+  - pattern: riff-mute
+    start: 0
+    length: 64
+  - pattern: verse-mute
+    start: 64
+    length: 64
+  - pattern: riff-mute
+    start: 224
+    length: 32
+  - pattern: verse-mute
+    start: 256
+    length: 48
+  - pattern: riff-mute
+    start: 384
+    length: 64
+  - pattern: break-mute
+    start: 448
+    length: 32
+- id: mute-r
+  instrument: mute-r
+  bus: guitars
+  pan: 0.7
+  clips:
+  - pattern: riff-mute
+    start: 16
+    length: 48
+  - pattern: verse-mute
+    start: 64
+    length: 64
+  - pattern: riff-mute
+    start: 224
+    length: 32
+  - pattern: verse-mute
+    start: 256
+    length: 48
+  - pattern: riff-mute
+    start: 384
+    length: 64
+  - pattern: break-mute
+    start: 448
+    length: 32
+- id: bass
+  instrument: bass
+  bus: bass
+  clips:
+  - pattern: bass-riff
+    start: 16
+    length: 48
+  - pattern: bass-verse
+    start: 64
+    length: 64
+  - pattern: bass-pre
+    start: 128
+    length: 32
+  - pattern: bass-chorus
+    start: 160
+    length: 64
+  - pattern: bass-riff
+    start: 224
+    length: 32
+  - pattern: bass-verse
+    start: 256
+    length: 48
+  - pattern: bass-pre
+    start: 304
+    length: 16
+  - pattern: bass-chorus
+    start: 320
+    length: 64
+  - pattern: bass-riff
+    start: 384
+    length: 64
+  - pattern: bass-break
+    start: 448
+    length: 32
+  - pattern: bass-chorus
+    start: 480
+    length: 48
+  - pattern: end
+    start: 528
+    length: 12
+    transpose: -24
+- id: lead
+  instrument: lead
+  bus: lead
+  clips:
+  - pattern: hook
+    start: 160
+    length: 64
+  - pattern: hook
+    start: 320
+    length: 64
+  - pattern: solo
+    start: 384
+    length: 64
+  - pattern: hook
+    start: 480
+    length: 32
+  - pattern: hook
+    start: 512
+    length: 16
+- id: choir
+  instrument: choir
+  bus: choir
+  volume: -4
+  clips:
+  - pattern: chorus-choir
+    start: 160
+    length: 64
+  - pattern: chorus-choir
+    start: 320
+    length: 64
+  - pattern: chorus-choir
+    start: 480
+    length: 48
+  - pattern: end
+    start: 528
+    length: 12
+    transpose: 24
+- id: organ
+  instrument: organ
+  bus: choir
+  volume: -8
+  clips:
+  - pattern: chorus-organ
+    start: 320
+    length: 64
+  - pattern: chorus-organ
+    start: 480
+    length: 48
+- id: kick
+  instrument: kit
+  bus: kick
+  clips:
+  - pattern: kick-8
+    start: 16
+    length: 16
+  - pattern: kick-8
+    start: 32
+    length: 32
+  - pattern: kick-gallop
+    start: 64
+    length: 64
+  - pattern: kick-8
+    start: 128
+    length: 32
+  - pattern: kick-double
+    start: 160
+    length: 64
+  - pattern: kick-8
+    start: 224
+    length: 32
+  - pattern: kick-gallop
+    start: 256
+    length: 48
+  - pattern: kick-8
+    start: 304
+    length: 16
+  - pattern: kick-double
+    start: 320
+    length: 64
+  - pattern: kick-double
+    start: 384
+    length: 64
+  - pattern: kick-break
+    start: 448
+    length: 32
+  - pattern: kick-double
+    start: 480
+    length: 48
+  - pattern: crash
+    start: 528
+    length: 4
+- id: snare
+  instrument: kit
+  bus: snare
+  clips:
+  - pattern: snare-24
+    start: 16
+    length: 12
+  - pattern: fill
+    start: 28
+    length: 4
+  - pattern: snare-24
+    start: 32
+    length: 28
+  - pattern: fill
+    start: 60
+    length: 4
+  - pattern: snare-24
+    start: 64
+    length: 60
+  - pattern: fill
+    start: 124
+    length: 4
+  - pattern: snare-24
+    start: 128
+    length: 28
+  - pattern: fill-snare
+    start: 156
+    length: 4
+  - pattern: snare-24
+    start: 160
+    length: 60
+  - pattern: fill
+    start: 220
+    length: 4
+  - pattern: snare-24
+    start: 224
+    length: 28
+  - pattern: fill
+    start: 252
+    length: 4
+  - pattern: snare-24
+    start: 256
+    length: 44
+  - pattern: fill-snare
+    start: 300
+    length: 4
+  - pattern: snare-24
+    start: 304
+    length: 12
+  - pattern: fill
+    start: 316
+    length: 4
+  - pattern: snare-24
+    start: 320
+    length: 60
+  - pattern: fill
+    start: 380
+    length: 4
+  - pattern: snare-24
+    start: 384
+    length: 60
+  - pattern: fill
+    start: 444
+    length: 4
+  - pattern: snare-3
+    start: 448
+    length: 28
+  - pattern: fill-snare
+    start: 476
+    length: 4
+  - pattern: snare-24
+    start: 480
+    length: 44
+  - pattern: fill
+    start: 524
+    length: 4
+- id: cymbals
+  instrument: kit
+  bus: cymbals
+  clips:
+  - pattern: hats-8
+    start: 32
+    length: 96
+  - pattern: ride-4
+    start: 128
+    length: 32
+  - pattern: ride-8
+    start: 160
+    length: 64
+  - pattern: ride-8
+    start: 224
+    length: 32
+  - pattern: hats-8
+    start: 256
+    length: 64
+  - pattern: ride-8
+    start: 320
+    length: 128
+  - pattern: ride-4
+    start: 448
+    length: 32
+  - pattern: ride-8
+    start: 480
+    length: 48
+- id: crash
+  instrument: kit
+  bus: cymbals
+  clips:
+  - pattern: crash
+    start: 16
+    length: 4
+  - pattern: crash
+    start: 32
+    length: 4
+  - pattern: crash
+    start: 64
+    length: 4
+  - pattern: crash
+    start: 128
+    length: 4
+  - pattern: crash-2
+    start: 160
+    length: 64
+  - pattern: crash
+    start: 224
+    length: 4
+  - pattern: crash
+    start: 256
+    length: 4
+  - pattern: crash-2
+    start: 320
+    length: 64
+  - pattern: crash
+    start: 384
+    length: 4
+  - pattern: crash
+    start: 416
+    length: 4
+  - pattern: crash
+    start: 448
+    length: 32
+  - pattern: crash-2
+    start: 480
+    length: 48
+mixer:
+  version: 1
+  buses:
+  - name: master
+    volume: 0
+    effects:
+    - type: equalizer
+      id: eq
+      params:
+        low-cut: 30
+        high-gain: 1
+    - type: compressor
+      id: glue
+      params:
+        threshold: -14
+        ratio: 3
+        attack: 0.02
+        release: 0.25
+        makeup: 1
+    - type: limiter
+      id: limit
+      params:
+        ceiling: -1
+  - name: drums
+    parent: master
+    volume: -1
+    sends:
+    - target: fx
+      level: -14
+    effects:
+    - type: compressor
+      id: punch
+      params:
+        threshold: -18
+        ratio: 4
+        attack: 0.005
+        release: 0.09
+    - type: distortion
+      id: heat
+      params:
+        mode: tanh
+        drive: 3
+        tone: 12000
+        output: -1.5
+        mix: 0.3
+  - name: kick
+    parent: drums
+    volume: 0
+    effects:
+    - type: equalizer
+      id: eq
+      params:
+        low-freq: 65
+        low-gain: 2
+        mid1-freq: 350
+        mid1-gain: -4
+        high-freq: 4000
+        high-gain: 3
+  - name: snare
+    parent: drums
+    volume: -4
+    sends:
+    - target: fx
+      level: -10
+  - name: toms
+    parent: drums
+    volume: -3
+    sends:
+    - target: fx
+      level: -9
+  - name: cymbals
+    parent: drums
+    volume: -10
+    effects:
+    - type: equalizer
+      id: eq
+      params:
+        low-cut: 400
+  - name: guitars
+    parent: master
+    volume: -2
+    effects:
+    - type: distortion
+      id: amp
+      params:
+        mode: tanh
+        drive: 28
+        tone: 5600
+        output: -15.4
+        mix: 1
+    - type: equalizer
+      id: cab
+      params:
+        low-cut: 90
+        mid1-freq: 800
+        mid1-gain: 3
+        mid1-q: 0.9
+        high-cut: 6500
+  - name: bass
+    parent: master
+    volume: -3
+    effects:
+    - type: distortion
+      id: grit
+      params:
+        mode: soft-clip
+        drive: 8
+        tone: 3000
+        output: -4
+        mix: 0.5
+    - type: equalizer
+      id: eq
+      params:
+        low-cut: 35
+        mid1-freq: 700
+        mid1-gain: 2
+  - name: lead
+    parent: master
+    volume: -3
+    sends:
+    - target: fx
+      level: -10
+    effects:
+    - type: distortion
+      id: amp
+      params:
+        mode: tanh
+        drive: 22
+        tone: 7000
+        output: -12.1
+        mix: 1
+    - type: equalizer
+      id: cab
+      params:
+        low-cut: 90
+        mid1-freq: 1200
+        mid1-gain: 4
+        mid1-q: 0.9
+        high-cut: 8000
+    - type: echo
+      id: delay
+      params:
+        delay: 0.3
+        feedback: 0.3
+        dry: 1
+        wet: 0.2
+  - name: choir
+    parent: master
+    volume: 0
+    sends:
+    - target: fx
+      level: -4
+    effects:
+    - type: stereo-widener
+      id: wide
+      params:
+        width: 1.5
+        bass-mono: 200
+  - name: fx
+    parent: master
+    volume: -6
+    effects:
+    - type: reverb
+      id: hall
+      params:
+        room-size: 0.8
+        damping: 0.45
+        wet: 1
+        dry: 0
+  ducking:
+  - trigger: kick
+    target: bass
+    threshold: -30
+    depth: -3
+    attack: 0.003
+    release: 0.06
