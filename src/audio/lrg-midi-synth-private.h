@@ -75,6 +75,18 @@ lrg_midi_synth_font_load (const guint8 *data,
 G_GNUC_INTERNAL void
 lrg_midi_synth_font_free (LrgMidiSynthFont *font);
 
+/*
+ * lrg_midi_synth_font_load_checked:
+ * Validates a SoundFont as lrg_midi_synth_load_soundfont_bytes() does,
+ * then loads it for stereo float output at @sample_rate.  NULL with
+ * LRG_MIDI_SYNTH_ERROR_INVALID on a bad bank.
+ */
+G_GNUC_INTERNAL LrgMidiSynthFont *
+lrg_midi_synth_font_load_checked (const guint8  *data,
+                                  gsize          size,
+                                  guint          sample_rate,
+                                  GError       **error);
+
 /* the number of presets of a loaded font */
 G_GNUC_INTERNAL gint
 lrg_midi_synth_font_get_preset_count (LrgMidiSynthFont *font);

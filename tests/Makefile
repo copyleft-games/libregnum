@@ -223,6 +223,7 @@ TEST_SOURCES := \
 	test-audio-dynamics.c \
 	test-foley.c \
 	test-foley-patch.c \
+	test-music-instruments.c \
 	test-audio-bus.c \
 	test-audio-robustness.c \
 	test-midi-output.c \

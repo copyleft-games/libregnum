@@ -1,0 +1,23 @@
+#+title: Music Module
+#+description: Making music and sound in code: instruments (synthesizer, drum machine, sampler, SoundFont, Foley), multitrack songs (.rsong), offline rendering, realtime and adaptive playback, MIDI import and export
+#+authors: Zach Podbielniak
+#+categories: libregnum music audio
+#+created: 2026-11-08T17:00:00-05:00
+#+updated: 2026-11-08T17:00:00-05:00
+#+version: 0.1
+
+* Music Module
+:PROPERTIES:
+:CUSTOM_ID: music-module
+:END:
+#+begin_quote
+*[[file:../../index.org][Home]]* > [[file:../index.org][Modules]] > Music
+#+end_quote
+
+The music module (0.10.0, =src/music/=) makes sound instead of playing recordings. It is built on the audio module's mixer and effects ([[file:../audio/index.org][Audio]]), and the editor's song editor and Foley designer edit its formats ([[file:../../editor/music.org][Music in the editor]]).
+
+- [[file:instruments.org][Instruments]]: =LrgInstrument= with sample-accurate note scheduling; =LrgSynth= (subtractive and FM, presets), =LrgDrumMachine= (808, 909 and Linn kits, synthesized), =LrgSampler=, =LrgSoundFontInstrument=, =LrgFoleyInstrument=.
+- [[file:song.org][Songs]]: =LrgSong=, a multitrack arrangement of pattern and audio clips with instruments, a tempo map, automation and an embedded mixer, saved as =.rsong= YAML; offline rendering with stems and loudness normalisation; MIDI import and export.
+- [[file:player.org][Playback]]: =LrgSongPlayer=, realtime playback on a render thread with live edits, and adaptive game music (sections, layers, stingers).
+
+Related, in the audio module: [[file:../audio/foley.org::#foley-patch][LrgFoleyPatch]] (editable sound effects), the mixing and mastering effects ([[file:../audio/effects.org::#mastering-effects][compressor, limiter, EQ, ...]]), [[file:../audio/encoder.org][audio encoding and decoding]] (wav, flac, mp3, ogg, opus, m4a, ...) and [[file:../audio/analysis.org][loudness analysis]].

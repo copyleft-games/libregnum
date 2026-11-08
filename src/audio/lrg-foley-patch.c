@@ -225,6 +225,7 @@ struct _LrgFoleyPatch
 	gdouble  duration;
 	guint    rate;
 	guint32  seed;
+	guint32  variation;   /* 0: as recorded; else every layer's noise moves */
 	gboolean loop;
 	gdouble  loop_tail;
 	gdouble  fade;
@@ -242,6 +243,7 @@ enum
 	PROP_DURATION,
 	PROP_SAMPLE_RATE,
 	PROP_SEED,
+	PROP_VARIATION,
 	PROP_LOOP,
 	PROP_LOOP_TAIL,
 	PROP_FADE,
@@ -302,6 +304,7 @@ lrg_foley_patch_get_property (GObject    *object,
 	case PROP_DURATION: g_value_set_double (value, self->duration); break;
 	case PROP_SAMPLE_RATE: g_value_set_uint (value, self->rate); break;
 	case PROP_SEED: g_value_set_uint (value, self->seed); break;
+	case PROP_VARIATION: g_value_set_uint (value, self->variation); break;
 	case PROP_LOOP: g_value_set_boolean (value, self->loop); break;
 	case PROP_LOOP_TAIL: g_value_set_double (value, self->loop_tail); break;
 	case PROP_FADE: g_value_set_double (value, self->fade); break;
@@ -328,6 +331,7 @@ lrg_foley_patch_set_property (GObject      *object,
 	case PROP_DURATION: self->duration = g_value_get_double (value); break;
 	case PROP_SAMPLE_RATE: self->rate = g_value_get_uint (value); break;
 	case PROP_SEED: self->seed = g_value_get_uint (value); break;
+	case PROP_VARIATION: self->variation = g_value_get_uint (value); break;
 	case PROP_LOOP: self->loop = g_value_get_boolean (value); break;
 	case PROP_LOOP_TAIL: self->loop_tail = g_value_get_double (value); break;
 	case PROP_FADE: self->fade = g_value_get_double (value); break;
@@ -377,6 +381,15 @@ lrg_foley_patch_class_init (LrgFoleyPatchClass *klass)
 	 * The seed of the layers whose own seed is 0.
 	 */
 	props[PROP_SEED] = g_param_spec_uint ("seed", NULL, NULL, 0, G_MAXUINT32, 1, flags);
+
+	/**
+	 * LrgFoleyPatch:variation:
+	 *
+	 * 0 renders the patch as it is; any other value moves the noise of
+	 * every layer (also those with their own seed), for another take of
+	 * the same sound (#LrgFoleyInstrument takes, game variations).
+	 */
+	props[PROP_VARIATION] = g_param_spec_uint ("variation", NULL, NULL, 0, G_MAXUINT32, 0, flags);
 
 	/**
 	 * LrgFoleyPatch:loop:
@@ -460,6 +473,7 @@ lrg_foley_patch_copy (LrgFoleyPatch *self)
 	copy->duration = self->duration;
 	copy->rate = self->rate;
 	copy->seed = self->seed;
+	copy->variation = self->variation;
 	copy->loop = self->loop;
 	copy->loop_tail = self->loop_tail;
 	copy->fade = self->fade;
@@ -991,10 +1005,20 @@ layer_state (LrgFoleyPatch *self,
 	guint32 seed = (guint32) layer->p[P_SEED];
 
 	if (seed != 0)
-		return seed;
-	tmp.state = (self->seed + 1u) * 2654435761u ^ (index + 1u) * 2246822519u;
-	next_random (&tmp);
-	next_random (&tmp);
+		tmp.state = seed;
+	else
+	{
+		tmp.state = (self->seed + 1u) * 2654435761u ^ (index + 1u) * 2246822519u;
+		next_random (&tmp);
+		next_random (&tmp);
+	}
+	if (self->variation != 0)
+	{
+		/* another take: the state moved by the variation, then stirred */
+		tmp.state ^= self->variation * 0x85EBCA6Bu + 0xC2B2AE35u;
+		next_random (&tmp);
+		next_random (&tmp);
+	}
 	return tmp.state != 0 ? tmp.state : 0x9E3779B9u;
 }
 
@@ -1261,6 +1285,8 @@ lrg_foley_patch_set_global (LrgFoleyPatch *self,
 		self->rate = (guint) CLAMP (round (value), 8000.0, 96000.0);
 	else if (g_str_equal (name, "seed"))
 		self->seed = (guint32) CLAMP (round (value), 0.0, 4294967295.0);
+	else if (g_str_equal (name, "variation"))
+		self->variation = (guint32) CLAMP (round (value), 0.0, 4294967295.0);
 	else if (g_str_equal (name, "loop"))
 		self->loop = value != 0.0;
 	else if (g_str_equal (name, "loop-tail") || g_str_equal (name, "loop_tail"))
@@ -1550,6 +1576,12 @@ read_patch (LrgAudioYamlCtx *ctx,
 				return FALSE;
 			self->seed = (guint32) iv;
 		}
+		if ((node = yaml_mapping_get_member (g, "variation")) != NULL)
+		{
+			if (!lrg_audio_yaml_int (ctx, node, "foley.variation", 0, G_MAXUINT32, &iv))
+				return FALSE;
+			self->variation = (guint32) iv;
+		}
 		if ((node = yaml_mapping_get_member (g, "loop")) != NULL
 		    && !lrg_audio_yaml_bool (ctx, node, "foley.loop", &self->loop))
 			return FALSE;
@@ -1659,6 +1691,8 @@ lrg_foley_patch_to_data (LrgFoleyPatch  *self,
 	lrg_audio_yaml_set (g, "duration", lrg_audio_yaml_num (self->duration));
 	lrg_audio_yaml_set (g, "sample_rate", lrg_audio_yaml_int_node (self->rate));
 	lrg_audio_yaml_set (g, "seed", lrg_audio_yaml_int_node (self->seed));
+	if (self->variation != 0)
+		lrg_audio_yaml_set (g, "variation", lrg_audio_yaml_int_node (self->variation));
 	lrg_audio_yaml_set (g, "loop", lrg_audio_yaml_bool_node (self->loop));
 	if (self->loop)
 		lrg_audio_yaml_set (g, "loop_tail", lrg_audio_yaml_num (self->loop_tail));

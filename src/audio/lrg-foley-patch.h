@@ -242,7 +242,7 @@ const gchar * lrg_foley_patch_get_name (LrgFoleyPatch *self);
  * lrg_foley_patch_set_global:
  * @self: an #LrgFoleyPatch
  * @name: a numeric or boolean global (`duration`, `sample-rate`, `seed`,
- *   `loop`, `loop-tail`, `fade`, `peak`, `normalize`)
+ *   `variation`, `loop`, `loop-tail`, `fade`, `peak`, `normalize`)
  * @value: the value, clamped to the setting's range (booleans: non-zero
  *   is true)
  *

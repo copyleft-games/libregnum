@@ -288,6 +288,12 @@ PUBLIC_HEADERS := \
 	src/audio/lrg-foley.h \
 	src/audio/lrg-audio-source.h \
 	src/audio/lrg-foley-patch.h \
+	src/music/lrg-instrument.h \
+	src/music/lrg-synth.h \
+	src/music/lrg-drum-machine.h \
+	src/music/lrg-sampler.h \
+	src/music/lrg-sound-font-instrument.h \
+	src/music/lrg-foley-instrument.h \
 	src/audio/lrg-limiter.h \
 	src/audio/lrg-distortion.h \
 	src/audio/lrg-equalizer.h \
@@ -1105,6 +1111,12 @@ SOURCES := \
 	src/audio/lrg-foley.c \
 	src/audio/lrg-audio-source.c \
 	src/audio/lrg-foley-patch.c \
+	src/music/lrg-instrument.c \
+	src/music/lrg-synth.c \
+	src/music/lrg-drum-machine.c \
+	src/music/lrg-sampler.c \
+	src/music/lrg-sound-font-instrument.c \
+	src/music/lrg-foley-instrument.c \
 	src/audio/lrg-audio-yaml-private.c \
 	src/audio/lrg-limiter.c \
 	src/audio/lrg-distortion.c \
