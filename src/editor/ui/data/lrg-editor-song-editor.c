@@ -49,10 +49,10 @@
 
 #define INSTALL_KEY "lrg-editor-song-installed"
 #define HEAD_W      (132.0f)    /* track names in the arrangement */
-#define RULER_H     (22.0f)
+#define RULER_H     (32.0f)     /* bar numbers above, markers below */
 #define TRACK_H     (30.0f)
 #define EDGE_W      (6.0f)      /* the resize handle at a clip's end */
-#define KEYS_W      (44.0f)     /* key or lane names in the pattern editor */
+#define KEYS_W      (76.0f)     /* key or lane names in the pattern editor */
 #define ROLL_ROW_H  (12.0f)
 #define LANE_H      (20.0f)
 
@@ -948,6 +948,16 @@ arrange_measure (LrgCustomWidget     *widget,
 	size->height = RULER_H + (gfloat) MAX (n_tracks (self), 1u) * TRACK_H + 4.0f;
 }
 
+/* the first paint (or event) fits the whole song in the view */
+static void
+fit_view (LrgEditorSongEditor *self,
+          gfloat               width)
+{
+	if (self->ppb > 0.0f || self->song == NULL || width <= HEAD_W + 20.0f)
+		return;
+	self->ppb = CLAMP ((width - HEAD_W - 8.0f) / (gfloat) view_beats (self), 1.0f, 200.0f);
+}
+
 static gfloat
 beat_x (LrgEditorSongEditor *self,
         gfloat               x0,
@@ -987,7 +997,7 @@ arrange_paint (LrgCustomWidget *widget,
 	GrlColor             loop_bg = *accent;
 	g_auto(GStrv)        ids = NULL;
 	gdouble              end = view_beats (self);
-	gdouble              ls = 0, le = 0, b;
+	gdouble              ls = 0, le = 0, b, bar_step;
 	guint                beats_bar = bpb (self), i, j;
 	gfloat               lanes_x = x + HEAD_W;
 	gfloat               playhead;
@@ -996,7 +1006,8 @@ arrange_paint (LrgCustomWidget *widget,
 	clip_bg.a = 90;
 	loop_bg.a = 50;
 	lrg_paint_list_rect (list, x, y, width, height, 4.0f, &track_bg);
-	if (self->song == NULL)
+	fit_view (self, width);
+	if (self->song == NULL || self->ppb <= 0.0f)
 	{
 		lrg_paint_list_text (list, font, self->load_error != NULL ? self->load_error : "The song does not load",
 		                     x + 10.0f, y + 10.0f, fs, 0.0f, danger);
@@ -1009,10 +1020,15 @@ arrange_paint (LrgCustomWidget *widget,
 	g_object_get (self->song, "loop-start", &ls, "loop-end", &le, NULL);
 	if (le > ls)
 		lrg_paint_list_rect (list, beat_x (self, x, ls), y, (gfloat) ((le - ls) * self->ppb), RULER_H, 0.0f, &loop_bg);
+	/* bars every 1, 2, 4 or 8 bars so lines stay 12 px apart or more */
+	bar_step = 1.0;
+	while (self->ppb * beats_bar * bar_step < 12.0f && bar_step < 64.0)
+		bar_step *= 2.0;
 	for (b = floor (self->scroll); b <= end; b += 1.0)
 	{
-		gfloat bx = beat_x (self, x, b);
-		gboolean bar = fmod (b, (gdouble) beats_bar) < 1e-9;
+		gfloat   bx = beat_x (self, x, b);
+		gdouble  bar_no = b / beats_bar;
+		gboolean bar = fmod (b, (gdouble) beats_bar) < 1e-9 && fmod (bar_no, bar_step) < 1e-9;
 
 		if (bx < lanes_x - 1.0f)
 			continue;
@@ -1021,11 +1037,11 @@ arrange_paint (LrgCustomWidget *widget,
 		if (bar || self->ppb >= 10.0f)
 			lrg_paint_list_line (list, bx, y + (bar ? 0.0f : RULER_H * 0.6f), bx, y + height, 1.0f,
 			                     bar ? muted : &track_bg);
-		if (bar && (self->ppb * beats_bar >= 28.0f || fmod (b / beats_bar, 4.0) < 1e-9))
+		if (bar && (self->ppb * beats_bar * bar_step >= 28.0f || fmod (bar_no, bar_step * 4.0) < 1e-9))
 		{
-			g_autofree gchar *num = g_strdup_printf ("%.0f", b / beats_bar + 1.0);
+			g_autofree gchar *num = g_strdup_printf ("%.0f", bar_no + 1.0);
 
-			lrg_paint_list_text (list, font, num, bx + 3.0f, y + 3.0f, fs, 0.0f, muted);
+			lrg_paint_list_text (list, font, num, bx + 3.0f, y + 2.0f, fs, 0.0f, muted);
 		}
 	}
 
@@ -1039,7 +1055,7 @@ arrange_paint (LrgCustomWidget *widget,
 		lrg_song_get_marker (self->song, i, &mb, &name);
 		mx = beat_x (self, x, mb);
 		lrg_paint_list_line (list, mx, y, mx, y + height, 1.0f, accent);
-		lrg_paint_list_text (list, font, name, mx + 3.0f, y + RULER_H * 0.5f, fs * 0.9f, 0.0f, accent);
+		lrg_paint_list_text (list, font, name, mx + 3.0f, y + RULER_H * 0.5f + 1.0f, fs, 0.0f, accent);
 	}
 
 	/* clips */
@@ -1063,6 +1079,8 @@ arrange_paint (LrgCustomWidget *widget,
 				continue;
 			lrg_paint_list_rect (list, cx + 1.0f, ty + 2.0f, cw - 2.0f, TRACK_H - 4.0f, 3.0f,
 			                     is_sel ? sel : &clip_bg);
+			/* where each clip starts, so neighbours do not merge */
+			lrg_paint_list_line (list, cx + 1.0f, ty + 3.0f, cx + 1.0f, ty + TRACK_H - 3.0f, 2.0f, accent);
 			lrg_paint_list_push_clip (list, cx + 1.0f, ty, MAX (cw - 3.0f, 0.0f), TRACK_H);
 			lrg_paint_list_text (list, font, source, cx + 5.0f, roundf (ty + (TRACK_H - fs) * 0.5f), fs, 0.0f,
 			                     muted_clip ? muted : text);
@@ -1167,6 +1185,9 @@ arrange_event (LrgCustomWidget  *widget,
 	g_autoptr(GError)    error = NULL;
 
 	if (self->song == NULL)
+		return FALSE;
+	fit_view (self, lrg_widget_get_width (LRG_WIDGET (widget)));
+	if (self->ppb <= 0.0f)
 		return FALSE;
 	if (type == LRG_UI_EVENT_SCROLL)
 	{
@@ -2117,7 +2138,7 @@ lrg_editor_song_editor_constructed (GObject *object)
 	const LrgInsets                pad = { 8.0f, 6.0f, 8.0f, 6.0f };
 	g_autoptr(GSimpleActionGroup)  group = g_simple_action_group_new ();
 	g_autoptr(GMenu)               menu = g_menu_new ();
-	LrgWidget                     *left, *right, *scroll, *heading;
+	LrgWidget                     *left, *right, *scroll;
 	LrgSplitter                   *split;
 	LrgEditorApp                  *app;
 
@@ -2148,9 +2169,6 @@ lrg_editor_song_editor_constructed (GObject *object)
 	lrg_container_set_spacing (LRG_CONTAINER (left), 6.0f);
 	lrg_widget_set_margin (left, &pad);
 	add_to (left, make_grid (self, "song-settings-grid", PART_SONG));
-	heading = LRG_WIDGET (lrg_label_new ("Track"));
-	lrg_widget_add_class (heading, "heading");
-	add_to (left, heading);
 	add_to (left, make_grid (self, "song-track-grid", PART_TRACK));
 	scroll = LRG_WIDGET (lrg_scroll_box_new ());
 	lrg_widget_set_name (scroll, "song-scroll");
@@ -2245,7 +2263,7 @@ static void
 lrg_editor_song_editor_init (LrgEditorSongEditor *self)
 {
 	self->sel_clip = -1;
-	self->ppb = 12.0f;
+	self->ppb = 0.0f;    /* fitted on the first paint */
 	self->drag_note = -1;
 }
 

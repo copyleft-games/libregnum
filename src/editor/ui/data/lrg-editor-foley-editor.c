@@ -545,7 +545,11 @@ editor_foley_source_list_properties (LrgPropertySource *source)
 			lrg_foley_layer_type_get_param_info (type, names[i], &min, &max, &def, &blurb);
 			step = (max - min) > 1000.0 ? 1.0 : (max - min) > 10.0 ? 0.1 : 0.001;
 			hint = g_strdup_printf ("range:%g,%g,%g", min, max, step);
-			add_row (infos, names[i], G_TYPE_DOUBLE, label, i < 7 ? "Layer" : type_nick (type), hint, blurb);
+			/* mute is a switch, every other parameter a number */
+			if (g_str_equal (names[i], "mute"))
+				add_row (infos, names[i], G_TYPE_BOOLEAN, label, "Layer", NULL, blurb);
+			else
+				add_row (infos, names[i], G_TYPE_DOUBLE, label, i < 7 ? "Layer" : type_nick (type), hint, blurb);
 		}
 	}
 	return infos;
@@ -591,6 +595,12 @@ editor_foley_source_get_value (LrgPropertySource *source,
 	}
 	if (ed->sel < 0)
 		return FALSE;
+	if (g_str_equal (name, "mute"))
+	{
+		g_value_init (value, G_TYPE_BOOLEAN);
+		g_value_set_boolean (value, lrg_foley_patch_get_layer_param (ed->patch, (guint) ed->sel, name) >= 0.5);
+		return TRUE;
+	}
 	g_value_init (value, G_TYPE_DOUBLE);
 	g_value_set_double (value, lrg_foley_patch_get_layer_param (ed->patch, (guint) ed->sel, name));
 	return TRUE;

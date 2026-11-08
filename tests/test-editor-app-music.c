@@ -340,6 +340,7 @@ test_song_canvas (EditorAppFixture *f,
 	const gchar         *source = NULL;
 	gdouble              start = -1, len = 0;
 	guint                notes;
+	gfloat               ppb;
 
 	music_project (f);
 	ed = new_song (f, "music/loop.rsong");
@@ -351,9 +352,11 @@ test_song_canvas (EditorAppFixture *f,
 	efx_rect_of (arrange, &ax, &ay, &aw, &ah);
 	efx_rect_of (pattern, &px, &py, &pw, &ph);
 	g_assert_cmpfloat (aw, >, 300.0f);
+	/* the view fits the song (16 beats) and two bars more */
+	ppb = (aw - 132.0f - 8.0f) / 24.0f;
 
 	/* the drums clip (beats 0-16 of the first track) */
-	efx_click (f, ax + 132.0f + 12.0f * 2.0f, ay + 22.0f + 15.0f);
+	efx_click (f, ax + 132.0f + ppb * 2.0f, ay + 32.0f + 15.0f);
 	g_assert_cmpstr (lrg_editor_song_editor_get_selected_track (ed), ==, "drums");
 	g_assert_cmpint (lrg_editor_song_editor_get_selected_clip (ed), ==, 0);
 	efx_frames (f, 2);
@@ -362,23 +365,23 @@ test_song_canvas (EditorAppFixture *f,
 	song = lrg_editor_song_editor_get_song (ed);
 	lane = lrg_song_pattern_get_lane (song, "beat", "kick");
 	g_assert_true (lane != NULL && lane[1] == '.');
-	efx_click (f, px + 44.0f + (pw - 48.0f) / 16.0f * 1.5f, py + 4.0f + 10.0f);
+	efx_click (f, px + 76.0f + (pw - 80.0f) / 16.0f * 1.5f, py + 4.0f + 10.0f);
 	song = lrg_editor_song_editor_get_song (ed);
 	lane = lrg_song_pattern_get_lane (song, "beat", "kick");
 	g_assert_nonnull (lane);
 	g_assert_cmpint (lane[1], ==, 'x');
 
 	/* the bass clip: a click on an empty cell of the roll adds a note */
-	efx_click (f, ax + 132.0f + 12.0f * 2.0f, ay + 22.0f + 30.0f + 15.0f);
+	efx_click (f, ax + 132.0f + ppb * 2.0f, ay + 32.0f + 30.0f + 15.0f);
 	g_assert_cmpstr (lrg_editor_song_editor_get_selected_track (ed), ==, "bass");
 	efx_frames (f, 2);
 	notes = lrg_song_pattern_get_n_notes (lrg_editor_song_editor_get_song (ed), "bassline");
-	efx_click (f, px + 44.0f + (pw - 48.0f) * 0.9f, py + 6.0f);
+	efx_click (f, px + 76.0f + (pw - 80.0f) * 0.9f, py + 6.0f);
 	g_assert_cmpuint (lrg_song_pattern_get_n_notes (lrg_editor_song_editor_get_song (ed), "bassline"), ==, notes + 1);
 
 	/* drag the bass clip four beats right: one undo step */
-	efx_drag (f, GRL_MOUSE_BUTTON_LEFT, ax + 132.0f + 12.0f * 2.0f, ay + 22.0f + 45.0f,
-	          ax + 132.0f + 12.0f * 6.0f, ay + 22.0f + 45.0f, 4);
+	efx_drag (f, GRL_MOUSE_BUTTON_LEFT, ax + 132.0f + ppb * 2.0f, ay + 32.0f + 45.0f,
+	          ax + 132.0f + ppb * 6.0f, ay + 32.0f + 45.0f, 4);
 	g_assert_true (lrg_song_get_clip (lrg_editor_song_editor_get_song (ed), "bass", 0, &source, &start, &len));
 	g_assert_cmpfloat (start, ==, 4.0);
 	g_assert_true (lrg_editor_data_editor_undo (LRG_EDITOR_DATA_EDITOR (ed)));
