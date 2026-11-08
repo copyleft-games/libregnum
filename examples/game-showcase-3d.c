@@ -12,10 +12,12 @@
  * --self-test runs that check with no window and exits. With a display,
  * the same check runs and then the level is drawn until Esc.
  *
- * Run from examples/:
- *   ./build/release/examples/game-showcase-3d --self-test
- *   ./build/release/examples/game-showcase-3d
- *   ./build/release/examples/game-showcase-3d --level data/pbr-showcase/pbr-showcase.rlevel
+ * The default level is examples/data/pbr-showcase/pbr-showcase.rlevel.
+ * A run from the repository root or from examples/ finds it. --self-test
+ * loads that level into an LrgWorld3D and exits.
+ *
+ *   ./examples/build/release/examples/game-showcase-3d --self-test
+ *   cd examples && ./build/release/examples/game-showcase-3d
  */
 
 #include <libregnum.h>
@@ -49,9 +51,42 @@ near (gfloat a, gfloat b)
 	return fabsf (a - b) < 0.05f;
 }
 
-/* Headless checks. The level file is loaded when it is on disk; a
- * missing default file is skipped so the binary still checks the
- * libraries after install. */
+/* The authored showcase, whether cwd is the repository root, examples/,
+ * or the directory that holds this binary. */
+static gchar *
+default_level_path (void)
+{
+	static const gchar *candidates[] = {
+		"examples/data/pbr-showcase/pbr-showcase.rlevel",
+		"data/pbr-showcase/pbr-showcase.rlevel"
+	};
+	g_autofree gchar *exe = NULL;
+	g_autofree gchar *dir = NULL;
+	g_autofree gchar *beside = NULL;
+	guint i;
+
+	for (i = 0; i < G_N_ELEMENTS (candidates); i++)
+	{
+		if (g_file_test (candidates[i], G_FILE_TEST_IS_REGULAR))
+			return g_canonicalize_filename (candidates[i], NULL);
+	}
+
+	/* examples/build/release/examples/<exe> -> examples/data/... */
+	exe = g_file_read_link ("/proc/self/exe", NULL);
+	if (exe != NULL)
+	{
+		dir = g_path_get_dirname (exe);
+		beside = g_build_filename (dir, "..", "..", "..",
+		                           "data", "pbr-showcase",
+		                           "pbr-showcase.rlevel", NULL);
+		if (g_file_test (beside, G_FILE_TEST_IS_REGULAR))
+			return g_canonicalize_filename (beside, NULL);
+	}
+	return g_strdup (DEFAULT_LEVEL);
+}
+
+/* Headless checks. The showcase level is part of the check: a missing
+ * file fails, it does not skip. */
 static gboolean
 self_test (const gchar *level_path,
            GError     **error)
@@ -88,6 +123,7 @@ self_test (const gchar *level_path,
 	guint plane;
 	guint track;
 	guint substeps;
+	guint entities;
 	gint i;
 
 	key_a = NULL;
@@ -97,6 +133,7 @@ self_test (const gchar *level_path,
 	plane = 0;
 	track = 0;
 	substeps = 0;
+	entities = 0;
 	sample = 0.0f;
 	view_w = 0;
 	view_h = 0;
@@ -218,26 +255,28 @@ self_test (const gchar *level_path,
 		return FALSE;
 	}
 
-	if (level_path != NULL && g_file_test (level_path, G_FILE_TEST_IS_REGULAR))
+	if (level_path == NULL || !g_file_test (level_path, G_FILE_TEST_IS_REGULAR))
 	{
-		world = lrg_world3d_new ();
-		level = lrg_level_load_world3d (level_path, world, error);
-		if (level == NULL)
-			return FALSE;
-		if (lrg_world3d_get_entity_count (world) == 0)
-		{
-			g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-			             "%s instantiated no entities", level_path);
-			return FALSE;
-		}
-		g_print ("game-showcase-3d: level %s, %u entities\n",
-		         level_path, lrg_world3d_get_entity_count (world));
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		             "no level file at %s",
+		             level_path != NULL ? level_path : "(none)");
+		return FALSE;
 	}
-	else
-		g_print ("game-showcase-3d: no level file at %s (library check only)\n",
-		         level_path != NULL ? level_path : "(none)");
 
-	g_print ("game-showcase-3d: self-test ok (tags, stream, view, ui anim, clip, physics, nav)\n");
+	world = lrg_world3d_new ();
+	level = lrg_level_load_world3d (level_path, world, error);
+	if (level == NULL)
+		return FALSE;
+	entities = lrg_world3d_get_entity_count (world);
+	if (entities == 0)
+	{
+		g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		             "%s instantiated no entities", level_path);
+		return FALSE;
+	}
+
+	g_print ("game-showcase-3d: self-test ok (level %s, %u entities; tags, stream, view, ui anim, clip, physics, nav)\n",
+	         level_path, entities);
 	return TRUE;
 }
 
@@ -289,10 +328,14 @@ main (int argc, char *argv[])
 	g_option_context_set_summary (ctx,
 		"Headless check, then (with a display) the PBR showcase level.");
 	g_option_context_set_description (ctx,
-		"Examples (from the examples/ directory):\n"
+		"Examples:\n"
 		"  game-showcase-3d --self-test\n"
 		"  game-showcase-3d\n"
-		"  game-showcase-3d --level data/levels/level-3d-runtime.rlevel --frames 120\n");
+		"  game-showcase-3d --level data/levels/level-3d-runtime.rlevel --frames 120\n"
+		"\n"
+		"The default level is examples/data/pbr-showcase/pbr-showcase.rlevel\n"
+		"from the repository root, or data/pbr-showcase/pbr-showcase.rlevel\n"
+		"from examples/.\n");
 	if (!g_option_context_parse (ctx, &argc, &argv, &error))
 	{
 		g_printerr ("game-showcase-3d: %s\n", error->message);
@@ -304,7 +347,7 @@ main (int argc, char *argv[])
 		return 0;
 	}
 	if (opt_level == NULL)
-		opt_level = g_strdup (DEFAULT_LEVEL);
+		opt_level = default_level_path ();
 
 	engine = lrg_engine_get_default ();
 	if (!lrg_engine_startup (engine, &error))
