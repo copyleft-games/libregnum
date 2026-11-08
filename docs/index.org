@@ -166,6 +166,7 @@ See the [[file:quickstart.org][Quickstart Guide]] for more detailed examples.
 - *[[file:examples/editor-custom-panel.org][Editor Custom Panel]]* - Embedding lrgeditor: a custom dock panel (level stats), a custom action with a shortcut and a Tools menu entry, through the 0.8.1 embedding API
 - *[[file:examples/level-3d-runtime.org][Level 3D Runtime]]* - A standalone game playing an lrgeditor level with LrgWorld3D and LrgWorld3DRenderer
 - *[[file:examples/pbr-showcase.org][PBR Showcase]]* - Every 0.9.0 rendering feature in one level: environment/IBL, .rmat materials, spot/point shadows, decal, reflection probe, LOD, .rpost, with toggles
+- *[[file:examples/synthwave-song.org][Synthwave Song]]* - "Neon Drive", a 2:40 song made in code with the music module: synths, an 808, a Foley impact, sidechained mix, rendered at -14 LUFS and exported to every audio format
 - *[[file:examples/physics-sandbox.org][Physics Sandbox]]* - 3D physics from components: stacks, ramps, a ragdoll, a joint chain, a breakable wall, a cloth flag, CCD shots, debug draw toggles
 - *[[file:examples/game-showcase-3d.org][3D Showcase]]* - One program for a 0.9.0 level plus physics, nav, a clip, streaming cells and a UI animation (=--self-test= is headless)
 - *[[file:CHANGELOG.org][Changelog]]* - Release notes, including what 0.9.0 ships and what it leaves partial
